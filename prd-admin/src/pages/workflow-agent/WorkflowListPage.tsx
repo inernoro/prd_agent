@@ -7,6 +7,8 @@ import { Button } from '@/components/design/Button';
 import { TabBar } from '@/components/design/TabBar';
 import { getEmojiForCapsule, getCapsuleType } from './capsuleRegistry';
 import { NodeTypeLabels } from '@/services/contracts/workflowAgent';
+import { TemplatePickerDialog } from './TemplatePickerDialog';
+import type { WorkflowTemplate } from './workflowTemplates';
 
 // ═══════════════════════════════════════════════════════════════
 // 工作流列表页 — 卡片网格 + 统计总览 + Mini DAG 预览
@@ -619,6 +621,8 @@ export function WorkflowListPage() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [creatingTest, setCreatingTest] = useState(false);
+  const [templateOpen, setTemplateOpen] = useState(false);
+  const [templateImporting, setTemplateImporting] = useState(false);
 
   useEffect(() => {
     reload();
@@ -680,6 +684,27 @@ export function WorkflowListPage() {
     } catch { /* ignore */ }
   }
 
+  async function handleImportTemplate(template: WorkflowTemplate, inputs: Record<string, string>) {
+    setTemplateImporting(true);
+    try {
+      const { nodes, edges, variables } = template.build(inputs);
+      const res = await createWorkflow({
+        name: template.name,
+        description: template.description,
+        icon: template.icon,
+        tags: template.tags,
+        nodes,
+        edges,
+        variables,
+      });
+      if (res.success && res.data) {
+        setTemplateOpen(false);
+        navigate(`/workflow-agent/${res.data.workflow.id}`);
+      }
+    } catch { /* ignore */ }
+    setTemplateImporting(false);
+  }
+
   return (
     <div className="h-full min-h-0 flex flex-col overflow-x-hidden overflow-y-auto gap-5">
       <TabBar
@@ -687,6 +712,15 @@ export function WorkflowListPage() {
         icon={<span className="text-[14px]">⚡</span>}
         actions={
           <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={() => setTemplateOpen(true)}
+              disabled={creating || creatingTest}
+              title="从预定义模板一键创建工作流"
+            >
+              📋 从模板创建
+            </Button>
             <Button
               variant="ghost"
               size="xs"
@@ -738,6 +772,14 @@ export function WorkflowListPage() {
           </div>
         )}
       </div>
+
+      {/* 模板选择器弹窗 */}
+      <TemplatePickerDialog
+        open={templateOpen}
+        onClose={() => setTemplateOpen(false)}
+        onImport={handleImportTemplate}
+        importing={templateImporting}
+      />
     </div>
   );
 }
