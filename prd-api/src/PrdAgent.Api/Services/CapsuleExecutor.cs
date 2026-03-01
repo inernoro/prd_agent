@@ -1172,7 +1172,10 @@ public static class CapsuleExecutor
 
     public static ExecutionArtifact MakeTextArtifact(WorkflowNode node, string slotSuffix, string name, string content, string mimeType = "text/plain")
     {
-        var slotId = node.OutputSlots.FirstOrDefault()?.SlotId ?? slotSuffix;
+        // 优先匹配 slotSuffix 对应的 OutputSlot，支持多输出节点
+        var slotId = node.OutputSlots.FirstOrDefault(s => s.SlotId == slotSuffix)?.SlotId
+                  ?? node.OutputSlots.FirstOrDefault()?.SlotId
+                  ?? slotSuffix;
         return new ExecutionArtifact
         {
             Name = name,
