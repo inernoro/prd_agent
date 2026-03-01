@@ -183,6 +183,23 @@ export const testRunCapsuleReal: TestRunCapsuleContract = async (input) => {
   );
 };
 
+// ========== TAPD Cookie Validation ==========
+
+export async function validateTapdCookie(input: { cookie: string; workspaceId?: string }) {
+  return await apiRequest<{
+    valid: boolean;
+    error?: string;
+    userName?: string;
+    userId?: string;
+    hasDscToken?: boolean;
+    workspaces?: { id: string; name: string }[];
+    bugCount?: number;
+  }>(
+    api.workflowAgent.tapd.validateCookie(),
+    { method: 'POST', body: input }
+  );
+}
+
 // ========== Chat Assistant (SSE) ==========
 
 export const getChatHistoryReal: GetChatHistoryContract = async (input) => {

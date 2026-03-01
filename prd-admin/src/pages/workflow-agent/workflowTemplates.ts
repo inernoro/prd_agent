@@ -23,7 +23,7 @@ export interface WorkflowTemplate {
 export interface TemplateInput {
   key: string;
   label: string;
-  type: 'text' | 'password' | 'select' | 'textarea';
+  type: 'text' | 'password' | 'select' | 'textarea' | 'month';
   placeholder?: string;
   helpTip?: string;
   required: boolean;
@@ -99,10 +99,11 @@ const tapdBugCollectionTemplate: WorkflowTemplate = {
     {
       key: 'dateRange',
       label: '时间范围（可选）',
-      type: 'text',
-      placeholder: '2026-01',
-      helpTip: '留空取全部，填月份 (YYYY-MM) 按月筛选',
+      type: 'month',
+      placeholder: '2026-03',
+      helpTip: '留空取全部，选择月份按月筛选',
       required: false,
+      defaultValue: new Date().toISOString().slice(0, 7),
     },
   ],
   build: (inputs) => {

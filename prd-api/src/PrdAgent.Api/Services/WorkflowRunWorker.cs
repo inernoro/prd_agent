@@ -4,6 +4,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Api.Services;
 
@@ -181,6 +182,9 @@ public sealed class WorkflowRunWorker : BackgroundService
                 nodeExec.DurationMs = nodeSw.ElapsedMilliseconds;
                 nodeExec.OutputArtifacts = result.Artifacts;
                 nodeExec.Logs = CapsuleExecutor.TruncateLogs(result.Logs);
+
+                // COS 持久化：上传产物到云存储
+                await UploadArtifactsToCosAsync(scope.ServiceProvider, executionId, nodeId, result.Artifacts);
 
                 artifactStore[nodeId] = result.Artifacts;
 
@@ -488,5 +492,56 @@ public sealed class WorkflowRunWorker : BackgroundService
                 .Set(e => e.CompletedAt, DateTime.UtcNow)
                 .Set(e => e.ErrorMessage, errorMessage),
             cancellationToken: CancellationToken.None);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // COS 产物持久化
+    // ═══════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// 将节点输出产物上传到 COS，设置 CosUrl 供前端下载。
+    /// 仅上传有内联内容的产物（> 0 bytes），不影响执行流程。
+    /// </summary>
+    private async Task UploadArtifactsToCosAsync(
+        IServiceProvider sp, string executionId, string nodeId, List<ExecutionArtifact> artifacts)
+    {
+        if (artifacts.Count == 0) return;
+
+        IAssetStorage? storage;
+        try
+        {
+            storage = sp.GetService<IAssetStorage>();
+        }
+        catch
+        {
+            return; // COS 未配置，跳过上传
+        }
+
+        if (storage == null) return;
+
+        foreach (var artifact in artifacts)
+        {
+            if (string.IsNullOrEmpty(artifact.InlineContent)) continue;
+
+            try
+            {
+                var bytes = System.Text.Encoding.UTF8.GetBytes(artifact.InlineContent);
+                var mime = artifact.MimeType ?? "text/plain";
+
+                var stored = await storage.SaveAsync(bytes, mime, CancellationToken.None,
+                    domain: "workflow-agent", type: "doc");
+
+                artifact.CosUrl = stored.Url;
+
+                _logger.LogDebug("Artifact uploaded to COS: {Name} -> {Url} ({Size} bytes)",
+                    artifact.Name, stored.Url, stored.SizeBytes);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to upload artifact to COS: {Name} nodeId={NodeId} execId={ExecId}",
+                    artifact.Name, nodeId, executionId);
+                // COS 上传失败不影响执行流程，产物仍可通过 InlineContent 查看
+            }
+        }
     }
 }

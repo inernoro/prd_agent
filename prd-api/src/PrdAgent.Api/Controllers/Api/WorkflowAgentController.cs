@@ -185,6 +185,175 @@ public class WorkflowAgentController : ControllerBase
     }
 
     // ─────────────────────────────────────────────────────────
+    // TAPD Cookie 校验
+    // ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// 校验 TAPD Cookie 是否有效，并返回工作空间信息和基础统计。
+    /// </summary>
+    [HttpPost("tapd/validate-cookie")]
+    public async Task<IActionResult> ValidateTapdCookie(
+        [FromBody] ValidateTapdCookieRequest request,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.Cookie))
+            return BadRequest(ApiResponse<object>.Fail("MISSING_COOKIE", "Cookie 不能为空"));
+
+        var factory = HttpContext.RequestServices.GetRequiredService<IHttpClientFactory>();
+        using var client = factory.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(15);
+
+        var cookieStr = request.Cookie.Trim();
+
+        // 提取 dsc-token
+        var dscToken = "";
+        var dscMatch = System.Text.RegularExpressions.Regex.Match(cookieStr, @"dsc-token=([^;\s]+)");
+        if (dscMatch.Success) dscToken = dscMatch.Groups[1].Value;
+
+        // 1. 尝试获取用户信息（验证 Cookie 有效性）
+        string? userName = null;
+        string? userId = null;
+        try
+        {
+            var userReq = new HttpRequestMessage(HttpMethod.Get, "https://www.tapd.cn/api/basic/info/get_user_info");
+            userReq.Headers.Add("Cookie", cookieStr);
+            userReq.Headers.Add("Accept", "application/json");
+            userReq.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+
+            var userResp = await client.SendAsync(userReq, ct);
+            if (!userResp.IsSuccessStatusCode)
+            {
+                return Ok(ApiResponse<object>.Ok(new
+                {
+                    valid = false,
+                    error = $"Cookie 无效或已过期 (HTTP {(int)userResp.StatusCode})",
+                }));
+            }
+
+            var userBody = await userResp.Content.ReadAsStringAsync(ct);
+            using var userDoc = JsonDocument.Parse(userBody);
+            if (userDoc.RootElement.TryGetProperty("data", out var userData))
+            {
+                if (userData.TryGetProperty("nick", out var nick)) userName = nick.GetString();
+                if (userData.TryGetProperty("user_id", out var uid)) userId = uid.GetString();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "TAPD cookie validation - user info request failed");
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                valid = false,
+                error = $"验证请求失败: {ex.Message}",
+            }));
+        }
+
+        // 2. 尝试获取工作空间列表
+        var workspaces = new List<object>();
+        try
+        {
+            var wsReq = new HttpRequestMessage(HttpMethod.Get, "https://www.tapd.cn/api/aggregation/workspaces");
+            wsReq.Headers.Add("Cookie", cookieStr);
+            wsReq.Headers.Add("Accept", "application/json");
+            wsReq.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+
+            var wsResp = await client.SendAsync(wsReq, ct);
+            if (wsResp.IsSuccessStatusCode)
+            {
+                var wsBody = await wsResp.Content.ReadAsStringAsync(ct);
+                using var wsDoc = JsonDocument.Parse(wsBody);
+                if (wsDoc.RootElement.TryGetProperty("data", out var wsData) &&
+                    wsData.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var ws in wsData.EnumerateArray())
+                    {
+                        var wsId = ws.TryGetProperty("workspace_id", out var wid) ? wid.GetString() : null;
+                        var wsName = ws.TryGetProperty("name", out var wn) ? wn.GetString() : null;
+                        if (wsId != null)
+                            workspaces.Add(new { id = wsId, name = wsName ?? wsId });
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "TAPD cookie validation - workspace list request failed");
+        }
+
+        // 3. 如果指定了 workspaceId，尝试获取基础统计
+        int? bugCount = null;
+        if (!string.IsNullOrWhiteSpace(request.WorkspaceId))
+        {
+            try
+            {
+                var searchData = new JsonObject();
+                searchData["workspace_ids"] = request.WorkspaceId;
+                searchData["search_data"] = System.Text.Json.JsonSerializer.Serialize(new { data = new object[0], optionType = "AND", needInit = "1" });
+                searchData["obj_type"] = "bug";
+                searchData["search_type"] = "advanced";
+                searchData["page"] = 1;
+                searchData["perpage"] = "1";
+                searchData["block_size"] = 50;
+                searchData["parallel_token"] = "";
+                searchData["order_field"] = "created";
+                searchData["order_value"] = "desc";
+                searchData["show_fields"] = new JsonArray();
+                searchData["extra_fields"] = new JsonArray();
+                searchData["display_mode"] = "list";
+                searchData["version"] = "1.1.0";
+                searchData["only_gen_token"] = 0;
+                searchData["exclude_workspace_configs"] = new JsonArray();
+                searchData["from_pro_dashboard"] = 1;
+                if (!string.IsNullOrWhiteSpace(dscToken))
+                    searchData["dsc_token"] = dscToken;
+
+                var countReq = new HttpRequestMessage(HttpMethod.Post, "https://www.tapd.cn/api/search_filter/search_filter/search");
+                countReq.Headers.Add("Cookie", cookieStr);
+                countReq.Headers.Add("Accept", "application/json");
+                countReq.Headers.Add("Origin", "https://www.tapd.cn");
+                countReq.Headers.Add("Referer", $"https://www.tapd.cn/tapd_fe/{request.WorkspaceId}/bug/list");
+                countReq.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+                countReq.Content = new StringContent(searchData.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
+
+                var countResp = await client.SendAsync(countReq, ct);
+                if (countResp.IsSuccessStatusCode)
+                {
+                    var countBody = await countResp.Content.ReadAsStringAsync(ct);
+                    using var countDoc = JsonDocument.Parse(countBody);
+                    if (countDoc.RootElement.TryGetProperty("data", out var d) &&
+                        d.TryGetProperty("total_count", out var tc))
+                    {
+                        if (tc.ValueKind == JsonValueKind.Number)
+                            bugCount = tc.GetInt32();
+                        else if (tc.ValueKind == JsonValueKind.String && int.TryParse(tc.GetString(), out var n))
+                            bugCount = n;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "TAPD cookie validation - bug count request failed");
+            }
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            valid = true,
+            userName,
+            userId,
+            hasDscToken = !string.IsNullOrWhiteSpace(dscToken),
+            workspaces,
+            bugCount,
+        }));
+    }
+
+    public class ValidateTapdCookieRequest
+    {
+        public string Cookie { get; set; } = string.Empty;
+        public string? WorkspaceId { get; set; }
+    }
+
+    // ─────────────────────────────────────────────────────────
     // Workflow CRUD
     // ─────────────────────────────────────────────────────────
 

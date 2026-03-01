@@ -1155,6 +1155,7 @@ export const testRunCapsule: TestRunCapsuleContract = withAuth(testRunCapsuleRea
 export const getChatHistory: GetChatHistoryContract = withAuth(getChatHistoryReal);
 export { chatWorkflowReal as chatWorkflow } from '@/services/real/workflowAgent';
 export { analyzeExecutionReal as analyzeExecution } from '@/services/real/workflowAgent';
+export { validateTapdCookie } from '@/services/real/workflowAgent';
 
 // 数据迁移服务
 import type {

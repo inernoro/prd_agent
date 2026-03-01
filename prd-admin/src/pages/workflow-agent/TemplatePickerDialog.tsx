@@ -1,7 +1,9 @@
 import { useState } from 'react';
+import { Loader2, ShieldCheck, ShieldAlert } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { WORKFLOW_TEMPLATES, type WorkflowTemplate, type TemplateInput } from './workflowTemplates';
+import { validateTapdCookie } from '@/services';
 
 // ═══════════════════════════════════════════════════════════════
 // 工作流模板选择器 — 一键导入预定义工作流
@@ -259,6 +261,10 @@ function TemplateConfigForm({
               field={field}
               value={inputs[field.key] ?? ''}
               onChange={(v) => onChange(field.key, v)}
+              allInputs={inputs}
+              onBatchChange={(updates) => {
+                for (const [k, v] of Object.entries(updates)) onChange(k, v);
+              }}
             />
           ))}
         </div>
@@ -273,17 +279,54 @@ function FieldInput({
   field,
   value,
   onChange,
+  allInputs,
+  onBatchChange,
 }: {
   field: TemplateInput;
   value: string;
   onChange: (v: string) => void;
+  allInputs: Record<string, string>;
+  onBatchChange: (updates: Record<string, string>) => void;
 }) {
+  const [validating, setValidating] = useState(false);
+  const [validation, setValidation] = useState<{
+    valid: boolean;
+    userName?: string;
+    workspaces?: { id: string; name: string }[];
+    bugCount?: number;
+    error?: string;
+  } | null>(null);
+
   const inputStyle: React.CSSProperties = {
     background: 'rgba(255,255,255,0.04)',
     border: '1px solid rgba(255,255,255,0.1)',
     color: 'var(--text-primary)',
     outline: 'none',
   };
+
+  const isCookieField = field.key === 'cookie';
+
+  async function handleValidateCookie() {
+    const cookie = value.trim();
+    if (!cookie) return;
+    setValidating(true);
+    setValidation(null);
+    try {
+      const res = await validateTapdCookie({ cookie, workspaceId: allInputs.workspaceId });
+      if (!res.success) {
+        setValidation({ valid: false, error: res.error?.message || '请求失败' });
+        return;
+      }
+      setValidation(res.data);
+      if (res.data.valid && res.data.workspaces?.length && !allInputs.workspaceId) {
+        onBatchChange({ workspaceId: res.data.workspaces[0].id });
+      }
+    } catch {
+      setValidation({ valid: false, error: '请求失败，请检查网络' });
+    } finally {
+      setValidating(false);
+    }
+  }
 
   return (
     <div>
@@ -307,13 +350,86 @@ function FieldInput({
           ))}
         </select>
       ) : field.type === 'textarea' ? (
-        <textarea
+        <>
+          <textarea
+            value={value}
+            onChange={(e) => { onChange(e.target.value); setValidation(null); }}
+            placeholder={field.placeholder}
+            rows={3}
+            className="w-full px-3 py-2 rounded-[8px] text-[12px] resize-y font-mono"
+            style={{ ...inputStyle, minHeight: 72 }}
+          />
+          {isCookieField && (
+            <div className="mt-2 space-y-2">
+              <button
+                onClick={handleValidateCookie}
+                disabled={validating || !value.trim()}
+                className="flex items-center gap-1.5 h-7 px-3 rounded-[6px] text-[11px] font-medium transition-colors"
+                style={{
+                  background: validating ? 'rgba(255,255,255,0.03)' : 'rgba(99,102,241,0.1)',
+                  border: '1px solid rgba(99,102,241,0.2)',
+                  color: validating ? 'var(--text-muted)' : 'rgba(99,102,241,0.9)',
+                  cursor: validating || !value.trim() ? 'not-allowed' : 'pointer',
+                  opacity: !value.trim() ? 0.5 : 1,
+                }}
+              >
+                {validating ? <Loader2 size={12} className="animate-spin" /> : <ShieldCheck size={12} />}
+                {validating ? '验证中...' : '验证 Cookie'}
+              </button>
+
+              {validation && (
+                <div
+                  className="rounded-[8px] p-2.5 text-[11px] space-y-1"
+                  style={{
+                    background: validation.valid ? 'rgba(34,197,94,0.06)' : 'rgba(239,68,68,0.06)',
+                    border: `1px solid ${validation.valid ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)'}`,
+                  }}
+                >
+                  <div className="flex items-center gap-1.5" style={{ color: validation.valid ? 'rgba(34,197,94,0.9)' : 'rgba(239,68,68,0.9)' }}>
+                    {validation.valid ? <ShieldCheck size={12} /> : <ShieldAlert size={12} />}
+                    <span className="font-medium">
+                      {validation.valid ? `Cookie 有效 — ${validation.userName || '已认证'}` : `Cookie 无效 — ${validation.error || '认证失败'}`}
+                    </span>
+                  </div>
+                  {validation.valid && validation.workspaces && validation.workspaces.length > 0 && (
+                    <div style={{ color: 'var(--text-muted)' }}>
+                      <span>检测到 {validation.workspaces.length} 个工作空间：</span>
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {validation.workspaces.slice(0, 5).map((ws) => (
+                          <button
+                            key={ws.id}
+                            onClick={() => onBatchChange({ workspaceId: ws.id })}
+                            className="px-1.5 py-0.5 rounded text-[10px] transition-colors"
+                            style={{
+                              background: allInputs.workspaceId === ws.id ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.05)',
+                              border: `1px solid ${allInputs.workspaceId === ws.id ? 'rgba(99,102,241,0.3)' : 'rgba(255,255,255,0.08)'}`,
+                              color: allInputs.workspaceId === ws.id ? 'rgba(99,102,241,0.9)' : 'var(--text-muted)',
+                            }}
+                          >
+                            {ws.name || ws.id}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {validation.valid && validation.bugCount !== undefined && (
+                    <div style={{ color: 'var(--text-muted)' }}>
+                      当前工作空间缺陷数：{validation.bugCount}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      ) : field.type === 'month' ? (
+        <input
+          type="month"
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={field.placeholder}
-          rows={3}
-          className="w-full px-3 py-2 rounded-[8px] text-[12px] resize-y font-mono"
-          style={{ ...inputStyle, minHeight: 72 }}
+          className="w-full h-9 px-3 rounded-[8px] text-[13px]"
+          style={inputStyle}
         />
       ) : (
         <input
