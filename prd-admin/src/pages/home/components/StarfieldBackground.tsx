@@ -149,8 +149,8 @@ export function StarfieldBackground({ className, themeColor }: StarfieldBackgrou
           m += layer(uv * mix(10.0, 0.5, depth) + fi * 20.0) * fade;
         }
 
-        // Use theme color if provided, otherwise use indigo
-        vec3 defaultColor = vec3(0.39, 0.40, 0.95);
+        // Use theme color if provided, otherwise use electric cyan-blue
+        vec3 defaultColor = vec3(0.0, 0.70, 0.95);
         vec3 themeBase = length(uThemeColor) > 0.1 ? uThemeColor : defaultColor;
 
         // Create color variations
