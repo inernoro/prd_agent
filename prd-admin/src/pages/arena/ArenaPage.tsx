@@ -1089,18 +1089,32 @@ export function ArenaPage() {
   const hasBattle = panels.length > 0 || !!currentPrompt;
   const canReveal = allDone && !revealed && !revealAnimating && !revealLoading && panels.length > 0 && panels.some((p) => p.status === 'done');
 
-  // --- Sort panels: panels with content first, then by startedAt, waiting last ---
+  // --- Sort panels ---
+  // First to produce content stays left, latecomers append right.
+  // Once a panel's position is assigned it never changes — no reordering at any point.
+  const sortOrderRef = useRef<Map<string, number>>(new Map());
+
+  useEffect(() => {
+    if (panels.length === 0) {
+      sortOrderRef.current = new Map();
+      return;
+    }
+    let nextOrder = sortOrderRef.current.size;
+    for (const p of panels) {
+      if (!sortOrderRef.current.has(p.slotId)) {
+        const hasContent = (p.text?.length ?? 0) > 0 || (p.thinking?.length ?? 0) > 0 || p.status === 'error';
+        if (hasContent) {
+          sortOrderRef.current.set(p.slotId, nextOrder++);
+        }
+      }
+    }
+  }, [panels]);
+
   const sortedPanels = useMemo(() => {
     return [...panels].sort((a, b) => {
-      // Panels with content (text or error) come first
-      const aHasContent = (a.text?.length ?? 0) > 0 || (a.thinking?.length ?? 0) > 0 || a.status === 'error';
-      const bHasContent = (b.text?.length ?? 0) > 0 || (b.thinking?.length ?? 0) > 0 || b.status === 'error';
-      if (aHasContent !== bHasContent) return aHasContent ? -1 : 1;
-      // Among those with content, sort by startedAt (earliest first = responded first)
-      const aT = a.startedAt ?? Infinity;
-      const bT = b.startedAt ?? Infinity;
-      if (aT !== bT) return aT - bT;
-      return 0;
+      const aOrder = sortOrderRef.current.get(a.slotId) ?? Infinity;
+      const bOrder = sortOrderRef.current.get(b.slotId) ?? Infinity;
+      return aOrder - bOrder;
     });
   }, [panels]);
 
