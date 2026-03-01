@@ -4,7 +4,7 @@ import {
   Play, Loader2, CheckCircle2, AlertCircle,
   Download, FileText, ArrowLeft, Save, Plus,
   ChevronDown, ChevronRight, Settings2, XCircle,
-  Zap, FlaskConical, Trash2, Wand2,
+  Zap, FlaskConical, Trash2, Wand2, Terminal,
 } from 'lucide-react';
 import {
   getWorkflow, updateWorkflow, executeWorkflow, getExecution,
@@ -1056,8 +1056,32 @@ export function WorkflowEditorPage() {
   // 当前会话触发的执行 ID（区分「本次操作」vs「历史执行」）
   const [currentSessionExecId, setCurrentSessionExecId] = useState<string | null>(null);
 
-  // AI 聊天面板
-  const [showChatPanel, setShowChatPanel] = useState(false);
+  // 右侧面板模式: 'chat' | 'log'
+  const [rightPanel, setRightPanel] = useState<'chat' | 'log' | null>(null);
+
+  // 实时日志
+  interface LogEntry {
+    id: string;
+    ts: string;
+    level: 'info' | 'success' | 'error' | 'warn';
+    nodeId?: string;
+    nodeName?: string;
+    message: string;
+  }
+  const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
+  const logIdRef = useRef(0);
+  // 记录上次轮询已知的节点状态，用于生成增量日志
+  const prevNodeStatusRef = useRef<Record<string, string>>({});
+
+  function addLog(level: LogEntry['level'], message: string, opts?: { nodeId?: string; nodeName?: string }) {
+    setLogEntries(prev => [...prev, {
+      id: `log-${logIdRef.current++}`,
+      ts: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+      level,
+      message,
+      ...opts,
+    }]);
+  }
 
   // 轮询
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -1126,7 +1150,22 @@ export function WorkflowEditorPage() {
           const exec = res.data.execution;
           setLatestExec(exec);
 
+          // 生成增量日志
           for (const ne of exec.nodeExecutions) {
+            const prev = prevNodeStatusRef.current[ne.nodeId];
+            if (ne.status !== prev) {
+              prevNodeStatusRef.current[ne.nodeId] = ne.status;
+              if (ne.status === 'running' && prev !== 'running') {
+                addLog('info', '开始执行', { nodeId: ne.nodeId, nodeName: ne.nodeName });
+              } else if (ne.status === 'completed' && prev !== 'completed') {
+                addLog('success', `完成${ne.durationMs ? ` (${(ne.durationMs / 1000).toFixed(1)}s)` : ''}`, { nodeId: ne.nodeId, nodeName: ne.nodeName });
+              } else if (ne.status === 'failed') {
+                addLog('error', `失败: ${ne.errorMessage || '未知错误'}`, { nodeId: ne.nodeId, nodeName: ne.nodeName });
+              } else if (ne.status === 'skipped') {
+                addLog('warn', '已跳过', { nodeId: ne.nodeId, nodeName: ne.nodeName });
+              }
+            }
+
             if (['completed', 'failed'].includes(ne.status) && !fetchedNodesRef.current.has(ne.nodeId)) {
               fetchedNodesRef.current.add(ne.nodeId);
               fetchNodeOutput(exec.id, ne.nodeId);
@@ -1134,6 +1173,13 @@ export function WorkflowEditorPage() {
           }
 
           if (['completed', 'failed', 'cancelled'].includes(exec.status)) {
+            if (exec.status === 'completed') {
+              addLog('success', `工作流执行完成${exec.completedAt && exec.startedAt ? ` · 总耗时 ${((new Date(exec.completedAt).getTime() - new Date(exec.startedAt).getTime()) / 1000).toFixed(1)}s` : ''}`);
+            } else if (exec.status === 'failed') {
+              addLog('error', `工作流执行失败: ${exec.errorMessage || '未知错误'}`);
+            } else {
+              addLog('warn', '工作流已取消');
+            }
             stopPolling();
           }
         }
@@ -1257,6 +1303,10 @@ export function WorkflowEditorPage() {
     setIsExecuting(true);
     setNodeOutputs({});
     fetchedNodesRef.current.clear();
+    prevNodeStatusRef.current = {};
+    setLogEntries([]);
+    addLog('info', '提交执行请求...');
+    setRightPanel('log');  // 自动打开日志面板
 
     try {
       const res = await executeWorkflow({ id: workflow.id, variables: vars });
@@ -1264,6 +1314,7 @@ export function WorkflowEditorPage() {
         const exec = res.data.execution;
         setLatestExec(exec);
         setCurrentSessionExecId(exec.id);
+        addLog('info', `工作流已入队，共 ${exec.nodeExecutions.length} 个节点`);
         startPolling(exec.id);
       } else {
         alert('执行失败: ' + (res.error?.message || '未知错误'));
@@ -1462,9 +1513,17 @@ export function WorkflowEditorPage() {
               {dirty ? '保存*' : '已保存'}
             </Button>
             <Button
-              variant={showChatPanel ? 'primary' : 'secondary'}
+              variant={rightPanel === 'log' ? 'primary' : 'secondary'}
               size="xs"
-              onClick={() => setShowChatPanel((v) => !v)}
+              onClick={() => setRightPanel(p => p === 'log' ? null : 'log')}
+            >
+              <Terminal className="w-3.5 h-3.5" />
+              日志{logEntries.length > 0 ? ` (${logEntries.length})` : ''}
+            </Button>
+            <Button
+              variant={rightPanel === 'chat' ? 'primary' : 'secondary'}
+              size="xs"
+              onClick={() => setRightPanel(p => p === 'chat' ? null : 'chat')}
             >
               <Wand2 className="w-3.5 h-3.5" />
               AI 助手
@@ -1612,14 +1671,149 @@ export function WorkflowEditorPage() {
           </div>
         </div>
 
-        {/* 右侧：AI 聊天面板 */}
-        {showChatPanel && (
+        {/* 右侧面板：日志 or AI 聊天 */}
+        {rightPanel === 'log' && (
+          <ExecutionLogPanel
+            entries={logEntries}
+            onClear={() => setLogEntries([])}
+            onClose={() => setRightPanel(null)}
+          />
+        )}
+        {rightPanel === 'chat' && (
           <WorkflowChatPanel
             workflowId={workflowId}
             onApplyWorkflow={handleApplyWorkflow}
-            onClose={() => setShowChatPanel(false)}
+            onClose={() => setRightPanel(null)}
           />
         )}
+      </div>
+    </div>
+  );
+}
+
+// ──── 执行日志面板 ────
+
+const LOG_LEVEL_COLORS: Record<string, string> = {
+  info: 'rgba(99,102,241,0.9)',
+  success: 'rgba(34,197,94,0.9)',
+  error: 'rgba(239,68,68,0.9)',
+  warn: 'rgba(234,179,8,0.9)',
+};
+
+function ExecutionLogPanel({ entries, onClear, onClose }: {
+  entries: { id: string; ts: string; level: string; nodeId?: string; nodeName?: string; message: string }[];
+  onClear: () => void;
+  onClose: () => void;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [autoScroll, setAutoScroll] = useState(true);
+
+  useEffect(() => {
+    if (autoScroll && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [entries, autoScroll]);
+
+  function handleScroll() {
+    if (!scrollRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+    setAutoScroll(scrollHeight - scrollTop - clientHeight < 40);
+  }
+
+  return (
+    <div
+      className="flex flex-col h-full"
+      style={{
+        width: 340,
+        flexShrink: 0,
+        borderLeft: '1px solid rgba(255,255,255,0.08)',
+        background: 'rgba(0,0,0,0.2)',
+      }}
+    >
+      {/* Header */}
+      <div
+        className="flex items-center gap-2 px-3 py-2.5 flex-shrink-0"
+        style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+      >
+        <Terminal className="w-3.5 h-3.5" style={{ color: 'rgba(99,102,241,0.8)' }} />
+        <span className="text-[12px] font-semibold flex-1" style={{ color: 'var(--text-primary)' }}>
+          执行日志
+        </span>
+        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+          {entries.length} 条
+        </span>
+        {entries.length > 0 && (
+          <button
+            onClick={onClear}
+            className="p-1 rounded-[6px] transition-colors"
+            style={{ color: 'var(--text-muted)' }}
+            title="清空日志"
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
+        )}
+        <button
+          onClick={onClose}
+          className="p-1 rounded-[6px] transition-colors"
+          style={{ color: 'var(--text-muted)' }}
+          title="关闭"
+        >
+          <XCircle className="w-3 h-3" />
+        </button>
+      </div>
+
+      {/* Log entries */}
+      <div
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto px-2 py-2 space-y-0.5"
+        onScroll={handleScroll}
+        style={{ fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace' }}
+      >
+        {entries.length === 0 && (
+          <div className="flex flex-col items-center justify-center h-full gap-2 opacity-40">
+            <Terminal className="w-6 h-6" />
+            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              执行工作流后日志将在此显示
+            </span>
+          </div>
+        )}
+
+        {entries.map((entry) => (
+          <div
+            key={entry.id}
+            className="flex items-start gap-1.5 px-2 py-1 rounded-[6px] transition-colors"
+            style={{ background: entry.level === 'error' ? 'rgba(239,68,68,0.04)' : 'transparent' }}
+          >
+            {/* Level dot */}
+            <span
+              className="w-1.5 h-1.5 rounded-full flex-shrink-0 mt-[5px]"
+              style={{ background: LOG_LEVEL_COLORS[entry.level] || LOG_LEVEL_COLORS.info }}
+            />
+            {/* Content */}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>
+                  {entry.ts}
+                </span>
+                {entry.nodeName && (
+                  <span
+                    className="text-[9px] px-1.5 py-0 rounded-[4px] font-medium"
+                    style={{
+                      background: 'rgba(99,102,241,0.1)',
+                      color: 'rgba(99,102,241,0.8)',
+                      border: '1px solid rgba(99,102,241,0.15)',
+                    }}
+                  >
+                    {entry.nodeName}
+                  </span>
+                )}
+              </div>
+              <div className="text-[10px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                {entry.message}
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
