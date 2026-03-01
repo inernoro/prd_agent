@@ -57,7 +57,7 @@ export const Button = React.forwardRef<
 
   const hoverCls =
     variant === 'primary'
-      ? 'hover:brightness-[1.05] hover:shadow-lg active:scale-[0.98]'
+      ? 'btn-primary-anim hover:brightness-[1.05] hover:shadow-lg'
       : variant === 'secondary'
         ? 'hover:bg-white/10 hover:border-white/20 active:scale-[0.98]'
         : variant === 'danger'
