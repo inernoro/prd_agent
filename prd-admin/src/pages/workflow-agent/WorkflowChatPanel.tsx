@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect, useCallback, type KeyboardEvent } from 'react';
 import { Send, X, Code, Loader2, CheckCircle2, Wand2, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/design/Button';
-import { GlassCard } from '@/components/design/GlassCard';
 import { readSseStream } from '@/lib/sse';
 import { chatWorkflow, getChatHistory } from '@/services';
 import type { WorkflowChatGenerated } from '@/services/contracts/workflowAgent';

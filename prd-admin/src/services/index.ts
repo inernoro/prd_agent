@@ -1131,8 +1131,6 @@ import {
   getCapsuleTypeReal,
   testRunCapsuleReal,
   getChatHistoryReal,
-  chatWorkflowReal,
-  analyzeExecutionReal,
 } from '@/services/real/workflowAgent';
 
 export const listWorkflows: ListWorkflowsContract = withAuth(listWorkflowsReal);
