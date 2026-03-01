@@ -492,6 +492,10 @@ export const api = {
     },
     activity: () => '/api/report-agent/activity',
     users: () => '/api/report-agent/users',
+    trends: {
+      personal: () => '/api/report-agent/trends/personal',
+      team: (teamId: string) => `/api/report-agent/trends/team/${teamId}`,
+    },
   },
 
   // ============ Open Platform 开放平台 ============

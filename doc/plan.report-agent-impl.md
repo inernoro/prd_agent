@@ -1,6 +1,6 @@
 # 周报 Agent — 实施进度追踪
 
-> **最后更新**：2026-02-27 | **当前阶段**：Phase 3 ✅ → Phase 4 待启动
+> **最后更新**：2026-03-01 | **当前阶段**：Phase 4 ✅ DONE
 >
 > **用途**：跨 session 的实施进度单一信息源。新 session 读此文档即可恢复上下文，无需全盘扫描。
 >
@@ -19,7 +19,7 @@
 | 1 | 基础闭环 | ✅ DONE | `46c6d15` | 2026-02-24 |
 | 2 | 自动采集 | ✅ DONE | `ffce7fd` | 2026-02-26 |
 | 3 | 管理增强 | ✅ DONE | `005de06` | 2026-02-27 |
-| 4 | 体验优化 | 🔵 PLANNED | — | — |
+| 4 | 体验优化 | ✅ DONE | — | 2026-03-01 |
 
 ---
 
@@ -197,19 +197,61 @@
 
 ---
 
-## Phase 4：体验优化 — 🔵 PLANNED
+## Phase 4：体验优化 — ✅ DONE
 
-> 来源：PRD `doc/agent.report-agent.md` §八 Phase 4
+> 完成日期: 2026-03-01
+> 功能：SVN 连接器 + 历史趋势 + Markdown 导出 + 假期标记
 
-### 待实现
+### 交付物
 
-| 功能点 | 说明 |
-|--------|------|
-| SVN 连接器 | 扩展 `ICodeSourceConnector` 实现 SVN |
-| 历史趋势 | 个人/团队趋势图表 |
-| 导出功能 | PDF / Markdown 导出 |
-| 桌面端打点 | Tauri 托盘快捷打点 |
-| 假期/补报 | 请假标记、补报流程 |
+**后端新增 — 服务 (1 个)**：
+- `SvnConnector.cs` — SVN 仓库连接器（`ICodeSourceConnector` 实现，CLI `svn log --xml` 方式）
+
+**后端修改**：
+- `ReportAgentController.cs` — +8 端点（趋势 2 + 导出 2 + 假期 2 + 创建数据源 sourceType 支持），+MarkVacationRequest DTO
+- `WeeklyReport.cs` — +Vacation 状态常量
+- `GitSyncWorker.cs` — 扩展支持 SVN 数据源同步
+- `CreateDataSourceRequest` — +SourceType 字段
+
+**前端新增**：
+- `HistoryTrendsPanel.tsx` — 个人/团队历史趋势图表（柱状图 + 统计卡片，~280 行）
+
+**前端修改**：
+- `DataSourceManager.tsx` — +SVN 类型选择器 +类型标签显示 +动态占位文案
+- `ReportDetailPanel.tsx` — +Markdown 导出按钮
+- `TeamDashboard.tsx` — +假期标记/取消 +团队汇总导出 +Vacation 状态配置
+- `ReportAgentPage.tsx` — +数据统计 Tab（HistoryTrendsPanel）
+- `contracts/reportAgent.ts` — +PersonalTrendItem/TeamTrendItem 类型 +6 contract types +Vacation 状态 +sourceType
+- `real/reportAgent.ts` — +6 API 实现（趋势/导出/假期）
+- `reportAgentStore.ts` — +trends TabKey
+- `services/index.ts` — +6 导出
+
+### API 端点清单（Phase 4 新增 8 个）
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/report-agent/trends/personal` | GET | 个人历史趋势（?weeks=12） |
+| `/api/report-agent/trends/team/{teamId}` | GET | 团队历史趋势（?weeks=12） |
+| `/api/report-agent/reports/{id}/export/markdown` | GET | 周报 Markdown 导出 |
+| `/api/report-agent/teams/{teamId}/summary/export/markdown` | GET | 团队汇总 Markdown 导出 |
+| `/api/report-agent/teams/{teamId}/members/{userId}/vacation` | POST | 标记请假 |
+| `/api/report-agent/teams/{teamId}/members/{userId}/vacation` | DELETE | 取消请假 |
+
+### 架构决策
+
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| SVN 接入方式 | CLI `svn log --xml` | 无 C# SVN 库依赖，XML 输出易解析 |
+| 趋势数据 | 实时聚合查询 | 数据量可控（12-52 周），避免额外缓存 |
+| 导出格式 | Markdown（非 PDF） | 轻量级、无额外库依赖、GitHub 友好 |
+| 假期实现 | 特殊 WeeklyReport (status=vacation) | 复用现有数据模型，Dashboard 自动兼容 |
+| 桌面端打点 | 🔵 延后 | 需要 Tauri 环境，独立实现 |
+
+### 未实现
+
+| 功能点 | 状态 | 说明 |
+|--------|------|------|
+| 桌面端打点 | 🔵 延后 | 依赖 Tauri 环境，需独立实现 |
 
 ---
 

@@ -215,6 +215,7 @@ export const WeeklyReportStatus = {
   Reviewed: 'reviewed',
   Returned: 'returned',
   Overdue: 'overdue',
+  Vacation: 'vacation',
 } as const;
 
 export const ReportTeamRole = {
@@ -374,6 +375,7 @@ export type ListDataSourcesContract = (input?: {
 
 export type CreateDataSourceContract = (input: {
   teamId: string;
+  sourceType?: string;
   name: string;
   repoUrl: string;
   accessToken?: string;
@@ -502,3 +504,68 @@ export type GetTeamSummaryContract = (input: {
   weekYear?: number;
   weekNumber?: number;
 }) => Promise<ApiResponse<{ summary: TeamSummary | null }>>;
+
+// ========== Phase 4: History Trends ==========
+
+export interface PersonalTrendItem {
+  weekYear: number;
+  weekNumber: number;
+  periodStart: string;
+  periodEnd: string;
+  reportStatus: string;
+  sectionCount: number;
+  commitCount: number;
+  dailyLogDays: number;
+  submittedAt?: string;
+}
+
+export interface TeamTrendItem {
+  weekYear: number;
+  weekNumber: number;
+  periodStart: string;
+  periodEnd: string;
+  memberCount: number;
+  submittedCount: number;
+  reviewedCount: number;
+  overdueCount: number;
+  submissionRate: number;
+  commitCount: number;
+}
+
+export type GetPersonalTrendsContract = (input?: {
+  weeks?: number;
+}) => Promise<ApiResponse<{ items: PersonalTrendItem[]; weeks: number }>>;
+
+export type GetTeamTrendsContract = (input: {
+  teamId: string;
+  weeks?: number;
+}) => Promise<ApiResponse<{ items: TeamTrendItem[]; weeks: number; teamId: string }>>;
+
+// ========== Phase 4: Export ==========
+
+export type ExportReportMarkdownContract = (input: {
+  id: string;
+}) => Promise<Blob>;
+
+export type ExportTeamSummaryMarkdownContract = (input: {
+  teamId: string;
+  weekYear?: number;
+  weekNumber?: number;
+}) => Promise<Blob>;
+
+// ========== Phase 4: Vacation ==========
+
+export type MarkVacationContract = (input: {
+  teamId: string;
+  userId: string;
+  weekYear?: number;
+  weekNumber?: number;
+  reason?: string;
+}) => Promise<ApiResponse<{ report: WeeklyReport }>>;
+
+export type CancelVacationContract = (input: {
+  teamId: string;
+  userId: string;
+  weekYear?: number;
+  weekNumber?: number;
+}) => Promise<ApiResponse<{ deleted: boolean }>>;

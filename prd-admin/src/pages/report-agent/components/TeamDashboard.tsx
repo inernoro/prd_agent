@@ -1,11 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
-import { ChevronLeft, ChevronRight, Calendar, CheckCircle2, Clock, AlertCircle, Eye, Sparkles, Loader2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Calendar, CheckCircle2, Clock, AlertCircle, Eye, Sparkles, Loader2, Palmtree, Download } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
 import { useReportAgentStore } from '@/stores/reportAgentStore';
 import { useAuthStore } from '@/stores/authStore';
-import { reviewWeeklyReport, returnWeeklyReport, generateTeamSummary, getTeamSummary } from '@/services';
+import { reviewWeeklyReport, returnWeeklyReport, generateTeamSummary, getTeamSummary, markVacation, cancelVacation, exportTeamSummaryMarkdown } from '@/services';
 import { WeeklyReportStatus } from '@/services/contracts/reportAgent';
 import type { TeamSummary } from '@/services/contracts/reportAgent';
 import { ReportDetailPanel } from './ReportDetailPanel';
@@ -26,6 +26,7 @@ const statusConfig: Record<string, { label: string; color: string; icon: typeof 
   [WeeklyReportStatus.Reviewed]: { label: '已审阅', color: 'rgba(34, 197, 94, 0.9)', icon: CheckCircle2 },
   [WeeklyReportStatus.Returned]: { label: '已退回', color: 'rgba(239, 68, 68, 0.9)', icon: AlertCircle },
   [WeeklyReportStatus.Overdue]: { label: '逾期', color: 'rgba(239, 68, 68, 0.9)', icon: AlertCircle },
+  vacation: { label: '请假', color: 'rgba(139, 92, 246, 0.9)', icon: Palmtree },
 };
 
 export function TeamDashboard() {
@@ -110,6 +111,54 @@ export function TeamDashboard() {
     }
   };
 
+  // Vacation
+  const [vacationDialogUserId, setVacationDialogUserId] = useState<string | null>(null);
+  const [vacationReason, setVacationReason] = useState('');
+
+  const handleMarkVacation = async () => {
+    if (!vacationDialogUserId) return;
+    const res = await markVacation({
+      teamId: selectedTeamId,
+      userId: vacationDialogUserId,
+      weekYear,
+      weekNumber,
+      reason: vacationReason || undefined,
+    });
+    if (res.success) {
+      toast.success('已标记请假');
+      setVacationDialogUserId(null);
+      setVacationReason('');
+      void loadDashboard(selectedTeamId, weekYear, weekNumber);
+    } else {
+      toast.error(res.error?.message || '操作失败');
+    }
+  };
+
+  const handleCancelVacation = async (memberUserId: string) => {
+    const res = await cancelVacation({ teamId: selectedTeamId, userId: memberUserId, weekYear, weekNumber });
+    if (res.success) {
+      toast.success('已取消请假标记');
+      void loadDashboard(selectedTeamId, weekYear, weekNumber);
+    } else {
+      toast.error(res.error?.message || '操作失败');
+    }
+  };
+
+  const handleExportSummary = async () => {
+    try {
+      const blob = await exportTeamSummaryMarkdown({ teamId: selectedTeamId, weekYear, weekNumber });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `团队汇总_${weekYear}W${String(weekNumber).padStart(2, '0')}.md`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success('导出成功');
+    } catch {
+      toast.error('导出失败');
+    }
+  };
+
   if (leaderTeams.length === 0) {
     return (
       <GlassCard variant="subtle" className="flex items-center justify-center py-16">
@@ -145,6 +194,31 @@ export function TeamDashboard() {
             <div className="flex justify-end gap-2 mt-3">
               <Button variant="ghost" size="sm" onClick={() => { setReturnDialogId(null); setReturnReason(''); }}>取消</Button>
               <Button variant="primary" size="sm" onClick={handleReturn}>确认退回</Button>
+            </div>
+          </GlassCard>
+        </div>
+      )}
+
+      {/* Vacation Dialog */}
+      {vacationDialogUserId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.3)' }}>
+          <GlassCard className="p-4 w-[400px]">
+            <div className="text-[14px] font-medium mb-3" style={{ color: 'var(--text-primary)' }}>
+              <Palmtree size={14} className="inline mr-1" /> 标记请假
+            </div>
+            <div className="text-[12px] mb-2" style={{ color: 'var(--text-secondary)' }}>
+              将标记该成员 {weekYear} 年第 {weekNumber} 周为请假，无需提交周报。
+            </div>
+            <textarea
+              className="w-full text-[12px] px-3 py-2 rounded-lg resize-none"
+              style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)', minHeight: 60 }}
+              placeholder="请假原因（选填）..."
+              value={vacationReason}
+              onChange={(e) => setVacationReason(e.target.value)}
+            />
+            <div className="flex justify-end gap-2 mt-3">
+              <Button variant="ghost" size="sm" onClick={() => { setVacationDialogUserId(null); setVacationReason(''); }}>取消</Button>
+              <Button variant="primary" size="sm" onClick={handleMarkVacation}>确认标记</Button>
             </div>
           </GlassCard>
         </div>
@@ -234,9 +308,19 @@ export function TeamDashboard() {
                         </Button>
                       </div>
                     )}
-                    {member.reportId && member.reportStatus !== WeeklyReportStatus.Submitted && member.reportStatus !== WeeklyReportStatus.NotStarted && (
+                    {member.reportId && member.reportStatus === 'vacation' && (
+                      <Button variant="ghost" size="sm" className="ml-2" onClick={() => handleCancelVacation(member.userId)}>
+                        取消请假
+                      </Button>
+                    )}
+                    {member.reportId && member.reportStatus !== WeeklyReportStatus.Submitted && member.reportStatus !== WeeklyReportStatus.NotStarted && member.reportStatus !== 'vacation' && (
                       <Button variant="ghost" size="sm" className="ml-2" onClick={() => setViewingReportId(member.reportId!)}>
                         <Eye size={12} /> 查看
+                      </Button>
+                    )}
+                    {(!member.reportId || member.reportStatus === WeeklyReportStatus.NotStarted || member.reportStatus === WeeklyReportStatus.Draft) && member.reportStatus !== 'vacation' && (
+                      <Button variant="ghost" size="sm" className="ml-1" onClick={() => setVacationDialogUserId(member.userId)} title="标记请假">
+                        <Palmtree size={12} />
                       </Button>
                     )}
                   </div>
@@ -251,15 +335,22 @@ export function TeamDashboard() {
       <GlassCard variant="subtle" className="p-4">
         <div className="flex items-center justify-between mb-3">
           <div className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>团队周报汇总</div>
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={handleGenerateSummary}
-            disabled={generatingSummary}
-          >
-            {generatingSummary ? <Loader2 size={12} className="animate-spin mr-1" /> : <Sparkles size={12} className="mr-1" />}
-            {summary ? '重新生成' : '生成汇总'}
-          </Button>
+          <div className="flex items-center gap-2">
+            {summary && (
+              <Button variant="ghost" size="sm" onClick={handleExportSummary} title="导出 Markdown">
+                <Download size={12} />
+              </Button>
+            )}
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={handleGenerateSummary}
+              disabled={generatingSummary}
+            >
+              {generatingSummary ? <Loader2 size={12} className="animate-spin mr-1" /> : <Sparkles size={12} className="mr-1" />}
+              {summary ? '重新生成' : '生成汇总'}
+            </Button>
+          </div>
         </div>
 
         {summaryLoading ? (

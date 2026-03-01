@@ -989,6 +989,7 @@ public class ReportAgentController : ControllerBase
     public class CreateDataSourceRequest
     {
         public string TeamId { get; set; } = string.Empty;
+        public string SourceType { get; set; } = DataSourceType.Git;
         public string Name { get; set; } = string.Empty;
         public string RepoUrl { get; set; } = string.Empty;
         public string? AccessToken { get; set; }
@@ -1204,9 +1205,14 @@ public class ReportAgentController : ControllerBase
             return Forbid();
         }
 
+        var sourceType = request.SourceType?.ToLowerInvariant() ?? DataSourceType.Git;
+        if (!DataSourceType.All.Contains(sourceType))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", $"不支持的数据源类型: {sourceType}"));
+
         var source = new ReportDataSource
         {
             TeamId = request.TeamId,
+            SourceType = sourceType,
             Name = request.Name,
             RepoUrl = request.RepoUrl,
             BranchFilter = request.BranchFilter,
@@ -1382,6 +1388,7 @@ public class ReportAgentController : ControllerBase
         return source.SourceType switch
         {
             DataSourceType.Git => new GitHubConnector(source, token, _db, _logger),
+            DataSourceType.Svn => new SvnConnector(source, token, _db, _logger),
             _ => throw new NotSupportedException($"数据源类型 {source.SourceType} 暂不支持")
         };
     }
@@ -1687,6 +1694,344 @@ public class ReportAgentController : ControllerBase
     }
 
     #endregion
+
+    #region Phase 4: History Trends
+
+    /// <summary>
+    /// 获取个人历史趋势数据（最近 N 周）
+    /// </summary>
+    [HttpGet("trends/personal")]
+    public async Task<IActionResult> GetPersonalTrends([FromQuery] int weeks = 12)
+    {
+        var userId = GetUserId();
+        weeks = Math.Clamp(weeks, 4, 52);
+        var now = DateTime.UtcNow;
+
+        var items = new List<object>();
+        for (var i = weeks - 1; i >= 0; i--)
+        {
+            var targetDate = now.AddDays(-7 * i);
+            var wy = ISOWeek.GetYear(targetDate);
+            var wn = ISOWeek.GetWeekOfYear(targetDate);
+            var monday = ISOWeek.ToDateTime(wy, wn, DayOfWeek.Monday);
+            var sunday = monday.AddDays(6);
+
+            // 周报状态
+            var report = await _db.WeeklyReports.Find(
+                r => r.UserId == userId && r.WeekYear == wy && r.WeekNumber == wn
+            ).FirstOrDefaultAsync();
+
+            // 提交记录数
+            var commitCount = await _db.ReportCommits.CountDocumentsAsync(
+                c => c.MappedUserId == userId && c.CommittedAt >= monday && c.CommittedAt <= sunday.AddDays(1));
+
+            // 每日打点天数
+            var dailyLogDays = await _db.ReportDailyLogs.CountDocumentsAsync(
+                d => d.UserId == userId && d.Date >= monday && d.Date <= sunday.AddDays(1));
+
+            items.Add(new
+            {
+                weekYear = wy,
+                weekNumber = wn,
+                periodStart = monday,
+                periodEnd = sunday,
+                reportStatus = report?.Status ?? WeeklyReportStatus.NotStarted,
+                sectionCount = report?.Sections.Sum(s => s.Items.Count) ?? 0,
+                commitCount,
+                dailyLogDays,
+                submittedAt = report?.SubmittedAt,
+            });
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { items, weeks }));
+    }
+
+    /// <summary>
+    /// 获取团队历史趋势数据（最近 N 周）
+    /// </summary>
+    [HttpGet("trends/team/{teamId}")]
+    public async Task<IActionResult> GetTeamTrends(string teamId, [FromQuery] int weeks = 12)
+    {
+        var userId = GetUserId();
+        if (!await IsTeamLeaderOrDeputy(teamId, userId) &&
+            !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权查看团队趋势"));
+
+        weeks = Math.Clamp(weeks, 4, 52);
+        var now = DateTime.UtcNow;
+
+        var members = await _db.ReportTeamMembers.Find(m => m.TeamId == teamId).ToListAsync();
+        var memberCount = members.Count;
+
+        var items = new List<object>();
+        for (var i = weeks - 1; i >= 0; i--)
+        {
+            var targetDate = now.AddDays(-7 * i);
+            var wy = ISOWeek.GetYear(targetDate);
+            var wn = ISOWeek.GetWeekOfYear(targetDate);
+            var monday = ISOWeek.ToDateTime(wy, wn, DayOfWeek.Monday);
+            var sunday = monday.AddDays(6);
+
+            var reports = await _db.WeeklyReports.Find(
+                r => r.TeamId == teamId && r.WeekYear == wy && r.WeekNumber == wn
+            ).ToListAsync();
+
+            var submittedCount = reports.Count(r =>
+                r.Status == WeeklyReportStatus.Submitted ||
+                r.Status == WeeklyReportStatus.Reviewed);
+            var reviewedCount = reports.Count(r => r.Status == WeeklyReportStatus.Reviewed);
+            var overdueCount = reports.Count(r => r.Status == WeeklyReportStatus.Overdue);
+
+            // 团队提交记录数
+            var memberIds = members.Select(m => m.UserId).ToList();
+            var commitCount = await _db.ReportCommits.CountDocumentsAsync(
+                c => memberIds.Contains(c.MappedUserId!) && c.CommittedAt >= monday && c.CommittedAt <= sunday.AddDays(1));
+
+            items.Add(new
+            {
+                weekYear = wy,
+                weekNumber = wn,
+                periodStart = monday,
+                periodEnd = sunday,
+                memberCount,
+                submittedCount,
+                reviewedCount,
+                overdueCount,
+                submissionRate = memberCount > 0 ? Math.Round((double)submittedCount / memberCount * 100, 1) : 0,
+                commitCount,
+            });
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { items, weeks, teamId }));
+    }
+
+    #endregion
+
+    #region Phase 4: Export
+
+    /// <summary>
+    /// 导出周报为 Markdown
+    /// </summary>
+    [HttpGet("reports/{id}/export/markdown")]
+    public async Task<IActionResult> ExportReportMarkdown(string id)
+    {
+        var userId = GetUserId();
+        var report = await _db.WeeklyReports.Find(r => r.Id == id).FirstOrDefaultAsync();
+        if (report == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "周报不存在"));
+
+        // 验证可见性
+        if (report.UserId != userId &&
+            !await IsTeamLeaderOrDeputy(report.TeamId, userId) &&
+            !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权导出该周报"));
+
+        var md = BuildMarkdownExport(report);
+        var fileName = $"周报_{report.UserName ?? report.UserId}_{report.WeekYear}W{report.WeekNumber:D2}.md";
+
+        return File(System.Text.Encoding.UTF8.GetBytes(md), "text/markdown; charset=utf-8", fileName);
+    }
+
+    /// <summary>
+    /// 导出团队汇总为 Markdown
+    /// </summary>
+    [HttpGet("teams/{teamId}/summary/export/markdown")]
+    public async Task<IActionResult> ExportTeamSummaryMarkdown(string teamId,
+        [FromQuery] int? weekYear, [FromQuery] int? weekNumber)
+    {
+        var userId = GetUserId();
+        if (!await IsTeamLeaderOrDeputy(teamId, userId) &&
+            !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权导出团队汇总"));
+
+        var now = DateTime.UtcNow;
+        var wy = weekYear ?? ISOWeek.GetYear(now);
+        var wn = weekNumber ?? ISOWeek.GetWeekOfYear(now);
+
+        var summary = await _db.ReportTeamSummaries.Find(
+            s => s.TeamId == teamId && s.WeekYear == wy && s.WeekNumber == wn
+        ).FirstOrDefaultAsync();
+
+        if (summary == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "暂无团队汇总数据"));
+
+        var md = BuildTeamSummaryMarkdown(summary);
+        var fileName = $"团队汇总_{summary.TeamName}_{wy}W{wn:D2}.md";
+
+        return File(System.Text.Encoding.UTF8.GetBytes(md), "text/markdown; charset=utf-8", fileName);
+    }
+
+    private static string BuildMarkdownExport(WeeklyReport report)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"# 周报 — {report.UserName ?? report.UserId}");
+        sb.AppendLine();
+        sb.AppendLine($"- **周期**：{report.WeekYear} 年第 {report.WeekNumber} 周（{report.PeriodStart:yyyy-MM-dd} ~ {report.PeriodEnd:yyyy-MM-dd}）");
+        sb.AppendLine($"- **团队**：{report.TeamName ?? report.TeamId}");
+        sb.AppendLine($"- **状态**：{report.Status}");
+        if (report.SubmittedAt.HasValue)
+            sb.AppendLine($"- **提交时间**：{report.SubmittedAt:yyyy-MM-dd HH:mm}");
+        sb.AppendLine();
+        sb.AppendLine("---");
+        sb.AppendLine();
+
+        foreach (var section in report.Sections)
+        {
+            sb.AppendLine($"## {section.TemplateSection.Title}");
+            sb.AppendLine();
+
+            if (section.Items.Count == 0)
+            {
+                sb.AppendLine("_（暂无内容）_");
+            }
+            else
+            {
+                foreach (var item in section.Items)
+                {
+                    var source = item.Source != "manual" ? $" `[{item.Source}]`" : "";
+                    sb.AppendLine($"- {item.Content}{source}");
+                }
+            }
+            sb.AppendLine();
+        }
+
+        sb.AppendLine("---");
+        sb.AppendLine($"_导出时间：{DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC_");
+        return sb.ToString();
+    }
+
+    private static string BuildTeamSummaryMarkdown(TeamSummary summary)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"# 团队周报汇总 — {summary.TeamName}");
+        sb.AppendLine();
+        sb.AppendLine($"- **周期**：{summary.WeekYear} 年第 {summary.WeekNumber} 周（{summary.PeriodStart:yyyy-MM-dd} ~ {summary.PeriodEnd:yyyy-MM-dd}）");
+        sb.AppendLine($"- **成员数**：{summary.MemberCount}，已提交：{summary.SubmittedCount}");
+        sb.AppendLine($"- **生成人**：{summary.GeneratedByName}");
+        sb.AppendLine($"- **生成时间**：{summary.GeneratedAt:yyyy-MM-dd HH:mm}");
+        sb.AppendLine();
+        sb.AppendLine("---");
+        sb.AppendLine();
+
+        foreach (var section in summary.Sections)
+        {
+            sb.AppendLine($"## {section.Title}");
+            sb.AppendLine();
+            foreach (var item in section.Items)
+            {
+                sb.AppendLine($"- {item}");
+            }
+            sb.AppendLine();
+        }
+
+        sb.AppendLine("---");
+        sb.AppendLine($"_导出时间：{DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC_");
+        return sb.ToString();
+    }
+
+    #endregion
+
+    #region Phase 4: Holiday / Vacation
+
+    /// <summary>
+    /// 标记成员本周请假（团队负责人操作）
+    /// </summary>
+    [HttpPost("teams/{teamId}/members/{userId}/vacation")]
+    public async Task<IActionResult> MarkVacation(string teamId, string userId,
+        [FromBody] MarkVacationRequest req)
+    {
+        var currentUserId = GetUserId();
+
+        if (!await IsTeamLeaderOrDeputy(teamId, currentUserId) &&
+            !HasPermission(AdminPermissionCatalog.ReportAgentTeamManage))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只有团队负责人可以标记请假"));
+
+        if (!await IsTeamMember(teamId, userId))
+            return BadRequest(ApiResponse<object>.Fail("NOT_FOUND", "该用户不是团队成员"));
+
+        var now = DateTime.UtcNow;
+        var wy = req.WeekYear ?? ISOWeek.GetYear(now);
+        var wn = req.WeekNumber ?? ISOWeek.GetWeekOfYear(now);
+
+        // 查看该周是否已有周报
+        var existingReport = await _db.WeeklyReports.Find(
+            r => r.UserId == userId && r.TeamId == teamId && r.WeekYear == wy && r.WeekNumber == wn
+        ).FirstOrDefaultAsync();
+
+        if (existingReport != null &&
+            (existingReport.Status == WeeklyReportStatus.Submitted || existingReport.Status == WeeklyReportStatus.Reviewed))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_REQUEST", "该周报已提交/审阅，无法标记请假"));
+
+        // 如果已有 draft/overdue 周报，删除
+        if (existingReport != null)
+        {
+            await _db.WeeklyReports.DeleteOneAsync(r => r.Id == existingReport.Id);
+        }
+
+        // 创建请假标记周报（特殊 status = vacation）
+        var monday = ISOWeek.ToDateTime(wy, wn, DayOfWeek.Monday);
+        var sunday = monday.AddDays(6);
+        var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
+
+        var vacationReport = new WeeklyReport
+        {
+            UserId = userId,
+            UserName = user?.DisplayName,
+            AvatarFileName = user?.AvatarFileName,
+            TeamId = teamId,
+            TeamName = (await _db.ReportTeams.Find(t => t.Id == teamId).FirstOrDefaultAsync())?.Name,
+            TemplateId = "",
+            WeekYear = wy,
+            WeekNumber = wn,
+            PeriodStart = monday,
+            PeriodEnd = sunday,
+            Status = "vacation",
+            Sections = new List<WeeklyReportSection>
+            {
+                new() {
+                    TemplateSection = new ReportTemplateSection { Title = "请假说明" },
+                    Items = new List<WeeklyReportItem>
+                    {
+                        new() { Content = req.Reason ?? "本周请假", Source = "system" }
+                    }
+                }
+            }
+        };
+
+        await _db.WeeklyReports.InsertOneAsync(vacationReport);
+
+        return Ok(ApiResponse<object>.Ok(new { report = vacationReport }));
+    }
+
+    /// <summary>
+    /// 取消请假标记
+    /// </summary>
+    [HttpDelete("teams/{teamId}/members/{userId}/vacation")]
+    public async Task<IActionResult> CancelVacation(string teamId, string userId,
+        [FromQuery] int? weekYear, [FromQuery] int? weekNumber)
+    {
+        var currentUserId = GetUserId();
+
+        if (!await IsTeamLeaderOrDeputy(teamId, currentUserId) &&
+            !HasPermission(AdminPermissionCatalog.ReportAgentTeamManage))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只有团队负责人可以取消请假标记"));
+
+        var now = DateTime.UtcNow;
+        var wy = weekYear ?? ISOWeek.GetYear(now);
+        var wn = weekNumber ?? ISOWeek.GetWeekOfYear(now);
+
+        var result = await _db.WeeklyReports.DeleteOneAsync(
+            r => r.UserId == userId && r.TeamId == teamId &&
+                 r.WeekYear == wy && r.WeekNumber == wn &&
+                 r.Status == "vacation");
+
+        if (result.DeletedCount == 0)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "未找到请假标记"));
+
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    #endregion
 }
 
 public class CreateCommentRequest
@@ -1694,4 +2039,11 @@ public class CreateCommentRequest
     public int SectionIndex { get; set; }
     public string Content { get; set; } = string.Empty;
     public string? ParentCommentId { get; set; }
+}
+
+public class MarkVacationRequest
+{
+    public int? WeekYear { get; set; }
+    public int? WeekNumber { get; set; }
+    public string? Reason { get; set; }
 }

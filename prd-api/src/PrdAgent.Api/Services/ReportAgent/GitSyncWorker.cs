@@ -55,7 +55,7 @@ public class GitSyncWorker : BackgroundService
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
 
         var sources = await db.ReportDataSources.Find(
-            s => s.Enabled && s.SourceType == DataSourceType.Git
+            s => s.Enabled && (s.SourceType == DataSourceType.Git || s.SourceType == DataSourceType.Svn)
         ).ToListAsync(ct);
 
         var now = DateTime.UtcNow;
@@ -72,7 +72,9 @@ public class GitSyncWorker : BackgroundService
                     ? null
                     : ApiKeyCrypto.Decrypt(source.EncryptedAccessToken, cryptoKey);
 
-                var connector = new GitHubConnector(source, token, db, _logger);
+                ICodeSourceConnector connector = source.SourceType == DataSourceType.Svn
+                    ? new SvnConnector(source, token, db, _logger)
+                    : new GitHubConnector(source, token, db, _logger);
                 var synced = await connector.SyncAsync(ct);
 
                 await db.ReportDataSources.UpdateOneAsync(

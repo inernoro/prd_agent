@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'react';
-import { FileBarChart, Users, FileText, Building2, RefreshCw, CalendarCheck, GitBranch } from 'lucide-react';
+import { FileBarChart, Users, FileText, Building2, RefreshCw, CalendarCheck, GitBranch, BarChart3 } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
@@ -11,6 +11,7 @@ import { TemplateManager } from './components/TemplateManager';
 import { TeamManager } from './components/TeamManager';
 import { DailyLogPanel } from './components/DailyLogPanel';
 import { DataSourceManager } from './components/DataSourceManager';
+import { HistoryTrendsPanel } from './components/HistoryTrendsPanel';
 
 export default function ReportAgentPage() {
   const {
@@ -46,6 +47,8 @@ export default function ReportAgentPage() {
     if (isLeader) {
       items.push({ key: 'team-dashboard', label: '团队面板', icon: <Users size={14} /> });
     }
+    // Trends tab - visible to everyone
+    items.push({ key: 'trends', label: '数据统计', icon: <BarChart3 size={14} /> });
     if (hasTemplateManage) {
       items.push({ key: 'templates', label: '模板管理', icon: <FileBarChart size={14} /> });
     }
@@ -92,6 +95,7 @@ export default function ReportAgentPage() {
         {activeTab === 'my-reports' && <MyReportsList />}
         {activeTab === 'daily-log' && <DailyLogPanel />}
         {activeTab === 'team-dashboard' && <TeamDashboard />}
+        {activeTab === 'trends' && <HistoryTrendsPanel />}
         {activeTab === 'templates' && <TemplateManager />}
         {activeTab === 'teams' && <TeamManager />}
         {activeTab === 'data-sources' && <DataSourceManager />}

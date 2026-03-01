@@ -529,6 +529,10 @@ import type {
   GetPlanComparisonContract,
   GenerateTeamSummaryContract,
   GetTeamSummaryContract,
+  GetPersonalTrendsContract,
+  GetTeamTrendsContract,
+  MarkVacationContract,
+  CancelVacationContract,
 } from '@/services/contracts/reportAgent';
 import {
   listReportTeamsReal,
@@ -573,6 +577,12 @@ import {
   getPlanComparisonReal,
   generateTeamSummaryReal,
   getTeamSummaryReal,
+  getPersonalTrendsReal,
+  getTeamTrendsReal,
+  exportReportMarkdownReal,
+  exportTeamSummaryMarkdownReal,
+  markVacationReal,
+  cancelVacationReal,
 } from '@/services/real/reportAgent';
 
 function withAuth<TArgs extends unknown[], TResult>(
@@ -911,6 +921,13 @@ export const deleteComment: DeleteCommentContract = withAuth(deleteCommentReal);
 export const getPlanComparison: GetPlanComparisonContract = withAuth(getPlanComparisonReal);
 export const generateTeamSummary: GenerateTeamSummaryContract = withAuth(generateTeamSummaryReal);
 export const getTeamSummary: GetTeamSummaryContract = withAuth(getTeamSummaryReal);
+// Report Agent Phase 4: Trends + Export + Vacation
+export const getPersonalTrends: GetPersonalTrendsContract = withAuth(getPersonalTrendsReal);
+export const getTeamTrends: GetTeamTrendsContract = withAuth(getTeamTrendsReal);
+export const exportReportMarkdown = exportReportMarkdownReal;
+export const exportTeamSummaryMarkdown = exportTeamSummaryMarkdownReal;
+export const markVacation: MarkVacationContract = withAuth(markVacationReal);
+export const cancelVacation: CancelVacationContract = withAuth(cancelVacationReal);
 
 // Arena 竞技场
 import {

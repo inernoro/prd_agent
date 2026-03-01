@@ -125,6 +125,7 @@ public static class WeeklyReportStatus
     public const string Reviewed = "reviewed";
     public const string Returned = "returned";
     public const string Overdue = "overdue";
+    public const string Vacation = "vacation";
 
-    public static readonly string[] All = { NotStarted, Draft, Submitted, Reviewed, Returned, Overdue };
+    public static readonly string[] All = { NotStarted, Draft, Submitted, Reviewed, Returned, Overdue, Vacation };
 }
