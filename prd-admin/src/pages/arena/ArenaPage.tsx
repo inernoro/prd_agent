@@ -1575,7 +1575,7 @@ export function ArenaPage() {
                   >
                     <div
                       className={cn(
-                        'flex flex-col h-full rounded-[14px] transition-all duration-500',
+                        'flex flex-col h-full rounded-[14px] overflow-hidden transition-transform duration-500',
                         revealAnimating && 'scale-[0.98]',
                         justCompleted && 'arena-panel-done-pulse'
                       )}
