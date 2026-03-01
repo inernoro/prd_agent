@@ -234,6 +234,24 @@ export const VideoAgentPage: React.FC = () => {
                   if (currentEvent === 'render.progress' && payload.percent !== undefined) {
                     setSelectedRun((prev) => prev ? { ...prev, phaseProgress: payload.percent } : prev);
                   }
+                  if (currentEvent === 'scene.added' && payload.scene) {
+                    // 流式分镜：实时追加新分镜到列表
+                    setSelectedRun((prev) => {
+                      if (!prev) return prev;
+                      const newScene = {
+                        ...payload.scene,
+                        imageStatus: payload.scene.imageStatus || 'idle',
+                        backgroundImageStatus: payload.scene.backgroundImageStatus || 'idle',
+                      };
+                      const exists = prev.scenes.some((s) => s.index === newScene.index);
+                      if (exists) return prev;
+                      return {
+                        ...prev,
+                        scenes: [...prev.scenes, newScene],
+                        phaseProgress: Math.min(20 + (prev.scenes.length + 1) * 7, 90),
+                      };
+                    });
+                  }
                   if (currentEvent === 'script.done') {
                     if (selectedRunId) loadDetail(selectedRunId);
                     loadRuns();
@@ -269,49 +287,21 @@ export const VideoAgentPage: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRunId, selectedRun?.status, needsScenePolling, token, loadRuns, loadDetail]);
 
-  // ─── Background polling: detect when runs finish scripting ───
-  const prevRunStatusRef = useRef<Record<string, string>>({});
+  // ─── Background polling: keep runs list fresh when active runs exist ───
   useEffect(() => {
-    // 有正在进行中的任务才启动轮询
     const hasActiveRuns = runs.some((r) => ACTIVE_STATUSES.includes(r.status));
     if (!hasActiveRuns) return;
 
     const timer = setInterval(async () => {
       try {
         const res = await listVideoGenRunsReal({ limit: 20 });
-        if (!res.success) return;
-        const latest = res.data.items;
-        setRuns(latest);
-
-        // 检查是否有 run 从活跃状态变成了 Editing（分镜生成完成）
-        for (const run of latest) {
-          const prev = prevRunStatusRef.current[run.id];
-          if (prev && ACTIVE_STATUSES.includes(prev) && run.status === 'Editing') {
-            toast.success('分镜就绪', `${run.articleTitle || '任务'} 的分镜已生成，点击查看`);
-            // 自动选中该 run
-            setSelectedRunId(run.id);
-          }
-        }
-
-        // 更新状态快照
-        const snapshot: Record<string, string> = {};
-        for (const r of latest) snapshot[r.id] = r.status;
-        prevRunStatusRef.current = snapshot;
+        if (res.success) setRuns(res.data.items);
       } catch { /* ignore */ }
-    }, 3000);
+    }, 5000);
 
     return () => clearInterval(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runs.map((r) => `${r.id}:${r.status}`).join(',')]);
-
-  // 同步 prevRunStatusRef（无活跃任务时也保持快照最新，避免恢复轮询后误报）
-  useEffect(() => {
-    const hasActiveRuns = runs.some((r) => ACTIVE_STATUSES.includes(r.status));
-    if (hasActiveRuns) return; // 轮询中由 interval 回调维护
-    const snapshot: Record<string, string> = {};
-    for (const r of runs) snapshot[r.id] = r.status;
-    prevRunStatusRef.current = snapshot;
-  }, [runs]);
 
   // ─── File upload handler ───
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -347,9 +337,9 @@ export const VideoAgentPage: React.FC = () => {
         styleDescription: styleDescription || undefined,
       });
       if (res.success) {
-        toast.success('已提交', '分镜脚本正在后台生成，完成后会通知你');
+        toast.success('已提交', '正在生成分镜脚本...');
+        setSelectedRunId(res.data.runId);
         await loadRuns();
-        // 不锁定到该 run，保持输入状态，用户可以继续操作
       } else {
         toast.error('创建失败', (res as { message?: string }).message || '服务器返回失败');
       }
@@ -814,8 +804,8 @@ export const VideoAgentPage: React.FC = () => {
             )}
           </PanelCard>
 
-          {/* Scene list (only visible in phase 2) */}
-          {phase === 2 && selectedRun && selectedRun.scenes.length > 0 && (
+          {/* Scene list (visible when scenes exist — including during streaming) */}
+          {selectedRun && selectedRun.scenes.length > 0 && phase >= 1 && (
             <PanelCard className="flex-1 min-h-0 flex flex-col">
               {/* Compact title bar */}
               <div className="flex items-center justify-between mb-2">
@@ -827,6 +817,12 @@ export const VideoAgentPage: React.FC = () => {
                   >
                     {scenesReady}/{scenesTotal}
                   </span>
+                  {selectedRun?.status === 'Scripting' && (
+                    <span className="flex items-center gap-1 text-[10px]" style={{ color: 'rgba(236, 72, 153, 0.8)' }}>
+                      <Loader2 size={10} className="animate-spin" />
+                      生成中...
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-1">
                   <Button

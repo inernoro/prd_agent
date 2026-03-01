@@ -484,29 +484,111 @@ public class VideoGenRunWorker : BackgroundService
                     new JsonObject { ["role"] = "user", ["content"] = userPrompt }
                 }
             },
-            Stream = false,
+            Stream = true,
             TimeoutSeconds = 120
         };
 
-        await UpdatePhaseAsync(run, "scripting", 30);
-        await PublishEventAsync(run.Id, "phase.changed", new { phase = "scripting", progress = 30 });
+        await UpdatePhaseAsync(run, "scripting", 20);
+        await PublishEventAsync(run.Id, "phase.changed", new { phase = "scripting", progress = 20 });
 
-        var response = await gateway.SendAsync(request, CancellationToken.None);
-        if (!response.Success)
+        // ─── 流式接收 + 增量解析分镜 ───
+        var scenes = new List<VideoGenScene>();
+        var fullText = new StringBuilder();
+        var objectBuffer = new StringBuilder();
+        var foundArrayStart = false;
+        var braceDepth = 0;
+        var inString = false;
+        var escapeNext = false;
+
+        await foreach (var chunk in gateway.StreamAsync(request, CancellationToken.None))
         {
-            throw new InvalidOperationException($"LLM 分镜生成失败: {response.ErrorMessage}");
+            if (chunk.Type == GatewayChunkType.Error)
+            {
+                throw new InvalidOperationException($"LLM 分镜生成失败: {chunk.Error}");
+            }
+
+            if (chunk.Type != GatewayChunkType.Text || string.IsNullOrEmpty(chunk.Content))
+                continue;
+
+            fullText.Append(chunk.Content);
+
+            // 逐字符解析 JSON 数组中的对象
+            foreach (var ch in chunk.Content)
+            {
+                if (!foundArrayStart)
+                {
+                    if (ch == '[') foundArrayStart = true;
+                    continue;
+                }
+
+                // 处理转义字符
+                if (escapeNext)
+                {
+                    if (braceDepth > 0) objectBuffer.Append(ch);
+                    escapeNext = false;
+                    continue;
+                }
+
+                // 在字符串内部
+                if (inString)
+                {
+                    if (braceDepth > 0) objectBuffer.Append(ch);
+                    if (ch == '\\') escapeNext = true;
+                    else if (ch == '"') inString = false;
+                    continue;
+                }
+
+                // 不在字符串内
+                switch (ch)
+                {
+                    case '"':
+                        inString = true;
+                        if (braceDepth > 0) objectBuffer.Append(ch);
+                        break;
+                    case '{':
+                        braceDepth++;
+                        objectBuffer.Append(ch);
+                        break;
+                    case '}':
+                        objectBuffer.Append(ch);
+                        braceDepth--;
+                        if (braceDepth == 0)
+                        {
+                            // 检测到完整 JSON 对象，尝试解析为分镜
+                            var objJson = objectBuffer.ToString();
+                            objectBuffer.Clear();
+                            await TryAddStreamedSceneAsync(run, scenes, objJson);
+                        }
+                        break;
+                    default:
+                        if (braceDepth > 0) objectBuffer.Append(ch);
+                        break;
+                }
+            }
         }
 
-        await UpdatePhaseAsync(run, "scripting", 80);
-
-        // 解析分镜
-        var scenes = ParseScenesFromLlmResponse(response.Content);
-        // 所有分镜初始状态为 Done（LLM 生成的默认即可用）
-        foreach (var s in scenes)
+        // 流式解析未产出任何分镜时，回退到全文解析
+        if (scenes.Count == 0)
         {
-            s.Status = SceneItemStatus.Done;
+            _logger.LogWarning("VideoGen 流式解析未产出分镜，回退全文解析: runId={RunId}", run.Id);
+            var fallback = ParseScenesFromLlmResponse(fullText.ToString());
+            foreach (var s in fallback)
+            {
+                s.Status = SceneItemStatus.Done;
+                scenes.Add(s);
+            }
+            // 一次性保存并通知
+            await _db.VideoGenRuns.UpdateOneAsync(
+                x => x.Id == run.Id,
+                Builders<VideoGenRun>.Update.Set(x => x.Scenes, scenes),
+                cancellationToken: CancellationToken.None);
+            foreach (var s in scenes)
+            {
+                await PublishSceneAddedEventAsync(run.Id, s, scenes.Count);
+            }
         }
 
+        // 最终定稿
         var totalDuration = scenes.Sum(s => s.DurationSeconds);
         var scriptMd = GenerateScriptMarkdown(scenes, run.ArticleTitle);
         var narrationDoc = GenerateNarrationDoc(scenes, run.ArticleTitle);
@@ -533,6 +615,69 @@ public class VideoGenRunWorker : BackgroundService
 
         _logger.LogInformation("VideoGen 分镜生成完成: runId={RunId}, scenes={Count}, duration={Duration}s → Editing",
             run.Id, scenes.Count, totalDuration);
+    }
+
+    /// <summary>
+    /// 尝试将流式解析到的 JSON 对象作为分镜添加到列表，同时增量保存到 DB 并发布 SSE 事件
+    /// </summary>
+    private async Task TryAddStreamedSceneAsync(VideoGenRun run, List<VideoGenScene> scenes, string objectJson)
+    {
+        try
+        {
+            var scene = JsonSerializer.Deserialize<VideoGenScene>(objectJson, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+            if (scene == null) return;
+
+            scene.Index = scenes.Count;
+            var charCount = scene.Narration?.Length ?? 0;
+            scene.DurationSeconds = Math.Max(3, Math.Round(charCount / CharsPerSecond, 1));
+            scene.Status = SceneItemStatus.Done;
+            scenes.Add(scene);
+
+            // 增量保存到 DB
+            var progress = Math.Min(20 + scenes.Count * 7, 90);
+            await _db.VideoGenRuns.UpdateOneAsync(
+                x => x.Id == run.Id,
+                Builders<VideoGenRun>.Update
+                    .Set(x => x.Scenes, scenes.ToList())
+                    .Set(x => x.PhaseProgress, progress),
+                cancellationToken: CancellationToken.None);
+
+            // 发布 scene.added 事件
+            await PublishSceneAddedEventAsync(run.Id, scene, scenes.Count);
+
+            _logger.LogInformation("VideoGen 流式分镜 #{Index}: topic={Topic}, type={Type}",
+                scene.Index, scene.Topic, scene.SceneType);
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "VideoGen 流式分镜 JSON 解析失败: {Json}", objectJson[..Math.Min(objectJson.Length, 200)]);
+        }
+    }
+
+    /// <summary>
+    /// 发布 scene.added SSE 事件
+    /// </summary>
+    private async Task PublishSceneAddedEventAsync(string runId, VideoGenScene scene, int totalScenes)
+    {
+        await PublishEventAsync(runId, "scene.added", new
+        {
+            scene = new
+            {
+                scene.Index,
+                scene.Topic,
+                scene.Narration,
+                scene.VisualDescription,
+                scene.DurationSeconds,
+                scene.SceneType,
+                status = scene.Status,
+                imageStatus = "idle",
+                backgroundImageStatus = "idle",
+            },
+            totalScenes,
+        });
     }
 
     // ─── 路径 2: 视频渲染（Rendering → Completed）───
