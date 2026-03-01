@@ -552,6 +552,11 @@ public static class CapsuleExecutor
         IHttpClientFactory factory, WorkflowNode node, Dictionary<string, string> variables,
         string workspaceId, string dataType, string dateRange)
     {
+        // ── 兜底：如果用户提供了自定义 cURL，直接执行它 ──
+        var customCurl = GetConfigString(node, "customCurl") ?? "";
+        if (!string.IsNullOrWhiteSpace(customCurl))
+            return await ExecuteCustomCurlAsync(factory, node, customCurl, dataType);
+
         var cookieStr = ReplaceVariables(
             GetConfigString(node, "cookie") ?? "", variables);
         var dscToken = GetConfigString(node, "dscToken") ?? GetConfigString(node, "dsc_token") ?? "";
@@ -732,6 +737,303 @@ public static class CapsuleExecutor
         var resultJson = allItems.ToJsonString();
         var artifact = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType}", resultJson, "application/json");
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs.ToString());
+    }
+
+    /// <summary>自定义 cURL 兜底模式：解析用户粘贴的 cURL 命令并直接执行，支持自动分页</summary>
+    private static async Task<CapsuleResult> ExecuteCustomCurlAsync(
+        IHttpClientFactory factory, WorkflowNode node, string curlCommand, string dataType)
+    {
+        var logs = new StringBuilder();
+        logs.AppendLine("Custom cURL mode: parsing user-provided curl command");
+
+        // 解析 cURL
+        var parsed = ParseCurlCommand(curlCommand);
+        if (string.IsNullOrWhiteSpace(parsed.Url))
+            throw new InvalidOperationException("无法从 cURL 命令中解析出 URL。请检查格式是否正确。");
+
+        logs.AppendLine($"URL: {parsed.Url}");
+        logs.AppendLine($"Method: {parsed.Method}");
+        logs.AppendLine($"Headers: {parsed.Headers.Count} 个");
+        logs.AppendLine($"Body: {(string.IsNullOrEmpty(parsed.Body) ? "(无)" : $"{parsed.Body.Length} chars")}");
+
+        var allItems = new JsonArray();
+        var page = 1;
+        var maxPages = 50;
+        var totalCount = 0;
+
+        while (page <= maxPages)
+        {
+            using var client = factory.CreateClient();
+            client.Timeout = TimeSpan.FromSeconds(30);
+
+            var request = new HttpRequestMessage(
+                parsed.Method.Equals("POST", StringComparison.OrdinalIgnoreCase) ? HttpMethod.Post :
+                parsed.Method.Equals("PUT", StringComparison.OrdinalIgnoreCase) ? HttpMethod.Put :
+                parsed.Method.Equals("DELETE", StringComparison.OrdinalIgnoreCase) ? HttpMethod.Delete :
+                HttpMethod.Get,
+                parsed.Url);
+
+            // 添加解析出的请求头
+            foreach (var (key, value) in parsed.Headers)
+            {
+                // Content-Type 需要通过 Content 设置，跳过
+                if (key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)) continue;
+                try { request.Headers.TryAddWithoutValidation(key, value); }
+                catch { /* 忽略无法添加的头 */ }
+            }
+
+            // 设置请求体（如果有），支持分页替换
+            if (!string.IsNullOrEmpty(parsed.Body))
+            {
+                var bodyToSend = parsed.Body;
+                // 尝试修改 body 中的 page 参数以支持分页
+                if (page > 1)
+                {
+                    try
+                    {
+                        var bodyNode = JsonNode.Parse(bodyToSend);
+                        if (bodyNode is JsonObject bodyObj && bodyObj.ContainsKey("page"))
+                        {
+                            bodyObj["page"] = page;
+                            bodyToSend = bodyObj.ToJsonString();
+                        }
+                    }
+                    catch { /* body 非 JSON 或没有 page 字段，保持原样 */ }
+                }
+
+                var contentType = parsed.Headers
+                    .FirstOrDefault(h => h.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)).Value
+                    ?? "application/json";
+                request.Content = new StringContent(bodyToSend, Encoding.UTF8, contentType);
+            }
+
+            var response = await client.SendAsync(request, CancellationToken.None);
+            var body = await response.Content.ReadAsStringAsync(CancellationToken.None);
+
+            logs.AppendLine($"Page {page}: HTTP {(int)response.StatusCode}");
+
+            if (!response.IsSuccessStatusCode)
+            {
+                logs.AppendLine($"Page {page}: request failed - {body[..Math.Min(300, body.Length)]}");
+                if (page == 1)
+                    throw new InvalidOperationException($"自定义 cURL 请求失败: HTTP {(int)response.StatusCode}。响应: {body[..Math.Min(500, body.Length)]}");
+                break;
+            }
+
+            // 检测非 JSON 响应
+            var trimmedBody = body.TrimStart();
+            if (trimmedBody.Length == 0 || (trimmedBody[0] != '{' && trimmedBody[0] != '['))
+            {
+                logs.AppendLine($"Page {page}: 非 JSON 响应（可能 Cookie 已过期）");
+                if (page == 1)
+                    throw new InvalidOperationException("cURL 请求返回了非 JSON 响应，可能 Cookie 已过期。请重新从浏览器复制最新的 cURL 命令。");
+                break;
+            }
+
+            // 解析响应 — 兼容多种 TAPD 响应格式
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                var root = doc.RootElement;
+
+                if (root.TryGetProperty("data", out var dataEl) &&
+                    dataEl.ValueKind == JsonValueKind.Object &&
+                    dataEl.TryGetProperty("list", out var listEl) &&
+                    listEl.ValueKind == JsonValueKind.Array)
+                {
+                    var items = listEl.EnumerateArray().ToList();
+                    if (items.Count == 0)
+                    {
+                        logs.AppendLine($"Page {page}: empty list, stopping");
+                        break;
+                    }
+
+                    foreach (var item in items)
+                        allItems.Add(JsonNode.Parse(item.GetRawText())!);
+
+                    if (page == 1 && dataEl.TryGetProperty("total_count", out var totalEl))
+                    {
+                        var totalStr = totalEl.ValueKind == JsonValueKind.Number
+                            ? totalEl.GetInt32().ToString()
+                            : totalEl.GetString() ?? "0";
+                        totalCount = int.TryParse(totalStr, out var tc) ? tc : 0;
+                        logs.AppendLine($"Total count: {totalCount}");
+                    }
+
+                    logs.AppendLine($"Page {page}: got {items.Count} items (cumulative: {allItems.Count})");
+
+                    if (allItems.Count >= totalCount && totalCount > 0)
+                        break;
+
+                    // 如果 body 里没有 page 字段，无法分页，直接结束
+                    if (!string.IsNullOrEmpty(parsed.Body))
+                    {
+                        try
+                        {
+                            var bodyCheck = JsonNode.Parse(parsed.Body);
+                            if (bodyCheck is not JsonObject obj || !obj.ContainsKey("page"))
+                            {
+                                logs.AppendLine("Body 中无 page 字段，无法自动分页，仅返回首页数据");
+                                break;
+                            }
+                        }
+                        catch { break; }
+                    }
+                    else
+                    {
+                        logs.AppendLine("无请求体，无法自动分页");
+                        break;
+                    }
+                }
+                else
+                {
+                    // 非标准格式 — 对于首页尝试返回整个响应
+                    if (page == 1)
+                    {
+                        logs.AppendLine("Response is not standard TAPD format (no data.list), returning raw response");
+                        var rawArtifact = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType}", body, "application/json");
+                        return new CapsuleResult(new List<ExecutionArtifact> { rawArtifact }, logs.ToString());
+                    }
+                    break;
+                }
+            }
+            catch (JsonException ex)
+            {
+                logs.AppendLine($"Page {page}: JSON parse error - {ex.Message}");
+                break;
+            }
+
+            page++;
+            if (page <= maxPages)
+                await Task.Delay(500, CancellationToken.None);
+        }
+
+        logs.AppendLine($"Done: {allItems.Count} total items collected across {page - 1} pages");
+
+        if (allItems.Count == 0)
+            throw new InvalidOperationException("自定义 cURL 采集到 0 条数据。请检查 cURL 命令是否有效、Cookie 是否过期。");
+
+        var resultJson = allItems.ToJsonString();
+        var artifact = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType}", resultJson, "application/json");
+        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs.ToString());
+    }
+
+    /// <summary>解析 cURL 命令，提取 URL、Method、Headers、Body</summary>
+    private static (string Url, string Method, List<KeyValuePair<string, string>> Headers, string? Body) ParseCurlCommand(string curl)
+    {
+        var url = "";
+        var method = "GET";
+        var headers = new List<KeyValuePair<string, string>>();
+        string? body = null;
+
+        // 移除换行续行符
+        curl = curl.Replace("\\\n", " ").Replace("\\\r\n", " ").Replace("\r\n", " ").Replace("\n", " ").Trim();
+
+        // 去掉开头的 curl
+        if (curl.StartsWith("curl ", StringComparison.OrdinalIgnoreCase))
+            curl = curl[5..].TrimStart();
+
+        var tokens = TokenizeCurl(curl);
+
+        for (var i = 0; i < tokens.Count; i++)
+        {
+            var token = tokens[i];
+
+            if (token is "-X" or "--request")
+            {
+                if (i + 1 < tokens.Count) method = tokens[++i].ToUpperInvariant();
+            }
+            else if (token is "-H" or "--header")
+            {
+                if (i + 1 < tokens.Count)
+                {
+                    var headerStr = tokens[++i];
+                    var colonIdx = headerStr.IndexOf(':');
+                    if (colonIdx > 0)
+                    {
+                        var key = headerStr[..colonIdx].Trim();
+                        var value = headerStr[(colonIdx + 1)..].Trim();
+                        headers.Add(new KeyValuePair<string, string>(key, value));
+                    }
+                }
+            }
+            else if (token is "-d" or "--data" or "--data-raw" or "--data-binary" or "--data-urlencode")
+            {
+                if (i + 1 < tokens.Count)
+                {
+                    body = tokens[++i];
+                    if (method == "GET") method = "POST"; // curl 默认 -d 时用 POST
+                }
+            }
+            else if (token is "--compressed" or "--insecure" or "-k" or "-s" or "--silent" or "-v" or "--verbose" or "-L" or "--location")
+            {
+                // 忽略这些标志
+            }
+            else if (!token.StartsWith('-') && string.IsNullOrEmpty(url))
+            {
+                // 第一个非标志参数是 URL
+                url = token;
+            }
+        }
+
+        return (url, method, headers, body);
+    }
+
+    /// <summary>将 cURL 命令字符串分词（处理单引号、双引号、转义）</summary>
+    private static List<string> TokenizeCurl(string input)
+    {
+        var tokens = new List<string>();
+        var current = new StringBuilder();
+        var inSingleQuote = false;
+        var inDoubleQuote = false;
+        var escape = false;
+
+        for (var i = 0; i < input.Length; i++)
+        {
+            var c = input[i];
+
+            if (escape)
+            {
+                current.Append(c);
+                escape = false;
+                continue;
+            }
+
+            if (c == '\\' && !inSingleQuote)
+            {
+                escape = true;
+                continue;
+            }
+
+            if (c == '\'' && !inDoubleQuote)
+            {
+                inSingleQuote = !inSingleQuote;
+                continue;
+            }
+
+            if (c == '"' && !inSingleQuote)
+            {
+                inDoubleQuote = !inDoubleQuote;
+                continue;
+            }
+
+            if (c == ' ' && !inSingleQuote && !inDoubleQuote)
+            {
+                if (current.Length > 0)
+                {
+                    tokens.Add(current.ToString());
+                    current.Clear();
+                }
+                continue;
+            }
+
+            current.Append(c);
+        }
+
+        if (current.Length > 0)
+            tokens.Add(current.ToString());
+
+        return tokens;
     }
 
     /// <summary>Basic Auth 模式：使用 TAPD Open API</summary>
