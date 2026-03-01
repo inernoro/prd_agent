@@ -1026,14 +1026,14 @@ export function ArenaPage() {
         for (const id of newlyDone) next.add(id);
         return next;
       });
-      // Clear after animation
+      // Clear after animation completes (matches 3s CSS duration)
       setTimeout(() => {
         setJustCompletedIds((prev) => {
           const next = new Set(prev);
           for (const id of newlyDone) next.delete(id);
           return next;
         });
-      }, 1500);
+      }, 3200);
     }
   }, [panels]);
   function handleCopyPanel(panel: ArenaPanel) {
