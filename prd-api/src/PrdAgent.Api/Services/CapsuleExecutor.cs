@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Models;
 
@@ -392,43 +393,202 @@ public static class CapsuleExecutor
     public static async Task<CapsuleResult> ExecuteTapdCollectorAsync(
         IServiceProvider sp, WorkflowNode node, Dictionary<string, string> variables)
     {
-        var baseUrl = ReplaceVariables(
-            GetConfigString(node, "api_url") ?? GetConfigString(node, "apiUrl") ?? "", variables);
-        var authToken = ReplaceVariables(
-            GetConfigString(node, "auth_token") ?? GetConfigString(node, "authToken")
-            ?? GetConfigString(node, "apiToken") ?? "", variables);
-        var dataType = GetConfigString(node, "data_type") ?? GetConfigString(node, "dataType") ?? "bugs";
+        var authMode = GetConfigString(node, "authMode") ?? GetConfigString(node, "auth_mode") ?? "cookie";
         var workspaceId = GetConfigString(node, "workspaceId") ?? GetConfigString(node, "workspace_id") ?? "";
+        var dataType = GetConfigString(node, "data_type") ?? GetConfigString(node, "dataType") ?? "bugs";
         var dateRange = GetConfigString(node, "dateRange") ?? GetConfigString(node, "date_range") ?? "";
 
-        // 如果未直接提供完整 URL，则从 baseUrl + workspaceId + dataType 自动构造
-        if (string.IsNullOrWhiteSpace(baseUrl))
-            baseUrl = "https://api.tapd.cn";
-
-        var url = baseUrl.TrimEnd('/');
-        if (!url.Contains('?') && !string.IsNullOrWhiteSpace(workspaceId))
-        {
-            // 构造 TAPD Open API URL: https://api.tapd.cn/{dataType}?workspace_id={id}
-            url = $"{url}/{dataType}?workspace_id={workspaceId}";
-            if (!string.IsNullOrWhiteSpace(dateRange))
-                url += $"&created=>={dateRange}-01&created=<={dateRange}-31";
-        }
-
-        if (string.IsNullOrWhiteSpace(workspaceId) && !url.Contains("workspace_id"))
+        if (string.IsNullOrWhiteSpace(workspaceId))
             throw new InvalidOperationException("TAPD 工作空间 ID 未配置");
 
         var factory = sp.GetRequiredService<IHttpClientFactory>();
+
+        if (authMode == "cookie")
+            return await ExecuteTapdCookieModeAsync(factory, node, variables, workspaceId, dataType, dateRange);
+        else
+            return await ExecuteTapdBasicAuthModeAsync(factory, node, variables, workspaceId, dataType, dateRange);
+    }
+
+    /// <summary>Cookie 模式：使用浏览器 Cookie 调用 TAPD 内部 Web API，支持分页</summary>
+    private static async Task<CapsuleResult> ExecuteTapdCookieModeAsync(
+        IHttpClientFactory factory, WorkflowNode node, Dictionary<string, string> variables,
+        string workspaceId, string dataType, string dateRange)
+    {
+        var cookieStr = ReplaceVariables(
+            GetConfigString(node, "cookie") ?? "", variables);
+        var dscToken = GetConfigString(node, "dscToken") ?? GetConfigString(node, "dsc_token") ?? "";
+        var maxPages = int.TryParse(GetConfigString(node, "maxPages") ?? GetConfigString(node, "max_pages"), out var mp) ? Math.Clamp(mp, 1, 200) : 50;
+
+        if (string.IsNullOrWhiteSpace(cookieStr))
+            throw new InvalidOperationException("Cookie 未配置。请在浏览器登录 TAPD 后，从 DevTools 复制 Cookie 粘贴到此处");
+
+        // 如果 dscToken 为空，尝试从 cookie 中提取
+        if (string.IsNullOrWhiteSpace(dscToken))
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(cookieStr, @"dsc-token=([^;\s]+)");
+            if (match.Success) dscToken = match.Groups[1].Value;
+        }
+
+        var logs = new System.Text.StringBuilder();
+        var allItems = new JsonArray();
+        var page = 1;
+        var totalCount = 0;
+
+        logs.AppendLine($"TAPD Cookie mode: workspace={workspaceId} dataType={dataType} dateRange={dateRange}");
+
+        while (page <= maxPages)
+        {
+            using var client = factory.CreateClient();
+            client.Timeout = TimeSpan.FromSeconds(30);
+
+            // 构造 TAPD 内部搜索 API 请求
+            var searchUrl = "https://www.tapd.cn/api/search_filter/search_filter/search";
+
+            var searchData = new JsonObject();
+            var filterData = new JsonArray();
+
+            // 如果有日期范围，添加筛选条件
+            if (!string.IsNullOrWhiteSpace(dateRange))
+            {
+                filterData.Add(new JsonObject
+                {
+                    ["entity"] = dataType == "bugs" ? "bug" : dataType.TrimEnd('s'),
+                    ["fieldDisplayName"] = "创建时间",
+                    ["fieldSubEntityType"] = "",
+                    ["fieldIsSystem"] = "1",
+                    ["fieldOption"] = "like",
+                    ["fieldSystemName"] = "created",
+                    ["fieldType"] = "text",
+                    ["selectOption"] = new JsonArray(),
+                    ["value"] = dateRange,
+                    ["id"] = "1",
+                });
+            }
+
+            searchData["workspace_ids"] = workspaceId;
+            searchData["search_data"] = JsonSerializer.Serialize(new
+            {
+                data = filterData,
+                optionType = "AND",
+                needInit = "1",
+            });
+            searchData["obj_type"] = dataType == "bugs" ? "bug" : dataType.TrimEnd('s');
+            searchData["search_type"] = "advanced";
+            searchData["page"] = page;
+            searchData["perpage"] = "20";
+            searchData["block_size"] = 50;
+            searchData["parallel_token"] = "";
+            searchData["order_field"] = "created";
+            searchData["order_value"] = "desc";
+            searchData["show_fields"] = new JsonArray();
+            searchData["extra_fields"] = new JsonArray();
+            searchData["display_mode"] = "list";
+            searchData["version"] = "1.1.0";
+            searchData["only_gen_token"] = 0;
+            searchData["exclude_workspace_configs"] = new JsonArray();
+            searchData["from_pro_dashboard"] = 1;
+            if (!string.IsNullOrWhiteSpace(dscToken))
+                searchData["dsc_token"] = dscToken;
+
+            var request = new HttpRequestMessage(HttpMethod.Post, searchUrl);
+            request.Headers.Add("Cookie", cookieStr);
+            request.Headers.Add("Accept", "application/json, text/plain, */*");
+            request.Headers.Add("Origin", "https://www.tapd.cn");
+            request.Headers.Add("Referer", $"https://www.tapd.cn/tapd_fe/{workspaceId}/bug/list");
+            request.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+            request.Content = new StringContent(searchData.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
+
+            var response = await client.SendAsync(request, CancellationToken.None);
+            var body = await response.Content.ReadAsStringAsync(CancellationToken.None);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                logs.AppendLine($"Page {page}: HTTP {(int)response.StatusCode} - request failed");
+                break;
+            }
+
+            // 解析响应
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                var root = doc.RootElement;
+
+                if (root.TryGetProperty("data", out var dataEl) && dataEl.TryGetProperty("list", out var listEl))
+                {
+                    var items = listEl.EnumerateArray().ToList();
+                    if (items.Count == 0)
+                    {
+                        logs.AppendLine($"Page {page}: empty list, stopping");
+                        break;
+                    }
+
+                    foreach (var item in items)
+                        allItems.Add(JsonNode.Parse(item.GetRawText())!);
+
+                    if (page == 1 && dataEl.TryGetProperty("total_count", out var totalEl))
+                    {
+                        var totalStr = totalEl.ValueKind == JsonValueKind.Number
+                            ? totalEl.GetInt32().ToString()
+                            : totalEl.GetString() ?? "0";
+                        totalCount = int.TryParse(totalStr, out var tc) ? tc : 0;
+                        logs.AppendLine($"Total count: {totalCount}");
+                    }
+
+                    logs.AppendLine($"Page {page}: got {items.Count} items (cumulative: {allItems.Count})");
+
+                    if (allItems.Count >= totalCount && totalCount > 0)
+                        break;
+                }
+                else
+                {
+                    // 可能 Cookie 过期或格式错误
+                    var info = root.TryGetProperty("info", out var infoEl) ? infoEl.GetString() : "unknown";
+                    logs.AppendLine($"Page {page}: unexpected response - {info}");
+                    logs.AppendLine($"Response preview: {body[..Math.Min(500, body.Length)]}");
+                    break;
+                }
+            }
+            catch (JsonException ex)
+            {
+                logs.AppendLine($"Page {page}: JSON parse error - {ex.Message}");
+                break;
+            }
+
+            page++;
+            if (page <= maxPages)
+                await Task.Delay(500, CancellationToken.None); // 避免请求过快
+        }
+
+        logs.AppendLine($"Done: {allItems.Count} total items collected across {page - 1} pages");
+
+        var resultJson = allItems.ToJsonString();
+        var artifact = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType}", resultJson, "application/json");
+        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs.ToString());
+    }
+
+    /// <summary>Basic Auth 模式：使用 TAPD Open API</summary>
+    private static async Task<CapsuleResult> ExecuteTapdBasicAuthModeAsync(
+        IHttpClientFactory factory, WorkflowNode node, Dictionary<string, string> variables,
+        string workspaceId, string dataType, string dateRange)
+    {
+        var authToken = ReplaceVariables(
+            GetConfigString(node, "auth_token") ?? GetConfigString(node, "authToken")
+            ?? GetConfigString(node, "apiToken") ?? "", variables);
+
+        var url = $"https://api.tapd.cn/{dataType}?workspace_id={workspaceId}";
+        if (!string.IsNullOrWhiteSpace(dateRange))
+            url += $"&created=>={dateRange}-01&created=<={dateRange}-31";
+
         using var client = factory.CreateClient();
         client.Timeout = TimeSpan.FromSeconds(30);
 
-        // TAPD Open API 使用 Basic Auth (Base64 of api_user:api_password)
         if (!string.IsNullOrWhiteSpace(authToken))
             client.DefaultRequestHeaders.Authorization =
                 new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", authToken);
 
         var response = await client.GetAsync(url, CancellationToken.None);
         var body = await response.Content.ReadAsStringAsync(CancellationToken.None);
-        var logs = $"TAPD {dataType} collect: {url}\nStatus: {(int)response.StatusCode}\nBody length: {body.Length}\n";
+        var logs = $"TAPD BasicAuth mode: {url}\nStatus: {(int)response.StatusCode}\nBody length: {body.Length}\n";
 
         var artifact = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType}", body, "application/json");
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs);

@@ -23,7 +23,7 @@ export interface WorkflowTemplate {
 export interface TemplateInput {
   key: string;
   label: string;
-  type: 'text' | 'password' | 'select';
+  type: 'text' | 'password' | 'select' | 'textarea';
   placeholder?: string;
   helpTip?: string;
   required: boolean;
@@ -76,19 +76,11 @@ const tapdBugCollectionTemplate: WorkflowTemplate = {
       required: true,
     },
     {
-      key: 'apiUser',
-      label: 'API 账号',
-      type: 'text',
-      placeholder: 'your_api_user',
-      helpTip: '在 TAPD「公司管理 → API 应用」中创建的 API 账号',
-      required: true,
-    },
-    {
-      key: 'apiPassword',
-      label: 'API 密码',
-      type: 'password',
-      placeholder: '',
-      helpTip: '对应 API 账号的密码，系统会自动进行 Base64 编码',
+      key: 'cookie',
+      label: 'Cookie',
+      type: 'textarea',
+      placeholder: 'tapdsession=xxx; t_u=xxx; _wt=xxx; ...',
+      helpTip: '浏览器登录 TAPD → F12 → Network → 点任意请求 → Headers → 找到 Cookie → 复制整段粘贴到这里',
       required: true,
     },
     {
@@ -116,11 +108,6 @@ const tapdBugCollectionTemplate: WorkflowTemplate = {
   build: (inputs) => {
     _edgeIdx = 0;
 
-    // 自动将 apiUser:apiPassword 编码为 Base64
-    const authToken = inputs.apiUser && inputs.apiPassword
-      ? btoa(`${inputs.apiUser}:${inputs.apiPassword}`)
-      : '';
-
     const nodes: WorkflowNode[] = [
       {
         nodeId: 'n-trigger',
@@ -136,11 +123,12 @@ const tapdBugCollectionTemplate: WorkflowTemplate = {
         name: 'TAPD 数据采集',
         nodeType: 'tapd-collector',
         config: {
-          apiUrl: 'https://api.tapd.cn',
+          authMode: 'cookie',
           workspaceId: inputs.workspaceId || '',
-          authToken,
+          cookie: inputs.cookie || '',
           dataType: inputs.dataType || 'bugs',
           dateRange: inputs.dateRange || '',
+          maxPages: '50',
         },
         inputSlots: [{ slotId: 'tapd-in', name: 'trigger', dataType: 'json', required: false }],
         outputSlots: [{ slotId: 'tapd-out', name: 'data', dataType: 'json', required: true }],

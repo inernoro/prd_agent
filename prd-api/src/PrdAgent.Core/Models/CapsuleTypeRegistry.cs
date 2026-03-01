@@ -166,22 +166,28 @@ public static class CapsuleTypeRegistry
     {
         TypeKey = CapsuleTypes.TapdCollector,
         Name = "TAPD 数据采集",
-        Description = "通过 TAPD Open API 拉取 Bug、Story 等项目数据",
+        Description = "通过 Cookie 或 Open API 拉取 Bug、Story 等项目数据",
         Icon = "database",
         Category = CapsuleCategory.Processor,
         AccentHue = 30,
         ConfigSchema = new()
         {
-            new() { Key = "apiUrl", Label = "TAPD API 地址", FieldType = "text", Required = false, Placeholder = "https://api.tapd.cn", DefaultValue = "https://api.tapd.cn", HelpTip = "TAPD Open API 地址，一般不需要修改。留空或使用默认值即可" },
-            new() { Key = "workspaceId", Label = "工作空间 ID", FieldType = "text", Required = true, Placeholder = "20000001", HelpTip = "TAPD 项目首页地址栏中的数字 ID" },
-            new() { Key = "authToken", Label = "API 访问凭证", FieldType = "password", Required = true, Placeholder = "dXNlcjpwYXNzd29yZA==", HelpTip = "在 TAPD「公司管理 → API 应用」中创建，将 api_user:api_password 进行 Base64 编码后填入。如使用模板导入，会自动编码" },
+            new() { Key = "authMode", Label = "认证方式", FieldType = "select", Required = true, DefaultValue = "cookie", Options = new() {
+                new() { Value = "cookie", Label = "Cookie (浏览器登录)" },
+                new() { Value = "basic", Label = "Open API (Basic Auth)" },
+            }, HelpTip = "Cookie 方式：从浏览器复制 Cookie，数据更全。Open API：需在公司管理中申请 API 账号" },
+            new() { Key = "workspaceId", Label = "工作空间 ID", FieldType = "text", Required = true, Placeholder = "50116108", HelpTip = "TAPD 项目 URL 中的数字 ID，如 tapd.cn/50116108" },
+            new() { Key = "cookie", Label = "Cookie 字符串", FieldType = "password", Required = false, Placeholder = "tapdsession=xxx; t_u=xxx; ...", HelpTip = "浏览器登录 TAPD → F12 → Network → 任意请求 → Headers → Cookie，复制整段粘贴。认证方式选 Cookie 时必填" },
+            new() { Key = "dscToken", Label = "dsc-token", FieldType = "text", Required = false, Placeholder = "xgoJSmV1VxqW6fLm", HelpTip = "从 Cookie 中的 dsc-token 值，或从请求中获取。Cookie 模式必填" },
+            new() { Key = "authToken", Label = "API 访问凭证", FieldType = "password", Required = false, Placeholder = "dXNlcjpwYXNzd29yZA==", HelpTip = "Open API 模式使用。Base64(api_user:api_password)" },
             new() { Key = "dataType", Label = "数据类型", FieldType = "select", Required = true, DefaultValue = "bugs", Options = new() {
                 new() { Value = "bugs", Label = "缺陷 (Bugs)" },
                 new() { Value = "stories", Label = "需求 (Stories)" },
                 new() { Value = "tasks", Label = "任务 (Tasks)" },
                 new() { Value = "iterations", Label = "迭代 (Iterations)" },
             }},
-            new() { Key = "dateRange", Label = "时间范围", FieldType = "text", Required = false, Placeholder = "2026-01", HelpTip = "留空取全部，填月份(YYYY-MM)按月筛选" },
+            new() { Key = "dateRange", Label = "时间范围", FieldType = "text", Required = false, Placeholder = "2026-01", HelpTip = "留空取全部，填月份 (YYYY-MM) 按月筛选" },
+            new() { Key = "maxPages", Label = "最大页数", FieldType = "number", Required = false, DefaultValue = "50", HelpTip = "防止无限翻页，每页 20 条" },
         },
         DefaultInputSlots = new()
         {

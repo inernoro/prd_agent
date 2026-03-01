@@ -306,6 +306,15 @@ function FieldInput({
             <option key={opt.value} value={opt.value}>{opt.label}</option>
           ))}
         </select>
+      ) : field.type === 'textarea' ? (
+        <textarea
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={field.placeholder}
+          rows={3}
+          className="w-full px-3 py-2 rounded-[8px] text-[12px] resize-y font-mono"
+          style={{ ...inputStyle, minHeight: 72 }}
+        />
       ) : (
         <input
           type={field.type === 'password' ? 'password' : 'text'}
