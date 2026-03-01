@@ -1594,74 +1594,46 @@ html[data-perf-mode="performance"] .blur-text span {
 }
 
 /* ========================================
-   Primary Button Micro-Interactions
-   收敛动效：仅增强感知反馈，不增加视觉噪声
+   Primary Button — 渐变游走动效
+   渐变色缓慢漂移，让按钮"活"起来
+   仅 background-position 变化，不触发 layout
    ======================================== */
 
-/* 1. Hover 微光扫过 — 45° 白光从左到右，一次性 400ms */
-@keyframes btnPrimarySweep {
-  0%   { transform: translateX(-100%) skewX(-15deg); }
-  100% { transform: translateX(200%) skewX(-15deg); }
+@keyframes btnGradientDrift {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
 }
 
 .btn-primary-anim {
-  position: relative;
-  overflow: hidden;
-  /* 2. Press 弹性回弹 — 按下更深 + 释放微弹 */
-  transition: all 200ms cubic-bezier(0.2, 0.9, 0.2, 1);
-}
-
-.btn-primary-anim::after {
-  content: '';
-  position: absolute;
-  inset: 0;
   background: linear-gradient(
-    105deg,
-    transparent 40%,
-    rgba(255, 255, 255, 0.18) 45%,
-    rgba(255, 255, 255, 0.25) 50%,
-    rgba(255, 255, 255, 0.18) 55%,
-    transparent 60%
+    135deg,
+    #c7d2fe 0%, #6366f1 25%, #a5b4fc 50%, #6366f1 75%, #c7d2fe 100%
   );
-  pointer-events: none;
-  transform: translateX(-100%) skewX(-15deg);
-  z-index: 1;
+  background-size: 250% 250%;
+  animation: btnGradientDrift 6s ease-in-out infinite;
+  transition: transform 200ms cubic-bezier(0.2, 0.9, 0.2, 1),
+              box-shadow 200ms ease;
 }
 
-.btn-primary-anim:hover::after {
-  animation: btnPrimarySweep 400ms ease-out 1;
-}
-
-/* 弹性回弹：按下 0.96 → 释放弹到 1.02 → 归位 */
+/* 按压弹性 */
 .btn-primary-anim:active {
-  transform: scale(0.96) !important;
+  transform: scale(0.96);
   transition-duration: 80ms;
 }
 
-/* 3. Focus 光环脉冲 — Tab 聚焦时柔和扩散 */
-@keyframes btnFocusRing {
-  0%   { box-shadow: 0 0 0 0px rgba(99, 102, 241, 0.5); }
-  50%  { box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.2); }
-  100% { box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15); }
-}
-
-.btn-primary-anim:focus-visible {
-  animation: btnFocusRing 300ms ease-out 1 forwards;
-  outline: none;
-}
-
-/* 尊重减少动画偏好 */
+/* 尊重减少动画偏好 — 静止渐变 */
 @media (prefers-reduced-motion: reduce) {
-  .btn-primary-anim::after { display: none; }
-  .btn-primary-anim:active { transform: none !important; }
-  .btn-primary-anim:focus-visible { animation: none; }
+  .btn-primary-anim {
+    animation: none;
+    background: var(--gold-gradient);
+    background-size: 100% 100%;
+  }
 }
 
-/* 性能模式下简化：去掉扫光，保留按压反馈 */
-html[data-perf-mode="performance"] .btn-primary-anim::after {
-  display: none;
-}
-
-html[data-perf-mode="performance"] .btn-primary-anim:hover {
-  filter: brightness(1.08);
+/* 性能模式 — 静止渐变，省 repaint */
+html[data-perf-mode="performance"] .btn-primary-anim {
+  animation: none;
+  background: var(--gold-gradient);
+  background-size: 100% 100%;
 }

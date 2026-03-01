@@ -35,8 +35,8 @@ export const Button = React.forwardRef<
 
   const style: React.CSSProperties =
     variant === 'primary'
-      ? { 
-          background: 'var(--gold-gradient)', 
+      ? {
+          // background 由 .btn-primary-anim 类控制（含渐变游走动画）
           boxShadow: '0 4px 16px -2px rgba(99, 102, 241, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1) inset',
           // 隔离阴影效果，防止与 GlassCard 的 backdrop-filter 产生异常渲染
           isolation: 'isolate',
