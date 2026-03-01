@@ -33,6 +33,7 @@
    | 视觉创作 Agent | `visual-agent` | 高级视觉创作工作区 |
    | PRD Agent | `prd-agent` | PRD 智能解读与问答 |
    | 缺陷管理 Agent | `defect-agent` | 缺陷提交与跟踪 |
+   | 视频 Agent | `video-agent` | 文章转视频教程生成 |
    | 周报管理 Agent | `report-agent` | 周报创建、提交、审阅管理 |
 
 4. **为什么这样设计**
@@ -339,7 +340,10 @@ prd_agent/
 │       └── lib/          # themeApplier, themeComputed
 ├── prd-desktop/      # Tauri 2.0 桌面客户端 (Rust + React)
 │   ├── src-tauri/    # Rust: commands/, services/, models/
-│   └── src/          # React: components/, stores/, pages/  
+│   └── src/          # React: components/, stores/, pages/
+├── prd-video/        # Remotion 视频合成项目 (React + TypeScript)
+│   ├── src/          # components/, scenes/, utils/, Root.tsx, TutorialVideo.tsx
+│   └── scripts/      # generate_srt.py, render.sh
 ├── doc/              # 编号文档 (0-5) + 专题文档 (design.*, agent.*, rule.*) 
 └── scripts/          # 构建/部署脚本
 ```
@@ -380,6 +384,7 @@ prd_agent/
 | 数据管理面板 | ✅ DONE | DataManagePage |
 | 管理通知 | ✅ DONE | NotificationsController, admin_notifications |
 | 缺陷管理 Agent | ✅ DONE | DefectAgentController, DefectAgentTests (25 tests) |
+| 视频 Agent | ✅ DONE | VideoAgentController, VideoGenRunWorker, prd-video/ (Remotion) |
 | 配置市场 (海鲜市场) | ✅ DONE | CONFIG_TYPE_REGISTRY, MarketplaceCard, IForkable, ForkService |
 | 周报管理 Agent | ✅ Phase 1-3 DONE | ReportAgentController, ReportAgentPage (6 tabs)，详见 `doc/plan.report-agent-impl.md` |
 | **附件上传** | ✅ DONE | AttachmentsController + Rust upload_attachment + Desktop UI (图片选择/预览/上传) |
@@ -412,6 +417,8 @@ VisualAgent (DB 名保留 image_master)：`image_master_workspaces`, `image_asse
 开放平台：`openplatformapps`, `openplatformrequestlogs`
 
 缺陷管理：`defect_templates`, `defect_reports`, `defect_messages`, `defect_folders`
+
+视频 Agent：`video_gen_runs`
 
 周报管理：`report_teams`, `report_team_members`, `report_templates`, `report_weekly_reports`, `report_daily_logs`, `report_data_sources`, `report_commits`, `report_comments`, `report_team_summaries`
 

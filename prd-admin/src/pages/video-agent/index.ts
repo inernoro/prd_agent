@@ -1,0 +1,1 @@
+export { VideoAgentPage } from './VideoAgentPage';

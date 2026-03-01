@@ -569,6 +569,36 @@ public static class WorkflowAgent
 }
 
 /// <summary>
+/// Video Agent 文章转视频
+/// </summary>
+public static class VideoAgent
+{
+    public const string AppName = "Video Agent";
+
+    public static class Script
+    {
+        [AppCallerMetadata(
+            "视频脚本生成",
+            "将文章内容拆分为视频镜头脚本",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Video"
+        )]
+        public const string Chat = "video-agent.script::chat";
+    }
+
+    public static class Image
+    {
+        [AppCallerMetadata(
+            "视频场景-文生图",
+            "根据分镜画面描述生成预览图",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "Video"
+        )]
+        public const string Text2Img = "video-agent.image.text2img::generation";
+    }
+}
+
+/// <summary>
 /// Report Agent 周报管理
 /// </summary>
 public static class ReportAgent
@@ -662,7 +692,7 @@ public static class Admin
             ModelTypes = new[] { ModelTypes.Chat },
             Category = "Management"
         )]
-        public const string AvailableModels = "admin.platforms.available-models";
+        public const string AvailableModels = "admin.platforms.available-models::chat";
 
         [AppCallerMetadata(
             "刷新模型列表",
@@ -670,7 +700,7 @@ public static class Admin
             ModelTypes = new[] { ModelTypes.Chat },
             Category = "Management"
         )]
-        public const string RefreshModels = "admin.platforms.refresh-models";
+        public const string RefreshModels = "admin.platforms.refresh-models::chat";
 
         [AppCallerMetadata(
             "重分类-拉取模型",
@@ -678,7 +708,7 @@ public static class Admin
             ModelTypes = new[] { ModelTypes.Chat },
             Category = "Management"
         )]
-        public const string ReclassifyFetchModels = "admin.platforms.reclassify.fetch-models";
+        public const string ReclassifyFetchModels = "admin.platforms.reclassify.fetch-models::chat";
 
         [AppCallerMetadata(
             "拉取平台模型",
@@ -686,7 +716,7 @@ public static class Admin
             ModelTypes = new[] { ModelTypes.Chat },
             Category = "Management"
         )]
-        public const string FetchModels = "admin.platforms.fetch-models";
+        public const string FetchModels = "admin.platforms.fetch-models::chat";
 
         [AppCallerMetadata(
             "模型重分类",

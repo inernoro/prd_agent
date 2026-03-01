@@ -26,6 +26,7 @@ public static class AppDomainPaths
     public const string DomainLiteraryAgent = "literary-agent";
     public const string DomainPrdAgent = "prd-agent";
     public const string DomainDefectAgent = "defect-agent";
+    public const string DomainVideoAgent = "video-agent";
     public const string DomainWorkflowAgent = "workflow-agent";
     public const string DomainAssets = "assets";
     public const string DomainWatermark = "watermark";
@@ -47,11 +48,12 @@ public static class AppDomainPaths
     public const string TypeDoc = "doc";
     public const string TypeMeta = "meta";
     public const string TypeFont = "font";
+    public const string TypeVideo = "video";
 
     private static readonly HashSet<string> DomainAllow = new(StringComparer.Ordinal)
     {
         // 新域名
-        DomainVisualAgent, DomainLiteraryAgent, DomainPrdAgent, DomainDefectAgent, DomainWorkflowAgent, DomainAssets, DomainWatermark, DomainLogs, DomainMds,
+        DomainVisualAgent, DomainLiteraryAgent, DomainPrdAgent, DomainDefectAgent, DomainVideoAgent, DomainWorkflowAgent, DomainAssets, DomainWatermark, DomainLogs, DomainMds,
 #pragma warning disable CS0618 // 允许使用旧域名以保持兼容
         // 兼容旧域名
         DomainImageGen, DomainUploads, DomainLlmLogs,
@@ -60,7 +62,7 @@ public static class AppDomainPaths
 
     private static readonly HashSet<string> TypeAllow = new(StringComparer.Ordinal)
     {
-        TypeImg, TypeBin, TypeLog, TypeDoc, TypeMeta, TypeFont,
+        TypeImg, TypeBin, TypeLog, TypeDoc, TypeMeta, TypeFont, TypeVideo,
     };
 
     private static readonly Regex SafeSeg = new("^[a-z0-9][a-z0-9_-]*$", RegexOptions.Compiled);

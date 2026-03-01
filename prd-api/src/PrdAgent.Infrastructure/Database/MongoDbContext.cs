@@ -162,6 +162,9 @@ public class MongoDbContext
     // 模型中继 (Exchange)
     public IMongoCollection<ModelExchange> ModelExchanges => _database.GetCollection<ModelExchange>("model_exchanges");
 
+    // Video Agent 文章转视频
+    public IMongoCollection<VideoGenRun> VideoGenRuns => _database.GetCollection<VideoGenRun>("video_gen_runs");
+
     // Tutorial Email 教程邮件
     public IMongoCollection<TutorialEmailSequence> TutorialEmailSequences => _database.GetCollection<TutorialEmailSequence>("tutorial_email_sequences");
     public IMongoCollection<TutorialEmailTemplate> TutorialEmailTemplates => _database.GetCollection<TutorialEmailTemplate>("tutorial_email_templates");

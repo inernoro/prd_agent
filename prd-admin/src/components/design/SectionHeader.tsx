@@ -43,16 +43,16 @@ export interface SectionHeaderProps {
 
 const sizeClasses: Record<SectionHeaderSize, { title: string; subtitle: string }> = {
   sm: {
-    title: 'text-2xl sm:text-3xl font-bold text-white/90 mb-2',
-    subtitle: 'text-base text-white/40',
+    title: 'text-2xl sm:text-3xl font-bold text-white/95 mb-2',
+    subtitle: 'text-base text-white/55',
   },
   md: {
-    title: 'text-3xl sm:text-4xl md:text-5xl font-bold text-white/90 mb-4',
-    subtitle: 'text-lg text-white/40 max-w-2xl',
+    title: 'text-3xl sm:text-4xl md:text-5xl font-bold text-white/95 mb-4',
+    subtitle: 'text-lg text-white/55 max-w-2xl',
   },
   lg: {
-    title: 'text-4xl sm:text-5xl md:text-6xl font-bold text-white/90 mb-4',
-    subtitle: 'text-xl text-white/40 max-w-3xl',
+    title: 'text-4xl sm:text-5xl md:text-6xl font-bold text-white/95 mb-4',
+    subtitle: 'text-xl text-white/55 max-w-3xl',
   },
 };
 
@@ -75,9 +75,9 @@ export function SectionHeader({
     <div className={cn(center && 'text-center', spacingMap[spacing], className)}>
       {/* Badge */}
       {badge && (
-        <div className="inline-flex items-center gap-2 px-4 py-2 mb-6 rounded-full border border-white/10 bg-white/[0.03]">
+        <div className="inline-flex items-center gap-2 px-4 py-2 mb-6 rounded-full border border-cyan-400/25 bg-cyan-400/[0.06]">
           {badgeIcon}
-          <span className="text-sm text-white/50">{badge}</span>
+          <span className="text-sm text-cyan-300/80">{badge}</span>
         </div>
       )}
 

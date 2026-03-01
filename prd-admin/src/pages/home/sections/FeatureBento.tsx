@@ -2,6 +2,7 @@ import { cn } from '@/lib/cn';
 import { useEffect, useState } from 'react';
 import ShinyText from '@/components/reactbits/ShinyText';
 import { SectionHeader } from '@/components/design/SectionHeader';
+import { HERO_GRADIENT, HERO_GRADIENT_TEXT } from './HeroSection';
 
 // Simple model badges grid - clean and no overlap
 function ModelCarousel() {
@@ -289,12 +290,12 @@ interface FeatureBentoProps {
 export function FeatureBento({ className }: FeatureBentoProps) {
   return (
     <section className={cn('relative py-24 sm:py-32 overflow-hidden', className)}>
-      {/* Semi-transparent overlay to let global background show through */}
-      <div className="absolute inset-0 bg-[#050508]/40" />
+      {/* Semi-transparent overlay — reduced for more vibrancy */}
+      <div className="absolute inset-0 bg-[#030306]/30" />
 
-      {/* Subtle grid pattern */}
+      {/* Subtle grid pattern — slightly more visible */}
       <div
-        className="absolute inset-0 opacity-[0.02]"
+        className="absolute inset-0 opacity-[0.035]"
         style={{
           backgroundImage: `
             linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px),
@@ -315,17 +316,8 @@ export function FeatureBento({ className }: FeatureBentoProps) {
           }
           title={
             <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold mb-4">
-              <span className="text-white/90">为什么选择</span>{' '}
-              <span
-                style={{
-                  background: 'linear-gradient(135deg, #c7d2fe 0%, #6366f1 45%, #a5b4fc 100%)',
-                  WebkitBackgroundClip: 'text',
-                  WebkitTextFillColor: 'transparent',
-                  backgroundClip: 'text',
-                }}
-              >
-                MAP
-              </span>
+              <span className="text-white/95">为什么选择</span>{' '}
+              <span style={HERO_GRADIENT_TEXT}>MAP</span>
             </h2>
           }
           subtitle="企业级 AI 基础设施，为您的智能化转型提供坚实保障"
@@ -334,7 +326,7 @@ export function FeatureBento({ className }: FeatureBentoProps) {
         {/* Bento grid - improved layout */}
         <div className="grid grid-cols-1 md:grid-cols-6 gap-4 lg:gap-5">
           {/* 先进性 - Left large card spanning 4 columns */}
-          <div className="md:col-span-4 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.06] backdrop-blur-2xl p-6 lg:p-8 hover:border-blue-500/30 transition-all duration-500">
+          <div className="md:col-span-4 group relative overflow-hidden rounded-3xl border border-white/[0.12] bg-white/[0.07] backdrop-blur-2xl p-6 lg:p-8 hover:border-blue-500/30 transition-all duration-500">
             <div
               className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
               style={{
@@ -349,14 +341,14 @@ export function FeatureBento({ className }: FeatureBentoProps) {
                     <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
                     <span className="text-xs text-blue-400">实验室孵化</span>
                   </div>
-                  <h3 className="text-xl lg:text-2xl font-bold text-white/90 mb-2">全球最先进模型</h3>
-                  <p className="text-sm lg:text-base text-white/50 leading-relaxed">
+                  <h3 className="text-xl lg:text-2xl font-bold text-white mb-2">全球最先进模型</h3>
+                  <p className="text-sm lg:text-base text-white/65 leading-relaxed">
                     昨天发布，今天可用。我们与 OpenAI、Anthropic、Google 等保持同步，新模型第一时间接入
                   </p>
                 </div>
                 <div className="text-right flex-shrink-0 hidden sm:block">
-                  <div className="text-4xl lg:text-5xl font-bold text-blue-400">24h</div>
-                  <div className="text-sm text-white/40">新模型上线</div>
+                  <div className="text-4xl lg:text-5xl font-bold text-cyan-400">24h</div>
+                  <div className="text-sm text-white/55">新模型上线</div>
                 </div>
               </div>
 
@@ -386,8 +378,8 @@ export function FeatureBento({ className }: FeatureBentoProps) {
                       )}
                     </div>
                     <div>
-                      <div className="text-sm font-medium text-white/80">{item.title}</div>
-                      <div className="text-xs text-white/40">{item.desc}</div>
+                      <div className="text-sm font-medium text-white/90">{item.title}</div>
+                      <div className="text-xs text-white/55">{item.desc}</div>
                     </div>
                   </div>
                 ))}
@@ -399,7 +391,7 @@ export function FeatureBento({ className }: FeatureBentoProps) {
           </div>
 
           {/* 稳定性 - Right card spanning 2 columns */}
-          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.06] backdrop-blur-2xl p-6 hover:border-emerald-500/30 transition-all duration-500">
+          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/[0.12] bg-white/[0.07] backdrop-blur-2xl p-6 hover:border-emerald-500/30 transition-all duration-500">
             <div
               className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
               style={{
@@ -411,8 +403,8 @@ export function FeatureBento({ className }: FeatureBentoProps) {
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                 <span className="text-xs text-emerald-400">永不断线</span>
               </div>
-              <h3 className="text-lg font-bold text-white/90 mb-2">7×24 稳定运行</h3>
-              <p className="text-sm text-white/50 mb-4">Worker 进程池设计，离开屏幕继续运行</p>
+              <h3 className="text-lg font-bold text-white mb-2">7×24 稳定运行</h3>
+              <p className="text-sm text-white/60 mb-4">Worker 进程池设计，离开屏幕继续运行</p>
 
               {/* Stability features */}
               <div className="space-y-2">
@@ -445,7 +437,7 @@ export function FeatureBento({ className }: FeatureBentoProps) {
                         </svg>
                       )}
                     </div>
-                    <span className="text-white/60">{item.text}</span>
+                    <span className="text-white/70">{item.text}</span>
                   </div>
                 ))}
               </div>
@@ -462,7 +454,7 @@ export function FeatureBento({ className }: FeatureBentoProps) {
           </div>
 
           {/* Security - 2 columns */}
-          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.06] backdrop-blur-2xl p-6 hover:border-emerald-500/30 transition-all duration-500">
+          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/[0.12] bg-white/[0.07] backdrop-blur-2xl p-6 hover:border-emerald-500/30 transition-all duration-500">
             <div
               className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
               style={{
@@ -475,14 +467,14 @@ export function FeatureBento({ className }: FeatureBentoProps) {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                 </svg>
               </div>
-              <h3 className="text-lg font-bold text-white/90 mb-1">企业级安全</h3>
-              <p className="text-sm text-white/50">加密存储，权限精细管控</p>
+              <h3 className="text-lg font-bold text-white mb-1">企业级安全</h3>
+              <p className="text-sm text-white/60">加密存储，权限精细管控</p>
               <SecurityShield />
             </div>
           </div>
 
           {/* Private deployment - 2 columns */}
-          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.06] backdrop-blur-2xl p-6 hover:border-purple-500/30 transition-all duration-500">
+          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/[0.12] bg-white/[0.07] backdrop-blur-2xl p-6 hover:border-purple-500/30 transition-all duration-500">
             <div
               className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
               style={{
@@ -495,14 +487,14 @@ export function FeatureBento({ className }: FeatureBentoProps) {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
                 </svg>
               </div>
-              <h3 className="text-lg font-bold text-white/90 mb-1">私有化部署</h3>
-              <p className="text-sm text-white/50">数据永不出境，满足高安全需求</p>
+              <h3 className="text-lg font-bold text-white mb-1">私有化部署</h3>
+              <p className="text-sm text-white/60">数据永不出境，满足高安全需求</p>
               <ServerRack />
             </div>
           </div>
 
           {/* API Platform - 2 columns */}
-          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.06] backdrop-blur-2xl p-6 hover:border-rose-500/30 transition-all duration-500">
+          <div className="md:col-span-2 group relative overflow-hidden rounded-3xl border border-white/[0.12] bg-white/[0.07] backdrop-blur-2xl p-6 hover:border-rose-500/30 transition-all duration-500">
             <div
               className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
               style={{
@@ -515,14 +507,14 @@ export function FeatureBento({ className }: FeatureBentoProps) {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
                 </svg>
               </div>
-              <h3 className="text-lg font-bold text-white/90 mb-1">API 开放平台</h3>
-              <p className="text-sm text-white/50">标准 RESTful，轻松集成</p>
+              <h3 className="text-lg font-bold text-white mb-1">API 开放平台</h3>
+              <p className="text-sm text-white/60">标准 RESTful，轻松集成</p>
               <ApiCodeBlock />
             </div>
           </div>
 
           {/* Workflow - full width */}
-          <div className="md:col-span-6 group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.06] backdrop-blur-2xl p-6 lg:p-8 hover:border-indigo-500/30 transition-all duration-500">
+          <div className="md:col-span-6 group relative overflow-hidden rounded-3xl border border-white/[0.12] bg-white/[0.07] backdrop-blur-2xl p-6 lg:p-8 hover:border-indigo-500/30 transition-all duration-500">
             <div
               className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
               style={{
@@ -534,15 +526,16 @@ export function FeatureBento({ className }: FeatureBentoProps) {
                 <div className="flex-1 text-center lg:text-left">
                   <div className="inline-flex p-3 rounded-2xl mb-4 shadow-lg group-hover:scale-105 transition-all duration-300"
                     style={{
-                      background: 'linear-gradient(135deg, #c7d2fe 0%, #6366f1 45%, #a5b4fc 100%)',
+                      background: HERO_GRADIENT,
+                      boxShadow: '0 0 20px rgba(0, 240, 255, 0.2)',
                     }}
                   >
                     <svg className="w-7 h-7 text-[#ffffff]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
                   </div>
-                  <h3 className="text-xl lg:text-2xl font-bold text-white/90 mb-2">简单三步，即刻上手</h3>
-                  <p className="text-sm lg:text-base text-white/50 leading-relaxed max-w-md mx-auto lg:mx-0">
+                  <h3 className="text-xl lg:text-2xl font-bold text-white mb-2">简单三步，即刻上手</h3>
+                  <p className="text-sm lg:text-base text-white/60 leading-relaxed max-w-md mx-auto lg:mx-0">
                     无需复杂配置，从注册到产出只需三步，让 AI 能力触手可及
                   </p>
                 </div>

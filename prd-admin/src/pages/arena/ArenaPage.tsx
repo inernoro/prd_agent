@@ -31,7 +31,7 @@ import { ModelPoolPickerDialog, type SelectedModelItem } from '@/components/mode
 import type { Platform } from '@/types/admin';
 import {
   Eye, Send, Plus, Search, MessageSquare, Clock, Loader2, Swords, ChevronDown, ChevronRight, Brain,
-  Edit3, Trash2, Settings, Power,
+  Edit3, Trash2, Settings, Power, RefreshCw, Download, Copy, Check,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -389,6 +389,7 @@ export function ArenaPage() {
           labelIndex: s.labelIndex,
           status: 'waiting' as const,
           text: '',
+          thinking: '',
           ttftMs: null,
           totalMs: null,
           errorMessage: null,
@@ -518,7 +519,7 @@ export function ArenaPage() {
           description: groupForm.description.trim() || undefined,
           sortOrder: groupForm.sortOrder,
         });
-        if (!res.success) throw new Error(res.message || '更新失败');
+        if (!res.success) throw new Error(res.error?.message || '更新失败');
         toast.success('分组已更新');
       } else {
         const res = await createArenaGroup({
@@ -527,7 +528,7 @@ export function ArenaPage() {
           description: groupForm.description.trim() || undefined,
           sortOrder: groupForm.sortOrder,
         });
-        if (!res.success) throw new Error(res.message || '创建失败');
+        if (!res.success) throw new Error(res.error?.message || '创建失败');
         toast.success('分组已创建');
       }
       setGroupDialogOpen(false);
@@ -542,7 +543,7 @@ export function ArenaPage() {
   async function handleDeleteGroup(groupId: string) {
     try {
       const res = await deleteArenaGroup(groupId);
-      if (!res.success) throw new Error(res.message || '删除失败');
+      if (!res.success) throw new Error(res.error?.message || '删除失败');
       toast.success('分组已删除');
       await loadAdminGroups();
     } catch (err: any) {
@@ -593,7 +594,7 @@ export function ArenaPage() {
   async function handleDeleteSlot(slotId: string) {
     try {
       const res = await deleteArenaSlot(slotId);
-      if (!res.success) throw new Error(res.message || '删除失败');
+      if (!res.success) throw new Error(res.error?.message || '删除失败');
       toast.success('模型已删除');
       await loadAdminGroups();
     } catch (err: any) {
@@ -604,7 +605,7 @@ export function ArenaPage() {
   async function handleToggleSlot(slotId: string) {
     try {
       const res = await toggleArenaSlot(slotId);
-      if (!res.success) throw new Error(res.message || '切换失败');
+      if (!res.success) throw new Error(res.error?.message || '切换失败');
       await loadAdminGroups();
     } catch (err: any) {
       toast.error('切换状态失败', err?.message);
@@ -651,9 +652,10 @@ export function ArenaPage() {
     // Run-level events
     if (type === 'runStart') return; // nothing to do
     if (type === 'runDone') {
-      const final = panelsRef.current;
-      const done = final.length > 0 && final.every((p) => p.status === 'done' || p.status === 'error');
-      setAllDone(done);
+      // Backend only emits runDone after Task.WhenAll — all models are guaranteed done/error.
+      // Directly set allDone=true to avoid React 18 batching race where panelsRef.current
+      // hasn't been updated yet by preceding modelDone setPanels updaters.
+      setAllDone(true);
       setIsStreaming(false);
       // Clear persisted run
       sessionStorage.removeItem(ARENA_RUN_STORAGE_KEY);
@@ -953,6 +955,111 @@ export function ArenaPage() {
     }
   }
 
+  // --- Retry: re-send the same question ---
+  function handleRetry() {
+    if (isStreaming || !currentPrompt.trim()) return;
+    setPrompt(currentPrompt);
+    // Trigger send on next tick after prompt is set
+    setTimeout(() => {
+      const question = currentPrompt.trim();
+      if (!question || slots.length === 0) return;
+
+      const newLabelMap = assignLabels(slots);
+      const runSlots = slots.map((slot) => {
+        const info = newLabelMap.get(slot.id) ?? { label: '助手 ?', index: 0 };
+        return { slotId: slot.id, platformId: slot.platformId, modelId: slot.modelId, label: info.label, labelIndex: info.index };
+      });
+      const initialPanels: ArenaPanel[] = runSlots.map((s) => ({
+        slotId: s.slotId, label: s.label, labelIndex: s.labelIndex,
+        status: 'waiting' as const, text: '', thinking: '', ttftMs: null, totalMs: null, errorMessage: null, startedAt: null,
+      }));
+      setPanels(initialPanels);
+      panelsRef.current = initialPanels;
+      setCurrentPrompt(question);
+      setIsStreaming(true);
+      setAllDone(false);
+      setRevealed(false);
+      setRevealedInfos(new Map());
+      setActiveBattleId(null);
+      setPrompt('');
+      afterSeqRef.current = 0;
+
+      (async () => {
+        try {
+          const res = await createArenaRun({ prompt: question, groupKey: selectedGroupKey, slots: runSlots });
+          if (!res.success || !res.data?.runId) throw new Error(res.error?.message || '创建 Run 失败');
+          const runId = res.data.runId as string;
+          setActiveRunId(runId);
+          sessionStorage.setItem(ARENA_RUN_STORAGE_KEY, JSON.stringify({ runId, prompt: question, groupKey: selectedGroupKey, slots: runSlots }));
+          await subscribeToRunStream(runId, 0);
+        } catch (e: any) {
+          if (e?.name === 'AbortError') return;
+          toast.error('重试失败', e?.message ?? '网络错误');
+          setPanels((prev) => prev.map((p) => p.status === 'waiting' || p.status === 'streaming' ? { ...p, status: 'error', errorMessage: e?.message ?? '连接中断' } : p));
+          setIsStreaming(false);
+          sessionStorage.removeItem(ARENA_RUN_STORAGE_KEY);
+          setActiveRunId(null);
+        }
+      })();
+    }, 0);
+  }
+
+  // --- Copy panel text to clipboard ---
+  const [copiedSlotId, setCopiedSlotId] = useState<string | null>(null);
+
+  // --- Track panels that just completed (for attention pulse) ---
+  const [justCompletedIds, setJustCompletedIds] = useState<Set<string>>(new Set());
+  const prevPanelStatusRef = useRef<Map<string, string>>(new Map());
+  useEffect(() => {
+    const prevMap = prevPanelStatusRef.current;
+    const newlyDone: string[] = [];
+    const anyStillStreaming = panels.some((p) => p.status === 'streaming' || p.status === 'waiting');
+    for (const p of panels) {
+      const prev = prevMap.get(p.slotId);
+      if (prev && prev !== 'done' && prev !== 'error' && (p.status === 'done' || p.status === 'error') && anyStillStreaming) {
+        newlyDone.push(p.slotId);
+      }
+      prevMap.set(p.slotId, p.status);
+    }
+    if (newlyDone.length > 0) {
+      setJustCompletedIds((prev) => {
+        const next = new Set(prev);
+        for (const id of newlyDone) next.add(id);
+        return next;
+      });
+      // Clear after animation completes (matches 3s CSS duration)
+      setTimeout(() => {
+        setJustCompletedIds((prev) => {
+          const next = new Set(prev);
+          for (const id of newlyDone) next.delete(id);
+          return next;
+        });
+      }, 3200);
+    }
+  }, [panels]);
+  function handleCopyPanel(panel: ArenaPanel) {
+    navigator.clipboard.writeText(panel.text).then(() => {
+      setCopiedSlotId(panel.slotId);
+      toast.success('已复制到剪贴板');
+      setTimeout(() => setCopiedSlotId(null), 2000);
+    }).catch(() => toast.error('复制失败'));
+  }
+
+  // --- Download panel text as markdown ---
+  function handleDownloadPanel(panel: ArenaPanel) {
+    const info = revealedInfos.get(panel.slotId);
+    const name = revealed && info ? info.displayName : panel.label;
+    const filename = `${name.replace(/[/\\?%*:|"<>\s]/g, '_')}.md`;
+    const header = `# ${name}\n\n`;
+    const blob = new Blob([header + panel.text], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   // --- Load a historical battle ---
   async function handleLoadBattle(battleId: string) {
     if (isStreaming) return;
@@ -973,7 +1080,7 @@ export function ArenaPage() {
           labelIndex: idx,
           status: r.status === 'error' ? 'error' : 'done',
           text: r.content || '',
-          thinking: r.thinking || '',
+          thinking: (r as any).thinking || '',
           ttftMs: r.ttftMs,
           totalMs: r.totalMs,
           errorMessage: r.errorMessage,
@@ -1014,25 +1121,45 @@ export function ArenaPage() {
   const hasBattle = panels.length > 0 || !!currentPrompt;
   const canReveal = allDone && !revealed && !revealAnimating && !revealLoading && panels.length > 0 && panels.some((p) => p.status === 'done');
 
-  // --- Sort panels: panels with content first, then by startedAt, waiting last ---
+  // --- Sort panels ---
+  // First to produce content stays left, latecomers append right.
+  // Once a panel's position is assigned it never changes — no reordering at any point.
+  const sortOrderRef = useRef<Map<string, number>>(new Map());
+
+  useEffect(() => {
+    if (panels.length === 0) {
+      sortOrderRef.current = new Map();
+      return;
+    }
+    let nextOrder = sortOrderRef.current.size;
+    for (const p of panels) {
+      if (!sortOrderRef.current.has(p.slotId)) {
+        const hasContent = (p.text?.length ?? 0) > 0 || (p.thinking?.length ?? 0) > 0 || p.status === 'error';
+        if (hasContent) {
+          sortOrderRef.current.set(p.slotId, nextOrder++);
+        }
+      }
+    }
+  }, [panels]);
+
   const sortedPanels = useMemo(() => {
     return [...panels].sort((a, b) => {
-      // Panels with content (text or error) come first
-      const aHasContent = (a.text?.length ?? 0) > 0 || (a.thinking?.length ?? 0) > 0 || a.status === 'error';
-      const bHasContent = (b.text?.length ?? 0) > 0 || (b.thinking?.length ?? 0) > 0 || b.status === 'error';
-      if (aHasContent !== bHasContent) return aHasContent ? -1 : 1;
-      // Among those with content, sort by startedAt (earliest first = responded first)
-      const aT = a.startedAt ?? Infinity;
-      const bT = b.startedAt ?? Infinity;
-      if (aT !== bT) return aT - bT;
-      return 0;
+      const aOrder = sortOrderRef.current.get(a.slotId) ?? Infinity;
+      const bOrder = sortOrderRef.current.get(b.slotId) ?? Infinity;
+      return aOrder - bOrder;
     });
   }, [panels]);
+
+  // --- Safety net: detect all panels done even if runDone event was missed ---
+  useEffect(() => {
+    if (!allDone && !isStreaming && panels.length > 0 && panels.every((p) => p.status === 'done' || p.status === 'error')) {
+      setAllDone(true);
+    }
+  }, [panels, isStreaming, allDone]);
 
   // --- Progress calculation ---
   const completedCount = panels.filter((p) => p.status === 'done' || p.status === 'error').length;
   const totalCount = panels.length;
-  const progressPct = totalCount > 0 ? (completedCount / totalCount) * 100 : 0;
   const hasActiveProgress = hasBattle && totalCount > 0 && (isStreaming || completedCount > 0);
 
   return (
@@ -1413,6 +1540,17 @@ export function ArenaPage() {
               >
                 {currentPrompt}
               </p>
+              {allDone && !isStreaming && (
+                <button
+                  onClick={handleRetry}
+                  className="flex items-center gap-1.5 px-3 h-7 rounded-lg text-[12px] transition-colors hover:bg-white/8 flex-shrink-0"
+                  style={{ color: 'var(--text-muted)', border: '1px solid rgba(255,255,255,0.08)' }}
+                  title="使用相同问题重新对战"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  重试
+                </button>
+              )}
             </div>
 
             {/* Panels Row — horizontal scroll, each card 1/3 width, sorted by activity */}
@@ -1427,17 +1565,19 @@ export function ArenaPage() {
                   ? (getAvatarUrlByModelName(info.displayName) ?? getAvatarUrlByPlatformType(info.platformName))
                   : null;
                 const isSvg = avatarUrl ? /\.svg(\?|#|$)/i.test(avatarUrl) : false;
+                const justCompleted = justCompletedIds.has(panel.slotId);
 
                 return (
                   <div
                     key={panel.slotId}
-                    className="flex-shrink-0 flex flex-col"
+                    className="flex-shrink-0 flex flex-col overflow-hidden"
                     style={{ width: 'calc(33.333% - 8px)', minWidth: '320px' }}
                   >
                     <div
                       className={cn(
-                        'flex flex-col h-full rounded-[14px] transition-transform duration-500',
-                        revealAnimating && 'scale-[0.98]'
+                        'flex flex-col h-full rounded-[14px] overflow-hidden transition-transform duration-500',
+                        revealAnimating && 'scale-[0.98]',
+                        justCompleted && 'arena-panel-done-pulse'
                       )}
                       style={{
                         background: 'rgba(255,255,255,0.03)',
@@ -1522,7 +1662,7 @@ export function ArenaPage() {
                               <ThinkingBlock thinking={panel.thinking} color={labelColor} />
                             )}
                             <div
-                              className="text-[13px] px-3 py-2 rounded-lg"
+                              className="text-[13px] px-3 py-2 rounded-lg break-all"
                               style={{ background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.9)', border: '1px solid rgba(239,68,68,0.15)' }}
                             >
                               {panel.errorMessage ?? '响应异常'}
@@ -1548,21 +1688,52 @@ export function ArenaPage() {
                         )}
                       </div>
 
-                      {/* Footer — metrics (visible after reveal) */}
-                      {(panel.status === 'done' || panel.status === 'error') && revealed && (
+                      {/* Footer — actions + metrics */}
+                      {(panel.status === 'done' || panel.status === 'error') && (
                         <div
-                          className="px-4 py-2 flex items-center gap-4 flex-shrink-0"
+                          className="px-4 py-2 flex items-center flex-shrink-0"
                         >
-                          {panel.ttftMs != null && (
-                            <div className="flex items-center gap-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                              <Clock className="w-3 h-3" />
-                              <span>TTFT: {panel.ttftMs}ms</span>
+                          {/* Metrics (visible after reveal) */}
+                          {revealed && (
+                            <div className="flex items-center gap-4 flex-1">
+                              {panel.ttftMs != null && (
+                                <div className="flex items-center gap-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                  <Clock className="w-3 h-3" />
+                                  <span>TTFT: {panel.ttftMs}ms</span>
+                                </div>
+                              )}
+                              {panel.totalMs != null && (
+                                <div className="flex items-center gap-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                  <Clock className="w-3 h-3" />
+                                  <span>总耗时: {(panel.totalMs / 1000).toFixed(1)}s</span>
+                                </div>
+                              )}
                             </div>
                           )}
-                          {panel.totalMs != null && (
-                            <div className="flex items-center gap-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                              <Clock className="w-3 h-3" />
-                              <span>总耗时: {(panel.totalMs / 1000).toFixed(1)}s</span>
+                          {!revealed && <div className="flex-1" />}
+                          {/* Copy & Download buttons — right-aligned */}
+                          {panel.text && (
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => handleCopyPanel(panel)}
+                                className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-colors hover:bg-white/8"
+                                style={{ color: 'var(--text-muted)' }}
+                                title="复制内容"
+                              >
+                                {copiedSlotId === panel.slotId
+                                  ? <Check className="w-3 h-3" style={{ color: '#10b981' }} />
+                                  : <Copy className="w-3 h-3" />}
+                                复制
+                              </button>
+                              <button
+                                onClick={() => handleDownloadPanel(panel)}
+                                className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-colors hover:bg-white/8"
+                                style={{ color: 'var(--text-muted)' }}
+                                title="下载 Markdown"
+                              >
+                                <Download className="w-3 h-3" />
+                                下载
+                              </button>
                             </div>
                           )}
                         </div>

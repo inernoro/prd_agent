@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { HeroSection } from './sections/HeroSection';
+import { HeroSection, HERO_GRADIENT } from './sections/HeroSection';
 import { AgentShowcase, agents, parseGlowColor } from './sections/AgentShowcase';
 import { FeatureBento } from './sections/FeatureBento';
 import { SocialProof } from './sections/SocialProof';
@@ -13,9 +13,9 @@ function MapLogo({ className = 'w-10 h-10' }: { className?: string }) {
     <svg className={className} viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
       <defs>
         <linearGradient id="indigoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" style={{ stopColor: '#c7d2fe', stopOpacity: 1 }} />
-          <stop offset="45%" style={{ stopColor: '#6366f1', stopOpacity: 1 }} />
-          <stop offset="100%" style={{ stopColor: '#a5b4fc', stopOpacity: 1 }} />
+          <stop offset="0%" style={{ stopColor: '#00f0ff', stopOpacity: 1 }} />
+          <stop offset="50%" style={{ stopColor: '#7c3aed', stopOpacity: 1 }} />
+          <stop offset="100%" style={{ stopColor: '#f43f5e', stopOpacity: 1 }} />
         </linearGradient>
       </defs>
       <rect x="0" y="0" width="512" height="512" rx="102" ry="102" fill="url(#indigoGradient)" />
@@ -83,7 +83,7 @@ export default function LandingPage() {
   return (
     <div
       ref={mainRef}
-      className="min-h-screen bg-[#050508] text-white overflow-x-hidden"
+      className="min-h-screen bg-[#030306] text-white overflow-x-hidden"
       style={{
         scrollBehavior: 'smooth',
       }}
@@ -98,7 +98,7 @@ export default function LandingPage() {
         <div
           className="mx-auto px-6 py-4"
           style={{
-            background: 'linear-gradient(180deg, rgba(5,5,8,0.9) 0%, rgba(5,5,8,0) 100%)',
+            background: 'linear-gradient(180deg, rgba(3,3,6,0.92) 0%, rgba(3,3,6,0) 100%)',
           }}
         >
           <div className="max-w-7xl mx-auto flex items-center justify-between">
@@ -110,16 +110,16 @@ export default function LandingPage() {
 
             {/* Nav links - desktop */}
             <div className="hidden md:flex items-center gap-8">
-              <a href="#agent-showcase" className="text-sm text-white/60 hover:text-white/90 transition-colors">
+              <a href="#agent-showcase" className="text-sm text-white/65 hover:text-white transition-colors">
                 产品
               </a>
-              <a href="#features" className="text-sm text-white/60 hover:text-white/90 transition-colors">
+              <a href="#features" className="text-sm text-white/65 hover:text-white transition-colors">
                 功能
               </a>
-              <a href="#testimonials" className="text-sm text-white/60 hover:text-white/90 transition-colors">
+              <a href="#testimonials" className="text-sm text-white/65 hover:text-white transition-colors">
                 案例
               </a>
-              <a href="#" className="text-sm text-white/60 hover:text-white/90 transition-colors">
+              <a href="#" className="text-sm text-white/65 hover:text-white transition-colors">
                 文档
               </a>
             </div>
@@ -127,10 +127,11 @@ export default function LandingPage() {
             {/* CTA button */}
             <button
               onClick={handleGetStarted}
-              className="px-5 py-2 rounded-lg text-sm font-medium transition-all duration-300 hover:scale-105"
+              className="px-5 py-2 rounded-lg text-sm font-semibold transition-all duration-300 hover:scale-105"
               style={{
-                background: 'linear-gradient(135deg, #c7d2fe 0%, #6366f1 45%, #a5b4fc 100%)',
-                color: '#0b0b0d',
+                background: HERO_GRADIENT,
+                color: '#ffffff',
+                boxShadow: '0 0 20px rgba(0, 240, 255, 0.25)',
               }}
             >
               登录 / 注册

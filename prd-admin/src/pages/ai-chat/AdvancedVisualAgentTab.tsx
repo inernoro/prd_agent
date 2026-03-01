@@ -1,7 +1,7 @@
 import JSZip from 'jszip';
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
-import { glassPanel, glassTooltip, glassInputArea, glassPopoverCompact } from '@/lib/glassStyles';
+import { glassPanel, glassTooltip, glassPopoverCompact } from '@/lib/glassStyles';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { saveVisualAgentWorkspaceViewport } from '@/services';
 import { Switch } from '@/components/design/Switch';

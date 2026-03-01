@@ -179,7 +179,7 @@ export default function ArenaConfigTab() {
           description: groupForm.description.trim() || undefined,
           sortOrder: groupForm.sortOrder,
         });
-        if (!res.success) throw new Error(res.message || '更新失败');
+        if (!res.success) throw new Error(res.error?.message || '更新失败');
         toast.success('分组已更新');
       } else {
         const res = await createArenaGroup({
@@ -188,7 +188,7 @@ export default function ArenaConfigTab() {
           description: groupForm.description.trim() || undefined,
           sortOrder: groupForm.sortOrder,
         });
-        if (!res.success) throw new Error(res.message || '创建失败');
+        if (!res.success) throw new Error(res.error?.message || '创建失败');
         toast.success('分组已创建');
       }
       setGroupDialogOpen(false);
@@ -203,7 +203,7 @@ export default function ArenaConfigTab() {
   const handleDeleteGroup = useCallback(async (groupId: string) => {
     try {
       const res = await deleteArenaGroup(groupId);
-      if (!res.success) throw new Error(res.message || '删除失败');
+      if (!res.success) throw new Error(res.error?.message || '删除失败');
       toast.success('分组已删除');
       await fetchData();
     } catch (err: any) {
@@ -275,7 +275,7 @@ export default function ArenaConfigTab() {
       const res = await updateArenaSlot(editingSlot.id, {
         displayName: editDisplayName.trim(),
       });
-      if (!res.success) throw new Error(res.message || '更新失败');
+      if (!res.success) throw new Error(res.error?.message || '更新失败');
       toast.success('槽位已更新');
       setEditDialogOpen(false);
       await fetchData();
@@ -290,7 +290,7 @@ export default function ArenaConfigTab() {
   const handleDeleteSlot = useCallback(async (slotId: string) => {
     try {
       const res = await deleteArenaSlot(slotId);
-      if (!res.success) throw new Error(res.message || '删除失败');
+      if (!res.success) throw new Error(res.error?.message || '删除失败');
       toast.success('槽位已删除');
       await fetchData();
     } catch (err: any) {
@@ -301,7 +301,7 @@ export default function ArenaConfigTab() {
   const handleToggleSlot = useCallback(async (slotId: string) => {
     try {
       const res = await toggleArenaSlot(slotId);
-      if (!res.success) throw new Error(res.message || '切换失败');
+      if (!res.success) throw new Error(res.error?.message || '切换失败');
       await fetchData();
     } catch (err: any) {
       toast.error('切换槽位状态失败', err?.message);

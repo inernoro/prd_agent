@@ -693,6 +693,25 @@ export const api = {
     },
   },
 
+  // ============ Video Agent 视频创作 ============
+  videoAgent: {
+    runs: {
+      list: () => '/api/video-agent/runs',
+      create: () => '/api/video-agent/runs',
+      byId: (runId: string) => `/api/video-agent/runs/${runId}`,
+      cancel: (runId: string) => `/api/video-agent/runs/${runId}/cancel`,
+      render: (runId: string) => `/api/video-agent/runs/${runId}/render`,
+      stream: (runId: string) => `/api/video-agent/runs/${runId}/stream`,
+      download: (runId: string, type: string) => `/api/video-agent/runs/${runId}/download/${type}`,
+    },
+    scenes: {
+      update: (runId: string, sceneIndex: number) => `/api/video-agent/runs/${runId}/scenes/${sceneIndex}`,
+      regenerate: (runId: string, sceneIndex: number) => `/api/video-agent/runs/${runId}/scenes/${sceneIndex}/regenerate`,
+      preview: (runId: string, sceneIndex: number) => `/api/video-agent/runs/${runId}/scenes/${sceneIndex}/preview`,
+      generateBg: (runId: string, sceneIndex: number) => `/api/video-agent/runs/${runId}/scenes/${sceneIndex}/generate-bg`,
+    },
+  },
+
   // ─── 移动端仪表盘 ───
   mobile: {
     feed: () => '/api/mobile/feed',
