@@ -624,11 +624,17 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
     <div className={isActive ? 'capsule-running-border' : ''}>
       <GlassCard
         animated
-        accentHue={accentHue}
         glow={isActive}
-        padding="md"
+        padding="none"
         className=""
       >
+        <div className="flex">
+          {/* 左侧色条 */}
+          <div
+            className="w-[3px] flex-shrink-0 rounded-l-[12px]"
+            style={{ background: `hsla(${accentHue}, 55%, 55%, ${status === 'completed' ? 0.5 : 0.25})` }}
+          />
+          <div className="flex-1 min-w-0 p-4">
         {/* 头部：点击展开/折叠 */}
         <div
           className="flex items-center gap-3 cursor-pointer select-none"
@@ -928,6 +934,8 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
             )}
           </div>
         )}
+          </div>{/* end flex-1 content */}
+        </div>{/* end flex row */}
       </GlassCard>
     </div>
   );
