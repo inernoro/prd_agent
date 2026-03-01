@@ -9,6 +9,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.LLM;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Api.Services;
 
@@ -25,6 +26,7 @@ public class VideoGenRunWorker : BackgroundService
     private readonly MongoDbContext _db;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IRunEventStore _runStore;
+    private readonly IAssetStorage _assetStorage;
     private readonly ILogger<VideoGenRunWorker> _logger;
     private readonly IConfiguration _configuration;
 
@@ -37,12 +39,14 @@ public class VideoGenRunWorker : BackgroundService
         MongoDbContext db,
         IServiceScopeFactory scopeFactory,
         IRunEventStore runStore,
+        IAssetStorage assetStorage,
         ILogger<VideoGenRunWorker> logger,
         IConfiguration configuration)
     {
         _db = db;
         _scopeFactory = scopeFactory;
         _runStore = runStore;
+        _assetStorage = assetStorage;
         _logger = logger;
         _configuration = configuration;
     }
@@ -416,10 +420,16 @@ public class VideoGenRunWorker : BackgroundService
             if (process.ExitCode != 0)
                 throw new InvalidOperationException($"Remotion 单场景渲染失败 (exit code {process.ExitCode}): {stderrBuilder}");
 
-            // 更新分镜的预览视频 URL（存储 API 可访问的相对路径）
-            var outputFileName = Path.GetFileName(outputMp4);
-            run.Scenes[sceneIdx].ImageUrl = $"/api/video-agent/assets/{outputFileName}";
+            // 上传渲染产物到 COS
+            var mp4Bytes = await File.ReadAllBytesAsync(outputMp4, CancellationToken.None);
+            var stored = await _assetStorage.SaveAsync(mp4Bytes, "video/mp4", CancellationToken.None,
+                domain: AppDomainPaths.DomainVideoAgent, type: AppDomainPaths.TypeVideo);
+
+            run.Scenes[sceneIdx].ImageUrl = stored.Url;
             run.Scenes[sceneIdx].ImageStatus = "done";
+
+            _logger.LogInformation("VideoGen 分镜视频已上传 COS: runId={RunId}, scene={Index}, url={Url}, size={Size}",
+                run.Id, sceneIdx, stored.Url, stored.SizeBytes);
 
             await _db.VideoGenRuns.UpdateOneAsync(
                 x => x.Id == run.Id,
@@ -586,13 +596,20 @@ public class VideoGenRunWorker : BackgroundService
         var scriptMd = GenerateScriptMarkdown(run.Scenes, run.ArticleTitle);
         var narrationDoc = GenerateNarrationDoc(run.Scenes, run.ArticleTitle);
 
-        // 2e: 完成（存储 API 可访问的 URL 而非本地路径）
-        var videoAssetApiUrl = $"/api/video-agent/assets/{Path.GetFileName(outputMp4)}";
+        // 2e: 上传完整视频到 COS
+        var videoBytes = await File.ReadAllBytesAsync(outputMp4, CancellationToken.None);
+        var videoStored = await _assetStorage.SaveAsync(videoBytes, "video/mp4", CancellationToken.None,
+            domain: AppDomainPaths.DomainVideoAgent, type: AppDomainPaths.TypeVideo);
+
+        _logger.LogInformation("VideoGen 完整视频已上传 COS: runId={RunId}, url={Url}, size={Size}",
+            run.Id, videoStored.Url, videoStored.SizeBytes);
+
+        // 2f: 完成
         await _db.VideoGenRuns.UpdateOneAsync(
             x => x.Id == run.Id,
             Builders<VideoGenRun>.Update
                 .Set(x => x.Status, VideoGenRunStatus.Completed)
-                .Set(x => x.VideoAssetUrl, videoAssetApiUrl)
+                .Set(x => x.VideoAssetUrl, videoStored.Url)
                 .Set(x => x.SrtContent, srtContent)
                 .Set(x => x.ScriptMarkdown, scriptMd)
                 .Set(x => x.NarrationDoc, narrationDoc)
@@ -603,7 +620,7 @@ public class VideoGenRunWorker : BackgroundService
 
         await PublishEventAsync(run.Id, "run.completed", new
         {
-            videoUrl = videoAssetApiUrl,
+            videoUrl = videoStored.Url,
             totalDuration = run.TotalDurationSeconds,
             scenesCount = run.Scenes.Count,
         });

@@ -655,7 +655,6 @@ export const api = {
       stream: (runId: string) => `/api/video-agent/runs/${runId}/stream`,
       download: (runId: string, type: string) => `/api/video-agent/runs/${runId}/download/${type}`,
     },
-    assets: (fileName: string) => `/api/video-agent/assets/${fileName}`,
     scenes: {
       update: (runId: string, sceneIndex: number) => `/api/video-agent/runs/${runId}/scenes/${sceneIndex}`,
       regenerate: (runId: string, sceneIndex: number) => `/api/video-agent/runs/${runId}/scenes/${sceneIndex}/regenerate`,

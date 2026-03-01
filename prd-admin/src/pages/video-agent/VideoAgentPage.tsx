@@ -910,10 +910,12 @@ export const VideoAgentPage: React.FC = () => {
                           </div>
                         ) : canShow ? (
                           <>
-                            <AuthenticatedVideo
+                            <video
                               src={scene.imageUrl!}
                               className="w-full h-full block"
                               style={{ objectFit: 'contain' }}
+                              controls
+                              preload="metadata"
                             />
                             {/* Download on hover */}
                             <div
@@ -923,19 +925,12 @@ export const VideoAgentPage: React.FC = () => {
                               <button
                                 className="p-1.5 rounded-lg"
                                 style={{ background: 'rgba(0, 0, 0, 0.6)', border: '1px solid rgba(255, 255, 255, 0.2)' }}
-                                onClick={async () => {
-                                  try {
-                                    const tk = useAuthStore.getState().token;
-                                    const fullUrl = `${import.meta.env.VITE_API_BASE_URL || ''}${scene.imageUrl!}`;
-                                    const response = await fetch(fullUrl, { headers: { Authorization: `Bearer ${tk}` } });
-                                    const blob = await response.blob();
-                                    const blobUrl = URL.createObjectURL(blob);
-                                    const link = document.createElement('a');
-                                    link.href = blobUrl;
-                                    link.download = `镜头-${idx + 1}.mp4`;
-                                    link.click();
-                                    URL.revokeObjectURL(blobUrl);
-                                  } catch { /* ignore */ }
+                                onClick={() => {
+                                  const link = document.createElement('a');
+                                  link.href = scene.imageUrl!;
+                                  link.download = `镜头-${idx + 1}.mp4`;
+                                  link.target = '_blank';
+                                  link.click();
                                 }}
                                 title="下载分镜视频"
                               >
@@ -1136,66 +1131,6 @@ const RunStatusBadge: React.FC<{ status: string }> = ({ status }) => {
     >
       {c.label}
     </span>
-  );
-};
-
-/** 通过 JWT 鉴权加载视频并创建 blob URL 供 <video> 播放 */
-const AuthenticatedVideo: React.FC<{
-  src: string;
-  className?: string;
-  style?: React.CSSProperties;
-}> = ({ src, className, style }) => {
-  const token = useAuthStore((s) => s.token);
-  const [blobUrl, setBlobUrl] = React.useState<string | null>(null);
-  const [error, setError] = React.useState(false);
-
-  React.useEffect(() => {
-    let cancelled = false;
-    let url: string | null = null;
-    setError(false);
-    setBlobUrl(null);
-
-    (async () => {
-      try {
-        const fullUrl = `${import.meta.env.VITE_API_BASE_URL || ''}${src}`;
-        const res = await fetch(fullUrl, { headers: { Authorization: `Bearer ${token}` } });
-        if (!res.ok || cancelled) { if (!cancelled) setError(true); return; }
-        const blob = await res.blob();
-        if (cancelled) return;
-        url = URL.createObjectURL(blob);
-        setBlobUrl(url);
-      } catch {
-        if (!cancelled) setError(true);
-      }
-    })();
-
-    return () => { cancelled = true; if (url) URL.revokeObjectURL(url); };
-  }, [src, token]);
-
-  if (error) {
-    return (
-      <div className="w-full h-full flex items-center justify-center text-xs" style={{ color: 'rgba(239,68,68,0.8)' }}>
-        视频加载失败
-      </div>
-    );
-  }
-
-  if (!blobUrl) {
-    return (
-      <div className="w-full h-full flex items-center justify-center">
-        <Loader2 size={20} className="animate-spin" style={{ color: 'rgba(236, 72, 153, 0.5)' }} />
-      </div>
-    );
-  }
-
-  return (
-    <video
-      src={blobUrl}
-      className={className}
-      style={style}
-      controls
-      preload="metadata"
-    />
   );
 };
 
