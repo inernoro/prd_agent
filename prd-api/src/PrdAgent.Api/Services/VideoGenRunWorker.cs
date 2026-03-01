@@ -485,6 +485,7 @@ public class VideoGenRunWorker : BackgroundService
                 }
             },
             Stream = true,
+            IncludeThinking = true,
             TimeoutSeconds = 120
         };
 
@@ -499,6 +500,7 @@ public class VideoGenRunWorker : BackgroundService
         var braceDepth = 0;
         var inString = false;
         var escapeNext = false;
+        var thinkingStarted = false;
 
         await foreach (var chunk in gateway.StreamAsync(request, CancellationToken.None))
         {
@@ -507,10 +509,32 @@ public class VideoGenRunWorker : BackgroundService
                 throw new InvalidOperationException($"LLM 分镜生成失败: {chunk.Error}");
             }
 
+            // 推送思考过程给前端实时显示
+            if (chunk.Type == GatewayChunkType.Thinking && !string.IsNullOrEmpty(chunk.Content))
+            {
+                if (!thinkingStarted)
+                {
+                    thinkingStarted = true;
+                    await PublishEventAsync(run.Id, "phase.changed", new { phase = "thinking", progress = 20 });
+                }
+                await PublishEventAsync(run.Id, "thinking.delta", new { content = chunk.Content });
+                continue;
+            }
+
             if (chunk.Type != GatewayChunkType.Text || string.IsNullOrEmpty(chunk.Content))
                 continue;
 
+            // 思考结束，开始输出文本
+            if (thinkingStarted)
+            {
+                thinkingStarted = false;
+                await PublishEventAsync(run.Id, "phase.changed", new { phase = "scripting", progress = 30 });
+            }
+
             fullText.Append(chunk.Content);
+
+            // 推送原始文本输出给前端
+            await PublishEventAsync(run.Id, "text.delta", new { content = chunk.Content });
 
             // 逐字符解析 JSON 数组中的对象
             foreach (var ch in chunk.Content)

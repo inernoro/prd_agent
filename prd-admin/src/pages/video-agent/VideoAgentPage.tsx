@@ -131,6 +131,11 @@ export const VideoAgentPage: React.FC = () => {
   // ─── Scene editing state ───
   const [editingNarrations, setEditingNarrations] = useState<Record<number, string>>({});
 
+  // ─── Streaming state (real-time thinking + text output) ───
+  const [streamingThinking, setStreamingThinking] = useState('');
+  const [streamingText, setStreamingText] = useState('');
+  const streamEndRef = useRef<HTMLDivElement>(null);
+
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const sceneListRef = useRef<HTMLDivElement>(null);
 
@@ -180,8 +185,14 @@ export const VideoAgentPage: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (selectedRunId) loadDetail(selectedRunId);
-    else setSelectedRun(null);
+    if (selectedRunId) {
+      loadDetail(selectedRunId);
+    } else {
+      setSelectedRun(null);
+    }
+    // 切换任务时重置流式状态
+    setStreamingThinking('');
+    setStreamingText('');
   }, [selectedRunId, loadDetail]);
 
   // ─── SSE / Polling ───
@@ -234,6 +245,12 @@ export const VideoAgentPage: React.FC = () => {
                   if (currentEvent === 'render.progress' && payload.percent !== undefined) {
                     setSelectedRun((prev) => prev ? { ...prev, phaseProgress: payload.percent } : prev);
                   }
+                  if (currentEvent === 'thinking.delta' && payload.content) {
+                    setStreamingThinking((prev) => prev + payload.content);
+                  }
+                  if (currentEvent === 'text.delta' && payload.content) {
+                    setStreamingText((prev) => prev + payload.content);
+                  }
                   if (currentEvent === 'scene.added' && payload.scene) {
                     // 流式分镜：实时追加新分镜到列表
                     setSelectedRun((prev) => {
@@ -253,6 +270,8 @@ export const VideoAgentPage: React.FC = () => {
                     });
                   }
                   if (currentEvent === 'script.done') {
+                    setStreamingThinking('');
+                    setStreamingText('');
                     if (selectedRunId) loadDetail(selectedRunId);
                     loadRuns();
                   }
@@ -286,6 +305,11 @@ export const VideoAgentPage: React.FC = () => {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRunId, selectedRun?.status, needsScenePolling, token, loadRuns, loadDetail]);
+
+  // ─── Auto-scroll streaming content ───
+  useEffect(() => {
+    streamEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [streamingThinking, streamingText]);
 
   // ─── Background polling: keep runs list fresh when active runs exist ───
   useEffect(() => {
@@ -614,26 +638,64 @@ export const VideoAgentPage: React.FC = () => {
                     style={{ minHeight: 200 }}
                   />
                 </div>
-              ) : isActive && selectedRun?.scenes.length === 0 ? (
-                /* Scripting progress — 用户手动点击了进行中任务时才会看到 */
-                <div className="h-full flex flex-col items-center justify-center gap-4">
-                  <Loader2 size={36} className="animate-spin" style={{ color: 'rgba(236, 72, 153, 0.7)' }} />
-                  <div className="text-center">
-                    <div className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
-                      AI 正在分析文章，生成分镜脚本...
-                    </div>
-                    <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                      {selectedRun?.currentPhase === 'scripting' ? `进度 ${selectedRun.phaseProgress}%` : '准备中'}
-                    </div>
+              ) : selectedRun && (selectedRun.status === 'Scripting' || selectedRun.status === 'Queued') ? (
+                /* Streaming display — 实时显示思考过程和 LLM 输出 */
+                <div className="h-full flex flex-col">
+                  {/* Header bar */}
+                  <div className="flex items-center gap-2 mb-2 flex-shrink-0">
+                    <Loader2 size={14} className="animate-spin" style={{ color: 'rgba(236, 72, 153, 0.7)' }} />
+                    <span className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>
+                      {streamingText
+                        ? 'AI 正在输出分镜脚本...'
+                        : streamingThinking
+                          ? 'AI 正在思考...'
+                          : '排队等待中...'}
+                    </span>
+                    <div className="flex-1" />
+                    <Button variant="secondary" size="xs" onClick={handleNewTask}>返回</Button>
+                    <Button variant="secondary" size="xs" onClick={handleCancel}>
+                      <X size={12} />
+                      取消
+                    </Button>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Button variant="secondary" onClick={handleNewTask}>
-                      返回
-                    </Button>
-                    <Button variant="secondary" onClick={handleCancel}>
-                      <X size={14} />
-                      取消任务
-                    </Button>
+
+                  {/* Streaming content */}
+                  <div className="flex-1 min-h-0 overflow-auto space-y-2">
+                    {streamingThinking && (
+                      <div>
+                        <div className="text-[11px] font-medium mb-1 flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
+                          <Sparkles size={10} />
+                          思考过程
+                        </div>
+                        <div
+                          className="text-xs leading-relaxed whitespace-pre-wrap rounded-lg p-3 max-h-[45vh] overflow-auto"
+                          style={{ background: 'rgba(147, 197, 253, 0.06)', border: '1px solid rgba(147, 197, 253, 0.12)', color: 'var(--text-secondary)' }}
+                        >
+                          {streamingThinking}
+                        </div>
+                      </div>
+                    )}
+                    {streamingText && (
+                      <div>
+                        <div className="text-[11px] font-medium mb-1 flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
+                          <FileText size={10} />
+                          输出内容
+                        </div>
+                        <div
+                          className="text-xs leading-relaxed whitespace-pre-wrap rounded-lg p-3 font-mono max-h-[45vh] overflow-auto"
+                          style={{ background: 'rgba(236, 72, 153, 0.04)', border: '1px solid rgba(236, 72, 153, 0.1)', color: 'var(--text-secondary)' }}
+                        >
+                          {streamingText}
+                        </div>
+                      </div>
+                    )}
+                    {!streamingThinking && !streamingText && (
+                      <div className="flex flex-col items-center justify-center h-32 gap-2">
+                        <Loader2 size={24} className="animate-spin" style={{ color: 'rgba(236, 72, 153, 0.4)' }} />
+                        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>等待模型响应...</span>
+                      </div>
+                    )}
+                    <div ref={streamEndRef} />
                   </div>
                 </div>
               ) : (
