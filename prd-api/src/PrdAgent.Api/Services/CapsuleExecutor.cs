@@ -726,7 +726,8 @@ public static class CapsuleExecutor
         logs.AppendLine($"Done: {allItems.Count} total items collected across {page - 1} pages");
 
         if (allItems.Count == 0)
-            logs.AppendLine($"[WARN] 采集到 0 条数据（workspace={workspaceId}, dateRange={dateRange}），下游节点将处理空数据集");
+            throw new InvalidOperationException(
+                $"采集到 0 条数据。工作空间={workspaceId}，时间范围={dateRange}（留空可获取全部数据）");
 
         var resultJson = allItems.ToJsonString();
         var artifact = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType}", resultJson, "application/json");
