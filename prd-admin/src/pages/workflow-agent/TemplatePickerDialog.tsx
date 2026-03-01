@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Loader2, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { Loader2, ShieldCheck, ShieldAlert, Copy, Check } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { WORKFLOW_TEMPLATES, type WorkflowTemplate, type TemplateInput } from './workflowTemplates';
@@ -289,12 +289,14 @@ function FieldInput({
   onBatchChange: (updates: Record<string, string>) => void;
 }) {
   const [validating, setValidating] = useState(false);
+  const [curlCopied, setCurlCopied] = useState(false);
   const [validation, setValidation] = useState<{
     valid: boolean;
     userName?: string;
     workspaces?: { id: string; name: string }[];
     bugCount?: number;
     error?: string;
+    debugCurls?: { name: string; curl: string }[];
   } | null>(null);
 
   const inputStyle: React.CSSProperties = {
@@ -361,21 +363,44 @@ function FieldInput({
           />
           {isCookieField && (
             <div className="mt-2 space-y-2">
-              <button
-                onClick={handleValidateCookie}
-                disabled={validating || !value.trim()}
-                className="flex items-center gap-1.5 h-7 px-3 rounded-[6px] text-[11px] font-medium transition-colors"
-                style={{
-                  background: validating ? 'rgba(255,255,255,0.03)' : 'rgba(99,102,241,0.1)',
-                  border: '1px solid rgba(99,102,241,0.2)',
-                  color: validating ? 'var(--text-muted)' : 'rgba(99,102,241,0.9)',
-                  cursor: validating || !value.trim() ? 'not-allowed' : 'pointer',
-                  opacity: !value.trim() ? 0.5 : 1,
-                }}
-              >
-                {validating ? <Loader2 size={12} className="animate-spin" /> : <ShieldCheck size={12} />}
-                {validating ? '验证中...' : '验证 Cookie'}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleValidateCookie}
+                  disabled={validating || !value.trim()}
+                  className="flex items-center gap-1.5 h-7 px-3 rounded-[6px] text-[11px] font-medium transition-colors"
+                  style={{
+                    background: validating ? 'rgba(255,255,255,0.03)' : 'rgba(99,102,241,0.1)',
+                    border: '1px solid rgba(99,102,241,0.2)',
+                    color: validating ? 'var(--text-muted)' : 'rgba(99,102,241,0.9)',
+                    cursor: validating || !value.trim() ? 'not-allowed' : 'pointer',
+                    opacity: !value.trim() ? 0.5 : 1,
+                  }}
+                >
+                  {validating ? <Loader2 size={12} className="animate-spin" /> : <ShieldCheck size={12} />}
+                  {validating ? '验证中...' : '验证 Cookie'}
+                </button>
+                {validation?.debugCurls && validation.debugCurls.length > 0 && (
+                  <button
+                    onClick={() => {
+                      const text = validation.debugCurls!
+                        .map((c) => `# ${c.name}\n${c.curl}`)
+                        .join('\n\n');
+                      navigator.clipboard.writeText(text);
+                      setCurlCopied(true);
+                      setTimeout(() => setCurlCopied(false), 2000);
+                    }}
+                    className="flex items-center gap-1 h-7 px-2.5 rounded-[6px] text-[11px] font-medium transition-colors"
+                    style={{
+                      background: curlCopied ? 'rgba(34,197,94,0.1)' : 'rgba(255,255,255,0.04)',
+                      border: `1px solid ${curlCopied ? 'rgba(34,197,94,0.2)' : 'rgba(255,255,255,0.1)'}`,
+                      color: curlCopied ? 'rgba(34,197,94,0.9)' : 'var(--text-muted)',
+                    }}
+                  >
+                    {curlCopied ? <Check size={11} /> : <Copy size={11} />}
+                    {curlCopied ? '已复制' : '复制 cURL'}
+                  </button>
+                )}
+              </div>
 
               {validation && (
                 <div

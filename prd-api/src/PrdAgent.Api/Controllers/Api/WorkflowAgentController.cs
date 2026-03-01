@@ -210,99 +210,112 @@ public class WorkflowAgentController : ControllerBase
         var dscMatch = System.Text.RegularExpressions.Regex.Match(cookieStr, @"dsc-token=([^;\s]+)");
         if (dscMatch.Success) dscToken = dscMatch.Groups[1].Value;
 
-        // 1. 尝试获取用户信息（验证 Cookie 有效性）
+        // 收集调试 curl 命令
+        var debugCurls = new List<object>();
+        const string ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36";
+
+        // 1. 尝试获取用户信息
         string? userName = null;
         string? userId = null;
+        string? userInfoError = null;
         try
         {
-            var userReq = new HttpRequestMessage(HttpMethod.Get, "https://www.tapd.cn/api/basic/info/get_user_info");
+            var userUrl = "https://www.tapd.cn/api/basic/info/get_user_info";
+            var userReq = new HttpRequestMessage(HttpMethod.Get, userUrl);
             userReq.Headers.Add("Cookie", cookieStr);
             userReq.Headers.Add("Accept", "application/json");
-            userReq.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+            userReq.Headers.Add("User-Agent", ua);
+
+            debugCurls.Add(new
+            {
+                name = "获取用户信息",
+                curl = $"curl -s '{userUrl}' -H 'Accept: application/json' -H 'User-Agent: {ua}' -H 'Cookie: {cookieStr}'",
+            });
 
             var userResp = await client.SendAsync(userReq, ct);
-            if (!userResp.IsSuccessStatusCode)
-            {
-                return Ok(ApiResponse<object>.Ok(new
-                {
-                    valid = false,
-                    error = $"Cookie 无效或已过期 (HTTP {(int)userResp.StatusCode})",
-                }));
-            }
-
             var userBody = await userResp.Content.ReadAsStringAsync(ct);
 
-            // TAPD 可能返回 HTML（登录页/重定向），检测非 JSON 响应
-            var trimmedBody = userBody.TrimStart();
-            if (trimmedBody.Length == 0 || (trimmedBody[0] != '{' && trimmedBody[0] != '['))
+            if (!userResp.IsSuccessStatusCode)
             {
-                _logger.LogWarning("TAPD cookie validation - got non-JSON response (first char: '{FirstChar}')", trimmedBody.Length > 0 ? trimmedBody[0] : '?');
-                return Ok(ApiResponse<object>.Ok(new
-                {
-                    valid = false,
-                    error = "Cookie 无效或已过期（TAPD 返回了非 JSON 响应，可能需要重新登录）",
-                }));
+                userInfoError = $"HTTP {(int)userResp.StatusCode}";
             }
-
-            using var userDoc = JsonDocument.Parse(userBody);
-            if (userDoc.RootElement.TryGetProperty("data", out var userData))
+            else
             {
-                if (userData.ValueKind == JsonValueKind.Object)
+                var trimmedBody = userBody.TrimStart();
+                if (trimmedBody.Length == 0 || (trimmedBody[0] != '{' && trimmedBody[0] != '['))
                 {
-                    if (userData.TryGetProperty("nick", out var nick)) userName = nick.GetString();
-                    if (userData.TryGetProperty("user_id", out var uid)) userId = uid.GetString();
+                    userInfoError = "返回了非 JSON 响应";
                 }
-                else if (userData.ValueKind == JsonValueKind.Null)
+                else
                 {
-                    // data 为 null 通常意味着 Cookie 已过期
-                    _logger.LogWarning("TAPD cookie validation - data is null, cookie likely expired");
-                    return Ok(ApiResponse<object>.Ok(new
+                    using var userDoc = JsonDocument.Parse(userBody);
+                    if (userDoc.RootElement.TryGetProperty("data", out var userData) &&
+                        userData.ValueKind == JsonValueKind.Object)
                     {
-                        valid = false,
-                        error = "Cookie 无效或已过期（用户信息返回为空，请重新登录 TAPD 获取新 Cookie）",
-                    }));
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "TAPD cookie validation - user info request failed");
-            return Ok(ApiResponse<object>.Ok(new
-            {
-                valid = false,
-                error = $"验证请求失败: {ex.Message}",
-            }));
-        }
-
-        // 2. 尝试获取工作空间列表
-        var workspaces = new List<object>();
-        try
-        {
-            var wsReq = new HttpRequestMessage(HttpMethod.Get, "https://www.tapd.cn/api/aggregation/workspaces");
-            wsReq.Headers.Add("Cookie", cookieStr);
-            wsReq.Headers.Add("Accept", "application/json");
-            wsReq.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-
-            var wsResp = await client.SendAsync(wsReq, ct);
-            if (wsResp.IsSuccessStatusCode)
-            {
-                var wsBody = await wsResp.Content.ReadAsStringAsync(ct);
-                using var wsDoc = JsonDocument.Parse(wsBody);
-                if (wsDoc.RootElement.TryGetProperty("data", out var wsData) &&
-                    wsData.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var ws in wsData.EnumerateArray())
+                        if (userData.TryGetProperty("nick", out var nick)) userName = nick.GetString();
+                        if (userData.TryGetProperty("user_id", out var uid)) userId = uid.GetString();
+                    }
+                    else
                     {
-                        var wsId = ws.TryGetProperty("workspace_id", out var wid) ? wid.GetString() : null;
-                        var wsName = ws.TryGetProperty("name", out var wn) ? wn.GetString() : null;
-                        if (wsId != null)
-                            workspaces.Add(new { id = wsId, name = wsName ?? wsId });
+                        // data 为 null 或不存在 — 用户信息不可用，但不代表 Cookie 无效
+                        userInfoError = "用户信息接口 data 为空";
+                        _logger.LogWarning("TAPD cookie validation - get_user_info data is null/missing, will try workspace API");
                     }
                 }
             }
         }
         catch (Exception ex)
         {
+            userInfoError = ex.Message;
+            _logger.LogWarning(ex, "TAPD cookie validation - user info request failed");
+        }
+
+        // 2. 尝试获取工作空间列表
+        var workspaces = new List<object>();
+        string? workspaceError = null;
+        try
+        {
+            var wsUrl = "https://www.tapd.cn/api/aggregation/workspaces";
+            var wsReq = new HttpRequestMessage(HttpMethod.Get, wsUrl);
+            wsReq.Headers.Add("Cookie", cookieStr);
+            wsReq.Headers.Add("Accept", "application/json");
+            wsReq.Headers.Add("User-Agent", ua);
+
+            debugCurls.Add(new
+            {
+                name = "获取工作空间列表",
+                curl = $"curl -s '{wsUrl}' -H 'Accept: application/json' -H 'User-Agent: {ua}' -H 'Cookie: {cookieStr}'",
+            });
+
+            var wsResp = await client.SendAsync(wsReq, ct);
+            if (wsResp.IsSuccessStatusCode)
+            {
+                var wsBody = await wsResp.Content.ReadAsStringAsync(ct);
+                var trimmedWs = wsBody.TrimStart();
+                if (trimmedWs.Length > 0 && (trimmedWs[0] == '{' || trimmedWs[0] == '['))
+                {
+                    using var wsDoc = JsonDocument.Parse(wsBody);
+                    if (wsDoc.RootElement.TryGetProperty("data", out var wsData) &&
+                        wsData.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var ws in wsData.EnumerateArray())
+                        {
+                            var wsId = ws.TryGetProperty("workspace_id", out var wid) ? wid.GetString() : null;
+                            var wsName = ws.TryGetProperty("name", out var wn) ? wn.GetString() : null;
+                            if (wsId != null)
+                                workspaces.Add(new { id = wsId, name = wsName ?? wsId });
+                        }
+                    }
+                }
+            }
+            else
+            {
+                workspaceError = $"HTTP {(int)wsResp.StatusCode}";
+            }
+        }
+        catch (Exception ex)
+        {
+            workspaceError = ex.Message;
             _logger.LogWarning(ex, "TAPD cookie validation - workspace list request failed");
         }
 
@@ -333,27 +346,39 @@ public class WorkflowAgentController : ControllerBase
                 if (!string.IsNullOrWhiteSpace(dscToken))
                     searchData["dsc_token"] = dscToken;
 
-                var countReq = new HttpRequestMessage(HttpMethod.Post, "https://www.tapd.cn/api/search_filter/search_filter/search");
+                var searchUrl = "https://www.tapd.cn/api/search_filter/search_filter/search";
+                var countReq = new HttpRequestMessage(HttpMethod.Post, searchUrl);
                 countReq.Headers.Add("Cookie", cookieStr);
                 countReq.Headers.Add("Accept", "application/json");
                 countReq.Headers.Add("Origin", "https://www.tapd.cn");
                 countReq.Headers.Add("Referer", $"https://www.tapd.cn/tapd_fe/{request.WorkspaceId}/bug/list");
-                countReq.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-                countReq.Content = new StringContent(searchData.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
+                countReq.Headers.Add("User-Agent", ua);
+                var searchBody = searchData.ToJsonString();
+                countReq.Content = new StringContent(searchBody, System.Text.Encoding.UTF8, "application/json");
+
+                debugCurls.Add(new
+                {
+                    name = "搜索缺陷（统计总数）",
+                    curl = $"curl -s -X POST '{searchUrl}' -H 'Accept: application/json' -H 'Content-Type: application/json' -H 'Origin: https://www.tapd.cn' -H 'Referer: https://www.tapd.cn/tapd_fe/{request.WorkspaceId}/bug/list' -H 'User-Agent: {ua}' -H 'Cookie: {cookieStr}' -d '{searchBody}'",
+                });
 
                 var countResp = await client.SendAsync(countReq, ct);
                 if (countResp.IsSuccessStatusCode)
                 {
                     var countBody = await countResp.Content.ReadAsStringAsync(ct);
-                    using var countDoc = JsonDocument.Parse(countBody);
-                    if (countDoc.RootElement.TryGetProperty("data", out var d) &&
-                        d.ValueKind == JsonValueKind.Object &&
-                        d.TryGetProperty("total_count", out var tc))
+                    var trimmedCount = countBody.TrimStart();
+                    if (trimmedCount.Length > 0 && (trimmedCount[0] == '{' || trimmedCount[0] == '['))
                     {
-                        if (tc.ValueKind == JsonValueKind.Number)
-                            bugCount = tc.GetInt32();
-                        else if (tc.ValueKind == JsonValueKind.String && int.TryParse(tc.GetString(), out var n))
-                            bugCount = n;
+                        using var countDoc = JsonDocument.Parse(countBody);
+                        if (countDoc.RootElement.TryGetProperty("data", out var d) &&
+                            d.ValueKind == JsonValueKind.Object &&
+                            d.TryGetProperty("total_count", out var tc))
+                        {
+                            if (tc.ValueKind == JsonValueKind.Number)
+                                bugCount = tc.GetInt32();
+                            else if (tc.ValueKind == JsonValueKind.String && int.TryParse(tc.GetString(), out var n))
+                                bugCount = n;
+                        }
                     }
                 }
             }
@@ -361,6 +386,18 @@ public class WorkflowAgentController : ControllerBase
             {
                 _logger.LogWarning(ex, "TAPD cookie validation - bug count request failed");
             }
+        }
+
+        // 判断有效性：用户信息 或 工作空间列表任一成功即视为有效
+        var isValid = userName != null || workspaces.Count > 0;
+        if (!isValid && userInfoError != null)
+        {
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                valid = false,
+                error = $"Cookie 验证失败：用户信息（{userInfoError}），工作空间（{workspaceError ?? "无数据"}）",
+                debugCurls,
+            }));
         }
 
         return Ok(ApiResponse<object>.Ok(new
@@ -371,6 +408,7 @@ public class WorkflowAgentController : ControllerBase
             hasDscToken = !string.IsNullOrWhiteSpace(dscToken),
             workspaces,
             bugCount,
+            debugCurls,
         }));
     }
 
