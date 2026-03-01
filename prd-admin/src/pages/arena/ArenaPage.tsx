@@ -31,7 +31,7 @@ import { ModelPoolPickerDialog, type SelectedModelItem } from '@/components/mode
 import type { Platform } from '@/types/admin';
 import {
   Eye, Send, Plus, Search, MessageSquare, Clock, Loader2, Swords, ChevronDown, ChevronRight, Brain,
-  Edit3, Trash2, Settings, Power,
+  Edit3, Trash2, Settings, Power, RefreshCw, Download, Copy, Check,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -954,6 +954,80 @@ export function ArenaPage() {
     }
   }
 
+  // --- Retry: re-send the same question ---
+  function handleRetry() {
+    if (isStreaming || !currentPrompt.trim()) return;
+    setPrompt(currentPrompt);
+    // Trigger send on next tick after prompt is set
+    setTimeout(() => {
+      const question = currentPrompt.trim();
+      if (!question || slots.length === 0) return;
+
+      const newLabelMap = assignLabels(slots);
+      const runSlots = slots.map((slot) => {
+        const info = newLabelMap.get(slot.id) ?? { label: '助手 ?', index: 0 };
+        return { slotId: slot.id, platformId: slot.platformId, modelId: slot.modelId, label: info.label, labelIndex: info.index };
+      });
+      const initialPanels: ArenaPanel[] = runSlots.map((s) => ({
+        slotId: s.slotId, label: s.label, labelIndex: s.labelIndex,
+        status: 'waiting' as const, text: '', thinking: '', ttftMs: null, totalMs: null, errorMessage: null, startedAt: null,
+      }));
+      setPanels(initialPanels);
+      panelsRef.current = initialPanels;
+      setCurrentPrompt(question);
+      setIsStreaming(true);
+      setAllDone(false);
+      setRevealed(false);
+      setRevealedInfos(new Map());
+      setActiveBattleId(null);
+      setPrompt('');
+      afterSeqRef.current = 0;
+
+      (async () => {
+        try {
+          const res = await createArenaRun({ prompt: question, groupKey: selectedGroupKey, slots: runSlots });
+          if (!res.success || !res.data?.runId) throw new Error(res.error?.message || '创建 Run 失败');
+          const runId = res.data.runId as string;
+          setActiveRunId(runId);
+          sessionStorage.setItem(ARENA_RUN_STORAGE_KEY, JSON.stringify({ runId, prompt: question, groupKey: selectedGroupKey, slots: runSlots }));
+          await subscribeToRunStream(runId, 0);
+        } catch (e: any) {
+          if (e?.name === 'AbortError') return;
+          toast.error('重试失败', e?.message ?? '网络错误');
+          setPanels((prev) => prev.map((p) => p.status === 'waiting' || p.status === 'streaming' ? { ...p, status: 'error', errorMessage: e?.message ?? '连接中断' } : p));
+          setIsStreaming(false);
+          sessionStorage.removeItem(ARENA_RUN_STORAGE_KEY);
+          setActiveRunId(null);
+        }
+      })();
+    }, 0);
+  }
+
+  // --- Copy panel text to clipboard ---
+  const [copiedSlotId, setCopiedSlotId] = useState<string | null>(null);
+  function handleCopyPanel(panel: ArenaPanel) {
+    navigator.clipboard.writeText(panel.text).then(() => {
+      setCopiedSlotId(panel.slotId);
+      toast.success('已复制到剪贴板');
+      setTimeout(() => setCopiedSlotId(null), 2000);
+    }).catch(() => toast.error('复制失败'));
+  }
+
+  // --- Download panel text as markdown ---
+  function handleDownloadPanel(panel: ArenaPanel) {
+    const info = revealedInfos.get(panel.slotId);
+    const name = revealed && info ? info.displayName : panel.label;
+    const filename = `${name.replace(/[/\\?%*:|"<>\s]/g, '_')}.md`;
+    const header = `# ${name}\n\n`;
+    const blob = new Blob([header + panel.text], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   // --- Load a historical battle ---
   async function handleLoadBattle(battleId: string) {
     if (isStreaming) return;
@@ -1421,6 +1495,17 @@ export function ArenaPage() {
               >
                 {currentPrompt}
               </p>
+              {allDone && !isStreaming && (
+                <button
+                  onClick={handleRetry}
+                  className="flex items-center gap-1.5 px-3 h-7 rounded-lg text-[12px] transition-colors hover:bg-white/8 flex-shrink-0"
+                  style={{ color: 'var(--text-muted)', border: '1px solid rgba(255,255,255,0.08)' }}
+                  title="使用相同问题重新对战"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  重试
+                </button>
+              )}
             </div>
 
             {/* Panels Row — horizontal scroll, each card 1/3 width, sorted by activity */}
@@ -1556,21 +1641,52 @@ export function ArenaPage() {
                         )}
                       </div>
 
-                      {/* Footer — metrics (visible after reveal) */}
-                      {(panel.status === 'done' || panel.status === 'error') && revealed && (
+                      {/* Footer — actions + metrics */}
+                      {(panel.status === 'done' || panel.status === 'error') && (
                         <div
-                          className="px-4 py-2 flex items-center gap-4 flex-shrink-0"
+                          className="px-4 py-2 flex items-center flex-shrink-0"
                         >
-                          {panel.ttftMs != null && (
-                            <div className="flex items-center gap-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                              <Clock className="w-3 h-3" />
-                              <span>TTFT: {panel.ttftMs}ms</span>
+                          {/* Metrics (visible after reveal) */}
+                          {revealed && (
+                            <div className="flex items-center gap-4 flex-1">
+                              {panel.ttftMs != null && (
+                                <div className="flex items-center gap-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                  <Clock className="w-3 h-3" />
+                                  <span>TTFT: {panel.ttftMs}ms</span>
+                                </div>
+                              )}
+                              {panel.totalMs != null && (
+                                <div className="flex items-center gap-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                  <Clock className="w-3 h-3" />
+                                  <span>总耗时: {(panel.totalMs / 1000).toFixed(1)}s</span>
+                                </div>
+                              )}
                             </div>
                           )}
-                          {panel.totalMs != null && (
-                            <div className="flex items-center gap-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                              <Clock className="w-3 h-3" />
-                              <span>总耗时: {(panel.totalMs / 1000).toFixed(1)}s</span>
+                          {!revealed && <div className="flex-1" />}
+                          {/* Copy & Download buttons — right-aligned */}
+                          {panel.text && (
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => handleCopyPanel(panel)}
+                                className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-colors hover:bg-white/8"
+                                style={{ color: 'var(--text-muted)' }}
+                                title="复制内容"
+                              >
+                                {copiedSlotId === panel.slotId
+                                  ? <Check className="w-3 h-3" style={{ color: '#10b981' }} />
+                                  : <Copy className="w-3 h-3" />}
+                                复制
+                              </button>
+                              <button
+                                onClick={() => handleDownloadPanel(panel)}
+                                className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-colors hover:bg-white/8"
+                                style={{ color: 'var(--text-muted)' }}
+                                title="下载 Markdown"
+                              >
+                                <Download className="w-3 h-3" />
+                                下载
+                              </button>
                             </div>
                           )}
                         </div>
