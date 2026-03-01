@@ -544,6 +544,28 @@ public static class WorkflowAgent
         )]
         public const string Chat = "workflow-agent.report-generator::chat";
     }
+
+    public static class ChatAssistant
+    {
+        [AppCallerMetadata(
+            "工作流-对话助手",
+            "通过自然语言对话创建和修改工作流配置，支持代码转工作流",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Workflow"
+        )]
+        public const string Chat = "workflow-agent.chat-assistant::chat";
+    }
+
+    public static class ErrorAnalyzer
+    {
+        [AppCallerMetadata(
+            "工作流-错误分析",
+            "分析工作流执行失败的原因并给出修复建议",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Workflow"
+        )]
+        public const string Chat = "workflow-agent.error-analyzer::chat";
+    }
 }
 
 /// <summary>

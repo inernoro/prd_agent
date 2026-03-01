@@ -18,8 +18,12 @@ import type {
   ListCapsuleTypesContract,
   GetCapsuleTypeContract,
   TestRunCapsuleContract,
+  GetChatHistoryContract,
+  ChatWorkflowContract,
+  AnalyzeExecutionContract,
   Workflow,
   WorkflowExecution,
+  WorkflowChatMessage,
   ShareLink,
   ExecutionArtifact,
   CapsuleTypeMeta,
@@ -176,4 +180,48 @@ export const testRunCapsuleReal: TestRunCapsuleContract = async (input) => {
     api.workflowAgent.capsules.testRun(),
     { method: 'POST', body: input }
   );
+};
+
+// ========== Chat Assistant (SSE) ==========
+
+export const getChatHistoryReal: GetChatHistoryContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input.afterSeq !== undefined) qs.set('afterSeq', String(input.afterSeq));
+  const query = qs.toString();
+  return await apiRequest<{ messages: WorkflowChatMessage[] }>(
+    api.workflowAgent.chat.history(input.workflowId) + (query ? `?${query}` : ''),
+    { method: 'GET' }
+  );
+};
+
+/** Returns raw Response for SSE streaming */
+export const chatWorkflowReal: ChatWorkflowContract = async (input) => {
+  const baseUrl = import.meta.env.VITE_API_BASE_URL || '';
+  const token = localStorage.getItem('token');
+  const res = await fetch(`${baseUrl}${api.workflowAgent.chat.fromChat()}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(input),
+  });
+  return res;
+};
+
+/** Returns raw Response for SSE streaming */
+export const analyzeExecutionReal: AnalyzeExecutionContract = async (input) => {
+  const baseUrl = import.meta.env.VITE_API_BASE_URL || '';
+  const token = localStorage.getItem('token');
+  const res = await fetch(`${baseUrl}${api.workflowAgent.chat.analyze(input.executionId)}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ instruction: input.instruction }),
+  });
+  return res;
 };

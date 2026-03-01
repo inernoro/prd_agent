@@ -148,6 +148,7 @@ public class MongoDbContext
     public IMongoCollection<WorkflowExecution> WorkflowExecutions => _database.GetCollection<WorkflowExecution>("workflow_executions");
     public IMongoCollection<WorkflowSchedule> WorkflowSchedules => _database.GetCollection<WorkflowSchedule>("workflow_schedules");
     public IMongoCollection<WorkflowSecret> WorkflowSecrets => _database.GetCollection<WorkflowSecret>("workflow_secrets");
+    public IMongoCollection<WorkflowChatMessage> WorkflowChatMessages => _database.GetCollection<WorkflowChatMessage>("workflow_chat_messages");
     public IMongoCollection<ShareLink> ShareLinks => _database.GetCollection<ShareLink>("share_links");
 
     // Webhook 通知

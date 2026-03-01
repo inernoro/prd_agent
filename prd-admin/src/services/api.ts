@@ -683,6 +683,11 @@ export const api = {
       typeByKey: (typeKey: string) => `/api/workflow-agent/capsule-types/${typeKey}`,
       testRun: () => '/api/workflow-agent/capsules/test-run',
     },
+    chat: {
+      fromChat: () => '/api/workflow-agent/workflows/from-chat',
+      history: (workflowId: string) => `/api/workflow-agent/workflows/${workflowId}/chat-history`,
+      analyze: (executionId: string) => `/api/workflow-agent/executions/${executionId}/analyze`,
+    },
   },
 
   // ─── 移动端仪表盘 ───

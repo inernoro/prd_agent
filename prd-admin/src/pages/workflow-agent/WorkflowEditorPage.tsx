@@ -4,7 +4,7 @@ import {
   Play, Loader2, CheckCircle2, AlertCircle,
   Download, FileText, ArrowLeft, Save, Plus,
   ChevronDown, ChevronRight, Settings2, XCircle,
-  Zap, FlaskConical, Trash2,
+  Zap, FlaskConical, Trash2, Wand2,
 } from 'lucide-react';
 import {
   getWorkflow, updateWorkflow, executeWorkflow, getExecution,
@@ -25,19 +25,21 @@ import {
 } from './capsuleRegistry';
 import { parseCurl, toCurl, headersToJson, prettyBody, type ParsedCurl } from './parseCurl';
 import { HttpConfigPanel } from './HttpConfigPanel';
+import { WorkflowChatPanel } from './WorkflowChatPanel';
+import type { WorkflowChatGenerated } from '@/services/contracts/workflowAgent';
 
 // ═══════════════════════════════════════════════════════════════
 // 工作流直接编辑页
 //
 // 布局：
-//   ┌────────────────────────────────────────────────┐
-//   │ TabBar (工作流名称 + 操作按钮)                 │
-//   ├──────────┬─────────────────────────────────────┤
-//   │ 左侧     │ 右侧                               │
-//   │ 舱目录   │ 已添加的舱列表 (从上至下)           │
-//   │ (可选择  │ 点击展开配置/调试/结果面板          │
-//   │  添加)   │                                     │
-//   └──────────┴─────────────────────────────────────┘
+//   ┌──────────────────────────────────────────────────────────┐
+//   │ TabBar (工作流名称 + 操作按钮 + AI助手开关)              │
+//   ├──────────┬──────────────────────────┬────────────────────┤
+//   │ 左侧     │ 中间                     │ 右侧 (可选)       │
+//   │ 舱目录   │ 已添加的舱列表           │ AI 聊天面板       │
+//   │ (可选择  │ 点击展开配置/调试/结果   │ (WorkflowChat-    │
+//   │  添加)   │                          │  Panel)           │
+//   └──────────┴──────────────────────────┴────────────────────┘
 // ═══════════════════════════════════════════════════════════════
 
 // ──── 状态映射 ────
@@ -1054,6 +1056,9 @@ export function WorkflowEditorPage() {
   // 当前会话触发的执行 ID（区分「本次操作」vs「历史执行」）
   const [currentSessionExecId, setCurrentSessionExecId] = useState<string | null>(null);
 
+  // AI 聊天面板
+  const [showChatPanel, setShowChatPanel] = useState(false);
+
   // 轮询
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fetchedNodesRef = useRef(new Set<string>());
@@ -1333,6 +1338,29 @@ export function WorkflowEditorPage() {
     }
   }
 
+  // ── AI 聊天面板回调 ──
+
+  function handleApplyWorkflow(generated: WorkflowChatGenerated, newWorkflowId?: string) {
+    if (newWorkflowId && newWorkflowId !== workflowId) {
+      // 新建的工作流 — 跳转到对应的编辑页
+      navigate(`/workflow-agent/${newWorkflowId}`);
+      return;
+    }
+    // 修改现有工作流 — 更新节点/边/变量
+    setWorkflow((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        name: generated.name ?? prev.name,
+        description: generated.description ?? prev.description,
+        nodes: generated.nodes ?? prev.nodes,
+        edges: generated.edges ?? prev.edges,
+        variables: generated.variables ?? prev.variables,
+      };
+    });
+    setDirty(true);
+  }
+
   // ── UI helpers ──
 
   const isRunning = !!(latestExec && ['queued', 'running'].includes(latestExec.status));
@@ -1434,6 +1462,14 @@ export function WorkflowEditorPage() {
               {dirty ? '保存*' : '已保存'}
             </Button>
             <Button
+              variant={showChatPanel ? 'primary' : 'secondary'}
+              size="xs"
+              onClick={() => setShowChatPanel((v) => !v)}
+            >
+              <Wand2 className="w-3.5 h-3.5" />
+              AI 助手
+            </Button>
+            <Button
               variant="ghost"
               size="xs"
               onClick={() => navigate('/workflow-agent')}
@@ -1462,7 +1498,7 @@ export function WorkflowEditorPage() {
           />
         </div>
 
-        {/* 右侧：已添加的舱列表 + 变量配置 */}
+        {/* 中间：已添加的舱列表 + 变量配置 */}
         <div className="flex-1 overflow-y-auto">
           <div className="px-5 py-4 space-y-4 max-w-3xl">
             {/* 变量配置区 (折叠) */}
@@ -1575,6 +1611,15 @@ export function WorkflowEditorPage() {
             )}
           </div>
         </div>
+
+        {/* 右侧：AI 聊天面板 */}
+        {showChatPanel && (
+          <WorkflowChatPanel
+            workflowId={workflowId}
+            onApplyWorkflow={handleApplyWorkflow}
+            onClose={() => setShowChatPanel(false)}
+          />
+        )}
       </div>
     </div>
   );
