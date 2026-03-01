@@ -305,6 +305,81 @@ public static class CapsuleExecutor
         return new CapsuleResult(new List<ExecutionArtifact> { dataArtifact, metaArtifact }, logs);
     }
 
+    /// <summary>
+    /// 估算 Token 数（粗略：每 3 字节约 1 token，中英文混合场景）。
+    /// 这是一个保守估计，用于避免超出模型上下文限制。
+    /// </summary>
+    private static int EstimateTokens(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return 0;
+        return Encoding.UTF8.GetByteCount(text) / 3;
+    }
+
+    /// <summary>
+    /// Token 感知截断：如果输入文本超出 Token 预算，智能截断。
+    /// 对 JSON 数组数据，按条目截断而非粗暴截断字符串。
+    /// </summary>
+    private static (string truncated, int originalTokens, bool wasTruncated) TruncateToTokenBudget(
+        string text, int tokenBudget, StringBuilder logs)
+    {
+        var estimatedTokens = EstimateTokens(text);
+        if (estimatedTokens <= tokenBudget)
+            return (text, estimatedTokens, false);
+
+        logs.AppendLine($"  ⚠️ 输入数据过大: 估算 {estimatedTokens} tokens，超出预算 {tokenBudget} tokens，将智能截断");
+
+        // 尝试 JSON 数组截断：保留前 N 条 + 统计摘要
+        var trimmed = text.TrimStart();
+        if (trimmed.StartsWith("["))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(text);
+                if (doc.RootElement.ValueKind == JsonValueKind.Array)
+                {
+                    var totalItems = doc.RootElement.GetArrayLength();
+                    var items = new List<string>();
+                    var currentTokens = 200; // 预留给包裹和摘要
+                    var includedCount = 0;
+
+                    foreach (var elem in doc.RootElement.EnumerateArray())
+                    {
+                        var itemJson = elem.GetRawText();
+                        var itemTokens = EstimateTokens(itemJson);
+                        if (currentTokens + itemTokens > tokenBudget) break;
+                        items.Add(itemJson);
+                        currentTokens += itemTokens;
+                        includedCount++;
+                    }
+
+                    var truncatedJson = $"[{string.Join(",", items)}]";
+                    var summary = $"\n\n/* 注意: 原始数据共 {totalItems} 条，因 Token 限制仅包含前 {includedCount} 条。请基于现有数据进行分析。 */";
+                    logs.AppendLine($"  JSON 数组截断: {totalItems} 条 → {includedCount} 条 (约 {currentTokens} tokens)");
+
+                    return (truncatedJson + summary, currentTokens, true);
+                }
+            }
+            catch { /* 不是有效 JSON，使用文本截断 */ }
+        }
+
+        // 文本截断：按字节预算截取
+        var targetBytes = tokenBudget * 3;
+        var bytes = Encoding.UTF8.GetBytes(text);
+        if (targetBytes >= bytes.Length)
+            return (text, estimatedTokens, false);
+
+        // 安全截断（避免截断 UTF-8 多字节字符）
+        var truncatedText = Encoding.UTF8.GetString(bytes, 0, Math.Min(targetBytes, bytes.Length));
+        // 找到最后一个完整字符的位置
+        if (truncatedText.Length > 0 && char.IsHighSurrogate(truncatedText[^1]))
+            truncatedText = truncatedText[..^1];
+
+        truncatedText += $"\n\n/* 注意: 原始文本共 {text.Length} 字符，因 Token 限制已截断至约 {truncatedText.Length} 字符。 */";
+        logs.AppendLine($"  文本截断: {text.Length} chars → {truncatedText.Length} chars");
+
+        return (truncatedText, tokenBudget, true);
+    }
+
     public static async Task<CapsuleResult> ExecuteLlmAnalyzerAsync(
         IServiceProvider sp, WorkflowNode node, Dictionary<string, string> variables, List<ExecutionArtifact> inputArtifacts)
     {
@@ -315,15 +390,36 @@ public static class CapsuleExecutor
         var systemPrompt = ReplaceVariables(GetConfigString(node, "systemPrompt") ?? "", variables);
         var userPromptTemplate = ReplaceVariables(GetConfigString(node, "userPromptTemplate") ?? "", variables);
         var temperature = double.TryParse(GetConfigString(node, "temperature"), out var t) ? t : 0.3;
+        // Token 预算：为系统提示词和输出预留空间，默认限制输入在 80K tokens 以内
+        var maxInputTokens = int.TryParse(GetConfigString(node, "maxInputTokens"), out var mit) ? mit : 80000;
+
+        var llmLogs = new StringBuilder();
+        llmLogs.AppendLine($"[LLM 分析器] 节点: {node.Name}");
+        llmLogs.AppendLine($"  AppCallerCode: {PrdAgent.Core.Models.AppCallerRegistry.WorkflowAgent.LlmAnalyzer.Chat}");
 
         // 将输入产物内容拼接为 inputText
         var inputText = "";
+        var inputMimeType = "text/plain";
         if (inputArtifacts.Count > 0)
         {
             inputText = string.Join("\n---\n", inputArtifacts
                 .Where(a => !string.IsNullOrWhiteSpace(a.InlineContent))
                 .Select(a => $"[{a.Name}]\n{a.InlineContent}"));
+            // 保留首个非空输入的 mimeType（用于回退场景）
+            inputMimeType = inputArtifacts.FirstOrDefault(a => !string.IsNullOrWhiteSpace(a.InlineContent))?.MimeType ?? "text/plain";
         }
+
+        llmLogs.AppendLine($"  InputArtifacts: {inputArtifacts.Count} 个, 总 {inputArtifacts.Sum(a => a.SizeBytes)} bytes");
+        llmLogs.AppendLine($"  原始 InputText: {inputText.Length} chars (估算 {EstimateTokens(inputText)} tokens)");
+
+        // Token 感知截断：避免超出模型上下文限制
+        var systemTokens = EstimateTokens(systemPrompt);
+        var templateTokens = EstimateTokens(userPromptTemplate);
+        var dataTokenBudget = maxInputTokens - systemTokens - templateTokens - 500; // 500 tokens 预留
+        if (dataTokenBudget < 1000) dataTokenBudget = 1000;
+
+        var (truncatedInput, actualTokens, wasTruncated) = TruncateToTokenBudget(inputText, dataTokenBudget, llmLogs);
+        if (wasTruncated) inputText = truncatedInput;
 
         // 替换 userPromptTemplate 中的 {{input}} 占位符
         var userContent = userPromptTemplate;
@@ -364,12 +460,9 @@ public static class CapsuleExecutor
             }
         };
 
-        var llmLogs = new StringBuilder();
-        llmLogs.AppendLine($"[LLM 分析器] 节点: {node.Name}");
-        llmLogs.AppendLine($"  AppCallerCode: {request.AppCallerCode}");
-        llmLogs.AppendLine($"  SystemPrompt: {(systemPrompt.Length > 80 ? systemPrompt[..80] + "..." : systemPrompt)}");
-        llmLogs.AppendLine($"  UserPrompt: {(userContent.Length > 120 ? userContent[..120] + "..." : userContent)}");
-        llmLogs.AppendLine($"  InputArtifacts: {inputArtifacts.Count} 个, 总 {inputArtifacts.Sum(a => a.SizeBytes)} bytes");
+        llmLogs.AppendLine($"  SystemPrompt ({systemPrompt.Length} chars): {(systemPrompt.Length > 300 ? systemPrompt[..300] + "..." : systemPrompt)}");
+        llmLogs.AppendLine($"  UserPrompt ({userContent.Length} chars): {(userContent.Length > 500 ? userContent[..500] + "..." : userContent)}");
+        llmLogs.AppendLine($"  总估算 Tokens: system={systemTokens} + user={EstimateTokens(userContent)} = {systemTokens + EstimateTokens(userContent)}");
         llmLogs.AppendLine($"  Temperature: {temperature}");
         llmLogs.AppendLine("  --- 调用 LLM Gateway ---");
 
@@ -383,13 +476,25 @@ public static class CapsuleExecutor
         llmLogs.AppendLine($"  Model: {model}");
         llmLogs.AppendLine($"  Tokens: input={inputTokens} output={outputTokens}");
         llmLogs.AppendLine($"  ResolutionType: {response.Resolution?.ResolutionType}");
-        llmLogs.AppendLine($"  Response: {content.Length} chars");
-        if (string.IsNullOrWhiteSpace(content))
-            llmLogs.AppendLine("  ⚠️ 警告: LLM 返回内容为空，可能是模型调度失败或配额不足");
-        else
-            llmLogs.AppendLine($"  Preview: {(content.Length > 200 ? content[..200] + "..." : content)}");
 
-        // 若 LLM 返回空内容，使用输入数据的摘要作为回退，避免产出完全空的产物
+        // 记录 Gateway 错误信息
+        if (!string.IsNullOrWhiteSpace(response.ErrorCode) || !string.IsNullOrWhiteSpace(response.ErrorMessage))
+        {
+            llmLogs.AppendLine($"  ❌ Gateway 错误: [{response.ErrorCode}] {response.ErrorMessage}");
+            llmLogs.AppendLine($"  HTTP Status: {response.StatusCode}");
+        }
+
+        llmLogs.AppendLine($"  LLM 响应 ({content.Length} chars): {(content.Length > 500 ? content[..500] + "..." : content)}");
+
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            var reason = !string.IsNullOrWhiteSpace(response.ErrorMessage)
+                ? $"Gateway 错误: {response.ErrorMessage}"
+                : "可能是模型调度失败或配额不足";
+            llmLogs.AppendLine($"  ⚠️ 警告: LLM 返回内容为空 ({reason})");
+        }
+
+        // 若 LLM 返回空内容，使用输入数据作为回退
         if (string.IsNullOrWhiteSpace(content) && inputArtifacts.Count > 0)
         {
             llmLogs.AppendLine("  ⚠️ LLM 返回空内容，使用输入数据直通作为回退");
@@ -398,7 +503,9 @@ public static class CapsuleExecutor
                 .Select(a => a.InlineContent!));
         }
 
-        var artifact = MakeTextArtifact(node, "llm-output", "分析结果", content);
+        // 回退时保留输入数据的 mimeType
+        var artifactMime = !string.IsNullOrWhiteSpace(response.Content) ? "text/plain" : inputMimeType;
+        var artifact = MakeTextArtifact(node, "llm-output", "分析结果", content, artifactMime);
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, llmLogs.ToString());
     }
 
@@ -1072,10 +1179,28 @@ public static class CapsuleExecutor
 
         var reportTemplate = ReplaceVariables(GetConfigString(node, "reportTemplate") ?? "", variables);
         var format = GetConfigString(node, "format") ?? "markdown";
+        var maxInputTokens = int.TryParse(GetConfigString(node, "maxInputTokens"), out var mit) ? mit : 80000;
+
+        var reportLogs = new StringBuilder();
+        reportLogs.AppendLine($"[报告生成器] 节点: {node.Name}");
+        reportLogs.AppendLine($"  Format: {format}");
+        reportLogs.AppendLine($"  InputArtifacts: {inputArtifacts.Count} 个");
+        foreach (var ia in inputArtifacts)
+            reportLogs.AppendLine($"    - [{ia.Name}] SlotId={ia.SlotId} InlineContent={ia.InlineContent?.Length ?? 0} chars, SizeBytes={ia.SizeBytes}");
 
         var inputText = string.Join("\n---\n", inputArtifacts
             .Where(a => !string.IsNullOrWhiteSpace(a.InlineContent))
             .Select(a => $"[{a.Name}]\n{a.InlineContent}"));
+
+        reportLogs.AppendLine($"  原始 InputText: {inputText.Length} chars (估算 {EstimateTokens(inputText)} tokens)");
+
+        // Token 感知截断
+        var templateTokens = EstimateTokens(reportTemplate);
+        var dataTokenBudget = maxInputTokens - templateTokens - 500;
+        if (dataTokenBudget < 1000) dataTokenBudget = 1000;
+
+        var (truncatedInput, _, wasTruncated) = TruncateToTokenBudget(inputText, dataTokenBudget, reportLogs);
+        if (wasTruncated) inputText = truncatedInput;
 
         var prompt = string.IsNullOrWhiteSpace(reportTemplate)
             ? $"请根据以下数据生成{format}格式的报告：\n\n{inputText}"
@@ -1098,14 +1223,8 @@ public static class CapsuleExecutor
             }
         };
 
-        var reportLogs = new StringBuilder();
-        reportLogs.AppendLine($"[报告生成器] 节点: {node.Name}");
-        reportLogs.AppendLine($"  Format: {format}");
-        reportLogs.AppendLine($"  InputArtifacts: {inputArtifacts.Count} 个");
-        foreach (var ia in inputArtifacts)
-            reportLogs.AppendLine($"    - [{ia.Name}] SlotId={ia.SlotId} InlineContent={ia.InlineContent?.Length ?? 0} chars, SizeBytes={ia.SizeBytes}");
-        reportLogs.AppendLine($"  InputText: {inputText.Length} chars");
-        reportLogs.AppendLine($"  ReportTemplate: {(reportTemplate.Length > 100 ? reportTemplate[..100] + "..." : reportTemplate)}");
+        reportLogs.AppendLine($"  ReportTemplate ({reportTemplate.Length} chars): {(reportTemplate.Length > 300 ? reportTemplate[..300] + "..." : reportTemplate)}");
+        reportLogs.AppendLine($"  Prompt 总长: {prompt.Length} chars (估算 {EstimateTokens(prompt)} tokens)");
         reportLogs.AppendLine("  --- 调用 LLM Gateway ---");
 
         var response = await gateway.SendAsync(request, CancellationToken.None);
@@ -1113,11 +1232,24 @@ public static class CapsuleExecutor
 
         reportLogs.AppendLine($"  Model: {response.Resolution?.ActualModel ?? "(unknown)"}");
         reportLogs.AppendLine($"  Tokens: input={response.TokenUsage?.InputTokens ?? 0} output={response.TokenUsage?.OutputTokens ?? 0}");
-        reportLogs.AppendLine($"  Output: {content.Length} chars ({format})");
+        reportLogs.AppendLine($"  ResolutionType: {response.Resolution?.ResolutionType}");
+
+        // 记录 Gateway 错误信息
+        if (!string.IsNullOrWhiteSpace(response.ErrorCode) || !string.IsNullOrWhiteSpace(response.ErrorMessage))
+        {
+            reportLogs.AppendLine($"  ❌ Gateway 错误: [{response.ErrorCode}] {response.ErrorMessage}");
+            reportLogs.AppendLine($"  HTTP Status: {response.StatusCode}");
+        }
+
+        reportLogs.AppendLine($"  LLM 响应 ({content.Length} chars): {(content.Length > 500 ? content[..500] + "..." : content)}");
+
         if (string.IsNullOrWhiteSpace(content))
-            reportLogs.AppendLine("  ⚠️ 警告: 报告内容为空，可能是 LLM 调度失败");
-        else
-            reportLogs.AppendLine($"  Preview: {(content.Length > 200 ? content[..200] + "..." : content)}");
+        {
+            var reason = !string.IsNullOrWhiteSpace(response.ErrorMessage)
+                ? $"Gateway 错误: {response.ErrorMessage}"
+                : "可能是 LLM 调度失败";
+            reportLogs.AppendLine($"  ⚠️ 警告: 报告内容为空 ({reason})");
+        }
 
         var mimeType = format == "html" ? "text/html" : "text/markdown";
         var artifact = MakeTextArtifact(node, "report", "报告", content, mimeType);

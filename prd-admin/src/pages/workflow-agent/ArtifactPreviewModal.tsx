@@ -17,9 +17,12 @@ export function ArtifactPreviewModal({ artifact, onClose }: ArtifactPreviewModal
   const isHtml = artifact.mimeType === 'text/html';
   const isJson = artifact.mimeType === 'application/json';
 
-  // 检测是否为 JSON 数组（TAPD bugs 等表格数据）
+  // 检测是否为 JSON 数组（TAPD bugs 等表格数据），不依赖 mimeType
   const jsonArray = useMemo<Record<string, unknown>[] | null>(() => {
-    if (!isJson || !content) return null;
+    if (!content) return null;
+    const trimmed = content.trimStart();
+    // 快速检测：内容必须以 [ 开头才可能是 JSON 数组
+    if (!trimmed.startsWith('[')) return null;
     try {
       const parsed = JSON.parse(content);
       if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === 'object' && parsed[0] !== null) {
@@ -27,7 +30,7 @@ export function ArtifactPreviewModal({ artifact, onClose }: ArtifactPreviewModal
       }
     } catch { /* ignore */ }
     return null;
-  }, [isJson, content]);
+  }, [content]);
 
   // 表格列：从数据中提取所有 key
   const columns = useMemo(() => {
@@ -305,7 +308,7 @@ export function ArtifactPreviewModal({ artifact, onClose }: ArtifactPreviewModal
             />
           )}
 
-          {content && (viewMode === 'raw' && !jsonArray) && (isMarkdown || isHtml) && (
+          {content && viewMode === 'raw' && !jsonArray && (isMarkdown || isHtml) && (
             <pre
               className="text-[12px] font-mono leading-relaxed p-4 rounded-xl overflow-auto whitespace-pre-wrap"
               style={{
@@ -318,7 +321,7 @@ export function ArtifactPreviewModal({ artifact, onClose }: ArtifactPreviewModal
             </pre>
           )}
 
-          {content && viewMode === 'preview' && !isMarkdown && !isHtml && !isJson && (
+          {content && viewMode === 'preview' && !isMarkdown && !isHtml && !isJson && !jsonArray && (
             <pre
               className="text-[12px] font-mono leading-relaxed p-4 rounded-xl overflow-auto whitespace-pre-wrap"
               style={{

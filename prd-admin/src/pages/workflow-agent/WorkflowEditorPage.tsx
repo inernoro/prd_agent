@@ -1242,23 +1242,26 @@ export function WorkflowEditorPage() {
     const nodeName = workflow?.nodes.find(n => n.nodeId === nodeId)?.name
       || latestExec?.nodeExecutions.find(n => n.nodeId === nodeId)?.nodeName
       || nodeId;
-    // 解析后端日志中的关键信息
+    // 解析后端日志：几乎所有非空行都注入（除了标题行 [xxx]）
     if (logs) {
       const lines = logs.split('\n').filter(l => l.trim());
       for (const line of lines) {
         const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith('[') && trimmed.endsWith(']')) continue;
-        // 关键信息行
-        if (trimmed.startsWith('Model:') || trimmed.startsWith('Tokens:') ||
-            trimmed.startsWith('InputArtifacts:') || trimmed.startsWith('InputText:') ||
-            trimmed.startsWith('Response:') || trimmed.startsWith('Output:') ||
-            trimmed.startsWith('Content:') || trimmed.startsWith('FileName:') ||
-            trimmed.startsWith('Format:') || trimmed.startsWith('Preview:') ||
-            trimmed.startsWith('ResolutionType:') || trimmed.startsWith('AppCallerCode:') ||
-            trimmed.includes('⚠️')) {
-          const level = trimmed.includes('⚠️') ? 'warn' as const : 'info' as const;
-          addLog(level, trimmed, { nodeId, nodeName });
+        if (!trimmed) continue;
+        // 跳过标题行（如 "[LLM 分析器] 节点: xxx"）
+        if (trimmed.startsWith('[') && trimmed.includes(']') && trimmed.includes('节点:')) continue;
+        // 跳过分隔线
+        if (trimmed === '--- 调用 LLM Gateway ---') {
+          addLog('info', '调用 LLM Gateway...', { nodeId, nodeName });
+          continue;
         }
+        // 错误行
+        const level = (trimmed.includes('⚠️') || trimmed.includes('警告'))
+          ? 'warn' as const
+          : trimmed.includes('❌')
+            ? 'error' as const
+            : 'info' as const;
+        addLog(level, trimmed, { nodeId, nodeName });
       }
     }
     // 产物摘要
