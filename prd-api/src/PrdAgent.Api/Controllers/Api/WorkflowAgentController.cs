@@ -247,8 +247,21 @@ public class WorkflowAgentController : ControllerBase
             using var userDoc = JsonDocument.Parse(userBody);
             if (userDoc.RootElement.TryGetProperty("data", out var userData))
             {
-                if (userData.TryGetProperty("nick", out var nick)) userName = nick.GetString();
-                if (userData.TryGetProperty("user_id", out var uid)) userId = uid.GetString();
+                if (userData.ValueKind == JsonValueKind.Object)
+                {
+                    if (userData.TryGetProperty("nick", out var nick)) userName = nick.GetString();
+                    if (userData.TryGetProperty("user_id", out var uid)) userId = uid.GetString();
+                }
+                else if (userData.ValueKind == JsonValueKind.Null)
+                {
+                    // data 为 null 通常意味着 Cookie 已过期
+                    _logger.LogWarning("TAPD cookie validation - data is null, cookie likely expired");
+                    return Ok(ApiResponse<object>.Ok(new
+                    {
+                        valid = false,
+                        error = "Cookie 无效或已过期（用户信息返回为空，请重新登录 TAPD 获取新 Cookie）",
+                    }));
+                }
             }
         }
         catch (Exception ex)
@@ -334,6 +347,7 @@ public class WorkflowAgentController : ControllerBase
                     var countBody = await countResp.Content.ReadAsStringAsync(ct);
                     using var countDoc = JsonDocument.Parse(countBody);
                     if (countDoc.RootElement.TryGetProperty("data", out var d) &&
+                        d.ValueKind == JsonValueKind.Object &&
                         d.TryGetProperty("total_count", out var tc))
                     {
                         if (tc.ValueKind == JsonValueKind.Number)
