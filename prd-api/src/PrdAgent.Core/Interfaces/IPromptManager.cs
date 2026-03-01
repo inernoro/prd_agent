@@ -16,6 +16,9 @@ public interface IPromptManager
     /// </summary>
     string BuildPrdContextMessage(string prdContent);
 
+    /// <summary>构建多文档 PRD 上下文消息</summary>
+    string BuildMultiPrdContextMessage(List<ParsedPrd> documents);
+
     /// <summary>获取引导大纲</summary>
     List<GuideOutlineItem> GetGuideOutline(UserRole role);
 

@@ -16,8 +16,21 @@ public class Session
     /// </summary>
     public string? OwnerUserId { get; set; }
     
-    /// <summary>关联的文档ID</summary>
+    /// <summary>关联的文档ID（主文档，向后兼容）</summary>
     public string DocumentId { get; set; } = string.Empty;
+
+    /// <summary>关联的文档ID列表（多文档支持；为空时回退到 DocumentId）</summary>
+    public List<string> DocumentIds { get; set; } = new();
+
+    /// <summary>获取所有关联的文档ID（优先 DocumentIds，回退 DocumentId 兼容旧数据）</summary>
+    public List<string> GetAllDocumentIds()
+    {
+        if (DocumentIds.Count > 0)
+            return DocumentIds;
+        if (!string.IsNullOrEmpty(DocumentId))
+            return new List<string> { DocumentId };
+        return new List<string>();
+    }
 
     /// <summary>会话标题（可选：用于 IM 形态的会话列表展示）</summary>
     public string? Title { get; set; }

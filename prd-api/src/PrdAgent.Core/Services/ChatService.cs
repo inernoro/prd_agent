@@ -100,9 +100,15 @@ public class ChatService : IChatService
         // 回答机器人/提示词选择角色：优先使用调用方传入（例如按群成员身份决定），否则回退到 session 的 CurrentRole（兼容历史）。
         var effectiveAnswerRole = answerAsRole ?? session.CurrentRole;
 
-        // 获取文档
-        var document = await _documentService.GetByIdAsync(session.DocumentId);
-        if (document == null)
+        // 获取文档（多文档支持）
+        var allDocIds = session.GetAllDocumentIds();
+        var documents = new List<ParsedPrd>();
+        foreach (var docId in allDocIds)
+        {
+            var doc = await _documentService.GetByIdAsync(docId);
+            if (doc != null) documents.Add(doc);
+        }
+        if (documents.Count == 0)
         {
             yield return new ChatStreamEvent
             {
@@ -112,6 +118,8 @@ public class ChatService : IChatService
             };
             yield break;
         }
+        // 主文档（用于兼容需要单文档引用的场景：hash、charCount 等）
+        var document = documents[0];
 
         // 获取发送者信息
         SenderInfo? senderInfo = null;
@@ -198,8 +206,8 @@ public class ChatService : IChatService
         // 获取对话历史（disableGroupContext=true 时跳过，仅使用系统提示词+PRD+当前消息）
         var messages = new List<LLMMessage>
         {
-            // 首条 user message：PRD 资料（日志侧会按标记脱敏，不落库 PRD 原文）
-            new() { Role = "user", Content = _promptManager.BuildPrdContextMessage(document.RawContent) }
+            // 首条 user message：PRD 资料（多文档合并；日志侧会按标记脱敏，不落库 PRD 原文）
+            new() { Role = "user", Content = _promptManager.BuildMultiPrdContextMessage(documents) }
         };
         if (!disableGroupContext)
         {
@@ -239,7 +247,7 @@ public class ChatService : IChatService
             SessionId: sessionId,
             UserId: userId,
             ViewRole: effectiveAnswerRole.ToString(),
-            DocumentChars: document.RawContent?.Length ?? 0,
+            DocumentChars: documents.Sum(d => d.RawContent?.Length ?? 0),
             DocumentHash: docHash,
             SystemPromptRedacted: systemPromptRedacted,
             RequestType: "reasoning",

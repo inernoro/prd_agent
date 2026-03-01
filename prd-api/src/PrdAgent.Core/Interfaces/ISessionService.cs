@@ -25,9 +25,15 @@ public interface ISessionService
     /// <summary>刷新会话活跃时间</summary>
     Task RefreshActivityAsync(string sessionId);
     
+    /// <summary>向会话追加文档</summary>
+    Task<Session> AddDocumentAsync(string sessionId, string documentId);
+
+    /// <summary>从会话移除文档</summary>
+    Task<Session> RemoveDocumentAsync(string sessionId, string documentId);
+
     /// <summary>删除会话</summary>
     Task DeleteAsync(string sessionId);
-    
+
     /// <summary>清理过期会话</summary>
     Task CleanupExpiredSessionsAsync();
 }

@@ -23,3 +23,12 @@ public class UploadDocumentRequest
         return (true, null);
     }
 }
+
+/// <summary>
+/// 向会话追加文档请求
+/// </summary>
+public class AddDocumentToSessionRequest
+{
+    /// <summary>Markdown文档内容</summary>
+    public string Content { get; set; } = string.Empty;
+}

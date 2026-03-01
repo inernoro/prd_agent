@@ -6,6 +6,7 @@ using PrdAgent.Api.Models.Requests;
 using PrdAgent.Api.Models.Responses;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Controllers;
@@ -19,15 +20,18 @@ namespace PrdAgent.Api.Controllers;
 public class SessionsController : ControllerBase
 {
     private readonly ISessionService _sessionService;
+    private readonly IDocumentService _documentService;
     private readonly MongoDbContext _db;
     private readonly ILogger<SessionsController> _logger;
 
     public SessionsController(
         ISessionService sessionService,
+        IDocumentService documentService,
         MongoDbContext db,
         ILogger<SessionsController> logger)
     {
         _sessionService = sessionService;
+        _documentService = documentService;
         _db = db;
         _logger = logger;
     }
@@ -315,6 +319,101 @@ public class SessionsController : ControllerBase
         return Ok(ApiResponse<SessionResponse>.Ok(MapToResponse(updated)));
     }
 
+    /// <summary>
+    /// 向会话追加文档（多文档支持）
+    /// </summary>
+    [HttpPost("{sessionId}/documents")]
+    [ProducesResponseType(typeof(ApiResponse<SessionResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> AddDocument(string sessionId, [FromBody] AddDocumentToSessionRequest request, CancellationToken ct = default)
+    {
+        var userId = GetUserId(User);
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Content))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文档内容不能为空"));
+        }
+
+        // 内容验证
+        var validationResult = DocumentValidator.Validate(request.Content);
+        if (!validationResult.IsValid)
+        {
+            return BadRequest(ApiResponse<object>.Fail(
+                validationResult.ErrorCode!,
+                validationResult.ErrorMessage!));
+        }
+
+        var session = await _sessionService.GetByIdAsync(sessionId);
+        if (session == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.SESSION_NOT_FOUND, "会话不存在"));
+        }
+
+        var canAccess = await CanAccessSessionAsync(session, userId, ct);
+        if (!canAccess)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+        }
+
+        // 解析并保存文档
+        var parsed = await _documentService.ParseAsync(request.Content);
+        await _documentService.SaveAsync(parsed);
+
+        // 追加到会话
+        var updated = await _sessionService.AddDocumentAsync(sessionId, parsed.Id);
+
+        _logger.LogInformation("Document added to session {SessionId}: {Title}, Chars: {Chars}",
+            sessionId, parsed.Title, parsed.CharCount);
+
+        return Ok(ApiResponse<SessionResponse>.Ok(MapToResponse(updated)));
+    }
+
+    /// <summary>
+    /// 从会话移除文档
+    /// </summary>
+    [HttpDelete("{sessionId}/documents/{documentId}")]
+    [ProducesResponseType(typeof(ApiResponse<SessionResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> RemoveDocument(string sessionId, string documentId, CancellationToken ct = default)
+    {
+        var userId = GetUserId(User);
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+        }
+
+        var session = await _sessionService.GetByIdAsync(sessionId);
+        if (session == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.SESSION_NOT_FOUND, "会话不存在"));
+        }
+
+        var canAccess = await CanAccessSessionAsync(session, userId, ct);
+        if (!canAccess)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+        }
+
+        try
+        {
+            var updated = await _sessionService.RemoveDocumentAsync(sessionId, documentId);
+            _logger.LogInformation("Document removed from session {SessionId}: {DocumentId}", sessionId, documentId);
+            return Ok(ApiResponse<SessionResponse>.Ok(MapToResponse(updated)));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+    }
+
     private static SessionResponse MapToResponse(Session session)
     {
         return new SessionResponse
@@ -323,6 +422,7 @@ public class SessionsController : ControllerBase
             GroupId = session.GroupId,
             OwnerUserId = session.OwnerUserId,
             DocumentId = session.DocumentId,
+            DocumentIds = session.GetAllDocumentIds(),
             Title = session.Title,
             CurrentRole = session.CurrentRole,
             Mode = session.Mode,

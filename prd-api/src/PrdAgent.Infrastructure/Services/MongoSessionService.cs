@@ -52,6 +52,7 @@ public class MongoSessionService : ISessionService
         {
             SessionId = await _idGenerator.GenerateIdAsync("session"),
             DocumentId = did,
+            DocumentIds = new List<string> { did },
             GroupId = string.IsNullOrWhiteSpace(gid) ? null : gid,
             CurrentRole = UserRole.PM,
             Mode = InteractionMode.QA,
@@ -131,6 +132,51 @@ public class MongoSessionService : ISessionService
         await _db.Sessions.UpdateOneAsync(
             x => x.SessionId == sid && x.DeletedAtUtc == null,
             Builders<Session>.Update.Set(x => x.LastActiveAt, DateTime.UtcNow));
+    }
+
+    public async Task<Session> AddDocumentAsync(string sessionId, string documentId)
+    {
+        var session = await GetByIdAsync(sessionId) ?? throw new KeyNotFoundException("会话不存在");
+        var did = (documentId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(did)) throw new ArgumentException("documentId 不能为空", nameof(documentId));
+
+        // 兼容旧数据：如果 DocumentIds 为空但 DocumentId 有值，先迁移
+        if (session.DocumentIds.Count == 0 && !string.IsNullOrEmpty(session.DocumentId))
+        {
+            session.DocumentIds.Add(session.DocumentId);
+        }
+
+        if (!session.DocumentIds.Contains(did))
+        {
+            session.DocumentIds.Add(did);
+        }
+
+        session.LastActiveAt = DateTime.UtcNow;
+        await UpsertAsync(session);
+        return session;
+    }
+
+    public async Task<Session> RemoveDocumentAsync(string sessionId, string documentId)
+    {
+        var session = await GetByIdAsync(sessionId) ?? throw new KeyNotFoundException("会话不存在");
+        var did = (documentId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(did)) throw new ArgumentException("documentId 不能为空", nameof(documentId));
+
+        // 不允许移除最后一个文档
+        if (session.GetAllDocumentIds().Count <= 1)
+            throw new InvalidOperationException("至少保留一个文档");
+
+        session.DocumentIds.Remove(did);
+
+        // 如果移除的是主文档，更新 DocumentId 指向新的首项
+        if (string.Equals(session.DocumentId, did, StringComparison.Ordinal) && session.DocumentIds.Count > 0)
+        {
+            session.DocumentId = session.DocumentIds[0];
+        }
+
+        session.LastActiveAt = DateTime.UtcNow;
+        await UpsertAsync(session);
+        return session;
     }
 
     public async Task DeleteAsync(string sessionId)
