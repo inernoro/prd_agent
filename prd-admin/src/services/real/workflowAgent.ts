@@ -1,5 +1,6 @@
 import { apiRequest } from './apiClient';
 import { api } from '@/services/api';
+import { useAuthStore } from '@/stores/authStore';
 import type {
   ListWorkflowsContract,
   CreateWorkflowContract,
@@ -197,7 +198,7 @@ export const getChatHistoryReal: GetChatHistoryContract = async (input) => {
 /** Returns raw Response for SSE streaming */
 export const chatWorkflowReal: ChatWorkflowContract = async (input) => {
   const baseUrl = import.meta.env.VITE_API_BASE_URL || '';
-  const token = localStorage.getItem('token');
+  const token = useAuthStore.getState().token;
   const res = await fetch(`${baseUrl}${api.workflowAgent.chat.fromChat()}`, {
     method: 'POST',
     headers: {
@@ -213,7 +214,7 @@ export const chatWorkflowReal: ChatWorkflowContract = async (input) => {
 /** Returns raw Response for SSE streaming */
 export const analyzeExecutionReal: AnalyzeExecutionContract = async (input) => {
   const baseUrl = import.meta.env.VITE_API_BASE_URL || '';
-  const token = localStorage.getItem('token');
+  const token = useAuthStore.getState().token;
   const res = await fetch(`${baseUrl}${api.workflowAgent.chat.analyze(input.executionId)}`, {
     method: 'POST',
     headers: {
