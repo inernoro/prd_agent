@@ -214,7 +214,7 @@ export const VideoAgentPage: React.FC = () => {
       const connectSSE = async () => {
         try {
           const response = await fetch(fullUrl, {
-            headers: { Authorization: `Bearer ${token}` },
+            headers: { Authorization: `Bearer ${token}`, Accept: 'text/event-stream' },
             signal: abortController.signal,
           });
           if (!response.ok || !response.body) return;

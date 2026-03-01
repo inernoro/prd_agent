@@ -346,6 +346,11 @@ public class VideoAgentController : ControllerBase
         Response.ContentType = "text/event-stream";
         Response.Headers.CacheControl = "no-cache";
         Response.Headers.Connection = "keep-alive";
+        Response.Headers["X-Accel-Buffering"] = "no";
+
+        // 禁用 ASP.NET Core 响应缓冲，确保 SSE 即时推送
+        var bodyFeature = HttpContext.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpResponseBodyFeature>();
+        bodyFeature?.DisableBuffering();
 
         var adminId = GetAdminId();
         runId = (runId ?? string.Empty).Trim();
@@ -361,6 +366,10 @@ public class VideoAgentController : ControllerBase
                 cancellationToken);
             return;
         }
+
+        // 立即发送 SSE 注释作为心跳，确保连接建立并防止代理超时
+        await Response.WriteAsync(": connected\n\n", cancellationToken);
+        await Response.Body.FlushAsync(cancellationToken);
 
         long lastSeq = afterSeq ?? 0;
         var lastKeepAliveAt = DateTime.UtcNow;
