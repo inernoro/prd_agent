@@ -22,7 +22,9 @@ import {
   createArenaRun,
   getArenaRun,
   getPlatforms,
+  uploadArenaAttachment,
 } from '@/services';
+import type { ArenaAttachmentInfo } from '@/services';
 import { api } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import { Dialog } from '@/components/ui/Dialog';
@@ -32,6 +34,7 @@ import type { Platform } from '@/types/admin';
 import {
   Eye, Send, Plus, Search, MessageSquare, Clock, Loader2, Swords, ChevronDown, ChevronRight, Brain,
   Edit3, Trash2, Settings, Power, RefreshCw, Download, Copy, Check,
+  Paperclip, Image as ImageIcon, X, FileText,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -93,6 +96,14 @@ interface BattleHistoryItem {
   revealed: boolean;
   createdAt: string;
   responseCount: number;
+  hasAttachments?: boolean;
+}
+
+interface BattleAttachment {
+  attachmentId: string;
+  url: string;
+  fileName: string;
+  mimeType: string;
 }
 
 interface BattleDetail {
@@ -110,6 +121,7 @@ interface BattleDetail {
   }>;
   revealed: boolean;
   createdAt: string;
+  attachments?: BattleAttachment[];
 }
 
 // ---------------------------------------------------------------------------
@@ -274,6 +286,13 @@ export function ArenaPage() {
   const [revealAnimating, setRevealAnimating] = useState(false);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   void activeRunId; // used via setActiveRunId for run lifecycle tracking
+
+  // --- Attachment state ---
+  const [attachments, setAttachments] = useState<ArenaAttachmentInfo[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const [currentAttachments, setCurrentAttachments] = useState<BattleAttachment[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState(false);
 
   // --- History state ---
   const [history, setHistory] = useState<BattleHistoryItem[]>([]);
@@ -631,6 +650,8 @@ export function ArenaPage() {
     setActiveBattleId(null);
     setActiveRunId(null);
     setPrompt('');
+    setAttachments([]);
+    setCurrentAttachments([]);
     afterSeqRef.current = 0;
     sessionStorage.removeItem(ARENA_RUN_STORAGE_KEY);
     textareaRef.current?.focus();
@@ -880,8 +901,18 @@ export function ArenaPage() {
     setRevealed(false);
     setRevealedInfos(new Map());
     setActiveBattleId(null);
-    setPrompt('');
     afterSeqRef.current = 0;
+
+    // Capture attachments before clearing
+    const sendAttachmentIds = attachments.map((a) => a.attachmentId);
+    setCurrentAttachments(attachments.map((a) => ({
+      attachmentId: a.attachmentId,
+      url: a.url,
+      fileName: a.fileName,
+      mimeType: a.mimeType,
+    })));
+    setPrompt('');
+    setAttachments([]);
 
     try {
       // 1) Create Run (server-side) — returns immediately with runId
@@ -889,6 +920,7 @@ export function ArenaPage() {
         prompt: question,
         groupKey: selectedGroupKey,
         slots: runSlots,
+        attachmentIds: sendAttachmentIds.length > 0 ? sendAttachmentIds : undefined,
       });
 
       if (!res.success || !res.data?.runId) {
@@ -922,7 +954,7 @@ export function ArenaPage() {
       sessionStorage.removeItem(ARENA_RUN_STORAGE_KEY);
       setActiveRunId(null);
     }
-  }, [prompt, isStreaming, slots, selectedGroupKey]);
+  }, [prompt, isStreaming, slots, selectedGroupKey, attachments]);
 
   // --- Reveal models ---
   async function handleReveal() {
@@ -1073,6 +1105,7 @@ export function ArenaPage() {
         setAllDone(true);
         setIsStreaming(false);
         setRevealedInfos(new Map());
+        setCurrentAttachments(battle.attachments ?? []);
 
         const loadedPanels: ArenaPanel[] = (battle.responses || []).map((r, idx) => ({
           slotId: r.slotId,
@@ -1109,6 +1142,87 @@ export function ArenaPage() {
     const el = e.target;
     el.style.height = 'auto';
     el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+  }
+
+  // --- Attachment handlers ---
+  const ACCEPTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml'];
+  const MAX_ATTACHMENTS = 5;
+
+  async function uploadFiles(files: File[]) {
+    const imageFiles = files.filter((f) => ACCEPTED_IMAGE_TYPES.includes(f.type));
+    if (imageFiles.length === 0) {
+      toast.warning('仅支持图片文件', '支持 PNG、JPG、GIF、WebP、SVG 格式');
+      return;
+    }
+    const remaining = MAX_ATTACHMENTS - attachments.length;
+    if (remaining <= 0) {
+      toast.warning(`最多添加 ${MAX_ATTACHMENTS} 个附件`);
+      return;
+    }
+    const toUpload = imageFiles.slice(0, remaining);
+    setIsUploading(true);
+    for (const file of toUpload) {
+      try {
+        const res = await uploadArenaAttachment(file);
+        if (res.success && res.data) {
+          setAttachments((prev) => [...prev, res.data!]);
+        } else {
+          toast.error('上传失败', res.error?.message ?? file.name);
+        }
+      } catch (err: any) {
+        toast.error('上传失败', err?.message ?? file.name);
+      }
+    }
+    setIsUploading(false);
+  }
+
+  function handleAttachmentClick() {
+    fileInputRef.current?.click();
+  }
+
+  function handleFileInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    if (files.length > 0) uploadFiles(files);
+    e.target.value = '';
+  }
+
+  function handleRemoveAttachment(attachmentId: string) {
+    setAttachments((prev) => prev.filter((a) => a.attachmentId !== attachmentId));
+  }
+
+  function handlePaste(e: React.ClipboardEvent) {
+    const items = Array.from(e.clipboardData.items);
+    const imageFiles: File[] = [];
+    for (const item of items) {
+      if (item.kind === 'file' && ACCEPTED_IMAGE_TYPES.includes(item.type)) {
+        const file = item.getAsFile();
+        if (file) imageFiles.push(file);
+      }
+    }
+    if (imageFiles.length > 0) {
+      e.preventDefault();
+      uploadFiles(imageFiles);
+    }
+  }
+
+  function handleDragOver(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(true);
+  }
+
+  function handleDragLeave(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length > 0) uploadFiles(files);
   }
 
   // --- Filter history ---
@@ -1234,6 +1348,9 @@ export function ArenaPage() {
                         </div>
                         <div className="text-[11px] mt-0.5 flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
                           <span>{item.responseCount} 个模型</span>
+                          {item.hasAttachments && (
+                            <ImageIcon className="w-3 h-3 ml-0.5" style={{ color: 'rgba(99,102,241,0.7)' }} />
+                          )}
                           {item.revealed && (
                             <span
                               className="ml-1 text-[10px] px-1 py-0.5 rounded"
@@ -1524,32 +1641,61 @@ export function ArenaPage() {
           <div className="flex-1 flex flex-col min-h-0">
             {/* Prompt Bar */}
             <div
-              className="flex-shrink-0 flex items-center gap-2 px-5 py-2.5"
+              className="flex-shrink-0 px-5 py-2.5"
               style={{ background: 'rgba(99,102,241,0.04)' }}
             >
-              <div
-                className="w-5 h-5 rounded flex items-center justify-center flex-shrink-0"
-                style={{ background: 'rgba(99,102,241,0.15)' }}
-              >
-                <MessageSquare className="w-3 h-3" style={{ color: 'rgba(99,102,241,0.8)' }} />
-              </div>
-              <p
-                className="text-[13px] truncate flex-1"
-                style={{ color: 'var(--text-primary)' }}
-                title={currentPrompt}
-              >
-                {currentPrompt}
-              </p>
-              {allDone && !isStreaming && (
-                <button
-                  onClick={handleRetry}
-                  className="flex items-center gap-1.5 px-3 h-7 rounded-lg text-[12px] transition-colors hover:bg-white/8 flex-shrink-0"
-                  style={{ color: 'var(--text-muted)', border: '1px solid rgba(255,255,255,0.08)' }}
-                  title="使用相同问题重新对战"
+              <div className="flex items-center gap-2">
+                <div
+                  className="w-5 h-5 rounded flex items-center justify-center flex-shrink-0"
+                  style={{ background: 'rgba(99,102,241,0.15)' }}
                 >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  重试
-                </button>
+                  <MessageSquare className="w-3 h-3" style={{ color: 'rgba(99,102,241,0.8)' }} />
+                </div>
+                <p
+                  className="text-[13px] truncate flex-1"
+                  style={{ color: 'var(--text-primary)' }}
+                  title={currentPrompt}
+                >
+                  {currentPrompt}
+                </p>
+                {allDone && !isStreaming && (
+                  <button
+                    onClick={handleRetry}
+                    className="flex items-center gap-1.5 px-3 h-7 rounded-lg text-[12px] transition-colors hover:bg-white/8 flex-shrink-0"
+                    style={{ color: 'var(--text-muted)', border: '1px solid rgba(255,255,255,0.08)' }}
+                    title="使用相同问题重新对战"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    重试
+                  </button>
+                )}
+              </div>
+              {/* Attachment thumbnails in prompt bar */}
+              {currentAttachments.length > 0 && (
+                <div className="flex gap-1.5 mt-2 ml-7">
+                  {currentAttachments.map((att) => (
+                    <div
+                      key={att.attachmentId}
+                      className="rounded overflow-hidden flex-shrink-0"
+                      style={{
+                        width: '40px',
+                        height: '40px',
+                        background: 'rgba(255,255,255,0.04)',
+                        border: '1px solid rgba(255,255,255,0.08)',
+                      }}
+                      title={att.fileName}
+                    >
+                      <img
+                        src={att.url}
+                        alt={att.fileName}
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                  ))}
+                  <span className="self-center text-[11px] ml-1" style={{ color: 'var(--text-muted)' }}>
+                    {currentAttachments.length} 张附图
+                  </span>
+                </div>
               )}
             </div>
 
@@ -1754,18 +1900,35 @@ export function ArenaPage() {
           }}
         >
           <div className="mx-auto" style={{ maxWidth: '900px' }}>
+            {/* Hidden file input */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
+              className="hidden"
+              onChange={handleFileInputChange}
+            />
             {/* Rotating progress ring wrapper */}
             <div
-              className="rounded-[18px] p-[2px] transition-all duration-300"
+              className={cn(
+                'rounded-[18px] p-[2px] transition-all duration-300',
+                dragOver && 'ring-2 ring-indigo-500/50'
+              )}
               style={{
                 background: hasActiveProgress
                   ? completedCount === totalCount && !isStreaming
                     ? '#10b981'
                     : 'rgba(255,255,255,0.06)'
-                  : 'rgba(255,255,255,0.06)',
+                  : dragOver
+                    ? 'rgba(99,102,241,0.2)'
+                    : 'rgba(255,255,255,0.06)',
                 position: 'relative',
                 overflow: 'hidden',
               }}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
             >
               {/* Spinning arc overlay — only visible during streaming */}
               {hasActiveProgress && !(completedCount === totalCount && !isStreaming) && (
@@ -1783,11 +1946,61 @@ export function ArenaPage() {
                 className="rounded-[16px] p-3"
                 style={{ background: 'var(--bg-base, #0d0d0f)', position: 'relative', zIndex: 1 }}
               >
+              {/* Attachment preview strip */}
+              {attachments.length > 0 && (
+                <div className="flex gap-2 px-2 pb-2 flex-wrap">
+                  {attachments.map((att) => (
+                    <div
+                      key={att.attachmentId}
+                      className="relative group rounded-lg overflow-hidden flex-shrink-0"
+                      style={{
+                        width: '64px',
+                        height: '64px',
+                        background: 'rgba(255,255,255,0.04)',
+                        border: '1px solid rgba(255,255,255,0.08)',
+                      }}
+                    >
+                      <img
+                        src={att.url}
+                        alt={att.fileName}
+                        className="w-full h-full object-cover"
+                      />
+                      <button
+                        onClick={() => handleRemoveAttachment(att.attachmentId)}
+                        className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                        style={{ background: 'rgba(0,0,0,0.7)' }}
+                      >
+                        <X className="w-2.5 h-2.5" style={{ color: '#fff' }} />
+                      </button>
+                      <div
+                        className="absolute bottom-0 left-0 right-0 px-1 py-0.5 text-[9px] truncate"
+                        style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}
+                      >
+                        {att.fileName}
+                      </div>
+                    </div>
+                  ))}
+                  {isUploading && (
+                    <div
+                      className="flex items-center justify-center rounded-lg flex-shrink-0"
+                      style={{
+                        width: '64px',
+                        height: '64px',
+                        background: 'rgba(255,255,255,0.04)',
+                        border: '1px dashed rgba(255,255,255,0.15)',
+                      }}
+                    >
+                      <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--text-muted)' }} />
+                    </div>
+                  )}
+                </div>
+              )}
               <textarea
                 ref={textareaRef}
                 value={prompt}
                 onChange={handleTextareaInput}
                 onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
                 placeholder={
                   lineupLoading
                     ? '阵容加载中...'
@@ -1795,7 +2008,7 @@ export function ArenaPage() {
                       ? '请先在管理页配置竞技场阵容...'
                       : slots.length === 0
                         ? '请先选择一个有模型的阵容...'
-                        : '输入你的问题，让多个模型匿名回答...'
+                        : '输入你的问题，让多个模型匿名回答... (支持粘贴/拖拽图片)'
                 }
                 disabled={isStreaming || slots.length === 0}
                 rows={2}
@@ -1819,6 +2032,20 @@ export function ArenaPage() {
                     : groups.length === 0 ? '未配置阵容' : '请选择阵容'}
                 </span>
                 <div className="flex items-center gap-2">
+                  {/* Attachment button */}
+                  <button
+                    onClick={handleAttachmentClick}
+                    disabled={isStreaming || slots.length === 0 || attachments.length >= MAX_ATTACHMENTS}
+                    className={cn(
+                      'flex items-center gap-1 h-8 px-2.5 rounded-lg text-[12px] transition-colors',
+                      'disabled:opacity-40 disabled:cursor-not-allowed',
+                      'hover:bg-white/5'
+                    )}
+                    style={{ color: 'var(--text-muted)' }}
+                    title={`添加图片附件 (${attachments.length}/${MAX_ATTACHMENTS})`}
+                  >
+                    <Paperclip className="w-3.5 h-3.5" />
+                  </button>
                   {canReveal && (
                     <Button
                       variant="secondary"

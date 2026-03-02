@@ -1,6 +1,7 @@
 import { apiRequest } from '@/services/real/apiClient';
 import { api } from '@/services/api';
 import { type ApiResponse } from '@/types/api';
+import { useAuthStore } from '@/stores/authStore';
 
 // ============ Arena Groups ============
 
@@ -88,6 +89,7 @@ export async function createArenaRunReal(data: {
     label: string;
     labelIndex: number;
   }>;
+  attachmentIds?: string[];
 }): Promise<ApiResponse<any>> {
   return await apiRequest(api.arena.runs.create(), {
     method: 'POST',
@@ -124,4 +126,34 @@ export async function listArenaBattlesReal(page?: number, pageSize?: number): Pr
 
 export async function getArenaBattleReal(id: string): Promise<ApiResponse<any>> {
   return await apiRequest(api.arena.battles.byId(id));
+}
+
+// ============ Arena Attachment Upload ============
+
+export interface ArenaAttachmentInfo {
+  attachmentId: string;
+  url: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+}
+
+export async function uploadArenaAttachmentReal(file: File): Promise<ApiResponse<ArenaAttachmentInfo>> {
+  const token = useAuthStore.getState().token;
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const fd = new FormData();
+  fd.append('file', file);
+
+  const rawBase = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').trim().replace(/\/+$/, '');
+  const url = rawBase ? `${rawBase}/api/v1/attachments` : '/api/v1/attachments';
+
+  const res = await fetch(url, { method: 'POST', headers, body: fd });
+  const text = await res.text();
+  try {
+    return JSON.parse(text) as ApiResponse<ArenaAttachmentInfo>;
+  } catch {
+    return { success: false, error: { code: 'PARSE_ERROR', message: text || '上传失败' } } as any;
+  }
 }
