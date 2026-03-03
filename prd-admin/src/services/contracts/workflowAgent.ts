@@ -283,6 +283,7 @@ export type GetNodeLogsContract = (input: {
   nodeName: string;
   status: string;
   logs?: string;
+  logsCosUrl?: string;
   errorMessage?: string;
   artifacts: ExecutionArtifact[];
 }>>;

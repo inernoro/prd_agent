@@ -454,6 +454,7 @@ public static class CapsuleExecutor
         {
             AppCallerCode = PrdAgent.Core.Models.AppCallerRegistry.WorkflowAgent.LlmAnalyzer.Chat,
             ModelType = "chat",
+            TimeoutSeconds = 300, // 复杂分析任务（如 28 维度统计）需要较长时间
             RequestBody = new System.Text.Json.Nodes.JsonObject
             {
                 ["messages"] = messages,
@@ -461,8 +462,10 @@ public static class CapsuleExecutor
             }
         };
 
-        llmLogs.AppendLine($"  SystemPrompt ({systemPrompt.Length} chars): {(systemPrompt.Length > 300 ? systemPrompt[..300] + "..." : systemPrompt)}");
-        llmLogs.AppendLine($"  UserPrompt ({userContent.Length} chars): {(userContent.Length > 500 ? userContent[..500] + "..." : userContent)}");
+        llmLogs.AppendLine($"  SystemPrompt ({systemPrompt.Length} chars):");
+        llmLogs.AppendLine(systemPrompt);
+        llmLogs.AppendLine($"  UserPrompt ({userContent.Length} chars):");
+        llmLogs.AppendLine(userContent);
         llmLogs.AppendLine($"  总估算 Tokens: system={systemTokens} + user={EstimateTokens(userContent)} = {systemTokens + EstimateTokens(userContent)}");
         llmLogs.AppendLine($"  Temperature: {temperature}");
         llmLogs.AppendLine("  --- 调用 LLM Gateway ---");
@@ -485,7 +488,8 @@ public static class CapsuleExecutor
             llmLogs.AppendLine($"  HTTP Status: {response.StatusCode}");
         }
 
-        llmLogs.AppendLine($"  LLM 响应 ({content.Length} chars): {(content.Length > 500 ? content[..500] + "..." : content)}");
+        llmLogs.AppendLine($"  LLM 响应 ({content.Length} chars):");
+        llmLogs.AppendLine(content);
 
         if (string.IsNullOrWhiteSpace(content))
         {
@@ -590,21 +594,21 @@ public static class CapsuleExecutor
             var searchData = new JsonObject();
             var filterData = new JsonArray();
 
-            // 如果有日期范围（月份格式如 "2026-03"），添加创建时间筛选
+            // 如果有日期范围（月份格式如 "2026-03"），添加反馈时间筛选（自定义字段，与 GitHub 代码一致）
             if (!string.IsNullOrWhiteSpace(dateRange))
             {
                 filterData.Add(new JsonObject
                 {
                     ["entity"] = dataType == "bugs" ? "bug" : dataType.TrimEnd('s'),
-                    ["fieldDisplayName"] = "创建时间",
+                    ["fieldDisplayName"] = "反馈时间",
                     ["fieldSubEntityType"] = "",
-                    ["fieldIsSystem"] = "1",
+                    ["fieldIsSystem"] = "0",
                     ["fieldOption"] = "like",
-                    ["fieldSystemName"] = "created",
+                    ["fieldSystemName"] = "反馈时间",
                     ["fieldType"] = "text",
                     ["selectOption"] = new JsonArray(),
                     ["value"] = dateRange,
-                    ["id"] = "1",
+                    ["id"] = "4",
                 });
             }
 
@@ -734,9 +738,235 @@ public static class CapsuleExecutor
             throw new InvalidOperationException(
                 $"采集到 0 条数据。工作空间={workspaceId}，时间范围={dateRange}（留空可获取全部数据）");
 
-        var resultJson = allItems.ToJsonString();
-        var artifact = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType}", resultJson, "application/json");
-        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs.ToString());
+        // ── 阶段二：逐个调用 common_get_info 获取缺陷详情 ──
+        var fetchDetail = GetConfigString(node, "fetchDetail") ?? "true";
+        if (fetchDetail == "true" && dataType is "bugs" or "bug")
+        {
+            var detailItems = await FetchTapdBugDetailsAsync(
+                factory, allItems, workspaceId, cookieStr, dscToken, logs);
+            if (detailItems.Count > 0)
+            {
+                var resultJson = detailItems.ToJsonString();
+                var artifact = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType} 详情", resultJson, "application/json");
+                return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs.ToString());
+            }
+            // 如果详情获取全部失败，回退到搜索列表数据
+            logs.AppendLine("⚠️ 详情获取失败，回退使用搜索列表数据");
+        }
+
+        var resultJsonFallback = allItems.ToJsonString();
+        var artifactFallback = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType}", resultJsonFallback, "application/json");
+        return new CapsuleResult(new List<ExecutionArtifact> { artifactFallback }, logs.ToString());
+    }
+
+    /// <summary>
+    /// 阶段二：逐个调用 common_get_info 获取缺陷详情，提取全部字段（含自定义字段），
+    /// 并映射为中文字段名，同时计算"是否历史问题"和"及时处理"衍生字段。
+    /// </summary>
+    private static async Task<JsonArray> FetchTapdBugDetailsAsync(
+        IHttpClientFactory factory, JsonArray searchItems, string workspaceId,
+        string cookieStr, string dscToken, StringBuilder logs)
+    {
+        var detailItems = new JsonArray();
+        var detailUrl = "https://www.tapd.cn/api/aggregation/workitem_aggregation/common_get_info";
+
+        // 从搜索结果提取 bug ID 列表
+        var bugIds = new List<string>();
+        foreach (var item in searchItems)
+        {
+            var id = item?["id"]?.GetValue<string>()
+                     ?? item?["bug_id"]?.GetValue<string>()
+                     ?? item?["ID"]?.GetValue<string>();
+            if (!string.IsNullOrWhiteSpace(id)) bugIds.Add(id);
+        }
+
+        logs.AppendLine($"Phase 2: fetching details for {bugIds.Count} bugs via common_get_info");
+
+        var successCount = 0;
+        for (var i = 0; i < bugIds.Count; i++)
+        {
+            var entityId = bugIds[i];
+            try
+            {
+                using var client = factory.CreateClient();
+                client.Timeout = TimeSpan.FromSeconds(30);
+
+                var body = new JsonObject
+                {
+                    ["workspace_id"] = workspaceId,
+                    ["entity_id"] = entityId,
+                    ["entity_type"] = "bug",
+                    ["api_controller_prefix"] = "",
+                    ["enable_description"] = "true",
+                    ["is_detail"] = 1,
+                    ["blacklist_fields"] = new JsonArray(),
+                    ["identifier"] = "app_for_editor,app_for_obj_more,app_for_obj_dialog_dropdown",
+                    ["installed_app_entity"] = new JsonObject
+                    {
+                        ["obj_id"] = entityId,
+                        ["obj_type"] = "bug",
+                        ["obj_name"] = "缺陷",
+                    },
+                    ["has_edit_rule_fields"] = new JsonArray(),
+                    ["is_archived"] = 0,
+                    ["is_assistant_exec_log"] = 1,
+                };
+                if (!string.IsNullOrWhiteSpace(dscToken))
+                    body["dsc_token"] = dscToken;
+
+                var request = new HttpRequestMessage(HttpMethod.Post, detailUrl);
+                request.Headers.Add("Cookie", cookieStr);
+                request.Headers.Add("Accept", "application/json, text/plain, */*");
+                request.Headers.Add("Accept-Language", "zh-CN,zh;q=0.9");
+                request.Headers.Add("Origin", "https://www.tapd.cn");
+                request.Headers.Add("Referer", $"https://www.tapd.cn/tapd_fe/{workspaceId}/bug/detail/{entityId}");
+                request.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36");
+                request.Headers.Add("Sec-Fetch-Dest", "empty");
+                request.Headers.Add("Sec-Fetch-Mode", "cors");
+                request.Headers.Add("Sec-Fetch-Site", "same-origin");
+                request.Content = new StringContent(body.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
+
+                var response = await client.SendAsync(request, CancellationToken.None);
+                var respBody = await response.Content.ReadAsStringAsync(CancellationToken.None);
+
+                // 首条记录记录详细请求/响应信息，用于调试
+                if (i == 0)
+                {
+                    logs.AppendLine($"  [DEBUG] First request URL: {detailUrl}");
+                    logs.AppendLine($"  [DEBUG] HTTP Status: {(int)response.StatusCode}");
+                    logs.AppendLine($"  [DEBUG] Response length: {respBody.Length} chars");
+                    logs.AppendLine($"  [DEBUG] Response preview: {respBody[..Math.Min(500, respBody.Length)]}");
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    logs.AppendLine($"  [{i + 1}/{bugIds.Count}] {entityId}: HTTP {(int)response.StatusCode} failed, body={respBody[..Math.Min(200, respBody.Length)]}");
+                    // 保留原始搜索数据作为 fallback
+                    detailItems.Add(JsonNode.Parse(searchItems[i]!.ToJsonString())!);
+                    continue;
+                }
+
+                using var doc = JsonDocument.Parse(respBody);
+                var root = doc.RootElement;
+
+                // 解析 data.get_info_ret.data.Bug
+                if (root.TryGetProperty("data", out var dataEl) &&
+                    dataEl.TryGetProperty("get_info_ret", out var retEl) &&
+                    retEl.TryGetProperty("data", out var retDataEl) &&
+                    retDataEl.TryGetProperty("Bug", out var bugEl))
+                {
+                    // copy_info 在 data 层级下，不在 get_info_ret.data 下
+                    var copyUrl = "";
+                    if (dataEl.TryGetProperty("copy_info", out var copyEl) &&
+                        copyEl.TryGetProperty("url", out var urlEl))
+                        copyUrl = urlEl.GetString() ?? "";
+
+                    // 提取并映射为中文字段名
+                    var mapped = MapBugFieldsToChinese(bugEl, copyUrl);
+                    detailItems.Add(mapped);
+                    successCount++;
+                }
+                else
+                {
+                    // 记录响应结构帮助调试
+                    var keys = new List<string>();
+                    if (root.TryGetProperty("data", out var dEl2))
+                    {
+                        foreach (var prop in dEl2.EnumerateObject())
+                            keys.Add(prop.Name);
+                    }
+                    logs.AppendLine($"  [{i + 1}/{bugIds.Count}] {entityId}: unexpected structure, data keys=[{string.Join(",", keys)}]");
+                    logs.AppendLine($"    Response preview: {respBody[..Math.Min(300, respBody.Length)]}");
+                    // 保留原始搜索数据作为 fallback
+                    detailItems.Add(JsonNode.Parse(searchItems[i]!.ToJsonString())!);
+                }
+            }
+            catch (Exception ex)
+            {
+                logs.AppendLine($"  [{i + 1}/{bugIds.Count}] {entityId}: error - {ex.Message}");
+                // 保留原始搜索数据作为 fallback
+                detailItems.Add(JsonNode.Parse(searchItems[i]!.ToJsonString())!);
+            }
+
+            // 进度日志（每 10 条记录一次）
+            if ((i + 1) % 10 == 0 || i == bugIds.Count - 1)
+                logs.AppendLine($"  [{i + 1}/{bugIds.Count}] progress: {successCount} success, {detailItems.Count - successCount} fallback");
+
+            // 避免请求过快
+            if (i < bugIds.Count - 1)
+                await Task.Delay(300, CancellationToken.None);
+        }
+
+        logs.AppendLine($"Phase 2 done: {successCount}/{bugIds.Count} details fetched, {detailItems.Count} total items");
+        return detailItems;
+    }
+
+    /// <summary>
+    /// 将 common_get_info 返回的 Bug JSON 字段映射为中文字段名，
+    /// 同时计算"是否历史问题"和"及时处理"衍生字段。
+    /// </summary>
+    private static JsonNode MapBugFieldsToChinese(JsonElement bug, string copyUrl)
+    {
+        string Get(string key) =>
+            bug.TryGetProperty(key, out var el) && el.ValueKind == JsonValueKind.String
+                ? el.GetString() ?? "" : "";
+
+        var resolved = Get("resolved");
+        var due = Get("due");
+        var customField100 = Get("custom_field_100"); // 问题开始时间
+
+        // 计算"是否历史问题"：问题开始时间距解决时间 ≥ 6 个月
+        var isHistorical = "否";
+        if (!string.IsNullOrWhiteSpace(customField100) && !string.IsNullOrWhiteSpace(resolved))
+        {
+            if (DateTime.TryParse(customField100, out var startDt) && DateTime.TryParse(resolved, out var resolvedDt))
+            {
+                var monthsDiff = (resolvedDt.Year - startDt.Year) * 12 + (resolvedDt.Month - startDt.Month);
+                if (monthsDiff >= 6) isHistorical = "是";
+            }
+        }
+
+        // 计算"及时处理"：预计结束时间 ≥ 解决时间（只比较日期）
+        var timelyFixed = "无法判断";
+        if (!string.IsNullOrWhiteSpace(due) && !string.IsNullOrWhiteSpace(resolved))
+        {
+            if (DateTime.TryParse(due, out var dueDt) && DateTime.TryParse(resolved, out var resolvedDt))
+                timelyFixed = dueDt.Date >= resolvedDt.Date ? "是" : "否";
+        }
+
+        // TAPD API 中 Bug 的 id 字段可能是 "id" 或 "ID"（大小写不一致）
+        var bugIdValue = Get("id");
+        if (string.IsNullOrEmpty(bugIdValue)) bugIdValue = Get("ID");
+        if (string.IsNullOrEmpty(bugIdValue)) bugIdValue = Get("bug_id");
+
+        return new JsonObject
+        {
+            ["缺陷ID"] = bugIdValue,
+            ["标题"] = Get("title"),
+            ["创建人"] = Get("reporter"),
+            ["创建时间"] = Get("created"),
+            ["问题开始时间"] = customField100,
+            ["解决时间"] = resolved,
+            ["关闭时间"] = Get("closed"),
+            ["预计结束时间"] = due,
+            ["处理人"] = Get("current_owner"),
+            ["状态"] = Get("status"),
+            ["责任人"] = Get("custom_field_two"),
+            ["是否逾期"] = Get("custom_field_four"),
+            ["有效报告"] = Get("custom_field_five"),
+            ["缺陷等级"] = Get("custom_field_6"),
+            ["缺陷划分"] = Get("custom_field_7"),
+            ["反馈人"] = Get("custom_field_8"),
+            ["公司名称"] = Get("custom_field_9"),
+            ["商户编号"] = Get("custom_field_10"),
+            ["引入项目"] = Get("custom_field_11"),
+            ["反馈时间"] = Get("custom_field_12"),
+            ["影响范围"] = Get("custom_field_13"),
+            ["结构归母"] = Get("custom_field_one"),
+            ["URL链接"] = copyUrl,
+            ["是否历史问题"] = isHistorical,
+            ["及时处理"] = timelyFixed,
+        };
     }
 
     /// <summary>自定义 cURL 兜底模式：解析用户粘贴的 cURL 命令并直接执行，支持自动分页</summary>
@@ -912,6 +1142,56 @@ public static class CapsuleExecutor
 
         if (allItems.Count == 0)
             throw new InvalidOperationException("自定义 cURL 采集到 0 条数据。请检查 cURL 命令是否有效、Cookie 是否过期。");
+
+        // ── 阶段二：对 bugs 类型调用 common_get_info 获取详情 ──
+        var fetchDetail = GetConfigString(node, "fetchDetail") ?? "true";
+        if (fetchDetail == "true" && dataType is "bugs" or "bug")
+        {
+            // 从 cURL headers 中提取 Cookie 和 dsc-token
+            var cookieStr = parsed.Headers
+                .FirstOrDefault(h => h.Key.Equals("Cookie", StringComparison.OrdinalIgnoreCase)).Value ?? "";
+            var dscToken = "";
+            if (!string.IsNullOrWhiteSpace(cookieStr))
+            {
+                var match = System.Text.RegularExpressions.Regex.Match(cookieStr, @"dsc-token=([^;\s]+)");
+                if (match.Success) dscToken = match.Groups[1].Value;
+            }
+
+            // 从 cURL body 中提取 workspace_id（如果 allItems 里没有 workspace_id 字段）
+            var wsId = GetConfigString(node, "workspaceId") ?? GetConfigString(node, "workspace_id") ?? "";
+            if (string.IsNullOrWhiteSpace(wsId) && !string.IsNullOrEmpty(parsed.Body))
+            {
+                try
+                {
+                    var bodyNode = JsonNode.Parse(parsed.Body);
+                    wsId = bodyNode?["workspace_id"]?.GetValue<string>() ?? "";
+                }
+                catch { /* ignore */ }
+            }
+            // 尝试从搜索结果中获取 workspace_id
+            if (string.IsNullOrWhiteSpace(wsId) && allItems.Count > 0)
+            {
+                wsId = allItems[0]?["workspace_id"]?.GetValue<string>()
+                    ?? allItems[0]?["project_id"]?.GetValue<string>() ?? "";
+            }
+
+            if (!string.IsNullOrWhiteSpace(cookieStr) && !string.IsNullOrWhiteSpace(wsId))
+            {
+                logs.AppendLine($"Phase 2: will fetch bug details via common_get_info (workspace={wsId})");
+                var detailItems = await FetchTapdBugDetailsAsync(factory, allItems, wsId, cookieStr, dscToken, logs);
+                if (detailItems.Count > 0)
+                {
+                    var detailJson = detailItems.ToJsonString();
+                    var detailArtifact = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType} 详情", detailJson, "application/json");
+                    return new CapsuleResult(new List<ExecutionArtifact> { detailArtifact }, logs.ToString());
+                }
+                logs.AppendLine("⚠️ Phase 2 全部失败，回退使用搜索列表数据");
+            }
+            else
+            {
+                logs.AppendLine($"⚠️ Phase 2 skipped: cookie={(!string.IsNullOrWhiteSpace(cookieStr) ? "yes" : "no")}, workspaceId={(!string.IsNullOrWhiteSpace(wsId) ? wsId : "missing")}");
+            }
+        }
 
         var resultJson = allItems.ToJsonString();
         var artifact = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType}", resultJson, "application/json");
@@ -1781,6 +2061,7 @@ public static class CapsuleExecutor
         {
             AppCallerCode = PrdAgent.Core.Models.AppCallerRegistry.WorkflowAgent.ReportGenerator.Chat,
             ModelType = "chat",
+            TimeoutSeconds = 300, // 报告生成可能需要处理大量输入数据，延长超时
             RequestBody = new System.Text.Json.Nodes.JsonObject
             {
                 ["messages"] = new System.Text.Json.Nodes.JsonArray
@@ -1794,7 +2075,8 @@ public static class CapsuleExecutor
             }
         };
 
-        reportLogs.AppendLine($"  ReportTemplate ({reportTemplate.Length} chars): {(reportTemplate.Length > 300 ? reportTemplate[..300] + "..." : reportTemplate)}");
+        reportLogs.AppendLine($"  ReportTemplate ({reportTemplate.Length} chars):");
+        reportLogs.AppendLine(reportTemplate);
         reportLogs.AppendLine($"  Prompt 总长: {prompt.Length} chars (估算 {EstimateTokens(prompt)} tokens)");
         reportLogs.AppendLine("  --- 调用 LLM Gateway ---");
 
@@ -1812,7 +2094,8 @@ public static class CapsuleExecutor
             reportLogs.AppendLine($"  HTTP Status: {response.StatusCode}");
         }
 
-        reportLogs.AppendLine($"  LLM 响应 ({content.Length} chars): {(content.Length > 500 ? content[..500] + "..." : content)}");
+        reportLogs.AppendLine($"  LLM 响应 ({content.Length} chars):");
+        reportLogs.AppendLine(content);
 
         if (string.IsNullOrWhiteSpace(content))
         {
@@ -1944,12 +2227,31 @@ public static class CapsuleExecutor
             message = string.Join("\n", summaryParts);
         }
 
+        // 收集附件：从上游产物的 COS URL 中提取
+        List<NotificationAttachment>? attachments = null;
+        var attachMode = GetConfigString(node, "attachFromInput") ?? "none";
+        if (attachMode == "cos" && inputArtifacts.Count > 0)
+        {
+            attachments = inputArtifacts
+                .Where(a => !string.IsNullOrWhiteSpace(a.CosUrl))
+                .Select(a => new NotificationAttachment
+                {
+                    Name = a.Name,
+                    Url = a.CosUrl!,
+                    SizeBytes = a.SizeBytes,
+                    MimeType = a.MimeType,
+                })
+                .ToList();
+            if (attachments.Count == 0) attachments = null;
+        }
+
         var notification = new AdminNotification
         {
             Title = title,
             Message = message,
             Level = level,
             Source = "workflow-agent",
+            Attachments = attachments,
         };
         await db.AdminNotifications.InsertOneAsync(notification, cancellationToken: CancellationToken.None);
 

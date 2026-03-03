@@ -1,5 +1,12 @@
 import type { ApiResponse } from '@/types/api';
 
+export type NotificationAttachment = {
+  name: string;
+  url: string;
+  sizeBytes: number;
+  mimeType?: string | null;
+};
+
 export type AdminNotificationItem = {
   id: string;
   key?: string | null;
@@ -11,6 +18,7 @@ export type AdminNotificationItem = {
   actionUrl?: string | null;
   actionKind?: string | null;
   source?: string | null;
+  attachments?: NotificationAttachment[] | null;
   createdAt: string;
   updatedAt: string;
   handledAt?: string | null;

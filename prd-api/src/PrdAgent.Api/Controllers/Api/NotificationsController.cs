@@ -65,6 +65,7 @@ public sealed class NotificationsController : ControllerBase
                 x.ActionUrl,
                 x.ActionKind,
                 x.Source,
+                attachments = x.Attachments,
                 x.CreatedAt,
                 x.UpdatedAt,
                 x.HandledAt,
