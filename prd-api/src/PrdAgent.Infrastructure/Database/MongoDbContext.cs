@@ -165,6 +165,9 @@ public class MongoDbContext
     // Video Agent 文章转视频
     public IMongoCollection<VideoGenRun> VideoGenRuns => _database.GetCollection<VideoGenRun>("video_gen_runs");
 
+    // Video Agent 视频转文档
+    public IMongoCollection<VideoToDocRun> VideoToDocRuns => _database.GetCollection<VideoToDocRun>("video_to_doc_runs");
+
     // Tutorial Email 教程邮件
     public IMongoCollection<TutorialEmailSequence> TutorialEmailSequences => _database.GetCollection<TutorialEmailSequence>("tutorial_email_sequences");
     public IMongoCollection<TutorialEmailTemplate> TutorialEmailTemplates => _database.GetCollection<TutorialEmailTemplate>("tutorial_email_templates");
