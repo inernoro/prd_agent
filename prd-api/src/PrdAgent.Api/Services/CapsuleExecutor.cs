@@ -593,21 +593,21 @@ public static class CapsuleExecutor
             var searchData = new JsonObject();
             var filterData = new JsonArray();
 
-            // 如果有日期范围（月份格式如 "2026-03"），添加创建时间筛选
+            // 如果有日期范围（月份格式如 "2026-03"），添加反馈时间筛选（自定义字段，与 GitHub 代码一致）
             if (!string.IsNullOrWhiteSpace(dateRange))
             {
                 filterData.Add(new JsonObject
                 {
                     ["entity"] = dataType == "bugs" ? "bug" : dataType.TrimEnd('s'),
-                    ["fieldDisplayName"] = "创建时间",
+                    ["fieldDisplayName"] = "反馈时间",
                     ["fieldSubEntityType"] = "",
-                    ["fieldIsSystem"] = "1",
+                    ["fieldIsSystem"] = "0",
                     ["fieldOption"] = "like",
-                    ["fieldSystemName"] = "created",
+                    ["fieldSystemName"] = "反馈时间",
                     ["fieldType"] = "text",
                     ["selectOption"] = new JsonArray(),
                     ["value"] = dateRange,
-                    ["id"] = "1",
+                    ["id"] = "4",
                 });
             }
 
@@ -737,9 +737,202 @@ public static class CapsuleExecutor
             throw new InvalidOperationException(
                 $"采集到 0 条数据。工作空间={workspaceId}，时间范围={dateRange}（留空可获取全部数据）");
 
-        var resultJson = allItems.ToJsonString();
-        var artifact = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType}", resultJson, "application/json");
-        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs.ToString());
+        // ── 阶段二：逐个调用 common_get_info 获取缺陷详情 ──
+        var fetchDetail = GetConfigString(node, "fetchDetail") ?? "true";
+        if (fetchDetail == "true" && dataType is "bugs" or "bug")
+        {
+            var detailItems = await FetchTapdBugDetailsAsync(
+                factory, allItems, workspaceId, cookieStr, dscToken, logs);
+            if (detailItems.Count > 0)
+            {
+                var resultJson = detailItems.ToJsonString();
+                var artifact = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType} 详情", resultJson, "application/json");
+                return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs.ToString());
+            }
+            // 如果详情获取全部失败，回退到搜索列表数据
+            logs.AppendLine("⚠️ 详情获取失败，回退使用搜索列表数据");
+        }
+
+        var resultJsonFallback = allItems.ToJsonString();
+        var artifactFallback = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType}", resultJsonFallback, "application/json");
+        return new CapsuleResult(new List<ExecutionArtifact> { artifactFallback }, logs.ToString());
+    }
+
+    /// <summary>
+    /// 阶段二：逐个调用 common_get_info 获取缺陷详情，提取全部字段（含自定义字段），
+    /// 并映射为中文字段名，同时计算"是否历史问题"和"及时处理"衍生字段。
+    /// </summary>
+    private static async Task<JsonArray> FetchTapdBugDetailsAsync(
+        IHttpClientFactory factory, JsonArray searchItems, string workspaceId,
+        string cookieStr, string dscToken, StringBuilder logs)
+    {
+        var detailItems = new JsonArray();
+        var detailUrl = "https://www.tapd.cn/api/aggregation/workitem_aggregation/common_get_info";
+
+        // 从搜索结果提取 bug ID 列表
+        var bugIds = new List<string>();
+        foreach (var item in searchItems)
+        {
+            var id = item?["id"]?.GetValue<string>()
+                     ?? item?["bug_id"]?.GetValue<string>()
+                     ?? item?["ID"]?.GetValue<string>();
+            if (!string.IsNullOrWhiteSpace(id)) bugIds.Add(id);
+        }
+
+        logs.AppendLine($"Phase 2: fetching details for {bugIds.Count} bugs via common_get_info");
+
+        var successCount = 0;
+        for (var i = 0; i < bugIds.Count; i++)
+        {
+            var entityId = bugIds[i];
+            try
+            {
+                using var client = factory.CreateClient();
+                client.Timeout = TimeSpan.FromSeconds(30);
+
+                var body = new JsonObject
+                {
+                    ["workspace_id"] = workspaceId,
+                    ["entity_id"] = entityId,
+                    ["entity_type"] = "bug",
+                    ["api_controller_prefix"] = "",
+                    ["enable_description"] = "true",
+                    ["is_detail"] = 1,
+                    ["blacklist_fields"] = new JsonArray(),
+                    ["identifier"] = "app_for_editor,app_for_obj_more,app_for_obj_dialog_dropdown",
+                    ["installed_app_entity"] = new JsonObject
+                    {
+                        ["obj_id"] = entityId,
+                        ["obj_type"] = "bug",
+                        ["obj_name"] = "缺陷",
+                    },
+                    ["has_edit_rule_fields"] = new JsonArray(),
+                    ["is_archived"] = 0,
+                    ["is_assistant_exec_log"] = 1,
+                };
+                if (!string.IsNullOrWhiteSpace(dscToken))
+                    body["dsc_token"] = dscToken;
+
+                var request = new HttpRequestMessage(HttpMethod.Post, detailUrl);
+                request.Headers.Add("Cookie", cookieStr);
+                request.Headers.Add("Accept", "application/json, text/plain, */*");
+                request.Headers.Add("Accept-Language", "zh-CN,zh;q=0.9");
+                request.Headers.Add("Origin", "https://www.tapd.cn");
+                request.Headers.Add("Referer", $"https://www.tapd.cn/tapd_fe/{workspaceId}/bug/detail/{entityId}");
+                request.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36");
+                request.Headers.Add("Sec-Fetch-Dest", "empty");
+                request.Headers.Add("Sec-Fetch-Mode", "cors");
+                request.Headers.Add("Sec-Fetch-Site", "same-origin");
+                request.Content = new StringContent(body.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
+
+                var response = await client.SendAsync(request, CancellationToken.None);
+                var respBody = await response.Content.ReadAsStringAsync(CancellationToken.None);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    logs.AppendLine($"  [{i + 1}/{bugIds.Count}] {entityId}: HTTP {(int)response.StatusCode} failed");
+                    continue;
+                }
+
+                using var doc = JsonDocument.Parse(respBody);
+                var root = doc.RootElement;
+
+                // 解析 data.get_info_ret.data.Bug
+                if (root.TryGetProperty("data", out var dataEl) &&
+                    dataEl.TryGetProperty("get_info_ret", out var retEl) &&
+                    retEl.TryGetProperty("data", out var retDataEl) &&
+                    retDataEl.TryGetProperty("Bug", out var bugEl))
+                {
+                    var copyUrl = "";
+                    if (retDataEl.TryGetProperty("copy_info", out var copyEl) &&
+                        copyEl.TryGetProperty("url", out var urlEl))
+                        copyUrl = urlEl.GetString() ?? "";
+
+                    // 提取并映射为中文字段名
+                    var mapped = MapBugFieldsToChinese(bugEl, copyUrl);
+                    detailItems.Add(mapped);
+                    successCount++;
+                }
+                else
+                {
+                    logs.AppendLine($"  [{i + 1}/{bugIds.Count}] {entityId}: unexpected response structure");
+                }
+            }
+            catch (Exception ex)
+            {
+                logs.AppendLine($"  [{i + 1}/{bugIds.Count}] {entityId}: error - {ex.Message}");
+            }
+
+            // 避免请求过快
+            if (i < bugIds.Count - 1)
+                await Task.Delay(500, CancellationToken.None);
+        }
+
+        logs.AppendLine($"Phase 2 done: {successCount}/{bugIds.Count} details fetched successfully");
+        return detailItems;
+    }
+
+    /// <summary>
+    /// 将 common_get_info 返回的 Bug JSON 字段映射为中文字段名，
+    /// 同时计算"是否历史问题"和"及时处理"衍生字段。
+    /// </summary>
+    private static JsonNode MapBugFieldsToChinese(JsonElement bug, string copyUrl)
+    {
+        string Get(string key) =>
+            bug.TryGetProperty(key, out var el) && el.ValueKind == JsonValueKind.String
+                ? el.GetString() ?? "" : "";
+
+        var resolved = Get("resolved");
+        var due = Get("due");
+        var customField100 = Get("custom_field_100"); // 问题开始时间
+
+        // 计算"是否历史问题"：问题开始时间距解决时间 ≥ 6 个月
+        var isHistorical = "否";
+        if (!string.IsNullOrWhiteSpace(customField100) && !string.IsNullOrWhiteSpace(resolved))
+        {
+            if (DateTime.TryParse(customField100, out var startDt) && DateTime.TryParse(resolved, out var resolvedDt))
+            {
+                var monthsDiff = (resolvedDt.Year - startDt.Year) * 12 + (resolvedDt.Month - startDt.Month);
+                if (monthsDiff >= 6) isHistorical = "是";
+            }
+        }
+
+        // 计算"及时处理"：预计结束时间 ≥ 解决时间（只比较日期）
+        var timelyFixed = "无法判断";
+        if (!string.IsNullOrWhiteSpace(due) && !string.IsNullOrWhiteSpace(resolved))
+        {
+            if (DateTime.TryParse(due, out var dueDt) && DateTime.TryParse(resolved, out var resolvedDt))
+                timelyFixed = dueDt.Date >= resolvedDt.Date ? "是" : "否";
+        }
+
+        return new JsonObject
+        {
+            ["缺陷ID"] = Get("ID"),
+            ["标题"] = Get("title"),
+            ["创建人"] = Get("reporter"),
+            ["创建时间"] = Get("created"),
+            ["问题开始时间"] = customField100,
+            ["解决时间"] = resolved,
+            ["关闭时间"] = Get("closed"),
+            ["预计结束时间"] = due,
+            ["处理人"] = Get("current_owner"),
+            ["状态"] = Get("status"),
+            ["责任人"] = Get("custom_field_two"),
+            ["是否逾期"] = Get("custom_field_four"),
+            ["有效报告"] = Get("custom_field_five"),
+            ["缺陷等级"] = Get("custom_field_6"),
+            ["缺陷划分"] = Get("custom_field_7"),
+            ["反馈人"] = Get("custom_field_8"),
+            ["公司名称"] = Get("custom_field_9"),
+            ["商户编号"] = Get("custom_field_10"),
+            ["引入项目"] = Get("custom_field_11"),
+            ["反馈时间"] = Get("custom_field_12"),
+            ["影响范围"] = Get("custom_field_13"),
+            ["结构归母"] = Get("custom_field_one"),
+            ["URL链接"] = copyUrl,
+            ["是否历史问题"] = isHistorical,
+            ["及时处理"] = timelyFixed,
+        };
     }
 
     /// <summary>自定义 cURL 兜底模式：解析用户粘贴的 cURL 命令并直接执行，支持自动分页</summary>
