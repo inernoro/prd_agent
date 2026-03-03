@@ -34,7 +34,7 @@ import type { Platform } from '@/types/admin';
 import {
   Eye, Send, Plus, Search, MessageSquare, Clock, Loader2, Swords, ChevronDown, ChevronRight, Brain,
   Edit3, Trash2, Settings, Power, RefreshCw, Download, Copy, Check,
-  Paperclip, Image as ImageIcon, X, FileText,
+  Image as ImageIcon, X,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -1597,44 +1597,187 @@ export function ArenaPage() {
 
         {/* ===================== Content ===================== */}
         {!hasBattle ? (
-          /* Empty State */
-          <div className="flex-1 flex flex-col items-center justify-center gap-4 px-4" style={{ minHeight: 0 }}>
-            <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{ background: 'rgba(99,102,241,0.1)' }}>
-              <Swords className="w-8 h-8" style={{ color: 'rgba(99,102,241,0.7)' }} />
-            </div>
-            <div className="text-center">
-              <h2 className="text-[18px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>AI 盲评竞技场</h2>
-              <p className="text-[14px] max-w-md" style={{ color: 'var(--text-muted)' }}>
-                提出问题，多个模型匿名作答。阅读回答后揭晓真实身份，公平评估模型能力。
-              </p>
-            </div>
-            {lineupLoading ? (
-              <div className="flex items-center gap-2 text-[13px]" style={{ color: 'var(--text-muted)' }}>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                <span>加载阵容中...</span>
-              </div>
-            ) : lineupError ? (
-              <div className="text-center">
-                <div
-                  className="text-[13px] mb-2 px-3 py-2 rounded-lg"
-                  style={{ background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.9)', border: '1px solid rgba(239,68,68,0.15)' }}
-                >
-                  加载阵容失败: {lineupError}
+          /* Empty State — centered input like ChatGPT welcome */
+          <div className="flex-1 flex flex-col items-center justify-center px-4" style={{ minHeight: 0 }}>
+            <div className="w-full" style={{ maxWidth: '720px' }}>
+              {/* Welcome header */}
+              <div className="text-center mb-8">
+                <div className="w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4" style={{ background: 'rgba(99,102,241,0.1)' }}>
+                  <Swords className="w-7 h-7" style={{ color: 'rgba(99,102,241,0.7)' }} />
                 </div>
-                <Button variant="secondary" size="sm" onClick={loadLineup}>重新加载</Button>
+                <h2 className="text-[20px] font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>AI 盲评竞技场</h2>
+                <p className="text-[14px]" style={{ color: 'var(--text-muted)' }}>
+                  提出问题，多个模型匿名作答。阅读回答后揭晓真实身份，公平评估模型能力。
+                </p>
               </div>
-            ) : groups.length === 0 ? (
+
+              {lineupLoading ? (
+                <div className="flex items-center justify-center gap-2 text-[13px] mb-4" style={{ color: 'var(--text-muted)' }}>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>加载阵容中...</span>
+                </div>
+              ) : lineupError ? (
+                <div className="text-center mb-4">
+                  <div
+                    className="text-[13px] mb-2 px-3 py-2 rounded-lg inline-block"
+                    style={{ background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.9)', border: '1px solid rgba(239,68,68,0.15)' }}
+                  >
+                    加载阵容失败: {lineupError}
+                  </div>
+                  <div><Button variant="secondary" size="sm" onClick={loadLineup}>重新加载</Button></div>
+                </div>
+              ) : groups.length === 0 ? (
+                <div
+                  className="text-[13px] px-4 py-3 rounded-xl text-center mx-auto max-w-sm mb-4"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+                >
+                  暂无可用阵容，请先在后台管理页面配置竞技场分组和模型
+                </div>
+              ) : null}
+
+              {/* Centered input box */}
+              {/* Hidden file input */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
+                className="hidden"
+                onChange={handleFileInputChange}
+              />
               <div
-                className="text-[13px] px-4 py-3 rounded-xl text-center max-w-sm"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+                className={cn(
+                  'rounded-[18px] p-[2px] transition-all duration-300',
+                  dragOver && 'ring-2 ring-indigo-500/50'
+                )}
+                style={{
+                  background: dragOver ? 'rgba(99,102,241,0.2)' : 'rgba(255,255,255,0.06)',
+                  position: 'relative',
+                  overflow: 'hidden',
+                }}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
               >
-                暂无可用阵容，请先在后台管理页面配置竞技场分组和模型
+                <div
+                  className="rounded-[16px] p-3"
+                  style={{ background: 'var(--bg-base, #0d0d0f)', position: 'relative', zIndex: 1 }}
+                >
+                  {/* Attachment preview strip */}
+                  {attachments.length > 0 && (
+                    <div className="flex gap-2 px-2 pb-2 flex-wrap">
+                      {attachments.map((att) => (
+                        <div
+                          key={att.attachmentId}
+                          className="relative group rounded-lg overflow-hidden flex-shrink-0"
+                          style={{
+                            width: '64px',
+                            height: '64px',
+                            background: 'rgba(255,255,255,0.04)',
+                            border: '1px solid rgba(255,255,255,0.08)',
+                          }}
+                        >
+                          <img src={att.url} alt={att.fileName} className="w-full h-full object-cover" />
+                          <button
+                            onClick={() => handleRemoveAttachment(att.attachmentId)}
+                            className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                            style={{ background: 'rgba(0,0,0,0.7)' }}
+                          >
+                            <X className="w-2.5 h-2.5" style={{ color: '#fff' }} />
+                          </button>
+                          <div
+                            className="absolute bottom-0 left-0 right-0 px-1 py-0.5 text-[9px] truncate"
+                            style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}
+                          >
+                            {att.fileName}
+                          </div>
+                        </div>
+                      ))}
+                      {isUploading && (
+                        <div
+                          className="flex items-center justify-center rounded-lg flex-shrink-0"
+                          style={{
+                            width: '64px',
+                            height: '64px',
+                            background: 'rgba(255,255,255,0.04)',
+                            border: '1px dashed rgba(255,255,255,0.15)',
+                          }}
+                        >
+                          <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--text-muted)' }} />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <textarea
+                    ref={textareaRef}
+                    value={prompt}
+                    onChange={handleTextareaInput}
+                    onKeyDown={handleKeyDown}
+                    onPaste={handlePaste}
+                    placeholder={
+                      lineupLoading
+                        ? '阵容加载中...'
+                        : groups.length === 0
+                          ? '请先在管理页配置竞技场阵容...'
+                          : slots.length === 0
+                            ? '请先选择一个有模型的阵容...'
+                            : '输入你的问题，让多个模型匿名回答...'
+                    }
+                    disabled={isStreaming || slots.length === 0}
+                    rows={3}
+                    className={cn(
+                      'w-full bg-transparent border-none outline-none ring-0 focus:ring-0 focus:outline-none resize-none text-[14px] leading-relaxed',
+                      'placeholder:text-[color:var(--text-muted)] disabled:opacity-50 disabled:cursor-not-allowed',
+                      'px-2 py-1 no-focus-ring'
+                    )}
+                    style={{ color: 'var(--text-primary)', minHeight: '72px', maxHeight: '200px', border: 'none', boxShadow: 'none' }}
+                  />
+                  {/* Toolbar row */}
+                  <div className="flex items-center justify-between mt-1 px-1">
+                    <div className="flex items-center gap-1">
+                      {/* Attachment button */}
+                      <button
+                        onClick={handleAttachmentClick}
+                        disabled={isStreaming || slots.length === 0 || attachments.length >= MAX_ATTACHMENTS}
+                        className={cn(
+                          'flex items-center justify-center w-8 h-8 rounded-lg transition-colors',
+                          'disabled:opacity-30 disabled:cursor-not-allowed',
+                          'hover:bg-white/8'
+                        )}
+                        style={{ color: 'var(--text-muted)' }}
+                        title={`添加图片 (${attachments.length}/${MAX_ATTACHMENTS})`}
+                      >
+                        <ImageIcon className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                        {slots.length > 0
+                          ? `${selectedGroup?.name} · ${slots.length} 个模型`
+                          : groups.length === 0 ? '未配置阵容' : '请选择阵容'}
+                      </span>
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        onClick={handleSend}
+                        disabled={isStreaming || !prompt.trim() || slots.length === 0}
+                        className="px-4"
+                      >
+                        <Send className="w-4 h-4" />
+                        发送
+                      </Button>
+                    </div>
+                  </div>
+                </div>
               </div>
-            ) : (
-              <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
-                当前阵容: {selectedGroup?.name} ({slots.length} 个模型)
+
+              {/* Hint text */}
+              <div className="text-center mt-3">
+                <span className="text-[11px]" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
+                  支持粘贴或拖拽图片 · Enter 发送 · Shift+Enter 换行
+                </span>
               </div>
-            )}
+            </div>
           </div>
         ) : (
           /* Battle View — horizontal card layout */
@@ -1894,7 +2037,7 @@ export function ArenaPage() {
 
         {/* ===================== Bottom Bar ===================== */}
         <div
-          className="flex-shrink-0 px-6 py-4"
+          className="flex-shrink-0 px-6 py-3"
           style={{
             background: 'var(--bg-base, #0d0d0f)',
           }}
@@ -1946,136 +2089,121 @@ export function ArenaPage() {
                 className="rounded-[16px] p-3"
                 style={{ background: 'var(--bg-base, #0d0d0f)', position: 'relative', zIndex: 1 }}
               >
-              {/* Attachment preview strip */}
-              {attachments.length > 0 && (
-                <div className="flex gap-2 px-2 pb-2 flex-wrap">
-                  {attachments.map((att) => (
-                    <div
-                      key={att.attachmentId}
-                      className="relative group rounded-lg overflow-hidden flex-shrink-0"
-                      style={{
-                        width: '64px',
-                        height: '64px',
-                        background: 'rgba(255,255,255,0.04)',
-                        border: '1px solid rgba(255,255,255,0.08)',
-                      }}
-                    >
-                      <img
-                        src={att.url}
-                        alt={att.fileName}
-                        className="w-full h-full object-cover"
-                      />
-                      <button
-                        onClick={() => handleRemoveAttachment(att.attachmentId)}
-                        className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                        style={{ background: 'rgba(0,0,0,0.7)' }}
-                      >
-                        <X className="w-2.5 h-2.5" style={{ color: '#fff' }} />
-                      </button>
+                {/* Attachment preview strip */}
+                {attachments.length > 0 && (
+                  <div className="flex gap-2 px-2 pb-2 flex-wrap">
+                    {attachments.map((att) => (
                       <div
-                        className="absolute bottom-0 left-0 right-0 px-1 py-0.5 text-[9px] truncate"
-                        style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}
+                        key={att.attachmentId}
+                        className="relative group rounded-lg overflow-hidden flex-shrink-0"
+                        style={{
+                          width: '64px',
+                          height: '64px',
+                          background: 'rgba(255,255,255,0.04)',
+                          border: '1px solid rgba(255,255,255,0.08)',
+                        }}
                       >
-                        {att.fileName}
+                        <img src={att.url} alt={att.fileName} className="w-full h-full object-cover" />
+                        <button
+                          onClick={() => handleRemoveAttachment(att.attachmentId)}
+                          className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                          style={{ background: 'rgba(0,0,0,0.7)' }}
+                        >
+                          <X className="w-2.5 h-2.5" style={{ color: '#fff' }} />
+                        </button>
+                        <div
+                          className="absolute bottom-0 left-0 right-0 px-1 py-0.5 text-[9px] truncate"
+                          style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}
+                        >
+                          {att.fileName}
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                  {isUploading && (
-                    <div
-                      className="flex items-center justify-center rounded-lg flex-shrink-0"
-                      style={{
-                        width: '64px',
-                        height: '64px',
-                        background: 'rgba(255,255,255,0.04)',
-                        border: '1px dashed rgba(255,255,255,0.15)',
-                      }}
-                    >
-                      <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--text-muted)' }} />
-                    </div>
-                  )}
-                </div>
-              )}
-              <textarea
-                ref={textareaRef}
-                value={prompt}
-                onChange={handleTextareaInput}
-                onKeyDown={handleKeyDown}
-                onPaste={handlePaste}
-                placeholder={
-                  lineupLoading
-                    ? '阵容加载中...'
-                    : groups.length === 0
-                      ? '请先在管理页配置竞技场阵容...'
-                      : slots.length === 0
-                        ? '请先选择一个有模型的阵容...'
-                        : '输入你的问题，让多个模型匿名回答... (支持粘贴/拖拽图片)'
-                }
-                disabled={isStreaming || slots.length === 0}
-                rows={2}
-                className={cn(
-                  'w-full bg-transparent border-none outline-none ring-0 focus:ring-0 focus:outline-none resize-none text-[14px] leading-relaxed',
-                  'placeholder:text-[color:var(--text-muted)] disabled:opacity-50 disabled:cursor-not-allowed',
-                  'px-2 py-1 no-focus-ring'
+                    ))}
+                    {isUploading && (
+                      <div
+                        className="flex items-center justify-center rounded-lg flex-shrink-0"
+                        style={{
+                          width: '64px',
+                          height: '64px',
+                          background: 'rgba(255,255,255,0.04)',
+                          border: '1px dashed rgba(255,255,255,0.15)',
+                        }}
+                      >
+                        <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--text-muted)' }} />
+                      </div>
+                    )}
+                  </div>
                 )}
-                style={{ color: 'var(--text-primary)', minHeight: '56px', maxHeight: '200px', border: 'none', boxShadow: 'none' }}
-              />
-              <div className="flex items-center justify-between mt-2 pt-2">
-                <span className="text-[11px] px-2" style={{ color: 'var(--text-muted)' }}>
-                  {hasActiveProgress
-                    ? <span style={{ color: completedCount === totalCount ? '#10b981' : 'var(--text-muted)' }}>
-                        {completedCount}/{totalCount}{completedCount === totalCount && !isStreaming ? ' 完成' : ' 进行中'}
-                        {' · '}
-                      </span>
-                    : null}
-                  {slots.length > 0
-                    ? `${selectedGroup?.name} · ${slots.length} 个模型匿名回答`
-                    : groups.length === 0 ? '未配置阵容' : '请选择阵容'}
-                </span>
-                <div className="flex items-center gap-2">
-                  {/* Attachment button */}
-                  <button
-                    onClick={handleAttachmentClick}
-                    disabled={isStreaming || slots.length === 0 || attachments.length >= MAX_ATTACHMENTS}
-                    className={cn(
-                      'flex items-center gap-1 h-8 px-2.5 rounded-lg text-[12px] transition-colors',
-                      'disabled:opacity-40 disabled:cursor-not-allowed',
-                      'hover:bg-white/5'
-                    )}
-                    style={{ color: 'var(--text-muted)' }}
-                    title={`添加图片附件 (${attachments.length}/${MAX_ATTACHMENTS})`}
-                  >
-                    <Paperclip className="w-3.5 h-3.5" />
-                  </button>
-                  {canReveal && (
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={handleReveal}
-                      disabled={revealLoading}
-                    >
-                      {revealLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
-                      揭晓身份
-                    </Button>
+                <textarea
+                  ref={textareaRef}
+                  value={prompt}
+                  onChange={handleTextareaInput}
+                  onKeyDown={handleKeyDown}
+                  onPaste={handlePaste}
+                  placeholder="继续提问..."
+                  disabled={isStreaming || slots.length === 0}
+                  rows={1}
+                  className={cn(
+                    'w-full bg-transparent border-none outline-none ring-0 focus:ring-0 focus:outline-none resize-none text-[14px] leading-relaxed',
+                    'placeholder:text-[color:var(--text-muted)] disabled:opacity-50 disabled:cursor-not-allowed',
+                    'px-2 py-1 no-focus-ring'
                   )}
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={handleSend}
-                    disabled={isStreaming || !prompt.trim() || slots.length === 0}
-                    className="px-4"
-                  >
-                    {isStreaming ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <>
-                        <Send className="w-4 h-4" />
-                        发送
-                      </>
+                  style={{ color: 'var(--text-primary)', minHeight: '40px', maxHeight: '200px', border: 'none', boxShadow: 'none' }}
+                />
+                {/* Toolbar row */}
+                <div className="flex items-center justify-between mt-1 px-1">
+                  <div className="flex items-center gap-1">
+                    {/* Attachment button */}
+                    <button
+                      onClick={handleAttachmentClick}
+                      disabled={isStreaming || slots.length === 0 || attachments.length >= MAX_ATTACHMENTS}
+                      className={cn(
+                        'flex items-center justify-center w-8 h-8 rounded-lg transition-colors',
+                        'disabled:opacity-30 disabled:cursor-not-allowed',
+                        'hover:bg-white/8'
+                      )}
+                      style={{ color: 'var(--text-muted)' }}
+                      title={`添加图片 (${attachments.length}/${MAX_ATTACHMENTS})`}
+                    >
+                      <ImageIcon className="w-4 h-4" />
+                    </button>
+                    {/* Status info */}
+                    <span className="text-[11px] ml-1" style={{ color: 'var(--text-muted)' }}>
+                      {hasActiveProgress
+                        ? <span style={{ color: completedCount === totalCount ? '#10b981' : 'var(--text-muted)' }}>
+                            {completedCount}/{totalCount}{completedCount === totalCount && !isStreaming ? ' 完成' : ' 进行中'}
+                          </span>
+                        : null}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {canReveal && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={handleReveal}
+                        disabled={revealLoading}
+                      >
+                        {revealLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
+                        揭晓身份
+                      </Button>
                     )}
-                  </Button>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={handleSend}
+                      disabled={isStreaming || !prompt.trim() || slots.length === 0}
+                      className="px-4"
+                    >
+                      {isStreaming ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Send className="w-4 h-4" />
+                      )}
+                    </Button>
+                  </div>
                 </div>
               </div>
-            </div>
             </div>
           </div>
         </div>
