@@ -121,6 +121,7 @@ export default function App() {
   const setPermissionsLoaded = useAuthStore((s) => s.setPermissionsLoaded);
   const setIsRoot = useAuthStore((s) => s.setIsRoot);
   const setCdnBaseUrl = useAuthStore((s) => s.setCdnBaseUrl);
+  const setPermFingerprint = useAuthStore((s) => s.setPermFingerprint);
   const setMenuCatalog = useAuthStore((s) => s.setMenuCatalog);
   const menuCatalogLoaded = useAuthStore((s) => s.menuCatalogLoaded);
   const logout = useAuthStore((s) => s.logout);
@@ -143,9 +144,10 @@ export default function App() {
       setPermissions(res.data.effectivePermissions || []);
       setIsRoot(res.data.isRoot ?? false);
       if (res.data.cdnBaseUrl) setCdnBaseUrl(res.data.cdnBaseUrl);
+      if (res.data.permissionFingerprint) setPermFingerprint(res.data.permissionFingerprint);
       setPermissionsLoaded(true);
     })();
-  }, [isAuthenticated, permissionsLoaded, setPermissions, setPermissionsLoaded, setIsRoot, setCdnBaseUrl, logout]);
+  }, [isAuthenticated, permissionsLoaded, setPermissions, setPermissionsLoaded, setIsRoot, setCdnBaseUrl, setPermFingerprint, logout]);
 
   // 加载菜单目录
   useEffect(() => {

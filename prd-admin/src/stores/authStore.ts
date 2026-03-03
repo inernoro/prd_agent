@@ -30,6 +30,8 @@ type AuthState = {
   menuCatalogLoaded: boolean;
   /** CDN 基础地址（从后端 /api/authz/me 获取） */
   cdnBaseUrl: string;
+  /** 权限指纹（后端基于权限目录+角色定义计算的哈希，用于检测部署/角色变更后的缓存失效） */
+  permFingerprint: string;
   login: (user: AuthUser, token: string) => void;
   setTokens: (token: string, refreshToken: string, sessionKey: string) => void;
   setPermissions: (permissions: string[]) => void;
@@ -38,6 +40,7 @@ type AuthState = {
   setMenuCatalog: (items: AdminMenuItem[]) => void;
   setMenuCatalogLoaded: (loaded: boolean) => void;
   setCdnBaseUrl: (url: string) => void;
+  setPermFingerprint: (fp: string) => void;
   patchUser: (patch: Partial<AuthUser>) => void;
   logout: () => void;
 };
@@ -56,6 +59,7 @@ export const useAuthStore = create<AuthState>()(
       menuCatalog: [],
       menuCatalogLoaded: false,
       cdnBaseUrl: '',
+      permFingerprint: '',
       login: (user, token) => set({ isAuthenticated: true, user, token }),
       setTokens: (token, refreshToken, sessionKey) => set({ token, refreshToken, sessionKey }),
       setPermissions: (permissions) => set({ permissions: Array.isArray(permissions) ? permissions : [] }),
@@ -64,6 +68,7 @@ export const useAuthStore = create<AuthState>()(
       setMenuCatalog: (items) => set({ menuCatalog: Array.isArray(items) ? items : [], menuCatalogLoaded: true }),
       setMenuCatalogLoaded: (loaded) => set({ menuCatalogLoaded: !!loaded }),
       setCdnBaseUrl: (url) => set({ cdnBaseUrl: (url ?? '').trim().replace(/\/+$/, '') }),
+      setPermFingerprint: (fp) => set({ permFingerprint: fp || '' }),
       patchUser: (patch) =>
         set((s) => (s.user ? { user: { ...s.user, ...patch } } : ({} as Partial<AuthState>))),
       logout: () => {
@@ -83,6 +88,7 @@ export const useAuthStore = create<AuthState>()(
           menuCatalog: [],
           menuCatalogLoaded: false,
           cdnBaseUrl: '',
+          permFingerprint: '',
         });
       },
     }),
