@@ -454,6 +454,7 @@ public static class CapsuleExecutor
         {
             AppCallerCode = PrdAgent.Core.Models.AppCallerRegistry.WorkflowAgent.LlmAnalyzer.Chat,
             ModelType = "chat",
+            TimeoutSeconds = 300, // 复杂分析任务（如 28 维度统计）需要较长时间
             RequestBody = new System.Text.Json.Nodes.JsonObject
             {
                 ["messages"] = messages,
@@ -767,7 +768,7 @@ public static class CapsuleExecutor
         string cookieStr, string dscToken, StringBuilder logs)
     {
         var detailItems = new JsonArray();
-        var detailUrl = "https://www.tapd.cn/api/aggregation/workitem_aggregation/common_get_info";
+        var detailUrl = "https://www.tapd.cn/api/workitem_aggregation/common_get_info";
 
         // 从搜索结果提取 bug ID 列表
         var bugIds = new List<string>();
@@ -831,6 +832,8 @@ public static class CapsuleExecutor
                 if (!response.IsSuccessStatusCode)
                 {
                     logs.AppendLine($"  [{i + 1}/{bugIds.Count}] {entityId}: HTTP {(int)response.StatusCode} failed");
+                    // 保留原始搜索数据作为 fallback
+                    detailItems.Add(JsonNode.Parse(searchItems[i]!.ToJsonString())!);
                     continue;
                 }
 
@@ -843,8 +846,9 @@ public static class CapsuleExecutor
                     retEl.TryGetProperty("data", out var retDataEl) &&
                     retDataEl.TryGetProperty("Bug", out var bugEl))
                 {
+                    // copy_info 在 data 层级下，不在 get_info_ret.data 下
                     var copyUrl = "";
-                    if (retDataEl.TryGetProperty("copy_info", out var copyEl) &&
+                    if (dataEl.TryGetProperty("copy_info", out var copyEl) &&
                         copyEl.TryGetProperty("url", out var urlEl))
                         copyUrl = urlEl.GetString() ?? "";
 
@@ -855,20 +859,36 @@ public static class CapsuleExecutor
                 }
                 else
                 {
-                    logs.AppendLine($"  [{i + 1}/{bugIds.Count}] {entityId}: unexpected response structure");
+                    // 记录响应结构帮助调试
+                    var keys = new List<string>();
+                    if (root.TryGetProperty("data", out var dEl2))
+                    {
+                        foreach (var prop in dEl2.EnumerateObject())
+                            keys.Add(prop.Name);
+                    }
+                    logs.AppendLine($"  [{i + 1}/{bugIds.Count}] {entityId}: unexpected structure, data keys=[{string.Join(",", keys)}]");
+                    logs.AppendLine($"    Response preview: {respBody[..Math.Min(300, respBody.Length)]}");
+                    // 保留原始搜索数据作为 fallback
+                    detailItems.Add(JsonNode.Parse(searchItems[i]!.ToJsonString())!);
                 }
             }
             catch (Exception ex)
             {
                 logs.AppendLine($"  [{i + 1}/{bugIds.Count}] {entityId}: error - {ex.Message}");
+                // 保留原始搜索数据作为 fallback
+                detailItems.Add(JsonNode.Parse(searchItems[i]!.ToJsonString())!);
             }
+
+            // 进度日志（每 10 条记录一次）
+            if ((i + 1) % 10 == 0 || i == bugIds.Count - 1)
+                logs.AppendLine($"  [{i + 1}/{bugIds.Count}] progress: {successCount} success, {detailItems.Count - successCount} fallback");
 
             // 避免请求过快
             if (i < bugIds.Count - 1)
-                await Task.Delay(500, CancellationToken.None);
+                await Task.Delay(300, CancellationToken.None);
         }
 
-        logs.AppendLine($"Phase 2 done: {successCount}/{bugIds.Count} details fetched successfully");
+        logs.AppendLine($"Phase 2 done: {successCount}/{bugIds.Count} details fetched, {detailItems.Count} total items");
         return detailItems;
     }
 
@@ -905,9 +925,14 @@ public static class CapsuleExecutor
                 timelyFixed = dueDt.Date >= resolvedDt.Date ? "是" : "否";
         }
 
+        // TAPD API 中 Bug 的 id 字段可能是 "id" 或 "ID"（大小写不一致）
+        var bugIdValue = Get("id");
+        if (string.IsNullOrEmpty(bugIdValue)) bugIdValue = Get("ID");
+        if (string.IsNullOrEmpty(bugIdValue)) bugIdValue = Get("bug_id");
+
         return new JsonObject
         {
-            ["缺陷ID"] = Get("ID"),
+            ["缺陷ID"] = bugIdValue,
             ["标题"] = Get("title"),
             ["创建人"] = Get("reporter"),
             ["创建时间"] = Get("created"),
@@ -1977,6 +2002,7 @@ public static class CapsuleExecutor
         {
             AppCallerCode = PrdAgent.Core.Models.AppCallerRegistry.WorkflowAgent.ReportGenerator.Chat,
             ModelType = "chat",
+            TimeoutSeconds = 300, // 报告生成可能需要处理大量输入数据，延长超时
             RequestBody = new System.Text.Json.Nodes.JsonObject
             {
                 ["messages"] = new System.Text.Json.Nodes.JsonArray
