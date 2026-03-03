@@ -472,8 +472,8 @@ public class ModelGroupsController : ControllerBase
     /// </summary>
     /// <param name="id">模型池 ID</param>
     /// <param name="modelId">模型 ID（ModelGroupItem.ModelId）</param>
-    [HttpPost("{id}/models/{modelId}/reset-health")]
-    public async Task<IActionResult> ResetModelHealth(string id, string modelId)
+    [HttpPost("{id}/reset-model-health")]
+    public async Task<IActionResult> ResetModelHealth(string id, [FromQuery] string modelId)
     {
         var group = await _db.ModelGroups.Find(g => g.Id == id).FirstOrDefaultAsync();
 

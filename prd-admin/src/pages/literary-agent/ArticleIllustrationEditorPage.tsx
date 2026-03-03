@@ -50,7 +50,7 @@ import {
 } from '@/services/real/literaryAgentConfig';
 import type { LiteraryAgentModelPool, LiteraryAgentAllModelsResponse } from '@/services/contracts/literaryAgentConfig';
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
-import type { SizesByResolution } from '@/lib/imageAspectOptions';
+import { ASPECT_OPTIONS, type SizesByResolution } from '@/lib/imageAspectOptions';
 import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2, Loader2, ArrowLeft } from 'lucide-react';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
@@ -493,7 +493,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       setImageGenModel({
         id: `pool-${pool.id}-${topPoolModel.modelId}`,
         name: pool.name || topPoolModel.modelId,
-        modelName: topPoolModel.modelId,
+        modelName: pool.code || topPoolModel.modelId,
         platformId: topPoolModel.platformId,
         enabled: true,
         isImageGen: true,
@@ -506,11 +506,18 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
   }, [referenceImageConfigs, text2ImgPool, img2ImgPool]);
 
+  // 从 ASPECT_OPTIONS 构建默认尺寸选项（当适配器未返回尺寸时作为 fallback）
+  const defaultSizesByResolution: SizesByResolution = React.useMemo(() => ({
+    '1k': ASPECT_OPTIONS.map(opt => ({ size: opt.size1k, aspectRatio: opt.id })),
+    '2k': ASPECT_OPTIONS.map(opt => ({ size: opt.size2k, aspectRatio: opt.id })),
+    '4k': ASPECT_OPTIONS.map(opt => ({ size: opt.size4k, aspectRatio: opt.id })),
+  }), []);
+
   // 从后端获取生图模型的尺寸选项（按分辨率分组，与视觉创作一致）
   useEffect(() => {
     const modelName = imageGenModel?.modelName;
     if (!modelName) {
-      setSizesByResolutionForPicker({ '1k': [], '2k': [], '4k': [] });
+      setSizesByResolutionForPicker(defaultSizesByResolution);
       return;
     }
     let cancelled = false;
@@ -520,20 +527,23 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         if (cancelled) return;
         if (res.success && res.data?.matched && res.data.sizesByResolution) {
           const data = res.data.sizesByResolution;
-          setSizesByResolutionForPicker({
+          const resolved: SizesByResolution = {
             '1k': Array.isArray(data['1k']) ? data['1k'] : [],
             '2k': Array.isArray(data['2k']) ? data['2k'] : [],
             '4k': Array.isArray(data['4k']) ? data['4k'] : [],
-          });
+          };
+          // 适配器返回了有效尺寸则使用，否则 fallback 到默认
+          const hasAny = resolved['1k'].length > 0 || resolved['2k'].length > 0 || resolved['4k'].length > 0;
+          setSizesByResolutionForPicker(hasAny ? resolved : defaultSizesByResolution);
         } else {
-          setSizesByResolutionForPicker({ '1k': [], '2k': [], '4k': [] });
+          setSizesByResolutionForPicker(defaultSizesByResolution);
         }
       } catch {
-        if (!cancelled) setSizesByResolutionForPicker({ '1k': [], '2k': [], '4k': [] });
+        if (!cancelled) setSizesByResolutionForPicker(defaultSizesByResolution);
       }
     })();
     return () => { cancelled = true; };
-  }, [imageGenModel?.modelName]);
+  }, [imageGenModel?.modelName, defaultSizesByResolution]);
 
   useEffect(() => {
     let cancelled = false;
