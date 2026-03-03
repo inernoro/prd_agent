@@ -493,7 +493,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       setImageGenModel({
         id: `pool-${pool.id}-${topPoolModel.modelId}`,
         name: pool.name || topPoolModel.modelId,
-        modelName: topPoolModel.modelId,
+        modelName: pool.code || topPoolModel.modelId,
         platformId: topPoolModel.platformId,
         enabled: true,
         isImageGen: true,
