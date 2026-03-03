@@ -89,6 +89,10 @@ export default function Sidebar() {
     setMode('Defect');
   }, [setMode]);
 
+  const openAssets = useCallback(() => {
+    setMode('Assets');
+  }, [setMode]);
+
   const openPrdPreview = useCallback(() => {
     if (!documentLoaded || !prdDocument) return;
     openPrdPreviewPage();
@@ -717,6 +721,30 @@ export default function Sidebar() {
                   ) : null}
                 </div>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* 我的资产入口 */}
+        {!isCollapsed && (
+          <div className="shrink-0 border-t border-black/10 dark:border-white/10">
+            <div className="px-3 py-2 flex items-center justify-between">
+              <div className="text-xs font-medium text-text-secondary">我的资产</div>
+              <button
+                type="button"
+                onClick={openAssets}
+                className={`h-7 w-7 inline-flex items-center justify-center rounded-md transition-colors ${
+                  mode === 'Assets'
+                    ? 'text-primary-600 dark:text-primary-300 bg-primary-50 dark:bg-white/5'
+                    : 'text-text-secondary hover:text-primary-500 hover:bg-black/5 dark:hover:bg-white/5'
+                }`}
+                title="我的资产"
+                aria-label="我的资产"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3 3h18v18H3z" />
+                </svg>
+              </button>
             </div>
           </div>
         )}
