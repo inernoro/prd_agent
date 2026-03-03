@@ -1143,6 +1143,56 @@ public static class CapsuleExecutor
         if (allItems.Count == 0)
             throw new InvalidOperationException("自定义 cURL 采集到 0 条数据。请检查 cURL 命令是否有效、Cookie 是否过期。");
 
+        // ── 阶段二：对 bugs 类型调用 common_get_info 获取详情 ──
+        var fetchDetail = GetConfigString(node, "fetchDetail") ?? "true";
+        if (fetchDetail == "true" && dataType is "bugs" or "bug")
+        {
+            // 从 cURL headers 中提取 Cookie 和 dsc-token
+            var cookieStr = parsed.Headers
+                .FirstOrDefault(h => h.Key.Equals("Cookie", StringComparison.OrdinalIgnoreCase)).Value ?? "";
+            var dscToken = "";
+            if (!string.IsNullOrWhiteSpace(cookieStr))
+            {
+                var match = System.Text.RegularExpressions.Regex.Match(cookieStr, @"dsc-token=([^;\s]+)");
+                if (match.Success) dscToken = match.Groups[1].Value;
+            }
+
+            // 从 cURL body 中提取 workspace_id（如果 allItems 里没有 workspace_id 字段）
+            var wsId = GetConfigString(node, "workspaceId") ?? GetConfigString(node, "workspace_id") ?? "";
+            if (string.IsNullOrWhiteSpace(wsId) && !string.IsNullOrEmpty(parsed.Body))
+            {
+                try
+                {
+                    var bodyNode = JsonNode.Parse(parsed.Body);
+                    wsId = bodyNode?["workspace_id"]?.GetValue<string>() ?? "";
+                }
+                catch { /* ignore */ }
+            }
+            // 尝试从搜索结果中获取 workspace_id
+            if (string.IsNullOrWhiteSpace(wsId) && allItems.Count > 0)
+            {
+                wsId = allItems[0]?["workspace_id"]?.GetValue<string>()
+                    ?? allItems[0]?["project_id"]?.GetValue<string>() ?? "";
+            }
+
+            if (!string.IsNullOrWhiteSpace(cookieStr) && !string.IsNullOrWhiteSpace(wsId))
+            {
+                logs.AppendLine($"Phase 2: will fetch bug details via common_get_info (workspace={wsId})");
+                var detailItems = await FetchTapdBugDetailsAsync(factory, allItems, wsId, cookieStr, dscToken, logs);
+                if (detailItems.Count > 0)
+                {
+                    var detailJson = detailItems.ToJsonString();
+                    var detailArtifact = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType} 详情", detailJson, "application/json");
+                    return new CapsuleResult(new List<ExecutionArtifact> { detailArtifact }, logs.ToString());
+                }
+                logs.AppendLine("⚠️ Phase 2 全部失败，回退使用搜索列表数据");
+            }
+            else
+            {
+                logs.AppendLine($"⚠️ Phase 2 skipped: cookie={(!string.IsNullOrWhiteSpace(cookieStr) ? "yes" : "no")}, workspaceId={(!string.IsNullOrWhiteSpace(wsId) ? wsId : "missing")}");
+            }
+        }
+
         var resultJson = allItems.ToJsonString();
         var artifact = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType}", resultJson, "application/json");
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs.ToString());
