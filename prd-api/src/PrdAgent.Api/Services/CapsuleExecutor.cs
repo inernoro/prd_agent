@@ -768,7 +768,7 @@ public static class CapsuleExecutor
         string cookieStr, string dscToken, StringBuilder logs)
     {
         var detailItems = new JsonArray();
-        var detailUrl = "https://www.tapd.cn/api/workitem_aggregation/common_get_info";
+        var detailUrl = "https://www.tapd.cn/api/aggregation/workitem_aggregation/common_get_info";
 
         // 从搜索结果提取 bug ID 列表
         var bugIds = new List<string>();
@@ -829,9 +829,18 @@ public static class CapsuleExecutor
                 var response = await client.SendAsync(request, CancellationToken.None);
                 var respBody = await response.Content.ReadAsStringAsync(CancellationToken.None);
 
+                // 首条记录记录详细请求/响应信息，用于调试
+                if (i == 0)
+                {
+                    logs.AppendLine($"  [DEBUG] First request URL: {detailUrl}");
+                    logs.AppendLine($"  [DEBUG] HTTP Status: {(int)response.StatusCode}");
+                    logs.AppendLine($"  [DEBUG] Response length: {respBody.Length} chars");
+                    logs.AppendLine($"  [DEBUG] Response preview: {respBody[..Math.Min(500, respBody.Length)]}");
+                }
+
                 if (!response.IsSuccessStatusCode)
                 {
-                    logs.AppendLine($"  [{i + 1}/{bugIds.Count}] {entityId}: HTTP {(int)response.StatusCode} failed");
+                    logs.AppendLine($"  [{i + 1}/{bugIds.Count}] {entityId}: HTTP {(int)response.StatusCode} failed, body={respBody[..Math.Min(200, respBody.Length)]}");
                     // 保留原始搜索数据作为 fallback
                     detailItems.Add(JsonNode.Parse(searchItems[i]!.ToJsonString())!);
                     continue;
