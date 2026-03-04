@@ -180,7 +180,7 @@ const tapdBugCollectionTemplate: WorkflowTemplate = {
         name: '导出报告文件',
         nodeType: 'file-exporter',
         config: {
-          fileFormat: 'markdown',
+          fileFormat: 'md',
           fileName: 'tapd-quality-report-{{date}}',
         },
         inputSlots: [{ slotId: 'export-in', name: 'data', dataType: 'json', required: true }],

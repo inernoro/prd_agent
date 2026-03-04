@@ -2470,9 +2470,10 @@ public static class CapsuleExecutor
             .Replace("{{datetime}}", now.ToString("yyyy-MM-dd_HHmmss"))
             .Replace("{datetime}", now.ToString("yyyy-MM-dd_HHmmss"));
 
-        // 确保文件有扩展名
+        // 规范化扩展名（markdown → md）
+        var ext = format == "markdown" ? "md" : format;
         if (!fileName.Contains('.'))
-            fileName = $"{fileName}.{format}";
+            fileName = $"{fileName}.{ext}";
 
         var content = string.Join("\n", inputArtifacts
             .Where(a => !string.IsNullOrWhiteSpace(a.InlineContent))
@@ -2590,6 +2591,14 @@ public static class CapsuleExecutor
                 })
                 .ToList();
             if (attachments.Count == 0) attachments = null;
+        }
+
+        // 将附件下载链接追加到通知正文
+        if (attachments?.Count > 0)
+        {
+            var links = string.Join("\n", attachments.Select(a =>
+                $"- [{a.Name}]({a.Url}) ({(a.SizeBytes / 1024.0):F1} KB)"));
+            message = $"{message}\n\n**下载链接：**\n{links}";
         }
 
         var notification = new AdminNotification
