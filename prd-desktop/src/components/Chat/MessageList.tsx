@@ -10,6 +10,8 @@ import type { GroupMemberTag, Message, MessageBlock } from '../../types';
 import MarkdownRenderer from '../Markdown/MarkdownRenderer';
 import AsyncIconButton from '../ui/AsyncIconButton';
 import { copyText } from '../../lib/clipboard';
+import { invoke } from '../../lib/tauri';
+import type { ApiResponse } from '../../types';
 import WizardLoader from './WizardLoader';
 import { AvatarWithFallback } from './AvatarWithFallback';
 
@@ -1380,6 +1382,44 @@ function MessageListInner() {
                         </svg>
                       )}
                       className="inline-flex items-center justify-center w-8 h-8 rounded-md text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-black/5 dark:hover:bg-white/5"
+                    />
+                    <AsyncIconButton
+                      title="保存为技能"
+                      successTitle="草案已生成"
+                      onAction={async () => {
+                        const resp = await invoke<ApiResponse<{
+                          title: string; description: string; icon: string;
+                          category: string; tags: string[];
+                          contextScope: string; acceptsUserInput: boolean;
+                          promptTemplate: string; outputMode: string;
+                        }>>('generate_skill_from_message', {
+                          assistantMessage: message.content,
+                        });
+                        if (resp?.success && resp.data) {
+                          const d = resp.data;
+                          window.dispatchEvent(new CustomEvent('prdAgent:createSkillFromMessage', {
+                            detail: {
+                              formData: {
+                                title: d.title,
+                                description: d.description,
+                                icon: d.icon,
+                                category: d.category,
+                                contextScope: d.contextScope,
+                                outputMode: d.outputMode,
+                                promptTemplate: d.promptTemplate,
+                              },
+                            },
+                          }));
+                        } else {
+                          throw new Error('生成失败');
+                        }
+                      }}
+                      icon={(
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                      )}
+                      className="inline-flex items-center justify-center w-8 h-8 rounded-md text-text-secondary hover:text-amber-500 dark:hover:text-amber-400 hover:bg-black/5 dark:hover:bg-white/5"
                     />
                   </div>
                 </div>
