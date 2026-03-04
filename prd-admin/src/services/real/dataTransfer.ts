@@ -28,7 +28,7 @@ export const getTransferReal: GetTransferContract = async (id) => {
 export const createTransferReal: CreateTransferContract = async (req) => {
   return await apiRequest<{ id: string; itemCount: number }>(api.accountDataTransfer.create(), {
     method: 'POST',
-    body: JSON.stringify(req),
+    body: req,
   });
 };
 
