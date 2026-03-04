@@ -1478,34 +1478,54 @@ export function WorkflowEditorPage() {
     } catch { /* ignore */ }
   }
 
-  /** 将后端舱执行详细日志注入到右侧日志面板 */
+  /** 将后端舱执行详细日志的关键摘要注入到右侧日志面板（仅提取关键事件，详细日志在节点卡片展开查看） */
   function injectBackendLogs(nodeId: string, logs: string, artifacts: ExecutionArtifact[]) {
     if (!logs && artifacts.length === 0) return;
     const nodeName = workflow?.nodes.find(n => n.nodeId === nodeId)?.name
       || latestExec?.nodeExecutions.find(n => n.nodeId === nodeId)?.nodeName
       || nodeId;
-    // 解析后端日志：几乎所有非空行都注入（除了标题行 [xxx]）
+
+    // 只从后端日志中提取关键摘要行，不逐行注入
     if (logs) {
-      const lines = logs.split('\n').filter(l => l.trim());
+      const lines = logs.split('\n');
       for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        // 跳过标题行（如 "[LLM 分析器] 节点: xxx"）
-        if (trimmed.startsWith('[') && trimmed.includes(']') && trimmed.includes('节点:')) continue;
-        // 跳过分隔线
-        if (trimmed === '--- 调用 LLM Gateway ---') {
+        const t = line.trim();
+        if (!t) continue;
+
+        // 提取关键指标行（AppCallerCode、Model、Tokens、耗时、产物数等）
+        if (t.startsWith('AppCallerCode:')) {
+          addLog('info', t, { nodeId, nodeName });
+        } else if (t.startsWith('Model:') || t.startsWith('Tokens:')) {
+          addLog('info', t, { nodeId, nodeName });
+        } else if (t.match(/^(StreamDuration|Streaming duration):/i)) {
+          addLog('info', t, { nodeId, nodeName });
+        } else if (t.startsWith('InputArtifacts:')) {
+          addLog('info', t, { nodeId, nodeName });
+        } else if (t.match(/^原始 InputText:/) || t.match(/^Prompt 总长:/)) {
+          addLog('info', t, { nodeId, nodeName });
+        } else if (t.match(/^总估算 Tokens:/)) {
+          addLog('info', t, { nodeId, nodeName });
+        } else if (t.includes('调用 LLM Gateway')) {
           addLog('info', '调用 LLM Gateway...', { nodeId, nodeName });
-          continue;
         }
-        // 错误行
-        const level = (trimmed.includes('⚠️') || trimmed.includes('警告'))
-          ? 'warn' as const
-          : trimmed.includes('❌')
-            ? 'error' as const
-            : 'info' as const;
-        addLog(level, trimmed, { nodeId, nodeName });
+        // TAPD 采集关键信息
+        else if (t.match(/^TAPD Cookie mode:|^Total count:|^Done:.*total items|^Phase 2 done:/)) {
+          addLog('info', t, { nodeId, nodeName });
+        }
+        // 脚本执行关键信息
+        else if (t.match(/^输入数据:|^执行耗时:|^输出:/)) {
+          addLog('info', t, { nodeId, nodeName });
+        }
+        // 错误/警告
+        else if (t.includes('❌')) {
+          addLog('error', t, { nodeId, nodeName });
+        } else if (t.includes('⚠️') || t.includes('警告')) {
+          addLog('warn', t, { nodeId, nodeName });
+        }
+        // 其他行全部跳过（prompt 内容、LLM 响应、JSON 数据等留在节点详情里查看）
       }
     }
+
     // 产物摘要
     if (artifacts.length > 0) {
       const summary = artifacts.map(a => `${a.name} (${formatBytes(a.sizeBytes)})`).join(', ');
