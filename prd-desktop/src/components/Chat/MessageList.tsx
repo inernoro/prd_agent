@@ -1385,7 +1385,7 @@ function MessageListInner() {
                     />
                     <AsyncIconButton
                       title="保存为技能"
-                      successTitle="草案已生成"
+                      successTitle="模板已提炼"
                       onAction={async () => {
                         const resp = await invoke<ApiResponse<{
                           promptTemplate: string;
