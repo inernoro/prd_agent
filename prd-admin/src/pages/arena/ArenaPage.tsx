@@ -1540,13 +1540,22 @@ export function ArenaPage() {
                       </div>
                     ) : (
                       adminGroups.map((ag) => (
-                        <div key={ag.key} className="mb-2 rounded-[10px] overflow-hidden" style={{ background: 'rgba(255,255,255,0.03)' }}>
+                        <div key={ag.key} className="mb-2 rounded-[10px] overflow-hidden" style={{ background: ag.key === selectedGroupKey ? 'rgba(99,102,241,0.08)' : 'rgba(255,255,255,0.03)', border: ag.key === selectedGroupKey ? '1px solid rgba(99,102,241,0.2)' : '1px solid transparent' }}>
                           {/* Group row */}
                           <div className="flex items-center justify-between px-3 py-2">
-                            <div className="flex-1 min-w-0">
-                              <div className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{ag.name}</div>
+                            <button
+                              className="flex-1 min-w-0 text-left"
+                              onClick={() => { setSelectedGroupKey(ag.key); setGroupDropdownOpen(false); setManageMode(false); manageModeRef.current = false; }}
+                              title="点击切换到此阵容"
+                            >
+                              <div className="flex items-center gap-1.5">
+                                <div className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{ag.name}</div>
+                                {ag.key === selectedGroupKey && (
+                                  <Check className="w-3 h-3 flex-shrink-0" style={{ color: 'rgba(99,102,241,0.8)' }} />
+                                )}
+                              </div>
                               <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{ag.slots.length} 个模型</div>
-                            </div>
+                            </button>
                             <div className="flex items-center gap-1 flex-shrink-0">
                               <button
                                 onClick={() => openEditGroup(ag)}
