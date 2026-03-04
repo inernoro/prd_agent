@@ -312,17 +312,16 @@ public static class CapsuleTypeRegistry
     {
         TypeKey = CapsuleTypes.ScriptExecutor,
         Name = "代码脚本",
-        Description = "运行自定义 JavaScript / Python 脚本处理数据",
+        Description = "运行 JavaScript 脚本处理数据（Jint 沙箱引擎，支持 ES6+语法）",
         Icon = "code",
         Category = CapsuleCategory.Processor,
         AccentHue = 150,
         ConfigSchema = new()
         {
             new() { Key = "language", Label = "脚本语言", FieldType = "select", Required = true, DefaultValue = "javascript", Options = new() {
-                new() { Value = "javascript", Label = "JavaScript (Node.js)" },
-                new() { Value = "python", Label = "Python 3" },
+                new() { Value = "javascript", Label = "JavaScript (Jint 引擎)" },
             }},
-            new() { Key = "code", Label = "脚本代码", FieldType = "code", Required = true, HelpTip = "输入变量 `input` 为上游数据，返回值为输出数据。JS: module.exports = (input) => { ... }; Python: def main(input): ..." },
+            new() { Key = "code", Label = "脚本代码", FieldType = "code", Required = true, HelpTip = "上游数据注入为全局变量 `data`（JSON 数组或对象）。将处理结果赋值给 `result` 变量。\n\n示例：\nconst bugs = data.filter(i => i.status === '新建');\nresult = { total: data.length, newBugs: bugs.length, rate: (bugs.length / data.length * 100).toFixed(1) + '%' };" },
             new() { Key = "timeoutSeconds", Label = "超时时间(秒)", FieldType = "number", Required = false, DefaultValue = "30" },
         },
         DefaultInputSlots = new()

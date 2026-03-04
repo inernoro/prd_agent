@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Jint;
+using Jint.Runtime;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Models;
 
@@ -46,7 +48,7 @@ public static class CapsuleExecutor
             CapsuleTypes.HttpRequest => await ExecuteHttpRequestAsync(sp, node, variables, inputArtifacts),
             CapsuleTypes.SmartHttp => await ExecuteSmartHttpAsync(sp, node, variables, inputArtifacts),
             CapsuleTypes.LlmAnalyzer => await ExecuteLlmAnalyzerAsync(sp, node, variables, inputArtifacts, emitEvent),
-            CapsuleTypes.ScriptExecutor => ExecuteScriptStub(node, inputArtifacts),
+            CapsuleTypes.ScriptExecutor => ExecuteScript(node, inputArtifacts),
             CapsuleTypes.TapdCollector => await ExecuteTapdCollectorAsync(sp, node, variables),
             CapsuleTypes.DataExtractor => ExecuteDataExtractor(node, inputArtifacts),
             CapsuleTypes.DataMerger => ExecuteDataMerger(node, inputArtifacts),
@@ -615,22 +617,142 @@ public static class CapsuleExecutor
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, llmLogs.ToString());
     }
 
-    public static CapsuleResult ExecuteScriptStub(WorkflowNode node, List<ExecutionArtifact> inputArtifacts)
+    /// <summary>
+    /// JavaScript 脚本执行器 —— 使用 Jint 引擎在沙箱中执行用户脚本。
+    /// 输入：上游 artifacts 合并为 JSON → 注入为全局变量 `data`。
+    /// 输出：用户脚本赋值给 `result` 变量的内容。
+    /// </summary>
+    public static CapsuleResult ExecuteScript(WorkflowNode node, List<ExecutionArtifact> inputArtifacts)
     {
-        var language = GetConfigString(node, "language") ?? "javascript";
+        var logs = new StringBuilder();
+        logs.AppendLine($"[脚本执行器] 节点: {node.Name}");
+
         var code = GetConfigString(node, "code") ?? "";
+        var timeoutStr = GetConfigString(node, "timeoutSeconds");
+        var timeoutSeconds = int.TryParse(timeoutStr, out var t) && t is > 0 and <= 300 ? t : 30;
 
-        // 沙箱执行待实现，目前返回代码预览
-        var output = JsonSerializer.Serialize(new
+        if (string.IsNullOrWhiteSpace(code))
         {
-            language,
-            codePreview = code.Length > 200 ? code[..200] + "..." : code,
-            inputCount = inputArtifacts.Count,
-            message = $"脚本执行器({language}) - 代码已接收，执行完成",
-        });
+            logs.AppendLine("  ⚠️ 代码为空，跳过执行");
+            var emptyArt = MakeTextArtifact(node, "script-out", "脚本输出",
+                JsonSerializer.Serialize(new { error = "代码为空" }), "application/json");
+            return new CapsuleResult(new List<ExecutionArtifact> { emptyArt }, logs.ToString());
+        }
 
-        var artifact = MakeTextArtifact(node, "script-output", "脚本输出", output);
-        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, $"Script ({language}): {code.Length} chars");
+        // ── 1. 解析上游输入：合并所有 artifact 的 InlineContent ──
+        object? inputData = null;
+        var allItems = new List<JsonElement>();
+        foreach (var art in inputArtifacts)
+        {
+            if (string.IsNullOrWhiteSpace(art.InlineContent)) continue;
+            try
+            {
+                using var doc = JsonDocument.Parse(art.InlineContent);
+                if (doc.RootElement.ValueKind == JsonValueKind.Array)
+                    foreach (var item in doc.RootElement.EnumerateArray())
+                        allItems.Add(item.Clone());
+                else
+                    allItems.Add(doc.RootElement.Clone());
+            }
+            catch { logs.AppendLine($"  ⚠️ 跳过无法解析的输入 artifact: {art.Name}"); }
+        }
+
+        // 将输入转为 JSON 字符串，供 Jint 解析
+        var inputJson = allItems.Count switch
+        {
+            0 => "[]",
+            1 when inputArtifacts.Count == 1 => JsonSerializer.Serialize(allItems[0]),
+            _ => JsonSerializer.Serialize(allItems)
+        };
+        logs.AppendLine($"  输入数据: {inputJson.Length} chars, {allItems.Count} 条记录");
+
+        // ── 2. 创建 Jint 引擎（沙箱配置） ──
+        try
+        {
+            var engine = new Engine(options =>
+            {
+                options.TimeoutInterval(TimeSpan.FromSeconds(timeoutSeconds));
+                options.LimitMemory(16_000_000); // 16 MB
+                options.LimitRecursion(256);
+                options.Strict(false);
+            });
+
+            // 注入 data 变量：先用 JSON.parse 把字符串转为 JS 对象
+            engine.Execute($"var data = JSON.parse({JsonSerializer.Serialize(inputJson)});");
+            // 初始化 result 为 null
+            engine.Execute("var result = null;");
+
+            // ── 3. 执行用户脚本 ──
+            var sw = Stopwatch.StartNew();
+            engine.Execute(code);
+            sw.Stop();
+
+            logs.AppendLine($"  执行耗时: {sw.ElapsedMilliseconds}ms");
+
+            // ── 4. 提取 result 变量 ──
+            var resultValue = engine.GetValue("result");
+            string outputJson;
+
+            if (resultValue == null || resultValue.IsNull() || resultValue.IsUndefined())
+            {
+                logs.AppendLine("  ⚠️ result 变量为空，尝试提取脚本最终表达式值");
+                var completion = engine.GetCompletionValue();
+                if (completion != null && !completion.IsNull() && !completion.IsUndefined())
+                {
+                    var raw = completion.ToObject();
+                    outputJson = raw is string s ? s : JsonSerializer.Serialize(raw, new JsonSerializerOptions { WriteIndented = true });
+                }
+                else
+                {
+                    outputJson = JsonSerializer.Serialize(new { warning = "脚本未设置 result 变量且无返回值" });
+                }
+            }
+            else
+            {
+                var raw = resultValue.ToObject();
+                outputJson = raw is string s ? s : JsonSerializer.Serialize(raw, new JsonSerializerOptions { WriteIndented = true });
+            }
+
+            logs.AppendLine($"  输出: {outputJson.Length} chars");
+
+            var artifact = MakeTextArtifact(node, "script-out", "脚本输出", outputJson, "application/json");
+            return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs.ToString());
+        }
+        catch (TimeoutException)
+        {
+            logs.AppendLine($"  ❌ 脚本执行超时（{timeoutSeconds}秒限制）");
+            var art = MakeTextArtifact(node, "script-out", "超时错误",
+                JsonSerializer.Serialize(new { error = $"脚本执行超时，已超过 {timeoutSeconds} 秒限制" }), "application/json");
+            return new CapsuleResult(new List<ExecutionArtifact> { art }, logs.ToString());
+        }
+        catch (MemoryLimitExceededException)
+        {
+            logs.AppendLine("  ❌ 脚本内存超限（16MB）");
+            var art = MakeTextArtifact(node, "script-out", "内存超限",
+                JsonSerializer.Serialize(new { error = "脚本内存使用超过 16MB 限制" }), "application/json");
+            return new CapsuleResult(new List<ExecutionArtifact> { art }, logs.ToString());
+        }
+        catch (RecursionDepthOverflowException)
+        {
+            logs.AppendLine("  ❌ 脚本递归深度超限（256层）");
+            var art = MakeTextArtifact(node, "script-out", "递归超限",
+                JsonSerializer.Serialize(new { error = "脚本递归深度超过 256 层限制" }), "application/json");
+            return new CapsuleResult(new List<ExecutionArtifact> { art }, logs.ToString());
+        }
+        catch (JavaScriptException jsEx)
+        {
+            logs.AppendLine($"  ❌ JavaScript 运行时错误: {jsEx.Message}");
+            var art = MakeTextArtifact(node, "script-out", "脚本错误",
+                JsonSerializer.Serialize(new { error = jsEx.Message, stack = jsEx.JavaScriptStackTrace }), "application/json");
+            return new CapsuleResult(new List<ExecutionArtifact> { art }, logs.ToString());
+        }
+        catch (Exception ex)
+        {
+            logs.AppendLine($"  ❌ 执行异常: {ex.Message}");
+            var art = MakeTextArtifact(node, "script-out", "执行错误",
+                JsonSerializer.Serialize(new { error = ex.Message }), "application/json");
+            return new CapsuleResult(new List<ExecutionArtifact> { art }, logs.ToString());
+        }
     }
 
     public static async Task<CapsuleResult> ExecuteTapdCollectorAsync(
