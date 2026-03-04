@@ -585,6 +585,9 @@ public sealed class WorkflowRunWorker : BackgroundService
             {
                 var bytes = System.Text.Encoding.UTF8.GetBytes(artifact.InlineContent);
                 var mime = artifact.MimeType ?? "text/plain";
+                // 文本类产物添加 charset=utf-8，确保浏览器下载/打开时正确解码中文
+                if (mime.StartsWith("text/") && !mime.Contains("charset"))
+                    mime += "; charset=utf-8";
 
                 var stored = await storage.SaveAsync(bytes, mime, CancellationToken.None,
                     domain: "workflow-agent", type: "doc");

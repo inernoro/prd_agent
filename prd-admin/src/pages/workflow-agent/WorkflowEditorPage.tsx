@@ -736,9 +736,6 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
             </div>
           </div>
 
-          {/* 状态 */}
-          <StepStatusBadge status={status} durationMs={nodeExec?.durationMs} />
-
           {/* 产物芯片（完成后，折叠态也能看到和操作产物） */}
           {status === 'completed' && nodeOutput?.artifacts && nodeOutput.artifacts.length > 0 && (
             <div className="flex items-center gap-1 flex-shrink-0">
@@ -782,6 +779,9 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
               ))}
             </div>
           )}
+
+          {/* 状态 */}
+          <StepStatusBadge status={status} durationMs={nodeExec?.durationMs} />
 
           {/* 展开/折叠 */}
           {isExpanded

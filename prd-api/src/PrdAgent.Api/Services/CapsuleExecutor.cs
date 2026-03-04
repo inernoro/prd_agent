@@ -314,7 +314,7 @@ public static class CapsuleExecutor
         logs += $"Total: {pagesFetched} pages, {allData.Count} records\n";
 
         var dataArtifact = MakeTextArtifact(node, "smart-data", $"全量数据 ({allData.Count} 条)",
-            allData.ToJsonString(new JsonSerializerOptions { WriteIndented = false }), "application/json");
+            allData.ToJsonString(JsonCompact), "application/json");
 
         var metaJson = JsonSerializer.Serialize(new
         {
