@@ -29,6 +29,7 @@ import { PrdAgentTabsPage } from '@/pages/PrdAgentTabsPage';
 import AgentLauncherPage from '@/pages/AgentLauncherPage';
 import MobileHomePage from '@/pages/MobileHomePage';
 import MobileAssetsPage from '@/pages/MobileAssetsPage';
+import DesktopAssetsPage from '@/pages/DesktopAssetsPage';
 import MobileProfilePage from '@/pages/MobileProfilePage';
 import RichComposerLab from '@/pages/_dev/RichComposerLab';
 import MobileAuditPage from '@/pages/_dev/MobileAuditPage';
@@ -107,6 +108,13 @@ function IndexPage() {
   if (!loaded) return null;
   if (isMobile) return <MobileHomePage />;
   return <AgentLauncherPage />;
+}
+
+/** 我的资产路由：移动端使用 MobileAssetsPage，桌面端使用增强版 DesktopAssetsPage。 */
+function MyAssetsPage() {
+  const { isMobile } = useBreakpoint();
+  if (isMobile) return <MobileAssetsPage />;
+  return <DesktopAssetsPage />;
 }
 
 /** /executive 路由：独立的总裁面板，不与首页绑定。 */
@@ -265,7 +273,7 @@ export default function App() {
         <Route path="settings" element={<RequirePermission perm="access"><SettingsPage /></RequirePermission>} />
         <Route path="executive" element={<RequirePermission perm="access"><ExecutivePage /></RequirePermission>} />
         {/* 移动端专属路由 */}
-        <Route path="my-assets" element={<RequirePermission perm="access"><MobileAssetsPage /></RequirePermission>} />
+        <Route path="my-assets" element={<RequirePermission perm="access"><MyAssetsPage /></RequirePermission>} />
         <Route path="profile" element={<RequirePermission perm="access"><MobileProfilePage /></RequirePermission>} />
         <Route path="stats" element={<Navigate to="/" replace />} />
       </Route>
