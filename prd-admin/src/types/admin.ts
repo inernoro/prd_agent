@@ -106,6 +106,10 @@ export type LlmRequestLogListItem = {
   sessionId?: string | null;
   /** 发起请求的用户 ID */
   userId?: string | null;
+  /** 用户名（从 users 集合 join 获取） */
+  username?: string | null;
+  /** 用户头像文件名（从 users 集合 join 获取） */
+  avatarFileName?: string | null;
   viewRole?: string | null;
   /** 这次调用的类型：reasoning/intent/vision/imageGen/unknown/... */
   requestType?: string | null;

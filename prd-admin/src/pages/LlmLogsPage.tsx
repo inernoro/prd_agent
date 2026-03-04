@@ -11,6 +11,7 @@ import type { LlmLogsMetaUser, LlmLogsMetaRequestPurpose } from '@/services/cont
 import type { LlmRequestLog, LlmRequestLogListItem, UploadArtifact } from '@/types/admin';
 import { CheckCircle, ChevronDown, Clock, Copy, Database, Eraser, Hash, HelpCircle, ImagePlus, Layers, Loader2, RefreshCw, Reply, ScanEye, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
 import { AppCallerKeyIcon } from '@/lib/appCallerUtils';
+import { resolveAvatarUrl } from '@/lib/avatar';
 import { glassPanel } from '@/lib/glassStyles';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -1693,7 +1694,21 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                       </div>
                     </div>
 
-                    <div className="text-right">
+                    <div className="text-right shrink-0">
+                      {/* 用户头像 + 用户名 */}
+                      {it.userId && (
+                        <div className="flex items-center justify-end gap-1.5 mb-1">
+                          <span className="text-[11px] truncate max-w-[100px]" style={{ color: 'var(--text-secondary)' }} title={it.username || it.userId}>
+                            {it.username || it.userId}
+                          </span>
+                          <img
+                            src={resolveAvatarUrl({ avatarFileName: it.avatarFileName, username: it.username })}
+                            alt={it.username || it.userId}
+                            className="w-5 h-5 rounded-full object-cover shrink-0"
+                            style={{ border: '1px solid var(--border-subtle)' }}
+                          />
+                        </div>
+                      )}
                       <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>
                         {it.durationMs ? `${it.durationMs}ms` : '-'}
                       </div>

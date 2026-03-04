@@ -276,43 +276,67 @@ public class LlmLogsController : ControllerBase
             })
             .ToListAsync();
 
-        var items = rawItems.Select(x => new
-        {
-            x.Id,
-            x.RequestId,
-            x.Provider,
-            x.Model,
-            x.ApiBase,
-            x.Path,
-            x.HttpMethod,
-            x.PlatformId,
-            x.PlatformName,
-            x.ModelResolutionType,
-            x.ModelGroupId,
-            x.ModelGroupName,
-            x.GroupId,
-            x.SessionId,
-            x.UserId,
-            x.ViewRole,
-            x.RequestType,
-            x.RequestPurpose,
-            x.RequestPurposeDisplayName,
-            x.Status,
-            x.StartedAt,
-            x.FirstByteAt,
-            x.EndedAt,
-            x.DurationMs,
-            x.StatusCode,
-            x.InputTokens,
-            x.OutputTokens,
-            x.CacheCreationInputTokens,
-            x.CacheReadInputTokens,
-            x.Error,
-            x.IsFallback,
-            x.ExpectedModel,
+        // Join with users collection to get username and avatar
+        var userIds = rawItems
+            .Where(x => !string.IsNullOrEmpty(x.UserId))
+            .Select(x => x.UserId!)
+            .Distinct()
+            .ToList();
 
-            questionPreview = TruncatePreview(x.QuestionText, 260),
-            answerPreview = ExtractAnswerPreviewText(x.AnswerText)
+        var userMap = new Dictionary<string, (string? Username, string? AvatarFileName)>();
+        if (userIds.Count > 0)
+        {
+            var users = await _db.Users
+                .Find(u => userIds.Contains(u.UserId))
+                .Project(u => new { u.UserId, u.Username, u.AvatarFileName })
+                .ToListAsync();
+            foreach (var u in users)
+                userMap[u.UserId] = (u.Username, u.AvatarFileName);
+        }
+
+        var items = rawItems.Select(x =>
+        {
+            userMap.TryGetValue(x.UserId ?? "", out var userInfo);
+            return new
+            {
+                x.Id,
+                x.RequestId,
+                x.Provider,
+                x.Model,
+                x.ApiBase,
+                x.Path,
+                x.HttpMethod,
+                x.PlatformId,
+                x.PlatformName,
+                x.ModelResolutionType,
+                x.ModelGroupId,
+                x.ModelGroupName,
+                x.GroupId,
+                x.SessionId,
+                x.UserId,
+                username = userInfo.Username,
+                avatarFileName = userInfo.AvatarFileName,
+                x.ViewRole,
+                x.RequestType,
+                x.RequestPurpose,
+                x.RequestPurposeDisplayName,
+                x.Status,
+                x.StartedAt,
+                x.FirstByteAt,
+                x.EndedAt,
+                x.DurationMs,
+                x.StatusCode,
+                x.InputTokens,
+                x.OutputTokens,
+                x.CacheCreationInputTokens,
+                x.CacheReadInputTokens,
+                x.Error,
+                x.IsFallback,
+                x.ExpectedModel,
+
+                questionPreview = TruncatePreview(x.QuestionText, 260),
+                answerPreview = ExtractAnswerPreviewText(x.AnswerText)
+            };
         }).ToList();
 
         return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
