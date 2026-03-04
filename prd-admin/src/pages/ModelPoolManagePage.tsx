@@ -43,7 +43,8 @@ import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
-import { getModelTypeDisplayName, getModelTypeIcon } from '@/lib/appCallerUtils';
+import { getModelTypeDisplayName, getModelTypeIcon, MODEL_TYPE_DEFINITIONS } from '@/lib/appCallerUtils';
+import { ModelTypePicker } from '@/components/model/ModelTypePicker';
 
 /* ── 4 种可预测的调度策略（icon 选择器） ── */
 const STRATEGY_OPTIONS = [
@@ -63,16 +64,7 @@ const STRATEGY_LABEL_MAP: Record<number, string> = {
   [PoolStrategyType.LeastLatency]: '最低延迟',
 };
 
-const MODEL_TYPES = [
-  { value: 'chat', label: '对话模型' },
-  { value: 'intent', label: '意图识别' },
-  { value: 'vision', label: '视觉理解' },
-  { value: 'generation', label: '图像生成' },
-  { value: 'code', label: '代码生成' },
-  { value: 'long-context', label: '长上下文' },
-  { value: 'embedding', label: '向量嵌入' },
-  { value: 'rerank', label: '重排序' },
-];
+// MODEL_TYPES 已迁移到 appCallerUtils.ts 的 MODEL_TYPE_DEFINITIONS
 
 const HEALTH_STATUS_MAP = {
   Healthy: { label: '健康', color: 'rgba(34,197,94,0.95)', bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.28)' },
@@ -333,7 +325,7 @@ export function ModelPoolManagePage() {
 
   // 按 modelType 分组，组内备用池置顶，其余按名称排序
   const groupedByType = useMemo(() => {
-    const typeOrder = MODEL_TYPES.map(t => t.value);
+    const typeOrder = MODEL_TYPE_DEFINITIONS.map(t => t.value);
     const groups = new Map<string, ModelGroup[]>();
     for (const pool of filteredPools) {
       const type = pool.modelType || 'chat';
@@ -355,7 +347,7 @@ export function ModelPoolManagePage() {
         Icon: getModelTypeIcon(type),
         pools: sortPools(groups.get(type)!),
       }));
-    // 追加不在 MODEL_TYPES 里的类型
+    // 追加不在 MODEL_TYPE_DEFINITIONS 里的类型
     for (const [type, typePools] of groups) {
       if (!typeOrder.includes(type)) {
         ordered.push({
@@ -890,8 +882,8 @@ export function ModelPoolManagePage() {
           maxWidth={isMobile ? undefined : 760}
           content={
             <div className="space-y-4">
-              {/* ── 第一行：名称 / 代码 / 模型类型 ── */}
-              <div className={`grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-3'}`}>
+              {/* ── 第一行：名称 / 代码 ── */}
+              <div className={`grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-2'}`}>
                 <div>
                   <label className="block text-[12px] font-semibold mb-1.5" style={{ color: 'var(--text-secondary)' }}>
                     模型池名称
@@ -919,19 +911,18 @@ export function ModelPoolManagePage() {
                     style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)', opacity: editingPool ? 0.6 : 1 }}
                   />
                 </div>
-                <div>
-                  <label className="block text-[12px] font-semibold mb-1.5" style={{ color: 'var(--text-secondary)' }}>
-                    模型类型
-                  </label>
-                  <Select
-                    value={poolForm.modelType}
-                    onChange={(e) => setPoolForm({ ...poolForm, modelType: e.target.value })}
-                  >
-                    {MODEL_TYPES.map((t) => (
-                      <option key={t.value} value={t.value}>{t.label}</option>
-                    ))}
-                  </Select>
-                </div>
+              </div>
+
+              {/* ── 模型类型面板 ── */}
+              <div>
+                <label className="block text-[12px] font-semibold mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+                  模型类型
+                </label>
+                <ModelTypePicker
+                  value={poolForm.modelType}
+                  onChange={(v) => setPoolForm({ ...poolForm, modelType: v })}
+                  disabled={!!editingPool}
+                />
               </div>
 
               {/* ── 第二行：优先级 / 调度策略 icons / 设为默认 ── */}
