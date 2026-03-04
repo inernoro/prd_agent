@@ -563,7 +563,6 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
 }) {
   const typeDef = getCapsuleType(node.nodeType);
   const status = nodeExec?.status || 'idle';
-  const isActive = status === 'running';
   const accentHue = typeDef?.accentHue ?? capsuleMeta?.accentHue ?? 210;
   const CIcon = typeDef?.Icon;
   const emoji = typeDef?.emoji ?? '📦';
@@ -626,10 +625,10 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
   const resultSource: 'test' | 'exec' | null = testRunResult ? 'test' : currentExecOutput ? 'exec' : null;
 
   return (
-    <div className={isActive ? 'capsule-running-border' : ''}>
+    <div>
       <GlassCard
         animated
-        glow={isActive}
+        glow={false}
         padding="none"
         className=""
       >
@@ -1410,11 +1409,13 @@ export function WorkflowEditorPage() {
 
     (async () => {
       try {
-        const resp = await fetch(url, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-          signal: abort.signal,
-        });
-        if (!resp.ok || !resp.body) return;
+        const headers: Record<string, string> = { Accept: 'text/event-stream' };
+        if (token) headers.Authorization = `Bearer ${token}`;
+        const resp = await fetch(url, { headers, signal: abort.signal });
+        if (!resp.ok || !resp.body) {
+          console.warn('[SSE] Stream failed:', resp.status, resp.statusText);
+          return;
+        }
         const reader = resp.body.getReader();
         const decoder = new TextDecoder();
         let buf = '';
@@ -1446,8 +1447,10 @@ export function WorkflowEditorPage() {
                   [payload.nodeId]: (prev[payload.nodeId] || '') + payload.content,
                 }));
               } else if (eventName === 'llm-stream-start' && payload.nodeId) {
+                console.log('[SSE] llm-stream-start:', payload.nodeId, payload.nodeName);
                 setStreamingTexts(prev => ({ ...prev, [payload.nodeId]: '' }));
               } else if (eventName === 'llm-stream-end' && payload.nodeId) {
+                console.log('[SSE] llm-stream-end:', payload.nodeId, 'totalLength:', payload.totalLength);
                 // 流结束，保留文本直到轮询获取最终结果后自然被替代
               }
             } catch { /* ignore parse errors */ }
