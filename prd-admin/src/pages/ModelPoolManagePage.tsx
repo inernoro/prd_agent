@@ -906,9 +906,8 @@ export function ModelPoolManagePage() {
                     value={poolForm.code}
                     onChange={(e) => setPoolForm({ ...poolForm, code: e.target.value })}
                     placeholder="例如：main-chat-pool"
-                    disabled={!!editingPool}
                     className="w-full h-9 px-3 rounded-[10px] outline-none text-[13px]"
-                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)', opacity: editingPool ? 0.6 : 1 }}
+                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
                   />
                 </div>
               </div>
@@ -921,7 +920,6 @@ export function ModelPoolManagePage() {
                 <ModelTypePicker
                   value={poolForm.modelType}
                   onChange={(v) => setPoolForm({ ...poolForm, modelType: v })}
-                  disabled={!!editingPool}
                 />
               </div>
 
