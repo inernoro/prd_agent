@@ -272,8 +272,9 @@ export default function App() {
         <Route path="lab" element={<RequirePermission perm="lab.read"><LabPage /></RequirePermission>} />
         <Route path="settings" element={<RequirePermission perm="access"><SettingsPage /></RequirePermission>} />
         <Route path="executive" element={<RequirePermission perm="access"><ExecutivePage /></RequirePermission>} />
-        {/* 移动端专属路由 */}
+        {/* 我的资产：桌面端/移动端自动切换 */}
         <Route path="my-assets" element={<RequirePermission perm="access"><MyAssetsPage /></RequirePermission>} />
+        {/* 移动端专属路由 */}
         <Route path="profile" element={<RequirePermission perm="access"><MobileProfilePage /></RequirePermission>} />
         <Route path="stats" element={<Navigate to="/" replace />} />
       </Route>
