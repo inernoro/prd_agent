@@ -751,6 +751,50 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
           {/* 状态 */}
           <StepStatusBadge status={status} durationMs={nodeExec?.durationMs} />
 
+          {/* 产物芯片（完成后，折叠态也能看到和操作产物） */}
+          {status === 'completed' && nodeOutput?.artifacts && nodeOutput.artifacts.length > 0 && (
+            <div className="flex items-center gap-1 flex-shrink-0">
+              {nodeOutput.artifacts.map((art, ai) => (
+                <span
+                  key={ai}
+                  className="inline-flex items-center gap-1 text-[10px] pl-1.5 pr-0.5 py-0.5 rounded-full"
+                  style={{
+                    background: 'rgba(34,197,94,0.08)',
+                    color: 'rgba(34,197,94,0.85)',
+                    border: '1px solid rgba(34,197,94,0.15)',
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <FileText className="w-3 h-3" />
+                  <span className="truncate max-w-[80px]">{ensureExtension(art.name, art.mimeType)}</span>
+                  <span className="text-[9px] opacity-60">{formatBytes(art.sizeBytes)}</span>
+                  {(art.inlineContent || art.cosUrl) && onPreviewArtifact && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onPreviewArtifact(art); }}
+                      className="p-0.5 rounded hover:bg-white/10 transition-colors"
+                      title="预览"
+                    >
+                      <Eye className="w-3 h-3" />
+                    </button>
+                  )}
+                  {art.cosUrl && (
+                    <a
+                      href={art.cosUrl}
+                      download={ensureExtension(art.name, art.mimeType)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="p-0.5 rounded hover:bg-white/10 transition-colors"
+                      title="下载"
+                    >
+                      <Download className="w-3 h-3" />
+                    </a>
+                  )}
+                </span>
+              ))}
+            </div>
+          )}
+
           {/* 展开/折叠 */}
           {isExpanded
             ? <ChevronDown className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
@@ -2066,6 +2110,8 @@ export function WorkflowEditorPage() {
             totalNodeCount={workflow?.nodes.length ?? 0}
             completedNodeCount={latestExec?.nodeExecutions.filter(ne => ['completed', 'failed', 'skipped'].includes(ne.status)).length ?? 0}
             isRunning={['queued', 'running'].includes(latestExec?.status ?? '')}
+            nodeOutputs={nodeOutputs}
+            onPreviewArtifact={setPreviewArtifact}
             onClear={() => setLogEntries([])}
             onClose={() => setRightPanel(null)}
           />
@@ -2099,11 +2145,13 @@ const LOG_LEVEL_STYLE: Record<string, { dot: string; bg: string }> = {
   warn:    { dot: 'rgba(234,179,8,0.9)',   bg: 'rgba(234,179,8,0.06)' },
 };
 
-function ExecutionLogPanel({ entries, totalNodeCount, completedNodeCount, isRunning, onClear, onClose }: {
+function ExecutionLogPanel({ entries, totalNodeCount, completedNodeCount, isRunning, nodeOutputs, onPreviewArtifact, onClear, onClose }: {
   entries: { id: string; ts: string; level: string; nodeId?: string; nodeName?: string; message: string }[];
   totalNodeCount: number;
   completedNodeCount: number;
   isRunning: boolean;
+  nodeOutputs: Record<string, { logs: string; artifacts: ExecutionArtifact[] }>;
+  onPreviewArtifact?: (art: ExecutionArtifact) => void;
   onClear: () => void;
   onClose: () => void;
 }) {
@@ -2259,6 +2307,48 @@ function ExecutionLogPanel({ entries, totalNodeCount, completedNodeCount, isRunn
                 >
                   {entry.message}
                 </div>
+                {/* 产物芯片：在完成日志条目下方展示该节点的产物 */}
+                {entry.level === 'success' && entry.nodeId && nodeOutputs[entry.nodeId]?.artifacts?.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-1.5">
+                    {nodeOutputs[entry.nodeId].artifacts.map((art, ai) => (
+                      <span
+                        key={ai}
+                        className="inline-flex items-center gap-1.5 text-[11px] pl-2 pr-1 py-0.5 rounded-full cursor-pointer transition-colors"
+                        style={{
+                          background: 'rgba(99,102,241,0.1)',
+                          color: 'rgba(99,102,241,0.9)',
+                          border: '1px solid rgba(99,102,241,0.18)',
+                        }}
+                        title={`${art.name} (${art.mimeType}, ${formatBytes(art.sizeBytes)})`}
+                      >
+                        <FileText className="w-3 h-3" />
+                        <span className="truncate max-w-[120px]">{ensureExtension(art.name, art.mimeType)}</span>
+                        <span className="text-[10px] opacity-60">{formatBytes(art.sizeBytes)}</span>
+                        {(art.inlineContent || art.cosUrl) && onPreviewArtifact && (
+                          <button
+                            onClick={() => onPreviewArtifact(art as ExecutionArtifact)}
+                            className="p-0.5 rounded hover:bg-white/10 transition-colors"
+                            title="预览"
+                          >
+                            <Eye className="w-3 h-3" />
+                          </button>
+                        )}
+                        {art.cosUrl && (
+                          <a
+                            href={art.cosUrl}
+                            download={ensureExtension(art.name, art.mimeType)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-0.5 rounded hover:bg-white/10 transition-colors"
+                            title="下载"
+                          >
+                            <Download className="w-3 h-3" />
+                          </a>
+                        )}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           );
