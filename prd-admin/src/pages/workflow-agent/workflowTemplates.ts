@@ -45,7 +45,7 @@ function edge(src: string, srcSlot: string, tgt: string, tgtSlot: string): Workf
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 模板 1: TAPD 缺陷数据采集 → LLM 28维度分析 → 报告导出
+// 模板 1: TAPD 缺陷数据采集 → 预统计 → LLM 分析解读 → 报告导出
 // ═══════════════════════════════════════════════════════════════
 //
 // 拓扑图：
@@ -53,7 +53,9 @@ function edge(src: string, srcSlot: string, tgt: string, tgtSlot: string): Workf
 //     ↓
 //   🐛 TAPD 数据采集（含 common_get_info 详情）
 //     ↓
-//   🧠 LLM 28维度统计分析（直接处理原始数据，含缺陷ID列表）
+//   📊 28维度预统计（代码精确计算，非 LLM 估算）
+//     ↓
+//   🧠 AI 分析解读（基于统计结果生成报告叙述）
 //     ↓
 //   📝 报告生成
 //     ↓      ↓
@@ -63,7 +65,7 @@ function edge(src: string, srcSlot: string, tgt: string, tgtSlot: string): Workf
 const tapdBugCollectionTemplate: WorkflowTemplate = {
   id: 'tapd-bug-collection',
   name: 'TAPD 缺陷采集与分析',
-  description: '从 TAPD 拉取缺陷数据 → 统计分析 → AI 趋势解读 → 生成质量报告 → 文件导出 + 站内通知',
+  description: '从 TAPD 拉取缺陷数据 → 28维度预统计（代码精确计算） → AI 趋势解读 → 生成质量报告 → 文件导出 + 站内通知',
   icon: '🐛',
   tags: ['tapd', 'quality', 'report'],
   requiredInputs: [
@@ -137,30 +139,41 @@ const tapdBugCollectionTemplate: WorkflowTemplate = {
         position: { x: 400, y: 300 },
       },
       {
+        nodeId: 'n-agg',
+        name: '28维度预统计',
+        nodeType: 'data-aggregator',
+        config: {
+          aggregationType: 'tapd-bug-28d',
+        },
+        inputSlots: [{ slotId: 'agg-in', name: 'data', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'agg-out', name: 'stats', dataType: 'json', required: true }],
+        position: { x: 700, y: 300 },
+      },
+      {
         nodeId: 'n-llm',
-        name: 'AI 28维度分析',
+        name: 'AI 分析解读',
         nodeType: 'llm-analyzer',
         config: {
-          systemPrompt: '你是一个软件质量分析专家。你会收到 TAPD 缺陷的**原始数据 JSON 数组**，每条记录包含以下字段：缺陷ID、标题、创建人、处理人、状态、缺陷等级（P0/P1/P2/P3/P4）、缺陷划分（技术缺陷/产品缺陷/非缺陷/无法判断）、有效报告（是/否）、是否逾期（是/否）、及时处理（是/否/无法判断）、结构归母、创建时间、解决时间、TAPD链接 等。\n\n请你**直接遍历原始数据**，按以下 28 个维度生成完整的缺陷统计分析报告。你必须自己做统计计算，并在每个维度列出对应的缺陷ID列表。\n\n输出 Markdown 格式，包含以下 28 个章节：\n\n### 1. 缺陷总数\n统计所有缺陷记录的总数。\n\n### 2. 非缺陷数量\n筛选条件：缺陷划分 = "非缺陷"。列出缺陷ID。\n\n### 3. 产品缺陷数量\n筛选条件：缺陷划分 = "产品缺陷"。列出缺陷ID。\n\n### 4. 技术缺陷数量\n筛选条件：缺陷划分 = "技术缺陷"。列出缺陷ID。\n\n### 5. 无法判断的数量\n筛选条件：缺陷划分 = "无法判断"。列出缺陷ID。\n\n### 6. 未判断（空）的数量\n筛选条件：缺陷划分 为空或未设置。列出缺陷ID。\n\n### 7. 无效反馈数量\n筛选条件：有效报告 = "否"。列出缺陷ID。\n\n### 8. 有效反馈数量\n筛选条件：有效报告 = "是"。列出缺陷ID。\n\n### 9. P2级及以下技术缺陷数量\n筛选条件：缺陷划分="技术缺陷" 且 缺陷等级 ∈ {P2, P3, P4}。列出缺陷ID。\n\n### 10. P0级别技术缺陷数量\n筛选条件：缺陷划分="技术缺陷" 且 缺陷等级="P0"。列出缺陷ID。\n\n### 11. P1级别技术缺陷数量\n筛选条件：缺陷划分="技术缺陷" 且 缺陷等级="P1"。列出缺陷ID。\n\n### 12. P2级别技术缺陷数量\n筛选条件：缺陷划分="技术缺陷" 且 缺陷等级="P2"。列出缺陷ID。\n\n### 13. P3级别技术缺陷数量\n筛选条件：缺陷划分="技术缺陷" 且 缺陷等级="P3"。列出缺陷ID。\n\n### 14. P4级别技术缺陷数量\n筛选条件：缺陷划分="技术缺陷" 且 缺陷等级="P4"。列出缺陷ID。\n\n### 15. 未判断缺陷等级技术缺陷数量\n筛选条件：缺陷划分="技术缺陷" 且 缺陷等级为空。列出缺陷ID。\n\n### 16. 技术缺陷等级统计总和验证\n验证：P0+P1+P2+P3+P4+未判断 = 技术缺陷总数。如不一致须说明差异。\n\n### 17. P2级及以下技术缺陷中简报逾期的数量\n筛选条件：第9章的缺陷集合中，是否逾期="是"。列出缺陷ID。\n\n### 18. P2级及以下技术缺陷中未逾期的数量\n筛选条件：第9章的缺陷集合中，是否逾期="否"。列出缺陷ID。\n\n### 19. P2级及以下技术缺陷中简报是否逾期为空的数量\n筛选条件：第9章的缺陷集合中，是否逾期为空。列出缺陷ID。\n\n### 20. P2级及以下技术缺陷逾期统计总和验证\n验证：逾期+未逾期+空 = P2及以下技术缺陷总数。\n\n### 21. P2级及以下技术缺陷中及时处理的数量\n筛选条件：第9章的缺陷集合中，及时处理="是"。列出缺陷ID。\n\n### 22. P2级及以下技术缺陷中未及时处理的数量\n筛选条件：第9章的缺陷集合中，及时处理="否"。列出缺陷ID。\n\n### 23. P2级及以下技术缺陷中无法判断是否及时处理的数量\n筛选条件：第9章的缺陷集合中，及时处理="无法判断"或为空。列出缺陷ID。\n\n### 24. P2级及以下技术缺陷及时处理统计总和验证\n验证：及时+未及时+无法判断 = P2及以下技术缺陷总数。\n\n### 25. P2级及以下技术缺陷中已修复的数量\n筛选条件：第9章的缺陷集合中，状态 ∈ {closed, 已关闭, 已解决}。列出缺陷ID。\n\n### 26. P2级及以下技术缺陷及时修复率\n公式：已修复数 / P2及以下总数 × 100%。评级：≥90%优秀、≥80%良好、≥70%一般、≥60%需改进、<60%较差。\n\n### 27. P2级及以下技术缺陷及时处理率\n公式：及时处理数 / P2及以下总数 × 100%。评级同上。\n\n### 28. 技术缺陷中"结构归母"字段统计\n按结构归母字段分组统计技术缺陷数量，列出每组的缺陷ID。\n\n---\n**输出格式要求**：\n- 每个章节必须包含：统计逻辑说明、数量、缺陷ID列表\n- 缺陷ID使用 `ID1, ID2, ID3` 格式列出\n- 验证章节如不一致须标红说明差异\n- 比率类需包含计算公式和评级',
-          userPromptTemplate: '以下是 TAPD 缺陷的原始数据（JSON 数组），请直接遍历每条记录，按 28 个维度统计并生成完整报告：\n\n{{input}}',
+          systemPrompt: '你是一个软件质量分析专家。你会收到一份已由代码精确计算的 TAPD 缺陷 28 维度统计结果（JSON 格式），包含每个维度的精确数量和缺陷 ID 列表。\n\n你的任务是**基于这些已计算好的统计数据**，生成一份结构化的 Markdown 质量分析报告。你不需要重新计算任何数字——所有统计数据已经是精确的。\n\n请按以下结构输出报告：\n\n## 报告要求\n\n对每个维度（dim 1-28），输出一个章节，包含：\n1. **维度名称**和**统计数量**（直接引用 JSON 中的 count 值）\n2. **缺陷 ID 列表**（直接引用 JSON 中的 ids 数组，格式：ID1, ID2, ID3）\n3. 对于验证维度（dim 16/20/24），引用 extra 字段中的验证结果\n4. 对于比率维度（dim 26/27），引用 logic 和 extra 字段中的计算公式和评级\n5. 对于结构归母（dim 28），按 groups 数组列出每个分组\n\n## 额外要求\n\n在 28 个维度之后，补充以下分析章节：\n- **数据质量评估**：未分类缺陷占比、字段空值情况\n- **风险提示**：P0/P1 级缺陷详情、逾期缺陷趋势\n- **改进建议**：基于及时修复率和及时处理率评级，给出 2-3 条具体可执行建议',
+          userPromptTemplate: '以下是由代码精确计算的 TAPD 缺陷 28 维度统计结果，请基于这些数据生成完整的质量分析报告：\n\n{{input}}',
           outputFormat: 'markdown',
-          temperature: '0.1',
+          temperature: '0.3',
         },
         inputSlots: [{ slotId: 'llm-in', name: 'input', dataType: 'json', required: true }],
         outputSlots: [{ slotId: 'llm-out', name: 'result', dataType: 'json', required: true }],
-        position: { x: 700, y: 300 },
+        position: { x: 1000, y: 300 },
       },
       {
         nodeId: 'n-report',
         name: '质量报告生成',
         nodeType: 'report-generator',
         config: {
-          reportTemplate: '将以下 28 维度缺陷统计分析报告整理为最终报告。保持所有维度的统计内容、缺陷ID列表不变，在末尾补充：\n1. 数据采集说明（数据来源：TAPD common_get_info 接口，采集字段列表）\n2. 总结与改进建议\n\n如果上游已经是完整的 Markdown 报告格式，请直接透传并补充末尾部分即可。',
+          reportTemplate: '将以下 28 维度缺陷统计分析报告整理为最终报告。保持所有维度的统计内容、缺陷ID列表不变，在末尾补充：\n1. 数据采集说明（数据来源：TAPD common_get_info 接口，28 维度由代码精确计算）\n2. 总结与改进建议\n\n如果上游已经是完整的 Markdown 报告格式，请直接透传并补充末尾部分即可。',
           format: 'markdown',
         },
         inputSlots: [{ slotId: 'report-in', name: 'data', dataType: 'json', required: true }],
         outputSlots: [{ slotId: 'report-out', name: 'report', dataType: 'text', required: true }],
-        position: { x: 1000, y: 300 },
+        position: { x: 1300, y: 300 },
       },
       {
         nodeId: 'n-export',
@@ -172,7 +185,7 @@ const tapdBugCollectionTemplate: WorkflowTemplate = {
         },
         inputSlots: [{ slotId: 'export-in', name: 'data', dataType: 'json', required: true }],
         outputSlots: [{ slotId: 'export-out', name: 'file', dataType: 'binary', required: true }],
-        position: { x: 1300, y: 180 },
+        position: { x: 1600, y: 180 },
       },
       {
         nodeId: 'n-notify',
@@ -186,13 +199,14 @@ const tapdBugCollectionTemplate: WorkflowTemplate = {
         },
         inputSlots: [{ slotId: 'notify-in', name: 'data', dataType: 'json', required: false }],
         outputSlots: [{ slotId: 'notify-out', name: 'result', dataType: 'json', required: true }],
-        position: { x: 1300, y: 420 },
+        position: { x: 1600, y: 420 },
       },
     ];
 
     const edges: WorkflowEdge[] = [
       edge('n-trigger', 'manual-out', 'n-tapd', 'tapd-in'),
-      edge('n-tapd', 'tapd-out', 'n-llm', 'llm-in'),
+      edge('n-tapd', 'tapd-out', 'n-agg', 'agg-in'),
+      edge('n-agg', 'agg-out', 'n-llm', 'llm-in'),
       edge('n-llm', 'llm-out', 'n-report', 'report-in'),
       edge('n-report', 'report-out', 'n-export', 'export-in'),
       edge('n-report', 'report-out', 'n-notify', 'notify-in'),

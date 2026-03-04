@@ -1570,6 +1570,11 @@ public static class CapsuleExecutor
     /// </summary>
     public static CapsuleResult ExecuteDataAggregator(WorkflowNode node, List<ExecutionArtifact> inputArtifacts)
     {
+        // 检查是否为 TAPD 28 维度专用聚合模式
+        var aggregationType = GetConfigString(node, "aggregationType") ?? "";
+        if (aggregationType == "tapd-bug-28d")
+            return ExecuteTapdBug28DAggregation(node, inputArtifacts);
+
         var groupByStr = GetConfigString(node, "groupByFields") ?? "severity,status,current_owner,module";
         var dateField = GetConfigString(node, "dateField") ?? "created";
         var dateGroupBy = GetConfigString(node, "dateGroupBy") ?? "week";
@@ -1751,6 +1756,270 @@ public static class CapsuleExecutor
 
         var artifact = MakeTextArtifact(node, "agg-out", "统计摘要", outputJson, "application/json");
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs.ToString());
+    }
+
+    // ── TAPD 缺陷 28 维度预统计 ─────────────────────────────────
+
+    /// <summary>
+    /// TAPD 缺陷 28 维度专用聚合：用代码精确计算所有统计指标和缺陷 ID 列表，
+    /// 输出结构化 JSON 摘要（~5-15KB），替代将原始数据（~200KB+）直接喂给 LLM 让其"数数"。
+    /// </summary>
+    private static CapsuleResult ExecuteTapdBug28DAggregation(WorkflowNode node, List<ExecutionArtifact> inputArtifacts)
+    {
+        var logs = new StringBuilder();
+        logs.AppendLine($"[TAPD 28维度预统计] 节点: {node.Name}");
+
+        // ── 解析输入数据 ──
+        var allItems = new List<Dictionary<string, string>>();
+        foreach (var art in inputArtifacts)
+        {
+            if (string.IsNullOrWhiteSpace(art.InlineContent)) continue;
+            try
+            {
+                using var doc = JsonDocument.Parse(art.InlineContent);
+                if (doc.RootElement.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in doc.RootElement.EnumerateArray())
+                        allItems.Add(JsonElementToDict(item));
+                }
+                else if (doc.RootElement.ValueKind == JsonValueKind.Object)
+                {
+                    allItems.Add(JsonElementToDict(doc.RootElement));
+                }
+            }
+            catch { logs.AppendLine($"  ⚠️ 跳过无法解析的输入: {art.Name}"); }
+        }
+
+        logs.AppendLine($"  总记录数: {allItems.Count}");
+
+        if (allItems.Count == 0)
+        {
+            var emptyJson = JsonSerializer.Serialize(new { totalCount = 0, message = "无数据", dimensions = Array.Empty<object>() });
+            var emptyArt = MakeTextArtifact(node, "agg-out", "TAPD 28维度统计", emptyJson, "application/json");
+            return new CapsuleResult(new List<ExecutionArtifact> { emptyArt }, logs.ToString());
+        }
+
+        // 字段取值辅助
+        string Get(Dictionary<string, string> item, string field) =>
+            item.TryGetValue(field, out var v) ? (v ?? "") : "";
+
+        // ── 构建子集 ──
+        var all = allItems;
+        var techBugs = all.Where(i => Get(i, "缺陷划分") == "技术缺陷").ToList();
+        var p2Below = techBugs.Where(i =>
+        {
+            var level = Get(i, "缺陷等级").ToUpperInvariant();
+            return level is "P2" or "P3" or "P4";
+        }).ToList();
+
+        // 辅助：提取缺陷 ID 列表
+        List<string> Ids(List<Dictionary<string, string>> items) =>
+            items.Select(i => Get(i, "缺陷ID")).Where(id => !string.IsNullOrWhiteSpace(id)).ToList();
+
+        // 辅助：构建一个维度对象
+        object Dim(int num, string name, int count, List<string> ids, string? logic = null, string? extra = null)
+        {
+            var d = new Dictionary<string, object>
+            {
+                ["dim"] = num,
+                ["name"] = name,
+                ["count"] = count,
+                ["ids"] = ids,
+            };
+            if (logic != null) d["logic"] = logic;
+            if (extra != null) d["extra"] = extra;
+            return d;
+        }
+
+        // ── 28 维度计算 ──
+        var dimensions = new List<object>();
+
+        // 1. 缺陷总数
+        dimensions.Add(Dim(1, "缺陷总数", all.Count, Ids(all)));
+
+        // 2. 非缺陷数量
+        var nonBugs = all.Where(i => Get(i, "缺陷划分") == "非缺陷").ToList();
+        dimensions.Add(Dim(2, "非缺陷数量", nonBugs.Count, Ids(nonBugs), "缺陷划分=\"非缺陷\""));
+
+        // 3. 产品缺陷数量
+        var productBugs = all.Where(i => Get(i, "缺陷划分") == "产品缺陷").ToList();
+        dimensions.Add(Dim(3, "产品缺陷数量", productBugs.Count, Ids(productBugs), "缺陷划分=\"产品缺陷\""));
+
+        // 4. 技术缺陷数量
+        dimensions.Add(Dim(4, "技术缺陷数量", techBugs.Count, Ids(techBugs), "缺陷划分=\"技术缺陷\""));
+
+        // 5. 无法判断数量
+        var indeterminate = all.Where(i => Get(i, "缺陷划分") == "无法判断").ToList();
+        dimensions.Add(Dim(5, "无法判断的数量", indeterminate.Count, Ids(indeterminate), "缺陷划分=\"无法判断\""));
+
+        // 6. 未判断（空）的数量
+        var unclassified = all.Where(i => string.IsNullOrWhiteSpace(Get(i, "缺陷划分"))).ToList();
+        dimensions.Add(Dim(6, "未判断（空）的数量", unclassified.Count, Ids(unclassified), "缺陷划分为空"));
+
+        // 7. 无效反馈数量
+        var invalidFeedback = all.Where(i => Get(i, "有效报告") == "否").ToList();
+        dimensions.Add(Dim(7, "无效反馈数量", invalidFeedback.Count, Ids(invalidFeedback), "有效报告=\"否\""));
+
+        // 8. 有效反馈数量
+        var validFeedback = all.Where(i => Get(i, "有效报告") == "是").ToList();
+        dimensions.Add(Dim(8, "有效反馈数量", validFeedback.Count, Ids(validFeedback), "有效报告=\"是\""));
+
+        // 9. P2级及以下技术缺陷
+        dimensions.Add(Dim(9, "P2级及以下技术缺陷数量", p2Below.Count, Ids(p2Below),
+            "缺陷划分=\"技术缺陷\" 且 缺陷等级∈{P2,P3,P4}"));
+
+        // 10-15. 各等级技术缺陷
+        var severityLevels = new[] { ("P0", 10), ("P1", 11), ("P2", 12), ("P3", 13), ("P4", 14) };
+        foreach (var (level, dimNum) in severityLevels)
+        {
+            var subset = techBugs.Where(i => Get(i, "缺陷等级").Equals(level, StringComparison.OrdinalIgnoreCase)).ToList();
+            dimensions.Add(Dim(dimNum, $"{level}级别技术缺陷数量", subset.Count, Ids(subset),
+                $"缺陷划分=\"技术缺陷\" 且 缺陷等级=\"{level}\""));
+        }
+
+        var techNoLevel = techBugs.Where(i => string.IsNullOrWhiteSpace(Get(i, "缺陷等级"))).ToList();
+        dimensions.Add(Dim(15, "未判断缺陷等级技术缺陷数量", techNoLevel.Count, Ids(techNoLevel),
+            "缺陷划分=\"技术缺陷\" 且 缺陷等级为空"));
+
+        // 16. 等级统计验证
+        var levelSum = severityLevels.Sum(sl =>
+            techBugs.Count(i => Get(i, "缺陷等级").Equals(sl.Item1, StringComparison.OrdinalIgnoreCase)))
+            + techNoLevel.Count;
+        var levelValid = levelSum == techBugs.Count;
+        dimensions.Add(Dim(16, "技术缺陷等级统计总和验证", levelSum, new List<string>(),
+            $"P0+P1+P2+P3+P4+未判断={levelSum}，技术缺陷总数={techBugs.Count}",
+            levelValid ? "✅ 一致" : $"❌ 差异={techBugs.Count - levelSum}"));
+
+        // 17-19. P2 及以下逾期状态
+        var p2Overdue = p2Below.Where(i => Get(i, "是否逾期") == "是").ToList();
+        dimensions.Add(Dim(17, "P2及以下技术缺陷中简报逾期数量", p2Overdue.Count, Ids(p2Overdue),
+            "P2及以下技术缺陷中 是否逾期=\"是\""));
+
+        var p2NotOverdue = p2Below.Where(i => Get(i, "是否逾期") == "否").ToList();
+        dimensions.Add(Dim(18, "P2及以下技术缺陷中未逾期数量", p2NotOverdue.Count, Ids(p2NotOverdue),
+            "P2及以下技术缺陷中 是否逾期=\"否\""));
+
+        var p2OverdueEmpty = p2Below.Where(i => string.IsNullOrWhiteSpace(Get(i, "是否逾期"))).ToList();
+        dimensions.Add(Dim(19, "P2及以下技术缺陷中逾期状态为空数量", p2OverdueEmpty.Count, Ids(p2OverdueEmpty),
+            "P2及以下技术缺陷中 是否逾期为空"));
+
+        // 20. 逾期验证
+        var overdueSum = p2Overdue.Count + p2NotOverdue.Count + p2OverdueEmpty.Count;
+        var overdueValid = overdueSum == p2Below.Count;
+        dimensions.Add(Dim(20, "P2及以下技术缺陷逾期统计验证", overdueSum, new List<string>(),
+            $"逾期+未逾期+空={overdueSum}，P2及以下总数={p2Below.Count}",
+            overdueValid ? "✅ 一致" : $"❌ 差异={p2Below.Count - overdueSum}"));
+
+        // 21-23. P2 及以下及时处理
+        var p2Timely = p2Below.Where(i => Get(i, "及时处理") == "是").ToList();
+        dimensions.Add(Dim(21, "P2及以下技术缺陷中及时处理数量", p2Timely.Count, Ids(p2Timely),
+            "P2及以下技术缺陷中 及时处理=\"是\""));
+
+        var p2NotTimely = p2Below.Where(i => Get(i, "及时处理") == "否").ToList();
+        dimensions.Add(Dim(22, "P2及以下技术缺陷中未及时处理数量", p2NotTimely.Count, Ids(p2NotTimely),
+            "P2及以下技术缺陷中 及时处理=\"否\""));
+
+        var p2TimelyUnknown = p2Below.Where(i =>
+        {
+            var v = Get(i, "及时处理");
+            return v == "无法判断" || string.IsNullOrWhiteSpace(v);
+        }).ToList();
+        dimensions.Add(Dim(23, "P2及以下技术缺陷中无法判断是否及时处理数量", p2TimelyUnknown.Count, Ids(p2TimelyUnknown),
+            "P2及以下技术缺陷中 及时处理=\"无法判断\"或为空"));
+
+        // 24. 及时处理验证
+        var timelySum = p2Timely.Count + p2NotTimely.Count + p2TimelyUnknown.Count;
+        var timelyValid = timelySum == p2Below.Count;
+        dimensions.Add(Dim(24, "P2及以下技术缺陷及时处理统计验证", timelySum, new List<string>(),
+            $"及时+未及时+无法判断={timelySum}，P2及以下总数={p2Below.Count}",
+            timelyValid ? "✅ 一致" : $"❌ 差异={p2Below.Count - timelySum}"));
+
+        // 25. 已修复数量
+        var closedStatuses = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "closed", "已关闭", "已解决", "关闭" };
+        var p2Fixed = p2Below.Where(i => closedStatuses.Contains(Get(i, "状态"))).ToList();
+        dimensions.Add(Dim(25, "P2及以下技术缺陷中已修复数量", p2Fixed.Count, Ids(p2Fixed),
+            "P2及以下技术缺陷中 状态∈{closed,已关闭,已解决,关闭}"));
+
+        // 26. 及时修复率
+        var fixRate = p2Below.Count > 0 ? Math.Round(100.0 * p2Fixed.Count / p2Below.Count, 2) : 0;
+        var fixRating = fixRate >= 90 ? "优秀" : fixRate >= 80 ? "良好" : fixRate >= 70 ? "一般" : fixRate >= 60 ? "需改进" : "较差";
+        dimensions.Add(Dim(26, "P2及以下技术缺陷及时修复率", p2Fixed.Count, new List<string>(),
+            $"{p2Fixed.Count}/{p2Below.Count}×100%={fixRate}%",
+            $"比率={fixRate}%，评级={fixRating}"));
+
+        // 27. 及时处理率
+        var processRate = p2Below.Count > 0 ? Math.Round(100.0 * p2Timely.Count / p2Below.Count, 2) : 0;
+        var processRating = processRate >= 90 ? "优秀" : processRate >= 80 ? "良好" : processRate >= 70 ? "一般" : processRate >= 60 ? "需改进" : "较差";
+        dimensions.Add(Dim(27, "P2及以下技术缺陷及时处理率", p2Timely.Count, new List<string>(),
+            $"{p2Timely.Count}/{p2Below.Count}×100%={processRate}%",
+            $"比率={processRate}%，评级={processRating}"));
+
+        // 28. 结构归母统计
+        var structureGroups = techBugs
+            .GroupBy(i =>
+            {
+                var v = Get(i, "结构归母");
+                return string.IsNullOrWhiteSpace(v) ? "暂未归母" : v;
+            })
+            .OrderByDescending(g => g.Count())
+            .Select(g => new
+            {
+                category = g.Key,
+                count = g.Count(),
+                ids = g.Select(i => Get(i, "缺陷ID")).Where(id => !string.IsNullOrWhiteSpace(id)).ToList()
+            })
+            .ToList();
+        dimensions.Add(new Dictionary<string, object>
+        {
+            ["dim"] = 28,
+            ["name"] = "技术缺陷结构归母统计",
+            ["logic"] = "按结构归母分组统计技术缺陷",
+            ["groups"] = structureGroups,
+            ["totalTechBugs"] = techBugs.Count,
+        });
+
+        // ── 组装输出 ──
+        var output = new Dictionary<string, object>
+        {
+            ["_meta"] = new
+            {
+                aggregationType = "tapd-bug-28d",
+                totalRecords = all.Count,
+                generatedAt = DateTime.UtcNow.ToString("O"),
+                note = "所有统计由代码精确计算，非 LLM 估算",
+            },
+            ["dimensions"] = dimensions,
+        };
+
+        var outputJson = JsonSerializer.Serialize(output, new JsonSerializerOptions { WriteIndented = true });
+        logs.AppendLine($"  28 维度统计完成");
+        logs.AppendLine($"  输出摘要: {outputJson.Length} chars ({Encoding.UTF8.GetByteCount(outputJson)} bytes)");
+        logs.AppendLine($"  关键指标: 总数={all.Count}, 技术缺陷={techBugs.Count}, P2及以下={p2Below.Count}");
+        logs.AppendLine($"  及时修复率={fixRate}%({fixRating}), 及时处理率={processRate}%({processRating})");
+
+        var outputArtifact = MakeTextArtifact(node, "agg-out", "TAPD 28维度统计", outputJson, "application/json");
+        return new CapsuleResult(new List<ExecutionArtifact> { outputArtifact }, logs.ToString());
+    }
+
+    /// <summary>将 JsonElement 展平为 Dictionary（只取一层字符串值）</summary>
+    private static Dictionary<string, string> JsonElementToDict(JsonElement el)
+    {
+        var dict = new Dictionary<string, string>();
+        if (el.ValueKind != JsonValueKind.Object) return dict;
+        foreach (var prop in el.EnumerateObject())
+        {
+            dict[prop.Name] = prop.Value.ValueKind switch
+            {
+                JsonValueKind.String => prop.Value.GetString() ?? "",
+                JsonValueKind.Number => prop.Value.GetRawText(),
+                JsonValueKind.True => "true",
+                JsonValueKind.False => "false",
+                JsonValueKind.Null => "",
+                _ => prop.Value.GetRawText(),
+            };
+        }
+        return dict;
     }
 
     /// <summary>从 JSON 元素中提取字段值（支持嵌套路径如 "Bug.severity"）</summary>

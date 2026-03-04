@@ -445,14 +445,18 @@ public static class CapsuleTypeRegistry
         AccentHue = 120,
         ConfigSchema = new()
         {
-            new() { Key = "groupByFields", Label = "分组统计字段", FieldType = "text", Required = false, DefaultValue = "status,severity,priority,reporter", HelpTip = "逗号分隔的字段名，将按每个字段进行分组计数。支持嵌套路径如 Bug.status。留空则自动检测高频字段" },
-            new() { Key = "dateField", Label = "日期字段", FieldType = "text", Required = false, DefaultValue = "created", HelpTip = "用于时间趋势统计的日期字段名，支持嵌套路径如 Bug.created" },
+            new() { Key = "aggregationType", Label = "统计模式", FieldType = "select", Required = false, DefaultValue = "generic", HelpTip = "选择专用统计模式可获得精确的领域指标计算", Options = new() {
+                new() { Value = "generic", Label = "通用分组统计" },
+                new() { Value = "tapd-bug-28d", Label = "TAPD 缺陷 28 维度" },
+            }},
+            new() { Key = "groupByFields", Label = "分组统计字段", FieldType = "text", Required = false, DefaultValue = "status,severity,priority,reporter", HelpTip = "通用模式下使用。逗号分隔的字段名，将按每个字段进行分组计数。支持嵌套路径如 Bug.status" },
+            new() { Key = "dateField", Label = "日期字段", FieldType = "text", Required = false, DefaultValue = "created", HelpTip = "通用模式下使用。用于时间趋势统计的日期字段名" },
             new() { Key = "dateGroupBy", Label = "时间粒度", FieldType = "select", Required = false, DefaultValue = "week", Options = new() {
                 new() { Value = "day", Label = "按天" },
                 new() { Value = "week", Label = "按周" },
                 new() { Value = "month", Label = "按月" },
             }},
-            new() { Key = "topN", Label = "Top N", FieldType = "number", Required = false, DefaultValue = "10", HelpTip = "每个维度保留前 N 个分组（其余归入「其他」）" },
+            new() { Key = "topN", Label = "Top N", FieldType = "number", Required = false, DefaultValue = "10", HelpTip = "通用模式下使用。每个维度保留前 N 个分组（其余归入「其他」）" },
         },
         DefaultInputSlots = new()
         {
