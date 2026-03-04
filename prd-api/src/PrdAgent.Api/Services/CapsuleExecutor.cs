@@ -841,8 +841,8 @@ public static class CapsuleExecutor
                 if (!response.IsSuccessStatusCode)
                 {
                     logs.AppendLine($"  [{i + 1}/{bugIds.Count}] {entityId}: HTTP {(int)response.StatusCode} failed, body={respBody[..Math.Min(200, respBody.Length)]}");
-                    // 保留原始搜索数据作为 fallback
-                    detailItems.Add(JsonNode.Parse(searchItems[i]!.ToJsonString())!);
+                    // 保留原始搜索数据，映射为中文字段名以保持一致
+                    detailItems.Add(MapSearchItemToChinese(searchItems[i]!, workspaceId));
                     continue;
                 }
 
@@ -855,14 +855,19 @@ public static class CapsuleExecutor
                     retEl.TryGetProperty("data", out var retDataEl) &&
                     retDataEl.TryGetProperty("Bug", out var bugEl))
                 {
-                    // copy_info 在 data 层级下，不在 get_info_ret.data 下
+                    // copy_info 可能在 data 层级下，也可能在 get_info_ret 下
                     var copyUrl = "";
                     if (dataEl.TryGetProperty("copy_info", out var copyEl) &&
                         copyEl.TryGetProperty("url", out var urlEl))
                         copyUrl = urlEl.GetString() ?? "";
+                    // 备选路径：get_info_ret.copy_info
+                    if (string.IsNullOrWhiteSpace(copyUrl) &&
+                        retEl.TryGetProperty("copy_info", out var copyEl2) &&
+                        copyEl2.TryGetProperty("url", out var urlEl2))
+                        copyUrl = urlEl2.GetString() ?? "";
 
-                    // 提取并映射为中文字段名
-                    var mapped = MapBugFieldsToChinese(bugEl, copyUrl);
+                    // 提取并映射为中文字段名（首条记录带 debug 日志）
+                    var mapped = MapBugFieldsToChinese(bugEl, copyUrl, workspaceId, i == 0 ? logs : null);
                     detailItems.Add(mapped);
                     successCount++;
                 }
@@ -877,15 +882,15 @@ public static class CapsuleExecutor
                     }
                     logs.AppendLine($"  [{i + 1}/{bugIds.Count}] {entityId}: unexpected structure, data keys=[{string.Join(",", keys)}]");
                     logs.AppendLine($"    Response preview: {respBody[..Math.Min(300, respBody.Length)]}");
-                    // 保留原始搜索数据作为 fallback
-                    detailItems.Add(JsonNode.Parse(searchItems[i]!.ToJsonString())!);
+                    // 保留原始搜索数据，映射为中文字段名以保持一致
+                    detailItems.Add(MapSearchItemToChinese(searchItems[i]!, workspaceId));
                 }
             }
             catch (Exception ex)
             {
                 logs.AppendLine($"  [{i + 1}/{bugIds.Count}] {entityId}: error - {ex.Message}");
-                // 保留原始搜索数据作为 fallback
-                detailItems.Add(JsonNode.Parse(searchItems[i]!.ToJsonString())!);
+                // 保留原始搜索数据，映射为中文字段名以保持一致
+                detailItems.Add(MapSearchItemToChinese(searchItems[i]!, workspaceId));
             }
 
             // 进度日志（每 10 条记录一次）
@@ -905,11 +910,33 @@ public static class CapsuleExecutor
     /// 将 common_get_info 返回的 Bug JSON 字段映射为中文字段名，
     /// 同时计算"是否历史问题"和"及时处理"衍生字段。
     /// </summary>
-    private static JsonNode MapBugFieldsToChinese(JsonElement bug, string copyUrl)
+    private static JsonNode MapBugFieldsToChinese(JsonElement bug, string copyUrl, string workspaceId = "", StringBuilder? logs = null)
     {
-        string Get(string key) =>
-            bug.TryGetProperty(key, out var el) && el.ValueKind == JsonValueKind.String
-                ? el.GetString() ?? "" : "";
+        // 通用取值：支持 String / Number / True / False，Null 和不存在返回空串
+        string Get(string key)
+        {
+            if (!bug.TryGetProperty(key, out var el)) return "";
+            return el.ValueKind switch
+            {
+                JsonValueKind.String => el.GetString() ?? "",
+                JsonValueKind.Number => el.GetRawText(),
+                JsonValueKind.True => "true",
+                JsonValueKind.False => "false",
+                JsonValueKind.Null => "",
+                _ => el.GetRawText(), // Object / Array → 原始 JSON 文本
+            };
+        }
+
+        // 调试日志：记录 Bug 对象的所有字段名（仅首次调用时记录）
+        if (logs != null)
+        {
+            var fieldNames = new List<string>();
+            foreach (var prop in bug.EnumerateObject())
+                fieldNames.Add(prop.Name);
+            logs.AppendLine($"  [DEBUG] Bug fields ({fieldNames.Count}): {string.Join(", ", fieldNames.Take(40))}");
+            // 打印自定义字段的实际值，方便调试空值问题
+            logs.AppendLine($"  [DEBUG] custom_field_one={Get("custom_field_one")} | custom_field_11={Get("custom_field_11")} | custom_field_13={Get("custom_field_13")}");
+        }
 
         var resolved = Get("resolved");
         var due = Get("due");
@@ -939,6 +966,11 @@ public static class CapsuleExecutor
         if (string.IsNullOrEmpty(bugIdValue)) bugIdValue = Get("ID");
         if (string.IsNullOrEmpty(bugIdValue)) bugIdValue = Get("bug_id");
 
+        // URL链接：优先使用 copy_info.url，如果为空则从 workspaceId + bugId 构造
+        var finalUrl = copyUrl;
+        if (string.IsNullOrWhiteSpace(finalUrl) && !string.IsNullOrWhiteSpace(workspaceId) && !string.IsNullOrWhiteSpace(bugIdValue))
+            finalUrl = $"https://www.tapd.cn/tapd_fe/{workspaceId}/bug/detail/{bugIdValue}";
+
         return new JsonObject
         {
             ["缺陷ID"] = bugIdValue,
@@ -963,9 +995,55 @@ public static class CapsuleExecutor
             ["反馈时间"] = Get("custom_field_12"),
             ["影响范围"] = Get("custom_field_13"),
             ["结构归母"] = Get("custom_field_one"),
-            ["URL链接"] = copyUrl,
+            ["URL链接"] = finalUrl,
             ["是否历史问题"] = isHistorical,
             ["及时处理"] = timelyFixed,
+        };
+    }
+
+    /// <summary>
+    /// 将 Phase 1 搜索列表的原始 item（JSON 字段名不统一）映射为与 MapBugFieldsToChinese 一致的中文字段名，
+    /// 这样在 Phase 2 部分失败回退时，输出的列结构与成功项保持一致，前端表格不会出现空列。
+    /// </summary>
+    private static JsonNode MapSearchItemToChinese(JsonNode item, string workspaceId)
+    {
+        string Get(string key) => item[key]?.GetValue<string>() ?? "";
+
+        var bugIdValue = Get("id");
+        if (string.IsNullOrEmpty(bugIdValue)) bugIdValue = Get("ID");
+        if (string.IsNullOrEmpty(bugIdValue)) bugIdValue = Get("bug_id");
+
+        var url = "";
+        if (!string.IsNullOrWhiteSpace(workspaceId) && !string.IsNullOrWhiteSpace(bugIdValue))
+            url = $"https://www.tapd.cn/tapd_fe/{workspaceId}/bug/detail/{bugIdValue}";
+
+        return new JsonObject
+        {
+            ["缺陷ID"] = bugIdValue,
+            ["标题"] = Get("title"),
+            ["创建人"] = Get("reporter"),
+            ["创建时间"] = Get("created"),
+            ["问题开始时间"] = Get("custom_field_100"),
+            ["解决时间"] = Get("resolved"),
+            ["关闭时间"] = Get("closed"),
+            ["预计结束时间"] = Get("due"),
+            ["处理人"] = Get("current_owner"),
+            ["状态"] = Get("status"),
+            ["责任人"] = Get("custom_field_two"),
+            ["是否逾期"] = Get("custom_field_four"),
+            ["有效报告"] = Get("custom_field_five"),
+            ["缺陷等级"] = Get("custom_field_6"),
+            ["缺陷划分"] = Get("custom_field_7"),
+            ["反馈人"] = Get("custom_field_8"),
+            ["公司名称"] = Get("custom_field_9"),
+            ["商户编号"] = Get("custom_field_10"),
+            ["引入项目"] = Get("custom_field_11"),
+            ["反馈时间"] = Get("custom_field_12"),
+            ["影响范围"] = Get("custom_field_13"),
+            ["结构归母"] = Get("custom_field_one"),
+            ["URL链接"] = url,
+            ["是否历史问题"] = "",
+            ["及时处理"] = "",
         };
     }
 
