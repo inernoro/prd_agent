@@ -178,7 +178,8 @@ public class AppCallerCodeMappingTests
     public void AllRegisteredAppCallerCodes_ShouldFollowStandardFormat()
     {
         var definitions = AppCallerRegistrationService.GetAllDefinitions();
-        var validModelTypes = new[] { "chat", "intent", "vision", "generation", "embedding", "rerank", "code", "long-context" };
+        // 与生产代码保持同源，避免新增 modelType（如 asr/tts）后测试白名单滞后
+        var validModelTypes = ModelTypes.AllTypes;
 
         foreach (var def in definitions)
         {
