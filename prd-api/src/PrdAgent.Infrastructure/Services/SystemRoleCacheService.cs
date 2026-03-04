@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
@@ -30,6 +32,9 @@ public sealed class SystemRoleCacheService : ISystemRoleCacheService
 
     // 快速查找表
     private Dictionary<string, SystemRole> _roleByKey = new(StringComparer.OrdinalIgnoreCase);
+
+    // 权限指纹（权限目录 + 角色定义的哈希，用于前端缓存失效判断）
+    private string _fingerprint = string.Empty;
 
     public SystemRoleCacheService(MongoDbContext db, ILogger<SystemRoleCacheService> logger)
     {
@@ -93,6 +98,42 @@ public sealed class SystemRoleCacheService : ISystemRoleCacheService
 
         _allRoles = merged.OrderBy(r => r.Key, StringComparer.OrdinalIgnoreCase).ToList();
         _roleByKey = _allRoles.ToDictionary(r => r.Key, r => r, StringComparer.OrdinalIgnoreCase);
+
+        _fingerprint = ComputeFingerprint();
+    }
+
+    /// <summary>
+    /// 基于权限目录 + 所有角色定义计算 SHA256 指纹（取前 12 位 hex）。
+    /// 任何权限目录变更（新部署）或角色权限调整都会改变此值。
+    /// </summary>
+    private string ComputeFingerprint()
+    {
+        var sb = new StringBuilder();
+
+        // 1. 权限目录（每次新增/删除权限 key 都会变）
+        sb.Append("catalog:");
+        foreach (var p in AdminPermissionCatalog.All.OrderBy(x => x.Key, StringComparer.Ordinal))
+        {
+            sb.Append(p.Key).Append(',');
+        }
+
+        // 2. 所有角色的 key + 排序后的权限列表
+        sb.Append("|roles:");
+        foreach (var role in _allRoles)
+        {
+            sb.Append(role.Key).Append('=');
+            if (role.Permissions != null)
+            {
+                foreach (var p in role.Permissions.OrderBy(x => x, StringComparer.Ordinal))
+                {
+                    sb.Append(p).Append(',');
+                }
+            }
+            sb.Append(';');
+        }
+
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString()));
+        return Convert.ToHexString(hash)[..12].ToLowerInvariant();
     }
 
     public IReadOnlyList<SystemRole> GetAllRoles()
@@ -110,6 +151,14 @@ public sealed class SystemRoleCacheService : ISystemRoleCacheService
         lock (_lock)
         {
             return _roleByKey.TryGetValue(key.Trim(), out var role) ? role : null;
+        }
+    }
+
+    public string GetFingerprint()
+    {
+        lock (_lock)
+        {
+            return _fingerprint;
         }
     }
 }

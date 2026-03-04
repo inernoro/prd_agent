@@ -18,6 +18,12 @@ public sealed class AdminAuthzMeResponse
     /// CDN 基础地址，前端用于拼接静态资源 URL（如头像、图标等）
     /// </summary>
     public string? CdnBaseUrl { get; set; }
+
+    /// <summary>
+    /// 权限指纹（基于权限目录 + 角色定义计算的哈希）。
+    /// 前端缓存此值，当检测到变化时自动刷新权限缓存。
+    /// </summary>
+    public string? PermissionFingerprint { get; set; }
 }
 
 public sealed class SystemRoleDto

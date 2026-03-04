@@ -19,17 +19,20 @@ public sealed class AuthzController : ControllerBase
 {
     private readonly IAdminPermissionService _permissionService;
     private readonly IAdminControllerScanner _scanner;
+    private readonly ISystemRoleCacheService _roleCache;
     private readonly MongoDbContext _db;
     private readonly IConfiguration _cfg;
 
     public AuthzController(
         IAdminPermissionService permissionService,
         IAdminControllerScanner scanner,
+        ISystemRoleCacheService roleCache,
         MongoDbContext db,
         IConfiguration cfg)
     {
         _permissionService = permissionService;
         _scanner = scanner;
+        _roleCache = roleCache;
         _db = db;
         _cfg = cfg;
     }
@@ -52,6 +55,8 @@ public sealed class AuthzController : ControllerBase
         var uid = GetUserId();
         var isRoot = IsRoot();
 
+        var fingerprint = _roleCache.GetFingerprint();
+
         if (isRoot)
         {
             return Ok(ApiResponse<AdminAuthzMeResponse>.Ok(new AdminAuthzMeResponse
@@ -63,7 +68,8 @@ public sealed class AuthzController : ControllerBase
                 IsRoot = true,
                 SystemRoleKey = "root",
                 EffectivePermissions = AdminPermissionCatalog.All.Select(x => x.Key).ToList(),
-                CdnBaseUrl = GetCdnBaseUrl()
+                CdnBaseUrl = GetCdnBaseUrl(),
+                PermissionFingerprint = fingerprint
             }));
         }
 
@@ -90,7 +96,8 @@ public sealed class AuthzController : ControllerBase
             IsRoot = false,
             SystemRoleKey = roleKey,
             EffectivePermissions = perms.ToList(),
-            CdnBaseUrl = GetCdnBaseUrl()
+            CdnBaseUrl = GetCdnBaseUrl(),
+            PermissionFingerprint = fingerprint
         }));
     }
 

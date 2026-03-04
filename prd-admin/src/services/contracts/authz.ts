@@ -10,6 +10,8 @@ export type AdminAuthzMe = {
   effectivePermissions: string[];
   /** CDN 基础地址，用于拼接静态资源 URL */
   cdnBaseUrl?: string | null;
+  /** 权限指纹（基于权限目录+角色定义的哈希），用于检测部署/角色变更后的前端缓存失效 */
+  permissionFingerprint?: string | null;
 };
 
 export type AdminPermissionDef = { key: string; name: string; description?: string | null };
