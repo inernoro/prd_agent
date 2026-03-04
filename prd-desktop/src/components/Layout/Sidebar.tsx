@@ -13,7 +13,7 @@ import { extractMarkdownTitle, isMeaninglessName, normalizeCandidateName, stripF
 
 export default function Sidebar() {
   const { user, logout } = useAuthStore();
-  const { setSession, activeGroupId, documentLoaded, document: prdDocument, mode, sessionId, setMode, openPrdPreviewPage } = useSessionStore();
+  const { setSession, activeGroupId, documentLoaded, document: prdDocument, documents, sessionId, mode, setMode, openPrdPreviewPage, setDocuments } = useSessionStore();
   const { loadGroups } = useGroupListStore();
   const clearCurrentContext = useMessageStore((s) => s.clearCurrentContext);
   const stopStreaming = useMessageStore((s) => s.stopStreaming);
@@ -28,6 +28,39 @@ export default function Sidebar() {
   const createPrdInputRef = useRef<HTMLInputElement | null>(null);
   const [createPrdFileName, setCreatePrdFileName] = useState<string>('');
   const [createPrdContent, setCreatePrdContent] = useState<string>('');
+  const sidebarDocInputRef = useRef<HTMLInputElement | null>(null);
+  const [addingDoc, setAddingDoc] = useState(false);
+
+  // 侧边栏追加资料
+  const handleSidebarAddDoc = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const input = e.currentTarget;
+    const file = input.files?.[0] ?? null;
+    input.value = '';
+    if (!file || !sessionId) return;
+    const ext = file.name.toLowerCase();
+    if (!ext.endsWith('.md') && !ext.endsWith('.mdc') && !ext.endsWith('.txt')) return;
+    try {
+      setAddingDoc(true);
+      const content = await file.text();
+      const resp = await invoke<ApiResponse<{ sessionId: string; documentIds: string[] }>>(
+        'add_document_to_session',
+        { sessionId, content }
+      );
+      if (!resp.success || !resp.data) return;
+      const newDocs: Document[] = [];
+      for (const did of resp.data.documentIds) {
+        try {
+          const r = await invoke<ApiResponse<Document>>('get_document', { documentId: did });
+          if (r.success && r.data) newDocs.push(r.data);
+        } catch { /* skip */ }
+      }
+      setDocuments(newDocs);
+    } catch {
+      // ignore
+    } finally {
+      setAddingDoc(false);
+    }
+  }, [sessionId, setDocuments]);
 
   const COLLAPSED_WIDTH = 56; // Tailwind w-14
   const DEFAULT_EXPANDED_WIDTH = 224; // Tailwind w-56
@@ -659,6 +692,7 @@ export default function Sidebar() {
             </div>
             <div className="px-2 pb-2 max-h-44 overflow-y-auto space-y-1">
 
+              {/* 主文档 */}
               <div
                 role="button"
                 tabIndex={0}
@@ -729,6 +763,44 @@ export default function Sidebar() {
                   ) : null}
                 </div>
               </div>
+
+              {/* 补充资料文档 */}
+              {documentLoaded && prdDocument && documents.filter(d => d.id !== prdDocument.id).map((doc) => (
+                <div
+                  key={doc.id}
+                  className="w-full px-3 py-1.5 rounded-lg text-left text-sm text-text-secondary hover:bg-black/5 dark:hover:bg-white/5 transition-colors flex items-center gap-2 min-w-0 group"
+                  title={doc.title}
+                >
+                  <svg className="w-3.5 h-3.5 shrink-0 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                  </svg>
+                  <span className="truncate flex-1 text-xs">{doc.title || '未命名文档'}</span>
+                </div>
+              ))}
+
+              {/* 追加资料入口 */}
+              {documentLoaded && prdDocument && (
+                <>
+                  <button
+                    type="button"
+                    disabled={addingDoc}
+                    onClick={() => sidebarDocInputRef.current?.click()}
+                    className="w-full px-3 py-1.5 rounded-lg text-left text-xs text-text-secondary hover:text-primary-500 hover:bg-black/5 dark:hover:bg-white/5 transition-colors flex items-center gap-2 disabled:opacity-50"
+                  >
+                    <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                    <span>{addingDoc ? '上传中...' : '追加资料'}</span>
+                  </button>
+                  <input
+                    ref={sidebarDocInputRef}
+                    type="file"
+                    accept=".md,.mdc,.txt"
+                    className="hidden"
+                    onChange={handleSidebarAddDoc}
+                  />
+                </>
+              )}
             </div>
           </div>
         )}
