@@ -68,6 +68,30 @@ function getDefaultMonth() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
+/** 根据 mimeType 推断文件扩展名 */
+function inferExtension(mimeType?: string): string {
+  if (!mimeType) return '.txt';
+  if (mimeType.includes('markdown')) return '.md';
+  if (mimeType.includes('html')) return '.html';
+  if (mimeType.includes('json')) return '.json';
+  if (mimeType.includes('csv')) return '.csv';
+  if (mimeType.includes('xml')) return '.xml';
+  if (mimeType.includes('yaml') || mimeType.includes('yml')) return '.yaml';
+  if (mimeType.includes('javascript')) return '.js';
+  if (mimeType.includes('pdf')) return '.pdf';
+  if (mimeType.includes('png')) return '.png';
+  if (mimeType.includes('jpeg') || mimeType.includes('jpg')) return '.jpg';
+  return '.txt';
+}
+
+/** 确保文件名有正确的扩展名 */
+function ensureExtension(name: string, mimeType?: string): string {
+  if (!name) name = 'output';
+  // 已有扩展名则直接返回
+  if (/\.\w{1,5}$/.test(name)) return name;
+  return name + inferExtension(mimeType);
+}
+
 /** 通用产物操作按钮：预览 + 下载 */
 function ArtifactActionButtons({ artifact, onPreview, size = 'sm' }: {
   artifact: { name: string; mimeType: string; sizeBytes: number; inlineContent?: string; cosUrl?: string };
@@ -91,6 +115,7 @@ function ArtifactActionButtons({ artifact, onPreview, size = 'sm' }: {
       {artifact.cosUrl && (
         <a
           href={artifact.cosUrl}
+          download={ensureExtension(artifact.name, artifact.mimeType)}
           target="_blank"
           rel="noopener noreferrer"
           onClick={(e) => e.stopPropagation()}
@@ -109,7 +134,7 @@ function ArtifactActionButtons({ artifact, onPreview, size = 'sm' }: {
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = artifact.name || 'output';
+            a.download = ensureExtension(artifact.name, artifact.mimeType);
             a.click();
             URL.revokeObjectURL(url);
           }}
@@ -2038,6 +2063,9 @@ export function WorkflowEditorPage() {
         {rightPanel === 'log' && (
           <ExecutionLogPanel
             entries={logEntries}
+            totalNodeCount={workflow?.nodes.length ?? 0}
+            completedNodeCount={latestExec?.nodeExecutions.filter(ne => ['completed', 'failed', 'skipped'].includes(ne.status)).length ?? 0}
+            isRunning={['queued', 'running'].includes(latestExec?.status ?? '')}
             onClear={() => setLogEntries([])}
             onClose={() => setRightPanel(null)}
           />
@@ -2064,15 +2092,18 @@ export function WorkflowEditorPage() {
 
 // ──── 执行日志面板 ────
 
-const LOG_LEVEL_STYLE: Record<string, { dot: string; bg: string; icon: string }> = {
-  info:    { dot: 'rgba(99,102,241,0.9)',  bg: 'rgba(99,102,241,0.04)',  icon: '›' },
-  success: { dot: 'rgba(34,197,94,0.9)',   bg: 'rgba(34,197,94,0.06)',   icon: '✓' },
-  error:   { dot: 'rgba(239,68,68,0.9)',   bg: 'rgba(239,68,68,0.06)',   icon: '✗' },
-  warn:    { dot: 'rgba(234,179,8,0.9)',   bg: 'rgba(234,179,8,0.06)',   icon: '!' },
+const LOG_LEVEL_STYLE: Record<string, { dot: string; bg: string }> = {
+  info:    { dot: 'rgba(99,102,241,0.9)',  bg: 'rgba(99,102,241,0.04)' },
+  success: { dot: 'rgba(34,197,94,0.9)',   bg: 'rgba(34,197,94,0.06)' },
+  error:   { dot: 'rgba(239,68,68,0.9)',   bg: 'rgba(239,68,68,0.06)' },
+  warn:    { dot: 'rgba(234,179,8,0.9)',   bg: 'rgba(234,179,8,0.06)' },
 };
 
-function ExecutionLogPanel({ entries, onClear, onClose }: {
+function ExecutionLogPanel({ entries, totalNodeCount, completedNodeCount, isRunning, onClear, onClose }: {
   entries: { id: string; ts: string; level: string; nodeId?: string; nodeName?: string; message: string }[];
+  totalNodeCount: number;
+  completedNodeCount: number;
+  isRunning: boolean;
   onClear: () => void;
   onClose: () => void;
 }) {
@@ -2091,19 +2122,8 @@ function ExecutionLogPanel({ entries, onClear, onClose }: {
     setAutoScroll(scrollHeight - scrollTop - clientHeight < 40);
   }
 
-  // 统计：按节点分组计算已完成/总数（简易进度）
-  const nodeNames = new Set<string>();
-  let completedNodes = 0;
-  let totalNodes = 0;
-  for (const e of entries) {
-    if (e.nodeName && !nodeNames.has(e.nodeName)) {
-      nodeNames.add(e.nodeName);
-      totalNodes++;
-    }
-    if (e.level === 'success' && e.message.startsWith('完成')) completedNodes++;
-  }
-  const hasRunning = entries.some(e => e.level === 'info' && e.message === '开始执行')
-    && completedNodes < totalNodes;
+  const totalNodes = totalNodeCount;
+  const completedNodes = completedNodeCount;
 
   return (
     <div
@@ -2169,7 +2189,7 @@ function ExecutionLogPanel({ entries, onClear, onClose }: {
                 background: completedNodes === totalNodes
                   ? 'rgba(34,197,94,0.8)'
                   : 'linear-gradient(90deg, rgba(99,102,241,0.7), rgba(168,85,247,0.8))',
-                ...(hasRunning ? { animation: 'pulse 2s ease-in-out infinite' } : {}),
+                ...(isRunning && completedNodes < totalNodes ? { animation: 'pulse 2s ease-in-out infinite' } : {}),
               }}
             />
           </div>
@@ -2202,16 +2222,11 @@ function ExecutionLogPanel({ entries, onClear, onClose }: {
                 animation: `log-entry-in 0.3s ease-out ${Math.min(i * 0.03, 0.5)}s both`,
               }}
             >
-              {/* Level indicator */}
+              {/* Level dot */}
               <span
-                className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 text-[11px] font-bold"
-                style={{
-                  background: `${style.dot}20`,
-                  color: style.dot,
-                }}
-              >
-                {style.icon}
-              </span>
+                className="w-2.5 h-2.5 rounded-full flex-shrink-0 mt-[7px]"
+                style={{ background: style.dot }}
+              />
 
               {/* Content */}
               <div className="flex-1 min-w-0">
