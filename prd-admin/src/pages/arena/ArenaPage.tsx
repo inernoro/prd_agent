@@ -34,7 +34,7 @@ import type { Platform } from '@/types/admin';
 import {
   Eye, Send, Plus, Search, MessageSquare, Clock, Loader2, Swords, ChevronDown, ChevronRight, Brain,
   Edit3, Trash2, Settings, Power, RefreshCw, Download, Copy, Check,
-  Image as ImageIcon, X,
+  Image as ImageIcon, X, FileText, Paperclip,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -1174,13 +1174,18 @@ export function ArenaPage() {
   }
 
   // --- Attachment handlers ---
-  const ACCEPTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml'];
-  const MAX_ATTACHMENTS = 5;
+  const ACCEPTED_TYPES = [
+    'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml',
+    'text/plain', 'text/markdown', 'text/csv', 'text/html', 'text/xml',
+    'application/pdf', 'application/json', 'application/xml',
+  ];
+  const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml']);
+  const MAX_ATTACHMENTS = 20;
 
   async function uploadFiles(files: File[]) {
-    const imageFiles = files.filter((f) => ACCEPTED_IMAGE_TYPES.includes(f.type));
-    if (imageFiles.length === 0) {
-      toast.warning('仅支持图片文件', '支持 PNG、JPG、GIF、WebP、SVG 格式');
+    const validFiles = files.filter((f) => ACCEPTED_TYPES.includes(f.type));
+    if (validFiles.length === 0) {
+      toast.warning('不支持的文件类型', '支持图片、文本、Markdown、PDF、JSON、CSV 等格式');
       return;
     }
     const remaining = MAX_ATTACHMENTS - attachments.length;
@@ -1188,7 +1193,7 @@ export function ArenaPage() {
       toast.warning(`最多添加 ${MAX_ATTACHMENTS} 个附件`);
       return;
     }
-    const toUpload = imageFiles.slice(0, remaining);
+    const toUpload = validFiles.slice(0, remaining);
     setIsUploading(true);
     for (const file of toUpload) {
       try {
@@ -1221,16 +1226,16 @@ export function ArenaPage() {
 
   function handlePaste(e: React.ClipboardEvent) {
     const items = Array.from(e.clipboardData.items);
-    const imageFiles: File[] = [];
+    const pastedFiles: File[] = [];
     for (const item of items) {
-      if (item.kind === 'file' && ACCEPTED_IMAGE_TYPES.includes(item.type)) {
+      if (item.kind === 'file') {
         const file = item.getAsFile();
-        if (file) imageFiles.push(file);
+        if (file) pastedFiles.push(file);
       }
     }
-    if (imageFiles.length > 0) {
+    if (pastedFiles.length > 0) {
       e.preventDefault();
-      uploadFiles(imageFiles);
+      uploadFiles(pastedFiles);
     }
   }
 
@@ -1510,23 +1515,14 @@ export function ArenaPage() {
                   {/* Manage header */}
                   <div className="flex items-center justify-between px-3 py-2.5 flex-shrink-0">
                     <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>管理阵容</span>
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        onClick={openCreateGroup}
-                        className="h-7 px-2 rounded-md text-[11px] flex items-center gap-1 hover:bg-white/5 transition-colors"
-                        style={{ color: 'rgba(99,102,241,0.9)' }}
-                      >
-                        <Plus className="w-3 h-3" />
-                        新建分组
-                      </button>
-                      <button
-                        onClick={exitManageMode}
-                        className="h-7 px-2 rounded-md text-[11px] hover:bg-white/5 transition-colors"
-                        style={{ color: 'var(--text-muted)' }}
-                      >
-                        完成
-                      </button>
-                    </div>
+                    <button
+                      onClick={openCreateGroup}
+                      className="h-7 px-2 rounded-md text-[11px] flex items-center gap-1 hover:bg-white/5 transition-colors"
+                      style={{ color: 'rgba(99,102,241,0.9)' }}
+                    >
+                      <Plus className="w-3 h-3" />
+                      新建分组
+                    </button>
                   </div>
                   {/* Group list */}
                   <div className="flex-1 overflow-y-auto px-2 pb-2" style={{ minHeight: 0 }}>
@@ -1627,6 +1623,22 @@ export function ArenaPage() {
                       ))
                     )}
                   </div>
+                  {/* Full-width bottom bar — "完成" */}
+                  <div className="flex-shrink-0 px-2 pb-2 pt-1">
+                    <button
+                      onClick={exitManageMode}
+                      className="w-full h-9 rounded-lg text-[13px] font-medium transition-colors"
+                      style={{
+                        background: 'rgba(99,102,241,0.15)',
+                        color: 'rgba(99,102,241,0.95)',
+                        border: '1px solid rgba(99,102,241,0.2)',
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(99,102,241,0.25)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(99,102,241,0.15)'; }}
+                    >
+                      完成
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -1679,7 +1691,7 @@ export function ArenaPage() {
                 ref={fileInputRef}
                 type="file"
                 multiple
-                accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
+                accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml,text/plain,text/markdown,text/csv,text/html,text/xml,application/pdf,application/json,application/xml,.md,.txt,.csv,.json,.pdf,.xml,.html"
                 className="hidden"
                 onChange={handleFileInputChange}
               />
@@ -1715,7 +1727,13 @@ export function ArenaPage() {
                             border: '1px solid rgba(255,255,255,0.08)',
                           }}
                         >
-                          <img src={att.url} alt={att.fileName} className="w-full h-full object-cover" />
+                          {IMAGE_TYPES.has(att.mimeType) ? (
+                            <img src={att.url} alt={att.fileName} className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center">
+                              <FileText className="w-5 h-5" style={{ color: 'var(--text-muted)' }} />
+                            </div>
+                          )}
                           <button
                             onClick={() => handleRemoveAttachment(att.attachmentId)}
                             className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
@@ -1783,9 +1801,9 @@ export function ArenaPage() {
                           'hover:bg-white/8'
                         )}
                         style={{ color: 'var(--text-muted)' }}
-                        title={`添加图片 (${attachments.length}/${MAX_ATTACHMENTS})`}
+                        title={`添加附件 (${attachments.length}/${MAX_ATTACHMENTS})`}
                       >
-                        <ImageIcon className="w-4 h-4" />
+                        <Paperclip className="w-4 h-4" />
                       </button>
                     </div>
                     <div className="flex items-center gap-2">
@@ -1812,7 +1830,7 @@ export function ArenaPage() {
               {/* Hint text */}
               <div className="text-center mt-3">
                 <span className="text-[11px]" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
-                  支持粘贴或拖拽图片 · Enter 发送 · Shift+Enter 换行
+                  支持粘贴或拖拽文件（图片、文本、Markdown、PDF 等） · Enter 发送 · Shift+Enter 换行
                 </span>
               </div>
             </div>
@@ -1866,15 +1884,17 @@ export function ArenaPage() {
                       }}
                       title={att.fileName}
                     >
-                      <img
-                        src={att.url}
-                        alt={att.fileName}
-                        className="w-full h-full object-cover"
-                      />
+                      {IMAGE_TYPES.has(att.mimeType) ? (
+                        <img src={att.url} alt={att.fileName} className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center">
+                          <FileText className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+                        </div>
+                      )}
                     </div>
                   ))}
                   <span className="self-center text-[11px] ml-1" style={{ color: 'var(--text-muted)' }}>
-                    {currentAttachments.length} 张附图
+                    {currentAttachments.length} 个附件
                   </span>
                 </div>
               )}
@@ -2073,7 +2093,8 @@ export function ArenaPage() {
           </div>
         )}
 
-        {/* ===================== Bottom Bar ===================== */}
+        {/* ===================== Bottom Bar (only when in battle) ===================== */}
+        {hasBattle && (
         <div
           className="flex-shrink-0 px-6 py-3"
           style={{
@@ -2086,7 +2107,7 @@ export function ArenaPage() {
               ref={fileInputRef}
               type="file"
               multiple
-              accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
+              accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml,text/plain,text/markdown,text/csv,text/html,text/xml,application/pdf,application/json,application/xml,.md,.txt,.csv,.json,.pdf,.xml,.html"
               className="hidden"
               onChange={handleFileInputChange}
             />
@@ -2201,9 +2222,9 @@ export function ArenaPage() {
                         'hover:bg-white/8'
                       )}
                       style={{ color: 'var(--text-muted)' }}
-                      title={`添加图片 (${attachments.length}/${MAX_ATTACHMENTS})`}
+                      title={`添加附件 (${attachments.length}/${MAX_ATTACHMENTS})`}
                     >
-                      <ImageIcon className="w-4 h-4" />
+                      <Paperclip className="w-4 h-4" />
                     </button>
                     {/* Status info */}
                     <span className="text-[11px] ml-1" style={{ color: 'var(--text-muted)' }}>
@@ -2245,6 +2266,7 @@ export function ArenaPage() {
             </div>
           </div>
         </div>
+        )}
       </div>
 
       {/* ===================== Group Create/Edit Dialog ===================== */}
