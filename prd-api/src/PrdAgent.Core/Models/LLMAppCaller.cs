@@ -110,24 +110,40 @@ public static class ModelTypes
     /// <summary>图片生成</summary>
     public const string ImageGen = "generation";
 
-    /// <summary>代码生成（预留）</summary>
+    /// <summary>代码生成</summary>
     public const string Code = "code";
 
-    /// <summary>长文本处理（预留）</summary>
+    /// <summary>长文本处理</summary>
     public const string LongContext = "long-context";
 
-    /// <summary>向量嵌入（预留）</summary>
+    /// <summary>向量嵌入</summary>
     public const string Embedding = "embedding";
 
-    /// <summary>重排序（预留）</summary>
+    /// <summary>重排序</summary>
     public const string Rerank = "rerank";
 
     /// <summary>语音识别（ASR: Automatic Speech Recognition）</summary>
     public const string Asr = "asr";
 
+    /// <summary>语音合成（TTS: Text-to-Speech）</summary>
+    public const string Tts = "tts";
+
+    /// <summary>视频生成（Sora / Kling / Runway 等）</summary>
+    public const string VideoGen = "video-gen";
+
+    /// <summary>音频/音乐生成</summary>
+    public const string AudioGen = "audio-gen";
+
+    /// <summary>内容审核</summary>
+    public const string Moderation = "moderation";
+
     /// <summary>获取所有基础类型</summary>
     public static readonly string[] BaseTypes = { Chat, Intent, Vision, ImageGen };
 
     /// <summary>获取所有类型（包括扩展）</summary>
-    public static readonly string[] AllTypes = { Chat, Intent, Vision, ImageGen, Code, LongContext, Embedding, Rerank, Asr };
+    public static readonly string[] AllTypes = {
+        Chat, Intent, Vision, ImageGen,
+        Code, LongContext, Embedding, Rerank,
+        Asr, Tts, VideoGen, AudioGen, Moderation
+    };
 }
