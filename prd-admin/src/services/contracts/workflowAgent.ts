@@ -90,6 +90,7 @@ export interface NodeExecution {
   errorMessage?: string;
   logs?: string;
   inputArtifactRefs: ArtifactRef[];
+  inputArtifacts: ExecutionArtifact[];
   outputArtifacts: ExecutionArtifact[];
 }
 

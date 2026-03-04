@@ -174,6 +174,10 @@ public sealed class WorkflowRunWorker : BackgroundService
             try
             {
                 var inputArtifacts = CollectInputArtifacts(nodeId, execution.EdgeSnapshot, artifactStore);
+
+                // 持久化实际收到的上游输入（用于调试和回放）
+                nodeExec.InputArtifacts = inputArtifacts;
+
                 var result = await ExecuteCapsuleAsync(scope.ServiceProvider, nodeDef, execution.Variables, inputArtifacts, executionId);
 
                 nodeSw.Stop();
@@ -506,6 +510,7 @@ public sealed class WorkflowRunWorker : BackgroundService
             .Set("NodeExecutions.$.DurationMs", nodeExec.DurationMs)
             .Set("NodeExecutions.$.ErrorMessage", nodeExec.ErrorMessage)
             .Set("NodeExecutions.$.Logs", nodeExec.Logs)
+            .Set("NodeExecutions.$.InputArtifacts", nodeExec.InputArtifacts)
             .Set("NodeExecutions.$.OutputArtifacts", nodeExec.OutputArtifacts);
 
         await db.WorkflowExecutions.UpdateOneAsync(filter, update, cancellationToken: CancellationToken.None);

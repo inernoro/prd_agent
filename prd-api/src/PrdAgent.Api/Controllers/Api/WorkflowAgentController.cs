@@ -912,8 +912,86 @@ public class WorkflowAgentController : ControllerBase
             logs = nodeExec.Logs,
             logsCosUrl = nodeExec.LogsCosUrl,
             errorMessage = nodeExec.ErrorMessage,
+            inputArtifacts = nodeExec.InputArtifacts,
             artifacts = nodeExec.OutputArtifacts,
         }));
+    }
+
+    /// <summary>回放单舱：使用历史执行中记录的真实上游输入重新执行该舱</summary>
+    [HttpPost("executions/{executionId}/nodes/{nodeId}/replay")]
+    public async Task<IActionResult> ReplayNode(
+        string executionId, string nodeId, CancellationToken ct = default)
+    {
+        var execution = await _db.WorkflowExecutions.Find(e => e.Id == executionId).FirstOrDefaultAsync(ct);
+        if (execution == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "执行记录不存在"));
+
+        if (execution.TriggeredBy != GetUserId() && !HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        var nodeExec = execution.NodeExecutions.FirstOrDefault(n => n.NodeId == nodeId);
+        if (nodeExec == null)
+            return NotFound(ApiResponse<object>.Fail("NODE_NOT_FOUND", "节点不存在"));
+
+        if (nodeExec.InputArtifacts.Count == 0 && nodeExec.Status != NodeExecutionStatus.Completed)
+            return BadRequest(ApiResponse<object>.Fail("NO_INPUT_DATA", "该节点无历史输入数据，无法回放"));
+
+        // 从快照中找到节点定义
+        var nodeDef = execution.NodeSnapshot.FirstOrDefault(n => n.NodeId == nodeId);
+        if (nodeDef == null)
+            return NotFound(ApiResponse<object>.Fail("NODE_DEF_NOT_FOUND", "节点定义快照不存在"));
+
+        var startedAt = DateTime.UtcNow;
+        try
+        {
+            // 使用存储的真实输入重新执行
+            var result = await CapsuleExecutor.ExecuteAsync(
+                HttpContext.RequestServices, _logger, nodeDef,
+                execution.Variables, nodeExec.InputArtifacts);
+
+            var completedAt = DateTime.UtcNow;
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                result = new CapsuleTestRunResult
+                {
+                    TypeKey = nodeDef.NodeType,
+                    TypeName = nodeExec.NodeName,
+                    Status = "completed",
+                    StartedAt = startedAt,
+                    CompletedAt = completedAt,
+                    DurationMs = (long)(completedAt - startedAt).TotalMilliseconds,
+                    Logs = result.Logs,
+                    Artifacts = result.Artifacts.Select(a => new TestRunArtifact
+                    {
+                        Name = a.Name,
+                        MimeType = a.MimeType,
+                        SizeBytes = a.SizeBytes,
+                        InlineContent = a.InlineContent?.Length > 50_000
+                            ? a.InlineContent[..50_000] + "\n...[truncated]"
+                            : a.InlineContent,
+                    }).ToList(),
+                },
+                inputArtifactCount = nodeExec.InputArtifacts.Count,
+            }));
+        }
+        catch (Exception ex)
+        {
+            var completedAt = DateTime.UtcNow;
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                result = new CapsuleTestRunResult
+                {
+                    TypeKey = nodeDef.NodeType,
+                    TypeName = nodeExec.NodeName,
+                    Status = "failed",
+                    StartedAt = startedAt,
+                    CompletedAt = completedAt,
+                    DurationMs = (long)(completedAt - startedAt).TotalMilliseconds,
+                    ErrorMessage = ex.Message,
+                    Logs = $"[ERROR] {ex.Message}",
+                },
+            }));
+        }
     }
 
     // ─────────────────────────────────────────────────────────

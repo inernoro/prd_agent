@@ -11,6 +11,7 @@ import {
   getNodeLogs, listExecutions, cancelExecution,
   listCapsuleTypes, testRunCapsule,
 } from '@/services';
+import { replayNode } from '@/services/real/workflowAgent';
 import type {
   Workflow, WorkflowNode, WorkflowExecution, ExecutionArtifact,
   NodeExecution, CapsuleTypeMeta, CapsuleCategoryInfo,
@@ -539,7 +540,7 @@ function SectionBox({ title, type, children }: {
 
 // ──── 右侧舱卡片 ────
 
-function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, onRemove, onTestRun, onConfigChange, onToggleBreakpoint, capsuleMeta, isRunning, testRunResult, isTestRunning, formatWarnings, onPreviewArtifact }: {
+function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, onRemove, onTestRun, onReplay, onConfigChange, onToggleBreakpoint, capsuleMeta, isRunning, testRunResult, isTestRunning, formatWarnings, onPreviewArtifact }: {
   node: WorkflowNode;
   index: number;
   nodeExec?: NodeExecution;
@@ -548,6 +549,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
   onToggle: () => void;
   onRemove: () => void;
   onTestRun: (testInput?: string) => void;
+  onReplay?: () => void;
   onConfigChange: (nodeId: string, config: Record<string, unknown>) => void;
   onToggleBreakpoint: () => void;
   capsuleMeta?: CapsuleTypeMeta;
@@ -769,54 +771,83 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
             {/* ──── 📥 输入区 ──── */}
             {hasAnyInputSlot && capsuleMeta?.testable && (
               <SectionBox title="📥 输入" type="input">
-                <div className="space-y-2">
-                  <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                    {isHttpType
-                      ? '上游数据 — JSON 对象，键名对应 URL/Headers/Body 中的 {{变量}} 占位符'
-                      : hasRequiredInput ? '此舱需要输入数据才能测试' : '测试输入（可选，空则使用模拟数据）'}
+                {/* 有历史执行数据时显示真实上游输入（只读） */}
+                {nodeExec && nodeExec.inputArtifacts && nodeExec.inputArtifacts.length > 0 ? (
+                  <div className="space-y-2">
+                    <div className="text-[10px] flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
+                      <CheckCircle2 className="w-3 h-3" style={{ color: `hsl(${accentHue}, 70%, 60%)` }} />
+                      上游实际传入数据（{nodeExec.inputArtifacts.length} 份产物）
+                    </div>
+                    {nodeExec.inputArtifacts.map((art, i) => (
+                      <div key={art.artifactId || i}>
+                        <div className="text-[10px] mb-0.5" style={{ color: 'var(--text-secondary)' }}>
+                          {art.name} ({art.mimeType}, {art.sizeBytes > 1024 ? `${(art.sizeBytes / 1024).toFixed(1)}KB` : `${art.sizeBytes}B`})
+                        </div>
+                        <pre
+                          className="prd-field w-full px-3 py-2 rounded-[8px] text-[10px] font-mono overflow-auto"
+                          style={{ maxHeight: '200px', whiteSpace: 'pre-wrap', wordBreak: 'break-all', opacity: 0.85 }}
+                        >
+                          {art.inlineContent
+                            ? art.inlineContent.length > 3000
+                              ? art.inlineContent.slice(0, 3000) + '\n...[truncated]'
+                              : art.inlineContent
+                            : art.cosUrl
+                              ? `[COS] ${art.cosUrl}`
+                              : '(无内联内容)'}
+                        </pre>
+                      </div>
+                    ))}
                   </div>
-                  <textarea
-                    value={testInput}
-                    onChange={(e) => setTestInput(e.target.value)}
-                    placeholder={isHttpType
-                      ? '{"userId": "123", "token": "xxx"}'
-                      : hasRequiredInput
-                        ? '粘贴 JSON 数据或上传文件内容…'
-                        : '空则使用默认模拟数据'}
-                    rows={2}
-                    className="prd-field w-full px-3 py-2 rounded-[8px] text-[11px] outline-none resize-y font-mono"
-                  />
-                  <div className="flex items-center gap-2">
-                    <label
-                      className="text-[10px] px-2 py-0.5 rounded-[6px] cursor-pointer transition-colors"
-                      style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.08)' }}
-                    >
-                      📎 上传
-                      <input
-                        type="file"
-                        className="hidden"
-                        accept=".json,.csv,.txt,.xml"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (!file) return;
-                          const reader = new FileReader();
-                          reader.onload = () => setTestInput(reader.result as string);
-                          reader.readAsText(file);
-                          e.target.value = '';
+                ) : (
+                  <div className="space-y-2">
+                    <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                      {isHttpType
+                        ? '上游数据 — JSON 对象，键名对应 URL/Headers/Body 中的 {{变量}} 占位符'
+                        : hasRequiredInput ? '此舱需要输入数据才能测试' : '测试输入（可选，空则使用模拟数据）'}
+                    </div>
+                    <textarea
+                      value={testInput}
+                      onChange={(e) => setTestInput(e.target.value)}
+                      placeholder={isHttpType
+                        ? '{"userId": "123", "token": "xxx"}'
+                        : hasRequiredInput
+                          ? '粘贴 JSON 数据或上传文件内容…'
+                          : '空则使用默认模拟数据'}
+                      rows={2}
+                      className="prd-field w-full px-3 py-2 rounded-[8px] text-[11px] outline-none resize-y font-mono"
+                    />
+                    <div className="flex items-center gap-2">
+                      <label
+                        className="text-[10px] px-2 py-0.5 rounded-[6px] cursor-pointer transition-colors"
+                        style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.08)' }}
+                      >
+                        📎 上传
+                        <input
+                          type="file"
+                          className="hidden"
+                          accept=".json,.csv,.txt,.xml"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            const reader = new FileReader();
+                            reader.onload = () => setTestInput(reader.result as string);
+                            reader.readAsText(file);
+                            e.target.value = '';
+                          }}
+                        />
+                      </label>
+                      <button
+                        className="text-[10px] px-2 py-0.5 rounded-[6px] transition-colors"
+                        style={{ color: 'var(--text-muted)' }}
+                        onClick={() => {
+                          try { setTestInput(JSON.stringify(JSON.parse(testInput), null, 2)); } catch { /* not json */ }
                         }}
-                      />
-                    </label>
-                    <button
-                      className="text-[10px] px-2 py-0.5 rounded-[6px] transition-colors"
-                      style={{ color: 'var(--text-muted)' }}
-                      onClick={() => {
-                        try { setTestInput(JSON.stringify(JSON.parse(testInput), null, 2)); } catch { /* not json */ }
-                      }}
-                    >
-                      格式化
-                    </button>
+                      >
+                        格式化
+                      </button>
+                    </div>
                   </div>
-                </div>
+                )}
               </SectionBox>
             )}
 
@@ -856,6 +887,20 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
                 >
                   {isTestRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <FlaskConical className="w-3 h-3" />}
                   {isTestRunning ? '执行中...' : '▶ 单舱测试'}
+                </Button>
+              )}
+              {onReplay && nodeExec?.inputArtifacts && nodeExec.inputArtifacts.length > 0 && (
+                <Button
+                  size="xs"
+                  variant="secondary"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onReplay();
+                  }}
+                  disabled={isRunning || isTestRunning}
+                >
+                  <Play className="w-3 h-3" />
+                  回放（真实数据）
                 </Button>
               )}
               {node.nodeType === 'tapd-collector' && (
@@ -1554,6 +1599,38 @@ export function WorkflowEditorPage() {
     }
   }
 
+  async function handleReplayNode(nodeId: string) {
+    if (!latestExec) return;
+    setTestRunning(nodeId);
+    setTestRunResult(null);
+    try {
+      const res = await replayNode(latestExec.id, nodeId);
+      if (res.success && res.data?.result) {
+        setTestRunResult({ nodeId, result: res.data.result });
+      } else {
+        setTestRunResult({
+          nodeId,
+          result: {
+            typeKey: '', typeName: '',
+            status: 'failed', startedAt: '', completedAt: '', durationMs: 0,
+            errorMessage: res.error?.message || '回放失败',
+          },
+        });
+      }
+    } catch (e: unknown) {
+      setTestRunResult({
+        nodeId,
+        result: {
+          typeKey: '', typeName: '',
+          status: 'failed', startedAt: '', completedAt: '', durationMs: 0,
+          errorMessage: e instanceof Error ? e.message : '请求失败',
+        },
+      });
+    } finally {
+      setTestRunning(null);
+    }
+  }
+
   // ── AI 聊天面板回调 ──
 
   function handleApplyWorkflow(generated: WorkflowChatGenerated, newWorkflowId?: string) {
@@ -1773,6 +1850,7 @@ export function WorkflowEditorPage() {
                         onToggle={() => setExpandedNodeId(expandedNodeId === node.nodeId ? null : node.nodeId)}
                         onRemove={() => handleRemoveNode(node.nodeId)}
                         onTestRun={(testInput) => handleTestRun(node.nodeId, testInput)}
+                        onReplay={() => handleReplayNode(node.nodeId)}
                         onConfigChange={handleNodeConfigChange}
                         onToggleBreakpoint={() => handleToggleBreakpoint(node.nodeId)}
                         capsuleMeta={capsuleTypes.find(ct => ct.typeKey === node.nodeType)}

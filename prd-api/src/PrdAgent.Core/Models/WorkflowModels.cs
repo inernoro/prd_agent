@@ -240,6 +240,12 @@ public class NodeExecution
     public string Status { get; set; } = NodeExecutionStatus.Pending;
 
     public List<ArtifactRef> InputArtifactRefs { get; set; } = new();
+
+    /// <summary>
+    /// 实际收到的上游输入产物（工作流执行时自动记录，用于回放和调试）
+    /// </summary>
+    public List<ExecutionArtifact> InputArtifacts { get; set; } = new();
+
     public List<ExecutionArtifact> OutputArtifacts { get; set; } = new();
 
     /// <summary>

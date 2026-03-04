@@ -192,6 +192,13 @@ export const testRunCapsuleReal: TestRunCapsuleContract = async (input) => {
   );
 };
 
+export async function replayNode(executionId: string, nodeId: string) {
+  return await apiRequest<{ result: CapsuleTestRunResult; inputArtifactCount: number }>(
+    api.workflowAgent.executions.nodeReplay(executionId, nodeId),
+    { method: 'POST' }
+  );
+}
+
 // ========== TAPD Cookie Validation ==========
 
 export async function validateTapdCookie(input: { cookie: string; workspaceId?: string }) {
