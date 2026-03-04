@@ -181,7 +181,7 @@ public class DataTransferController : ControllerBase
         var adminId = GetAdminId();
 
         // 乐观锁：只有 pending 状态才能接受
-        var transfer = await _db.AccountDataTransfers.FindOneAndUpdateAsync(
+        var transfer = await _db.AccountDataTransfers.FindOneAndUpdateAsync<AccountDataTransfer>(
             t => t.Id == id && t.ReceiverUserId == adminId && t.Status == "pending",
             Builders<AccountDataTransfer>.Update
                 .Set(t => t.Status, "processing")
