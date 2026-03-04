@@ -2944,14 +2944,46 @@ public static class CapsuleExecutor
         var slotId = node.OutputSlots.FirstOrDefault(s => s.SlotId == slotSuffix)?.SlotId
                   ?? node.OutputSlots.FirstOrDefault()?.SlotId
                   ?? slotSuffix;
+
+        // 自动补全文件扩展名，确保下载时带正确后缀
+        var displayName = EnsureFileExtension(name, mimeType);
+
         return new ExecutionArtifact
         {
-            Name = name,
+            Name = displayName,
             MimeType = mimeType,
             SlotId = slotId,
             InlineContent = content,
             SizeBytes = System.Text.Encoding.UTF8.GetByteCount(content),
         };
+    }
+
+    /// <summary>
+    /// 确保文件名带正确扩展名（根据 mimeType 推断）
+    /// </summary>
+    private static string EnsureFileExtension(string name, string mimeType)
+    {
+        if (string.IsNullOrWhiteSpace(name)) name = "output";
+        // 已有扩展名则直接返回
+        if (System.IO.Path.HasExtension(name)) return name;
+
+        var ext = mimeType switch
+        {
+            "text/markdown" => ".md",
+            "text/html" => ".html",
+            "text/css" => ".css",
+            "text/csv" => ".csv",
+            "application/json" => ".json",
+            "application/xml" or "text/xml" => ".xml",
+            "application/javascript" => ".js",
+            "text/plain" => ".txt",
+            _ when mimeType.Contains("markdown") => ".md",
+            _ when mimeType.Contains("json") => ".json",
+            _ when mimeType.Contains("csv") => ".csv",
+            _ when mimeType.Contains("html") => ".html",
+            _ => ".txt",
+        };
+        return name + ext;
     }
 
     public static string? GetConfigString(WorkflowNode node, string key)

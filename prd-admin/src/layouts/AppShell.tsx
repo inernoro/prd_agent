@@ -55,6 +55,20 @@ import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 
 type NavItem = { key: string; label: string; icon: React.ReactNode; description?: string };
 
+/** 根据 mimeType 推断扩展名，确保下载文件名带后缀 */
+function ensureDownloadName(name: string | undefined | null, mimeType?: string | null): string {
+  let n = name || 'output';
+  if (/\.\w{1,5}$/.test(n)) return n;
+  if (!mimeType) return n + '.txt';
+  if (mimeType.includes('markdown')) return n + '.md';
+  if (mimeType.includes('json')) return n + '.json';
+  if (mimeType.includes('csv')) return n + '.csv';
+  if (mimeType.includes('html')) return n + '.html';
+  if (mimeType.includes('xml')) return n + '.xml';
+  if (mimeType.includes('javascript')) return n + '.js';
+  return n + '.txt';
+}
+
 // 图标映射：后端下发的图标名称 → Lucide 图标组件
 const iconMap: Record<string, LucideIcon> = {
   LayoutDashboard,
@@ -349,7 +363,7 @@ export default function AppShell() {
                       <a
                         key={i}
                         href={att.url}
-                        download={att.name}
+                        download={ensureDownloadName(att.name, att.mimeType)}
                         onClick={async (e) => {
                           e.preventDefault();
                           try {
@@ -358,7 +372,7 @@ export default function AppShell() {
                             const blobUrl = URL.createObjectURL(blob);
                             const link = document.createElement('a');
                             link.href = blobUrl;
-                            link.download = att.name;
+                            link.download = ensureDownloadName(att.name, att.mimeType);
                             link.click();
                             URL.revokeObjectURL(blobUrl);
                           } catch {
@@ -369,7 +383,7 @@ export default function AppShell() {
                         style={{ color: 'var(--accent-gold)' }}
                       >
                         <Download size={12} />
-                        <span>{att.name}</span>
+                        <span>{ensureDownloadName(att.name, att.mimeType)}</span>
                         {att.sizeBytes > 0 && (
                           <span style={{ color: 'var(--text-muted)' }}>
                             ({(att.sizeBytes / 1024).toFixed(1)} KB)
@@ -982,7 +996,7 @@ export default function AppShell() {
                                   <a
                                     key={i}
                                     href={att.url}
-                                    download={att.name}
+                                    download={ensureDownloadName(att.name, att.mimeType)}
                                     onClick={async (e) => {
                                       e.preventDefault();
                                       try {
@@ -991,7 +1005,7 @@ export default function AppShell() {
                                         const blobUrl = URL.createObjectURL(blob);
                                         const link = document.createElement('a');
                                         link.href = blobUrl;
-                                        link.download = att.name;
+                                        link.download = ensureDownloadName(att.name, att.mimeType);
                                         link.click();
                                         URL.revokeObjectURL(blobUrl);
                                       } catch {
@@ -1006,7 +1020,7 @@ export default function AppShell() {
                                     }}
                                   >
                                     <Download size={12} />
-                                    <span>{att.name}</span>
+                                    <span>{ensureDownloadName(att.name, att.mimeType)}</span>
                                     {att.sizeBytes > 0 && (
                                       <span style={{ color: 'var(--text-muted)' }}>
                                         ({(att.sizeBytes / 1024).toFixed(1)} KB)

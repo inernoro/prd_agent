@@ -45,7 +45,7 @@ function edge(src: string, srcSlot: string, tgt: string, tgtSlot: string): Workf
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 模板 1: TAPD 缺陷数据采集 → 预统计 → LLM 分析解读 → 报告导出
+// 模板 1: TAPD 缺陷数据采集 → 预统计 → 报告生成 → 导出+通知
 // ═══════════════════════════════════════════════════════════════
 //
 // 拓扑图：
@@ -53,11 +53,9 @@ function edge(src: string, srcSlot: string, tgt: string, tgtSlot: string): Workf
 //     ↓
 //   🐛 TAPD 数据采集（含 common_get_info 详情）
 //     ↓
-//   📊 28维度预统计（代码精确计算，非 LLM 估算）
+//   📊 数据预处理（JS 精确统计）
 //     ↓
-//   🧠 AI 分析解读（基于统计结果生成报告叙述）
-//     ↓
-//   📝 报告生成
+//   📝 质量报告生成（LLM 一次性完成分析+报告）
 //     ↓      ↓
 //   💾 导出  🔔 通知
 //
@@ -65,7 +63,7 @@ function edge(src: string, srcSlot: string, tgt: string, tgtSlot: string): Workf
 const tapdBugCollectionTemplate: WorkflowTemplate = {
   id: 'tapd-bug-collection',
   name: 'TAPD 缺陷采集与分析',
-  description: '从 TAPD 拉取缺陷数据 → 28维度预统计（代码精确计算） → AI 趋势解读 → 生成质量报告 → 文件导出 + 站内通知',
+  description: '从 TAPD 拉取缺陷数据 → JS 预处理统计 → LLM 一次性生成质量分析报告 → 文件导出 + 站内通知',
   icon: '🐛',
   tags: ['tapd', 'quality', 'report'],
   requiredInputs: [
@@ -177,30 +175,16 @@ result = {
         position: { x: 700, y: 300 },
       },
       {
-        nodeId: 'n-llm',
-        name: 'AI 分析解读',
-        nodeType: 'llm-analyzer',
-        config: {
-          systemPrompt: '你是一个软件质量分析专家。你会收到一份已由代码精确计算的 TAPD 缺陷 28 维度统计结果（JSON 格式），包含每个维度的精确数量和缺陷 ID 列表。\n\n你的任务是**基于这些已计算好的统计数据**，生成一份结构化的 Markdown 质量分析报告。你不需要重新计算任何数字——所有统计数据已经是精确的。\n\n请按以下结构输出报告：\n\n## 报告要求\n\n对每个维度（dim 1-28），输出一个章节，包含：\n1. **维度名称**和**统计数量**（直接引用 JSON 中的 count 值）\n2. **缺陷 ID 列表**（直接引用 JSON 中的 ids 数组，格式：ID1, ID2, ID3）\n3. 对于验证维度（dim 16/20/24），引用 extra 字段中的验证结果\n4. 对于比率维度（dim 26/27），引用 logic 和 extra 字段中的计算公式和评级\n5. 对于结构归母（dim 28），按 groups 数组列出每个分组\n\n## 额外要求\n\n在 28 个维度之后，补充以下分析章节：\n- **数据质量评估**：未分类缺陷占比、字段空值情况\n- **风险提示**：P0/P1 级缺陷详情、逾期缺陷趋势\n- **改进建议**：基于及时修复率和及时处理率评级，给出 2-3 条具体可执行建议',
-          userPromptTemplate: '以下是由代码精确计算的 TAPD 缺陷 28 维度统计结果，请基于这些数据生成完整的质量分析报告：\n\n{{input}}',
-          outputFormat: 'markdown',
-          temperature: '0.3',
-        },
-        inputSlots: [{ slotId: 'llm-in', name: 'input', dataType: 'json', required: true }],
-        outputSlots: [{ slotId: 'llm-out', name: 'result', dataType: 'json', required: true }],
-        position: { x: 1000, y: 300 },
-      },
-      {
         nodeId: 'n-report',
         name: '质量报告生成',
         nodeType: 'report-generator',
         config: {
-          reportTemplate: '将以下 28 维度缺陷统计分析报告整理为最终报告。保持所有维度的统计内容、缺陷ID列表不变，在末尾补充：\n1. 数据采集说明（数据来源：TAPD common_get_info 接口，28 维度由代码精确计算）\n2. 总结与改进建议\n\n如果上游已经是完整的 Markdown 报告格式，请直接透传并补充末尾部分即可。',
+          reportTemplate: '你是一个软件质量分析专家。你会收到一份由 JS 脚本预处理后的 TAPD 缺陷统计数据（JSON 格式），包含按状态、等级、优先级的分布统计和修复率。\n\n请基于这些数据，一次性生成完整的 Markdown 质量分析报告，包含：\n\n1. **数据概览**：缺陷总数、修复率、各维度统计\n2. **按状态分布**：引用 JSON 中的具体数字\n3. **按等级分布**：严重/致命缺陷占比分析\n4. **按优先级分布**：高优先级缺陷关注点\n5. **风险提示**：高严重度或高优先级缺陷的风险\n6. **改进建议**：基于数据给出 2-3 条具体可执行建议\n7. **数据采集说明**：数据来源 TAPD，由代码精确计算',
           format: 'markdown',
         },
         inputSlots: [{ slotId: 'report-in', name: 'data', dataType: 'json', required: true }],
         outputSlots: [{ slotId: 'report-out', name: 'report', dataType: 'text', required: true }],
-        position: { x: 1300, y: 300 },
+        position: { x: 1000, y: 300 },
       },
       {
         nodeId: 'n-export',
@@ -212,29 +196,28 @@ result = {
         },
         inputSlots: [{ slotId: 'export-in', name: 'data', dataType: 'json', required: true }],
         outputSlots: [{ slotId: 'export-out', name: 'file', dataType: 'binary', required: true }],
-        position: { x: 1600, y: 180 },
+        position: { x: 1300, y: 180 },
       },
       {
         nodeId: 'n-notify',
         name: '完成通知',
         nodeType: 'notification-sender',
         config: {
-          title: 'TAPD 缺陷统计分析报告已生成',
-          content: '已完成 TAPD 缺陷数据采集、28 维度统计分析，请查看执行结果下载报告',
+          title: 'TAPD 缺陷质量报告已生成',
+          content: '已完成 TAPD 缺陷数据采集与质量分析，请查看执行结果下载报告',
           level: 'success',
           attachFromInput: 'cos',
         },
         inputSlots: [{ slotId: 'notify-in', name: 'data', dataType: 'json', required: false }],
         outputSlots: [{ slotId: 'notify-out', name: 'result', dataType: 'json', required: true }],
-        position: { x: 1600, y: 420 },
+        position: { x: 1300, y: 420 },
       },
     ];
 
     const edges: WorkflowEdge[] = [
       edge('n-trigger', 'manual-out', 'n-tapd', 'tapd-in'),
       edge('n-tapd', 'tapd-out', 'n-agg', 'script-in'),
-      edge('n-agg', 'script-out', 'n-llm', 'llm-in'),
-      edge('n-llm', 'llm-out', 'n-report', 'report-in'),
+      edge('n-agg', 'script-out', 'n-report', 'report-in'),
       edge('n-report', 'report-out', 'n-export', 'export-in'),
       edge('n-report', 'report-out', 'n-notify', 'notify-in'),
     ];
