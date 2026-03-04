@@ -6,14 +6,15 @@ import { useAuthStore } from '../../stores/authStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useGroupListStore } from '../../stores/groupListStore';
 import { useMessageStore } from '../../stores/messageStore';
-import type { ApiResponse, Document, Session, UserRole } from '../../types';
+import type { ApiResponse, Document, UserRole } from '../../types';
+import { openGroupSessionAndSetStore } from '../../lib/openGroupSession';
 import GroupList from '../Group/GroupList';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { extractMarkdownTitle, isMeaninglessName, normalizeCandidateName, stripFileExtension } from '../utils/nameHeuristics';
 
 export default function Sidebar() {
   const { user, logout } = useAuthStore();
-  const { setSession, activeGroupId, documentLoaded, document: prdDocument, documents, sessionId, mode, setMode, openPrdPreviewPage, setDocuments } = useSessionStore();
+  const { activeGroupId, documentLoaded, document: prdDocument, documents, sessionId, mode, setMode, openPrdPreviewPage, setDocuments } = useSessionStore();
   const { loadGroups } = useGroupListStore();
   const clearCurrentContext = useMessageStore((s) => s.clearCurrentContext);
   const stopStreaming = useMessageStore((s) => s.stopStreaming);
@@ -131,45 +132,13 @@ export default function Sidebar() {
     window.dispatchEvent(new Event('prdAgent:openBindPrdPicker'));
   }, []);
 
-  const openGroupSession = async (groupId: string) => {
+  const openGroupSession = useCallback(async (groupId: string) => {
     const role: UserRole =
       user?.role === 'DEV' || user?.role === 'QA' || user?.role === 'PM'
         ? user.role
         : 'PM';
-
-    const openResp = await invoke<ApiResponse<{ sessionId: string; groupId: string; documentId: string; documentIds?: string[]; currentRole: string }>>(
-      'open_group_session',
-      { groupId, userRole: role }
-    );
-    if (!openResp.success || !openResp.data) return;
-
-    const docResp = await invoke<ApiResponse<Document>>('get_document', {
-      documentId: openResp.data.documentId,
-    });
-    if (!docResp.success || !docResp.data) return;
-
-    // 获取所有文档元信息（多文档支持）
-    const allDocIds = openResp.data.documentIds ?? [openResp.data.documentId];
-    const allDocs: Document[] = [docResp.data];
-    for (const did of allDocIds) {
-      if (did === openResp.data.documentId) continue; // 主文档已获取
-      try {
-        const r = await invoke<ApiResponse<Document>>('get_document', { documentId: did });
-        if (r.success && r.data) allDocs.push(r.data);
-      } catch { /* skip */ }
-    }
-
-    const session: Session = {
-      sessionId: openResp.data.sessionId,
-      groupId: openResp.data.groupId,
-      documentId: openResp.data.documentId,
-      documentIds: allDocIds,
-      currentRole: (openResp.data.currentRole as UserRole) || role,
-      mode: 'QA',
-    };
-
-    setSession(session, docResp.data, allDocs);
-  };
+    await openGroupSessionAndSetStore(groupId, role);
+  }, [user?.role]);
 
   type GroupMemberInfo = { userId: string; isOwner: boolean };
   const [activeOwner, setActiveOwner] = useState<boolean>(false);

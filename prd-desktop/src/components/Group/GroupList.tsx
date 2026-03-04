@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { invoke } from '../../lib/tauri';
-import { ApiResponse, Document, Session, UserRole } from '../../types';
+import { ApiResponse, UserRole } from '../../types';
 import { useAuthStore } from '../../stores/authStore';
 import { useSessionStore } from '../../stores/sessionStore';
+import { openGroupSessionAndSetStore } from '../../lib/openGroupSession';
 import { useGroupListStore } from '../../stores/groupListStore';
 import { useMessageStore } from '../../stores/messageStore';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -20,7 +21,7 @@ type GroupMemberInfo = {
 export default function GroupList() {
   const { user } = useAuthStore();
   const { groups, loading, loadGroups } = useGroupListStore();
-  const { activeGroupId, setSession, setActiveGroupContext, clearSession } = useSessionStore();
+  const { activeGroupId, setActiveGroupContext, clearSession } = useSessionStore();
   const syncFromServer = useMessageStore((s) => s.syncFromServer);
   const triggerScrollToBottom = useMessageStore((s) => s.triggerScrollToBottom);
   const bindGroupContext = useMessageStore((s) => s.bindGroupContext);
@@ -68,41 +69,7 @@ export default function GroupList() {
         : 'PM';
 
     try {
-      const openResp = await invoke<ApiResponse<{ sessionId: string; groupId: string; documentId: string; documentIds?: string[]; currentRole: string }>>(
-        'open_group_session',
-        { groupId: group.groupId, userRole: role }
-      );
-
-      if (!openResp.success || !openResp.data) return;
-
-      const docResp = await invoke<ApiResponse<Document>>('get_document', {
-        documentId: openResp.data.documentId,
-      });
-
-      if (!docResp.success || !docResp.data) return;
-
-      // 获取所有文档元信息（多文档支持 — 与 Sidebar.openGroupSession 同一逻辑）
-      const allDocIds = openResp.data.documentIds ?? [openResp.data.documentId];
-      const allDocs: Document[] = [docResp.data];
-      for (const did of allDocIds) {
-        if (did === openResp.data.documentId) continue; // 主文档已获取
-        try {
-          const r = await invoke<ApiResponse<Document>>('get_document', { documentId: did });
-          if (r.success && r.data) allDocs.push(r.data);
-        } catch { /* skip */ }
-      }
-
-      const session: Session = {
-        sessionId: openResp.data.sessionId,
-        groupId: openResp.data.groupId,
-        documentId: openResp.data.documentId,
-        documentIds: allDocIds,
-        currentRole: (openResp.data.currentRole as UserRole) || role,
-        mode: 'QA',
-      };
-
-      setSession(session, docResp.data, allDocs);
-      // setActiveGroupId 已由 setSession 内部设置（session.groupId），不再重复调用
+      await openGroupSessionAndSetStore(group.groupId, role);
 
       // 关键体验：点击群组 = 拉一次最新消息 + 跳到最新
       // - 即使点击的是“当前群组”，也执行一次（用户期望刷新）
