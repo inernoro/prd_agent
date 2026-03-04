@@ -18,4 +18,17 @@ export const getAiChatHistoryReal: AiChatGetHistoryContract = async ({ sessionId
   });
 };
 
+/** 向会话追加文档 */
+export const addDocumentToSession = async (sessionId: string, content: string) => {
+  return await apiRequest(api.v1.sessions.documents(encodeURIComponent(sessionId)), {
+    method: 'POST',
+    body: { content },
+  });
+};
 
+/** 从会话移除文档 */
+export const removeDocumentFromSession = async (sessionId: string, documentId: string) => {
+  return await apiRequest(api.v1.sessions.document(encodeURIComponent(sessionId), encodeURIComponent(documentId)), {
+    method: 'DELETE',
+  });
+};
