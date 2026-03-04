@@ -13,6 +13,7 @@ export interface WorkflowNode {
   outputSlots: ArtifactSlot[];
   position?: NodePosition;
   retry?: RetryPolicy;
+  breakpoint?: boolean;
 }
 
 export interface ArtifactSlot {
@@ -198,6 +199,7 @@ export const ExecutionStatus = {
   Completed: 'completed',
   Failed: 'failed',
   Cancelled: 'cancelled',
+  Paused: 'paused',
 } as const;
 
 export const ExecutionStatusLabels: Record<string, string> = {
@@ -206,6 +208,7 @@ export const ExecutionStatusLabels: Record<string, string> = {
   completed: '已完成',
   failed: '失败',
   cancelled: '已取消',
+  paused: '已暂停',
 };
 
 export const NodeExecutionStatus = {
@@ -214,6 +217,7 @@ export const NodeExecutionStatus = {
   Completed: 'completed',
   Failed: 'failed',
   Skipped: 'skipped',
+  Paused: 'paused',
 } as const;
 
 // ─────────────────────────────────────────────
@@ -274,6 +278,8 @@ export type ResumeFromNodeContract = (input: {
   executionId: string;
   nodeId: string;
 }) => Promise<ApiResponse<{ execution: WorkflowExecution }>>;
+
+export type ContinueExecutionContract = (executionId: string) => Promise<ApiResponse<{ execution: WorkflowExecution }>>;
 
 export type GetNodeLogsContract = (input: {
   executionId: string;

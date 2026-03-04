@@ -12,6 +12,7 @@ import type {
   GetExecutionContract,
   CancelExecutionContract,
   ResumeFromNodeContract,
+  ContinueExecutionContract,
   GetNodeLogsContract,
   CreateShareLinkContract,
   ListShareLinksContract,
@@ -115,6 +116,13 @@ export const cancelExecutionReal: CancelExecutionContract = async (id) => {
 export const resumeFromNodeReal: ResumeFromNodeContract = async (input) => {
   return await apiRequest<{ execution: WorkflowExecution }>(
     api.workflowAgent.executions.resumeFrom(input.executionId, input.nodeId),
+    { method: 'POST' }
+  );
+};
+
+export const continueExecutionReal: ContinueExecutionContract = async (executionId) => {
+  return await apiRequest<{ execution: WorkflowExecution }>(
+    api.workflowAgent.executions.continue(executionId),
     { method: 'POST' }
   );
 };

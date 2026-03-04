@@ -775,6 +775,43 @@ public class WorkflowAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { execution = newExecution }));
     }
 
+    /// <summary>继续执行（断点暂停后恢复）</summary>
+    [HttpPost("executions/{executionId}/continue")]
+    public async Task<IActionResult> ContinueExecution(string executionId, CancellationToken ct = default)
+    {
+        var execution = await _db.WorkflowExecutions.Find(e => e.Id == executionId).FirstOrDefaultAsync(ct);
+        if (execution == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "执行记录不存在"));
+
+        if (execution.TriggeredBy != GetUserId() && !HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限操作此执行记录"));
+
+        if (execution.Status != WorkflowExecutionStatus.Paused)
+            return BadRequest(ApiResponse<object>.Fail("NOT_PAUSED", "仅暂停状态的执行可以继续"));
+
+        // 将暂停的节点改回 completed，将 execution 改回 queued 重新入队
+        foreach (var ne in execution.NodeExecutions)
+        {
+            if (ne.Status == NodeExecutionStatus.Paused)
+                ne.Status = NodeExecutionStatus.Completed;
+        }
+
+        await _db.WorkflowExecutions.UpdateOneAsync(
+            e => e.Id == executionId,
+            Builders<WorkflowExecution>.Update
+                .Set(e => e.Status, WorkflowExecutionStatus.Queued)
+                .Set(e => e.NodeExecutions, execution.NodeExecutions),
+            cancellationToken: ct);
+
+        await _runQueue.EnqueueAsync("workflow", executionId, ct);
+
+        _logger.LogInformation("[{AppKey}] Execution continued from pause: {ExecutionId}", AppKey, executionId);
+
+        // 重新加载返回最新状态
+        execution = await _db.WorkflowExecutions.Find(e => e.Id == executionId).FirstOrDefaultAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new { execution }));
+    }
+
     /// <summary>取消执行</summary>
     [HttpPost("executions/{executionId}/cancel")]
     public async Task<IActionResult> CancelExecution(string executionId, CancellationToken ct = default)

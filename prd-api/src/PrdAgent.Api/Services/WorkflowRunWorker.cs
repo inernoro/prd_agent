@@ -88,7 +88,7 @@ public sealed class WorkflowRunWorker : BackgroundService
             return;
         }
 
-        if (execution.Status is WorkflowExecutionStatus.Completed or WorkflowExecutionStatus.Failed or WorkflowExecutionStatus.Cancelled)
+        if (execution.Status is WorkflowExecutionStatus.Completed or WorkflowExecutionStatus.Failed or WorkflowExecutionStatus.Cancelled or WorkflowExecutionStatus.Paused)
         {
             _logger.LogInformation("Execution already terminal: {ExecutionId} status={Status}", executionId, execution.Status);
             return;
@@ -262,6 +262,35 @@ public sealed class WorkflowRunWorker : BackgroundService
             }
 
             await UpdateNodeExecutionAsync(db, executionId, nodeExec);
+
+            // 断点：节点完成后暂停工作流
+            if (nodeExec.Status == NodeExecutionStatus.Completed && nodeDef.Breakpoint)
+            {
+                _logger.LogInformation("Breakpoint hit at node {NodeId} ({NodeName}), pausing execution {ExecutionId}",
+                    nodeId, nodeExec.NodeName, executionId);
+
+                nodeExec.Status = NodeExecutionStatus.Paused;
+                await UpdateNodeExecutionAsync(db, executionId, nodeExec);
+
+                sw.Stop();
+                await db.WorkflowExecutions.UpdateOneAsync(
+                    e => e.Id == executionId,
+                    Builders<WorkflowExecution>.Update
+                        .Set(e => e.Status, WorkflowExecutionStatus.Paused)
+                        .Set(e => e.DurationMs, sw.ElapsedMilliseconds),
+                    cancellationToken: CancellationToken.None);
+
+                await EmitEventAsync(executionId, "execution-paused", new
+                {
+                    executionId,
+                    pausedAtNodeId = nodeId,
+                    pausedAtNodeName = nodeExec.NodeName,
+                    durationMs = sw.ElapsedMilliseconds,
+                    completedNodes = execution.NodeExecutions.Count(n => n.Status is NodeExecutionStatus.Completed or NodeExecutionStatus.Paused),
+                });
+
+                return; // 停止执行，等用户继续
+            }
 
             // 如果节点成功，检查下游节点是否就绪
             if (nodeExec.Status == NodeExecutionStatus.Completed)

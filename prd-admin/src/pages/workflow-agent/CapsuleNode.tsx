@@ -1,6 +1,6 @@
 import { memo, useMemo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { Loader2, AlertCircle, CheckCircle2, FlaskConical } from 'lucide-react';
+import { Loader2, AlertCircle, CheckCircle2, FlaskConical, PauseCircle } from 'lucide-react';
 import { getIconForCapsule, getEmojiForCapsule } from './capsuleRegistry';
 import type { ArtifactSlot } from '@/services/contracts/workflowAgent';
 
@@ -19,13 +19,16 @@ export interface CapsuleNodeData {
   accentHue: number;
   inputSlots: ArtifactSlot[];
   outputSlots: ArtifactSlot[];
-  /** pending | running | completed | failed | idle */
+  /** pending | running | completed | failed | paused | idle */
   execStatus?: string;
   durationMs?: number;
   testable?: boolean;
   onTestRun?: (typeKey: string) => void;
   /** 选中态 */
   selected?: boolean;
+  /** 断点标记 */
+  breakpoint?: boolean;
+  onToggleBreakpoint?: () => void;
 }
 
 type CapsuleNodeType = NodeProps & { data: CapsuleNodeData };
@@ -36,6 +39,7 @@ function statusColor(status?: string) {
     case 'running': return { bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.35)' };
     case 'completed': return { bg: 'rgba(34,197,94,0.1)', border: 'rgba(34,197,94,0.3)' };
     case 'failed': return { bg: 'rgba(239,68,68,0.1)', border: 'rgba(239,68,68,0.3)' };
+    case 'paused': return { bg: 'rgba(245,158,11,0.1)', border: 'rgba(245,158,11,0.3)' };
     default: return { bg: 'rgba(255,255,255,0.04)', border: 'rgba(255,255,255,0.12)' };
   }
 }
@@ -49,6 +53,7 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
     data.execStatus === 'running' ? 'capsule-node-body--running'
     : data.execStatus === 'completed' ? 'capsule-node-body--completed'
     : data.execStatus === 'failed' ? 'capsule-node-body--failed'
+    : data.execStatus === 'paused' ? 'capsule-node-body--completed'
     : '';
 
   return (
@@ -101,6 +106,19 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
           border: `1.5px solid ${selected ? `hsla(${data.accentHue}, 70%, 60%, 0.6)` : sc.border}`,
         } as React.CSSProperties}
       >
+        {/* 断点红点 */}
+        {data.breakpoint && (
+          <button
+            onClick={(e) => { e.stopPropagation(); data.onToggleBreakpoint?.(); }}
+            className="nodrag absolute -left-2 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full flex items-center justify-center"
+            style={{
+              background: 'rgba(239,68,68,0.9)',
+              boxShadow: '0 0 6px rgba(239,68,68,0.5)',
+            }}
+            title="移除断点"
+          />
+        )}
+
         {/* 头部：图标 + 名称 */}
         <div className="flex items-center gap-2.5">
           <div
@@ -145,6 +163,14 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
             <div className="flex items-center gap-1">
               <AlertCircle className="w-3 h-3" style={{ color: 'rgba(239,68,68,0.85)' }} />
               <span className="text-[10px]" style={{ color: 'rgba(239,68,68,0.85)' }}>失败</span>
+            </div>
+          )}
+          {data.execStatus === 'paused' && (
+            <div className="flex items-center gap-1">
+              <PauseCircle className="w-3 h-3" style={{ color: 'rgba(245,158,11,0.9)' }} />
+              <span className="text-[10px]" style={{ color: 'rgba(245,158,11,0.9)' }}>
+                断点暂停{data.durationMs != null ? ` · ${(data.durationMs / 1000).toFixed(1)}s` : ''}
+              </span>
             </div>
           )}
           {!data.execStatus || data.execStatus === 'idle' || data.execStatus === 'pending' ? (

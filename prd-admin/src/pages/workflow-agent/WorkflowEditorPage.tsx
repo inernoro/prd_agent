@@ -4,7 +4,7 @@ import {
   Play, Loader2, CheckCircle2, AlertCircle,
   Download, FileText, ArrowLeft, Save, Plus,
   ChevronDown, ChevronRight, Settings2, XCircle,
-  Zap, FlaskConical, Trash2, Wand2, Terminal, Eye, Copy, Check,
+  Zap, FlaskConical, Trash2, Wand2, Terminal, Eye, Copy, Check, CirclePause,
 } from 'lucide-react';
 import {
   getWorkflow, updateWorkflow, executeWorkflow, getExecution,
@@ -539,7 +539,7 @@ function SectionBox({ title, type, children }: {
 
 // ──── 右侧舱卡片 ────
 
-function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, onRemove, onTestRun, onConfigChange, capsuleMeta, isRunning, testRunResult, isTestRunning, formatWarnings, onPreviewArtifact }: {
+function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, onRemove, onTestRun, onConfigChange, onToggleBreakpoint, capsuleMeta, isRunning, testRunResult, isTestRunning, formatWarnings, onPreviewArtifact }: {
   node: WorkflowNode;
   index: number;
   nodeExec?: NodeExecution;
@@ -549,6 +549,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
   onRemove: () => void;
   onTestRun: (testInput?: string) => void;
   onConfigChange: (nodeId: string, config: Record<string, unknown>) => void;
+  onToggleBreakpoint: () => void;
   capsuleMeta?: CapsuleTypeMeta;
   isRunning: boolean;
   testRunResult?: import('@/services/contracts/workflowAgent').CapsuleTestRunResult | null;
@@ -655,6 +656,15 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
           >
             {status === 'completed' ? '✓' : index + 1}
           </span>
+
+          {/* 断点红点指示 */}
+          {node.breakpoint && (
+            <div
+              className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+              style={{ background: 'rgba(239,68,68,0.9)', boxShadow: '0 0 4px rgba(239,68,68,0.5)' }}
+              title="断点：执行完此节点后暂停"
+            />
+          )}
 
           {/* 图标 + 名称 */}
           <div
@@ -909,6 +919,16 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
                   {curlCopied ? '已复制' : '复制 cURL'}
                 </Button>
               )}
+              <Button
+                size="xs"
+                variant={node.breakpoint ? 'danger' : 'ghost'}
+                onClick={(e) => { e.stopPropagation(); onToggleBreakpoint(); }}
+                disabled={isRunning}
+                title={node.breakpoint ? '移除断点' : '添加断点（执行完此节点后暂停）'}
+              >
+                <CirclePause className="w-3 h-3" />
+                {node.breakpoint ? '断点' : '断点'}
+              </Button>
               <Button
                 size="xs"
                 variant="danger"
@@ -1419,6 +1439,17 @@ export function WorkflowEditorPage() {
     if (expandedNodeId === nodeId) setExpandedNodeId(null);
   }
 
+  function handleToggleBreakpoint(nodeId: string) {
+    if (!workflow) return;
+    setWorkflow((prev) => prev ? {
+      ...prev,
+      nodes: prev.nodes.map(n =>
+        n.nodeId === nodeId ? { ...n, breakpoint: !n.breakpoint } : n
+      ),
+    } : prev);
+    setDirty(true);
+  }
+
   // ── 执行 ──
 
   async function handleExecute() {
@@ -1743,6 +1774,7 @@ export function WorkflowEditorPage() {
                         onRemove={() => handleRemoveNode(node.nodeId)}
                         onTestRun={(testInput) => handleTestRun(node.nodeId, testInput)}
                         onConfigChange={handleNodeConfigChange}
+                        onToggleBreakpoint={() => handleToggleBreakpoint(node.nodeId)}
                         capsuleMeta={capsuleTypes.find(ct => ct.typeKey === node.nodeType)}
                         isRunning={isRunning}
                         testRunResult={testRunResult?.nodeId === node.nodeId ? testRunResult.result : null}

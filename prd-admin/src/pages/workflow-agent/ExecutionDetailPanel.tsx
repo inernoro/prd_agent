@@ -3,10 +3,10 @@ import {
   ArrowLeft, RefreshCw, RotateCcw, Share2, XCircle,
   CheckCircle2, Clock, AlertCircle, Loader2, MinusCircle,
   FileText, Download, ChevronDown, ChevronRight, Eye,
-  ScrollText, LayoutList, Terminal, ExternalLink,
+  ScrollText, LayoutList, Terminal, ExternalLink, PauseCircle, PlayCircle,
 } from 'lucide-react';
 import { useWorkflowStore } from '@/stores/workflowStore';
-import { getExecution, getNodeLogs, resumeFromNode, cancelExecution, createShareLink } from '@/services';
+import { getExecution, getNodeLogs, resumeFromNode, cancelExecution, continueExecution, createShareLink } from '@/services';
 import { ExecutionStatusLabels } from '@/services/contracts/workflowAgent';
 import type { ExecutionArtifact, WorkflowExecution } from '@/services/contracts/workflowAgent';
 import { getCapsuleType } from './capsuleRegistry';
@@ -38,6 +38,7 @@ const nodeStatusIcons: Record<string, React.ReactNode> = {
   completed: <CheckCircle2 className="w-4 h-4 text-green-500" />,
   failed: <AlertCircle className="w-4 h-4 text-red-500" />,
   skipped: <MinusCircle className="w-4 h-4 text-gray-400" />,
+  paused: <PauseCircle className="w-4 h-4 text-amber-500" />,
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -168,6 +169,11 @@ export function ExecutionDetailPanel() {
           ),
         });
       }
+    } else if (eventName === 'execution-paused') {
+      const pausedNodeName = payload.pausedAtNodeName as string;
+      addLog('warn', `断点暂停 — 节点「${pausedNodeName}」执行完成后暂停，等待继续`);
+      stopLogSse();
+      loadExecution(execId);
     } else if (eventName === 'execution-completed') {
       const status = payload.status as string;
       const completed = payload.completedNodes as number;
@@ -189,7 +195,7 @@ export function ExecutionDetailPanel() {
         const res = await getExecution(execId);
         if (res.success && res.data) {
           setSelectedExecution(res.data.execution);
-          if (['completed', 'failed', 'cancelled'].includes(res.data.execution.status)) {
+          if (['completed', 'failed', 'cancelled', 'paused'].includes(res.data.execution.status)) {
             clearInterval(iv);
             loadHistoricalLogs(res.data.execution);
           }
@@ -275,7 +281,7 @@ export function ExecutionDetailPanel() {
     }
 
     // Final status
-    if (['completed', 'failed', 'cancelled'].includes(execution.status)) {
+    if (['completed', 'failed', 'cancelled', 'paused'].includes(execution.status)) {
       entries.push({
         id: `hist-${id++}`,
         timestamp: new Date(execution.completedAt || execution.createdAt),
@@ -335,6 +341,13 @@ export function ExecutionDetailPanel() {
     await loadExecution(exec.id);
   };
 
+  const handleContinue = async () => {
+    const res = await continueExecution(exec.id);
+    if (res.success && res.data) {
+      setSelectedExecution(res.data.execution);
+    }
+  };
+
   const handleShare = async () => {
     const res = await createShareLink({ executionId: exec.id });
     if (res.success && res.data) {
@@ -345,6 +358,7 @@ export function ExecutionDetailPanel() {
   };
 
   const isTerminal = ['completed', 'failed', 'cancelled'].includes(exec.status);
+  const isPaused = exec.status === 'paused';
   const isRunning = ['queued', 'running'].includes(exec.status);
 
   return (
@@ -367,7 +381,17 @@ export function ExecutionDetailPanel() {
           <button onClick={handleRefresh} className="p-1.5 rounded-md hover:bg-accent" title="刷新">
             <RefreshCw className="w-4 h-4" />
           </button>
-          {!isTerminal && (
+          {isPaused && (
+            <button
+              onClick={handleContinue}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md bg-amber-500/10 text-amber-500 hover:bg-amber-500/20 border border-amber-500/20"
+              title="继续执行"
+            >
+              <PlayCircle className="w-4 h-4" />
+              继续执行
+            </button>
+          )}
+          {!isTerminal && !isPaused && (
             <button onClick={handleCancel} className="p-1.5 rounded-md hover:bg-destructive/10 text-destructive" title="取消">
               <XCircle className="w-4 h-4" />
             </button>
@@ -392,6 +416,7 @@ export function ExecutionDetailPanel() {
             exec.status === 'failed' ? 'bg-red-500/10 text-red-600' :
             exec.status === 'running' ? 'bg-blue-500/10 text-blue-600' :
             exec.status === 'cancelled' ? 'bg-gray-500/10 text-gray-500' :
+            exec.status === 'paused' ? 'bg-amber-500/10 text-amber-500' :
             'bg-yellow-500/10 text-yellow-600'
           }`}>
             {ExecutionStatusLabels[exec.status] || exec.status}
@@ -528,6 +553,15 @@ export function ExecutionDetailPanel() {
                       title="从此节点重跑"
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                  {ne.status === 'paused' && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleContinue(); }}
+                      className="p-1.5 rounded hover:bg-amber-500/10 text-amber-500"
+                      title="继续执行"
+                    >
+                      <PlayCircle className="w-3.5 h-3.5" />
                     </button>
                   )}
                 </div>

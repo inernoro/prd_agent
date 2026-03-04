@@ -75,6 +75,7 @@ function workflowToFlow(
         execStatus: ne?.status,
         durationMs: ne?.durationMs,
         testable: false,
+        breakpoint: n.breakpoint,
       },
     };
   });
@@ -115,6 +116,7 @@ function flowToWorkflowNodes(nodes: Node<CapsuleNodeData>[]): WorkflowNode[] {
     inputSlots: n.data.inputSlots,
     outputSlots: n.data.outputSlots,
     position: { x: n.position.x, y: n.position.y },
+    breakpoint: n.data.breakpoint,
   }));
 }
 
@@ -210,6 +212,29 @@ function CanvasInner({
     },
     [setEdges],
   );
+
+  // 断点切换
+  const handleToggleBreakpoint = useCallback((nodeId: string) => {
+    setNodes((prev) =>
+      prev.map((n) =>
+        n.id === nodeId ? { ...n, data: { ...n.data, breakpoint: !n.data.breakpoint } } : n
+      ),
+    );
+    setDirty(true);
+  }, [setNodes]);
+
+  // 将断点切换回调注入每个节点
+  useEffect(() => {
+    setNodes((prev) =>
+      prev.map((n) => ({
+        ...n,
+        data: {
+          ...n.data,
+          onToggleBreakpoint: () => handleToggleBreakpoint(n.id),
+        },
+      })),
+    );
+  }, [handleToggleBreakpoint, setNodes]);
 
   // 拖拽变更
   const onNodesDragStop = useCallback(() => setDirty(true), []);
@@ -384,6 +409,10 @@ function CanvasInner({
             onEdgesDelete={onDelete}
             onDragOver={onDragOver}
             onDrop={onDrop}
+            onNodeContextMenu={(e, node) => {
+              e.preventDefault();
+              handleToggleBreakpoint(node.id);
+            }}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             defaultEdgeOptions={defaultEdgeOptions}

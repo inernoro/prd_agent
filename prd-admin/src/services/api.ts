@@ -666,6 +666,7 @@ export const api = {
       list: () => '/api/workflow-agent/executions',
       byId: (id: string) => `/api/workflow-agent/executions/${id}`,
       cancel: (id: string) => `/api/workflow-agent/executions/${id}/cancel`,
+      continue: (id: string) => `/api/workflow-agent/executions/${id}/continue`,
       resumeFrom: (executionId: string, nodeId: string) =>
         `/api/workflow-agent/executions/${executionId}/resume-from/${nodeId}`,
       nodeLogs: (executionId: string, nodeId: string) =>

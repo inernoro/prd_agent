@@ -73,6 +73,11 @@ public class WorkflowNode
     public NodePosition? Position { get; set; }
 
     public RetryPolicy? Retry { get; set; }
+
+    /// <summary>
+    /// 断点：节点执行完成后暂停工作流
+    /// </summary>
+    public bool Breakpoint { get; set; }
 }
 
 public class ArtifactSlot
@@ -214,8 +219,9 @@ public static class WorkflowExecutionStatus
     public const string Completed = "completed";
     public const string Failed = "failed";
     public const string Cancelled = "cancelled";
+    public const string Paused = "paused";
 
-    public static readonly string[] All = { Queued, Running, Completed, Failed, Cancelled };
+    public static readonly string[] All = { Queued, Running, Completed, Failed, Cancelled, Paused };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -261,6 +267,7 @@ public static class NodeExecutionStatus
     public const string Completed = "completed";
     public const string Failed = "failed";
     public const string Skipped = "skipped";
+    public const string Paused = "paused";
 }
 
 public class ArtifactRef
