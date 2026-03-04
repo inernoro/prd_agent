@@ -12,7 +12,7 @@ public record LlmRequestContext(
     string? DocumentHash,
     string? SystemPromptRedacted,
     string? RequestType = null,
-    string? RequestPurpose = null,
+    string? AppCallerCode = null,
     string? PlatformId = null,
     string? PlatformName = null,
     /// <summary>模型解析类型（0=直连单模型, 1=默认模型池, 2=专属模型池）</summary>

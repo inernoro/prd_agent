@@ -20,14 +20,14 @@ public class LlmRequestLog
 
     // 本次调用类型/用途（用于追溯"这次请求是做什么的"）
     // - RequestType: 推理/意图/识图/生图/unknown/...
-    // - RequestPurpose: 业务侧用途标识（AppCallerCode，如 prd-agent-desktop.chat.sendmessage::chat）
-    // - RequestPurposeDisplayName: 中文显示名（日志写入时从 AppCallerRegistry 获取，自包含）
+    // - AppCallerCode: 业务侧用途标识（如 prd-agent-desktop.chat.sendmessage::chat）
+    // - AppCallerCodeDisplayName: 中文显示名（日志写入时从 AppCallerRegistry 获取，自包含）
     public string? RequestType { get; set; }
-    public string? RequestPurpose { get; set; }
+    public string? AppCallerCode { get; set; }
     /// <summary>
-    /// RequestPurpose 的中文显示名（日志写入时一次性保存，确保日志自包含）
+    /// AppCallerCode 的中文显示名（日志写入时一次性保存，确保日志自包含）
     /// </summary>
-    public string? RequestPurposeDisplayName { get; set; }
+    public string? AppCallerCodeDisplayName { get; set; }
 
     // Provider / 模型信息
     public string Provider { get; set; } = string.Empty; // Claude/OpenAI/...

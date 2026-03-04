@@ -2086,7 +2086,7 @@ public class ImageMasterController : ControllerBase
                 DocumentHash: Sha256Hex(articleContent),
                 SystemPromptRedacted: "[LITERARY_ARTICLE_MARKERS]",
                 RequestType: "chat",
-                RequestPurpose: appCallerCode));
+                AppCallerCode: appCallerCode));
 
             // 调用主模型 LLM
             var client = llmClient;

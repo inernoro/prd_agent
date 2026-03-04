@@ -128,7 +128,7 @@ public class ImageDescriptionService : IImageDescriptionService
             DocumentHash: null,
             SystemPromptRedacted: "[IMAGE_DESCRIBE]",
             RequestType: "vision",
-            RequestPurpose: appCallerCode));
+            AppCallerCode: appCallerCode));
 
         var msg = new LLMMessage
         {
