@@ -232,7 +232,8 @@ public class MobileDashboardController : ControllerBase
         }
 
         // 2) 附件 (Attachment) — 用户上传的文件
-        if (category is null or "attachment" or "document")
+        //    MIME 分类：image/* → image, pdf/text/word → document, 其余 → attachment
+        if (category is null or "attachment" or "document" or "image")
         {
             try
             {
@@ -244,9 +245,15 @@ public class MobileDashboardController : ControllerBase
 
                 foreach (var att in attachments)
                 {
-                    var isDoc = att.MimeType.Contains("pdf") || att.MimeType.Contains("text")
-                             || att.MimeType.Contains("document") || att.MimeType.Contains("word");
-                    var assetType = isDoc ? "document" : "attachment";
+                    var mime = att.MimeType ?? "";
+                    string assetType;
+                    if (mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+                        assetType = "image";
+                    else if (mime.Contains("pdf") || mime.Contains("text")
+                          || mime.Contains("document") || mime.Contains("word"))
+                        assetType = "document";
+                    else
+                        assetType = "attachment";
 
                     if (category != null && category != assetType) continue;
 
@@ -256,7 +263,7 @@ public class MobileDashboardController : ControllerBase
                         type = assetType,
                         title = att.FileName,
                         url = att.Url,
-                        thumbnailUrl = att.ThumbnailUrl,
+                        thumbnailUrl = att.ThumbnailUrl ?? (assetType == "image" ? att.Url : null),
                         mime = att.MimeType,
                         width = 0,
                         height = 0,
@@ -267,6 +274,52 @@ public class MobileDashboardController : ControllerBase
                 }
             }
             catch (Exception ex) { _logger.LogWarning(ex, "Assets: failed to load attachments"); }
+        }
+
+        // 3) PRD 文档 (ParsedPrd) — 通过 Session 关联到用户
+        if (category is null or "document")
+        {
+            try
+            {
+                // 先获取用户的会话，取出关联的 DocumentId
+                var sessions = await _db.Sessions
+                    .Find(s => s.OwnerUserId == userId && s.DeletedAtUtc == null)
+                    .SortByDescending(s => s.LastActiveAt)
+                    .Limit(limit)
+                    .ToListAsync();
+
+                var docIds = sessions
+                    .Where(s => !string.IsNullOrEmpty(s.DocumentId))
+                    .Select(s => s.DocumentId)
+                    .Distinct()
+                    .ToList();
+
+                if (docIds.Count > 0)
+                {
+                    var docs = await _db.Documents
+                        .Find(d => docIds.Contains(d.Id))
+                        .ToListAsync();
+
+                    foreach (var doc in docs)
+                    {
+                        assets.Add(new
+                        {
+                            id = $"doc-{doc.Id}",
+                            type = "document",
+                            title = !string.IsNullOrEmpty(doc.Title) ? doc.Title : "PRD 文档",
+                            url = (string?)null,
+                            thumbnailUrl = (string?)null,
+                            mime = "text/markdown",
+                            width = 0,
+                            height = 0,
+                            sizeBytes = (long)doc.CharCount,
+                            createdAt = doc.CreatedAt,
+                            workspaceId = (string?)null,
+                        });
+                    }
+                }
+            }
+            catch (Exception ex) { _logger.LogWarning(ex, "Assets: failed to load PRD documents"); }
         }
 
         // 按时间排序 + 分页
