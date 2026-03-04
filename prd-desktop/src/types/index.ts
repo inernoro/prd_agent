@@ -28,6 +28,7 @@ export interface Session {
   sessionId: string;
   groupId?: string;
   documentId: string;
+  documentIds?: string[];
   currentRole: UserRole;
   mode: InteractionMode;
 }

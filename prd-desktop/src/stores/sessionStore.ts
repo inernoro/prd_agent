@@ -8,13 +8,15 @@ interface SessionState {
   lastGroupSeqByGroup: Record<string, number>;
   documentLoaded: boolean;
   document: Document | null;
+  documents: Document[];
   currentRole: UserRole;
   mode: InteractionMode;
   previousMode: InteractionMode | null;
   prompts: PromptItem[] | null;
   promptsUpdatedAt: string | null;
-  
-  setSession: (session: Session, doc: Document) => void;
+
+  setSession: (session: Session, doc: Document, docs?: Document[]) => void;
+  setDocuments: (docs: Document[]) => void;
   setActiveGroupId: (groupId: string | null) => void;
   setActiveGroupContext: (groupId: string) => void;
   getLastGroupSeq: (groupId: string) => number;
@@ -36,29 +38,34 @@ export const useSessionStore = create<SessionState>()(
       lastGroupSeqByGroup: {},
       documentLoaded: false,
       document: null,
+      documents: [],
       currentRole: 'PM',
       mode: 'QA',
       previousMode: null,
       prompts: null,
       promptsUpdatedAt: null,
 
-      setSession: (session, doc) => set({
+      setSession: (session, doc, docs) => set({
         sessionId: session.sessionId,
         activeGroupId: session.groupId ?? null,
         documentLoaded: true,
         document: doc,
+        documents: docs ?? [doc],
         currentRole: session.currentRole,
         mode: session.mode,
       }),
 
+      setDocuments: (docs) => set({ documents: docs }),
+
       setActiveGroupId: (groupId) => set({ activeGroupId: groupId }),
 
-      // 仅切换当前群组上下文（用于“未绑定 PRD 的群组”），必须清空旧 session/document，避免串信息
+      // 仅切换当前群组上下文（用于”未绑定 PRD 的群组”），必须清空旧 session/document，避免串信息
       setActiveGroupContext: (groupId) => set((state) => ({
         sessionId: null,
         activeGroupId: groupId,
         documentLoaded: false,
         document: null,
+        documents: [],
         currentRole: state.currentRole ?? 'PM',
         mode: 'QA',
         previousMode: null,
@@ -106,14 +113,15 @@ export const useSessionStore = create<SessionState>()(
         return { prompts, promptsUpdatedAt: updatedAt };
       }),
 
-      // 仅清理“当前上下文”（不登出、不清群组列表、不清 prompts）
-      // - 不应影响 PRD 绑定与会话（否则 UI 会误显示“未绑定 PRD”）
-      // - 仅用于把页面状态从 PrdPreview 等拉回到 QA，避免“清理后仍停留在预览页”的错觉
+      // 仅清理”当前上下文”（不登出、不清群组列表、不清 prompts）
+      // - 不应影响 PRD 绑定与会话（否则 UI 会误显示”未绑定 PRD”）
+      // - 仅用于把页面状态从 PrdPreview 等拉回到 QA，避免”清理后仍停留在预览页”的错觉
       clearContext: () => set((state) => ({
         sessionId: state.sessionId ?? null,
         activeGroupId: state.activeGroupId ?? null,
         documentLoaded: state.documentLoaded ?? false,
         document: state.document ?? null,
+        documents: state.documents ?? [],
         currentRole: state.currentRole ?? 'PM',
         mode: 'QA',
         previousMode: null,
@@ -127,6 +135,7 @@ export const useSessionStore = create<SessionState>()(
         lastGroupSeqByGroup: {},
         documentLoaded: false,
         document: null,
+        documents: [],
         currentRole: 'PM',
         mode: 'QA',
         previousMode: null,
@@ -143,6 +152,7 @@ export const useSessionStore = create<SessionState>()(
         lastGroupSeqByGroup: s.lastGroupSeqByGroup,
         documentLoaded: s.documentLoaded,
         document: s.document,
+        documents: s.documents,
         currentRole: s.currentRole,
         mode: s.mode,
         previousMode: s.previousMode,

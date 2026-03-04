@@ -104,7 +104,7 @@ export default function Sidebar() {
         ? user.role
         : 'PM';
 
-    const openResp = await invoke<ApiResponse<{ sessionId: string; groupId: string; documentId: string; currentRole: string }>>(
+    const openResp = await invoke<ApiResponse<{ sessionId: string; groupId: string; documentId: string; documentIds?: string[]; currentRole: string }>>(
       'open_group_session',
       { groupId, userRole: role }
     );
@@ -115,15 +115,27 @@ export default function Sidebar() {
     });
     if (!docResp.success || !docResp.data) return;
 
+    // 获取所有文档元信息（多文档支持）
+    const allDocIds = openResp.data.documentIds ?? [openResp.data.documentId];
+    const allDocs: Document[] = [docResp.data];
+    for (const did of allDocIds) {
+      if (did === openResp.data.documentId) continue; // 主文档已获取
+      try {
+        const r = await invoke<ApiResponse<Document>>('get_document', { documentId: did });
+        if (r.success && r.data) allDocs.push(r.data);
+      } catch { /* skip */ }
+    }
+
     const session: Session = {
       sessionId: openResp.data.sessionId,
       groupId: openResp.data.groupId,
       documentId: openResp.data.documentId,
+      documentIds: allDocIds,
       currentRole: (openResp.data.currentRole as UserRole) || role,
       mode: 'QA',
     };
 
-    setSession(session, docResp.data);
+    setSession(session, docResp.data, allDocs);
   };
 
   type GroupMemberInfo = { userId: string; isOwner: boolean };
