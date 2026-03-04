@@ -103,16 +103,57 @@ public class SessionService : ISessionService
     {
         // 获取所有会话键
         var keys = _cache.GetKeys($"{CacheKeys.Session}*");
-        
+
         foreach (var key in keys)
         {
             var session = await _cache.GetAsync<Session>(key);
-            if (session != null && 
+            if (session != null &&
                 DateTime.UtcNow - session.LastActiveAt > _sessionTimeout)
             {
                 await DeleteAsync(session.SessionId);
             }
         }
+    }
+
+    public async Task<Session> AddDocumentAsync(string sessionId, string documentId)
+    {
+        var session = await GetByIdAsync(sessionId)
+            ?? throw new KeyNotFoundException("会话不存在");
+
+        var did = (documentId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(did))
+            throw new ArgumentException("documentId 不能为空", nameof(documentId));
+
+        if (session.DocumentIds.Count == 0 && !string.IsNullOrEmpty(session.DocumentId))
+            session.DocumentIds.Add(session.DocumentId);
+
+        if (!session.DocumentIds.Contains(did))
+            session.DocumentIds.Add(did);
+
+        session.LastActiveAt = DateTime.UtcNow;
+        await SaveSessionAsync(session);
+        return session;
+    }
+
+    public async Task<Session> RemoveDocumentAsync(string sessionId, string documentId)
+    {
+        var session = await GetByIdAsync(sessionId)
+            ?? throw new KeyNotFoundException("会话不存在");
+
+        var did = (documentId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(did))
+            throw new ArgumentException("documentId 不能为空", nameof(documentId));
+
+        if (session.GetAllDocumentIds().Count <= 1)
+            throw new InvalidOperationException("至少保留一个文档");
+
+        session.DocumentIds.Remove(did);
+        if (string.Equals(session.DocumentId, did, StringComparison.Ordinal) && session.DocumentIds.Count > 0)
+            session.DocumentId = session.DocumentIds[0];
+
+        session.LastActiveAt = DateTime.UtcNow;
+        await SaveSessionAsync(session);
+        return session;
     }
 
     private async Task SaveSessionAsync(Session session)
