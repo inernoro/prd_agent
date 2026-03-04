@@ -237,6 +237,54 @@ const appNameMap = {
 
 ---
 
+## 单一数据源渲染原则 (Single Source of Truth for Rendering)
+
+**核心原则**：同一个组件、同一处 UI、同一个业务功能的渲染，禁止从两个数据源获取数据。
+
+> 业界参考：Redux SSOT (Single Source of Truth)、TanStack Query 的 queryKey 唯一缓存、React 单向数据流。
+
+### 规则说明
+
+1. **一个列表 = 一个数据源**
+   - 一个 UI 列表只能由一个 Store 字段（或一个 query cache entry）驱动
+   - 禁止：组件 A 通过接口 X 填充列表，组件 B 通过接口 Y 填充同一列表
+   - 正确：列表数据统一存储在一个 Store 字段，所有写入路径最终都更新同一个字段
+
+2. **mutation 后刷新**
+   - 修改操作（增/删/改）完成后，必须更新同一个 Store 字段
+   - 禁止在 mutation 回调中绕过 Store 直接操作 UI 状态
+
+3. **rehydrate 兼容**
+   - 当 Store 新增字段时，必须在 `onRehydrateStorage` 中处理旧数据兼容
+   - 确保旧 localStorage 缺失新字段时，能从已有字段派生出正确初始值
+
+### 示例
+
+```typescript
+// ✅ 正确做法：统一数据源
+// sessionStore 中只有 documents[] 一个字段
+// openGroupSession → setDocuments(allDocs)
+// addDocument → setDocuments(updatedDocs)
+// removeDocument → setDocuments(updatedDocs)
+// KnowledgeBasePage 读取 → sessionStore.documents
+// Sidebar 读取 → sessionStore.documents
+
+// ❌ 错误做法：两个数据源
+// openGroupSession → 填充 sessionStore.document (单数)
+// addDocument → 直接 fetch 并维护 KnowledgeBasePage 本地 state
+// 结果：切换页面/刷新后数据不一致
+```
+
+### 检查清单
+
+当新增/修改 Store 字段时：
+- [ ] 确认该字段是否为某个 UI 列表的唯一数据源
+- [ ] 确认所有写入路径（初始化、mutation、rehydrate）都更新同一个字段
+- [ ] 确认 `onRehydrateStorage` 能兼容旧数据
+- [ ] 确认没有组件通过本地 state 维护该字段的"影子副本"
+
+---
+
 ## 服务器权威性设计
 
 **核心原则**：服务器端任务一旦启动，只有显式的用户主动取消请求才能中断，客户端被动断开连接不应取消服务器处理。
