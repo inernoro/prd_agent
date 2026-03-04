@@ -85,9 +85,10 @@ public class OpenAIClient : ILLMClient
 
         static string RedactPrdContextForLog(string? content, string? requestPurpose)
         {
+            const string PreviewAskSectionPurpose = "previewAsk.section";
             if (!IsPrdContextMessage(content)) return content ?? string.Empty;
-            // previewAsk.section: 可能包含“全文参考 + 章节原文”，统一更强脱敏标记
-            return string.Equals(requestPurpose, "previewAsk.section", StringComparison.OrdinalIgnoreCase)
+            // previewAsk.section 可能包含全文参考和章节原文，统一采用更强脱敏标记
+            return string.Equals(requestPurpose, PreviewAskSectionPurpose, StringComparison.OrdinalIgnoreCase)
                 ? "[PRD_FULL_REDACTED]"
                 : "[PRD_CONTENT_REDACTED]";
         }

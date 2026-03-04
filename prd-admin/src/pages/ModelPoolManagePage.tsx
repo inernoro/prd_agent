@@ -2,7 +2,6 @@ import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
 import { GlassSwitch } from '@/components/design/GlassSwitch';
 import { TabBar } from '@/components/design/TabBar';
-import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { ModelPoolPickerDialog, type SelectedModelItem } from '@/components/model/ModelPoolPickerDialog';
