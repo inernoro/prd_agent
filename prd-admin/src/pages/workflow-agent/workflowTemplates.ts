@@ -82,6 +82,7 @@ const tapdBugCollectionTemplate: WorkflowTemplate = {
       label: '工作空间 ID',
       type: 'text',
       placeholder: '50116108',
+      defaultValue: '50116108',
       helpTip: 'TAPD 项目 URL 中的数字 ID，如 tapd.cn/50116108。验证 Cookie 后可从下拉列表选择',
       required: true,
     },
