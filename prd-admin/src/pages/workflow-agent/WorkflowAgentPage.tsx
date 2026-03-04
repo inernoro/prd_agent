@@ -398,26 +398,25 @@ function ArtifactCard({ artifact, isExpanded, onToggle, onPreview }: {
   const hasInline = !!artifact.inlineContent;
   const hasContent = hasInline || !!artifact.cosUrl;
 
-  function handleDownload(e: React.MouseEvent) {
-    e.stopPropagation();
-    if (artifact.cosUrl) {
-      window.open(artifact.cosUrl, '_blank');
-      return;
-    }
-    if (!artifact.inlineContent) return;
+  // 下载链接：优先 COS URL，否则用 inlineContent 生成 blob URL
+  function getDownloadHref(): string | null {
+    if (artifact.cosUrl) return artifact.cosUrl;
+    if (!artifact.inlineContent) return null;
+    return URL.createObjectURL(new Blob([artifact.inlineContent], { type: artifact.mimeType || 'text/plain' }));
+  }
+
+  function getDownloadName(): string {
+    const name = artifact.name || 'output';
+    if (/\.\w{1,5}$/.test(name)) return name;
     const ext = artifact.mimeType === 'text/markdown' ? '.md'
       : artifact.mimeType === 'text/html' ? '.html'
       : artifact.mimeType === 'application/json' ? '.json'
       : artifact.mimeType === 'text/csv' ? '.csv' : '.txt';
-    const fileName = artifact.name.includes('.') ? artifact.name : `${artifact.name}${ext}`;
-    const blob = new Blob([artifact.inlineContent], { type: artifact.mimeType });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName;
-    a.click();
-    URL.revokeObjectURL(url);
+    return name + ext;
   }
+
+  const downloadHref = getDownloadHref();
+  const downloadName = getDownloadName();
 
   return (
     <div
@@ -434,7 +433,7 @@ function ArtifactCard({ artifact, isExpanded, onToggle, onPreview }: {
       >
         <FileText className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
         <span className="text-[12px] font-medium flex-1 truncate" style={{ color: 'var(--text-primary)' }}>
-          {artifact.name}
+          {downloadName}
         </span>
         <span className="text-[10px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
           {formatBytes(artifact.sizeBytes)}
@@ -450,16 +449,20 @@ function ArtifactCard({ artifact, isExpanded, onToggle, onPreview }: {
             <Eye className="w-3 h-3" />
           </button>
         )}
-        {/* Download button (always visible for any artifact with content) */}
-        {hasContent && (
-          <button
-            onClick={handleDownload}
+        {/* Download link (always visible for any artifact with content) */}
+        {downloadHref && (
+          <a
+            href={downloadHref}
+            download={downloadName}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
             className="surface-row p-1 rounded-[6px] flex-shrink-0 transition-colors"
-            title="下载"
+            title={`下载 ${downloadName}`}
             style={{ color: 'var(--accent-gold)' }}
           >
             <Download className="w-3 h-3" />
-          </button>
+          </a>
         )}
         {hasInline && (
           isExpanded

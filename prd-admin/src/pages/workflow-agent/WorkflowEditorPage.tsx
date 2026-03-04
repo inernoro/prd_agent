@@ -92,7 +92,7 @@ function ensureExtension(name: string, mimeType?: string): string {
   return name + inferExtension(mimeType);
 }
 
-/** 通用产物操作按钮：预览 + 下载 */
+/** 通用产物操作按钮：预览 + 下载（全部使用 <a> 标签，不使用 JS 编程式下载） */
 function ArtifactActionButtons({ artifact, onPreview, size = 'sm' }: {
   artifact: { name: string; mimeType: string; sizeBytes: number; inlineContent?: string; cosUrl?: string };
   onPreview?: (art: ExecutionArtifact) => void;
@@ -100,6 +100,13 @@ function ArtifactActionButtons({ artifact, onPreview, size = 'sm' }: {
 }) {
   const iconSize = size === 'sm' ? 'w-3.5 h-3.5' : 'w-4 h-4';
   const padding = size === 'sm' ? 'p-1' : 'p-1.5';
+
+  // 优先使用 COS URL（已有正确后缀），没有则用 inlineContent 生成 blob URL
+  const downloadUrl = artifact.cosUrl || (artifact.inlineContent
+    ? URL.createObjectURL(new Blob([artifact.inlineContent], { type: artifact.mimeType || 'text/plain' }))
+    : null);
+  const downloadName = ensureExtension(artifact.name, artifact.mimeType);
+
   return (
     <>
       {(artifact.inlineContent || artifact.cosUrl) && onPreview && (
@@ -112,38 +119,19 @@ function ArtifactActionButtons({ artifact, onPreview, size = 'sm' }: {
           <Eye className={iconSize} />
         </button>
       )}
-      {artifact.cosUrl && (
+      {downloadUrl && (
         <a
-          href={artifact.cosUrl}
-          download={ensureExtension(artifact.name, artifact.mimeType)}
+          href={downloadUrl}
+          download={downloadName}
           target="_blank"
           rel="noopener noreferrer"
           onClick={(e) => e.stopPropagation()}
           className={`${padding} rounded-[6px] flex-shrink-0 transition-colors`}
-          title="下载"
+          title={`下载 ${downloadName}`}
           style={{ color: 'var(--text-muted)' }}
         >
           <Download className={iconSize} />
         </a>
-      )}
-      {!artifact.cosUrl && artifact.inlineContent && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            const blob = new Blob([artifact.inlineContent!], { type: artifact.mimeType || 'text/plain' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = ensureExtension(artifact.name, artifact.mimeType);
-            a.click();
-            URL.revokeObjectURL(url);
-          }}
-          className={`${padding} rounded-[6px] flex-shrink-0 transition-colors`}
-          title="下载"
-          style={{ color: 'var(--text-muted)' }}
-        >
-          <Download className={iconSize} />
-        </button>
       )}
     </>
   );
@@ -1201,7 +1189,7 @@ function UnifiedResultPanel({ result, source, expandedArtifacts, toggleArtifact,
                     >
                       <FileText className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
                       <span className="text-[12px] font-medium flex-1 truncate" style={{ color: 'var(--text-primary)' }}>
-                        {art.name}
+                        {ensureExtension(art.name, art.mimeType)}
                       </span>
                       <span className="text-[10px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
                         {formatBytes(art.sizeBytes)}
@@ -2089,7 +2077,7 @@ export function WorkflowEditorPage() {
                     >
                       <FileText className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
                       <span className="text-[12px] font-medium flex-1 truncate" style={{ color: 'var(--text-primary)' }}>
-                        {art.name}
+                        {ensureExtension(art.name, art.mimeType)}
                       </span>
                       <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
                         {formatBytes(art.sizeBytes)}
