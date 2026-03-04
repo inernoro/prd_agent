@@ -598,10 +598,18 @@ public static class VideoAgent
     }
 
     /// <summary>
-    /// 视频转文档 - 多模态分析（帧+文字→结构化文档）
+    /// 视频转文档 - 语音转写 + 多模态分析（帧+文字→结构化文档）
     /// </summary>
     public static class VideoToDoc
     {
+        [AppCallerMetadata(
+            "视频转文档-语音转写",
+            "将视频音频转换为带时间戳的文字（ASR）",
+            ModelTypes = new[] { ModelTypes.Asr },
+            Category = "Video"
+        )]
+        public const string Transcribe = "video-agent.v2d.transcribe::asr";
+
         [AppCallerMetadata(
             "视频转文档-分析",
             "分析视频关键帧和转写文本，生成结构化文档",

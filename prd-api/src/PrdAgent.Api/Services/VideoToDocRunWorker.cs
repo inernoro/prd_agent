@@ -244,17 +244,19 @@ public class VideoToDocRunWorker : BackgroundService
     private async Task<(List<TranscriptSegment> segments, string language)> TranscribeAudioAsync(
         VideoToDocRun run, string audioPath, ILlmGateway gateway)
     {
-        // MVP: 通过 Gateway 的 SendRawAsync 调用 Whisper API
-        // Whisper API 兼容 OpenAI /v1/audio/transcriptions 端点
+        // 通过 Gateway 的 SendRawAsync 调用 ASR 模型池
+        // ASR 模型池统一管理语音识别模型（Whisper / TeleSpeechASR / Qwen3-ASR 等）
+        // API 兼容 OpenAI /v1/audio/transcriptions 端点
         var audioBytes = await File.ReadAllBytesAsync(audioPath);
 
         var rawRequest = new GatewayRawRequest
         {
-            AppCallerCode = AppCallerRegistry.VideoAgent.VideoToDoc.Analyze,
-            ModelType = "chat", // 走默认 chat 池（Whisper 端点通过 EndpointPath 覆盖）
+            AppCallerCode = AppCallerRegistry.VideoAgent.VideoToDoc.Transcribe,
+            ModelType = ModelTypes.Asr,
             EndpointPath = "/v1/audio/transcriptions",
             MultipartFields = new Dictionary<string, object>
             {
+                // model 字段由 Gateway 根据 ASR 模型池调度结果自动替换
                 ["model"] = "whisper-1",
                 ["response_format"] = "verbose_json",
                 ["timestamp_granularities[]"] = "segment",
@@ -274,7 +276,7 @@ public class VideoToDocRunWorker : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "VideoToDoc Whisper API 调用失败，使用 LLM 文本分析兜底: runId={RunId}", run.Id);
+            _logger.LogWarning(ex, "VideoToDoc ASR 调用失败，降级为无转写模式: runId={RunId}", run.Id);
         }
 
         if (rawResp?.Success == true && rawResp.Content != null)
@@ -282,8 +284,8 @@ public class VideoToDocRunWorker : BackgroundService
             return ParseWhisperResponse(rawResp.Content);
         }
 
-        // 兜底方案：如果没有 Whisper 端点，用纯文本占位
-        _logger.LogWarning("VideoToDoc STT 不可用，返回空转写: runId={RunId}", run.Id);
+        // 降级方案：ASR 模型池未配置或不可用时，仅依赖关键帧视觉分析
+        _logger.LogWarning("VideoToDoc ASR 模型池不可用，降级为纯视觉分析模式: runId={RunId}", run.Id);
         return (new List<TranscriptSegment>(), "unknown");
     }
 

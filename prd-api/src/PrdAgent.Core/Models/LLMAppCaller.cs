@@ -122,9 +122,12 @@ public static class ModelTypes
     /// <summary>重排序（预留）</summary>
     public const string Rerank = "rerank";
 
+    /// <summary>语音识别（ASR: Automatic Speech Recognition）</summary>
+    public const string Asr = "asr";
+
     /// <summary>获取所有基础类型</summary>
     public static readonly string[] BaseTypes = { Chat, Intent, Vision, ImageGen };
 
     /// <summary>获取所有类型（包括扩展）</summary>
-    public static readonly string[] AllTypes = { Chat, Intent, Vision, ImageGen, Code, LongContext, Embedding, Rerank };
+    public static readonly string[] AllTypes = { Chat, Intent, Vision, ImageGen, Code, LongContext, Embedding, Rerank, Asr };
 }
