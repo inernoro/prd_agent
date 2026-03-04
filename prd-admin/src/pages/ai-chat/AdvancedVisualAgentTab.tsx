@@ -2435,7 +2435,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             void (async () => {
               for (const el of runningElements) {
                 try {
-                  const res = await getImageGenRun({ runId: el.runId!, includeItems: true });
+                  const res = await getImageGenRun({ runId: el.runId!, includeItems: true, includeImages: true });
                   if (!res.success || !res.data?.run) continue;
                   const run = res.data.run;
                   if (run.status === 'Failed' || run.status === 'Cancelled') {

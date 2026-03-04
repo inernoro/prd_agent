@@ -1468,7 +1468,7 @@ public class ImageGenController : ControllerBase
                 x.RatioAdjusted,
                 status = x.Status.ToString(),
                 base64 = includeImages ? x.Base64 : null,
-                url = includeImages ? x.Url : null,
+                x.Url,
                 x.RevisedPrompt,
                 x.ErrorCode,
                 x.ErrorMessage,
