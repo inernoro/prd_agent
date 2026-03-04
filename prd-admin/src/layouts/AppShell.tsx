@@ -30,6 +30,7 @@ import {
   Swords,
   Menu,
   ChevronDown,
+  Download,
   type LucideIcon,
 } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -340,6 +341,28 @@ export default function AppShell() {
                 {toastNotification.message && (
                   <div className="mt-1 text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
                     {toastNotification.message}
+                  </div>
+                )}
+                {toastNotification.attachments && toastNotification.attachments.length > 0 && (
+                  <div className="mt-2 flex flex-col gap-1">
+                    {toastNotification.attachments.map((att, i) => (
+                      <a
+                        key={i}
+                        href={att.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-[6px] transition-colors hover:bg-white/10"
+                        style={{ color: 'var(--accent-gold)', textDecoration: 'none' }}
+                      >
+                        <Download size={12} />
+                        <span>{att.name}</span>
+                        {att.sizeBytes > 0 && (
+                          <span style={{ color: 'var(--text-muted)' }}>
+                            ({(att.sizeBytes / 1024).toFixed(1)} KB)
+                          </span>
+                        )}
+                      </a>
+                    ))}
                   </div>
                 )}
               </div>
@@ -937,6 +960,33 @@ export default function AppShell() {
                             {item.message && (
                               <div className="mt-1 text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
                                 {item.message}
+                              </div>
+                            )}
+                            {item.attachments && item.attachments.length > 0 && (
+                              <div className="mt-2 flex flex-wrap gap-1.5">
+                                {item.attachments.map((att, i) => (
+                                  <a
+                                    key={i}
+                                    href={att.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-[6px] transition-colors hover:bg-white/10"
+                                    style={{
+                                      background: 'rgba(255,255,255,0.06)',
+                                      border: '1px solid rgba(255,255,255,0.1)',
+                                      color: 'var(--accent-gold)',
+                                      textDecoration: 'none',
+                                    }}
+                                  >
+                                    <Download size={12} />
+                                    <span>{att.name}</span>
+                                    {att.sizeBytes > 0 && (
+                                      <span style={{ color: 'var(--text-muted)' }}>
+                                        ({(att.sizeBytes / 1024).toFixed(1)} KB)
+                                      </span>
+                                    )}
+                                  </a>
+                                ))}
                               </div>
                             )}
                             <div className="mt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>

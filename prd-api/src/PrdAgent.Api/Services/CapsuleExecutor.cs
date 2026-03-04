@@ -2593,14 +2593,6 @@ public static class CapsuleExecutor
             if (attachments.Count == 0) attachments = null;
         }
 
-        // 将附件下载链接追加到通知正文
-        if (attachments?.Count > 0)
-        {
-            var links = string.Join("\n", attachments.Select(a =>
-                $"- [{a.Name}]({a.Url}) ({(a.SizeBytes / 1024.0):F1} KB)"));
-            message = $"{message}\n\n**下载链接：**\n{links}";
-        }
-
         var notification = new AdminNotification
         {
             Title = title,
