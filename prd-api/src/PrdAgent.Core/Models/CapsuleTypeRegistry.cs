@@ -177,7 +177,7 @@ public static class CapsuleTypeRegistry
                 new() { Value = "basic", Label = "Open API (Basic Auth)" },
             }, HelpTip = "Cookie 方式：从浏览器复制 Cookie，数据更全。Open API：需在公司管理中申请 API 账号" },
             new() { Key = "workspaceId", Label = "工作空间 ID", FieldType = "text", Required = true, Placeholder = "50116108", HelpTip = "TAPD 项目 URL 中的数字 ID，如 tapd.cn/50116108" },
-            new() { Key = "cookie", Label = "Cookie 字符串", FieldType = "password", Required = false, Placeholder = "tapdsession=xxx; t_u=xxx; ...", HelpTip = "浏览器登录 TAPD → F12 → Network → 任意请求 → Headers → Cookie，复制整段粘贴。认证方式选 Cookie 时必填" },
+            new() { Key = "cookie", Label = "Cookie 字符串", FieldType = "textarea", Required = false, Placeholder = "tapdsession=xxx; t_u=xxx; ...", HelpTip = "浏览器登录 TAPD → F12 → Network → 任意请求 → Headers → Cookie，复制整段粘贴。认证方式选 Cookie 时必填" },
             new() { Key = "dscToken", Label = "dsc-token", FieldType = "text", Required = false, Placeholder = "xgoJSmV1VxqW6fLm", HelpTip = "从 Cookie 中的 dsc-token 值，或从请求中获取。Cookie 模式必填" },
             new() { Key = "authToken", Label = "API 访问凭证", FieldType = "password", Required = false, Placeholder = "dXNlcjpwYXNzd29yZA==", HelpTip = "Open API 模式使用。Base64(api_user:api_password)" },
             new() { Key = "dataType", Label = "数据类型", FieldType = "select", Required = true, DefaultValue = "bugs", Options = new() {
