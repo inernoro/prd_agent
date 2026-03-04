@@ -101,10 +101,9 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
       <div
         className={`capsule-node-body ${statusClass} rounded-[14px] px-4 py-3 cursor-grab active:cursor-grabbing`}
         style={{
-          '--node-glow-color': `hsla(${data.accentHue}, 50%, 60%, 0.08)`,
           background: sc.bg,
           border: `1.5px solid ${selected ? `hsla(${data.accentHue}, 70%, 60%, 0.6)` : sc.border}`,
-        } as React.CSSProperties}
+        }}
       >
         {/* 断点红点 */}
         {data.breakpoint && (

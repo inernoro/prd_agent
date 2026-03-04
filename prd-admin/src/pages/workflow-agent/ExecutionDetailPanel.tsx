@@ -155,11 +155,28 @@ export function ExecutionDetailPanel() {
     const nodeName = payload.nodeName as string;
     const nodeType = payload.nodeType as string;
 
+    // Debug logging for SSE events (helps diagnose streaming issues)
+    if (eventName.startsWith('llm-')) {
+      console.debug('[Workflow SSE]', eventName, payload);
+    }
+
     if (eventName === 'execution-started') {
       addLog('info', `执行开始，共 ${payload.totalNodes} 个节点`);
     } else if (eventName === 'node-started') {
       const inputCount = payload.inputArtifactCount as number;
       addLog('info', `开始执行`, `接收 ${inputCount ?? 0} 个输入产物`, nodeId, nodeName, nodeType);
+
+      // Pre-activate LLM streaming panel for LLM analyzer nodes
+      if (nodeType === 'llm-analyzer') {
+        setLlmStreamContent('');
+        setLlmStreamNodeName(nodeName || 'AI 分析');
+        setLlmStreamModel('');
+        setLlmStreamActive(true);
+        setLlmStreamExpanded(true);
+        setLlmStreamStartTime(Date.now());
+        setLlmStreamElapsed(0);
+        addLog('info', '启动 LLM 流式输出...', undefined, nodeId, nodeName, nodeType);
+      }
     } else if (eventName === 'node-completed') {
       const durationMs = payload.durationMs as number;
       const artifactCount = payload.artifactCount as number;
@@ -197,17 +214,28 @@ export function ExecutionDetailPanel() {
         });
       }
     } else if (eventName === 'llm-stream-start') {
-      setLlmStreamContent('');
-      setLlmStreamNodeName((payload.nodeName as string) || 'AI 分析');
-      setLlmStreamModel((payload.model as string) || '');
-      setLlmStreamActive(true);
-      setLlmStreamExpanded(true);
-      setLlmStreamStartTime(Date.now());
-      setLlmStreamElapsed(0);
+      // Only reset content on the first llm-stream-start (no model yet);
+      // the second one (with model info) just updates the model name
+      const model = (payload.model as string) || '';
+      if (model) {
+        // Second emission — just update model, don't reset content
+        setLlmStreamModel(model);
+      } else {
+        // First emission — initialize panel
+        setLlmStreamContent('');
+        setLlmStreamNodeName((payload.nodeName as string) || 'AI 分析');
+        setLlmStreamModel('');
+        setLlmStreamActive(true);
+        setLlmStreamExpanded(true);
+        setLlmStreamStartTime(Date.now());
+        setLlmStreamElapsed(0);
+      }
     } else if (eventName === 'llm-chunk') {
       const chunkContent = payload.content as string;
       if (chunkContent) {
         setLlmStreamContent(prev => prev + chunkContent);
+        // Ensure panel is active in case llm-stream-start was missed
+        setLlmStreamActive(true);
       }
     } else if (eventName === 'llm-stream-end') {
       setLlmStreamActive(false);
