@@ -1106,6 +1106,7 @@ import type {
   GetExecutionContract,
   CancelExecutionContract,
   ResumeFromNodeContract,
+  ContinueExecutionContract,
   GetNodeLogsContract,
   CreateShareLinkContract,
   ListShareLinksContract,
@@ -1126,6 +1127,7 @@ import {
   getExecutionReal,
   cancelExecutionReal,
   resumeFromNodeReal,
+  continueExecutionReal,
   getNodeLogsReal,
   createShareLinkReal,
   listShareLinksReal,
@@ -1146,6 +1148,7 @@ export const listExecutions: ListExecutionsContract = withAuth(listExecutionsRea
 export const getExecution: GetExecutionContract = withAuth(getExecutionReal);
 export const cancelExecution: CancelExecutionContract = withAuth(cancelExecutionReal);
 export const resumeFromNode: ResumeFromNodeContract = withAuth(resumeFromNodeReal);
+export const continueExecution: ContinueExecutionContract = withAuth(continueExecutionReal);
 export const getNodeLogs: GetNodeLogsContract = withAuth(getNodeLogsReal);
 export const createShareLink: CreateShareLinkContract = withAuth(createShareLinkReal);
 export const listShareLinks: ListShareLinksContract = withAuth(listShareLinksReal);

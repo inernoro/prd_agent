@@ -30,6 +30,7 @@ import {
   Swords,
   Menu,
   ChevronDown,
+  Download,
   type LucideIcon,
 } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -53,6 +54,20 @@ import { GlobalDefectSubmitDialog, DefectSubmitButton } from '@/components/ui/Gl
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 
 type NavItem = { key: string; label: string; icon: React.ReactNode; description?: string };
+
+/** 根据 mimeType 推断扩展名，确保下载文件名带后缀 */
+function ensureDownloadName(name: string | undefined | null, mimeType?: string | null): string {
+  let n = name || 'output';
+  if (/\.\w{1,5}$/.test(n)) return n;
+  if (!mimeType) return n + '.txt';
+  if (mimeType.includes('markdown')) return n + '.md';
+  if (mimeType.includes('json')) return n + '.json';
+  if (mimeType.includes('csv')) return n + '.csv';
+  if (mimeType.includes('html')) return n + '.html';
+  if (mimeType.includes('xml')) return n + '.xml';
+  if (mimeType.includes('javascript')) return n + '.js';
+  return n + '.txt';
+}
 
 // 图标映射：后端下发的图标名称 → Lucide 图标组件
 const iconMap: Record<string, LucideIcon> = {
@@ -340,6 +355,42 @@ export default function AppShell() {
                 {toastNotification.message && (
                   <div className="mt-1 text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
                     {toastNotification.message}
+                  </div>
+                )}
+                {toastNotification.attachments && toastNotification.attachments.length > 0 && (
+                  <div className="mt-2 flex flex-col gap-1">
+                    {toastNotification.attachments.map((att, i) => (
+                      <a
+                        key={i}
+                        href={att.url}
+                        download={ensureDownloadName(att.name, att.mimeType)}
+                        onClick={async (e) => {
+                          e.preventDefault();
+                          try {
+                            const resp = await fetch(att.url);
+                            const blob = await resp.blob();
+                            const blobUrl = URL.createObjectURL(blob);
+                            const link = document.createElement('a');
+                            link.href = blobUrl;
+                            link.download = ensureDownloadName(att.name, att.mimeType);
+                            link.click();
+                            URL.revokeObjectURL(blobUrl);
+                          } catch {
+                            window.open(att.url, '_blank');
+                          }
+                        }}
+                        className="inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-[6px] transition-colors hover:bg-white/10 cursor-pointer no-underline"
+                        style={{ color: 'var(--accent-gold)' }}
+                      >
+                        <Download size={12} />
+                        <span>{ensureDownloadName(att.name, att.mimeType)}</span>
+                        {att.sizeBytes > 0 && (
+                          <span style={{ color: 'var(--text-muted)' }}>
+                            ({(att.sizeBytes / 1024).toFixed(1)} KB)
+                          </span>
+                        )}
+                      </a>
+                    ))}
                   </div>
                 )}
               </div>
@@ -937,6 +988,46 @@ export default function AppShell() {
                             {item.message && (
                               <div className="mt-1 text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
                                 {item.message}
+                              </div>
+                            )}
+                            {item.attachments && item.attachments.length > 0 && (
+                              <div className="mt-2 flex flex-wrap gap-1.5">
+                                {item.attachments.map((att, i) => (
+                                  <a
+                                    key={i}
+                                    href={att.url}
+                                    download={ensureDownloadName(att.name, att.mimeType)}
+                                    onClick={async (e) => {
+                                      e.preventDefault();
+                                      try {
+                                        const resp = await fetch(att.url);
+                                        const blob = await resp.blob();
+                                        const blobUrl = URL.createObjectURL(blob);
+                                        const link = document.createElement('a');
+                                        link.href = blobUrl;
+                                        link.download = ensureDownloadName(att.name, att.mimeType);
+                                        link.click();
+                                        URL.revokeObjectURL(blobUrl);
+                                      } catch {
+                                        window.open(att.url, '_blank');
+                                      }
+                                    }}
+                                    className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-[6px] transition-colors hover:bg-white/10 cursor-pointer no-underline"
+                                    style={{
+                                      background: 'rgba(255,255,255,0.06)',
+                                      border: '1px solid rgba(255,255,255,0.1)',
+                                      color: 'var(--accent-gold)',
+                                    }}
+                                  >
+                                    <Download size={12} />
+                                    <span>{ensureDownloadName(att.name, att.mimeType)}</span>
+                                    {att.sizeBytes > 0 && (
+                                      <span style={{ color: 'var(--text-muted)' }}>
+                                        ({(att.sizeBytes / 1024).toFixed(1)} KB)
+                                      </span>
+                                    )}
+                                  </a>
+                                ))}
                               </div>
                             )}
                             <div className="mt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>

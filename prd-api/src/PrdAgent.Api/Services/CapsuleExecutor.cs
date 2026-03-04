@@ -1,6 +1,9 @@
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Jint;
+using Jint.Runtime;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Models;
 
@@ -14,15 +17,34 @@ public static class CapsuleExecutor
 {
     public record CapsuleResult(List<ExecutionArtifact> Artifacts, string Logs);
 
+    /// <summary>共享序列化选项：不转义中文、美化输出</summary>
+    private static readonly JsonSerializerOptions JsonPretty = new()
+    {
+        WriteIndented = true,
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
+    /// <summary>共享序列化选项：不转义中文、紧凑输出</summary>
+    private static readonly JsonSerializerOptions JsonCompact = new()
+    {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
     /// <summary>
     /// 按舱类型调度执行。
     /// </summary>
+    /// <summary>
+    /// 事件发射委托：(eventName, payload) → Task
+    /// </summary>
+    public delegate Task EmitEventDelegate(string eventName, object payload);
+
     public static async Task<CapsuleResult> ExecuteAsync(
         IServiceProvider sp,
         ILogger logger,
         WorkflowNode node,
         Dictionary<string, string> variables,
-        List<ExecutionArtifact> inputArtifacts)
+        List<ExecutionArtifact> inputArtifacts,
+        EmitEventDelegate? emitEvent = null)
     {
         logger.LogInformation("Executing capsule: {NodeId} type={NodeType} name={NodeName}",
             node.NodeId, node.NodeType, node.Name);
@@ -38,8 +60,8 @@ public static class CapsuleExecutor
             // ── 处理类 ──
             CapsuleTypes.HttpRequest => await ExecuteHttpRequestAsync(sp, node, variables, inputArtifacts),
             CapsuleTypes.SmartHttp => await ExecuteSmartHttpAsync(sp, node, variables, inputArtifacts),
-            CapsuleTypes.LlmAnalyzer => await ExecuteLlmAnalyzerAsync(sp, node, variables, inputArtifacts),
-            CapsuleTypes.ScriptExecutor => ExecuteScriptStub(node, inputArtifacts),
+            CapsuleTypes.LlmAnalyzer => await ExecuteLlmAnalyzerAsync(sp, node, variables, inputArtifacts, emitEvent),
+            CapsuleTypes.ScriptExecutor => ExecuteScript(node, inputArtifacts),
             CapsuleTypes.TapdCollector => await ExecuteTapdCollectorAsync(sp, node, variables),
             CapsuleTypes.DataExtractor => ExecuteDataExtractor(node, inputArtifacts),
             CapsuleTypes.DataMerger => ExecuteDataMerger(node, inputArtifacts),
@@ -51,7 +73,7 @@ public static class CapsuleExecutor
             CapsuleTypes.Condition => ExecuteCondition(node, inputArtifacts),
 
             // ── 输出类 ──
-            CapsuleTypes.ReportGenerator => await ExecuteReportGeneratorAsync(sp, node, variables, inputArtifacts),
+            CapsuleTypes.ReportGenerator => await ExecuteReportGeneratorAsync(sp, node, variables, inputArtifacts, emitEvent),
             CapsuleTypes.FileExporter => ExecuteFileExporter(node, inputArtifacts),
             CapsuleTypes.WebhookSender => await ExecuteWebhookSenderAsync(sp, node, inputArtifacts),
             CapsuleTypes.NotificationSender => await ExecuteNotificationSenderAsync(sp, node, variables, inputArtifacts),
@@ -292,7 +314,7 @@ public static class CapsuleExecutor
         logs += $"Total: {pagesFetched} pages, {allData.Count} records\n";
 
         var dataArtifact = MakeTextArtifact(node, "smart-data", $"全量数据 ({allData.Count} 条)",
-            allData.ToJsonString(new JsonSerializerOptions { WriteIndented = false }), "application/json");
+            allData.ToJsonString(JsonCompact), "application/json");
 
         var metaJson = JsonSerializer.Serialize(new
         {
@@ -382,7 +404,8 @@ public static class CapsuleExecutor
     }
 
     public static async Task<CapsuleResult> ExecuteLlmAnalyzerAsync(
-        IServiceProvider sp, WorkflowNode node, Dictionary<string, string> variables, List<ExecutionArtifact> inputArtifacts)
+        IServiceProvider sp, WorkflowNode node, Dictionary<string, string> variables, List<ExecutionArtifact> inputArtifacts,
+        EmitEventDelegate? emitEvent = null)
     {
         var gateway = sp.GetService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>();
         if (gateway == null)
@@ -468,24 +491,116 @@ public static class CapsuleExecutor
         llmLogs.AppendLine(userContent);
         llmLogs.AppendLine($"  总估算 Tokens: system={systemTokens} + user={EstimateTokens(userContent)} = {systemTokens + EstimateTokens(userContent)}");
         llmLogs.AppendLine($"  Temperature: {temperature}");
-        llmLogs.AppendLine("  --- 调用 LLM Gateway ---");
+        llmLogs.AppendLine("  --- 调用 LLM Gateway (streaming) ---");
 
-        var response = await gateway.SendAsync(request, CancellationToken.None);
-        var content = response.Content ?? "";
+        // 使用流式调用，支持实时推送 LLM 输出到前端
+        var contentBuilder = new StringBuilder();
+        var model = "(unknown)";
+        int inputTokens = 0, outputTokens = 0;
+        string? resolutionType = null;
+        string? errorCode = null, errorMessage = null;
+        int? httpStatus = null;
 
-        var model = response.Resolution?.ActualModel ?? "(unknown)";
-        var inputTokens = response.TokenUsage?.InputTokens ?? 0;
-        var outputTokens = response.TokenUsage?.OutputTokens ?? 0;
+        // 每积累 CHUNK_BATCH_SIZE 个字符发一次事件，避免事件过于频繁
+        const int CHUNK_BATCH_SIZE = 200;
+        var pendingChunk = new StringBuilder();
+        var streamSw = Stopwatch.StartNew();
+
+        if (emitEvent != null)
+        {
+            await emitEvent("llm-stream-start", new { nodeId = node.NodeId, nodeName = node.Name });
+        }
+
+        try
+        {
+            await foreach (var chunk in gateway.StreamAsync(request, CancellationToken.None))
+            {
+                switch (chunk.Type)
+                {
+                    case PrdAgent.Infrastructure.LlmGateway.GatewayChunkType.Start:
+                        model = chunk.Resolution?.ActualModel ?? "(unknown)";
+                        resolutionType = chunk.Resolution?.ResolutionType;
+                        if (emitEvent != null)
+                        {
+                            await emitEvent("llm-stream-start", new { nodeId = node.NodeId, nodeName = node.Name, model });
+                        }
+                        break;
+
+                    case PrdAgent.Infrastructure.LlmGateway.GatewayChunkType.Text:
+                        if (!string.IsNullOrEmpty(chunk.Content))
+                        {
+                            contentBuilder.Append(chunk.Content);
+                            pendingChunk.Append(chunk.Content);
+
+                            // 批量发送 chunk 事件
+                            if (emitEvent != null && pendingChunk.Length >= CHUNK_BATCH_SIZE)
+                            {
+                                await emitEvent("llm-chunk", new
+                                {
+                                    nodeId = node.NodeId,
+                                    content = pendingChunk.ToString(),
+                                    accumulatedLength = contentBuilder.Length,
+                                });
+                                pendingChunk.Clear();
+                            }
+                        }
+                        break;
+
+                    case PrdAgent.Infrastructure.LlmGateway.GatewayChunkType.Done:
+                        inputTokens = chunk.TokenUsage?.InputTokens ?? 0;
+                        outputTokens = chunk.TokenUsage?.OutputTokens ?? 0;
+                        break;
+
+                    case PrdAgent.Infrastructure.LlmGateway.GatewayChunkType.Error:
+                        errorCode = "STREAM_ERROR";
+                        errorMessage = chunk.Error;
+                        break;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            errorCode = "STREAM_EXCEPTION";
+            errorMessage = ex.Message;
+        }
+
+        // 发送剩余的 pending chunk
+        if (emitEvent != null && pendingChunk.Length > 0)
+        {
+            await emitEvent("llm-chunk", new
+            {
+                nodeId = node.NodeId,
+                content = pendingChunk.ToString(),
+                accumulatedLength = contentBuilder.Length,
+            });
+        }
+
+        streamSw.Stop();
+        var content = contentBuilder.ToString();
+
+        if (emitEvent != null)
+        {
+            await emitEvent("llm-stream-end", new
+            {
+                nodeId = node.NodeId,
+                totalLength = content.Length,
+                durationMs = streamSw.ElapsedMilliseconds,
+                model,
+                inputTokens,
+                outputTokens,
+            });
+        }
 
         llmLogs.AppendLine($"  Model: {model}");
         llmLogs.AppendLine($"  Tokens: input={inputTokens} output={outputTokens}");
-        llmLogs.AppendLine($"  ResolutionType: {response.Resolution?.ResolutionType}");
+        llmLogs.AppendLine($"  ResolutionType: {resolutionType}");
+        llmLogs.AppendLine($"  StreamDuration: {streamSw.ElapsedMilliseconds}ms");
 
         // 记录 Gateway 错误信息
-        if (!string.IsNullOrWhiteSpace(response.ErrorCode) || !string.IsNullOrWhiteSpace(response.ErrorMessage))
+        if (!string.IsNullOrWhiteSpace(errorCode) || !string.IsNullOrWhiteSpace(errorMessage))
         {
-            llmLogs.AppendLine($"  ❌ Gateway 错误: [{response.ErrorCode}] {response.ErrorMessage}");
-            llmLogs.AppendLine($"  HTTP Status: {response.StatusCode}");
+            llmLogs.AppendLine($"  ❌ Gateway 错误: [{errorCode}] {errorMessage}");
+            if (httpStatus.HasValue) llmLogs.AppendLine($"  HTTP Status: {httpStatus}");
         }
 
         llmLogs.AppendLine($"  LLM 响应 ({content.Length} chars):");
@@ -493,8 +608,8 @@ public static class CapsuleExecutor
 
         if (string.IsNullOrWhiteSpace(content))
         {
-            var reason = !string.IsNullOrWhiteSpace(response.ErrorMessage)
-                ? $"Gateway 错误: {response.ErrorMessage}"
+            var reason = !string.IsNullOrWhiteSpace(errorMessage)
+                ? $"Gateway 错误: {errorMessage}"
                 : "可能是模型调度失败或配额不足";
             llmLogs.AppendLine($"  ⚠️ 警告: LLM 返回内容为空 ({reason})");
         }
@@ -509,27 +624,146 @@ public static class CapsuleExecutor
         }
 
         // 回退时保留输入数据的 mimeType
-        var artifactMime = !string.IsNullOrWhiteSpace(response.Content) ? "text/plain" : inputMimeType;
+        var hasLlmContent = contentBuilder.Length > 0 && string.IsNullOrWhiteSpace(errorCode);
+        var artifactMime = hasLlmContent ? "text/plain" : inputMimeType;
         var artifact = MakeTextArtifact(node, "llm-output", "分析结果", content, artifactMime);
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, llmLogs.ToString());
     }
 
-    public static CapsuleResult ExecuteScriptStub(WorkflowNode node, List<ExecutionArtifact> inputArtifacts)
+    /// <summary>
+    /// JavaScript 脚本执行器 —— 使用 Jint 引擎在沙箱中执行用户脚本。
+    /// 输入：上游 artifacts 合并为 JSON → 注入为全局变量 `data`。
+    /// 输出：用户脚本赋值给 `result` 变量的内容。
+    /// </summary>
+    public static CapsuleResult ExecuteScript(WorkflowNode node, List<ExecutionArtifact> inputArtifacts)
     {
-        var language = GetConfigString(node, "language") ?? "javascript";
+        var logs = new StringBuilder();
+        logs.AppendLine($"[脚本执行器] 节点: {node.Name}");
+
         var code = GetConfigString(node, "code") ?? "";
+        var timeoutStr = GetConfigString(node, "timeoutSeconds");
+        var timeoutSeconds = int.TryParse(timeoutStr, out var t) && t is > 0 and <= 300 ? t : 30;
 
-        // 沙箱执行待实现，目前返回代码预览
-        var output = JsonSerializer.Serialize(new
+        if (string.IsNullOrWhiteSpace(code))
         {
-            language,
-            codePreview = code.Length > 200 ? code[..200] + "..." : code,
-            inputCount = inputArtifacts.Count,
-            message = $"脚本执行器({language}) - 代码已接收，执行完成",
-        });
+            logs.AppendLine("  ⚠️ 代码为空，跳过执行");
+            var emptyArt = MakeTextArtifact(node, "script-out", "脚本输出",
+                JsonSerializer.Serialize(new { error = "代码为空" }), "application/json");
+            return new CapsuleResult(new List<ExecutionArtifact> { emptyArt }, logs.ToString());
+        }
 
-        var artifact = MakeTextArtifact(node, "script-output", "脚本输出", output);
-        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, $"Script ({language}): {code.Length} chars");
+        // ── 1. 解析上游输入：合并所有 artifact 的 InlineContent ──
+        var allItems = new List<JsonElement>();
+        foreach (var art in inputArtifacts)
+        {
+            if (string.IsNullOrWhiteSpace(art.InlineContent)) continue;
+            try
+            {
+                using var doc = JsonDocument.Parse(art.InlineContent);
+                if (doc.RootElement.ValueKind == JsonValueKind.Array)
+                    foreach (var item in doc.RootElement.EnumerateArray())
+                        allItems.Add(item.Clone());
+                else
+                    allItems.Add(doc.RootElement.Clone());
+            }
+            catch { logs.AppendLine($"  ⚠️ 跳过无法解析的输入 artifact: {art.Name}"); }
+        }
+
+        // 将输入转为 JSON 字符串，供 Jint 解析
+        var inputJson = allItems.Count switch
+        {
+            0 => "[]",
+            1 when inputArtifacts.Count == 1 => JsonSerializer.Serialize(allItems[0], JsonCompact),
+            _ => JsonSerializer.Serialize(allItems, JsonCompact)
+        };
+        logs.AppendLine($"  输入数据: {inputJson.Length} chars, {allItems.Count} 条记录");
+
+        // ── 2. 创建 Jint 引擎（沙箱配置） ──
+        try
+        {
+            var engine = new Engine(options =>
+            {
+                options.TimeoutInterval(TimeSpan.FromSeconds(timeoutSeconds));
+                options.LimitMemory(16_000_000); // 16 MB
+                options.LimitRecursion(256);
+                options.Strict(false);
+            });
+
+            // 注入 data 变量：先用 JSON.parse 把字符串转为 JS 对象
+            engine.Execute($"var data = JSON.parse({JsonSerializer.Serialize(inputJson)});");
+            // 初始化 result 为 null
+            engine.Execute("var result = null;");
+
+            // ── 3. 执行用户脚本（Evaluate 返回最后一个表达式的值） ──
+            var sw = Stopwatch.StartNew();
+            var lastExprValue = engine.Evaluate(code);
+            sw.Stop();
+
+            logs.AppendLine($"  执行耗时: {sw.ElapsedMilliseconds}ms");
+
+            // ── 4. 提取 result 变量（优先），否则用最终表达式值 ──
+            var resultValue = engine.GetValue("result");
+            string outputJson;
+
+            if (resultValue == null || resultValue.IsNull() || resultValue.IsUndefined())
+            {
+                logs.AppendLine("  ⚠️ result 变量为空，尝试使用脚本最终表达式值");
+                if (lastExprValue != null && !lastExprValue.IsNull() && !lastExprValue.IsUndefined())
+                {
+                    var raw = lastExprValue.ToObject();
+                    outputJson = raw is string s ? s : JsonSerializer.Serialize(raw, JsonPretty);
+                }
+                else
+                {
+                    outputJson = JsonSerializer.Serialize(new { warning = "脚本未设置 result 变量且无返回值" });
+                }
+            }
+            else
+            {
+                var raw = resultValue.ToObject();
+                outputJson = raw is string s ? s : JsonSerializer.Serialize(raw, JsonPretty);
+            }
+
+            logs.AppendLine($"  输出: {outputJson.Length} chars");
+
+            var artifact = MakeTextArtifact(node, "script-out", "脚本输出", outputJson, "application/json");
+            return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs.ToString());
+        }
+        catch (TimeoutException)
+        {
+            logs.AppendLine($"  ❌ 脚本执行超时（{timeoutSeconds}秒限制）");
+            var art = MakeTextArtifact(node, "script-out", "超时错误",
+                JsonSerializer.Serialize(new { error = $"脚本执行超时，已超过 {timeoutSeconds} 秒限制" }), "application/json");
+            return new CapsuleResult(new List<ExecutionArtifact> { art }, logs.ToString());
+        }
+        catch (MemoryLimitExceededException)
+        {
+            logs.AppendLine("  ❌ 脚本内存超限（16MB）");
+            var art = MakeTextArtifact(node, "script-out", "内存超限",
+                JsonSerializer.Serialize(new { error = "脚本内存使用超过 16MB 限制" }), "application/json");
+            return new CapsuleResult(new List<ExecutionArtifact> { art }, logs.ToString());
+        }
+        catch (RecursionDepthOverflowException)
+        {
+            logs.AppendLine("  ❌ 脚本递归深度超限（256层）");
+            var art = MakeTextArtifact(node, "script-out", "递归超限",
+                JsonSerializer.Serialize(new { error = "脚本递归深度超过 256 层限制" }), "application/json");
+            return new CapsuleResult(new List<ExecutionArtifact> { art }, logs.ToString());
+        }
+        catch (JavaScriptException jsEx)
+        {
+            logs.AppendLine($"  ❌ JavaScript 运行时错误: {jsEx.Message}");
+            var art = MakeTextArtifact(node, "script-out", "脚本错误",
+                JsonSerializer.Serialize(new { error = jsEx.Message, stack = jsEx.JavaScriptStackTrace }), "application/json");
+            return new CapsuleResult(new List<ExecutionArtifact> { art }, logs.ToString());
+        }
+        catch (Exception ex)
+        {
+            logs.AppendLine($"  ❌ 执行异常: {ex.Message}");
+            var art = MakeTextArtifact(node, "script-out", "执行错误",
+                JsonSerializer.Serialize(new { error = ex.Message }), "application/json");
+            return new CapsuleResult(new List<ExecutionArtifact> { art }, logs.ToString());
+        }
     }
 
     public static async Task<CapsuleResult> ExecuteTapdCollectorAsync(
@@ -746,7 +980,7 @@ public static class CapsuleExecutor
                 factory, allItems, workspaceId, cookieStr, dscToken, logs);
             if (detailItems.Count > 0)
             {
-                var resultJson = detailItems.ToJsonString();
+                var resultJson = detailItems.ToJsonString(JsonCompact);
                 var artifact = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType} 详情", resultJson, "application/json");
                 return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs.ToString());
             }
@@ -754,7 +988,7 @@ public static class CapsuleExecutor
             logs.AppendLine("⚠️ 详情获取失败，回退使用搜索列表数据");
         }
 
-        var resultJsonFallback = allItems.ToJsonString();
+        var resultJsonFallback = allItems.ToJsonString(JsonCompact);
         var artifactFallback = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType}", resultJsonFallback, "application/json");
         return new CapsuleResult(new List<ExecutionArtifact> { artifactFallback }, logs.ToString());
     }
@@ -1259,7 +1493,7 @@ public static class CapsuleExecutor
                 var detailItems = await FetchTapdBugDetailsAsync(factory, allItems, wsId, cookieStr, dscToken, logs);
                 if (detailItems.Count > 0)
                 {
-                    var detailJson = detailItems.ToJsonString();
+                    var detailJson = detailItems.ToJsonString(JsonCompact);
                     var detailArtifact = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType} 详情", detailJson, "application/json");
                     return new CapsuleResult(new List<ExecutionArtifact> { detailArtifact }, logs.ToString());
                 }
@@ -1271,7 +1505,7 @@ public static class CapsuleExecutor
             }
         }
 
-        var resultJson = allItems.ToJsonString();
+        var resultJson = allItems.ToJsonString(JsonCompact);
         var artifact = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType}", resultJson, "application/json");
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs.ToString());
     }
@@ -1448,7 +1682,7 @@ public static class CapsuleExecutor
                 .Where(a => !string.IsNullOrWhiteSpace(a.InlineContent))
                 .Select(a => a.InlineContent!)
                 .ToList();
-            merged = JsonSerializer.Serialize(items);
+            merged = JsonSerializer.Serialize(items, JsonCompact);
         }
         else
         {
@@ -1570,6 +1804,11 @@ public static class CapsuleExecutor
     /// </summary>
     public static CapsuleResult ExecuteDataAggregator(WorkflowNode node, List<ExecutionArtifact> inputArtifacts)
     {
+        // 检查是否为 TAPD 28 维度专用聚合模式
+        var aggregationType = GetConfigString(node, "aggregationType") ?? "";
+        if (aggregationType == "tapd-bug-28d")
+            return ExecuteTapdBug28DAggregation(node, inputArtifacts);
+
         var groupByStr = GetConfigString(node, "groupByFields") ?? "severity,status,current_owner,module";
         var dateField = GetConfigString(node, "dateField") ?? "created";
         var dateGroupBy = GetConfigString(node, "dateGroupBy") ?? "week";
@@ -1607,7 +1846,7 @@ public static class CapsuleExecutor
 
         if (allItems.Count == 0)
         {
-            var emptyResult = JsonSerializer.Serialize(new { totalCount = 0, message = "无数据" });
+            var emptyResult = JsonSerializer.Serialize(new { totalCount = 0, message = "无数据" }, JsonCompact);
             var emptyArt = MakeTextArtifact(node, "agg-out", "统计摘要", emptyResult, "application/json");
             return new CapsuleResult(new List<ExecutionArtifact> { emptyArt }, logs.ToString());
         }
@@ -1746,11 +1985,275 @@ public static class CapsuleExecutor
         if (numericSummaries.Count > 0)
             result["numericSummaries"] = numericSummaries;
 
-        var outputJson = JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });
+        var outputJson = JsonSerializer.Serialize(result, JsonPretty);
         logs.AppendLine($"  输出统计摘要: {outputJson.Length} chars ({Encoding.UTF8.GetByteCount(outputJson)} bytes)");
 
         var artifact = MakeTextArtifact(node, "agg-out", "统计摘要", outputJson, "application/json");
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs.ToString());
+    }
+
+    // ── TAPD 缺陷 28 维度预统计 ─────────────────────────────────
+
+    /// <summary>
+    /// TAPD 缺陷 28 维度专用聚合：用代码精确计算所有统计指标和缺陷 ID 列表，
+    /// 输出结构化 JSON 摘要（~5-15KB），替代将原始数据（~200KB+）直接喂给 LLM 让其"数数"。
+    /// </summary>
+    private static CapsuleResult ExecuteTapdBug28DAggregation(WorkflowNode node, List<ExecutionArtifact> inputArtifacts)
+    {
+        var logs = new StringBuilder();
+        logs.AppendLine($"[TAPD 28维度预统计] 节点: {node.Name}");
+
+        // ── 解析输入数据 ──
+        var allItems = new List<Dictionary<string, string>>();
+        foreach (var art in inputArtifacts)
+        {
+            if (string.IsNullOrWhiteSpace(art.InlineContent)) continue;
+            try
+            {
+                using var doc = JsonDocument.Parse(art.InlineContent);
+                if (doc.RootElement.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in doc.RootElement.EnumerateArray())
+                        allItems.Add(JsonElementToDict(item));
+                }
+                else if (doc.RootElement.ValueKind == JsonValueKind.Object)
+                {
+                    allItems.Add(JsonElementToDict(doc.RootElement));
+                }
+            }
+            catch { logs.AppendLine($"  ⚠️ 跳过无法解析的输入: {art.Name}"); }
+        }
+
+        logs.AppendLine($"  总记录数: {allItems.Count}");
+
+        if (allItems.Count == 0)
+        {
+            var emptyJson = JsonSerializer.Serialize(new { totalCount = 0, message = "无数据", dimensions = Array.Empty<object>() }, JsonCompact);
+            var emptyArt = MakeTextArtifact(node, "agg-out", "TAPD 28维度统计", emptyJson, "application/json");
+            return new CapsuleResult(new List<ExecutionArtifact> { emptyArt }, logs.ToString());
+        }
+
+        // 字段取值辅助
+        string Get(Dictionary<string, string> item, string field) =>
+            item.TryGetValue(field, out var v) ? (v ?? "") : "";
+
+        // ── 构建子集 ──
+        var all = allItems;
+        var techBugs = all.Where(i => Get(i, "缺陷划分") == "技术缺陷").ToList();
+        var p2Below = techBugs.Where(i =>
+        {
+            var level = Get(i, "缺陷等级").ToUpperInvariant();
+            return level is "P2" or "P3" or "P4";
+        }).ToList();
+
+        // 辅助：提取缺陷 ID 列表
+        List<string> Ids(List<Dictionary<string, string>> items) =>
+            items.Select(i => Get(i, "缺陷ID")).Where(id => !string.IsNullOrWhiteSpace(id)).ToList();
+
+        // 辅助：构建一个维度对象
+        object Dim(int num, string name, int count, List<string> ids, string? logic = null, string? extra = null)
+        {
+            var d = new Dictionary<string, object>
+            {
+                ["dim"] = num,
+                ["name"] = name,
+                ["count"] = count,
+                ["ids"] = ids,
+            };
+            if (logic != null) d["logic"] = logic;
+            if (extra != null) d["extra"] = extra;
+            return d;
+        }
+
+        // ── 28 维度计算 ──
+        var dimensions = new List<object>();
+
+        // 1. 缺陷总数
+        dimensions.Add(Dim(1, "缺陷总数", all.Count, Ids(all)));
+
+        // 2. 非缺陷数量
+        var nonBugs = all.Where(i => Get(i, "缺陷划分") == "非缺陷").ToList();
+        dimensions.Add(Dim(2, "非缺陷数量", nonBugs.Count, Ids(nonBugs), "缺陷划分=\"非缺陷\""));
+
+        // 3. 产品缺陷数量
+        var productBugs = all.Where(i => Get(i, "缺陷划分") == "产品缺陷").ToList();
+        dimensions.Add(Dim(3, "产品缺陷数量", productBugs.Count, Ids(productBugs), "缺陷划分=\"产品缺陷\""));
+
+        // 4. 技术缺陷数量
+        dimensions.Add(Dim(4, "技术缺陷数量", techBugs.Count, Ids(techBugs), "缺陷划分=\"技术缺陷\""));
+
+        // 5. 无法判断数量
+        var indeterminate = all.Where(i => Get(i, "缺陷划分") == "无法判断").ToList();
+        dimensions.Add(Dim(5, "无法判断的数量", indeterminate.Count, Ids(indeterminate), "缺陷划分=\"无法判断\""));
+
+        // 6. 未判断（空）的数量
+        var unclassified = all.Where(i => string.IsNullOrWhiteSpace(Get(i, "缺陷划分"))).ToList();
+        dimensions.Add(Dim(6, "未判断（空）的数量", unclassified.Count, Ids(unclassified), "缺陷划分为空"));
+
+        // 7. 无效反馈数量
+        var invalidFeedback = all.Where(i => Get(i, "有效报告") == "否").ToList();
+        dimensions.Add(Dim(7, "无效反馈数量", invalidFeedback.Count, Ids(invalidFeedback), "有效报告=\"否\""));
+
+        // 8. 有效反馈数量
+        var validFeedback = all.Where(i => Get(i, "有效报告") == "是").ToList();
+        dimensions.Add(Dim(8, "有效反馈数量", validFeedback.Count, Ids(validFeedback), "有效报告=\"是\""));
+
+        // 9. P2级及以下技术缺陷
+        dimensions.Add(Dim(9, "P2级及以下技术缺陷数量", p2Below.Count, Ids(p2Below),
+            "缺陷划分=\"技术缺陷\" 且 缺陷等级∈{P2,P3,P4}"));
+
+        // 10-15. 各等级技术缺陷
+        var severityLevels = new[] { ("P0", 10), ("P1", 11), ("P2", 12), ("P3", 13), ("P4", 14) };
+        foreach (var (level, dimNum) in severityLevels)
+        {
+            var subset = techBugs.Where(i => Get(i, "缺陷等级").Equals(level, StringComparison.OrdinalIgnoreCase)).ToList();
+            dimensions.Add(Dim(dimNum, $"{level}级别技术缺陷数量", subset.Count, Ids(subset),
+                $"缺陷划分=\"技术缺陷\" 且 缺陷等级=\"{level}\""));
+        }
+
+        var techNoLevel = techBugs.Where(i => string.IsNullOrWhiteSpace(Get(i, "缺陷等级"))).ToList();
+        dimensions.Add(Dim(15, "未判断缺陷等级技术缺陷数量", techNoLevel.Count, Ids(techNoLevel),
+            "缺陷划分=\"技术缺陷\" 且 缺陷等级为空"));
+
+        // 16. 等级统计验证
+        var levelSum = severityLevels.Sum(sl =>
+            techBugs.Count(i => Get(i, "缺陷等级").Equals(sl.Item1, StringComparison.OrdinalIgnoreCase)))
+            + techNoLevel.Count;
+        var levelValid = levelSum == techBugs.Count;
+        dimensions.Add(Dim(16, "技术缺陷等级统计总和验证", levelSum, new List<string>(),
+            $"P0+P1+P2+P3+P4+未判断={levelSum}，技术缺陷总数={techBugs.Count}",
+            levelValid ? "✅ 一致" : $"❌ 差异={techBugs.Count - levelSum}"));
+
+        // 17-19. P2 及以下逾期状态
+        var p2Overdue = p2Below.Where(i => Get(i, "是否逾期") == "是").ToList();
+        dimensions.Add(Dim(17, "P2及以下技术缺陷中简报逾期数量", p2Overdue.Count, Ids(p2Overdue),
+            "P2及以下技术缺陷中 是否逾期=\"是\""));
+
+        var p2NotOverdue = p2Below.Where(i => Get(i, "是否逾期") == "否").ToList();
+        dimensions.Add(Dim(18, "P2及以下技术缺陷中未逾期数量", p2NotOverdue.Count, Ids(p2NotOverdue),
+            "P2及以下技术缺陷中 是否逾期=\"否\""));
+
+        var p2OverdueEmpty = p2Below.Where(i => string.IsNullOrWhiteSpace(Get(i, "是否逾期"))).ToList();
+        dimensions.Add(Dim(19, "P2及以下技术缺陷中逾期状态为空数量", p2OverdueEmpty.Count, Ids(p2OverdueEmpty),
+            "P2及以下技术缺陷中 是否逾期为空"));
+
+        // 20. 逾期验证
+        var overdueSum = p2Overdue.Count + p2NotOverdue.Count + p2OverdueEmpty.Count;
+        var overdueValid = overdueSum == p2Below.Count;
+        dimensions.Add(Dim(20, "P2及以下技术缺陷逾期统计验证", overdueSum, new List<string>(),
+            $"逾期+未逾期+空={overdueSum}，P2及以下总数={p2Below.Count}",
+            overdueValid ? "✅ 一致" : $"❌ 差异={p2Below.Count - overdueSum}"));
+
+        // 21-23. P2 及以下及时处理
+        var p2Timely = p2Below.Where(i => Get(i, "及时处理") == "是").ToList();
+        dimensions.Add(Dim(21, "P2及以下技术缺陷中及时处理数量", p2Timely.Count, Ids(p2Timely),
+            "P2及以下技术缺陷中 及时处理=\"是\""));
+
+        var p2NotTimely = p2Below.Where(i => Get(i, "及时处理") == "否").ToList();
+        dimensions.Add(Dim(22, "P2及以下技术缺陷中未及时处理数量", p2NotTimely.Count, Ids(p2NotTimely),
+            "P2及以下技术缺陷中 及时处理=\"否\""));
+
+        var p2TimelyUnknown = p2Below.Where(i =>
+        {
+            var v = Get(i, "及时处理");
+            return v == "无法判断" || string.IsNullOrWhiteSpace(v);
+        }).ToList();
+        dimensions.Add(Dim(23, "P2及以下技术缺陷中无法判断是否及时处理数量", p2TimelyUnknown.Count, Ids(p2TimelyUnknown),
+            "P2及以下技术缺陷中 及时处理=\"无法判断\"或为空"));
+
+        // 24. 及时处理验证
+        var timelySum = p2Timely.Count + p2NotTimely.Count + p2TimelyUnknown.Count;
+        var timelyValid = timelySum == p2Below.Count;
+        dimensions.Add(Dim(24, "P2及以下技术缺陷及时处理统计验证", timelySum, new List<string>(),
+            $"及时+未及时+无法判断={timelySum}，P2及以下总数={p2Below.Count}",
+            timelyValid ? "✅ 一致" : $"❌ 差异={p2Below.Count - timelySum}"));
+
+        // 25. 已修复数量
+        var closedStatuses = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "closed", "已关闭", "已解决", "关闭" };
+        var p2Fixed = p2Below.Where(i => closedStatuses.Contains(Get(i, "状态"))).ToList();
+        dimensions.Add(Dim(25, "P2及以下技术缺陷中已修复数量", p2Fixed.Count, Ids(p2Fixed),
+            "P2及以下技术缺陷中 状态∈{closed,已关闭,已解决,关闭}"));
+
+        // 26. 及时修复率
+        var fixRate = p2Below.Count > 0 ? Math.Round(100.0 * p2Fixed.Count / p2Below.Count, 2) : 0;
+        var fixRating = fixRate >= 90 ? "优秀" : fixRate >= 80 ? "良好" : fixRate >= 70 ? "一般" : fixRate >= 60 ? "需改进" : "较差";
+        dimensions.Add(Dim(26, "P2及以下技术缺陷及时修复率", p2Fixed.Count, new List<string>(),
+            $"{p2Fixed.Count}/{p2Below.Count}×100%={fixRate}%",
+            $"比率={fixRate}%，评级={fixRating}"));
+
+        // 27. 及时处理率
+        var processRate = p2Below.Count > 0 ? Math.Round(100.0 * p2Timely.Count / p2Below.Count, 2) : 0;
+        var processRating = processRate >= 90 ? "优秀" : processRate >= 80 ? "良好" : processRate >= 70 ? "一般" : processRate >= 60 ? "需改进" : "较差";
+        dimensions.Add(Dim(27, "P2及以下技术缺陷及时处理率", p2Timely.Count, new List<string>(),
+            $"{p2Timely.Count}/{p2Below.Count}×100%={processRate}%",
+            $"比率={processRate}%，评级={processRating}"));
+
+        // 28. 结构归母统计
+        var structureGroups = techBugs
+            .GroupBy(i =>
+            {
+                var v = Get(i, "结构归母");
+                return string.IsNullOrWhiteSpace(v) ? "暂未归母" : v;
+            })
+            .OrderByDescending(g => g.Count())
+            .Select(g => new
+            {
+                category = g.Key,
+                count = g.Count(),
+                ids = g.Select(i => Get(i, "缺陷ID")).Where(id => !string.IsNullOrWhiteSpace(id)).ToList()
+            })
+            .ToList();
+        dimensions.Add(new Dictionary<string, object>
+        {
+            ["dim"] = 28,
+            ["name"] = "技术缺陷结构归母统计",
+            ["logic"] = "按结构归母分组统计技术缺陷",
+            ["groups"] = structureGroups,
+            ["totalTechBugs"] = techBugs.Count,
+        });
+
+        // ── 组装输出 ──
+        var output = new Dictionary<string, object>
+        {
+            ["_meta"] = new
+            {
+                aggregationType = "tapd-bug-28d",
+                totalRecords = all.Count,
+                generatedAt = DateTime.UtcNow.ToString("O"),
+                note = "所有统计由代码精确计算，非 LLM 估算",
+            },
+            ["dimensions"] = dimensions,
+        };
+
+        var outputJson = JsonSerializer.Serialize(output, JsonPretty);
+        logs.AppendLine($"  28 维度统计完成");
+        logs.AppendLine($"  输出摘要: {outputJson.Length} chars ({Encoding.UTF8.GetByteCount(outputJson)} bytes)");
+        logs.AppendLine($"  关键指标: 总数={all.Count}, 技术缺陷={techBugs.Count}, P2及以下={p2Below.Count}");
+        logs.AppendLine($"  及时修复率={fixRate}%({fixRating}), 及时处理率={processRate}%({processRating})");
+
+        var outputArtifact = MakeTextArtifact(node, "agg-out", "TAPD 28维度统计", outputJson, "application/json");
+        return new CapsuleResult(new List<ExecutionArtifact> { outputArtifact }, logs.ToString());
+    }
+
+    /// <summary>将 JsonElement 展平为 Dictionary（只取一层字符串值）</summary>
+    private static Dictionary<string, string> JsonElementToDict(JsonElement el)
+    {
+        var dict = new Dictionary<string, string>();
+        if (el.ValueKind != JsonValueKind.Object) return dict;
+        foreach (var prop in el.EnumerateObject())
+        {
+            dict[prop.Name] = prop.Value.ValueKind switch
+            {
+                JsonValueKind.String => prop.Value.GetString() ?? "",
+                JsonValueKind.Number => prop.Value.GetRawText(),
+                JsonValueKind.True => "true",
+                JsonValueKind.False => "false",
+                JsonValueKind.Null => "",
+                _ => prop.Value.GetRawText(),
+            };
+        }
+        return dict;
     }
 
     /// <summary>从 JSON 元素中提取字段值（支持嵌套路径如 "Bug.severity"）</summary>
@@ -1857,8 +2360,8 @@ public static class CapsuleExecutor
         if (targetFormat == "json")
         {
             output = prettyPrint
-                ? JsonSerializer.Serialize(jsonData, new JsonSerializerOptions { WriteIndented = true })
-                : JsonSerializer.Serialize(jsonData);
+                ? JsonSerializer.Serialize(jsonData, JsonPretty)
+                : JsonSerializer.Serialize(jsonData, JsonCompact);
             mimeType = "application/json";
         }
         else if (targetFormat == "csv" || targetFormat == "tsv")
@@ -1908,7 +2411,7 @@ public static class CapsuleExecutor
             rows.Add(row);
         }
 
-        return JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize(rows));
+        return JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize(rows, JsonCompact));
     }
 
     private static List<string> ParseCsvLine(string line, char delimiter)
@@ -1978,7 +2481,7 @@ public static class CapsuleExecutor
     private static string XmlElementToJson(System.Xml.Linq.XElement el)
     {
         if (!el.HasElements)
-            return JsonSerializer.Serialize(el.Value);
+            return JsonSerializer.Serialize(el.Value, JsonCompact);
 
         // 检查是否有重复子元素名（数组）
         var groups = el.Elements().GroupBy(e => e.Name.LocalName).ToList();
@@ -1997,7 +2500,7 @@ public static class CapsuleExecutor
             }
         }
 
-        return JsonSerializer.Serialize(dict);
+        return JsonSerializer.Serialize(dict, JsonCompact);
     }
 
     private static string JsonToXml(JsonElement json, string rootTag, bool indent)
@@ -2100,7 +2603,8 @@ public static class CapsuleExecutor
     // ── 输出类 ──────────────────────────────────────────────
 
     public static async Task<CapsuleResult> ExecuteReportGeneratorAsync(
-        IServiceProvider sp, WorkflowNode node, Dictionary<string, string> variables, List<ExecutionArtifact> inputArtifacts)
+        IServiceProvider sp, WorkflowNode node, Dictionary<string, string> variables,
+        List<ExecutionArtifact> inputArtifacts, EmitEventDelegate? emitEvent = null)
     {
         var gateway = sp.GetService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>();
         if (gateway == null)
@@ -2139,7 +2643,7 @@ public static class CapsuleExecutor
         {
             AppCallerCode = PrdAgent.Core.Models.AppCallerRegistry.WorkflowAgent.ReportGenerator.Chat,
             ModelType = "chat",
-            TimeoutSeconds = 300, // 报告生成可能需要处理大量输入数据，延长超时
+            TimeoutSeconds = 300,
             RequestBody = new System.Text.Json.Nodes.JsonObject
             {
                 ["messages"] = new System.Text.Json.Nodes.JsonArray
@@ -2156,20 +2660,111 @@ public static class CapsuleExecutor
         reportLogs.AppendLine($"  ReportTemplate ({reportTemplate.Length} chars):");
         reportLogs.AppendLine(reportTemplate);
         reportLogs.AppendLine($"  Prompt 总长: {prompt.Length} chars (估算 {EstimateTokens(prompt)} tokens)");
-        reportLogs.AppendLine("  --- 调用 LLM Gateway ---");
+        reportLogs.AppendLine("  --- 调用 LLM Gateway (streaming) ---");
 
-        var response = await gateway.SendAsync(request, CancellationToken.None);
-        var content = response.Content ?? "";
+        // ── 流式调用，与 LLM 分析器相同模式 ──
+        var contentBuilder = new StringBuilder();
+        var model = "(unknown)";
+        int inputTokens = 0, outputTokens = 0;
+        string? resolutionType = null;
+        string? errorCode = null, errorMessage = null;
 
-        reportLogs.AppendLine($"  Model: {response.Resolution?.ActualModel ?? "(unknown)"}");
-        reportLogs.AppendLine($"  Tokens: input={response.TokenUsage?.InputTokens ?? 0} output={response.TokenUsage?.OutputTokens ?? 0}");
-        reportLogs.AppendLine($"  ResolutionType: {response.Resolution?.ResolutionType}");
+        const int CHUNK_BATCH_SIZE = 200;
+        var pendingChunk = new StringBuilder();
+        var streamSw = Stopwatch.StartNew();
 
-        // 记录 Gateway 错误信息
-        if (!string.IsNullOrWhiteSpace(response.ErrorCode) || !string.IsNullOrWhiteSpace(response.ErrorMessage))
+        if (emitEvent != null)
         {
-            reportLogs.AppendLine($"  ❌ Gateway 错误: [{response.ErrorCode}] {response.ErrorMessage}");
-            reportLogs.AppendLine($"  HTTP Status: {response.StatusCode}");
+            await emitEvent("llm-stream-start", new { nodeId = node.NodeId, nodeName = node.Name });
+        }
+
+        try
+        {
+            await foreach (var chunk in gateway.StreamAsync(request, CancellationToken.None))
+            {
+                switch (chunk.Type)
+                {
+                    case PrdAgent.Infrastructure.LlmGateway.GatewayChunkType.Start:
+                        model = chunk.Resolution?.ActualModel ?? "(unknown)";
+                        resolutionType = chunk.Resolution?.ResolutionType;
+                        if (emitEvent != null)
+                        {
+                            await emitEvent("llm-stream-start", new { nodeId = node.NodeId, nodeName = node.Name, model });
+                        }
+                        break;
+
+                    case PrdAgent.Infrastructure.LlmGateway.GatewayChunkType.Text:
+                        if (!string.IsNullOrEmpty(chunk.Content))
+                        {
+                            contentBuilder.Append(chunk.Content);
+                            pendingChunk.Append(chunk.Content);
+
+                            if (emitEvent != null && pendingChunk.Length >= CHUNK_BATCH_SIZE)
+                            {
+                                await emitEvent("llm-chunk", new
+                                {
+                                    nodeId = node.NodeId,
+                                    content = pendingChunk.ToString(),
+                                    accumulatedLength = contentBuilder.Length,
+                                });
+                                pendingChunk.Clear();
+                            }
+                        }
+                        break;
+
+                    case PrdAgent.Infrastructure.LlmGateway.GatewayChunkType.Done:
+                        inputTokens = chunk.TokenUsage?.InputTokens ?? 0;
+                        outputTokens = chunk.TokenUsage?.OutputTokens ?? 0;
+                        break;
+
+                    case PrdAgent.Infrastructure.LlmGateway.GatewayChunkType.Error:
+                        errorCode = "STREAM_ERROR";
+                        errorMessage = chunk.Error;
+                        break;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            errorCode = "STREAM_EXCEPTION";
+            errorMessage = ex.Message;
+        }
+
+        // 发送剩余的 pending chunk
+        if (emitEvent != null && pendingChunk.Length > 0)
+        {
+            await emitEvent("llm-chunk", new
+            {
+                nodeId = node.NodeId,
+                content = pendingChunk.ToString(),
+                accumulatedLength = contentBuilder.Length,
+            });
+        }
+
+        streamSw.Stop();
+        var content = contentBuilder.ToString();
+
+        if (emitEvent != null)
+        {
+            await emitEvent("llm-stream-end", new
+            {
+                nodeId = node.NodeId,
+                totalLength = content.Length,
+                durationMs = streamSw.ElapsedMilliseconds,
+                model,
+                inputTokens,
+                outputTokens,
+            });
+        }
+
+        reportLogs.AppendLine($"  Model: {model}");
+        reportLogs.AppendLine($"  Tokens: input={inputTokens} output={outputTokens}");
+        reportLogs.AppendLine($"  ResolutionType: {resolutionType}");
+        reportLogs.AppendLine($"  Streaming duration: {streamSw.ElapsedMilliseconds}ms");
+
+        if (!string.IsNullOrWhiteSpace(errorCode) || !string.IsNullOrWhiteSpace(errorMessage))
+        {
+            reportLogs.AppendLine($"  ❌ Gateway 错误: [{errorCode}] {errorMessage}");
         }
 
         reportLogs.AppendLine($"  LLM 响应 ({content.Length} chars):");
@@ -2177,8 +2772,8 @@ public static class CapsuleExecutor
 
         if (string.IsNullOrWhiteSpace(content))
         {
-            var reason = !string.IsNullOrWhiteSpace(response.ErrorMessage)
-                ? $"Gateway 错误: {response.ErrorMessage}"
+            var reason = !string.IsNullOrWhiteSpace(errorMessage)
+                ? $"Gateway 错误: {errorMessage}"
                 : "可能是 LLM 调度失败";
             reportLogs.AppendLine($"  ⚠️ 警告: 报告内容为空 ({reason})");
         }
@@ -2201,9 +2796,10 @@ public static class CapsuleExecutor
             .Replace("{{datetime}}", now.ToString("yyyy-MM-dd_HHmmss"))
             .Replace("{datetime}", now.ToString("yyyy-MM-dd_HHmmss"));
 
-        // 确保文件有扩展名
+        // 规范化扩展名（markdown → md）
+        var ext = format == "markdown" ? "md" : format;
         if (!fileName.Contains('.'))
-            fileName = $"{fileName}.{format}";
+            fileName = $"{fileName}.{ext}";
 
         var content = string.Join("\n", inputArtifacts
             .Where(a => !string.IsNullOrWhiteSpace(a.InlineContent))
@@ -2211,11 +2807,11 @@ public static class CapsuleExecutor
 
         var mimeType = format switch
         {
-            "csv" => "text/csv",
-            "html" => "text/html",
-            "md" or "markdown" => "text/markdown",
-            "txt" => "text/plain",
-            _ => "application/json",
+            "csv" => "text/csv; charset=utf-8",
+            "html" => "text/html; charset=utf-8",
+            "md" or "markdown" => "text/markdown; charset=utf-8",
+            "txt" => "text/plain; charset=utf-8",
+            _ => "application/json; charset=utf-8",
         };
 
         var exportLogs = new StringBuilder();
@@ -2348,14 +2944,46 @@ public static class CapsuleExecutor
         var slotId = node.OutputSlots.FirstOrDefault(s => s.SlotId == slotSuffix)?.SlotId
                   ?? node.OutputSlots.FirstOrDefault()?.SlotId
                   ?? slotSuffix;
+
+        // 自动补全文件扩展名，确保下载时带正确后缀
+        var displayName = EnsureFileExtension(name, mimeType);
+
         return new ExecutionArtifact
         {
-            Name = name,
+            Name = displayName,
             MimeType = mimeType,
             SlotId = slotId,
             InlineContent = content,
             SizeBytes = System.Text.Encoding.UTF8.GetByteCount(content),
         };
+    }
+
+    /// <summary>
+    /// 确保文件名带正确扩展名（根据 mimeType 推断）
+    /// </summary>
+    private static string EnsureFileExtension(string name, string mimeType)
+    {
+        if (string.IsNullOrWhiteSpace(name)) name = "output";
+        // 已有扩展名则直接返回
+        if (System.IO.Path.HasExtension(name)) return name;
+
+        var ext = mimeType switch
+        {
+            "text/markdown" => ".md",
+            "text/html" => ".html",
+            "text/css" => ".css",
+            "text/csv" => ".csv",
+            "application/json" => ".json",
+            "application/xml" or "text/xml" => ".xml",
+            "application/javascript" => ".js",
+            "text/plain" => ".txt",
+            _ when mimeType.Contains("markdown") => ".md",
+            _ when mimeType.Contains("json") => ".json",
+            _ when mimeType.Contains("csv") => ".csv",
+            _ when mimeType.Contains("html") => ".html",
+            _ => ".txt",
+        };
+        return name + ext;
     }
 
     public static string? GetConfigString(WorkflowNode node, string key)

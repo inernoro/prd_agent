@@ -88,7 +88,7 @@ public sealed class WorkflowRunWorker : BackgroundService
             return;
         }
 
-        if (execution.Status is WorkflowExecutionStatus.Completed or WorkflowExecutionStatus.Failed or WorkflowExecutionStatus.Cancelled)
+        if (execution.Status is WorkflowExecutionStatus.Completed or WorkflowExecutionStatus.Failed or WorkflowExecutionStatus.Cancelled or WorkflowExecutionStatus.Paused)
         {
             _logger.LogInformation("Execution already terminal: {ExecutionId} status={Status}", executionId, execution.Status);
             return;
@@ -174,7 +174,11 @@ public sealed class WorkflowRunWorker : BackgroundService
             try
             {
                 var inputArtifacts = CollectInputArtifacts(nodeId, execution.EdgeSnapshot, artifactStore);
-                var result = await ExecuteCapsuleAsync(scope.ServiceProvider, nodeDef, execution.Variables, inputArtifacts);
+
+                // 持久化实际收到的上游输入（用于调试和回放）
+                nodeExec.InputArtifacts = inputArtifacts;
+
+                var result = await ExecuteCapsuleAsync(scope.ServiceProvider, nodeDef, execution.Variables, inputArtifacts, executionId);
 
                 nodeSw.Stop();
                 nodeExec.Status = NodeExecutionStatus.Completed;
@@ -262,6 +266,35 @@ public sealed class WorkflowRunWorker : BackgroundService
             }
 
             await UpdateNodeExecutionAsync(db, executionId, nodeExec);
+
+            // 断点：节点完成后暂停工作流
+            if (nodeExec.Status == NodeExecutionStatus.Completed && nodeDef.Breakpoint)
+            {
+                _logger.LogInformation("Breakpoint hit at node {NodeId} ({NodeName}), pausing execution {ExecutionId}",
+                    nodeId, nodeExec.NodeName, executionId);
+
+                nodeExec.Status = NodeExecutionStatus.Paused;
+                await UpdateNodeExecutionAsync(db, executionId, nodeExec);
+
+                sw.Stop();
+                await db.WorkflowExecutions.UpdateOneAsync(
+                    e => e.Id == executionId,
+                    Builders<WorkflowExecution>.Update
+                        .Set(e => e.Status, WorkflowExecutionStatus.Paused)
+                        .Set(e => e.DurationMs, sw.ElapsedMilliseconds),
+                    cancellationToken: CancellationToken.None);
+
+                await EmitEventAsync(executionId, "execution-paused", new
+                {
+                    executionId,
+                    pausedAtNodeId = nodeId,
+                    pausedAtNodeName = nodeExec.NodeName,
+                    durationMs = sw.ElapsedMilliseconds,
+                    completedNodes = execution.NodeExecutions.Count(n => n.Status is NodeExecutionStatus.Completed or NodeExecutionStatus.Paused),
+                });
+
+                return; // 停止执行，等用户继续
+            }
 
             // 如果节点成功，检查下游节点是否就绪
             if (nodeExec.Status == NodeExecutionStatus.Completed)
@@ -418,9 +451,16 @@ public sealed class WorkflowRunWorker : BackgroundService
         IServiceProvider sp,
         WorkflowNode node,
         Dictionary<string, string> variables,
-        List<ExecutionArtifact> inputArtifacts)
+        List<ExecutionArtifact> inputArtifacts,
+        string executionId)
     {
-        return await CapsuleExecutor.ExecuteAsync(sp, _logger, node, variables, inputArtifacts);
+        // LLM 类舱支持流式输出事件（分析器 + 报告生成器）
+        CapsuleExecutor.EmitEventDelegate? emitEvent = null;
+        if (node.NodeType is CapsuleTypes.LlmAnalyzer or CapsuleTypes.ReportGenerator)
+        {
+            emitEvent = (eventName, payload) => EmitEventAsync(executionId, eventName, payload);
+        }
+        return await CapsuleExecutor.ExecuteAsync(sp, _logger, node, variables, inputArtifacts, emitEvent);
     }
 
     private static void SkipDownstream(string failedNodeId, Dictionary<string, List<string>> downstream, List<NodeExecution> nodeExecutions)
@@ -470,6 +510,7 @@ public sealed class WorkflowRunWorker : BackgroundService
             .Set("NodeExecutions.$.DurationMs", nodeExec.DurationMs)
             .Set("NodeExecutions.$.ErrorMessage", nodeExec.ErrorMessage)
             .Set("NodeExecutions.$.Logs", nodeExec.Logs)
+            .Set("NodeExecutions.$.InputArtifacts", nodeExec.InputArtifacts)
             .Set("NodeExecutions.$.OutputArtifacts", nodeExec.OutputArtifacts);
 
         await db.WorkflowExecutions.UpdateOneAsync(filter, update, cancellationToken: CancellationToken.None);
@@ -544,6 +585,9 @@ public sealed class WorkflowRunWorker : BackgroundService
             {
                 var bytes = System.Text.Encoding.UTF8.GetBytes(artifact.InlineContent);
                 var mime = artifact.MimeType ?? "text/plain";
+                // 文本类产物添加 charset=utf-8，确保浏览器下载/打开时正确解码中文
+                if (mime.StartsWith("text/") && !mime.Contains("charset"))
+                    mime += "; charset=utf-8";
 
                 var stored = await storage.SaveAsync(bytes, mime, CancellationToken.None,
                     domain: "workflow-agent", type: "doc");
