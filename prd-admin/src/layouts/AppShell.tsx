@@ -350,8 +350,21 @@ export default function AppShell() {
                         key={i}
                         href={att.url}
                         download={att.name}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                        onClick={async (e) => {
+                          e.preventDefault();
+                          try {
+                            const resp = await fetch(att.url);
+                            const blob = await resp.blob();
+                            const blobUrl = URL.createObjectURL(blob);
+                            const link = document.createElement('a');
+                            link.href = blobUrl;
+                            link.download = att.name;
+                            link.click();
+                            URL.revokeObjectURL(blobUrl);
+                          } catch {
+                            window.open(att.url, '_blank');
+                          }
+                        }}
                         className="inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-[6px] transition-colors hover:bg-white/10 cursor-pointer no-underline"
                         style={{ color: 'var(--accent-gold)' }}
                       >
@@ -970,8 +983,21 @@ export default function AppShell() {
                                     key={i}
                                     href={att.url}
                                     download={att.name}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
+                                    onClick={async (e) => {
+                                      e.preventDefault();
+                                      try {
+                                        const resp = await fetch(att.url);
+                                        const blob = await resp.blob();
+                                        const blobUrl = URL.createObjectURL(blob);
+                                        const link = document.createElement('a');
+                                        link.href = blobUrl;
+                                        link.download = att.name;
+                                        link.click();
+                                        URL.revokeObjectURL(blobUrl);
+                                      } catch {
+                                        window.open(att.url, '_blank');
+                                      }
+                                    }}
                                     className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-[6px] transition-colors hover:bg-white/10 cursor-pointer no-underline"
                                     style={{
                                       background: 'rgba(255,255,255,0.06)',

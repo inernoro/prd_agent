@@ -398,13 +398,6 @@ function ArtifactCard({ artifact, isExpanded, onToggle, onPreview }: {
   const hasInline = !!artifact.inlineContent;
   const hasContent = hasInline || !!artifact.cosUrl;
 
-  // 下载链接：优先 COS URL，否则用 inlineContent 生成 blob URL
-  function getDownloadHref(): string | null {
-    if (artifact.cosUrl) return artifact.cosUrl;
-    if (!artifact.inlineContent) return null;
-    return URL.createObjectURL(new Blob([artifact.inlineContent], { type: artifact.mimeType || 'text/plain' }));
-  }
-
   function getDownloadName(): string {
     const name = artifact.name || 'output';
     if (/\.\w{1,5}$/.test(name)) return name;
@@ -415,8 +408,30 @@ function ArtifactCard({ artifact, isExpanded, onToggle, onPreview }: {
     return name + ext;
   }
 
-  const downloadHref = getDownloadHref();
   const downloadName = getDownloadName();
+
+  /** 下载：inlineContent 直接 blob，COS URL fetch→blob（跨域 download 属性不生效） */
+  async function handleDownload(e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      let blob: Blob;
+      if (artifact.inlineContent) {
+        blob = new Blob([artifact.inlineContent], { type: artifact.mimeType || 'text/plain' });
+      } else if (artifact.cosUrl) {
+        const resp = await fetch(artifact.cosUrl);
+        blob = await resp.blob();
+      } else return;
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = downloadName;
+      link.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      if (artifact.cosUrl) window.open(artifact.cosUrl, '_blank');
+    }
+  }
 
   return (
     <div
@@ -450,13 +465,11 @@ function ArtifactCard({ artifact, isExpanded, onToggle, onPreview }: {
           </button>
         )}
         {/* Download link (always visible for any artifact with content) */}
-        {downloadHref && (
+        {hasContent && (
           <a
-            href={downloadHref}
+            href={artifact.cosUrl || '#'}
             download={downloadName}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
+            onClick={handleDownload}
             className="surface-row p-1 rounded-[6px] flex-shrink-0 transition-colors"
             title={`下载 ${downloadName}`}
             style={{ color: 'var(--accent-gold)' }}

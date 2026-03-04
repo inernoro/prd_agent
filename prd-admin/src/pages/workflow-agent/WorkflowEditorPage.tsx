@@ -92,7 +92,7 @@ function ensureExtension(name: string, mimeType?: string): string {
   return name + inferExtension(mimeType);
 }
 
-/** 通用产物操作按钮：预览 + 下载（全部使用 <a> 标签，不使用 JS 编程式下载） */
+/** 通用产物操作按钮：预览 + 下载 */
 function ArtifactActionButtons({ artifact, onPreview, size = 'sm' }: {
   artifact: { name: string; mimeType: string; sizeBytes: number; inlineContent?: string; cosUrl?: string };
   onPreview?: (art: ExecutionArtifact) => void;
@@ -100,16 +100,35 @@ function ArtifactActionButtons({ artifact, onPreview, size = 'sm' }: {
 }) {
   const iconSize = size === 'sm' ? 'w-3.5 h-3.5' : 'w-4 h-4';
   const padding = size === 'sm' ? 'p-1' : 'p-1.5';
-
-  // 优先使用 COS URL（已有正确后缀），没有则用 inlineContent 生成 blob URL
-  const downloadUrl = artifact.cosUrl || (artifact.inlineContent
-    ? URL.createObjectURL(new Blob([artifact.inlineContent], { type: artifact.mimeType || 'text/plain' }))
-    : null);
   const downloadName = ensureExtension(artifact.name, artifact.mimeType);
+  const hasContent = !!(artifact.inlineContent || artifact.cosUrl);
+
+  /** 下载：inlineContent 直接 blob，COS URL fetch 后转 blob（跨域 <a download> 不生效） */
+  async function handleDownload(e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      let blob: Blob;
+      if (artifact.inlineContent) {
+        blob = new Blob([artifact.inlineContent], { type: artifact.mimeType || 'text/plain' });
+      } else if (artifact.cosUrl) {
+        const resp = await fetch(artifact.cosUrl);
+        blob = await resp.blob();
+      } else return;
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = downloadName;
+      link.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      if (artifact.cosUrl) window.open(artifact.cosUrl, '_blank');
+    }
+  }
 
   return (
     <>
-      {(artifact.inlineContent || artifact.cosUrl) && onPreview && (
+      {hasContent && onPreview && (
         <button
           onClick={(e) => { e.stopPropagation(); onPreview(artifact as ExecutionArtifact); }}
           className={`${padding} rounded-[6px] flex-shrink-0 transition-colors`}
@@ -119,13 +138,11 @@ function ArtifactActionButtons({ artifact, onPreview, size = 'sm' }: {
           <Eye className={iconSize} />
         </button>
       )}
-      {downloadUrl && (
+      {hasContent && (
         <a
-          href={downloadUrl}
+          href={artifact.cosUrl || '#'}
           download={downloadName}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={(e) => e.stopPropagation()}
+          onClick={handleDownload}
           className={`${padding} rounded-[6px] flex-shrink-0 transition-colors`}
           title={`下载 ${downloadName}`}
           style={{ color: 'var(--text-muted)' }}
