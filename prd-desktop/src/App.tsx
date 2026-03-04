@@ -16,7 +16,6 @@ import GroupInfoDrawer from './components/Group/GroupInfoDrawer';
 import SystemErrorModal from './components/Feedback/SystemErrorModal';
 import SettingsModal from './components/Settings/SettingsModal';
 import AssetsDiagPage from './components/Assets/AssetsDiagPage';
-import DesktopAssetsPage from './components/Assets/DesktopAssetsPage';
 import DefectListPage from './components/Defect/DefectListPage';
 import StartLoadOverlay from './components/Assets/StartLoadOverlay';
 import { isSystemErrorCode } from './lib/systemError';
@@ -420,9 +419,7 @@ function App() {
               - 没有任何群组：右侧显示上传 PRD（上传后自动建群）
               - 有群组：右侧进入会话区域；未绑定 PRD 的群组显示“待上传/不可对话”空态（由 ChatContainer/ChatInput 控制）
           */}
-          {mode === 'Assets' ? (
-            <DesktopAssetsPage />
-          ) : mode === 'AssetsDiag' ? (
+          {mode === 'AssetsDiag' ? (
             <AssetsDiagPage />
           ) : mode === 'Defect' ? (
             <DefectListPage />

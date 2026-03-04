@@ -147,32 +147,6 @@ pub struct DesktopSkinsResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct MyAssetsResponse {
-    pub items: Vec<MyAssetItem>,
-    pub total: i64,
-    pub has_more: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MyAssetItem {
-    pub id: String,
-    pub r#type: String,
-    pub title: String,
-    pub summary: Option<String>,
-    pub source: Option<String>,
-    pub url: Option<String>,
-    pub thumbnail_url: Option<String>,
-    pub mime: Option<String>,
-    pub width: i32,
-    pub height: i32,
-    pub size_bytes: i64,
-    pub created_at: String,
-    pub workspace_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct SwitchRoleResponse {
     pub session_id: String,
     pub current_role: String,

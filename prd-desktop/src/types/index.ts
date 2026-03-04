@@ -1,5 +1,5 @@
 export type UserRole = 'PM' | 'DEV' | 'QA' | 'ADMIN';
-export type InteractionMode = 'QA' | 'Knowledge' | 'PrdPreview' | 'AssetsDiag' | 'Defect' | 'Assets';
+export type InteractionMode = 'QA' | 'Knowledge' | 'PrdPreview' | 'AssetsDiag' | 'Defect';
 export type MessageRole = 'User' | 'Assistant';
 
 export interface DocCitation {
@@ -177,33 +177,6 @@ export interface DefectStats {
   total: number;
   byStatus: Record<string, number>;
   bySeverity: Record<string, number>;
-}
-
-// ━━━ 资产类型（我的资产） ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-export type AssetType = 'image' | 'document' | 'attachment';
-
-export interface AssetItem {
-  id: string;
-  type: AssetType;
-  title: string;
-  /** 内容摘要（前80字），让卡片不再空白 */
-  summary?: string | null;
-  /** 来源标签（如"视觉创作"、"PRD Agent"、"手动上传"） */
-  source?: string | null;
-  url?: string | null;
-  thumbnailUrl?: string | null;
-  mime?: string | null;
-  width: number;
-  height: number;
-  sizeBytes: number;
-  createdAt: string;
-  workspaceId?: string | null;
-}
-
-export interface MyAssetsResponse {
-  items: AssetItem[];
-  total: number;
-  hasMore: boolean;
 }
 
 // ━━━ 附件类型 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
