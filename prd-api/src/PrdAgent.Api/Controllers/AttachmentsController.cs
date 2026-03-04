@@ -19,16 +19,31 @@ public class AttachmentsController : ControllerBase
     private readonly IAssetStorage _assetStorage;
     private readonly ILogger<AttachmentsController> _logger;
 
-    /// <summary>5 MB per file</summary>
-    private const long MaxUploadBytes = 5 * 1024 * 1024;
+    /// <summary>20 MB per file</summary>
+    private const long MaxUploadBytes = 20 * 1024 * 1024;
 
     private static readonly HashSet<string> AllowedMimeTypes = new(StringComparer.OrdinalIgnoreCase)
     {
+        // Images
         "image/png",
         "image/jpeg",
         "image/gif",
         "image/webp",
         "image/svg+xml",
+        // Documents
+        "text/plain",
+        "text/markdown",
+        "text/csv",
+        "application/pdf",
+        "application/json",
+        "application/xml",
+        "text/xml",
+        "text/html",
+    };
+
+    private static readonly HashSet<string> ImageMimeTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml",
     };
 
     public AttachmentsController(
@@ -71,7 +86,8 @@ public class AttachmentsController : ControllerBase
         }
 
         // 存储到 COS / 本地
-        var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: "prd-agent", type: "img");
+        var isImage = ImageMimeTypes.Contains(mime);
+        var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: "prd-agent", type: isImage ? "img" : "doc");
 
         var attachment = new Attachment
         {
@@ -80,7 +96,7 @@ public class AttachmentsController : ControllerBase
             MimeType = mime,
             Size = file.Length,
             Url = stored.Url,
-            Type = AttachmentType.Image,
+            Type = isImage ? AttachmentType.Image : AttachmentType.Document,
             UploadedAt = DateTime.UtcNow,
         };
 
