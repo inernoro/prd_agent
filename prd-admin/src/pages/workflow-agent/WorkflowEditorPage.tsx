@@ -1319,7 +1319,7 @@ export function WorkflowEditorPage() {
       : `${normalized.slice(0, Math.max(0, maxLength - 1))}…`;
   }
 
-  function buildCompactBackendLog(logs: string, artifacts: ExecutionArtifact[]): {
+  function buildCompactBackendLog(logs: string, artifacts: ExecutionArtifact[], nodeStatus?: string): {
     level: LogEntry['level'];
     message: string;
     detail?: string;
@@ -1331,51 +1331,19 @@ export function WorkflowEditorPage() {
 
     if (rawLines.length === 0 && artifacts.length === 0) return null;
 
-    const lines = rawLines.filter((line) => !(line.startsWith('[') && line.includes(']') && line.includes('节点:')));
-
-    const hasError = lines.some((line) =>
-      line.includes('❌') || line.includes('[ERROR]') || line.includes('执行失败') || line.includes('失败:'),
-    );
-    const hasWarn = lines.some((line) => line.includes('⚠️') || line.includes('警告'));
-    const level: LogEntry['level'] = hasError ? 'error' : hasWarn ? 'warn' : 'info';
+    const level: LogEntry['level'] =
+      nodeStatus === 'failed' ? 'error'
+        : nodeStatus === 'skipped' ? 'warn'
+          : 'info';
 
     const summaryTokens: string[] = [];
-
-    const fileNameLine = lines.find((line) => line.startsWith('FileName:'));
-    const formatLine = lines.find((line) => line.startsWith('Format:'));
-    const inputArtifactsLine = lines.find((line) => line.startsWith('InputArtifacts:'));
-    const contentLine = lines.find((line) => line.startsWith('Content:'));
-    const previewLine = lines.find((line) => line.startsWith('Preview:'));
-    const modelLine = lines.find((line) => line.startsWith('Model:'));
-    const tokenLine = lines.find((line) => line.startsWith('Tokens:'));
-    const notificationLine = lines.find((line) => line.startsWith('Notification sent:'));
-    const gatewayLine = lines.find((line) => line === '--- 调用 LLM Gateway ---');
-
-    if (fileNameLine) summaryTokens.push(`文件 ${trimForSummary(fileNameLine.replace(/^FileName:\s*/, ''), 24)}`);
-    if (formatLine) {
-      const formatValue = formatLine
-        .replace(/^Format:\s*/, '')
-        .replace(/\s*\(MIME:[^)]+\)/i, '')
-        .trim();
-      summaryTokens.push(`格式 ${trimForSummary(formatValue, 14)}`);
+    if (rawLines.length > 0) {
+      summaryTokens.push(`日志 ${rawLines.length} 行`);
+      summaryTokens.push(trimForSummary(rawLines[0], 42));
     }
-    if (inputArtifactsLine) {
-      const m = inputArtifactsLine.match(/InputArtifacts:\s*(\d+)/i);
-      summaryTokens.push(`输入 ${m?.[1] ?? trimForSummary(inputArtifactsLine.replace(/^InputArtifacts:\s*/i, ''), 8)} 个`);
-    }
-    if (contentLine) summaryTokens.push(trimForSummary(contentLine.replace(/^Content:\s*/, '内容 '), 36));
-    if (modelLine) summaryTokens.push(trimForSummary(modelLine.replace(/^Model:\s*/, '模型 '), 30));
-    if (tokenLine) summaryTokens.push(trimForSummary(tokenLine.replace(/^Tokens:\s*/, 'Tokens '), 30));
-    if (gatewayLine) summaryTokens.push('调用 LLM Gateway');
-    if (notificationLine) summaryTokens.push(trimForSummary(notificationLine.replace(/^Notification sent:\s*/, '已发送通知: '), 32));
-    if (previewLine && summaryTokens.length < 5) {
-      summaryTokens.push(trimForSummary(previewLine.replace(/^Preview:\s*/, '预览: '), 30));
-    }
-    if (artifacts.length > 0) summaryTokens.push(`产物 ${artifacts.length} 个`);
-
-    if (summaryTokens.length === 0) {
-      const fallback = lines[0] || `产物 ${artifacts.length} 个`;
-      summaryTokens.push(trimForSummary(fallback, 60));
+    if (artifacts.length > 0) {
+      summaryTokens.push(`产物 ${artifacts.length} 个`);
+      summaryTokens.push(trimForSummary(artifacts.map((a) => a.name).join(', '), 28));
     }
 
     const detailLines: string[] = [];
@@ -1384,7 +1352,7 @@ export function WorkflowEditorPage() {
       if (detailLines.length > 0) detailLines.push('');
       detailLines.push('[产物]');
       detailLines.push(...artifacts.map((a) => {
-        const cosFlag = a.cosUrl ? ' | COS✓' : '';
+        const cosFlag = a.cosUrl ? ' | COS' : '';
         return `- ${a.name} | ${a.mimeType} | ${formatBytes(a.sizeBytes)}${cosFlag}`;
       }));
     }
@@ -1394,7 +1362,9 @@ export function WorkflowEditorPage() {
       detail = `${detail.slice(0, 6000)}\n...(已截断，完整内容请在节点详情中查看)`;
     }
 
-    const message = summaryTokens.slice(0, 5).join(' · ');
+    const message = summaryTokens.length > 0
+      ? summaryTokens.slice(0, 4).join(' · ')
+      : '收到节点详细日志';
     return {
       level,
       message,
@@ -1408,7 +1378,8 @@ export function WorkflowEditorPage() {
     const nodeName = workflow?.nodes.find(n => n.nodeId === nodeId)?.name
       || latestExec?.nodeExecutions.find(n => n.nodeId === nodeId)?.nodeName
       || nodeId;
-    const compact = buildCompactBackendLog(logs, artifacts);
+    const nodeStatus = latestExec?.nodeExecutions.find(n => n.nodeId === nodeId)?.status;
+    const compact = buildCompactBackendLog(logs, artifacts, nodeStatus);
     if (!compact) return;
     addLog(compact.level, compact.message, { nodeId, nodeName, detail: compact.detail });
   }
