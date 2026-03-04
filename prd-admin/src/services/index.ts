@@ -931,7 +931,9 @@ import {
   saveArenaBattleReal,
   listArenaBattlesReal,
   getArenaBattleReal,
+  uploadArenaAttachmentReal,
 } from '@/services/real/arena';
+export type { ArenaAttachmentInfo } from '@/services/real/arena';
 
 export const listArenaGroups = withAuth(listArenaGroupsReal);
 export const createArenaGroup = withAuth(createArenaGroupReal);
@@ -950,6 +952,7 @@ export const cancelArenaRun = withAuth(cancelArenaRunReal);
 export const saveArenaBattle = withAuth(saveArenaBattleReal);
 export const listArenaBattles = withAuth(listArenaBattlesReal);
 export const getArenaBattle = withAuth(getArenaBattleReal);
+export const uploadArenaAttachment = uploadArenaAttachmentReal;
 
 export const openPlatformService: IOpenPlatformService = new OpenPlatformService();
 export const automationsService: IAutomationsService = new AutomationsService();

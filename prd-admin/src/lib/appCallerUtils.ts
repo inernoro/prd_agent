@@ -24,7 +24,7 @@ import {
 
 /**
  * AppCallerKey 图标组件
- * 用于标识 appCallerKey/requestPurpose 字段
+ * 用于标识 appCallerCode 字段
  */
 export const AppCallerKeyIcon = FileCode;
 

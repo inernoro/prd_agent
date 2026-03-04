@@ -482,7 +482,7 @@ public class ImageGenRunWorker : BackgroundService
                             DocumentHash: null,
                             SystemPromptRedacted: "[IMAGE_GEN_RUN]",
                             RequestType: "imageGen",
-                            RequestPurpose: appCallerCode,
+                            AppCallerCode: appCallerCode,
                             PlatformId: run.PlatformId,
                             ModelResolutionType: run.ModelResolutionType,
                             ModelGroupId: run.ModelGroupId,

@@ -521,21 +521,23 @@ builder.Services.AddCors(options =>
             policy
                 .SetIsOriginAllowed(origin =>
                 {
-                    if (string.IsNullOrWhiteSpace(origin) || origin == "null") return false;
+                    if (string.IsNullOrWhiteSpace(origin) || origin == “null”) return false;
                     if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri)) return false;
                     // 兼容 IPv4/IPv6 回环：localhost、127.0.0.1、[::1]
-                    // 说明：Mac/Windows 上某些情况下前端会以 http://[::1]:port 作为 Origin，若未放行会导致预检 OPTIONS 403“看似随机”波动
-                    return uri.Host is "localhost" or "127.0.0.1" or "::1";
+                    // 说明：Mac/Windows 上某些情况下前端会以 http://[::1]:port 作为 Origin，若未放行会导致预检 OPTIONS 403”看似随机”波动
+                    return uri.Host is “localhost” or “127.0.0.1” or “::1”;
                 })
                 .AllowAnyHeader()
-                .AllowAnyMethod();
+                .AllowAnyMethod()
+                .WithExposedHeaders(“X-Perm-Fingerprint”);
             return;
         }
 
         // 生产环境：严格按配置允许来源
         policy.WithOrigins(allowedOrigins)
             .AllowAnyHeader()
-            .AllowAnyMethod();
+            .AllowAnyMethod()
+            .WithExposedHeaders(“X-Perm-Fingerprint”);
     });
 });
 
@@ -954,6 +956,8 @@ app.UseMiddleware<PrdAgent.Api.Middleware.UserLastActiveMiddleware>();
 app.UseAuthorization();
 // 管理后台权限（菜单/页面/接口统一绑定 permission key）
 app.UseMiddleware<PrdAgent.Api.Middleware.AdminPermissionMiddleware>();
+// 权限指纹：每个响应注入 X-Perm-Fingerprint，前端据此判断是否需要刷新权限缓存
+app.UseMiddleware<PrdAgent.Api.Middleware.PermissionFingerprintMiddleware>();
 app.MapControllers();
 
 // 健康检查端点

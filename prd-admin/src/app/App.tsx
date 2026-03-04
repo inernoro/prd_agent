@@ -121,6 +121,7 @@ export default function App() {
   const setPermissionsLoaded = useAuthStore((s) => s.setPermissionsLoaded);
   const setIsRoot = useAuthStore((s) => s.setIsRoot);
   const setCdnBaseUrl = useAuthStore((s) => s.setCdnBaseUrl);
+  const setPermFingerprint = useAuthStore((s) => s.setPermFingerprint);
   const setMenuCatalog = useAuthStore((s) => s.setMenuCatalog);
   const menuCatalogLoaded = useAuthStore((s) => s.menuCatalogLoaded);
   const logout = useAuthStore((s) => s.logout);
@@ -143,9 +144,10 @@ export default function App() {
       setPermissions(res.data.effectivePermissions || []);
       setIsRoot(res.data.isRoot ?? false);
       if (res.data.cdnBaseUrl) setCdnBaseUrl(res.data.cdnBaseUrl);
+      if (res.data.permissionFingerprint) setPermFingerprint(res.data.permissionFingerprint);
       setPermissionsLoaded(true);
     })();
-  }, [isAuthenticated, permissionsLoaded, setPermissions, setPermissionsLoaded, setIsRoot, setCdnBaseUrl, logout]);
+  }, [isAuthenticated, permissionsLoaded, setPermissions, setPermissionsLoaded, setIsRoot, setCdnBaseUrl, setPermFingerprint, logout]);
 
   // 加载菜单目录
   useEffect(() => {
@@ -251,7 +253,7 @@ export default function App() {
         <Route path="workflow-agent" element={<RequirePermission perm="workflow-agent.use"><WorkflowListPage /></RequirePermission>} />
         <Route path="workflow-agent/:workflowId" element={<RequirePermission perm="workflow-agent.use"><WorkflowEditorPage /></RequirePermission>} />
         <Route path="workflow-agent/:workflowId/canvas" element={<RequirePermission perm="workflow-agent.use"><WorkflowCanvasPage /></RequirePermission>} />
-        <Route path="ai-toolbox" element={<RequirePermission perm="access"><AiToolboxPage /></RequirePermission>} />
+        <Route path="ai-toolbox" element={<RequirePermission perm="ai-toolbox.use"><AiToolboxPage /></RequirePermission>} />
         <Route path="logs" element={<RequirePermission perm="logs.read"><LlmLogsPage /></RequirePermission>} />
         <Route path="open-platform" element={<RequirePermission perm="open-platform.manage"><OpenPlatformTabsPage /></RequirePermission>} />
         <Route path="automations" element={<RequirePermission perm="automations.manage"><AutomationRulesPage /></RequirePermission>} />
@@ -260,7 +262,7 @@ export default function App() {
 
         <Route path="assets" element={<RequirePermission perm="assets.read"><AssetsManagePage /></RequirePermission>} />
         <Route path="skills" element={<RequirePermission perm="skills.read"><SkillsPage /></RequirePermission>} />
-        <Route path="arena" element={<RequirePermission perm="access"><ArenaPage /></RequirePermission>} />
+        <Route path="arena" element={<RequirePermission perm="arena-agent.use"><ArenaPage /></RequirePermission>} />
         <Route path="lab" element={<RequirePermission perm="lab.read"><LabPage /></RequirePermission>} />
         <Route path="settings" element={<RequirePermission perm="access"><SettingsPage /></RequirePermission>} />
         <Route path="executive" element={<RequirePermission perm="access"><ExecutivePage /></RequirePermission>} />

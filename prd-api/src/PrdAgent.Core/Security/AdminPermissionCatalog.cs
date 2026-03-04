@@ -80,6 +80,11 @@ public static class AdminPermissionCatalog
     public const string VideoAgentUse = "video-agent.use";
 
     /// <summary>
+    /// 竞技场 Agent 权限：模型盲评对战
+    /// </summary>
+    public const string ArenaAgentUse = "arena-agent.use";
+
+    /// <summary>
     /// AI 百宝箱权限：使用百宝箱功能
     /// </summary>
     public const string AiToolboxUse = "ai-toolbox.use";
@@ -164,6 +169,7 @@ public static class AdminPermissionCatalog
         new(DefectAgentUse, "缺陷管理 Agent", "提交和查看缺陷"),
         new(DefectAgentManage, "缺陷管理 Agent-管理", "设置模板、指派处理人"),
         new(VideoAgentUse, "视频 Agent", "文章转视频教程生成"),
+        new(ArenaAgentUse, "竞技场 Agent", "模型盲评对战"),
         new(AiToolboxUse, "AI 百宝箱", "使用 AI 百宝箱功能"),
         new(AiToolboxManage, "AI 百宝箱-管理", "管理工作流、配置等"),
         new(DataMigrationAgentUse, "数据迁移 Agent-读", "查看实体与集合映射、数据预览"),

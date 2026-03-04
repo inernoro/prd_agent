@@ -188,6 +188,10 @@ public static class CapsuleTypeRegistry
             }},
             new() { Key = "dateRange", Label = "时间范围", FieldType = "text", Required = false, Placeholder = "2026-01", HelpTip = "留空取全部，填月份 (YYYY-MM) 按月筛选" },
             new() { Key = "maxPages", Label = "最大页数", FieldType = "number", Required = false, DefaultValue = "50", HelpTip = "防止无限翻页，每页 20 条" },
+            new() { Key = "fetchDetail", Label = "获取缺陷详情", FieldType = "select", Required = false, DefaultValue = "true", Options = new() {
+                new() { Value = "true", Label = "是 (调用 common_get_info 获取完整字段)" },
+                new() { Value = "false", Label = "否 (仅使用搜索列表数据)" },
+            }, HelpTip = "开启后会逐条调用详情接口获取全部自定义字段（缺陷等级、缺陷划分、有效报告等），用于统计分析" },
             new() { Key = "customCurl", Label = "自定义 cURL（兜底）", FieldType = "textarea", Required = false,
                 Placeholder = "curl 'https://www.tapd.cn/api/...' -H 'Cookie: ...' --data-raw '{...}'",
                 HelpTip = "从浏览器 / Postman 复制可用的 cURL 命令粘贴到这里。填写后将直接执行此请求，不再自动构造请求。支持自动分页" },
@@ -617,6 +621,10 @@ public static class CapsuleTypeRegistry
                 new() { Value = "success", Label = "成功" },
                 new() { Value = "warning", Label = "警告" },
                 new() { Value = "error", Label = "错误" },
+            }},
+            new() { Key = "attachFromInput", Label = "附件来源", FieldType = "select", Required = false, DefaultValue = "none", HelpTip = "从上游产物中提取附件链接", Options = new() {
+                new() { Value = "none", Label = "无附件" },
+                new() { Value = "cos", Label = "上游产物 COS 链接" },
             }},
         },
         DefaultInputSlots = new()

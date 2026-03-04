@@ -121,6 +121,33 @@ function getApiErrorLike(x: unknown): { code?: string; message?: string } | null
   return code || message ? { code, message } : null;
 }
 
+/**
+ * 检测后端响应中的权限指纹是否与前端缓存一致。
+ * 若不一致（说明后端发布了新版本或角色发生变更），则清除权限/菜单缓存标记，
+ * 触发 App.tsx 中的 useEffect 自动重新拉取。
+ */
+function checkPermissionFingerprint(res: Response): void {
+  const serverFp = res.headers.get('X-Perm-Fingerprint');
+  if (!serverFp) return; // 旧版后端或非 API 响应，跳过
+
+  const store = useAuthStore.getState();
+  if (!store.isAuthenticated) return;
+
+  const cachedFp = store.permFingerprint;
+  // 首次缓存为空时仅记录，不触发刷新（避免首次登录时多余请求）
+  if (!cachedFp) {
+    store.setPermFingerprint(serverFp);
+    return;
+  }
+
+  if (cachedFp !== serverFp) {
+    // 指纹变更：清除缓存标记，下一轮 React render 会自动重新拉取
+    store.setPermFingerprint(serverFp);
+    store.setPermissionsLoaded(false);
+    store.setMenuCatalogLoaded(false);
+  }
+}
+
 async function tryRefreshAdminToken(): Promise<boolean> {
   const authStore = useAuthStore.getState();
   const token = authStore.token;
@@ -217,6 +244,10 @@ async function apiRequestInner<T>(
     }
     return fail('NETWORK_ERROR', e instanceof Error ? e.message : '网络错误') as unknown as ApiResponse<T>;
   }
+
+  // 检测权限指纹变更：后端每个响应都带 X-Perm-Fingerprint 头，
+  // 若与前端缓存不一致则说明发生了新部署或角色变更，需刷新权限缓存
+  checkPermissionFingerprint(res);
 
   if (res.status === 204) {
     const data = (options?.emptyResponseData ?? (true as unknown)) as T;

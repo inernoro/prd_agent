@@ -123,7 +123,7 @@
 |------|------|------|
 | `PromptTemplate` | string | 提示词模板，支持 `{{变量}}` 占位符 |
 | `SystemPromptOverride` | string? | 系统提示词覆盖（null = 使用默认角色系统提示词） |
-| `AppCallerCode` | string? | LLM Gateway 路由标识（遵循 `rule.app-feature-definition.md`） |
+| `AppCallerCode` | string? | LLM Gateway 路由标识（遵循 `core/rule.app-identity.md`） |
 | `ModelType` | string | 模型类型偏好，默认 `"chat"` |
 | `ExpectedModel` | string? | 期望模型提示（如 `"gpt-4o"`），仅作调度参考 |
 | `ToolChain` | SkillToolStep[] | 后处理工具链（见 3.4.2） |

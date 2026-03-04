@@ -156,7 +156,7 @@ public class PreviewAskService : IPreviewAskService
             DocumentHash: docHash,
             SystemPromptRedacted: systemPromptRedacted,
             RequestType: "reasoning",
-            RequestPurpose: appCallerCode));
+            AppCallerCode: appCallerCode));
 
         yield return new PreviewAskStreamEvent { Type = "start", RequestId = requestId };
 

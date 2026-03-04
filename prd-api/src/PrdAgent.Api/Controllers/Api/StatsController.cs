@@ -101,14 +101,14 @@ public class StatsController : ControllerBase
             .ToListAsync();
 
         // 2) 系统级用量补全：来自 llmrequestlogs（用于覆盖非 chat 的 LLM 调用；注意该集合默认 TTL=7天）
-        //    为避免 chat 调用被重复计入，排除 RequestPurpose 以 "chat." 开头的日志。
+        //    为避免 chat 调用被重复计入，排除 AppCallerCode 以 "chat." 开头的日志。
         var logFilter = Builders<LlmRequestLog>.Filter.Gte(x => x.StartedAt, startDate) &
                         Builders<LlmRequestLog>.Filter.Ne(x => x.InputTokens, null) &
                         Builders<LlmRequestLog>.Filter.Ne(x => x.OutputTokens, null) &
                         Builders<LlmRequestLog>.Filter.Ne(x => x.Status, "running") &
                         Builders<LlmRequestLog>.Filter.Not(
                             Builders<LlmRequestLog>.Filter.Regex(
-                                x => x.RequestPurpose,
+                                x => x.AppCallerCode,
                                 new MongoDB.Bson.BsonRegularExpression("^chat\\.", "i")));
         var nonChatItems = await _db.LlmRequestLogs
             .Find(logFilter)

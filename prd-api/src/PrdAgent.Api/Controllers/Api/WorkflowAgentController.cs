@@ -873,6 +873,7 @@ public class WorkflowAgentController : ControllerBase
             nodeName = nodeExec.NodeName,
             status = nodeExec.Status,
             logs = nodeExec.Logs,
+            logsCosUrl = nodeExec.LogsCosUrl,
             errorMessage = nodeExec.ErrorMessage,
             artifacts = nodeExec.OutputArtifacts,
         }));

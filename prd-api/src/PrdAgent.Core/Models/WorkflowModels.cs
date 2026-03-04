@@ -241,6 +241,11 @@ public class NodeExecution
     /// </summary>
     public string? Logs { get; set; }
 
+    /// <summary>
+    /// 完整日志 COS 地址（大于 10KB 时上传）
+    /// </summary>
+    public string? LogsCosUrl { get; set; }
+
     public int AttemptCount { get; set; }
     public string? ErrorMessage { get; set; }
 

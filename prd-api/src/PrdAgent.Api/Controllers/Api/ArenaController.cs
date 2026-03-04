@@ -16,7 +16,7 @@ namespace PrdAgent.Api.Controllers.Api;
 [ApiController]
 [Route("api/lab/arena")]
 [Authorize]
-[AdminController("lab", AdminPermissionCatalog.LabRead, WritePermission = AdminPermissionCatalog.LabWrite)]
+[AdminController("arena-agent", AdminPermissionCatalog.ArenaAgentUse)]
 public sealed class ArenaController : ControllerBase
 {
     private readonly MongoDbContext _db;
@@ -399,7 +399,12 @@ public sealed class ArenaController : ControllerBase
                     modelId = (s.ModelId ?? "").Trim(),
                     label = (s.Label ?? "").Trim(),
                     labelIndex = s.LabelIndex
-                })
+                }),
+                attachmentIds = request.AttachmentIds?
+                    .Where(id => !string.IsNullOrWhiteSpace(id))
+                    .Select(id => id.Trim())
+                    .Distinct()
+                    .ToList() ?? new List<string>()
             }, JsonOptions)
         };
 
@@ -580,7 +585,8 @@ public sealed class ArenaController : ControllerBase
             b.GroupKey,
             b.Revealed,
             b.CreatedAt,
-            ResponseCount = b.Responses.Count
+            ResponseCount = b.Responses.Count,
+            HasAttachments = b.Attachments.Count > 0
         });
 
         return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
@@ -639,6 +645,7 @@ public class CreateArenaBattleRequest
     public string? GroupKey { get; set; }
     public List<CreateArenaBattleResponseItem> Responses { get; set; } = new();
     public bool Revealed { get; set; }
+    public List<string>? AttachmentIds { get; set; }
 }
 
 public class CreateArenaBattleResponseItem
@@ -660,6 +667,7 @@ public class CreateArenaRunRequest
     public string? Prompt { get; set; }
     public string? GroupKey { get; set; }
     public List<CreateArenaRunSlotItem> Slots { get; set; } = new();
+    public List<string>? AttachmentIds { get; set; }
 }
 
 public class CreateArenaRunSlotItem
