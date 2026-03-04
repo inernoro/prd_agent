@@ -2064,11 +2064,11 @@ export function WorkflowEditorPage() {
 
 // ──── 执行日志面板 ────
 
-const LOG_LEVEL_COLORS: Record<string, string> = {
-  info: 'rgba(99,102,241,0.9)',
-  success: 'rgba(34,197,94,0.9)',
-  error: 'rgba(239,68,68,0.9)',
-  warn: 'rgba(234,179,8,0.9)',
+const LOG_LEVEL_STYLE: Record<string, { dot: string; bg: string; icon: string }> = {
+  info:    { dot: 'rgba(99,102,241,0.9)',  bg: 'rgba(99,102,241,0.04)',  icon: '›' },
+  success: { dot: 'rgba(34,197,94,0.9)',   bg: 'rgba(34,197,94,0.06)',   icon: '✓' },
+  error:   { dot: 'rgba(239,68,68,0.9)',   bg: 'rgba(239,68,68,0.06)',   icon: '✗' },
+  warn:    { dot: 'rgba(234,179,8,0.9)',   bg: 'rgba(234,179,8,0.06)',   icon: '!' },
 };
 
 function ExecutionLogPanel({ entries, onClear, onClose }: {
@@ -2091,100 +2091,163 @@ function ExecutionLogPanel({ entries, onClear, onClose }: {
     setAutoScroll(scrollHeight - scrollTop - clientHeight < 40);
   }
 
+  // 统计：按节点分组计算已完成/总数（简易进度）
+  const nodeNames = new Set<string>();
+  let completedNodes = 0;
+  let totalNodes = 0;
+  for (const e of entries) {
+    if (e.nodeName && !nodeNames.has(e.nodeName)) {
+      nodeNames.add(e.nodeName);
+      totalNodes++;
+    }
+    if (e.level === 'success' && e.message.startsWith('完成')) completedNodes++;
+  }
+  const hasRunning = entries.some(e => e.level === 'info' && e.message === '开始执行')
+    && completedNodes < totalNodes;
+
   return (
     <div
       className="flex flex-col h-full"
       style={{
-        width: 340,
+        width: 420,
         flexShrink: 0,
         borderLeft: '1px solid rgba(255,255,255,0.08)',
-        background: 'rgba(0,0,0,0.2)',
+        background: 'rgba(0,0,0,0.25)',
       }}
     >
       {/* Header */}
       <div
-        className="flex items-center gap-2 px-3 py-2.5 flex-shrink-0"
+        className="flex items-center gap-2.5 px-4 py-3 flex-shrink-0"
         style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
       >
-        <Terminal className="w-3.5 h-3.5" style={{ color: 'rgba(99,102,241,0.8)' }} />
-        <span className="text-[12px] font-semibold flex-1" style={{ color: 'var(--text-primary)' }}>
+        <Terminal className="w-4 h-4" style={{ color: 'rgba(99,102,241,0.8)' }} />
+        <span className="text-[14px] font-semibold flex-1" style={{ color: 'var(--text-primary)' }}>
           执行日志
         </span>
-        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        <span
+          className="text-[12px] px-2 py-0.5 rounded-full"
+          style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+        >
           {entries.length} 条
         </span>
         {entries.length > 0 && (
           <button
             onClick={onClear}
-            className="p-1 rounded-[6px] transition-colors"
+            className="p-1.5 rounded-[6px] transition-colors hover:bg-white/5"
             style={{ color: 'var(--text-muted)' }}
             title="清空日志"
           >
-            <Trash2 className="w-3 h-3" />
+            <Trash2 className="w-3.5 h-3.5" />
           </button>
         )}
         <button
           onClick={onClose}
-          className="p-1 rounded-[6px] transition-colors"
+          className="p-1.5 rounded-[6px] transition-colors hover:bg-white/5"
           style={{ color: 'var(--text-muted)' }}
           title="关闭"
         >
-          <XCircle className="w-3 h-3" />
+          <XCircle className="w-3.5 h-3.5" />
         </button>
       </div>
+
+      {/* 总体进度条 */}
+      {totalNodes > 0 && (
+        <div className="px-4 py-2 flex-shrink-0" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+              节点进度
+            </span>
+            <span className="text-[12px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+              {completedNodes} / {totalNodes}
+            </span>
+          </div>
+          <div className="w-full h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+            <div
+              className="h-full rounded-full transition-all duration-700 ease-out"
+              style={{
+                width: `${totalNodes > 0 ? (completedNodes / totalNodes) * 100 : 0}%`,
+                background: completedNodes === totalNodes
+                  ? 'rgba(34,197,94,0.8)'
+                  : 'linear-gradient(90deg, rgba(99,102,241,0.7), rgba(168,85,247,0.8))',
+                ...(hasRunning ? { animation: 'pulse 2s ease-in-out infinite' } : {}),
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Log entries */}
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto px-2 py-2 space-y-0.5"
+        className="flex-1 overflow-y-auto px-3 py-2 space-y-1"
         onScroll={handleScroll}
-        style={{ fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace' }}
       >
         {entries.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full gap-2 opacity-40">
-            <Terminal className="w-6 h-6" />
-            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+          <div className="flex flex-col items-center justify-center h-full gap-3 opacity-40">
+            <Terminal className="w-8 h-8" />
+            <span className="text-[14px]" style={{ color: 'var(--text-muted)' }}>
               执行工作流后日志将在此显示
             </span>
           </div>
         )}
 
-        {entries.map((entry) => (
-          <div
-            key={entry.id}
-            className="flex items-start gap-1.5 px-2 py-1 rounded-[6px] transition-colors"
-            style={{ background: entry.level === 'error' ? 'rgba(239,68,68,0.04)' : 'transparent' }}
-          >
-            {/* Level dot */}
-            <span
-              className="w-1.5 h-1.5 rounded-full flex-shrink-0 mt-[5px]"
-              style={{ background: LOG_LEVEL_COLORS[entry.level] || LOG_LEVEL_COLORS.info }}
-            />
-            {/* Content */}
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>
-                  {entry.ts}
-                </span>
-                {entry.nodeName && (
-                  <span
-                    className="text-[9px] px-1.5 py-0 rounded-[4px] font-medium"
-                    style={{
-                      background: 'rgba(99,102,241,0.1)',
-                      color: 'rgba(99,102,241,0.8)',
-                      border: '1px solid rgba(99,102,241,0.15)',
-                    }}
-                  >
-                    {entry.nodeName}
+        {entries.map((entry, i) => {
+          const style = LOG_LEVEL_STYLE[entry.level] || LOG_LEVEL_STYLE.info;
+          return (
+            <div
+              key={entry.id}
+              className="flex items-start gap-2.5 px-3 py-2 rounded-[8px] transition-all duration-300"
+              style={{
+                background: style.bg,
+                animation: `log-entry-in 0.3s ease-out ${Math.min(i * 0.03, 0.5)}s both`,
+              }}
+            >
+              {/* Level indicator */}
+              <span
+                className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 text-[11px] font-bold"
+                style={{
+                  background: `${style.dot}20`,
+                  color: style.dot,
+                }}
+              >
+                {style.icon}
+              </span>
+
+              {/* Content */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                  <span className="text-[12px] font-mono" style={{ color: 'var(--text-muted)' }}>
+                    {entry.ts}
                   </span>
-                )}
-              </div>
-              <div className="text-[10px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-                {entry.message}
+                  {entry.nodeName && (
+                    <span
+                      className="text-[12px] px-2.5 py-0.5 rounded-full font-medium truncate max-w-[180px]"
+                      style={{
+                        background: entry.level === 'success'
+                          ? 'rgba(34,197,94,0.12)' : entry.level === 'error'
+                          ? 'rgba(239,68,68,0.12)' : 'rgba(99,102,241,0.12)',
+                        color: entry.level === 'success'
+                          ? 'rgba(34,197,94,0.9)' : entry.level === 'error'
+                          ? 'rgba(239,68,68,0.9)' : 'rgba(99,102,241,0.9)',
+                        border: `1px solid ${entry.level === 'success'
+                          ? 'rgba(34,197,94,0.2)' : entry.level === 'error'
+                          ? 'rgba(239,68,68,0.2)' : 'rgba(99,102,241,0.2)'}`,
+                      }}
+                    >
+                      {entry.nodeName}
+                    </span>
+                  )}
+                </div>
+                <div
+                  className="text-[13px] leading-relaxed"
+                  style={{ color: 'var(--text-secondary)', wordBreak: 'break-word' }}
+                >
+                  {entry.message}
+                </div>
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
