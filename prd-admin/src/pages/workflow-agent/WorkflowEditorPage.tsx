@@ -1160,6 +1160,7 @@ export function WorkflowEditorPage() {
     nodeId?: string;
     nodeName?: string;
     message: string;
+    detail?: string;
   }
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const logIdRef = useRef(0);
@@ -1169,7 +1170,11 @@ export function WorkflowEditorPage() {
   // 记录上次轮询已知的节点状态，用于生成增量日志
   const prevNodeStatusRef = useRef<Record<string, string>>({});
 
-  function addLog(level: LogEntry['level'], message: string, opts?: { nodeId?: string; nodeName?: string }) {
+  function addLog(
+    level: LogEntry['level'],
+    message: string,
+    opts?: { nodeId?: string; nodeName?: string; detail?: string },
+  ) {
     setLogEntries(prev => [...prev, {
       id: `log-${logIdRef.current++}`,
       ts: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
@@ -1306,39 +1311,106 @@ export function WorkflowEditorPage() {
     } catch { /* ignore */ }
   }
 
+  function trimForSummary(text: string, maxLength = 34): string {
+    const normalized = text.replace(/\s+/g, ' ').trim();
+    if (!normalized) return '';
+    return normalized.length <= maxLength
+      ? normalized
+      : `${normalized.slice(0, Math.max(0, maxLength - 1))}…`;
+  }
+
+  function buildCompactBackendLog(logs: string, artifacts: ExecutionArtifact[]): {
+    level: LogEntry['level'];
+    message: string;
+    detail?: string;
+  } | null {
+    const rawLines = logs
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    if (rawLines.length === 0 && artifacts.length === 0) return null;
+
+    const lines = rawLines.filter((line) => !(line.startsWith('[') && line.includes(']') && line.includes('节点:')));
+
+    const hasError = lines.some((line) =>
+      line.includes('❌') || line.includes('[ERROR]') || line.includes('执行失败') || line.includes('失败:'),
+    );
+    const hasWarn = lines.some((line) => line.includes('⚠️') || line.includes('警告'));
+    const level: LogEntry['level'] = hasError ? 'error' : hasWarn ? 'warn' : 'info';
+
+    const summaryTokens: string[] = [];
+
+    const fileNameLine = lines.find((line) => line.startsWith('FileName:'));
+    const formatLine = lines.find((line) => line.startsWith('Format:'));
+    const inputArtifactsLine = lines.find((line) => line.startsWith('InputArtifacts:'));
+    const contentLine = lines.find((line) => line.startsWith('Content:'));
+    const previewLine = lines.find((line) => line.startsWith('Preview:'));
+    const modelLine = lines.find((line) => line.startsWith('Model:'));
+    const tokenLine = lines.find((line) => line.startsWith('Tokens:'));
+    const notificationLine = lines.find((line) => line.startsWith('Notification sent:'));
+    const gatewayLine = lines.find((line) => line === '--- 调用 LLM Gateway ---');
+
+    if (fileNameLine) summaryTokens.push(`文件 ${trimForSummary(fileNameLine.replace(/^FileName:\s*/, ''), 24)}`);
+    if (formatLine) {
+      const formatValue = formatLine
+        .replace(/^Format:\s*/, '')
+        .replace(/\s*\(MIME:[^)]+\)/i, '')
+        .trim();
+      summaryTokens.push(`格式 ${trimForSummary(formatValue, 14)}`);
+    }
+    if (inputArtifactsLine) {
+      const m = inputArtifactsLine.match(/InputArtifacts:\s*(\d+)/i);
+      summaryTokens.push(`输入 ${m?.[1] ?? trimForSummary(inputArtifactsLine.replace(/^InputArtifacts:\s*/i, ''), 8)} 个`);
+    }
+    if (contentLine) summaryTokens.push(trimForSummary(contentLine.replace(/^Content:\s*/, '内容 '), 36));
+    if (modelLine) summaryTokens.push(trimForSummary(modelLine.replace(/^Model:\s*/, '模型 '), 30));
+    if (tokenLine) summaryTokens.push(trimForSummary(tokenLine.replace(/^Tokens:\s*/, 'Tokens '), 30));
+    if (gatewayLine) summaryTokens.push('调用 LLM Gateway');
+    if (notificationLine) summaryTokens.push(trimForSummary(notificationLine.replace(/^Notification sent:\s*/, '已发送通知: '), 32));
+    if (previewLine && summaryTokens.length < 5) {
+      summaryTokens.push(trimForSummary(previewLine.replace(/^Preview:\s*/, '预览: '), 30));
+    }
+    if (artifacts.length > 0) summaryTokens.push(`产物 ${artifacts.length} 个`);
+
+    if (summaryTokens.length === 0) {
+      const fallback = lines[0] || `产物 ${artifacts.length} 个`;
+      summaryTokens.push(trimForSummary(fallback, 60));
+    }
+
+    const detailLines: string[] = [];
+    if (rawLines.length > 0) detailLines.push(...rawLines);
+    if (artifacts.length > 0) {
+      if (detailLines.length > 0) detailLines.push('');
+      detailLines.push('[产物]');
+      detailLines.push(...artifacts.map((a) => {
+        const cosFlag = a.cosUrl ? ' | COS✓' : '';
+        return `- ${a.name} | ${a.mimeType} | ${formatBytes(a.sizeBytes)}${cosFlag}`;
+      }));
+    }
+
+    let detail = detailLines.join('\n').trim();
+    if (detail.length > 6000) {
+      detail = `${detail.slice(0, 6000)}\n...(已截断，完整内容请在节点详情中查看)`;
+    }
+
+    const message = summaryTokens.slice(0, 5).join(' · ');
+    return {
+      level,
+      message,
+      detail: detailLines.length > 1 ? detail : undefined,
+    };
+  }
+
   /** 将后端舱执行详细日志注入到右侧日志面板 */
   function injectBackendLogs(nodeId: string, logs: string, artifacts: ExecutionArtifact[]) {
     if (!logs && artifacts.length === 0) return;
     const nodeName = workflow?.nodes.find(n => n.nodeId === nodeId)?.name
       || latestExec?.nodeExecutions.find(n => n.nodeId === nodeId)?.nodeName
       || nodeId;
-    // 解析后端日志：几乎所有非空行都注入（除了标题行 [xxx]）
-    if (logs) {
-      const lines = logs.split('\n').filter(l => l.trim());
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        // 跳过标题行（如 "[LLM 分析器] 节点: xxx"）
-        if (trimmed.startsWith('[') && trimmed.includes(']') && trimmed.includes('节点:')) continue;
-        // 跳过分隔线
-        if (trimmed === '--- 调用 LLM Gateway ---') {
-          addLog('info', '调用 LLM Gateway...', { nodeId, nodeName });
-          continue;
-        }
-        // 错误行
-        const level = (trimmed.includes('⚠️') || trimmed.includes('警告'))
-          ? 'warn' as const
-          : trimmed.includes('❌')
-            ? 'error' as const
-            : 'info' as const;
-        addLog(level, trimmed, { nodeId, nodeName });
-      }
-    }
-    // 产物摘要
-    if (artifacts.length > 0) {
-      const summary = artifacts.map(a => `${a.name} (${formatBytes(a.sizeBytes)})`).join(', ');
-      addLog('info', `产物: ${summary}`, { nodeId, nodeName });
-    }
+    const compact = buildCompactBackendLog(logs, artifacts);
+    if (!compact) return;
+    addLog(compact.level, compact.message, { nodeId, nodeName, detail: compact.detail });
   }
 
   function fetchAllNodeOutputs(exec: WorkflowExecution) {
@@ -1832,12 +1904,21 @@ const LOG_LEVEL_COLORS: Record<string, string> = {
 };
 
 function ExecutionLogPanel({ entries, onClear, onClose }: {
-  entries: { id: string; ts: string; level: string; nodeId?: string; nodeName?: string; message: string }[];
+  entries: {
+    id: string;
+    ts: string;
+    level: 'info' | 'success' | 'error' | 'warn';
+    nodeId?: string;
+    nodeName?: string;
+    message: string;
+    detail?: string;
+  }[];
   onClear: () => void;
   onClose: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
+  const [expandedDetails, setExpandedDetails] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (autoScroll && scrollRef.current) {
@@ -1909,42 +1990,67 @@ function ExecutionLogPanel({ entries, onClear, onClose }: {
           </div>
         )}
 
-        {entries.map((entry) => (
-          <div
-            key={entry.id}
-            className="flex items-start gap-1.5 px-2 py-1 rounded-[6px] transition-colors"
-            style={{ background: entry.level === 'error' ? 'rgba(239,68,68,0.04)' : 'transparent' }}
-          >
-            {/* Level dot */}
-            <span
-              className="w-1.5 h-1.5 rounded-full flex-shrink-0 mt-[5px]"
-              style={{ background: LOG_LEVEL_COLORS[entry.level] || LOG_LEVEL_COLORS.info }}
-            />
-            {/* Content */}
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>
-                  {entry.ts}
-                </span>
-                {entry.nodeName && (
-                  <span
-                    className="text-[9px] px-1.5 py-0 rounded-[4px] font-medium"
-                    style={{
-                      background: 'rgba(99,102,241,0.1)',
-                      color: 'rgba(99,102,241,0.8)',
-                      border: '1px solid rgba(99,102,241,0.15)',
-                    }}
-                  >
-                    {entry.nodeName}
-                  </span>
-                )}
-              </div>
-              <div className="text-[10px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-                {entry.message}
+        {entries.map((entry) => {
+          const isExpanded = !!expandedDetails[entry.id];
+          return (
+            <div
+              key={entry.id}
+              className="px-2 py-1 rounded-[6px] transition-colors"
+              style={{ background: entry.level === 'error' ? 'rgba(239,68,68,0.04)' : 'transparent' }}
+            >
+              <div className="flex items-start gap-1.5">
+                <span
+                  className="w-1.5 h-1.5 rounded-full flex-shrink-0 mt-[5px]"
+                  style={{ background: LOG_LEVEL_COLORS[entry.level] || LOG_LEVEL_COLORS.info }}
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>
+                      {entry.ts}
+                    </span>
+                    {entry.nodeName && (
+                      <span
+                        className="text-[9px] px-1.5 py-0 rounded-[4px] font-medium"
+                        style={{
+                          background: 'rgba(99,102,241,0.1)',
+                          color: 'rgba(99,102,241,0.8)',
+                          border: '1px solid rgba(99,102,241,0.15)',
+                        }}
+                      >
+                        {entry.nodeName}
+                      </span>
+                    )}
+                    <span className="text-[10px] leading-relaxed break-all" style={{ color: 'var(--text-secondary)' }}>
+                      {entry.message}
+                    </span>
+                    {entry.detail && (
+                      <button
+                        className="inline-flex items-center gap-0.5 text-[9px] transition-colors"
+                        style={{ color: 'var(--text-muted)' }}
+                        onClick={() => setExpandedDetails(prev => ({ ...prev, [entry.id]: !prev[entry.id] }))}
+                      >
+                        {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                        详情
+                      </button>
+                    )}
+                  </div>
+                  {entry.detail && isExpanded && (
+                    <pre
+                      className="text-[9px] mt-1 leading-relaxed whitespace-pre-wrap break-all max-h-48 overflow-auto rounded-[6px] p-2"
+                      style={{
+                        color: 'var(--text-muted)',
+                        background: 'rgba(255,255,255,0.03)',
+                        border: '1px solid rgba(255,255,255,0.06)',
+                      }}
+                    >
+                      {entry.detail}
+                    </pre>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
