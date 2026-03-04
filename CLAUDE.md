@@ -179,6 +179,27 @@ Gateway 自动记录以下信息到 `llmrequestlogs`：
 
 ---
 
+## 前端组件复用原则
+
+**核心原则**：全局同属性元素，能复用则复用。多个页面需要相同语义的 UI 元素时，必须抽取为 `src/components/` 下的共享组件，禁止在各页面硬编码重复的选项列表或选择器。
+
+### 规则说明
+
+1. **两个以上页面**出现同一业务概念的选择/展示 → 必须提取共享组件
+2. 数据源（枚举定义、常量列表）统一维护在 `src/lib/` 下的单一文件
+3. 新增/修改页面时，先搜索现有共享组件，已有则直接使用
+
+### 已注册共享组件
+
+| 组件 | 路径 | 数据源 |
+|------|------|--------|
+| `ModelTypePicker` | `components/model/ModelTypePicker.tsx` | `lib/appCallerUtils.ts → MODEL_TYPE_DEFINITIONS` |
+| `ModelTypeFilterBar` | `components/model/ModelTypePicker.tsx` | 同上 |
+
+> 详细规则见 `doc/rule.frontend-component-reuse.md`
+
+---
+
 ## 前端架构原则
 
 **核心原则**：前端仅作为指令发送者与状态观察者，所有业务逻辑与状态流转必须在后端形成完整闭环，前端不得维护或修改任何中间态。
