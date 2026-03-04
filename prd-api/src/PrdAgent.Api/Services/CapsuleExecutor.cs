@@ -73,7 +73,7 @@ public static class CapsuleExecutor
             CapsuleTypes.Condition => ExecuteCondition(node, inputArtifacts),
 
             // ── 输出类 ──
-            CapsuleTypes.ReportGenerator => await ExecuteReportGeneratorAsync(sp, node, variables, inputArtifacts),
+            CapsuleTypes.ReportGenerator => await ExecuteReportGeneratorAsync(sp, node, variables, inputArtifacts, emitEvent),
             CapsuleTypes.FileExporter => ExecuteFileExporter(node, inputArtifacts),
             CapsuleTypes.WebhookSender => await ExecuteWebhookSenderAsync(sp, node, inputArtifacts),
             CapsuleTypes.NotificationSender => await ExecuteNotificationSenderAsync(sp, node, variables, inputArtifacts),
@@ -2603,7 +2603,8 @@ public static class CapsuleExecutor
     // ── 输出类 ──────────────────────────────────────────────
 
     public static async Task<CapsuleResult> ExecuteReportGeneratorAsync(
-        IServiceProvider sp, WorkflowNode node, Dictionary<string, string> variables, List<ExecutionArtifact> inputArtifacts)
+        IServiceProvider sp, WorkflowNode node, Dictionary<string, string> variables,
+        List<ExecutionArtifact> inputArtifacts, EmitEventDelegate? emitEvent = null)
     {
         var gateway = sp.GetService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>();
         if (gateway == null)
@@ -2642,7 +2643,7 @@ public static class CapsuleExecutor
         {
             AppCallerCode = PrdAgent.Core.Models.AppCallerRegistry.WorkflowAgent.ReportGenerator.Chat,
             ModelType = "chat",
-            TimeoutSeconds = 300, // 报告生成可能需要处理大量输入数据，延长超时
+            TimeoutSeconds = 300,
             RequestBody = new System.Text.Json.Nodes.JsonObject
             {
                 ["messages"] = new System.Text.Json.Nodes.JsonArray
@@ -2659,20 +2660,111 @@ public static class CapsuleExecutor
         reportLogs.AppendLine($"  ReportTemplate ({reportTemplate.Length} chars):");
         reportLogs.AppendLine(reportTemplate);
         reportLogs.AppendLine($"  Prompt 总长: {prompt.Length} chars (估算 {EstimateTokens(prompt)} tokens)");
-        reportLogs.AppendLine("  --- 调用 LLM Gateway ---");
+        reportLogs.AppendLine("  --- 调用 LLM Gateway (streaming) ---");
 
-        var response = await gateway.SendAsync(request, CancellationToken.None);
-        var content = response.Content ?? "";
+        // ── 流式调用，与 LLM 分析器相同模式 ──
+        var contentBuilder = new StringBuilder();
+        var model = "(unknown)";
+        int inputTokens = 0, outputTokens = 0;
+        string? resolutionType = null;
+        string? errorCode = null, errorMessage = null;
 
-        reportLogs.AppendLine($"  Model: {response.Resolution?.ActualModel ?? "(unknown)"}");
-        reportLogs.AppendLine($"  Tokens: input={response.TokenUsage?.InputTokens ?? 0} output={response.TokenUsage?.OutputTokens ?? 0}");
-        reportLogs.AppendLine($"  ResolutionType: {response.Resolution?.ResolutionType}");
+        const int CHUNK_BATCH_SIZE = 200;
+        var pendingChunk = new StringBuilder();
+        var streamSw = Stopwatch.StartNew();
 
-        // 记录 Gateway 错误信息
-        if (!string.IsNullOrWhiteSpace(response.ErrorCode) || !string.IsNullOrWhiteSpace(response.ErrorMessage))
+        if (emitEvent != null)
         {
-            reportLogs.AppendLine($"  ❌ Gateway 错误: [{response.ErrorCode}] {response.ErrorMessage}");
-            reportLogs.AppendLine($"  HTTP Status: {response.StatusCode}");
+            await emitEvent("llm-stream-start", new { nodeId = node.NodeId, nodeName = node.Name });
+        }
+
+        try
+        {
+            await foreach (var chunk in gateway.StreamAsync(request, CancellationToken.None))
+            {
+                switch (chunk.Type)
+                {
+                    case PrdAgent.Infrastructure.LlmGateway.GatewayChunkType.Start:
+                        model = chunk.Resolution?.ActualModel ?? "(unknown)";
+                        resolutionType = chunk.Resolution?.ResolutionType;
+                        if (emitEvent != null)
+                        {
+                            await emitEvent("llm-stream-start", new { nodeId = node.NodeId, nodeName = node.Name, model });
+                        }
+                        break;
+
+                    case PrdAgent.Infrastructure.LlmGateway.GatewayChunkType.Text:
+                        if (!string.IsNullOrEmpty(chunk.Content))
+                        {
+                            contentBuilder.Append(chunk.Content);
+                            pendingChunk.Append(chunk.Content);
+
+                            if (emitEvent != null && pendingChunk.Length >= CHUNK_BATCH_SIZE)
+                            {
+                                await emitEvent("llm-chunk", new
+                                {
+                                    nodeId = node.NodeId,
+                                    content = pendingChunk.ToString(),
+                                    accumulatedLength = contentBuilder.Length,
+                                });
+                                pendingChunk.Clear();
+                            }
+                        }
+                        break;
+
+                    case PrdAgent.Infrastructure.LlmGateway.GatewayChunkType.Done:
+                        inputTokens = chunk.TokenUsage?.InputTokens ?? 0;
+                        outputTokens = chunk.TokenUsage?.OutputTokens ?? 0;
+                        break;
+
+                    case PrdAgent.Infrastructure.LlmGateway.GatewayChunkType.Error:
+                        errorCode = "STREAM_ERROR";
+                        errorMessage = chunk.Error;
+                        break;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            errorCode = "STREAM_EXCEPTION";
+            errorMessage = ex.Message;
+        }
+
+        // 发送剩余的 pending chunk
+        if (emitEvent != null && pendingChunk.Length > 0)
+        {
+            await emitEvent("llm-chunk", new
+            {
+                nodeId = node.NodeId,
+                content = pendingChunk.ToString(),
+                accumulatedLength = contentBuilder.Length,
+            });
+        }
+
+        streamSw.Stop();
+        var content = contentBuilder.ToString();
+
+        if (emitEvent != null)
+        {
+            await emitEvent("llm-stream-end", new
+            {
+                nodeId = node.NodeId,
+                totalLength = content.Length,
+                durationMs = streamSw.ElapsedMilliseconds,
+                model,
+                inputTokens,
+                outputTokens,
+            });
+        }
+
+        reportLogs.AppendLine($"  Model: {model}");
+        reportLogs.AppendLine($"  Tokens: input={inputTokens} output={outputTokens}");
+        reportLogs.AppendLine($"  ResolutionType: {resolutionType}");
+        reportLogs.AppendLine($"  Streaming duration: {streamSw.ElapsedMilliseconds}ms");
+
+        if (!string.IsNullOrWhiteSpace(errorCode) || !string.IsNullOrWhiteSpace(errorMessage))
+        {
+            reportLogs.AppendLine($"  ❌ Gateway 错误: [{errorCode}] {errorMessage}");
         }
 
         reportLogs.AppendLine($"  LLM 响应 ({content.Length} chars):");
@@ -2680,8 +2772,8 @@ public static class CapsuleExecutor
 
         if (string.IsNullOrWhiteSpace(content))
         {
-            var reason = !string.IsNullOrWhiteSpace(response.ErrorMessage)
-                ? $"Gateway 错误: {response.ErrorMessage}"
+            var reason = !string.IsNullOrWhiteSpace(errorMessage)
+                ? $"Gateway 错误: {errorMessage}"
                 : "可能是 LLM 调度失败";
             reportLogs.AppendLine($"  ⚠️ 警告: 报告内容为空 ({reason})");
         }

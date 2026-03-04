@@ -141,13 +141,39 @@ const tapdBugCollectionTemplate: WorkflowTemplate = {
       },
       {
         nodeId: 'n-agg',
-        name: '28维度预统计',
-        nodeType: 'data-aggregator',
+        name: '数据预处理（JS脚本）',
+        nodeType: 'script-executor',
         config: {
-          aggregationType: 'tapd-bug-28d',
+          language: 'javascript',
+          code: `// data = 上游 TAPD 缺陷数组
+const total = data.length;
+const byStatus = {};
+const bySeverity = {};
+const byPriority = {};
+
+data.forEach(item => {
+  const s = item["状态"] || item.status || "未知";
+  const sev = item["缺陷等级"] || item.severity || "未知";
+  const pri = item["优先级"] || item.priority || "未知";
+  byStatus[s] = (byStatus[s] || 0) + 1;
+  bySeverity[sev] = (bySeverity[sev] || 0) + 1;
+  byPriority[pri] = (byPriority[pri] || 0) + 1;
+});
+
+const closed = data.filter(i => ["已关闭","closed","已验证"].includes(i["状态"] || i.status || ""));
+const fixRate = total > 0 ? (closed.length / total * 100).toFixed(1) + "%" : "N/A";
+
+result = {
+  总数: total,
+  修复率: fixRate,
+  按状态: byStatus,
+  按等级: bySeverity,
+  按优先级: byPriority,
+};`,
+          timeoutSeconds: '30',
         },
-        inputSlots: [{ slotId: 'agg-in', name: 'data', dataType: 'json', required: true }],
-        outputSlots: [{ slotId: 'agg-out', name: 'stats', dataType: 'json', required: true }],
+        inputSlots: [{ slotId: 'script-in', name: 'input', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'script-out', name: 'output', dataType: 'json', required: true }],
         position: { x: 700, y: 300 },
       },
       {
@@ -206,8 +232,8 @@ const tapdBugCollectionTemplate: WorkflowTemplate = {
 
     const edges: WorkflowEdge[] = [
       edge('n-trigger', 'manual-out', 'n-tapd', 'tapd-in'),
-      edge('n-tapd', 'tapd-out', 'n-agg', 'agg-in'),
-      edge('n-agg', 'agg-out', 'n-llm', 'llm-in'),
+      edge('n-tapd', 'tapd-out', 'n-agg', 'script-in'),
+      edge('n-agg', 'script-out', 'n-llm', 'llm-in'),
       edge('n-llm', 'llm-out', 'n-report', 'report-in'),
       edge('n-report', 'report-out', 'n-export', 'export-in'),
       edge('n-report', 'report-out', 'n-notify', 'notify-in'),

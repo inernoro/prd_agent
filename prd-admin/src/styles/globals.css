@@ -1630,6 +1630,11 @@ html[data-perf-mode="performance"] .blur-text span {
    仅 background-position 变化，不触发 layout
    ======================================== */
 
+@keyframes progress-slide {
+  0%   { background-position: 100% 0%; }
+  100% { background-position: -100% 0%; }
+}
+
 @keyframes btnGradientDrift {
   0%   { background-position: 0% 50%; }
   50%  { background-position: 100% 50%; }

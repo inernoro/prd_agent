@@ -17,6 +17,7 @@ import type {
   NodeExecution, CapsuleTypeMeta, CapsuleCategoryInfo,
   CapsuleConfigField,
 } from '@/services/contracts/workflowAgent';
+import { useAuthStore } from '@/stores/authStore';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Badge } from '@/components/design/Badge';
 import { Button } from '@/components/design/Button';
@@ -540,11 +541,12 @@ function SectionBox({ title, type, children }: {
 
 // ──── 右侧舱卡片 ────
 
-function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, onRemove, onTestRun, onReplay, onConfigChange, onToggleBreakpoint, capsuleMeta, isRunning, testRunResult, isTestRunning, formatWarnings, onPreviewArtifact }: {
+function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpanded, onToggle, onRemove, onTestRun, onReplay, onConfigChange, onToggleBreakpoint, capsuleMeta, isRunning, testRunResult, isTestRunning, formatWarnings, onPreviewArtifact }: {
   node: WorkflowNode;
   index: number;
   nodeExec?: NodeExecution;
   nodeOutput?: { logs: string; artifacts: ExecutionArtifact[] };
+  streamingText?: string;
   isExpanded: boolean;
   onToggle: () => void;
   onRemove: () => void;
@@ -732,16 +734,46 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
           }
         </div>
 
-        {/* 执行中进度条 */}
+        {/* 执行中进度条 + LLM 流式输出 */}
         {status === 'running' && (
-          <div className="mt-2 flex items-center gap-2 ml-[68px]">
-            <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+          <div className="mt-2 ml-[68px] space-y-2">
+            <div
+              className="w-full h-3 rounded-full overflow-hidden"
+              style={{ background: 'rgba(255,255,255,0.06)' }}
+            >
               <div
-                className="h-full rounded-full animate-pulse"
-                style={{ width: '60%', background: 'var(--gold-gradient, linear-gradient(90deg, rgba(99,102,241,0.6), rgba(99,102,241,0.3)))' }}
+                className="h-full rounded-full"
+                style={{
+                  background: `linear-gradient(90deg, transparent 0%, hsla(${accentHue},70%,55%,0.7) 30%, hsla(${accentHue},80%,65%,0.9) 50%, hsla(${accentHue},70%,55%,0.7) 70%, transparent 100%)`,
+                  backgroundSize: '200% 100%',
+                  animation: 'progress-slide 1.8s ease-in-out infinite',
+                }}
               />
             </div>
-            <span className="text-[10px]" style={{ color: 'var(--accent-gold)' }}>处理中...</span>
+            {/* LLM 实时流式输出 */}
+            {streamingText != null && streamingText.length > 0 && (
+              <div
+                className="rounded-[8px] px-3 py-2 text-[11px] font-mono overflow-auto"
+                style={{
+                  maxHeight: '240px',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-all',
+                  background: 'rgba(255,255,255,0.03)',
+                  border: `1px solid hsla(${accentHue},50%,50%,0.15)`,
+                  color: 'var(--text-secondary)',
+                }}
+              >
+                {streamingText}
+                <span
+                  className="inline-block w-1.5 h-3.5 ml-0.5 rounded-sm"
+                  style={{
+                    background: `hsl(${accentHue}, 70%, 60%)`,
+                    animation: 'pulse 1s ease-in-out infinite',
+                    verticalAlign: 'text-bottom',
+                  }}
+                />
+              </div>
+            )}
           </div>
         )}
 
@@ -1244,6 +1276,10 @@ export function WorkflowEditorPage() {
     }]);
   }
 
+  // LLM 流式输出（按 nodeId 追踪实时文本）
+  const [streamingTexts, setStreamingTexts] = useState<Record<string, string>>({});
+  const sseAbortRef = useRef<AbortController | null>(null);
+
   // 轮询
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fetchedNodesRef = useRef(new Set<string>());
@@ -1290,6 +1326,7 @@ export function WorkflowEditorPage() {
           const latest = execRes.data.items[0];
           setLatestExec(latest);
           if (['queued', 'running'].includes(latest.status)) {
+            startSseStream(latest.id);
             startPolling(latest.id);
           } else {
             fetchAllNodeOutputs(latest);
@@ -1353,6 +1390,73 @@ export function WorkflowEditorPage() {
       clearInterval(pollingRef.current);
       pollingRef.current = null;
     }
+    // 同时关闭 SSE 流
+    if (sseAbortRef.current) {
+      sseAbortRef.current.abort();
+      sseAbortRef.current = null;
+    }
+  }
+
+  /** 通过 fetch ReadableStream 订阅 SSE 事件，获取 LLM 实时流式输出 */
+  function startSseStream(execId: string) {
+    if (sseAbortRef.current) sseAbortRef.current.abort();
+    const abort = new AbortController();
+    sseAbortRef.current = abort;
+    setStreamingTexts({});
+
+    const token = useAuthStore.getState().token;
+    const baseUrl = (import.meta.env.VITE_API_BASE_URL as string || '').replace(/\/+$/, '');
+    const url = `${baseUrl}/api/workflow-agent/executions/${execId}/stream`;
+
+    (async () => {
+      try {
+        const resp = await fetch(url, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          signal: abort.signal,
+        });
+        if (!resp.ok || !resp.body) return;
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+
+          // 解析 SSE：按 \n\n 分割事件
+          const parts = buf.split('\n\n');
+          buf = parts.pop() || '';
+
+          for (const part of parts) {
+            if (!part.trim()) continue;
+            let eventName = '';
+            let data = '';
+            for (const line of part.split('\n')) {
+              if (line.startsWith('event: ')) eventName = line.slice(7);
+              else if (line.startsWith('data: ')) data = line.slice(6);
+            }
+            if (!eventName || !data) continue;
+
+            try {
+              const payload = JSON.parse(data);
+              if (eventName === 'llm-chunk' && payload.nodeId && payload.content) {
+                setStreamingTexts(prev => ({
+                  ...prev,
+                  [payload.nodeId]: (prev[payload.nodeId] || '') + payload.content,
+                }));
+              } else if (eventName === 'llm-stream-start' && payload.nodeId) {
+                setStreamingTexts(prev => ({ ...prev, [payload.nodeId]: '' }));
+              } else if (eventName === 'llm-stream-end' && payload.nodeId) {
+                // 流结束，保留文本直到轮询获取最终结果后自然被替代
+              }
+            } catch { /* ignore parse errors */ }
+          }
+        }
+      } catch {
+        // fetch aborted or network error — ignore
+      }
+    })();
   }
 
   async function fetchNodeOutput(execId: string, nodeId: string) {
@@ -1513,6 +1617,7 @@ export function WorkflowEditorPage() {
 
     setIsExecuting(true);
     setNodeOutputs({});
+    setStreamingTexts({});
     fetchedNodesRef.current.clear();
     prevNodeStatusRef.current = {};
     setLogEntries([]);
@@ -1525,6 +1630,7 @@ export function WorkflowEditorPage() {
         const exec = res.data.execution;
         setLatestExec(exec);
         addLog('info', `工作流已入队，共 ${exec.nodeExecutions.length} 个节点`);
+        startSseStream(exec.id);
         startPolling(exec.id);
       } else {
         alert('执行失败: ' + (res.error?.message || '未知错误'));
@@ -1846,6 +1952,7 @@ export function WorkflowEditorPage() {
                         index={idx}
                         nodeExec={latestExec?.nodeExecutions.find(ne => ne.nodeId === node.nodeId)}
                         nodeOutput={nodeOutputs[node.nodeId]}
+                        streamingText={streamingTexts[node.nodeId]}
                         isExpanded={expandedNodeId === node.nodeId}
                         onToggle={() => setExpandedNodeId(expandedNodeId === node.nodeId ? null : node.nodeId)}
                         onRemove={() => handleRemoveNode(node.nodeId)}
