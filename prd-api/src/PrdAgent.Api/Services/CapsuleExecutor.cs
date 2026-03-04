@@ -17,6 +17,19 @@ public static class CapsuleExecutor
 {
     public record CapsuleResult(List<ExecutionArtifact> Artifacts, string Logs);
 
+    /// <summary>共享序列化选项：不转义中文、美化输出</summary>
+    private static readonly JsonSerializerOptions JsonPretty = new()
+    {
+        WriteIndented = true,
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
+    /// <summary>共享序列化选项：不转义中文、紧凑输出</summary>
+    private static readonly JsonSerializerOptions JsonCompact = new()
+    {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
     /// <summary>
     /// 按舱类型调度执行。
     /// </summary>
@@ -660,8 +673,8 @@ public static class CapsuleExecutor
         var inputJson = allItems.Count switch
         {
             0 => "[]",
-            1 when inputArtifacts.Count == 1 => JsonSerializer.Serialize(allItems[0]),
-            _ => JsonSerializer.Serialize(allItems)
+            1 when inputArtifacts.Count == 1 => JsonSerializer.Serialize(allItems[0], JsonCompact),
+            _ => JsonSerializer.Serialize(allItems, JsonCompact)
         };
         logs.AppendLine($"  输入数据: {inputJson.Length} chars, {allItems.Count} 条记录");
 
@@ -698,7 +711,7 @@ public static class CapsuleExecutor
                 if (lastExprValue != null && !lastExprValue.IsNull() && !lastExprValue.IsUndefined())
                 {
                     var raw = lastExprValue.ToObject();
-                    outputJson = raw is string s ? s : JsonSerializer.Serialize(raw, new JsonSerializerOptions { WriteIndented = true });
+                    outputJson = raw is string s ? s : JsonSerializer.Serialize(raw, JsonPretty);
                 }
                 else
                 {
@@ -708,7 +721,7 @@ public static class CapsuleExecutor
             else
             {
                 var raw = resultValue.ToObject();
-                outputJson = raw is string s ? s : JsonSerializer.Serialize(raw, new JsonSerializerOptions { WriteIndented = true });
+                outputJson = raw is string s ? s : JsonSerializer.Serialize(raw, JsonPretty);
             }
 
             logs.AppendLine($"  输出: {outputJson.Length} chars");
@@ -1669,7 +1682,7 @@ public static class CapsuleExecutor
                 .Where(a => !string.IsNullOrWhiteSpace(a.InlineContent))
                 .Select(a => a.InlineContent!)
                 .ToList();
-            merged = JsonSerializer.Serialize(items);
+            merged = JsonSerializer.Serialize(items, JsonCompact);
         }
         else
         {
@@ -1833,7 +1846,7 @@ public static class CapsuleExecutor
 
         if (allItems.Count == 0)
         {
-            var emptyResult = JsonSerializer.Serialize(new { totalCount = 0, message = "无数据" });
+            var emptyResult = JsonSerializer.Serialize(new { totalCount = 0, message = "无数据" }, JsonCompact);
             var emptyArt = MakeTextArtifact(node, "agg-out", "统计摘要", emptyResult, "application/json");
             return new CapsuleResult(new List<ExecutionArtifact> { emptyArt }, logs.ToString());
         }
@@ -1972,7 +1985,7 @@ public static class CapsuleExecutor
         if (numericSummaries.Count > 0)
             result["numericSummaries"] = numericSummaries;
 
-        var outputJson = JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });
+        var outputJson = JsonSerializer.Serialize(result, JsonPretty);
         logs.AppendLine($"  输出统计摘要: {outputJson.Length} chars ({Encoding.UTF8.GetByteCount(outputJson)} bytes)");
 
         var artifact = MakeTextArtifact(node, "agg-out", "统计摘要", outputJson, "application/json");
@@ -2015,7 +2028,7 @@ public static class CapsuleExecutor
 
         if (allItems.Count == 0)
         {
-            var emptyJson = JsonSerializer.Serialize(new { totalCount = 0, message = "无数据", dimensions = Array.Empty<object>() });
+            var emptyJson = JsonSerializer.Serialize(new { totalCount = 0, message = "无数据", dimensions = Array.Empty<object>() }, JsonCompact);
             var emptyArt = MakeTextArtifact(node, "agg-out", "TAPD 28维度统计", emptyJson, "application/json");
             return new CapsuleResult(new List<ExecutionArtifact> { emptyArt }, logs.ToString());
         }
@@ -2213,7 +2226,7 @@ public static class CapsuleExecutor
             ["dimensions"] = dimensions,
         };
 
-        var outputJson = JsonSerializer.Serialize(output, new JsonSerializerOptions { WriteIndented = true });
+        var outputJson = JsonSerializer.Serialize(output, JsonPretty);
         logs.AppendLine($"  28 维度统计完成");
         logs.AppendLine($"  输出摘要: {outputJson.Length} chars ({Encoding.UTF8.GetByteCount(outputJson)} bytes)");
         logs.AppendLine($"  关键指标: 总数={all.Count}, 技术缺陷={techBugs.Count}, P2及以下={p2Below.Count}");
@@ -2347,8 +2360,8 @@ public static class CapsuleExecutor
         if (targetFormat == "json")
         {
             output = prettyPrint
-                ? JsonSerializer.Serialize(jsonData, new JsonSerializerOptions { WriteIndented = true })
-                : JsonSerializer.Serialize(jsonData);
+                ? JsonSerializer.Serialize(jsonData, JsonPretty)
+                : JsonSerializer.Serialize(jsonData, JsonCompact);
             mimeType = "application/json";
         }
         else if (targetFormat == "csv" || targetFormat == "tsv")
@@ -2398,7 +2411,7 @@ public static class CapsuleExecutor
             rows.Add(row);
         }
 
-        return JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize(rows));
+        return JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize(rows, JsonCompact));
     }
 
     private static List<string> ParseCsvLine(string line, char delimiter)
@@ -2468,7 +2481,7 @@ public static class CapsuleExecutor
     private static string XmlElementToJson(System.Xml.Linq.XElement el)
     {
         if (!el.HasElements)
-            return JsonSerializer.Serialize(el.Value);
+            return JsonSerializer.Serialize(el.Value, JsonCompact);
 
         // 检查是否有重复子元素名（数组）
         var groups = el.Elements().GroupBy(e => e.Name.LocalName).ToList();
@@ -2487,7 +2500,7 @@ public static class CapsuleExecutor
             }
         }
 
-        return JsonSerializer.Serialize(dict);
+        return JsonSerializer.Serialize(dict, JsonCompact);
     }
 
     private static string JsonToXml(JsonElement json, string rootTag, bool indent)
