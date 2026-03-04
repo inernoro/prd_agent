@@ -24,6 +24,7 @@ import { LandingPage } from '@/pages/home';
 import OpenPlatformTabsPage from '@/pages/OpenPlatformTabsPage';
 import AutomationRulesPage from '@/pages/AutomationRulesPage';
 import SettingsPage from '@/pages/SettingsPage';
+import DataTransferPage from '@/pages/DataTransferPage';
 import ExecutiveDashboardPage from '@/pages/ExecutiveDashboardPage';
 import { PrdAgentTabsPage } from '@/pages/PrdAgentTabsPage';
 import AgentLauncherPage from '@/pages/AgentLauncherPage';
@@ -265,6 +266,7 @@ export default function App() {
         <Route path="arena" element={<RequirePermission perm="access"><ArenaPage /></RequirePermission>} />
         <Route path="lab" element={<RequirePermission perm="lab.read"><LabPage /></RequirePermission>} />
         <Route path="settings" element={<RequirePermission perm="access"><SettingsPage /></RequirePermission>} />
+        <Route path="data-transfers" element={<RequirePermission perm="access"><DataTransferPage /></RequirePermission>} />
         <Route path="executive" element={<RequirePermission perm="access"><ExecutivePage /></RequirePermission>} />
         {/* 移动端专属路由 */}
         <Route path="my-assets" element={<RequirePermission perm="access"><MobileAssetsPage /></RequirePermission>} />

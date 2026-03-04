@@ -1213,3 +1213,15 @@ export type {
   TutorialEmailEnrollment,
   TutorialEmailStep,
 } from '@/services/real/tutorialEmail';
+
+// ── Account Data Transfer 数据分享 ──
+export {
+  listTransfersReal as listTransfers,
+  getTransferReal as getTransfer,
+  createTransferReal as createTransfer,
+  acceptTransferReal as acceptTransfer,
+  rejectTransferReal as rejectTransfer,
+  cancelTransferReal as cancelTransfer,
+  listMyWorkspacesReal as listMyWorkspaces,
+  listMyConfigsReal as listMyConfigs,
+} from '@/services/real/dataTransfer';
