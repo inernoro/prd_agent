@@ -60,7 +60,7 @@ public class AIGapDetector
             DocumentHash: Sha256Hex(prdContent ?? string.Empty),
             SystemPromptRedacted: "你是一个专业的PRD分析助手，帮助识别文档中的内容缺口。",
             RequestType: "reasoning",
-            RequestPurpose: appCallerCode));
+            AppCallerCode: appCallerCode));
 
         await foreach (var chunk in llmClient.StreamGenerateAsync(
             "你是一个专业的PRD分析助手，帮助识别文档中的内容缺口。",
@@ -125,7 +125,7 @@ public class AIGapDetector
             DocumentHash: Sha256Hex(prdContent ?? string.Empty),
             SystemPromptRedacted: "你是一个专业的产品文档分析师。",
             RequestType: "reasoning",
-            RequestPurpose: appCallerCode));
+            AppCallerCode: appCallerCode));
 
         await foreach (var chunk in llmClient.StreamGenerateAsync(
             "你是一个专业的产品文档分析师。",

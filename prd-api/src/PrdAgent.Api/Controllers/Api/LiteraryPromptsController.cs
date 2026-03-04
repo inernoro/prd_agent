@@ -432,7 +432,7 @@ public class LiteraryPromptsController : ControllerBase
             DocumentHash: null,
             SystemPromptRedacted: "[LITERARY_PROMPT_OPTIMIZE]",
             RequestType: "chat",
-            RequestPurpose: appCallerCode));
+            AppCallerCode: appCallerCode));
 
         var systemPrompt = @"【你的角色】
 你是一个""提示词清洗工具""。

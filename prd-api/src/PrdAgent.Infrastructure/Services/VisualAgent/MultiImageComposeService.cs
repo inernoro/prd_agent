@@ -202,7 +202,7 @@ public class MultiImageComposeService : IMultiImageComposeService
             DocumentHash: null,
             SystemPromptRedacted: "[MULTI_IMAGE_COMPOSE]",
             RequestType: "vision",
-            RequestPurpose: appCallerCode));
+            AppCallerCode: appCallerCode));
 
         var msg = new LLMMessage
         {

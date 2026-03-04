@@ -127,7 +127,7 @@ public class LlmLogsController : ControllerBase
     [HttpGet("meta")]
     public async Task<IActionResult> Meta()
     {
-        // 下拉枚举：为了稳定性，status 使用固定枚举；provider/model/requestPurposes 使用 distinct
+        // 下拉枚举：为了稳定性，status 使用固定枚举；provider/model/appCallerCodes 使用 distinct
         var providers = (await _db.LlmRequestLogs
                 .Distinct(x => x.Provider, Builders<LlmRequestLog>.Filter.Empty)
                 .ToListAsync())
@@ -144,19 +144,19 @@ public class LlmLogsController : ControllerBase
             .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        // 聚合获取所有 RequestPurpose 及其存储的 DisplayName
+        // 聚合获取所有 AppCallerCode 及其存储的 DisplayName
         // 优先使用日志中存储的 displayName（自包含），其次使用注册表，最后使用原始值
-        var requestPurposeAggregation = await _db.LlmRequestLogs
+        var appCallerCodeAggregation = await _db.LlmRequestLogs
             .Aggregate()
-            .Match(Builders<LlmRequestLog>.Filter.Ne(x => x.RequestPurpose, null))
-            .Group(x => x.RequestPurpose, g => new
+            .Match(Builders<LlmRequestLog>.Filter.Ne(x => x.AppCallerCode, null))
+            .Group(x => x.AppCallerCode, g => new
             {
                 Value = g.Key,
-                StoredDisplayName = g.First().RequestPurposeDisplayName
+                StoredDisplayName = g.First().AppCallerCodeDisplayName
             })
             .ToListAsync();
 
-        var requestPurposes = requestPurposeAggregation
+        var appCallerCodes = appCallerCodeAggregation
             .Where(x => !string.IsNullOrWhiteSpace(x.Value))
             .Select(x => new
             {
@@ -199,7 +199,7 @@ public class LlmLogsController : ControllerBase
             .ThenBy(x => x.UserId, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        return Ok(ApiResponse<object>.Ok(new { providers, models, requestPurposes, statuses, users = metaUsers }));
+        return Ok(ApiResponse<object>.Ok(new { providers, models, appCallerCodes, statuses, users = metaUsers }));
     }
 
     [HttpGet]
@@ -215,7 +215,7 @@ public class LlmLogsController : ControllerBase
         [FromQuery] string? sessionId = null,
         [FromQuery] string? userId = null,
         [FromQuery] string? status = null,
-        [FromQuery] string? requestPurpose = null)
+        [FromQuery] string? appCallerCode = null)
     {
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 10, 200);
@@ -230,7 +230,7 @@ public class LlmLogsController : ControllerBase
         if (!string.IsNullOrWhiteSpace(sessionId)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.SessionId, sessionId);
         if (!string.IsNullOrWhiteSpace(userId)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.UserId, userId);
         if (!string.IsNullOrWhiteSpace(status)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.Status, status);
-        if (!string.IsNullOrWhiteSpace(requestPurpose)) filter &= Builders<LlmRequestLog>.Filter.Regex(x => x.RequestPurpose, new BsonRegularExpression($"^{Regex.Escape(requestPurpose)}", "i"));
+        if (!string.IsNullOrWhiteSpace(appCallerCode)) filter &= Builders<LlmRequestLog>.Filter.Regex(x => x.AppCallerCode, new BsonRegularExpression($"^{Regex.Escape(appCallerCode)}", "i"));
 
         var total = await _db.LlmRequestLogs.CountDocumentsAsync(filter);
         var rawItems = await _db.LlmRequestLogs.Find(filter)
@@ -256,8 +256,8 @@ public class LlmLogsController : ControllerBase
                 x.UserId,
                 x.ViewRole,
                 x.RequestType,
-                x.RequestPurpose,
-                x.RequestPurposeDisplayName,
+                x.AppCallerCode,
+                x.AppCallerCodeDisplayName,
                 x.Status,
                 x.StartedAt,
                 x.FirstByteAt,
@@ -318,8 +318,8 @@ public class LlmLogsController : ControllerBase
                 avatarFileName = userInfo.AvatarFileName,
                 x.ViewRole,
                 x.RequestType,
-                x.RequestPurpose,
-                x.RequestPurposeDisplayName,
+                x.AppCallerCode,
+                x.AppCallerCodeDisplayName,
                 x.Status,
                 x.StartedAt,
                 x.FirstByteAt,
@@ -700,7 +700,7 @@ public class LlmLogsController : ControllerBase
         [FromQuery] string? model = null,
         [FromQuery] string? status = null,
         [FromQuery] string? platformId = null,
-        [FromQuery] string? requestPurpose = null)
+        [FromQuery] string? appCallerCode = null)
     {
         days = Math.Clamp(days, 1, 30);
         var from = DateTime.UtcNow.AddDays(-days);
@@ -710,7 +710,7 @@ public class LlmLogsController : ControllerBase
         if (!string.IsNullOrWhiteSpace(model)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.Model, model);
         if (!string.IsNullOrWhiteSpace(status)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.Status, status);
         if (!string.IsNullOrWhiteSpace(platformId)) filter &= Builders<LlmRequestLog>.Filter.Eq(x => x.PlatformId, platformId);
-        if (!string.IsNullOrWhiteSpace(requestPurpose)) filter &= Builders<LlmRequestLog>.Filter.Regex(x => x.RequestPurpose, new BsonRegularExpression($"^{Regex.Escape(requestPurpose)}", "i"));
+        if (!string.IsNullOrWhiteSpace(appCallerCode)) filter &= Builders<LlmRequestLog>.Filter.Regex(x => x.AppCallerCode, new BsonRegularExpression($"^{Regex.Escape(appCallerCode)}", "i"));
 
         // 用聚合管道避免把大量日志拉回内存
         var matchDoc = filter.Render(new RenderArgs<LlmRequestLog>(
@@ -856,12 +856,12 @@ public class LlmLogsController : ControllerBase
                 Builders<LlmRequestLog>.Filter.Eq(x => x.Model, item.ModelId)
             );
 
-            // 如果指定了 appCallerCode，则按前缀匹配 RequestPurpose
+            // 如果指定了 appCallerCode，则按前缀匹配 AppCallerCode
             if (!string.IsNullOrWhiteSpace(item.AppCallerCode))
             {
                 filter = Builders<LlmRequestLog>.Filter.And(
                     filter,
-                    Builders<LlmRequestLog>.Filter.Regex(x => x.RequestPurpose, 
+                    Builders<LlmRequestLog>.Filter.Regex(x => x.AppCallerCode,
                         new MongoDB.Bson.BsonRegularExpression($"^{System.Text.RegularExpressions.Regex.Escape(item.AppCallerCode)}"))
                 );
             }

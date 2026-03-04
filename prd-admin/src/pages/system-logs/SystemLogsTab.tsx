@@ -727,8 +727,8 @@ export default function SystemLogsTab() {
                             <span style={{ color: 'var(--text-muted)' }}>
                               {llm.durationMs != null ? `${(llm.durationMs / 1000).toFixed(1)}s` : '—'}
                             </span>
-                            {llm.requestPurpose && (
-                              <span style={{ color: 'var(--text-muted)' }}>{llm.requestPurpose}</span>
+                            {llm.appCallerCode && (
+                              <span style={{ color: 'var(--text-muted)' }}>{llm.appCallerCode}</span>
                             )}
                           </div>
                         ))}

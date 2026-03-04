@@ -785,7 +785,7 @@ public class OpenPlatformChatController : ControllerBase
                 DocumentHash: null,
                 SystemPromptRedacted: null,
                 RequestType: "reasoning",
-                RequestPurpose: appCallerCode));
+                AppCallerCode: appCallerCode));
 
             var isFirstChunk = true;
 
@@ -964,7 +964,7 @@ public class OpenPlatformChatController : ControllerBase
                 DocumentHash: null,
                 SystemPromptRedacted: null,
                 RequestType: "reasoning",
-                RequestPurpose: appCallerCode));
+                AppCallerCode: appCallerCode));
 
             // 调用主模型
             await foreach (var chunk in llmClient.StreamGenerateAsync(

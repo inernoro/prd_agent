@@ -13,7 +13,7 @@ export type GetLlmLogsParams = {
   sessionId?: string;
   userId?: string;
   status?: string;
-  requestPurpose?: string;
+  appCallerCode?: string;
 };
 
 export type LlmLogsListData = {
@@ -23,7 +23,7 @@ export type LlmLogsListData = {
   pageSize: number;
 };
 
-export type LlmLogsMetaRequestPurpose = {
+export type LlmLogsMetaAppCallerCode = {
   value: string;
   displayName: string;
 };
@@ -31,7 +31,7 @@ export type LlmLogsMetaRequestPurpose = {
 export type LlmLogsMetaData = {
   providers: string[];
   models: string[];
-  requestPurposes: LlmLogsMetaRequestPurpose[];
+  appCallerCodes: LlmLogsMetaAppCallerCode[];
   statuses: string[];
   users?: LlmLogsMetaUser[];
 };
@@ -54,7 +54,7 @@ export type GetLlmModelStatsParams = {
   model?: string;
   status?: string;
   platformId?: string;
-  requestPurpose?: string;
+  appCallerCode?: string;
 };
 
 export type LlmModelStatsItem = {
