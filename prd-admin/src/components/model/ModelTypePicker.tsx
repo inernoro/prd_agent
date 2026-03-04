@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { ChevronDown, ChevronUp, Check } from 'lucide-react';
+import { useMemo, useState, useRef, useEffect } from 'react';
+import { ChevronDown, Check } from 'lucide-react';
 import {
   MODEL_TYPE_DEFINITIONS,
   MODEL_TYPE_CATEGORIES,
@@ -16,10 +16,12 @@ interface ModelTypePickerProps {
 
 /**
  * 模型类型选择面板
- * 用 icon + 文字 + 描述的分类网格替代下拉框，一览无余。
+ * 点击后弹出浮动面板（popover），不撑开页面布局。
  */
 export function ModelTypePicker({ value, onChange, disabled, compact }: ModelTypePickerProps) {
-  const [expanded, setExpanded] = useState(compact ?? false);
+  const [open, setOpen] = useState(false);
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
 
   const selected = useMemo(
     () => MODEL_TYPE_DEFINITIONS.find((d) => d.value === value),
@@ -34,22 +36,48 @@ export function ModelTypePicker({ value, onChange, disabled, compact }: ModelTyp
     return groups;
   }, []);
 
-  if (!expanded) {
-    // 折叠态：显示当前选中 + 展开按钮
+  // 点击外部关闭
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (
+        anchorRef.current?.contains(e.target as Node) ||
+        popoverRef.current?.contains(e.target as Node)
+      ) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  // compact 模式保持内联展示
+  if (compact) {
     return (
+      <InlineGrid
+        grouped={grouped}
+        value={value}
+        onChange={onChange}
+        disabled={disabled}
+      />
+    );
+  }
+
+  return (
+    <div ref={anchorRef} className="relative">
+      {/* 触发按钮 */}
       <button
         type="button"
         disabled={disabled}
-        onClick={() => !disabled && setExpanded(true)}
+        onClick={() => !disabled && setOpen((v) => !v)}
         className="w-full flex items-center gap-3 px-3 py-2.5 rounded-[12px] text-left transition-all"
         style={{
           background: 'var(--bg-input)',
-          border: '1px solid var(--border-subtle)',
+          border: `1px solid ${open ? 'var(--accent-alpha-30)' : 'var(--border-subtle)'}`,
           opacity: disabled ? 0.6 : 1,
           cursor: disabled ? 'not-allowed' : 'pointer',
         }}
       >
-        {selected && (
+        {selected ? (
           <>
             <span
               className="shrink-0 w-8 h-8 rounded-[10px] flex items-center justify-center"
@@ -66,39 +94,132 @@ export function ModelTypePicker({ value, onChange, disabled, compact }: ModelTyp
               </div>
             </div>
           </>
-        )}
-        {!selected && (
+        ) : (
           <span className="text-[13px]" style={{ color: 'var(--text-muted)' }}>
             选择模型类型...
           </span>
         )}
-        <ChevronDown size={14} style={{ color: 'var(--text-muted)' }} className="shrink-0" />
+        <ChevronDown
+          size={14}
+          style={{
+            color: 'var(--text-muted)',
+            transform: open ? 'rotate(180deg)' : undefined,
+            transition: 'transform 0.2s',
+          }}
+          className="shrink-0"
+        />
       </button>
-    );
-  }
 
-  // 展开态：分类网格
+      {/* 浮动面板 */}
+      {open && (
+        <div
+          ref={popoverRef}
+          className="absolute z-50 mt-1 w-full rounded-[12px] overflow-hidden shadow-lg"
+          style={{
+            background: 'var(--bg-elevated, var(--bg-input))',
+            border: '1px solid var(--border-subtle)',
+            maxHeight: 360,
+            overflowY: 'auto',
+          }}
+        >
+          <div className="p-2 space-y-3">
+            {(['core', 'extended', 'media'] as const).map((cat) => {
+              const items = grouped[cat];
+              if (!items?.length) return null;
+              return (
+                <div key={cat}>
+                  <div
+                    className="text-[10px] font-semibold uppercase tracking-wider px-1 mb-1.5"
+                    style={{ color: 'var(--text-muted)' }}
+                  >
+                    {MODEL_TYPE_CATEGORIES[cat]}
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {items.map((def) => {
+                      const isSelected = value === def.value;
+                      return (
+                        <button
+                          key={def.value}
+                          type="button"
+                          onClick={() => {
+                            onChange(def.value);
+                            setOpen(false);
+                          }}
+                          className="flex items-center gap-2.5 px-2.5 py-2 rounded-[10px] text-left transition-all group"
+                          style={{
+                            background: isSelected ? 'var(--accent-alpha-10)' : 'transparent',
+                            border: isSelected
+                              ? '1px solid var(--accent-alpha-30)'
+                              : '1px solid transparent',
+                          }}
+                          onMouseEnter={(e) => {
+                            if (!isSelected) {
+                              e.currentTarget.style.background = 'var(--bg-hover)';
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (!isSelected) {
+                              e.currentTarget.style.background = 'transparent';
+                            }
+                          }}
+                        >
+                          <span
+                            className="shrink-0 w-7 h-7 rounded-[8px] flex items-center justify-center"
+                            style={{
+                              background: isSelected ? 'var(--accent-alpha-20)' : 'var(--bg-tertiary)',
+                              color: isSelected ? 'var(--accent)' : 'var(--text-secondary)',
+                            }}
+                          >
+                            <def.icon size={14} />
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <div
+                              className="text-[12px] font-medium leading-tight"
+                              style={{ color: isSelected ? 'var(--accent)' : 'var(--text-primary)' }}
+                            >
+                              {def.label}
+                            </div>
+                            <div
+                              className="text-[10px] leading-tight truncate mt-0.5"
+                              style={{ color: 'var(--text-muted)' }}
+                            >
+                              {def.description}
+                            </div>
+                          </div>
+                          {isSelected && (
+                            <Check size={14} className="shrink-0" style={{ color: 'var(--accent)' }} />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** compact 模式内联网格（不变） */
+function InlineGrid({
+  grouped,
+  value,
+  onChange,
+  disabled,
+}: {
+  grouped: Record<string, ModelTypeDefinition[]>;
+  value: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+}) {
   return (
     <div
       className="rounded-[12px] overflow-hidden"
-      style={{
-        background: 'var(--bg-input)',
-        border: '1px solid var(--border-subtle)',
-      }}
+      style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}
     >
-      {/* 折叠按钮 */}
-      {!compact && (
-        <button
-          type="button"
-          onClick={() => setExpanded(false)}
-          className="w-full flex items-center justify-between px-3 py-2 text-[12px] font-medium transition-colors hover:opacity-80"
-          style={{ color: 'var(--text-secondary)', borderBottom: '1px solid var(--border-subtle)' }}
-        >
-          <span>选择模型类型</span>
-          <ChevronUp size={14} />
-        </button>
-      )}
-
       <div className="p-2 space-y-3">
         {(['core', 'extended', 'media'] as const).map((cat) => {
           const items = grouped[cat];
@@ -119,15 +240,10 @@ export function ModelTypePicker({ value, onChange, disabled, compact }: ModelTyp
                       key={def.value}
                       type="button"
                       disabled={disabled}
-                      onClick={() => {
-                        onChange(def.value);
-                        if (!compact) setExpanded(false);
-                      }}
+                      onClick={() => onChange(def.value)}
                       className="flex items-center gap-2.5 px-2.5 py-2 rounded-[10px] text-left transition-all group"
                       style={{
-                        background: isSelected
-                          ? 'var(--accent-alpha-10)'
-                          : 'transparent',
+                        background: isSelected ? 'var(--accent-alpha-10)' : 'transparent',
                         border: isSelected
                           ? '1px solid var(--accent-alpha-30)'
                           : '1px solid transparent',
@@ -135,14 +251,10 @@ export function ModelTypePicker({ value, onChange, disabled, compact }: ModelTyp
                         opacity: disabled ? 0.5 : 1,
                       }}
                       onMouseEnter={(e) => {
-                        if (!isSelected && !disabled) {
-                          e.currentTarget.style.background = 'var(--bg-hover)';
-                        }
+                        if (!isSelected && !disabled) e.currentTarget.style.background = 'var(--bg-hover)';
                       }}
                       onMouseLeave={(e) => {
-                        if (!isSelected) {
-                          e.currentTarget.style.background = 'transparent';
-                        }
+                        if (!isSelected) e.currentTarget.style.background = 'transparent';
                       }}
                     >
                       <span
@@ -194,12 +306,7 @@ interface ModelTypeFilterBarProps {
 export function ModelTypeFilterBar({ value, onChange }: ModelTypeFilterBarProps) {
   return (
     <div className="flex items-center gap-1 flex-wrap">
-      {/* "全部" 标签 */}
-      <FilterTag
-        label="全部"
-        isActive={value === 'all'}
-        onClick={() => onChange('all')}
-      />
+      <FilterTag label="全部" isActive={value === 'all'} onClick={() => onChange('all')} />
       {MODEL_TYPE_DEFINITIONS.map((def) => (
         <FilterTag
           key={def.value}
@@ -235,14 +342,10 @@ function FilterTag({
         border: isActive ? '1px solid var(--accent-alpha-30)' : '1px solid transparent',
       }}
       onMouseEnter={(e) => {
-        if (!isActive) {
-          e.currentTarget.style.background = 'var(--bg-hover)';
-        }
+        if (!isActive) e.currentTarget.style.background = 'var(--bg-hover)';
       }}
       onMouseLeave={(e) => {
-        if (!isActive) {
-          e.currentTarget.style.background = 'transparent';
-        }
+        if (!isActive) e.currentTarget.style.background = 'transparent';
       }}
     >
       {Icon && <Icon size={12} />}
