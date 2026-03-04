@@ -980,7 +980,7 @@ public static class CapsuleExecutor
                 factory, allItems, workspaceId, cookieStr, dscToken, logs);
             if (detailItems.Count > 0)
             {
-                var resultJson = detailItems.ToJsonString();
+                var resultJson = detailItems.ToJsonString(JsonCompact);
                 var artifact = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType} 详情", resultJson, "application/json");
                 return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs.ToString());
             }
@@ -988,7 +988,7 @@ public static class CapsuleExecutor
             logs.AppendLine("⚠️ 详情获取失败，回退使用搜索列表数据");
         }
 
-        var resultJsonFallback = allItems.ToJsonString();
+        var resultJsonFallback = allItems.ToJsonString(JsonCompact);
         var artifactFallback = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType}", resultJsonFallback, "application/json");
         return new CapsuleResult(new List<ExecutionArtifact> { artifactFallback }, logs.ToString());
     }
@@ -1493,7 +1493,7 @@ public static class CapsuleExecutor
                 var detailItems = await FetchTapdBugDetailsAsync(factory, allItems, wsId, cookieStr, dscToken, logs);
                 if (detailItems.Count > 0)
                 {
-                    var detailJson = detailItems.ToJsonString();
+                    var detailJson = detailItems.ToJsonString(JsonCompact);
                     var detailArtifact = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType} 详情", detailJson, "application/json");
                     return new CapsuleResult(new List<ExecutionArtifact> { detailArtifact }, logs.ToString());
                 }
@@ -1505,7 +1505,7 @@ public static class CapsuleExecutor
             }
         }
 
-        var resultJson = allItems.ToJsonString();
+        var resultJson = allItems.ToJsonString(JsonCompact);
         var artifact = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType}", resultJson, "application/json");
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs.ToString());
     }
