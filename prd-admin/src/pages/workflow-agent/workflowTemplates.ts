@@ -182,7 +182,7 @@ const tapdBugCollectionTemplate: WorkflowTemplate = {
         nodeType: 'file-exporter',
         config: {
           fileFormat: 'md',
-          fileName: 'tapd-quality-report-{{date}}',
+          fileName: `tapd-quality-report-{{date}}-${inputs.workspaceId || 'unknown'}`,
         },
         inputSlots: [{ slotId: 'export-in', name: 'data', dataType: 'json', required: true }],
         outputSlots: [{ slotId: 'export-out', name: 'file', dataType: 'binary', required: true }],

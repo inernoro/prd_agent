@@ -174,7 +174,7 @@ public sealed class WorkflowRunWorker : BackgroundService
             try
             {
                 var inputArtifacts = CollectInputArtifacts(nodeId, execution.EdgeSnapshot, artifactStore);
-                var result = await ExecuteCapsuleAsync(scope.ServiceProvider, nodeDef, execution.Variables, inputArtifacts);
+                var result = await ExecuteCapsuleAsync(scope.ServiceProvider, nodeDef, execution.Variables, inputArtifacts, executionId);
 
                 nodeSw.Stop();
                 nodeExec.Status = NodeExecutionStatus.Completed;
@@ -447,9 +447,16 @@ public sealed class WorkflowRunWorker : BackgroundService
         IServiceProvider sp,
         WorkflowNode node,
         Dictionary<string, string> variables,
-        List<ExecutionArtifact> inputArtifacts)
+        List<ExecutionArtifact> inputArtifacts,
+        string executionId)
     {
-        return await CapsuleExecutor.ExecuteAsync(sp, _logger, node, variables, inputArtifacts);
+        // LLM 分析器支持流式输出事件
+        CapsuleExecutor.EmitEventDelegate? emitEvent = null;
+        if (node.NodeType == CapsuleTypes.LlmAnalyzer)
+        {
+            emitEvent = (eventName, payload) => EmitEventAsync(executionId, eventName, payload);
+        }
+        return await CapsuleExecutor.ExecuteAsync(sp, _logger, node, variables, inputArtifacts, emitEvent);
     }
 
     private static void SkipDownstream(string failedNodeId, Dictionary<string, List<string>> downstream, List<NodeExecution> nodeExecutions)

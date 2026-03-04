@@ -4,6 +4,7 @@ import {
   CheckCircle2, Clock, AlertCircle, Loader2, MinusCircle,
   FileText, Download, ChevronDown, ChevronRight, Eye,
   ScrollText, LayoutList, Terminal, ExternalLink, PauseCircle, PlayCircle,
+  Brain,
 } from 'lucide-react';
 import { useWorkflowStore } from '@/stores/workflowStore';
 import { getExecution, getNodeLogs, resumeFromNode, cancelExecution, continueExecution, createShareLink } from '@/services';
@@ -61,12 +62,38 @@ export function ExecutionDetailPanel() {
   const logBottomRef = useRef<HTMLDivElement>(null);
   const sseAbortRef = useRef<AbortController | null>(null);
 
+  // LLM streaming state
+  const [llmStreamContent, setLlmStreamContent] = useState('');
+  const [llmStreamNodeName, setLlmStreamNodeName] = useState('');
+  const [llmStreamModel, setLlmStreamModel] = useState('');
+  const [llmStreamActive, setLlmStreamActive] = useState(false);
+  const [llmStreamExpanded, setLlmStreamExpanded] = useState(true);
+  const [llmStreamStartTime, setLlmStreamStartTime] = useState<number | null>(null);
+  const [llmStreamElapsed, setLlmStreamElapsed] = useState(0);
+  const llmStreamRef = useRef<HTMLDivElement>(null);
+
   const exec = selectedExecution;
 
   // Auto-scroll logs
   useEffect(() => {
     logBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logEntries]);
+
+  // LLM stream elapsed timer
+  useEffect(() => {
+    if (!llmStreamActive || !llmStreamStartTime) return;
+    const iv = setInterval(() => {
+      setLlmStreamElapsed(Date.now() - llmStreamStartTime);
+    }, 100);
+    return () => clearInterval(iv);
+  }, [llmStreamActive, llmStreamStartTime]);
+
+  // Auto-scroll LLM stream panel
+  useEffect(() => {
+    if (llmStreamExpanded && llmStreamRef.current) {
+      llmStreamRef.current.scrollTop = llmStreamRef.current.scrollHeight;
+    }
+  }, [llmStreamContent, llmStreamExpanded]);
 
   // Start SSE for running executions, load logs for completed ones
   useEffect(() => {
@@ -169,6 +196,28 @@ export function ExecutionDetailPanel() {
           ),
         });
       }
+    } else if (eventName === 'llm-stream-start') {
+      setLlmStreamContent('');
+      setLlmStreamNodeName((payload.nodeName as string) || 'AI 分析');
+      setLlmStreamModel((payload.model as string) || '');
+      setLlmStreamActive(true);
+      setLlmStreamExpanded(true);
+      setLlmStreamStartTime(Date.now());
+      setLlmStreamElapsed(0);
+    } else if (eventName === 'llm-chunk') {
+      const chunkContent = payload.content as string;
+      if (chunkContent) {
+        setLlmStreamContent(prev => prev + chunkContent);
+      }
+    } else if (eventName === 'llm-stream-end') {
+      setLlmStreamActive(false);
+      const totalLen = payload.totalLength as number;
+      const dMs = payload.durationMs as number;
+      const inTok = payload.inputTokens as number;
+      const outTok = payload.outputTokens as number;
+      addLog('info',
+        `LLM 流式完成 (${(dMs / 1000).toFixed(1)}s, ${totalLen} chars, tokens: ${inTok}/${outTok})`,
+        undefined, payload.nodeId as string, payload.nodeName as string || undefined);
     } else if (eventName === 'execution-paused') {
       const pausedNodeName = payload.pausedAtNodeName as string;
       addLog('warn', `断点暂停 — 节点「${pausedNodeName}」执行完成后暂停，等待继续`);
@@ -504,8 +553,71 @@ export function ExecutionDetailPanel() {
               清空
             </button>
           </div>
+          {/* ── LLM 实时思考面板 ── */}
+          {(llmStreamActive || llmStreamContent) && (
+            <div style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+              <button
+                type="button"
+                onClick={() => setLlmStreamExpanded(!llmStreamExpanded)}
+                className="w-full flex items-center justify-between px-4 py-2 hover:bg-white/5 transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  <Brain className="w-3.5 h-3.5" style={{ color: 'rgba(139,92,246,0.9)' }} />
+                  <span className="text-xs font-medium" style={{ color: 'rgba(139,92,246,0.9)' }}>
+                    {llmStreamNodeName || 'AI 分析'}
+                  </span>
+                  {llmStreamModel && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded" style={{
+                      background: 'rgba(139,92,246,0.1)',
+                      color: 'rgba(139,92,246,0.7)',
+                    }}>
+                      {llmStreamModel}
+                    </span>
+                  )}
+                  {llmStreamActive && (
+                    <Loader2 className="w-3 h-3 animate-spin" style={{ color: 'rgba(139,92,246,0.7)' }} />
+                  )}
+                  {!llmStreamActive && llmStreamContent && (
+                    <CheckCircle2 className="w-3 h-3" style={{ color: 'rgba(34,197,94,0.8)' }} />
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
+                    {llmStreamElapsed > 0 ? `${(llmStreamElapsed / 1000).toFixed(1)}s` : ''}
+                    {llmStreamContent ? ` · ${llmStreamContent.length} chars` : ''}
+                  </span>
+                  {llmStreamExpanded
+                    ? <ChevronDown className="w-3 h-3 text-muted-foreground" />
+                    : <ChevronRight className="w-3 h-3 text-muted-foreground" />}
+                </div>
+              </button>
+              {llmStreamExpanded && (
+                <div
+                  ref={llmStreamRef}
+                  className="px-4 py-3 overflow-auto text-[12px] leading-relaxed whitespace-pre-wrap"
+                  style={{
+                    maxHeight: 360,
+                    background: 'rgba(139,92,246,0.03)',
+                    color: 'var(--text-secondary, #c4c0b8)',
+                    fontFamily: 'ui-sans-serif, system-ui, -apple-system, sans-serif',
+                  }}
+                >
+                  {llmStreamContent || (
+                    <span className="text-muted-foreground text-[11px]">等待模型输出...</span>
+                  )}
+                  {llmStreamActive && (
+                    <span className="inline-block w-1.5 h-4 ml-0.5 animate-pulse" style={{
+                      background: 'rgba(139,92,246,0.6)',
+                      verticalAlign: 'text-bottom',
+                    }} />
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="max-h-[500px] overflow-auto font-mono text-[11px] leading-relaxed">
-            {logEntries.length === 0 && (
+            {logEntries.length === 0 && !llmStreamActive && (
               <div className="px-4 py-8 text-center text-muted-foreground text-xs">
                 {isRunning ? '等待执行事件...' : '暂无日志'}
               </div>

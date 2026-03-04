@@ -346,13 +346,25 @@ export default function AppShell() {
                 {toastNotification.attachments && toastNotification.attachments.length > 0 && (
                   <div className="mt-2 flex flex-col gap-1">
                     {toastNotification.attachments.map((att, i) => (
-                      <a
+                      <button
                         key={i}
-                        href={att.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-[6px] transition-colors hover:bg-white/10"
-                        style={{ color: 'var(--accent-gold)', textDecoration: 'none' }}
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            const resp = await fetch(att.url);
+                            const blob = await resp.blob();
+                            const blobUrl = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = blobUrl;
+                            a.download = att.name;
+                            a.click();
+                            URL.revokeObjectURL(blobUrl);
+                          } catch {
+                            window.open(att.url, '_blank');
+                          }
+                        }}
+                        className="inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-[6px] transition-colors hover:bg-white/10 cursor-pointer"
+                        style={{ color: 'var(--accent-gold)', background: 'none', border: 'none' }}
                       >
                         <Download size={12} />
                         <span>{att.name}</span>
@@ -361,7 +373,7 @@ export default function AppShell() {
                             ({(att.sizeBytes / 1024).toFixed(1)} KB)
                           </span>
                         )}
-                      </a>
+                      </button>
                     ))}
                   </div>
                 )}
@@ -965,17 +977,28 @@ export default function AppShell() {
                             {item.attachments && item.attachments.length > 0 && (
                               <div className="mt-2 flex flex-wrap gap-1.5">
                                 {item.attachments.map((att, i) => (
-                                  <a
+                                  <button
                                     key={i}
-                                    href={att.url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-[6px] transition-colors hover:bg-white/10"
+                                    type="button"
+                                    onClick={async () => {
+                                      try {
+                                        const resp = await fetch(att.url);
+                                        const blob = await resp.blob();
+                                        const blobUrl = URL.createObjectURL(blob);
+                                        const a = document.createElement('a');
+                                        a.href = blobUrl;
+                                        a.download = att.name;
+                                        a.click();
+                                        URL.revokeObjectURL(blobUrl);
+                                      } catch {
+                                        window.open(att.url, '_blank');
+                                      }
+                                    }}
+                                    className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-[6px] transition-colors hover:bg-white/10 cursor-pointer"
                                     style={{
                                       background: 'rgba(255,255,255,0.06)',
                                       border: '1px solid rgba(255,255,255,0.1)',
                                       color: 'var(--accent-gold)',
-                                      textDecoration: 'none',
                                     }}
                                   >
                                     <Download size={12} />
@@ -985,7 +1008,7 @@ export default function AppShell() {
                                         ({(att.sizeBytes / 1024).toFixed(1)} KB)
                                       </span>
                                     )}
-                                  </a>
+                                  </button>
                                 ))}
                               </div>
                             )}
