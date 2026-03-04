@@ -1388,25 +1388,15 @@ function MessageListInner() {
                       successTitle="草案已生成"
                       onAction={async () => {
                         const resp = await invoke<ApiResponse<{
-                          title: string; description: string; icon: string;
-                          category: string; tags: string[];
-                          contextScope: string; acceptsUserInput: boolean;
-                          promptTemplate: string; outputMode: string;
+                          promptTemplate: string;
                         }>>('generate_skill_from_message', {
                           assistantMessage: message.content,
                         });
-                        if (resp?.success && resp.data) {
-                          const d = resp.data;
+                        if (resp?.success && resp.data?.promptTemplate) {
                           window.dispatchEvent(new CustomEvent('prdAgent:createSkillFromMessage', {
                             detail: {
                               formData: {
-                                title: d.title,
-                                description: d.description,
-                                icon: d.icon,
-                                category: d.category,
-                                contextScope: d.contextScope,
-                                outputMode: d.outputMode,
-                                promptTemplate: d.promptTemplate,
+                                promptTemplate: resp.data.promptTemplate,
                               },
                             },
                           }));

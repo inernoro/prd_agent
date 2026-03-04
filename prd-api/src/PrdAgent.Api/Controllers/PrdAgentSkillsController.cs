@@ -288,8 +288,8 @@ public class PrdAgentSkillsController : ControllerBase
     }
 
     /// <summary>
-    /// 从对话消息自动生成技能草案
-    /// 接收用户消息 + AI 回复内容，调用 LLM 分析并返回结构化的技能配置草案
+    /// 从对话消息提炼可复用的提示词模板（纯文本）
+    /// LLM 只负责提炼 promptTemplate，元数据由前端表单填写
     /// </summary>
     [HttpPost("generate-from-message")]
     public async Task<IActionResult> GenerateFromMessage([FromBody] GenerateSkillFromMessageRequest request, CancellationToken ct)
@@ -317,28 +317,16 @@ public class PrdAgentSkillsController : ControllerBase
             RequestType: "skill-generation",
             RequestPurpose: appCallerCode));
 
-        var systemPrompt = @"你是一个技能模板生成助手。根据用户提供的对话片段（用户问题 + AI 回复），分析其中的可复用模式，生成一个结构化的技能配置草案。
+        var systemPrompt = @"你是一个提示词模板提炼助手。根据用户提供的对话片段（用户问题 + AI 回复），从中提炼出一个可复用的提示词模板。
 
-输出必须是一个严格的 JSON 对象，不要包含任何其他文本。JSON 结构如下：
-{
-  ""title"": ""简洁的技能名称（5-15字）"",
-  ""description"": ""一句话描述用途"",
-  ""icon"": ""一个匹配用途的 emoji"",
-  ""category"": ""分类：analysis / testing / development / general"",
-  ""tags"": [""标签1"", ""标签2""],
-  ""contextScope"": ""上下文范围：prd / all / current / none"",
-  ""acceptsUserInput"": true/false,
-  ""promptTemplate"": ""从 AI 回复中提炼出的可复用提示词模板，用 {{userInput}} 作为用户输入占位符"",
-  ""outputMode"": ""输出模式：chat / download / clipboard""
-}
+直接输出提示词模板的纯文本，不要包含任何额外说明、不要用 JSON、不要用代码块包裹。
 
-生成规则：
-1. promptTemplate 应从 AI 回复中提炼核心指令和输出格式要求，去除具体细节，保留通用结构
+提炼规则：
+1. 从 AI 回复中提炼核心指令和输出格式要求，去除具体细节，保留通用结构
 2. 如果回复中包含分步骤指令，保留步骤结构
 3. 如果回复中有输出格式规范（表格、列表等），在模板中明确要求
-4. contextScope 根据内容判断：涉及 PRD 分析→prd，通用任务→none，需要对话历史→all
-5. acceptsUserInput：如果技能需要用户提供额外信息才能工作，设为 true
-6. 不要在 promptTemplate 中包含具体的项目信息或一次性内容";
+4. 用 {{userInput}} 作为用户输入占位符（如果模板需要用户提供额外信息）
+5. 不要在模板中包含具体的项目信息或一次性内容";
 
         var userContent = new StringBuilder();
         if (!string.IsNullOrWhiteSpace(request.UserMessage))
@@ -362,38 +350,15 @@ public class PrdAgentSkillsController : ControllerBase
                 resultBuilder.Append(chunk.Content);
         }
 
-        var rawResult = resultBuilder.ToString().Trim();
+        var promptTemplate = resultBuilder.ToString().Trim();
 
-        // 提取 JSON（处理可能的 ```json 包裹）
-        var jsonStr = rawResult;
-        if (jsonStr.Contains("```"))
-        {
-            var startIdx = jsonStr.IndexOf('{');
-            var endIdx = jsonStr.LastIndexOf('}');
-            if (startIdx >= 0 && endIdx > startIdx)
-                jsonStr = jsonStr[startIdx..(endIdx + 1)];
-        }
+        if (string.IsNullOrWhiteSpace(promptTemplate))
+            return StatusCode(500, ApiResponse<object>.Fail("GENERATION_FAILED", "AI 未生成有效内容"));
 
-        try
-        {
-            var draft = JsonSerializer.Deserialize<GenerateSkillDraftResponse>(jsonStr, new JsonSerializerOptions
-            {
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                PropertyNameCaseInsensitive = true,
-            });
+        _logger.LogInformation("Skill promptTemplate extracted from message by {UserId}, length={Length}",
+            userId, promptTemplate.Length);
 
-            if (draft == null || string.IsNullOrWhiteSpace(draft.Title))
-                return StatusCode(500, ApiResponse<object>.Fail("GENERATION_FAILED", "AI 生成结果无法解析"));
-
-            _logger.LogInformation("Skill draft generated from message by {UserId}: {Title}", userId, draft.Title);
-
-            return Ok(ApiResponse<object>.Ok(draft));
-        }
-        catch (JsonException ex)
-        {
-            _logger.LogWarning(ex, "Failed to parse skill draft JSON: {Raw}", rawResult[..Math.Min(200, rawResult.Length)]);
-            return StatusCode(500, ApiResponse<object>.Fail("GENERATION_FAILED", "AI 返回格式不正确，请重试"));
-        }
+        return Ok(ApiResponse<object>.Ok(new { promptTemplate }));
     }
 
     /// <summary>
@@ -431,16 +396,3 @@ public class GenerateSkillFromMessageRequest
     public string AssistantMessage { get; set; } = string.Empty;
 }
 
-/// <summary>AI 生成的技能草案</summary>
-public class GenerateSkillDraftResponse
-{
-    public string Title { get; set; } = string.Empty;
-    public string Description { get; set; } = string.Empty;
-    public string Icon { get; set; } = string.Empty;
-    public string Category { get; set; } = "general";
-    public List<string> Tags { get; set; } = new();
-    public string ContextScope { get; set; } = "prd";
-    public bool AcceptsUserInput { get; set; }
-    public string PromptTemplate { get; set; } = string.Empty;
-    public string OutputMode { get; set; } = "chat";
-}

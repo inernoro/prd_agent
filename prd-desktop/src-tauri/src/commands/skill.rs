@@ -186,7 +186,7 @@ pub async fn delete_skill(skill_key: String) -> Result<ApiResponse<serde_json::V
         .await
 }
 
-// ━━━ 从消息生成技能草案 ━━━━━━━━
+// ━━━ 从消息提炼提示词模板 ━━━━━━━━
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -197,24 +197,16 @@ pub struct GenerateSkillFromMessageRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GenerateSkillDraftResponse {
-    pub title: String,
-    pub description: String,
-    pub icon: String,
-    pub category: String,
-    pub tags: Vec<String>,
-    pub context_scope: String,
-    pub accepts_user_input: bool,
+pub struct ExtractPromptTemplateResponse {
     pub prompt_template: String,
-    pub output_mode: String,
 }
 
-/// 从对话消息自动生成技能草案
+/// 从对话消息提炼可复用的提示词模板
 #[command]
 pub async fn generate_skill_from_message(
     user_message: Option<String>,
     assistant_message: String,
-) -> Result<ApiResponse<GenerateSkillDraftResponse>, String> {
+) -> Result<ApiResponse<ExtractPromptTemplateResponse>, String> {
     let client = ApiClient::new();
     let request = GenerateSkillFromMessageRequest {
         user_message,
