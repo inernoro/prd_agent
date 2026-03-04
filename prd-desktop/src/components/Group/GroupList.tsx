@@ -68,7 +68,7 @@ export default function GroupList() {
         : 'PM';
 
     try {
-      const openResp = await invoke<ApiResponse<{ sessionId: string; groupId: string; documentId: string; currentRole: string }>>(
+      const openResp = await invoke<ApiResponse<{ sessionId: string; groupId: string; documentId: string; documentIds?: string[]; currentRole: string }>>(
         'open_group_session',
         { groupId: group.groupId, userRole: role }
       );
@@ -81,15 +81,27 @@ export default function GroupList() {
 
       if (!docResp.success || !docResp.data) return;
 
+      // 获取所有文档元信息（多文档支持 — 与 Sidebar.openGroupSession 同一逻辑）
+      const allDocIds = openResp.data.documentIds ?? [openResp.data.documentId];
+      const allDocs: Document[] = [docResp.data];
+      for (const did of allDocIds) {
+        if (did === openResp.data.documentId) continue; // 主文档已获取
+        try {
+          const r = await invoke<ApiResponse<Document>>('get_document', { documentId: did });
+          if (r.success && r.data) allDocs.push(r.data);
+        } catch { /* skip */ }
+      }
+
       const session: Session = {
         sessionId: openResp.data.sessionId,
         groupId: openResp.data.groupId,
         documentId: openResp.data.documentId,
+        documentIds: allDocIds,
         currentRole: (openResp.data.currentRole as UserRole) || role,
         mode: 'QA',
       };
 
-      setSession(session, docResp.data);
+      setSession(session, docResp.data, allDocs);
       // setActiveGroupId 已由 setSession 内部设置（session.groupId），不再重复调用
 
       // 关键体验：点击群组 = 拉一次最新消息 + 跳到最新
