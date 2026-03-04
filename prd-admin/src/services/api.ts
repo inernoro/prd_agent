@@ -357,6 +357,17 @@ export const api = {
     prompts: () => '/api/prd-agent/prompts',
     /** 系统提示词（只读，供 PRD Agent 页面展示系统提示词内容） */
     systemPrompts: () => '/api/prd-agent/prompts/system',
+    skills: {
+      /** 个人技能 CRUD（前台） */
+      list: () => '/api/prd-agent/skills',
+      /** 对话沉淀：获取最新一轮建议 */
+      latestSuggestion: (sessionId: string, assistantMessageId?: string) =>
+        `/api/prd-agent/skills/suggestions/latest?sessionId=${encodeURIComponent(sessionId)}${
+          assistantMessageId ? `&assistantMessageId=${encodeURIComponent(assistantMessageId)}` : ''
+        }`,
+      /** 确认建议并入库 */
+      confirmSuggestion: () => '/api/prd-agent/skills/suggestions/confirm',
+    },
   },
 
   // ============ Literary Agent 文学创作 ============

@@ -58,6 +58,18 @@ type PromptItem = {
   role?: 'PM' | 'DEV' | 'QA';
 };
 
+type SkillSuggestion = {
+  suggestionId: string;
+  sessionId: string;
+  sourceUserMessageId: string;
+  sourceAssistantMessageId: string;
+  title: string;
+  description: string;
+  reason: string;
+  confidence: number;
+  tags: string[];
+};
+
 function StreamingDots() {
   return (
     <span
@@ -340,6 +352,9 @@ export default function AiChatPage() {
   const [currentRole, setCurrentRole] = useState<'PM' | 'DEV' | 'QA'>('PM');
   const [selectedPromptKey, setSelectedPromptKey] = useState<string>(''); // 本轮使用的 promptKey（可选）
   const [debugMode, setDebugMode] = useState(false);
+  const [skillSuggestion, setSkillSuggestion] = useState<SkillSuggestion | null>(null);
+  const [skillSuggestionSaving, setSkillSuggestionSaving] = useState(false);
+  const dismissedSuggestionIdsRef = useRef<Set<string>>(new Set());
 
   // 新建会话（上传 PRD）
   const [createOpen, setCreateOpen] = useState(false);
@@ -647,6 +662,68 @@ export default function AiChatPage() {
     }
   }, [userId]);
 
+  const fetchLatestSkillSuggestion = useCallback(async (assistantMessageId?: string) => {
+    if (!activeSessionId || !token) return;
+    try {
+      const res = await apiRequest<{ suggestion: SkillSuggestion | null }>(
+        api.prdAgent.skills.latestSuggestion(activeSessionId, assistantMessageId)
+      );
+      if (!res.success) return;
+      const suggestion = (res.data as any)?.suggestion as SkillSuggestion | null | undefined;
+      if (!suggestion) {
+        setSkillSuggestion(null);
+        return;
+      }
+      if (dismissedSuggestionIdsRef.current.has(String(suggestion.suggestionId || ''))) {
+        return;
+      }
+      setSkillSuggestion(suggestion);
+    } catch {
+      // ignore
+    }
+  }, [activeSessionId, token]);
+
+  const dismissSkillSuggestion = useCallback(() => {
+    if (skillSuggestion?.suggestionId) {
+      dismissedSuggestionIdsRef.current.add(String(skillSuggestion.suggestionId));
+    }
+    setSkillSuggestion(null);
+  }, [skillSuggestion]);
+
+  const confirmSkillSuggestion = useCallback(async () => {
+    if (!skillSuggestion || !activeSessionId || skillSuggestionSaving) return;
+    try {
+      setSkillSuggestionSaving(true);
+      const res = await apiRequest<{ skillKey: string; alreadyExists?: boolean }>(
+        api.prdAgent.skills.confirmSuggestion(),
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            sessionId: activeSessionId,
+            suggestionId: skillSuggestion.suggestionId,
+            assistantMessageId: skillSuggestion.sourceAssistantMessageId,
+          }),
+        }
+      );
+      if (!res.success) {
+        toast.error(res.error?.message || '保存技能失败');
+        return;
+      }
+      const existed = (res.data as any)?.alreadyExists === true;
+      toast.success(existed ? '技能已存在，已直接复用' : '已保存到技能库');
+      dismissedSuggestionIdsRef.current.add(String(skillSuggestion.suggestionId));
+      setSkillSuggestion(null);
+    } catch {
+      toast.error('保存技能失败（网络错误）');
+    } finally {
+      setSkillSuggestionSaving(false);
+    }
+  }, [activeSessionId, skillSuggestion, skillSuggestionSaving]);
+
+  useEffect(() => {
+    setSkillSuggestion(null);
+  }, [activeSessionId]);
+
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -741,6 +818,7 @@ export default function AiChatPage() {
         // 关键：刷新一次历史，把本地临时 user id 替换成服务端落库 id，
         // 这样"刚发送的消息"也可以立即使用"重发"。
         void refreshHistory(activeSessionId);
+        void fetchLatestSkillSuggestion(String(evt.messageId || ''));
       }
       return;
     }
@@ -795,6 +873,7 @@ export default function AiChatPage() {
 
     setPendingAttachmentText('');
     setPendingAttachmentName('');
+    setSkillSuggestion(null);
 
     setMessages((prev) =>
       (resendId ? removeRoundByUserMessageId(prev, resendId) : prev).concat({
@@ -1407,6 +1486,66 @@ export default function AiChatPage() {
         </div>
 
         <div className="shrink-0 px-4 pb-4 pt-3 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+          {skillSuggestion ? (
+            <div
+              className="mb-3 rounded-[12px] px-3 py-2.5"
+              style={{
+                border: '1px solid rgba(99, 102, 241, 0.35)',
+                background: 'rgba(99, 102, 241, 0.08)',
+              }}
+            >
+              <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                检测到可复用流程：{skillSuggestion.title}
+              </div>
+              <div className="mt-1 text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+                {skillSuggestion.reason || '当前对话具备可沉淀为技能的特征'}
+                {typeof skillSuggestion.confidence === 'number' ? `（置信度 ${(skillSuggestion.confidence * 100).toFixed(0)}%）` : ''}
+              </div>
+              {Array.isArray(skillSuggestion.tags) && skillSuggestion.tags.length > 0 ? (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {skillSuggestion.tags.slice(0, 6).map((tag) => (
+                    <span
+                      key={`skill-tag-${tag}`}
+                      className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px]"
+                      style={{
+                        border: '1px solid rgba(129, 140, 248, 0.45)',
+                        color: '#818CF8',
+                      }}
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              <div className="mt-2.5 flex items-center gap-2">
+                <button
+                  type="button"
+                  className="h-[28px] px-3 rounded-[8px] text-[11px] font-medium"
+                  style={{
+                    background: '#6366F1',
+                    color: '#fff',
+                  }}
+                  onClick={() => void confirmSkillSuggestion()}
+                  disabled={skillSuggestionSaving}
+                >
+                  {skillSuggestionSaving ? '保存中...' : '保存为技能'}
+                </button>
+                <button
+                  type="button"
+                  className="h-[28px] px-3 rounded-[8px] text-[11px]"
+                  style={{
+                    border: '1px solid var(--border-subtle)',
+                    color: 'var(--text-secondary)',
+                  }}
+                  onClick={dismissSkillSuggestion}
+                  disabled={skillSuggestionSaving}
+                >
+                  忽略
+                </button>
+              </div>
+            </div>
+          ) : null}
+
           {/* 提示词快捷标签 */}
           {prompts.length > 0 && (
             <div className="mb-3 flex flex-wrap gap-2">

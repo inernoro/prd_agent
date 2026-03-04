@@ -6,16 +6,25 @@ import { useAuthStore } from '../../stores/authStore';
 import { useConnectionStore } from '../../stores/connectionStore';
 import { useUiPrefsStore } from '../../stores/uiPrefsStore';
 import { useSkillStore } from '../../stores/skillStore';
-import { ApiResponse, AttachmentInfo, Message, Skill, SkillsResponse } from '../../types';
+import { useSystemNoticeStore } from '../../stores/systemNoticeStore';
+import { ApiResponse, AttachmentInfo, Message, Skill, SkillSuggestion, SkillsResponse } from '../../types';
 import AttachmentPreview from './AttachmentPreview';
 import SkillManagerModal from './SkillManagerModal';
 import { open as tauriDialogOpen } from '@tauri-apps/plugin-dialog';
 
 export default function ChatInput() {
   const { sessionId, currentRole, document } = useSessionStore();
-  const { addUserMessageWithPendingAssistant, isStreaming, stopStreaming, ackPendingUserMessageRunId, clearPendingAssistant } = useMessageStore();
+  const {
+    addUserMessageWithPendingAssistant,
+    isStreaming,
+    stopStreaming,
+    ackPendingUserMessageRunId,
+    clearPendingAssistant,
+    messages,
+  } = useMessageStore();
   const { user } = useAuthStore();
   const connectionStatus = useConnectionStore((s) => s.status);
+  const pushNotice = useSystemNoticeStore((s) => s.push);
   const isDisconnected = connectionStatus === 'disconnected';
   const aiAnyway = useUiPrefsStore((s) => s.aiAnyway);
   const toggleAiAnyway = useUiPrefsStore((s) => s.toggleAiAnyway);
@@ -34,6 +43,10 @@ export default function ChatInput() {
 
   // 技能管理弹窗
   const [showSkillManager, setShowSkillManager] = useState(false);
+  const [skillSuggestion, setSkillSuggestion] = useState<SkillSuggestion | null>(null);
+  const [skillSuggestionSaving, setSkillSuggestionSaving] = useState(false);
+  const dismissedSuggestionIdsRef = useRef<Set<string>>(new Set());
+  const lastCheckedAssistantIdRef = useRef<string>('');
 
   // 技能 store
   const { skills, setSkills, setLoading, getVisibleSkills, pinnedSkillKeys } = useSkillStore();
@@ -46,6 +59,18 @@ export default function ChatInput() {
     await new Promise<void>((r) => requestAnimationFrame(() => r()));
     await new Promise<void>((r) => requestAnimationFrame(() => r()));
   }, []);
+
+  const refreshSkills = useCallback(async () => {
+    if (!sessionId) return;
+    try {
+      const resp = await invoke<ApiResponse<SkillsResponse>>('get_skills', { role: currentRole });
+      if (resp?.success && resp.data?.skills) {
+        setSkills(resp.data.skills);
+      }
+    } catch {
+      // ignore
+    }
+  }, [sessionId, currentRole, setSkills]);
 
   useEffect(() => {
     if (isStreaming && isSubmitting) setIsSubmitting(false);
@@ -77,21 +102,85 @@ export default function ChatInput() {
   useEffect(() => {
     if (!sessionId) return;
     setLoading(true);
-    invoke<ApiResponse<SkillsResponse>>('get_skills', { role: currentRole })
-      .then((resp) => {
-        if (resp?.success && resp.data?.skills) {
-          setSkills(resp.data.skills);
-        }
-      })
+    refreshSkills()
       .catch(() => { /* ignore */ })
       .finally(() => setLoading(false));
-  }, [sessionId, currentRole, setSkills, setLoading]);
+  }, [sessionId, currentRole, refreshSkills, setLoading]);
 
   // 按角色过滤的技能列表
   const visibleSkills = useMemo(
     () => getVisibleSkills(currentRole),
     [currentRole, getVisibleSkills, skills, pinnedSkillKeys]
   );
+
+  useEffect(() => {
+    setSkillSuggestion(null);
+    lastCheckedAssistantIdRef.current = '';
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!sessionId || isStreaming || isSubmitting) return;
+    const latestAssistant = [...messages]
+      .reverse()
+      .find((m) => m.role === 'Assistant' && String(m.content || '').trim().length > 0);
+    if (!latestAssistant?.id) return;
+    if (lastCheckedAssistantIdRef.current === latestAssistant.id) return;
+    lastCheckedAssistantIdRef.current = latestAssistant.id;
+
+    invoke<ApiResponse<{ suggestion?: SkillSuggestion | null }>>('get_latest_skill_suggestion', {
+      sessionId,
+      assistantMessageId: latestAssistant.id,
+    })
+      .then((resp) => {
+        const suggestion = resp?.success ? ((resp.data as any)?.suggestion as SkillSuggestion | null | undefined) : null;
+        if (!suggestion?.suggestionId) {
+          setSkillSuggestion(null);
+          return;
+        }
+        if (dismissedSuggestionIdsRef.current.has(String(suggestion.suggestionId))) {
+          return;
+        }
+        setSkillSuggestion(suggestion);
+      })
+      .catch(() => {
+        // ignore
+      });
+  }, [sessionId, messages, isStreaming, isSubmitting]);
+
+  const handleDismissSkillSuggestion = useCallback(() => {
+    if (skillSuggestion?.suggestionId) {
+      dismissedSuggestionIdsRef.current.add(String(skillSuggestion.suggestionId));
+    }
+    setSkillSuggestion(null);
+  }, [skillSuggestion]);
+
+  const handleConfirmSkillSuggestion = useCallback(async () => {
+    if (!sessionId || !skillSuggestion || skillSuggestionSaving) return;
+    try {
+      setSkillSuggestionSaving(true);
+      const resp = await invoke<ApiResponse<{ skillKey: string; alreadyExists?: boolean }>>(
+        'confirm_skill_suggestion',
+        {
+          sessionId,
+          suggestionId: skillSuggestion.suggestionId,
+          assistantMessageId: skillSuggestion.sourceAssistantMessageId,
+        }
+      );
+      if (!resp?.success) {
+        pushNotice(resp?.error?.message || '保存技能失败', { level: 'error' });
+        return;
+      }
+      const existed = (resp.data as any)?.alreadyExists === true;
+      pushNotice(existed ? '技能已存在，已直接复用' : '已保存到技能库', { level: 'info' });
+      dismissedSuggestionIdsRef.current.add(String(skillSuggestion.suggestionId));
+      setSkillSuggestion(null);
+      await refreshSkills();
+    } catch {
+      pushNotice('保存技能失败', { level: 'error' });
+    } finally {
+      setSkillSuggestionSaving(false);
+    }
+  }, [sessionId, skillSuggestion, skillSuggestionSaving, pushNotice, refreshSkills]);
 
   const pushSimulatedUserMessage = (text: string) => {
     const userMessage: Message = {
@@ -114,6 +203,7 @@ export default function ChatInput() {
     if (!sessionId || isStreaming || isSubmitting || isDisconnected) return;
     try {
       setIsSubmitting(true);
+      setSkillSuggestion(null);
       const userInput = content.trim() || undefined;
       const text = userInput ? `【${skill.title}】${userInput}` : `【${skill.title}】`;
       pushSimulatedUserMessage(text);
@@ -142,6 +232,7 @@ export default function ChatInput() {
 
   const handleSend = async () => {
     if (!content.trim() || !sessionId || isStreaming || isSubmitting || isDisconnected) return;
+    setSkillSuggestion(null);
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -378,6 +469,50 @@ export default function ChatInput() {
         </div>
       )}
 
+      {skillSuggestion && (
+        <div className="mx-3 mt-2 rounded-xl border border-primary-500/30 bg-primary-500/10 px-3 py-2.5">
+          <div className="text-xs font-medium text-text-primary">
+            检测到可复用流程：{skillSuggestion.title}
+          </div>
+          <div className="mt-1 text-[11px] text-text-secondary">
+            {skillSuggestion.reason || '当前轮次适合沉淀为技能'}
+            {typeof skillSuggestion.confidence === 'number'
+              ? `（置信度 ${Math.round(skillSuggestion.confidence * 100)}%）`
+              : ''}
+          </div>
+          {Array.isArray(skillSuggestion.tags) && skillSuggestion.tags.length > 0 ? (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {skillSuggestion.tags.slice(0, 6).map((tag, idx) => (
+                <span
+                  key={`skill-suggestion-tag-${idx}`}
+                  className="px-1.5 py-0.5 text-[10px] rounded-md border border-primary-500/40 text-primary-600 dark:text-primary-300"
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+          ) : null}
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void handleConfirmSkillSuggestion()}
+              disabled={skillSuggestionSaving}
+              className="h-7 px-3 text-[11px] rounded-md bg-primary-500 text-white hover:bg-primary-600 disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {skillSuggestionSaving ? '保存中...' : '保存为技能'}
+            </button>
+            <button
+              type="button"
+              onClick={handleDismissSkillSuggestion}
+              disabled={skillSuggestionSaving}
+              className="h-7 px-3 text-[11px] rounded-md border border-black/10 dark:border-white/15 text-text-secondary hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              忽略
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 附件预览条 */}
       {attachments.length > 0 && (
         <AttachmentPreview
@@ -458,15 +593,7 @@ export default function ChatInput() {
         onClose={() => {
           setShowSkillManager(false);
           // 关闭弹窗后刷新技能列表
-          if (sessionId) {
-            invoke<ApiResponse<SkillsResponse>>('get_skills', { role: currentRole })
-              .then((resp) => {
-                if (resp?.success && resp.data?.skills) {
-                  setSkills(resp.data.skills);
-                }
-              })
-              .catch(() => {});
-          }
+          void refreshSkills();
         }}
       />
     </div>

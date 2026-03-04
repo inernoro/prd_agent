@@ -238,6 +238,28 @@ export interface SkillsResponse {
   skills: Skill[];
 }
 
+export interface SkillSuggestionDraft {
+  title: string;
+  description: string;
+  category: string;
+  tags: string[];
+  input: SkillInputConfig;
+  output: SkillOutputConfig;
+}
+
+export interface SkillSuggestion {
+  suggestionId: string;
+  sessionId: string;
+  sourceUserMessageId: string;
+  sourceAssistantMessageId: string;
+  title: string;
+  description: string;
+  reason: string;
+  confidence: number;
+  tags: string[];
+  draft: SkillSuggestionDraft;
+}
+
 export interface StreamEvent {
   type: 'start' | 'delta' | 'done' | 'error' | 'blockStart' | 'blockDelta' | 'blockEnd' | 'phase' | 'citations' | 'thinking';
   messageId?: string;

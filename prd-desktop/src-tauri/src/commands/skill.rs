@@ -71,6 +71,56 @@ pub struct SkillsResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SkillSuggestionDraft {
+    pub title: String,
+    pub description: String,
+    pub category: String,
+    pub tags: Vec<String>,
+    pub input: SkillInputConfig,
+    pub execution: SkillExecutionConfig,
+    pub output: SkillOutputConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillSuggestion {
+    pub suggestion_id: String,
+    pub session_id: String,
+    pub source_user_message_id: String,
+    pub source_assistant_message_id: String,
+    pub title: String,
+    pub description: String,
+    pub reason: String,
+    pub confidence: f64,
+    pub tags: Vec<String>,
+    pub draft: SkillSuggestionDraft,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillSuggestionResponse {
+    pub suggestion: Option<SkillSuggestion>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfirmSkillSuggestionRequest {
+    pub session_id: String,
+    pub suggestion_id: String,
+    pub assistant_message_id: Option<String>,
+    pub title_override: Option<String>,
+    pub description_override: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfirmSkillSuggestionResponse {
+    pub skill_key: String,
+    pub already_exists: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillExecuteResponse {
     pub run_id: String,
     pub user_message_id: String,
@@ -183,5 +233,46 @@ pub async fn delete_skill(skill_key: String) -> Result<ApiResponse<serde_json::V
     let client = ApiClient::new();
     client
         .delete(&format!("/api/prd-agent/skills/{}", skill_key))
+        .await
+}
+
+/// 获取当前会话最近一轮的技能建议
+#[command]
+pub async fn get_latest_skill_suggestion(
+    session_id: String,
+    assistant_message_id: Option<String>,
+) -> Result<ApiResponse<SkillSuggestionResponse>, String> {
+    let client = ApiClient::new();
+    let sid = session_id.trim().to_string();
+    let mut path = format!("/api/prd-agent/skills/suggestions/latest?sessionId={}", sid);
+    if let Some(mid) = assistant_message_id {
+        let v = mid.trim().to_string();
+        if !v.is_empty() {
+            path.push_str("&assistantMessageId=");
+            path.push_str(&v);
+        }
+    }
+    client.get(&path).await
+}
+
+/// 确认技能建议并创建个人技能
+#[command]
+pub async fn confirm_skill_suggestion(
+    session_id: String,
+    suggestion_id: String,
+    assistant_message_id: Option<String>,
+    title_override: Option<String>,
+    description_override: Option<String>,
+) -> Result<ApiResponse<ConfirmSkillSuggestionResponse>, String> {
+    let client = ApiClient::new();
+    let request = ConfirmSkillSuggestionRequest {
+        session_id,
+        suggestion_id,
+        assistant_message_id,
+        title_override,
+        description_override,
+    };
+    client
+        .post("/api/prd-agent/skills/suggestions/confirm", &request)
         .await
 }

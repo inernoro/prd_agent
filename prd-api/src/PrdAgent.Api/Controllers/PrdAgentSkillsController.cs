@@ -1,8 +1,10 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Controllers;
 
@@ -19,27 +21,61 @@ public class PrdAgentSkillsController : ControllerBase
     private const string AppKey = "prd-agent";
 
     private readonly ISkillService _skillService;
+    private readonly ISkillSuggestionService _skillSuggestionService;
     private readonly IRunEventStore _runStore;
     private readonly IRunQueue _runQueue;
     private readonly ISessionService _sessionService;
+    private readonly MongoDbContext _db;
     private readonly ILogger<PrdAgentSkillsController> _logger;
 
     public PrdAgentSkillsController(
         ISkillService skillService,
+        ISkillSuggestionService skillSuggestionService,
         IRunEventStore runStore,
         IRunQueue runQueue,
         ISessionService sessionService,
+        MongoDbContext db,
         ILogger<PrdAgentSkillsController> logger)
     {
         _skillService = skillService;
+        _skillSuggestionService = skillSuggestionService;
         _runStore = runStore;
         _runQueue = runQueue;
         _sessionService = sessionService;
+        _db = db;
         _logger = logger;
     }
 
     private string GetUserId()
         => User.FindFirst("userId")?.Value ?? User.FindFirst("sub")?.Value ?? "";
+
+    private async Task<bool> CanAccessSessionAsync(Session session, string userId, CancellationToken ct)
+    {
+        if (session == null || string.IsNullOrWhiteSpace(userId)) return false;
+        if (session.DeletedAtUtc != null) return false;
+
+        if (!string.IsNullOrWhiteSpace(session.OwnerUserId))
+        {
+            return string.Equals(session.OwnerUserId, userId, StringComparison.Ordinal);
+        }
+
+        if (!string.IsNullOrWhiteSpace(session.GroupId))
+        {
+            var gid = session.GroupId.Trim();
+            var count = await _db.GroupMembers.CountDocumentsAsync(
+                x => x.GroupId == gid && x.UserId == userId,
+                cancellationToken: ct);
+            return count > 0;
+        }
+
+        return false;
+    }
+
+    private static string NormalizeTitle(string title)
+    {
+        var normalized = (title ?? string.Empty).Trim().ToLowerInvariant();
+        return System.Text.RegularExpressions.Regex.Replace(normalized, @"\s+", " ");
+    }
 
     /// <summary>
     /// 获取当前用户可见的技能列表（系统 + 公共 + 个人）
@@ -180,6 +216,126 @@ public class PrdAgentSkillsController : ControllerBase
     }
 
     /// <summary>
+    /// 获取当前会话最近一轮的技能建议（若不可沉淀则返回 suggestion=null）
+    /// </summary>
+    [HttpGet("suggestions/latest")]
+    public async Task<IActionResult> GetLatestSuggestion(
+        [FromQuery] string sessionId,
+        [FromQuery] string? assistantMessageId,
+        CancellationToken ct)
+    {
+        var userId = GetUserId();
+        if (string.IsNullOrWhiteSpace(userId))
+            return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "未授权"));
+
+        var sid = (sessionId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(sid))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "sessionId 不能为空"));
+
+        var session = await _sessionService.GetByIdAsync(sid);
+        if (session == null)
+            return NotFound(ApiResponse<object>.Fail("SESSION_NOT_FOUND", "会话不存在"));
+
+        var canAccess = await CanAccessSessionAsync(session, userId, ct);
+        if (!canAccess)
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权限"));
+
+        var suggestion = await _skillSuggestionService.GetLatestSuggestionAsync(
+            sid,
+            userId,
+            assistantMessageId,
+            ct);
+
+        return Ok(ApiResponse<object>.Ok(new { suggestion }));
+    }
+
+    /// <summary>
+    /// 确认技能建议并入库为个人技能
+    /// </summary>
+    [HttpPost("suggestions/confirm")]
+    public async Task<IActionResult> ConfirmSuggestion([FromBody] ConfirmSkillSuggestionRequest request, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        if (string.IsNullOrWhiteSpace(userId))
+            return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "未授权"));
+
+        var sid = (request.SessionId ?? string.Empty).Trim();
+        var suggestionId = (request.SuggestionId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(sid) || string.IsNullOrWhiteSpace(suggestionId))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "sessionId 与 suggestionId 不能为空"));
+
+        var session = await _sessionService.GetByIdAsync(sid);
+        if (session == null)
+            return NotFound(ApiResponse<object>.Fail("SESSION_NOT_FOUND", "会话不存在"));
+
+        var canAccess = await CanAccessSessionAsync(session, userId, ct);
+        if (!canAccess)
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权限"));
+
+        var suggestion = await _skillSuggestionService.GetLatestSuggestionAsync(
+            sid,
+            userId,
+            request.AssistantMessageId,
+            ct);
+
+        if (suggestion == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "当前没有可确认的技能建议"));
+
+        if (!string.Equals(suggestion.SuggestionId, suggestionId, StringComparison.Ordinal))
+            return Conflict(ApiResponse<object>.Fail("INVALID_FORMAT", "技能建议已变化，请刷新后重试"));
+
+        var finalTitle = string.IsNullOrWhiteSpace(request.TitleOverride)
+            ? suggestion.Draft.Title
+            : request.TitleOverride.Trim();
+        var finalDescription = string.IsNullOrWhiteSpace(request.DescriptionOverride)
+            ? suggestion.Draft.Description
+            : request.DescriptionOverride.Trim();
+
+        if (string.IsNullOrWhiteSpace(finalTitle))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "技能名称不能为空"));
+
+        // 幂等兜底：标题一致时复用已有个人技能。
+        var normalizedTitle = NormalizeTitle(finalTitle);
+        var visibleSkills = await _skillService.GetVisibleSkillsAsync(userId, null, ct);
+        var existing = visibleSkills.FirstOrDefault(s =>
+            s.Visibility == SkillVisibility.Personal &&
+            string.Equals((s.OwnerUserId ?? string.Empty).Trim(), userId, StringComparison.Ordinal) &&
+            string.Equals(NormalizeTitle(s.Title), normalizedTitle, StringComparison.Ordinal));
+        if (existing != null)
+        {
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                skillKey = existing.SkillKey,
+                alreadyExists = true
+            }));
+        }
+
+        var skill = new Skill
+        {
+            Title = finalTitle,
+            Description = finalDescription,
+            Category = suggestion.Draft.Category,
+            Tags = suggestion.Draft.Tags ?? new List<string>(),
+            Input = suggestion.Draft.Input ?? new SkillInputConfig(),
+            Execution = suggestion.Draft.Execution ?? new SkillExecutionConfig(),
+            Output = suggestion.Draft.Output ?? new SkillOutputConfig(),
+            IsEnabled = true,
+            Order = visibleSkills.Count(s => s.Visibility == SkillVisibility.Personal && s.OwnerUserId == userId) + 1,
+        };
+
+        var created = await _skillService.CreatePersonalSkillAsync(userId, skill, ct);
+
+        _logger.LogInformation("Skill suggestion confirmed: {SuggestionId}, skillKey={SkillKey}, userId={UserId}",
+            suggestionId, created.SkillKey, userId);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            skillKey = created.SkillKey,
+            alreadyExists = false
+        }));
+    }
+
+    /// <summary>
     /// 执行技能：创建 ChatRun 并返回 runId
     /// 复用现有 Run/Worker + ChatService 管线，通过 InputJson 传递技能元数据
     /// </summary>
@@ -302,4 +458,13 @@ public class CreateSkillRequest
     public SkillInputConfig? Input { get; set; }
     public SkillExecutionConfig? Execution { get; set; }
     public SkillOutputConfig? Output { get; set; }
+}
+
+public class ConfirmSkillSuggestionRequest
+{
+    public string SessionId { get; set; } = string.Empty;
+    public string SuggestionId { get; set; } = string.Empty;
+    public string? AssistantMessageId { get; set; }
+    public string? TitleOverride { get; set; }
+    public string? DescriptionOverride { get; set; }
 }
