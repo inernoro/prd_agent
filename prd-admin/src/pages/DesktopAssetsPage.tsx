@@ -78,6 +78,11 @@ const TYPE_CONFIG: Record<string, { label: string; bg: string; text: string }> =
   attachment: { label: '附件', bg: 'rgba(255,255,255,0.08)', text: 'var(--text-muted)' },
 };
 
+/** 判断是否为图片：type 为 image 或 MIME 以 image/ 开头 */
+function isImageAsset(asset: MobileAssetItem): boolean {
+  return asset.type === 'image' || (!!asset.mime && asset.mime.startsWith('image/'));
+}
+
 async function copyToClipboard(text: string) {
   try {
     await navigator.clipboard.writeText(text);
@@ -128,14 +133,14 @@ function AssetGridCard({
         className="w-full aspect-[4/3] flex items-center justify-center overflow-hidden"
         style={{ background: 'rgba(255,255,255,0.02)' }}
       >
-        {asset.thumbnailUrl ? (
+        {asset.thumbnailUrl || (isImageAsset(asset) && asset.url) ? (
           <img
-            src={asset.thumbnailUrl}
+            src={asset.thumbnailUrl || asset.url}
             alt=""
             className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
             loading="lazy"
           />
-        ) : asset.type === 'image' ? (
+        ) : asset.type === 'image' || isImageAsset(asset) ? (
           <Image size={28} style={{ color: 'rgba(255,255,255,0.12)' }} />
         ) : asset.type === 'document' ? (
           <FileText size={28} style={{ color: 'rgba(255,255,255,0.12)' }} />
@@ -215,8 +220,8 @@ function AssetListRow({
         className="w-10 h-8 rounded-lg overflow-hidden flex-shrink-0 flex items-center justify-center"
         style={{ background: 'rgba(255,255,255,0.04)' }}
       >
-        {asset.thumbnailUrl ? (
-          <img src={asset.thumbnailUrl} alt="" loading="lazy" className="w-full h-full object-cover" />
+        {asset.thumbnailUrl || (isImageAsset(asset) && asset.url) ? (
+          <img src={asset.thumbnailUrl || asset.url} alt="" loading="lazy" className="w-full h-full object-cover" />
         ) : (
           <FileText size={14} style={{ color: 'rgba(255,255,255,0.2)' }} />
         )}
@@ -260,7 +265,7 @@ function DetailPanel({
   onClose: () => void;
 }) {
   const [copied, setCopied] = useState(false);
-  const isImage = asset.type === 'image';
+  const isImage = isImageAsset(asset);
 
   const handleCopy = async () => {
     await copyToClipboard(asset.url);
