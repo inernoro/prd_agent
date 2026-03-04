@@ -160,13 +160,15 @@ export const useSessionStore = create<SessionState>()(
         promptsUpdatedAt: s.promptsUpdatedAt,
       }),
       onRehydrateStorage: () => (state, err) => {
-        // 修复：刷新/重启时停留在 PrdPreview，会导致用户误以为“聊天丢失”，且会影响消息线程切换。
-        // 这里将 PrdPreview 视为一次性页面：rehydrate 后自动返回上一模式（或 QA）。
-        if (!err && (state as any)?.mode === 'PrdPreview' && typeof (state as any)?.backFromPrdPreview === 'function') {
-          try {
-            (state as any).backFromPrdPreview();
-          } catch {
-            // ignore
+        if (!err && state) {
+          const s = state as any;
+          // 修复：刷新/重启时停留在 PrdPreview，会导致用户误以为”聊天丢失”
+          if (s.mode === 'PrdPreview' && typeof s.backFromPrdPreview === 'function') {
+            try { s.backFromPrdPreview(); } catch { /* ignore */ }
+          }
+          // 修复：旧 localStorage 无 documents 字段，从 document 补齐（单一数据源兼容）
+          if ((!Array.isArray(s.documents) || s.documents.length === 0) && s.document) {
+            try { s.setDocuments([s.document]); } catch { /* ignore */ }
           }
         }
       },
