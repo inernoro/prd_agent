@@ -149,21 +149,24 @@ export function StarfieldBackground({ className, themeColor }: StarfieldBackgrou
           m += layer(uv * mix(10.0, 0.5, depth) + fi * 20.0) * fade;
         }
 
+        // Reduce accumulated brightness for better content readability
+        m *= 0.55;
+
         // Use theme color if provided, otherwise use electric cyan-blue
         vec3 defaultColor = vec3(0.0, 0.70, 0.95);
         vec3 themeBase = length(uThemeColor) > 0.1 ? uThemeColor : defaultColor;
 
         // Create color variations
-        vec3 themeBright = themeBase * 1.3;
-        vec3 themeDark = themeBase * 0.7;
+        vec3 themeBright = themeBase * 1.2;
+        vec3 themeDark = themeBase * 0.6;
 
         float colorMix = sin(iTime * 0.3) * 0.5 + 0.5;
         vec3 baseColor = mix(themeDark, themeBright, colorMix);
 
-        vec3 col = (m - gradient.y * 0.5) * baseColor;
+        vec3 col = (m - gradient.y * 0.4) * baseColor;
 
-        // Tone mapping
-        col = col / (col + 0.8);
+        // Tone mapping (higher constant = darker overall)
+        col = col / (col + 1.2);
 
         gl_FragColor = vec4(col, 1.0);
       }
