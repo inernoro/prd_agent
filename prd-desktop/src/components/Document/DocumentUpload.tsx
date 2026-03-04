@@ -5,6 +5,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useGroupListStore } from '../../stores/groupListStore';
 import { useDesktopBrandingStore } from '../../stores/desktopBrandingStore';
+import { openGroupSessionAndSetStore } from '../../lib/openGroupSession';
 import { ApiResponse, Document, Session } from '../../types';
 import { extractMarkdownTitle, isMeaninglessName, normalizeCandidateName, stripFileExtension } from '../utils/nameHeuristics';
 
@@ -59,6 +60,7 @@ export default function DocumentUpload() {
           const session: Session = {
             sessionId: response.data.sessionId,
             documentId: response.data.document.id,
+            documentIds: [response.data.document.id],
             currentRole: 'PM',
             mode: 'QA',
           };
@@ -79,17 +81,14 @@ export default function DocumentUpload() {
           memberCount: 1,
         });
 
-        // 打开群组会话，后续所有对话都基于该群组/session
-        const openResp = await invoke<ApiResponse<{ sessionId: string; groupId: string; documentId: string; currentRole: string }>>(
-          'open_group_session',
-          { groupId: createResp.data.groupId, userRole: 'PM' }
-        );
-
-        if (!openResp.success || !openResp.data) {
+        // 打开群组会话（通过共享工具函数，保证多文档 SSOT 一致性）
+        const opened = await openGroupSessionAndSetStore(createResp.data.groupId, 'PM');
+        if (!opened) {
           // 退化：仍然保存文档信息
           const session: Session = {
             sessionId: response.data.sessionId,
             documentId: response.data.document.id,
+            documentIds: [response.data.document.id],
             currentRole: 'PM',
             mode: 'QA',
             groupId: createResp.data.groupId,
@@ -97,16 +96,6 @@ export default function DocumentUpload() {
           setSession(session, response.data.document);
           return;
         }
-
-        const session: Session = {
-          sessionId: openResp.data.sessionId,
-          groupId: openResp.data.groupId,
-          documentId: openResp.data.documentId,
-          currentRole: 'PM',
-          mode: 'QA',
-        };
-
-        setSession(session, response.data.document);
 
         // 后台静默获取 AI 生成的群名（不触发 loading，零闪烁）
         const newGroupId = createResp.data.groupId;
