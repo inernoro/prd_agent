@@ -83,6 +83,11 @@ function isImageAsset(asset: MobileAssetItem): boolean {
   return asset.type === 'image' || (!!asset.mime && asset.mime.startsWith('image/'));
 }
 
+/** url 是否可用 */
+function hasUrl(asset: MobileAssetItem): boolean {
+  return !!asset.url;
+}
+
 async function copyToClipboard(text: string) {
   try {
     await navigator.clipboard.writeText(text);
@@ -135,11 +140,17 @@ function AssetGridCard({
       >
         {asset.thumbnailUrl || (isImageAsset(asset) && asset.url) ? (
           <img
-            src={asset.thumbnailUrl || asset.url}
+            src={asset.thumbnailUrl || asset.url || ''}
             alt=""
             className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
             loading="lazy"
           />
+        ) : asset.summary ? (
+          <div className="flex items-center justify-center h-full px-4">
+            <p className="text-[11px] leading-relaxed text-center" style={{ color: 'rgba(255,255,255,0.45)', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+              {asset.summary}
+            </p>
+          </div>
         ) : asset.type === 'image' || isImageAsset(asset) ? (
           <Image size={28} style={{ color: 'rgba(255,255,255,0.12)' }} />
         ) : asset.type === 'document' ? (
@@ -168,9 +179,11 @@ function AssetGridCard({
           >
             {TYPE_CONFIG[asset.type]?.label || asset.type}
           </span>
-          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-            {formatBytes(asset.sizeBytes)}
-          </span>
+          {asset.source && (
+            <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.35)' }}>
+              {asset.source}
+            </span>
+          )}
           <span className="text-[11px] ml-auto" style={{ color: 'var(--text-muted)' }}>
             {formatShortDate(asset.createdAt)}
           </span>
@@ -221,16 +234,30 @@ function AssetListRow({
         style={{ background: 'rgba(255,255,255,0.04)' }}
       >
         {asset.thumbnailUrl || (isImageAsset(asset) && asset.url) ? (
-          <img src={asset.thumbnailUrl || asset.url} alt="" loading="lazy" className="w-full h-full object-cover" />
+          <img src={asset.thumbnailUrl || asset.url || ''} alt="" loading="lazy" className="w-full h-full object-cover" />
         ) : (
           <FileText size={14} style={{ color: 'rgba(255,255,255,0.2)' }} />
         )}
       </div>
 
-      {/* Title */}
-      <div className="flex-1 min-w-0 text-[13px] truncate" style={{ color: 'var(--text-primary)' }}>
-        {asset.title}
+      {/* Title + Summary */}
+      <div className="flex-1 min-w-0">
+        <div className="text-[13px] truncate" style={{ color: 'var(--text-primary)' }}>
+          {asset.title}
+        </div>
+        {asset.summary && (
+          <div className="text-[10px] truncate" style={{ color: 'rgba(255,255,255,0.35)' }}>
+            {asset.summary}
+          </div>
+        )}
       </div>
+
+      {/* Source */}
+      {asset.source && (
+        <span className="text-[10px] flex-shrink-0" style={{ color: 'rgba(255,255,255,0.30)' }}>
+          {asset.source}
+        </span>
+      )}
 
       {/* Type */}
       <span
@@ -268,6 +295,7 @@ function DetailPanel({
   const isImage = isImageAsset(asset);
 
   const handleCopy = async () => {
+    if (!asset.url) return;
     await copyToClipboard(asset.url);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -312,6 +340,12 @@ function DetailPanel({
               alt={asset.title}
               className="w-full h-full object-contain"
             />
+          ) : asset.summary ? (
+            <div className="flex items-center justify-center h-full px-5">
+              <p className="text-[12px] leading-relaxed text-center" style={{ color: 'rgba(255,255,255,0.45)', display: '-webkit-box', WebkitLineClamp: 6, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                {asset.summary}
+              </p>
+            </div>
           ) : asset.type === 'document' ? (
             <FileText size={40} style={{ color: 'rgba(255,255,255,0.12)' }} />
           ) : (
@@ -329,7 +363,8 @@ function DetailPanel({
 
       {/* Metadata */}
       <div className="px-4 mt-4 space-y-3 flex-1 overflow-auto">
-        <MetaRow icon={<Eye size={13} />} label="类型" value={TYPE_CONFIG[asset.type]?.label || asset.type} />
+        <MetaRow icon={<Eye size={13} />} label="类型" value={`${TYPE_CONFIG[asset.type]?.label || asset.type}${asset.source ? ` · ${asset.source}` : ''}`} />
+        {asset.summary && <MetaRow icon={<FileText size={13} />} label="摘要" value={asset.summary} />}
         <MetaRow icon={<HardDrive size={13} />} label="大小" value={formatBytes(asset.sizeBytes)} />
         <MetaRow icon={<Calendar size={13} />} label="创建时间" value={formatDate(asset.createdAt)} />
         {asset.mime && <MetaRow icon={<Type size={13} />} label="MIME" value={asset.mime} />}
@@ -344,7 +379,7 @@ function DetailPanel({
           <>
             <button
               type="button"
-              onClick={() => window.open(asset.url, '_blank', 'noopener,noreferrer')}
+              onClick={() => asset.url && window.open(asset.url, '_blank', 'noopener,noreferrer')}
               className="flex items-center justify-center gap-2 w-full h-9 rounded-lg text-[13px] font-medium transition-colors"
               style={{
                 background: 'var(--accent-primary, #818CF8)',
@@ -375,7 +410,7 @@ function DetailPanel({
                 {copied ? '已复制' : '复制链接'}
               </button>
               <a
-                href={asset.url}
+                href={asset.url || '#'}
                 download={asset.title}
                 className="flex items-center justify-center gap-1.5 flex-1 h-8 rounded-lg text-[12px] font-medium transition-colors no-underline"
                 style={{
@@ -436,6 +471,11 @@ export default function DesktopAssetsPage() {
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // 全局计数：始终从 "all" 请求获取，切换 Tab 不影响
+  const [allStats, setAllStats] = useState<{ total: number; image: number; document: number; attachment: number }>({
+    total: 0, image: 0, document: 0, attachment: 0,
+  });
+
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<SortBy>('date');
   const [sortDesc, setSortDesc] = useState(true);
@@ -451,8 +491,21 @@ export default function DesktopAssetsPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
+  // 加载全局分类计数（只在首次和刷新时调用）
+  const fetchAllStats = useCallback(async () => {
+    try {
+      const res = await getMobileAssets({ limit: PAGE_SIZE, skip: 0 });
+      if (res.success) {
+        const items = res.data.items ?? [];
+        const s = { image: 0, document: 0, attachment: 0 };
+        items.forEach((a) => { if (a.type in s) s[a.type as keyof typeof s]++; });
+        setAllStats({ total: res.data.total ?? items.length, ...s });
+      }
+    } catch { /* ignore */ }
+  }, []);
+
   // Fetch assets
-  const fetchAssets = useCallback(async (category?: AssetTab) => {
+  const fetchAssets = useCallback(async (category?: AssetTab, refreshStats = false) => {
     setLoading(true);
     setError(null);
     try {
@@ -462,9 +515,19 @@ export default function DesktopAssetsPage() {
         skip: 0,
       });
       if (res.success) {
-        setAssets(res.data.items ?? []);
+        const items = res.data.items ?? [];
+        setAssets(items);
         setTotal(res.data.total ?? 0);
         setHasMore(res.data.hasMore ?? false);
+
+        // 如果是 "all" 分类，同步更新 stats
+        if (category === 'all' || !category) {
+          const s = { image: 0, document: 0, attachment: 0 };
+          items.forEach((a) => { if (a.type in s) s[a.type as keyof typeof s]++; });
+          setAllStats({ total: res.data.total ?? items.length, ...s });
+        } else if (refreshStats) {
+          fetchAllStats();
+        }
       } else {
         setError(res.error?.message || '加载失败');
       }
@@ -473,7 +536,7 @@ export default function DesktopAssetsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [fetchAllStats]);
 
   const loadMore = useCallback(async () => {
     if (!hasMore || loadingMore) return;
@@ -519,7 +582,7 @@ export default function DesktopAssetsPage() {
 
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim();
-      list = list.filter((a) => a.title.toLowerCase().includes(q));
+      list = list.filter((a) => a.title.toLowerCase().includes(q) || a.summary?.toLowerCase().includes(q) || a.source?.toLowerCase().includes(q));
     }
 
     const dir = sortDesc ? -1 : 1;
@@ -537,14 +600,8 @@ export default function DesktopAssetsPage() {
     [assets, selectedId],
   );
 
-  // Stats
-  const stats = useMemo(() => {
-    const s = { image: 0, document: 0, attachment: 0 };
-    assets.forEach((a) => {
-      if (a.type in s) s[a.type as keyof typeof s]++;
-    });
-    return s;
-  }, [assets]);
+  // Stats 使用全局计数，不依赖当前 Tab 的 assets
+  const stats = allStats;
 
   const handleSort = (col: SortBy) => {
     if (sortBy === col) {
@@ -588,8 +645,8 @@ export default function DesktopAssetsPage() {
             const TabIcon = tab.icon;
             const count =
               tab.key === 'all'
-                ? total
-                : stats[tab.key as keyof typeof stats] ?? 0;
+                ? allStats.total
+                : allStats[tab.key as keyof Omit<typeof allStats, 'total'>] ?? 0;
             return (
               <button
                 key={tab.key}
