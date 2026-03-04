@@ -577,17 +577,42 @@ export function ArenaPage() {
 
   async function handleModelPickerConfirm(models: SelectedModelItem[]) {
     const group = adminGroups.find((g) => g.key === modelPickerTargetGroup);
+    const existingSlots = group?.slots ?? [];
     const existingKeys = new Set(
-      (group?.slots ?? []).map((s) => `${s.platformId}:${s.modelId}`.toLowerCase()),
+      existingSlots.map((s) => `${s.platformId}:${s.modelId}`.toLowerCase()),
     );
+    const confirmedKeys = new Set(
+      models.map((m) => `${m.platformId}:${m.modelId}`.toLowerCase()),
+    );
+
+    // Find new models to add
     const newModels = models.filter(
       (m) => !existingKeys.has(`${m.platformId}:${m.modelId}`.toLowerCase()),
     );
-    if (newModels.length === 0) {
-      toast.info('没有新模型需要添加');
+    // Find existing slots to remove (were in existing but removed from confirmed list)
+    const slotsToRemove = existingSlots.filter(
+      (s) => !confirmedKeys.has(`${s.platformId}:${s.modelId}`.toLowerCase()),
+    );
+
+    if (newModels.length === 0 && slotsToRemove.length === 0) {
+      toast.info('没有变更');
       return;
     }
-    let successCount = 0;
+
+    let addCount = 0;
+    let removeCount = 0;
+
+    // Delete removed slots
+    for (const slot of slotsToRemove) {
+      try {
+        const res = await deleteArenaSlot(slot.id);
+        if (res.success) removeCount++;
+      } catch {
+        // continue
+      }
+    }
+
+    // Add new slots
     for (const m of newModels) {
       try {
         const res = await createArenaSlot({
@@ -597,16 +622,20 @@ export function ArenaPage() {
           group: modelPickerTargetGroup,
           enabled: true,
         });
-        if (res.success) successCount++;
+        if (res.success) addCount++;
       } catch {
         // continue
       }
     }
-    if (successCount > 0) {
-      toast.success(`已添加 ${successCount} 个模型`);
+
+    if (addCount > 0 || removeCount > 0) {
+      const msgs: string[] = [];
+      if (addCount > 0) msgs.push(`添加 ${addCount} 个`);
+      if (removeCount > 0) msgs.push(`移除 ${removeCount} 个`);
+      toast.success(`模型已更新：${msgs.join('，')}`);
       await loadAdminGroups();
     } else {
-      toast.error('添加模型失败');
+      toast.error('操作失败');
     }
   }
 
@@ -1520,16 +1549,9 @@ export function ArenaPage() {
                             </div>
                             <div className="flex items-center gap-1 flex-shrink-0">
                               <button
-                                onClick={() => openAddSlots(ag.key)}
-                                className="p-1.5 rounded-md hover:bg-white/8 transition-colors"
-                                title="添加模型"
-                              >
-                                <Plus className="w-3.5 h-3.5" style={{ color: 'rgba(99,102,241,0.8)' }} />
-                              </button>
-                              <button
                                 onClick={() => openEditGroup(ag)}
                                 className="p-1.5 rounded-md hover:bg-white/8 transition-colors"
-                                title="编辑分组"
+                                title="重命名分组"
                               >
                                 <Edit3 className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
                               </button>
@@ -1548,8 +1570,7 @@ export function ArenaPage() {
                             </div>
                           </div>
                           {/* Slot list */}
-                          {ag.slots.length > 0 && (
-                            <div className="px-2 pb-2">
+                          <div className="px-2 pb-2">
                               {ag.slots.map((slot) => (
                                 <div
                                   key={slot.id}
@@ -1583,8 +1604,16 @@ export function ArenaPage() {
                                   </div>
                                 </div>
                               ))}
-                            </div>
-                          )}
+                              {/* Add model button — inside slot list for clarity */}
+                              <button
+                                onClick={() => openAddSlots(ag.key)}
+                                className="w-full flex items-center justify-center gap-1.5 mt-1 py-1.5 rounded-md text-[11px] transition-colors hover:bg-white/5"
+                                style={{ color: 'rgba(99,102,241,0.8)', border: '1px dashed rgba(99,102,241,0.25)' }}
+                              >
+                                <Plus className="w-3 h-3" />
+                                添加模型
+                              </button>
+                          </div>
                         </div>
                       ))
                     )}
@@ -2273,6 +2302,8 @@ export function ArenaPage() {
         selectedModels={existingModelsForPicker}
         platforms={platforms}
         onConfirm={handleModelPickerConfirm}
+        confirmText="确认保存"
+        description="管理该分组的参战模型：添加新模型或从池中移除已有模型，确认后生效"
       />
     </div>
   );
