@@ -640,7 +640,6 @@ public static class CapsuleExecutor
         }
 
         // ── 1. 解析上游输入：合并所有 artifact 的 InlineContent ──
-        object? inputData = null;
         var allItems = new List<JsonElement>();
         foreach (var art in inputArtifacts)
         {
@@ -682,24 +681,23 @@ public static class CapsuleExecutor
             // 初始化 result 为 null
             engine.Execute("var result = null;");
 
-            // ── 3. 执行用户脚本 ──
+            // ── 3. 执行用户脚本（Evaluate 返回最后一个表达式的值） ──
             var sw = Stopwatch.StartNew();
-            engine.Execute(code);
+            var lastExprValue = engine.Evaluate(code);
             sw.Stop();
 
             logs.AppendLine($"  执行耗时: {sw.ElapsedMilliseconds}ms");
 
-            // ── 4. 提取 result 变量 ──
+            // ── 4. 提取 result 变量（优先），否则用最终表达式值 ──
             var resultValue = engine.GetValue("result");
             string outputJson;
 
             if (resultValue == null || resultValue.IsNull() || resultValue.IsUndefined())
             {
-                logs.AppendLine("  ⚠️ result 变量为空，尝试提取脚本最终表达式值");
-                var completion = engine.GetCompletionValue();
-                if (completion != null && !completion.IsNull() && !completion.IsUndefined())
+                logs.AppendLine("  ⚠️ result 变量为空，尝试使用脚本最终表达式值");
+                if (lastExprValue != null && !lastExprValue.IsNull() && !lastExprValue.IsUndefined())
                 {
-                    var raw = completion.ToObject();
+                    var raw = lastExprValue.ToObject();
                     outputJson = raw is string s ? s : JsonSerializer.Serialize(raw, new JsonSerializerOptions { WriteIndented = true });
                 }
                 else
