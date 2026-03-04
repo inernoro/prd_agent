@@ -39,7 +39,21 @@ public class MongoSessionService : ISessionService
             {
                 if (!string.Equals(existing.DocumentId, did, StringComparison.Ordinal))
                 {
+                    // 主 PRD 被替换：更新 DocumentId，并同步 DocumentIds（替换旧主文档，保留补充资料）
+                    var oldPrimary = existing.DocumentId;
                     existing.DocumentId = did;
+
+                    if (existing.DocumentIds.Count > 0)
+                    {
+                        // 移除旧主文档，插入新主文档到首位
+                        existing.DocumentIds.Remove(oldPrimary);
+                        existing.DocumentIds.Insert(0, did);
+                    }
+                    else
+                    {
+                        // 旧数据无 DocumentIds，直接初始化
+                        existing.DocumentIds = new List<string> { did };
+                    }
                 }
 
                 existing.LastActiveAt = DateTime.UtcNow;

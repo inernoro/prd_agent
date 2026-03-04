@@ -25,6 +25,7 @@ public class SessionService : ISessionService
         {
             SessionId = await _idGenerator.GenerateIdAsync("session"),
             DocumentId = documentId,
+            DocumentIds = new List<string> { documentId },
             GroupId = groupId,
             CurrentRole = UserRole.PM,
             Mode = InteractionMode.QA
