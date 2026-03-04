@@ -62,17 +62,25 @@ function AssetCard({ item, isSelected, onSelect }: { item: AssetItem; isSelected
             className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
           />
         ) : (
-          <div className="flex flex-col items-center gap-1.5 text-text-secondary/60">
-            {item.type === 'document' ? (
-              <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-              </svg>
+          <div className="flex flex-col items-center justify-center gap-1.5 px-3 text-text-secondary/60 h-full">
+            {item.summary ? (
+              <p className="text-[11px] leading-relaxed text-text-secondary/80 line-clamp-4 text-center">
+                {item.summary}
+              </p>
             ) : (
-              <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" />
-              </svg>
+              <>
+                {item.type === 'document' ? (
+                  <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                  </svg>
+                ) : (
+                  <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" />
+                  </svg>
+                )}
+                <span className="text-xs">{item.mime?.split('/')[1] || item.type}</span>
+              </>
             )}
-            <span className="text-xs">{item.mime.split('/')[1] || item.type}</span>
           </div>
         )}
       </div>
@@ -83,9 +91,14 @@ function AssetCard({ item, isSelected, onSelect }: { item: AssetItem; isSelected
           {item.title}
         </div>
         <div className="flex items-center justify-between">
-          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${TYPE_COLORS[item.type] || ''}`}>
-            {TYPE_LABELS[item.type] || item.type}
-          </span>
+          <div className="flex items-center gap-1.5">
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${TYPE_COLORS[item.type] || ''}`}>
+              {TYPE_LABELS[item.type] || item.type}
+            </span>
+            {item.source && (
+              <span className="text-[10px] text-text-secondary/60">{item.source}</span>
+            )}
+          </div>
           <span className="text-[10px] text-text-secondary">{formatBytes(item.sizeBytes)}</span>
         </div>
       </div>
@@ -121,8 +134,18 @@ function AssetListRow({ item, isSelected, onSelect }: { item: AssetItem; isSelec
         )}
       </div>
 
-      {/* Title */}
-      <div className="flex-1 min-w-0 text-sm text-text-primary truncate">{item.title}</div>
+      {/* Title + Summary */}
+      <div className="flex-1 min-w-0">
+        <div className="text-sm text-text-primary truncate">{item.title}</div>
+        {item.summary && (
+          <div className="text-[10px] text-text-secondary/60 truncate">{item.summary}</div>
+        )}
+      </div>
+
+      {/* Source */}
+      {item.source && (
+        <span className="text-[10px] text-text-secondary/50 flex-shrink-0">{item.source}</span>
+      )}
 
       {/* Type badge */}
       <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 ${TYPE_COLORS[item.type] || ''}`}>
@@ -192,7 +215,7 @@ export default function DesktopAssetsPage() {
     // Search filter (client-side)
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim();
-      list = list.filter((i) => i.title.toLowerCase().includes(q));
+      list = list.filter((i) => i.title.toLowerCase().includes(q) || i.summary?.toLowerCase().includes(q) || i.source?.toLowerCase().includes(q));
     }
 
     // Sort

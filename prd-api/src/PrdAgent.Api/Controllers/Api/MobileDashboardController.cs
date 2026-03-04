@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 
@@ -13,7 +14,7 @@ namespace PrdAgent.Api.Controllers.Api;
 /// 端点:
 ///   GET /api/mobile/feed     → 最近活动 Feed 流
 ///   GET /api/mobile/stats    → 使用统计卡片
-///   GET /api/mobile/assets   → 聚合资产列表
+///   GET /api/mobile/assets   → 聚合资产列表（通过 IAssetProvider 被动披露）
 /// </summary>
 [ApiController]
 [Route("api/mobile")]
@@ -22,11 +23,16 @@ public class MobileDashboardController : ControllerBase
 {
     private readonly MongoDbContext _db;
     private readonly ILogger<MobileDashboardController> _logger;
+    private readonly IEnumerable<IAssetProvider> _assetProviders;
 
-    public MobileDashboardController(MongoDbContext db, ILogger<MobileDashboardController> logger)
+    public MobileDashboardController(
+        MongoDbContext db,
+        ILogger<MobileDashboardController> logger,
+        IEnumerable<IAssetProvider> assetProviders)
     {
         _db = db;
         _logger = logger;
+        _assetProviders = assetProviders;
     }
 
     private string GetUserId() =>
@@ -185,150 +191,47 @@ public class MobileDashboardController : ControllerBase
     // ─────────────────────────────────────────
 
     /// <summary>
-    /// 聚合用户所有产出物：图片资产 + 附件 + 缺陷附件，按时间倒序，支持分类过滤。
+    /// 聚合用户所有产出物，通过 IAssetProvider 被动披露。
+    /// 新模块只需实现 IAssetProvider 并注册 DI，即可自动出现在此列表中。
     /// </summary>
     [HttpGet("assets")]
     public async Task<IActionResult> GetAssets(
         [FromQuery] string? category = null,   // image | document | attachment | null(all)
         [FromQuery] int limit = 30,
-        [FromQuery] int skip = 0)
+        [FromQuery] int skip = 0,
+        CancellationToken ct = default)
     {
         var userId = GetUserId();
         limit = Math.Clamp(limit, 1, 100);
         skip = Math.Max(skip, 0);
 
-        var assets = new List<object>();
+        var allAssets = new List<UnifiedAsset>();
 
-        // 1) 图片资产 (ImageAsset)
-        if (category is null or "image")
+        // 并行收集所有 Provider 的资产
+        foreach (var provider in _assetProviders)
         {
+            // 按 category 过滤：如果指定了 category，跳过不支持该类型的 Provider
+            if (category != null && !provider.SupportedCategories.Contains(category))
+                continue;
+
             try
             {
-                var images = await _db.ImageAssets
-                    .Find(a => a.OwnerUserId == userId)
-                    .SortByDescending(a => a.CreatedAt)
-                    .Limit(limit)
-                    .ToListAsync();
-
-                foreach (var img in images)
-                {
-                    assets.Add(new
-                    {
-                        id = $"img-{img.Id}",
-                        type = "image",
-                        title = img.Prompt ?? "生成图片",
-                        url = img.Url,
-                        thumbnailUrl = img.Url,
-                        mime = img.Mime,
-                        width = img.Width,
-                        height = img.Height,
-                        sizeBytes = img.SizeBytes,
-                        createdAt = img.CreatedAt,
-                        workspaceId = img.WorkspaceId,
-                    });
-                }
+                var items = await provider.GetAssetsAsync(userId, limit, ct);
+                allAssets.AddRange(items);
             }
-            catch (Exception ex) { _logger.LogWarning(ex, "Assets: failed to load images"); }
-        }
-
-        // 2) 附件 (Attachment) — 用户上传的文件
-        //    MIME 分类：image/* → image, pdf/text/word → document, 其余 → attachment
-        if (category is null or "attachment" or "document" or "image")
-        {
-            try
+            catch (Exception ex)
             {
-                var attachments = await _db.Attachments
-                    .Find(a => a.UploaderId == userId)
-                    .SortByDescending(a => a.UploadedAt)
-                    .Limit(limit)
-                    .ToListAsync();
-
-                foreach (var att in attachments)
-                {
-                    var mime = att.MimeType ?? "";
-                    string assetType;
-                    if (mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
-                        assetType = "image";
-                    else if (mime.Contains("pdf") || mime.Contains("text")
-                          || mime.Contains("document") || mime.Contains("word"))
-                        assetType = "document";
-                    else
-                        assetType = "attachment";
-
-                    if (category != null && category != assetType) continue;
-
-                    assets.Add(new
-                    {
-                        id = $"att-{att.AttachmentId}",
-                        type = assetType,
-                        title = att.FileName,
-                        url = att.Url,
-                        thumbnailUrl = att.ThumbnailUrl ?? (assetType == "image" ? att.Url : null),
-                        mime = att.MimeType,
-                        width = 0,
-                        height = 0,
-                        sizeBytes = att.Size,
-                        createdAt = att.UploadedAt,
-                        workspaceId = (string?)null,
-                    });
-                }
+                _logger.LogWarning(ex, "Assets: failed to load from {Source}", provider.Source);
             }
-            catch (Exception ex) { _logger.LogWarning(ex, "Assets: failed to load attachments"); }
         }
 
-        // 3) PRD 文档 (ParsedPrd) — 通过 Session 关联到用户
-        if (category is null or "document")
-        {
-            try
-            {
-                // 先获取用户的会话，取出关联的 DocumentId
-                var sessions = await _db.Sessions
-                    .Find(s => s.OwnerUserId == userId && s.DeletedAtUtc == null)
-                    .SortByDescending(s => s.LastActiveAt)
-                    .Limit(limit)
-                    .ToListAsync();
-
-                var docIds = sessions
-                    .Where(s => !string.IsNullOrEmpty(s.DocumentId))
-                    .Select(s => s.DocumentId)
-                    .Distinct()
-                    .ToList();
-
-                if (docIds.Count > 0)
-                {
-                    var docs = await _db.Documents
-                        .Find(d => docIds.Contains(d.Id))
-                        .ToListAsync();
-
-                    foreach (var doc in docs)
-                    {
-                        assets.Add(new
-                        {
-                            id = $"doc-{doc.Id}",
-                            type = "document",
-                            title = !string.IsNullOrEmpty(doc.Title) ? doc.Title : "PRD 文档",
-                            url = (string?)null,
-                            thumbnailUrl = (string?)null,
-                            mime = "text/markdown",
-                            width = 0,
-                            height = 0,
-                            sizeBytes = (long)doc.CharCount,
-                            createdAt = doc.CreatedAt,
-                            workspaceId = (string?)null,
-                        });
-                    }
-                }
-            }
-            catch (Exception ex) { _logger.LogWarning(ex, "Assets: failed to load PRD documents"); }
-        }
+        // 按 category 二次过滤（Provider 可能产出多种 type，如 AttachmentProvider 同时产出 image/document/attachment）
+        if (category != null)
+            allAssets = allAssets.Where(a => a.Type == category).ToList();
 
         // 按时间排序 + 分页
-        var sorted = assets
-            .OrderByDescending(item =>
-            {
-                var prop = item.GetType().GetProperty("createdAt");
-                return prop?.GetValue(item) as DateTime? ?? DateTime.MinValue;
-            })
+        var sorted = allAssets
+            .OrderByDescending(a => a.CreatedAt)
             .Skip(skip)
             .Take(limit)
             .ToList();
@@ -336,8 +239,8 @@ public class MobileDashboardController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             items = sorted,
-            total = assets.Count,
-            hasMore = assets.Count > skip + limit,
+            total = allAssets.Count,
+            hasMore = allAssets.Count > skip + limit,
         }));
     }
 }

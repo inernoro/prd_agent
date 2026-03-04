@@ -186,9 +186,13 @@ export interface AssetItem {
   id: string;
   type: AssetType;
   title: string;
-  url: string;
+  /** 内容摘要（前80字），让卡片不再空白 */
+  summary?: string | null;
+  /** 来源标签（如"视觉创作"、"PRD Agent"、"手动上传"） */
+  source?: string | null;
+  url?: string | null;
   thumbnailUrl?: string | null;
-  mime: string;
+  mime?: string | null;
   width: number;
   height: number;
   sizeBytes: number;

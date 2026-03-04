@@ -157,6 +157,12 @@ builder.Services.AddScoped<OpenAIImageClient>();
 builder.Services.AddSingleton<WatermarkFontRegistry>();
 builder.Services.AddSingleton<WatermarkRenderer>();
 
+// 资产披露 Provider（IAssetProvider 被动注册 — 新模块只需实现接口并在此注册）
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.ImageAssetProvider>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.AttachmentAssetProvider>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.PrdDocumentAssetProvider>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.VideoAssetProvider>();
+
 // Visual Agent 多图组合服务（图片描述提取 + 多图意图解析）
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.VisualAgent.IImageDescriptionService, PrdAgent.Infrastructure.Services.VisualAgent.ImageDescriptionService>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.VisualAgent.IMultiImageComposeService, PrdAgent.Infrastructure.Services.VisualAgent.MultiImageComposeService>();

@@ -31,13 +31,17 @@ interface Props {
 export default function AssetDetailPanel({ asset, onClose }: Props) {
   const isImage = asset.type === 'image';
 
+  const hasUrl = !!asset.url;
+
   const copyUrl = async () => {
+    if (!asset.url) return;
     try {
       await navigator.clipboard.writeText(asset.url);
     } catch { /* ignore */ }
   };
 
   const openInBrowser = async () => {
+    if (!asset.url) return;
     try {
       const { open } = await import('@tauri-apps/plugin-shell');
       await open(asset.url);
@@ -64,14 +68,18 @@ export default function AssetDetailPanel({ asset, onClose }: Props) {
       {/* Preview */}
       <div className="p-3 border-b border-black/8 dark:border-white/8">
         <div className="aspect-[4/3] rounded-lg bg-black/[0.03] dark:bg-white/[0.03] overflow-hidden flex items-center justify-center">
-          {isImage ? (
+          {isImage && asset.url ? (
             <img src={asset.url} alt={asset.title} className="w-full h-full object-contain" loading="lazy" />
+          ) : asset.summary ? (
+            <div className="flex flex-col items-center justify-center p-4 text-text-secondary/70 h-full">
+              <p className="text-xs leading-relaxed text-center line-clamp-6">{asset.summary}</p>
+            </div>
           ) : (
             <div className="flex flex-col items-center gap-2 text-text-secondary/50">
               <svg className="w-12 h-12" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
               </svg>
-              <span className="text-xs">{asset.mime}</span>
+              {asset.mime && <span className="text-xs">{asset.mime}</span>}
             </div>
           )}
         </div>
@@ -85,17 +93,30 @@ export default function AssetDetailPanel({ asset, onClose }: Props) {
           <div className="text-sm text-text-primary break-all">{asset.title}</div>
         </div>
 
-        {/* Type */}
+        {/* Summary */}
+        {asset.summary && (
+          <div>
+            <div className="text-[10px] text-text-secondary/70 mb-0.5">摘要</div>
+            <div className="text-xs text-text-secondary leading-relaxed">{asset.summary}</div>
+          </div>
+        )}
+
+        {/* Type + Source */}
         <div>
           <div className="text-[10px] text-text-secondary/70 mb-0.5">类型</div>
-          <div className="text-sm text-text-primary">{TYPE_LABELS[asset.type] || asset.type}</div>
+          <div className="text-sm text-text-primary">
+            {TYPE_LABELS[asset.type] || asset.type}
+            {asset.source && <span className="text-text-secondary/60 ml-1.5">· {asset.source}</span>}
+          </div>
         </div>
 
         {/* MIME */}
-        <div>
-          <div className="text-[10px] text-text-secondary/70 mb-0.5">MIME</div>
-          <div className="text-sm text-text-primary font-mono text-xs">{asset.mime}</div>
-        </div>
+        {asset.mime && (
+          <div>
+            <div className="text-[10px] text-text-secondary/70 mb-0.5">MIME</div>
+            <div className="text-sm text-text-primary font-mono text-xs">{asset.mime}</div>
+          </div>
+        )}
 
         {/* Size */}
         <div>
@@ -119,6 +140,7 @@ export default function AssetDetailPanel({ asset, onClose }: Props) {
       </div>
 
       {/* Actions */}
+      {hasUrl && (
       <div className="p-3 border-t border-black/8 dark:border-white/8 space-y-1.5">
         <button
           onClick={copyUrl}
@@ -139,6 +161,7 @@ export default function AssetDetailPanel({ asset, onClose }: Props) {
           在浏览器中打开
         </button>
       </div>
+      )}
     </div>
   );
 }
