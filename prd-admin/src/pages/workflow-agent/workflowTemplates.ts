@@ -70,19 +70,19 @@ const tapdBugCollectionTemplate: WorkflowTemplate = {
   tags: ['tapd', 'quality', 'report'],
   requiredInputs: [
     {
-      key: 'workspaceId',
-      label: '工作空间 ID',
-      type: 'text',
-      placeholder: '50116108',
-      helpTip: 'TAPD 项目 URL 中的数字 ID，如 tapd.cn/50116108',
-      required: true,
-    },
-    {
       key: 'cookie',
       label: 'Cookie',
       type: 'textarea',
       placeholder: 'tapdsession=xxx; t_u=xxx; _wt=xxx; ...',
       helpTip: '浏览器登录 TAPD → F12 → Network → 点任意请求 → Headers → 找到 Cookie → 复制整段粘贴到这里',
+      required: true,
+    },
+    {
+      key: 'workspaceId',
+      label: '工作空间 ID',
+      type: 'text',
+      placeholder: '50116108',
+      helpTip: 'TAPD 项目 URL 中的数字 ID，如 tapd.cn/50116108。验证 Cookie 后可从下拉列表选择',
       required: true,
     },
     {
