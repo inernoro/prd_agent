@@ -239,7 +239,7 @@ const appNameMap = {
 
 ## 服务器权威性设计
 
-> 详细设计文档：`doc/core/design.server-authority.md`
+> 详细设计文档：`doc/design.server-authority.md`
 
 **核心原则**：客户端被动断开（关页面、切路由、网络中断）不得取消服务器任务。只有用户主动调用取消 API 才允许中断。
 
@@ -324,7 +324,7 @@ prd_agent/
 | 缺陷管理 Agent | ✅ DONE | DefectAgentController, DefectAgentTests (25 tests) |
 | 视频 Agent | ✅ DONE | VideoAgentController, VideoGenRunWorker, prd-video/ (Remotion) |
 | 配置市场 (海鲜市场) | ✅ DONE | CONFIG_TYPE_REGISTRY, MarketplaceCard, IForkable, ForkService |
-| 周报管理 Agent | ✅ Phase 1-3 DONE | ReportAgentController, ReportAgentPage (6 tabs)，详见 `doc/agent/plan.report-agent-impl.md` |
+| 周报管理 Agent | ✅ Phase 1-3 DONE | ReportAgentController, ReportAgentPage (6 tabs)，详见 `doc/plan.report-agent-impl.md` |
 | **附件上传** | ✅ DONE | AttachmentsController + Rust upload_attachment + Desktop UI (图片选择/预览/上传) |
 | **技能系统** | ✅ DONE | SkillSettings 模型 + SkillsController + Desktop SkillPanel/SkillManagerModal (服务端公共技能 + 客户端本地自定义技能) |
 | **知识库** | ⚠️ PARTIAL | KnowledgeBasePage UI 占位，"资料文件"标注开发中 |
@@ -413,7 +413,7 @@ VisualAgent (DB 名保留 image_master)：`image_master_workspaces`, `image_asse
 | `prd-admin/src/components/marketplace/MarketplaceCard.tsx` | 通用卡片组件 |
 | `prd-api/src/PrdAgent.Core/Interfaces/IMarketplaceItem.cs` | `IMarketplaceItem` + `IForkable` 接口 |
 | `prd-api/src/PrdAgent.Infrastructure/Services/ForkService.cs` | 通用 Fork 服务 |
-| `doc/engine/spec.marketplace.md` | 设计文档 (v3.0) |
+| `doc/spec.marketplace.md` | 设计文档 (v3.0) |
 
 ### 添加新类型步骤
 
