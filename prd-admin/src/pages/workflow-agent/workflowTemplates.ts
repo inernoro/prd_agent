@@ -355,7 +355,7 @@ L.push("## 📋 数据字段信息");
 L.push("### 📊 可用字段");
 L.push(BT+JSON.stringify(fields)+BT);
 
-result = L.join("\n");`,
+result = L.join("\\n");`,
           timeoutSeconds: '30',
         },
         inputSlots: [{ slotId: 'script-in', name: 'input', dataType: 'json', required: true }],
