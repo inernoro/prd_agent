@@ -168,7 +168,8 @@ public static class CapsuleExecutor
     }
 
     /// <summary>
-    /// 智能 HTTP：使用 LLM 分析 API 响应中的分页参数，自动翻页拉取全量数据
+    /// 智能 HTTP：自动识别分页参数并翻页拉取全量数据。
+    /// 支持：offset/page/cursor 分页、自定义数据路径、POST body 分页、请求间延迟、失败重试。
     /// </summary>
     public static async Task<CapsuleResult> ExecuteSmartHttpAsync(
         IServiceProvider sp, WorkflowNode node, Dictionary<string, string> variables, List<ExecutionArtifact> inputArtifacts)
@@ -179,6 +180,12 @@ public static class CapsuleExecutor
         var body = ReplaceVariables(GetConfigString(node, "body") ?? "", variables);
         var paginationType = GetConfigString(node, "paginationType") ?? "auto";
         var maxPages = int.TryParse(GetConfigString(node, "maxPages"), out var mp) ? mp : 10;
+        var dataPath = GetConfigString(node, "dataPath") ?? "";
+        var cursorField = GetConfigString(node, "cursorField") ?? "next_cursor";
+        var cursorParam = GetConfigString(node, "cursorParam") ?? "cursor";
+        var requestDelayMs = int.TryParse(GetConfigString(node, "requestDelayMs"), out var rd) ? rd : 0;
+        var retryCount = int.TryParse(GetConfigString(node, "retryCount"), out var rc) ? Math.Min(rc, 3) : 0;
+        var bodyPageField = GetConfigString(node, "bodyPageField") ?? "";
 
         if (string.IsNullOrWhiteSpace(url))
             throw new InvalidOperationException("智能 HTTP: URL 未配置，请粘贴 cURL 或手动填写 URL");
@@ -195,45 +202,51 @@ public static class CapsuleExecutor
                 var headers = JsonSerializer.Deserialize<Dictionary<string, string>>(headerJson);
                 if (headers != null)
                     foreach (var (k, v) in headers)
-                        client.DefaultRequestHeaders.TryAddWithoutValidation(k, v);
+                        client.DefaultRequestHeaders.TryAddWithoutValidation(k, ReplaceVariables(v, variables));
             }
             catch { /* ignore malformed headers */ }
         }
 
         var allData = new System.Text.Json.Nodes.JsonArray();
         var logs = $"SmartHTTP [{paginationType}] {method} {url}\n";
+        if (!string.IsNullOrWhiteSpace(dataPath)) logs += $"  dataPath: {dataPath}\n";
         var currentUrl = url;
+        var currentBody = body;
         var pagesFetched = 0;
 
         // 分页循环
         for (var page = 0; page < maxPages; page++)
         {
-            HttpResponseMessage response;
-            if (method.Equals("POST", StringComparison.OrdinalIgnoreCase))
-            {
-                var content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
-                response = await client.PostAsync(currentUrl, content, CancellationToken.None);
-            }
-            else
-            {
-                response = await client.GetAsync(currentUrl, CancellationToken.None);
-            }
+            // 请求间延迟（首页不延迟）
+            if (page > 0 && requestDelayMs > 0)
+                await Task.Delay(Math.Min(requestDelayMs, 5000), CancellationToken.None);
 
-            var responseBody = await response.Content.ReadAsStringAsync(CancellationToken.None);
+            // 发送请求（含重试）
+            var (responseBody, statusCode) = await SmartHttpSendWithRetry(
+                client, method, currentUrl, currentBody, retryCount, logs);
+
             pagesFetched++;
-            logs += $"  Page {pagesFetched}: {(int)response.StatusCode}, {responseBody.Length} bytes\n";
+            logs += $"  Page {pagesFetched}: {statusCode}, {responseBody.Length} bytes\n";
 
-            if (!response.IsSuccessStatusCode) break;
+            if (statusCode < 200 || statusCode >= 300)
+            {
+                logs += $"  [WARN] Non-success status {statusCode}, stopping pagination\n";
+                break;
+            }
 
-            // 尝试解析 JSON 数组数据
+            // 解析 JSON 响应
             try
             {
                 using var doc = JsonDocument.Parse(responseBody);
                 var root = doc.RootElement;
 
-                // 尝试提取 data 数组（常见 API 格式：{ data: [...] }）
+                // ── 数据提取：优先用 dataPath，否则自动检测 ──
                 JsonElement dataArr;
-                if (root.ValueKind == JsonValueKind.Array)
+                if (!string.IsNullOrWhiteSpace(dataPath))
+                {
+                    dataArr = TraverseJsonPath(root, dataPath);
+                }
+                else if (root.ValueKind == JsonValueKind.Array)
                 {
                     dataArr = root;
                 }
@@ -256,38 +269,96 @@ public static class CapsuleExecutor
                     break;
                 }
 
+                if (dataArr.ValueKind != JsonValueKind.Array)
+                {
+                    // dataPath 指向的不是数组，当作单条
+                    allData.Add(System.Text.Json.Nodes.JsonNode.Parse(dataArr.GetRawText()));
+                    break;
+                }
+
                 if (dataArr.GetArrayLength() == 0) break; // 空页，停止
 
                 foreach (var item in dataArr.EnumerateArray())
                     allData.Add(System.Text.Json.Nodes.JsonNode.Parse(item.GetRawText()));
 
-                // 分页检测：如果策略是 none 或没有分页参数 → 不翻页
+                // 分页检测：如果策略是 none → 不翻页
                 if (paginationType == "none") break;
 
-                // 自动分页：检测 URL 中的 page/offset 参数并递增
-                var uri = new Uri(currentUrl);
-                var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+                // ── cursor 分页 ──
+                if (paginationType == "cursor")
+                {
+                    var nextCursor = TraverseJsonPathString(root, cursorField);
+                    if (string.IsNullOrWhiteSpace(nextCursor))
+                    {
+                        logs += "  cursor is empty, stopping\n";
+                        break;
+                    }
+                    // 将 cursor 写入 URL query
+                    var uri = new Uri(currentUrl);
+                    var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+                    query[cursorParam] = nextCursor;
+                    var builder = new UriBuilder(uri) { Query = query.ToString() };
+                    currentUrl = builder.Uri.ToString();
+                    // 如果有 body 分页字段也更新
+                    if (!string.IsNullOrWhiteSpace(bodyPageField))
+                        currentBody = SetJsonFieldValue(currentBody, bodyPageField, nextCursor);
+                    continue;
+                }
+
+                // ── offset / page / auto 分页 ──
+                var pUri = new Uri(currentUrl);
+                var pQuery = System.Web.HttpUtility.ParseQueryString(pUri.Query);
 
                 bool advanced = false;
-                if (paginationType == "page" || (paginationType == "auto" && query["page"] != null))
+
+                if (paginationType == "page" || (paginationType == "auto" && pQuery["page"] != null))
                 {
-                    var p = int.TryParse(query["page"], out var pv) ? pv + 1 : 2;
-                    query["page"] = p.ToString();
+                    var p = int.TryParse(pQuery["page"], out var pv) ? pv + 1 : 2;
+                    pQuery["page"] = p.ToString();
                     advanced = true;
+                    // POST body 分页
+                    if (!string.IsNullOrWhiteSpace(bodyPageField))
+                        currentBody = SetJsonFieldValue(currentBody, bodyPageField, p.ToString());
                 }
-                else if (paginationType == "offset" || (paginationType == "auto" && query["offset"] != null))
+                else if (paginationType == "offset" || (paginationType == "auto" && pQuery["offset"] != null))
                 {
-                    var limit = int.TryParse(query["limit"], out var lv) ? lv : dataArr.GetArrayLength();
-                    var offset = int.TryParse(query["offset"], out var ov) ? ov + limit : limit;
-                    query["offset"] = offset.ToString();
+                    var limit = int.TryParse(pQuery["limit"], out var lv) ? lv : dataArr.GetArrayLength();
+                    var offset = int.TryParse(pQuery["offset"], out var ov) ? ov + limit : limit;
+                    pQuery["offset"] = offset.ToString();
                     advanced = true;
+                    // POST body 分页
+                    if (!string.IsNullOrWhiteSpace(bodyPageField))
+                        currentBody = SetJsonFieldValue(currentBody, bodyPageField, offset.ToString());
                 }
                 else if (paginationType == "auto")
                 {
-                    // 尝试从响应中查找 next_url / next_page_url
-                    if (root.TryGetProperty("next", out var next) && next.ValueKind == JsonValueKind.String)
+                    // 尝试从响应中查找 next / next_url / next_page_url
+                    string? nextUrl = null;
+                    foreach (var field in new[] { "next", "next_url", "next_page_url" })
                     {
-                        currentUrl = next.GetString()!;
+                        if (root.TryGetProperty(field, out var nv) && nv.ValueKind == JsonValueKind.String)
+                        {
+                            nextUrl = nv.GetString();
+                            break;
+                        }
+                    }
+                    if (!string.IsNullOrWhiteSpace(nextUrl))
+                    {
+                        currentUrl = nextUrl;
+                        continue;
+                    }
+                    // 尝试 cursor 自动检测
+                    var autoCursor = TraverseJsonPathString(root, "next_cursor")
+                                  ?? TraverseJsonPathString(root, "paging.next_cursor")
+                                  ?? TraverseJsonPathString(root, "cursor");
+                    if (!string.IsNullOrWhiteSpace(autoCursor))
+                    {
+                        var aUri = new Uri(currentUrl);
+                        var aQuery = System.Web.HttpUtility.ParseQueryString(aUri.Query);
+                        aQuery["cursor"] = autoCursor;
+                        var aBuilder = new UriBuilder(aUri) { Query = aQuery.ToString() };
+                        currentUrl = aBuilder.Uri.ToString();
+                        logs += $"  auto-detected cursor: {autoCursor[..Math.Min(autoCursor.Length, 20)]}...\n";
                         continue;
                     }
                     break; // 无法检测分页，停止
@@ -295,7 +366,7 @@ public static class CapsuleExecutor
 
                 if (advanced)
                 {
-                    var builder = new UriBuilder(uri) { Query = query.ToString() };
+                    var builder = new UriBuilder(pUri) { Query = pQuery.ToString() };
                     currentUrl = builder.Uri.ToString();
                 }
                 else
@@ -326,6 +397,106 @@ public static class CapsuleExecutor
         var metaArtifact = MakeTextArtifact(node, "smart-meta", "分页元信息", metaJson, "application/json");
 
         return new CapsuleResult(new List<ExecutionArtifact> { dataArtifact, metaArtifact }, logs);
+    }
+
+    /// <summary>
+    /// 发送 HTTP 请求并在失败时重试（指数退避）
+    /// </summary>
+    private static async Task<(string body, int statusCode)> SmartHttpSendWithRetry(
+        HttpClient client, string method, string url, string body, int maxRetries, string logs)
+    {
+        for (var attempt = 0; attempt <= maxRetries; attempt++)
+        {
+            try
+            {
+                HttpResponseMessage response;
+                if (method.Equals("POST", StringComparison.OrdinalIgnoreCase))
+                {
+                    var content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+                    response = await client.PostAsync(url, content, CancellationToken.None);
+                }
+                else
+                {
+                    response = await client.GetAsync(url, CancellationToken.None);
+                }
+
+                var responseBody = await response.Content.ReadAsStringAsync(CancellationToken.None);
+                return (responseBody, (int)response.StatusCode);
+            }
+            catch (Exception ex) when (attempt < maxRetries)
+            {
+                var delayMs = (int)Math.Pow(2, attempt + 1) * 1000; // 2s, 4s, 8s
+                logs += $"  [RETRY] Attempt {attempt + 1} failed: {ex.Message}, retrying in {delayMs}ms\n";
+                await Task.Delay(delayMs, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                return ($"{{\"error\": \"{ex.Message.Replace("\"", "'")}\"}}", 0);
+            }
+        }
+        return ("{\"error\": \"unreachable\"}", 0);
+    }
+
+    /// <summary>
+    /// 按点号路径遍历 JSON 元素（如 "result.list" → root["result"]["list"]）
+    /// </summary>
+    private static JsonElement TraverseJsonPath(JsonElement root, string dotPath)
+    {
+        var current = root;
+        foreach (var segment in dotPath.Split('.', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (current.ValueKind == JsonValueKind.Object && current.TryGetProperty(segment, out var child))
+                current = child;
+            else
+                return default;
+        }
+        return current;
+    }
+
+    /// <summary>
+    /// 按点号路径遍历 JSON 并返回字符串值（如提取 cursor 值）
+    /// </summary>
+    private static string? TraverseJsonPathString(JsonElement root, string dotPath)
+    {
+        var el = TraverseJsonPath(root, dotPath);
+        return el.ValueKind == JsonValueKind.String ? el.GetString()
+             : el.ValueKind == JsonValueKind.Number ? el.GetRawText()
+             : null;
+    }
+
+    /// <summary>
+    /// 设置 JSON 字符串中指定字段的值（用于 POST body 分页）
+    /// </summary>
+    private static string SetJsonFieldValue(string json, string fieldPath, string value)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return json;
+        try
+        {
+            var node = System.Text.Json.Nodes.JsonNode.Parse(json);
+            if (node is not System.Text.Json.Nodes.JsonObject obj) return json;
+
+            var segments = fieldPath.Split('.', StringSplitOptions.RemoveEmptyEntries);
+            var current = obj;
+            for (var i = 0; i < segments.Length - 1; i++)
+            {
+                if (current[segments[i]] is System.Text.Json.Nodes.JsonObject child)
+                    current = child;
+                else
+                    return json; // 路径不存在，不修改
+            }
+            var lastKey = segments[^1];
+            // 尝试写入为数字，否则写入为字符串
+            if (int.TryParse(value, out var intVal))
+                current[lastKey] = intVal;
+            else
+                current[lastKey] = value;
+
+            return node.ToJsonString();
+        }
+        catch
+        {
+            return json;
+        }
     }
 
     /// <summary>

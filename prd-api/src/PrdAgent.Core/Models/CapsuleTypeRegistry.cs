@@ -267,6 +267,12 @@ public static class CapsuleTypeRegistry
                     new() { Value = "none", Label = "不分页（单次请求）" },
                 }},
             new() { Key = "maxPages", Label = "最大页数", FieldType = "number", Required = false, DefaultValue = "10", HelpTip = "防止无限请求，最大抓取页数上限" },
+            new() { Key = "dataPath", Label = "数据路径", FieldType = "text", Required = false, Placeholder = "result.list", HelpTip = "响应 JSON 中数据数组的路径（点号分隔），如 result.list、data.records。留空则自动检测 data/items/results" },
+            new() { Key = "cursorField", Label = "游标字段", FieldType = "text", Required = false, Placeholder = "next_cursor", HelpTip = "cursor 分页时，从响应 JSON 中提取下一页游标的字段路径，如 paging.next_cursor" },
+            new() { Key = "cursorParam", Label = "游标参数名", FieldType = "text", Required = false, DefaultValue = "cursor", HelpTip = "cursor 分页时，将游标值放入 URL 的哪个 query 参数中（默认 cursor）" },
+            new() { Key = "requestDelayMs", Label = "请求间隔 (ms)", FieldType = "number", Required = false, DefaultValue = "0", HelpTip = "每次翻页请求之间的延迟毫秒数，防止触发外部 API 限流（0 表示不延迟）" },
+            new() { Key = "retryCount", Label = "失败重试次数", FieldType = "number", Required = false, DefaultValue = "0", HelpTip = "单次请求失败后的重试次数（0 表示不重试，最大 3）" },
+            new() { Key = "bodyPageField", Label = "Body 分页字段", FieldType = "text", Required = false, Placeholder = "pageIndex", HelpTip = "POST 分页时，请求体 JSON 中的页码字段路径。留空则仅在 URL query 中翻页" },
         },
         DefaultInputSlots = new()
         {
