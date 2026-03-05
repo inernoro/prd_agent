@@ -1,32 +1,31 @@
 import React from "react";
 import { useCurrentFrame, useVideoConfig, interpolate } from "remotion";
 import { Background } from "../components/Background";
-import { FloatingShapes } from "../components/FloatingShapes";
+import { ParticleField } from "../components/ParticleField";
 import { GlassCard } from "../components/GlassCard";
+import { AnimatedText } from "../components/AnimatedText";
 import { COLORS } from "../utils/colors";
-import { springIn, typewriterCount } from "../utils/animations";
+import { springIn, sceneFadeOut, staggerIn, glowPulse } from "../utils/animations";
 import type { SceneData } from "../types";
 
 export const ConceptScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames } = useVideoConfig();
 
-  const narrationChars = typewriterCount(frame, scene.narration, fps, 20, 12);
-  const fadeOut = interpolate(
-    frame,
-    [durationInFrames - 15, durationInFrames],
-    [1, 0],
-    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
-  );
+  const fadeOut = sceneFadeOut(frame, durationInFrames);
+  const badgeProgress = springIn(frame, fps, 8);
+
+  // 把旁白分段落显示
+  const paragraphs = scene.narration
+    .split(/[。\n]/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
 
   // 左侧装饰竖线
-  const lineHeight = interpolate(frame, [5, 40], [0, 200], {
+  const lineHeight = interpolate(frame, [5, 50], [0, 250], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
-
-  // 场景编号标签
-  const badgeProgress = springIn(frame, fps, 8);
 
   return (
     <div
@@ -40,55 +39,49 @@ export const ConceptScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
         opacity: fadeOut,
       }}
     >
-      <Background accentColor={COLORS.neon.purple} variant="diagonal" backgroundImageUrl={scene.backgroundImageUrl} />
-      <FloatingShapes accentColor={COLORS.neon.purple} seed={101} intensity="low" />
+      <Background accentColor={COLORS.neon.purple} variant="diagonal" backgroundImageUrl={scene.backgroundImageUrl} noiseSeed="concept" />
+      <ParticleField count={60} accentColor={COLORS.neon.purple} seed={101} speed={0.5} />
 
-      <div
-        style={{
-          position: "relative",
-          zIndex: 1,
-          padding: "0 120px",
-          maxWidth: 1400,
-          width: "100%",
-        }}
-      >
-        {/* 标题行：编号 + 标题 */}
+      <div style={{ position: "relative", zIndex: 1, padding: "0 120px", maxWidth: 1400, width: "100%" }}>
+        {/* 标题行 */}
         <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 32 }}>
           {/* 圆形编号 */}
           <div
             style={{
               opacity: Math.min(badgeProgress, 1),
-              transform: `scale(${0.5 + 0.5 * badgeProgress})`,
-              width: 48,
-              height: 48,
+              transform: `scale(${0.5 + 0.5 * badgeProgress}) rotate(${(1 - badgeProgress) * 180}deg)`,
+              width: 52,
+              height: 52,
               borderRadius: "50%",
               background: `${COLORS.neon.purple}20`,
               border: `2px solid ${COLORS.neon.purple}50`,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              fontSize: 20,
+              fontSize: 22,
               fontWeight: 800,
               color: COLORS.neon.purple,
               flexShrink: 0,
+              boxShadow: `0 0 20px ${COLORS.neon.purple}30`,
             }}
           >
             {scene.index + 1}
           </div>
-          <div
-            style={{
-              opacity: Math.min(springIn(frame, fps, 5), 1),
-              fontSize: 42,
-              fontWeight: 700,
-              color: COLORS.text.primary,
-              textShadow: `0 0 20px ${COLORS.neon.purple}30`,
-            }}
-          >
-            {scene.topic}
-          </div>
+
+          {/* 逐词入场标题 */}
+          <AnimatedText
+            text={scene.topic}
+            fontSize={42}
+            fontWeight={700}
+            mode="word"
+            animation="fade-up"
+            delay={5}
+            staggerFrames={4}
+            glowColor={COLORS.neon.purple}
+          />
         </div>
 
-        <GlassCard accentColor={COLORS.neon.purple} delay={10} width="100%">
+        <GlassCard accentColor={COLORS.neon.purple} delay={10} width="100%" shimmer gradientBorder>
           <div style={{ display: "flex", gap: 24 }}>
             {/* 左侧装饰竖线 */}
             <div
@@ -98,25 +91,33 @@ export const ConceptScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
                 background: `linear-gradient(180deg, ${COLORS.neon.purple}, ${COLORS.neon.purple}20)`,
                 borderRadius: 2,
                 flexShrink: 0,
+                boxShadow: `0 0 10px ${COLORS.neon.purple}40`,
               }}
             />
-            <div
-              style={{
-                fontSize: 26,
-                color: COLORS.text.secondary,
-                lineHeight: 1.7,
-                flex: 1,
-              }}
-            >
-              {scene.narration.substring(0, narrationChars)}
-              {narrationChars < scene.narration.length && (
-                <span style={{ opacity: Math.floor(frame / 15) % 2 === 0 ? 1 : 0, color: COLORS.neon.purple }}>|</span>
-              )}
+            {/* 分段落 stagger 入场 */}
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 16 }}>
+              {paragraphs.map((para, i) => {
+                const p = staggerIn(frame, fps, i, 10, 20);
+                return (
+                  <div
+                    key={i}
+                    style={{
+                      opacity: Math.min(p, 1),
+                      transform: `translateX(${(1 - Math.min(p, 1)) * 30}px)`,
+                      fontSize: 26,
+                      color: COLORS.text.secondary,
+                      lineHeight: 1.7,
+                    }}
+                  >
+                    {para}
+                  </div>
+                );
+              })}
             </div>
           </div>
         </GlassCard>
 
-        {/* 底部画面描述（如果有） */}
+        {/* 底部画面描述 */}
         {scene.visualDescription && (
           <div
             style={{

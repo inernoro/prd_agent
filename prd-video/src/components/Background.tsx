@@ -1,42 +1,51 @@
 import React from "react";
 import { useCurrentFrame, useVideoConfig, interpolate } from "remotion";
+import { noise2D } from "@remotion/noise";
 import { COLORS } from "../utils/colors";
 
-/** 动态粒子 + 网格 + 光晕 + 呼吸光带背景，支持 AI 背景图叠加 */
+/** 动态多层背景 — 噪声渐变 + 视差光晕 + 扫描线 + 呼吸光带 */
 export const Background: React.FC<{
   accentColor?: string;
   showGrid?: boolean;
   variant?: "default" | "radial" | "diagonal" | "split";
-  /** AI 生成的背景图 URL，有则作为底层渲染 */
   backgroundImageUrl?: string;
-}> = ({ accentColor = COLORS.neon.blue, showGrid = true, variant = "default", backgroundImageUrl }) => {
+  noiseSeed?: string;
+}> = ({
+  accentColor = COLORS.neon.blue,
+  showGrid = true,
+  variant = "default",
+  backgroundImageUrl,
+  noiseSeed = "bg",
+}) => {
   const frame = useCurrentFrame();
   const { width, height } = useVideoConfig();
 
-  // 缓慢移动的渐变
   const gradientAngle = interpolate(frame, [0, 300], [0, 360], {
     extrapolateRight: "extend",
   });
 
-  // 扫描线 Y 位置
   const scanLineY = interpolate(frame % 180, [0, 180], [0, height]);
+  const scanLine2Y = interpolate(frame % 300, [0, 300], [height, 0]);
 
-  // 呼吸效果
   const breathe = interpolate(frame % 120, [0, 60, 120], [0.8, 1.2, 0.8], {
     extrapolateRight: "clamp",
   });
 
-  // 第二条扫描线（反向、更慢）
-  const scanLine2Y = interpolate(frame % 300, [0, 300], [height, 0]);
+  // 噪声驱动的光晕位置偏移
+  const noiseX = noise2D(noiseSeed, frame * 0.005, 0) * 200;
+  const noiseY = noise2D(noiseSeed, 0, frame * 0.005) * 150;
+  const noiseScale = noise2D(noiseSeed, frame * 0.003, frame * 0.003) * 0.3 + 1;
 
-  // 变体背景
-  const bgGradient = variant === "diagonal"
-    ? `linear-gradient(${135 + gradientAngle * 0.1}deg, ${COLORS.bg.primary} 0%, ${COLORS.bg.secondary} 40%, ${accentColor}08 100%)`
-    : variant === "radial"
-      ? `radial-gradient(ellipse at 30% 30%, ${accentColor}12 0%, ${COLORS.bg.secondary} 50%, ${COLORS.bg.primary} 100%)`
-      : variant === "split"
-        ? `linear-gradient(180deg, ${COLORS.bg.secondary} 0%, ${COLORS.bg.primary} 50%, ${accentColor}05 100%)`
-        : `radial-gradient(ellipse at 50% 50%, ${COLORS.bg.secondary} 0%, ${COLORS.bg.primary} 70%)`;
+  const hueShift = Math.sin(frame * 0.01) * 10;
+
+  const bgGradient =
+    variant === "diagonal"
+      ? `linear-gradient(${135 + gradientAngle * 0.1}deg, ${COLORS.bg.primary} 0%, ${COLORS.bg.secondary} 40%, ${accentColor}08 100%)`
+      : variant === "radial"
+        ? `radial-gradient(ellipse at ${30 + noiseX * 0.05}% ${30 + noiseY * 0.05}%, ${accentColor}12 0%, ${COLORS.bg.secondary} 50%, ${COLORS.bg.primary} 100%)`
+        : variant === "split"
+          ? `linear-gradient(180deg, ${COLORS.bg.secondary} 0%, ${COLORS.bg.primary} 50%, ${accentColor}05 100%)`
+          : `radial-gradient(ellipse at 50% 50%, ${COLORS.bg.secondary} 0%, ${COLORS.bg.primary} 70%)`;
 
   return (
     <div
@@ -65,7 +74,6 @@ export const Background: React.FC<{
               objectFit: "cover",
             }}
           />
-          {/* 暗色叠加层，确保文字可读 */}
           <div
             style={{
               position: "absolute",
@@ -75,6 +83,21 @@ export const Background: React.FC<{
           />
         </>
       )}
+
+      {/* 噪声驱动的大光晕（视差层 1 — 最慢） */}
+      <div
+        style={{
+          position: "absolute",
+          top: `${35 + noiseY * 0.15}%`,
+          left: `${40 + noiseX * 0.15}%`,
+          transform: `translate(-50%, -50%) scale(${noiseScale})`,
+          width: 900,
+          height: 600,
+          borderRadius: "50%",
+          background: `radial-gradient(ellipse, ${accentColor}10 0%, transparent 70%)`,
+          filter: "blur(40px)",
+        }}
+      />
 
       {/* 网格 */}
       {showGrid && (
@@ -104,7 +127,7 @@ export const Background: React.FC<{
         }}
       />
 
-      {/* 第二扫描线（反向、更宽更柔和） */}
+      {/* 第二扫描线 */}
       <div
         style={{
           position: "absolute",
@@ -116,16 +139,17 @@ export const Background: React.FC<{
         }}
       />
 
-      {/* 角落光晕 - 右上（呼吸） */}
+      {/* 角落光晕 - 右上（呼吸 + 视差层 2） */}
       <div
         style={{
           position: "absolute",
-          top: -200,
-          right: -200,
+          top: -200 + noiseY * 0.3,
+          right: -200 + noiseX * 0.3,
           width: 600 * breathe,
           height: 600 * breathe,
           borderRadius: "50%",
-          background: `radial-gradient(circle, ${accentColor}12 0%, transparent 70%)`,
+          background: `radial-gradient(circle, ${accentColor}15 0%, transparent 70%)`,
+          filter: "blur(20px)",
         }}
       />
 
@@ -133,12 +157,27 @@ export const Background: React.FC<{
       <div
         style={{
           position: "absolute",
-          bottom: -200,
-          left: -200,
+          bottom: -200 - noiseY * 0.2,
+          left: -200 - noiseX * 0.2,
           width: 500 * breathe,
           height: 500 * breathe,
           borderRadius: "50%",
-          background: `radial-gradient(circle, ${accentColor}0a 0%, transparent 70%)`,
+          background: `radial-gradient(circle, ${accentColor}0d 0%, transparent 70%)`,
+          filter: "blur(15px)",
+        }}
+      />
+
+      {/* 动态渐变流动光带（视差层 3 — 最快） */}
+      <div
+        style={{
+          position: "absolute",
+          top: "20%",
+          left: "-10%",
+          width: "120%",
+          height: 200,
+          transform: `rotate(${-5 + hueShift * 0.3}deg) translateY(${noiseY * 0.5}px)`,
+          background: `linear-gradient(90deg, transparent 0%, ${accentColor}06 30%, ${accentColor}0a 50%, ${accentColor}06 70%, transparent 100%)`,
+          filter: "blur(30px)",
         }}
       />
 
@@ -148,11 +187,11 @@ export const Background: React.FC<{
           position: "absolute",
           top: "40%",
           left: "50%",
-          transform: "translate(-50%, -50%)",
+          transform: `translate(-50%, -50%) scale(${noiseScale})`,
           width: 800,
           height: 400,
           borderRadius: "50%",
-          background: `radial-gradient(ellipse, ${accentColor}06 0%, transparent 70%)`,
+          background: `radial-gradient(ellipse, ${accentColor}08 0%, transparent 70%)`,
           opacity: breathe,
         }}
       />
@@ -165,7 +204,7 @@ export const Background: React.FC<{
           left: 0,
           right: 0,
           height: 120,
-          background: `linear-gradient(0deg, ${accentColor}08 0%, transparent 100%)`,
+          background: `linear-gradient(0deg, ${accentColor}0a 0%, transparent 100%)`,
         }}
       />
     </div>

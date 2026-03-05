@@ -1,5 +1,12 @@
 import React from "react";
-import { Series } from "remotion";
+import {
+  TransitionSeries,
+  linearTiming,
+  springTiming,
+} from "@remotion/transitions";
+import { slide } from "@remotion/transitions/slide";
+import { fade } from "@remotion/transitions/fade";
+import { wipe } from "@remotion/transitions/wipe";
 import type { VideoData, SceneData } from "./types";
 
 import { IntroScene } from "./scenes/IntroScene";
@@ -26,26 +33,60 @@ const SCENE_MAP: Record<
   outro: OutroScene,
 };
 
-/** 主视频序列 - 数据驱动渲染 */
+/** 主视频序列 - TransitionSeries 丝滑转场 */
 export const TutorialVideo: React.FC<VideoData> = ({
   title,
   scenes,
 }) => {
   return (
-    <Series>
-      {scenes.map((scene) => {
+    <TransitionSeries>
+      {scenes.map((scene, i) => {
         const SceneComponent =
           SCENE_MAP[scene.sceneType] ?? SCENE_MAP.concept;
 
-        return (
-          <Series.Sequence
-            key={scene.index}
+        const elements: React.ReactNode[] = [];
+
+        // 从第二个场景开始添加转场（交替使用不同效果）
+        if (i > 0) {
+          const pattern = i % 3;
+          if (pattern === 0) {
+            elements.push(
+              <TransitionSeries.Transition
+                key={`t-${scene.index}`}
+                presentation={slide({ direction: i % 2 === 0 ? "from-right" : "from-left" })}
+                timing={springTiming({ config: { damping: 14 }, durationInFrames: 25 })}
+              />
+            );
+          } else if (pattern === 1) {
+            elements.push(
+              <TransitionSeries.Transition
+                key={`t-${scene.index}`}
+                presentation={fade()}
+                timing={linearTiming({ durationInFrames: 20 })}
+              />
+            );
+          } else {
+            elements.push(
+              <TransitionSeries.Transition
+                key={`t-${scene.index}`}
+                presentation={wipe({ direction: i % 2 === 0 ? "from-left" : "from-right" })}
+                timing={linearTiming({ durationInFrames: 22 })}
+              />
+            );
+          }
+        }
+
+        elements.push(
+          <TransitionSeries.Sequence
+            key={`s-${scene.index}`}
             durationInFrames={scene.durationInFrames}
           >
             <SceneComponent scene={scene} videoTitle={title} />
-          </Series.Sequence>
+          </TransitionSeries.Sequence>
         );
+
+        return elements;
       })}
-    </Series>
+    </TransitionSeries>
   );
 };

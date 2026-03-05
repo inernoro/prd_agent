@@ -1,29 +1,23 @@
 import React from "react";
 import { useCurrentFrame, useVideoConfig, interpolate } from "remotion";
 import { Background } from "../components/Background";
-import { FloatingShapes } from "../components/FloatingShapes";
+import { ParticleField } from "../components/ParticleField";
 import { COLORS } from "../utils/colors";
-import { springIn } from "../utils/animations";
+import { springIn, staggerIn, sceneFadeOut, pulse, easedProgress } from "../utils/animations";
 import type { SceneData } from "../types";
 
 export const StepsScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames } = useVideoConfig();
 
-  // 从旁白中提取步骤
   const steps = scene.narration
     .split(/[。；\n]/)
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
 
-  const fadeOut = interpolate(
-    frame,
-    [durationInFrames - 15, durationInFrames],
-    [1, 0],
-    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
-  );
+  const fadeOut = sceneFadeOut(frame, durationInFrames);
 
-  // 进度条（随步骤逐渐填充）
+  // 活跃步骤数（用于进度条和连线）
   const activeSteps = steps.filter((_, i) => {
     const stepDelay = 20 + i * 15;
     return frame > stepDelay + 10;
@@ -45,18 +39,10 @@ export const StepsScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
         opacity: fadeOut,
       }}
     >
-      <Background accentColor={COLORS.neon.green} variant="split" backgroundImageUrl={scene.backgroundImageUrl} />
-      <FloatingShapes accentColor={COLORS.neon.green} seed={202} intensity="low" />
+      <Background accentColor={COLORS.neon.green} variant="split" backgroundImageUrl={scene.backgroundImageUrl} noiseSeed="steps" />
+      <ParticleField count={50} accentColor={COLORS.neon.green} seed={202} speed={0.4} showTrails={false} />
 
-      <div
-        style={{
-          position: "relative",
-          zIndex: 1,
-          padding: "0 120px",
-          maxWidth: 1400,
-          width: "100%",
-        }}
-      >
+      <div style={{ position: "relative", zIndex: 1, padding: "0 120px", maxWidth: 1400, width: "100%" }}>
         {/* 标题 */}
         <div
           style={{
@@ -71,15 +57,16 @@ export const StepsScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
           {scene.topic}
         </div>
 
-        {/* 顶部进度条 */}
+        {/* 进度条 */}
         <div
           style={{
             width: "100%",
             height: 4,
             borderRadius: 2,
-            background: `${COLORS.glass.bg}`,
+            background: "rgba(255,255,255,0.05)",
             marginBottom: 36,
             overflow: "hidden",
+            position: "relative",
           }}
         >
           <div
@@ -89,19 +76,54 @@ export const StepsScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
               borderRadius: 2,
               background: `linear-gradient(90deg, ${COLORS.neon.green}, ${COLORS.neon.green}aa)`,
               boxShadow: `0 0 12px ${COLORS.neon.green}40`,
-              transition: "width 0.3s",
+            }}
+          />
+          {/* 扫描光 */}
+          <div
+            style={{
+              position: "absolute",
+              top: 0,
+              left: `${progressWidth - 5}%`,
+              width: 30,
+              height: "100%",
+              background: `linear-gradient(90deg, transparent, ${COLORS.neon.green}80, transparent)`,
+              opacity: progressWidth > 5 ? 1 : 0,
             }}
           />
         </div>
 
         {/* 步骤列表 */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 20, position: "relative" }}>
+          {/* 左侧连接线 */}
+          <svg
+            style={{ position: "absolute", left: 22, top: 0, width: 2, height: "100%", overflow: "visible" }}
+          >
+            {steps.slice(0, -1).map((_, i) => {
+              const lineProgress = easedProgress(frame, 25 + i * 15, 20);
+              const y1 = i * 64 + 44;
+              const y2 = (i + 1) * 64;
+              return (
+                <line
+                  key={i}
+                  x1={1}
+                  y1={y1}
+                  x2={1}
+                  y2={y1 + (y2 - y1) * lineProgress}
+                  stroke={COLORS.neon.green}
+                  strokeWidth={2}
+                  opacity={0.3}
+                  strokeDasharray="4 4"
+                />
+              );
+            })}
+          </svg>
+
           {steps.map((step, i) => {
-            const stepDelay = 20 + i * 15;
-            const progress = springIn(frame, fps, stepDelay, { damping: 12 });
+            const progress = staggerIn(frame, fps, i, 12, 15);
             const opacity = Math.min(progress, 1);
-            const translateX = (1 - progress) * 40;
-            const isActive = frame > stepDelay + 10;
+            const translateX = (1 - Math.min(progress, 1)) * 40;
+            const isActive = frame > (20 + i * 15 + 10);
+            const nodePulse = isActive ? pulse(frame, 60 + i * 7, 0.7, 1) : 0.5;
 
             return (
               <div
@@ -114,7 +136,7 @@ export const StepsScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
                   transform: `translateX(${translateX}px)`,
                 }}
               >
-                {/* 步骤编号 */}
+                {/* 步骤编号 — 脉冲发光 */}
                 <div
                   style={{
                     width: 44,
@@ -129,13 +151,15 @@ export const StepsScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
                     fontWeight: 700,
                     color: isActive ? COLORS.neon.green : `${COLORS.neon.green}80`,
                     flexShrink: 0,
-                    boxShadow: isActive ? `0 0 16px ${COLORS.neon.green}20` : "none",
+                    boxShadow: isActive
+                      ? `0 0 ${nodePulse * 20}px ${COLORS.neon.green}30, inset 0 0 ${nodePulse * 10}px ${COLORS.neon.green}10`
+                      : "none",
+                    transform: `scale(${isActive ? nodePulse : 1})`,
                   }}
                 >
                   {i + 1}
                 </div>
 
-                {/* 步骤文本 */}
                 <div
                   style={{
                     fontSize: 22,
