@@ -520,15 +520,15 @@ builder.Services.AddCors(options =>
             policy
                 .SetIsOriginAllowed(origin =>
                 {
-                    if (string.IsNullOrWhiteSpace(origin) || origin == “null”) return false;
+                    if (string.IsNullOrWhiteSpace(origin) || origin == "null") return false;
                     if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri)) return false;
                     // 兼容 IPv4/IPv6 回环：localhost、127.0.0.1、[::1]
-                    // 说明：Mac/Windows 上某些情况下前端会以 http://[::1]:port 作为 Origin，若未放行会导致预检 OPTIONS 403”看似随机”波动
-                    return uri.Host is “localhost” or “127.0.0.1” or “::1”;
+                    // 说明：Mac/Windows 上某些情况下前端会以 http://[::1]:port 作为 Origin，若未放行会导致预检 OPTIONS 403 "看似随机" 波动
+                    return uri.Host is "localhost" or "127.0.0.1" or "::1";
                 })
                 .AllowAnyHeader()
                 .AllowAnyMethod()
-                .WithExposedHeaders(“X-Perm-Fingerprint”);
+                .WithExposedHeaders("X-Perm-Fingerprint");
             return;
         }
 
@@ -536,7 +536,7 @@ builder.Services.AddCors(options =>
         policy.WithOrigins(allowedOrigins)
             .AllowAnyHeader()
             .AllowAnyMethod()
-            .WithExposedHeaders(“X-Perm-Fingerprint”);
+            .WithExposedHeaders("X-Perm-Fingerprint");
     });
 });
 
