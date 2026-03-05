@@ -746,6 +746,17 @@ export const api = {
       byId: (id: string) => `/api/lab/arena/battles/${id}`,
     },
   },
+  // ============ Account Data Transfer 数据分享 ============
+  accountDataTransfer: {
+    list: () => '/api/account/data-transfers',
+    create: () => '/api/account/data-transfers',
+    byId: (id: string) => `/api/account/data-transfers/${id}`,
+    accept: (id: string) => `/api/account/data-transfers/${id}/accept`,
+    reject: (id: string) => `/api/account/data-transfers/${id}/reject`,
+    cancel: (id: string) => `/api/account/data-transfers/${id}/cancel`,
+    myWorkspaces: () => '/api/account/data-transfers/my-workspaces',
+    myConfigs: () => '/api/account/data-transfers/my-configs',
+  },
 } as const;
 
 export default api;
