@@ -97,9 +97,7 @@ export function resolveAvatarUrl(args: {
     return joinUrl(base, DEFAULT_BOT_AVATAR_FILES.dev.toLowerCase());
   }
 
-  const username = String(args.username || '').trim().toLowerCase();
-  if (username) return joinUrl(base, `${username}.png`);
-
+  // 人类用户未设置头像：直接使用 nohead.png（避免拼接不存在的 {username}.png）
   return joinUrl(base, DEFAULT_NOHEAD_FILE);
 }
 
