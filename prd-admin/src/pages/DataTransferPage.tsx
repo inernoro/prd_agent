@@ -46,6 +46,10 @@ import {
   Timer,
   Sparkles,
   Search,
+  Copy,
+  Bell,
+  Shield,
+  ChevronRight,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -102,6 +106,9 @@ export default function DataTransferPage() {
   const [selectedTransfer, setSelectedTransfer] = useState<AccountDataTransfer | null>(null);
   const [showCreate, setShowCreate] = useState(false);
 
+  // Track if this is the user's very first visit (both directions empty)
+  const [isFirstVisit, setIsFirstVisit] = useState<boolean | null>(null);
+
   const loadTransfers = useCallback(async () => {
     setLoading(true);
     const res = await listTransfers(tab);
@@ -109,7 +116,29 @@ export default function DataTransferPage() {
     setLoading(false);
   }, [tab]);
 
-  useEffect(() => { loadTransfers(); }, [tab, loadTransfers]);
+  // On first mount, check both directions to determine if onboarding should show
+  useEffect(() => {
+    (async () => {
+      const [recvRes, sentRes] = await Promise.all([
+        listTransfers('received'),
+        listTransfers('sent'),
+      ]);
+      const recvEmpty = recvRes.success && recvRes.data.items.length === 0;
+      const sentEmpty = sentRes.success && sentRes.data.items.length === 0;
+      setIsFirstVisit(recvEmpty && sentEmpty);
+
+      // Also populate current tab data from above
+      if (recvRes.success) setTransfers(recvRes.data.items);
+      setLoading(false);
+    })();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reload when tab changes (skip initial since useEffect above handles it)
+  const [tabInitialized, setTabInitialized] = useState(false);
+  useEffect(() => {
+    if (!tabInitialized) { setTabInitialized(true); return; }
+    loadTransfers();
+  }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (highlightId && transfers.length > 0) {
@@ -127,6 +156,34 @@ export default function DataTransferPage() {
     () => transfers.filter(t => t.status === 'pending' && new Date(t.expiresAt) > new Date()).length,
     [transfers],
   );
+
+  const handleCreated = useCallback(() => {
+    setShowCreate(false);
+    setTab('sent');
+    setIsFirstVisit(false);
+    loadTransfers();
+  }, [loadTransfers]);
+
+  // Show onboarding when both directions are empty
+  if (isFirstVisit === true) {
+    return (
+      <div className="h-full min-h-0 flex flex-col gap-4 p-5">
+        <TabBar
+          title={<span className="text-[15px] font-semibold tracking-tight">数据分享</span>}
+          icon={<Sparkles size={16} style={{ color: 'var(--accent-gold)' }} />}
+          actions={
+            <Button variant="ghost" size="xs" onClick={() => { setIsFirstVisit(false); loadTransfers(); }}>
+              <RefreshCw className="w-3.5 h-3.5" />
+            </Button>
+          }
+        />
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <OnboardingView onStartShare={() => setShowCreate(true)} />
+        </div>
+        <CreateTransferDialog open={showCreate} onOpenChange={setShowCreate} onCreated={handleCreated} />
+      </div>
+    );
+  }
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-4 p-5">
@@ -172,7 +229,7 @@ export default function DataTransferPage() {
             {loading ? (
               Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
             ) : transfers.length === 0 ? (
-              <EmptyState direction={tab} />
+              <EmptyState direction={tab} onStartShare={() => setShowCreate(true)} />
             ) : (
               transfers.map((t) => (
                 <TransferCard
@@ -202,15 +259,7 @@ export default function DataTransferPage() {
       </div>
 
       {/* Create dialog (modal) */}
-      <CreateTransferDialog
-        open={showCreate}
-        onOpenChange={setShowCreate}
-        onCreated={() => {
-          setShowCreate(false);
-          setTab('sent');
-          loadTransfers();
-        }}
-      />
+      <CreateTransferDialog open={showCreate} onOpenChange={setShowCreate} onCreated={handleCreated} />
     </div>
   );
 }
@@ -231,9 +280,163 @@ function SkeletonCard() {
   );
 }
 
+// =================== Onboarding View (First Visit) ===================
+
+const FLOW_STEPS = [
+  { icon: Layers, label: '选择数据', desc: '工作区、提示词、参考图' },
+  { icon: Send, label: '发送分享', desc: '选择接收人，一键发送' },
+  { icon: Bell, label: '通知接收', desc: '对方收到系统通知' },
+  { icon: Copy, label: '深度复制', desc: '接受后自动深拷贝到账户' },
+] as const;
+
+const FEATURES = [
+  { icon: Copy, title: '完整深拷贝', desc: '工作区的所有图片、对话记录一并复制，不是链接引用' },
+  { icon: Shield, title: '安全可控', desc: '接收方需主动确认接受，7 天内有效，过期自动作废' },
+  { icon: Bell, title: '通知闭环', desc: '发送、接受、拒绝都会收到系统通知，状态清晰' },
+] as const;
+
+const DATA_TYPES = [
+  { icon: Layers, label: '工作区', color: 'rgba(99, 102, 241, 0.9)', desc: '含全部图片和对话' },
+  { icon: PenLine, label: '提示词', color: 'rgba(245, 158, 11, 0.9)', desc: '文学创作提示词模板' },
+  { icon: ImagePlus, label: '参考图配置', color: 'rgba(34, 197, 94, 0.9)', desc: '图片风格参考配置' },
+] as const;
+
+function OnboardingView({ onStartShare }: { onStartShare: () => void }) {
+  return (
+    <div className="max-w-[760px] mx-auto space-y-6">
+      {/* Hero */}
+      <GlassCard accentHue={234} padding="none">
+        <div className="px-8 py-10 text-center">
+          <div
+            className="w-16 h-16 rounded-[16px] mx-auto mb-5 flex items-center justify-center"
+            style={{ background: 'rgba(99, 102, 241, 0.1)', border: '1px solid rgba(99, 102, 241, 0.2)' }}
+          >
+            <Send size={28} style={{ color: 'var(--accent-gold)' }} />
+          </div>
+          <h2 className="text-xl font-bold mb-2" style={{ color: 'var(--text-primary)' }}>
+            跨账户数据分享
+          </h2>
+          <p className="text-[14px] leading-relaxed max-w-[480px] mx-auto" style={{ color: 'var(--text-secondary)' }}>
+            将你的工作区、提示词、参考图等数据安全地分享给其他用户。
+            <br />
+            接收方确认后，系统自动完成深度复制。
+          </p>
+
+          <Button className="mt-6" onClick={onStartShare}>
+            <Send className="w-4 h-4" />
+            发起第一次分享
+          </Button>
+        </div>
+      </GlassCard>
+
+      {/* Flow Steps */}
+      <div>
+        <div className="text-[11px] font-semibold uppercase tracking-wider mb-3 px-1" style={{ color: 'var(--text-muted)' }}>
+          分享流程
+        </div>
+        <div className="grid grid-cols-4 gap-3">
+          {FLOW_STEPS.map((step, i) => {
+            const Icon = step.icon;
+            return (
+              <div key={i} className="relative">
+                <div
+                  className="rounded-[12px] p-4 text-center h-full"
+                  style={{ background: 'var(--bg-input)', border: '1px solid var(--nested-block-border)' }}
+                >
+                  <div className="flex items-center justify-center gap-2 mb-2">
+                    <span
+                      className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold"
+                      style={{ background: 'rgba(99, 102, 241, 0.15)', color: 'rgba(99, 102, 241, 0.9)' }}
+                    >
+                      {i + 1}
+                    </span>
+                    <Icon size={15} style={{ color: 'var(--accent-gold)' }} />
+                  </div>
+                  <div className="text-[13px] font-medium mb-0.5" style={{ color: 'var(--text-primary)' }}>{step.label}</div>
+                  <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{step.desc}</div>
+                </div>
+                {i < FLOW_STEPS.length - 1 && (
+                  <ChevronRight
+                    size={14}
+                    className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 z-10"
+                    style={{ color: 'var(--text-muted)', opacity: 0.4 }}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Features + Data Types (two-column) */}
+      <div className="grid grid-cols-2 gap-4">
+        {/* Features */}
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-wider mb-3 px-1" style={{ color: 'var(--text-muted)' }}>
+            特性
+          </div>
+          <div className="space-y-2">
+            {FEATURES.map((f, i) => {
+              const Icon = f.icon;
+              return (
+                <div
+                  key={i}
+                  className="rounded-[10px] px-3.5 py-3 flex items-start gap-3"
+                  style={{ background: 'var(--bg-input)', border: '1px solid var(--nested-block-border)' }}
+                >
+                  <div
+                    className="shrink-0 w-7 h-7 rounded-[7px] flex items-center justify-center mt-0.5"
+                    style={{ background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.15)' }}
+                  >
+                    <Icon size={13} style={{ color: 'rgba(99, 102, 241, 0.7)' }} />
+                  </div>
+                  <div>
+                    <div className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>{f.title}</div>
+                    <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{f.desc}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Supported data types */}
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-wider mb-3 px-1" style={{ color: 'var(--text-muted)' }}>
+            支持的数据类型
+          </div>
+          <div className="space-y-2">
+            {DATA_TYPES.map((dt, i) => {
+              const Icon = dt.icon;
+              return (
+                <div
+                  key={i}
+                  className="rounded-[10px] px-3.5 py-3 flex items-start gap-3"
+                  style={{ background: 'var(--bg-input)', border: '1px solid var(--nested-block-border)' }}
+                >
+                  <div
+                    className="shrink-0 w-7 h-7 rounded-[7px] flex items-center justify-center mt-0.5"
+                    style={{ background: `${dt.color}12`, border: `1px solid ${dt.color}25` }}
+                  >
+                    <Icon size={13} style={{ color: dt.color }} />
+                  </div>
+                  <div>
+                    <div className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>{dt.label}</div>
+                    <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{dt.desc}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // =================== Empty States ===================
 
-function EmptyState({ direction }: { direction: 'sent' | 'received' }) {
+function EmptyState({ direction, onStartShare }: { direction: 'sent' | 'received'; onStartShare: () => void }) {
   return (
     <div className="flex flex-col items-center justify-center py-16 gap-3">
       <div
@@ -247,6 +450,12 @@ function EmptyState({ direction }: { direction: 'sent' | 'received' }) {
       <div className="text-[13px]" style={{ color: 'var(--text-muted)' }}>
         {direction === 'received' ? '暂无收到的分享' : '暂无发出的分享'}
       </div>
+      {direction === 'sent' && (
+        <Button variant="secondary" size="xs" onClick={onStartShare} className="mt-1">
+          <Send className="w-3 h-3" />
+          发起分享
+        </Button>
+      )}
     </div>
   );
 }
