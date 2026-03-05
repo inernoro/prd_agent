@@ -266,7 +266,8 @@ public class WorkflowAgentTests
         Assert.Contains(WorkflowExecutionStatus.Completed, WorkflowExecutionStatus.All);
         Assert.Contains(WorkflowExecutionStatus.Failed, WorkflowExecutionStatus.All);
         Assert.Contains(WorkflowExecutionStatus.Cancelled, WorkflowExecutionStatus.All);
-        Assert.Equal(5, WorkflowExecutionStatus.All.Length);
+        Assert.Contains(WorkflowExecutionStatus.Paused, WorkflowExecutionStatus.All);
+        Assert.Equal(6, WorkflowExecutionStatus.All.Length);
     }
 
     [Fact]
