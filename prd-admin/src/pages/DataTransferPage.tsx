@@ -24,6 +24,7 @@ import type {
 } from '@/services/contracts/dataTransfer';
 import type { AdminUser } from '@/types/admin';
 import { useAuthStore } from '@/stores/authStore';
+import { resolveAvatarUrl } from '@/lib/avatar';
 import {
   Send,
   Check,
@@ -987,17 +988,27 @@ function CreateTransferDialog({
                 placeholder="选择接收用户..."
                 leftIcon={<User size={14} />}
               >
-                {users.map(u => (
-                  <option key={u.userId} value={u.userId}>
-                    {u.displayName} ({u.username})
-                  </option>
-                ))}
+                {users.map(u => {
+                  const ava = resolveAvatarUrl({ username: u.username, userType: u.userType, botKind: u.botKind, avatarFileName: u.avatarFileName });
+                  return (
+                    <option key={u.userId} value={u.userId}>
+                      <span className="inline-flex items-center gap-2">
+                        <img src={ava} alt="" className="w-5 h-5 rounded-full object-cover shrink-0" referrerPolicy="no-referrer" />
+                        <span>{u.displayName}</span>
+                        <span className="text-[11px] opacity-50">@{u.username}</span>
+                      </span>
+                    </option>
+                  );
+                })}
               </Select>
               {selectedReceiver && (
                 <div className="flex items-center gap-2 px-1">
-                  <div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-semibold" style={{ background: 'rgba(99, 102, 241, 0.12)', color: 'var(--accent-gold)' }}>
-                    {selectedReceiver.displayName?.[0] ?? 'U'}
-                  </div>
+                  <img
+                    src={resolveAvatarUrl({ username: selectedReceiver.username, userType: selectedReceiver.userType, botKind: selectedReceiver.botKind, avatarFileName: selectedReceiver.avatarFileName })}
+                    alt=""
+                    className="w-5 h-5 rounded-full object-cover"
+                    referrerPolicy="no-referrer"
+                  />
                   <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
                     将发送系统通知给 {selectedReceiver.displayName}
                   </span>
@@ -1236,6 +1247,8 @@ function DataSection({
 
 function WorkspaceCheckItem({ ws, checked, onChange }: { ws: ShareableWorkspace; checked: boolean; onChange: () => void }) {
   const hasCover = ws.coverAssets && ws.coverAssets.length > 0;
+  const isLiterary = ws.scenarioType === 'article-illustration';
+  const hasContentPreview = isLiterary && !!ws.contentPreview;
   const assets = ws.coverAssets ?? [];
   const n = assets.length;
   const wsRoute = ws.scenarioType === 'article-illustration'
@@ -1319,11 +1332,26 @@ function WorkspaceCheckItem({ ws, checked, onChange }: { ws: ShareableWorkspace;
           style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.5) 0%, transparent 50%)' }}
         />
 
-        {/* No-cover placeholder */}
+        {/* No-cover: content preview for literary, icon placeholder for visual */}
         {!hasCover && (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <Layers size={24} style={{ color: 'rgba(99, 102, 241, 0.3)' }} />
-          </div>
+          hasContentPreview ? (
+            <div className="absolute inset-0 p-2.5 overflow-hidden">
+              <div className="flex items-center gap-1 mb-1">
+                <PenLine size={10} style={{ color: 'rgba(245, 158, 11, 0.6)' }} />
+                <span className="text-[9px] font-medium" style={{ color: 'rgba(245, 158, 11, 0.6)' }}>文章预览</span>
+              </div>
+              <div
+                className="text-[10px] leading-[1.5] overflow-hidden"
+                style={{ color: 'var(--text-muted)', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical' }}
+              >
+                {ws.contentPreview}
+              </div>
+            </div>
+          ) : (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <Layers size={24} style={{ color: 'rgba(99, 102, 241, 0.3)' }} />
+            </div>
+          )
         )}
       </div>
 

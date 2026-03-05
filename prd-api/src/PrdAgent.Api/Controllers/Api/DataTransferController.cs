@@ -390,19 +390,36 @@ public class DataTransferController : ControllerBase
                 coverAssetMap[ca.Id] = (ca.Url, ca.Width, ca.Height);
         }
 
-        var items = workspaces.Select(w => new
+        var items = workspaces.Select(w =>
         {
-            w.Id,
-            w.Title,
-            w.ScenarioType,
-            w.FolderName,
-            assetCount = assetCounts.GetValueOrDefault(w.Id, 0),
-            coverAssets = (w.CoverAssetIds ?? new List<string>())
-                .Where(id => coverAssetMap.ContainsKey(id))
-                .Take(4)
-                .Select(id => new { id, url = coverAssetMap[id].url, width = coverAssetMap[id].width, height = coverAssetMap[id].height })
-                .ToList(),
-            w.UpdatedAt,
+            // 文学创作工作区：提取文章内容前 200 字作为预览
+            string? contentPreview = null;
+            if (w.ScenarioType == "article-illustration")
+            {
+                var raw = w.ArticleContent ?? w.ArticleContentWithMarkers ?? "";
+                if (!string.IsNullOrWhiteSpace(raw))
+                {
+                    // 去除 markdown 标记图片行
+                    var cleaned = System.Text.RegularExpressions.Regex.Replace(raw, @"!\[.*?\]\(.*?\)", "").Trim();
+                    contentPreview = cleaned.Length > 200 ? cleaned[..200] : cleaned;
+                }
+            }
+
+            return new
+            {
+                w.Id,
+                w.Title,
+                w.ScenarioType,
+                w.FolderName,
+                assetCount = assetCounts.GetValueOrDefault(w.Id, 0),
+                coverAssets = (w.CoverAssetIds ?? new List<string>())
+                    .Where(id => coverAssetMap.ContainsKey(id))
+                    .Take(4)
+                    .Select(id => new { id, url = coverAssetMap[id].url, width = coverAssetMap[id].width, height = coverAssetMap[id].height })
+                    .ToList(),
+                contentPreview,
+                w.UpdatedAt,
+            };
         });
 
         return Ok(ApiResponse<object>.Ok(new { items }));

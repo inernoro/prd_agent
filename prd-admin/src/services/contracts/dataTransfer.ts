@@ -49,6 +49,8 @@ export type ShareableWorkspace = {
   folderName?: string | null;
   assetCount: number;
   coverAssets: Array<{ id: string; url: string; width: number; height: number }>;
+  /** 文学创作工作区的文章内容预览（前 200 字） */
+  contentPreview?: string | null;
   updatedAt: string;
 };
 
