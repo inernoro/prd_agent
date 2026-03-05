@@ -139,16 +139,15 @@ const tapdBugCollectionTemplate: WorkflowTemplate = {
       },
       {
         nodeId: 'n-agg',
-        name: '数据预处理（JS脚本）',
+        name: '缺陷统计报告生成（JS脚本）',
         nodeType: 'script-executor',
         config: {
           language: 'javascript',
-          code: `// data = 上游 TAPD 缺陷数组
+          code: `// data = 上游 TAPD 缺陷数组（由上游节点传入）
 const total = data.length;
-const ids = (arr) => arr.map(i => i["缺陷ID"] || i.id || "").filter(Boolean);
-const allIds = ids(data);
-
-// 可用字段
+const BT = String.fromCharCode(96);
+const sid = (arr) => arr.map(i => (i["缺陷ID"] || i.id || "").slice(-7)).filter(Boolean).sort();
+const fmtIds = (arr) => "[" + sid(arr).join(", ") + "]";
 const fields = total > 0 ? Object.keys(data[0]) : [];
 
 // 按缺陷划分分组
@@ -163,15 +162,12 @@ const 未判断 = data.filter(i => !(i["缺陷划分"] || "").trim());
 const 无效反馈 = data.filter(i => i["有效报告"] === "否");
 const 有效反馈 = data.filter(i => i["有效报告"] === "是");
 
-// 技术缺陷按等级
-const techByLevel = (lv) => 技术缺陷.filter(i => (i["缺陷等级"] || "") === lv);
-const p0 = techByLevel("P0");
-const p1 = techByLevel("P1");
-const p2 = techByLevel("P2");
-const p3 = techByLevel("P3");
-const p4 = techByLevel("P4");
+// 技术缺陷按等级（统一转大写匹配，兼容 p3/P3 混写）
+const byLv = (lv) => 技术缺陷.filter(i => (i["缺陷等级"] || "").toUpperCase() === lv);
+const p0 = byLv("P0"), p1 = byLv("P1"), p2 = byLv("P2"), p3 = byLv("P3"), p4 = byLv("P4");
 const p未判断 = 技术缺陷.filter(i => !(i["缺陷等级"] || "").trim());
-const p2及以下 = 技术缺陷.filter(i => ["P2","P3","P4"].includes(i["缺陷等级"] || ""));
+const p2及以下 = 技术缺陷.filter(i => ["P2","P3","P4"].includes((i["缺陷等级"] || "").toUpperCase()));
+const p2总 = p2及以下.length;
 
 // P2及以下逾期统计
 const p2逾期 = p2及以下.filter(i => i["是否逾期"] === "是");
@@ -179,74 +175,192 @@ const p2未逾期 = p2及以下.filter(i => i["是否逾期"] === "否");
 const p2逾期空 = p2及以下.filter(i => !(i["是否逾期"] || "").trim());
 
 // P2及以下及时处理统计
+const isClosed = (i) => ["closed","已关闭"].includes((i["状态"] || "").toLowerCase());
 const p2及时 = p2及以下.filter(i => i["及时处理"] === "是");
 const p2未及时 = p2及以下.filter(i => i["及时处理"] === "否");
 const p2及时空 = p2及以下.filter(i => !(i["及时处理"] || "").trim() || i["及时处理"] === "无法判断");
 
-// P2及以下已修复
-const p2已修复 = p2及以下.filter(i => ["closed","已关闭"].includes((i["状态"] || "").toLowerCase()));
+// P2及以下已修复 & 及时修复
+const p2已修复 = p2及以下.filter(i => isClosed(i));
+const p2及时修复 = p2及以下.filter(i => i["及时处理"] === "是" && isClosed(i));
 
-// 及时修复率 & 及时处理率
-const p2总 = p2及以下.length;
-const 及时修复率 = p2总 > 0 ? (p2已修复.length / p2总 * 100).toFixed(2) + "%" : "N/A";
-const 及时处理率 = p2总 > 0 ? (p2及时.length / p2总 * 100).toFixed(2) + "%" : "N/A";
+// 比率 & 评级
+const pct = (n, d) => d > 0 ? (n / d * 100) : 0;
+const fmtPct = (v) => v.toFixed(2) + "%";
+const 修复率 = pct(p2及时修复.length, p2总);
+const 处理率 = pct(p2及时.length, p2总);
+const rating = (v) => v >= 90 ? "优秀 🏆" : v >= 80 ? "良好 👍" : v >= 60 ? "需改进 ⚠️" : "较差 🔴";
 
 // 结构归母统计
 const 归母Map = {};
 技术缺陷.forEach(i => {
   const v = (i["结构归母"] || "").trim() || "暂未归母";
   if (!归母Map[v]) 归母Map[v] = [];
-  归母Map[v].push(i["缺陷ID"] || i.id || "");
+  归母Map[v].push(i);
 });
 
-result = {
-  fields,
-  total, allIds: ids(data),
-  非缺陷: { count: 非缺陷.length, ids: ids(非缺陷) },
-  产品缺陷: { count: 产品缺陷.length, ids: ids(产品缺陷) },
-  技术缺陷: { count: 技术缺陷.length, ids: ids(技术缺陷) },
-  无法判断: { count: 无法判断.length, ids: ids(无法判断) },
-  未判断: { count: 未判断.length, ids: ids(未判断) },
-  无效反馈: { count: 无效反馈.length, ids: ids(无效反馈) },
-  有效反馈: { count: 有效反馈.length, ids: ids(有效反馈) },
-  p2及以下: { count: p2及以下.length, ids: ids(p2及以下) },
-  p0: { count: p0.length, ids: ids(p0) },
-  p1: { count: p1.length, ids: ids(p1) },
-  p2: { count: p2.length, ids: ids(p2) },
-  p3: { count: p3.length, ids: ids(p3) },
-  p4: { count: p4.length, ids: ids(p4) },
-  p未判断等级: { count: p未判断.length, ids: ids(p未判断) },
-  等级验证: { sum: p0.length+p1.length+p2.length+p3.length+p4.length+p未判断.length, total: 技术缺陷.length },
-  p2逾期: { count: p2逾期.length, ids: ids(p2逾期) },
-  p2未逾期: { count: p2未逾期.length, ids: ids(p2未逾期) },
-  p2逾期空: { count: p2逾期空.length, ids: ids(p2逾期空) },
-  逾期验证: { sum: p2逾期.length+p2未逾期.length+p2逾期空.length, total: p2总 },
-  p2及时: { count: p2及时.length, ids: ids(p2及时) },
-  p2未及时: { count: p2未及时.length, ids: ids(p2未及时) },
-  p2及时空: { count: p2及时空.length, ids: ids(p2及时空) },
-  及时验证: { sum: p2及时.length+p2未及时.length+p2及时空.length, total: p2总 },
-  p2已修复: { count: p2已修复.length, ids: ids(p2已修复) },
-  及时修复率, 及时处理率, p2总,
-  归母统计: 归母Map,
-  归母验证: { sum: Object.values(归母Map).reduce((a,b) => a+b.length, 0), total: 技术缺陷.length },
-};`,
+// 验证辅助
+const verify = (sum, t, label) => sum === t
+  ? "**✓ 验证通过**: 统计总和与" + label + "一致"
+  : "**✗ 验证失败**: 统计总和(" + sum + ")与" + label + "(" + t + ")不一致";
+const 等级sum = p0.length+p1.length+p2.length+p3.length+p4.length+p未判断.length;
+const 逾期sum = p2逾期.length+p2未逾期.length+p2逾期空.length;
+const 及时sum = p2及时.length+p2未及时.length+p2及时空.length;
+const 归母sum = Object.values(归母Map).reduce((a,b) => a+b.length, 0);
+
+// 时间戳
+const now = new Date();
+const pad = (n) => String(n).padStart(2, "0");
+const ts = now.getFullYear()+"-"+pad(now.getMonth()+1)+"-"+pad(now.getDate())+" "+pad(now.getHours())+":"+pad(now.getMinutes())+":"+pad(now.getSeconds());
+
+// ═══ 拼接 Markdown 报告 ═══
+const L = [];
+L.push("# 📊 缺陷统计分析报告");
+L.push("**🕐 生成时间**: " + ts);
+L.push("**📁 数据文件**: 缺陷统计数据.xlsx");
+L.push("**📈 数据总行数**: " + total);
+
+L.push("## 1. 🏷️ 缺陷总数");
+L.push("**📋 统计逻辑**: 统计Excel文件中所有行的数量");
+L.push("**🔢 数量**: " + total);
+L.push("**📝 缺陷ID列表**: " + BT + fmtIds(data) + BT);
+
+[[2,"❌","非缺陷数量","筛选'缺陷划分'字段值为'非缺陷'的记录","非缺陷",非缺陷],
+[3,"📱","产品缺陷数量","筛选'缺陷划分'字段值为'产品缺陷'的记录","产品缺陷",产品缺陷],
+[4,"🔧","技术缺陷数量","筛选'缺陷划分'字段值为'技术缺陷'的记录","技术缺陷",技术缺陷],
+[5,"❓","无法判断的数量","筛选'缺陷划分'字段值为'无法判断'的记录","无法判断",无法判断],
+[6,"⚪","未判断（空）的数量","筛选'缺陷划分'字段值为空的记录","未判断",未判断],
+[7,"🚫","无效反馈数量","筛选'有效报告'字段值为'否'的记录","无效反馈",无效反馈],
+[8,"✅","有效反馈数量","筛选'有效报告'字段值为'是'的记录","有效反馈",有效反馈]
+].forEach(([n,icon,title,logic,label,arr]) => {
+  L.push("## "+n+". "+icon+" "+title);
+  L.push("**📋 统计逻辑**: "+logic);
+  L.push("**🔢 数量**: "+arr.length);
+  L.push("**📝 "+label+"ID列表**: "+BT+fmtIds(arr)+BT);
+});
+
+L.push("## 9. 📉 P2级及以下技术缺陷数量");
+L.push("**📋 统计逻辑**: 在技术缺陷中筛选'缺陷等级'为P2、P3、P4的记录");
+L.push("**🔢 数量**: "+p2总);
+L.push("**📝 P2级及以下技术缺陷ID列表**: "+BT+fmtIds(p2及以下)+BT);
+
+[[10,"🔴","P0",p0],[11,"🟠","P1",p1],[12,"🟡","P2",p2],[13,"🟢","P3",p3],[14,"🔵","P4",p4]
+].forEach(([n,icon,lv,arr]) => {
+  L.push("## "+n+". "+icon+" "+lv+"级别技术缺陷数量");
+  L.push("**📋 统计逻辑**: 在技术缺陷中筛选'缺陷等级'为"+lv+"的记录");
+  L.push("**🔢 数量**: "+arr.length);
+  L.push("**📝 "+lv+"级别技术缺陷ID列表**: "+BT+fmtIds(arr)+BT);
+});
+
+L.push("## 15. ⚪ 未判断缺陷等级技术缺陷数量");
+L.push("**📋 统计逻辑**: 在技术缺陷中筛选'缺陷等级'字段为空的记录");
+L.push("**🔢 数量**: "+p未判断.length);
+L.push("**📝 未判断等级技术缺陷ID列表**: "+BT+fmtIds(p未判断)+BT);
+
+L.push("## 16. ✅ 技术缺陷等级统计总和验证");
+L.push("**📋 统计逻辑**: 验证各等级技术缺陷数量之和是否等于技术缺陷总数");
+L.push("**📊 统计总和**: "+等级sum);
+L.push("**📈 技术缺陷总数**: "+技术缺陷.length);
+L.push(verify(等级sum, 技术缺陷.length, "技术缺陷总数"));
+
+L.push("## 17. ⏰ P2级及以下技术缺陷中简报逾期的数量");
+L.push("**📋 统计逻辑**: 在P2级及以下技术缺陷中筛选'是否逾期'字段值为'是'的记录");
+L.push("**🔢 数量**: "+p2逾期.length);
+L.push("**📝 逾期缺陷ID列表**: "+BT+fmtIds(p2逾期)+BT);
+
+L.push("## 18. ✅ P2级及以下技术缺陷中未逾期的数量");
+L.push("**📋 统计逻辑**: 在P2级及以下技术缺陷中筛选'是否逾期'字段值为'否'的记录");
+L.push("**🔢 数量**: "+p2未逾期.length);
+L.push("**📝 未逾期缺陷ID列表**: "+BT+fmtIds(p2未逾期)+BT);
+
+L.push("## 19. ❓ P2级及以下技术缺陷中简报是否逾期为空（无法判断）的数量");
+L.push("**📋 统计逻辑**: 在P2级及以下技术缺陷中筛选'是否逾期'字段为空的记录");
+L.push("**🔢 数量**: "+p2逾期空.length);
+L.push("**📝 逾期状态为空缺陷ID列表**: "+BT+fmtIds(p2逾期空)+BT);
+
+L.push("## 20. ✅ P2级及以下技术缺陷逾期统计总和验证");
+L.push("**📋 统计逻辑**: 验证各逾期状态技术缺陷数量之和是否等于P2级及以下技术缺陷总数");
+L.push("**📊 统计总和**: "+逾期sum);
+L.push("**📈 P2级及以下技术缺陷总数**: "+p2总);
+L.push(verify(逾期sum, p2总, "总数"));
+
+L.push("## 21. ⚡ P2级及以下技术缺陷中及时处理的数量");
+L.push("**📋 统计逻辑**: 在P2级及以下技术缺陷中筛选'及时处理'字段值为'是'的记录");
+L.push("**🔢 数量**: "+p2及时.length);
+L.push("**📝 及时处理缺陷ID列表**: "+BT+fmtIds(p2及时)+BT);
+
+L.push("## 22. 🐌 P2级及以下技术缺陷中未及时处理的数量");
+L.push("**📋 统计逻辑**: 在P2级及以下技术缺陷中筛选'及时处理'字段值为'否'的记录");
+L.push("**🔢 数量**: "+p2未及时.length);
+L.push("**📝 未及时处理缺陷ID列表**: "+BT+fmtIds(p2未及时)+BT);
+
+L.push("## 23. ❓ P2级及以下技术缺陷中无法判断是否及时处理的数量");
+L.push("**📋 统计逻辑**: 在P2级及以下技术缺陷中筛选'及时处理'字段为空或值为'无法判断'的记录");
+L.push("**🔢 数量**: "+p2及时空.length);
+L.push("**📝 无法判断及时处理缺陷ID列表**: "+BT+fmtIds(p2及时空)+BT);
+
+L.push("## 24. ✅ P2级及以下技术缺陷及时处理统计总和验证");
+L.push("**📋 统计逻辑**: 验证各及时处理状态技术缺陷数量之和是否等于P2级及以下技术缺陷总数");
+L.push("**📊 统计总和**: "+及时sum);
+L.push("**📈 P2级及以下技术缺陷总数**: "+p2总);
+L.push(verify(及时sum, p2总, "总数"));
+
+L.push("## 25. ✅ P2级及以下技术缺陷中已修复的数量");
+L.push("**📋 统计逻辑**: 在P2级及以下技术缺陷中筛选'状态'字段值为'closed'或'已关闭'的记录");
+L.push("**🔢 数量**: "+p2已修复.length);
+L.push("**📝 已修复缺陷ID列表**: "+BT+fmtIds(p2已修复)+BT);
+
+L.push("## 26. ⚡ P2级及以下技术缺陷中及时修复的数量");
+L.push("**📋 统计逻辑**: 在P2级及以下技术缺陷中筛选'及时处理'字段值为'是'且'状态'为'已关闭'的记录");
+L.push("**🔢 数量**: "+p2及时修复.length);
+L.push("**📝 及时修复缺陷ID列表**: "+BT+fmtIds(p2及时修复)+BT);
+
+L.push("## 27. 📈 P2级及以下技术缺陷及时修复率");
+L.push("**📋 统计逻辑**: P2级及以下及时修复率 = P2级及以下技术缺陷中及时修复的数量 / P2级及以下技术缺陷的数量");
+L.push("**🧮 计算公式**: 及时修复率 = 及时修复数量 / P2级及以下技术缺陷总数");
+L.push("**🔍 及时修复定义**: 预计结束时间 >= 解决时间 且 状态为已关闭");
+L.push("**🔢 及时修复数量**: "+p2及时修复.length);
+L.push("**📊 分母（P2级及以下技术缺陷总数）**: "+p2总);
+L.push("**📈 及时修复率**: "+fmtPct(修复率));
+L.push("**📊 百分比**: "+fmtPct(修复率));
+L.push("**🏅 评级**: "+rating(修复率));
+L.push("**ℹ️ 说明**: 基于第26项统计的及时修复数量计算");
+
+L.push("## 27. 📈 P2级及以下技术缺陷及时处理率");
+L.push("**📋 统计逻辑**: P2级及以下及时处理率 = P2级及以下技术缺陷中及时处理的数量 / P2级及以下技术缺陷的数量");
+L.push("**🧮 计算公式**: 及时处理率 = 及时处理数量 / P2级及以下技术缺陷总数");
+L.push("**🔢 及时处理数量**: "+p2及时.length);
+L.push("**🔢 未及时处理数量**: "+p2未及时.length);
+L.push("**🔢 无法判断数量**: "+p2及时空.length);
+L.push("**📊 分母（P2级及以下技术缺陷总数）**: "+p2总);
+L.push("**📈 及时处理率**: "+fmtPct(处理率));
+L.push("**📊 百分比**: "+fmtPct(处理率));
+L.push("**🏅 评级**: "+rating(处理率));
+L.push("**ℹ️ 说明**: 有"+p2及时空.length+"条记录无法判断是否及时处理，已计入分母");
+
+L.push("## 28. 🏗️ 技术缺陷中\u201C结构归母\u201D字段统计");
+L.push("**📋 统计逻辑**: 统计技术缺陷中'结构归母'字段各值的数量，包括空值");
+Object.entries(归母Map).forEach(([key, arr]) => {
+  L.push("### 📍 "+key);
+  L.push("**🔢 数量**: "+arr.length);
+  L.push("**📝 缺陷ID列表**: "+BT+fmtIds(arr)+BT);
+});
+L.push("### ✅ 统计总和验证");
+L.push("**📋 统计逻辑**: 验证'结构归母'字段统计总和是否等于技术缺陷总数");
+L.push("**📊 统计总和**: "+归母sum);
+L.push("**📈 技术缺陷总数**: "+技术缺陷.length);
+L.push(verify(归母sum, 技术缺陷.length, "技术缺陷总数"));
+
+L.push("## 📋 数据字段信息");
+L.push("### 📊 可用字段");
+L.push(BT+JSON.stringify(fields)+BT);
+
+result = L.join("\\n");`,
           timeoutSeconds: '30',
         },
         inputSlots: [{ slotId: 'script-in', name: 'input', dataType: 'json', required: true }],
-        outputSlots: [{ slotId: 'script-out', name: 'output', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'script-out', name: 'output', dataType: 'text', required: true }],
         position: { x: 700, y: 300 },
-      },
-      {
-        nodeId: 'n-report',
-        name: '质量报告生成',
-        nodeType: 'report-generator',
-        config: {
-          reportTemplate: '你是一个软件质量分析专家。你会收到一份由 JS 脚本预处理后的 TAPD 缺陷统计数据（JSON 格式），包含精确统计结果和缺陷ID列表。\n\n**严格按照以下模板格式输出 Markdown 报告，直接引用 JSON 中的数据，不要自行重新计算，不要遗漏任何章节：**\n\n# 📊 缺陷统计分析报告\n\n**🕐 生成时间**: {{当前时间}}\n**📁 数据文件**: 缺陷统计数据.xlsx\n**📈 数据总行数**: {{total}}\n\n## 1. 🏷️ 缺陷总数\n**📋 统计逻辑**: 统计Excel文件中所有行的数量\n**🔢 数量**: {{total}}\n**📝 缺陷ID列表**: `{{allIds}}`\n\n## 2. ❌ 非缺陷数量\n**📋 统计逻辑**: 筛选\'缺陷划分\'字段值为\'非缺陷\'的记录\n**🔢 数量**: {{非缺陷.count}}\n**📝 非缺陷ID列表**: `{{非缺陷.ids}}`\n\n## 3. 📱 产品缺陷数量\n**📋 统计逻辑**: 筛选\'缺陷划分\'字段值为\'产品缺陷\'的记录\n**🔢 数量**: {{产品缺陷.count}}\n**📝 产品缺陷ID列表**: `{{产品缺陷.ids}}`\n\n## 4. 🔧 技术缺陷数量\n**📋 统计逻辑**: 筛选\'缺陷划分\'字段值为\'技术缺陷\'的记录\n**🔢 数量**: {{技术缺陷.count}}\n**📝 技术缺陷ID列表**: `{{技术缺陷.ids}}`\n\n## 5. ❓ 无法判断的数量\n**📋 统计逻辑**: 筛选\'缺陷划分\'字段值为\'无法判断\'的记录\n**🔢 数量**: {{无法判断.count}}\n**📝 无法判断ID列表**: `{{无法判断.ids}}`\n\n## 6. ⚪ 未判断（空）的数量\n**📋 统计逻辑**: 筛选\'缺陷划分\'字段值为空的记录\n**🔢 数量**: {{未判断.count}}\n**📝 未判断ID列表**: `{{未判断.ids}}`\n\n## 7. 🚫 无效反馈数量\n**📋 统计逻辑**: 筛选\'有效报告\'字段值为\'否\'的记录\n**🔢 数量**: {{无效反馈.count}}\n**📝 无效反馈ID列表**: `{{无效反馈.ids}}`\n\n## 8. ✅ 有效反馈数量\n**📋 统计逻辑**: 筛选\'有效报告\'字段值为\'是\'的记录\n**🔢 数量**: {{有效反馈.count}}\n**📝 有效反馈ID列表**: `{{有效反馈.ids}}`\n\n## 9. 📉 P2级及以下技术缺陷数量\n**📋 统计逻辑**: 在技术缺陷中筛选\'缺陷等级\'为P2、P3、P4的记录\n**🔢 数量**: {{p2及以下.count}}\n**📝 P2级及以下技术缺陷ID列表**: `{{p2及以下.ids}}`\n\n## 10. 🔴 P0级别技术缺陷数量\n**📋 统计逻辑**: 在技术缺陷中筛选\'缺陷等级\'为P0的记录\n**🔢 数量**: {{p0.count}}\n**📝 P0级别技术缺陷ID列表**: `{{p0.ids}}`\n\n## 11. 🟠 P1级别技术缺陷数量\n**📋 统计逻辑**: 在技术缺陷中筛选\'缺陷等级\'为P1的记录\n**🔢 数量**: {{p1.count}}\n**📝 P1级别技术缺陷ID列表**: `{{p1.ids}}`\n\n## 12. 🟡 P2级别技术缺陷数量\n**📋 统计逻辑**: 在技术缺陷中筛选\'缺陷等级\'为P2的记录\n**🔢 数量**: {{p2.count}}\n**📝 P2级别技术缺陷ID列表**: `{{p2.ids}}`\n\n## 13. 🟢 P3级别技术缺陷数量\n**📋 统计逻辑**: 在技术缺陷中筛选\'缺陷等级\'为P3的记录\n**🔢 数量**: {{p3.count}}\n**📝 P3级别技术缺陷ID列表**: `{{p3.ids}}`\n\n## 14. 🔵 P4级别技术缺陷数量\n**📋 统计逻辑**: 在技术缺陷中筛选\'缺陷等级\'为P4的记录\n**🔢 数量**: {{p4.count}}\n**📝 P4级别技术缺陷ID列表**: `{{p4.ids}}`\n\n## 15. ⚪ 未判断缺陷等级技术缺陷数量\n**📋 统计逻辑**: 在技术缺陷中筛选\'缺陷等级\'字段为空的记录\n**🔢 数量**: {{p未判断等级.count}}\n**📝 未判断等级技术缺陷ID列表**: `{{p未判断等级.ids}}`\n\n## 16. ✅ 技术缺陷等级统计总和验证\n**📋 统计逻辑**: 验证各等级技术缺陷数量之和是否等于技术缺陷总数\n**📊 统计总和**: {{等级验证.sum}}\n**📈 技术缺陷总数**: {{等级验证.total}}\n（如果 sum === total 输出 **✓ 验证通过**，否则输出 **✗ 验证失败**）\n\n## 17. ⏰ P2级及以下技术缺陷中简报逾期的数量\n**📋 统计逻辑**: 在P2级及以下技术缺陷中筛选\'是否逾期\'字段值为\'是\'的记录\n**🔢 数量**: {{p2逾期.count}}\n**📝 逾期缺陷ID列表**: `{{p2逾期.ids}}`\n\n## 18. ✅ P2级及以下技术缺陷中未逾期的数量\n**📋 统计逻辑**: 在P2级及以下技术缺陷中筛选\'是否逾期\'字段值为\'否\'的记录\n**🔢 数量**: {{p2未逾期.count}}\n**📝 未逾期缺陷ID列表**: `{{p2未逾期.ids}}`\n\n## 19. ❓ P2级及以下技术缺陷中简报是否逾期为空（无法判断）的数量\n**📋 统计逻辑**: 在P2级及以下技术缺陷中筛选\'是否逾期\'字段为空的记录\n**🔢 数量**: {{p2逾期空.count}}\n**📝 逾期状态为空缺陷ID列表**: `{{p2逾期空.ids}}`\n\n## 20. ✅ P2级及以下技术缺陷逾期统计总和验证\n**📋 统计逻辑**: 验证各逾期状态技术缺陷数量之和是否等于P2级及以下技术缺陷总数\n**📊 统计总和**: {{逾期验证.sum}}\n**📈 P2级及以下技术缺陷总数**: {{逾期验证.total}}\n（验证通过/失败）\n\n## 21. ⚡ P2级及以下技术缺陷中及时处理的数量\n**📋 统计逻辑**: 在P2级及以下技术缺陷中筛选\'及时处理\'字段值为\'是\'的记录\n**🔢 数量**: {{p2及时.count}}\n**📝 及时处理缺陷ID列表**: `{{p2及时.ids}}`\n\n## 22. 🐌 P2级及以下技术缺陷中未及时处理的数量\n**📋 统计逻辑**: 在P2级及以下技术缺陷中筛选\'及时处理\'字段值为\'否\'的记录\n**🔢 数量**: {{p2未及时.count}}\n**📝 未及时处理缺陷ID列表**: `{{p2未及时.ids}}`\n\n## 23. ❓ P2级及以下技术缺陷中无法判断是否及时处理的数量\n**📋 统计逻辑**: 在P2级及以下技术缺陷中筛选\'及时处理\'字段为空或值为\'无法判断\'的记录\n**🔢 数量**: {{p2及时空.count}}\n**📝 无法判断及时处理缺陷ID列表**: `{{p2及时空.ids}}`\n\n## 24. ✅ P2级及以下技术缺陷及时处理统计总和验证\n**📋 统计逻辑**: 验证各及时处理状态技术缺陷数量之和是否等于P2级及以下技术缺陷总数\n**📊 统计总和**: {{及时验证.sum}}\n**📈 P2级及以下技术缺陷总数**: {{及时验证.total}}\n（验证通过/失败）\n\n## 25. ✅ P2级及以下技术缺陷中已修复的数量\n**📋 统计逻辑**: 在P2级及以下技术缺陷中筛选\'状态\'字段值为\'closed\'或\'已关闭\'的记录\n**🔢 数量**: {{p2已修复.count}}\n**📝 已修复缺陷ID列表**: `{{p2已修复.ids}}`\n\n## 26. 📈 P2级及以下技术缺陷及时修复率\n**📋 统计逻辑**: P2级及以下及时修复率 = P2级及以下技术缺陷中已修复的数量 / P2级及以下技术缺陷总数\n**🧮 计算公式**: 及时修复率 = 已修复数量 / P2级及以下技术缺陷总数\n**🔢 及时修复数量（已关闭）**: {{p2已修复.count}}\n**📊 分母（P2级及以下技术缺陷总数）**: {{p2总}}\n**📈 及时修复率**: {{及时修复率}}\n（根据比例给出评级：>=90% 优秀🏆, >=80% 良好🟢, >=60% 一般📊, <60% 较差🔴）\n\n## 27. 📈 P2级及以下技术缺陷及时处理率\n**📋 统计逻辑**: P2级及以下及时处理率 = P2级及以下技术缺陷中及时处理的数量 / P2级及以下技术缺陷总数\n**🧮 计算公式**: 及时处理率 = 及时处理数量 / P2级及以下技术缺陷总数\n**🔢 及时处理数量**: {{p2及时.count}}\n**🔢 未及时处理数量**: {{p2未及时.count}}\n**🔢 无法判断数量**: {{p2及时空.count}}\n**📊 分母（P2级及以下技术缺陷总数）**: {{p2总}}\n**📈 及时处理率**: {{及时处理率}}\n（根据比例给出评级，并说明无法判断记录已计入分母）\n\n## 28. 🏗️ 技术缺陷中"结构归母"字段统计\n**📋 统计逻辑**: 统计技术缺陷中\'结构归母\'字段各值的数量，包括空值\n（遍历 归母统计 对象，每个 key 输出一个子章节 ### 📍 {key}，包含数量和ID列表）\n\n### ✅ 统计总和验证\n**📊 统计总和**: {{归母验证.sum}}\n**📈 技术缺陷总数**: {{归母验证.total}}\n（验证通过/失败）\n\n## 📋 数据字段信息\n### 📊 可用字段\n`{{fields}}`\n\n---\n注意：报告中所有数字和ID列表必须直接从输入 JSON 中提取，不要自行计算或编造。验证章节根据 sum 与 total 是否相等输出通过或失败。',
-          format: 'markdown',
-        },
-        inputSlots: [{ slotId: 'report-in', name: 'data', dataType: 'json', required: true }],
-        outputSlots: [{ slotId: 'report-out', name: 'report', dataType: 'text', required: true }],
-        position: { x: 1000, y: 300 },
       },
       {
         nodeId: 'n-export',
@@ -279,9 +393,8 @@ result = {
     const edges: WorkflowEdge[] = [
       edge('n-trigger', 'manual-out', 'n-tapd', 'tapd-in'),
       edge('n-tapd', 'tapd-out', 'n-agg', 'script-in'),
-      edge('n-agg', 'script-out', 'n-report', 'report-in'),
-      edge('n-report', 'report-out', 'n-export', 'export-in'),
-      edge('n-report', 'report-out', 'n-notify', 'notify-in'),
+      edge('n-agg', 'script-out', 'n-export', 'export-in'),
+      edge('n-agg', 'script-out', 'n-notify', 'notify-in'),
     ];
 
     const variables: WorkflowVariable[] = [];
