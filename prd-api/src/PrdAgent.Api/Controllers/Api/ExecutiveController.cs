@@ -246,10 +246,10 @@ public class ExecutiveController : ControllerBase
 
         // ── 1. LLM 调用统计 (llm_request_logs) ──
         var llmLogs = await _db.LlmRequestLogs
-            .Find(l => l.StartedAt >= periodStart && l.RequestPurpose != null)
+            .Find(l => l.StartedAt >= periodStart && l.AppCallerCode != null)
             .Project(l => new
             {
-                l.RequestPurpose,
+                l.AppCallerCode,
                 l.UserId,
                 l.InputTokens,
                 l.OutputTokens,
@@ -260,7 +260,7 @@ public class ExecutiveController : ControllerBase
         var llmByAgent = llmLogs
             .GroupBy(l =>
             {
-                var rp = l.RequestPurpose ?? "";
+                var rp = l.AppCallerCode ?? "";
                 var dotIndex = rp.IndexOf('.');
                 var key = dotIndex > 0 ? rp[..dotIndex] : rp;
                 // 归一化别名
@@ -394,15 +394,15 @@ public class ExecutiveController : ControllerBase
 
         // LLM 维度
         var logs = await _db.LlmRequestLogs
-            .Find(l => l.StartedAt >= periodStart && l.RequestPurpose != null && l.UserId != null)
-            .Project(l => new { l.UserId, l.RequestPurpose })
+            .Find(l => l.StartedAt >= periodStart && l.AppCallerCode != null && l.UserId != null)
+            .Project(l => new { l.UserId, l.AppCallerCode })
             .ToListAsync();
 
         var llmAgentUserCounts = logs
             .Where(l => l.UserId != null && userIds.Contains(l.UserId))
             .GroupBy(l =>
             {
-                var rp = l.RequestPurpose ?? "";
+                var rp = l.AppCallerCode ?? "";
                 var dotIndex = rp.IndexOf('.');
                 return dotIndex > 0 ? rp[..dotIndex] : rp;
             })

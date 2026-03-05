@@ -83,11 +83,11 @@ public class OpenAIClient : ILLMClient
             => !string.IsNullOrEmpty(content) &&
                content.Contains("[[CONTEXT:PRD]]", StringComparison.Ordinal);
 
-        static string RedactPrdContextForLog(string? content, string? requestPurpose)
+        static string RedactPrdContextForLog(string? content, string? appCallerCode)
         {
             if (!IsPrdContextMessage(content)) return content ?? string.Empty;
-            // previewAsk.section: 可能包含“全文参考 + 章节原文”，统一更强脱敏标记
-            return string.Equals(requestPurpose, "previewAsk.section", StringComparison.OrdinalIgnoreCase)
+            // previewAsk.section: 可能包含”全文参考 + 章节原文”，统一更强脱敏标记
+            return string.Equals(appCallerCode, "previewAsk.section", StringComparison.OrdinalIgnoreCase)
                 ? "[PRD_FULL_REDACTED]"
                 : "[PRD_CONTENT_REDACTED]";
         }
@@ -104,7 +104,11 @@ public class OpenAIClient : ILLMClient
         systemPromptFinal ??= string.Empty;
         messages ??= new List<LLMMessage>();
         var ctx = _contextAccessor?.Current;
-        // Context 可能为 null（后台任务/Worker 场景），这是正常的
+        if (string.IsNullOrWhiteSpace(ctx?.AppCallerCode))
+        {
+            Console.Error.WriteLine(
+                $"[WARNING][OpenAIClient] AppCallerCode 为空！调用模型={_model}, 平台={_platformName}。请在调用前通过 BeginScope 设置 LlmRequestContext。");
+        }
 
         var allMessages = new List<OpenAIRequestMessage>
         {
@@ -159,7 +163,7 @@ public class OpenAIClient : ILLMClient
                 }.Concat(messages.Select(m => new
                 {
                     role = m.Role,
-                    content = RedactPrdContextForLog(m.Content, ctx?.RequestPurpose)
+                    content = RedactPrdContextForLog(m.Content, ctx?.AppCallerCode)
                 })).ToArray()
             };
 
@@ -193,7 +197,7 @@ public class OpenAIClient : ILLMClient
                     UserId: ctx?.UserId,
                     ViewRole: ctx?.ViewRole,
                     RequestType: ctx?.RequestType,
-                    RequestPurpose: ctx?.RequestPurpose,
+                    AppCallerCode: ctx?.AppCallerCode,
                     DocumentChars: ctx?.DocumentChars,
                     DocumentHash: ctx?.DocumentHash,
                     UserPromptChars: userPromptChars,

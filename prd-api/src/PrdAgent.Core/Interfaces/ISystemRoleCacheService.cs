@@ -27,4 +27,11 @@ public interface ISystemRoleCacheService
     /// 初始化缓存（启动时调用）
     /// </summary>
     Task InitializeAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// 获取权限指纹（基于权限目录 + 内置角色 + 自定义角色变更时间计算的哈希）。
+    /// 每次部署新版本（权限目录变更）或角色 CRUD 操作后指纹会变化，
+    /// 前端据此判断是否需要刷新权限缓存。
+    /// </summary>
+    string GetFingerprint();
 }

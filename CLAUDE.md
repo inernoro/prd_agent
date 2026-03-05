@@ -1,3 +1,21 @@
+# C# 代码静态分析规则
+
+**强制规则**：任何涉及 C#（`.cs` 文件）的改动，完成后**必须**使用 Roslyn 进行代码静态分析，确认零错误后才算完成。
+
+### 执行方式
+
+```bash
+# 在 prd-api 目录下执行
+cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | head -30
+```
+
+### 判定标准
+
+- **error CS\*\***：必须修复，不允许提交
+- **warning CS\*\***：评估是否为本次改动引入，如是则修复
+
+---
+
 # 任务完成交接规则
 
 **强制规则**：当你完成一个开发任务（代码编写 + 编译通过）后，**必须主动**使用 `task-handoff-checklist` 技能生成交接清单，不需要用户要求。
@@ -287,79 +305,17 @@ const appNameMap = {
 
 ## 服务器权威性设计
 
-**核心原则**：服务器端任务一旦启动，只有显式的用户主动取消请求才能中断，客户端被动断开连接不应取消服务器处理。
+> 详细设计文档：`doc/design.server-authority.md`
 
-### 规则说明
+**核心原则**：客户端被动断开（关页面、切路由、网络中断）不得取消服务器任务。只有用户主动调用取消 API 才允许中断。
 
-1. **主动取消 vs 被动断开**
-   - **主动取消**：用户点击"取消"按钮，触发显式取消 API → 允许取消服务器任务
-   - **被动断开**：用户关闭页面、切换路由、网络中断、浏览器刷新 → 不应取消服务器任务
+### 强制规则
 
-2. **为什么需要这样设计**
-   - 服务器端任务（如 LLM 调用、数据持久化）应该完整执行
-   - 用户被动断开时，服务器已消耗资源，应该让任务完成并保存结果
-   - 用户重新连接时可以查看已完成的结果
-
-3. **实现方式**
-
-   对于 SSE 流式响应场景：
-   - 服务器核心处理（LLM 调用、数据库操作）使用 `CancellationToken.None`
-   - SSE 写入操作捕获异常但不中断处理
-   - 只有收到显式取消 API 时才真正取消任务
-
-### 适用场景
-
-| 场景 | 处理方式 |
-|------|----------|
-| 文学创作标记生成 | LLM + 数据库用 `CancellationToken.None`，SSE 写入捕获异常 |
-| 图片生成任务 | 任务入队后与连接解耦，Worker 独立处理 |
-| 对话 Run/Worker | 已通过 Run/Worker 模式实现连接解耦 |
-
-### 示例
-
-```csharp
-// ✅ 正确做法：服务器权威性设计
-public async Task StreamGenerateAsync(CancellationToken clientCt)
-{
-    // SSE 响应头
-    Response.ContentType = "text/event-stream";
-
-    // LLM 调用不使用客户端 CancellationToken
-    await foreach (var chunk in client.StreamGenerateAsync(prompt, messages, false, CancellationToken.None))
-    {
-        // SSE 写入捕获异常，客户端断开时不中断处理
-        try
-        {
-            await Response.WriteAsync($"data: {chunk}\n\n");
-            await Response.Body.FlushAsync();
-        }
-        catch (OperationCanceledException)
-        {
-            // 客户端已断开，但继续处理 LLM 响应
-        }
-        catch (ObjectDisposedException)
-        {
-            // 连接已关闭，但继续处理
-        }
-    }
-
-    // 数据库操作不使用客户端 CancellationToken
-    await _db.SaveAsync(result, CancellationToken.None);
-}
-```
-
-```csharp
-// ❌ 错误做法：直接传递客户端 CancellationToken
-public async Task StreamGenerateAsync(CancellationToken ct)
-{
-    // 客户端关闭页面会导致整个处理被取消
-    await foreach (var chunk in client.StreamGenerateAsync(prompt, messages, false, ct))
-    {
-        await Response.WriteAsync($"data: {chunk}\n\n", ct);  // 会抛 OperationCanceledException
-    }
-    await _db.SaveAsync(result, ct);  // 可能不会执行
-}
-```
+1. **LLM 调用、数据库写操作**必须使用 `CancellationToken.None`，禁止传递 `HttpContext.RequestAborted`
+2. **SSE 写入**必须捕获 `OperationCanceledException` + `ObjectDisposedException`，断开后跳过写入但继续处理
+3. **长任务**（图片生成、视频渲染、工作流）必须通过 **Run/Worker 模式**与 HTTP 连接解耦
+4. **SSE 流**必须每 10 秒发送 keepalive 心跳，必须支持 `afterSeq` 断线续传
+5. **Worker 关闭时**必须将未完成的 run 标记为失败（`CancellationToken.None`）
 
 ---
 
@@ -523,7 +479,7 @@ VisualAgent (DB 名保留 image_master)：`image_master_workspaces`, `image_asse
 | `prd-admin/src/components/marketplace/MarketplaceCard.tsx` | 通用卡片组件 |
 | `prd-api/src/PrdAgent.Core/Interfaces/IMarketplaceItem.cs` | `IMarketplaceItem` + `IForkable` 接口 |
 | `prd-api/src/PrdAgent.Infrastructure/Services/ForkService.cs` | 通用 Fork 服务 |
-| `doc/prd.marketplace.md` | 设计文档 (v3.0) |
+| `doc/spec.marketplace.md` | 设计文档 (v3.0) |
 
 ### 添加新类型步骤
 

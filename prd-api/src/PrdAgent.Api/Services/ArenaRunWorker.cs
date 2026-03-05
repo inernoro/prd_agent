@@ -41,7 +41,8 @@ public sealed class ArenaRunWorker : BackgroundService
         string Prompt,
         string GroupKey,
         List<ArenaSlotInput> Slots,
-        string UserId);
+        string UserId,
+        List<string> AttachmentIds);
 
     private sealed record ArenaSlotInput(
         string SlotId,
@@ -133,7 +134,19 @@ public sealed class ArenaRunWorker : BackgroundService
             }
 
             if (string.IsNullOrWhiteSpace(prompt) || slots.Count == 0) return null;
-            return new ArenaRunInput(prompt.Trim(), groupKey.Trim(), slots, userId.Trim());
+
+            var attachmentIds = new List<string>();
+            if (root.TryGetProperty("attachmentIds", out var aIds) && aIds.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var aid in aIds.EnumerateArray())
+                {
+                    if (aid.ValueKind != JsonValueKind.String) continue;
+                    var v = (aid.GetString() ?? "").Trim();
+                    if (!string.IsNullOrWhiteSpace(v)) attachmentIds.Add(v);
+                }
+            }
+
+            return new ArenaRunInput(prompt.Trim(), groupKey.Trim(), slots, userId.Trim(), attachmentIds);
         }
         catch { return null; }
     }
@@ -194,6 +207,60 @@ public sealed class ArenaRunWorker : BackgroundService
             }
         }, CancellationToken.None);
 
+        // Load attachments (shared across all slots)
+        var llmAttachments = new List<LLMAttachment>();
+        var battleAttachments = new List<ArenaBattleAttachment>();
+        if (input.AttachmentIds.Count > 0)
+        {
+            try
+            {
+                var attachments = await db.Attachments
+                    .Find(Builders<Attachment>.Filter.In(a => a.AttachmentId, input.AttachmentIds))
+                    .ToListAsync(CancellationToken.None);
+
+                foreach (var att in attachments)
+                {
+                    battleAttachments.Add(new ArenaBattleAttachment
+                    {
+                        AttachmentId = att.AttachmentId,
+                        Url = att.Url,
+                        FileName = att.FileName,
+                        MimeType = att.MimeType,
+                    });
+
+                    // Download image for base64 (needed by Claude, also works for OpenAI)
+                    try
+                    {
+                        using var imgClient = httpClientFactory.CreateClient();
+                        var imgBytes = await imgClient.GetByteArrayAsync(att.Url, CancellationToken.None);
+                        var base64 = Convert.ToBase64String(imgBytes);
+                        llmAttachments.Add(new LLMAttachment
+                        {
+                            Type = "image",
+                            Url = att.Url,
+                            MimeType = att.MimeType,
+                            Base64Data = base64,
+                        });
+                    }
+                    catch (Exception imgEx)
+                    {
+                        _logger.LogWarning(imgEx, "ArenaRunWorker failed to download attachment: {Url}", att.Url);
+                        // Fall back to URL-only (works for OpenAI-compatible)
+                        llmAttachments.Add(new LLMAttachment
+                        {
+                            Type = "image",
+                            Url = att.Url,
+                            MimeType = att.MimeType,
+                        });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "ArenaRunWorker failed to load attachments for run: {RunId}", runId);
+            }
+        }
+
         // Per-slot snapshot accumulators
         var slotTexts = new Dictionary<string, StringBuilder>();
         foreach (var slot in input.Slots)
@@ -213,7 +280,7 @@ public sealed class ArenaRunWorker : BackgroundService
                 await sem.WaitAsync(CancellationToken.None);
                 try
                 {
-                    await RunOneSlotAsync(runId, slot, input.Prompt, db, httpClientFactory, logWriter, ctxAccessor, claudeLogger, jwtSecret, slotTexts, cts.Token);
+                    await RunOneSlotAsync(runId, slot, input.Prompt, llmAttachments, db, httpClientFactory, logWriter, ctxAccessor, claudeLogger, jwtSecret, slotTexts, cts.Token);
                 }
                 catch (OperationCanceledException) { /* expected on cancel */ }
                 catch (Exception ex)
@@ -283,7 +350,8 @@ public sealed class ArenaRunWorker : BackgroundService
                     };
                 }).ToList(),
                 Revealed = false,
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = DateTime.UtcNow,
+                Attachments = battleAttachments,
             };
             await db.ArenaBattles.InsertOneAsync(battle, cancellationToken: CancellationToken.None);
 
@@ -308,6 +376,7 @@ public sealed class ArenaRunWorker : BackgroundService
         string runId,
         ArenaSlotInput slot,
         string prompt,
+        List<LLMAttachment> llmAttachments,
         MongoDbContext db,
         IHttpClientFactory httpClientFactory,
         ILlmRequestLogWriter logWriter,
@@ -357,6 +426,20 @@ public sealed class ArenaRunWorker : BackgroundService
         var httpClient = httpClientFactory.CreateClient("LoggedHttpClient");
         httpClient.BaseAddress = new Uri(apiUrl.TrimEnd('/'));
 
+        // 设置 LLM 请求上下文（确保 AppCallerCode 不为空，日志可追溯）
+        using var _ = ctxAccessor.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: null,
+            SessionId: null,
+            UserId: null,
+            ViewRole: null,
+            DocumentChars: null,
+            DocumentHash: null,
+            SystemPromptRedacted: "[ARENA]",
+            RequestType: "reasoning",
+            AppCallerCode: "prd-agent.arena.battle::chat",
+            ModelResolutionType: ModelResolutionType.DirectModel));
+
         ILLMClient client = platformType == "anthropic" || apiUrl.Contains("anthropic.com", StringComparison.OrdinalIgnoreCase)
             ? new ClaudeClient(httpClient, apiKey, slot.ModelId, 4096, 0.2, false, claudeLogger, logWriter, ctxAccessor, platform.Id, platform.Name)
             : new OpenAIClient(httpClient, apiKey, slot.ModelId, 4096, 0.2, false, logWriter, ctxAccessor, null, platform.Id, platform.Name);
@@ -367,7 +450,15 @@ public sealed class ArenaRunWorker : BackgroundService
             new { type = "modelStart", slotId = slot.SlotId },
             ttl: TimeSpan.FromHours(24), ct: CancellationToken.None);
 
-        var messages = new List<LLMMessage> { new() { Role = "user", Content = prompt } };
+        var messages = new List<LLMMessage>
+        {
+            new()
+            {
+                Role = "user",
+                Content = prompt,
+                Attachments = llmAttachments.Count > 0 ? new List<LLMAttachment>(llmAttachments) : null,
+            }
+        };
         var sb = slotTexts[slot.SlotId];
         var sawFirstDelta = false;
 

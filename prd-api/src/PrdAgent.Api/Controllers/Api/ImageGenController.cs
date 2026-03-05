@@ -228,7 +228,7 @@ public class ImageGenController : ControllerBase
 
         // 强制过滤 requestPurpose 以 visual-agent 开头
         var filter = Builders<LlmRequestLog>.Filter.Regex(
-            x => x.RequestPurpose,
+            x => x.AppCallerCode,
             new MongoDB.Bson.BsonRegularExpression("^visual-agent", "i"));
 
         if (from.HasValue) filter &= Builders<LlmRequestLog>.Filter.Gte(x => x.StartedAt, from.Value);
@@ -242,7 +242,7 @@ public class ImageGenController : ControllerBase
             if (!rp.StartsWith("visual-agent", StringComparison.OrdinalIgnoreCase))
                 rp = "visual-agent." + rp;
             filter &= Builders<LlmRequestLog>.Filter.Regex(
-                x => x.RequestPurpose,
+                x => x.AppCallerCode,
                 new MongoDB.Bson.BsonRegularExpression($"^{Regex.Escape(rp)}", "i"));
         }
 
@@ -255,7 +255,7 @@ public class ImageGenController : ControllerBase
             {
                 x.Id, x.RequestId, x.Provider, x.Model, x.PlatformId, x.PlatformName,
                 x.ModelResolutionType, x.ModelGroupId, x.ModelGroupName,
-                x.RequestPurpose, x.RequestPurposeDisplayName,
+                x.AppCallerCode, x.AppCallerCodeDisplayName,
                 x.Status, x.StartedAt, x.FirstByteAt, x.EndedAt, x.DurationMs, x.StatusCode,
                 x.InputTokens, x.OutputTokens, x.Error,
                 x.QuestionText, x.AnswerText
@@ -266,7 +266,7 @@ public class ImageGenController : ControllerBase
         {
             x.Id, x.RequestId, x.Provider, x.Model, x.PlatformId, x.PlatformName,
             x.ModelResolutionType, x.ModelGroupId, x.ModelGroupName,
-            x.RequestPurpose, x.RequestPurposeDisplayName,
+            x.AppCallerCode, x.AppCallerCodeDisplayName,
             x.Status, x.StartedAt, x.FirstByteAt, x.EndedAt, x.DurationMs, x.StatusCode,
             x.InputTokens, x.OutputTokens, x.Error,
             questionPreview = TruncatePreview(x.QuestionText, 260),
@@ -284,7 +284,7 @@ public class ImageGenController : ControllerBase
     public async Task<IActionResult> GetLogsMeta(CancellationToken ct)
     {
         var vaFilter = Builders<LlmRequestLog>.Filter.Regex(
-            x => x.RequestPurpose,
+            x => x.AppCallerCode,
             new MongoDB.Bson.BsonRegularExpression("^visual-agent", "i"));
 
         var models = (await _db.LlmRequestLogs
@@ -298,10 +298,10 @@ public class ImageGenController : ControllerBase
         var requestPurposeAggregation = await _db.LlmRequestLogs
             .Aggregate()
             .Match(vaFilter)
-            .Group(x => x.RequestPurpose, g => new
+            .Group(x => x.AppCallerCode, g => new
             {
                 Value = g.Key,
-                StoredDisplayName = g.First().RequestPurposeDisplayName
+                StoredDisplayName = g.First().AppCallerCodeDisplayName
             })
             .ToListAsync(ct);
 
@@ -331,8 +331,8 @@ public class ImageGenController : ControllerBase
         var log = await _db.LlmRequestLogs.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
         if (log == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "日志不存在"));
         // 安全检查：只允许查看 visual-agent 的日志
-        if (string.IsNullOrWhiteSpace(log.RequestPurpose) ||
-            !log.RequestPurpose.StartsWith("visual-agent", StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(log.AppCallerCode) ||
+            !log.AppCallerCode.StartsWith("visual-agent", StringComparison.OrdinalIgnoreCase))
         {
             return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "日志不存在"));
         }
@@ -414,10 +414,10 @@ public class ImageGenController : ControllerBase
                 DocumentHash: null,
                 SystemPromptRedacted: "[IMAGE_GEN_PLAN]",
                 RequestType: "intent",
-                RequestPurpose: appCallerCode);
+                AppCallerCode: appCallerCode);
 
-            _logger.LogInformation("ImageGen.Plan: BeginScope with RequestType={RequestType}, RequestPurpose={RequestPurpose}",
-                requestContext.RequestType, requestContext.RequestPurpose);
+            _logger.LogInformation("ImageGen.Plan: BeginScope with RequestType={RequestType}, AppCallerCode={AppCallerCode}",
+                requestContext.RequestType, requestContext.AppCallerCode);
 
             using var _ = _llmRequestContext.BeginScope(requestContext);
 
@@ -634,7 +634,7 @@ public class ImageGenController : ControllerBase
             DocumentHash: null,
             SystemPromptRedacted: "[IMAGE_GEN_GENERATE]",
             RequestType: "imageGen",
-            RequestPurpose: appCallerCode));
+            AppCallerCode: appCallerCode));
 
         // 合并所有参考图来源到统一列表
         if (images.Count == 0 && !string.IsNullOrWhiteSpace(initImageBase64))
@@ -772,7 +772,7 @@ public class ImageGenController : ControllerBase
             DocumentHash: null,
             SystemPromptRedacted: "[IMAGE_GEN_COMPOSE]",
             RequestType: "imageGen",
-            RequestPurpose: appCallerCode));
+            AppCallerCode: appCallerCode));
 
         var res = await _imageClient.GenerateAsync(intentResult.GeneratedPrompt, n: 1, size, responseFormat, ct, appCallerCode, modelId, platformId);
         if (!res.Success)
@@ -932,7 +932,7 @@ public class ImageGenController : ControllerBase
                 DocumentHash: null,
                 SystemPromptRedacted: "[IMAGE_GEN_EXTRACT_STYLE]",
                 RequestType: "vision",
-                RequestPurpose: appCallerCode));
+                AppCallerCode: appCallerCode));
 
             var systemPrompt =
                 "你是“图片风格提取器”。你的任务：根据输入图片，提取可直接用于生图模型的风格描述。\n" +
@@ -1115,7 +1115,7 @@ public class ImageGenController : ControllerBase
                                 DocumentHash: null,
                                 SystemPromptRedacted: "[IMAGE_GEN_BATCH_GENERATE]",
                                 RequestType: "imageGen",
-                                RequestPurpose: appCallerCode));
+                                AppCallerCode: appCallerCode));
 
                             var res = await _imageClient.GenerateAsync(currentPrompt, n: 1, currentSize, responseFormat, cancellationToken, appCallerCode, modelId, platformId, modelName);
                             
@@ -1468,7 +1468,7 @@ public class ImageGenController : ControllerBase
                 x.RatioAdjusted,
                 status = x.Status.ToString(),
                 base64 = includeImages ? x.Base64 : null,
-                url = includeImages ? x.Url : null,
+                x.Url,
                 x.RevisedPrompt,
                 x.ErrorCode,
                 x.ErrorMessage,

@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Security.Cryptography;
@@ -84,6 +85,7 @@ builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+        options.JsonSerializerOptions.Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping;
         options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
         options.JsonSerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonContext.Default);
     });
@@ -157,6 +159,14 @@ builder.Services.AddScoped<OpenAIImageClient>();
 builder.Services.AddSingleton<WatermarkFontRegistry>();
 builder.Services.AddSingleton<WatermarkRenderer>();
 
+// Account Data Transfer 数据分享
+builder.Services.AddScoped<PrdAgent.Infrastructure.Services.WorkspaceCloneService>();
+// 资产披露 Provider（IAssetProvider 被动注册 — 新模块只需实现接口并在此注册）
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.ImageAssetProvider>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.AttachmentAssetProvider>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.PrdDocumentAssetProvider>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.VideoAssetProvider>();
+
 // Visual Agent 多图组合服务（图片描述提取 + 多图意图解析）
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.VisualAgent.IImageDescriptionService, PrdAgent.Infrastructure.Services.VisualAgent.ImageDescriptionService>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.VisualAgent.IMultiImageComposeService, PrdAgent.Infrastructure.Services.VisualAgent.MultiImageComposeService>();
@@ -227,7 +237,7 @@ builder.Services.AddSingleton<IAssetStorage>(sp =>
 {
     var cfg = sp.GetRequiredService<IConfiguration>();
     var log = sp.GetRequiredService<ILoggerFactory>().CreateLogger("AssetStorage");
-    // 强约束：统一只使用一套“扁平环境变量”（不使用双下划线）：
+    // 强约束：统一只使用一套"扁平环境变量"（不使用双下划线）：
     // - ASSETS_PROVIDER=tencentCos
     // - TENCENT_COS_BUCKET / TENCENT_COS_REGION / TENCENT_COS_SECRET_ID / TENCENT_COS_SECRET_KEY / TENCENT_COS_PUBLIC_BASE_URL / TENCENT_COS_PREFIX
     var providerRaw = (cfg["ASSETS_PROVIDER"] ?? "tencentCos").Trim();
@@ -286,7 +296,7 @@ builder.Services.AddSingleton<IAssetStorage>(sp =>
         return new TencentCosStorage(bucket!, region!, secretId!, secretKey!, publicBaseUrl, prefix, tempDir, enableSafeDelete, allow, logger);
     }
 
-    // 理论上不会走到这里；保留以满足编译器对“所有路径均有返回”的要求
+    // 理论上不会走到这里；保留以满足编译器对"所有路径均有返回"的要求
     throw new InvalidOperationException($"AssetStorage provider 选择异常：providerRaw={providerRaw} provider={provider}");
 });
 
@@ -327,7 +337,7 @@ var jwtSecret = builder.Configuration["Jwt:Secret"];
 if (string.IsNullOrWhiteSpace(jwtSecret))
 {
     // 注意：.NET 环境变量绑定规则为 Jwt__Secret（双下划线）
-    // 这里必须在启动阶段 fail-fast，避免 AddJwtBearer 的 options 懒加载导致线上“首个请求才爆炸”。
+    // 这里必须在启动阶段 fail-fast，避免 AddJwtBearer 的 options 懒加载导致线上"首个请求才爆炸"。
     throw new InvalidOperationException("JWT Secret 未配置或为空。请设置配置项 Jwt:Secret（环境变量：Jwt__Secret）。");
 }
 
@@ -521,18 +531,20 @@ builder.Services.AddCors(options =>
                     if (string.IsNullOrWhiteSpace(origin) || origin == "null") return false;
                     if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri)) return false;
                     // 兼容 IPv4/IPv6 回环：localhost、127.0.0.1、[::1]
-                    // 说明：Mac/Windows 上某些情况下前端会以 http://[::1]:port 作为 Origin，若未放行会导致预检 OPTIONS 403“看似随机”波动
+                    // 说明：Mac/Windows 上某些情况下前端会以 http://[::1]:port 作为 Origin，若未放行会导致预检 OPTIONS 403 "看似随机" 波动
                     return uri.Host is "localhost" or "127.0.0.1" or "::1";
                 })
                 .AllowAnyHeader()
-                .AllowAnyMethod();
+                .AllowAnyMethod()
+                .WithExposedHeaders("X-Perm-Fingerprint");
             return;
         }
 
         // 生产环境：严格按配置允许来源
         policy.WithOrigins(allowedOrigins)
             .AllowAnyHeader()
-            .AllowAnyMethod();
+            .AllowAnyMethod()
+            .WithExposedHeaders("X-Perm-Fingerprint");
     });
 });
 
@@ -937,7 +949,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-// 始终启用“单行 Request finished 摘要日志”（不包含 body，且默认跳过 OPTIONS），用于确认请求是否到达和返回结果
+// 始终启用"单行 Request finished 摘要日志"（不包含 body，且默认跳过 OPTIONS），用于确认请求是否到达和返回结果
 app.UseRequestResponseLogging();
 
 app.UseExceptionMiddleware();
@@ -946,11 +958,13 @@ app.UseCors();
 app.UseAuthentication();
 // 认证通过后做 3 天滑动续期（now+72h，按端独立）
 app.UseMiddleware<AuthSlidingExpirationMiddleware>();
-// 统一记录“最后操作时间”（仅写请求 + 成功响应）
+// 统一记录"最后操作时间"（仅写请求 + 成功响应）
 app.UseMiddleware<PrdAgent.Api.Middleware.UserLastActiveMiddleware>();
 app.UseAuthorization();
 // 管理后台权限（菜单/页面/接口统一绑定 permission key）
 app.UseMiddleware<PrdAgent.Api.Middleware.AdminPermissionMiddleware>();
+// 权限指纹：每个响应注入 X-Perm-Fingerprint，前端据此判断是否需要刷新权限缓存
+app.UseMiddleware<PrdAgent.Api.Middleware.PermissionFingerprintMiddleware>();
 app.MapControllers();
 
 // 健康检查端点

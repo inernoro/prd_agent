@@ -7,10 +7,11 @@ import { TabBar } from '@/components/design/TabBar';
 import { Dialog } from '@/components/ui/Dialog';
 import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
 import { getAdminDocumentContent, getLlmLogDetail, getLlmLogs, getLlmLogsMeta, listUploadArtifacts, getReplayCurl } from '@/services';
-import type { LlmLogsMetaUser, LlmLogsMetaRequestPurpose } from '@/services/contracts/llmLogs';
+import type { LlmLogsMetaUser, LlmLogsMetaAppCallerCode } from '@/services/contracts/llmLogs';
 import type { LlmRequestLog, LlmRequestLogListItem, UploadArtifact } from '@/types/admin';
 import { CheckCircle, ChevronDown, Clock, Copy, Database, Eraser, Hash, HelpCircle, ImagePlus, Layers, Loader2, RefreshCw, Reply, ScanEye, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
 import { AppCallerKeyIcon } from '@/lib/appCallerUtils';
+import { resolveAvatarUrl } from '@/lib/avatar';
 import { glassPanel } from '@/lib/glassStyles';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -906,10 +907,10 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
   const [qGroupId, setQGroupId] = useState(() => searchParams.get('groupId') ?? '');
   const [qSessionId, setQSessionId] = useState(() => searchParams.get('sessionId') ?? '');
   const [qUserId, setQUserId] = useState(() => searchParams.get('userId') ?? '');
-  const [qRequestPurpose, setQRequestPurpose] = useState(() => defaultAppKey ?? searchParams.get('requestPurpose') ?? '');
+  const [qAppCallerCode, setQAppCallerCode] = useState(() => defaultAppKey ?? searchParams.get('appCallerCode') ?? '');
 
   const [metaModels, setMetaModels] = useState<string[]>([]);
-  const [metaRequestPurposes, setMetaRequestPurposes] = useState<LlmLogsMetaRequestPurpose[]>([]);
+  const [metaAppCallerCodes, setMetaAppCallerCodes] = useState<LlmLogsMetaAppCallerCode[]>([]);
   const [metaStatuses, setMetaStatuses] = useState<string[]>(['running', 'succeeded', 'failed', 'cancelled']);
   const [metaUsers, setMetaUsers] = useState<LlmLogsMetaUser[]>([]);
 
@@ -1044,9 +1045,9 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
         sp.set('groupId', qGroupId || '');
         sp.set('sessionId', qSessionId || '');
         sp.set('userId', qUserId || '');
-        sp.set('requestPurpose', qRequestPurpose || '');
+        sp.set('appCallerCode', qAppCallerCode || '');
         // 清理空参数（保持 URL 干净）
-        ['model', 'status', 'requestId', 'groupId', 'sessionId', 'userId', 'requestPurpose'].forEach((k) => {
+        ['model', 'status', 'requestId', 'groupId', 'sessionId', 'userId', 'appCallerCode'].forEach((k) => {
           if (!String(sp.get(k) ?? '').trim()) sp.delete(k);
         });
         setSearchParams(sp, { replace: true });
@@ -1062,7 +1063,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
         groupId: qGroupId || undefined,
         sessionId: qSessionId || undefined,
         userId: qUserId || undefined,
-        requestPurpose: qRequestPurpose || undefined,
+        appCallerCode: qAppCallerCode || undefined,
       });
       if (res.success) {
         setItems(res.data.items);
@@ -1136,7 +1137,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
     }
     load({ resetPage: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [qModel, qStatus, qRequestPurpose, qUserId]);
+  }, [qModel, qStatus, qAppCallerCode, qUserId]);
 
   useEffect(() => {
     if (autoRefreshTimerRef.current) {
@@ -1180,7 +1181,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
       const res = await fetchMeta();
       if (res.success) {
         setMetaModels(res.data.models ?? []);
-        setMetaRequestPurposes(res.data.requestPurposes ?? []);
+        setMetaAppCallerCodes(res.data.appCallerCodes ?? []);
         setMetaStatuses(res.data.statuses ?? ['running', 'succeeded', 'failed', 'cancelled']);
         setMetaUsers(res.data.users ?? []);
       }
@@ -1304,7 +1305,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                   setQUserId('');
                   setQGroupId('');
                   setQSessionId('');
-                  setQRequestPurpose('');
+                  setQAppCallerCode('');
                   setPage(1);
                   setTimeout(() => load({ resetPage: true }), 0);
                 }}
@@ -1354,11 +1355,11 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
             ))}
           </Select>
           <SearchableSelect
-            value={qRequestPurpose}
-            onValueChange={setQRequestPurpose}
+            value={qAppCallerCode}
+            onValueChange={setQAppCallerCode}
             options={[
               { value: '', label: '应用' },
-              ...metaRequestPurposes.map((rp) => ({ value: rp.value, label: rp.displayName })),
+              ...metaAppCallerCodes.map((rp) => ({ value: rp.value, label: rp.displayName })),
             ]}
             placeholder="应用"
             leftIcon={<Zap size={16} />}
@@ -1458,17 +1459,17 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                         {statusBadge(it.status)}
                         {/* 功能描述（中文标题）- 直接使用后端返回的 displayName */}
                         <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                          {it.requestPurposeDisplayName || it.requestPurpose || '未知'}
+                          {it.appCallerCodeDisplayName || it.appCallerCode || '未知'}
                         </div>
                         {/* appCallerCode 标签，悬浮显示全文 */}
-                        {it.requestPurpose && (
+                        {it.appCallerCode && (
                           <span
                             className="inline-flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded shrink-0 cursor-help"
                             style={{ background: 'var(--bg-input-hover)', color: 'var(--text-muted)' }}
-                            title={it.requestPurpose}
+                            title={it.appCallerCode}
                           >
                             <AppCallerKeyIcon size={10} className="opacity-60" />
-                            {it.requestPurpose}
+                            {it.appCallerCode}
                           </span>
                         )}
                       </div>
@@ -1601,7 +1602,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                           );
                         })()}
                         {(() => {
-                          // 注意：requestPurpose 是“用途/功能点”（如 chat.sendMessage），不是模型标识。
+                          // 注意：appCallerCode 是”用途/功能点”（如 chat.sendMessage），不是模型标识。
                           // 这里应展示 modelId（按全局契约：仅展示 modelId；不要默认展示 name/displayName）。
                           // 兼容：部分历史/接口可能仍使用 model 字段承载 modelId。
                           const modelId = String((it as any).modelId ?? it.model ?? '').trim();
@@ -1693,7 +1694,21 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                       </div>
                     </div>
 
-                    <div className="text-right">
+                    <div className="text-right shrink-0">
+                      {/* 用户头像 + 用户名 */}
+                      {it.userId && (
+                        <div className="flex items-center justify-end gap-1.5 mb-1">
+                          <span className="text-[11px] truncate max-w-[100px]" style={{ color: 'var(--text-secondary)' }} title={it.username || it.userId}>
+                            {it.username || it.userId}
+                          </span>
+                          <img
+                            src={resolveAvatarUrl({ avatarFileName: it.avatarFileName, username: it.username })}
+                            alt={it.username || it.userId}
+                            className="w-5 h-5 rounded-full object-cover shrink-0"
+                            style={{ border: '1px solid var(--border-subtle)' }}
+                          />
+                        </div>
+                      )}
                       <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>
                         {it.durationMs ? `${it.durationMs}ms` : '-'}
                       </div>
@@ -1825,7 +1840,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                     { k: 'status', v: detail.status || '—' },
                     { k: 'requestId', v: detail.requestId || '—' },
                     { k: 'requestType', v: detail.requestType || '—' },
-                    { k: 'acc', v: detail.requestPurpose || '—' },
+                    { k: 'acc', v: detail.appCallerCode || '—' },
                     { k: 'groupId', v: detail.groupId || '—' },
                     { k: 'sessionId', v: detail.sessionId || '—' },
                     { k: 'startedAt', v: formatLocalTime(detail.startedAt) },

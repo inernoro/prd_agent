@@ -22,12 +22,18 @@ public static class BuiltInSystemRoles
             Permissions: new List<string>
             {
                 AdminPermissionCatalog.Access,
+                // Agent 权限
                 AdminPermissionCatalog.PrdAgentUse,
                 AdminPermissionCatalog.VisualAgentUse,
                 AdminPermissionCatalog.LiteraryAgentUse,
                 AdminPermissionCatalog.DefectAgentUse,
                 AdminPermissionCatalog.DefectAgentManage,
                 AdminPermissionCatalog.VideoAgentUse,
+                AdminPermissionCatalog.ArenaAgentUse,
+                AdminPermissionCatalog.ReportAgentUse,
+                AdminPermissionCatalog.WorkflowAgentUse,
+                AdminPermissionCatalog.AiToolboxUse,
+                // 管理权限
                 AdminPermissionCatalog.ModelsRead,
                 AdminPermissionCatalog.ModelsWrite,
                 AdminPermissionCatalog.GroupsRead,
@@ -49,11 +55,16 @@ public static class BuiltInSystemRoles
             Permissions: new List<string>
             {
                 AdminPermissionCatalog.Access,
+                // Agent 权限（只读用户也可体验 Agent）
                 AdminPermissionCatalog.PrdAgentUse,
                 AdminPermissionCatalog.VisualAgentUse,
                 AdminPermissionCatalog.LiteraryAgentUse,
                 AdminPermissionCatalog.DefectAgentUse,
                 AdminPermissionCatalog.VideoAgentUse,
+                AdminPermissionCatalog.ArenaAgentUse,
+                AdminPermissionCatalog.ReportAgentUse,
+                AdminPermissionCatalog.AiToolboxUse,
+                // 只读管理权限
                 AdminPermissionCatalog.UsersRead,
                 AdminPermissionCatalog.GroupsRead,
                 AdminPermissionCatalog.ModelsRead,
@@ -70,11 +81,15 @@ public static class BuiltInSystemRoles
             Permissions: new List<string>
             {
                 AdminPermissionCatalog.Access,
+                // 所有 Agent 使用权限
                 AdminPermissionCatalog.PrdAgentUse,
                 AdminPermissionCatalog.VisualAgentUse,
                 AdminPermissionCatalog.LiteraryAgentUse,
                 AdminPermissionCatalog.DefectAgentUse,
                 AdminPermissionCatalog.VideoAgentUse,
+                AdminPermissionCatalog.ArenaAgentUse,
+                AdminPermissionCatalog.ReportAgentUse,
+                AdminPermissionCatalog.WorkflowAgentUse,
                 AdminPermissionCatalog.AiToolboxUse,
                 // PRD Agent 读取提示词需要 settings.read，但不应默认展示"提示词管理"（前端已改为 prompts.write 才可见）
                 AdminPermissionCatalog.SettingsRead,

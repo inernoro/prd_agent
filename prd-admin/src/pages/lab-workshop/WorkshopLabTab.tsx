@@ -4,6 +4,9 @@
  */
 import { useRef, useState, useCallback } from 'react';
 import { RichComposer, type RichComposerRef, type ImageOption } from '@/components/RichComposer';
+import { GlassCard } from '@/components/design/GlassCard';
+import { Button } from '@/components/design/Button';
+import { cn } from '@/lib/cn';
 
 // 自动测试结果类型
 type TestResult = {
@@ -458,465 +461,320 @@ export default function WorkshopLabTab() {
   }, []);
 
   return (
-    <div className="h-full overflow-auto" style={{ padding: 16 }}>
-      <div style={{ maxWidth: 1200, margin: '0 auto' }}>
-        {/* 标题 */}
-        <div style={{ marginBottom: 16 }}>
-          <h2 style={{ fontSize: 18, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>
+    <div className="space-y-6">
+      {/* Header - matches DesktopLabTab / ShowcaseLabTab pattern */}
+      <div className="flex items-end justify-between">
+        <div>
+          <div className="text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>
             RichComposer 试验场
-          </h2>
-          <p style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+          </div>
+          <div className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
             测试富文本输入组件的各种功能和边界情况
-          </p>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-          {/* 左侧：测试区 */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {/* 模拟画布 - 两阶段选择 */}
-            <div className="surface-inset" style={{
-              background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
-              borderRadius: 8,
-              padding: 12,
-              border: '1px solid var(--border-default)',
-            }}>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span>模拟画布（点击图片预选 → 点击文本框确认）</span>
-                {pendingChipKeys.size > 0 && (
-                  <span style={{ color: 'rgba(156, 163, 175, 1)', fontSize: 10 }}>
-                    待确认 {pendingChipKeys.size} 张
-                    <button
-                      onClick={() => {
-                        // 清除所有 pending chips
-                        pendingChipKeys.forEach((key) => {
-                          composerRef.current?.removeChipByKey(key);
-                        });
-                        setPendingChipKeys(new Set());
-                      }}
-                      style={{
-                        marginLeft: 6,
-                        padding: '1px 4px',
-                        fontSize: 9,
-                        background: 'rgba(156, 163, 175, 0.2)',
-                        border: '1px solid rgba(156, 163, 175, 0.3)',
-                        borderRadius: 3,
-                        color: 'rgba(156, 163, 175, 1)',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      清除
-                    </button>
-                  </span>
-                )}
-              </div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {MOCK_IMAGES.map(img => {
-                  const hasPendingChip = pendingChipKeys.has(img.key);
-                  return (
-                    <div
-                      key={img.key}
-                      onClick={() => handleImageClick(img)}
-                      style={{
-                        cursor: 'pointer',
-                        padding: 6,
-                        background: hasPendingChip ? 'rgba(156, 163, 175, 0.15)' : 'var(--bg-base)',
-                        borderRadius: 6,
-                        border: `2px solid ${hasPendingChip ? 'rgba(156, 163, 175, 0.6)' : 'transparent'}`,
-                        outline: '1px solid var(--border-default)',
-                        transition: 'all 0.15s',
-                        position: 'relative',
-                      }}
-                    >
-                      {/* 已插入 pending chip 的遮罩 */}
-                      {hasPendingChip && (
-                        <div style={{
-                          position: 'absolute',
-                          top: 6,
-                          left: 6,
-                          right: 6,
-                          bottom: 22,
-                          background: 'rgba(156, 163, 175, 0.3)',
-                          borderRadius: 4,
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          color: 'white',
-                          fontSize: 16,
-                          fontWeight: 600,
-                        }}>
-                          ✓
-                        </div>
-                      )}
-                      <img
-                        src={img.src}
-                        alt={img.label}
-                        style={{
-                          width: 48,
-                          height: 48,
-                          borderRadius: 4,
-                          objectFit: 'cover',
-                          display: 'block',
-                          opacity: hasPendingChip ? 0.7 : 1,
-                        }}
-                      />
-                      <div style={{
-                        fontSize: 9,
-                        marginTop: 4,
-                        color: hasPendingChip ? 'rgba(156, 163, 175, 1)' : 'var(--text-muted)',
-                        maxWidth: 48,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                        textAlign: 'center',
-                        fontWeight: hasPendingChip ? 600 : 400,
-                      }}>
-                        #{img.refId}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* 主输入框 */}
-            <div className="surface-inset" style={{
-              background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
-              borderRadius: 8,
-              padding: 12,
-              border: '1px solid var(--border-default)',
-            }}>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
-                主输入框（点击文本框确认灰色 chip → 变蓝）
-              </div>
-              {/* 输入框容器 - 点击时确认 pending chips */}
-              <div
-                style={{
-                  background: 'var(--bg-base)',
-                  borderRadius: 6,
-                  padding: 10,
-                  border: pendingChipKeys.size > 0
-                    ? '1px solid rgba(156, 163, 175, 0.5)'
-                    : '1px solid var(--border-default)',
-                  transition: 'border-color 0.15s',
-                  cursor: 'text',
-                }}
-                onClick={handleInputContainerClick}
-              >
-                <RichComposer
-                  ref={composerRef}
-                  placeholder="输入文字，点击上方图片插入引用..."
-                  imageOptions={MOCK_IMAGES}
-                  onChange={setCurrentText}
-                  onSubmit={handleSubmit}
-                  minHeight={40}
-                  maxHeight={150}
-                />
-              </div>
-              <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
-                <Btn onClick={handleGetStructuredContent}>getStructuredContent()</Btn>
-                <Btn onClick={handleGetPlainText}>getPlainText()</Btn>
-                <Btn onClick={handleClear} variant="danger">clear()</Btn>
-              </div>
-            </div>
-
-            {/* 窄容器测试 */}
-            <div className="surface-inset" style={{
-              background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
-              borderRadius: 8,
-              padding: 12,
-              border: '1px solid var(--border-default)',
-            }}>
-              <div style={{
-                fontSize: 11,
-                color: 'var(--text-muted)',
-                marginBottom: 8,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-              }}>
-                <span>窄容器测试</span>
-                <input
-                  type="range"
-                  min={120}
-                  max={400}
-                  value={containerWidth}
-                  onChange={(e) => setContainerWidth(Number(e.target.value))}
-                  style={{ width: 80 }}
-                />
-                <span style={{ fontSize: 10 }}>{containerWidth}px</span>
-              </div>
-              <div style={{
-                width: containerWidth,
-                background: 'var(--bg-base)',
-                borderRadius: 6,
-                padding: 10,
-                border: '1px solid var(--border-default)',
-                transition: 'width 0.15s',
-              }}>
-                <RichComposer
-                  ref={narrowComposerRef}
-                  placeholder="窄容器..."
-                  imageOptions={MOCK_IMAGES}
-                  minHeight={40}
-                  maxHeight={80}
-                />
-              </div>
-            </div>
-
-            {/* 测试用例 */}
-            <div className="surface-inset" style={{
-              background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
-              borderRadius: 8,
-              padding: 12,
-              border: '1px solid var(--border-default)',
-            }}>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
-                边界测试用例（直接插入蓝色 chip）
-              </div>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                {TEST_CASES.map((tc, idx) => (
-                  <Btn key={idx} onClick={() => handleInsertTestCase(tc.text)} size="sm">
-                    {tc.name}
-                  </Btn>
-                ))}
-              </div>
-            </div>
-
-            {/* 两阶段测试用例 */}
-            <div className="surface-inset" style={{
-              background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
-              borderRadius: 8,
-              padding: 12,
-              border: '1px solid var(--border-default)',
-            }}>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
-                两阶段测试（灰色 pending → 点击文本框 → 蓝色确认）
-              </div>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                {PENDING_TEST_CASES.map((tc, idx) => (
-                  <Btn
-                    key={idx}
-                    onClick={() => handleInsertPendingTestCase(tc.refIds, tc.thenRefIds)}
-                    size="sm"
-                    title={tc.desc}
-                  >
-                    {tc.name}
-                  </Btn>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* 右侧：输出面板 */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {/* 当前文本 */}
-            <div className="surface-inset" style={{
-              background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
-              borderRadius: 8,
-              padding: 12,
-              border: '1px solid var(--border-default)',
-            }}>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
-                当前文本（实时）
-              </div>
-              <div style={{
-                background: 'var(--bg-base)',
-                borderRadius: 6,
-                padding: 10,
-                fontSize: 11,
-                fontFamily: 'monospace',
-                wordBreak: 'break-all',
-                minHeight: 32,
-                color: 'var(--text-primary)',
-              }}>
-                {currentText || <span style={{ color: 'var(--text-muted)' }}>(空)</span>}
-              </div>
-            </div>
-
-            {/* 输出日志 */}
-            <div className="surface-inset" style={{
-              background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
-              borderRadius: 8,
-              padding: 12,
-              border: '1px solid var(--border-default)',
-              flex: 1,
-              minHeight: 0,
-              display: 'flex',
-              flexDirection: 'column',
-            }}>
-              <div style={{
-                fontSize: 11,
-                color: 'var(--text-muted)',
-                marginBottom: 8,
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-              }}>
-                <span>输出日志</span>
-                <Btn onClick={() => setOutputs([])} size="xs">清空</Btn>
-              </div>
-              <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
-                {outputs.length === 0 ? (
-                  <div style={{
-                    color: 'var(--text-muted)',
-                    fontSize: 11,
-                    textAlign: 'center',
-                    padding: 16,
-                  }}>
-                    点击按钮或发送消息查看输出
-                  </div>
-                ) : (
-                  outputs.map((output, idx) => (
-                    <div
-                      key={idx}
-                      style={{
-                        background: 'var(--bg-base)',
-                        borderRadius: 6,
-                        padding: 10,
-                        marginBottom: 6,
-                        border: '1px solid var(--border-default)',
-                      }}
-                    >
-                      <div style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        marginBottom: 6,
-                      }}>
-                        <span style={{
-                          fontSize: 10,
-                          fontWeight: 600,
-                          color: 'rgba(99, 102, 241, 1)',
-                        }}>
-                          {output.action}
-                        </span>
-                        <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>
-                          {output.time}
-                        </span>
-                      </div>
-                      <pre style={{
-                        fontSize: 10,
-                        fontFamily: 'monospace',
-                        color: 'var(--text-primary)',
-                        margin: 0,
-                        whiteSpace: 'pre-wrap',
-                        wordBreak: 'break-all',
-                        background: 'rgba(0,0,0,0.2)',
-                        padding: 6,
-                        borderRadius: 4,
-                        maxHeight: 120,
-                        overflow: 'auto',
-                      }}>
-                        {JSON.stringify(output.data, null, 2)}
-                      </pre>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
           </div>
         </div>
+      </div>
 
-        {/* 验收清单 + 自动测试 */}
-        <div className="surface-inset" style={{
-          marginTop: 16,
-          background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
-          borderRadius: 8,
-          padding: 12,
-          border: '1px solid var(--border-default)',
-        }}>
-          <div style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginBottom: 12,
-          }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
-              验收检查清单
-            </div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>间隔</span>
-              <input
-                type="range"
-                min={200}
-                max={2000}
-                step={100}
-                value={testInterval}
-                onChange={(e) => setTestInterval(Number(e.target.value))}
-                style={{ width: 60 }}
-                disabled={isAutoTesting}
-              />
-              <span style={{ fontSize: 10, color: 'var(--text-muted)', minWidth: 40 }}>{testInterval}ms</span>
-              {isAutoTesting ? (
-                <Btn onClick={stopAutoTests} variant="danger" size="sm">停止</Btn>
-              ) : (
-                <Btn onClick={runAutoTests} size="sm">自动测试</Btn>
-              )}
-            </div>
-          </div>
-
-          {/* 手动检查项 */}
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 6 }}>手动检查（需人工验证）</div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 11 }}>
-              <CheckItem label="@ 弹出下拉" />
-              <CheckItem label="Enter 发送" />
-              <CheckItem label="Shift+Enter 换行" />
-            </div>
-          </div>
-
-          {/* 自动测试结果 */}
-          {testResults.length > 0 && (
-            <div>
-              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 6 }}>
-                自动测试结果
-                {' '}
-                <span style={{ color: 'rgba(34, 197, 94, 1)' }}>
-                  {testResults.filter((t) => t.status === 'pass').length} 通过
-                </span>
-                {' / '}
-                <span style={{ color: 'rgba(239, 68, 68, 1)' }}>
-                  {testResults.filter((t) => t.status === 'fail').length} 失败
-                </span>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                {testResults.map((result, idx) => (
-                  <div
-                    key={idx}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'flex-start',
-                      gap: 8,
-                      padding: '6px 8px',
-                      borderRadius: 4,
-                      fontSize: 11,
-                      background:
-                        result.status === 'pass'
-                          ? 'rgba(34, 197, 94, 0.1)'
-                          : result.status === 'fail'
-                          ? 'rgba(239, 68, 68, 0.1)'
-                          : result.status === 'running'
-                          ? 'rgba(99, 102, 241, 0.1)'
-                          : 'var(--bg-base)',
-                      border: `1px solid ${
-                        result.status === 'pass'
-                          ? 'rgba(34, 197, 94, 0.3)'
-                          : result.status === 'fail'
-                          ? 'rgba(239, 68, 68, 0.3)'
-                          : result.status === 'running'
-                          ? 'rgba(99, 102, 241, 0.3)'
-                          : 'var(--border-default)'
-                      }`,
+      <div className="grid grid-cols-2 gap-4">
+        {/* 左侧：测试区 */}
+        <div className="flex flex-col gap-3">
+          {/* 模拟画布 - 两阶段选择 */}
+          <GlassCard glow animated>
+            <div className="flex items-center justify-between text-[11px] mb-2" style={{ color: 'var(--text-muted)' }}>
+              <span>模拟画布（点击图片预选 → 点击文本框确认）</span>
+              {pendingChipKeys.size > 0 && (
+                <span className="flex items-center gap-1.5" style={{ color: 'rgba(156, 163, 175, 1)', fontSize: 10 }}>
+                  待确认 {pendingChipKeys.size} 张
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    onClick={() => {
+                      pendingChipKeys.forEach((key) => {
+                        composerRef.current?.removeChipByKey(key);
+                      });
+                      setPendingChipKeys(new Set());
                     }}
                   >
-                    <span style={{ width: 16, textAlign: 'center' }}>
-                      {result.status === 'pass' && '✓'}
-                      {result.status === 'fail' && '✗'}
-                      {result.status === 'running' && '⋯'}
-                      {result.status === 'pending' && '○'}
-                    </span>
-                    <span style={{
-                      flex: 1,
+                    清除
+                  </Button>
+                </span>
+              )}
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              {MOCK_IMAGES.map(img => {
+                const hasPendingChip = pendingChipKeys.has(img.key);
+                return (
+                  <div
+                    key={img.key}
+                    onClick={() => handleImageClick(img)}
+                    className="cursor-pointer p-1.5 rounded-md transition-all relative"
+                    style={{
+                      background: hasPendingChip ? 'rgba(156, 163, 175, 0.15)' : 'var(--bg-base)',
+                      border: `2px solid ${hasPendingChip ? 'rgba(156, 163, 175, 0.6)' : 'transparent'}`,
+                      outline: '1px solid var(--border-default)',
+                    }}
+                  >
+                    {hasPendingChip && (
+                      <div className="absolute inset-x-1.5 top-1.5 bottom-[22px] rounded flex items-center justify-center text-white text-base font-semibold" style={{ background: 'rgba(156, 163, 175, 0.3)' }}>
+                        ✓
+                      </div>
+                    )}
+                    <img
+                      src={img.src}
+                      alt={img.label}
+                      className="w-12 h-12 rounded object-cover block"
+                      style={{ opacity: hasPendingChip ? 0.7 : 1 }}
+                    />
+                    <div
+                      className="text-[9px] mt-1 max-w-[48px] overflow-hidden text-ellipsis whitespace-nowrap text-center"
+                      style={{
+                        color: hasPendingChip ? 'rgba(156, 163, 175, 1)' : 'var(--text-muted)',
+                        fontWeight: hasPendingChip ? 600 : 400,
+                      }}
+                    >
+                      #{img.refId}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </GlassCard>
+
+          {/* 主输入框 */}
+          <GlassCard glow animated>
+            <div className="text-[11px] mb-2" style={{ color: 'var(--text-muted)' }}>
+              主输入框（点击文本框确认灰色 chip → 变蓝）
+            </div>
+            <div
+              className="rounded-lg p-2.5 cursor-text transition-colors"
+              style={{
+                background: 'var(--bg-base)',
+                border: pendingChipKeys.size > 0
+                  ? '1px solid rgba(156, 163, 175, 0.5)'
+                  : '1px solid var(--border-default)',
+              }}
+              onClick={handleInputContainerClick}
+            >
+              <RichComposer
+                ref={composerRef}
+                placeholder="输入文字，点击上方图片插入引用..."
+                imageOptions={MOCK_IMAGES}
+                onChange={setCurrentText}
+                onSubmit={handleSubmit}
+                minHeight={40}
+                maxHeight={150}
+              />
+            </div>
+            <div className="flex gap-1.5 mt-2 flex-wrap">
+              <Button variant="ghost" size="xs" onClick={handleGetStructuredContent}>getStructuredContent()</Button>
+              <Button variant="ghost" size="xs" onClick={handleGetPlainText}>getPlainText()</Button>
+              <Button variant="danger" size="xs" onClick={handleClear}>clear()</Button>
+            </div>
+          </GlassCard>
+
+          {/* 窄容器测试 */}
+          <GlassCard animated>
+            <div className="flex items-center gap-2 text-[11px] mb-2" style={{ color: 'var(--text-muted)' }}>
+              <span>窄容器测试</span>
+              <input
+                type="range"
+                min={120}
+                max={400}
+                value={containerWidth}
+                onChange={(e) => setContainerWidth(Number(e.target.value))}
+                className="w-20"
+              />
+              <span className="text-[10px]">{containerWidth}px</span>
+            </div>
+            <div
+              className="rounded-lg p-2.5 transition-all"
+              style={{
+                width: containerWidth,
+                background: 'var(--bg-base)',
+                border: '1px solid var(--border-default)',
+              }}
+            >
+              <RichComposer
+                ref={narrowComposerRef}
+                placeholder="窄容器..."
+                imageOptions={MOCK_IMAGES}
+                minHeight={40}
+                maxHeight={80}
+              />
+            </div>
+          </GlassCard>
+
+          {/* 测试用例 */}
+          <GlassCard animated>
+            <div className="text-[11px] mb-2" style={{ color: 'var(--text-muted)' }}>
+              边界测试用例（直接插入蓝色 chip）
+            </div>
+            <div className="flex gap-1.5 flex-wrap">
+              {TEST_CASES.map((tc, idx) => (
+                <Button key={idx} variant="ghost" size="xs" onClick={() => handleInsertTestCase(tc.text)}>
+                  {tc.name}
+                </Button>
+              ))}
+            </div>
+          </GlassCard>
+
+          {/* 两阶段测试用例 */}
+          <GlassCard animated>
+            <div className="text-[11px] mb-2" style={{ color: 'var(--text-muted)' }}>
+              两阶段测试（灰色 pending → 点击文本框 → 蓝色确认）
+            </div>
+            <div className="flex gap-1.5 flex-wrap">
+              {PENDING_TEST_CASES.map((tc, idx) => (
+                <Button
+                  key={idx}
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => handleInsertPendingTestCase(tc.refIds, tc.thenRefIds)}
+                  title={tc.desc}
+                >
+                  {tc.name}
+                </Button>
+              ))}
+            </div>
+          </GlassCard>
+        </div>
+
+        {/* 右侧：输出面板 */}
+        <div className="flex flex-col gap-3">
+          {/* 当前文本 */}
+          <GlassCard animated>
+            <div className="text-[11px] mb-2" style={{ color: 'var(--text-muted)' }}>
+              当前文本（实时）
+            </div>
+            <div
+              className="rounded-lg p-2.5 text-[11px] font-mono break-all min-h-[32px]"
+              style={{ background: 'var(--bg-base)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+            >
+              {currentText || <span style={{ color: 'var(--text-muted)' }}>(空)</span>}
+            </div>
+          </GlassCard>
+
+          {/* 输出日志 */}
+          <GlassCard animated className="flex-1 min-h-0 flex flex-col">
+            <div className="flex items-center justify-between text-[11px] mb-2" style={{ color: 'var(--text-muted)' }}>
+              <span>输出日志</span>
+              <Button variant="ghost" size="xs" onClick={() => setOutputs([])}>清空</Button>
+            </div>
+            <div className="flex-1 min-h-0 overflow-y-auto">
+              {outputs.length === 0 ? (
+                <div className="text-[11px] text-center py-4" style={{ color: 'var(--text-muted)' }}>
+                  点击按钮或发送消息查看输出
+                </div>
+              ) : (
+                outputs.map((output, idx) => (
+                  <div
+                    key={idx}
+                    className="rounded-lg p-2.5 mb-1.5"
+                    style={{ background: 'var(--bg-base)', border: '1px solid var(--border-default)' }}
+                  >
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-[10px] font-semibold" style={{ color: 'rgba(99, 102, 241, 1)' }}>
+                        {output.action}
+                      </span>
+                      <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>
+                        {output.time}
+                      </span>
+                    </div>
+                    <pre className="text-[10px] font-mono m-0 whitespace-pre-wrap break-all p-1.5 rounded max-h-[120px] overflow-auto" style={{ background: 'rgba(0,0,0,0.2)', color: 'var(--text-primary)' }}>
+                      {JSON.stringify(output.data, null, 2)}
+                    </pre>
+                  </div>
+                ))
+              )}
+            </div>
+          </GlassCard>
+        </div>
+      </div>
+
+      {/* 验收清单 + 自动测试 */}
+      <GlassCard glow animated>
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+            验收检查清单
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>间隔</span>
+            <input
+              type="range"
+              min={200}
+              max={2000}
+              step={100}
+              value={testInterval}
+              onChange={(e) => setTestInterval(Number(e.target.value))}
+              className="w-[60px]"
+              disabled={isAutoTesting}
+            />
+            <span className="text-[10px] min-w-[40px]" style={{ color: 'var(--text-muted)' }}>{testInterval}ms</span>
+            {isAutoTesting ? (
+              <Button variant="danger" size="xs" onClick={stopAutoTests}>停止</Button>
+            ) : (
+              <Button variant="secondary" size="xs" onClick={runAutoTests}>自动测试</Button>
+            )}
+          </div>
+        </div>
+
+        {/* 手动检查项 */}
+        <div className="mb-3">
+          <div className="text-[10px] mb-1.5" style={{ color: 'var(--text-muted)' }}>手动检查（需人工验证）</div>
+          <div className="flex gap-2 flex-wrap text-[11px]">
+            <CheckItem label="@ 弹出下拉" />
+            <CheckItem label="Enter 发送" />
+            <CheckItem label="Shift+Enter 换行" />
+          </div>
+        </div>
+
+        {/* 自动测试结果 */}
+        {testResults.length > 0 && (
+          <div>
+            <div className="text-[10px] mb-1.5" style={{ color: 'var(--text-muted)' }}>
+              自动测试结果
+              {' '}
+              <span style={{ color: 'rgba(34, 197, 94, 1)' }}>
+                {testResults.filter((t) => t.status === 'pass').length} 通过
+              </span>
+              {' / '}
+              <span style={{ color: 'rgba(239, 68, 68, 1)' }}>
+                {testResults.filter((t) => t.status === 'fail').length} 失败
+              </span>
+            </div>
+            <div className="flex flex-col gap-1">
+              {testResults.map((result, idx) => (
+                <div
+                  key={idx}
+                  className="flex items-start gap-2 px-2 py-1.5 rounded text-[11px]"
+                  style={{
+                    background:
+                      result.status === 'pass'
+                        ? 'rgba(34, 197, 94, 0.1)'
+                        : result.status === 'fail'
+                        ? 'rgba(239, 68, 68, 0.1)'
+                        : result.status === 'running'
+                        ? 'rgba(99, 102, 241, 0.1)'
+                        : 'var(--bg-base)',
+                    border: `1px solid ${
+                      result.status === 'pass'
+                        ? 'rgba(34, 197, 94, 0.3)'
+                        : result.status === 'fail'
+                        ? 'rgba(239, 68, 68, 0.3)'
+                        : result.status === 'running'
+                        ? 'rgba(99, 102, 241, 0.3)'
+                        : 'var(--border-default)'
+                    }`,
+                  }}
+                >
+                  <span className="w-4 text-center">
+                    {result.status === 'pass' && '✓'}
+                    {result.status === 'fail' && '✗'}
+                    {result.status === 'running' && '⋯'}
+                    {result.status === 'pending' && '○'}
+                  </span>
+                  <span
+                    className="flex-1"
+                    style={{
                       color:
                         result.status === 'pass'
                           ? 'rgba(34, 197, 94, 1)'
@@ -925,79 +783,31 @@ export default function WorkshopLabTab() {
                           : result.status === 'running'
                           ? 'rgba(99, 102, 241, 1)'
                           : 'var(--text-secondary)',
-                    }}>
-                      {result.name}
+                    }}
+                  >
+                    {result.name}
+                  </span>
+                  {result.duration !== undefined && (
+                    <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>
+                      {result.duration}ms
                     </span>
-                    {result.duration !== undefined && (
-                      <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>
-                        {result.duration}ms
-                      </span>
-                    )}
-                    {result.message && result.status === 'fail' && (
-                      <span style={{
-                        fontSize: 9,
-                        color: 'rgba(239, 68, 68, 0.8)',
-                        maxWidth: 300,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
+                  )}
+                  {result.message && result.status === 'fail' && (
+                    <span
+                      className="text-[9px] max-w-[300px] overflow-hidden text-ellipsis whitespace-nowrap"
+                      style={{ color: 'rgba(239, 68, 68, 0.8)' }}
                       title={result.message}
-                      >
-                        {result.message}
-                      </span>
-                    )}
-                  </div>
-                ))}
-              </div>
+                    >
+                      {result.message}
+                    </span>
+                  )}
+                </div>
+              ))}
             </div>
-          )}
-        </div>
-      </div>
+          </div>
+        )}
+      </GlassCard>
     </div>
-  );
-}
-
-// 按钮组件
-function Btn({
-  children,
-  onClick,
-  variant = 'default',
-  size = 'md',
-  title,
-}: {
-  children: React.ReactNode;
-  onClick: () => void;
-  variant?: 'default' | 'danger';
-  size?: 'xs' | 'sm' | 'md';
-  title?: string;
-}) {
-  const sizeStyles = {
-    xs: { padding: '2px 6px', fontSize: 9 },
-    sm: { padding: '4px 8px', fontSize: 10 },
-    md: { padding: '6px 10px', fontSize: 11 },
-  };
-  const variantStyles = {
-    default: { background: 'rgba(99, 102, 241, 0.15)', borderColor: 'rgba(99, 102, 241, 0.25)' },
-    danger: { background: 'rgba(239, 68, 68, 0.15)', borderColor: 'rgba(239, 68, 68, 0.25)' },
-  };
-  return (
-    <button
-      onClick={onClick}
-      title={title}
-      style={{
-        ...sizeStyles[size],
-        ...variantStyles[variant],
-        fontWeight: 500,
-        border: '1px solid',
-        borderRadius: 4,
-        color: 'var(--text-primary)',
-        cursor: 'pointer',
-        transition: 'all 0.15s',
-      }}
-    >
-      {children}
-    </button>
   );
 }
 
@@ -1005,27 +815,27 @@ function Btn({
 function CheckItem({ label }: { label: string }) {
   const [checked, setChecked] = useState(false);
   return (
-    <label style={{
-      display: 'flex',
-      alignItems: 'center',
-      gap: 6,
-      cursor: 'pointer',
-      padding: '4px 8px',
-      background: checked ? 'rgba(34, 197, 94, 0.1)' : 'var(--bg-base)',
-      borderRadius: 4,
-      border: `1px solid ${checked ? 'rgba(34, 197, 94, 0.3)' : 'var(--border-default)'}`,
-      transition: 'all 0.15s',
-    }}>
+    <label
+      className={cn(
+        'flex items-center gap-1.5 cursor-pointer px-2 py-1 rounded transition-all',
+        checked ? 'bg-emerald-500/10' : 'bg-[var(--bg-base)]',
+      )}
+      style={{
+        border: `1px solid ${checked ? 'rgba(34, 197, 94, 0.3)' : 'var(--border-default)'}`,
+      }}
+    >
       <input
         type="checkbox"
         checked={checked}
         onChange={(e) => setChecked(e.target.checked)}
         style={{ accentColor: '#22c55e', width: 12, height: 12 }}
       />
-      <span style={{
-        color: checked ? 'rgba(34, 197, 94, 1)' : 'var(--text-secondary)',
-        textDecoration: checked ? 'line-through' : 'none',
-      }}>
+      <span
+        style={{
+          color: checked ? 'rgba(34, 197, 94, 1)' : 'var(--text-secondary)',
+          textDecoration: checked ? 'line-through' : 'none',
+        }}
+      >
         {label}
       </span>
     </label>

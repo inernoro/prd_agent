@@ -24,11 +24,13 @@ import { LandingPage } from '@/pages/home';
 import OpenPlatformTabsPage from '@/pages/OpenPlatformTabsPage';
 import AutomationRulesPage from '@/pages/AutomationRulesPage';
 import SettingsPage from '@/pages/SettingsPage';
+import DataTransferPage from '@/pages/DataTransferPage';
 import ExecutiveDashboardPage from '@/pages/ExecutiveDashboardPage';
 import { PrdAgentTabsPage } from '@/pages/PrdAgentTabsPage';
 import AgentLauncherPage from '@/pages/AgentLauncherPage';
 import MobileHomePage from '@/pages/MobileHomePage';
 import MobileAssetsPage from '@/pages/MobileAssetsPage';
+import DesktopAssetsPage from '@/pages/DesktopAssetsPage';
 import MobileProfilePage from '@/pages/MobileProfilePage';
 import RichComposerLab from '@/pages/_dev/RichComposerLab';
 import MobileAuditPage from '@/pages/_dev/MobileAuditPage';
@@ -109,6 +111,13 @@ function IndexPage() {
   return <AgentLauncherPage />;
 }
 
+/** 我的资产路由：移动端使用 MobileAssetsPage，桌面端使用增强版 DesktopAssetsPage。 */
+function MyAssetsPage() {
+  const { isMobile } = useBreakpoint();
+  if (isMobile) return <MobileAssetsPage />;
+  return <DesktopAssetsPage />;
+}
+
 /** /executive 路由：独立的总裁面板，不与首页绑定。 */
 function ExecutivePage() {
   return <ExecutiveDashboardPage />;
@@ -121,6 +130,7 @@ export default function App() {
   const setPermissionsLoaded = useAuthStore((s) => s.setPermissionsLoaded);
   const setIsRoot = useAuthStore((s) => s.setIsRoot);
   const setCdnBaseUrl = useAuthStore((s) => s.setCdnBaseUrl);
+  const setPermFingerprint = useAuthStore((s) => s.setPermFingerprint);
   const setMenuCatalog = useAuthStore((s) => s.setMenuCatalog);
   const menuCatalogLoaded = useAuthStore((s) => s.menuCatalogLoaded);
   const logout = useAuthStore((s) => s.logout);
@@ -143,9 +153,10 @@ export default function App() {
       setPermissions(res.data.effectivePermissions || []);
       setIsRoot(res.data.isRoot ?? false);
       if (res.data.cdnBaseUrl) setCdnBaseUrl(res.data.cdnBaseUrl);
+      if (res.data.permissionFingerprint) setPermFingerprint(res.data.permissionFingerprint);
       setPermissionsLoaded(true);
     })();
-  }, [isAuthenticated, permissionsLoaded, setPermissions, setPermissionsLoaded, setIsRoot, setCdnBaseUrl, logout]);
+  }, [isAuthenticated, permissionsLoaded, setPermissions, setPermissionsLoaded, setIsRoot, setCdnBaseUrl, setPermFingerprint, logout]);
 
   // 加载菜单目录
   useEffect(() => {
@@ -251,7 +262,7 @@ export default function App() {
         <Route path="workflow-agent" element={<RequirePermission perm="workflow-agent.use"><WorkflowListPage /></RequirePermission>} />
         <Route path="workflow-agent/:workflowId" element={<RequirePermission perm="workflow-agent.use"><WorkflowEditorPage /></RequirePermission>} />
         <Route path="workflow-agent/:workflowId/canvas" element={<RequirePermission perm="workflow-agent.use"><WorkflowCanvasPage /></RequirePermission>} />
-        <Route path="ai-toolbox" element={<RequirePermission perm="access"><AiToolboxPage /></RequirePermission>} />
+        <Route path="ai-toolbox" element={<RequirePermission perm="ai-toolbox.use"><AiToolboxPage /></RequirePermission>} />
         <Route path="logs" element={<RequirePermission perm="logs.read"><LlmLogsPage /></RequirePermission>} />
         <Route path="open-platform" element={<RequirePermission perm="open-platform.manage"><OpenPlatformTabsPage /></RequirePermission>} />
         <Route path="automations" element={<RequirePermission perm="automations.manage"><AutomationRulesPage /></RequirePermission>} />
@@ -260,12 +271,14 @@ export default function App() {
 
         <Route path="assets" element={<RequirePermission perm="assets.read"><AssetsManagePage /></RequirePermission>} />
         <Route path="skills" element={<RequirePermission perm="skills.read"><SkillsPage /></RequirePermission>} />
-        <Route path="arena" element={<RequirePermission perm="access"><ArenaPage /></RequirePermission>} />
+        <Route path="arena" element={<RequirePermission perm="arena-agent.use"><ArenaPage /></RequirePermission>} />
         <Route path="lab" element={<RequirePermission perm="lab.read"><LabPage /></RequirePermission>} />
         <Route path="settings" element={<RequirePermission perm="access"><SettingsPage /></RequirePermission>} />
+        <Route path="data-transfers" element={<RequirePermission perm="access"><DataTransferPage /></RequirePermission>} />
         <Route path="executive" element={<RequirePermission perm="access"><ExecutivePage /></RequirePermission>} />
+        {/* 我的资产：桌面端/移动端自动切换 */}
+        <Route path="my-assets" element={<RequirePermission perm="access"><MyAssetsPage /></RequirePermission>} />
         {/* 移动端专属路由 */}
-        <Route path="my-assets" element={<RequirePermission perm="access"><MobileAssetsPage /></RequirePermission>} />
         <Route path="profile" element={<RequirePermission perm="access"><MobileProfilePage /></RequirePermission>} />
         <Route path="stats" element={<Navigate to="/" replace />} />
       </Route>

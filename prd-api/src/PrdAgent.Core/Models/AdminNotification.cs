@@ -28,8 +28,21 @@ public class AdminNotification
 
     public string Source { get; set; } = "system";
 
+    /// <summary>
+    /// 附件列表（COS URL）
+    /// </summary>
+    public List<NotificationAttachment>? Attachments { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? HandledAt { get; set; }
     public DateTime? ExpiresAt { get; set; }
+}
+
+public class NotificationAttachment
+{
+    public string Name { get; set; } = string.Empty;
+    public string Url { get; set; } = string.Empty;
+    public long SizeBytes { get; set; }
+    public string? MimeType { get; set; }
 }

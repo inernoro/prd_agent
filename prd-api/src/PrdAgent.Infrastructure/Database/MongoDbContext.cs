@@ -162,6 +162,9 @@ public class MongoDbContext
     // 模型中继 (Exchange)
     public IMongoCollection<ModelExchange> ModelExchanges => _database.GetCollection<ModelExchange>("model_exchanges");
 
+    // Account Data Transfer 账户数据分享
+    public IMongoCollection<AccountDataTransfer> AccountDataTransfers => _database.GetCollection<AccountDataTransfer>("account_data_transfers");
+
     // Video Agent 文章转视频
     public IMongoCollection<VideoGenRun> VideoGenRuns => _database.GetCollection<VideoGenRun>("video_gen_runs");
 

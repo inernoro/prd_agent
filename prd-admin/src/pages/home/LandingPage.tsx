@@ -41,6 +41,7 @@ export default function LandingPage() {
   const mainRef = useRef<HTMLDivElement>(null);
   const [activeAgentIndex, setActiveAgentIndex] = useState(0);
   const [isInShowcase, setIsInShowcase] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Track scroll position to determine if we're in the showcase section
   useEffect(() => {
@@ -124,21 +125,102 @@ export default function LandingPage() {
               </a>
             </div>
 
-            {/* CTA button */}
-            <button
-              onClick={handleGetStarted}
-              className="px-5 py-2 rounded-lg text-sm font-semibold transition-all duration-300 hover:scale-105"
-              style={{
-                background: HERO_GRADIENT,
-                color: '#ffffff',
-                boxShadow: '0 0 20px rgba(0, 240, 255, 0.25)',
-              }}
-            >
-              登录 / 注册
-            </button>
+            {/* CTA button + mobile hamburger */}
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleGetStarted}
+                className="px-5 py-2 rounded-lg text-sm font-semibold transition-all duration-300 hover:scale-105"
+                style={{
+                  background: HERO_GRADIENT,
+                  color: '#ffffff',
+                  boxShadow: '0 0 20px rgba(0, 240, 255, 0.25)',
+                }}
+              >
+                登录 / 注册
+              </button>
+
+              {/* Hamburger button - mobile only */}
+              <button
+                onClick={() => setMobileMenuOpen(true)}
+                className="md:hidden flex items-center justify-center w-10 h-10 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors"
+                aria-label="打开导航菜单"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
       </nav>
+
+      {/* Mobile navigation overlay */}
+      {mobileMenuOpen && (
+        <div className="fixed inset-0 z-[100] md:hidden">
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-black/80 backdrop-blur-md"
+            onClick={() => setMobileMenuOpen(false)}
+          />
+
+          {/* Menu panel */}
+          <div className="absolute inset-x-0 top-0 bg-[#0a0a12]/95 backdrop-blur-xl border-b border-white/10 animate-[landingMenuIn_0.2s_ease-out]">
+            <style>{`@keyframes landingMenuIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}`}</style>
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4">
+              <div className="flex items-center gap-3">
+                <MapLogo className="w-10 h-10 rounded-xl" />
+                <span className="text-lg font-bold text-white/90">米多Agent平台</span>
+              </div>
+              <button
+                onClick={() => setMobileMenuOpen(false)}
+                className="flex items-center justify-center w-10 h-10 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors"
+                aria-label="关闭导航菜单"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Nav links */}
+            <nav className="px-6 pb-6 space-y-1">
+              {[
+                { label: '产品', href: '#agent-showcase' },
+                { label: '功能', href: '#features' },
+                { label: '案例', href: '#testimonials' },
+                { label: '文档', href: '#' },
+              ].map((item) => (
+                <a
+                  key={item.label}
+                  href={item.href}
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="block px-4 py-3 rounded-xl text-base text-white/70 hover:text-white hover:bg-white/8 transition-colors"
+                >
+                  {item.label}
+                </a>
+              ))}
+
+              {/* Mobile CTA */}
+              <div className="pt-4">
+                <button
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    handleGetStarted();
+                  }}
+                  className="w-full py-3 rounded-xl text-base font-semibold text-white transition-all hover:opacity-90"
+                  style={{
+                    background: HERO_GRADIENT,
+                    boxShadow: '0 0 20px rgba(0, 240, 255, 0.25)',
+                  }}
+                >
+                  登录 / 注册
+                </button>
+              </div>
+            </nav>
+          </div>
+        </div>
+      )}
 
       {/* Hero section */}
       <HeroSection onGetStarted={handleGetStarted} onWatchDemo={handleWatchDemo} />

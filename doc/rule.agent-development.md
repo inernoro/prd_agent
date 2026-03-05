@@ -49,10 +49,10 @@
 │                                                                 │
 │  Phase 5: 文档同步                                               │
 │  ├─ 5.1 更新 CLAUDE.md (Codebase Skill)                         │
-│  ├─ 5.2 更新 SRS (2.srs.md)                                     │
+│  ├─ 5.2 更新 SRS (spec.srs.md)                                   │
 │  ├─ 5.3 更新数据字典 (rule.data-dictionary.md)                   │
-│  ├─ 5.4 更新命名规范 (rule.app-feature-definition.md)            │
-│  └─ 5.5 创建功能设计文档 (doc/N.xxx.md)                          │
+│  ├─ 5.4 更新命名规范 (rule.app-identity.md)                      │
+│  └─ 5.5 创建功能设计文档 (design.{agent-name}.md)                │
 │                                                                 │
 │  Phase 6: Debugger Skill                                        │
 │  ├─ 6.1 日志埋点规范                                             │
@@ -470,10 +470,10 @@ E2E_ADMIN_PASS=your-admin-pass
 | 文档 | 更新内容 |
 |------|----------|
 | `CLAUDE.md` | Codebase Skill 段落：应用标识表、功能注册表、MongoDB 集合 |
-| `doc/2.srs.md` | 功能模块描述 |
+| `doc/spec.srs.md` | 功能模块描述 |
 | `doc/rule.data-dictionary.md` | 新增集合定义 |
-| `doc/rule.app-feature-definition.md` | 新增应用清单 |
-| `doc/N.{agent}.md` | 新建功能设计文档 |
+| `doc/rule.app-identity.md` | 新增应用清单 |
+| `doc/design.{agent-name}.md` | 新建功能设计文档 |
 
 ---
 

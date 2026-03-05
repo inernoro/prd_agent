@@ -933,7 +933,9 @@ import {
   saveArenaBattleReal,
   listArenaBattlesReal,
   getArenaBattleReal,
+  uploadArenaAttachmentReal,
 } from '@/services/real/arena';
+export type { ArenaAttachmentInfo } from '@/services/real/arena';
 
 export const listArenaGroups = withAuth(listArenaGroupsReal);
 export const createArenaGroup = withAuth(createArenaGroupReal);
@@ -952,6 +954,7 @@ export const cancelArenaRun = withAuth(cancelArenaRunReal);
 export const saveArenaBattle = withAuth(saveArenaBattleReal);
 export const listArenaBattles = withAuth(listArenaBattlesReal);
 export const getArenaBattle = withAuth(getArenaBattleReal);
+export const uploadArenaAttachment = uploadArenaAttachmentReal;
 
 export const openPlatformService: IOpenPlatformService = new OpenPlatformService();
 export const automationsService: IAutomationsService = new AutomationsService();
@@ -1105,6 +1108,7 @@ import type {
   GetExecutionContract,
   CancelExecutionContract,
   ResumeFromNodeContract,
+  ContinueExecutionContract,
   GetNodeLogsContract,
   CreateShareLinkContract,
   ListShareLinksContract,
@@ -1125,6 +1129,7 @@ import {
   getExecutionReal,
   cancelExecutionReal,
   resumeFromNodeReal,
+  continueExecutionReal,
   getNodeLogsReal,
   createShareLinkReal,
   listShareLinksReal,
@@ -1145,6 +1150,7 @@ export const listExecutions: ListExecutionsContract = withAuth(listExecutionsRea
 export const getExecution: GetExecutionContract = withAuth(getExecutionReal);
 export const cancelExecution: CancelExecutionContract = withAuth(cancelExecutionReal);
 export const resumeFromNode: ResumeFromNodeContract = withAuth(resumeFromNodeReal);
+export const continueExecution: ContinueExecutionContract = withAuth(continueExecutionReal);
 export const getNodeLogs: GetNodeLogsContract = withAuth(getNodeLogsReal);
 export const createShareLink: CreateShareLinkContract = withAuth(createShareLinkReal);
 export const listShareLinks: ListShareLinksContract = withAuth(listShareLinksReal);
@@ -1212,3 +1218,15 @@ export type {
   TutorialEmailEnrollment,
   TutorialEmailStep,
 } from '@/services/real/tutorialEmail';
+
+// ── Account Data Transfer 数据分享 ──
+export {
+  listTransfersReal as listTransfers,
+  getTransferReal as getTransfer,
+  createTransferReal as createTransfer,
+  acceptTransferReal as acceptTransfer,
+  rejectTransferReal as rejectTransfer,
+  cancelTransferReal as cancelTransfer,
+  listMyWorkspacesReal as listMyWorkspaces,
+  listMyConfigsReal as listMyConfigs,
+} from '@/services/real/dataTransfer';
