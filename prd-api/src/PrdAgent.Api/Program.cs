@@ -221,6 +221,10 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.ReportAgent.ReportAutoGe
 // Report Agent Phase 3: 管理增强服务
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ReportNotificationService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.TeamSummaryService>();
+// Report Agent v2.0: 工作流管道 + 个人数据源
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IWorkflowExecutionService, PrdAgent.Api.Services.ReportAgent.WorkflowExecutionService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ArtifactStatsParser>();
+builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.PersonalSourceService>();
 
 // ImageMaster 资产存储：默认本地文件（可替换为对象存储实现）
 builder.Services.AddSingleton<IAssetStorage>(sp =>

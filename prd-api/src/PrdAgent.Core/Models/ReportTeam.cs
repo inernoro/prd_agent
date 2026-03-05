@@ -26,6 +26,12 @@ public class ReportTeam
     /// <summary>团队描述</summary>
     public string? Description { get; set; }
 
+    /// <summary>绑定的数据采集工作流 ID（v2.0，从系统模板 clone）</summary>
+    public string? DataCollectionWorkflowId { get; set; }
+
+    /// <summary>使用的预置工作流模板 key（如 "dev-team", "product-team", "minimal"）</summary>
+    public string? WorkflowTemplateKey { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
@@ -57,6 +63,13 @@ public class ReportTeamMember
 
     /// <summary>岗位名称</summary>
     public string? JobTitle { get; set; }
+
+    /// <summary>
+    /// 多平台身份映射（v2.0）
+    /// key: 平台名 (github / tapd / yuque / gitlab)
+    /// value: 该平台上的用户标识
+    /// </summary>
+    public Dictionary<string, string> IdentityMappings { get; set; } = new();
 
     /// <summary>加入时间</summary>
     public DateTime JoinedAt { get; set; } = DateTime.UtcNow;

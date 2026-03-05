@@ -307,6 +307,8 @@ public class ReportAgentController : ControllerBase
             update = update.Set(m => m.Role, req.Role);
         if (req.JobTitle != null)
             update = update.Set(m => m.JobTitle, req.JobTitle);
+        if (req.IdentityMappings != null)
+            update = update.Set(m => m.IdentityMappings, req.IdentityMappings);
 
         var result = await _db.ReportTeamMembers.UpdateOneAsync(
             m => m.TeamId == id && m.UserId == userId, update);
@@ -316,6 +318,112 @@ public class ReportAgentController : ControllerBase
         var updated = await _db.ReportTeamMembers.Find(
             m => m.TeamId == id && m.UserId == userId).FirstOrDefaultAsync();
         return Ok(ApiResponse<object>.Ok(new { member = updated }));
+    }
+
+    /// <summary>
+    /// 更新成员多平台身份映射（v2.0）
+    /// </summary>
+    [HttpPut("teams/{id}/members/{userId}/identity-mappings")]
+    public async Task<IActionResult> UpdateIdentityMappings(
+        string id, string userId, [FromBody] Dictionary<string, string> mappings)
+    {
+        if (!HasPermission(AdminPermissionCatalog.ReportAgentTeamManage) &&
+            !await IsTeamLeaderOrDeputy(id, GetUserId()))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "缺少团队管理权限"));
+
+        var result = await _db.ReportTeamMembers.UpdateOneAsync(
+            m => m.TeamId == id && m.UserId == userId,
+            Builders<ReportTeamMember>.Update.Set(m => m.IdentityMappings, mappings));
+
+        if (result.MatchedCount == 0)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "成员不存在"));
+
+        return Ok(ApiResponse<object>.Ok(new { updated = true }));
+    }
+
+    /// <summary>
+    /// 获取团队采集工作流信息（v2.0）
+    /// </summary>
+    [HttpGet("teams/{id}/workflow")]
+    public async Task<IActionResult> GetTeamWorkflow(string id)
+    {
+        var team = await _db.ReportTeams.Find(t => t.Id == id).FirstOrDefaultAsync();
+        if (team == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "团队不存在"));
+
+        if (string.IsNullOrEmpty(team.DataCollectionWorkflowId))
+            return Ok(ApiResponse<object>.Ok(new { workflow = (object?)null, templateKey = team.WorkflowTemplateKey }));
+
+        var workflow = await _db.Workflows.Find(w => w.Id == team.DataCollectionWorkflowId).FirstOrDefaultAsync();
+        // 获取最近一次执行
+        var lastExecution = await _db.WorkflowExecutions
+            .Find(e => e.WorkflowId == team.DataCollectionWorkflowId)
+            .SortByDescending(e => e.CreatedAt)
+            .Limit(1)
+            .FirstOrDefaultAsync();
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            workflow = workflow != null ? new
+            {
+                workflow.Id,
+                workflow.Name,
+                nodeCount = workflow.Nodes.Count,
+                workflow.IsEnabled,
+                workflow.LastExecutedAt
+            } : null,
+            templateKey = team.WorkflowTemplateKey,
+            lastExecution = lastExecution != null ? new
+            {
+                lastExecution.Id,
+                lastExecution.Status,
+                lastExecution.CreatedAt,
+                lastExecution.CompletedAt,
+                lastExecution.DurationMs,
+                artifactCount = lastExecution.FinalArtifacts.Count,
+                lastExecution.ErrorMessage
+            } : null
+        }));
+    }
+
+    /// <summary>
+    /// 手动触发团队采集工作流（v2.0）
+    /// </summary>
+    [HttpPost("teams/{id}/workflow/run")]
+    public async Task<IActionResult> RunTeamWorkflow(string id, CancellationToken ct)
+    {
+        var team = await _db.ReportTeams.Find(t => t.Id == id).FirstOrDefaultAsync(ct);
+        if (team == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "团队不存在"));
+
+        if (string.IsNullOrEmpty(team.DataCollectionWorkflowId))
+            return BadRequest(ApiResponse<object>.Fail("NO_WORKFLOW", "团队未绑定采集工作流"));
+
+        if (!await IsTeamLeaderOrDeputy(id, GetUserId()) &&
+            !HasPermission(AdminPermissionCatalog.ReportAgentTeamManage))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "仅团队负责人可触发采集"));
+
+        var now = DateTime.UtcNow;
+        var wy = ISOWeek.GetYear(now);
+        var wn = ISOWeek.GetWeekOfYear(now);
+        var weekStart = ISOWeek.ToDateTime(wy, wn, DayOfWeek.Monday);
+        var weekEnd = weekStart.AddDays(4); // 周五
+
+        var wfService = HttpContext.RequestServices.GetRequiredService<PrdAgent.Core.Interfaces.IWorkflowExecutionService>();
+        var execution = await wfService.ExecuteInternalAsync(
+            team.DataCollectionWorkflowId,
+            new Dictionary<string, string>
+            {
+                ["weekYear"] = wy.ToString(),
+                ["weekNumber"] = wn.ToString(),
+                ["dateFrom"] = weekStart.ToString("yyyy-MM-dd"),
+                ["dateTo"] = weekEnd.ToString("yyyy-MM-dd"),
+                ["teamId"] = id
+            },
+            triggeredBy: $"report-agent:{GetUserId()}",
+            ct: ct);
+
+        return Ok(ApiResponse<object>.Ok(new { executionId = execution.Id, status = execution.Status }));
     }
 
     /// <summary>
@@ -910,6 +1018,8 @@ public class ReportAgentController : ControllerBase
     {
         public string? Role { get; set; }
         public string? JobTitle { get; set; }
+        /// <summary>多平台身份映射（v2.0）如 { "github": "zhangsan", "tapd": "zhangsan@company.com" }</summary>
+        public Dictionary<string, string>? IdentityMappings { get; set; }
     }
 
     public class CreateTemplateRequest
@@ -1130,6 +1240,166 @@ public class ReportAgentController : ControllerBase
             x => x.UserId == userId && x.Date == parsedDate.Date);
 
         return Ok(ApiResponse<object>.Ok(new { deleted = result.DeletedCount > 0 }));
+    }
+
+    #endregion
+
+    #region Personal Sources (v2.0)
+
+    /// <summary>
+    /// 我的个人数据源列表
+    /// </summary>
+    [HttpGet("my/sources")]
+    public async Task<IActionResult> ListPersonalSources()
+    {
+        var svc = HttpContext.RequestServices.GetRequiredService<PersonalSourceService>();
+        var sources = await svc.ListAsync(GetUserId());
+
+        var cryptoKey = GetCryptoKey();
+        var items = sources.Select(s => new
+        {
+            s.Id,
+            s.SourceType,
+            s.DisplayName,
+            s.Config,
+            tokenMasked = ApiKeyCrypto.Mask(
+                string.IsNullOrEmpty(s.EncryptedToken) ? null
+                : ApiKeyCrypto.Decrypt(s.EncryptedToken, cryptoKey)),
+            s.Enabled,
+            s.LastSyncAt,
+            s.LastSyncStatus,
+            s.LastSyncError,
+            s.CreatedAt
+        });
+
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>
+    /// 绑定个人数据源
+    /// </summary>
+    [HttpPost("my/sources")]
+    public async Task<IActionResult> CreatePersonalSource([FromBody] CreatePersonalSourceRequest req)
+    {
+        if (string.IsNullOrWhiteSpace(req.SourceType) || !PersonalSourceType.All.Contains(req.SourceType))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_SOURCE_TYPE", $"不支持的数据源类型: {req.SourceType}"));
+
+        var svc = HttpContext.RequestServices.GetRequiredService<PersonalSourceService>();
+        var source = await svc.CreateAsync(
+            GetUserId(),
+            req.SourceType,
+            req.DisplayName ?? req.SourceType,
+            new PersonalSourceConfig
+            {
+                RepoUrl = req.RepoUrl,
+                Username = req.Username,
+                SpaceId = req.SpaceId,
+                ApiEndpoint = req.ApiEndpoint
+            },
+            req.Token);
+
+        return Ok(ApiResponse<object>.Ok(new { source = new { source.Id, source.SourceType, source.DisplayName } }));
+    }
+
+    /// <summary>
+    /// 更新个人数据源
+    /// </summary>
+    [HttpPut("my/sources/{id}")]
+    public async Task<IActionResult> UpdatePersonalSource(string id, [FromBody] UpdatePersonalSourceRequest req)
+    {
+        var svc = HttpContext.RequestServices.GetRequiredService<PersonalSourceService>();
+        PersonalSourceConfig? config = (req.RepoUrl != null || req.Username != null || req.SpaceId != null || req.ApiEndpoint != null)
+            ? new PersonalSourceConfig
+            {
+                RepoUrl = req.RepoUrl,
+                Username = req.Username,
+                SpaceId = req.SpaceId,
+                ApiEndpoint = req.ApiEndpoint
+            }
+            : null;
+
+        var ok = await svc.UpdateAsync(id, GetUserId(), req.DisplayName, config, req.Token, req.Enabled);
+        if (!ok)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "数据源不存在"));
+
+        return Ok(ApiResponse<object>.Ok(new { updated = true }));
+    }
+
+    /// <summary>
+    /// 解绑个人数据源
+    /// </summary>
+    [HttpDelete("my/sources/{id}")]
+    public async Task<IActionResult> DeletePersonalSource(string id)
+    {
+        var svc = HttpContext.RequestServices.GetRequiredService<PersonalSourceService>();
+        var ok = await svc.DeleteAsync(id, GetUserId());
+        if (!ok)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "数据源不存在"));
+
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    /// <summary>
+    /// 测试个人数据源连接
+    /// </summary>
+    [HttpPost("my/sources/{id}/test")]
+    public async Task<IActionResult> TestPersonalSource(string id, CancellationToken ct)
+    {
+        var svc = HttpContext.RequestServices.GetRequiredService<PersonalSourceService>();
+        var ok = await svc.TestConnectionAsync(id, GetUserId(), ct);
+        return Ok(ApiResponse<object>.Ok(new { connected = ok }));
+    }
+
+    /// <summary>
+    /// 手动同步个人数据源
+    /// </summary>
+    [HttpPost("my/sources/{id}/sync")]
+    public async Task<IActionResult> SyncPersonalSource(string id, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var wy = ISOWeek.GetYear(now);
+        var wn = ISOWeek.GetWeekOfYear(now);
+        var weekStart = ISOWeek.ToDateTime(wy, wn, DayOfWeek.Monday);
+        var weekEnd = weekStart.AddDays(6).AddHours(23).AddMinutes(59);
+
+        var svc = HttpContext.RequestServices.GetRequiredService<PersonalSourceService>();
+        var stats = await svc.SyncAsync(id, GetUserId(), weekStart, weekEnd, ct);
+
+        if (stats == null)
+            return Ok(ApiResponse<object>.Ok(new { synced = false, error = "同步失败，请检查数据源配置" }));
+
+        return Ok(ApiResponse<object>.Ok(new { synced = true, stats = new { stats.Summary, detailCount = stats.Details.Count } }));
+    }
+
+    /// <summary>
+    /// 我的本周统计预览
+    /// </summary>
+    [HttpGet("my/stats")]
+    public async Task<IActionResult> GetMyStats([FromQuery] int? weekYear, [FromQuery] int? weekNumber, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var wy = weekYear ?? ISOWeek.GetYear(now);
+        var wn = weekNumber ?? ISOWeek.GetWeekOfYear(now);
+        var weekStart = ISOWeek.ToDateTime(wy, wn, DayOfWeek.Monday);
+        var weekEnd = weekStart.AddDays(6).AddHours(23).AddMinutes(59);
+
+        var svc = HttpContext.RequestServices.GetRequiredService<PersonalSourceService>();
+        var allStats = await svc.CollectAllAsync(GetUserId(), weekStart, weekEnd, ct);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            weekYear = wy,
+            weekNumber = wn,
+            periodStart = weekStart,
+            periodEnd = weekEnd,
+            sources = allStats.Select(s => new
+            {
+                s.SourceType,
+                s.Summary,
+                detailCount = s.Details.Count,
+                s.CollectedAt
+            })
+        }));
     }
 
     #endregion
@@ -2046,4 +2316,27 @@ public class MarkVacationRequest
     public int? WeekYear { get; set; }
     public int? WeekNumber { get; set; }
     public string? Reason { get; set; }
+}
+
+// v2.0 Personal Source DTOs
+public class CreatePersonalSourceRequest
+{
+    public string SourceType { get; set; } = string.Empty;
+    public string? DisplayName { get; set; }
+    public string? Token { get; set; }
+    public string? RepoUrl { get; set; }
+    public string? Username { get; set; }
+    public string? SpaceId { get; set; }
+    public string? ApiEndpoint { get; set; }
+}
+
+public class UpdatePersonalSourceRequest
+{
+    public string? DisplayName { get; set; }
+    public string? Token { get; set; }
+    public bool? Enabled { get; set; }
+    public string? RepoUrl { get; set; }
+    public string? Username { get; set; }
+    public string? SpaceId { get; set; }
+    public string? ApiEndpoint { get; set; }
 }
