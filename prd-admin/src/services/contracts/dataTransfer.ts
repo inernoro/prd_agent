@@ -7,6 +7,7 @@ export type DataTransferItem = {
   sourceId: string;
   displayName: string;
   appKey?: string | null;
+  appKeyDisplayName?: string | null;
   previewInfo?: string | null;
   clonedId?: string | null;
   cloneStatus: 'pending' | 'success' | 'failed' | 'source_missing';

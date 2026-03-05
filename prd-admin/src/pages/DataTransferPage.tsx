@@ -3,6 +3,7 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { Badge } from '@/components/design/Badge';
 import { TabBar } from '@/components/design/TabBar';
 import { Select } from '@/components/design/Select';
+import { Dialog } from '@/components/ui/Dialog';
 import {
   listTransfers,
   createTransfer,
@@ -33,7 +34,6 @@ import {
   ArrowUpRight,
   User,
   Clock,
-  ChevronRight,
   ArrowRight,
   Layers,
   Palette,
@@ -45,11 +45,12 @@ import {
   AlertCircle,
   Timer,
   Sparkles,
+  Search,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
-// ─── 工具函数 ───
+// --- Utility ---
 
 function fmtDate(s: string | null | undefined) {
   if (!s) return '-';
@@ -70,7 +71,7 @@ function relativeTime(s: string | null | undefined) {
   return fmtDate(s);
 }
 
-// ─── 常量 ───
+// --- Constants ---
 
 const STATUS_MAP: Record<string, { label: string; variant: 'subtle' | 'success' | 'danger' | 'warning' | 'new'; icon: typeof Check }> = {
   pending:    { label: '待接受', variant: 'warning', icon: Timer },
@@ -84,12 +85,12 @@ const STATUS_MAP: Record<string, { label: string; variant: 'subtle' | 'success' 
 };
 
 const SOURCE_ICON: Record<string, { icon: typeof Package; color: string }> = {
-  workspace:         { icon: Layers, color: 'rgba(99, 102, 241, 0.9)' },
-  'literary-prompt': { icon: PenLine, color: 'rgba(245, 158, 11, 0.9)' },
-  'ref-image-config':{ icon: ImagePlus, color: 'rgba(34, 197, 94, 0.9)' },
+  workspace:          { icon: Layers, color: 'rgba(99, 102, 241, 0.9)' },
+  'literary-prompt':  { icon: PenLine, color: 'rgba(245, 158, 11, 0.9)' },
+  'ref-image-config': { icon: ImagePlus, color: 'rgba(34, 197, 94, 0.9)' },
 };
 
-// ═══════════════════ 主页面 ═══════════════════
+// =================== Main Page ===================
 
 export default function DataTransferPage() {
   const [searchParams] = useSearchParams();
@@ -122,15 +123,14 @@ export default function DataTransferPage() {
     { key: 'sent', label: '发出', icon: <ArrowUpRight className="w-3.5 h-3.5" /> },
   ], []);
 
-  const stats = useMemo(() => {
-    const pending = transfers.filter(t => t.status === 'pending' && new Date(t.expiresAt) > new Date()).length;
-    const completed = transfers.filter(t => t.status === 'completed').length;
-    return { pending, completed, total: transfers.length };
-  }, [transfers]);
+  const pendingCount = useMemo(
+    () => transfers.filter(t => t.status === 'pending' && new Date(t.expiresAt) > new Date()).length,
+    [transfers],
+  );
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-4 p-5">
-      {/* 顶部操作栏 */}
+      {/* Top bar */}
       <TabBar
         title={<span className="text-[15px] font-semibold tracking-tight">数据分享</span>}
         icon={<Sparkles size={16} style={{ color: 'var(--accent-gold)' }} />}
@@ -147,27 +147,27 @@ export default function DataTransferPage() {
         }
       />
 
-      {/* 内容区域 — 左侧列表 + 右侧详情 */}
+      {/* Content: left list + right detail */}
       <div className="flex-1 min-h-0 flex gap-4">
-        {/* 左侧：分享列表 */}
+        {/* Left: transfer list */}
         <div className="w-[420px] shrink-0 flex flex-col gap-3 min-h-0">
-          {/* 统计概览 */}
-          <div className="flex gap-2">
-            <MiniStatCard label="待处理" value={stats.pending} accent="warning" />
-            <MiniStatCard label="已完成" value={stats.completed} accent="success" />
-            <MiniStatCard label="总计" value={stats.total} accent="default" />
+          {/* Tab + pending badge */}
+          <div className="shrink-0 flex items-center gap-2">
+            <div className="flex-1">
+              <TabBar
+                items={tabItems}
+                activeKey={tab}
+                onChange={(k) => { setTab(k as 'received' | 'sent'); setSelectedTransfer(null); }}
+              />
+            </div>
+            {pendingCount > 0 && (
+              <Badge variant="warning" size="sm">
+                {pendingCount} 待处理
+              </Badge>
+            )}
           </div>
 
-          {/* 列表切换 Tab */}
-          <div className="shrink-0">
-            <TabBar
-              items={tabItems}
-              activeKey={tab}
-              onChange={(k) => { setTab(k as 'received' | 'sent'); setSelectedTransfer(null); }}
-            />
-          </div>
-
-          {/* 列表 */}
+          {/* List */}
           <div className="flex-1 min-h-0 overflow-y-auto space-y-2 pr-1" style={{ scrollbarWidth: 'thin' }}>
             {loading ? (
               Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
@@ -187,18 +187,9 @@ export default function DataTransferPage() {
           </div>
         </div>
 
-        {/* 右侧：详情面板 / 创建面板 */}
+        {/* Right: detail panel */}
         <div className="flex-1 min-h-0 overflow-y-auto">
-          {showCreate ? (
-            <CreateTransferPanel
-              onCreated={() => {
-                setShowCreate(false);
-                setTab('sent');
-                loadTransfers();
-              }}
-              onCancel={() => setShowCreate(false)}
-            />
-          ) : selectedTransfer ? (
+          {selectedTransfer ? (
             <TransferDetail
               transfer={selectedTransfer}
               direction={tab}
@@ -209,31 +200,22 @@ export default function DataTransferPage() {
           )}
         </div>
       </div>
+
+      {/* Create dialog (modal) */}
+      <CreateTransferDialog
+        open={showCreate}
+        onOpenChange={setShowCreate}
+        onCreated={() => {
+          setShowCreate(false);
+          setTab('sent');
+          loadTransfers();
+        }}
+      />
     </div>
   );
 }
 
-// ═══════════════════ 小型统计卡片 ═══════════════════
-
-function MiniStatCard({ label, value, accent }: { label: string; value: number; accent: 'warning' | 'success' | 'default' }) {
-  const colors = {
-    warning: { bg: 'rgba(245, 158, 11, 0.06)', border: 'rgba(245, 158, 11, 0.15)', text: 'rgba(245, 158, 11, 0.95)' },
-    success: { bg: 'rgba(34, 197, 94, 0.06)', border: 'rgba(34, 197, 94, 0.15)', text: 'rgba(34, 197, 94, 0.95)' },
-    default: { bg: 'var(--bg-input)', border: 'var(--nested-block-border)', text: 'var(--text-primary)' },
-  }[accent];
-
-  return (
-    <div
-      className="flex-1 rounded-[10px] px-3 py-2 text-center transition-all duration-200"
-      style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
-    >
-      <div className="text-lg font-bold tabular-nums" style={{ color: colors.text, letterSpacing: '-0.02em' }}>{value}</div>
-      <div className="text-[10px] font-medium uppercase tracking-wider mt-0.5" style={{ color: 'var(--text-muted)' }}>{label}</div>
-    </div>
-  );
-}
-
-// ═══════════════════ 骨架屏 ═══════════════════
+// =================== Skeleton ===================
 
 function SkeletonCard() {
   return (
@@ -249,7 +231,7 @@ function SkeletonCard() {
   );
 }
 
-// ═══════════════════ 空状态 ═══════════════════
+// =================== Empty States ===================
 
 function EmptyState({ direction }: { direction: 'sent' | 'received' }) {
   return (
@@ -258,7 +240,9 @@ function EmptyState({ direction }: { direction: 'sent' | 'received' }) {
         className="w-12 h-12 rounded-full flex items-center justify-center"
         style={{ background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.15)' }}
       >
-        {direction === 'received' ? <Inbox size={20} style={{ color: 'var(--accent-gold)' }} /> : <Send size={20} style={{ color: 'var(--accent-gold)' }} />}
+        {direction === 'received'
+          ? <Inbox size={20} style={{ color: 'var(--accent-gold)' }} />
+          : <Send size={20} style={{ color: 'var(--accent-gold)' }} />}
       </div>
       <div className="text-[13px]" style={{ color: 'var(--text-muted)' }}>
         {direction === 'received' ? '暂无收到的分享' : '暂无发出的分享'}
@@ -281,7 +265,7 @@ function EmptyDetail() {
   );
 }
 
-// ═══════════════════ 分享卡片 ═══════════════════
+// =================== Transfer Card ===================
 
 function TransferCard({
   transfer: t,
@@ -308,7 +292,6 @@ function TransferCard({
       onClick={onClick}
     >
       <div className="flex items-start gap-3">
-        {/* 头像占位 */}
         <div
           className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-[13px] font-semibold"
           style={{ background: 'rgba(99, 102, 241, 0.12)', color: 'var(--accent-gold)' }}
@@ -319,17 +302,14 @@ function TransferCard({
         </div>
 
         <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <span className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                {direction === 'received' ? t.senderUserName : (t.receiverUserName ?? t.receiverUserId)}
-              </span>
-              <ArrowRight size={12} style={{ color: 'var(--text-muted)' }} className="shrink-0" />
-              <span className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
-                {direction === 'received' ? '分享给你' : '收到你的分享'}
-              </span>
-            </div>
-            <ChevronRight size={14} className="shrink-0 opacity-0 group-hover:opacity-60 transition-opacity" style={{ color: 'var(--text-muted)' }} />
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+              {direction === 'received' ? t.senderUserName : (t.receiverUserName ?? t.receiverUserId)}
+            </span>
+            <ArrowRight size={12} style={{ color: 'var(--text-muted)' }} className="shrink-0" />
+            <span className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+              {direction === 'received' ? '分享给你' : '收到你的分享'}
+            </span>
           </div>
 
           <div className="flex items-center gap-2 mt-1.5">
@@ -345,7 +325,7 @@ function TransferCard({
   );
 }
 
-// ═══════════════════ 分享详情面板 ═══════════════════
+// =================== Transfer Detail ===================
 
 function TransferDetail({
   transfer: t,
@@ -384,7 +364,7 @@ function TransferDetail({
 
   return (
     <GlassCard accentHue={234} padding="none" className="h-full flex flex-col">
-      {/* 头部信息 */}
+      {/* Header */}
       <div className="px-5 pt-5 pb-4" style={{ borderBottom: '1px solid var(--nested-block-border)' }}>
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
@@ -414,7 +394,6 @@ function TransferDetail({
           </Badge>
         </div>
 
-        {/* 附言 */}
         {t.message && (
           <div
             className="mt-3 rounded-[10px] px-3.5 py-2.5 flex items-start gap-2"
@@ -426,7 +405,7 @@ function TransferDetail({
         )}
       </div>
 
-      {/* 分享内容列表 */}
+      {/* Items */}
       <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4">
         <div className="text-[11px] font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
           分享内容 ({t.items.length})
@@ -457,12 +436,11 @@ function TransferDetail({
                     <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{item.previewInfo}</div>
                   )}
                 </div>
-                {item.appKey && (
+                {item.appKeyDisplayName && (
                   <Badge variant="subtle" size="sm">
-                    {item.appKey === 'literary-agent' ? '文学' : '视觉'}
+                    {item.appKeyDisplayName}
                   </Badge>
                 )}
-                {/* 克隆状态图标 */}
                 {item.cloneStatus === 'success' && <CheckCircle2 size={15} style={{ color: 'rgba(34, 197, 94, 0.8)' }} />}
                 {item.cloneStatus === 'failed' && (
                   <span className="flex items-center gap-1">
@@ -480,7 +458,6 @@ function TransferDetail({
           })}
         </div>
 
-        {/* 结果统计 */}
         {t.result && (
           <div
             className="mt-4 rounded-[10px] px-3.5 py-3 flex items-center gap-4"
@@ -496,7 +473,6 @@ function TransferDetail({
           </div>
         )}
 
-        {/* 过期时间 */}
         <div className="mt-4 flex items-center gap-1.5">
           <Clock size={12} style={{ color: 'var(--text-muted)' }} />
           <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
@@ -505,7 +481,7 @@ function TransferDetail({
         </div>
       </div>
 
-      {/* 底部操作 */}
+      {/* Actions */}
       {t.status === 'pending' && !isExpired && (
         <div className="px-5 py-4 flex gap-2" style={{ borderTop: '1px solid var(--nested-block-border)' }}>
           {direction === 'received' && (
@@ -531,9 +507,17 @@ function TransferDetail({
   );
 }
 
-// ═══════════════════ 创建分享面板 ═══════════════════
+// =================== Create Transfer Dialog ===================
 
-function CreateTransferPanel({ onCreated, onCancel }: { onCreated: () => void; onCancel: () => void }) {
+function CreateTransferDialog({
+  open,
+  onOpenChange,
+  onCreated,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onCreated: () => void;
+}) {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [receiverUserId, setReceiverUserId] = useState('');
   const [message, setMessage] = useState('');
@@ -545,10 +529,18 @@ function CreateTransferPanel({ onCreated, onCancel }: { onCreated: () => void; o
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [submitting, setSubmitting] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const currentUser = useAuthStore((s) => s.user);
 
   useEffect(() => {
+    if (!open) return;
+    // Reset state when dialog opens
+    setReceiverUserId('');
+    setMessage('');
+    setSelectedIds(new Set());
+    setSearchQuery('');
+
     (async () => {
       setLoadingData(true);
       const [usersRes, wsRes, configRes] = await Promise.all([
@@ -564,7 +556,7 @@ function CreateTransferPanel({ onCreated, onCancel }: { onCreated: () => void; o
       }
       setLoadingData(false);
     })();
-  }, [currentUser?.userId]);
+  }, [open, currentUser?.userId]);
 
   const toggle = (id: string) => {
     setSelectedIds((prev) => {
@@ -583,6 +575,16 @@ function CreateTransferPanel({ onCreated, onCancel }: { onCreated: () => void; o
       return next;
     });
   };
+
+  // Filter items by search query
+  const q = searchQuery.trim().toLowerCase();
+  const literaryWs = workspaces.filter((w) => w.scenarioType === 'article-illustration');
+  const visualWs = workspaces.filter((w) => w.scenarioType !== 'article-illustration');
+
+  const filteredLiteraryWs = q ? literaryWs.filter(w => w.title.toLowerCase().includes(q)) : literaryWs;
+  const filteredVisualWs = q ? visualWs.filter(w => w.title.toLowerCase().includes(q)) : visualWs;
+  const filteredPrompts = q ? prompts.filter(p => p.title.toLowerCase().includes(q)) : prompts;
+  const filteredRefImages = q ? refImages.filter(r => r.name.toLowerCase().includes(q)) : refImages;
 
   const handleSubmit = async () => {
     if (!receiverUserId || selectedIds.size === 0) return;
@@ -604,37 +606,19 @@ function CreateTransferPanel({ onCreated, onCancel }: { onCreated: () => void; o
     if (res.success) onCreated();
   };
 
-  const literaryWs = workspaces.filter((w) => w.scenarioType === 'article-illustration');
-  const visualWs = workspaces.filter((w) => w.scenarioType !== 'article-illustration');
   const selectedReceiver = users.find(u => u.userId === receiverUserId);
+  const totalItems = literaryWs.length + visualWs.length + prompts.length + refImages.length;
 
-  return (
-    <GlassCard accentHue={210} padding="none" className="h-full flex flex-col">
-      {/* 头部 */}
-      <div className="px-5 pt-5 pb-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--nested-block-border)' }}>
-        <div className="flex items-center gap-2">
-          <div
-            className="w-8 h-8 rounded-[8px] flex items-center justify-center"
-            style={{ background: 'rgba(99, 102, 241, 0.1)', border: '1px solid rgba(99, 102, 241, 0.2)' }}
-          >
-            <Send size={14} style={{ color: 'var(--accent-gold)' }} />
-          </div>
-          <span className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>发起数据分享</span>
+  const content = (
+    <div className="flex flex-col gap-0" style={{ maxHeight: '65vh' }}>
+      {loadingData ? (
+        <div className="flex items-center justify-center py-16">
+          <RefreshCw size={20} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
         </div>
-        <Button variant="ghost" size="xs" onClick={onCancel}>
-          <X size={14} /> 关闭
-        </Button>
-      </div>
-
-      {/* 内容 */}
-      <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-5">
-        {loadingData ? (
-          <div className="flex items-center justify-center py-16">
-            <RefreshCw size={20} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
-          </div>
-        ) : (
-          <>
-            {/* 接收人选择 */}
+      ) : (
+        <>
+          {/* Recipient + Message */}
+          <div className="space-y-4 pb-4" style={{ borderBottom: '1px solid var(--nested-block-border)' }}>
             <section className="space-y-2">
               <div className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
                 接收人
@@ -663,7 +647,6 @@ function CreateTransferPanel({ onCreated, onCancel }: { onCreated: () => void; o
               )}
             </section>
 
-            {/* 附言 */}
             <section className="space-y-2">
               <div className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
                 附言 <span className="normal-case font-normal">(可选)</span>
@@ -681,18 +664,40 @@ function CreateTransferPanel({ onCreated, onCancel }: { onCreated: () => void; o
                 onChange={(e) => setMessage(e.target.value)}
               />
             </section>
+          </div>
 
-            {/* 文学创作工作区 */}
-            {literaryWs.length > 0 && (
+          {/* Search + Data Selection */}
+          <div className="flex-1 min-h-0 overflow-y-auto pt-4 space-y-4">
+            {/* Search bar */}
+            {totalItems > 6 && (
+              <div className="relative">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+                <input
+                  type="text"
+                  className="w-full rounded-[10px] pl-9 pr-3.5 py-2 text-[13px] outline-none transition-all duration-200 focus:ring-1"
+                  style={{
+                    background: 'var(--bg-input)',
+                    border: '1px solid var(--nested-block-border)',
+                    color: 'var(--text-primary)',
+                  }}
+                  placeholder="搜索工作区、提示词、参考图..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
+            )}
+
+            {/* Literary workspaces */}
+            {filteredLiteraryWs.length > 0 && (
               <DataSection
                 title="文学创作"
                 icon={<PenLine size={13} />}
                 iconColor="rgba(245, 158, 11, 0.9)"
-                count={literaryWs.length}
-                selectedCount={literaryWs.filter(w => selectedIds.has(`workspace:${w.id}`)).length}
-                onToggleAll={() => toggleAll(literaryWs.map(w => `workspace:${w.id}`))}
+                count={filteredLiteraryWs.length}
+                selectedCount={filteredLiteraryWs.filter(w => selectedIds.has(`workspace:${w.id}`)).length}
+                onToggleAll={() => toggleAll(filteredLiteraryWs.map(w => `workspace:${w.id}`))}
               >
-                {literaryWs.map(ws => (
+                {filteredLiteraryWs.map(ws => (
                   <WorkspaceCheckItem
                     key={ws.id}
                     ws={ws}
@@ -703,17 +708,17 @@ function CreateTransferPanel({ onCreated, onCancel }: { onCreated: () => void; o
               </DataSection>
             )}
 
-            {/* 视觉创作工作区 */}
-            {visualWs.length > 0 && (
+            {/* Visual workspaces */}
+            {filteredVisualWs.length > 0 && (
               <DataSection
                 title="视觉创作"
                 icon={<Palette size={13} />}
                 iconColor="rgba(99, 102, 241, 0.9)"
-                count={visualWs.length}
-                selectedCount={visualWs.filter(w => selectedIds.has(`workspace:${w.id}`)).length}
-                onToggleAll={() => toggleAll(visualWs.map(w => `workspace:${w.id}`))}
+                count={filteredVisualWs.length}
+                selectedCount={filteredVisualWs.filter(w => selectedIds.has(`workspace:${w.id}`)).length}
+                onToggleAll={() => toggleAll(filteredVisualWs.map(w => `workspace:${w.id}`))}
               >
-                {visualWs.map(ws => (
+                {filteredVisualWs.map(ws => (
                   <WorkspaceCheckItem
                     key={ws.id}
                     ws={ws}
@@ -724,23 +729,23 @@ function CreateTransferPanel({ onCreated, onCancel }: { onCreated: () => void; o
               </DataSection>
             )}
 
-            {/* 配置资源 */}
-            {(prompts.length > 0 || refImages.length > 0) && (
+            {/* Configs */}
+            {(filteredPrompts.length > 0 || filteredRefImages.length > 0) && (
               <DataSection
                 title="配置资源"
                 icon={<FileText size={13} />}
                 iconColor="rgba(34, 197, 94, 0.9)"
-                count={prompts.length + refImages.length}
+                count={filteredPrompts.length + filteredRefImages.length}
                 selectedCount={
-                  prompts.filter(p => selectedIds.has(`literary-prompt:${p.id}`)).length +
-                  refImages.filter(r => selectedIds.has(`ref-image-config:${r.id}`)).length
+                  filteredPrompts.filter(p => selectedIds.has(`literary-prompt:${p.id}`)).length +
+                  filteredRefImages.filter(r => selectedIds.has(`ref-image-config:${r.id}`)).length
                 }
                 onToggleAll={() => toggleAll([
-                  ...prompts.map(p => `literary-prompt:${p.id}`),
-                  ...refImages.map(r => `ref-image-config:${r.id}`),
+                  ...filteredPrompts.map(p => `literary-prompt:${p.id}`),
+                  ...filteredRefImages.map(r => `ref-image-config:${r.id}`),
                 ])}
               >
-                {prompts.map((p) => (
+                {filteredPrompts.map((p) => (
                   <ConfigCheckItem
                     key={p.id}
                     label={p.title}
@@ -750,7 +755,7 @@ function CreateTransferPanel({ onCreated, onCancel }: { onCreated: () => void; o
                     onChange={() => toggle(`literary-prompt:${p.id}`)}
                   />
                 ))}
-                {refImages.map((r) => (
+                {filteredRefImages.map((r) => (
                   <ConfigCheckItem
                     key={r.id}
                     label={r.name}
@@ -762,32 +767,59 @@ function CreateTransferPanel({ onCreated, onCancel }: { onCreated: () => void; o
                 ))}
               </DataSection>
             )}
-          </>
-        )}
-      </div>
 
-      {/* 底部提交栏 */}
-      <div className="px-5 py-4 flex items-center justify-between" style={{ borderTop: '1px solid var(--nested-block-border)' }}>
-        <div className="flex items-center gap-1.5">
-          <Layers size={13} style={{ color: 'var(--accent-gold)' }} />
-          <span className="text-[12px] font-medium" style={{ color: 'var(--text-muted)' }}>
-            已选择 <span style={{ color: 'var(--text-primary)' }}>{selectedIds.size}</span> 项
-          </span>
+            {/* Search empty state */}
+            {q && filteredLiteraryWs.length === 0 && filteredVisualWs.length === 0 && filteredPrompts.length === 0 && filteredRefImages.length === 0 && (
+              <div className="text-center py-8">
+                <div className="text-[13px]" style={{ color: 'var(--text-muted)' }}>未找到匹配 "{searchQuery}" 的数据</div>
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="pt-4 flex items-center justify-between" style={{ borderTop: '1px solid var(--nested-block-border)' }}>
+            <div className="flex items-center gap-1.5">
+              <Layers size={13} style={{ color: 'var(--accent-gold)' }} />
+              <span className="text-[12px] font-medium" style={{ color: 'var(--text-muted)' }}>
+                已选择 <span style={{ color: 'var(--text-primary)' }}>{selectedIds.size}</span> 项
+              </span>
+            </div>
+            <Button
+              onClick={handleSubmit}
+              disabled={!receiverUserId || selectedIds.size === 0 || submitting}
+              size="sm"
+            >
+              <Send className="w-3.5 h-3.5" />
+              {submitting ? '发送中...' : '发送分享'}
+            </Button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title={
+        <div className="flex items-center gap-2">
+          <div
+            className="w-7 h-7 rounded-[7px] flex items-center justify-center"
+            style={{ background: 'rgba(99, 102, 241, 0.1)', border: '1px solid rgba(99, 102, 241, 0.2)' }}
+          >
+            <Send size={13} style={{ color: 'var(--accent-gold)' }} />
+          </div>
+          <span>发起数据分享</span>
         </div>
-        <Button
-          onClick={handleSubmit}
-          disabled={!receiverUserId || selectedIds.size === 0 || submitting}
-          size="sm"
-        >
-          <Send className="w-3.5 h-3.5" />
-          {submitting ? '发送中...' : '发送分享'}
-        </Button>
-      </div>
-    </GlassCard>
+      }
+      content={content}
+      maxWidth={640}
+    />
   );
 }
 
-// ═══════════════════ 数据分组组件 ═══════════════════
+// =================== Data Section ===================
 
 function DataSection({
   title,
@@ -837,7 +869,7 @@ function DataSection({
   );
 }
 
-// ═══════════════════ 复选框项目组件 ═══════════════════
+// =================== Checkbox Items ===================
 
 function WorkspaceCheckItem({ ws, checked, onChange }: { ws: ShareableWorkspace; checked: boolean; onChange: () => void }) {
   return (

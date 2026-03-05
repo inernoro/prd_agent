@@ -422,12 +422,14 @@ public class DataTransferController : ControllerBase
                 var ws = await _db.ImageMasterWorkspaces.Find(w => w.Id == ri.SourceId).FirstOrDefaultAsync(ct);
                 if (ws == null || ws.OwnerUserId != adminId) return null;
                 var assetCount = await _db.ImageAssets.CountDocumentsAsync(a => a.WorkspaceId == ws.Id, cancellationToken: ct);
+                var wsAppKey = ws.ScenarioType == "article-illustration" ? "literary-agent" : "visual-agent";
                 return new DataTransferItem
                 {
                     SourceType = "workspace",
                     SourceId = ws.Id,
                     DisplayName = ws.Title,
-                    AppKey = ws.ScenarioType == "article-illustration" ? "literary-agent" : "visual-agent",
+                    AppKey = wsAppKey,
+                    AppKeyDisplayName = GetAppKeyDisplayName(wsAppKey),
                     PreviewInfo = $"{assetCount} 张图片",
                 };
             }
@@ -441,18 +443,21 @@ public class DataTransferController : ControllerBase
                     SourceId = prompt.Id,
                     DisplayName = prompt.Title,
                     AppKey = "literary-agent",
+                    AppKeyDisplayName = GetAppKeyDisplayName("literary-agent"),
                 };
             }
             case "ref-image-config":
             {
                 var refImg = await _db.ReferenceImageConfigs.Find(r => r.Id == ri.SourceId).FirstOrDefaultAsync(ct);
                 if (refImg == null || refImg.CreatedByAdminId != adminId) return null;
+                var refAppKey = refImg.AppKey ?? ri.AppKey;
                 return new DataTransferItem
                 {
                     SourceType = "ref-image-config",
                     SourceId = refImg.Id,
                     DisplayName = refImg.Name,
-                    AppKey = refImg.AppKey ?? ri.AppKey,
+                    AppKey = refAppKey,
+                    AppKeyDisplayName = GetAppKeyDisplayName(refAppKey),
                 };
             }
             default:
@@ -530,6 +535,17 @@ public class DataTransferController : ControllerBase
                 throw new InvalidOperationException($"Unknown source type: {item.SourceType}");
         }
     }
+
+    private static string? GetAppKeyDisplayName(string? appKey) => appKey switch
+    {
+        "literary-agent" => "文学创作",
+        "visual-agent" => "视觉创作",
+        "prd-agent" => "PRD 解读",
+        "defect-agent" => "缺陷管理",
+        "video-agent" => "视频生成",
+        "report-agent" => "周报管理",
+        _ => null,
+    };
 
     private async Task UpdateTransferStatusAsync(string transferId, string status, CancellationToken ct)
     {

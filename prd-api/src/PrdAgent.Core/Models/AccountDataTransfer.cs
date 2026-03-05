@@ -52,6 +52,9 @@ public class DataTransferItem
     /// <summary>应用标识：literary-agent | visual-agent</summary>
     public string? AppKey { get; set; }
 
+    /// <summary>应用标识的中文显示名（由后端填充，前端直接展示）</summary>
+    public string? AppKeyDisplayName { get; set; }
+
     /// <summary>附加预览信息（如图片数量）</summary>
     public string? PreviewInfo { get; set; }
 
