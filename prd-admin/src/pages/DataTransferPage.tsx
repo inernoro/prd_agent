@@ -4,6 +4,8 @@ import { Badge } from '@/components/design/Badge';
 import { TabBar } from '@/components/design/TabBar';
 import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
+import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
+import { BlurText, DecryptedText, ShinyText, SplitText } from '@/components/reactbits';
 import {
   listTransfers,
   createTransfer,
@@ -54,6 +56,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { motion } from 'motion/react';
 
 // --- Utility ---
 
@@ -168,18 +171,30 @@ export default function DataTransferPage() {
   // Show onboarding when both directions are empty
   if (isFirstVisit === true) {
     return (
-      <div className="h-full min-h-0 flex flex-col gap-4 p-5">
-        <TabBar
-          title={<span className="text-[15px] font-semibold tracking-tight">数据分享</span>}
-          icon={<Sparkles size={16} style={{ color: 'var(--accent-gold)' }} />}
-          actions={
-            <Button variant="ghost" size="xs" onClick={() => { setIsFirstVisit(false); loadTransfers(); }}>
-              <RefreshCw className="w-3.5 h-3.5" />
-            </Button>
-          }
-        />
-        <div className="flex-1 min-h-0 overflow-y-auto">
-          <OnboardingView onStartShare={() => setShowCreate(true)} />
+      <div className="h-full min-h-0 flex flex-col gap-4 p-5 relative">
+        <div className="absolute inset-0 z-0 overflow-hidden rounded-[inherit]">
+          <BlackHoleVortex className="w-full h-full" />
+        </div>
+        <div className="relative z-10 flex flex-col gap-4 h-full min-h-0">
+          <TabBar
+            title={
+              <BlurText
+                text="数据分享"
+                className="text-[15px] font-semibold tracking-tight"
+                delay={80}
+                animateBy="letters"
+              />
+            }
+            icon={<Sparkles size={16} style={{ color: 'var(--accent-gold)' }} />}
+            actions={
+              <Button variant="ghost" size="xs" onClick={() => { setIsFirstVisit(false); loadTransfers(); }}>
+                <RefreshCw className="w-3.5 h-3.5" />
+              </Button>
+            }
+          />
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <OnboardingView onStartShare={() => setShowCreate(true)} />
+          </div>
         </div>
         <CreateTransferDialog open={showCreate} onOpenChange={setShowCreate} onCreated={handleCreated} />
       </div>
@@ -187,13 +202,29 @@ export default function DataTransferPage() {
   }
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-4 p-5">
+    <div className="h-full min-h-0 flex flex-col gap-4 p-5 relative">
+      <div className="absolute inset-0 z-0 overflow-hidden rounded-[inherit] opacity-40">
+        <BlackHoleVortex className="w-full h-full" />
+      </div>
+      <div className="relative z-10 flex flex-col gap-4 h-full min-h-0">
       {/* Top bar */}
       <TabBar
-        title={<span className="text-[15px] font-semibold tracking-tight">数据分享</span>}
+        title={
+          <BlurText
+            text="数据分享"
+            className="text-[15px] font-semibold tracking-tight"
+            delay={80}
+            animateBy="letters"
+          />
+        }
         icon={<Sparkles size={16} style={{ color: 'var(--accent-gold)' }} />}
         actions={
-          <div className="flex items-center gap-2">
+          <motion.div
+            className="flex items-center gap-2"
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.5, delay: 0.3 }}
+          >
             <Button variant="ghost" size="xs" onClick={loadTransfers} disabled={loading}>
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
             </Button>
@@ -201,12 +232,17 @@ export default function DataTransferPage() {
               <Send className="w-3.5 h-3.5" />
               发起分享
             </Button>
-          </div>
+          </motion.div>
         }
       />
 
       {/* Content: left list + right detail */}
-      <div className="flex-1 min-h-0 flex gap-4">
+      <motion.div
+        className="flex-1 min-h-0 flex gap-4"
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, delay: 0.2 }}
+      >
         {/* Left: transfer list */}
         <div className="w-[420px] shrink-0 flex flex-col gap-3 min-h-0">
           {/* Tab + pending badge */}
@@ -257,10 +293,11 @@ export default function DataTransferPage() {
             <EmptyDetail />
           )}
         </div>
-      </div>
+      </motion.div>
 
       {/* Create dialog (modal) */}
       <CreateTransferDialog open={showCreate} onOpenChange={setShowCreate} onCreated={handleCreated} />
+      </div>
     </div>
   );
 }
@@ -306,40 +343,93 @@ function OnboardingView({ onStartShare }: { onStartShare: () => void }) {
   return (
     <div className="max-w-[760px] mx-auto space-y-6">
       {/* Hero */}
-      <GlassCard accentHue={234} padding="none">
-        <div className="px-8 py-10 text-center">
-          <div
-            className="w-16 h-16 rounded-[16px] mx-auto mb-5 flex items-center justify-center"
-            style={{ background: 'rgba(99, 102, 241, 0.1)', border: '1px solid rgba(99, 102, 241, 0.2)' }}
-          >
-            <Send size={28} style={{ color: 'var(--accent-gold)' }} />
-          </div>
-          <h2 className="text-xl font-bold mb-2" style={{ color: 'var(--text-primary)' }}>
-            跨账户数据分享
-          </h2>
-          <p className="text-[14px] leading-relaxed max-w-[480px] mx-auto" style={{ color: 'var(--text-secondary)' }}>
-            将你的工作区、提示词、参考图等数据安全地分享给其他用户。
-            <br />
-            接收方确认后，系统自动完成深度复制。
-          </p>
+      <motion.div
+        initial={{ opacity: 0, y: 30, scale: 0.97 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: 0.6, ease: 'easeOut' }}
+      >
+        <GlassCard accentHue={234} padding="none">
+          <div className="px-8 py-10 text-center">
+            <motion.div
+              className="w-16 h-16 rounded-[16px] mx-auto mb-5 flex items-center justify-center"
+              style={{ background: 'rgba(99, 102, 241, 0.1)', border: '1px solid rgba(99, 102, 241, 0.2)' }}
+              initial={{ scale: 0, rotate: -180 }}
+              animate={{ scale: 1, rotate: 0 }}
+              transition={{ duration: 0.6, delay: 0.2, type: 'spring', stiffness: 200 }}
+            >
+              <Send size={28} style={{ color: 'var(--accent-gold)' }} />
+            </motion.div>
+            <h2 className="text-xl font-bold mb-2" style={{ color: 'var(--text-primary)' }}>
+              <SplitText
+                text="跨账户数据分享"
+                delay={60}
+                duration={0.5}
+                splitBy="chars"
+                from={{ opacity: 0, y: 20 }}
+                to={{ opacity: 1, y: 0 }}
+              />
+            </h2>
+            <motion.p
+              className="text-[14px] leading-relaxed max-w-[480px] mx-auto"
+              style={{ color: 'var(--text-secondary)' }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.6, delay: 0.5 }}
+            >
+              将你的工作区、提示词、参考图等数据安全地分享给其他用户。
+              <br />
+              <ShinyText
+                text="接收方确认后，系统自动完成深度复制。"
+                color="var(--text-secondary)"
+                shineColor="rgba(99, 102, 241, 0.8)"
+                speed={3}
+                className="text-[14px]"
+              />
+            </motion.p>
 
-          <Button className="mt-6" onClick={onStartShare}>
-            <Send className="w-4 h-4" />
-            发起第一次分享
-          </Button>
-        </div>
-      </GlassCard>
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4, delay: 0.7 }}
+            >
+              <Button className="mt-6" onClick={onStartShare}>
+                <Send className="w-4 h-4" />
+                发起第一次分享
+              </Button>
+            </motion.div>
+          </div>
+        </GlassCard>
+      </motion.div>
 
       {/* Flow Steps */}
       <div>
-        <div className="text-[11px] font-semibold uppercase tracking-wider mb-3 px-1" style={{ color: 'var(--text-muted)' }}>
-          分享流程
-        </div>
+        <motion.div
+          className="text-[11px] font-semibold uppercase tracking-wider mb-3 px-1"
+          style={{ color: 'var(--text-muted)' }}
+          initial={{ opacity: 0, x: -10 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.4, delay: 0.5 }}
+        >
+          <DecryptedText
+            text="分享流程"
+            speed={50}
+            maxIterations={8}
+            sequential
+            animateOn="view"
+            className="text-[11px]"
+          />
+        </motion.div>
         <div className="grid grid-cols-4 gap-3">
           {FLOW_STEPS.map((step, i) => {
             const Icon = step.icon;
             return (
-              <div key={i} className="relative">
+              <motion.div
+                key={i}
+                className="relative"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.4, delay: 0.6 + i * 0.1 }}
+              >
                 <div
                   className="rounded-[12px] p-4 text-center h-full"
                   style={{ background: 'var(--bg-input)', border: '1px solid var(--nested-block-border)' }}
@@ -363,7 +453,7 @@ function OnboardingView({ onStartShare }: { onStartShare: () => void }) {
                     style={{ color: 'var(--text-muted)', opacity: 0.4 }}
                   />
                 )}
-              </div>
+              </motion.div>
             );
           })}
         </div>
@@ -372,18 +462,25 @@ function OnboardingView({ onStartShare }: { onStartShare: () => void }) {
       {/* Features + Data Types (two-column) */}
       <div className="grid grid-cols-2 gap-4">
         {/* Features */}
-        <div>
+        <motion.div
+          initial={{ opacity: 0, x: -20 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.5, delay: 1.0 }}
+        >
           <div className="text-[11px] font-semibold uppercase tracking-wider mb-3 px-1" style={{ color: 'var(--text-muted)' }}>
-            特性
+            <DecryptedText text="特性" speed={50} maxIterations={8} sequential animateOn="view" className="text-[11px]" />
           </div>
           <div className="space-y-2">
             {FEATURES.map((f, i) => {
               const Icon = f.icon;
               return (
-                <div
+                <motion.div
                   key={i}
                   className="rounded-[10px] px-3.5 py-3 flex items-start gap-3"
                   style={{ background: 'var(--bg-input)', border: '1px solid var(--nested-block-border)' }}
+                  initial={{ opacity: 0, x: -15 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.35, delay: 1.1 + i * 0.1 }}
                 >
                   <div
                     className="shrink-0 w-7 h-7 rounded-[7px] flex items-center justify-center mt-0.5"
@@ -395,25 +492,32 @@ function OnboardingView({ onStartShare }: { onStartShare: () => void }) {
                     <div className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>{f.title}</div>
                     <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{f.desc}</div>
                   </div>
-                </div>
+                </motion.div>
               );
             })}
           </div>
-        </div>
+        </motion.div>
 
         {/* Supported data types */}
-        <div>
+        <motion.div
+          initial={{ opacity: 0, x: 20 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.5, delay: 1.0 }}
+        >
           <div className="text-[11px] font-semibold uppercase tracking-wider mb-3 px-1" style={{ color: 'var(--text-muted)' }}>
-            支持的数据类型
+            <DecryptedText text="支持的数据类型" speed={50} maxIterations={8} sequential animateOn="view" className="text-[11px]" />
           </div>
           <div className="space-y-2">
             {DATA_TYPES.map((dt, i) => {
               const Icon = dt.icon;
               return (
-                <div
+                <motion.div
                   key={i}
                   className="rounded-[10px] px-3.5 py-3 flex items-start gap-3"
                   style={{ background: 'var(--bg-input)', border: '1px solid var(--nested-block-border)' }}
+                  initial={{ opacity: 0, x: 15 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.35, delay: 1.1 + i * 0.1 }}
                 >
                   <div
                     className="shrink-0 w-7 h-7 rounded-[7px] flex items-center justify-center mt-0.5"
@@ -425,11 +529,11 @@ function OnboardingView({ onStartShare }: { onStartShare: () => void }) {
                     <div className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>{dt.label}</div>
                     <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{dt.desc}</div>
                   </div>
-                </div>
+                </motion.div>
               );
             })}
           </div>
-        </div>
+        </motion.div>
       </div>
     </div>
   );
@@ -463,15 +567,24 @@ function EmptyState({ direction, onStartShare }: { direction: 'sent' | 'received
 
 function EmptyDetail() {
   return (
-    <div className="h-full flex flex-col items-center justify-center gap-3">
-      <div
+    <motion.div
+      className="h-full flex flex-col items-center justify-center gap-3"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.5, delay: 0.4 }}
+    >
+      <motion.div
         className="w-14 h-14 rounded-[14px] flex items-center justify-center"
         style={{ background: 'rgba(99, 102, 241, 0.06)', border: '1px solid rgba(99, 102, 241, 0.12)' }}
+        animate={{ y: [0, -6, 0] }}
+        transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
       >
         <Package size={24} style={{ color: 'rgba(99, 102, 241, 0.4)' }} />
+      </motion.div>
+      <div className="text-[13px]" style={{ color: 'var(--text-muted)' }}>
+        <DecryptedText text="选择一条分享记录查看详情" speed={40} maxIterations={10} sequential animateOn="view" />
       </div>
-      <div className="text-[13px]" style={{ color: 'var(--text-muted)' }}>选择一条分享记录查看详情</div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -906,6 +1019,7 @@ function CreateTransferDialog({
                 count={filteredLiteraryWs.length}
                 selectedCount={filteredLiteraryWs.filter(w => selectedIds.has(`workspace:${w.id}`)).length}
                 onToggleAll={() => toggleAll(filteredLiteraryWs.map(w => `workspace:${w.id}`))}
+                grid
               >
                 {filteredLiteraryWs.map(ws => (
                   <WorkspaceCheckItem
@@ -927,6 +1041,7 @@ function CreateTransferDialog({
                 count={filteredVisualWs.length}
                 selectedCount={filteredVisualWs.filter(w => selectedIds.has(`workspace:${w.id}`)).length}
                 onToggleAll={() => toggleAll(filteredVisualWs.map(w => `workspace:${w.id}`))}
+                grid
               >
                 {filteredVisualWs.map(ws => (
                   <WorkspaceCheckItem
@@ -1039,6 +1154,7 @@ function DataSection({
   selectedCount,
   onToggleAll,
   children,
+  grid,
 }: {
   title: string;
   icon: React.ReactNode;
@@ -1047,6 +1163,8 @@ function DataSection({
   selectedCount: number;
   onToggleAll: () => void;
   children: React.ReactNode;
+  /** Use 2-col grid layout (for workspace cards) instead of vertical list */
+  grid?: boolean;
 }) {
   return (
     <section>
@@ -1072,7 +1190,7 @@ function DataSection({
           {selectedCount === count ? '取消全选' : '全选'}
         </button>
       </div>
-      <div className="space-y-1.5">
+      <div className={grid ? 'grid grid-cols-2 gap-2.5' : 'space-y-1.5'}>
         {children}
       </div>
     </section>
@@ -1083,72 +1201,106 @@ function DataSection({
 
 function WorkspaceCheckItem({ ws, checked, onChange }: { ws: ShareableWorkspace; checked: boolean; onChange: () => void }) {
   const hasCover = ws.coverAssets && ws.coverAssets.length > 0;
+  const assets = ws.coverAssets ?? [];
+  const n = assets.length;
   const wsRoute = ws.scenarioType === 'article-illustration'
     ? `/literary-agent/${ws.id}`
     : `/visual-agent/${ws.id}`;
 
+  const Tile = ({ idx, style }: { idx: number; style?: React.CSSProperties }) => {
+    const a = assets[idx];
+    return a?.url ? (
+      <img src={a.url} alt="" className="h-full w-full object-cover" style={style} loading="lazy" referrerPolicy="no-referrer" />
+    ) : (
+      <div className="h-full w-full" style={{ ...style, background: 'var(--nested-block-bg)' }} />
+    );
+  };
+
+  const renderMosaic = () => {
+    if (n === 1) return <img src={assets[0].url} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" referrerPolicy="no-referrer" />;
+    if (n === 2) return (
+      <div className="absolute inset-0 grid" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 2 }}>
+        <Tile idx={0} /><Tile idx={1} />
+      </div>
+    );
+    if (n === 3) return (
+      <div className="absolute inset-0 grid" style={{ gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1fr)', gridTemplateRows: 'repeat(2, minmax(0, 1fr))', gap: 2 }}>
+        <Tile idx={0} style={{ gridColumn: '1', gridRow: '1 / span 2' }} />
+        <Tile idx={1} style={{ gridColumn: '2', gridRow: '1' }} />
+        <Tile idx={2} style={{ gridColumn: '2', gridRow: '2' }} />
+      </div>
+    );
+    return (
+      <div className="absolute inset-0 grid" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gridTemplateRows: 'repeat(2, minmax(0, 1fr))', gap: 2 }}>
+        <Tile idx={0} /><Tile idx={1} /><Tile idx={2} /><Tile idx={3} />
+      </div>
+    );
+  };
+
   return (
-    <label
-      className="group rounded-[12px] overflow-hidden cursor-pointer transition-all duration-150"
-      style={{
-        background: checked ? 'rgba(99, 102, 241, 0.06)' : 'var(--bg-input)',
-        border: `1px solid ${checked ? 'rgba(99, 102, 241, 0.2)' : 'var(--nested-block-border)'}`,
-      }}
-    >
+    <label className="group cursor-pointer block">
       <input type="checkbox" checked={checked} onChange={onChange} className="sr-only" />
 
-      {/* Cover thumbnail strip */}
-      {hasCover && (
-        <div className="h-[52px] flex gap-px overflow-hidden">
-          {ws.coverAssets.slice(0, 4).map((asset) => (
-            <img
-              key={asset.id}
-              src={asset.url}
-              alt=""
-              className="h-full flex-1 object-cover min-w-0"
-              loading="lazy"
-              referrerPolicy="no-referrer"
-            />
-          ))}
-        </div>
-      )}
+      {/* Cover area with checkbox overlay */}
+      <div
+        className="h-[100px] w-full relative overflow-hidden rounded-[10px] transition-all duration-200"
+        style={{
+          background: hasCover ? 'transparent' : 'var(--bg-input)',
+          border: hasCover ? 'none' : '1px solid var(--nested-block-border)',
+          boxShadow: checked ? '0 0 0 2px rgba(99, 102, 241, 0.6)' : '0 2px 8px rgba(0,0,0,0.15)',
+        }}
+      >
+        {hasCover && renderMosaic()}
 
-      {/* Info row */}
-      <div className="flex items-center gap-2.5 px-3 py-2.5">
-        {/* Checkbox */}
-        <div
-          className="shrink-0 w-5 h-5 rounded-[5px] flex items-center justify-center transition-all duration-150"
-          style={{
-            background: checked ? 'rgba(99, 102, 241, 0.9)' : 'transparent',
-            border: `1.5px solid ${checked ? 'rgba(99, 102, 241, 0.9)' : 'rgba(255,255,255,0.2)'}`,
-          }}
-        >
-          {checked && <Check size={12} className="text-white" />}
-        </div>
-
-        {/* Title + meta */}
-        <div className="flex-1 min-w-0">
-          <div className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{ws.title}</div>
-          <div className="flex items-center gap-2 mt-0.5">
-            <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{ws.assetCount} 张图</span>
-            {ws.folderName && (
-              <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{ws.folderName}</span>
-            )}
+        {/* Checkbox overlay - top left */}
+        <div className="absolute top-1.5 left-1.5 z-10">
+          <div
+            className="w-5 h-5 rounded-[5px] flex items-center justify-center transition-all duration-150 backdrop-blur-sm"
+            style={{
+              background: checked ? 'rgba(99, 102, 241, 0.9)' : 'rgba(0,0,0,0.4)',
+              border: `1.5px solid ${checked ? 'rgba(99, 102, 241, 0.9)' : 'rgba(255,255,255,0.3)'}`,
+            }}
+          >
+            {checked && <Check size={12} className="text-white" />}
           </div>
         </div>
 
-        {/* Jump to workspace link */}
+        {/* Jump link overlay - top right */}
         <a
           href={wsRoute}
           target="_blank"
           rel="noopener noreferrer"
-          className="shrink-0 w-7 h-7 rounded-[7px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-150 hover:bg-white/8"
-          style={{ color: 'var(--text-muted)' }}
+          className="absolute top-1.5 right-1.5 z-10 w-6 h-6 rounded-[6px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-150 backdrop-blur-sm"
+          style={{ background: 'rgba(0,0,0,0.4)', color: 'rgba(255,255,255,0.8)' }}
           onClick={(e) => e.stopPropagation()}
-          title="在新标签页打开工作区"
+          title="在新标签页打开"
         >
-          <ExternalLink size={13} />
+          <ExternalLink size={11} />
         </a>
+
+        {/* Hover gradient */}
+        <div
+          className="absolute inset-0 opacity-0 transition-opacity duration-200 group-hover:opacity-100 pointer-events-none"
+          style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.5) 0%, transparent 50%)' }}
+        />
+
+        {/* No-cover placeholder */}
+        {!hasCover && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <Layers size={24} style={{ color: 'rgba(99, 102, 241, 0.3)' }} />
+          </div>
+        )}
+      </div>
+
+      {/* Info below cover */}
+      <div className="pt-1.5 px-0.5">
+        <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+          {ws.title || '未命名'}
+        </div>
+        <div className="text-[10px] flex items-center gap-1.5 mt-0.5" style={{ color: 'var(--text-muted)' }}>
+          <span>{ws.assetCount} 张图</span>
+          {ws.folderName && <><span>·</span><span>{ws.folderName}</span></>}
+        </div>
       </div>
     </label>
   );
