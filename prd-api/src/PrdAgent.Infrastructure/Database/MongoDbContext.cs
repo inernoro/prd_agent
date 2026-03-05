@@ -106,6 +106,8 @@ public class MongoDbContext
     public IMongoCollection<DefectReport> DefectReports => _database.GetCollection<DefectReport>("defect_reports");
     public IMongoCollection<DefectMessage> DefectMessages => _database.GetCollection<DefectMessage>("defect_messages");
     public IMongoCollection<DefectFolder> DefectFolders => _database.GetCollection<DefectFolder>("defect_folders");
+    public IMongoCollection<DefectProject> DefectProjects => _database.GetCollection<DefectProject>("defect_projects");
+    public IMongoCollection<DefectWebhookConfig> DefectWebhookConfigs => _database.GetCollection<DefectWebhookConfig>("defect_webhook_configs");
 
     // Report Agent 周报管理
     public IMongoCollection<ReportTeam> ReportTeams => _database.GetCollection<ReportTeam>("report_teams");
@@ -746,6 +748,40 @@ public class MongoDbContext
         DefectMessages.Indexes.CreateOne(new CreateIndexModel<DefectMessage>(
             Builders<DefectMessage>.IndexKeys.Ascending(x => x.DefectId).Ascending(x => x.Seq),
             new CreateIndexOptions { Name = "idx_defect_messages_defect_seq" }));
+
+        // DefectReports：按 projectId + status 查询
+        DefectReports.Indexes.CreateOne(new CreateIndexModel<DefectReport>(
+            Builders<DefectReport>.IndexKeys.Ascending(x => x.ProjectId).Ascending(x => x.Status).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_defect_reports_project" }));
+        // DefectReports：按 teamId + status 查询
+        DefectReports.Indexes.CreateOne(new CreateIndexModel<DefectReport>(
+            Builders<DefectReport>.IndexKeys.Ascending(x => x.TeamId).Ascending(x => x.Status).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_defect_reports_team" }));
+
+        // DefectProjects：按 key 唯一索引，按 ownerUserId 查询
+        try
+        {
+            DefectProjects.Indexes.CreateOne(new CreateIndexModel<DefectProject>(
+                Builders<DefectProject>.IndexKeys.Ascending(x => x.Key),
+                new CreateIndexOptions
+                {
+                    Name = "uniq_defect_projects_key",
+                    Unique = true,
+                    PartialFilterExpression = new BsonDocument("Key", new BsonDocument("$type", "string"))
+                }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        DefectProjects.Indexes.CreateOne(new CreateIndexModel<DefectProject>(
+            Builders<DefectProject>.IndexKeys.Ascending(x => x.OwnerUserId),
+            new CreateIndexOptions { Name = "idx_defect_projects_owner" }));
+
+        // DefectWebhookConfigs：按 teamId + projectId 查询
+        DefectWebhookConfigs.Indexes.CreateOne(new CreateIndexModel<DefectWebhookConfig>(
+            Builders<DefectWebhookConfig>.IndexKeys.Ascending(x => x.TeamId).Ascending(x => x.ProjectId),
+            new CreateIndexOptions { Name = "idx_defect_webhooks_team_project" }));
 
         // ========== Channel Adapter 多通道适配器索引 ==========
 

@@ -59,7 +59,7 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
   const isReporterMe = Boolean(userId && defect.reporterId === userId);
   const isAssigneeMe = Boolean(userId && defect.assigneeId === userId);
 
-  const isArchived = defect.status === DefectStatus.Resolved || defect.status === DefectStatus.Rejected;
+  const isArchived = defect.status === DefectStatus.Closed || defect.status === DefectStatus.Rejected;
   const attachmentCount = (defect.attachments || []).length;
 
   // 未读/已读状态标签逻辑（与 DefectCard 相同）
@@ -131,7 +131,7 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
   // 状态标签的简化版本（适配行内布局）
   const renderStatusBadge = () => {
     if (isArchived) {
-      if (defect.status === DefectStatus.Resolved) {
+      if (defect.status === DefectStatus.Resolved || defect.status === DefectStatus.Closed) {
         return (
           <span
             className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0"
@@ -148,6 +148,17 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
           style={{ background: 'rgba(255,120,120,0.15)', color: 'rgba(255,120,120,0.9)' }}
         >
           驳回
+        </span>
+      );
+    }
+
+    if (defect.status === DefectStatus.Verifying) {
+      return (
+        <span
+          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0"
+          style={{ background: 'rgba(180,140,255,0.15)', color: 'rgba(180,140,255,0.9)' }}
+        >
+          待验收
         </span>
       );
     }
@@ -346,7 +357,7 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
           'group-hover:opacity-100 group-hover:pointer-events-auto',
         ].join(' ')}
       >
-        {defect.status === DefectStatus.Resolved ? (
+        {(defect.status === DefectStatus.Resolved || defect.status === DefectStatus.Closed) ? (
           <Button
             size="xs"
             variant="secondary"

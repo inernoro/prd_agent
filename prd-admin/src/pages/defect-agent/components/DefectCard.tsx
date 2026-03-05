@@ -110,7 +110,7 @@ export function DefectCard({ defect }: DefectCardProps) {
     ? defect.assigneeUnread
     : undefined;
   // 完成/驳回状态不显示已读/未读/评论标签
-  const isArchived = defect.status === DefectStatus.Resolved || defect.status === DefectStatus.Rejected;
+  const isArchived = defect.status === DefectStatus.Closed || defect.status === DefectStatus.Rejected;
 
   // ========== 根据最后操作者决定显示状态 ==========
   // 操作包括：评论、读取、创建
@@ -275,7 +275,7 @@ export function DefectCard({ defect }: DefectCardProps) {
           {/* 主内容区 */}
           <div className="flex-1 min-w-0 flex flex-col relative">
             {/* 完成印章 - 右下角，毛玻璃背景 */}
-            {defect.status === DefectStatus.Resolved && (
+            {(defect.status === DefectStatus.Resolved || defect.status === DefectStatus.Closed) && (
               <div
                 className="absolute right-3 bottom-10 select-none z-10"
                 style={{ transform: 'rotate(-12deg)' }}
@@ -674,7 +674,7 @@ export function DefectCard({ defect }: DefectCardProps) {
                   'mobile-show-actions',
                 ].join(' ')}
               >
-                {defect.status === DefectStatus.Resolved ? (
+                {(defect.status === DefectStatus.Resolved || defect.status === DefectStatus.Closed) ? (
                   <Button
                     size="xs"
                     variant="secondary"

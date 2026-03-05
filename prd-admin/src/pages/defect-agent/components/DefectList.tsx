@@ -23,13 +23,14 @@ export function DefectList() {
     return defects;
   }, [defects, filter, userId]);
 
-  // 分成两组：进行中 和 已归档（完成/拒绝）
+  // 分成两组：进行中 和 已归档（已关闭/已驳回）
   const { activeDefects, archivedDefects } = useMemo(() => {
+    const archivedStatuses = [DefectStatus.Closed, DefectStatus.Rejected];
     const active = filteredDefects.filter(
-      (d) => d.status !== DefectStatus.Resolved && d.status !== DefectStatus.Rejected
+      (d) => !archivedStatuses.includes(d.status as typeof DefectStatus.Closed)
     );
     const archived = filteredDefects.filter(
-      (d) => d.status === DefectStatus.Resolved || d.status === DefectStatus.Rejected
+      (d) => archivedStatuses.includes(d.status as typeof DefectStatus.Closed)
     );
     return { activeDefects: active, archivedDefects: archived };
   }, [filteredDefects]);

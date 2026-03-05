@@ -13,6 +13,8 @@ import {
   sendDefectMessage,
   getDefectMessages,
   addDefectAttachment,
+  verifyPass,
+  verifyFail,
 } from '@/services';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
@@ -46,6 +48,8 @@ const statusLabels: Record<string, string> = {
   [DefectStatus.Working]: '处理中',
   [DefectStatus.Resolved]: '已解决',
   [DefectStatus.Rejected]: '已驳回',
+  [DefectStatus.Closed]: '已关闭',
+  [DefectStatus.Verifying]: '待验收',
 };
 
 const statusColors: Record<string, string> = {
@@ -54,6 +58,8 @@ const statusColors: Record<string, string> = {
   [DefectStatus.Working]: 'rgba(100,180,255,0.9)',
   [DefectStatus.Resolved]: 'rgba(100,200,120,0.9)',
   [DefectStatus.Rejected]: 'rgba(255,100,100,0.9)',
+  [DefectStatus.Closed]: 'rgba(160,160,160,0.9)',
+  [DefectStatus.Verifying]: 'rgba(180,140,255,0.9)',
 };
 
 const severityLabels: Record<string, string> = {
@@ -275,9 +281,49 @@ export function DefectDetailPanel() {
     }
   };
 
+  const handleVerifyPass = async () => {
+    const confirmed = await systemDialog.confirm({
+      title: '验收通过',
+      message: '确认该缺陷已修复，验收通过？',
+      confirmText: '通过',
+      cancelText: '取消',
+    });
+    if (!confirmed) return;
+
+    const res = await verifyPass({ id: defect.id });
+    if (res.success && res.data) {
+      updateDefectInList(res.data.defect);
+      toast.success('验收通过，缺陷已关闭');
+      loadStats();
+    } else {
+      toast.error(res.error?.message || '操作失败');
+    }
+  };
+
+  const handleVerifyFail = async () => {
+    const reason = await systemDialog.prompt({
+      title: '验收不通过',
+      message: '请输入不通过原因：',
+      placeholder: '如：问题仍然存在、修复不完整等',
+      confirmText: '提交',
+      cancelText: '取消',
+    });
+    if (!reason) return;
+
+    const res = await verifyFail({ id: defect.id, reason });
+    if (res.success && res.data) {
+      updateDefectInList(res.data.defect);
+      toast.success('验收不通过，已退回处理');
+      loadStats();
+    } else {
+      toast.error(res.error?.message || '操作失败');
+    }
+  };
+
   // Determine available actions based on status
   const canDelete = defect.status === DefectStatus.Draft;
   const canProcess = defect.status === DefectStatus.Pending;
+  const canVerify = defect.status === DefectStatus.Verifying && defect.reporterId === userId;
   const _statusLabel = statusLabels[defect.status] || defect.status;
   const _statusColor = statusColors[defect.status] || 'var(--text-muted)';
   void _statusLabel; void _statusColor; // 预留给未来使用
@@ -671,6 +717,26 @@ export function DefectDetailPanel() {
               </div>
             )}
 
+            {defect.verifyFailReason && (
+              <div>
+                <div
+                  className="text-[11px] mb-2 font-medium"
+                  style={{ color: 'rgba(255,160,60,0.9)' }}
+                >
+                  验收不通过原因
+                </div>
+                <div
+                  className="text-[12px] p-3 rounded-lg"
+                  style={{
+                    background: 'rgba(255,160,60,0.1)',
+                    color: 'var(--text-secondary)',
+                  }}
+                >
+                  {defect.verifyFailReason}
+                </div>
+              </div>
+            )}
+
             {/* Timestamps */}
             <div
               className="text-[11px] space-y-1.5 pt-2"
@@ -812,6 +878,27 @@ export function DefectDetailPanel() {
                   <Play size={14} />
                   开始处理
                 </Button>
+              )}
+              {canVerify && (
+                <>
+                  <Button variant="primary" size="sm" onClick={handleVerifyPass}>
+                    <CheckCircle size={14} />
+                    验收通过
+                  </Button>
+                  <button
+                    type="button"
+                    className="h-7 px-2.5 rounded-full flex items-center gap-1 text-[12px] transition-all hover:ring-2 hover:ring-white/20"
+                    style={{
+                      border: '1px solid rgba(255, 160, 60, 0.55)',
+                      color: 'rgba(255, 160, 60, 0.95)',
+                    }}
+                    title="验收不通过"
+                    onClick={handleVerifyFail}
+                  >
+                    <XCircle size={14} />
+                    不通过
+                  </button>
+                </>
               )}
               <button
                 type="button"

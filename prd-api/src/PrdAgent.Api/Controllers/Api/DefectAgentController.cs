@@ -6,6 +6,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using System.Security.Claims;
 using System.Text;
@@ -27,6 +28,7 @@ public class DefectAgentController : ControllerBase
     private readonly ILogger<DefectAgentController> _logger;
     private readonly IAssetStorage _assetStorage;
     private readonly ICacheManager _cache;
+    private readonly DefectWebhookService _webhookService;
     private static readonly TimeSpan ClientBindingTtl = TimeSpan.FromDays(3);
 
     public DefectAgentController(
@@ -34,13 +36,15 @@ public class DefectAgentController : ControllerBase
         ILlmGateway gateway,
         ILogger<DefectAgentController> logger,
         IAssetStorage assetStorage,
-        ICacheManager cache)
+        ICacheManager cache,
+        DefectWebhookService webhookService)
     {
         _db = db;
         _gateway = gateway;
         _logger = logger;
         _assetStorage = assetStorage;
         _cache = cache;
+        _webhookService = webhookService;
     }
 
     private string GetUserId()
@@ -272,6 +276,8 @@ public class DefectAgentController : ControllerBase
         [FromQuery] string? severity,
         [FromQuery] string? assigneeId,
         [FromQuery] string? folderId,
+        [FromQuery] string? projectId,
+        [FromQuery] string? teamId,
         [FromQuery] bool? mine,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
@@ -320,6 +326,12 @@ public class DefectAgentController : ControllerBase
             else
                 filters.Add(filterBuilder.Eq(x => x.FolderId, folderId));
         }
+
+        if (!string.IsNullOrWhiteSpace(projectId))
+            filters.Add(filterBuilder.Eq(x => x.ProjectId, projectId));
+
+        if (!string.IsNullOrWhiteSpace(teamId))
+            filters.Add(filterBuilder.Eq(x => x.TeamId, teamId));
 
         var filter = filters.Count > 0
             ? filterBuilder.And(filters)
@@ -402,6 +414,32 @@ public class DefectAgentController : ControllerBase
             }
         }
 
+        // 解析项目信息
+        string? projectIdVal = null;
+        string? projectNameVal = null;
+        if (!string.IsNullOrEmpty(request.ProjectId))
+        {
+            var project = await _db.DefectProjects.Find(x => x.Id == request.ProjectId).FirstOrDefaultAsync(ct);
+            if (project != null)
+            {
+                projectIdVal = project.Id;
+                projectNameVal = project.Name;
+            }
+        }
+
+        // 解析团队信息
+        string? teamIdVal = null;
+        string? teamNameVal = null;
+        if (!string.IsNullOrEmpty(request.TeamId))
+        {
+            var team = await _db.ReportTeams.Find(x => x.Id == request.TeamId).FirstOrDefaultAsync(ct);
+            if (team != null)
+            {
+                teamIdVal = team.Id;
+                teamNameVal = team.Name;
+            }
+        }
+
         var defect = new DefectReport
         {
             Id = Guid.NewGuid().ToString("N"),
@@ -418,6 +456,10 @@ public class DefectAgentController : ControllerBase
             AssigneeId = assigneeId,
             AssigneeAvatarFileName = assigneeAvatarFileName,
             AssigneeName = assigneeName,
+            ProjectId = projectIdVal,
+            ProjectName = projectNameVal,
+            TeamId = teamIdVal,
+            TeamName = teamNameVal,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
@@ -699,6 +741,9 @@ public class DefectAgentController : ControllerBase
             }
         }
 
+        // 发送 webhook 通知
+        _ = _webhookService.NotifyAsync(defect, DefectEventType.Submitted);
+
         return Ok(ApiResponse<object>.Ok(new { defect }));
     }
 
@@ -736,6 +781,8 @@ public class DefectAgentController : ControllerBase
 
         _logger.LogInformation("[{AppKey}] Defect assigned: {DefectNo} to {AssigneeId}", AppKey, defect.DefectNo, request.AssigneeId);
 
+        _ = _webhookService.NotifyAsync(defect, DefectEventType.Assigned);
+
         return Ok(ApiResponse<object>.Ok(new { defect }));
     }
 
@@ -767,7 +814,7 @@ public class DefectAgentController : ControllerBase
     }
 
     /// <summary>
-    /// 标记解决
+    /// 标记解决 → 进入待验收状态
     /// </summary>
     [HttpPost("defects/{id}/resolve")]
     public async Task<IActionResult> ResolveDefect(string id, [FromBody] ResolveDefectRequest request, CancellationToken ct)
@@ -787,17 +834,96 @@ public class DefectAgentController : ControllerBase
         var resolver = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
         var resolverName = resolver?.DisplayName ?? resolver?.Username ?? GetUsername() ?? "未知用户";
 
-        defect.Status = DefectStatus.Resolved;
+        defect.Status = DefectStatus.Verifying;
         defect.Resolution = request.Resolution?.Trim();
         defect.ResolvedById = userId;
         defect.ResolvedByAvatarFileName = resolver?.AvatarFileName;
         defect.ResolvedByName = resolverName;
         defect.ResolvedAt = DateTime.UtcNow;
+        defect.ReporterUnread = true;
         defect.UpdatedAt = DateTime.UtcNow;
 
         await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
 
-        _logger.LogInformation("[{AppKey}] Defect resolved: {DefectNo} by {UserId}", AppKey, defect.DefectNo, userId);
+        _logger.LogInformation("[{AppKey}] Defect resolved (verifying): {DefectNo} by {UserId}", AppKey, defect.DefectNo, userId);
+
+        // 发送 webhook 通知
+        _ = _webhookService.NotifyAsync(defect, DefectEventType.Resolved);
+
+        return Ok(ApiResponse<object>.Ok(new { defect }));
+    }
+
+    /// <summary>
+    /// 验收通过 → 关闭缺陷
+    /// </summary>
+    [HttpPost("defects/{id}/verify-pass")]
+    public async Task<IActionResult> VerifyPass(string id, CancellationToken ct)
+    {
+        var userId = GetUserId();
+
+        var defect = await _db.DefectReports.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (defect == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "缺陷不存在"));
+
+        // 仅报告人或管理员可验收
+        if (!HasManagePermission() && defect.ReporterId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "只有报告人可以验收"));
+
+        if (defect.Status != DefectStatus.Verifying)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只能验收待验收状态的缺陷"));
+
+        var verifier = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
+        var verifierName = verifier?.DisplayName ?? verifier?.Username ?? GetUsername() ?? "未知用户";
+
+        defect.Status = DefectStatus.Closed;
+        defect.VerifiedById = userId;
+        defect.VerifiedByName = verifierName;
+        defect.VerifiedAt = DateTime.UtcNow;
+        defect.ClosedAt = DateTime.UtcNow;
+        defect.AssigneeUnread = true;
+        defect.UpdatedAt = DateTime.UtcNow;
+
+        await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
+
+        _logger.LogInformation("[{AppKey}] Defect verify-pass: {DefectNo} by {UserId}", AppKey, defect.DefectNo, userId);
+
+        _ = _webhookService.NotifyAsync(defect, DefectEventType.Closed);
+
+        return Ok(ApiResponse<object>.Ok(new { defect }));
+    }
+
+    /// <summary>
+    /// 验收不通过 → 打回处理中
+    /// </summary>
+    [HttpPost("defects/{id}/verify-fail")]
+    public async Task<IActionResult> VerifyFail(string id, [FromBody] VerifyFailRequest request, CancellationToken ct)
+    {
+        var userId = GetUserId();
+
+        var defect = await _db.DefectReports.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (defect == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "缺陷不存在"));
+
+        if (!HasManagePermission() && defect.ReporterId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "只有报告人可以验收"));
+
+        if (defect.Status != DefectStatus.Verifying)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只能验收待验收状态的缺陷"));
+
+        defect.Status = DefectStatus.Processing;
+        defect.VerifyFailReason = request.Reason?.Trim();
+        defect.AssigneeUnread = true;
+        defect.UpdatedAt = DateTime.UtcNow;
+        // 清除验收字段
+        defect.VerifiedById = null;
+        defect.VerifiedByName = null;
+        defect.VerifiedAt = null;
+
+        await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
+
+        _logger.LogInformation("[{AppKey}] Defect verify-fail: {DefectNo} by {UserId}", AppKey, defect.DefectNo, userId);
+
+        _ = _webhookService.NotifyAsync(defect, DefectEventType.VerifyFailed);
 
         return Ok(ApiResponse<object>.Ok(new { defect }));
     }
@@ -854,21 +980,18 @@ public class DefectAgentController : ControllerBase
         if (!isAdmin && defect.ReporterId != userId && defect.AssigneeId != userId)
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限关闭缺陷"));
 
-        // 完成=关闭：统一进入结束态（resolved 或 rejected）
-        if (defect.Status != DefectStatus.Rejected)
-        {
-            var resolver = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
-            var resolverName = resolver?.DisplayName ?? resolver?.Username ?? GetUsername() ?? "未知用户";
-            defect.Status = DefectStatus.Resolved;
-            defect.ResolvedById = userId;
-            defect.ResolvedByAvatarFileName = resolver?.AvatarFileName;
-            defect.ResolvedByName = resolverName;
-            defect.ResolvedAt = DateTime.UtcNow;
-        }
+        // 只能关闭 verifying / resolved / rejected 状态的缺陷
+        var closableStatuses = new[] { DefectStatus.Verifying, DefectStatus.Resolved, DefectStatus.Rejected };
+        if (!closableStatuses.Contains(defect.Status))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只能关闭待验收/已解决/已拒绝状态的缺陷"));
 
+        defect.Status = DefectStatus.Closed;
+        defect.ClosedAt = DateTime.UtcNow;
         defect.UpdatedAt = DateTime.UtcNow;
 
         await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
+
+        _ = _webhookService.NotifyAsync(defect, DefectEventType.Closed);
 
         return Ok(ApiResponse<object>.Ok(new { defect }));
     }
@@ -890,8 +1013,9 @@ public class DefectAgentController : ControllerBase
         if (!isAdmin && defect.ReporterId != userId)
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限重新打开此缺陷"));
 
-        if (defect.Status != DefectStatus.Rejected && defect.Status != DefectStatus.Resolved)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只能重新打开已拒绝或已解决状态的缺陷"));
+        var reopenableStatuses = new[] { DefectStatus.Rejected, DefectStatus.Resolved, DefectStatus.Closed, DefectStatus.Verifying };
+        if (!reopenableStatuses.Contains(defect.Status))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只能重新打开已拒绝/已解决/已关闭/待验收状态的缺陷"));
 
         // 如果有指派人，回到已指派状态；否则回到已提交状态
         defect.Status = string.IsNullOrEmpty(defect.AssigneeId) ? DefectStatus.Submitted : DefectStatus.Assigned;
@@ -904,6 +1028,11 @@ public class DefectAgentController : ControllerBase
         defect.RejectedById = null;
         defect.RejectedByAvatarFileName = null;
         defect.RejectedByName = null;
+        defect.VerifiedById = null;
+        defect.VerifiedByName = null;
+        defect.VerifiedAt = null;
+        defect.VerifyFailReason = null;
+        defect.ClosedAt = null;
         defect.UpdatedAt = DateTime.UtcNow;
 
         await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
@@ -1182,19 +1311,32 @@ public class DefectAgentController : ControllerBase
     /// 获取缺陷统计
     /// </summary>
     [HttpGet("stats")]
-    public async Task<IActionResult> GetStats(CancellationToken ct)
+    public async Task<IActionResult> GetStats(
+        [FromQuery] string? projectId,
+        [FromQuery] string? teamId,
+        CancellationToken ct)
     {
         var userId = GetUserId();
         var isAdmin = HasManagePermission();
 
-        // 构建基础过滤器
         var filterBuilder = Builders<DefectReport>.Filter;
-        var baseFilter = isAdmin
-            ? FilterDefinition<DefectReport>.Empty
-            : filterBuilder.Or(
+        var filters = new List<FilterDefinition<DefectReport>>();
+        filters.Add(filterBuilder.Eq(x => x.IsDeleted, false));
+
+        if (!isAdmin)
+        {
+            filters.Add(filterBuilder.Or(
                 filterBuilder.Eq(x => x.ReporterId, userId),
                 filterBuilder.Eq(x => x.AssigneeId, userId)
-            );
+            ));
+        }
+
+        if (!string.IsNullOrWhiteSpace(projectId))
+            filters.Add(filterBuilder.Eq(x => x.ProjectId, projectId));
+        if (!string.IsNullOrWhiteSpace(teamId))
+            filters.Add(filterBuilder.Eq(x => x.TeamId, teamId));
+
+        var baseFilter = filterBuilder.And(filters);
 
         var total = await _db.DefectReports.CountDocumentsAsync(baseFilter, cancellationToken: ct);
 
@@ -1217,6 +1359,411 @@ public class DefectAgentController : ControllerBase
         }
 
         return Ok(ApiResponse<object>.Ok(new { total, statusCounts, severityCounts }));
+    }
+
+    /// <summary>
+    /// 统计概览（支持按团队/项目/时间段过滤）
+    /// </summary>
+    [HttpGet("stats/overview")]
+    public async Task<IActionResult> GetStatsOverview(
+        [FromQuery] string? projectId,
+        [FromQuery] string? teamId,
+        [FromQuery] DateTime? from,
+        [FromQuery] DateTime? to,
+        CancellationToken ct)
+    {
+        var filterBuilder = Builders<DefectReport>.Filter;
+        var filters = new List<FilterDefinition<DefectReport>>();
+        filters.Add(filterBuilder.Eq(x => x.IsDeleted, false));
+
+        if (!string.IsNullOrWhiteSpace(projectId))
+            filters.Add(filterBuilder.Eq(x => x.ProjectId, projectId));
+        if (!string.IsNullOrWhiteSpace(teamId))
+            filters.Add(filterBuilder.Eq(x => x.TeamId, teamId));
+        if (from.HasValue)
+            filters.Add(filterBuilder.Gte(x => x.CreatedAt, from.Value));
+        if (to.HasValue)
+            filters.Add(filterBuilder.Lte(x => x.CreatedAt, to.Value));
+
+        var baseFilter = filterBuilder.And(filters);
+        var allDefects = await _db.DefectReports.Find(baseFilter).ToListAsync(ct);
+
+        var total = allDefects.Count;
+        var statusCounts = allDefects.GroupBy(d => d.Status).ToDictionary(g => g.Key, g => g.Count());
+        var severityCounts = allDefects.GroupBy(d => d.Severity ?? "unknown").ToDictionary(g => g.Key, g => g.Count());
+
+        // 平均处理时长（从 submittedAt 到 resolvedAt）
+        var resolvedDefects = allDefects.Where(d => d.ResolvedAt.HasValue && d.SubmittedAt.HasValue).ToList();
+        var avgResolutionHours = resolvedDefects.Count > 0
+            ? resolvedDefects.Average(d => (d.ResolvedAt!.Value - d.SubmittedAt!.Value).TotalHours)
+            : 0;
+
+        // 本周新增
+        var weekStart = DateTime.UtcNow.Date.AddDays(-(int)DateTime.UtcNow.DayOfWeek);
+        var thisWeekCount = allDefects.Count(d => d.CreatedAt >= weekStart);
+
+        // 未解决数
+        var openStatuses = new[] { DefectStatus.Submitted, DefectStatus.Assigned, DefectStatus.Processing, DefectStatus.Verifying };
+        var openCount = allDefects.Count(d => openStatuses.Contains(d.Status));
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            total,
+            openCount,
+            thisWeekCount,
+            avgResolutionHours = Math.Round(avgResolutionHours, 1),
+            statusCounts,
+            severityCounts,
+        }));
+    }
+
+    /// <summary>
+    /// 趋势统计（按天/周/月）
+    /// </summary>
+    [HttpGet("stats/trend")]
+    public async Task<IActionResult> GetStatsTrend(
+        [FromQuery] string? projectId,
+        [FromQuery] string? teamId,
+        [FromQuery] DateTime? from,
+        [FromQuery] DateTime? to,
+        [FromQuery] string period = "day",
+        CancellationToken ct = default)
+    {
+        var filterBuilder = Builders<DefectReport>.Filter;
+        var filters = new List<FilterDefinition<DefectReport>>();
+        filters.Add(filterBuilder.Eq(x => x.IsDeleted, false));
+
+        var effectiveFrom = from ?? DateTime.UtcNow.AddDays(-30);
+        var effectiveTo = to ?? DateTime.UtcNow;
+
+        filters.Add(filterBuilder.Gte(x => x.CreatedAt, effectiveFrom));
+        filters.Add(filterBuilder.Lte(x => x.CreatedAt, effectiveTo));
+
+        if (!string.IsNullOrWhiteSpace(projectId))
+            filters.Add(filterBuilder.Eq(x => x.ProjectId, projectId));
+        if (!string.IsNullOrWhiteSpace(teamId))
+            filters.Add(filterBuilder.Eq(x => x.TeamId, teamId));
+
+        var baseFilter = filterBuilder.And(filters);
+        var allDefects = await _db.DefectReports.Find(baseFilter).ToListAsync(ct);
+
+        // 按周期分组
+        Func<DateTime, string> groupKey = period switch
+        {
+            "week" => d => $"{d.Year}-W{System.Globalization.ISOWeek.GetWeekOfYear(d):D2}",
+            "month" => d => d.ToString("yyyy-MM"),
+            _ => d => d.ToString("yyyy-MM-dd"),
+        };
+
+        var created = allDefects
+            .GroupBy(d => groupKey(d.CreatedAt))
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        var closed = allDefects
+            .Where(d => d.ClosedAt.HasValue || d.ResolvedAt.HasValue)
+            .GroupBy(d => groupKey(d.ClosedAt ?? d.ResolvedAt!.Value))
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        return Ok(ApiResponse<object>.Ok(new { created, closed, period }));
+    }
+
+    /// <summary>
+    /// 按人统计
+    /// </summary>
+    [HttpGet("stats/by-user")]
+    public async Task<IActionResult> GetStatsByUser(
+        [FromQuery] string? projectId,
+        [FromQuery] string? teamId,
+        [FromQuery] DateTime? from,
+        [FromQuery] DateTime? to,
+        CancellationToken ct = default)
+    {
+        var filterBuilder = Builders<DefectReport>.Filter;
+        var filters = new List<FilterDefinition<DefectReport>>();
+        filters.Add(filterBuilder.Eq(x => x.IsDeleted, false));
+
+        if (!string.IsNullOrWhiteSpace(projectId))
+            filters.Add(filterBuilder.Eq(x => x.ProjectId, projectId));
+        if (!string.IsNullOrWhiteSpace(teamId))
+            filters.Add(filterBuilder.Eq(x => x.TeamId, teamId));
+        if (from.HasValue)
+            filters.Add(filterBuilder.Gte(x => x.CreatedAt, from.Value));
+        if (to.HasValue)
+            filters.Add(filterBuilder.Lte(x => x.CreatedAt, to.Value));
+
+        var baseFilter = filterBuilder.And(filters);
+        var allDefects = await _db.DefectReports.Find(baseFilter).ToListAsync(ct);
+
+        // 按指派人统计
+        var byAssignee = allDefects
+            .Where(d => !string.IsNullOrEmpty(d.AssigneeId))
+            .GroupBy(d => new { d.AssigneeId, d.AssigneeName })
+            .Select(g =>
+            {
+                var resolved = g.Where(d => d.ResolvedAt.HasValue && d.SubmittedAt.HasValue).ToList();
+                return new
+                {
+                    userId = g.Key.AssigneeId,
+                    userName = g.Key.AssigneeName ?? "未知",
+                    assignedCount = g.Count(),
+                    resolvedCount = g.Count(d => d.Status == DefectStatus.Resolved || d.Status == DefectStatus.Closed || d.Status == DefectStatus.Verifying),
+                    avgResolutionHours = resolved.Count > 0
+                        ? Math.Round(resolved.Average(d => (d.ResolvedAt!.Value - d.SubmittedAt!.Value).TotalHours), 1)
+                        : 0,
+                };
+            })
+            .OrderByDescending(x => x.resolvedCount)
+            .Take(20)
+            .ToList();
+
+        // 按报告人统计
+        var byReporter = allDefects
+            .GroupBy(d => new { d.ReporterId, d.ReporterName })
+            .Select(g => new
+            {
+                userId = g.Key.ReporterId,
+                userName = g.Key.ReporterName ?? "未知",
+                submittedCount = g.Count(),
+            })
+            .OrderByDescending(x => x.submittedCount)
+            .Take(20)
+            .ToList();
+
+        return Ok(ApiResponse<object>.Ok(new { byAssignee, byReporter }));
+    }
+
+    #endregion
+
+    #region 项目管理
+
+    /// <summary>
+    /// 列出项目
+    /// </summary>
+    [HttpGet("projects")]
+    public async Task<IActionResult> ListProjects([FromQuery] string? keyword, CancellationToken ct)
+    {
+        var filter = Builders<DefectProject>.Filter.Eq(x => x.IsArchived, false);
+
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            var regex = new MongoDB.Bson.BsonRegularExpression(keyword, "i");
+            filter &= Builders<DefectProject>.Filter.Or(
+                Builders<DefectProject>.Filter.Regex(x => x.Name, regex),
+                Builders<DefectProject>.Filter.Regex(x => x.Key, regex)
+            );
+        }
+
+        var items = await _db.DefectProjects
+            .Find(filter)
+            .SortByDescending(x => x.CreatedAt)
+            .ToListAsync(ct);
+
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>
+    /// 创建项目
+    /// </summary>
+    [HttpPost("projects")]
+    public async Task<IActionResult> CreateProject([FromBody] CreateProjectRequest request, CancellationToken ct)
+    {
+        if (!HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限管理项目"));
+
+        if (string.IsNullOrWhiteSpace(request.Name))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "项目名称不能为空"));
+        if (string.IsNullOrWhiteSpace(request.Key))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "项目标识不能为空"));
+
+        // 检查 key 唯一性
+        var existing = await _db.DefectProjects.Find(x => x.Key == request.Key.Trim()).FirstOrDefaultAsync(ct);
+        if (existing != null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "项目标识已存在"));
+
+        var userId = GetUserId();
+        var user = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
+        var userName = user?.DisplayName ?? user?.Username ?? GetUsername() ?? "未知用户";
+
+        var project = new DefectProject
+        {
+            Name = request.Name.Trim(),
+            Key = request.Key.Trim(),
+            Description = request.Description?.Trim(),
+            OwnerUserId = userId,
+            OwnerName = userName,
+            DefaultTemplateId = request.DefaultTemplateId,
+        };
+
+        await _db.DefectProjects.InsertOneAsync(project, cancellationToken: ct);
+
+        _logger.LogInformation("[{AppKey}] Project created: {ProjectKey} by {UserId}", AppKey, project.Key, userId);
+
+        return Ok(ApiResponse<object>.Ok(new { project }));
+    }
+
+    /// <summary>
+    /// 更新项目
+    /// </summary>
+    [HttpPut("projects/{id}")]
+    public async Task<IActionResult> UpdateProject(string id, [FromBody] UpdateProjectRequest request, CancellationToken ct)
+    {
+        if (!HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限管理项目"));
+
+        var project = await _db.DefectProjects.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (project == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "项目不存在"));
+
+        if (!string.IsNullOrWhiteSpace(request.Name))
+            project.Name = request.Name.Trim();
+        if (!string.IsNullOrWhiteSpace(request.Description))
+            project.Description = request.Description.Trim();
+        if (request.DefaultTemplateId != null)
+            project.DefaultTemplateId = request.DefaultTemplateId;
+        if (!string.IsNullOrWhiteSpace(request.OwnerUserId))
+        {
+            var owner = await _db.Users.Find(x => x.UserId == request.OwnerUserId).FirstOrDefaultAsync(ct);
+            if (owner != null)
+            {
+                project.OwnerUserId = owner.UserId;
+                project.OwnerName = owner.DisplayName ?? owner.Username;
+            }
+        }
+
+        project.UpdatedAt = DateTime.UtcNow;
+
+        await _db.DefectProjects.ReplaceOneAsync(x => x.Id == id, project, cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new { project }));
+    }
+
+    /// <summary>
+    /// 归档项目
+    /// </summary>
+    [HttpDelete("projects/{id}")]
+    public async Task<IActionResult> ArchiveProject(string id, CancellationToken ct)
+    {
+        if (!HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限管理项目"));
+
+        var project = await _db.DefectProjects.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (project == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "项目不存在"));
+
+        project.IsArchived = true;
+        project.UpdatedAt = DateTime.UtcNow;
+
+        await _db.DefectProjects.ReplaceOneAsync(x => x.Id == id, project, cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new { archived = true }));
+    }
+
+    #endregion
+
+    #region 团队查询
+
+    /// <summary>
+    /// 列出团队（复用 report_teams）
+    /// </summary>
+    [HttpGet("teams")]
+    public async Task<IActionResult> ListTeams(CancellationToken ct)
+    {
+        var items = await _db.ReportTeams
+            .Find(FilterDefinition<ReportTeam>.Empty)
+            .SortByDescending(x => x.CreatedAt)
+            .ToListAsync(ct);
+
+        return Ok(ApiResponse<object>.Ok(new { items = items.Select(t => new { t.Id, t.Name, t.LeaderUserId, t.LeaderName, t.Description }) }));
+    }
+
+    #endregion
+
+    #region Webhook 配置
+
+    /// <summary>
+    /// 列出 Webhook 配置
+    /// </summary>
+    [HttpGet("webhooks")]
+    public async Task<IActionResult> ListWebhooks(CancellationToken ct)
+    {
+        if (!HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限管理 Webhook"));
+
+        var items = await _db.DefectWebhookConfigs
+            .Find(FilterDefinition<DefectWebhookConfig>.Empty)
+            .SortByDescending(x => x.CreatedAt)
+            .ToListAsync(ct);
+
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>
+    /// 创建 Webhook 配置
+    /// </summary>
+    [HttpPost("webhooks")]
+    public async Task<IActionResult> CreateWebhook([FromBody] CreateWebhookRequest request, CancellationToken ct)
+    {
+        if (!HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限管理 Webhook"));
+
+        if (string.IsNullOrWhiteSpace(request.WebhookUrl))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "Webhook URL 不能为空"));
+
+        var config = new DefectWebhookConfig
+        {
+            TeamId = request.TeamId,
+            ProjectId = request.ProjectId,
+            Channel = request.Channel ?? WebhookChannel.WeCom,
+            WebhookUrl = request.WebhookUrl.Trim(),
+            TriggerEvents = request.TriggerEvents ?? new List<string> { DefectEventType.Submitted, DefectEventType.Assigned, DefectEventType.Resolved },
+            IsEnabled = request.IsEnabled ?? true,
+        };
+
+        await _db.DefectWebhookConfigs.InsertOneAsync(config, cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new { webhook = config }));
+    }
+
+    /// <summary>
+    /// 更新 Webhook 配置
+    /// </summary>
+    [HttpPut("webhooks/{id}")]
+    public async Task<IActionResult> UpdateWebhook(string id, [FromBody] UpdateWebhookRequest request, CancellationToken ct)
+    {
+        if (!HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限管理 Webhook"));
+
+        var config = await _db.DefectWebhookConfigs.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (config == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "Webhook 配置不存在"));
+
+        if (request.WebhookUrl != null) config.WebhookUrl = request.WebhookUrl.Trim();
+        if (request.Channel != null) config.Channel = request.Channel;
+        if (request.TriggerEvents != null) config.TriggerEvents = request.TriggerEvents;
+        if (request.IsEnabled.HasValue) config.IsEnabled = request.IsEnabled.Value;
+        if (request.TeamId != null) config.TeamId = string.IsNullOrEmpty(request.TeamId) ? null : request.TeamId;
+        if (request.ProjectId != null) config.ProjectId = string.IsNullOrEmpty(request.ProjectId) ? null : request.ProjectId;
+        config.UpdatedAt = DateTime.UtcNow;
+
+        await _db.DefectWebhookConfigs.ReplaceOneAsync(x => x.Id == id, config, cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new { webhook = config }));
+    }
+
+    /// <summary>
+    /// 删除 Webhook 配置
+    /// </summary>
+    [HttpDelete("webhooks/{id}")]
+    public async Task<IActionResult> DeleteWebhook(string id, CancellationToken ct)
+    {
+        if (!HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限管理 Webhook"));
+
+        var result = await _db.DefectWebhookConfigs.DeleteOneAsync(x => x.Id == id, ct);
+        if (result.DeletedCount == 0)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "Webhook 配置不存在"));
+
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
     #endregion
@@ -1902,6 +2449,8 @@ public class CreateDefectRequest
     public string? AssigneeUserId { get; set; }
     public string? Severity { get; set; }
     public string? Priority { get; set; }
+    public string? ProjectId { get; set; }
+    public string? TeamId { get; set; }
 }
 
 public class UpdateDefectRequest
@@ -1976,6 +2525,47 @@ public class BatchMoveDefectsRequest
     public List<string> DefectIds { get; set; } = new();
     /// <summary>目标文件夹 ID（null 或空字符串表示移到根目录）</summary>
     public string? FolderId { get; set; }
+}
+
+public class VerifyFailRequest
+{
+    public string? Reason { get; set; }
+}
+
+public class CreateProjectRequest
+{
+    public string Name { get; set; } = string.Empty;
+    public string Key { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    public string? DefaultTemplateId { get; set; }
+}
+
+public class UpdateProjectRequest
+{
+    public string? Name { get; set; }
+    public string? Description { get; set; }
+    public string? DefaultTemplateId { get; set; }
+    public string? OwnerUserId { get; set; }
+}
+
+public class CreateWebhookRequest
+{
+    public string? TeamId { get; set; }
+    public string? ProjectId { get; set; }
+    public string? Channel { get; set; }
+    public string WebhookUrl { get; set; } = string.Empty;
+    public List<string>? TriggerEvents { get; set; }
+    public bool? IsEnabled { get; set; }
+}
+
+public class UpdateWebhookRequest
+{
+    public string? TeamId { get; set; }
+    public string? ProjectId { get; set; }
+    public string? Channel { get; set; }
+    public string? WebhookUrl { get; set; }
+    public List<string>? TriggerEvents { get; set; }
+    public bool? IsEnabled { get; set; }
 }
 
 #endregion

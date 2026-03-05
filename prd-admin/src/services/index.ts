@@ -207,6 +207,20 @@ import type {
   MoveDefectToFolderContract,
   BatchMoveDefectsContract,
   PreviewApiLogsContract,
+  VerifyPassContract,
+  VerifyFailContract,
+  ListDefectProjectsContract,
+  CreateDefectProjectContract,
+  UpdateDefectProjectContract,
+  ArchiveDefectProjectContract,
+  ListDefectTeamsContract,
+  GetDefectStatsOverviewContract,
+  GetDefectStatsTrendContract,
+  GetDefectStatsByUserContract,
+  ListDefectWebhooksContract,
+  CreateDefectWebhookContract,
+  UpdateDefectWebhookContract,
+  DeleteDefectWebhookContract,
   AnalyzeDefectImageContract,
 } from '@/services/contracts/defectAgent';
 import type { IOpenPlatformService } from '@/services/contracts/openPlatform';
@@ -464,6 +478,20 @@ import {
   moveDefectToFolderReal,
   batchMoveDefectsReal,
   previewApiLogsReal,
+  verifyPassReal,
+  verifyFailReal,
+  listDefectProjectsReal,
+  createDefectProjectReal,
+  updateDefectProjectReal,
+  archiveDefectProjectReal,
+  listDefectTeamsReal,
+  getDefectStatsOverviewReal,
+  getDefectStatsTrendReal,
+  getDefectStatsByUserReal,
+  listDefectWebhooksReal,
+  createDefectWebhookReal,
+  updateDefectWebhookReal,
+  deleteDefectWebhookReal,
 } from '@/services/real/defectAgent';
 import { OpenPlatformService } from '@/services/real/openPlatform';
 import { AutomationsService } from '@/services/real/automations';
@@ -860,6 +888,24 @@ export const deleteDefectFolder: DeleteDefectFolderContract = withAuth(deleteDef
 export const moveDefectToFolder: MoveDefectToFolderContract = withAuth(moveDefectToFolderReal);
 export const batchMoveDefects: BatchMoveDefectsContract = withAuth(batchMoveDefectsReal);
 export const previewApiLogs: PreviewApiLogsContract = withAuth(previewApiLogsReal);
+// Phase 2: 验收
+export const verifyPass: VerifyPassContract = withAuth(verifyPassReal);
+export const verifyFail: VerifyFailContract = withAuth(verifyFailReal);
+// Phase 1: 项目 + 团队
+export const listDefectProjects: ListDefectProjectsContract = withAuth(listDefectProjectsReal);
+export const createDefectProject: CreateDefectProjectContract = withAuth(createDefectProjectReal);
+export const updateDefectProject: UpdateDefectProjectContract = withAuth(updateDefectProjectReal);
+export const archiveDefectProject: ArchiveDefectProjectContract = withAuth(archiveDefectProjectReal);
+export const listDefectTeams: ListDefectTeamsContract = withAuth(listDefectTeamsReal);
+// Phase 4: 统计看板
+export const getDefectStatsOverview: GetDefectStatsOverviewContract = withAuth(getDefectStatsOverviewReal);
+export const getDefectStatsTrend: GetDefectStatsTrendContract = withAuth(getDefectStatsTrendReal);
+export const getDefectStatsByUser: GetDefectStatsByUserContract = withAuth(getDefectStatsByUserReal);
+// Phase 5: Webhook
+export const listDefectWebhooks: ListDefectWebhooksContract = withAuth(listDefectWebhooksReal);
+export const createDefectWebhook: CreateDefectWebhookContract = withAuth(createDefectWebhookReal);
+export const updateDefectWebhook: UpdateDefectWebhookContract = withAuth(updateDefectWebhookReal);
+export const deleteDefectWebhook: DeleteDefectWebhookContract = withAuth(deleteDefectWebhookReal);
 
 // ─── Mobile Dashboard ───
 export const getMobileFeed: GetMobileFeedContract = withAuth(getMobileFeedReal);

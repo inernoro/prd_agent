@@ -28,6 +28,12 @@ export default function DefectAgentPage() {
     viewMode,
     setViewMode,
     loadAll,
+    projects,
+    teams,
+    projectFilter,
+    teamFilter,
+    setProjectFilter,
+    setTeamFilter,
   } = useDefectStore();
 
   const notifiedRef = useRef(false);
@@ -46,7 +52,7 @@ export default function DefectAgentPage() {
     const notifiedIds = new Set<string>(notifiedIdsStr ? JSON.parse(notifiedIdsStr) : []);
 
     // 找出待处理的缺陷（待处理、处理中状态）
-    const pendingStatuses = [DefectStatus.Pending, DefectStatus.Working];
+    const pendingStatuses = [DefectStatus.Pending, DefectStatus.Working, DefectStatus.Verifying];
     const pendingDefects = defects.filter(
       (d) => pendingStatuses.includes(d.status as typeof DefectStatus.Pending) && !notifiedIds.has(d.id)
     );
@@ -87,6 +93,42 @@ export default function DefectAgentPage() {
         onChange={(key) => setFilter(key as 'submitted' | 'assigned')}
         actions={
           <>
+            {/* 项目/团队筛选 */}
+            {projects.length > 0 && (
+              <select
+                value={projectFilter}
+                onChange={(e) => setProjectFilter(e.target.value)}
+                className="h-7 px-2 rounded-lg text-[12px] outline-none"
+                style={{
+                  background: 'rgba(255,255,255,0.06)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  color: projectFilter ? 'var(--text-primary)' : 'var(--text-muted)',
+                }}
+              >
+                <option value="">全部项目</option>
+                {projects.filter(p => !p.isArchived).map((p) => (
+                  <option key={p.id} value={p.id}>[{p.key}] {p.name}</option>
+                ))}
+              </select>
+            )}
+            {teams.length > 0 && (
+              <select
+                value={teamFilter}
+                onChange={(e) => setTeamFilter(e.target.value)}
+                className="h-7 px-2 rounded-lg text-[12px] outline-none"
+                style={{
+                  background: 'rgba(255,255,255,0.06)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  color: teamFilter ? 'var(--text-primary)' : 'var(--text-muted)',
+                }}
+              >
+                <option value="">全部团队</option>
+                {teams.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+            )}
+
             {/* 视图切换 */}
             <div
               className="flex items-center rounded-lg overflow-hidden"
