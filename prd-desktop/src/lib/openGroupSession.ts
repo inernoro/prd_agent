@@ -5,7 +5,7 @@
  * 必须调用此函数，禁止各自维护重复逻辑。
  */
 import { invoke } from './tauri';
-import type { ApiResponse, Document, Session, UserRole } from '../types';
+import type { ApiResponse, Document, DocumentMeta, Session, UserRole } from '../types';
 import { useSessionStore } from '../stores/sessionStore';
 
 export interface OpenGroupSessionResult {
@@ -27,6 +27,7 @@ export async function openGroupSession(
     groupId: string;
     documentId: string;
     documentIds?: string[];
+    documentMetas?: DocumentMeta[];
     currentRole: string;
   }>>('open_group_session', { groupId, userRole });
 
@@ -39,12 +40,19 @@ export async function openGroupSession(
 
   // 获取所有文档元信息（多文档支持）
   const allDocIds = openResp.data.documentIds ?? [openResp.data.documentId];
+  const metas = openResp.data.documentMetas ?? [];
+  const metaMap = new Map(metas.map(m => [m.documentId, m.documentType]));
+  // 主文档带上类型
+  docResp.data.documentType = metaMap.get(docResp.data.id) ?? 'product';
   const allDocs: Document[] = [docResp.data];
   for (const did of allDocIds) {
     if (did === openResp.data.documentId) continue; // 主文档已获取
     try {
       const r = await invoke<ApiResponse<Document>>('get_document', { documentId: did });
-      if (r.success && r.data) allDocs.push(r.data);
+      if (r.success && r.data) {
+        r.data.documentType = metaMap.get(did) ?? 'reference';
+        allDocs.push(r.data);
+      }
     } catch { /* skip */ }
   }
 

@@ -116,7 +116,7 @@ public class SessionService : ISessionService
         }
     }
 
-    public async Task<Session> AddDocumentAsync(string sessionId, string documentId)
+    public async Task<Session> AddDocumentAsync(string sessionId, string documentId, string documentType = "reference")
     {
         var session = await GetByIdAsync(sessionId)
             ?? throw new KeyNotFoundException("会话不存在");
@@ -126,10 +126,18 @@ public class SessionService : ISessionService
             throw new ArgumentException("documentId 不能为空", nameof(documentId));
 
         if (session.DocumentIds.Count == 0 && !string.IsNullOrEmpty(session.DocumentId))
+        {
             session.DocumentIds.Add(session.DocumentId);
+            // 迁移时为主文档设置默认类型
+            if (!session.DocumentMetas.Any(m => m.DocumentId == session.DocumentId))
+                session.DocumentMetas.Add(new SessionDocumentMeta { DocumentId = session.DocumentId, DocumentType = "product" });
+        }
 
         if (!session.DocumentIds.Contains(did))
+        {
             session.DocumentIds.Add(did);
+            session.DocumentMetas.Add(new SessionDocumentMeta { DocumentId = did, DocumentType = documentType });
+        }
 
         session.LastActiveAt = DateTime.UtcNow;
         await SaveSessionAsync(session);
@@ -149,8 +157,29 @@ public class SessionService : ISessionService
             throw new InvalidOperationException("至少保留一个文档");
 
         session.DocumentIds.Remove(did);
+        session.DocumentMetas.RemoveAll(m => m.DocumentId == did);
         if (string.Equals(session.DocumentId, did, StringComparison.Ordinal) && session.DocumentIds.Count > 0)
             session.DocumentId = session.DocumentIds[0];
+
+        session.LastActiveAt = DateTime.UtcNow;
+        await SaveSessionAsync(session);
+        return session;
+    }
+
+    public async Task<Session> UpdateDocumentTypeAsync(string sessionId, string documentId, string documentType)
+    {
+        var session = await GetByIdAsync(sessionId)
+            ?? throw new KeyNotFoundException("会话不存在");
+
+        var meta = session.DocumentMetas.FirstOrDefault(m => m.DocumentId == documentId);
+        if (meta != null)
+        {
+            meta.DocumentType = documentType;
+        }
+        else
+        {
+            session.DocumentMetas.Add(new SessionDocumentMeta { DocumentId = documentId, DocumentType = documentType });
+        }
 
         session.LastActiveAt = DateTime.UtcNow;
         await SaveSessionAsync(session);

@@ -365,8 +365,9 @@ public class SessionsController : ControllerBase
         var parsed = await _documentService.ParseAsync(request.Content);
         await _documentService.SaveAsync(parsed);
 
-        // 追加到会话
-        var updated = await _sessionService.AddDocumentAsync(sessionId, parsed.Id);
+        // 追加到会话（含文档类型）
+        var docType = string.IsNullOrWhiteSpace(request.DocumentType) ? "reference" : request.DocumentType.Trim().ToLowerInvariant();
+        var updated = await _sessionService.AddDocumentAsync(sessionId, parsed.Id, docType);
 
         _logger.LogInformation("Document added to session {SessionId}: {Title}, Chars: {Chars}",
             sessionId, parsed.Title, parsed.CharCount);
@@ -414,6 +415,44 @@ public class SessionsController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// 更新文档类型
+    /// </summary>
+    [HttpPatch("{sessionId}/documents/{documentId}/type")]
+    [ProducesResponseType(typeof(ApiResponse<SessionResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> UpdateDocumentType(string sessionId, string documentId, [FromBody] UpdateDocumentTypeRequest request, CancellationToken ct = default)
+    {
+        var userId = GetUserId(User);
+        if (string.IsNullOrWhiteSpace(userId))
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+
+        if (!request.IsValid())
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的文档类型，可选值：product/technical/design/reference"));
+
+        var session = await _sessionService.GetByIdAsync(sessionId);
+        if (session == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.SESSION_NOT_FOUND, "会话不存在"));
+
+        var canAccess = await CanAccessSessionAsync(session, userId, ct);
+        if (!canAccess)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        if (!session.GetAllDocumentIds().Contains(documentId))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "文档不在当前会话中"));
+
+        var updated = await _sessionService.UpdateDocumentTypeAsync(sessionId, documentId, request.DocumentType.ToLowerInvariant());
+        return Ok(ApiResponse<SessionResponse>.Ok(MapToResponse(updated)));
+    }
+
+    private static List<SessionDocumentMetaDto> BuildDocumentMetas(Session session)
+    {
+        return session.GetAllDocumentIds().Select(did => new SessionDocumentMetaDto
+        {
+            DocumentId = did,
+            DocumentType = session.GetDocumentType(did),
+        }).ToList();
+    }
+
     private static SessionResponse MapToResponse(Session session)
     {
         return new SessionResponse
@@ -423,6 +462,7 @@ public class SessionsController : ControllerBase
             OwnerUserId = session.OwnerUserId,
             DocumentId = session.DocumentId,
             DocumentIds = session.GetAllDocumentIds(),
+            DocumentMetas = BuildDocumentMetas(session),
             Title = session.Title,
             CurrentRole = session.CurrentRole,
             Mode = session.Mode,

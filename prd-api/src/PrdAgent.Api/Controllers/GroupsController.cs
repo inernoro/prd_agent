@@ -292,6 +292,11 @@ public class GroupsController : ControllerBase
             GroupId = groupId,
             DocumentId = session.DocumentId,
             DocumentIds = session.GetAllDocumentIds(),
+            DocumentMetas = session.GetAllDocumentIds().Select(did => new SessionDocumentMetaDto
+            {
+                DocumentId = did,
+                DocumentType = session.GetDocumentType(did),
+            }).ToList(),
             // currentRole 语义：当前用户的身份（用于提示词分组与默认回答 bot）
             CurrentRole = member.MemberRole
         }));

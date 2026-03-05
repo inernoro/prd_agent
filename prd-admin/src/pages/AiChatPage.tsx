@@ -19,9 +19,17 @@ import type { AiChatStreamEvent } from '@/services/contracts/aiChat';
 import { toast } from '@/lib/toast';
 import { useLocation } from 'react-router-dom';
 
+const DOC_TYPE_LABELS: Record<string, string> = {
+  product: '产品',
+  technical: '技术',
+  design: '设计',
+  reference: '参考',
+};
+
 type LocalDocInfo = {
   documentId: string;
   documentTitle: string;
+  documentType?: string;
 };
 
 type LocalSession = {
@@ -424,11 +432,13 @@ export default function AiChatPage() {
             const title = String(x?.title ?? '').trim() || `会话 ${sid.slice(0, 8)}`;
             const createdAt = x?.createdAt ? new Date(String(x.createdAt)).getTime() : Date.now();
             const lastActiveAt = x?.lastActiveAt ? new Date(String(x.lastActiveAt)).getTime() : createdAt;
-            // 多文档：从服务端 documentIds 构建 documents 数组
+            // 多文档：从服务端 documentIds + documentMetas 构建 documents 数组
             const docIds: string[] = Array.isArray(x?.documentIds) ? x.documentIds : [];
+            const metas: Array<{ documentId: string; documentType: string }> = Array.isArray(x?.documentMetas) ? x.documentMetas : [];
+            const metaMap = new Map(metas.map((m: any) => [String(m.documentId), String(m.documentType)]));
             const documents: LocalDocInfo[] = docIds.length > 0
-              ? docIds.map((id: string) => ({ documentId: String(id), documentTitle: '' }))
-              : [{ documentId: did, documentTitle: String(x?.documentTitle ?? '').trim() }];
+              ? docIds.map((id: string) => ({ documentId: String(id), documentTitle: '', documentType: metaMap.get(String(id)) }))
+              : [{ documentId: did, documentTitle: String(x?.documentTitle ?? '').trim(), documentType: 'product' }];
 
             return {
               sessionId: sid,
@@ -1245,6 +1255,11 @@ export default function AiChatPage() {
           title={doc.documentTitle || doc.documentId.slice(0, 12)}
         >
           <span className="truncate">{doc.documentTitle || `文档${i + 1}`}</span>
+          {doc.documentType && DOC_TYPE_LABELS[doc.documentType] && (
+            <span className="text-[9px] px-1 py-px rounded opacity-60 whitespace-nowrap" style={{ background: 'var(--bg-muted)' }}>
+              {DOC_TYPE_LABELS[doc.documentType]}
+            </span>
+          )}
           {activeDocuments.length > 1 && (
             <button
               type="button"

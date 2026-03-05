@@ -178,6 +178,7 @@ pub fn run() {
             commands::document::get_document_content,
             commands::document::add_document_to_session,
             commands::document::remove_document_from_session,
+            commands::document::update_document_type,
             commands::intent::suggest_group_name,
             commands::session::get_session,
             commands::session::get_message_history,

@@ -22,6 +22,17 @@ public class Session
     /// <summary>关联的文档ID列表（多文档支持；为空时回退到 DocumentId）</summary>
     public List<string> DocumentIds { get; set; } = new();
 
+    /// <summary>各文档的元数据（类型等），按 DocumentId 索引</summary>
+    public List<SessionDocumentMeta> DocumentMetas { get; set; } = new();
+
+    /// <summary>获取指定文档的类型（未设置时：主文档默认 product，其他默认 reference）</summary>
+    public string GetDocumentType(string documentId)
+    {
+        var meta = DocumentMetas.FirstOrDefault(m => m.DocumentId == documentId);
+        if (meta != null) return meta.DocumentType;
+        return string.Equals(DocumentId, documentId, StringComparison.Ordinal) ? "product" : "reference";
+    }
+
     /// <summary>获取所有关联的文档ID（优先 DocumentIds，回退 DocumentId 兼容旧数据）</summary>
     public List<string> GetAllDocumentIds()
     {
@@ -55,4 +66,16 @@ public class Session
 
     /// <summary>删除时间（UTC；非空表示会话已软删除）</summary>
     public DateTime? DeletedAtUtc { get; set; }
+}
+
+/// <summary>
+/// 会话内文档元数据（类型标记等）
+/// </summary>
+public class SessionDocumentMeta
+{
+    /// <summary>文档ID</summary>
+    public string DocumentId { get; set; } = string.Empty;
+
+    /// <summary>文档类型：product(产品文档)、technical(技术文档)、design(设计文档)、reference(参考资料)</summary>
+    public string DocumentType { get; set; } = "reference";
 }

@@ -26,10 +26,13 @@ public interface ISessionService
     Task RefreshActivityAsync(string sessionId);
     
     /// <summary>向会话追加文档</summary>
-    Task<Session> AddDocumentAsync(string sessionId, string documentId);
+    Task<Session> AddDocumentAsync(string sessionId, string documentId, string documentType = "reference");
 
     /// <summary>从会话移除文档</summary>
     Task<Session> RemoveDocumentAsync(string sessionId, string documentId);
+
+    /// <summary>更新文档类型</summary>
+    Task<Session> UpdateDocumentTypeAsync(string sessionId, string documentId, string documentType);
 
     /// <summary>删除会话</summary>
     Task DeleteAsync(string sessionId);

@@ -65,5 +65,6 @@ public class OpenGroupSessionResponse
     public string GroupId { get; set; } = string.Empty;
     public string DocumentId { get; set; } = string.Empty;
     public List<string> DocumentIds { get; set; } = new();
+    public List<SessionDocumentMetaDto> DocumentMetas { get; set; } = new();
     public UserRole CurrentRole { get; set; }
 }

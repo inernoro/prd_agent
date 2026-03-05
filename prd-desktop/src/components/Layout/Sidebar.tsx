@@ -7,6 +7,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useGroupListStore } from '../../stores/groupListStore';
 import { useMessageStore } from '../../stores/messageStore';
 import type { ApiResponse, Document, UserRole } from '../../types';
+import { DOCUMENT_TYPE_LABELS } from '../../types';
 import { openGroupSessionAndSetStore } from '../../lib/openGroupSession';
 import GroupList from '../Group/GroupList';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -43,16 +44,20 @@ export default function Sidebar() {
     try {
       setAddingDoc(true);
       const content = await file.text();
-      const resp = await invoke<ApiResponse<{ sessionId: string; documentIds: string[] }>>(
+      const resp = await invoke<ApiResponse<{ sessionId: string; documentIds: string[]; documentMetas?: Array<{ documentId: string; documentType: string }> }>>(
         'add_document_to_session',
         { sessionId, content }
       );
       if (!resp.success || !resp.data) return;
+      const metaMap = new Map((resp.data.documentMetas ?? []).map(m => [m.documentId, m.documentType]));
       const newDocs: Document[] = [];
       for (const did of resp.data.documentIds) {
         try {
           const r = await invoke<ApiResponse<Document>>('get_document', { documentId: did });
-          if (r.success && r.data) newDocs.push(r.data);
+          if (r.success && r.data) {
+            r.data.documentType = (metaMap.get(did) ?? (did === resp.data!.documentIds[0] ? 'product' : 'reference')) as Document['documentType'];
+            newDocs.push(r.data);
+          }
         } catch { /* skip */ }
       }
       setDocuments(newDocs);
@@ -743,7 +748,36 @@ export default function Sidebar() {
                   <svg className="w-3.5 h-3.5 shrink-0 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
                   </svg>
-                  <span className="truncate flex-1 text-xs">{doc.title || '未命名文档'}</span>
+                  <div className="flex items-center gap-1 min-w-0 flex-1">
+                    <span className="truncate text-xs">{doc.title || '未命名文档'}</span>
+                    {doc.documentType && doc.documentType !== 'reference' && (
+                      <span className="text-[9px] px-1 py-px rounded bg-black/5 dark:bg-white/10 text-text-secondary whitespace-nowrap shrink-0">
+                        {DOCUMENT_TYPE_LABELS[doc.documentType] || doc.documentType}
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      import('../../stores/prdCitationPreviewStore').then(({ usePrdCitationPreviewStore }) => {
+                        usePrdCitationPreviewStore.getState().open({
+                          documentId: doc.id,
+                          groupId: activeGroupId || '',
+                          citations: [],
+                        });
+                      });
+                    }}
+                    className="h-6 w-6 hidden group-hover:inline-flex items-center justify-center rounded-md text-text-secondary hover:text-primary-500 hover:bg-black/5 dark:hover:bg-white/5 transition-colors shrink-0"
+                    title="预览文档"
+                    aria-label="预览文档"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                  </button>
                 </div>
               ))}
 
