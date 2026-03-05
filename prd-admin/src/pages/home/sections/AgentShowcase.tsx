@@ -688,7 +688,7 @@ export function AgentShowcase({ className, activeIndex: controlledIndex, onIndex
               key={agent.id}
               onClick={() => setActiveIndex(index)}
               className={cn(
-                'px-4 py-2 rounded-full text-sm font-medium transition-all duration-300',
+                'px-4 py-2.5 sm:py-2 rounded-full text-sm font-medium transition-all duration-300 min-h-[44px] sm:min-h-0',
                 index === activeIndex
                   ? 'bg-white/15 text-white border border-white/25 shadow-lg shadow-white/5'
                   : 'text-white/55 hover:text-white/80 hover:bg-white/8'

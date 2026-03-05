@@ -1,3 +1,4 @@
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -16,7 +17,7 @@ public sealed class RedisRunEventStore : IRunEventStore, IDisposable
     private readonly ConnectionMultiplexer _redis;
     private readonly IDatabase _db;
     private readonly TimeSpan _defaultTtl;
-    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
     public RedisRunEventStore(string connectionString, TimeSpan? defaultTtl = null)
     {

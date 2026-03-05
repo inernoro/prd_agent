@@ -12,6 +12,7 @@ import type {
   GetExecutionContract,
   CancelExecutionContract,
   ResumeFromNodeContract,
+  ContinueExecutionContract,
   GetNodeLogsContract,
   CreateShareLinkContract,
   ListShareLinksContract,
@@ -119,6 +120,13 @@ export const resumeFromNodeReal: ResumeFromNodeContract = async (input) => {
   );
 };
 
+export const continueExecutionReal: ContinueExecutionContract = async (executionId) => {
+  return await apiRequest<{ execution: WorkflowExecution }>(
+    api.workflowAgent.executions.continue(executionId),
+    { method: 'POST' }
+  );
+};
+
 export const getNodeLogsReal: GetNodeLogsContract = async (input) => {
   return await apiRequest<{
     nodeId: string;
@@ -183,6 +191,13 @@ export const testRunCapsuleReal: TestRunCapsuleContract = async (input) => {
     { method: 'POST', body: input }
   );
 };
+
+export async function replayNode(executionId: string, nodeId: string) {
+  return await apiRequest<{ result: CapsuleTestRunResult; inputArtifactCount: number }>(
+    api.workflowAgent.executions.nodeReplay(executionId, nodeId),
+    { method: 'POST' }
+  );
+}
 
 // ========== TAPD Cookie Validation ==========
 

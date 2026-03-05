@@ -33,7 +33,7 @@ public class LlmSchedulingPolicyTests
         gateway.LastAppCallerCode.ShouldBe(Desktop.Gap.DetectionChat);
         gateway.LastModelType.ShouldBe("chat");
         gateway.CapturedContext.ShouldNotBeNull();
-        gateway.CapturedContext!.RequestPurpose.ShouldBe(Desktop.Gap.DetectionChat);
+        gateway.CapturedContext!.AppCallerCode.ShouldBe(Desktop.Gap.DetectionChat);
         result.ShouldNotBeNull();
         result!.HasGap.ShouldBeFalse();
     }
@@ -56,7 +56,7 @@ public class LlmSchedulingPolicyTests
         gateway.LastAppCallerCode.ShouldBe(Desktop.Gap.SummarizationChat);
         gateway.LastModelType.ShouldBe("chat");
         gateway.CapturedContext.ShouldNotBeNull();
-        gateway.CapturedContext!.RequestPurpose.ShouldBe(Desktop.Gap.SummarizationChat);
+        gateway.CapturedContext!.AppCallerCode.ShouldBe(Desktop.Gap.SummarizationChat);
         report.ShouldBe("report");
     }
 

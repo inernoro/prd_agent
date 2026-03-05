@@ -111,7 +111,7 @@ public class PromptsOptimizeController : ControllerBase
                 DocumentHash: null,
                 SystemPromptRedacted: "[PROMPTS_OPTIMIZE]",
                 RequestType: "reasoning",
-                RequestPurpose: appCallerCode));
+                AppCallerCode: appCallerCode));
             // start
             var startData = JsonSerializer.Serialize(
                 new PromptOptimizeStreamEvent { Type = "start" },

@@ -821,7 +821,7 @@ public class LlmSchedulingIntegrationTests
         foreach (var r in results)
         {
             var apiError = string.IsNullOrWhiteSpace(r.ApiError) ? "" : $" | apiError={r.ApiError}";
-            var line = $"{r.Name} | purpose={r.RequestPurpose} | expected={r.ExpectedResolution} | actual={r.ActualResolution} | groupId={r.ModelGroupId}{apiError}";
+            var line = $"{r.Name} | purpose={r.AppCallerCode} | expected={r.ExpectedResolution} | actual={r.ActualResolution} | groupId={r.ModelGroupId}{apiError}";
             _output.WriteLine(line);
             Console.WriteLine(line);
         }
@@ -1182,12 +1182,12 @@ public class LlmSchedulingIntegrationTests
     private sealed record GroupCreateResult(string GroupId, DateTime CreatedAt);
     private sealed record AppCallerInfo(string Id, List<string> ChatModelGroupIds);
     private readonly record struct ModelInfo(string PlatformId, string ModelName, bool Enabled, bool IsMain, bool IsImageGen);
-    private sealed record LlmLogItem(string? RequestPurpose, string? ModelResolutionType, string? ModelGroupId, string? ModelGroupName);
+    private sealed record LlmLogItem(string? AppCallerCode, string? ModelResolutionType, string? ModelGroupId, string? ModelGroupName);
     private sealed record UserAuth(string Token, string UserId, string Username);
 
     private sealed record CaseResult(
         string Name,
-        string RequestPurpose,
+        string AppCallerCode,
         string ExpectedResolution,
         string ActualResolution,
         string? ModelGroupId,
@@ -1197,7 +1197,7 @@ public class LlmSchedulingIntegrationTests
         public static CaseResult FromLog(string name, LlmLogItem log, string expected, string? apiError = null)
         {
             var actual = log.ModelResolutionType?.ToString() ?? "null";
-            return new CaseResult(name, log.RequestPurpose ?? "", expected, actual, log.ModelGroupId, log.ModelGroupName, apiError);
+            return new CaseResult(name, log.AppCallerCode ?? "", expected, actual, log.ModelGroupId, log.ModelGroupName, apiError);
         }
     }
 }

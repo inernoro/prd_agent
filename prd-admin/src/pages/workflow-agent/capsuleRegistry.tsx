@@ -137,7 +137,7 @@ export const CAPSULE_TYPE_REGISTRY: Record<string, CapsuleTypeDef> = {
   'script-executor': {
     typeKey: 'script-executor',
     name: '代码脚本',
-    description: '运行 JavaScript / Python 脚本',
+    description: '运行 JavaScript 脚本处理数据（Jint 沙箱引擎）',
     Icon: Code2,
     emoji: '💻',
     category: 'processor',

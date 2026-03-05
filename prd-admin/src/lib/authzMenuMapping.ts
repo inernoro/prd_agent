@@ -105,6 +105,66 @@ export const menuList: MenuDef[] = [
     permissions: ['authz.manage'],
   },
   {
+    appKey: 'defect-agent',
+    label: '缺陷管理 Agent',
+    icon: 'Bug',
+    permissions: ['defect-agent.use', 'defect-agent.manage'],
+  },
+  {
+    appKey: 'arena-agent',
+    label: '竞技场 Agent',
+    icon: 'Swords',
+    permissions: ['arena-agent.use'],
+  },
+  {
+    appKey: 'ai-toolbox',
+    label: 'AI 百宝箱',
+    icon: 'Wrench',
+    permissions: ['ai-toolbox.use', 'ai-toolbox.manage'],
+  },
+  {
+    appKey: 'report-agent',
+    label: '周报 Agent',
+    icon: 'FileBarChart',
+    permissions: [
+      'report-agent.use',
+      'report-agent.template.manage',
+      'report-agent.team.manage',
+      'report-agent.view.all',
+      'report-agent.datasource.manage',
+    ],
+  },
+  {
+    appKey: 'workflow-agent',
+    label: '工作流引擎',
+    icon: 'Workflow',
+    permissions: ['workflow-agent.use', 'workflow-agent.manage'],
+  },
+  {
+    appKey: 'data-migration-agent',
+    label: '数据迁移 Agent',
+    icon: 'DatabaseZap',
+    permissions: ['data-migration-agent.use', 'data-migration-agent.write'],
+  },
+  {
+    appKey: 'skills',
+    label: '技能管理',
+    icon: 'Sparkles',
+    permissions: ['skills.read', 'skills.write'],
+  },
+  {
+    appKey: 'automations',
+    label: '自动化',
+    icon: 'Zap',
+    permissions: ['automations.manage'],
+  },
+  {
+    appKey: 'tutorial-email',
+    label: '教程邮件',
+    icon: 'Mail',
+    permissions: ['tutorial-email.read', 'tutorial-email.write'],
+  },
+  {
     appKey: 'lab',
     label: '实验室',
     icon: 'FlaskConical',
@@ -173,11 +233,36 @@ export const allPermissions: PermissionDef[] = [
   // 权限管理
   { key: 'authz.manage', label: '权限管理', description: '管理系统角色和用户权限', category: 'manage' },
 
-  // Agent 权限（独立）
+  // 技能管理
+  { key: 'skills.read', label: '技能 - 读', description: '查看技能配置', category: 'read' },
+  { key: 'skills.write', label: '技能 - 写', description: '创建/编辑/删除技能', category: 'write' },
+
+  // 自动化
+  { key: 'automations.manage', label: '自动化 - 管理', description: '管理自动化规则', category: 'manage' },
+
+  // Agent 权限
   { key: 'prd-agent.use', label: '米多智能体平台', description: '智能解读与问答', category: 'use' },
   { key: 'visual-agent.use', label: '视觉创作 Agent', description: '高级视觉创作工作区', category: 'use' },
   { key: 'literary-agent.use', label: '文学创作 Agent', description: '文章配图智能生成', category: 'use' },
   { key: 'video-agent.use', label: '视频 Agent', description: '文章转视频教程生成', category: 'use' },
+  { key: 'defect-agent.use', label: '缺陷管理 Agent', description: '提交和查看缺陷', category: 'use' },
+  { key: 'defect-agent.manage', label: '缺陷管理 Agent - 管理', description: '设置模板、指派处理人', category: 'manage' },
+  { key: 'arena-agent.use', label: '竞技场 Agent', description: '模型盲评对战', category: 'use' },
+  { key: 'ai-toolbox.use', label: 'AI 百宝箱', description: '使用 AI 百宝箱功能', category: 'use' },
+  { key: 'ai-toolbox.manage', label: 'AI 百宝箱 - 管理', description: '管理工作流、配置等', category: 'manage' },
+  { key: 'report-agent.use', label: '周报 Agent', description: '基础使用周报功能', category: 'use' },
+  { key: 'report-agent.template.manage', label: '周报 - 模板管理', description: '创建/编辑周报模板', category: 'manage' },
+  { key: 'report-agent.team.manage', label: '周报 - 团队管理', description: '管理周报团队与成员', category: 'manage' },
+  { key: 'report-agent.view.all', label: '周报 - 查看全部', description: '查看所有团队周报', category: 'read' },
+  { key: 'report-agent.datasource.manage', label: '周报 - 数据源管理', description: '配置 Git/SVN 仓库连接', category: 'manage' },
+  { key: 'workflow-agent.use', label: '工作流引擎', description: '创建和执行自动化工作流', category: 'use' },
+  { key: 'workflow-agent.manage', label: '工作流引擎 - 管理', description: '管理所有工作流与执行记录', category: 'manage' },
+  { key: 'data-migration-agent.use', label: '数据迁移 Agent - 读', description: '查看实体与集合映射', category: 'use' },
+  { key: 'data-migration-agent.write', label: '数据迁移 Agent - 写', description: '删除集合、修复数据', category: 'write' },
+
+  // 教程邮件
+  { key: 'tutorial-email.read', label: '教程邮件 - 读', description: '查看教程邮件序列与模板', category: 'read' },
+  { key: 'tutorial-email.write', label: '教程邮件 - 写', description: '编辑序列、模板、触发发送', category: 'write' },
 
   // 总裁面板
   { key: 'executive.read', label: '总裁面板 - 读', description: '查看总裁面板和周报', category: 'read' },

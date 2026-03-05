@@ -666,10 +666,13 @@ export const api = {
       list: () => '/api/workflow-agent/executions',
       byId: (id: string) => `/api/workflow-agent/executions/${id}`,
       cancel: (id: string) => `/api/workflow-agent/executions/${id}/cancel`,
+      continue: (id: string) => `/api/workflow-agent/executions/${id}/continue`,
       resumeFrom: (executionId: string, nodeId: string) =>
         `/api/workflow-agent/executions/${executionId}/resume-from/${nodeId}`,
       nodeLogs: (executionId: string, nodeId: string) =>
         `/api/workflow-agent/executions/${executionId}/nodes/${nodeId}/logs`,
+      nodeReplay: (executionId: string, nodeId: string) =>
+        `/api/workflow-agent/executions/${executionId}/nodes/${nodeId}/replay`,
       stream: (executionId: string) =>
         `/api/workflow-agent/executions/${executionId}/stream`,
     },

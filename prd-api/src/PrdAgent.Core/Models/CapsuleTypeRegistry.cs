@@ -177,7 +177,7 @@ public static class CapsuleTypeRegistry
                 new() { Value = "basic", Label = "Open API (Basic Auth)" },
             }, HelpTip = "Cookie 方式：从浏览器复制 Cookie，数据更全。Open API：需在公司管理中申请 API 账号" },
             new() { Key = "workspaceId", Label = "工作空间 ID", FieldType = "text", Required = true, Placeholder = "50116108", HelpTip = "TAPD 项目 URL 中的数字 ID，如 tapd.cn/50116108" },
-            new() { Key = "cookie", Label = "Cookie 字符串", FieldType = "password", Required = false, Placeholder = "tapdsession=xxx; t_u=xxx; ...", HelpTip = "浏览器登录 TAPD → F12 → Network → 任意请求 → Headers → Cookie，复制整段粘贴。认证方式选 Cookie 时必填" },
+            new() { Key = "cookie", Label = "Cookie 字符串", FieldType = "textarea", Required = false, Placeholder = "tapdsession=xxx; t_u=xxx; ...", HelpTip = "浏览器登录 TAPD → F12 → Network → 任意请求 → Headers → Cookie，复制整段粘贴。认证方式选 Cookie 时必填" },
             new() { Key = "dscToken", Label = "dsc-token", FieldType = "text", Required = false, Placeholder = "xgoJSmV1VxqW6fLm", HelpTip = "从 Cookie 中的 dsc-token 值，或从请求中获取。Cookie 模式必填" },
             new() { Key = "authToken", Label = "API 访问凭证", FieldType = "password", Required = false, Placeholder = "dXNlcjpwYXNzd29yZA==", HelpTip = "Open API 模式使用。Base64(api_user:api_password)" },
             new() { Key = "dataType", Label = "数据类型", FieldType = "select", Required = true, DefaultValue = "bugs", Options = new() {
@@ -312,17 +312,16 @@ public static class CapsuleTypeRegistry
     {
         TypeKey = CapsuleTypes.ScriptExecutor,
         Name = "代码脚本",
-        Description = "运行自定义 JavaScript / Python 脚本处理数据",
+        Description = "运行 JavaScript 脚本处理数据（Jint 沙箱引擎，支持 ES6+语法）",
         Icon = "code",
         Category = CapsuleCategory.Processor,
         AccentHue = 150,
         ConfigSchema = new()
         {
             new() { Key = "language", Label = "脚本语言", FieldType = "select", Required = true, DefaultValue = "javascript", Options = new() {
-                new() { Value = "javascript", Label = "JavaScript (Node.js)" },
-                new() { Value = "python", Label = "Python 3" },
+                new() { Value = "javascript", Label = "JavaScript (Jint 引擎)" },
             }},
-            new() { Key = "code", Label = "脚本代码", FieldType = "code", Required = true, HelpTip = "输入变量 `input` 为上游数据，返回值为输出数据。JS: module.exports = (input) => { ... }; Python: def main(input): ..." },
+            new() { Key = "code", Label = "脚本代码", FieldType = "code", Required = true, HelpTip = "上游数据注入为全局变量 `data`（JSON 数组或对象）。将处理结果赋值给 `result` 变量。\n\n示例：\nconst bugs = data.filter(i => i.status === '新建');\nresult = { total: data.length, newBugs: bugs.length, rate: (bugs.length / data.length * 100).toFixed(1) + '%' };" },
             new() { Key = "timeoutSeconds", Label = "超时时间(秒)", FieldType = "number", Required = false, DefaultValue = "30" },
         },
         DefaultInputSlots = new()
@@ -445,14 +444,18 @@ public static class CapsuleTypeRegistry
         AccentHue = 120,
         ConfigSchema = new()
         {
-            new() { Key = "groupByFields", Label = "分组统计字段", FieldType = "text", Required = false, DefaultValue = "status,severity,priority,reporter", HelpTip = "逗号分隔的字段名，将按每个字段进行分组计数。支持嵌套路径如 Bug.status。留空则自动检测高频字段" },
-            new() { Key = "dateField", Label = "日期字段", FieldType = "text", Required = false, DefaultValue = "created", HelpTip = "用于时间趋势统计的日期字段名，支持嵌套路径如 Bug.created" },
+            new() { Key = "aggregationType", Label = "统计模式", FieldType = "select", Required = false, DefaultValue = "generic", HelpTip = "选择专用统计模式可获得精确的领域指标计算", Options = new() {
+                new() { Value = "generic", Label = "通用分组统计" },
+                new() { Value = "tapd-bug-28d", Label = "TAPD 缺陷 28 维度" },
+            }},
+            new() { Key = "groupByFields", Label = "分组统计字段", FieldType = "text", Required = false, DefaultValue = "status,severity,priority,reporter", HelpTip = "通用模式下使用。逗号分隔的字段名，将按每个字段进行分组计数。支持嵌套路径如 Bug.status" },
+            new() { Key = "dateField", Label = "日期字段", FieldType = "text", Required = false, DefaultValue = "created", HelpTip = "通用模式下使用。用于时间趋势统计的日期字段名" },
             new() { Key = "dateGroupBy", Label = "时间粒度", FieldType = "select", Required = false, DefaultValue = "week", Options = new() {
                 new() { Value = "day", Label = "按天" },
                 new() { Value = "week", Label = "按周" },
                 new() { Value = "month", Label = "按月" },
             }},
-            new() { Key = "topN", Label = "Top N", FieldType = "number", Required = false, DefaultValue = "10", HelpTip = "每个维度保留前 N 个分组（其余归入「其他」）" },
+            new() { Key = "topN", Label = "Top N", FieldType = "number", Required = false, DefaultValue = "10", HelpTip = "通用模式下使用。每个维度保留前 N 个分组（其余归入「其他」）" },
         },
         DefaultInputSlots = new()
         {

@@ -213,7 +213,7 @@ export function LlmRequestDetailDialog({
                   { k: 'model', v: detail.model || '—' },
                   { k: 'status', v: detail.status || '—' },
                   { k: 'requestType', v: detail.requestType || '—' },
-                  { k: 'requestPurpose', v: detail.requestPurpose || '—' },
+                  { k: 'appCallerCode', v: detail.appCallerCode || '—' },
                   { k: 'groupId', v: detail.groupId || '—' },
                   { k: 'sessionId', v: detail.sessionId || '—' },
                   { k: 'startedAt', v: formatLocalTime(detail.startedAt) },

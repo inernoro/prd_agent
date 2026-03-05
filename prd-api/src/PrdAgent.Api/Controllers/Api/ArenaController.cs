@@ -16,7 +16,7 @@ namespace PrdAgent.Api.Controllers.Api;
 [ApiController]
 [Route("api/lab/arena")]
 [Authorize]
-[AdminController("lab", AdminPermissionCatalog.LabRead, WritePermission = AdminPermissionCatalog.LabWrite)]
+[AdminController("arena-agent", AdminPermissionCatalog.ArenaAgentUse)]
 public sealed class ArenaController : ControllerBase
 {
     private readonly MongoDbContext _db;

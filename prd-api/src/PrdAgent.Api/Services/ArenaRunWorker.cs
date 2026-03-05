@@ -426,6 +426,20 @@ public sealed class ArenaRunWorker : BackgroundService
         var httpClient = httpClientFactory.CreateClient("LoggedHttpClient");
         httpClient.BaseAddress = new Uri(apiUrl.TrimEnd('/'));
 
+        // 设置 LLM 请求上下文（确保 AppCallerCode 不为空，日志可追溯）
+        using var _ = ctxAccessor.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: null,
+            SessionId: null,
+            UserId: null,
+            ViewRole: null,
+            DocumentChars: null,
+            DocumentHash: null,
+            SystemPromptRedacted: "[ARENA]",
+            RequestType: "reasoning",
+            AppCallerCode: "prd-agent.arena.battle::chat",
+            ModelResolutionType: ModelResolutionType.DirectModel));
+
         ILLMClient client = platformType == "anthropic" || apiUrl.Contains("anthropic.com", StringComparison.OrdinalIgnoreCase)
             ? new ClaudeClient(httpClient, apiKey, slot.ModelId, 4096, 0.2, false, claudeLogger, logWriter, ctxAccessor, platform.Id, platform.Name)
             : new OpenAIClient(httpClient, apiKey, slot.ModelId, 4096, 0.2, false, logWriter, ctxAccessor, null, platform.Id, platform.Name);

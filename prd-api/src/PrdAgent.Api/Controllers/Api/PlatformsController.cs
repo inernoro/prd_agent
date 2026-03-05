@@ -398,7 +398,7 @@ public class PlatformsController : ControllerBase
             DocumentHash: null,
             SystemPromptRedacted: "[MODEL_RECLASSIFY]",
             RequestType: "reasoning",
-            RequestPurpose: appCallerCode));
+            AppCallerCode: appCallerCode));
 
         var results = new List<ModelClassifyResult>();
         const int chunkSize = 180;
@@ -697,7 +697,7 @@ public class PlatformsController : ControllerBase
             UserPromptChars: null,
             StartedAt: startedAt,
             RequestType: "update-model",
-            RequestPurpose: string.IsNullOrWhiteSpace(requestPurpose) ? "admin.platforms.fetch-models" : requestPurpose.Trim(),
+            AppCallerCode: string.IsNullOrWhiteSpace(requestPurpose) ? "admin.platforms.fetch-models" : requestPurpose.Trim(),
             PlatformId: platform.Id,
             PlatformName: platform.Name);
 

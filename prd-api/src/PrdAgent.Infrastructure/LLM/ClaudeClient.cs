@@ -84,17 +84,21 @@ public class ClaudeClient : ILLMClient
             => !string.IsNullOrEmpty(content) &&
                content.Contains("[[CONTEXT:PRD]]", StringComparison.Ordinal);
 
-        static string RedactPrdContextForLog(string? content, string? requestPurpose)
+        static string RedactPrdContextForLog(string? content, string? appCallerCode)
         {
             if (!IsPrdContextMessage(content)) return content ?? string.Empty;
-            return string.Equals(requestPurpose, "previewAsk.section", StringComparison.OrdinalIgnoreCase)
+            return string.Equals(appCallerCode, "previewAsk.section", StringComparison.OrdinalIgnoreCase)
                 ? "[PRD_FULL_REDACTED]"
                 : "[PRD_CONTENT_REDACTED]";
         }
 
         var ctx = _contextAccessor?.Current;
-        // Context 可能为 null（后台任务/Worker 场景），这是正常的
-        
+        if (string.IsNullOrWhiteSpace(ctx?.AppCallerCode))
+        {
+            _logger.LogWarning("[ClaudeClient] AppCallerCode 为空！调用模型={Model}, 平台={Platform}。请在调用前通过 BeginScope 设置 LlmRequestContext。调用堆栈: {StackTrace}",
+                _model, _platformName, Environment.StackTrace);
+        }
+
         var requestId = ctx?.RequestId ?? Guid.NewGuid().ToString();
         var startedAt = DateTime.UtcNow;
         string? logId = null;
@@ -192,7 +196,7 @@ public class ClaudeClient : ILLMClient
                 messages = messages.Select(m => new
                 {
                     role = m.Role,
-                    content = new object[] { new { type = "text", text = RedactPrdContextForLog(m.Content, ctx?.RequestPurpose) } }
+                    content = new object[] { new { type = "text", text = RedactPrdContextForLog(m.Content, ctx?.AppCallerCode) } }
                 }).ToArray()
             };
             var reqLogJson = LlmLogRedactor.RedactJson(JsonSerializer.Serialize(reqRedacted, LlmLogRedactor.LogSerializerOptions));
@@ -227,7 +231,7 @@ public class ClaudeClient : ILLMClient
                     UserId: ctx?.UserId,
                     ViewRole: ctx?.ViewRole,
                     RequestType: ctx?.RequestType,
-                    RequestPurpose: ctx?.RequestPurpose,
+                    AppCallerCode: ctx?.AppCallerCode,
                     DocumentChars: ctx?.DocumentChars,
                     DocumentHash: ctx?.DocumentHash,
                     UserPromptChars: userPromptChars,

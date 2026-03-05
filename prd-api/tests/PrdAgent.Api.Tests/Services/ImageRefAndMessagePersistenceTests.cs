@@ -588,7 +588,7 @@ public class ImageRefAndMessagePersistenceTests
             UserPromptChars: null,
             StartedAt: DateTime.UtcNow,
             RequestType: "imageGen",
-            RequestPurpose: request.AppCallerCode,
+            AppCallerCode: request.AppCallerCode,
             ImageReferences: request.Context.ImageReferences
         );
 
@@ -601,7 +601,7 @@ public class ImageRefAndMessagePersistenceTests
             Model = logStart.Model,
             UserId = logStart.UserId,
             RequestType = logStart.RequestType,
-            RequestPurpose = logStart.RequestPurpose,
+            AppCallerCode = logStart.AppCallerCode,
             ImageReferences = logStart.ImageReferences
         };
 

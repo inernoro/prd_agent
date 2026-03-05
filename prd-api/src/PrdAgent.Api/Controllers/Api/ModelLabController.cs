@@ -673,7 +673,7 @@ public class ModelLabController : ControllerBase
                 DocumentHash: null,
                 SystemPromptRedacted: "[MODEL_LAB]",
                 RequestType: requestType,
-                RequestPurpose: appCallerCode,
+                AppCallerCode: appCallerCode,
                 ModelResolutionType: ModelResolutionType.DirectModel));
 
             var startedAt = item.StartedAt;

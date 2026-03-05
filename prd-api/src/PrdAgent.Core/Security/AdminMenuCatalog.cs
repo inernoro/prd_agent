@@ -22,6 +22,9 @@ public static class AdminMenuCatalog
         // AI 百宝箱（Agent 统一入口，PRD协作已合并至此）
         new("ai-toolbox", "/ai-toolbox", "AI 百宝箱", null, "Sparkles", 8),
 
+        // 我的资产（聚合用户所有产出物：图片、文档、附件）
+        new("my-assets", "/my-assets", "我的资产", null, "Database", 10),
+
         // 用户管理
         new("users", "/users", "用户管理", null, "Users", 20),
 
@@ -73,8 +76,8 @@ public static class AdminMenuCatalog
 
         foreach (var menu in All)
         {
-            // AI 百宝箱 / 系统设置 / AI 竞技场：只需要基础访问权限
-            if (menu.AppKey is "ai-toolbox" or "settings" or "arena")
+            // AI 百宝箱 / 我的资产 / 系统设置 / AI 竞技场：只需要基础访问权限
+            if (menu.AppKey is "ai-toolbox" or "my-assets" or "settings" or "arena")
             {
                 if (permSet.Contains(AdminPermissionCatalog.Access))
                 {
