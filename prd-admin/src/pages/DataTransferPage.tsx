@@ -55,7 +55,7 @@ import {
   ChevronRight,
   ExternalLink,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { motion } from 'motion/react';
 
@@ -105,235 +105,75 @@ export default function DataTransferPage() {
   const [searchParams] = useSearchParams();
   const highlightId = searchParams.get('id');
 
-  const [tab, setTab] = useState<'received' | 'sent'>('received');
-  const [transfers, setTransfers] = useState<AccountDataTransfer[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [selectedTransfer, setSelectedTransfer] = useState<AccountDataTransfer | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [showList, setShowList] = useState<'received' | 'sent' | null>(null);
 
-  // Track if this is the user's very first visit (both directions empty)
-  const [isFirstVisit, setIsFirstVisit] = useState<boolean | null>(null);
-
-  const loadTransfers = useCallback(async () => {
-    setLoading(true);
-    const res = await listTransfers(tab);
-    if (res.success) setTransfers(res.data.items);
-    setLoading(false);
-  }, [tab]);
-
-  // On first mount, check both directions to determine if onboarding should show
+  // If URL has ?id=xxx, auto-open received list
   useEffect(() => {
-    (async () => {
-      const [recvRes, sentRes] = await Promise.all([
-        listTransfers('received'),
-        listTransfers('sent'),
-      ]);
-      const recvEmpty = recvRes.success && recvRes.data.items.length === 0;
-      const sentEmpty = sentRes.success && sentRes.data.items.length === 0;
-      setIsFirstVisit(recvEmpty && sentEmpty);
-
-      // Also populate current tab data from above
-      if (recvRes.success) setTransfers(recvRes.data.items);
-      setLoading(false);
-    })();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Reload when tab changes (skip initial since useEffect above handles it)
-  const [tabInitialized, setTabInitialized] = useState(false);
-  useEffect(() => {
-    if (!tabInitialized) { setTabInitialized(true); return; }
-    loadTransfers();
-  }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (highlightId && transfers.length > 0) {
-      const found = transfers.find(t => t.id === highlightId);
-      if (found) setSelectedTransfer(found);
-    }
-  }, [highlightId, transfers]);
-
-  const tabItems = useMemo(() => [
-    { key: 'received', label: '收到', icon: <Inbox className="w-3.5 h-3.5" /> },
-    { key: 'sent', label: '发出', icon: <ArrowUpRight className="w-3.5 h-3.5" /> },
-  ], []);
-
-  const pendingCount = useMemo(
-    () => transfers.filter(t => t.status === 'pending' && new Date(t.expiresAt) > new Date()).length,
-    [transfers],
-  );
+    if (highlightId) setShowList('received');
+  }, [highlightId]);
 
   const handleCreated = useCallback(() => {
     setShowCreate(false);
-    setTab('sent');
-    setIsFirstVisit(false);
-    loadTransfers();
-  }, [loadTransfers]);
-
-  // Show onboarding when both directions are empty
-  if (isFirstVisit === true) {
-    return (
-      <motion.div
-        className="h-full min-h-0 flex flex-col gap-4 p-5 relative overflow-hidden"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.6 }}
-      >
-        {/* Background: scales from center like a portal opening */}
-        <motion.div
-          className="absolute inset-0 z-0 overflow-hidden rounded-[inherit]"
-          initial={{ scale: 0.6, opacity: 0 }}
-          animate={{ scale: 1, opacity: 0.15 }}
-          transition={{ duration: 1.2, ease: [0.16, 1, 0.3, 1] }}
-        >
-          <BlackHoleVortex className="w-full h-full" />
-        </motion.div>
-        {/* Radial vignette overlay for depth */}
-        <div
-          className="absolute inset-0 z-[1] pointer-events-none"
-          style={{ background: 'radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.6) 100%)' }}
-        />
-        <motion.div
-          className="relative z-10 flex flex-col gap-4 h-full min-h-0"
-          initial={{ opacity: 0, y: 30 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 0.4, ease: 'easeOut' }}
-        >
-          <TabBar
-            title={
-              <BlurText
-                text="数据分享"
-                className="text-[15px] font-semibold tracking-tight"
-                delay={80}
-                animateBy="letters"
-              />
-            }
-            icon={<Sparkles size={16} style={{ color: 'var(--accent-gold)' }} />}
-            actions={
-              <Button variant="ghost" size="xs" onClick={() => { setIsFirstVisit(false); loadTransfers(); }}>
-                <RefreshCw className="w-3.5 h-3.5" />
-              </Button>
-            }
-          />
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            <OnboardingView onStartShare={() => setShowCreate(true)} />
-          </div>
-        </motion.div>
-        <CreateTransferDialog open={showCreate} onOpenChange={setShowCreate} onCreated={handleCreated} />
-      </motion.div>
-    );
-  }
+    setShowList('sent');
+  }, []);
 
   return (
     <motion.div
       className="h-full min-h-0 flex flex-col gap-4 p-5 relative overflow-hidden"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      transition={{ duration: 0.5 }}
+      transition={{ duration: 0.6 }}
     >
+      {/* Background: scales from center like a portal opening */}
       <motion.div
         className="absolute inset-0 z-0 overflow-hidden rounded-[inherit]"
-        initial={{ scale: 0.8, opacity: 0 }}
-        animate={{ scale: 1, opacity: 0.12 }}
-        transition={{ duration: 1.0, ease: [0.16, 1, 0.3, 1] }}
+        initial={{ scale: 0.6, opacity: 0 }}
+        animate={{ scale: 1, opacity: 0.15 }}
+        transition={{ duration: 1.2, ease: [0.16, 1, 0.3, 1] }}
       >
         <BlackHoleVortex className="w-full h-full" />
       </motion.div>
+      {/* Radial vignette overlay for depth */}
       <div
         className="absolute inset-0 z-[1] pointer-events-none"
-        style={{ background: 'radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.5) 100%)' }}
+        style={{ background: 'radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.6) 100%)' }}
       />
-      <div className="relative z-10 flex flex-col gap-4 h-full min-h-0">
-      {/* Top bar */}
-      <TabBar
-        title={
-          <BlurText
-            text="数据分享"
-            className="text-[15px] font-semibold tracking-tight"
-            delay={80}
-            animateBy="letters"
-          />
-        }
-        icon={<Sparkles size={16} style={{ color: 'var(--accent-gold)' }} />}
-        actions={
-          <motion.div
-            className="flex items-center gap-2"
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.5, delay: 0.3 }}
-          >
-            <Button variant="ghost" size="xs" onClick={loadTransfers} disabled={loading}>
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            </Button>
-            <Button size="xs" onClick={() => setShowCreate(true)}>
-              <Send className="w-3.5 h-3.5" />
-              发起分享
-            </Button>
-          </motion.div>
-        }
-      />
-
-      {/* Content: left list + right detail */}
       <motion.div
-        className="flex-1 min-h-0 flex gap-4"
-        initial={{ opacity: 0, y: 20 }}
+        className="relative z-10 flex flex-col gap-4 h-full min-h-0"
+        initial={{ opacity: 0, y: 30 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, delay: 0.2 }}
+        transition={{ duration: 0.7, delay: 0.4, ease: 'easeOut' }}
       >
-        {/* Left: transfer list */}
-        <div className="w-[420px] shrink-0 flex flex-col gap-3 min-h-0">
-          {/* Tab + pending badge */}
-          <div className="shrink-0 flex items-center gap-2">
-            <div className="flex-1">
-              <TabBar
-                items={tabItems}
-                activeKey={tab}
-                onChange={(k) => { setTab(k as 'received' | 'sent'); setSelectedTransfer(null); }}
-              />
-            </div>
-            {pendingCount > 0 && (
-              <Badge variant="warning" size="sm">
-                {pendingCount} 待处理
-              </Badge>
-            )}
-          </div>
-
-          {/* List */}
-          <div className="flex-1 min-h-0 overflow-y-auto space-y-2 pr-1" style={{ scrollbarWidth: 'thin' }}>
-            {loading ? (
-              Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
-            ) : transfers.length === 0 ? (
-              <EmptyState direction={tab} onStartShare={() => setShowCreate(true)} />
-            ) : (
-              transfers.map((t) => (
-                <TransferCard
-                  key={t.id}
-                  transfer={t}
-                  direction={tab}
-                  isActive={selectedTransfer?.id === t.id}
-                  onClick={() => setSelectedTransfer(t)}
-                />
-              ))
-            )}
-          </div>
-        </div>
-
-        {/* Right: detail panel */}
-        <div className="flex-1 min-h-0 overflow-y-auto">
-          {selectedTransfer ? (
-            <TransferDetail
-              transfer={selectedTransfer}
-              direction={tab}
-              onAction={() => { setSelectedTransfer(null); loadTransfers(); }}
+        <TabBar
+          title={
+            <BlurText
+              text="数据分享"
+              className="text-[15px] font-semibold tracking-tight"
+              delay={80}
+              animateBy="letters"
             />
-          ) : (
-            <EmptyDetail />
-          )}
+          }
+          icon={<Sparkles size={16} style={{ color: 'var(--accent-gold)' }} />}
+        />
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <OnboardingView
+            onStartShare={() => setShowCreate(true)}
+            onViewReceived={() => setShowList('received')}
+            onViewSent={() => setShowList('sent')}
+          />
         </div>
       </motion.div>
 
-      {/* Create dialog (modal) */}
+      {/* Dialogs */}
       <CreateTransferDialog open={showCreate} onOpenChange={setShowCreate} onCreated={handleCreated} />
-      </div>
+      <TransferListDialog
+        open={showList !== null}
+        onOpenChange={(open) => { if (!open) setShowList(null); }}
+        initialDirection={showList ?? 'received'}
+        highlightId={highlightId}
+        onStartShare={() => { setShowList(null); setShowCreate(true); }}
+      />
     </motion.div>
   );
 }
@@ -375,7 +215,30 @@ const DATA_TYPES = [
   { icon: ImagePlus, label: '参考图配置', color: 'rgba(34, 197, 94, 0.9)', desc: '图片风格参考配置' },
 ] as const;
 
-function OnboardingView({ onStartShare }: { onStartShare: () => void }) {
+function OnboardingView({ onStartShare, onViewReceived, onViewSent }: {
+  onStartShare: () => void;
+  onViewReceived: () => void;
+  onViewSent: () => void;
+}) {
+  const [receivedCount, setReceivedCount] = useState<number | null>(null);
+  const [sentCount, setSentCount] = useState<number | null>(null);
+  const [pendingCount, setPendingCount] = useState(0);
+
+  // Load counts on mount
+  useEffect(() => {
+    (async () => {
+      const [recvRes, sentRes] = await Promise.all([
+        listTransfers('received'),
+        listTransfers('sent'),
+      ]);
+      if (recvRes.success) {
+        setReceivedCount(recvRes.data.items.length);
+        setPendingCount(recvRes.data.items.filter(t => t.status === 'pending' && new Date(t.expiresAt) > new Date()).length);
+      }
+      if (sentRes.success) setSentCount(sentRes.data.items.length);
+    })();
+  }, []);
+
   return (
     <div className="max-w-[760px] mx-auto space-y-6">
       {/* Hero */}
@@ -423,14 +286,33 @@ function OnboardingView({ onStartShare }: { onStartShare: () => void }) {
               />
             </motion.p>
 
+            {/* Action buttons row */}
             <motion.div
+              className="mt-6 flex items-center justify-center gap-3 flex-wrap"
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.4, delay: 0.7 }}
             >
-              <Button className="mt-6" onClick={onStartShare}>
+              <Button onClick={onStartShare}>
                 <Send className="w-4 h-4" />
-                发起第一次分享
+                发起分享
+              </Button>
+              <Button variant="secondary" onClick={onViewReceived}>
+                <Inbox className="w-4 h-4" />
+                收到的分享
+                {pendingCount > 0 && (
+                  <Badge variant="warning" size="sm" className="ml-1">{pendingCount}</Badge>
+                )}
+                {receivedCount !== null && pendingCount === 0 && (
+                  <span className="text-[11px] opacity-50 ml-0.5">({receivedCount})</span>
+                )}
+              </Button>
+              <Button variant="secondary" onClick={onViewSent}>
+                <ArrowUpRight className="w-4 h-4" />
+                发出的分享
+                {sentCount !== null && (
+                  <span className="text-[11px] opacity-50 ml-0.5">({sentCount})</span>
+                )}
               </Button>
             </motion.div>
           </div>
@@ -1186,6 +1068,143 @@ function CreateTransferDialog({
       }
       content={content}
       maxWidth={640}
+    />
+  );
+}
+
+// =================== Transfer List Dialog ===================
+
+function TransferListDialog({
+  open,
+  onOpenChange,
+  initialDirection,
+  highlightId,
+  onStartShare,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  initialDirection: 'received' | 'sent';
+  highlightId: string | null;
+  onStartShare: () => void;
+}) {
+  const [tab, setTab] = useState<'received' | 'sent'>(initialDirection);
+  const [transfers, setTransfers] = useState<AccountDataTransfer[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedId, setSelectedId] = useState<string | null>(highlightId);
+
+  // Sync tab when dialog opens with a different direction
+  useEffect(() => {
+    if (open) setTab(initialDirection);
+  }, [open, initialDirection]);
+
+  // Auto-select highlight
+  useEffect(() => {
+    if (open && highlightId) setSelectedId(highlightId);
+  }, [open, highlightId]);
+
+  const fetchData = useCallback(async (dir: 'received' | 'sent') => {
+    setLoading(true);
+    const res = await listTransfers(dir);
+    if (res.success) setTransfers(res.data.items);
+    else setTransfers([]);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    fetchData(tab);
+  }, [open, tab, fetchData]);
+
+  const handleTabChange = (dir: 'received' | 'sent') => {
+    setTab(dir);
+    setSelectedId(null);
+  };
+
+  const handleAction = () => {
+    fetchData(tab);
+    setSelectedId(null);
+  };
+
+  const selected = transfers.find((t) => t.id === selectedId) ?? null;
+
+  const tabButton = (dir: 'received' | 'sent', icon: React.ReactNode, label: string) => (
+    <button
+      type="button"
+      className="flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] text-[12px] font-medium transition-all duration-150"
+      style={{
+        background: tab === dir ? 'rgba(99, 102, 241, 0.12)' : 'transparent',
+        color: tab === dir ? 'var(--accent-gold)' : 'var(--text-muted)',
+        border: tab === dir ? '1px solid rgba(99, 102, 241, 0.2)' : '1px solid transparent',
+      }}
+      onClick={() => handleTabChange(dir)}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+
+  const content = (
+    <div className="flex gap-4" style={{ height: '60vh' }}>
+      {/* Left: list */}
+      <div className="w-[280px] shrink-0 flex flex-col min-h-0">
+        <div className="flex items-center gap-1.5 mb-3">
+          {tabButton('received', <Inbox size={13} />, '收到的')}
+          {tabButton('sent', <ArrowUpRight size={13} />, '发出的')}
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto space-y-2 pr-1">
+          {loading ? (
+            <>
+              <SkeletonCard />
+              <SkeletonCard />
+              <SkeletonCard />
+            </>
+          ) : transfers.length === 0 ? (
+            <EmptyState direction={tab} onStartShare={onStartShare} />
+          ) : (
+            transfers.map((t) => (
+              <TransferCard
+                key={t.id}
+                transfer={t}
+                direction={tab}
+                isActive={selectedId === t.id}
+                onClick={() => setSelectedId(t.id)}
+              />
+            ))
+          )}
+        </div>
+      </div>
+      {/* Right: detail */}
+      <div className="flex-1 min-h-0 min-w-0">
+        {selected ? (
+          <TransferDetail
+            transfer={selected}
+            direction={tab}
+            onAction={handleAction}
+          />
+        ) : (
+          <EmptyDetail />
+        )}
+      </div>
+    </div>
+  );
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title={
+        <div className="flex items-center gap-2">
+          <div
+            className="w-7 h-7 rounded-[7px] flex items-center justify-center"
+            style={{ background: 'rgba(99, 102, 241, 0.1)', border: '1px solid rgba(99, 102, 241, 0.2)' }}
+          >
+            <Package size={13} style={{ color: 'var(--accent-gold)' }} />
+          </div>
+          <span>分享记录</span>
+        </div>
+      }
+      content={content}
+      maxWidth={880}
     />
   );
 }
