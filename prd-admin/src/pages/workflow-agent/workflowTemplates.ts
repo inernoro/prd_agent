@@ -163,15 +163,15 @@ const 未判断 = data.filter(i => !(i["缺陷划分"] || "").trim());
 const 无效反馈 = data.filter(i => i["有效报告"] === "否");
 const 有效反馈 = data.filter(i => i["有效报告"] === "是");
 
-// 技术缺陷按等级
-const techByLevel = (lv) => 技术缺陷.filter(i => (i["缺陷等级"] || "") === lv);
+// 技术缺陷按等级（统一转大写匹配，兼容 p3/P3 混写）
+const techByLevel = (lv) => 技术缺陷.filter(i => (i["缺陷等级"] || "").toUpperCase() === lv);
 const p0 = techByLevel("P0");
 const p1 = techByLevel("P1");
 const p2 = techByLevel("P2");
 const p3 = techByLevel("P3");
 const p4 = techByLevel("P4");
 const p未判断 = 技术缺陷.filter(i => !(i["缺陷等级"] || "").trim());
-const p2及以下 = 技术缺陷.filter(i => ["P2","P3","P4"].includes(i["缺陷等级"] || ""));
+const p2及以下 = 技术缺陷.filter(i => ["P2","P3","P4"].includes((i["缺陷等级"] || "").toUpperCase()));
 
 // P2及以下逾期统计
 const p2逾期 = p2及以下.filter(i => i["是否逾期"] === "是");
