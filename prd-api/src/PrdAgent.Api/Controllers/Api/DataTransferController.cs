@@ -372,6 +372,24 @@ public class DataTransferController : ControllerBase
                 .CountDocumentsAsync(a => a.WorkspaceId == wsId, cancellationToken: ct);
         }
 
+        // 批量解析 coverAssetIds → 封面缩略图 URL
+        var allCoverIds = workspaces
+            .Where(w => w.CoverAssetIds != null)
+            .SelectMany(w => w.CoverAssetIds!)
+            .Distinct()
+            .ToList();
+
+        var coverAssetMap = new Dictionary<string, (string url, int width, int height)>();
+        if (allCoverIds.Count > 0)
+        {
+            var coverAssets = await _db.ImageAssets
+                .Find(Builders<ImageAsset>.Filter.In(a => a.Id, allCoverIds))
+                .Project(a => new { a.Id, a.Url, a.Width, a.Height })
+                .ToListAsync(ct);
+            foreach (var ca in coverAssets)
+                coverAssetMap[ca.Id] = (ca.Url, ca.Width, ca.Height);
+        }
+
         var items = workspaces.Select(w => new
         {
             w.Id,
@@ -379,7 +397,11 @@ public class DataTransferController : ControllerBase
             w.ScenarioType,
             w.FolderName,
             assetCount = assetCounts.GetValueOrDefault(w.Id, 0),
-            w.CoverAssetIds,
+            coverAssets = (w.CoverAssetIds ?? new List<string>())
+                .Where(id => coverAssetMap.ContainsKey(id))
+                .Take(4)
+                .Select(id => new { id, url = coverAssetMap[id].url, width = coverAssetMap[id].width, height = coverAssetMap[id].height })
+                .ToList(),
             w.UpdatedAt,
         });
 

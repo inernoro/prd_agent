@@ -50,6 +50,7 @@ import {
   Bell,
   Shield,
   ChevronRight,
+  ExternalLink,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -1081,37 +1082,74 @@ function DataSection({
 // =================== Checkbox Items ===================
 
 function WorkspaceCheckItem({ ws, checked, onChange }: { ws: ShareableWorkspace; checked: boolean; onChange: () => void }) {
+  const hasCover = ws.coverAssets && ws.coverAssets.length > 0;
+  const wsRoute = ws.scenarioType === 'article-illustration'
+    ? `/literary-agent/${ws.id}`
+    : `/visual-agent/${ws.id}`;
+
   return (
     <label
-      className="flex items-center gap-3 rounded-[10px] px-3 py-2.5 cursor-pointer transition-all duration-150"
+      className="group rounded-[12px] overflow-hidden cursor-pointer transition-all duration-150"
       style={{
         background: checked ? 'rgba(99, 102, 241, 0.06)' : 'var(--bg-input)',
         border: `1px solid ${checked ? 'rgba(99, 102, 241, 0.2)' : 'var(--nested-block-border)'}`,
       }}
     >
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={onChange}
-        className="accent-primary sr-only"
-      />
-      <div
-        className="shrink-0 w-5 h-5 rounded-[5px] flex items-center justify-center transition-all duration-150"
-        style={{
-          background: checked ? 'rgba(99, 102, 241, 0.9)' : 'transparent',
-          border: `1.5px solid ${checked ? 'rgba(99, 102, 241, 0.9)' : 'rgba(255,255,255,0.2)'}`,
-        }}
-      >
-        {checked && <Check size={12} className="text-white" />}
-      </div>
-      <Layers size={15} className="shrink-0" style={{ color: 'rgba(99, 102, 241, 0.6)' }} />
-      <div className="flex-1 min-w-0">
-        <div className="text-[13px] truncate" style={{ color: 'var(--text-primary)' }}>{ws.title}</div>
-      </div>
-      <span className="text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>{ws.assetCount} 张图</span>
-      {ws.folderName && (
-        <Badge variant="subtle" size="sm">{ws.folderName}</Badge>
+      <input type="checkbox" checked={checked} onChange={onChange} className="sr-only" />
+
+      {/* Cover thumbnail strip */}
+      {hasCover && (
+        <div className="h-[52px] flex gap-px overflow-hidden">
+          {ws.coverAssets.slice(0, 4).map((asset) => (
+            <img
+              key={asset.id}
+              src={asset.url}
+              alt=""
+              className="h-full flex-1 object-cover min-w-0"
+              loading="lazy"
+              referrerPolicy="no-referrer"
+            />
+          ))}
+        </div>
       )}
+
+      {/* Info row */}
+      <div className="flex items-center gap-2.5 px-3 py-2.5">
+        {/* Checkbox */}
+        <div
+          className="shrink-0 w-5 h-5 rounded-[5px] flex items-center justify-center transition-all duration-150"
+          style={{
+            background: checked ? 'rgba(99, 102, 241, 0.9)' : 'transparent',
+            border: `1.5px solid ${checked ? 'rgba(99, 102, 241, 0.9)' : 'rgba(255,255,255,0.2)'}`,
+          }}
+        >
+          {checked && <Check size={12} className="text-white" />}
+        </div>
+
+        {/* Title + meta */}
+        <div className="flex-1 min-w-0">
+          <div className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{ws.title}</div>
+          <div className="flex items-center gap-2 mt-0.5">
+            <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{ws.assetCount} 张图</span>
+            {ws.folderName && (
+              <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{ws.folderName}</span>
+            )}
+          </div>
+        </div>
+
+        {/* Jump to workspace link */}
+        <a
+          href={wsRoute}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="shrink-0 w-7 h-7 rounded-[7px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-150 hover:bg-white/8"
+          style={{ color: 'var(--text-muted)' }}
+          onClick={(e) => e.stopPropagation()}
+          title="在新标签页打开工作区"
+        >
+          <ExternalLink size={13} />
+        </a>
+      </div>
     </label>
   );
 }

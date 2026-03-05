@@ -48,7 +48,7 @@ export type ShareableWorkspace = {
   scenarioType: string;
   folderName?: string | null;
   assetCount: number;
-  coverAssetIds: string[];
+  coverAssets: Array<{ id: string; url: string; width: number; height: number }>;
   updatedAt: string;
 };
 
