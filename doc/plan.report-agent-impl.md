@@ -1,6 +1,6 @@
 # 周报 Agent — 实施进度追踪
 
-> **最后更新**：2026-03-01 | **当前阶段**：Phase 4 ✅ DONE
+> **最后更新**：2026-03-05 | **当前阶段**：Phase 5 ✅ DONE
 >
 > **用途**：跨 session 的实施进度单一信息源。新 session 读此文档即可恢复上下文，无需全盘扫描。
 >
@@ -20,6 +20,8 @@
 | 2 | 自动采集 | ✅ DONE | `ffce7fd` | 2026-02-26 |
 | 3 | 管理增强 | ✅ DONE | `005de06` | 2026-02-27 |
 | 4 | 体验优化 | ✅ DONE | — | 2026-03-01 |
+| PRD v2.0 | Workflow as Data Pipeline PRD | ✅ DONE | — | 2026-03-05 |
+| 5 | Workflow 管道 + 个人数据源 | ✅ DONE | `0c3e00f` | 2026-03-05 |
 
 ---
 
@@ -255,11 +257,78 @@
 
 ---
 
+## Phase 5：Workflow 管道 + 个人数据源 — ✅ DONE
+
+> Commit: `0c3e00f` (2026-03-05)
+> 功能：工作流引擎对接 + Artifact 解析 + 成员身份映射 + 个人数据源 + V2.0 生成引擎
+> 用户故事文档：`doc/story.report-agent-phase5.md` (11 个用户故事, 14 个单元测试)
+
+### 交付物
+
+**后端新增 — 模型 (2 个文件)**：
+- `PersonalSource.cs` — 个人数据源模型 (PersonalSource + PersonalSourceConfig + PersonalSourceType + PersonalSourceSyncStatus)
+- `ReportCollectedStats.cs` — 采集统计模型 (TeamCollectedStats + SourceStats + StatsDetail + MemberCollectedStats)
+
+**后端新增 — 接口 (1 个)**：
+- `IWorkflowExecutionService.cs` — 内部工作流执行接口 (ExecuteInternalAsync + WaitForCompletionAsync)
+
+**后端新增 — 服务 (3 个文件)**：
+- `WorkflowExecutionService.cs` — 工作流执行服务（变量注入 + 入队 + 渐进轮询等待）
+- `ArtifactStatsParser.cs` — Artifact 解析器 (Parse + SplitByMember + RecalculateSummary)
+- `PersonalSourceConnectors.cs` — 个人数据源连接器 (IPersonalSourceConnector + PersonalGitHubConnector + PersonalYuqueConnector)
+- `PersonalSourceService.cs` — 个人数据源 CRUD + 连接测试 + 同步 + 统计聚合
+
+**后端修改**：
+- `ReportTeam.cs` — +2 字段 (DataCollectionWorkflowId, WorkflowTemplateKey)
+- `ReportTeamMember.cs` — +1 字段 (IdentityMappings)
+- `WeeklyReport.cs` — +2 字段 (WorkflowExecutionId, StatsSnapshot) + Viewed 状态
+- `ReportGenerationService.cs` — +V2.0 生成引擎 (GenerateForTeamV2Async + GenerateForMemberV2Async + FindTemplateAsync + BuildUserPromptV2)
+- `ReportAgentController.cs` — +10 个端点 (身份映射 + 工作流 + 个人数据源)
+- `MongoDbContext.cs` — +1 集合 (report_personal_sources) +1 复合索引
+- `Program.cs` — +3 DI 注册
+
+**单元测试**：
+- `ReportAgentV2Tests.cs` — 14 个测试用例（模型验证 + Artifact 解析 + 成员拆分 + 快照）
+
+**DB 新增集合**: `report_personal_sources`
+
+### API 端点清单（Phase 5 新增 10 个）
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/report-agent/teams/{id}/members/{userId}/identity-mappings` | PUT | 更新成员身份映射 |
+| `/api/report-agent/teams/{id}/workflow` | GET | 团队采集工作流信息 |
+| `/api/report-agent/teams/{id}/workflow/run` | POST | 手动触发采集 |
+| `/api/report-agent/my/sources` | GET | 我的数据源列表 |
+| `/api/report-agent/my/sources` | POST | 绑定数据源 |
+| `/api/report-agent/my/sources/{id}` | PUT | 更新数据源 |
+| `/api/report-agent/my/sources/{id}` | DELETE | 解绑数据源 |
+| `/api/report-agent/my/sources/{id}/test` | POST | 测试连接 |
+| `/api/report-agent/my/sources/{id}/sync` | POST | 手动同步 |
+| `/api/report-agent/my/stats` | GET | 本周统计预览 |
+
+### 架构决策
+
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| 数据采集方式 | 复用工作流引擎 (非自建 Connector) | 工作流已有 TapdCollector/HttpRequest 等胶囊，避免重复 |
+| 个人数据源 | 轻量 Connector 模式 (非工作流) | 配置简单，一个 Token 搞定，100 用户不需要 100 个工作流 |
+| Artifact 解析 | 静态方法 ArtifactStatsParser | 纯函数，无副作用，易测试 |
+| 成员拆分 | identity mapping + assignee 匹配 | 跨平台用户名不同，需要显式映射 |
+| Summary 重算 | 按 details 数量比例分配 | 无法精确还原每个成员的 summary，用比例近似 |
+| 模板查找 | 级联: 岗位 → 团队 → 系统默认 | 灵活度与简洁度平衡 |
+| 工作流等待 | 渐进轮询 2s→10s，最长 5min | 避免频繁 DB 查询，又不至于等太久 |
+| Token 存储 | AES-256 加密 (ApiKeyCrypto) | 复用已有加密基础设施 |
+
+---
+
 ## 附录：关联文档索引
 
 | 文档 | 用途 |
 |------|------|
 | `doc/agent.report-agent.md` | PRD 产品需求（v1.0，定义 WHAT） |
+| `doc/agent.report-agent.v2.md` | PRD 产品需求（v2.0，Workflow as Data Pipeline） |
+| `doc/story.report-agent-phase5.md` | Phase 5 用户故事（11 个故事，14 个测试） |
 | `CLAUDE.md` 功能注册表 | 全局功能状态一览 |
 | `doc/rule.data-dictionary.md` | MongoDB 集合字段定义 |
 | `doc/rule.app-feature-definition.md` | AppCallerCode 定义 |
