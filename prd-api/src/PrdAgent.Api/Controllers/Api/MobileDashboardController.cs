@@ -205,18 +205,15 @@ public class MobileDashboardController : ControllerBase
         limit = Math.Clamp(limit, 1, 100);
         skip = Math.Max(skip, 0);
 
+        // 用较大上限收集所有 Provider 的资产（保证计数准确）
+        const int internalLimit = 500;
         var allAssets = new List<UnifiedAsset>();
 
-        // 并行收集所有 Provider 的资产
         foreach (var provider in _assetProviders)
         {
-            // 按 category 过滤：如果指定了 category，跳过不支持该类型的 Provider
-            if (category != null && !provider.SupportedCategories.Contains(category))
-                continue;
-
             try
             {
-                var items = await provider.GetAssetsAsync(userId, limit, ct);
+                var items = await provider.GetAssetsAsync(userId, internalLimit, ct);
                 allAssets.AddRange(items);
             }
             catch (Exception ex)
@@ -225,12 +222,33 @@ public class MobileDashboardController : ControllerBase
             }
         }
 
-        // 按 category 二次过滤（Provider 可能产出多种 type，如 AttachmentProvider 同时产出 image/document/attachment）
-        if (category != null)
-            allAssets = allAssets.Where(a => a.Type == category).ToList();
+        // ── 全局统计（始终基于全量数据，不受 category 参数影响） ──
+        var categoryCounts = new Dictionary<string, int>
+        {
+            ["image"] = allAssets.Count(a => a.Type == "image"),
+            ["document"] = allAssets.Count(a => a.Type == "document"),
+            ["attachment"] = allAssets.Count(a => a.Type == "attachment"),
+        };
+        var totalSizeBytes = allAssets.Sum(a => a.SizeBytes);
+
+        // 来源分布
+        var sourceCounts = allAssets
+            .Where(a => !string.IsNullOrEmpty(a.Source))
+            .GroupBy(a => a.Source)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        // 最近活动时间
+        var latestActivity = allAssets.Count > 0
+            ? allAssets.Max(a => a.CreatedAt)
+            : (DateTime?)null;
+
+        // ── 按 category 过滤（仅影响 items 分页，不影响统计） ──
+        var filtered = category != null
+            ? allAssets.Where(a => a.Type == category).ToList()
+            : allAssets;
 
         // 按时间排序 + 分页
-        var sorted = allAssets
+        var sorted = filtered
             .OrderByDescending(a => a.CreatedAt)
             .Skip(skip)
             .Take(limit)
@@ -239,8 +257,12 @@ public class MobileDashboardController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             items = sorted,
-            total = allAssets.Count,
-            hasMore = allAssets.Count > skip + limit,
+            total = filtered.Count,
+            hasMore = filtered.Count > skip + limit,
+            categoryCounts,
+            totalSizeBytes,
+            sourceCounts,
+            latestActivity,
         }));
     }
 }

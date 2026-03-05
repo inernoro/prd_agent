@@ -20,6 +20,9 @@ import {
   HardDrive,
   Type,
   Eye,
+  BarChart3,
+  Clock,
+  Database,
 } from 'lucide-react';
 import { getMobileAssets } from '@/services';
 import type { MobileAssetItem } from '@/services/contracts/mobile';
@@ -81,11 +84,6 @@ const TYPE_CONFIG: Record<string, { label: string; bg: string; text: string }> =
 /** 判断是否为图片：type 为 image 或 MIME 以 image/ 开头 */
 function isImageAsset(asset: MobileAssetItem): boolean {
   return asset.type === 'image' || (!!asset.mime && asset.mime.startsWith('image/'));
-}
-
-/** url 是否可用 */
-function hasUrl(asset: MobileAssetItem): boolean {
-  return !!asset.url;
 }
 
 async function copyToClipboard(text: string) {
@@ -446,6 +444,124 @@ function MetaRow({ icon, label, value }: { icon: React.ReactNode; label: string;
   );
 }
 
+/* ── Stats Panel (shown when no asset selected) ── */
+function StatsPanel({
+  categoryCounts,
+  allTotal,
+  totalSizeBytes,
+  sourceCounts,
+  latestActivity,
+}: {
+  categoryCounts: Record<string, number>;
+  allTotal: number;
+  totalSizeBytes: number;
+  sourceCounts: Record<string, number>;
+  latestActivity: string | null;
+}) {
+  const sortedSources = useMemo(
+    () => Object.entries(sourceCounts).sort((a, b) => b[1] - a[1]),
+    [sourceCounts],
+  );
+  const maxSourceCount = sortedSources.length > 0 ? sortedSources[0][1] : 1;
+
+  return (
+    <div
+      className="w-[340px] flex-shrink-0 flex flex-col overflow-hidden"
+      style={{
+        borderLeft: '1px solid rgba(255,255,255,0.06)',
+        background: 'rgba(255,255,255,0.02)',
+      }}
+    >
+      {/* Header */}
+      <div className="px-4 py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="flex items-center gap-2">
+          <BarChart3 size={14} style={{ color: 'var(--accent-primary, #818CF8)' }} />
+          <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+            资产概览
+          </span>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-auto px-4 py-4 space-y-5">
+        {/* Summary cards */}
+        <div className="grid grid-cols-2 gap-2.5">
+          <StatCard icon={<FolderOpen size={14} />} label="总数" value={String(allTotal)} color="#818CF8" />
+          <StatCard icon={<Database size={14} />} label="总存储" value={formatBytes(totalSizeBytes)} color="#22c55e" />
+          <StatCard icon={<Image size={14} />} label="图片" value={String(categoryCounts['image'] ?? 0)} color="#FB923C" />
+          <StatCard icon={<FileText size={14} />} label="文档" value={String(categoryCounts['document'] ?? 0)} color="#818CF8" />
+        </div>
+
+        {/* Latest activity */}
+        {latestActivity && (
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-1.5 text-[11px] font-medium" style={{ color: 'var(--text-muted)' }}>
+              <Clock size={11} />
+              最近活动
+            </div>
+            <div className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+              {formatDate(latestActivity)}
+            </div>
+          </div>
+        )}
+
+        {/* Source distribution */}
+        {sortedSources.length > 0 && (
+          <div className="space-y-2.5">
+            <div className="text-[11px] font-medium" style={{ color: 'var(--text-muted)' }}>
+              来源分布
+            </div>
+            <div className="space-y-2">
+              {sortedSources.map(([source, count]) => (
+                <div key={source} className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>{source}</span>
+                    <span className="text-[11px] font-medium" style={{ color: 'var(--text-muted)' }}>{count}</span>
+                  </div>
+                  <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                    <div
+                      className="h-full rounded-full transition-all duration-500"
+                      style={{
+                        width: `${Math.max((count / maxSourceCount) * 100, 4)}%`,
+                        background: 'var(--accent-primary, #818CF8)',
+                        opacity: 0.7,
+                      }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Hint */}
+        <div
+          className="text-[11px] leading-relaxed pt-2"
+          style={{ color: 'rgba(255,255,255,0.25)', borderTop: '1px solid rgba(255,255,255,0.04)' }}
+        >
+          点击左侧资产卡片查看详情
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StatCard({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: string; color: string }) {
+  return (
+    <div
+      className="rounded-xl px-3 py-2.5 space-y-1"
+      style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}
+    >
+      <div className="flex items-center gap-1.5">
+        <span style={{ color, opacity: 0.8 }}>{icon}</span>
+        <span className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>{label}</span>
+      </div>
+      <div className="text-[16px] font-bold" style={{ color: 'var(--text-primary)' }}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
 /* ── Empty State ── */
 function EmptyState({ tab }: { tab: AssetTab }) {
   return (
@@ -467,14 +583,14 @@ export default function DesktopAssetsPage() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [assets, setAssets] = useState<MobileAssetItem[]>([]);
-  const [total, setTotal] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // 全局计数：始终从 "all" 请求获取，切换 Tab 不影响
-  const [allStats, setAllStats] = useState<{ total: number; image: number; document: number; attachment: number }>({
-    total: 0, image: 0, document: 0, attachment: 0,
-  });
+  // 后端统计（每次请求都返回，不受 category 过滤影响）
+  const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({});
+  const [totalSizeBytes, setTotalSizeBytes] = useState(0);
+  const [sourceCounts, setSourceCounts] = useState<Record<string, number>>({});
+  const [latestActivity, setLatestActivity] = useState<string | null>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<SortBy>('date');
@@ -491,21 +607,8 @@ export default function DesktopAssetsPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
-  // 加载全局分类计数（只在首次和刷新时调用）
-  const fetchAllStats = useCallback(async () => {
-    try {
-      const res = await getMobileAssets({ limit: PAGE_SIZE, skip: 0 });
-      if (res.success) {
-        const items = res.data.items ?? [];
-        const s = { image: 0, document: 0, attachment: 0 };
-        items.forEach((a) => { if (a.type in s) s[a.type as keyof typeof s]++; });
-        setAllStats({ total: res.data.total ?? items.length, ...s });
-      }
-    } catch { /* ignore */ }
-  }, []);
-
-  // Fetch assets
-  const fetchAssets = useCallback(async (category?: AssetTab, refreshStats = false) => {
+  // Fetch assets — 后端始终返回全局 categoryCounts 等统计
+  const fetchAssets = useCallback(async (category?: AssetTab) => {
     setLoading(true);
     setError(null);
     try {
@@ -515,19 +618,13 @@ export default function DesktopAssetsPage() {
         skip: 0,
       });
       if (res.success) {
-        const items = res.data.items ?? [];
-        setAssets(items);
-        setTotal(res.data.total ?? 0);
-        setHasMore(res.data.hasMore ?? false);
-
-        // 如果是 "all" 分类，同步更新 stats
-        if (category === 'all' || !category) {
-          const s = { image: 0, document: 0, attachment: 0 };
-          items.forEach((a) => { if (a.type in s) s[a.type as keyof typeof s]++; });
-          setAllStats({ total: res.data.total ?? items.length, ...s });
-        } else if (refreshStats) {
-          fetchAllStats();
-        }
+        const d = res.data;
+        setAssets(d.items ?? []);
+        setHasMore(d.hasMore ?? false);
+        if (d.categoryCounts) setCategoryCounts(d.categoryCounts);
+        if (d.totalSizeBytes != null) setTotalSizeBytes(d.totalSizeBytes);
+        if (d.sourceCounts) setSourceCounts(d.sourceCounts);
+        if (d.latestActivity !== undefined) setLatestActivity(d.latestActivity ?? null);
       } else {
         setError(res.error?.message || '加载失败');
       }
@@ -536,7 +633,7 @@ export default function DesktopAssetsPage() {
     } finally {
       setLoading(false);
     }
-  }, [fetchAllStats]);
+  }, []);
 
   const loadMore = useCallback(async () => {
     if (!hasMore || loadingMore) return;
@@ -549,7 +646,6 @@ export default function DesktopAssetsPage() {
       });
       if (res.success) {
         setAssets((prev) => [...prev, ...(res.data.items ?? [])]);
-        setTotal(res.data.total ?? 0);
         setHasMore(res.data.hasMore ?? false);
       }
     } catch { /* ignore */ } finally {
@@ -600,8 +696,8 @@ export default function DesktopAssetsPage() {
     [assets, selectedId],
   );
 
-  // Stats 使用全局计数，不依赖当前 Tab 的 assets
-  const stats = allStats;
+  // 全部资产总数（各分类之和）
+  const allTotal = Object.values(categoryCounts).reduce((s, n) => s + n, 0);
 
   const handleSort = (col: SortBy) => {
     if (sortBy === col) {
@@ -645,8 +741,8 @@ export default function DesktopAssetsPage() {
             const TabIcon = tab.icon;
             const count =
               tab.key === 'all'
-                ? allStats.total
-                : allStats[tab.key as keyof Omit<typeof allStats, 'total'>] ?? 0;
+                ? allTotal
+                : categoryCounts[tab.key] ?? 0;
             return (
               <button
                 key={tab.key}
@@ -850,11 +946,19 @@ export default function DesktopAssetsPage() {
           )}
         </div>
 
-        {/* Detail panel */}
-        {selectedAsset && (
+        {/* Right panel: detail or stats overview */}
+        {selectedAsset ? (
           <DetailPanel
             asset={selectedAsset}
             onClose={() => setSelectedId(null)}
+          />
+        ) : (
+          <StatsPanel
+            categoryCounts={categoryCounts}
+            allTotal={allTotal}
+            totalSizeBytes={totalSizeBytes}
+            sourceCounts={sourceCounts}
+            latestActivity={latestActivity}
           />
         )}
       </div>
