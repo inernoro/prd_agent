@@ -171,11 +171,32 @@ export default function DataTransferPage() {
   // Show onboarding when both directions are empty
   if (isFirstVisit === true) {
     return (
-      <div className="h-full min-h-0 flex flex-col gap-4 p-5 relative">
-        <div className="absolute inset-0 z-0 overflow-hidden rounded-[inherit]">
+      <motion.div
+        className="h-full min-h-0 flex flex-col gap-4 p-5 relative overflow-hidden"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.6 }}
+      >
+        {/* Background: scales from center like a portal opening */}
+        <motion.div
+          className="absolute inset-0 z-0 overflow-hidden rounded-[inherit]"
+          initial={{ scale: 0.6, opacity: 0 }}
+          animate={{ scale: 1, opacity: 0.15 }}
+          transition={{ duration: 1.2, ease: [0.16, 1, 0.3, 1] }}
+        >
           <BlackHoleVortex className="w-full h-full" />
-        </div>
-        <div className="relative z-10 flex flex-col gap-4 h-full min-h-0">
+        </motion.div>
+        {/* Radial vignette overlay for depth */}
+        <div
+          className="absolute inset-0 z-[1] pointer-events-none"
+          style={{ background: 'radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.6) 100%)' }}
+        />
+        <motion.div
+          className="relative z-10 flex flex-col gap-4 h-full min-h-0"
+          initial={{ opacity: 0, y: 30 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.7, delay: 0.4, ease: 'easeOut' }}
+        >
           <TabBar
             title={
               <BlurText
@@ -195,17 +216,31 @@ export default function DataTransferPage() {
           <div className="flex-1 min-h-0 overflow-y-auto">
             <OnboardingView onStartShare={() => setShowCreate(true)} />
           </div>
-        </div>
+        </motion.div>
         <CreateTransferDialog open={showCreate} onOpenChange={setShowCreate} onCreated={handleCreated} />
-      </div>
+      </motion.div>
     );
   }
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-4 p-5 relative">
-      <div className="absolute inset-0 z-0 overflow-hidden rounded-[inherit] opacity-40">
+    <motion.div
+      className="h-full min-h-0 flex flex-col gap-4 p-5 relative overflow-hidden"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.5 }}
+    >
+      <motion.div
+        className="absolute inset-0 z-0 overflow-hidden rounded-[inherit]"
+        initial={{ scale: 0.8, opacity: 0 }}
+        animate={{ scale: 1, opacity: 0.12 }}
+        transition={{ duration: 1.0, ease: [0.16, 1, 0.3, 1] }}
+      >
         <BlackHoleVortex className="w-full h-full" />
-      </div>
+      </motion.div>
+      <div
+        className="absolute inset-0 z-[1] pointer-events-none"
+        style={{ background: 'radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.5) 100%)' }}
+      />
       <div className="relative z-10 flex flex-col gap-4 h-full min-h-0">
       {/* Top bar */}
       <TabBar
@@ -298,7 +333,7 @@ export default function DataTransferPage() {
       {/* Create dialog (modal) */}
       <CreateTransferDialog open={showCreate} onOpenChange={setShowCreate} onCreated={handleCreated} />
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -431,8 +466,8 @@ function OnboardingView({ onStartShare }: { onStartShare: () => void }) {
                 transition={{ duration: 0.4, delay: 0.6 + i * 0.1 }}
               >
                 <div
-                  className="rounded-[12px] p-4 text-center h-full"
-                  style={{ background: 'var(--bg-input)', border: '1px solid var(--nested-block-border)' }}
+                  className="rounded-[12px] p-4 text-center h-full backdrop-blur-xl"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}
                 >
                   <div className="flex items-center justify-center gap-2 mb-2">
                     <span
@@ -476,8 +511,8 @@ function OnboardingView({ onStartShare }: { onStartShare: () => void }) {
               return (
                 <motion.div
                   key={i}
-                  className="rounded-[10px] px-3.5 py-3 flex items-start gap-3"
-                  style={{ background: 'var(--bg-input)', border: '1px solid var(--nested-block-border)' }}
+                  className="rounded-[10px] px-3.5 py-3 flex items-start gap-3 backdrop-blur-xl"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}
                   initial={{ opacity: 0, x: -15 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ duration: 0.35, delay: 1.1 + i * 0.1 }}
@@ -513,8 +548,8 @@ function OnboardingView({ onStartShare }: { onStartShare: () => void }) {
               return (
                 <motion.div
                   key={i}
-                  className="rounded-[10px] px-3.5 py-3 flex items-start gap-3"
-                  style={{ background: 'var(--bg-input)', border: '1px solid var(--nested-block-border)' }}
+                  className="rounded-[10px] px-3.5 py-3 flex items-start gap-3 backdrop-blur-xl"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}
                   initial={{ opacity: 0, x: 15 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ duration: 0.35, delay: 1.1 + i * 0.1 }}
