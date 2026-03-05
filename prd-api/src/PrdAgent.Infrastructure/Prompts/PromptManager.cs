@@ -221,15 +221,11 @@ public class PromptManager : IPromptManager
         sb.AppendLine($"# {doc.Title}");
         sb.AppendLine();
 
-        // 添加章节目录（极低 token 消耗）
+        // 添加章节目录（递归遍历 Children，极低 token 消耗）
         if (doc.Sections.Count > 0)
         {
             sb.AppendLine("## 章节目录");
-            foreach (var section in doc.Sections)
-            {
-                var indent = new string(' ', (section.Level - 1) * 2);
-                sb.AppendLine($"{indent}- {section.Title}");
-            }
+            AppendSectionTree(sb, doc.Sections);
             sb.AppendLine();
         }
 
@@ -258,6 +254,18 @@ public class PromptManager : IPromptManager
         }
 
         return sb.ToString();
+    }
+
+    /// <summary>递归输出章节树（用于摘要目录）</summary>
+    private static void AppendSectionTree(System.Text.StringBuilder sb, List<Section> sections)
+    {
+        foreach (var section in sections)
+        {
+            var indent = new string(' ', (section.Level - 1) * 2);
+            sb.AppendLine($"{indent}- {section.Title}");
+            if (section.Children.Count > 0)
+                AppendSectionTree(sb, section.Children);
+        }
     }
 
     /// <summary>粗略估算文本 token 数（中文约 2 字符/token，英文约 4 字符/token，取折中 3）</summary>

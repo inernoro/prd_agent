@@ -304,7 +304,9 @@ EstimateTokens(text) = ceil(text.Length / 3.0)
 - 纯英文：实际约 1 token / 4 字符，公式低估约 25% → 偏激进
 - 中英混合：大致准确
 
-**已知局限**：精确估算需要 tiktoken（按模型的实际 tokenizer 计算），但引入外部依赖的 ROI 不高，粗估已经够用。
+**已知局限**：
+- 精确估算需要 tiktoken（按模型的实际 tokenizer 计算），但引入外部依赖的 ROI 不高，粗估已经够用。
+- **注意两个 EstimateTokens 公式不一致**：`MarkdownParser`（入库用）采用中英文分别计算（中文×1.5 + 英文×0.25），`PromptManager`（预算 fallback）采用统一 `length/3`。正常流程优先使用入库值，不会触发 fallback。但 `BuildDocumentSummary` 内部的 `headerBudget` 计算用的是 PromptManager 公式，对纯中文文档可能导致摘要前文截取偏长。
 
 ### 3.3 未来演进方向（Phase 3: 按需检索）
 
@@ -630,6 +632,17 @@ var prdContext = documents.Count > 1
 - 单文档超限是极端 case（需要 > 180K 字符），概率低
 
 **已知风险**：如果用户上传了一份 50 万字的文档，单文档场景仍会超限。需要在 Phase 3 补充单文档保护。
+
+### 9.6 预算是"软上限"而非"硬上限"
+
+当所有文档都超预算时，每个文档仍然会生成最小摘要（标题+目录，约 300-500 token/文档）并累加到 `usedTokens`。也就是说 10 个全部超预算的文档会多出 ~5K token 的摘要开销。
+
+**决策理由**：
+- 完全丢弃文档（不注入任何内容）会让用户困惑——"我加了 10 个文档，AI 怎么只看到 3 个？"
+- 最小摘要至少告诉 LLM"有这个文档存在"，用户追问时 LLM 能给出引导
+- 5K token 的超出在 128K 上下文窗口中可忽略（< 4%）
+
+**如果需要硬上限**：在循环中加 `if (usedTokens >= tokenBudget) break;`，但会导致后面的文档完全消失。
 
 ---
 
