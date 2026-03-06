@@ -24,6 +24,12 @@ export interface BranchEntry {
   /** Human-readable error message when runStatus === 'error' */
   runErrorMessage?: string;
 
+  // ── Preview mode (per-branch nginx, independent of gateway) ──
+  /** Per-branch preview nginx container name */
+  previewContainerName?: string;
+  /** Host port allocated for independent preview (API + frontend on one port) */
+  previewPort?: number;
+
   createdAt: string;
 }
 
@@ -84,6 +90,13 @@ export interface BtConfig {
   };
   dashboard: {
     port: number;
+  };
+  /** Preview mode settings (per-branch nginx preview, optional, defaults applied if omitted) */
+  preview?: {
+    /** First host port to allocate for preview (default: 5501) */
+    portStart?: number;
+    /** Nginx image for preview containers (default: nginx:1.27-alpine) */
+    nginxImage?: string;
   };
   /** Run mode settings (source-based running, optional, defaults applied if omitted) */
   run?: {

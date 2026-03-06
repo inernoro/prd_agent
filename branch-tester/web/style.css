@@ -448,6 +448,32 @@ button.warn:hover { background: #8a5900; color: #fff; }
   border: 1px solid rgba(139, 148, 158, 0.2);
 }
 
+a.port-badge.preview-port {
+  background: rgba(56, 139, 253, 0.15);
+  color: #58a6ff;
+  border: 1px solid rgba(56, 139, 253, 0.3);
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+a.port-badge.preview-port:hover {
+  background: rgba(56, 139, 253, 0.3);
+}
+
+.preview-link {
+  color: #58a6ff;
+  font-weight: 500;
+}
+
+.complete-links {
+  margin-top: 6px;
+  padding: 6px 10px;
+  background: rgba(35, 134, 54, 0.08);
+  border-radius: 6px;
+  border: 1px solid rgba(35, 134, 54, 0.2);
+}
+
 .activate-inline {
   flex-shrink: 0;
   padding: 4px 14px;

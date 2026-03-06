@@ -158,7 +158,15 @@ function renderBranches(branches, activeBranchId) {
       portInfo = `<span class="port-badge port-idle" title="已分配端口（未运行）">:${b.hostPort} (已分配)</span>`;
     }
     if (a) {
-      portInfo += `<span class="port-badge deploy-port" title="部署网关端口">:5500 → 网关 (部署)</span>`;
+      portInfo += `<span class="port-badge deploy-port" title="部署网关端口">:5500 → 网关</span>`;
+    }
+    // Preview port (independent per-branch preview)
+    const hasPreview = b.previewPort && (b.status === 'running' || b.runStatus === 'running');
+    if (hasPreview) {
+      const previewHref = `http://${location.hostname}:${b.previewPort}`;
+      portInfo += `<a href="${previewHref}" target="_blank" class="port-badge preview-port" title="独立预览（不影响网关）">:${b.previewPort} → 预览 ↗</a>`;
+    } else if (b.previewPort) {
+      portInfo += `<span class="port-badge port-idle" title="预览端口已分配（未运行）">:${b.previewPort} (预览)</span>`;
     }
 
     // Activate button: always visible for non-active branches (auto-runs if needed)
@@ -591,6 +599,22 @@ function appendLogEvent(data) {
         ${d.hint ? `<br><span class="health-hint">${esc(d.hint)}</span>` : ''}
         ${d.error ? `<br><span class="health-fail">${esc(d.error)}</span>` : ''}
       </div>`);
+    }
+
+    // Preview container detail
+    if (data.detail && data.step === 'preview') {
+      const d = data.detail;
+      el.insertAdjacentHTML('beforeend',
+        `<div class="deploy-detail">预览容器: <code>${esc(d.previewContainerName)}</code> · 端口: <code>${d.previewPort}</code> · <a href="${esc(d.previewUrl)}" target="_blank" class="preview-link">${esc(d.previewUrl)} ↗</a></div>`);
+    }
+
+    // Complete detail (show preview URL)
+    if (data.detail && data.step === 'complete') {
+      const d = data.detail;
+      if (d.previewUrl) {
+        el.insertAdjacentHTML('beforeend',
+          `<div class="deploy-detail complete-links">独立预览: <a href="${esc(d.previewUrl)}" target="_blank">${esc(d.previewUrl)} ↗</a>${d.gatewayUrl ? ` · 网关: <a href="${esc(d.gatewayUrl)}" target="_blank">${esc(d.gatewayUrl)}</a>` : ''}</div>`);
+      }
     }
 
     // Start container detail (run mode)

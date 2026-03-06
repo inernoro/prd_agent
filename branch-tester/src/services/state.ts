@@ -113,6 +113,18 @@ export class StateService {
     return port;
   }
 
+  /** Allocate a preview port, skipping any already in use (including hostPorts to avoid collision) */
+  allocatePreviewPort(portStart: number): number {
+    const usedPorts = new Set<number>();
+    for (const b of Object.values(this.state.branches)) {
+      if (b.previewPort != null) usedPorts.add(b.previewPort);
+      if (b.hostPort != null) usedPorts.add(b.hostPort);
+    }
+    let port = portStart;
+    while (usedPorts.has(port)) port++;
+    return port;
+  }
+
   allocateDbName(id: string, defaultDbName: string): string {
     if (id === 'main' || id === 'master') {
       return defaultDbName;

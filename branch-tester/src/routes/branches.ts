@@ -246,6 +246,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
         send({ step: 'stop-run', status: 'done', title: '停止运行容器' });
       }
+      // Stop preview container if exists
+      if (entry.previewContainerName) {
+        send({ step: 'stop-preview', status: 'running', title: '停止预览容器' });
+        try { await containerService.stopPreview(entry.previewContainerName); } catch { /* may not exist */ }
+        send({ step: 'stop-preview', status: 'done', title: '停止预览容器' });
+        // Clean up preview nginx config temp dir
+        try { await shell.exec(`rm -rf /tmp/bt-preview-${id}`); } catch { /* ok */ }
+      }
 
       // Disconnect nginx if deleting the active branch
       if (wasActive) {
@@ -449,6 +457,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
 
       await containerService.stop(entry.containerName);
+      // Also stop the preview container if it exists
+      if (entry.previewContainerName) {
+        try { await containerService.stopPreview(entry.previewContainerName); } catch { /* ok */ }
+      }
       stateService.updateStatus(id, 'stopped');
       stateService.save();
 
@@ -817,26 +829,63 @@ export function createBranchRouter(deps: RouterDeps): Router {
         },
       });
 
-      // ---- activate nginx (route /api → dotnet, / → Vite) ----
-      send({ step: 'activate', status: 'running', title: '切换 Nginx 网关' });
-      try {
-        const activateResult = await doActivate(id);
+      // ---- preview container (per-branch independent preview) ----
+      send({ step: 'preview', status: 'running', title: '启动独立预览' });
+
+      const previewPortStart = config.preview?.portStart ?? 5501;
+      if (!entry.previewPort) {
+        entry.previewPort = stateService.allocatePreviewPort(previewPortStart);
+      }
+      if (!entry.previewContainerName) {
+        entry.previewContainerName = `prdagent-preview-${id}`;
+      }
+
+      // Stop existing preview container if any
+      try { await containerService.stopPreview(entry.previewContainerName); } catch { /* may not exist */ }
+
+      const previewNginxConf = switcherService.generatePreviewConfig(
+        entry.runContainerName!, 'run', entry.runWebContainerName,
+      );
+      await containerService.startPreview(entry, previewNginxConf);
+      stateService.save();
+
+      const previewUrl = `http://localhost:${entry.previewPort}`;
+      send({
+        step: 'preview', status: 'done', title: '独立预览已启动',
+        detail: {
+          previewUrl,
+          previewPort: entry.previewPort,
+          previewContainerName: entry.previewContainerName,
+        },
+      });
+
+      // ---- activate nginx (optional: only if no active branch yet) ----
+      const currentActive = stateService.getState().activeBranchId;
+      if (!currentActive) {
+        send({ step: 'activate', status: 'running', title: '切换 Nginx 网关（首次自动激活）' });
+        try {
+          const activateResult = await doActivate(id);
+          send({
+            step: 'activate', status: 'done', title: '已切换 Nginx 网关',
+            detail: activateResult,
+          });
+        } catch (activateErr) {
+          send({
+            step: 'activate', status: 'warn', title: 'Nginx 切换失败（可手动激活）',
+            log: (activateErr as Error).message,
+          });
+        }
+      } else {
         send({
-          step: 'activate', status: 'done', title: '切换 Nginx 网关',
-          detail: activateResult,
-        });
-      } catch (activateErr) {
-        // Non-fatal: containers are running, just nginx switch failed
-        send({
-          step: 'activate', status: 'warn', title: 'Nginx 切换失败（容器已启动，可手动激活）',
-          log: (activateErr as Error).message,
+          step: 'activate', status: 'skip',
+          title: `网关已指向 "${currentActive}"，无需切换（使用预览端口 :${entry.previewPort} 独立访问）`,
         });
       }
 
       // ---- done ----
       send({
         step: 'complete', status: 'done',
-        detail: { url: `http://localhost:${config.gateway.port}` },
+        detail: { previewUrl, gatewayUrl: `http://localhost:${config.gateway.port}` },
       });
 
       opLog.status = 'completed';
@@ -883,6 +932,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Also stop the web dev container if it exists
       if (entry.runWebContainerName) {
         try { await containerService.stop(entry.runWebContainerName); } catch { /* ok */ }
+      }
+      // Also stop the preview container if it exists
+      if (entry.previewContainerName) {
+        try { await containerService.stopPreview(entry.previewContainerName); } catch { /* ok */ }
       }
       entry.runStatus = 'stopped';
       stateService.save();
@@ -1281,19 +1334,64 @@ export function createBranchRouter(deps: RouterDeps): Router {
       switcherService.saveBranchConfig(id, nginxConf);
       stateService.save();
 
-      // ---- activate nginx ----
-      send({ step: 'activate', status: 'running', title: '切换 Nginx 网关' });
-      const activateResult = await doActivate(id);
+      // ---- preview container (per-branch independent preview) ----
+      send({ step: 'preview', status: 'running', title: '启动独立预览' });
+
+      const previewPortStart = config.preview?.portStart ?? 5501;
+      if (!entry.previewPort) {
+        entry.previewPort = stateService.allocatePreviewPort(previewPortStart);
+      }
+      if (!entry.previewContainerName) {
+        entry.previewContainerName = `prdagent-preview-${id}`;
+      }
+
+      // Stop existing preview container if any
+      try { await containerService.stopPreview(entry.previewContainerName); } catch { /* may not exist */ }
+
+      const previewNginxConf = switcherService.generatePreviewConfig(
+        entry.containerName, 'deploy',
+      );
+      await containerService.startPreview(entry, previewNginxConf, buildsDir);
+      stateService.save();
+
+      const previewUrl = `http://localhost:${entry.previewPort}`;
       send({
-        step: 'activate', status: 'done', title: '切换 Nginx 网关',
-        detail: activateResult,
+        step: 'preview', status: 'done', title: '独立预览已启动',
+        detail: {
+          previewUrl,
+          previewPort: entry.previewPort,
+          previewContainerName: entry.previewContainerName,
+        },
       });
 
-      // ---- health check ----
+      // ---- activate nginx (optional: only if no active branch yet) ----
+      const currentActive = stateService.getState().activeBranchId;
+      if (!currentActive) {
+        send({ step: 'activate', status: 'running', title: '切换 Nginx 网关（首次自动激活）' });
+        try {
+          const activateResult = await doActivate(id);
+          send({
+            step: 'activate', status: 'done', title: '已切换 Nginx 网关',
+            detail: activateResult,
+          });
+        } catch (activateErr) {
+          send({
+            step: 'activate', status: 'warn', title: 'Nginx 切换失败（可手动激活）',
+            log: (activateErr as Error).message,
+          });
+        }
+      } else {
+        send({
+          step: 'activate', status: 'skip',
+          title: `网关已指向 "${currentActive}"，无需切换（使用预览端口 :${entry.previewPort} 独立访问）`,
+        });
+      }
+
+      // ---- health check (via preview port) ----
       send({ step: 'health', status: 'running', title: '健康检查' });
       await new Promise((r) => setTimeout(r, 3000));
 
-      const versionUrl = `http://localhost:${config.gateway.port}/bt-version.json`;
+      const versionUrl = `${previewUrl}/bt-version.json`;
       const healthResult = await shell.exec(`curl -sf -m 5 "${versionUrl}"`, { timeout: 10_000 });
 
       let healthStatus: string;
@@ -1305,7 +1403,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           healthStatus = match ? 'done' : 'warn';
           healthDetail = {
             url: versionUrl, expected: commit, actual: actual.commit,
-            match, builtAt: actual.builtAt,
+            match, builtAt: actual.builtAt, previewUrl,
             hint: match ? '' : '版本不匹配 — 可能需要重新构建',
           };
         } catch {
@@ -1317,13 +1415,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
         healthDetail = {
           url: versionUrl, expected: commit, actual: '无法连接',
           match: false, error: combinedOutput(healthResult).slice(0, 300),
-          hint: '容器可能仍在启动，稍后可手动刷新检查',
+          hint: '预览容器可能仍在启动，稍后可手动刷新检查',
         };
       }
       send({ step: 'health', status: healthStatus, title: '健康检查', detail: healthDetail });
 
       // ---- done ----
-      send({ step: 'complete', status: 'done' });
+      send({
+        step: 'complete', status: 'done',
+        detail: { previewUrl, gatewayUrl: `http://localhost:${config.gateway.port}` },
+      });
       entry.errorMessage = undefined;
       stateService.save();
       opLog.status = 'completed';
@@ -1380,6 +1481,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
         if (entry.runStatus === 'running' && entry.runContainerName) {
           try { await containerService.stop(entry.runContainerName); } catch { /* ok */ }
+        }
+        // Stop preview container
+        if (entry.previewContainerName) {
+          try { await containerService.stopPreview(entry.previewContainerName); } catch { /* ok */ }
+          try { await shell.exec(`rm -rf /tmp/bt-preview-${entry.id}`); } catch { /* ok */ }
         }
 
         // Remove worktree + image + nginx config
