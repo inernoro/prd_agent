@@ -3,6 +3,7 @@
 #   .\quick.ps1          - Start backend server
 #   .\quick.ps1 admin    - Start admin panel
 #   .\quick.ps1 desktop  - Start desktop client
+#   .\quick.ps1 bt       - Start Branch Tester
 #   .\quick.ps1 all      - Start all services together
 #   .\quick.ps1 check    - Run desktop CI checks
 #   .\quick.ps1 ci       - Run full CI checks
@@ -11,7 +12,7 @@
 
 param(
     [Parameter(Position=0)]
-    [ValidateSet("", "admin", "desktop", "all", "check", "ci", "version", "help")]
+    [ValidateSet("", "admin", "desktop", "bt", "all", "check", "ci", "version", "help")]
     [string]$Command = "",
     [Parameter(Position=1)]
     [string]$Version = ""
@@ -220,6 +221,17 @@ function Ensure-PnpmInstalled {
     }
 }
 
+# Start branch tester
+function Start-BranchTester {
+    Write-Info "Starting Branch Tester..."
+    $btDir = "$ScriptDir\branch-tester"
+    if (-not (Test-Path (Join-Path $btDir "node_modules"))) {
+        Write-Warn "node_modules not found, running: npm install"
+        npm -C "$btDir" install
+    }
+    npm -C "$btDir" run dev
+}
+
 # Start backend server
 function Start-Backend {
     Write-Info "Starting backend server..."
@@ -406,6 +418,7 @@ function Show-Help {
     Write-Host "  (default)  Start backend server"
     Write-Host "  admin      Start admin panel (prd-admin)"
     Write-Host "  desktop    Start desktop client (prd-desktop)"
+    Write-Host "  bt         Start Branch Tester (branch-tester)"
     Write-Host "  all        Start backend + admin + desktop together (single console output)"
     Write-Host "  check      Run desktop CI-equivalent checks"
     Write-Host "  ci         Run local CI checks (server + admin + desktop)"
@@ -419,6 +432,7 @@ switch ($Command) {
     "" { Start-Backend }
     "admin" { Start-Admin }
     "desktop" { Start-Desktop }
+    "bt" { Start-BranchTester }
     "all" { Start-All }
     "check" { Check-Desktop }
     "ci" { Check-CI }
