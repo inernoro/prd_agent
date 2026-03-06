@@ -468,6 +468,69 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  // ── Docker images (for dropdown selection) ──
+
+  router.get('/docker-images', async (_req, res) => {
+    try {
+      const result = await shell.exec(
+        `docker images --format '{"repo":"{{.Repository}}","tag":"{{.Tag}}","size":"{{.Size}}","id":"{{.ID}}"}'`,
+        { timeout: 10_000 },
+      );
+      const images = result.stdout
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map(line => JSON.parse(line))
+        .filter((img: { repo: string; tag: string }) => img.repo !== '<none>' && img.tag !== '<none>');
+      res.json({ images });
+    } catch {
+      // Docker not accessible — return presets only
+      res.json({ images: [] });
+    }
+  });
+
+  // ── Quickstart: seed default build profiles for this project ──
+
+  router.post('/quickstart', (_req, res) => {
+    const existing = stateService.getBuildProfiles();
+    if (existing.length > 0) {
+      res.status(409).json({ error: 'Build profiles already configured. Delete existing profiles first or add manually.' });
+      return;
+    }
+
+    const defaults: BuildProfile[] = [
+      {
+        id: 'api',
+        name: 'Backend API (.NET 8)',
+        dockerImage: 'mcr.microsoft.com/dotnet/sdk:8.0',
+        workDir: 'prd-api',
+        installCommand: 'dotnet restore',
+        buildCommand: 'dotnet build --no-restore',
+        runCommand: 'dotnet run --no-build --project src/PrdAgent.Api/PrdAgent.Api.csproj --urls http://0.0.0.0:8080',
+        containerPort: 8080,
+      },
+      {
+        id: 'admin',
+        name: 'Admin Panel (Vite)',
+        dockerImage: 'node:20-slim',
+        workDir: 'prd-admin',
+        installCommand: 'npm install',
+        runCommand: 'npx vite --host 0.0.0.0 --port 5173',
+        containerPort: 5173,
+      },
+    ];
+
+    for (const profile of defaults) {
+      stateService.addBuildProfile(profile);
+    }
+    stateService.save();
+
+    res.status(201).json({
+      message: `Quickstart: ${defaults.length} profiles created`,
+      profiles: defaults,
+    });
+  });
+
   // ── Config (read-only) ──
 
   router.get('/config', (_req, res) => {

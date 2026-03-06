@@ -52,9 +52,16 @@ let defaultBranch = null;
 // ── Init ──
 
 async function init() {
-  await Promise.all([loadBranches(), loadProfiles(), loadRoutingRules()]);
+  await Promise.all([loadBranches(), loadProfiles(), loadRoutingRules(), loadConfig()]);
   refreshRemoteBranches();
   setInterval(loadBranches, 10000);
+}
+
+async function loadConfig() {
+  try {
+    const data = await api('GET', '/config');
+    document.getElementById('workerLabel').textContent = `Worker :${data.workerPort || '?'}`;
+  } catch (e) { console.error('loadConfig:', e); }
 }
 
 // ── Data loading ──
@@ -407,16 +414,20 @@ async function deleteRule(id) {
 
 function renderProfiles() {
   const el = document.getElementById('profilesList');
+  const banner = document.getElementById('quickstartBanner');
   if (buildProfiles.length === 0) {
     el.innerHTML = '<div class="config-empty">No build profiles. Add one to get started.</div>';
+    banner.classList.remove('hidden');
     return;
   }
+  banner.classList.add('hidden');
   el.innerHTML = buildProfiles.map(p => `
     <div class="config-item">
       <div class="config-item-main">
         <strong>${esc(p.name)}</strong>
         <code class="config-item-match">${esc(p.dockerImage)}</code>
         <span class="config-item-detail">${esc(p.workDir || '.')} :${p.containerPort}</span>
+        <code class="config-item-cmd" title="${esc(p.runCommand)}">${esc(p.runCommand)}</code>
       </div>
       <div class="config-item-actions">
         <button class="icon-btn xs danger-icon" onclick="deleteProfile('${esc(p.id)}')" title="Delete">&times;</button>
@@ -425,14 +436,50 @@ function renderProfiles() {
   `).join('');
 }
 
-function showAddProfileForm() { document.getElementById('addProfileForm').classList.remove('hidden'); }
+function showAddProfileForm() {
+  document.getElementById('addProfileForm').classList.remove('hidden');
+  loadDockerImages();
+}
 function hideAddProfileForm() { document.getElementById('addProfileForm').classList.add('hidden'); }
 
+function onImageSelect(val) {
+  const custom = document.getElementById('profileImageCustom');
+  if (val === '__custom__') {
+    custom.classList.remove('hidden');
+    custom.focus();
+  } else {
+    custom.classList.add('hidden');
+    custom.value = '';
+  }
+}
+
+function toggleAdvanced() {
+  document.getElementById('advancedFields').classList.toggle('hidden');
+}
+
+async function loadDockerImages() {
+  try {
+    const data = await api('GET', '/docker-images');
+    const group = document.getElementById('localImages');
+    if (data.images && data.images.length > 0) {
+      group.innerHTML = data.images.map(img =>
+        `<option value="${esc(img.repo + ':' + img.tag)}">${esc(img.repo)}:${esc(img.tag)} (${esc(img.size)})</option>`
+      ).join('');
+    } else {
+      group.innerHTML = '<option disabled>No local images found</option>';
+    }
+  } catch { /* ignore */ }
+}
+
 async function saveProfile() {
+  const selectVal = document.getElementById('profileImage').value;
+  const customVal = document.getElementById('profileImageCustom').value.trim();
+  const dockerImage = selectVal === '__custom__' ? customVal : selectVal;
+
   const profile = {
     id: document.getElementById('profileId').value.trim(),
     name: document.getElementById('profileName').value.trim(),
-    dockerImage: document.getElementById('profileImage').value.trim(),
+    dockerImage,
     workDir: document.getElementById('profileWorkDir').value.trim() || '.',
     containerPort: parseInt(document.getElementById('profilePort').value) || 8080,
     installCommand: document.getElementById('profileInstall').value.trim() || undefined,
@@ -443,6 +490,14 @@ async function saveProfile() {
     await api('POST', '/build-profiles', profile);
     hideAddProfileForm();
     showToast('Profile added', 'success');
+    await loadProfiles();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function runQuickstart() {
+  try {
+    const data = await api('POST', '/quickstart');
+    showToast(data.message, 'success');
     await loadProfiles();
   } catch (e) { showToast(e.message, 'error'); }
 }

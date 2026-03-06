@@ -30,7 +30,7 @@
     <div class="gateway-bar">
       <div class="gateway-left">
         <span class="gateway-dot active" id="workerDot"></span>
-        <span class="gateway-label">Worker :5500</span>
+        <span class="gateway-label" id="workerLabel">Worker</span>
       </div>
       <div class="gateway-right">
         <select id="defaultBranch" onchange="setDefaultBranch(this.value)">
@@ -91,26 +91,51 @@
           <input id="profileName" placeholder="Display Name" class="form-input sm">
         </div>
         <div class="form-row">
-          <input id="profileImage" placeholder="Docker image (e.g., node:20-slim)" class="form-input">
+          <select id="profileImage" class="form-input" onchange="onImageSelect(this.value)">
+            <option value="">-- Select Docker image --</option>
+            <optgroup label="Presets" id="presetImages">
+              <option value="mcr.microsoft.com/dotnet/sdk:8.0">.NET 8 SDK</option>
+              <option value="node:20-slim">Node.js 20</option>
+              <option value="node:22-slim">Node.js 22</option>
+              <option value="python:3.12-slim">Python 3.12</option>
+              <option value="golang:1.22-alpine">Go 1.22</option>
+              <option value="rust:1.77-slim">Rust 1.77</option>
+            </optgroup>
+            <optgroup label="Local Images" id="localImages"></optgroup>
+            <option value="__custom__">Custom...</option>
+          </select>
+          <input id="profileImageCustom" placeholder="Custom image" class="form-input hidden">
         </div>
         <div class="form-row">
-          <input id="profileWorkDir" placeholder="Work dir (e.g., prd-admin)" class="form-input sm">
-          <input id="profilePort" type="number" value="8080" placeholder="Container port" class="form-input xs">
-        </div>
-        <div class="form-row">
-          <input id="profileInstall" placeholder="Install command (optional)" class="form-input">
-        </div>
-        <div class="form-row">
-          <input id="profileBuild" placeholder="Build command (optional)" class="form-input">
+          <input id="profileWorkDir" placeholder="Work dir (default: .)" class="form-input sm" value=".">
+          <input id="profilePort" type="number" value="8080" placeholder="Port" class="form-input xs">
         </div>
         <div class="form-row">
           <input id="profileRun" placeholder="Run command (required)" class="form-input">
         </div>
+        <div id="advancedFields" class="hidden">
+          <div class="form-row">
+            <input id="profileInstall" placeholder="Install command (optional)" class="form-input">
+          </div>
+          <div class="form-row">
+            <input id="profileBuild" placeholder="Build command (optional)" class="form-input">
+          </div>
+        </div>
         <div class="form-row">
           <button class="primary sm" onclick="saveProfile()">Save</button>
           <button class="sm" onclick="hideAddProfileForm()">Cancel</button>
+          <button class="sm text-btn" onclick="toggleAdvanced()">Advanced</button>
         </div>
       </div>
+    </div>
+
+    <!-- Quickstart banner (shown when no profiles) -->
+    <div id="quickstartBanner" class="quickstart-banner hidden">
+      <div class="quickstart-content">
+        <strong>No build profiles configured.</strong>
+        <span>Load default profiles for this project?</span>
+      </div>
+      <button class="primary sm" onclick="runQuickstart()">Quickstart</button>
     </div>
 
     <!-- Branch picker -->

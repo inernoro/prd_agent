@@ -115,6 +115,8 @@ button.primary:hover { background: #2ea043; }
 button.danger { background: #da3633; border-color: #f85149; }
 button.danger:hover { background: #b62324; }
 button.sm { padding: 5px 10px; font-size: 12px; }
+button.text-btn { background: none; border: none; color: var(--text-secondary); text-decoration: underline; cursor: pointer; }
+button.text-btn:hover { color: var(--text-primary); }
 
 .form-input {
   padding: 7px 10px; background: var(--bg-input);
@@ -135,6 +137,17 @@ button.sm { padding: 5px 10px; font-size: 12px; }
   margin-bottom: 12px;
 }
 .config-panel.hidden { display: none; }
+
+/* Quickstart banner */
+.quickstart-banner {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--blue-bg); border: 1px solid rgba(56, 139, 253, 0.3);
+  border-radius: var(--radius); padding: 12px 16px; margin-bottom: 12px;
+}
+.quickstart-banner.hidden { display: none; }
+.quickstart-content { font-size: 13px; }
+.quickstart-content strong { color: var(--blue); margin-right: 6px; }
+.quickstart-content span { color: var(--text-secondary); }
 .config-panel-header {
   display: flex; justify-content: space-between; align-items: center;
   font-size: 14px; font-weight: 600; margin-bottom: 8px;
@@ -163,6 +176,10 @@ button.sm { padding: 5px 10px; font-size: 12px; }
 .config-item-arrow { color: var(--text-muted); }
 .config-item-target { color: var(--green); font-weight: 500; }
 .config-item-detail { color: var(--text-muted); font-size: 11px; }
+.config-item-cmd {
+  display: block; font-size: 11px; color: var(--text-secondary);
+  margin-top: 2px; max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .config-item-actions { display: flex; gap: 4px; flex-shrink: 0; }
 
 /* ---- Branch picker ---- */
