@@ -16,6 +16,15 @@ export class WorktreeService {
       throw new Error(`Failed to fetch branch "${branch}":\n${combinedOutput(fetchResult)}`);
     }
 
+    // Clean up stale worktree if the directory already exists
+    const checkDir = await this.shell.exec(`test -d "${targetDir}" && echo exists`);
+    if (checkDir.stdout.trim() === 'exists') {
+      // Prune stale worktree references first
+      await this.shell.exec('git worktree prune', { cwd: this.repoRoot });
+      // Remove the leftover directory
+      await this.shell.exec(`rm -rf "${targetDir}"`);
+    }
+
     const addResult = await this.shell.exec(
       `git worktree add "${targetDir}" "origin/${branch}"`,
       { cwd: this.repoRoot },

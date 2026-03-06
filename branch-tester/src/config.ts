@@ -1,55 +1,84 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { BtConfig } from './types.js';
+import type { CdsConfig } from './types.js';
 
-const DEFAULT_CONFIG: BtConfig = {
+const DEFAULT_CONFIG: CdsConfig = {
   repoRoot: path.resolve(process.cwd(), '..'),
-  worktreeBase: path.resolve(process.cwd(), '..', '.bt-worktrees'),
-  deployDir: 'deploy',
-  gateway: {
-    containerName: 'prdagent-gateway',
-    port: 5500,
-  },
-  docker: {
-    network: 'prdagent-network',
-    apiDockerfile: 'prd-api/Dockerfile',
-    apiImagePrefix: 'prdagent-server',
-    containerPrefix: 'prdagent-api',
-  },
-  mongodb: {
-    containerHost: 'prdagent-mongodb',
-    port: 27017,
-    defaultDbName: 'prdagent',
-  },
-  redis: {
-    connectionString: 'prdagent-redis:6379',
-  },
+  worktreeBase: path.resolve(process.cwd(), '..', '.cds-worktrees'),
+  masterPort: 9900,
+  workerPort: 5500,
+  dockerNetwork: 'cds-network',
+  portStart: 10001,
+  sharedEnv: buildSharedEnv(),
   jwt: {
     secret: process.env.JWT_SECRET ?? 'dev-only-change-me-32bytes-minimum!!',
     issuer: 'prdagent',
   },
-  dashboard: {
-    port: 9900,
-  },
 };
 
-export function loadConfig(configPath?: string): BtConfig {
-  // Priority: explicit arg → bt.config.json in cwd → defaults
+/** Collect shared environment from host (DB, Redis, asset providers, etc.) */
+function buildSharedEnv(): Record<string, string> {
+  const keys = [
+    // Database (raw values, kept for backward compat)
+    'MONGODB_HOST', 'MONGODB_PASSWORD',
+    // Redis (raw values)
+    'REDIS_HOST', 'REDIS_PASSWORD',
+    // Asset providers
+    'ASSETS_PROVIDER',
+    'TENCENT_COS_BUCKET', 'TENCENT_COS_REGION',
+    'TENCENT_COS_SECRET_ID', 'TENCENT_COS_SECRET_KEY',
+    'TENCENT_COS_PUBLIC_BASE_URL', 'TENCENT_COS_PREFIX',
+    // Auth
+    'ROOT_ACCESS_USERNAME', 'ROOT_ACCESS_PASSWORD',
+  ];
+  const env: Record<string, string> = {};
+  for (const key of keys) {
+    const val = process.env[key];
+    if (val !== undefined && val !== '') {
+      env[key] = val;
+    }
+  }
+
+  // Synthesize .NET-style connection strings from individual host/password vars.
+  // The .NET app reads MongoDB:ConnectionString (env: MongoDB__ConnectionString)
+  // and Redis:ConnectionString (env: Redis__ConnectionString).
+  const mongoHost = process.env.MONGODB_HOST;
+  const mongoPass = process.env.MONGODB_PASSWORD;
+  if (mongoHost && !env['MongoDB__ConnectionString']) {
+    env['MongoDB__ConnectionString'] = mongoPass
+      ? `mongodb://root:${encodeURIComponent(mongoPass)}@${mongoHost}:27017`
+      : `mongodb://${mongoHost}:27017`;
+  }
+
+  const redisHost = process.env.REDIS_HOST;
+  const redisPass = process.env.REDIS_PASSWORD;
+  if (redisHost && !env['Redis__ConnectionString']) {
+    env['Redis__ConnectionString'] = redisPass
+      ? `${redisHost}:6379,password=${redisPass}`
+      : `${redisHost}:6379`;
+  }
+
+  return env;
+}
+
+export function loadConfig(configPath?: string): CdsConfig {
   const candidates = [
     configPath,
+    path.resolve(process.cwd(), 'cds.config.json'),
+    // Backward compat
     path.resolve(process.cwd(), 'bt.config.json'),
   ];
 
   for (const candidate of candidates) {
     if (candidate && fs.existsSync(candidate)) {
       const raw = fs.readFileSync(candidate, 'utf-8');
-      const override = JSON.parse(raw) as Partial<BtConfig>;
+      const override = JSON.parse(raw) as Partial<CdsConfig>;
       console.log(`  Config loaded from: ${candidate}`);
       return deepMerge(DEFAULT_CONFIG, override);
     }
   }
 
-  console.log('  Config: using defaults (no bt.config.json found)');
+  console.log('  Config: using defaults (no cds.config.json found)');
   return { ...DEFAULT_CONFIG };
 }
 

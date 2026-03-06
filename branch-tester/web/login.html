@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Branch Tester — 登录</title>
+  <title>Cloud Dev Suite — Login</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -23,50 +23,21 @@
       border-radius: 12px;
       box-shadow: 0 16px 48px rgba(0,0,0,0.4);
     }
-    .login-card h1 {
-      font-size: 20px;
-      font-weight: 600;
-      margin-bottom: 4px;
-    }
-    .login-card .subtitle {
-      font-size: 13px;
-      color: #8b949e;
-      margin-bottom: 24px;
-    }
+    .login-card h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+    .login-card .subtitle { font-size: 13px; color: #8b949e; margin-bottom: 24px; }
     .field { margin-bottom: 16px; }
-    .field label {
-      display: block;
-      font-size: 13px;
-      color: #8b949e;
-      margin-bottom: 6px;
-    }
+    .field label { display: block; font-size: 13px; color: #8b949e; margin-bottom: 6px; }
     .field input {
-      width: 100%;
-      padding: 10px 12px;
-      background: #0d1117;
-      border: 1px solid #30363d;
-      border-radius: 6px;
-      color: #e1e4e8;
-      font-size: 14px;
-      outline: none;
+      width: 100%; padding: 10px 12px;
+      background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+      color: #e1e4e8; font-size: 14px; outline: none;
     }
     .field input:focus { border-color: #58a6ff; }
-    .error-msg {
-      font-size: 13px;
-      color: #f85149;
-      margin-bottom: 12px;
-      display: none;
-    }
+    .error-msg { font-size: 13px; color: #f85149; margin-bottom: 12px; display: none; }
     button {
-      width: 100%;
-      padding: 10px;
-      background: #238636;
-      border: 1px solid #2ea043;
-      border-radius: 6px;
-      color: #fff;
-      font-size: 14px;
-      font-weight: 500;
-      cursor: pointer;
+      width: 100%; padding: 10px;
+      background: #238636; border: 1px solid #2ea043; border-radius: 6px;
+      color: #fff; font-size: 14px; font-weight: 500; cursor: pointer;
     }
     button:hover { background: #2ea043; }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -74,19 +45,19 @@
 </head>
 <body>
   <div class="login-card">
-    <h1>Branch Tester</h1>
-    <div class="subtitle">请输入凭据登录管理面板</div>
+    <h1>Cloud Dev Suite</h1>
+    <div class="subtitle">Enter credentials to access the dashboard</div>
     <div class="error-msg" id="errorMsg"></div>
     <form onsubmit="doLogin(event)">
       <div class="field">
-        <label for="username">用户名</label>
+        <label for="username">Username</label>
         <input id="username" type="text" autocomplete="username" autofocus required>
       </div>
       <div class="field">
-        <label for="password">密码</label>
+        <label for="password">Password</label>
         <input id="password" type="password" autocomplete="current-password" required>
       </div>
-      <button type="submit" id="loginBtn">登 录</button>
+      <button type="submit" id="loginBtn">Login</button>
     </form>
   </div>
   <script>
@@ -106,9 +77,8 @@
           }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error || '登录失败');
-        // Set cookie (30 days)
-        document.cookie = `bt_token=${data.token}; path=/; max-age=${30 * 86400}; SameSite=Lax`;
+        if (!res.ok) throw new Error(data.error || 'Login failed');
+        document.cookie = `cds_token=${data.token}; path=/; max-age=${30 * 86400}; SameSite=Lax`;
         location.href = '/';
       } catch (ex) {
         err.textContent = ex.message;

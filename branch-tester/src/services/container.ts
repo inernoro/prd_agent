@@ -1,216 +1,151 @@
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import type { IShellExecutor, BranchEntry, BtConfig, RunFromSourceOptions, RunWebFromSourceOptions } from '../types.js';
+import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState } from '../types.js';
 import { combinedOutput } from '../types.js';
-
-/**
- * Environment variable names to forward from the host process into
- * every branch container. Only variables that are actually set on the
- * host will be included (empty/undefined are skipped).
- */
-const HOST_FORWARD_ENV_KEYS = [
-  'ASSETS_PROVIDER',
-  'TENCENT_COS_BUCKET',
-  'TENCENT_COS_REGION',
-  'TENCENT_COS_SECRET_ID',
-  'TENCENT_COS_SECRET_KEY',
-  'TENCENT_COS_PUBLIC_BASE_URL',
-  'TENCENT_COS_PREFIX',
-  'ROOT_ACCESS_USERNAME',
-  'ROOT_ACCESS_PASSWORD',
-];
-
-/** Collect host env vars that are set and return as `KEY=VALUE` pairs */
-function hostForwardedEnv(): string[] {
-  const result: string[] = [];
-  for (const key of HOST_FORWARD_ENV_KEYS) {
-    const val = process.env[key];
-    if (val !== undefined && val !== '') {
-      result.push(`${key}=${val}`);
-    }
-  }
-  return result;
-}
 
 export class ContainerService {
   constructor(
     private readonly shell: IShellExecutor,
-    private readonly config: BtConfig,
+    private readonly config: CdsConfig,
   ) {}
 
-  /** Start a deploy container from a pre-built Docker image */
-  async start(entry: BranchEntry): Promise<void> {
-    const { mongodb, redis, jwt, docker } = this.config;
-
-    await this.ensureNetwork(docker.network);
-
-    // Remove any existing container with the same name (avoids "name already in use")
-    await this.shell.exec(`docker rm -f ${entry.containerName}`);
-
-    const envVars = [
-      `ASPNETCORE_ENVIRONMENT=Production`,
-      `ASPNETCORE_URLS=http://+:8080`,
-      `MongoDB__ConnectionString=mongodb://${mongodb.containerHost}:${mongodb.port}`,
-      `MongoDB__DatabaseName=${entry.dbName}`,
-      `Redis__ConnectionString=${redis.connectionString}`,
-      `Jwt__Secret=${jwt.secret}`,
-      `Jwt__Issuer=${jwt.issuer}`,
-      ...hostForwardedEnv(),
-    ];
-
-    const envFlags = envVars.map((e) => `-e ${e}`).join(' ');
-
-    const cmd = [
-      'docker run -d',
-      `--name ${entry.containerName}`,
-      `--network ${docker.network}`,
-      envFlags,
-      '--read-only',
-      '--tmpfs /tmp',
-      entry.imageName,
-    ].join(' ');
-
-    const result = await this.shell.exec(cmd);
-    if (result.exitCode !== 0) {
-      throw new Error(`Failed to start container "${entry.containerName}":\n${combinedOutput(result)}`);
-    }
+  /**
+   * Write env vars to a temp file and return its path.
+   * Uses --env-file instead of -e to avoid shell escaping issues
+   * with special characters (@, #, !, etc.) in values.
+   */
+  private writeEnvFile(mergedEnv: Record<string, string>): string {
+    const envFilePath = path.join(os.tmpdir(), `cds-env-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const lines = Object.entries(mergedEnv).map(([k, v]) => `${k}=${v}`);
+    fs.writeFileSync(envFilePath, lines.join('\n'), 'utf-8');
+    return envFilePath;
   }
 
-  /** Run a container from source code (mount worktree + SDK image + dotnet run) */
-  async runFromSource(entry: BranchEntry, options: RunFromSourceOptions): Promise<void> {
-    const { mongodb, redis, jwt, docker } = this.config;
-    const containerName = entry.runContainerName!;
-
-    await this.ensureNetwork(docker.network);
-
-    // Remove any existing container with the same name (avoids "name already in use")
-    await this.shell.exec(`docker rm -f ${containerName}`);
-
-    const srcMount = path.join(entry.worktreePath, options.sourceDir);
-
-    const envVars = [
-      `ASPNETCORE_ENVIRONMENT=Development`,
-      `ASPNETCORE_URLS=http://+:8080`,
-      `MongoDB__ConnectionString=mongodb://${mongodb.containerHost}:${mongodb.port}`,
-      `MongoDB__DatabaseName=${entry.dbName}`,
-      `Redis__ConnectionString=${redis.connectionString}`,
-      `Jwt__Secret=${jwt.secret}`,
-      `Jwt__Issuer=${jwt.issuer}`,
-      ...hostForwardedEnv(),
-    ];
-
-    const envFlags = envVars.map((e) => `-e ${e}`).join(' ');
-
-    const cmd = [
-      'docker run -d',
-      `--name ${containerName}`,
-      `--network ${docker.network}`,
-      `-p ${options.hostPort}:8080`,
-      `-v ${srcMount}:/src`,
-      `-w /src`,
-      envFlags,
-      '--tmpfs /tmp',
-      options.baseImage,
-      options.command,
-    ].join(' ');
-
-    const result = await this.shell.exec(cmd);
-    if (result.exitCode !== 0) {
-      throw new Error(`Failed to run container "${containerName}":\n${combinedOutput(result)}`);
-    }
-  }
-
-  /** Run a Vite dev server container from source (mount worktree + Node image + pnpm dev) */
-  async runWebFromSource(entry: BranchEntry, options: RunWebFromSourceOptions): Promise<void> {
-    const { docker } = this.config;
-    const containerName = entry.runWebContainerName!;
-
-    await this.ensureNetwork(docker.network);
-
-    // Remove any existing container with the same name
-    await this.shell.exec(`docker rm -f ${containerName}`);
-
-    const srcMount = path.join(entry.worktreePath, options.webSourceDir);
-
-    const cmd = [
-      'docker run -d',
-      `--name ${containerName}`,
-      `--network ${docker.network}`,
-      `-v ${srcMount}:/src`,
-      `-w /src`,
-      '--tmpfs /tmp',
-      // Store pnpm cache outside /src to avoid Vite watching thousands of store files (ENOSPC)
-      '-e npm_config_store_dir=/tmp/.pnpm-store',
-      options.webBaseImage,
-      options.webCommand,
-    ].join(' ');
-
-    const result = await this.shell.exec(cmd);
-    if (result.exitCode !== 0) {
-      throw new Error(`Failed to start web dev container "${containerName}":\n${combinedOutput(result)}`);
-    }
+  private removeEnvFile(envFilePath: string): void {
+    try { fs.unlinkSync(envFilePath); } catch { /* ok */ }
   }
 
   /**
-   * Start a per-branch preview nginx container.
-   * Serves the branch independently on its own host port (API proxy + static files or Vite).
+   * Run a branch service from source using a build profile.
+   * Mounts the worktree + shared cache volumes into a Docker container.
    */
-  async startPreview(
+  async runService(
     entry: BranchEntry,
-    nginxConfigContent: string,
-    staticFilesPath?: string,
+    profile: BuildProfile,
+    service: ServiceState,
+    onOutput?: (chunk: string) => void,
+    customEnv?: Record<string, string>,
   ): Promise<void> {
-    const { docker } = this.config;
-    const containerName = entry.previewContainerName!;
-    const previewPort = entry.previewPort!;
-    const nginxImage = this.config.preview?.nginxImage ?? 'nginx:1.27-alpine';
+    await this.ensureNetwork();
 
-    await this.ensureNetwork(docker.network);
+    // Remove any existing container
+    await this.shell.exec(`docker rm -f ${service.containerName}`);
 
-    // Remove any existing preview container
-    await this.shell.exec(`docker rm -f ${containerName}`);
+    const srcMount = path.join(entry.worktreePath, profile.workDir);
 
-    // Write nginx config to a temp file that we'll mount
-    const configDir = `/tmp/bt-preview-${entry.id}`;
-    await this.shell.exec(`mkdir -p ${configDir}`);
-    await this.shell.exec(`cat > ${configDir}/default.conf << 'NGINX_EOF'\n${nginxConfigContent}\nNGINX_EOF`);
+    // Build environment variables (later entries override earlier ones)
+    // Priority: sharedEnv (auto) < customEnv (user dashboard) < profile.env (per-profile)
+    const mergedEnv: Record<string, string> = {
+      ...this.config.sharedEnv,
+    };
 
-    const volumes = [
-      `-v ${configDir}/default.conf:/etc/nginx/conf.d/default.conf:ro`,
-    ];
-
-    // Mount static files for deploy mode
-    if (staticFilesPath) {
-      volumes.push(`-v ${staticFilesPath}:/usr/share/nginx/html:ro`);
+    // User-defined env vars from dashboard (override auto-detected)
+    if (customEnv) {
+      Object.assign(mergedEnv, customEnv);
     }
 
-    const cmd = [
-      'docker run -d',
-      `--name ${containerName}`,
-      `--network ${docker.network}`,
-      `-p ${previewPort}:80`,
-      ...volumes,
-      nginxImage,
-    ].join(' ');
+    // JWT
+    mergedEnv['Jwt__Secret'] = this.config.jwt.secret;
+    mergedEnv['Jwt__Issuer'] = this.config.jwt.issuer;
 
-    const result = await this.shell.exec(cmd);
-    if (result.exitCode !== 0) {
-      throw new Error(`Failed to start preview container "${containerName}":\n${combinedOutput(result)}`);
+    // Profile-specific env (highest priority)
+    if (profile.env) {
+      Object.assign(mergedEnv, profile.env);
     }
-  }
 
-  /** Stop and remove a preview container */
-  async stopPreview(containerName: string): Promise<void> {
-    await this.shell.exec(`docker stop ${containerName}`);
-    await this.shell.exec(`docker rm ${containerName}`);
-  }
+    // Write to temp file — avoids shell escaping issues with special chars
+    const envFilePath = this.writeEnvFile(mergedEnv);
+    const envFlag = `--env-file "${envFilePath}"`;
 
-  private async ensureNetwork(network: string): Promise<void> {
-    const inspect = await this.shell.exec(`docker network inspect ${network}`);
-    if (inspect.exitCode !== 0) {
-      const create = await this.shell.exec(`docker network create ${network}`);
-      if (create.exitCode !== 0) {
-        throw new Error(`Failed to create Docker network "${network}":\n${combinedOutput(create)}`);
+    // Shared cache mounts (avoid duplicating node_modules, nuget, etc.)
+    const volumeFlags: string[] = [`-v "${srcMount}":/src`];
+    if (profile.cacheMounts) {
+      for (const cm of profile.cacheMounts) {
+        // Ensure host path exists
+        await this.shell.exec(`mkdir -p "${cm.hostPath}"`);
+        volumeFlags.push(`-v "${cm.hostPath}":"${cm.containerPath}"`);
       }
+    }
+
+    try {
+      // Install step (if defined)
+      if (profile.installCommand) {
+        onOutput?.(`── Install: ${profile.installCommand} ──\n`);
+        const installCmd = [
+          'docker run --rm',
+          `--network ${this.config.dockerNetwork}`,
+          ...volumeFlags,
+          '-w /src',
+          envFlag,
+          '--tmpfs /tmp',
+          profile.dockerImage,
+          `sh -c "${profile.installCommand.replace(/"/g, '\\"')}"`,
+        ].join(' ');
+
+        const installResult = await this.shell.exec(installCmd, {
+          timeout: profile.buildTimeout ?? 600_000,
+          onData: onOutput,
+        });
+        if (installResult.exitCode !== 0) {
+          throw new Error(`Install failed:\n${combinedOutput(installResult)}`);
+        }
+      }
+
+      // Build step (if defined)
+      if (profile.buildCommand) {
+        onOutput?.(`\n── Build: ${profile.buildCommand} ──\n`);
+        const buildCmd = [
+          'docker run --rm',
+          `--network ${this.config.dockerNetwork}`,
+          ...volumeFlags,
+          '-w /src',
+          envFlag,
+          '--tmpfs /tmp',
+          profile.dockerImage,
+          `sh -c "${profile.buildCommand.replace(/"/g, '\\"')}"`,
+        ].join(' ');
+
+        const buildResult = await this.shell.exec(buildCmd, {
+          timeout: profile.buildTimeout ?? 600_000,
+          onData: onOutput,
+        });
+        if (buildResult.exitCode !== 0) {
+          throw new Error(`Build failed:\n${combinedOutput(buildResult)}`);
+        }
+      }
+
+      // Run step — start the service in the background
+      onOutput?.(`\n── Run: ${profile.runCommand} ──\n`);
+      const runCmd = [
+        'docker run -d',
+        `--name ${service.containerName}`,
+        `--network ${this.config.dockerNetwork}`,
+        `-p ${service.hostPort}:${profile.containerPort}`,
+        ...volumeFlags,
+        '-w /src',
+        envFlag,
+        '--tmpfs /tmp',
+        profile.dockerImage,
+        `sh -c "${profile.runCommand.replace(/"/g, '\\"')}"`,
+      ].join(' ');
+
+      const result = await this.shell.exec(runCmd);
+      if (result.exitCode !== 0) {
+        throw new Error(`Failed to run service "${service.containerName}":\n${combinedOutput(result)}`);
+      }
+    } finally {
+      this.removeEnvFile(envFilePath);
     }
   }
 
@@ -226,7 +161,18 @@ export class ContainerService {
     return result.exitCode === 0 && result.stdout.trim() === 'true';
   }
 
-  async removeImage(imageName: string): Promise<void> {
-    await this.shell.exec(`docker rmi ${imageName}`);
+  async getLogs(containerName: string, tail = 100): Promise<string> {
+    const result = await this.shell.exec(`docker logs --tail ${tail} ${containerName}`);
+    return combinedOutput(result);
+  }
+
+  private async ensureNetwork(): Promise<void> {
+    const inspect = await this.shell.exec(`docker network inspect ${this.config.dockerNetwork}`);
+    if (inspect.exitCode !== 0) {
+      const create = await this.shell.exec(`docker network create ${this.config.dockerNetwork}`);
+      if (create.exitCode !== 0) {
+        throw new Error(`Failed to create Docker network "${this.config.dockerNetwork}":\n${combinedOutput(create)}`);
+      }
+    }
   }
 }

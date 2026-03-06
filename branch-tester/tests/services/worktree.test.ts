@@ -14,13 +14,26 @@ describe('WorktreeService', () => {
   describe('create', () => {
     it('should fetch then create a worktree', async () => {
       mock.addResponsePattern(/git fetch/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/test -d/, () => ({ stdout: '', stderr: '', exitCode: 1 }));
       mock.addResponsePattern(/git worktree add/, () => ({ stdout: 'Preparing worktree', stderr: '', exitCode: 0 }));
 
       await service.create('feature/new-ui', '/tmp/wt/feature-new-ui');
       expect(mock.commands[0]).toContain('git fetch');
-      expect(mock.commands[1]).toContain('git worktree add');
-      expect(mock.commands[1]).toContain('/tmp/wt/feature-new-ui');
-      expect(mock.commands[1]).toContain('origin/feature/new-ui');
+      expect(mock.commands.find(c => c.includes('git worktree add'))).toContain('/tmp/wt/feature-new-ui');
+      expect(mock.commands.find(c => c.includes('git worktree add'))).toContain('origin/feature/new-ui');
+    });
+
+    it('should clean up stale worktree directory before creating', async () => {
+      mock.addResponsePattern(/git fetch/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/test -d/, () => ({ stdout: 'exists\n', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/git worktree prune/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/rm -rf/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/git worktree add/, () => ({ stdout: 'Preparing worktree', stderr: '', exitCode: 0 }));
+
+      await service.create('main', '/tmp/wt/main');
+      expect(mock.commands).toContainEqual(expect.stringContaining('git worktree prune'));
+      expect(mock.commands).toContainEqual(expect.stringContaining('rm -rf'));
+      expect(mock.commands).toContainEqual(expect.stringContaining('git worktree add'));
     });
 
     it('should throw if fetch fails', async () => {
@@ -35,6 +48,7 @@ describe('WorktreeService', () => {
 
     it('should throw if worktree add fails', async () => {
       mock.addResponsePattern(/git fetch/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/test -d/, () => ({ stdout: '', stderr: '', exitCode: 1 }));
       mock.addResponsePattern(/git worktree add/, () => ({
         stdout: '',
         stderr: 'fatal: already exists',

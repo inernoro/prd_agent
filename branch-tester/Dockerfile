@@ -14,8 +14,8 @@ COPY . .
 # Build TypeScript
 RUN pnpm build
 
-# Branch Tester needs access to Docker socket for container management
+# CDS needs Docker socket for container management
 # Mount /var/run/docker.sock when running
-EXPOSE 9900
+EXPOSE 9900 5500
 
 CMD ["node", "dist/index.js"]
