@@ -1,5 +1,5 @@
 import http from 'node:http';
-import type { CdsState, RoutingRule, BranchEntry } from '../types.js';
+import type { RoutingRule, BranchEntry } from '../types.js';
 import { StateService } from './state.js';
 
 /**
