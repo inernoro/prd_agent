@@ -1,3 +1,14 @@
+# 前端包管理器规则
+
+**强制规则**：本项目所有 Node.js / 前端项目（`prd-admin`、`prd-desktop`、`prd-video` 等）统一使用 **pnpm**，禁止使用 npm 或 yarn。
+
+- 安装依赖：`pnpm install`
+- 添加依赖：`pnpm add <package>`
+- 运行脚本：`pnpm run <script>` 或 `pnpm <script>`
+- Lockfile：仅保留 `pnpm-lock.yaml`，禁止提交 `package-lock.json` 或 `yarn.lock`
+
+---
+
 # C# 代码静态分析规则
 
 **强制规则**：任何涉及 C#（`.cs` 文件）的改动，完成后**必须**使用 Roslyn 进行代码静态分析，确认零错误后才算完成。
