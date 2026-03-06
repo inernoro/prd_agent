@@ -490,144 +490,215 @@ const smartHttpTemplate: WorkflowTemplate = {
 };
 
 // ═══════════════════════════════════════════════════════════════
-// 模板 3: 智能 HTTP 增强测试（cursor 分页 + 自定义 dataPath + 重试）
+// 模板 3: API 数据采集审查（完整表单 → 一键生成工作流）
 // ═══════════════════════════════════════════════════════════════
 //
 // 拓扑图：
 //   👆 手动触发
 //     ↓
-//   🤖 智能 HTTP（cursor 分页 + dataPath）
+//   🤖 智能 HTTP（全配置：分页/路径/重试/延迟）
 //     ↓
-//   💻 JS 脚本（数据校验 + 统计）
+//   💻 JS 数据预处理（统计摘要 + 字段分布）
+//     ↓
+//   📝 LLM 报告生成（基于分析指令生成可读报告）
 //     ↓      ↓
 //   💾 导出  🔔 通知
 //
-// 需要先启动 mock: node scripts/mock-paginated-api.js
 
-const smartHttpEnhancedTestTemplate: WorkflowTemplate = {
-  id: 'smart-http-enhanced-test',
-  name: '智能 HTTP 增强测试',
-  description: '使用 mock API 测试 cursor 分页、自定义 dataPath、请求延迟、失败重试等增强功能',
-  icon: '🧪',
-  tags: ['test', 'smart-http', 'cursor', 'mock'],
+const apiReviewWorkflowTemplate: WorkflowTemplate = {
+  id: 'api-review-workflow',
+  name: 'API 数据采集与审查',
+  description: '一键配置外部 API 拉取 → 数据预处理 → LLM 分析报告 → 文件导出 + 站内通知。支持 cursor/offset/page 分页、自定义数据路径、失败重试',
+  icon: '🔍',
+  tags: ['api', 'review', 'smart-http', 'report', 'llm'],
   requiredInputs: [
+    // ── HTTP 基础 ──
     {
-      key: 'mockHost',
-      label: 'Mock API 地址',
-      type: 'text',
-      placeholder: 'http://localhost:7799',
-      defaultValue: 'http://localhost:7799',
-      helpTip: '先运行 node scripts/mock-paginated-api.js 启动 mock 服务',
+      key: 'curlCommand',
+      label: 'cURL 命令 / 请求 URL',
+      type: 'textarea',
+      placeholder: "curl 'https://api.example.com/v1/items?page=1&pageSize=20' \\\n  -H 'Authorization: Bearer your-token' \\\n  -H 'Content-Type: application/json'",
+      helpTip: '粘贴完整 cURL（自动解析 URL/Headers/Body），或直接填 URL。认证信息放在 Headers 里即可',
       required: true,
     },
     {
-      key: 'testMode',
-      label: '测试场景',
+      key: 'method',
+      label: '请求方法',
       type: 'select',
       required: true,
-      defaultValue: 'cursor',
+      defaultValue: 'GET',
       options: [
-        { value: 'cursor', label: 'cursor 分页 + 自定义 dataPath' },
-        { value: 'offset', label: 'offset 分页' },
-        { value: 'page', label: 'page 分页' },
-        { value: 'post-body', label: 'POST body 分页' },
-        { value: 'retry', label: '失败重试测试' },
+        { value: 'GET', label: 'GET' },
+        { value: 'POST', label: 'POST' },
       ],
     },
     {
-      key: 'pageSize',
-      label: '每页条数',
+      key: 'headers',
+      label: '请求头 (JSON)',
+      type: 'textarea',
+      placeholder: '{"Authorization": "Bearer xxx", "Content-Type": "application/json"}',
+      helpTip: '如果已在 cURL 中包含 Headers 可留空，这里的值会合并/覆盖 cURL 解析的 Headers',
+      required: false,
+    },
+    {
+      key: 'body',
+      label: '请求体 (POST 时填写)',
+      type: 'textarea',
+      placeholder: '{"query": "all", "pageIndex": 1, "pageSize": 20}',
+      helpTip: 'POST 请求的 JSON Body。支持 {{变量}} 模板替换',
+      required: false,
+    },
+    // ── 分页配置 ──
+    {
+      key: 'paginationType',
+      label: '分页策略',
+      type: 'select',
+      required: true,
+      defaultValue: 'auto',
+      options: [
+        { value: 'auto', label: 'AI 自动检测（推荐）' },
+        { value: 'page', label: 'page/pageSize 页码分页' },
+        { value: 'offset', label: 'offset/limit 偏移分页' },
+        { value: 'cursor', label: 'cursor 游标分页' },
+        { value: 'none', label: '不分页（单次请求）' },
+      ],
+    },
+    {
+      key: 'dataPath',
+      label: '数据路径',
       type: 'text',
-      defaultValue: '10',
-      helpTip: 'mock 数据共 50 条，建议 10 条/页 → 期望 5 页',
+      placeholder: 'response.data.list',
+      helpTip: '响应 JSON 中数据数组的路径（点号分隔）。如 API 返回 {"response":{"data":{"list":[...]}}} 则填 response.data.list。留空自动检测 data/items/results',
+      required: false,
+    },
+    {
+      key: 'cursorField',
+      label: '游标字段路径',
+      type: 'text',
+      placeholder: 'paging.next_cursor',
+      helpTip: 'cursor 分页专用：从响应中提取下一页游标的字段路径。如 {"paging":{"next_cursor":"abc"}} 则填 paging.next_cursor',
+      required: false,
+    },
+    {
+      key: 'maxPages',
+      label: '最大页数',
+      type: 'text',
+      defaultValue: '20',
+      helpTip: '安全上限，防止无限翻页。根据数据量设置，如总共 200 条每页 20 条则填 10',
+      required: false,
+    },
+    // ── 高级选项 ──
+    {
+      key: 'requestDelayMs',
+      label: '请求间隔 (毫秒)',
+      type: 'text',
+      defaultValue: '200',
+      helpTip: '翻页请求之间的延迟，防止触发对方 API 限流。0 = 不延迟',
+      required: false,
+    },
+    {
+      key: 'retryCount',
+      label: '失败重试',
+      type: 'select',
+      defaultValue: '1',
+      required: false,
+      options: [
+        { value: '0', label: '不重试' },
+        { value: '1', label: '重试 1 次' },
+        { value: '2', label: '重试 2 次' },
+        { value: '3', label: '重试 3 次' },
+      ],
+    },
+    {
+      key: 'bodyPageField',
+      label: 'Body 分页字段',
+      type: 'text',
+      placeholder: 'pageIndex',
+      helpTip: 'POST 分页时，请求体中的页码/游标字段名。如 Body 是 {"pageIndex":1} 则填 pageIndex，翻页时自动更新此值',
+      required: false,
+    },
+    // ── 分析与报告 ──
+    {
+      key: 'analysisPrompt',
+      label: 'LLM 分析指令',
+      type: 'textarea',
+      placeholder: '请分析以下数据，输出：\n1. 数据总量和时间跨度\n2. 按状态/优先级/负责人分组统计\n3. 趋势分析和异常点\n4. 改进建议',
+      helpTip: '告诉 LLM 如何分析数据。留空则使用默认的通用分析模板',
+      required: false,
+    },
+    {
+      key: 'reportTitle',
+      label: '报告标题',
+      type: 'text',
+      placeholder: 'API 数据审查报告',
+      defaultValue: 'API 数据审查报告',
+      helpTip: '导出文件和通知的标题',
       required: false,
     },
   ],
   build: (inputs) => {
     _edgeIdx = 0;
-    const host = inputs.mockHost || 'http://localhost:7799';
-    const pageSize = inputs.pageSize || '10';
-    const mode = inputs.testMode || 'cursor';
+    const curlOrUrl = inputs.curlCommand || '';
+    const method = inputs.method || 'GET';
+    const headers = inputs.headers || '';
+    const body = inputs.body || '';
+    const paginationType = inputs.paginationType || 'auto';
+    const dataPath = inputs.dataPath || '';
+    const cursorField = inputs.cursorField || 'next_cursor';
+    const maxPages = inputs.maxPages || '20';
+    const requestDelayMs = inputs.requestDelayMs || '200';
+    const retryCount = inputs.retryCount || '1';
+    const bodyPageField = inputs.bodyPageField || '';
+    const analysisPrompt = inputs.analysisPrompt || '';
+    const reportTitle = inputs.reportTitle || 'API 数据审查报告';
 
-    // 根据测试模式构建 smart-http 配置
-    let smartConfig: Record<string, string>;
-
-    switch (mode) {
-      case 'cursor':
-        smartConfig = {
-          url: `${host}/api/cursor-list?cursor=0&limit=${pageSize}`,
-          method: 'GET',
-          paginationType: 'cursor',
-          dataPath: 'response.result.list',
-          cursorField: 'paging.next_cursor',
-          cursorParam: 'cursor',
-          maxPages: '10',
-          requestDelayMs: '100',
-        };
-        break;
-      case 'offset':
-        smartConfig = {
-          url: `${host}/api/offset-list?offset=0&limit=${pageSize}`,
-          method: 'GET',
-          paginationType: 'offset',
-          maxPages: '10',
-          requestDelayMs: '50',
-        };
-        break;
-      case 'page':
-        smartConfig = {
-          url: `${host}/api/page-list?page=1&pageSize=${pageSize}`,
-          method: 'GET',
-          paginationType: 'page',
-          maxPages: '10',
-        };
-        break;
-      case 'post-body':
-        smartConfig = {
-          url: `${host}/api/search`,
-          method: 'POST',
-          body: JSON.stringify({ query: 'all', pageIndex: 1, pageSize: parseInt(pageSize) }),
-          paginationType: 'cursor',
-          dataPath: 'result.records',
-          cursorField: 'pagination.next_cursor',
-          cursorParam: 'cursor',
-          bodyPageField: 'pageIndex',
-          maxPages: '10',
-          requestDelayMs: '100',
-        };
-        break;
-      case 'retry':
-        smartConfig = {
-          url: `${host}/api/flaky?page=1&pageSize=${pageSize}&fail_rate=0.4&delay_ms=200`,
-          method: 'GET',
-          paginationType: 'page',
-          maxPages: '10',
-          retryCount: '2',
-          requestDelayMs: '300',
-        };
-        break;
-      default:
-        smartConfig = {
-          url: `${host}/api/cursor-list?cursor=0&limit=${pageSize}`,
-          method: 'GET',
-          paginationType: 'auto',
-          maxPages: '10',
-        };
+    // 判断输入是 cURL 还是纯 URL
+    const isCurl = /^\s*curl[\s'"]/.test(curlOrUrl);
+    const smartConfig: Record<string, string> = {
+      paginationType,
+      maxPages,
+      requestDelayMs,
+      retryCount,
+    };
+    if (isCurl) {
+      smartConfig.curlCommand = curlOrUrl;
+    } else {
+      smartConfig.url = curlOrUrl;
+      smartConfig.method = method;
     }
+    if (headers) smartConfig.headers = headers;
+    if (body) smartConfig.body = body;
+    if (dataPath) smartConfig.dataPath = dataPath;
+    if (paginationType === 'cursor' || cursorField !== 'next_cursor') {
+      smartConfig.cursorField = cursorField;
+    }
+    if (bodyPageField) smartConfig.bodyPageField = bodyPageField;
+
+    const defaultAnalysis = `请对以下数据进行全面分析，输出结构化的审查报告：
+
+1. **数据概览**：总条数、字段列表、数据时间范围
+2. **分组统计**：自动识别分类字段（如 status、type、priority、assignee 等），按每个字段分组计数，输出 Top 10
+3. **异常检测**：数据缺失（空字段比例）、重复记录、异常值
+4. **趋势分析**：如有日期字段，按周/月统计趋势
+5. **关键发现与建议**：基于数据给出 3-5 条核心洞察
+
+以 Markdown 格式输出，包含标题、表格和要点列表。`;
 
     const nodes: WorkflowNode[] = [
+      // ── 1. 手动触发 ──
       {
         nodeId: 'n-trigger',
         name: '手动触发',
         nodeType: 'manual-trigger',
-        config: { inputPrompt: `测试模式: ${mode}，点击开始` },
+        config: { inputPrompt: `点击开始采集: ${reportTitle}` },
         inputSlots: [],
         outputSlots: [{ slotId: 'manual-out', name: 'input', dataType: 'json', required: true }],
-        position: { x: 100, y: 300 },
+        position: { x: 80, y: 300 },
       },
+      // ── 2. 智能 HTTP 采集（全配置） ──
       {
         nodeId: 'n-smart',
-        name: `智能 HTTP (${mode})`,
+        name: '智能 HTTP 采集',
         nodeType: 'smart-http',
         config: smartConfig,
         inputSlots: [{ slotId: 'smart-in', name: 'context', dataType: 'json', required: false }],
@@ -635,91 +706,113 @@ const smartHttpEnhancedTestTemplate: WorkflowTemplate = {
           { slotId: 'smart-out', name: 'data', dataType: 'json', required: true },
           { slotId: 'smart-meta', name: 'meta', dataType: 'json', required: false },
         ],
-        position: { x: 450, y: 300 },
+        position: { x: 380, y: 300 },
       },
+      // ── 3. JS 数据预处理（统计摘要 + 结构探测） ──
       {
-        nodeId: 'n-verify',
-        name: '数据校验',
+        nodeId: 'n-preprocess',
+        name: '数据预处理',
         nodeType: 'script-executor',
         config: {
           language: 'javascript',
-          code: `// data = smart-http 拉取的全量数据
-const total = Array.isArray(data) ? data.length : 0;
-const ids = Array.isArray(data) ? data.map(i => i.id) : [];
-const uniqueIds = [...new Set(ids)];
-const hasDuplicates = uniqueIds.length < ids.length;
+          code: `// data = smart-http 拉取的全量 JSON 数组
+var items = Array.isArray(data) ? data : (data ? [data] : []);
+var total = items.length;
 
-// 状态分布
-const statusDist = {};
-const priorityDist = {};
-if (Array.isArray(data)) {
-  data.forEach(item => {
-    statusDist[item.status] = (statusDist[item.status] || 0) + 1;
-    priorityDist[item.priority] = (priorityDist[item.priority] || 0) + 1;
+// 字段探测
+var fieldCounts = {};
+items.forEach(function(item) {
+  Object.keys(item).forEach(function(k) {
+    fieldCounts[k] = (fieldCounts[k] || 0) + (item[k] != null && item[k] !== '' ? 1 : 0);
   });
-}
+});
 
-const lines = [];
-lines.push("# Smart-HTTP 增强测试报告");
-lines.push("## 基础验证");
-lines.push("- 总条数: " + total + " (期望 50)");
-lines.push("- 去重后: " + uniqueIds.length);
-lines.push("- 有重复: " + (hasDuplicates ? "YES (有问题!)" : "NO (正常)"));
-lines.push("- 测试结果: " + (total === 50 && !hasDuplicates ? "PASS" : "FAIL"));
-lines.push("");
-lines.push("## 状态分布");
-Object.entries(statusDist).forEach(([k, v]) => lines.push("- " + k + ": " + v));
-lines.push("");
-lines.push("## 优先级分布");
-Object.entries(priorityDist).forEach(([k, v]) => lines.push("- " + k + ": " + v));
-lines.push("");
-lines.push("## 数据样本 (前 3 条)");
-if (Array.isArray(data)) {
-  data.slice(0, 3).forEach((item, i) => {
-    lines.push((i+1) + ". " + JSON.stringify(item));
+// 自动分组统计（取枚举型字段：唯一值 < 30 的字段）
+var groupStats = {};
+Object.keys(fieldCounts).forEach(function(field) {
+  var values = {};
+  var uniqueCount = 0;
+  items.forEach(function(item) {
+    var v = String(item[field] || '(空)');
+    if (!values[v]) { values[v] = 0; uniqueCount++; }
+    if (uniqueCount <= 30) values[v]++;
   });
-}
+  if (uniqueCount > 1 && uniqueCount <= 30) {
+    groupStats[field] = values;
+  }
+});
 
-result = lines.join("\\n");`,
-          timeoutSeconds: '10',
+// 数据质量
+var emptyRates = {};
+Object.keys(fieldCounts).forEach(function(k) {
+  var emptyCount = total - fieldCounts[k];
+  if (emptyCount > 0) {
+    emptyRates[k] = (emptyCount / total * 100).toFixed(1) + '%';
+  }
+});
+
+result = {
+  summary: { totalRecords: total, fieldCount: Object.keys(fieldCounts).length, fields: Object.keys(fieldCounts) },
+  groupStats: groupStats,
+  dataQuality: { emptyRates: emptyRates },
+  rawData: items,
+  sampleRecords: items.slice(0, 5)
+};`,
+          timeoutSeconds: '30',
         },
         inputSlots: [{ slotId: 'script-in', name: 'input', dataType: 'json', required: true }],
-        outputSlots: [{ slotId: 'script-out', name: 'output', dataType: 'text', required: true }],
-        position: { x: 800, y: 300 },
+        outputSlots: [{ slotId: 'script-out', name: 'output', dataType: 'json', required: true }],
+        position: { x: 680, y: 300 },
       },
+      // ── 4. LLM 分析报告 ──
+      {
+        nodeId: 'n-report',
+        name: 'LLM 分析报告',
+        nodeType: 'report-generator',
+        config: {
+          reportTemplate: analysisPrompt || defaultAnalysis,
+          format: 'markdown',
+        },
+        inputSlots: [{ slotId: 'report-in', name: 'data', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'report-out', name: 'report', dataType: 'text', required: true }],
+        position: { x: 980, y: 300 },
+      },
+      // ── 5. 文件导出 ──
       {
         nodeId: 'n-export',
-        name: '导出测试报告',
+        name: '导出报告',
         nodeType: 'file-exporter',
         config: {
           fileFormat: 'markdown',
-          fileName: `smart-http-test-${mode}-{{date}}`,
+          fileName: `${reportTitle.replace(/\s+/g, '-')}-{{date}}`,
         },
         inputSlots: [{ slotId: 'export-in', name: 'data', dataType: 'json', required: true }],
         outputSlots: [{ slotId: 'export-out', name: 'file', dataType: 'binary', required: true }],
-        position: { x: 1200, y: 180 },
+        position: { x: 1300, y: 180 },
       },
+      // ── 6. 站内通知 ──
       {
         nodeId: 'n-notify',
-        name: '测试完成通知',
+        name: '完成通知',
         nodeType: 'notification-sender',
         config: {
-          title: `Smart-HTTP 测试完成 (${mode})`,
-          content: '',
-          level: 'info',
+          title: `${reportTitle} 已生成`,
+          content: '数据采集与分析完成，请查看执行结果下载报告',
+          level: 'success',
           attachFromInput: 'cos',
         },
         inputSlots: [{ slotId: 'notify-in', name: 'data', dataType: 'json', required: false }],
         outputSlots: [{ slotId: 'notify-out', name: 'result', dataType: 'json', required: true }],
-        position: { x: 1200, y: 420 },
+        position: { x: 1300, y: 420 },
       },
     ];
 
     const edges: WorkflowEdge[] = [
       edge('n-trigger', 'manual-out', 'n-smart', 'smart-in'),
-      edge('n-smart', 'smart-out', 'n-verify', 'script-in'),
-      edge('n-verify', 'script-out', 'n-export', 'export-in'),
-      edge('n-verify', 'script-out', 'n-notify', 'notify-in'),
+      edge('n-smart', 'smart-out', 'n-preprocess', 'script-in'),
+      edge('n-preprocess', 'script-out', 'n-report', 'report-in'),
+      edge('n-report', 'report-out', 'n-export', 'export-in'),
+      edge('n-report', 'report-out', 'n-notify', 'notify-in'),
     ];
 
     return { nodes, edges, variables: [] };
@@ -733,5 +826,5 @@ result = lines.join("\\n");`,
 export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   tapdBugCollectionTemplate,
   smartHttpTemplate,
-  smartHttpEnhancedTestTemplate,
+  apiReviewWorkflowTemplate,
 ];
