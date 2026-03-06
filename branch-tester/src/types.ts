@@ -97,6 +97,12 @@ export interface BtConfig {
     portStart?: number;
     /** Nginx image for preview containers (default: nginx:1.27-alpine) */
     nginxImage?: string;
+    /**
+     * Wildcard domain for branch previews (e.g., "miduo.org").
+     * When set, branches are accessible at {branch-slug}.{domain}
+     * instead of hostname:port.
+     */
+    domain?: string;
   };
   /** Run mode settings (source-based running, optional, defaults applied if omitted) */
   run?: {

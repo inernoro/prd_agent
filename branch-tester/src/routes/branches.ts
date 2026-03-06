@@ -1778,5 +1778,71 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  // PUT /config/preview-domain — set wildcard domain for preview
+  router.put('/config/preview-domain', (req, res) => {
+    try {
+      const { domain } = req.body;
+      if (!config.preview) config.preview = {};
+      config.preview.domain = domain || undefined;
+      res.json({ success: true, domain: config.preview.domain ?? null });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // GET /provision/:slug — check if a branch exists and is running by slug name
+  // Used by wildcard domain auto-provision: when someone visits branch-slug.domain.com,
+  // the frontend can check if the branch is ready and trigger provisioning if not.
+  router.get('/provision/:slug', async (req, res) => {
+    try {
+      const slug = req.params.slug.toLowerCase();
+      const state = stateService.getState();
+      // Find branch by slug match
+      const match = Object.values(state.branches).find(
+        (b) => StateService.slugify(b.branch) === slug,
+      );
+      if (!match) {
+        // Branch not in system — check if it exists on remote
+        const result = await shell.exec(
+          `git ls-remote --heads origin 2>/dev/null | grep -i "${slug}"`,
+          { cwd: config.repoRoot, timeout: 10_000 },
+        );
+        const remoteBranches = result.stdout
+          .split('\n')
+          .filter(Boolean)
+          .map((line) => line.replace(/.*refs\/heads\//, '').trim());
+        res.json({
+          status: 'not_found',
+          remoteBranches,
+          message: remoteBranches.length > 0
+            ? '找到匹配的远程分支，可以自动部署'
+            : '未找到匹配分支',
+        });
+        return;
+      }
+      // Branch exists — check if it's running (deploy or run mode)
+      const isDeployRunning = match.status === 'running' && match.previewPort;
+      const isRunRunning = match.runStatus === 'running' && match.previewPort;
+      if (isDeployRunning || isRunRunning) {
+        res.json({
+          status: 'running',
+          branchId: match.id,
+          previewPort: match.previewPort,
+          branch: match.branch,
+        });
+      } else {
+        res.json({
+          status: 'provisioning_needed',
+          branchId: match.id,
+          branch: match.branch,
+          currentStatus: match.status,
+          runStatus: match.runStatus,
+        });
+      }
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   return router;
 }
