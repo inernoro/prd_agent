@@ -48,11 +48,12 @@ let localBranches = [];
 let buildProfiles = [];
 let routingRules = [];
 let defaultBranch = null;
+let customEnvVars = {};
 
 // ── Init ──
 
 async function init() {
-  await Promise.all([loadBranches(), loadProfiles(), loadRoutingRules(), loadConfig()]);
+  await Promise.all([loadBranches(), loadProfiles(), loadRoutingRules(), loadConfig(), loadEnvVars()]);
   refreshRemoteBranches();
   setInterval(loadBranches, 10000);
 }
@@ -507,6 +508,74 @@ async function deleteProfile(id) {
     await api('DELETE', `/build-profiles/${id}`);
     showToast('Profile deleted', 'success');
     await loadProfiles();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+// ── Environment variables ──
+
+async function loadEnvVars() {
+  try {
+    const data = await api('GET', '/env');
+    customEnvVars = data.env || {};
+    renderEnvVars();
+  } catch (e) { console.error('loadEnvVars:', e); }
+}
+
+function maskValue(key, val) {
+  if (/password|secret|key/i.test(key)) return '••••••••';
+  return val;
+}
+
+function renderEnvVars() {
+  const el = document.getElementById('envVarsList');
+  const entries = Object.entries(customEnvVars);
+  if (entries.length === 0) {
+    el.innerHTML = '<div class="config-empty">No custom environment variables. Auto-detected host variables (MONGODB_HOST, etc.) are used by default.</div>';
+    return;
+  }
+  el.innerHTML = entries.map(([k, v]) => `
+    <div class="config-item">
+      <div class="config-item-main">
+        <code class="env-key">${esc(k)}</code>
+        <span class="config-item-arrow">=</span>
+        <code class="env-val" title="${esc(v)}">${esc(maskValue(k, v))}</code>
+      </div>
+      <div class="config-item-actions">
+        <button class="icon-btn xs" onclick="editEnvVar('${esc(k)}')" title="Edit">&#x270E;</button>
+        <button class="icon-btn xs danger-icon" onclick="deleteEnvVar('${esc(k)}')" title="Delete">&times;</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function showAddEnvForm() { document.getElementById('addEnvForm').classList.remove('hidden'); }
+function hideAddEnvForm() { document.getElementById('addEnvForm').classList.add('hidden'); }
+
+async function saveEnvVar() {
+  const key = document.getElementById('envKey').value.trim();
+  const value = document.getElementById('envValue').value;
+  if (!key) { showToast('Key is required', 'error'); return; }
+  try {
+    await api('PUT', `/env/${encodeURIComponent(key)}`, { value });
+    hideAddEnvForm();
+    document.getElementById('envKey').value = '';
+    document.getElementById('envValue').value = '';
+    showToast(`Set ${key}`, 'success');
+    await loadEnvVars();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function editEnvVar(key) {
+  document.getElementById('envKey').value = key;
+  document.getElementById('envValue').value = customEnvVars[key] || '';
+  showAddEnvForm();
+}
+
+async function deleteEnvVar(key) {
+  try {
+    await api('DELETE', `/env/${encodeURIComponent(key)}`);
+    showToast(`Deleted ${key}`, 'success');
+    await loadEnvVars();
   } catch (e) { showToast(e.message, 'error'); }
 }
 

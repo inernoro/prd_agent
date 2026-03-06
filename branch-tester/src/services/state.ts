@@ -12,6 +12,7 @@ function emptyState(): CdsState {
     nextPortIndex: 0,
     logs: {},
     defaultBranch: null,
+    customEnv: {},
   };
 }
 
@@ -40,6 +41,7 @@ export class StateService {
       if (!this.state.routingRules) this.state.routingRules = [];
       if (!this.state.buildProfiles) this.state.buildProfiles = [];
       if (this.state.defaultBranch === undefined) this.state.defaultBranch = null;
+      if (!this.state.customEnv) this.state.customEnv = {};
     } else {
       this.state = emptyState();
     }
@@ -166,5 +168,23 @@ export class StateService {
 
   removeLogs(branchId: string): void {
     delete this.state.logs[branchId];
+  }
+
+  // ── Custom environment variables ──
+
+  getCustomEnv(): Record<string, string> {
+    return this.state.customEnv;
+  }
+
+  setCustomEnv(env: Record<string, string>): void {
+    this.state.customEnv = env;
+  }
+
+  setCustomEnvVar(key: string, value: string): void {
+    this.state.customEnv[key] = value;
+  }
+
+  removeCustomEnvVar(key: string): void {
+    delete this.state.customEnv[key];
   }
 }

@@ -115,6 +115,8 @@ export interface CdsState {
   logs: Record<string, OperationLog[]>;
   /** Default branch (used when no routing rule matches) */
   defaultBranch: string | null;
+  /** User-defined environment variables (override auto-detected sharedEnv) */
+  customEnv: Record<string, string>;
 }
 
 /** Application configuration */

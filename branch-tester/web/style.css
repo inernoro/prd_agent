@@ -182,6 +182,12 @@ button.text-btn:hover { color: var(--text-primary); }
 }
 .config-item-actions { display: flex; gap: 4px; flex-shrink: 0; }
 
+.env-key { color: var(--orange); font-size: 12px; font-weight: 600; }
+.env-val {
+  color: var(--text-secondary); font-size: 11px;
+  max-width: 350px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
 /* ---- Branch picker ---- */
 
 .branch-picker-section { margin-bottom: 12px; }

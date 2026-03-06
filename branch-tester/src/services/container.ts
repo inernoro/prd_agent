@@ -17,6 +17,7 @@ export class ContainerService {
     profile: BuildProfile,
     service: ServiceState,
     onOutput?: (chunk: string) => void,
+    customEnv?: Record<string, string>,
   ): Promise<void> {
     await this.ensureNetwork();
 
@@ -25,24 +26,27 @@ export class ContainerService {
 
     const srcMount = path.join(entry.worktreePath, profile.workDir);
 
-    // Build environment variables
-    const envVars: string[] = [];
+    // Build environment variables (later entries override earlier ones)
+    // Priority: sharedEnv (auto) < customEnv (user dashboard) < profile.env (per-profile)
+    const mergedEnv: Record<string, string> = {
+      ...this.config.sharedEnv,
+    };
 
-    // Shared env from config (MongoDB, Redis, etc.)
-    for (const [key, val] of Object.entries(this.config.sharedEnv)) {
-      envVars.push(`${key}=${val}`);
+    // User-defined env vars from dashboard (override auto-detected)
+    if (customEnv) {
+      Object.assign(mergedEnv, customEnv);
     }
 
     // JWT
-    envVars.push(`Jwt__Secret=${this.config.jwt.secret}`);
-    envVars.push(`Jwt__Issuer=${this.config.jwt.issuer}`);
+    mergedEnv['Jwt__Secret'] = this.config.jwt.secret;
+    mergedEnv['Jwt__Issuer'] = this.config.jwt.issuer;
 
-    // Profile-specific env
+    // Profile-specific env (highest priority)
     if (profile.env) {
-      for (const [key, val] of Object.entries(profile.env)) {
-        envVars.push(`${key}=${val}`);
-      }
+      Object.assign(mergedEnv, profile.env);
     }
+
+    const envVars: string[] = Object.entries(mergedEnv).map(([k, v]) => `${k}=${v}`);
 
     const envFlags = envVars.map(e => `-e "${e}"`).join(' ');
 

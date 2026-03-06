@@ -254,9 +254,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         svc.status = 'building';
 
         try {
+          const customEnv = stateService.getCustomEnv();
           await containerService.runService(entry, profile, svc, (chunk) => {
             sendSSE(res, 'log', { profileId: profile.id, chunk });
-          });
+          }, customEnv);
 
           svc.status = 'running';
           logEvent({ step: `build-${profile.id}`, status: 'done', title: `${profile.name} running on :${svc.hostPort}`, timestamp: new Date().toISOString() });
@@ -535,6 +536,42 @@ export function createBranchRouter(deps: RouterDeps): Router {
       message: `Quickstart: ${defaults.length} profiles created`,
       profiles: defaults,
     });
+  });
+
+  // ── Custom environment variables ──
+
+  router.get('/env', (_req, res) => {
+    res.json({ env: stateService.getCustomEnv() });
+  });
+
+  router.put('/env', (req, res) => {
+    const env = req.body as Record<string, string>;
+    if (!env || typeof env !== 'object') {
+      res.status(400).json({ error: 'Body must be a key-value object' });
+      return;
+    }
+    stateService.setCustomEnv(env);
+    stateService.save();
+    res.json({ message: 'Environment variables updated', env });
+  });
+
+  router.put('/env/:key', (req, res) => {
+    const { key } = req.params;
+    const { value } = req.body as { value?: string };
+    if (value === undefined) {
+      res.status(400).json({ error: 'value is required' });
+      return;
+    }
+    stateService.setCustomEnvVar(key, value);
+    stateService.save();
+    res.json({ message: `Set ${key}` });
+  });
+
+  router.delete('/env/:key', (req, res) => {
+    const { key } = req.params;
+    stateService.removeCustomEnvVar(key);
+    stateService.save();
+    res.json({ message: `Deleted ${key}` });
   });
 
   // ── Config (read-only) ──
