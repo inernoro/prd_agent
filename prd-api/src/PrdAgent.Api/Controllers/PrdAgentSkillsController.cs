@@ -315,7 +315,7 @@ public class PrdAgentSkillsController : ControllerBase
             DocumentHash: null,
             SystemPromptRedacted: "skill-gen-system-prompt",
             RequestType: "skill-generation",
-            RequestPurpose: appCallerCode));
+            AppCallerCode: appCallerCode));
 
         var systemPrompt = @"你是一个提示词模板提炼助手。根据用户提供的对话片段（用户问题 + AI 回复），从中提炼出一个可复用的提示词模板。
 
