@@ -490,10 +490,248 @@ const smartHttpTemplate: WorkflowTemplate = {
 };
 
 // ═══════════════════════════════════════════════════════════════
+// 模板 3: 智能 HTTP 增强测试（cursor 分页 + 自定义 dataPath + 重试）
+// ═══════════════════════════════════════════════════════════════
+//
+// 拓扑图：
+//   👆 手动触发
+//     ↓
+//   🤖 智能 HTTP（cursor 分页 + dataPath）
+//     ↓
+//   💻 JS 脚本（数据校验 + 统计）
+//     ↓      ↓
+//   💾 导出  🔔 通知
+//
+// 需要先启动 mock: node scripts/mock-paginated-api.js
+
+const smartHttpEnhancedTestTemplate: WorkflowTemplate = {
+  id: 'smart-http-enhanced-test',
+  name: '智能 HTTP 增强测试',
+  description: '使用 mock API 测试 cursor 分页、自定义 dataPath、请求延迟、失败重试等增强功能',
+  icon: '🧪',
+  tags: ['test', 'smart-http', 'cursor', 'mock'],
+  requiredInputs: [
+    {
+      key: 'mockHost',
+      label: 'Mock API 地址',
+      type: 'text',
+      placeholder: 'http://localhost:7799',
+      defaultValue: 'http://localhost:7799',
+      helpTip: '先运行 node scripts/mock-paginated-api.js 启动 mock 服务',
+      required: true,
+    },
+    {
+      key: 'testMode',
+      label: '测试场景',
+      type: 'select',
+      required: true,
+      defaultValue: 'cursor',
+      options: [
+        { value: 'cursor', label: 'cursor 分页 + 自定义 dataPath' },
+        { value: 'offset', label: 'offset 分页' },
+        { value: 'page', label: 'page 分页' },
+        { value: 'post-body', label: 'POST body 分页' },
+        { value: 'retry', label: '失败重试测试' },
+      ],
+    },
+    {
+      key: 'pageSize',
+      label: '每页条数',
+      type: 'text',
+      defaultValue: '10',
+      helpTip: 'mock 数据共 50 条，建议 10 条/页 → 期望 5 页',
+      required: false,
+    },
+  ],
+  build: (inputs) => {
+    _edgeIdx = 0;
+    const host = inputs.mockHost || 'http://localhost:7799';
+    const pageSize = inputs.pageSize || '10';
+    const mode = inputs.testMode || 'cursor';
+
+    // 根据测试模式构建 smart-http 配置
+    let smartConfig: Record<string, string>;
+
+    switch (mode) {
+      case 'cursor':
+        smartConfig = {
+          url: `${host}/api/cursor-list?cursor=0&limit=${pageSize}`,
+          method: 'GET',
+          paginationType: 'cursor',
+          dataPath: 'response.result.list',
+          cursorField: 'paging.next_cursor',
+          cursorParam: 'cursor',
+          maxPages: '10',
+          requestDelayMs: '100',
+        };
+        break;
+      case 'offset':
+        smartConfig = {
+          url: `${host}/api/offset-list?offset=0&limit=${pageSize}`,
+          method: 'GET',
+          paginationType: 'offset',
+          maxPages: '10',
+          requestDelayMs: '50',
+        };
+        break;
+      case 'page':
+        smartConfig = {
+          url: `${host}/api/page-list?page=1&pageSize=${pageSize}`,
+          method: 'GET',
+          paginationType: 'page',
+          maxPages: '10',
+        };
+        break;
+      case 'post-body':
+        smartConfig = {
+          url: `${host}/api/search`,
+          method: 'POST',
+          body: JSON.stringify({ query: 'all', pageIndex: 1, pageSize: parseInt(pageSize) }),
+          paginationType: 'cursor',
+          dataPath: 'result.records',
+          cursorField: 'pagination.next_cursor',
+          cursorParam: 'cursor',
+          bodyPageField: 'pageIndex',
+          maxPages: '10',
+          requestDelayMs: '100',
+        };
+        break;
+      case 'retry':
+        smartConfig = {
+          url: `${host}/api/flaky?page=1&pageSize=${pageSize}&fail_rate=0.4&delay_ms=200`,
+          method: 'GET',
+          paginationType: 'page',
+          maxPages: '10',
+          retryCount: '2',
+          requestDelayMs: '300',
+        };
+        break;
+      default:
+        smartConfig = {
+          url: `${host}/api/cursor-list?cursor=0&limit=${pageSize}`,
+          method: 'GET',
+          paginationType: 'auto',
+          maxPages: '10',
+        };
+    }
+
+    const nodes: WorkflowNode[] = [
+      {
+        nodeId: 'n-trigger',
+        name: '手动触发',
+        nodeType: 'manual-trigger',
+        config: { inputPrompt: `测试模式: ${mode}，点击开始` },
+        inputSlots: [],
+        outputSlots: [{ slotId: 'manual-out', name: 'input', dataType: 'json', required: true }],
+        position: { x: 100, y: 300 },
+      },
+      {
+        nodeId: 'n-smart',
+        name: `智能 HTTP (${mode})`,
+        nodeType: 'smart-http',
+        config: smartConfig,
+        inputSlots: [{ slotId: 'smart-in', name: 'context', dataType: 'json', required: false }],
+        outputSlots: [
+          { slotId: 'smart-out', name: 'data', dataType: 'json', required: true },
+          { slotId: 'smart-meta', name: 'meta', dataType: 'json', required: false },
+        ],
+        position: { x: 450, y: 300 },
+      },
+      {
+        nodeId: 'n-verify',
+        name: '数据校验',
+        nodeType: 'script-executor',
+        config: {
+          language: 'javascript',
+          code: `// data = smart-http 拉取的全量数据
+const total = Array.isArray(data) ? data.length : 0;
+const ids = Array.isArray(data) ? data.map(i => i.id) : [];
+const uniqueIds = [...new Set(ids)];
+const hasDuplicates = uniqueIds.length < ids.length;
+
+// 状态分布
+const statusDist = {};
+const priorityDist = {};
+if (Array.isArray(data)) {
+  data.forEach(item => {
+    statusDist[item.status] = (statusDist[item.status] || 0) + 1;
+    priorityDist[item.priority] = (priorityDist[item.priority] || 0) + 1;
+  });
+}
+
+const lines = [];
+lines.push("# Smart-HTTP 增强测试报告");
+lines.push("## 基础验证");
+lines.push("- 总条数: " + total + " (期望 50)");
+lines.push("- 去重后: " + uniqueIds.length);
+lines.push("- 有重复: " + (hasDuplicates ? "YES (有问题!)" : "NO (正常)"));
+lines.push("- 测试结果: " + (total === 50 && !hasDuplicates ? "PASS" : "FAIL"));
+lines.push("");
+lines.push("## 状态分布");
+Object.entries(statusDist).forEach(([k, v]) => lines.push("- " + k + ": " + v));
+lines.push("");
+lines.push("## 优先级分布");
+Object.entries(priorityDist).forEach(([k, v]) => lines.push("- " + k + ": " + v));
+lines.push("");
+lines.push("## 数据样本 (前 3 条)");
+if (Array.isArray(data)) {
+  data.slice(0, 3).forEach((item, i) => {
+    lines.push((i+1) + ". " + JSON.stringify(item));
+  });
+}
+
+result = lines.join("\\n");`,
+          timeoutSeconds: '10',
+        },
+        inputSlots: [{ slotId: 'script-in', name: 'input', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'script-out', name: 'output', dataType: 'text', required: true }],
+        position: { x: 800, y: 300 },
+      },
+      {
+        nodeId: 'n-export',
+        name: '导出测试报告',
+        nodeType: 'file-exporter',
+        config: {
+          fileFormat: 'markdown',
+          fileName: `smart-http-test-${mode}-{{date}}`,
+        },
+        inputSlots: [{ slotId: 'export-in', name: 'data', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'export-out', name: 'file', dataType: 'binary', required: true }],
+        position: { x: 1200, y: 180 },
+      },
+      {
+        nodeId: 'n-notify',
+        name: '测试完成通知',
+        nodeType: 'notification-sender',
+        config: {
+          title: `Smart-HTTP 测试完成 (${mode})`,
+          content: '',
+          level: 'info',
+          attachFromInput: 'cos',
+        },
+        inputSlots: [{ slotId: 'notify-in', name: 'data', dataType: 'json', required: false }],
+        outputSlots: [{ slotId: 'notify-out', name: 'result', dataType: 'json', required: true }],
+        position: { x: 1200, y: 420 },
+      },
+    ];
+
+    const edges: WorkflowEdge[] = [
+      edge('n-trigger', 'manual-out', 'n-smart', 'smart-in'),
+      edge('n-smart', 'smart-out', 'n-verify', 'script-in'),
+      edge('n-verify', 'script-out', 'n-export', 'export-in'),
+      edge('n-verify', 'script-out', 'n-notify', 'notify-in'),
+    ];
+
+    return { nodes, edges, variables: [] };
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════
 // 注册表
 // ═══════════════════════════════════════════════════════════════
 
 export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   tapdBugCollectionTemplate,
   smartHttpTemplate,
+  smartHttpEnhancedTestTemplate,
 ];
