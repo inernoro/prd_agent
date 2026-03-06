@@ -1,17 +1,17 @@
 # Skill: 开发环境安装、调试与还原
 
-> 触发词：`装环境`、`环境搭建`、`setup env`、`dev env`、`还原环境`、`restore env`、`测试连接`、`test connectivity`、`dotnet restore`、`环境调试`
+> 触发词：`装环境`、`环境搭建`、`setup env`、`dev env`、`还原环境`、`restore env`、`测试连接`、`test connectivity`、`dotnet restore`、`环境调试`、`本地验证`、`local verify`、`沙箱能力`、`sandbox check`
 
 ## 概述
 
-一键完成开发环境的安装、配置、数据库连接测试和项目还原。自动检测运行模式（本地 CLI / 云端 Web 沙箱），对已知平台 Bug 自动绕过。
+一键完成开发环境的安装、配置、本地验证和项目还原。自动检测运行模式（本地 CLI / 云端 Web 沙箱），对已知平台限制自动绕过，并提供完整的本地能力矩阵。
 
 ## 核心原则
 
 1. **环境变量驱动**：所有密码/密钥通过环境变量传入，绝不硬编码到代码
 2. **幂等执行**：重复运行不会破坏已有环境
-3. **真实验证**：不靠假设，连真实数据库验证连通性
-4. **双模自适应**：自动区分本地 CLI 与 Web 沙箱，选择对应安装策略
+3. **真实验证**：不靠假设，用实际命令验证能力
+4. **双模自适应**：自动区分本地 CLI 与 Web 沙箱，选择对应策略
 
 ---
 
@@ -22,14 +22,17 @@
 | 运行环境 | 用户本机终端 | Anthropic 托管 Ubuntu 容器 |
 | .NET SDK | 用户自行安装，完全可控 | 需通过 `dotnet-install.sh` 安装 |
 | `dotnet restore` | 正常工作 | **需启动代理中继**（.NET HttpClient 代理认证 Bug） |
+| `dotnet build` | 正常工作 | 正常工作（restore 完成后） |
+| `dotnet test` | 正常工作 | **纯逻辑测试可行，涉及外部 DB 的测试不行** |
 | `apt-get` | 正常工作 | 受限（部分源不可达） |
-| 网络访问 | 无限制 | JWT 认证代理，存在已知兼容性问题 |
-| 外部数据库 | 正常连接 | 部分端口/IP 可能受限 |
+| 网络访问 | 无限制 | JWT 认证 Envoy 代理，仅允许 HTTP/HTTPS |
+| 外部数据库 | 正常连接 | **被 Envoy 代理阻断**（见下方详解） |
+| 前端 pnpm install | 正常工作 | 正常工作 |
+| 前端 pnpm build/dev | 正常工作 | build 可行，dev 需端口转发 |
 
 ### 如何判断当前模式
 
 ```bash
-# 检查是否在 Web 沙箱中
 if [ -n "$HTTPS_PROXY" ] && echo "$HTTPS_PROXY" | grep -q "container_"; then
   echo "Web sandbox mode"
 else
@@ -39,7 +42,42 @@ fi
 
 ---
 
-## 一、SDK 安装清单
+## 一、Web 沙箱网络限制（关键结论）
+
+### 已验证的限制
+
+Web 沙箱的出口流量通过 **Envoy 代理** 转发，该代理具有以下特性：
+
+| 协议 | 能否通过 | 原因 |
+|------|---------|------|
+| HTTP/HTTPS (443/80) | 可以 | Envoy 原生支持 |
+| MongoDB (27017) | **不行** | Envoy 深度包检测 (DPI) 拒绝非 HTTP 流量 |
+| Redis (6379) | **不行** | 同上，RESP 协议被识别为非 HTTP |
+| 任意 TCP (非 HTTP) | **不行** | CONNECT 隧道建立后，Envoy 检测到非 TLS/HTTP 流量即断开 |
+| MongoDB+SRV (TLS) | **未验证** | 理论上 TLS 封装可能通过，但 Envoy 可能按端口过滤 |
+
+### 验证过程记录
+
+1. **直接 TCP 连接**：`nc -zv host 27017` → 连接被代理拦截
+2. **通过 CONNECT 隧道**：HTTP CONNECT 返回 200，但发送 MongoDB wire protocol 后连接被 reset
+3. **socat 端口转发**：同样被 Envoy DPI 拦截
+4. **结论**：沙箱环境无法访问任何非 HTTP 的外部服务
+
+### 对开发的影响
+
+| 开发活动 | 沙箱可行性 | 替代方案 |
+|---------|-----------|---------|
+| 代码编写 + 编译 | 完全可行 | - |
+| 纯逻辑单元测试 | 完全可行 | Mock DB 依赖 |
+| 集成测试（需 DB） | **不可行** | 本地 CLI 模式运行 |
+| API 启动（需 DB） | **不可行** | 本地 CLI 模式运行 |
+| 前端构建 | 完全可行 | - |
+| NuGet/npm 包还原 | 可行（需代理中继） | - |
+| Git push/pull | 完全可行 | - |
+
+---
+
+## 二、SDK 安装清单
 
 | SDK | 版本要求 | 用途 | 安装方式 |
 |-----|---------|------|---------|
@@ -62,7 +100,7 @@ sudo apt-get install -y \
 
 ---
 
-## 二、一键安装
+## 三、一键安装
 
 ### 方式 A：完整一键脚本（本地推荐）
 
@@ -112,7 +150,7 @@ cargo install tauri-cli
 
 ---
 
-## 三、dotnet restore 在 Web 沙箱中的特殊处理
+## 四、dotnet restore 在 Web 沙箱中的特殊处理
 
 ### 问题根源
 
@@ -148,7 +186,69 @@ kill $RELAY_PID
 
 ---
 
-## 四、环境变量配置
+## 五、本地能力矩阵（沙箱内可执行的完整验证清单）
+
+当 AI 被触发此技能时，按以下矩阵逐项验证，快速确认当前环境的完整能力。
+
+### 5.1 SDK 版本验证
+
+```bash
+echo "=== SDK Versions ==="
+dotnet --version 2>/dev/null || echo "dotnet: MISSING"
+node -v 2>/dev/null || echo "node: MISSING"
+pnpm -v 2>/dev/null || echo "pnpm: MISSING"
+rustc --version 2>/dev/null || echo "rustc: MISSING"
+cargo --version 2>/dev/null || echo "cargo: MISSING"
+python3 --version 2>/dev/null || echo "python3: MISSING"
+```
+
+### 5.2 后端编译验证（CLAUDE.md 强制规则）
+
+```bash
+cd prd-api && dotnet build --no-restore 2>&1 | tail -5
+# 必须看到 "Build succeeded" 且 0 error
+dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | head -30
+```
+
+### 5.3 前端构建验证
+
+```bash
+# TypeScript 类型检查
+cd prd-admin && npx tsc --noEmit 2>&1 | tail -10
+
+# Vite 构建（可选，耗时较长）
+# cd prd-admin && pnpm build
+```
+
+### 5.4 dotnet test（纯逻辑测试）
+
+```bash
+# 列出所有测试项目
+find prd-api -name "*.Tests.csproj" -o -name "*Tests*.csproj" 2>/dev/null
+
+# 运行不依赖外部服务的测试（如有）
+# dotnet test prd-api/tests/SomeUnit.Tests --no-restore --filter "Category!=Integration"
+```
+
+### 5.5 Roslyn 静态分析
+
+```bash
+# CLAUDE.md 强制要求：任何 .cs 改动后必须执行
+cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | head -30
+# 判定：error CS = 必须修复，warning CS = 评估是否本次引入
+```
+
+### 5.6 Git 状态
+
+```bash
+git status --short
+git log --oneline -5
+git branch -a | head -20
+```
+
+---
+
+## 六、环境变量配置
 
 ### 必需环境变量
 
@@ -181,26 +281,9 @@ Redis__ConnectionString="<host>:6379,password=<password>"
 
 ---
 
-## 五、项目还原（Restore）
+## 七、数据库连接测试
 
-```bash
-# 后端 NuGet 包还原
-cd prd-api && dotnet restore PrdAgent.sln
-
-# 验证编译（CLAUDE.md 强制规则：0 error 才算通过）
-cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | head -30
-
-# 前端依赖安装
-cd prd-admin && pnpm install
-cd prd-desktop && pnpm install
-cd prd-video && pnpm install
-```
-
----
-
-## 六、数据库连接测试
-
-### 6.1 快速连通性测试
+### 7.1 快速连通性测试
 
 ```bash
 # 设置环境变量（绝不硬编码密码）
@@ -226,7 +309,7 @@ var pong = redis.GetDatabase().Ping();
 // 成功：返回 PONG 延迟
 ```
 
-### 6.2 通过 API 服务验证
+### 7.2 通过 API 服务验证
 
 ```bash
 export ASPNETCORE_ENVIRONMENT=Development
@@ -238,9 +321,22 @@ curl http://localhost:5000/swagger/index.html -o /dev/null -w "HTTP %{http_code}
 # 应返回 HTTP 200
 ```
 
+### 7.3 Web 沙箱中的 DB 连接（不可行）
+
+**结论**：Web 沙箱中无法连接外部 MongoDB/Redis。
+
+已验证的失败路径：
+1. 直接 TCP → Envoy 代理拦截非 HTTP 流量
+2. HTTP CONNECT 隧道 → Envoy DPI 检测到非 HTTP 内容后断开
+3. socat 本地端口转发 → 同样被拦截
+
+**替代方案**：
+- 沙箱内仅做编译 + 静态分析 + 纯逻辑测试
+- 需要 DB 的集成测试/API 启动 → 本地 CLI 模式
+
 ---
 
-## 七、常见问题排查
+## 八、常见问题排查
 
 | 问题 | 模式 | 排查方式 |
 |------|------|---------|
@@ -248,14 +344,17 @@ curl http://localhost:5000/swagger/index.html -o /dev/null -w "HTTP %{http_code}
 | NuGet `401 Unauthorized` | Web | 启动 `nuget-proxy-relay.py` 后重试 |
 | NuGet `403 Access Denied` | Web | .NET CDN 被代理拦截，用 `dotnet-install.sh` 替代 `apt install` |
 | `apt-get update` 失败 | Web | 沙箱网络限制，改用 curl 直接下载 |
-| MongoDB 连接超时 | Web | 沙箱可能不允许访问外部 IP，改用 Docker 本地 MongoDB |
+| MongoDB 连接超时 | Web | **沙箱限制，无解**，改用本地 CLI 模式 |
 | MongoDB 连接超时 | 本地 | 检查防火墙 27017、密码特殊字符 URL 编码 |
-| Redis 连接失败 | 两者 | 检查 6379 端口、`requirepass` 配置 |
+| Redis 连接失败 | Web | **沙箱限制，无解**，改用本地 CLI 模式 |
+| Redis 连接失败 | 本地 | 检查 6379 端口、`requirepass` 配置 |
 | Tauri 编译失败 | 本地 | 检查 webkit2gtk 等系统库是否安装 |
+| `pnpm install` 超时 | Web | 重试，或检查 npm registry 是否可达 |
+| `dotnet build` warning CS | 两者 | 评估是否本次改动引入，如是则修复 |
 
 ---
 
-## 八、Docker 一键启动（替代方案）
+## 九、Docker 一键启动（替代方案）
 
 不安装 SDK，直接用 Docker：
 
@@ -269,30 +368,38 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 
 ---
 
-## 九、AI 执行此技能时的操作流程
+## 十、AI 执行此技能时的操作流程
 
-当 AI 被要求搭建/调试环境时，按以下顺序执行：
+当 AI 被要求搭建/调试/验证环境时，按以下顺序执行：
 
-### 步骤 1：环境检测
+### 步骤 1：环境检测 + 模式判断
+
 ```bash
-dotnet --version 2>/dev/null || echo "MISSING"
-node -v 2>/dev/null || echo "MISSING"
-rustc --version 2>/dev/null || echo "MISSING"
-# 检测是否在 Web 沙箱
-echo $HTTPS_PROXY | grep -q "container_" && echo "WEB_SANDBOX" || echo "LOCAL"
+# 一次性检测所有 SDK 和运行模式
+echo "--- Mode ---"
+echo $HTTPS_PROXY | grep -q "container_" 2>/dev/null && echo "WEB_SANDBOX" || echo "LOCAL"
+echo "--- SDKs ---"
+dotnet --version 2>/dev/null || echo "dotnet: MISSING"
+node -v 2>/dev/null || echo "node: MISSING"
+pnpm -v 2>/dev/null || echo "pnpm: MISSING"
+rustc --version 2>/dev/null || echo "rustc: MISSING"
+python3 --version 2>/dev/null || echo "python3: MISSING"
 ```
 
-### 步骤 2：安装缺失 SDK
+### 步骤 2：安装缺失 SDK（按需）
+
 - .NET: `curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 8.0`
 - Node: `nvm install 22`（如缺失）
 - Rust: `rustup install stable`（如缺失）
 
 ### 步骤 3：Web 沙箱专属 - 启动 NuGet 代理中继
+
 ```bash
 python3 scripts/nuget-proxy-relay.py &
 ```
 
 ### 步骤 4：dotnet restore
+
 ```bash
 # Web 沙箱
 HTTPS_PROXY=http://127.0.0.1:18080 HTTP_PROXY=http://127.0.0.1:18080 dotnet restore PrdAgent.sln
@@ -300,19 +407,56 @@ HTTPS_PROXY=http://127.0.0.1:18080 HTTP_PROXY=http://127.0.0.1:18080 dotnet rest
 dotnet restore PrdAgent.sln
 ```
 
-### 步骤 5：编译验证
+### 步骤 5：编译验证（CLAUDE.md 强制规则）
+
 ```bash
 cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | head -30
 # 必须 0 error
 ```
 
-### 步骤 6：配置环境变量（用户提供时）
+### 步骤 6：前端依赖安装
+
+```bash
+cd prd-admin && pnpm install
+cd prd-desktop && pnpm install
+cd prd-video && pnpm install
+```
+
+### 步骤 7：能力报告
+
+输出结构化报告：
+
+```
+=== 环境验证报告 ===
+模式: Web 沙箱 / 本地 CLI
+.NET SDK: 8.0.xxx
+Node.js: v22.x.x
+pnpm: x.x.x
+Rust: x.x.x
+
+=== 可执行能力 ===
+[OK] dotnet build (编译)
+[OK] dotnet build 静态分析 (Roslyn)
+[OK] pnpm install (前端依赖)
+[OK] pnpm build / tsc (前端构建)
+[OK] git 操作
+[--] dotnet test (仅纯逻辑测试，DB 相关不可行)  ← 仅沙箱
+[NO] MongoDB 连接  ← 仅沙箱
+[NO] Redis 连接  ← 仅沙箱
+[NO] API 启动 (依赖 DB)  ← 仅沙箱
+
+=== 建议 ===
+- 沙箱内：专注代码编写 + 编译 + 静态分析 + 前端构建
+- 需要 DB 测试：请在本地 CLI 模式运行
+```
+
+### 步骤 8：配置环境变量（用户提供时）
+
 - 从用户提供的值设置 `MongoDB__ConnectionString`、`Redis__ConnectionString` 等
 - **绝不在代码/日志中暴露实际密码值**
 
-### 步骤 7：连通性测试（用户提供 DB 凭据时）
+### 步骤 9：连通性测试（仅本地模式 + 用户提供 DB 凭据时）
+
 - 创建临时 .NET 项目测试 MongoDB + Redis 连接
 - 报告连接状态和延迟
-
-### 步骤 8：报告结果
-列出各组件版本、连接状态、已知问题
+- **Web 沙箱中跳过此步骤**，直接告知用户沙箱限制
