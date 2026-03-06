@@ -46,7 +46,7 @@ function buildSharedEnv(): Record<string, string> {
   const mongoPass = process.env.MONGODB_PASSWORD;
   if (mongoHost && !env['MongoDB__ConnectionString']) {
     env['MongoDB__ConnectionString'] = mongoPass
-      ? `mongodb://root:${mongoPass}@${mongoHost}:27017`
+      ? `mongodb://root:${encodeURIComponent(mongoPass)}@${mongoHost}:27017`
       : `mongodb://${mongoHost}:27017`;
   }
 

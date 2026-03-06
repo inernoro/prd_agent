@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import fs from 'node:fs';
 import { ContainerService } from '../../src/services/container.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { CdsConfig, BranchEntry, BuildProfile, ServiceState } from '../../src/types.js';
@@ -58,6 +59,9 @@ describe('ContainerService', () => {
       mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker run/, () => ({ stdout: 'cid123', stderr: '', exitCode: 0 }));
 
+      // Spy on writeFileSync to capture the env file content
+      const writeSpy = vi.spyOn(fs, 'writeFileSync');
+
       await service.runService(makeEntry(), makeProfile(), makeService());
 
       const runCmd = mock.commands.find(c => c.includes('docker run -d'));
@@ -66,9 +70,15 @@ describe('ContainerService', () => {
       expect(runCmd).toContain('--network cds-network');
       expect(runCmd).toContain('-p 10001:8080');
       expect(runCmd).toContain('-v "/wt/feature-a/prd-api":/src');
-      expect(runCmd).toContain('MONGODB_HOST=db:27017');
-      expect(runCmd).toContain('Jwt__Secret=test-secret');
+      expect(runCmd).toContain('--env-file');
       expect(runCmd).toContain('dotnet watch run');
+
+      // Verify env file contents
+      const envFileContent = writeSpy.mock.calls[0][1] as string;
+      expect(envFileContent).toContain('MONGODB_HOST=db:27017');
+      expect(envFileContent).toContain('Jwt__Secret=test-secret');
+
+      writeSpy.mockRestore();
     });
 
     it('should run install and build steps when defined', async () => {

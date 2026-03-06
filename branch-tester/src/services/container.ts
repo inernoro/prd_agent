@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState } from '../types.js';
 import { combinedOutput } from '../types.js';
@@ -7,6 +9,22 @@ export class ContainerService {
     private readonly shell: IShellExecutor,
     private readonly config: CdsConfig,
   ) {}
+
+  /**
+   * Write env vars to a temp file and return its path.
+   * Uses --env-file instead of -e to avoid shell escaping issues
+   * with special characters (@, #, !, etc.) in values.
+   */
+  private writeEnvFile(mergedEnv: Record<string, string>): string {
+    const envFilePath = path.join(os.tmpdir(), `cds-env-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const lines = Object.entries(mergedEnv).map(([k, v]) => `${k}=${v}`);
+    fs.writeFileSync(envFilePath, lines.join('\n'), 'utf-8');
+    return envFilePath;
+  }
+
+  private removeEnvFile(envFilePath: string): void {
+    try { fs.unlinkSync(envFilePath); } catch { /* ok */ }
+  }
 
   /**
    * Run a branch service from source using a build profile.
@@ -46,9 +64,9 @@ export class ContainerService {
       Object.assign(mergedEnv, profile.env);
     }
 
-    const envVars: string[] = Object.entries(mergedEnv).map(([k, v]) => `${k}=${v}`);
-
-    const envFlags = envVars.map(e => `-e "${e}"`).join(' ');
+    // Write to temp file — avoids shell escaping issues with special chars
+    const envFilePath = this.writeEnvFile(mergedEnv);
+    const envFlag = `--env-file "${envFilePath}"`;
 
     // Shared cache mounts (avoid duplicating node_modules, nuget, etc.)
     const volumeFlags: string[] = [`-v "${srcMount}":/src`];
@@ -60,70 +78,74 @@ export class ContainerService {
       }
     }
 
-    // Install step (if defined)
-    if (profile.installCommand) {
-      onOutput?.(`── Install: ${profile.installCommand} ──\n`);
-      const installCmd = [
-        'docker run --rm',
+    try {
+      // Install step (if defined)
+      if (profile.installCommand) {
+        onOutput?.(`── Install: ${profile.installCommand} ──\n`);
+        const installCmd = [
+          'docker run --rm',
+          `--network ${this.config.dockerNetwork}`,
+          ...volumeFlags,
+          '-w /src',
+          envFlag,
+          '--tmpfs /tmp',
+          profile.dockerImage,
+          `sh -c "${profile.installCommand.replace(/"/g, '\\"')}"`,
+        ].join(' ');
+
+        const installResult = await this.shell.exec(installCmd, {
+          timeout: profile.buildTimeout ?? 600_000,
+          onData: onOutput,
+        });
+        if (installResult.exitCode !== 0) {
+          throw new Error(`Install failed:\n${combinedOutput(installResult)}`);
+        }
+      }
+
+      // Build step (if defined)
+      if (profile.buildCommand) {
+        onOutput?.(`\n── Build: ${profile.buildCommand} ──\n`);
+        const buildCmd = [
+          'docker run --rm',
+          `--network ${this.config.dockerNetwork}`,
+          ...volumeFlags,
+          '-w /src',
+          envFlag,
+          '--tmpfs /tmp',
+          profile.dockerImage,
+          `sh -c "${profile.buildCommand.replace(/"/g, '\\"')}"`,
+        ].join(' ');
+
+        const buildResult = await this.shell.exec(buildCmd, {
+          timeout: profile.buildTimeout ?? 600_000,
+          onData: onOutput,
+        });
+        if (buildResult.exitCode !== 0) {
+          throw new Error(`Build failed:\n${combinedOutput(buildResult)}`);
+        }
+      }
+
+      // Run step — start the service in the background
+      onOutput?.(`\n── Run: ${profile.runCommand} ──\n`);
+      const runCmd = [
+        'docker run -d',
+        `--name ${service.containerName}`,
         `--network ${this.config.dockerNetwork}`,
+        `-p ${service.hostPort}:${profile.containerPort}`,
         ...volumeFlags,
         '-w /src',
-        envFlags,
+        envFlag,
         '--tmpfs /tmp',
         profile.dockerImage,
-        `sh -c "${profile.installCommand.replace(/"/g, '\\"')}"`,
+        `sh -c "${profile.runCommand.replace(/"/g, '\\"')}"`,
       ].join(' ');
 
-      const installResult = await this.shell.exec(installCmd, {
-        timeout: profile.buildTimeout ?? 600_000,
-        onData: onOutput,
-      });
-      if (installResult.exitCode !== 0) {
-        throw new Error(`Install failed:\n${combinedOutput(installResult)}`);
+      const result = await this.shell.exec(runCmd);
+      if (result.exitCode !== 0) {
+        throw new Error(`Failed to run service "${service.containerName}":\n${combinedOutput(result)}`);
       }
-    }
-
-    // Build step (if defined)
-    if (profile.buildCommand) {
-      onOutput?.(`\n── Build: ${profile.buildCommand} ──\n`);
-      const buildCmd = [
-        'docker run --rm',
-        `--network ${this.config.dockerNetwork}`,
-        ...volumeFlags,
-        '-w /src',
-        envFlags,
-        '--tmpfs /tmp',
-        profile.dockerImage,
-        `sh -c "${profile.buildCommand.replace(/"/g, '\\"')}"`,
-      ].join(' ');
-
-      const buildResult = await this.shell.exec(buildCmd, {
-        timeout: profile.buildTimeout ?? 600_000,
-        onData: onOutput,
-      });
-      if (buildResult.exitCode !== 0) {
-        throw new Error(`Build failed:\n${combinedOutput(buildResult)}`);
-      }
-    }
-
-    // Run step — start the service in the background
-    onOutput?.(`\n── Run: ${profile.runCommand} ──\n`);
-    const runCmd = [
-      'docker run -d',
-      `--name ${service.containerName}`,
-      `--network ${this.config.dockerNetwork}`,
-      `-p ${service.hostPort}:${profile.containerPort}`,
-      ...volumeFlags,
-      '-w /src',
-      envFlags,
-      '--tmpfs /tmp',
-      profile.dockerImage,
-      `sh -c "${profile.runCommand.replace(/"/g, '\\"')}"`,
-    ].join(' ');
-
-    const result = await this.shell.exec(runCmd);
-    if (result.exitCode !== 0) {
-      throw new Error(`Failed to run service "${service.containerName}":\n${combinedOutput(result)}`);
+    } finally {
+      this.removeEnvFile(envFilePath);
     }
   }
 
