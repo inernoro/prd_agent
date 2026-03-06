@@ -83,6 +83,12 @@
 | `report_commits` | `ReportCommit` | 缓存的代码提交 | `(dataSourceId, commitHash)` 唯一；`(mappedUserId, committedAt)` |
 | `report_comments` | `ReportComment` | 周报段落级评论（支持线程回复） | `(reportId, sectionIndex)`；`(parentCommentId)` |
 | `report_team_summaries` | `TeamSummary` | AI 团队周报汇总（按周去重） | `(teamId, weekYear, weekNumber)` 唯一 |
+| `defect_templates` | `DefectTemplate` | 缺陷报告模板 | （未显式创建额外索引） |
+| `defect_reports` | `DefectReport` | 缺陷报告主体（含状态机：draft→submitted→assigned→processing→verifying→closed） | `projectId`；`teamId`；`assigneeId`；`reporterId`；`status`；`createdAt` |
+| `defect_messages` | `DefectMessage` | 缺陷评论/沟通消息 | `defectId` |
+| `defect_folders` | `DefectFolder` | 缺陷分组文件夹 | `ownerUserId` |
+| `defect_projects` | `DefectProject` | 缺陷项目维度（关联缺陷到项目） | `key` 唯一；`ownerUserId` |
+| `defect_webhook_configs` | `DefectWebhookConfig` | 缺陷事件 Webhook 推送配置（WeCom/DingTalk/Feishu/Custom） | `(teamId, projectId)` |
 
 ---
 

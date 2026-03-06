@@ -339,7 +339,7 @@ prd_agent/
 | 会话归档 | ✅ DONE | SessionsController (archive/unarchive) |
 | 数据管理面板 | ✅ DONE | DataManagePage |
 | 管理通知 | ✅ DONE | NotificationsController, admin_notifications |
-| 缺陷管理 Agent | ✅ DONE | DefectAgentController, DefectAgentTests (25 tests) |
+| 缺陷管理 Agent | ✅ DONE | DefectAgentController, DefectEscalationWorker, DefectWebhookService, DefectAgentTests (25 tests)。含项目维度、待验收流程、超时催办、统计看板、Webhook 通知 |
 | 视频 Agent | ✅ DONE | VideoAgentController, VideoGenRunWorker, prd-video/ (Remotion) |
 | 配置市场 (海鲜市场) | ✅ DONE | CONFIG_TYPE_REGISTRY, MarketplaceCard, IForkable, ForkService |
 | 周报管理 Agent | ✅ Phase 1-3 DONE | ReportAgentController, ReportAgentPage (6 tabs)，详见 `doc/plan.report-agent-impl.md` |
@@ -350,7 +350,7 @@ prd_agent/
 | **K8s 部署** | ❌ NOT_IMPL | 仅 docker-compose，无 K8s manifests |
 | **告警通知 (邮件/Webhook)** | ❌ NOT_IMPL | 仅 AdminNotification 面板内通知 |
 
-### MongoDB 集合清单 (96 个)
+### MongoDB 集合清单 (98 个)
 
 核心业务：`users`, `groups`, `groupmembers`, `documents`, `sessions`, `messages`, `group_message_counters`, `contentgaps`, `attachments`, `prdcomments`, `share_links`
 
@@ -372,7 +372,7 @@ VisualAgent (DB 名保留 image_master)：`image_master_workspaces`, `image_asse
 
 开放平台：`openplatformapps`, `openplatformrequestlogs`
 
-缺陷管理：`defect_templates`, `defect_reports`, `defect_messages`, `defect_folders`
+缺陷管理：`defect_templates`, `defect_reports`, `defect_messages`, `defect_folders`, `defect_projects`, `defect_webhook_configs`
 
 视频 Agent：`video_gen_runs`
 
