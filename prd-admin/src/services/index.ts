@@ -1217,6 +1217,23 @@ export type {
   TutorialEmailStep,
 } from '@/services/real/tutorialEmail';
 
+// ── Web Pages 网页收藏 ──
+export {
+  listWebPages,
+  getWebPage,
+  createWebPage,
+  updateWebPage,
+  deleteWebPage,
+  batchDeleteWebPages,
+  toggleWebPageFavorite,
+  listWebPageFolders,
+  listWebPageTags,
+  createWebPageShare,
+  listWebPageShares,
+  revokeWebPageShare,
+} from '@/services/real/webPages';
+export type { WebPageItem, WebPageShareLinkItem, TagCount } from '@/services/real/webPages';
+
 // ── Account Data Transfer 数据分享 ──
 export {
   listTransfersReal as listTransfers,

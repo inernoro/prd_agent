@@ -31,6 +31,7 @@ import {
   Menu,
   ChevronDown,
   Download,
+  Globe,
   type LucideIcon,
 } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -91,6 +92,7 @@ const iconMap: Record<string, LucideIcon> = {
   Sparkles,
   Workflow,
   Swords,
+  Globe,
 };
 
 const notificationTone = {

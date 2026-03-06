@@ -168,6 +168,10 @@ public class MongoDbContext
     // Video Agent 文章转视频
     public IMongoCollection<VideoGenRun> VideoGenRuns => _database.GetCollection<VideoGenRun>("video_gen_runs");
 
+    // Web Pages 网页收藏与分享
+    public IMongoCollection<WebPage> WebPages => _database.GetCollection<WebPage>("web_pages");
+    public IMongoCollection<WebPageShareLink> WebPageShareLinks => _database.GetCollection<WebPageShareLink>("web_page_share_links");
+
     // Tutorial Email 教程邮件
     public IMongoCollection<TutorialEmailSequence> TutorialEmailSequences => _database.GetCollection<TutorialEmailSequence>("tutorial_email_sequences");
     public IMongoCollection<TutorialEmailTemplate> TutorialEmailTemplates => _database.GetCollection<TutorialEmailTemplate>("tutorial_email_templates");
@@ -1091,5 +1095,36 @@ public class MongoDbContext
         ArenaBattles.Indexes.CreateOne(new CreateIndexModel<ArenaBattle>(
             Builders<ArenaBattle>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_arena_battles_user_created" }));
+
+        // ========== Web Pages 网页收藏索引 ==========
+
+        // WebPages：按用户 + 创建时间查询
+        WebPages.Indexes.CreateOne(new CreateIndexModel<WebPage>(
+            Builders<WebPage>.IndexKeys.Ascending(x => x.OwnerUserId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_web_pages_owner_created" }));
+        // WebPages：按标签多值索引
+        WebPages.Indexes.CreateOne(new CreateIndexModel<WebPage>(
+            Builders<WebPage>.IndexKeys.Ascending(x => x.Tags),
+            new CreateIndexOptions { Name = "idx_web_pages_tags" }));
+        // WebPages：按文件夹查询
+        WebPages.Indexes.CreateOne(new CreateIndexModel<WebPage>(
+            Builders<WebPage>.IndexKeys.Ascending(x => x.OwnerUserId).Ascending(x => x.Folder),
+            new CreateIndexOptions { Name = "idx_web_pages_owner_folder" }));
+
+        // WebPageShareLinks：按 Token 唯一
+        try
+        {
+            WebPageShareLinks.Indexes.CreateOne(new CreateIndexModel<WebPageShareLink>(
+                Builders<WebPageShareLink>.IndexKeys.Ascending(x => x.Token),
+                new CreateIndexOptions { Name = "uniq_web_page_share_links_token", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        // WebPageShareLinks：按创建者 + 时间
+        WebPageShareLinks.Indexes.CreateOne(new CreateIndexModel<WebPageShareLink>(
+            Builders<WebPageShareLink>.IndexKeys.Ascending(x => x.CreatedBy).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_web_page_share_links_creator_created" }));
     }
 }
