@@ -46,6 +46,19 @@ describe('ProxyService', () => {
       expect(proxy.resolveBranch(req)).toBe('main');
     });
 
+    it('should resolve from cds_branch cookie', () => {
+      const req = makeReq({ cookie: 'cds_branch=claude%2Ffix-worktree-creation-rG5DU' });
+      expect(proxy.resolveBranch(req)).toBe('claude-fix-worktree-creation-rg5du');
+    });
+
+    it('should prefer X-Branch header over cookie', () => {
+      const req = makeReq({
+        'x-branch': 'feature/alpha',
+        cookie: 'cds_branch=feature%2Fbeta',
+      });
+      expect(proxy.resolveBranch(req)).toBe('feature-alpha');
+    });
+
     it('should return null when no rules match and no default', () => {
       const req = makeReq({ host: 'anything.com' });
       expect(proxy.resolveBranch(req)).toBeNull();
@@ -78,6 +91,34 @@ describe('ProxyService', () => {
       const regex = proxy.patternToRegex('staging.example.com');
       expect('staging.example.com').toMatch(new RegExp(regex, 'i'));
       expect('other.example.com').not.toMatch(new RegExp(regex, 'i'));
+    });
+  });
+
+  describe('handleRequest — /_switch/', () => {
+    function makeRes(): { res: http.ServerResponse; written: { statusCode: number; headers: Record<string, string>; body: string } } {
+      const written = { statusCode: 0, headers: {} as Record<string, string>, body: '' };
+      const res = {
+        writeHead(code: number, headers: Record<string, string>) { written.statusCode = code; written.headers = headers; },
+        end(body?: string) { written.body = body || ''; },
+      } as unknown as http.ServerResponse;
+      return { res, written };
+    }
+
+    it('should set cds_branch cookie and redirect on /_switch/<branch>', () => {
+      const req = makeReq({}, '/_switch/claude/fix-worktree-creation-rG5DU');
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+      expect(written.statusCode).toBe(302);
+      expect(written.headers['Set-Cookie']).toContain('cds_branch=');
+      expect(written.headers['Location']).toBe('/');
+    });
+
+    it('should clear cookie on /_clear_branch', () => {
+      const req = makeReq({}, '/_clear_branch');
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+      expect(written.statusCode).toBe(302);
+      expect(written.headers['Set-Cookie']).toContain('Max-Age=0');
     });
   });
 

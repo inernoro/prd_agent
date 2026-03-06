@@ -38,6 +38,12 @@ export class ProxyService {
       return slug;
     }
 
+    // Check cds_branch cookie (set via /_switch/<branch> URL)
+    const cookieBranch = this.parseCookie(req.headers.cookie || '', 'cds_branch');
+    if (cookieBranch) {
+      return StateService.slugify(cookieBranch);
+    }
+
     const host = req.headers.host || '';
 
     // Evaluate rules by priority
@@ -138,6 +144,31 @@ export class ProxyService {
    * Routes to the correct branch or triggers auto-build.
    */
   handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
+    // /_switch/<branch> — set cds_branch cookie and redirect to /
+    const switchMatch = (req.url || '').match(/^\/_switch\/(.+?)(?:\?.*)?$/);
+    if (switchMatch) {
+      const branch = decodeURIComponent(switchMatch[1]);
+      const slug = StateService.slugify(branch);
+      res.writeHead(302, {
+        'Set-Cookie': `cds_branch=${encodeURIComponent(branch)}; Path=/; SameSite=Lax`,
+        Location: '/',
+        'Content-Type': 'text/plain',
+      });
+      res.end(`Switched to branch: ${slug}`);
+      return;
+    }
+
+    // /_clear_branch — remove cds_branch cookie
+    if (req.url === '/_clear_branch') {
+      res.writeHead(302, {
+        'Set-Cookie': 'cds_branch=; Path=/; Max-Age=0',
+        Location: '/',
+        'Content-Type': 'text/plain',
+      });
+      res.end('Branch cookie cleared');
+      return;
+    }
+
     const branchSlug = this.resolveBranch(req);
 
     if (!branchSlug) {
@@ -237,6 +268,14 @@ export class ProxyService {
     });
 
     clientReq.pipe(proxyReq, { end: true });
+  }
+
+  /**
+   * Parse a cookie value from a cookie header string.
+   */
+  private parseCookie(cookieStr: string, name: string): string | undefined {
+    const match = cookieStr.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
+    return match ? decodeURIComponent(match[1]) : undefined;
   }
 
   /**
