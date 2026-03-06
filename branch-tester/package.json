@@ -1,7 +1,7 @@
 {
-  "name": "branch-tester",
-  "version": "0.1.0",
-  "description": "Branch verification manager for prd_agent — switch branches on :5500 via nginx hot-reload",
+  "name": "cloud-dev-suite",
+  "version": "1.0.0",
+  "description": "Cloud Development Suite — dynamic branch preview server with routing, auto-build, and shared infrastructure",
   "type": "module",
   "engines": {
     "node": ">=20"

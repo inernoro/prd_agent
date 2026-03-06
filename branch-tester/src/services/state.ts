@@ -1,21 +1,22 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { BtState, BranchEntry, OperationLog } from '../types.js';
+import type { CdsState, BranchEntry, BuildProfile, RoutingRule, OperationLog } from '../types.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
 
-function emptyState(): BtState {
+function emptyState(): CdsState {
   return {
-    activeBranchId: null,
-    history: [],
+    routingRules: [],
+    buildProfiles: [],
     branches: {},
-    nextPortIndex: 1,
+    nextPortIndex: 0,
     logs: {},
+    defaultBranch: null,
   };
 }
 
 export class StateService {
-  private state: BtState = emptyState();
+  private state: CdsState = emptyState();
   private readonly filePath: string;
 
   constructor(filePath: string) {
@@ -33,9 +34,12 @@ export class StateService {
   load(): void {
     if (fs.existsSync(this.filePath)) {
       const raw = fs.readFileSync(this.filePath, 'utf-8');
-      this.state = JSON.parse(raw) as BtState;
-      // Migrate: ensure logs field exists for older state files
+      this.state = JSON.parse(raw) as CdsState;
+      // Migrate older state files
       if (!this.state.logs) this.state.logs = {};
+      if (!this.state.routingRules) this.state.routingRules = [];
+      if (!this.state.buildProfiles) this.state.buildProfiles = [];
+      if (this.state.defaultBranch === undefined) this.state.defaultBranch = null;
     } else {
       this.state = emptyState();
     }
@@ -49,9 +53,11 @@ export class StateService {
     fs.writeFileSync(this.filePath, JSON.stringify(this.state, null, 2));
   }
 
-  getState(): Readonly<BtState> {
+  getState(): Readonly<CdsState> {
     return this.state;
   }
+
+  // ── Branch management ──
 
   getBranch(id: string): BranchEntry | undefined {
     return this.state.branches[id];
@@ -69,93 +75,95 @@ export class StateService {
       throw new Error(`Branch "${id}" not found`);
     }
     delete this.state.branches[id];
-    if (this.state.activeBranchId === id) {
-      this.state.activeBranchId = null;
+    if (this.state.defaultBranch === id) {
+      this.state.defaultBranch = null;
     }
   }
 
-  updateStatus(id: string, status: BranchEntry['status']): void {
-    const entry = this.state.branches[id];
-    if (!entry) {
-      throw new Error(`Branch "${id}" not found`);
-    }
-    entry.status = status;
+  setDefaultBranch(id: string | null): void {
+    this.state.defaultBranch = id;
   }
 
-  deactivate(): void {
-    this.state.activeBranchId = null;
-  }
+  // ── Port allocation ──
 
-  activate(id: string): void {
-    if (!this.state.branches[id]) {
-      throw new Error(`Branch "${id}" not found`);
-    }
-    this.state.activeBranchId = id;
-    this.state.history.push(id);
-    this.state.branches[id].lastActivatedAt = new Date().toISOString();
-  }
-
-  rollback(): string | null {
-    if (this.state.history.length <= 1) {
-      return null;
-    }
-    this.state.history.pop();
-    const previousId = this.state.history[this.state.history.length - 1];
-    this.state.activeBranchId = previousId;
-    return previousId;
-  }
-
-  /** Allocate the next available host port, skipping any already in use */
   allocatePort(portStart: number): number {
-    const usedPorts = new Set(
-      Object.values(this.state.branches)
-        .map((b) => b.hostPort)
-        .filter((p): p is number => p != null),
-    );
-    let port = portStart;
-    while (usedPorts.has(port)) port++;
-    return port;
-  }
-
-  /** Allocate a preview port, skipping any already in use (including hostPorts to avoid collision) */
-  allocatePreviewPort(portStart: number): number {
     const usedPorts = new Set<number>();
     for (const b of Object.values(this.state.branches)) {
-      if (b.previewPort != null) usedPorts.add(b.previewPort);
-      if (b.hostPort != null) usedPorts.add(b.hostPort);
+      for (const svc of Object.values(b.services)) {
+        if (svc.hostPort) usedPorts.add(svc.hostPort);
+      }
     }
-    let port = portStart;
+    let port = portStart + this.state.nextPortIndex;
     while (usedPorts.has(port)) port++;
+    this.state.nextPortIndex++;
     return port;
   }
 
-  allocateDbName(id: string, defaultDbName: string): string {
-    if (id === 'main' || id === 'master') {
-      return defaultDbName;
-    }
-    const index = this.state.nextPortIndex;
-    this.state.nextPortIndex++;
-    return `${defaultDbName}_${index}`;
+  // ── Routing rules ──
+
+  getRoutingRules(): RoutingRule[] {
+    return this.state.routingRules;
   }
 
-  /** Append an operation log for a branch (keeps last MAX_LOGS_PER_BRANCH) */
+  addRoutingRule(rule: RoutingRule): void {
+    this.state.routingRules.push(rule);
+    this.state.routingRules.sort((a, b) => a.priority - b.priority);
+  }
+
+  updateRoutingRule(id: string, updates: Partial<RoutingRule>): void {
+    const idx = this.state.routingRules.findIndex(r => r.id === id);
+    if (idx === -1) throw new Error(`Routing rule "${id}" not found`);
+    Object.assign(this.state.routingRules[idx], updates);
+    this.state.routingRules.sort((a, b) => a.priority - b.priority);
+  }
+
+  removeRoutingRule(id: string): void {
+    this.state.routingRules = this.state.routingRules.filter(r => r.id !== id);
+  }
+
+  // ── Build profiles ──
+
+  getBuildProfiles(): BuildProfile[] {
+    return this.state.buildProfiles;
+  }
+
+  getBuildProfile(id: string): BuildProfile | undefined {
+    return this.state.buildProfiles.find(p => p.id === id);
+  }
+
+  addBuildProfile(profile: BuildProfile): void {
+    if (this.state.buildProfiles.some(p => p.id === profile.id)) {
+      throw new Error(`Build profile "${profile.id}" already exists`);
+    }
+    this.state.buildProfiles.push(profile);
+  }
+
+  updateBuildProfile(id: string, updates: Partial<BuildProfile>): void {
+    const idx = this.state.buildProfiles.findIndex(p => p.id === id);
+    if (idx === -1) throw new Error(`Build profile "${id}" not found`);
+    Object.assign(this.state.buildProfiles[idx], updates);
+  }
+
+  removeBuildProfile(id: string): void {
+    this.state.buildProfiles = this.state.buildProfiles.filter(p => p.id !== id);
+  }
+
+  // ── Operation logs ──
+
   appendLog(branchId: string, log: OperationLog): void {
     if (!this.state.logs[branchId]) {
       this.state.logs[branchId] = [];
     }
     this.state.logs[branchId].push(log);
-    // Trim old logs
     if (this.state.logs[branchId].length > MAX_LOGS_PER_BRANCH) {
       this.state.logs[branchId] = this.state.logs[branchId].slice(-MAX_LOGS_PER_BRANCH);
     }
   }
 
-  /** Get all operation logs for a branch */
   getLogs(branchId: string): OperationLog[] {
     return this.state.logs[branchId] || [];
   }
 
-  /** Remove logs for a branch */
   removeLogs(branchId: string): void {
     delete this.state.logs[branchId];
   }

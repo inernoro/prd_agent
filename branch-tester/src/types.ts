@@ -1,39 +1,87 @@
-export interface BranchEntry {
+// ── Cloud Development Suite (CDS) — Core Types ──
+
+/** A routing rule that maps incoming requests to a branch */
+export interface RoutingRule {
   id: string;
+  /** Human-readable name */
+  name: string;
+  /** Match type: header (X-Branch), domain substring, or pattern */
+  type: 'header' | 'domain' | 'pattern';
+  /**
+   * Match value. Supports {{wildcard}} placeholders:
+   *   - {{agent_*}}  → matches "agent-xxx", "agent-yyy", etc.
+   *   - {{feature_*}} → matches "feature-xxx", etc.
+   * For 'header' type: matched against X-Branch header value
+   * For 'domain' type: matched against request Host header
+   * For 'pattern' type: matched against full URL path
+   */
+  match: string;
+  /** Target branch slug (resolved at runtime) */
   branch: string;
-  worktreePath: string;
-
-  // ── Deploy mode (artifact-based, via nginx gateway) ──
-  containerName: string;
-  imageName: string;
-  dbName: string;
-  /** Original isolated DB name (saved when switching to main DB, for switching back) */
-  originalDbName?: string;
-  status: 'idle' | 'building' | 'built' | 'running' | 'stopped' | 'error';
-  buildLog?: string;
-  lastActivatedAt?: string;
-  /** Human-readable error message when status === 'error' */
-  errorMessage?: string;
-
-  // ── Run mode (source-based, direct port access) ──
-  runContainerName?: string;
-  /** Vite dev server container name (paired with runContainerName for full-stack dev) */
-  runWebContainerName?: string;
-  runStatus?: 'idle' | 'running' | 'stopped' | 'error';
-  hostPort?: number;
-  /** Human-readable error message when runStatus === 'error' */
-  runErrorMessage?: string;
-
-  // ── Preview mode (per-branch nginx, independent of gateway) ──
-  /** Per-branch preview nginx container name */
-  previewContainerName?: string;
-  /** Host port allocated for independent preview (API + frontend on one port) */
-  previewPort?: number;
-
-  createdAt: string;
+  /** Priority (lower = higher priority, default 0) */
+  priority: number;
+  enabled: boolean;
 }
 
-/** A single event recorded during an operation (deploy/run/rerun) */
+/** A build profile defines how to build/run a specific type of project */
+export interface BuildProfile {
+  id: string;
+  name: string;
+  /** Docker image to use for building/running */
+  dockerImage: string;
+  /** Working directory relative to worktree root */
+  workDir: string;
+  /** Install command (runs once on first build or after pull) */
+  installCommand?: string;
+  /** Build command (produces runnable artifacts or just prepares) */
+  buildCommand?: string;
+  /** Run command (starts the service) */
+  runCommand: string;
+  /** Port the service listens on inside the container */
+  containerPort: number;
+  /** Extra environment variables for this profile */
+  env?: Record<string, string>;
+  /** Volume mounts for shared caches (e.g., node_modules, nuget) */
+  cacheMounts?: CacheMount[];
+  /** Timeout for build in ms (default: 600000) */
+  buildTimeout?: number;
+}
+
+/** A shared cache mount to avoid duplicating packages across branches */
+export interface CacheMount {
+  /** Host path (absolute) for the shared cache */
+  hostPath: string;
+  /** Container path where it gets mounted */
+  containerPath: string;
+}
+
+/** Branch entry — simplified for CDS */
+export interface BranchEntry {
+  id: string;
+  /** Original git branch name */
+  branch: string;
+  worktreePath: string;
+  /** Per-profile container state */
+  services: Record<string, ServiceState>;
+  /** Overall branch status */
+  status: 'idle' | 'building' | 'running' | 'error';
+  errorMessage?: string;
+  createdAt: string;
+  lastAccessedAt?: string;
+}
+
+/** State of a single service (one build profile instance) within a branch */
+export interface ServiceState {
+  profileId: string;
+  containerName: string;
+  /** Host port allocated for this service */
+  hostPort: number;
+  status: 'idle' | 'building' | 'running' | 'stopped' | 'error';
+  buildLog?: string;
+  errorMessage?: string;
+}
+
+/** A build/operation log event */
 export interface OperationLogEvent {
   step: string;
   status: string;
@@ -44,110 +92,60 @@ export interface OperationLogEvent {
   timestamp: string;
 }
 
-/** A complete operation log (one deploy or run session) */
+/** A complete operation log */
 export interface OperationLog {
-  type: 'deploy' | 'run' | 'rerun';
+  type: 'build' | 'run' | 'auto-build';
   startedAt: string;
   finishedAt?: string;
   status: 'running' | 'completed' | 'error';
   events: OperationLogEvent[];
 }
 
-export interface BtState {
-  activeBranchId: string | null;
-  history: string[];
+/** Persisted state */
+export interface CdsState {
+  /** Routing rules */
+  routingRules: RoutingRule[];
+  /** Build profiles */
+  buildProfiles: BuildProfile[];
+  /** All tracked branches */
   branches: Record<string, BranchEntry>;
+  /** Next port index for allocation */
   nextPortIndex: number;
-  /** Per-branch operation logs (keyed by branch id, most recent last, max 10 per branch) */
+  /** Per-branch operation logs */
   logs: Record<string, OperationLog[]>;
+  /** Default branch (used when no routing rule matches) */
+  defaultBranch: string | null;
 }
 
-export interface BtConfig {
+/** Application configuration */
+export interface CdsConfig {
   repoRoot: string;
   worktreeBase: string;
-  deployDir: string;
-  gateway: {
-    containerName: string;
-    port: number;
-  };
-  docker: {
-    network: string;
-    apiDockerfile: string;
-    apiImagePrefix: string;
-    containerPrefix: string;
-  };
-  mongodb: {
-    containerHost: string;
-    port: number;
-    defaultDbName: string;
-  };
-  redis: {
-    connectionString: string;
-  };
+  /** Master dashboard port */
+  masterPort: number;
+  /** Worker proxy port (all traffic) */
+  workerPort: number;
+  /** Docker network name */
+  dockerNetwork: string;
+  /** Port range start for branch services */
+  portStart: number;
+  /** Shared environment variables (from host env) */
+  sharedEnv: Record<string, string>;
+  /** JWT settings (passed through to branch services) */
   jwt: {
     secret: string;
     issuer: string;
   };
-  dashboard: {
-    port: number;
-  };
-  /** Preview mode settings (per-branch nginx preview, optional, defaults applied if omitted) */
-  preview?: {
-    /** First host port to allocate for preview (default: 5501) */
-    portStart?: number;
-    /** Nginx image for preview containers (default: nginx:1.27-alpine) */
-    nginxImage?: string;
-    /**
-     * Wildcard domain for branch previews (e.g., "miduo.org").
-     * When set, branches are accessible at {branch-slug}.{domain}
-     * instead of hostname:port.
-     */
-    domain?: string;
-  };
-  /** Run mode settings (source-based running, optional, defaults applied if omitted) */
-  run?: {
-    /** First host port to allocate (default: 9001) */
-    portStart?: number;
-    /** SDK base image for running from source (default: mcr.microsoft.com/dotnet/sdk:8.0) */
-    baseImage?: string;
-    /** Command to run inside the container (default: dotnet watch run --project src/PrdAgent.Api) */
-    command?: string;
-    /** Subdirectory of worktree to mount as /src (default: prd-api) */
-    sourceDir?: string;
-    /** Node.js base image for Vite dev server (default: node:20-slim) */
-    webBaseImage?: string;
-    /** Command to run Vite dev server (default: auto-generated with pnpm dev --host) */
-    webCommand?: string;
-    /** Subdirectory for frontend source (default: prd-admin) */
-    webSourceDir?: string;
-    /** Vite dev server port inside container (default: 8000) */
-    webPort?: number;
-  };
 }
 
-/** Options for running a container from source code */
-export interface RunFromSourceOptions {
-  hostPort: number;
-  baseImage: string;
-  command: string;
-  sourceDir: string;
-}
-
-/** Options for running a Vite dev server container from source */
-export interface RunWebFromSourceOptions {
-  webBaseImage: string;
-  webCommand: string;
-  webSourceDir: string;
-  webPort: number;
-}
-
+/** Shell execution result */
 export interface ExecResult {
   stdout: string;
   stderr: string;
   exitCode: number;
 }
 
-/** Merge stdout + stderr — many CLI tools write to either stream unpredictably */
+/** Merge stdout + stderr */
 export function combinedOutput(result: { stdout: string; stderr: string }): string {
   return [result.stdout, result.stderr].filter(Boolean).join('\n');
 }
@@ -155,7 +153,6 @@ export function combinedOutput(result: { stdout: string; stderr: string }): stri
 export interface ExecOptions {
   cwd?: string;
   timeout?: number;
-  /** Called with each chunk of stdout/stderr output in real-time */
   onData?: (chunk: string) => void;
 }
 
