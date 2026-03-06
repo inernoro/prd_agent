@@ -260,7 +260,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         send({ step: 'nginx', status: 'running', title: '断开网关' });
         try {
           await switcherService.disconnect();
-          stateService.getState().activeBranchId = null;
+          stateService.deactivate();
           stateService.save();
           send({ step: 'nginx', status: 'done', title: '网关已断开' });
         } catch {
@@ -1591,7 +1591,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Symlink to _disconnected.conf (returns 502 for /api/ calls)
       await switcherService.disconnect();
 
-      state.activeBranchId = null;
+      stateService.deactivate();
       stateService.save();
 
       res.json({ success: true, message: '网关已断开' });

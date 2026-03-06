@@ -82,6 +82,10 @@ export class StateService {
     entry.status = status;
   }
 
+  deactivate(): void {
+    this.state.activeBranchId = null;
+  }
+
   activate(id: string): void {
     if (!this.state.branches[id]) {
       throw new Error(`Branch "${id}" not found`);
