@@ -2,9 +2,11 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Interfaces.LlmGateway;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Controllers;
 
@@ -20,6 +22,7 @@ public class PrdAgentSkillsController : ControllerBase
 {
     private const string AppKey = "prd-agent";
 
+    private readonly MongoDbContext _db;
     private readonly ISkillService _skillService;
     private readonly IRunEventStore _runStore;
     private readonly IRunQueue _runQueue;
@@ -29,6 +32,7 @@ public class PrdAgentSkillsController : ControllerBase
     private readonly ILogger<PrdAgentSkillsController> _logger;
 
     public PrdAgentSkillsController(
+        MongoDbContext db,
         ISkillService skillService,
         IRunEventStore runStore,
         IRunQueue runQueue,
@@ -37,6 +41,7 @@ public class PrdAgentSkillsController : ControllerBase
         ILLMRequestContextAccessor llmRequestContext,
         ILogger<PrdAgentSkillsController> logger)
     {
+        _db = db;
         _skillService = skillService;
         _runStore = runStore;
         _runQueue = runQueue;
@@ -48,6 +53,48 @@ public class PrdAgentSkillsController : ControllerBase
 
     private string GetUserId()
         => User.FindFirst("userId")?.Value ?? User.FindFirst("sub")?.Value ?? "";
+
+    private async Task<(Session? Session, UserRole EffectiveAnswerRole, IActionResult? Error)> ResolveAccessibleSessionAsync(
+        string sessionId,
+        string userId,
+        CancellationToken ct)
+    {
+        var sid = (sessionId ?? string.Empty).Trim();
+        var session = await _sessionService.GetByIdAsync(sid);
+        if (session == null)
+        {
+            return (null, default, NotFound(ApiResponse<object>.Fail(ErrorCodes.SESSION_NOT_FOUND, "会话不存在")));
+        }
+
+        if (!string.IsNullOrWhiteSpace(session.OwnerUserId))
+        {
+            if (!string.Equals(session.OwnerUserId, userId, StringComparison.Ordinal))
+            {
+                return (session, default, StatusCode(StatusCodes.Status403Forbidden,
+                    ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权访问该会话")));
+            }
+
+            return (session, session.CurrentRole, null);
+        }
+
+        if (!string.IsNullOrWhiteSpace(session.GroupId))
+        {
+            var gid = session.GroupId.Trim();
+            var member = await _db.GroupMembers
+                .Find(x => x.GroupId == gid && x.UserId == userId)
+                .FirstOrDefaultAsync(ct);
+            if (member == null)
+            {
+                return (session, default, StatusCode(StatusCodes.Status403Forbidden,
+                    ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "您不是该群组成员")));
+            }
+
+            return (session, member.MemberRole, null);
+        }
+
+        return (session, default, StatusCode(StatusCodes.Status403Forbidden,
+            ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权访问该会话")));
+    }
 
     /// <summary>
     /// 获取当前用户可见的技能列表（系统 + 公共 + 个人）
@@ -210,10 +257,17 @@ public class PrdAgentSkillsController : ControllerBase
         if (skill.Visibility == SkillVisibility.Personal && skill.OwnerUserId != userId)
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权执行此技能"));
 
-        // 会话检查
-        var session = await _sessionService.GetByIdAsync(request.SessionId);
-        if (session == null)
-            return NotFound(ApiResponse<object>.Fail("SESSION_NOT_FOUND", "会话不存在"));
+        // 会话访问校验：个人会话必须 owner，群会话必须是成员。
+        // 群会话回答角色始终以 GroupMembers.MemberRole 为准，避免直接信任 session.CurrentRole。
+        var (session, effectiveAnswerRole, accessError) = await ResolveAccessibleSessionAsync(request.SessionId, userId, ct);
+        if (accessError != null)
+            return accessError;
+
+        if (skill.Roles.Count > 0 && !skill.Roles.Contains(effectiveAnswerRole))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "当前角色无权执行此技能"));
+        }
 
         // 解析模板参数
         var promptTemplate = skill.Execution.PromptTemplate;
@@ -243,7 +297,7 @@ public class PrdAgentSkillsController : ControllerBase
             RunId = runId,
             Kind = RunKinds.Chat,
             Status = RunStatuses.Queued,
-            GroupId = string.IsNullOrWhiteSpace(session.GroupId) ? null : session.GroupId.Trim(),
+            GroupId = string.IsNullOrWhiteSpace(session!.GroupId) ? null : session.GroupId.Trim(),
             SessionId = request.SessionId,
             CreatedByUserId = userId,
             UserMessageId = userMessageId,
@@ -259,7 +313,7 @@ public class PrdAgentSkillsController : ControllerBase
                 // 同时传递解析后的模板供 ChatRunWorker 直接使用
                 promptKey = skill.SkillKey,
                 resolvedPromptTemplate = promptTemplate,
-                answerAsRole = session.CurrentRole.ToString(),
+                answerAsRole = effectiveAnswerRole.ToString(),
                 attachmentIds = request.AttachmentIds ?? new List<string>(),
                 userId,
                 // 技能元数据
