@@ -1,27 +1,26 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import { PageHeader } from '@/components/design/PageHeader';
 import { Dialog } from '@/components/ui/Dialog';
 import {
-  listWebPages,
-  createWebPage,
-  updateWebPage,
-  deleteWebPage,
-  batchDeleteWebPages,
-  toggleWebPageFavorite,
-  listWebPageFolders,
-  listWebPageTags,
-  createWebPageShare,
-  listWebPageShares,
-  revokeWebPageShare,
+  uploadSite,
+  reuploadSite,
+  listSites,
+  updateSite,
+  deleteSite,
+  batchDeleteSites,
+  listSiteFolders,
+  listSiteTags,
+  createSiteShareLink,
+  listSiteShares,
+  revokeSiteShare,
 } from '@/services';
-import type { WebPageItem, WebPageShareLinkItem, TagCount } from '@/services/real/webPages';
+import type { HostedSite, ShareLinkItem, TagCount } from '@/services/real/webPages';
 import {
-  Plus,
+  Upload,
   Search,
-  Star,
   Trash2,
   ExternalLink,
   Share2,
@@ -29,7 +28,6 @@ import {
   Grid3X3,
   List,
   FolderOpen,
-  Tag,
   Eye,
   Copy,
   Check,
@@ -39,7 +37,10 @@ import {
   Clock,
   RefreshCw,
   Link2,
-  ChevronDown,
+  FileCode2,
+  FileArchive,
+  HardDrive,
+  UploadCloud,
 } from 'lucide-react';
 
 // ─── Utility ───
@@ -63,24 +64,28 @@ function relativeTime(s: string | null | undefined) {
   return fmtDate(s);
 }
 
-function getDomain(url: string) {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return url;
-  }
+function fmtSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
+
+const sourceTypeLabels: Record<string, string> = {
+  upload: '手动上传',
+  workflow: '工作流',
+  api: 'API',
+};
 
 // ─── Main Page ───
 
 export default function WebPagesPage() {
-  const [pages, setPages] = useState<WebPageItem[]>([]);
+  const [sites, setSites] = useState<HostedSite[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [keyword, setKeyword] = useState('');
   const [activeFolder, setActiveFolder] = useState<string | null>(null);
   const [activeTag, setActiveTag] = useState<string | null>(null);
-  const [showFavOnly, setShowFavOnly] = useState(false);
+  const [activeSourceType, setActiveSourceType] = useState<string | null>(null);
   const [sort, setSort] = useState('newest');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -88,60 +93,48 @@ export default function WebPagesPage() {
   const [folders, setFolders] = useState<string[]>([]);
   const [tags, setTags] = useState<TagCount[]>([]);
 
-  const [showAddDialog, setShowAddDialog] = useState(false);
-  const [editItem, setEditItem] = useState<WebPageItem | null>(null);
+  const [showUploadDialog, setShowUploadDialog] = useState(false);
+  const [editItem, setEditItem] = useState<HostedSite | null>(null);
   const [showShareDialog, setShowShareDialog] = useState(false);
   const [shareTargetId, setShareTargetId] = useState<string | null>(null);
   const [showSharesPanel, setShowSharesPanel] = useState(false);
-  const [shares, setShares] = useState<WebPageShareLinkItem[]>([]);
+  const [shares, setShares] = useState<ShareLinkItem[]>([]);
 
   // ─── Load ───
 
   const load = useCallback(async () => {
     setLoading(true);
-    const res = await listWebPages({
+    const res = await listSites({
       keyword: keyword || undefined,
       folder: activeFolder || undefined,
       tag: activeTag || undefined,
-      isFavorite: showFavOnly || undefined,
+      sourceType: activeSourceType || undefined,
       sort,
       limit: 200,
     });
     if (res.success) {
-      setPages(res.data.items);
+      setSites(res.data.items);
       setTotal(res.data.total);
     }
     setLoading(false);
-  }, [keyword, activeFolder, activeTag, showFavOnly, sort]);
+  }, [keyword, activeFolder, activeTag, activeSourceType, sort]);
 
   const loadMeta = useCallback(async () => {
-    const [fRes, tRes] = await Promise.all([listWebPageFolders(), listWebPageTags()]);
+    const [fRes, tRes] = await Promise.all([listSiteFolders(), listSiteTags()]);
     if (fRes.success) setFolders(fRes.data.folders);
     if (tRes.success) setTags(tRes.data.tags);
   }, []);
 
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  useEffect(() => {
-    loadMeta();
-  }, [loadMeta]);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { loadMeta(); }, [loadMeta]);
 
   // ─── Actions ───
 
-  const handleToggleFavorite = async (id: string) => {
-    const res = await toggleWebPageFavorite(id);
-    if (res.success) {
-      setPages(prev => prev.map(p => p.id === id ? { ...p, isFavorite: res.data.isFavorite } : p));
-    }
-  };
-
   const handleDelete = async (id: string) => {
-    if (!confirm('确定删除此网页收藏？')) return;
-    const res = await deleteWebPage(id);
+    if (!confirm('确定删除此站点？站点文件将同时被清理。')) return;
+    const res = await deleteSite(id);
     if (res.success) {
-      setPages(prev => prev.filter(p => p.id !== id));
+      setSites(prev => prev.filter(s => s.id !== id));
       setTotal(prev => prev - 1);
       loadMeta();
     }
@@ -149,8 +142,8 @@ export default function WebPagesPage() {
 
   const handleBatchDelete = async () => {
     if (selectedIds.size === 0) return;
-    if (!confirm(`确定删除选中的 ${selectedIds.size} 个网页收藏？`)) return;
-    const res = await batchDeleteWebPages([...selectedIds]);
+    if (!confirm(`确定删除选中的 ${selectedIds.size} 个站点？`)) return;
+    const res = await batchDeleteSites([...selectedIds]);
     if (res.success) {
       setSelectedIds(new Set());
       load();
@@ -165,7 +158,7 @@ export default function WebPagesPage() {
 
   const handleBatchShare = () => {
     if (selectedIds.size === 0) return;
-    setShareTargetId(null); // collection mode
+    setShareTargetId(null);
     setShowShareDialog(true);
   };
 
@@ -178,20 +171,18 @@ export default function WebPagesPage() {
     });
   };
 
-  // ─── Render ───
-
   return (
     <div className="h-full flex flex-col gap-4 p-4 overflow-auto" style={{ background: 'var(--bg-base)' }}>
       <PageHeader
-        title="网页收藏"
-        description="收藏、整理和分享你发现的好网页"
+        title="网页托管"
+        description="上传 HTML 或 ZIP 压缩包，托管并分享你的网页"
         actions={
           <div className="flex items-center gap-2">
             <Button size="sm" variant="outline" onClick={() => setShowSharesPanel(true)}>
               <Link2 size={14} className="mr-1" /> 分享管理
             </Button>
-            <Button size="sm" onClick={() => { setEditItem(null); setShowAddDialog(true); }}>
-              <Plus size={14} className="mr-1" /> 添加网页
+            <Button size="sm" onClick={() => { setEditItem(null); setShowUploadDialog(true); }}>
+              <Upload size={14} className="mr-1" /> 上传站点
             </Button>
           </div>
         }
@@ -205,7 +196,7 @@ export default function WebPagesPage() {
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
             <input
               type="text"
-              placeholder="搜索标题、URL、描述..."
+              placeholder="搜索站点名称、描述..."
               value={keyword}
               onChange={e => setKeyword(e.target.value)}
               className="w-full pl-9 pr-3 py-2 rounded-lg text-sm outline-none"
@@ -223,45 +214,38 @@ export default function WebPagesPage() {
               value={activeFolder ?? ''}
               onChange={e => setActiveFolder(e.target.value || null)}
               className="px-3 py-2 rounded-lg text-sm outline-none cursor-pointer"
-              style={{
-                background: 'var(--bg-sunken)',
-                color: 'var(--text-primary)',
-                border: '1px solid var(--border-default)',
-              }}
+              style={{ background: 'var(--bg-sunken)', color: 'var(--text-primary)', border: '1px solid var(--border-default)' }}
             >
               <option value="">全部文件夹</option>
               {folders.map(f => <option key={f} value={f}>{f}</option>)}
             </select>
           )}
 
-          {/* Fav toggle */}
-          <button
-            onClick={() => setShowFavOnly(v => !v)}
-            className="flex items-center gap-1 px-3 py-2 rounded-lg text-sm transition-colors"
-            style={{
-              background: showFavOnly ? 'rgba(234, 179, 8, 0.15)' : 'var(--bg-sunken)',
-              color: showFavOnly ? '#eab308' : 'var(--text-muted)',
-              border: '1px solid var(--border-default)',
-            }}
+          {/* Source type filter */}
+          <select
+            value={activeSourceType ?? ''}
+            onChange={e => setActiveSourceType(e.target.value || null)}
+            className="px-3 py-2 rounded-lg text-sm outline-none cursor-pointer"
+            style={{ background: 'var(--bg-sunken)', color: 'var(--text-primary)', border: '1px solid var(--border-default)' }}
           >
-            <Star size={14} fill={showFavOnly ? '#eab308' : 'none'} /> 收藏
-          </button>
+            <option value="">全部来源</option>
+            <option value="upload">手动上传</option>
+            <option value="workflow">工作流</option>
+            <option value="api">API</option>
+          </select>
 
           {/* Sort */}
           <select
             value={sort}
             onChange={e => setSort(e.target.value)}
             className="px-3 py-2 rounded-lg text-sm outline-none cursor-pointer"
-            style={{
-              background: 'var(--bg-sunken)',
-              color: 'var(--text-primary)',
-              border: '1px solid var(--border-default)',
-            }}
+            style={{ background: 'var(--bg-sunken)', color: 'var(--text-primary)', border: '1px solid var(--border-default)' }}
           >
-            <option value="newest">最新添加</option>
-            <option value="oldest">最早添加</option>
+            <option value="newest">最新创建</option>
+            <option value="oldest">最早创建</option>
             <option value="title">按标题</option>
             <option value="most-viewed">最多浏览</option>
+            <option value="largest">最大体积</option>
           </select>
 
           {/* View mode */}
@@ -334,71 +318,70 @@ export default function WebPagesPage() {
 
       {/* Stats */}
       <div className="flex items-center gap-4 text-sm" style={{ color: 'var(--text-muted)' }}>
-        <span>共 {total} 个收藏</span>
+        <span>共 {total} 个站点</span>
         {activeFolder && <span>文件夹: {activeFolder}</span>}
         {activeTag && <span>标签: {activeTag}</span>}
+        {activeSourceType && <span>来源: {sourceTypeLabels[activeSourceType] ?? activeSourceType}</span>}
       </div>
 
       {/* Content */}
-      {loading && pages.length === 0 ? (
+      {loading && sites.length === 0 ? (
         <div className="flex-1 flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>
           加载中...
         </div>
-      ) : pages.length === 0 ? (
+      ) : sites.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-3" style={{ color: 'var(--text-muted)' }}>
-          <Globe size={48} strokeWidth={1} />
-          <p>还没有收藏的网页</p>
-          <Button size="sm" onClick={() => { setEditItem(null); setShowAddDialog(true); }}>
-            <Plus size={14} className="mr-1" /> 添加第一个网页
+          <UploadCloud size={48} strokeWidth={1} />
+          <p>还没有托管的网页</p>
+          <Button size="sm" onClick={() => { setEditItem(null); setShowUploadDialog(true); }}>
+            <Upload size={14} className="mr-1" /> 上传第一个站点
           </Button>
         </div>
       ) : viewMode === 'grid' ? (
         <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' }}>
-          {pages.map(page => (
-            <WebPageCard
-              key={page.id}
-              page={page}
-              selected={selectedIds.has(page.id)}
-              onSelect={() => toggleSelect(page.id)}
-              onFavorite={() => handleToggleFavorite(page.id)}
-              onEdit={() => { setEditItem(page); setShowAddDialog(true); }}
-              onDelete={() => handleDelete(page.id)}
-              onShare={() => handleShare(page.id)}
+          {sites.map(site => (
+            <SiteCard
+              key={site.id}
+              site={site}
+              selected={selectedIds.has(site.id)}
+              onSelect={() => toggleSelect(site.id)}
+              onEdit={() => { setEditItem(site); setShowUploadDialog(true); }}
+              onDelete={() => handleDelete(site.id)}
+              onShare={() => handleShare(site.id)}
             />
           ))}
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          {pages.map(page => (
-            <WebPageListItem
-              key={page.id}
-              page={page}
-              selected={selectedIds.has(page.id)}
-              onSelect={() => toggleSelect(page.id)}
-              onFavorite={() => handleToggleFavorite(page.id)}
-              onEdit={() => { setEditItem(page); setShowAddDialog(true); }}
-              onDelete={() => handleDelete(page.id)}
-              onShare={() => handleShare(page.id)}
+          {sites.map(site => (
+            <SiteListItem
+              key={site.id}
+              site={site}
+              selected={selectedIds.has(site.id)}
+              onSelect={() => toggleSelect(site.id)}
+              onEdit={() => { setEditItem(site); setShowUploadDialog(true); }}
+              onDelete={() => handleDelete(site.id)}
+              onShare={() => handleShare(site.id)}
             />
           ))}
         </div>
       )}
 
-      {/* Add/Edit Dialog */}
-      {showAddDialog && (
-        <AddEditDialog
+      {/* Upload / Edit Dialog */}
+      {showUploadDialog && (
+        <UploadEditDialog
           item={editItem}
           folders={folders}
-          onClose={() => { setShowAddDialog(false); setEditItem(null); }}
-          onSaved={() => { setShowAddDialog(false); setEditItem(null); load(); loadMeta(); }}
+          onClose={() => { setShowUploadDialog(false); setEditItem(null); }}
+          onSaved={() => { setShowUploadDialog(false); setEditItem(null); load(); loadMeta(); }}
         />
       )}
 
       {/* Share Dialog */}
       {showShareDialog && (
         <ShareDialog
-          webPageId={shareTargetId}
-          webPageIds={shareTargetId ? undefined : [...selectedIds]}
+          siteId={shareTargetId}
+          siteIds={shareTargetId ? undefined : [...selectedIds]}
           onClose={() => { setShowShareDialog(false); setShareTargetId(null); }}
         />
       )}
@@ -417,11 +400,10 @@ export default function WebPagesPage() {
 
 // ─── Card View ───
 
-function WebPageCard({ page, selected, onSelect, onFavorite, onEdit, onDelete, onShare }: {
-  page: WebPageItem;
+function SiteCard({ site, selected, onSelect, onEdit, onDelete, onShare }: {
+  site: HostedSite;
   selected: boolean;
   onSelect: () => void;
-  onFavorite: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onShare: () => void;
@@ -429,65 +411,58 @@ function WebPageCard({ page, selected, onSelect, onFavorite, onEdit, onDelete, o
   return (
     <GlassCard
       className="group relative flex flex-col overflow-hidden transition-all duration-200"
-      style={{
-        border: selected ? '2px solid var(--accent-primary)' : undefined,
-      }}
+      style={{ border: selected ? '2px solid var(--accent-primary)' : undefined }}
     >
-      {/* Cover */}
-      {page.coverImageUrl ? (
-        <div className="h-40 overflow-hidden">
-          <img
-            src={page.coverImageUrl}
-            alt=""
-            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-          />
+      {/* Preview header */}
+      <div
+        className="h-28 flex flex-col items-center justify-center gap-2 cursor-pointer relative"
+        style={{ background: 'var(--bg-sunken)' }}
+        onClick={() => window.open(site.siteUrl, '_blank')}
+      >
+        {site.coverImageUrl ? (
+          <img src={site.coverImageUrl} alt="" className="absolute inset-0 w-full h-full object-cover" />
+        ) : (
+          <>
+            <FileCode2 size={28} style={{ color: 'var(--accent-primary)', opacity: 0.6 }} />
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{site.entryFile}</span>
+          </>
+        )}
+        {/* Source badge */}
+        <div className="absolute top-2 right-2">
+          <Badge variant={site.sourceType === 'workflow' ? 'info' : site.sourceType === 'api' ? 'warning' : 'default'}>
+            {sourceTypeLabels[site.sourceType] ?? site.sourceType}
+          </Badge>
         </div>
-      ) : (
-        <div
-          className="h-24 flex items-center justify-center"
-          style={{ background: 'var(--bg-sunken)' }}
-        >
-          <Globe size={32} style={{ color: 'var(--text-muted)', opacity: 0.4 }} />
-        </div>
-      )}
+      </div>
 
       {/* Content */}
       <div className="flex-1 p-4 flex flex-col gap-2">
         <div className="flex items-start justify-between gap-2">
-          <div className="flex items-center gap-2 min-w-0">
-            {page.faviconUrl && (
-              <img src={page.faviconUrl} alt="" className="w-4 h-4 rounded-sm shrink-0" />
-            )}
-            <h3
-              className="text-sm font-medium truncate cursor-pointer hover:underline"
-              style={{ color: 'var(--text-primary)' }}
-              onClick={() => window.open(page.url, '_blank')}
-              title={page.title}
-            >
-              {page.title}
-            </h3>
-          </div>
-          <button
-            onClick={onFavorite}
-            className="shrink-0 transition-transform hover:scale-110"
+          <h3
+            className="text-sm font-medium truncate cursor-pointer hover:underline"
+            style={{ color: 'var(--text-primary)' }}
+            onClick={() => window.open(site.siteUrl, '_blank')}
+            title={site.title}
           >
-            <Star size={16} fill={page.isFavorite ? '#eab308' : 'none'} color={page.isFavorite ? '#eab308' : 'var(--text-muted)'} />
-          </button>
+            {site.title}
+          </h3>
         </div>
 
-        <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-          {getDomain(page.url)}
-        </p>
-
-        {page.description && (
+        {site.description && (
           <p className="text-xs line-clamp-2" style={{ color: 'var(--text-secondary)' }}>
-            {page.description}
+            {site.description}
           </p>
         )}
 
-        {page.tags.length > 0 && (
+        {/* File info */}
+        <div className="flex items-center gap-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+          <span className="flex items-center gap-1"><FileArchive size={10} /> {site.files.length} 个文件</span>
+          <span className="flex items-center gap-1"><HardDrive size={10} /> {fmtSize(site.totalSize)}</span>
+        </div>
+
+        {site.tags.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-1">
-            {page.tags.slice(0, 4).map(tag => (
+            {site.tags.slice(0, 4).map(tag => (
               <span
                 key={tag}
                 className="px-1.5 py-0.5 rounded text-[10px]"
@@ -496,25 +471,25 @@ function WebPageCard({ page, selected, onSelect, onFavorite, onEdit, onDelete, o
                 {tag}
               </span>
             ))}
-            {page.tags.length > 4 && (
-              <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>+{page.tags.length - 4}</span>
+            {site.tags.length > 4 && (
+              <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>+{site.tags.length - 4}</span>
             )}
           </div>
         )}
 
         <div className="flex items-center justify-between mt-auto pt-2" style={{ borderTop: '1px solid var(--border-subtle)' }}>
           <div className="flex items-center gap-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-            <span className="flex items-center gap-1"><Eye size={10} /> {page.viewCount}</span>
-            <span className="flex items-center gap-1"><Clock size={10} /> {relativeTime(page.createdAt)}</span>
-            {page.folder && (
-              <span className="flex items-center gap-1"><FolderOpen size={10} /> {page.folder}</span>
+            <span className="flex items-center gap-1"><Eye size={10} /> {site.viewCount}</span>
+            <span className="flex items-center gap-1"><Clock size={10} /> {relativeTime(site.createdAt)}</span>
+            {site.folder && (
+              <span className="flex items-center gap-1"><FolderOpen size={10} /> {site.folder}</span>
             )}
           </div>
           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
             <button onClick={onSelect} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="选择">
               <input type="checkbox" checked={selected} readOnly className="pointer-events-none" style={{ accentColor: 'var(--accent-primary)' }} />
             </button>
-            <button onClick={() => window.open(page.url, '_blank')} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="打开">
+            <button onClick={() => window.open(site.siteUrl, '_blank')} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="访问">
               <ExternalLink size={13} style={{ color: 'var(--text-muted)' }} />
             </button>
             <button onClick={onShare} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="分享">
@@ -535,11 +510,10 @@ function WebPageCard({ page, selected, onSelect, onFavorite, onEdit, onDelete, o
 
 // ─── List View ───
 
-function WebPageListItem({ page, selected, onSelect, onFavorite, onEdit, onDelete, onShare }: {
-  page: WebPageItem;
+function SiteListItem({ site, selected, onSelect, onEdit, onDelete, onShare }: {
+  site: HostedSite;
   selected: boolean;
   onSelect: () => void;
-  onFavorite: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onShare: () => void;
@@ -557,47 +531,36 @@ function WebPageListItem({ page, selected, onSelect, onFavorite, onEdit, onDelet
         style={{ accentColor: 'var(--accent-primary)' }}
       />
 
-      {page.faviconUrl ? (
-        <img src={page.faviconUrl} alt="" className="w-5 h-5 rounded-sm shrink-0" />
-      ) : (
-        <Globe size={20} className="shrink-0" style={{ color: 'var(--text-muted)' }} />
-      )}
+      <FileCode2 size={20} className="shrink-0" style={{ color: 'var(--accent-primary)' }} />
 
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span
             className="text-sm font-medium truncate cursor-pointer hover:underline"
             style={{ color: 'var(--text-primary)' }}
-            onClick={() => window.open(page.url, '_blank')}
+            onClick={() => window.open(site.siteUrl, '_blank')}
           >
-            {page.title}
+            {site.title}
           </span>
-          <span className="text-xs truncate shrink-0" style={{ color: 'var(--text-muted)' }}>
-            {getDomain(page.url)}
-          </span>
+          <Badge variant={site.sourceType === 'workflow' ? 'info' : site.sourceType === 'api' ? 'warning' : 'default'}>
+            {sourceTypeLabels[site.sourceType] ?? site.sourceType}
+          </Badge>
         </div>
-        {page.tags.length > 0 && (
-          <div className="flex gap-1 mt-1">
-            {page.tags.slice(0, 5).map(tag => (
-              <span key={tag} className="px-1.5 py-0.5 rounded text-[10px]" style={{ background: 'var(--bg-sunken)', color: 'var(--text-muted)' }}>
-                {tag}
-              </span>
-            ))}
-          </div>
-        )}
+        <div className="flex items-center gap-3 mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>
+          <span>{site.files.length} 个文件</span>
+          <span>{fmtSize(site.totalSize)}</span>
+          <span>{site.entryFile}</span>
+        </div>
       </div>
 
       <div className="flex items-center gap-3 text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
-        {page.folder && <span className="flex items-center gap-1"><FolderOpen size={12} /> {page.folder}</span>}
-        <span className="flex items-center gap-1"><Eye size={12} /> {page.viewCount}</span>
-        <span>{relativeTime(page.createdAt)}</span>
+        {site.folder && <span className="flex items-center gap-1"><FolderOpen size={12} /> {site.folder}</span>}
+        <span className="flex items-center gap-1"><Eye size={12} /> {site.viewCount}</span>
+        <span>{relativeTime(site.createdAt)}</span>
       </div>
 
       <div className="flex items-center gap-1 shrink-0">
-        <button onClick={onFavorite} className="p-1 rounded hover:bg-[var(--bg-hover)]">
-          <Star size={14} fill={page.isFavorite ? '#eab308' : 'none'} color={page.isFavorite ? '#eab308' : 'var(--text-muted)'} />
-        </button>
-        <button onClick={() => window.open(page.url, '_blank')} className="p-1 rounded hover:bg-[var(--bg-hover)]">
+        <button onClick={() => window.open(site.siteUrl, '_blank')} className="p-1 rounded hover:bg-[var(--bg-hover)]">
           <ExternalLink size={14} style={{ color: 'var(--text-muted)' }} />
         </button>
         <button onClick={onShare} className="p-1 rounded hover:bg-[var(--bg-hover)]">
@@ -614,50 +577,63 @@ function WebPageListItem({ page, selected, onSelect, onFavorite, onEdit, onDelet
   );
 }
 
-// ─── Add/Edit Dialog ───
+// ─── Upload / Edit Dialog ───
 
-function AddEditDialog({ item, folders, onClose, onSaved }: {
-  item: WebPageItem | null;
+function UploadEditDialog({ item, folders, onClose, onSaved }: {
+  item: HostedSite | null;
   folders: string[];
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [url, setUrl] = useState(item?.url ?? '');
+  const isEdit = !!item;
   const [title, setTitle] = useState(item?.title ?? '');
   const [description, setDescription] = useState(item?.description ?? '');
-  const [faviconUrl, setFaviconUrl] = useState(item?.faviconUrl ?? '');
-  const [coverImageUrl, setCoverImageUrl] = useState(item?.coverImageUrl ?? '');
   const [tagInput, setTagInput] = useState((item?.tags ?? []).join(', '));
   const [folder, setFolder] = useState(item?.folder ?? '');
-  const [note, setNote] = useState(item?.note ?? '');
-  const [isFavorite, setIsFavorite] = useState(item?.isFavorite ?? false);
-  const [isPublic, setIsPublic] = useState(item?.isPublic ?? false);
+  const [file, setFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const f = e.dataTransfer.files[0];
+    if (f) setFile(f);
+  };
 
   const handleSave = async () => {
-    if (!url.trim() || !title.trim()) return;
     setSaving(true);
-    const tags = tagInput.split(/[,，]/).map(t => t.trim()).filter(Boolean);
 
-    const data = {
-      url: url.trim(),
-      title: title.trim(),
-      description: description.trim() || undefined,
-      faviconUrl: faviconUrl.trim() || undefined,
-      coverImageUrl: coverImageUrl.trim() || undefined,
-      tags,
-      folder: folder.trim() || undefined,
-      note: note.trim() || undefined,
-      isFavorite,
-      isPublic,
-    };
-
-    const res = item
-      ? await updateWebPage(item.id, data)
-      : await createWebPage(data);
-
-    setSaving(false);
-    if (res.success) onSaved();
+    if (isEdit) {
+      if (file) {
+        // Reupload
+        const res = await reuploadSite(item.id, file);
+        if (!res.success) { setSaving(false); return; }
+      }
+      // Update metadata
+      const tags = tagInput.split(/[,，]/).map(t => t.trim()).filter(Boolean);
+      const res = await updateSite(item.id, {
+        title: title.trim() || undefined,
+        description: description.trim() || undefined,
+        tags,
+        folder: folder.trim() || undefined,
+      });
+      setSaving(false);
+      if (res.success) onSaved();
+    } else {
+      if (!file) { setSaving(false); return; }
+      const tags = tagInput.split(/[,，]/).map(t => t.trim()).filter(Boolean);
+      const res = await uploadSite({
+        file,
+        title: title.trim() || undefined,
+        description: description.trim() || undefined,
+        folder: folder.trim() || undefined,
+        tags: tags.length > 0 ? tags.join(',') : undefined,
+      });
+      setSaving(false);
+      if (res.success) onSaved();
+    }
   };
 
   const inputStyle = {
@@ -667,27 +643,69 @@ function AddEditDialog({ item, folders, onClose, onSaved }: {
   };
 
   return (
-    <Dialog open onClose={onClose} title={item ? '编辑网页' : '添加网页'}>
+    <Dialog open onClose={onClose} title={isEdit ? '编辑站点' : '上传站点'}>
       <div className="flex flex-col gap-3 max-h-[65vh] overflow-y-auto pr-1">
-        <label className="flex flex-col gap-1">
-          <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>URL *</span>
-          <input
-            type="url"
-            value={url}
-            onChange={e => setUrl(e.target.value)}
-            placeholder="https://example.com"
-            className="px-3 py-2 rounded-lg text-sm outline-none"
-            style={inputStyle}
-          />
-        </label>
+
+        {/* File drop zone */}
+        {(!isEdit || file !== null) ? (
+          <div
+            className="flex flex-col items-center justify-center gap-2 p-6 rounded-lg cursor-pointer transition-colors"
+            style={{
+              background: dragOver ? 'rgba(59, 130, 246, 0.1)' : 'var(--bg-sunken)',
+              border: `2px dashed ${dragOver ? 'var(--accent-primary)' : 'var(--border-default)'}`,
+            }}
+            onClick={() => fileInputRef.current?.click()}
+            onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={handleDrop}
+          >
+            <UploadCloud size={32} style={{ color: 'var(--text-muted)' }} />
+            {file ? (
+              <div className="text-center">
+                <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{file.name}</p>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{fmtSize(file.size)}</p>
+              </div>
+            ) : (
+              <div className="text-center">
+                <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>拖拽文件到此处，或点击选择</p>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>支持 .html / .htm / .zip 文件，最大 50MB</p>
+              </div>
+            )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".html,.htm,.zip"
+              className="hidden"
+              onChange={e => { const f = e.target.files?.[0]; if (f) setFile(f); }}
+            />
+          </div>
+        ) : (
+          <div className="flex items-center gap-3 p-3 rounded-lg" style={{ background: 'var(--bg-sunken)', border: '1px solid var(--border-default)' }}>
+            <FileCode2 size={20} style={{ color: 'var(--accent-primary)' }} />
+            <div className="flex-1">
+              <p className="text-sm" style={{ color: 'var(--text-primary)' }}>{item.entryFile}</p>
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{item.files.length} 个文件, {fmtSize(item.totalSize)}</p>
+            </div>
+            <Button size="xs" variant="outline" onClick={() => fileInputRef.current?.click()}>
+              <Upload size={12} className="mr-1" /> 重新上传
+            </Button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".html,.htm,.zip"
+              className="hidden"
+              onChange={e => { const f = e.target.files?.[0]; if (f) setFile(f); }}
+            />
+          </div>
+        )}
 
         <label className="flex flex-col gap-1">
-          <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>标题 *</span>
+          <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>站点标题</span>
           <input
             type="text"
             value={title}
             onChange={e => setTitle(e.target.value)}
-            placeholder="网页标题"
+            placeholder="站点标题（留空使用文件名）"
             className="px-3 py-2 rounded-lg text-sm outline-none"
             style={inputStyle}
           />
@@ -698,37 +716,12 @@ function AddEditDialog({ item, folders, onClose, onSaved }: {
           <textarea
             value={description}
             onChange={e => setDescription(e.target.value)}
-            placeholder="简短描述这个网页..."
+            placeholder="站点描述..."
             rows={2}
             className="px-3 py-2 rounded-lg text-sm outline-none resize-none"
             style={inputStyle}
           />
         </label>
-
-        <div className="grid grid-cols-2 gap-3">
-          <label className="flex flex-col gap-1">
-            <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Favicon URL</span>
-            <input
-              type="url"
-              value={faviconUrl}
-              onChange={e => setFaviconUrl(e.target.value)}
-              placeholder="https://example.com/favicon.ico"
-              className="px-3 py-2 rounded-lg text-sm outline-none"
-              style={inputStyle}
-            />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>封面图 URL</span>
-            <input
-              type="url"
-              value={coverImageUrl}
-              onChange={e => setCoverImageUrl(e.target.value)}
-              placeholder="https://example.com/cover.jpg"
-              className="px-3 py-2 rounded-lg text-sm outline-none"
-              style={inputStyle}
-            />
-          </label>
-        </div>
 
         <label className="flex flex-col gap-1">
           <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>标签（逗号分隔）</span>
@@ -757,35 +750,12 @@ function AddEditDialog({ item, folders, onClose, onSaved }: {
             {folders.map(f => <option key={f} value={f} />)}
           </datalist>
         </label>
-
-        <label className="flex flex-col gap-1">
-          <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>备注</span>
-          <textarea
-            value={note}
-            onChange={e => setNote(e.target.value)}
-            placeholder="个人备注..."
-            rows={2}
-            className="px-3 py-2 rounded-lg text-sm outline-none resize-none"
-            style={inputStyle}
-          />
-        </label>
-
-        <div className="flex items-center gap-6">
-          <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: 'var(--text-secondary)' }}>
-            <input type="checkbox" checked={isFavorite} onChange={e => setIsFavorite(e.target.checked)} style={{ accentColor: '#eab308' }} />
-            <Star size={14} /> 收藏
-          </label>
-          <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: 'var(--text-secondary)' }}>
-            <input type="checkbox" checked={isPublic} onChange={e => setIsPublic(e.target.checked)} style={{ accentColor: 'var(--accent-primary)' }} />
-            <Globe size={14} /> 公开
-          </label>
-        </div>
       </div>
 
       <div className="flex justify-end gap-2 mt-4 pt-3" style={{ borderTop: '1px solid var(--border-default)' }}>
         <Button variant="ghost" onClick={onClose}>取消</Button>
-        <Button onClick={handleSave} disabled={saving || !url.trim() || !title.trim()}>
-          {saving ? '保存中...' : item ? '更新' : '添加'}
+        <Button onClick={handleSave} disabled={saving || (!isEdit && !file)}>
+          {saving ? '处理中...' : isEdit ? '保存' : '上传并创建'}
         </Button>
       </div>
     </Dialog>
@@ -794,9 +764,9 @@ function AddEditDialog({ item, folders, onClose, onSaved }: {
 
 // ─── Share Dialog ───
 
-function ShareDialog({ webPageId, webPageIds, onClose }: {
-  webPageId: string | null;
-  webPageIds?: string[];
+function ShareDialog({ siteId, siteIds, onClose }: {
+  siteId: string | null;
+  siteIds?: string[];
   onClose: () => void;
 }) {
   const [password, setPassword] = useState('');
@@ -806,13 +776,13 @@ function ShareDialog({ webPageId, webPageIds, onClose }: {
   const [result, setResult] = useState<{ shareUrl: string; token: string } | null>(null);
   const [copied, setCopied] = useState(false);
 
-  const isCollection = !webPageId && webPageIds && webPageIds.length > 1;
+  const isCollection = !siteId && siteIds && siteIds.length > 1;
 
   const handleCreate = async () => {
     setCreating(true);
-    const res = await createWebPageShare({
-      webPageId: webPageId || undefined,
-      webPageIds: isCollection ? webPageIds : undefined,
+    const res = await createSiteShareLink({
+      siteId: siteId || undefined,
+      siteIds: isCollection ? siteIds : undefined,
       shareType: isCollection ? 'collection' : 'single',
       title: title.trim() || undefined,
       password: password.trim() || undefined,
@@ -865,7 +835,7 @@ function ShareDialog({ webPageId, webPageIds, onClose }: {
         <div className="flex flex-col gap-3">
           {isCollection && (
             <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-              将分享 {webPageIds!.length} 个网页的合集
+              将分享 {siteIds!.length} 个站点的合集
             </p>
           )}
           <label className="flex flex-col gap-1">
@@ -924,8 +894,8 @@ function ShareDialog({ webPageId, webPageIds, onClose }: {
 // ─── Shares Panel ───
 
 function SharesPanel({ shares, setShares, onClose }: {
-  shares: WebPageShareLinkItem[];
-  setShares: (s: WebPageShareLinkItem[]) => void;
+  shares: ShareLinkItem[];
+  setShares: (s: ShareLinkItem[]) => void;
   onClose: () => void;
 }) {
   const [loading, setLoading] = useState(true);
@@ -933,7 +903,7 @@ function SharesPanel({ shares, setShares, onClose }: {
   useEffect(() => {
     (async () => {
       setLoading(true);
-      const res = await listWebPageShares();
+      const res = await listSiteShares();
       if (res.success) setShares(res.data.items);
       setLoading(false);
     })();
@@ -941,7 +911,7 @@ function SharesPanel({ shares, setShares, onClose }: {
 
   const handleRevoke = async (shareId: string) => {
     if (!confirm('确定撤销此分享链接？')) return;
-    const res = await revokeWebPageShare(shareId);
+    const res = await revokeSiteShare(shareId);
     if (res.success) {
       setShares(shares.filter(s => s.id !== shareId));
     }
@@ -971,13 +941,13 @@ function SharesPanel({ shares, setShares, onClose }: {
                 <div className="flex items-center gap-2">
                   <Link2 size={14} style={{ color: 'var(--text-muted)' }} />
                   <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                    {share.title || (share.shareType === 'collection' ? `合集 (${share.webPageIds.length} 页)` : '单页分享')}
+                    {share.title || (share.shareType === 'collection' ? `合集 (${share.siteIds.length} 站)` : '单站点分享')}
                   </span>
                   <Badge variant={share.accessLevel === 'password' ? 'warning' : 'success'}>
                     {share.accessLevel === 'password' ? '密码保护' : '公开'}
                   </Badge>
                   {share.shareType === 'collection' && (
-                    <Badge variant="info">{share.webPageIds.length} 页合集</Badge>
+                    <Badge variant="info">{share.siteIds.length} 站合集</Badge>
                   )}
                 </div>
                 <div className="flex items-center gap-3 mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>

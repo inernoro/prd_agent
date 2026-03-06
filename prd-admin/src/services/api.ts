@@ -757,12 +757,14 @@ export const api = {
     myWorkspaces: () => '/api/account/data-transfers/my-workspaces',
     myConfigs: () => '/api/account/data-transfers/my-configs',
   },
-  // ============ Web Pages 网页收藏 ============
+  // ============ Web Hosting 网页托管 ============
   webPages: {
+    upload: () => '/api/web-pages/upload',
+    fromContent: () => '/api/web-pages/from-content',
     list: () => '/api/web-pages',
     byId: (id: string) => `/api/web-pages/${id}`,
+    reupload: (id: string) => `/api/web-pages/${id}/reupload`,
     batchDelete: () => '/api/web-pages/batch-delete',
-    toggleFavorite: (id: string) => `/api/web-pages/${id}/toggle-favorite`,
     folders: () => '/api/web-pages/folders',
     tags: () => '/api/web-pages/tags',
     share: () => '/api/web-pages/share',

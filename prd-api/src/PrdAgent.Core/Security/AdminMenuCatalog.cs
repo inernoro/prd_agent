@@ -55,8 +55,8 @@ public static class AdminMenuCatalog
         // AI 竞技场（用户侧盲评对战）
         new("arena", "/arena", "AI 竞技场", null, "Swords", 135),
 
-        // 网页收藏
-        new("web-pages", "/web-pages", "网页收藏", null, "Globe", 127),
+        // 网页托管
+        new("web-pages", "/web-pages", "网页托管", null, "Globe", 127),
 
         // 实验室
         new("lab", "/lab", "实验室", null, "FlaskConical", 140),

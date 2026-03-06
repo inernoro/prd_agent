@@ -1217,22 +1217,23 @@ export type {
   TutorialEmailStep,
 } from '@/services/real/tutorialEmail';
 
-// ── Web Pages 网页收藏 ──
+// ── Web Hosting 网页托管 ──
 export {
-  listWebPages,
-  getWebPage,
-  createWebPage,
-  updateWebPage,
-  deleteWebPage,
-  batchDeleteWebPages,
-  toggleWebPageFavorite,
-  listWebPageFolders,
-  listWebPageTags,
-  createWebPageShare,
-  listWebPageShares,
-  revokeWebPageShare,
+  uploadSite,
+  reuploadSite,
+  createFromContent,
+  listSites,
+  getSite,
+  updateSite,
+  deleteSite,
+  batchDeleteSites,
+  listFolders as listSiteFolders,
+  listTags as listSiteTags,
+  createShareLink as createSiteShareLink,
+  listShares as listSiteShares,
+  revokeShare as revokeSiteShare,
 } from '@/services/real/webPages';
-export type { WebPageItem, WebPageShareLinkItem, TagCount } from '@/services/real/webPages';
+export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount } from '@/services/real/webPages';
 
 // ── Account Data Transfer 数据分享 ──
 export {

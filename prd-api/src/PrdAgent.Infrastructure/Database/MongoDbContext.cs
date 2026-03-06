@@ -168,8 +168,8 @@ public class MongoDbContext
     // Video Agent 文章转视频
     public IMongoCollection<VideoGenRun> VideoGenRuns => _database.GetCollection<VideoGenRun>("video_gen_runs");
 
-    // Web Pages 网页收藏与分享
-    public IMongoCollection<WebPage> WebPages => _database.GetCollection<WebPage>("web_pages");
+    // Web Hosting 网页托管与分享
+    public IMongoCollection<HostedSite> HostedSites => _database.GetCollection<HostedSite>("hosted_sites");
     public IMongoCollection<WebPageShareLink> WebPageShareLinks => _database.GetCollection<WebPageShareLink>("web_page_share_links");
 
     // Tutorial Email 教程邮件
@@ -1096,20 +1096,24 @@ public class MongoDbContext
             Builders<ArenaBattle>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_arena_battles_user_created" }));
 
-        // ========== Web Pages 网页收藏索引 ==========
+        // ========== Hosted Sites 网页托管索引 ==========
 
-        // WebPages：按用户 + 创建时间查询
-        WebPages.Indexes.CreateOne(new CreateIndexModel<WebPage>(
-            Builders<WebPage>.IndexKeys.Ascending(x => x.OwnerUserId).Descending(x => x.CreatedAt),
-            new CreateIndexOptions { Name = "idx_web_pages_owner_created" }));
-        // WebPages：按标签多值索引
-        WebPages.Indexes.CreateOne(new CreateIndexModel<WebPage>(
-            Builders<WebPage>.IndexKeys.Ascending(x => x.Tags),
-            new CreateIndexOptions { Name = "idx_web_pages_tags" }));
-        // WebPages：按文件夹查询
-        WebPages.Indexes.CreateOne(new CreateIndexModel<WebPage>(
-            Builders<WebPage>.IndexKeys.Ascending(x => x.OwnerUserId).Ascending(x => x.Folder),
-            new CreateIndexOptions { Name = "idx_web_pages_owner_folder" }));
+        // HostedSites：按用户 + 创建时间查询
+        HostedSites.Indexes.CreateOne(new CreateIndexModel<HostedSite>(
+            Builders<HostedSite>.IndexKeys.Ascending(x => x.OwnerUserId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_hosted_sites_owner_created" }));
+        // HostedSites：按标签多值索引
+        HostedSites.Indexes.CreateOne(new CreateIndexModel<HostedSite>(
+            Builders<HostedSite>.IndexKeys.Ascending(x => x.Tags),
+            new CreateIndexOptions { Name = "idx_hosted_sites_tags" }));
+        // HostedSites：按来源类型查询
+        HostedSites.Indexes.CreateOne(new CreateIndexModel<HostedSite>(
+            Builders<HostedSite>.IndexKeys.Ascending(x => x.OwnerUserId).Ascending(x => x.SourceType),
+            new CreateIndexOptions { Name = "idx_hosted_sites_owner_source" }));
+        // HostedSites：按文件夹查询
+        HostedSites.Indexes.CreateOne(new CreateIndexModel<HostedSite>(
+            Builders<HostedSite>.IndexKeys.Ascending(x => x.OwnerUserId).Ascending(x => x.Folder),
+            new CreateIndexOptions { Name = "idx_hosted_sites_owner_folder" }));
 
         // WebPageShareLinks：按 Token 唯一
         try
