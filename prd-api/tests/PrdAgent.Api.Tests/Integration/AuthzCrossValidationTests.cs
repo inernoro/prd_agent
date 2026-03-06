@@ -1,8 +1,9 @@
 using System.Net;
-using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -12,13 +13,16 @@ namespace PrdAgent.Api.Tests.Integration;
 /// Cross-validation integration tests: verify that skill execute, chat-run create,
 /// and run access endpoints enforce identical authorization rules.
 ///
-/// Test matrix:
-///   1. Owner session: root user => skill execute OK, chat-run OK, run get/cancel/stream OK
-///   2. Other user's session: userB => skill execute 403, chat-run 403
-///   3. Non-existent session: both paths return 404
-///   4. Run created by root => only root can get/cancel/stream, userB gets 403
+/// Uses X-AI-Access-Key + X-AI-Impersonate to simulate any user (no JWT needed).
 ///
-/// Requires: real MongoDB + Redis, root + at least one normal user.
+/// Test matrix:
+///   CV1: Owner CAN access own session (skill execute + chat-run, no 403)
+///   CV2: Non-owner CANNOT access other's session (both paths -> 403)
+///   CV3: Non-existent session -> 404 (both paths)
+///   CV4: Run access — owner OK, other user 403 (get/cancel/stream)
+///   CV5: Skill list visibility consistent with execute permission
+///
+/// Requires: real MongoDB + Redis + AI_ACCESS_KEY configured.
 /// CI skips these (Category=Integration).
 ///
 /// Run:
@@ -32,19 +36,17 @@ public class AuthzCrossValidationTests : IClassFixture<WebApplicationFactory<Pro
     private readonly WebApplicationFactory<Program> _factory;
     private readonly ITestOutputHelper _output;
 
-    // Root user context (admin, owns personal sessions)
-    private string? _rootToken;
-    private string? _rootUserId;
+    private string? _aiAccessKey;
 
-    // Root's first available session (personal)
-    private string? _rootSessionId;
+    // UserA: the owner of a personal session (first human user found)
+    private string? _userAUsername;
+    private string? _userASessionId;
 
-    // Root's first available skill
+    // UserB: a different user who should NOT be able to access UserA's session
+    private string? _userBUsername;
+
+    // Available skill key
     private string? _availableSkillKey;
-
-    // A second user context (to test cross-user denial)
-    private string? _userBToken;
-    private string? _userBUserId;
 
     public AuthzCrossValidationTests(WebApplicationFactory<Program> factory, ITestOutputHelper output)
     {
@@ -56,118 +58,139 @@ public class AuthzCrossValidationTests : IClassFixture<WebApplicationFactory<Pro
 
     public async Task InitializeAsync()
     {
-        // ── Step 1: Root login ──
-        _rootToken = await LoginAsync("root", "root", "admin");
-        if (_rootToken != null)
-        {
-            _rootUserId = ExtractUserId(_rootToken);
-            Log($"[Init] Root login OK, userId={_rootUserId}");
-        }
-        else
-        {
-            // Retry with env vars
-            var username = Environment.GetEnvironmentVariable("ROOT_ACCESS_USERNAME");
-            var password = Environment.GetEnvironmentVariable("ROOT_ACCESS_PASSWORD");
-            if (!string.IsNullOrWhiteSpace(username) && !string.IsNullOrWhiteSpace(password))
-            {
-                _rootToken = await LoginAsync(username, password, "admin");
-                if (_rootToken != null)
-                    _rootUserId = ExtractUserId(_rootToken);
-            }
+        // Read AI_ACCESS_KEY from app config (same as the running server)
+        using var scope = _factory.Services.CreateScope();
+        var config = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+        _aiAccessKey = (config["AI_ACCESS_KEY"] ?? "").Trim();
 
-            if (_rootToken == null)
-            {
-                Log("[Init] Root login failed, all auth tests will be skipped");
-                return;
-            }
+        if (string.IsNullOrWhiteSpace(_aiAccessKey))
+        {
+            Log("[Init] AI_ACCESS_KEY not configured, all tests will skip");
+            return;
+        }
+        Log("[Init] AI_ACCESS_KEY found");
+
+        // Find all human users
+        var adminClient = CreateClient("admin");
+        var usersResp = await adminClient.GetAsync("/api/users");
+        if (usersResp.StatusCode != HttpStatusCode.OK)
+        {
+            // Try "root" as impersonation target
+            adminClient = CreateClient("root");
+            usersResp = await adminClient.GetAsync("/api/users");
         }
 
-        // ── Step 2: Get root's sessions ──
-        var rootClient = CreateClient(_rootToken);
-        var sessionsResp = await rootClient.GetAsync("/api/v1/sessions");
-        if (sessionsResp.StatusCode == HttpStatusCode.OK)
+        if (usersResp.StatusCode != HttpStatusCode.OK)
         {
-            var body = await sessionsResp.Content.ReadAsStringAsync();
-            using var doc = JsonDocument.Parse(body);
-            var items = doc.RootElement.GetProperty("data").GetProperty("items");
-            if (items.GetArrayLength() > 0)
+            Log($"[Init] Cannot list users: {usersResp.StatusCode}");
+            return;
+        }
+
+        var usersBody = await usersResp.Content.ReadAsStringAsync();
+        using var usersDoc = JsonDocument.Parse(usersBody);
+        var users = usersDoc.RootElement.GetProperty("data").GetProperty("items");
+
+        // Collect human (non-bot) usernames
+        var humanUsers = new List<(string username, string userId)>();
+        foreach (var u in users.EnumerateArray())
+        {
+            var userType = u.TryGetProperty("userType", out var ut) ? ut.GetString() : null;
+            var botKind = u.TryGetProperty("botKind", out var bk) ? bk.GetString() : null;
+            var username = u.GetProperty("username").GetString()!;
+            var userId = u.GetProperty("userId").GetString()!;
+
+            // Skip bots
+            if (userType == "Bot" || !string.IsNullOrWhiteSpace(botKind)) continue;
+            humanUsers.Add((username, userId));
+        }
+
+        Log($"[Init] Found {humanUsers.Count} human users: {string.Join(", ", humanUsers.Select(u => u.username))}");
+
+        // Find UserA: a human user who has at least one personal session
+        foreach (var (username, userId) in humanUsers)
+        {
+            var client = CreateClient(username);
+            var sessResp = await client.GetAsync("/api/v1/sessions");
+            if (sessResp.StatusCode != HttpStatusCode.OK) continue;
+
+            var sessBody = await sessResp.Content.ReadAsStringAsync();
+            using var sessDoc = JsonDocument.Parse(sessBody);
+            var items = sessDoc.RootElement.GetProperty("data").GetProperty("items");
+            if (items.GetArrayLength() == 0) continue;
+
+            _userAUsername = username;
+            _userASessionId = items[0].GetProperty("sessionId").GetString();
+            Log($"[Init] UserA: {username} (userId={userId}), session: {_userASessionId}");
+            break;
+        }
+
+        if (_userAUsername == null)
+            Log("[Init] No user with sessions found, session-dependent tests will skip");
+
+        // Find UserB: any different human user
+        foreach (var (username, _) in humanUsers)
+        {
+            if (username != _userAUsername)
             {
-                _rootSessionId = items[0].GetProperty("sessionId").GetString();
-                Log($"[Init] Root session: {_rootSessionId}");
-            }
-            else
-            {
-                Log("[Init] Root has no sessions, session-dependent tests will skip");
+                _userBUsername = username;
+                Log($"[Init] UserB: {username}");
+                break;
             }
         }
 
-        // ── Step 3: Get available skills ──
-        var skillsResp = await rootClient.GetAsync("/api/prd-agent/skills");
+        if (_userBUsername == null)
+            Log("[Init] No second user found, cross-user tests will skip");
+
+        // Find an available skill (impersonate UserA if available, else admin)
+        var skillClient = CreateClient(_userAUsername ?? "admin");
+        var skillsResp = await skillClient.GetAsync("/api/prd-agent/skills");
         if (skillsResp.StatusCode == HttpStatusCode.OK)
         {
-            var body = await skillsResp.Content.ReadAsStringAsync();
-            using var doc = JsonDocument.Parse(body);
-            var skills = doc.RootElement.GetProperty("data").GetProperty("skills");
+            var skillsBody = await skillsResp.Content.ReadAsStringAsync();
+            using var skillsDoc = JsonDocument.Parse(skillsBody);
+            var skills = skillsDoc.RootElement.GetProperty("data").GetProperty("skills");
             if (skills.GetArrayLength() > 0)
             {
                 _availableSkillKey = skills[0].GetProperty("skillKey").GetString();
                 Log($"[Init] Available skill: {_availableSkillKey}");
             }
-            else
-            {
-                Log("[Init] No skills available, skill tests will skip");
-            }
         }
 
-        // ── Step 4: Try login as second user ──
-        // Use env var or try common test accounts
-        var userBName = Environment.GetEnvironmentVariable("TEST_USER_B_USERNAME");
-        var userBPass = Environment.GetEnvironmentVariable("TEST_USER_B_PASSWORD");
-
-        if (!string.IsNullOrWhiteSpace(userBName) && !string.IsNullOrWhiteSpace(userBPass))
-        {
-            _userBToken = await LoginAsync(userBName, userBPass, "desktop");
-            if (_userBToken != null)
-            {
-                _userBUserId = ExtractUserId(_userBToken);
-                Log($"[Init] UserB login OK, userId={_userBUserId}");
-            }
-        }
-
-        if (_userBToken == null)
-        {
-            Log("[Init] No second user available (set TEST_USER_B_USERNAME/PASSWORD), cross-user tests will skip");
-        }
+        if (_availableSkillKey == null)
+            Log("[Init] No skills available, skill tests will skip");
     }
 
     public Task DisposeAsync() => Task.CompletedTask;
 
+    private HttpClient CreateClient(string impersonateUsername)
+    {
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-AI-Access-Key", _aiAccessKey);
+        client.DefaultRequestHeaders.Add("X-AI-Impersonate", impersonateUsername);
+        return client;
+    }
+
+    private bool Ready => !string.IsNullOrWhiteSpace(_aiAccessKey);
+
     // ══════════════════════════════════════════
-    // Cross-validation 1: Owner CAN access own session
-    // Both skill execute and chat-run should succeed
+    // CV1: Owner CAN access own session
     // ══════════════════════════════════════════
 
     [Fact]
     public async Task CV1_SkillExecute_OwnerSession_ShouldNotReturn403()
     {
-        if (_rootToken == null || _rootSessionId == null || _availableSkillKey == null)
-        {
-            Log("[Skip] Missing root token / session / skill");
-            return;
-        }
+        if (!Ready || _userAUsername == null || _userASessionId == null || _availableSkillKey == null)
+        { Log("[Skip] Missing prerequisites"); return; }
 
-        Log($"[CV1] Skill execute: owner({_rootUserId}) + ownSession({_rootSessionId}) + skill({_availableSkillKey})");
-
-        var client = CreateClient(_rootToken);
+        Log($"[CV1] Skill execute: {_userAUsername} + own session + skill({_availableSkillKey})");
+        var client = CreateClient(_userAUsername);
         var response = await client.PostAsJsonAsync(
             $"/api/prd-agent/skills/{_availableSkillKey}/execute",
-            new { sessionId = _rootSessionId });
+            new { sessionId = _userASessionId });
 
         var body = await response.Content.ReadAsStringAsync();
-        Log($"  StatusCode: {response.StatusCode}");
-        Log($"  Body: {Truncate(body, 300)}");
+        Log($"  => {response.StatusCode} | {Truncate(body, 200)}");
 
-        // Should NOT be 403 (could be 200 success, or other business error, but not permission denied)
         Assert.NotEqual(HttpStatusCode.Forbidden, response.StatusCode);
         Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
     }
@@ -175,51 +198,40 @@ public class AuthzCrossValidationTests : IClassFixture<WebApplicationFactory<Pro
     [Fact]
     public async Task CV1_ChatRunCreate_OwnerSession_ShouldNotReturn403()
     {
-        if (_rootToken == null || _rootSessionId == null)
-        {
-            Log("[Skip] Missing root token / session");
-            return;
-        }
+        if (!Ready || _userAUsername == null || _userASessionId == null)
+        { Log("[Skip] Missing prerequisites"); return; }
 
-        Log($"[CV1] ChatRun create: owner({_rootUserId}) + ownSession({_rootSessionId})");
-
-        var client = CreateClient(_rootToken);
+        Log($"[CV1] ChatRun create: {_userAUsername} + own session");
+        var client = CreateClient(_userAUsername);
         var response = await client.PostAsJsonAsync(
-            $"/api/v1/sessions/{_rootSessionId}/messages/run",
-            new { content = "[test] cross-validation owner access" });
+            $"/api/v1/sessions/{_userASessionId}/messages/run",
+            new { content = "[cv-test] owner access check" });
 
         var body = await response.Content.ReadAsStringAsync();
-        Log($"  StatusCode: {response.StatusCode}");
-        Log($"  Body: {Truncate(body, 300)}");
+        Log($"  => {response.StatusCode} | {Truncate(body, 200)}");
 
         Assert.NotEqual(HttpStatusCode.Forbidden, response.StatusCode);
         Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
     // ══════════════════════════════════════════
-    // Cross-validation 2: Non-owner CANNOT access other's session
-    // Both skill execute and chat-run should return 403
+    // CV2: Non-owner CANNOT access other's session
     // ══════════════════════════════════════════
 
     [Fact]
     public async Task CV2_SkillExecute_OtherUserSession_ShouldReturn403()
     {
-        if (_userBToken == null || _rootSessionId == null || _availableSkillKey == null)
-        {
-            Log("[Skip] Missing userB token / root session / skill");
-            return;
-        }
+        if (!Ready || _userBUsername == null || _userASessionId == null || _availableSkillKey == null)
+        { Log("[Skip] Missing prerequisites"); return; }
 
-        Log($"[CV2] Skill execute: userB({_userBUserId}) + rootSession({_rootSessionId}) + skill({_availableSkillKey})");
-
-        var client = CreateClient(_userBToken);
+        Log($"[CV2] Skill execute: {_userBUsername} + {_userAUsername}'s session");
+        var client = CreateClient(_userBUsername);
         var response = await client.PostAsJsonAsync(
             $"/api/prd-agent/skills/{_availableSkillKey}/execute",
-            new { sessionId = _rootSessionId });
+            new { sessionId = _userASessionId });
 
         var body = await response.Content.ReadAsStringAsync();
-        Log($"  StatusCode: {response.StatusCode}");
-        Log($"  Body: {Truncate(body, 300)}");
+        Log($"  => {response.StatusCode} | {Truncate(body, 200)}");
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         AssertErrorCode(body, "PERMISSION_DENIED");
@@ -228,120 +240,89 @@ public class AuthzCrossValidationTests : IClassFixture<WebApplicationFactory<Pro
     [Fact]
     public async Task CV2_ChatRunCreate_OtherUserSession_ShouldReturn403()
     {
-        if (_userBToken == null || _rootSessionId == null)
-        {
-            Log("[Skip] Missing userB token / root session");
-            return;
-        }
+        if (!Ready || _userBUsername == null || _userASessionId == null)
+        { Log("[Skip] Missing prerequisites"); return; }
 
-        Log($"[CV2] ChatRun create: userB({_userBUserId}) + rootSession({_rootSessionId})");
-
-        var client = CreateClient(_userBToken);
+        Log($"[CV2] ChatRun create: {_userBUsername} + {_userAUsername}'s session");
+        var client = CreateClient(_userBUsername);
         var response = await client.PostAsJsonAsync(
-            $"/api/v1/sessions/{_rootSessionId}/messages/run",
-            new { content = "[test] cross-user denial" });
+            $"/api/v1/sessions/{_userASessionId}/messages/run",
+            new { content = "[cv-test] cross-user denial" });
 
         var body = await response.Content.ReadAsStringAsync();
-        Log($"  StatusCode: {response.StatusCode}");
-        Log($"  Body: {Truncate(body, 300)}");
+        Log($"  => {response.StatusCode} | {Truncate(body, 200)}");
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         AssertErrorCode(body, "PERMISSION_DENIED");
     }
 
     // ══════════════════════════════════════════
-    // Cross-validation 3: Non-existent session => 404 (both paths)
+    // CV3: Non-existent session => 404 (both paths)
     // ══════════════════════════════════════════
 
     [Fact]
     public async Task CV3_SkillExecute_NonExistentSession_Returns404()
     {
-        if (_rootToken == null || _availableSkillKey == null)
-        {
-            Log("[Skip] Missing root token / skill");
-            return;
-        }
+        if (!Ready || _userAUsername == null || _availableSkillKey == null)
+        { Log("[Skip] Missing prerequisites"); return; }
 
         Log("[CV3] Skill execute: non-existent session");
-
-        var client = CreateClient(_rootToken);
+        var client = CreateClient(_userAUsername);
         var response = await client.PostAsJsonAsync(
             $"/api/prd-agent/skills/{_availableSkillKey}/execute",
-            new { sessionId = "non-existent-session-cv3-" + Guid.NewGuid().ToString("N")[..8] });
+            new { sessionId = "cv3-phantom-" + Guid.NewGuid().ToString("N")[..8] });
 
-        Log($"  StatusCode: {response.StatusCode}");
+        Log($"  => {response.StatusCode}");
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
     [Fact]
     public async Task CV3_ChatRunCreate_NonExistentSession_Returns404()
     {
-        if (_rootToken == null)
-        {
-            Log("[Skip] Missing root token");
-            return;
-        }
+        if (!Ready || _userAUsername == null)
+        { Log("[Skip] Missing prerequisites"); return; }
 
         Log("[CV3] ChatRun create: non-existent session");
-
-        var client = CreateClient(_rootToken);
+        var client = CreateClient(_userAUsername);
         var response = await client.PostAsJsonAsync(
-            $"/api/v1/sessions/non-existent-session-cv3-{Guid.NewGuid().ToString("N")[..8]}/messages/run",
+            $"/api/v1/sessions/cv3-phantom-{Guid.NewGuid().ToString("N")[..8]}/messages/run",
             new { content = "test" });
 
-        Log($"  StatusCode: {response.StatusCode}");
+        Log($"  => {response.StatusCode}");
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
     // ══════════════════════════════════════════
-    // Cross-validation 4: Run access — owner OK, other user 403
-    // Creates a run via chat-run, then verifies get/cancel/stream
+    // CV4: Run access — owner OK, other user 403
     // ══════════════════════════════════════════
 
     [Fact]
     public async Task CV4_RunAccess_OwnerCanGetRun()
     {
-        var runId = await CreateRunAsRoot();
-        if (runId == null)
-        {
-            Log("[Skip] Could not create run");
-            return;
-        }
+        var runId = await CreateRunAs(_userAUsername);
+        if (runId == null) { Log("[Skip] Could not create run"); return; }
 
-        Log($"[CV4] Owner GetRun: runId={runId}");
-
-        var client = CreateClient(_rootToken!);
+        Log($"[CV4] Owner GetRun: {_userAUsername} + runId={runId}");
+        var client = CreateClient(_userAUsername!);
         var response = await client.GetAsync($"/api/v1/chat-runs/{runId}");
 
-        Log($"  StatusCode: {response.StatusCode}");
+        Log($"  => {response.StatusCode}");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
     [Fact]
     public async Task CV4_RunAccess_OtherUserCannotGetRun()
     {
-        if (_userBToken == null)
-        {
-            Log("[Skip] No userB token");
-            return;
-        }
+        if (_userBUsername == null) { Log("[Skip] No userB"); return; }
+        var runId = await CreateRunAs(_userAUsername);
+        if (runId == null) { Log("[Skip] Could not create run"); return; }
 
-        var runId = await CreateRunAsRoot();
-        if (runId == null)
-        {
-            Log("[Skip] Could not create run");
-            return;
-        }
-
-        Log($"[CV4] OtherUser GetRun: userB({_userBUserId}) + runId={runId}");
-
-        var client = CreateClient(_userBToken);
+        Log($"[CV4] OtherUser GetRun: {_userBUsername} + runId={runId}");
+        var client = CreateClient(_userBUsername);
         var response = await client.GetAsync($"/api/v1/chat-runs/{runId}");
         var body = await response.Content.ReadAsStringAsync();
 
-        Log($"  StatusCode: {response.StatusCode}");
-        Log($"  Body: {Truncate(body, 300)}");
-
+        Log($"  => {response.StatusCode} | {Truncate(body, 200)}");
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         AssertErrorCode(body, "PERMISSION_DENIED");
     }
@@ -349,28 +330,16 @@ public class AuthzCrossValidationTests : IClassFixture<WebApplicationFactory<Pro
     [Fact]
     public async Task CV4_RunAccess_OtherUserCannotCancelRun()
     {
-        if (_userBToken == null)
-        {
-            Log("[Skip] No userB token");
-            return;
-        }
+        if (_userBUsername == null) { Log("[Skip] No userB"); return; }
+        var runId = await CreateRunAs(_userAUsername);
+        if (runId == null) { Log("[Skip] Could not create run"); return; }
 
-        var runId = await CreateRunAsRoot();
-        if (runId == null)
-        {
-            Log("[Skip] Could not create run");
-            return;
-        }
-
-        Log($"[CV4] OtherUser CancelRun: userB({_userBUserId}) + runId={runId}");
-
-        var client = CreateClient(_userBToken);
+        Log($"[CV4] OtherUser Cancel: {_userBUsername} + runId={runId}");
+        var client = CreateClient(_userBUsername);
         var response = await client.PostAsync($"/api/v1/chat-runs/{runId}/cancel", null);
         var body = await response.Content.ReadAsStringAsync();
 
-        Log($"  StatusCode: {response.StatusCode}");
-        Log($"  Body: {Truncate(body, 300)}");
-
+        Log($"  => {response.StatusCode} | {Truncate(body, 200)}");
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         AssertErrorCode(body, "PERMISSION_DENIED");
     }
@@ -378,64 +347,42 @@ public class AuthzCrossValidationTests : IClassFixture<WebApplicationFactory<Pro
     [Fact]
     public async Task CV4_RunAccess_OtherUserStreamGetsDenied()
     {
-        if (_userBToken == null)
-        {
-            Log("[Skip] No userB token");
-            return;
-        }
+        if (_userBUsername == null) { Log("[Skip] No userB"); return; }
+        var runId = await CreateRunAs(_userAUsername);
+        if (runId == null) { Log("[Skip] Could not create run"); return; }
 
-        var runId = await CreateRunAsRoot();
-        if (runId == null)
-        {
-            Log("[Skip] Could not create run");
-            return;
-        }
-
-        Log($"[CV4] OtherUser StreamRun: userB({_userBUserId}) + runId={runId}");
-
-        var client = CreateClient(_userBToken);
+        Log($"[CV4] OtherUser Stream: {_userBUsername} + runId={runId}");
+        var client = CreateClient(_userBUsername);
         var response = await client.GetAsync($"/api/v1/chat-runs/{runId}/stream");
         var body = await response.Content.ReadAsStringAsync();
 
-        Log($"  StatusCode: {response.StatusCode}");
-        Log($"  Body: {Truncate(body, 200)}");
-
-        // SSE returns 200 with error event
+        Log($"  => {response.StatusCode} | {Truncate(body, 150)}");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Contains("event: error", body);
         Assert.Contains("PERMISSION_DENIED", body);
     }
 
     // ══════════════════════════════════════════
-    // Cross-validation 5: Consistency check
-    // Skill list visible items match execute permission
+    // CV5: Skill list visibility = execute permission
     // ══════════════════════════════════════════
 
     [Fact]
     public async Task CV5_SkillListAndExecute_ShouldBeConsistent()
     {
-        if (_rootToken == null || _rootSessionId == null)
-        {
-            Log("[Skip] Missing root token / session");
-            return;
-        }
+        if (!Ready || _userAUsername == null || _userASessionId == null)
+        { Log("[Skip] Missing prerequisites"); return; }
 
         Log("[CV5] Skill list vs execute consistency");
+        var client = CreateClient(_userAUsername);
 
-        var client = CreateClient(_rootToken);
-
-        // Get all visible skills
         var listResp = await client.GetAsync("/api/prd-agent/skills");
         Assert.Equal(HttpStatusCode.OK, listResp.StatusCode);
 
         var listBody = await listResp.Content.ReadAsStringAsync();
         using var listDoc = JsonDocument.Parse(listBody);
         var skills = listDoc.RootElement.GetProperty("data").GetProperty("skills");
-
         Log($"  Visible skills: {skills.GetArrayLength()}");
 
-        // Try executing the first 3 skills — they should NOT return 403
-        // (they may return other errors like missing context, but not permission denied)
         var count = 0;
         foreach (var skill in skills.EnumerateArray())
         {
@@ -444,92 +391,44 @@ public class AuthzCrossValidationTests : IClassFixture<WebApplicationFactory<Pro
 
             var execResp = await client.PostAsJsonAsync(
                 $"/api/prd-agent/skills/{key}/execute",
-                new { sessionId = _rootSessionId });
+                new { sessionId = _userASessionId });
 
-            Log($"  Skill [{key}] execute => {execResp.StatusCode}");
+            Log($"  [{key}] => {execResp.StatusCode}");
+
+            // Visible skill should not be 403 for the same user
             Assert.NotEqual(HttpStatusCode.Forbidden, execResp.StatusCode);
-
             count++;
         }
 
-        if (count == 0)
-            Log("  No skills to validate");
-        else
-            Log($"  Validated {count} skills: all accessible (no 403)");
+        Log(count == 0
+            ? "  No skills to validate"
+            : $"  Validated {count} skills: none returned 403");
     }
 
     // ══════════════════════════════════════════
     // Helpers
     // ══════════════════════════════════════════
 
-    private async Task<string?> LoginAsync(string username, string password, string clientType)
+    private async Task<string?> CreateRunAs(string? username)
     {
-        var client = _factory.CreateClient();
-        var response = await client.PostAsJsonAsync("/api/v1/auth/login", new
-        {
-            username,
-            password,
-            clientType
-        });
+        if (!Ready || username == null || _userASessionId == null) return null;
 
-        if (response.StatusCode != HttpStatusCode.OK)
-        {
-            var err = await response.Content.ReadAsStringAsync();
-            Log($"[Login] {username} failed: {response.StatusCode} - {Truncate(err, 200)}");
-            return null;
-        }
-
-        var body = await response.Content.ReadAsStringAsync();
-        using var doc = JsonDocument.Parse(body);
-        return doc.RootElement.GetProperty("data").GetProperty("accessToken").GetString();
-    }
-
-    private static string? ExtractUserId(string jwtToken)
-    {
-        // Decode JWT payload (no verification needed, just read claims)
-        var parts = jwtToken.Split('.');
-        if (parts.Length < 2) return null;
-
-        var payload = parts[1];
-        // Pad base64
-        switch (payload.Length % 4)
-        {
-            case 2: payload += "=="; break;
-            case 3: payload += "="; break;
-        }
-
-        var bytes = Convert.FromBase64String(payload.Replace('-', '+').Replace('_', '/'));
-        using var doc = JsonDocument.Parse(bytes);
-        return doc.RootElement.TryGetProperty("sub", out var sub) ? sub.GetString() : null;
-    }
-
-    private HttpClient CreateClient(string token)
-    {
-        var client = _factory.CreateClient();
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        return client;
-    }
-
-    private async Task<string?> CreateRunAsRoot()
-    {
-        if (_rootToken == null || _rootSessionId == null) return null;
-
-        var client = CreateClient(_rootToken);
+        var client = CreateClient(username);
         var response = await client.PostAsJsonAsync(
-            $"/api/v1/sessions/{_rootSessionId}/messages/run",
-            new { content = $"[test] cv4-run-{Guid.NewGuid().ToString("N")[..6]}" });
+            $"/api/v1/sessions/{_userASessionId}/messages/run",
+            new { content = $"[cv-test] run-{Guid.NewGuid().ToString("N")[..6]}" });
 
         if (response.StatusCode != HttpStatusCode.OK)
         {
             var err = await response.Content.ReadAsStringAsync();
-            Log($"[CreateRun] Failed: {response.StatusCode} - {Truncate(err, 200)}");
+            Log($"[CreateRun] {username} => {response.StatusCode}: {Truncate(err, 150)}");
             return null;
         }
 
         var body = await response.Content.ReadAsStringAsync();
         using var doc = JsonDocument.Parse(body);
         var runId = doc.RootElement.GetProperty("data").GetProperty("runId").GetString();
-        Log($"[CreateRun] OK, runId={runId}");
+        Log($"[CreateRun] {username} => runId={runId}");
         return runId;
     }
 
