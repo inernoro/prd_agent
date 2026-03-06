@@ -766,8 +766,7 @@ public class MongoDbContext
                 new CreateIndexOptions
                 {
                     Name = "uniq_defect_projects_key",
-                    Unique = true,
-                    PartialFilterExpression = new BsonDocument("Key", new BsonDocument("$type", "string"))
+                    Unique = true
                 }));
         }
         catch (MongoCommandException ex) when (IsIndexConflict(ex))
