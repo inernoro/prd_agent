@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────
-# Branch Tester 一键启动脚本
+# CDS 一键启动脚本
 #
 # 用法：
 #   ./exec_branch_tester.sh                # 前台运行
@@ -31,7 +31,7 @@ for arg in "$@"; do
 done
 
 echo ""
-echo "  Branch Tester Startup"
+echo "  CDS Startup"
 echo "  ─────────────────────"
 echo "  Directory:  $SCRIPT_DIR"
 echo "  Config:     $CONFIG_FILE"
@@ -72,7 +72,7 @@ if [ "${BT_NGINX_ENABLE:-}" = "1" ]; then
 
   if [ -f "$BT_NGINX_CONF" ]; then
     if [ -d "$NGINX_CONF_DIR" ]; then
-      sudo cp "$BT_NGINX_CONF" "$NGINX_CONF_DIR/bt-branch-tester.conf"
+      sudo cp "$BT_NGINX_CONF" "$NGINX_CONF_DIR/bt-cds.conf"
       sudo nginx -t 2>/dev/null && sudo nginx -s reload 2>/dev/null && echo "  Nginx: OK (port 58000)" || echo "  Nginx: config test failed (skipped)"
     else
       echo "  Nginx: $NGINX_CONF_DIR not found (skipped)"
@@ -82,10 +82,10 @@ else
   echo "[2/3] Nginx: skipped (set BT_NGINX_ENABLE=1 to enable)"
 fi
 
-# ── 4. Start branch-tester ──
+# ── 4. Start cds ──
 mkdir -p .bt
 
-echo "[3/3] Starting Branch Tester..."
+echo "[3/3] Starting CDS..."
 
 if [ "$BACKGROUND" = true ]; then
   # Stop any existing instance
@@ -104,7 +104,7 @@ if [ "$BACKGROUND" = true ]; then
   echo "$BT_PID" > "$PID_FILE"
 
   echo ""
-  echo "  Branch Tester started in background"
+  echo "  CDS started in background"
   echo "  PID:        $BT_PID"
   echo "  Log:        $SCRIPT_DIR/$LOG_FILE"
   echo "  Dashboard:  http://localhost:9900"
