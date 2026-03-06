@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Branch Provisioning</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0f1117;
+      color: #e1e4e8;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .container {
+      text-align: center;
+      padding: 24px;
+      max-width: 480px;
+    }
+    .spinner {
+      width: 48px;
+      height: 48px;
+      border: 3px solid rgba(88, 166, 255, 0.2);
+      border-top-color: #58a6ff;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 24px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    h1 {
+      font-size: 20px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .branch-name {
+      font-family: 'SF Mono', Menlo, Consolas, monospace;
+      color: #58a6ff;
+      font-size: 16px;
+      font-weight: 500;
+      margin-bottom: 16px;
+      word-break: break-all;
+    }
+    .status {
+      color: #8b949e;
+      font-size: 14px;
+      margin-bottom: 24px;
+      line-height: 1.6;
+    }
+    .progress-steps {
+      text-align: left;
+      display: inline-block;
+      margin-bottom: 24px;
+    }
+    .step {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 0;
+      font-size: 13px;
+      color: #6e7681;
+    }
+    .step.active { color: #e1e4e8; }
+    .step.done { color: #3fb950; }
+    .step-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #30363d;
+      flex-shrink: 0;
+    }
+    .step.active .step-dot {
+      background: #58a6ff;
+      box-shadow: 0 0 8px rgba(88, 166, 255, 0.4);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    .step.done .step-dot { background: #3fb950; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    .error-box {
+      background: rgba(248, 81, 73, 0.1);
+      border: 1px solid rgba(248, 81, 73, 0.3);
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-size: 13px;
+      color: #f85149;
+      margin-top: 16px;
+      text-align: left;
+    }
+    .retry-btn {
+      margin-top: 16px;
+      padding: 10px 24px;
+      background: #1f6feb;
+      border: none;
+      border-radius: 6px;
+      color: #fff;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    .retry-btn:hover { background: #388bfd; }
+    .not-found {
+      margin-top: 16px;
+    }
+    .not-found a {
+      color: #58a6ff;
+      text-decoration: none;
+    }
+    .not-found a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="spinner" id="spinner"></div>
+    <h1 id="title">正在准备环境</h1>
+    <div class="branch-name" id="branchSlug"></div>
+    <div class="status" id="statusText">正在检查分支状态...</div>
+
+    <div class="progress-steps" id="steps" style="display:none">
+      <div class="step" id="step-check"><div class="step-dot"></div>检查分支</div>
+      <div class="step" id="step-add"><div class="step-dot"></div>添加分支</div>
+      <div class="step" id="step-run"><div class="step-dot"></div>启动服务</div>
+      <div class="step" id="step-ready"><div class="step-dot"></div>就绪</div>
+    </div>
+
+    <div id="errorBox" class="error-box" style="display:none"></div>
+    <div id="notFound" class="not-found" style="display:none"></div>
+  </div>
+
+  <script>
+    // Extract branch slug from subdomain
+    const host = location.hostname;
+    const parts = host.split('.');
+    const slug = parts.length >= 3 ? parts[0] : null;
+    const dashboardHost = parts.length >= 3 ? parts.slice(1).join('.') : host;
+
+    document.getElementById('branchSlug').textContent = slug || 'unknown';
+
+    if (!slug) {
+      document.getElementById('spinner').style.display = 'none';
+      document.getElementById('title').textContent = '无效的分支地址';
+      document.getElementById('statusText').textContent = '请通过 {分支名}.{域名} 格式访问';
+      document.getElementById('notFound').style.display = 'block';
+      document.getElementById('notFound').innerHTML = `<a href="http://${dashboardHost}:9900">返回 Branch Tester 控制台</a>`;
+    } else {
+      checkProvision();
+    }
+
+    // The dashboard API base URL — assumes BT dashboard is on port 9900
+    const BT_API = `http://${dashboardHost}:9900/api`;
+
+    function setStep(stepId) {
+      document.getElementById('steps').style.display = 'block';
+      const steps = ['check', 'add', 'run', 'ready'];
+      const idx = steps.indexOf(stepId);
+      steps.forEach((s, i) => {
+        const el = document.getElementById(`step-${s}`);
+        el.className = i < idx ? 'step done' : i === idx ? 'step active' : 'step';
+      });
+    }
+
+    async function checkProvision() {
+      setStep('check');
+      document.getElementById('statusText').textContent = '正在检查分支状态...';
+
+      try {
+        const res = await fetch(`${BT_API}/provision/${slug}`);
+        const data = await res.json();
+
+        if (data.status === 'running') {
+          // Branch is running — redirect to preview port
+          setStep('ready');
+          document.getElementById('statusText').textContent = '分支已就绪，正在跳转...';
+          setTimeout(() => {
+            location.href = `http://${location.hostname}:${data.previewPort}`;
+          }, 1000);
+          return;
+        }
+
+        if (data.status === 'not_found') {
+          if (data.remoteBranches && data.remoteBranches.length > 0) {
+            // Found matching remote branches — offer to provision
+            document.getElementById('statusText').textContent = `找到远程分支，点击开始自动部署`;
+            const html = data.remoteBranches.map(b =>
+              `<button class="retry-btn" onclick="startProvision('${b}')">${b}</button>`
+            ).join(' ');
+            document.getElementById('notFound').style.display = 'block';
+            document.getElementById('notFound').innerHTML = html;
+            document.getElementById('spinner').style.display = 'none';
+          } else {
+            document.getElementById('spinner').style.display = 'none';
+            document.getElementById('title').textContent = '分支未找到';
+            document.getElementById('statusText').textContent = `未找到与 "${slug}" 匹配的远程分支`;
+            document.getElementById('notFound').style.display = 'block';
+            document.getElementById('notFound').innerHTML = `<a href="http://${dashboardHost}:9900">返回控制台</a>`;
+          }
+          return;
+        }
+
+        if (data.status === 'provisioning_needed') {
+          // Branch exists but not running — start it
+          document.getElementById('statusText').textContent = '分支已添加，正在启动...';
+          await startRun(data.branchId);
+          return;
+        }
+      } catch (err) {
+        showError(`检查失败: ${err.message}`);
+      }
+    }
+
+    async function startProvision(branchName) {
+      document.getElementById('spinner').style.display = 'block';
+      document.getElementById('notFound').style.display = 'none';
+      setStep('add');
+      document.getElementById('statusText').textContent = `正在添加分支 ${branchName}...`;
+
+      try {
+        // Add the branch
+        const addRes = await fetch(`${BT_API}/branches`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ branch: branchName }),
+        });
+        const addData = await addRes.json();
+        if (!addRes.ok) throw new Error(addData.error || 'Failed to add branch');
+
+        // Now run it
+        const branchId = addData.id || slug;
+        await startRun(branchId);
+      } catch (err) {
+        showError(`添加失败: ${err.message}`);
+      }
+    }
+
+    async function startRun(branchId) {
+      setStep('run');
+      document.getElementById('statusText').textContent = '正在启动服务，请稍候...';
+
+      try {
+        const response = await fetch(`${BT_API}/branches/${branchId}/run`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        });
+
+        if (!response.ok && !response.headers.get('content-type')?.includes('text/event-stream')) {
+          const err = await response.json();
+          throw new Error(err.error || `HTTP ${response.status}`);
+        }
+
+        // Consume SSE stream
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const lines = buf.split('\n');
+          buf = lines.pop();
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                if (data.title) {
+                  document.getElementById('statusText').textContent = data.title;
+                }
+                if (data.step === 'complete') {
+                  setStep('ready');
+                  document.getElementById('statusText').textContent = '就绪！正在跳转...';
+                  // Wait a moment then check for preview port
+                  setTimeout(async () => {
+                    try {
+                      const res = await fetch(`${BT_API}/provision/${slug}`);
+                      const pd = await res.json();
+                      if (pd.status === 'running' && pd.previewPort) {
+                        location.href = `http://${location.hostname}:${pd.previewPort}`;
+                      } else {
+                        location.reload();
+                      }
+                    } catch {
+                      location.reload();
+                    }
+                  }, 2000);
+                  return;
+                }
+                if (data.step === 'error') {
+                  showError(data.title || '启动失败');
+                  return;
+                }
+              } catch { /* skip */ }
+            }
+          }
+        }
+
+        // Stream ended — check status
+        setStep('ready');
+        document.getElementById('statusText').textContent = '启动完成，正在检查...';
+        setTimeout(() => location.reload(), 2000);
+      } catch (err) {
+        showError(`启动失败: ${err.message}`);
+      }
+    }
+
+    function showError(msg) {
+      document.getElementById('spinner').style.display = 'none';
+      document.getElementById('title').textContent = '出错了';
+      document.getElementById('statusText').textContent = '';
+      const box = document.getElementById('errorBox');
+      box.style.display = 'block';
+      box.textContent = msg;
+      document.getElementById('notFound').style.display = 'block';
+      document.getElementById('notFound').innerHTML = `
+        <button class="retry-btn" onclick="location.reload()">重试</button>
+        <br><br>
+        <a href="http://${dashboardHost}:9900" style="color:#58a6ff;text-decoration:none">返回控制台</a>`;
+    }
+  </script>
+</body>
+</html>

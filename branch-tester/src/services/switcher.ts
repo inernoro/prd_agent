@@ -160,6 +160,105 @@ ${proxyHeaders}
 `;
   }
 
+  /**
+   * Generate nginx config for a per-branch preview container.
+   * This config is used by an independent nginx container (not the gateway),
+   * listening on port 80 (mapped to a unique host port).
+   */
+  generatePreviewConfig(
+    apiUpstream: string,
+    mode: 'deploy' | 'run',
+    webUpstream?: string,
+  ): string {
+    const proxyHeaders = `        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 3s;
+        proxy_send_timeout 60s;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 3600s;`;
+
+    if (mode === 'run') {
+      const webTarget = webUpstream ?? apiUpstream;
+      const webPort = webUpstream ? 8000 : 8080;
+      return `server {
+    listen 80;
+    server_name _;
+    client_max_body_size 30m;
+    absolute_redirect off;
+    port_in_redirect off;
+
+    # Docker embedded DNS
+    resolver 127.0.0.11 valid=30s ipv6=off;
+
+    # Preview: API → dotnet container
+    location ^~ /api/ {
+        set $api_backend http://${apiUpstream}:8080;
+        proxy_pass $api_backend;
+${proxyHeaders}
+    }
+
+    # Preview: Frontend → Vite dev server
+    location / {
+        set $web_backend http://${webTarget}:${webPort};
+        proxy_pass $web_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host localhost;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_connect_timeout 3s;
+        proxy_send_timeout 60s;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 3600s;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+`;
+    }
+
+    // Deploy mode: serve static files + proxy API
+    return `server {
+    listen 80;
+    server_name _;
+    client_max_body_size 30m;
+    absolute_redirect off;
+    port_in_redirect off;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Preview: API → branch container
+    location ^~ /api/ {
+        proxy_pass http://${apiUpstream}:8080;
+${proxyHeaders}
+    }
+
+    location ^~ /assets/ {
+        try_files $uri =404;
+        expires 7d;
+        add_header Cache-Control "public, max-age=604800" always;
+    }
+
+    location ~* \\.(?:js|css|map|png|jpg|jpeg|gif|webp|svg|ico|woff2?|json|txt)$ {
+        try_files $uri =404;
+        expires 7d;
+        add_header Cache-Control "public, max-age=604800" always;
+    }
+
+    location / {
+        try_files $uri /index.html;
+    }
+}
+`;
+  }
+
   // ── Per-branch config file management ──
 
   /** Write a branch's nginx config to conf.d/branches/{branchId}.conf */

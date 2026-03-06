@@ -22,7 +22,6 @@ function showToast(msg, type = 'info', duration) {
   el.textContent = msg;
   el.className = `toast ${type}`;
   if (toastTimer) clearTimeout(toastTimer);
-  // Success/info toasts: longer by default so user can read them
   const ms = duration ?? (type === 'success' ? 6000 : type === 'error' ? 8000 : 4000);
   toastTimer = setTimeout(() => { el.className = 'toast hidden'; toastTimer = null; }, ms);
 }
@@ -44,12 +43,12 @@ function relativeTime(iso) {
   if (!iso) return '';
   const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
   if (m < 1) return '刚刚';
-  if (m < 60) return `${m} 分钟前`;
+  if (m < 60) return `${m}分钟前`;
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h} 小时前`;
+  if (h < 24) return `${h}小时前`;
   const d = Math.floor(h / 24);
-  if (d < 30) return `${d} 天前`;
-  return `${Math.floor(d / 30)} 个月前`;
+  if (d < 30) return `${d}天前`;
+  return `${Math.floor(d / 30)}个月前`;
 }
 
 function esc(str) {
@@ -71,122 +70,129 @@ function isBusy(branchId) {
   return globalBusy || (branchId && busyBranches.has(branchId));
 }
 
+function slugify(branch) {
+  return branch
+    .replace(/[^a-zA-Z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .toLowerCase();
+}
+
+// ---- Preview domain state ----
+let previewDomain = '';
+
 // ---- Tracked branch cards ----
 
-function branchActions(b, isActive) {
-  const groups = [];
+function branchQuickActions(b, isActive) {
   const srcRunning = b.runStatus === 'running';
   const depRunning = b.status === 'running';
-  const isBuilding = b.status === 'building';
-  const isMainDb = b.dbName === mainDbName;
-  const hasError = b.status === 'error' || b.runStatus === 'error';
   const branchBusy = isBusy(b.id);
-  const dis = branchBusy ? ' disabled title="操作进行中，请等待..."' : '';
+  const dis = branchBusy ? ' disabled' : '';
 
-  // ── Source mode (run/rerun merged into one button) ──
-  const srcBtns = [];
+  let html = '';
+  // Primary action: Run or Re-run
   if (srcRunning) {
-    srcBtns.push(`<button class="run-active" onclick="rerunBranch('${b.id}')" title="拉取最新代码并重新运行"${dis}>重运行</button>`);
+    html += `<button class="run-active" onclick="rerunBranch('${b.id}')"${dis}>重运行</button>`;
   } else {
-    srcBtns.push(`<button class="run" onclick="runBranch('${b.id}')" title="挂载源码运行 (dotnet run)"${dis}>运行</button>`);
+    html += `<button class="run" onclick="runBranch('${b.id}')"${dis}>运行</button>`;
   }
-  groups.push(srcBtns.join(''));
 
-  // ── Deploy mode (deploy/stop merged into one button) ──
-  const depBtns = [];
-  depBtns.push(!isBuilding
-    ? `<button onclick="pullBranch('${b.id}')" title="拉取最新代码"${dis}>拉取</button>`
-    : `<button disabled title="正在构建中，请等待完成">拉取</button>`);
+  // Deploy
+  const canDeploy = ['idle', 'error', 'built', 'stopped'].includes(b.status) && b.status !== 'building';
   if (depRunning) {
-    depBtns.push(isActive
-      ? `<button class="primary" disabled title="当前激活的部署不能停止">停止</button>`
-      : `<button onclick="stopBranch('${b.id}')" title="停止部署容器"${dis}>停止</button>`);
+    html += isActive
+      ? `<button class="primary" disabled>停止</button>`
+      : `<button onclick="stopBranch('${b.id}')"${dis}>停止</button>`;
   } else {
-    const canDeploy = ['idle', 'error', 'built', 'stopped'].includes(b.status) && !isBuilding;
-    depBtns.push(canDeploy
+    html += canDeploy
       ? `<button class="primary" onclick="deployBranch('${b.id}')"${dis}>部署</button>`
-      : `<button class="primary" disabled title="${isBuilding ? '正在构建中' : '请先拉取或构建'}">部署</button>`);
+      : `<button class="primary" disabled>部署</button>`;
   }
-  groups.push(depBtns.join(''));
 
-  // ── Database ──
-  const dbBtns = [];
-  dbBtns.push(!isMainDb
-    ? `<button onclick="cloneDb('${b.id}')" title="将主库数据克隆到分支库"${dis}>克隆主库</button>`
-    : `<button disabled title="已在使用主库">克隆主库</button>`);
-  dbBtns.push(!isMainDb
-    ? `<button onclick="useMainDb('${b.id}')" title="切换到主库（共享数据）"${dis}>用主库</button>`
-    : `<button disabled title="已在使用主库">用主库</button>`);
-  if (b.originalDbName) {
-    dbBtns.push(isMainDb
-      ? `<button onclick="useOwnDb('${b.id}')" title="切换回独立数据库"${dis}>用独立库</button>`
-      : `<button disabled title="已在使用独立库">用独立库</button>`);
+  // More actions (mobile: action sheet; desktop: inline)
+  html += `<button class="mobile-actions-btn icon-btn sm" onclick="openBranchActions('${b.id}')" title="更多操作">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 9a1.5 1.5 0 100-3 1.5 1.5 0 000 3zM1.5 9a1.5 1.5 0 100-3 1.5 1.5 0 000 3zm13 0a1.5 1.5 0 100-3 1.5 1.5 0 000 3z"/></svg>
+  </button>`;
+
+  // Desktop extra actions
+  html += `<span class="desktop-actions">`;
+  html += `<button onclick="pullBranch('${b.id}')"${dis} class="sm">拉取</button>`;
+  html += `<button onclick="viewLogs('${b.id}')" class="sm">日志</button>`;
+  const hasError = b.status === 'error' || b.runStatus === 'error';
+  if (hasError) {
+    html += `<button class="warn sm" onclick="resetBranch('${b.id}')"${dis}>重置</button>`;
   }
-  groups.push(dbBtns.join(''));
+  html += `<button class="danger sm" onclick="removeBranch('${b.id}')"${dis}>删除</button>`;
+  html += `</span>`;
 
-  // ── Management (日志/诊断/Nginx are read-only: never disabled by busy) ──
-  const mgmtBtns = [];
-  mgmtBtns.push(`<button onclick="viewLogs('${b.id}')" title="查看日志">日志</button>`);
-  mgmtBtns.push(`<button onclick="viewBranchNginxConfig('${b.id}')" title="查看此分支的 Nginx 配置">Nginx</button>`);
-  if (srcRunning) {
-    mgmtBtns.push(`<button onclick="runDiagnostics('${b.id}')" title="运行模式诊断检查">诊断</button>`);
-  }
-  mgmtBtns.push(hasError
-    ? `<button class="warn" onclick="resetBranch('${b.id}')" title="重置错误状态"${dis}>重置</button>`
-    : `<button disabled title="无异常状态需要重置">重置</button>`);
-  mgmtBtns.push(`<button class="danger" onclick="removeBranch('${b.id}')"${dis}>删除</button>`);
-  groups.push(mgmtBtns.join(''));
-
-  return groups.join('<span class="action-divider">|</span>');
+  return html;
 }
 
 function renderBranches(branches, activeBranchId) {
   const list = document.getElementById('branchList');
   const entries = Object.values(branches);
+
+  // Update branch count
+  const countEl = document.getElementById('branchCount');
+  if (countEl) countEl.textContent = entries.length ? `${entries.length} 个分支` : '';
+
   if (!entries.length) {
-    list.innerHTML = '<div class="empty-state">暂无分支，请从远程分支列表添加</div>';
+    list.innerHTML = '<div class="empty-state">暂无分支，请从搜索框添加</div>';
     return;
   }
+
   list.innerHTML = entries.map((b) => {
     const a = b.id === activeBranchId;
     const depRunning = b.status === 'running';
-    // Build port info line
+
+    // Port badges
     let portInfo = '';
     if (b.runStatus === 'running' && b.hostPort) {
-      portInfo = `<span class="port-badge run-port" title="源码运行端口">:${b.hostPort} → API (源码)</span>`;
-    } else if (b.hostPort) {
-      portInfo = `<span class="port-badge port-idle" title="已分配端口（未运行）">:${b.hostPort} (已分配)</span>`;
+      portInfo = `<span class="port-badge run-port">:${b.hostPort} API</span>`;
     }
     if (a) {
-      portInfo += `<span class="port-badge deploy-port" title="部署网关端口">:5500 → 网关 (部署)</span>`;
+      portInfo += `<span class="port-badge deploy-port">:5500 网关</span>`;
     }
 
-    // Activate button: always visible for non-active branches (auto-runs if needed)
+    // Preview port
+    const hasPreview = b.previewPort && (b.status === 'running' || b.runStatus === 'running');
+    if (hasPreview) {
+      const previewHref = `http://${location.hostname}:${b.previewPort}`;
+      portInfo += `<a href="${previewHref}" target="_blank" class="port-badge preview-port">:${b.previewPort} 预览</a>`;
+    }
+
+    // Domain-based preview URL
+    if (hasPreview && previewDomain) {
+      const slug = slugify(b.branch);
+      const domainUrl = `http://${slug}.${previewDomain}`;
+      portInfo += `<a href="${domainUrl}" target="_blank" class="port-badge domain-preview">${slug}.${previewDomain}</a>`;
+    }
+
+    // Activate button
     const bBusy = isBusy(b.id);
     const activateHtml = !a
-      ? `<button class="activate-inline" onclick="switchToBranch('${b.id}')" title="切换到此分支（未运行则自动启动）"${bBusy ? ' disabled' : ''}>切换到此分支</button>`
+      ? `<button class="activate-inline" onclick="switchToBranch('${b.id}')"${bBusy ? ' disabled' : ''}>切换</button>`
       : '';
 
-    // Error message
+    // Error
     let errorHtml = '';
     if (b.status === 'error' && b.errorMessage) {
-      errorHtml = `<div class="branch-error" title="${esc(b.errorMessage)}">部署异常: ${esc(b.errorMessage.slice(0, 120))}</div>`;
+      errorHtml = `<div class="branch-error" title="${esc(b.errorMessage)}">部署: ${esc(b.errorMessage.slice(0, 80))}</div>`;
     }
     if (b.runStatus === 'error' && b.runErrorMessage) {
-      errorHtml += `<div class="branch-error" title="${esc(b.runErrorMessage)}">运行异常: ${esc(b.runErrorMessage.slice(0, 120))}</div>`;
+      errorHtml += `<div class="branch-error" title="${esc(b.runErrorMessage)}">运行: ${esc(b.runErrorMessage.slice(0, 80))}</div>`;
     }
 
-    // Status line: deploy status + run status
+    // Status
     const deployStatus = statusLabel(b.status);
-    const runStatus = b.runStatus ? ` · 运行: ${runStatusLabel(b.runStatus)}` : '';
+    const runStatus = b.runStatus ? ` · ${runStatusLabel(b.runStatus)}` : '';
 
-    // Time info
+    // Time
     const timeInfo = [];
-    if (b.createdAt) timeInfo.push(`添加于 ${relativeTime(b.createdAt)}`);
-    if (b.lastActivatedAt) timeInfo.push(`激活于 ${relativeTime(b.lastActivatedAt)}`);
-    const timeLine = timeInfo.length ? timeInfo.join(' · ') : '';
+    if (b.createdAt) timeInfo.push(relativeTime(b.createdAt));
+    if (b.lastActivatedAt) timeInfo.push(`激活 ${relativeTime(b.lastActivatedAt)}`);
+    const timeLine = timeInfo.join(' · ');
 
-    // Deployed (artifact running) branches get a special visual treatment
     const deployedClass = depRunning ? 'deployed' : '';
 
     return `
@@ -195,25 +201,101 @@ function renderBranches(branches, activeBranchId) {
         <div class="branch-card-left">
           <div class="status-dot ${b.status}"></div>
           <div class="branch-info">
-            <div class="branch-name">
-              ${depRunning ? '<span class="deploy-icon" title="制品部署运行中">📦</span> ' : ''}${esc(b.branch)} ${a ? '<span class="active-badge">当前激活</span>' : ''}
-            </div>
-            <div class="branch-meta">部署: ${deployStatus}${runStatus} · DB: <span class="${b.originalDbName ? 'db-shared' : ''}" title="${b.originalDbName ? '正在使用主库（原始库: ' + esc(b.originalDbName) + '）' : ''}">${b.dbName}${b.originalDbName ? ' (主库)' : ''}</span></div>
+            <div class="branch-name">${esc(b.branch)} ${a ? '<span class="active-badge">激活</span>' : ''}</div>
+            <div class="branch-meta">${deployStatus}${runStatus} · ${b.dbName}${b.originalDbName ? ' (主库)' : ''}</div>
             ${timeLine ? `<div class="branch-time">${timeLine}</div>` : ''}
             ${portInfo ? `<div class="branch-ports">${portInfo}</div>` : ''}
-            ${b.worktreePath ? `<div class="branch-time" title="${esc(b.worktreePath)}">源码: ${esc(b.worktreePath)}</div>` : ''}
             ${errorHtml}
           </div>
         </div>
         ${activateHtml}
       </div>
-      <div class="branch-actions">${branchActions(b, a)}</div>
+      <div class="branch-card-actions-row">${branchQuickActions(b, a)}</div>
     </div>`;
   }).join('');
 }
 
 // ============================================================
-// Operation History — Visual Timeline
+// Mobile Action Sheet
+// ============================================================
+
+function openBranchActions(id) {
+  const b = lastBranches[id];
+  if (!b) return;
+
+  const sheet = document.getElementById('actionSheet');
+  const title = document.getElementById('actionSheetTitle');
+  const body = document.getElementById('actionSheetBody');
+
+  title.textContent = b.branch;
+
+  const srcRunning = b.runStatus === 'running';
+  const depRunning = b.status === 'running';
+  const isActive = b.id === lastActiveBranchId;
+  const branchBusy = isBusy(b.id);
+  const dis = branchBusy ? ' disabled' : '';
+  const hasError = b.status === 'error' || b.runStatus === 'error';
+  const isMainDb = b.dbName === mainDbName;
+  const canDeploy = ['idle', 'error', 'built', 'stopped'].includes(b.status);
+
+  let html = '';
+
+  // Source mode
+  if (srcRunning) {
+    html += `<button class="action-sheet-item run-color" onclick="closeActionSheet();rerunBranch('${id}')"${dis}>重运行（拉取 + 重启）</button>`;
+    html += `<button class="action-sheet-item" onclick="closeActionSheet();stopRunBranch('${id}')"${dis}>停止运行</button>`;
+  } else {
+    html += `<button class="action-sheet-item run-color" onclick="closeActionSheet();runBranch('${id}')"${dis}>运行（源码模式）</button>`;
+  }
+
+  html += '<div class="action-sheet-divider"></div>';
+
+  // Deploy mode
+  html += `<button class="action-sheet-item" onclick="closeActionSheet();pullBranch('${id}')"${dis}>拉取最新代码</button>`;
+  if (depRunning) {
+    html += isActive
+      ? `<button class="action-sheet-item" disabled>停止部署（当前激活）</button>`
+      : `<button class="action-sheet-item" onclick="closeActionSheet();stopBranch('${id}')"${dis}>停止部署</button>`;
+  } else if (canDeploy) {
+    html += `<button class="action-sheet-item green-color" onclick="closeActionSheet();deployBranch('${id}')"${dis}>部署（制品模式）</button>`;
+  }
+
+  html += '<div class="action-sheet-divider"></div>';
+
+  // Database
+  if (!isMainDb) {
+    html += `<button class="action-sheet-item" onclick="closeActionSheet();cloneDb('${id}')"${dis}>克隆主库数据</button>`;
+    html += `<button class="action-sheet-item" onclick="closeActionSheet();useMainDb('${id}')"${dis}>切换到主库</button>`;
+  }
+  if (b.originalDbName && isMainDb) {
+    html += `<button class="action-sheet-item" onclick="closeActionSheet();useOwnDb('${id}')"${dis}>切换回独立库</button>`;
+  }
+
+  html += '<div class="action-sheet-divider"></div>';
+
+  // Management
+  html += `<button class="action-sheet-item" onclick="closeActionSheet();viewLogs('${id}')">查看日志</button>`;
+  html += `<button class="action-sheet-item" onclick="closeActionSheet();viewBranchNginxConfig('${id}')">Nginx 配置</button>`;
+  if (srcRunning) {
+    html += `<button class="action-sheet-item" onclick="closeActionSheet();runDiagnostics('${id}')">运行诊断</button>`;
+  }
+  if (hasError) {
+    html += `<button class="action-sheet-item" onclick="closeActionSheet();resetBranch('${id}')"${dis}>重置错误状态</button>`;
+  }
+
+  html += '<div class="action-sheet-divider"></div>';
+  html += `<button class="action-sheet-item danger" onclick="closeActionSheet();removeBranch('${id}')"${dis}>删除分支</button>`;
+
+  body.innerHTML = html;
+  sheet.classList.remove('hidden');
+}
+
+function closeActionSheet() {
+  document.getElementById('actionSheet').classList.add('hidden');
+}
+
+// ============================================================
+// History
 // ============================================================
 
 function renderHistory(history, branches) {
@@ -227,8 +309,6 @@ function renderHistory(history, branches) {
   }
 
   btn.disabled = history.length <= 1;
-
-  // Keep last 10, most recent first (top = current)
   const displayHistory = history.slice(-10).reverse();
 
   el.innerHTML = `<div class="timeline">` +
@@ -237,7 +317,7 @@ function renderHistory(history, branches) {
       const isRollbackTarget = i === 1 && displayHistory.length > 1;
       const branchName = branches?.[id]?.branch || id;
       const nodeClass = isCurrent ? 'timeline-node current' : isRollbackTarget ? 'timeline-node rollback-target' : 'timeline-node';
-      const label = isCurrent ? '当前' : isRollbackTarget ? '↩ 回滚目标' : '';
+      const label = isCurrent ? '当前' : isRollbackTarget ? '回滚目标' : '';
       const stepNum = displayHistory.length - i;
       return `
         <div class="${nodeClass}">
@@ -255,52 +335,106 @@ function renderHistory(history, branches) {
 function renderActiveSwitcher(branches, activeBranchId) {
   const sel = document.getElementById('activeSwitcher');
   const link = document.getElementById('activeLink');
+  const dot = document.getElementById('gatewayDot');
   const entries = Object.values(branches);
 
-  let html = '<option value="">未指向任何分支</option>';
+  let html = '<option value="">未连接</option>';
   if (activeBranchId) {
-    html += '<option value="__disconnect__">断开网关</option>';
+    html += '<option value="__disconnect__">断开</option>';
   }
   entries.forEach((b) => {
     const isRunning = b.status === 'running' || b.runStatus === 'running';
     const mode = b.status === 'running' ? '制品' : b.runStatus === 'running' ? '源码' : '';
-    const tag = isRunning ? ` (${mode})` : ` [${statusLabel(b.status)}]`;
+    const tag = isRunning ? ` (${mode})` : '';
     const selected = b.id === activeBranchId ? 'selected' : '';
     html += `<option value="${b.id}" ${selected}>${b.branch}${tag}</option>`;
   });
   sel.innerHTML = html;
   sel.disabled = !entries.length;
+
   const active = activeBranchId && branches[activeBranchId];
   if (active) {
     link.classList.remove('hidden');
     link.href = `http://${location.hostname}:5500`;
     sel.classList.remove('gateway-none');
     sel.classList.add('gateway-active');
+    dot.classList.add('active');
   } else {
     link.classList.add('hidden');
     sel.classList.remove('gateway-active');
     sel.classList.add('gateway-none');
+    dot.classList.remove('active');
   }
 }
 
-// Update cleanup button state based on branches
 function updateCleanupBtn(branches, activeBranchId) {
   const btn = document.getElementById('cleanupBtn');
   if (!btn) return;
   const nonActive = Object.values(branches).filter((b) => b.id !== activeBranchId);
   btn.disabled = !nonActive.length;
   btn.title = nonActive.length
-    ? `清理 ${nonActive.length} 个非活跃分支（含容器、镜像、数据库）`
+    ? `清理 ${nonActive.length} 个非活跃分支`
     : '没有可清理的分支';
 }
 
-// ---- Branch picker (combobox dropdown) ----
+// ---- Domain settings ----
+
+function toggleDomainSettings() {
+  const el = document.getElementById('domainSettings');
+  el.classList.toggle('hidden');
+}
+
+async function loadDomainConfig() {
+  try {
+    const data = await api('GET', '/config');
+    previewDomain = data.preview?.domain || '';
+    const input = document.getElementById('domainInput');
+    if (input) input.value = previewDomain;
+    updateDomainPreview();
+  } catch { /* ignore */ }
+}
+
+function updateDomainPreview() {
+  const el = document.getElementById('domainPreview');
+  if (!el) return;
+  if (!previewDomain) {
+    el.innerHTML = '';
+    return;
+  }
+  const entries = Object.values(lastBranches);
+  if (!entries.length) {
+    el.innerHTML = `<span class="domain-example">*.${esc(previewDomain)}</span> 配置完成，添加分支后即可使用`;
+    return;
+  }
+  const examples = entries.slice(0, 3).map(b => {
+    const slug = slugify(b.branch);
+    return `<span class="domain-example">${slug}.${esc(previewDomain)}</span>`;
+  });
+  el.innerHTML = examples.join(' ');
+}
+
+async function saveDomain() {
+  const input = document.getElementById('domainInput');
+  const domain = (input.value || '').trim();
+  try {
+    await api('PUT', '/config/preview-domain', { domain });
+    previewDomain = domain;
+    showToast(domain ? `泛域名已设置: *.${domain}` : '泛域名已清除', 'success');
+    updateDomainPreview();
+    refresh();
+  } catch (err) {
+    showToast(`保存失败: ${err.message}`, 'error');
+  }
+}
+
+// ---- Branch picker ----
 
 const BRANCH_ICON = `<svg class="branch-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.493 2.493 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25Zm-6 0a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Zm8.25-.75a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM4.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z"/></svg>`;
 
-let remoteBranches = []; // cached from server
-let mainDbName = 'prdagent'; // updated from API
-let lastBranches = {}; // cached branch data for history rendering
+let remoteBranches = [];
+let mainDbName = 'prdagent';
+let lastBranches = {};
+let lastActiveBranchId = null;
 
 function renderDropdown(keyword) {
   const dd = document.getElementById('branchDropdown');
@@ -336,7 +470,6 @@ function hideDropdown() {
   document.getElementById('branchDropdown').classList.add('hidden');
 }
 
-// Input events
 document.getElementById('branchSearch').addEventListener('focus', () => {
   renderDropdown(document.getElementById('branchSearch').value);
 });
@@ -345,7 +478,6 @@ document.getElementById('branchSearch').addEventListener('input', (e) => {
   renderDropdown(e.target.value);
 });
 
-// Click on dropdown item → add branch
 document.getElementById('branchDropdown').addEventListener('click', (e) => {
   const item = e.target.closest('.branch-dropdown-item');
   if (!item) return;
@@ -357,13 +489,11 @@ document.getElementById('branchDropdown').addEventListener('click', (e) => {
   }
 });
 
-// Click outside → close dropdown
 document.addEventListener('mousedown', (e) => {
   const picker = document.querySelector('.branch-picker');
   if (picker && !picker.contains(e.target)) hideDropdown();
 });
 
-// Silent data fetch — no UI side effects
 async function loadRemoteBranches() {
   const btn = document.getElementById('refreshRemoteBtn');
   try {
@@ -378,7 +508,6 @@ async function loadRemoteBranches() {
   }
 }
 
-// Manual refresh — show loading state in dropdown
 async function refreshRemoteBranches() {
   const dd = document.getElementById('branchDropdown');
   dd.innerHTML = '<div class="branch-dropdown-empty"><span class="loading"></span> 正在获取...</div>';
@@ -392,42 +521,41 @@ async function refresh() {
     const [bd, hd] = await Promise.all([api('GET', '/branches'), api('GET', '/history')]);
     if (bd.mainDbName) mainDbName = bd.mainDbName;
     lastBranches = bd.branches;
+    lastActiveBranchId = bd.activeBranchId;
     renderBranches(bd.branches, bd.activeBranchId);
     renderHistory(hd.history, bd.branches);
     renderActiveSwitcher(bd.branches, bd.activeBranchId);
     updateCleanupBtn(bd.branches, bd.activeBranchId);
+    updateDomainPreview();
   } catch (err) { showToast(err.message, 'error'); }
 }
 
 // ============================================================
-// Operation Log Modal (shared for deploy / run / log viewing)
+// Operation Log Modal
 // ============================================================
 
 let currentLogModalBranchId = null;
-let activeSSEBranchId = null; // branch with ongoing SSE stream
-let liveLogAbort = null; // AbortController for live log streaming
-let currentLogTab = 'live'; // 'live' or 'history'
+let activeSSEBranchId = null;
+let liveLogAbort = null;
+let currentLogTab = 'live';
 
 function openLogModal(title) {
   document.getElementById('logModalTitle').textContent = title;
   document.getElementById('logModalBody').innerHTML = '';
   document.getElementById('logModal').classList.remove('hidden');
-  // Hide tabs when opening for SSE operations (deploy/run)
   document.getElementById('logTabs').classList.add('hidden');
 }
 
 function showLogModal() {
-  // Re-show without clearing content
   document.getElementById('logModal').classList.remove('hidden');
 }
 
 function closeLogModal() {
   document.getElementById('logModal').classList.add('hidden');
   stopLiveLog();
-  // Keep currentLogModalBranchId so we can reopen during active SSE
 }
 
-const STEP_ICONS = { running: '<span class="loading"></span>', done: '✅', skip: '⏭️', warn: '⚠️', error: '❌' };
+const STEP_ICONS = { running: '<span class="loading"></span>', done: '&#x2705;', skip: '&#x23ED;', warn: '&#x26A0;', error: '&#x274C;' };
 
 function appendLogEvent(data) {
   const body = document.getElementById('logModalBody');
@@ -442,23 +570,19 @@ function appendLogEvent(data) {
 
     if (mode === 'source') {
       rows += `<tr><td>容器</td><td><code>${esc(d.runContainerName || '')}</code></td></tr>`;
-      rows += `<tr><td>端口</td><td><code>${d.hostPort || '?'} → API :8080</code></td></tr>`;
-      rows += `<tr><td>基础镜像</td><td><code>${esc(d.baseImage || '')}</code></td></tr>`;
-      rows += `<tr><td>源码目录</td><td><code>${esc(d.sourceDir || '')}</code></td></tr>`;
-      rows += `<tr><td>访问地址</td><td><a href="${esc(d.url || '')}" target="_blank"><code>${esc(d.url || '')}</code></a></td></tr>`;
+      rows += `<tr><td>端口</td><td><code>${d.hostPort || '?'} → :8080</code></td></tr>`;
+      rows += `<tr><td>镜像</td><td><code>${esc(d.baseImage || '')}</code></td></tr>`;
+      if (d.url) rows += `<tr><td>地址</td><td><a href="${esc(d.url)}" target="_blank"><code>${esc(d.url)}</code></a></td></tr>`;
     } else {
       if (d.worktreePath) rows += `<tr><td>Worktree</td><td><code>${esc(d.worktreePath)}</code></td></tr>`;
       if (d.containerName) rows += `<tr><td>容器</td><td><code>${esc(d.containerName)}</code></td></tr>`;
       if (d.imageName) rows += `<tr><td>镜像</td><td><code>${esc(d.imageName)}</code></td></tr>`;
       if (d.dbName) rows += `<tr><td>数据库</td><td><code>${esc(d.dbName)}</code></td></tr>`;
-      if (d.network) rows += `<tr><td>Docker 网络</td><td><code>${esc(d.network)}</code></td></tr>`;
-      if (d.gatewayPort) rows += `<tr><td>网关端口</td><td><code>${d.gatewayPort}</code></td></tr>`;
+      if (d.network) rows += `<tr><td>网络</td><td><code>${esc(d.network)}</code></td></tr>`;
+      if (d.gatewayPort) rows += `<tr><td>网关</td><td><code>${d.gatewayPort}</code></td></tr>`;
     }
 
-    body.insertAdjacentHTML('beforeend', `
-      <div class="deploy-env">
-        <table class="deploy-env-table">${rows}</table>
-      </div>`);
+    body.insertAdjacentHTML('beforeend', `<div class="deploy-env"><table class="deploy-env-table">${rows}</table></div>`);
     return;
   }
 
@@ -467,11 +591,11 @@ function appendLogEvent(data) {
     const url = data.detail?.url;
     const title = data.title || '';
     body.insertAdjacentHTML('beforeend',
-      `<div class="deploy-complete">✅ ${url ? `完成 — <a href="${esc(url)}" target="_blank">${esc(url)}</a>` : esc(title) || '操作完成'}</div>`);
+      `<div class="deploy-complete">${url ? `完成 — <a href="${esc(url)}" target="_blank">${esc(url)}</a>` : esc(title) || '操作完成'}</div>`);
     return;
   }
 
-  // ---- fatal error — also mark any running steps as failed ----
+  // ---- fatal error ----
   if (data.step === 'error') {
     body.querySelectorAll('.deploy-step.is-running').forEach((el) => {
       el.className = 'deploy-step is-error';
@@ -495,7 +619,6 @@ function appendLogEvent(data) {
 
   if (data.status === 'running') {
     if (!el) {
-      // First running event — create step with streaming log area
       const progressBar = (data.total != null)
         ? `<div class="step-progress"><div class="step-progress-bar" style="width:${Math.round(((data.progress || 0) / data.total) * 100)}%"></div></div>`
         : '';
@@ -506,15 +629,13 @@ function appendLogEvent(data) {
           <pre class="deploy-stream-log"></pre>
         </div>`);
     } else {
-      // Update title and progress
       const hdr = el.querySelector('.deploy-step-hdr span:not(.loading)');
       if (hdr) hdr.textContent = data.title;
       if (data.total != null) {
-        let pb = el.querySelector('.step-progress-bar');
+        const pb = el.querySelector('.step-progress-bar');
         if (pb) pb.style.width = `${Math.round(((data.progress || 0) / data.total) * 100)}%`;
       }
     }
-    // Append streaming chunk if present
     if (data.chunk) {
       const logEl = document.querySelector(`#ds-${data.step} .deploy-stream-log`);
       if (logEl) {
@@ -534,31 +655,26 @@ function appendLogEvent(data) {
     return;
   }
 
-  // Update existing step (done / warn / error)
+  // Update existing step
   if (el) {
     const icon = STEP_ICONS[data.status] || STEP_ICONS.done;
     el.className = `deploy-step is-${data.status}`;
 
-    // Update header icon
     const hdr = el.querySelector('.deploy-step-hdr');
     if (hdr) hdr.innerHTML = `${icon} <span>${esc(data.title)}</span>`;
 
-    // Hide progress bar on completion
     const pb = el.querySelector('.step-progress');
     if (pb) pb.style.display = 'none';
 
-    // If streaming log has content, keep it visible; otherwise hide empty pre
     const streamLog = el.querySelector('.deploy-stream-log');
     if (streamLog && !streamLog.textContent.trim()) {
       streamLog.style.display = 'none';
-      // Non-streaming step: show collapsible log if provided
       if (data.log) {
         el.insertAdjacentHTML('beforeend',
           `<details class="deploy-log-wrap"><summary>查看日志</summary><pre class="deploy-log">${esc(data.log)}</pre></details>`);
       }
     }
 
-    // Pull diff detail
     if (data.detail && data.step === 'pull') {
       const d = data.detail;
       el.insertAdjacentHTML('beforeend', `<div class="deploy-detail">
@@ -568,37 +684,48 @@ function appendLogEvent(data) {
       </div>`);
     }
 
-    // Nginx config detail
     if (data.detail && data.step === 'activate') {
       const d = data.detail;
       el.insertAdjacentHTML('beforeend',
         `<div class="deploy-detail">upstream: <code>${esc(String(d.upstream))}</code> → gateway: <code>${esc(String(d.gateway))}</code></div>`);
       if (d.nginxConf) {
         el.insertAdjacentHTML('beforeend',
-          `<details class="deploy-log-wrap"><summary>查看 Nginx 配置</summary><pre class="deploy-log">${esc(d.nginxConf || '')}</pre></details>`);
+          `<details class="deploy-log-wrap"><summary>Nginx 配置</summary><pre class="deploy-log">${esc(d.nginxConf || '')}</pre></details>`);
       }
     }
 
-    // Health check detail
     if (data.detail && data.step === 'health') {
       const d = data.detail;
-      const mark = d.match ? '<span class="health-ok">✓ 匹配</span>' : '<span class="health-fail">✗ 不匹配</span>';
+      const mark = d.match ? '<span class="health-ok">match</span>' : '<span class="health-fail">mismatch</span>';
       el.insertAdjacentHTML('beforeend', `<div class="deploy-detail">
         URL: <code>${esc(String(d.url))}</code><br>
-        期望 commit: <code>${esc(String(d.expected))}</code><br>
-        实际 commit: <code>${esc(String(d.actual))}</code> ${mark}
-        ${d.builtAt ? `<br>构建时间: ${esc(d.builtAt)}` : ''}
+        期望: <code>${esc(String(d.expected))}</code><br>
+        实际: <code>${esc(String(d.actual))}</code> ${mark}
+        ${d.builtAt ? `<br>构建: ${esc(d.builtAt)}` : ''}
         ${d.hint ? `<br><span class="health-hint">${esc(d.hint)}</span>` : ''}
         ${d.error ? `<br><span class="health-fail">${esc(d.error)}</span>` : ''}
       </div>`);
     }
 
-    // Start container detail (run mode)
+    if (data.detail && data.step === 'preview') {
+      const d = data.detail;
+      el.insertAdjacentHTML('beforeend',
+        `<div class="deploy-detail">预览: <code>${esc(d.previewContainerName)}</code> :${d.previewPort} · <a href="${esc(d.previewUrl)}" target="_blank">${esc(d.previewUrl)}</a></div>`);
+    }
+
+    if (data.detail && data.step === 'complete') {
+      const d = data.detail;
+      if (d.previewUrl) {
+        el.insertAdjacentHTML('beforeend',
+          `<div class="deploy-detail complete-links">预览: <a href="${esc(d.previewUrl)}" target="_blank">${esc(d.previewUrl)}</a>${d.gatewayUrl ? ` · 网关: <a href="${esc(d.gatewayUrl)}" target="_blank">${esc(d.gatewayUrl)}</a>` : ''}</div>`);
+      }
+    }
+
     if (data.detail && data.step === 'start') {
       const d = data.detail;
       if (d.url) {
         el.insertAdjacentHTML('beforeend',
-          `<div class="deploy-detail">容器: <code>${esc(d.runContainerName || d.containerName)}</code> · 端口: <code>${d.hostPort || ''}</code> · <a href="${esc(d.url)}" target="_blank">${esc(d.url)}</a></div>`);
+          `<div class="deploy-detail">容器: <code>${esc(d.runContainerName || d.containerName)}</code> :${d.hostPort || ''} · <a href="${esc(d.url)}" target="_blank">${esc(d.url)}</a></div>`);
       } else if (d.containerName) {
         el.insertAdjacentHTML('beforeend',
           `<div class="deploy-detail">容器: <code>${esc(d.containerName)}</code> · 网络: <code>${esc(d.network)}</code></div>`);
@@ -609,20 +736,18 @@ function appendLogEvent(data) {
   body.scrollTop = body.scrollHeight;
 }
 
-// ---- SSE consumer helper ----
+// ---- SSE consumer ----
 async function consumeSSE(url, { method, onEvent, onError, onDone }) {
   const response = await fetch(url, {
     method: method || 'POST',
     headers: { 'Content-Type': 'application/json' },
   });
 
-  // Non-SSE error response (404 / 409)
   if (!response.ok && !response.headers.get('content-type')?.includes('text/event-stream')) {
     const err = await response.json();
     throw new Error(err.error || `HTTP ${response.status}`);
   }
 
-  // Consume SSE stream
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buf = '';
@@ -633,11 +758,11 @@ async function consumeSSE(url, { method, onEvent, onError, onDone }) {
     buf += decoder.decode(value, { stream: true });
 
     const lines = buf.split('\n');
-    buf = lines.pop(); // keep incomplete line in buffer
+    buf = lines.pop();
 
     for (const line of lines) {
       if (line.startsWith('data: ')) {
-        try { onEvent(JSON.parse(line.slice(6))); } catch { /* skip bad json */ }
+        try { onEvent(JSON.parse(line.slice(6))); } catch { /* skip */ }
       }
     }
   }
@@ -662,9 +787,7 @@ async function startLiveLog(id) {
 
   const body = document.getElementById('logModalBody');
   body.innerHTML = `
-    <div class="live-log-header">
-      <span class="loading"></span> 正在连接容器日志...
-    </div>
+    <div class="live-log-header"><span class="loading"></span> 正在连接...</div>
     <pre class="live-log-output" id="liveLogOutput"></pre>`;
 
   try {
@@ -679,9 +802,8 @@ async function startLiveLog(id) {
       return;
     }
 
-    // Update header to connected
     const hdr = body.querySelector('.live-log-header');
-    if (hdr) hdr.innerHTML = '<span class="live-dot"></span> 实时日志（自动刷新）';
+    if (hdr) hdr.innerHTML = '<span class="live-dot"></span> 实时日志';
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -716,7 +838,7 @@ async function startLiveLog(id) {
   } catch (err) {
     if (err.name === 'AbortError') return;
     const el = document.getElementById('liveLogOutput');
-    if (el) el.textContent += `\n[连接断开: ${err.message}]`;
+    if (el) el.textContent += `\n[断开: ${err.message}]`;
   }
 }
 
@@ -733,16 +855,14 @@ async function loadLogHistory(id) {
       return;
     }
 
-    // Render logs (most recent first)
     body.innerHTML = logs.slice().reverse().map((log, i) => {
       const typeLabel = { deploy: '部署', run: '运行', rerun: '重运行' }[log.type] || log.type;
-      const statusIcon = { completed: '✅', error: '❌', running: '<span class="loading"></span>' }[log.status] || '';
+      const statusIcon = { completed: '&#x2705;', error: '&#x274C;', running: '<span class="loading"></span>' }[log.status] || '';
       const time = log.startedAt ? new Date(log.startedAt).toLocaleString() : '';
       const duration = (log.startedAt && log.finishedAt)
         ? `${Math.round((new Date(log.finishedAt) - new Date(log.startedAt)) / 1000)}s`
         : '';
 
-      // Render events summary
       const eventsHtml = log.events.map(ev => {
         const icon = STEP_ICONS[ev.status] || '';
         return `<div class="log-event-line">${icon} ${esc(ev.title || ev.step)}${ev.log ? ` — ${esc(ev.log.slice(0, 200))}` : ''}</div>`;
@@ -759,7 +879,7 @@ async function loadLogHistory(id) {
         </details>`;
     }).join('');
   } catch (err) {
-    body.innerHTML = `<div class="deploy-step is-error"><div class="deploy-step-hdr">${STEP_ICONS.error} <span>加载日志失败: ${esc(err.message)}</span></div></div>`;
+    body.innerHTML = `<div class="deploy-step is-error"><div class="deploy-step-hdr">${STEP_ICONS.error} <span>加载失败: ${esc(err.message)}</span></div></div>`;
   }
 }
 
@@ -784,7 +904,7 @@ async function addBranch(name) {
   globalBusy = true;
   try {
     await api('POST', '/branches', { branch: name });
-    showToast(`分支 ${name} 已添加`, 'success');
+    showToast(`${name} 已添加`, 'success');
     await loadRemoteBranches();
   } catch (err) { showToast(err.message, 'error'); }
   finally { globalBusy = false; refresh(); }
@@ -793,13 +913,13 @@ async function addBranch(name) {
 async function pullBranch(id) {
   if (isBusy(id)) return;
   setBusy(true, id);
-  showToast(`正在拉取 ${id} 最新代码...`, 'info');
+  showToast(`正在拉取 ${id}...`, 'info');
   try {
     const data = await api('POST', `/branches/${id}/pull`);
     if (data.updated) {
-      showToast(`${id} 已更新: ${data.before} → ${data.after}`, 'success');
+      showToast(`${id} 已更新`, 'success');
     } else {
-      showToast(`${id} 已是最新 (${data.after})`, 'success');
+      showToast(`${id} 已是最新`, 'success');
     }
   } catch (err) { showToast(`拉取失败: ${err.message}`, 'error'); }
   finally { setBusy(false, id); }
@@ -809,7 +929,6 @@ async function deployBranch(id) {
   if (isBusy(id)) return;
   setBusy(true, id);
 
-  // Get branch name for modal title
   let branchName = id;
   try {
     const bd = await api('GET', '/branches');
@@ -818,15 +937,13 @@ async function deployBranch(id) {
 
   currentLogModalBranchId = id;
   activeSSEBranchId = id;
-  openLogModal(`部署日志 — ${branchName}`);
+  openLogModal(`部署 — ${branchName}`);
 
   try {
-    await consumeSSE(`${API}/branches/${id}/deploy`, {
-      onEvent: appendLogEvent,
-    });
+    await consumeSSE(`${API}/branches/${id}/deploy`, { onEvent: appendLogEvent });
     showToast(`${branchName} 部署完成`, 'success');
   } catch (err) {
-    appendLogEvent({ step: 'error', status: 'error', title: '连接失败', log: err.message });
+    appendLogEvent({ step: 'error', status: 'error', title: '失败', log: err.message });
     showToast(`部署失败: ${err.message}`, 'error');
   } finally {
     activeSSEBranchId = null;
@@ -846,15 +963,13 @@ async function runBranch(id) {
 
   currentLogModalBranchId = id;
   activeSSEBranchId = id;
-  openLogModal(`运行日志 — ${branchName}`);
+  openLogModal(`运行 — ${branchName}`);
 
   try {
-    await consumeSSE(`${API}/branches/${id}/run`, {
-      onEvent: appendLogEvent,
-    });
+    await consumeSSE(`${API}/branches/${id}/run`, { onEvent: appendLogEvent });
     showToast(`${branchName} 运行已启动`, 'success');
   } catch (err) {
-    appendLogEvent({ step: 'error', status: 'error', title: '连接失败', log: err.message });
+    appendLogEvent({ step: 'error', status: 'error', title: '失败', log: err.message });
     showToast(`运行失败: ${err.message}`, 'error');
   } finally {
     activeSSEBranchId = null;
@@ -874,15 +989,13 @@ async function rerunBranch(id) {
 
   currentLogModalBranchId = id;
   activeSSEBranchId = id;
-  openLogModal(`重运行日志 — ${branchName}`);
+  openLogModal(`重运行 — ${branchName}`);
 
   try {
-    await consumeSSE(`${API}/branches/${id}/rerun`, {
-      onEvent: appendLogEvent,
-    });
+    await consumeSSE(`${API}/branches/${id}/rerun`, { onEvent: appendLogEvent });
     showToast(`${branchName} 重运行完成`, 'success');
   } catch (err) {
-    appendLogEvent({ step: 'error', status: 'error', title: '连接失败', log: err.message });
+    appendLogEvent({ step: 'error', status: 'error', title: '失败', log: err.message });
     showToast(`重运行失败: ${err.message}`, 'error');
   } finally {
     activeSSEBranchId = null;
@@ -895,30 +1008,22 @@ async function stopRunBranch(id) {
   setBusy(true, id);
   try {
     await api('POST', `/branches/${id}/stop-run`);
-    showToast(`${id} 源码运行已停止`, 'success');
+    showToast(`${id} 已停止`, 'success');
   } catch (err) { showToast(err.message, 'error'); }
   finally { setBusy(false, id); }
 }
 
 async function runDiagnostics(id) {
-  // Read-only operation: no busy check
   try {
     const data = await api('GET', `/branches/${id}/run-diagnostics`);
     const checks = data.checks || [];
-
-    // Build readable report
     const statusIcon = { pass: '\u2705', fail: '\u274c', warn: '\u26a0\ufe0f', skip: '\u23ed\ufe0f' };
-    const lines = checks.map(c => {
-      const icon = statusIcon[c.status] || '?';
-      return `${icon} [${c.name}] ${c.status.toUpperCase()}\n${c.detail}`;
-    });
-
+    const lines = checks.map(c => `${statusIcon[c.status] || '?'} [${c.name}] ${c.status.toUpperCase()}\n${c.detail}`);
     const overall = data.overall === 'healthy' ? '\u2705 ALL PASS' : '\u274c UNHEALTHY';
     const report = `=== Diagnostics: ${id} ===\nOverall: ${overall}\n\n${lines.join('\n\n---\n\n')}`;
 
-    // Show in log modal for easy copy-paste
     currentLogModalBranchId = id;
-    openLogModal(`诊断报告 — ${id}`);
+    openLogModal(`诊断 — ${id}`);
     const body = document.getElementById('logModalBody');
     body.innerHTML = '';
     const pre = document.createElement('pre');
@@ -935,24 +1040,23 @@ async function stopBranch(id) {
   setBusy(true, id);
   try {
     await api('POST', `/branches/${id}/stop`);
-    showToast(`${id} 部署容器已停止`, 'success');
+    showToast(`${id} 已停止`, 'success');
   } catch (err) { showToast(err.message, 'error'); }
   finally { setBusy(false, id); }
 }
 
 async function resetBranch(id) {
-  if (!confirm(`重置 ${id} 的状态？将停止所有容器并恢复到初始状态。`)) return;
+  if (!confirm(`重置 ${id} 的状态？`)) return;
   if (isBusy(id)) return;
   setBusy(true, id);
   try {
     await api('POST', `/branches/${id}/reset`);
-    showToast(`${id} 状态已重置`, 'success');
+    showToast(`${id} 已重置`, 'success');
   } catch (err) { showToast(`重置失败: ${err.message}`, 'error'); }
   finally { setBusy(false, id); }
 }
 
 async function viewLogs(id) {
-  // If an SSE stream is active for this branch, just re-show the modal
   if (activeSSEBranchId === id && currentLogModalBranchId === id) {
     showLogModal();
     return;
@@ -970,11 +1074,9 @@ async function viewLogs(id) {
   currentLogModalBranchId = id;
   openLogModal(`日志 — ${branchName}`);
 
-  // Show tabs
   const tabs = document.getElementById('logTabs');
   tabs.classList.remove('hidden');
 
-  // Default to live logs if container is running, otherwise history
   if (hasRunningContainer) {
     currentLogTab = 'live';
     document.querySelectorAll('.log-tab').forEach(t =>
@@ -988,9 +1090,7 @@ async function viewLogs(id) {
   }
 }
 
-// ---- Async delete with SSE progress (request 6) ----
 async function removeBranch(id) {
-  // Get branch info for better confirm message
   let branchName = id;
   let isDeploying = false;
   let isActive = false;
@@ -1004,14 +1104,13 @@ async function removeBranch(id) {
     }
   } catch { /* ok */ }
 
-  if (isActive) {
-    if (!confirm(`⚠️ 分支 ${branchName} 是当前激活的分支！\n删除后网关将断开连接。\n\n确认删除？将停止容器、删除 worktree、镜像和分支数据库。`)) return;
-  } else if (isDeploying) {
-    if (!confirm(`⚠️ 分支 ${branchName} 正在构建中！\n确认强制删除？这会中断构建过程。\n\n将删除: 容器、Worktree、镜像、分支数据库`)) return;
-  } else {
-    if (!confirm(`确认删除分支 ${branchName}？\n将停止容器、删除 worktree、镜像和分支数据库。`)) return;
-  }
+  const msg = isActive
+    ? `${branchName} 是当前激活分支！删除后网关将断开。确认？`
+    : isDeploying
+    ? `${branchName} 正在构建中！确认强制删除？`
+    : `确认删除 ${branchName}？`;
 
+  if (!confirm(msg)) return;
   if (isBusy(id)) return;
   setBusy(true, id);
 
@@ -1033,8 +1132,6 @@ async function removeBranch(id) {
   }
 }
 
-// ---- switchToBranch: auto-run + activate ----
-
 async function switchToBranch(id) {
   let bd;
   try { bd = await api('GET', '/branches'); } catch { return; }
@@ -1044,10 +1141,8 @@ async function switchToBranch(id) {
   const isRunning = b.status === 'running' || b.runStatus === 'running';
 
   if (isRunning) {
-    // Container already running, just activate nginx
     await activateBranch(id);
   } else {
-    // Need to run first, then activate
     if (isBusy(id)) return;
     setBusy(true, id);
 
@@ -1057,24 +1152,15 @@ async function switchToBranch(id) {
     openLogModal(`运行 + 切换 — ${branchName}`);
 
     try {
-      // Step 1: Run from source (SSE)
-      await consumeSSE(`${API}/branches/${id}/run`, {
-        onEvent: appendLogEvent,
-      });
-
-      // Step 2: Activate nginx
-      appendLogEvent({ step: 'activate', status: 'running', title: '切换 Nginx 网关' });
+      await consumeSSE(`${API}/branches/${id}/run`, { onEvent: appendLogEvent });
+      appendLogEvent({ step: 'activate', status: 'running', title: '切换网关' });
       try {
         const result = await api('POST', `/branches/${id}/activate`);
-        appendLogEvent({
-          step: 'activate', status: 'done', title: '切换 Nginx 网关',
-          detail: { gateway: result.url },
-        });
+        appendLogEvent({ step: 'activate', status: 'done', title: '切换网关', detail: { gateway: result.url } });
       } catch (err) {
-        appendLogEvent({ step: 'activate', status: 'error', title: '切换 Nginx 网关', log: err.message });
+        appendLogEvent({ step: 'activate', status: 'error', title: '切换网关', log: err.message });
         throw err;
       }
-
       showToast(`${branchName} 已运行并切换`, 'success');
     } catch (err) {
       if (!document.querySelector('#ds-activate')) {
@@ -1088,10 +1174,10 @@ async function switchToBranch(id) {
   }
 }
 
-// ---- Database management ----
+// ---- Database ----
 
 async function cloneDb(id) {
-  if (!confirm(`将主库数据克隆到 ${id} 的分支库？\n（会覆盖分支库现有数据）`)) return;
+  if (!confirm(`克隆主库数据到 ${id}？`)) return;
   if (isBusy(id)) return;
   setBusy(true, id);
 
@@ -1105,9 +1191,7 @@ async function cloneDb(id) {
   openLogModal(`克隆数据库 — ${branchName}`);
 
   try {
-    await consumeSSE(`${API}/branches/${id}/db/clone`, {
-      onEvent: appendLogEvent,
-    });
+    await consumeSSE(`${API}/branches/${id}/db/clone`, { onEvent: appendLogEvent });
     showToast('数据库克隆完成', 'success');
   } catch (err) {
     appendLogEvent({ step: 'error', status: 'error', title: '克隆失败', log: err.message });
@@ -1118,7 +1202,7 @@ async function cloneDb(id) {
 }
 
 async function useMainDb(id) {
-  if (!confirm(`将 ${id} 切换到主库？\n（共享主库数据，需要重启容器生效）`)) return;
+  if (!confirm(`将 ${id} 切换到主库？`)) return;
   if (isBusy(id)) return;
   setBusy(true, id);
   try {
@@ -1129,7 +1213,7 @@ async function useMainDb(id) {
 }
 
 async function useOwnDb(id) {
-  if (!confirm(`将 ${id} 切换回独立数据库？\n（需要重启容器生效）`)) return;
+  if (!confirm(`将 ${id} 切换回独立库？`)) return;
   if (isBusy(id)) return;
   setBusy(true, id);
   try {
@@ -1151,7 +1235,6 @@ async function doRollback() {
 }
 
 async function activateBranch(id) {
-  // Activate is lightweight (just nginx reload), no busy check needed
   showToast(`正在切换到 ${id}...`, 'info');
   try {
     await api('POST', `/branches/${id}/activate`);
@@ -1160,25 +1243,22 @@ async function activateBranch(id) {
   } catch (err) { showToast(err.message, 'error'); }
 }
 
-// ---- One-click cleanup ----
 async function cleanupAll() {
-  const nonActive = Object.values(lastBranches).filter((b) => b.id !== document.getElementById('activeSwitcher').value);
+  const nonActive = Object.values(lastBranches).filter((b) => b.id !== lastActiveBranchId);
   if (!nonActive.length) {
     showToast('没有需要清理的分支', 'info');
     return;
   }
-  const names = nonActive.map(b => b.branch).join('\n  ');
-  if (!confirm(`一键清理以下 ${nonActive.length} 个分支？\n  ${names}\n\n将删除: 容器、Worktree、镜像、分支数据库\n（当前激活分支不会被清理）`)) return;
+  const names = nonActive.map(b => b.branch).join(', ');
+  if (!confirm(`清理 ${nonActive.length} 个分支？\n${names}`)) return;
 
   if (globalBusy) return;
   setBusy(true);
 
-  openLogModal(`一键清理 ${nonActive.length} 个分支`);
+  openLogModal(`清理 ${nonActive.length} 个分支`);
 
   try {
-    await consumeSSE(`${API}/cleanup`, {
-      onEvent: appendLogEvent,
-    });
+    await consumeSSE(`${API}/cleanup`, { onEvent: appendLogEvent });
     showToast('清理完成', 'success');
     await loadRemoteBranches();
   } catch (err) {
@@ -1193,10 +1273,9 @@ async function cleanupAll() {
 document.getElementById('activeSwitcher').addEventListener('change', async (e) => {
   const id = e.target.value;
   if (!id) return;
-  // Gateway switching is lightweight, allow even during branch operations
   try {
     if (id === '__disconnect__') {
-      showToast('正在断开网关...', 'info');
+      showToast('正在断开...', 'info');
       await api('POST', '/gateway/disconnect');
       showToast('网关已断开', 'success');
     } else {
@@ -1211,7 +1290,7 @@ document.getElementById('activeSwitcher').addEventListener('change', async (e) =
 // ---- Nginx config viewer ----
 
 async function viewNginxConfig() {
-  openLogModal('Nginx 配置（当前激活）');
+  openLogModal('Nginx 配置');
   const body = document.getElementById('logModalBody');
   body.innerHTML = '<div class="empty-state"><span class="loading"></span> 加载中...</div>';
 
@@ -1220,8 +1299,7 @@ async function viewNginxConfig() {
     const activeBranch = data.activeBranch || '(unknown)';
     const isDisconnected = activeBranch === '_disconnected';
     body.innerHTML = `
-      <div class="nginx-conf-path">激活分支: <code>${esc(activeBranch)}</code>${isDisconnected ? ' <span class="health-fail">(已断开)</span>' : ''}</div>
-      <div class="nginx-conf-path">模式: <code>default.conf → branches/${esc(activeBranch)}.conf</code></div>
+      <div class="nginx-conf-path">激活: <code>${esc(activeBranch)}</code>${isDisconnected ? ' <span class="health-fail">(断开)</span>' : ''}</div>
       <pre class="nginx-conf-content">${esc(data.content)}</pre>`;
   } catch (err) {
     body.innerHTML = `<div class="deploy-step is-error"><div class="deploy-step-hdr">${STEP_ICONS.error} <span>${esc(err.message)}</span></div></div>`;
@@ -1229,16 +1307,15 @@ async function viewNginxConfig() {
 }
 
 async function viewBranchNginxConfig(id) {
-  openLogModal(`Nginx 配置 — ${id}`);
+  openLogModal(`Nginx — ${id}`);
   const body = document.getElementById('logModalBody');
   body.innerHTML = '<div class="empty-state"><span class="loading"></span> 加载中...</div>';
 
   try {
     const data = await api('GET', `/branches/${id}/nginx-conf`);
-    const activeLabel = data.isActive ? ' <span class="active-badge">当前激活</span>' : '';
+    const activeLabel = data.isActive ? ' <span class="active-badge">激活</span>' : '';
     body.innerHTML = `
       <div class="nginx-conf-path">分支: <code>${esc(data.branchId)}</code>${activeLabel}</div>
-      <div class="nginx-conf-path">文件: <code>conf.d/branches/${esc(data.branchId)}.conf</code></div>
       <pre class="nginx-conf-content">${esc(data.content)}</pre>`;
   } catch (err) {
     body.innerHTML = `<div class="deploy-step is-error"><div class="deploy-step-hdr">${STEP_ICONS.error} <span>${esc(err.message)}</span></div></div>`;
@@ -1247,4 +1324,5 @@ async function viewBranchNginxConfig(id) {
 
 // Init
 loadRemoteBranches();
+loadDomainConfig();
 refresh();

@@ -150,6 +150,60 @@ export class ContainerService {
     }
   }
 
+  /**
+   * Start a per-branch preview nginx container.
+   * Serves the branch independently on its own host port (API proxy + static files or Vite).
+   */
+  async startPreview(
+    entry: BranchEntry,
+    nginxConfigContent: string,
+    staticFilesPath?: string,
+  ): Promise<void> {
+    const { docker } = this.config;
+    const containerName = entry.previewContainerName!;
+    const previewPort = entry.previewPort!;
+    const nginxImage = this.config.preview?.nginxImage ?? 'nginx:1.27-alpine';
+
+    await this.ensureNetwork(docker.network);
+
+    // Remove any existing preview container
+    await this.shell.exec(`docker rm -f ${containerName}`);
+
+    // Write nginx config to a temp file that we'll mount
+    const configDir = `/tmp/bt-preview-${entry.id}`;
+    await this.shell.exec(`mkdir -p ${configDir}`);
+    await this.shell.exec(`cat > ${configDir}/default.conf << 'NGINX_EOF'\n${nginxConfigContent}\nNGINX_EOF`);
+
+    const volumes = [
+      `-v ${configDir}/default.conf:/etc/nginx/conf.d/default.conf:ro`,
+    ];
+
+    // Mount static files for deploy mode
+    if (staticFilesPath) {
+      volumes.push(`-v ${staticFilesPath}:/usr/share/nginx/html:ro`);
+    }
+
+    const cmd = [
+      'docker run -d',
+      `--name ${containerName}`,
+      `--network ${docker.network}`,
+      `-p ${previewPort}:80`,
+      ...volumes,
+      nginxImage,
+    ].join(' ');
+
+    const result = await this.shell.exec(cmd);
+    if (result.exitCode !== 0) {
+      throw new Error(`Failed to start preview container "${containerName}":\n${combinedOutput(result)}`);
+    }
+  }
+
+  /** Stop and remove a preview container */
+  async stopPreview(containerName: string): Promise<void> {
+    await this.shell.exec(`docker stop ${containerName}`);
+    await this.shell.exec(`docker rm ${containerName}`);
+  }
+
   private async ensureNetwork(network: string): Promise<void> {
     const inspect = await this.shell.exec(`docker network inspect ${network}`);
     if (inspect.exitCode !== 0) {
