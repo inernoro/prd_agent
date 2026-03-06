@@ -4,14 +4,38 @@
 
 ## 概述
 
-一键完成开发环境的安装、配置、数据库连接测试和项目还原。适用于新机器初始化、CI 环境准备、排查环境问题。
+一键完成开发环境的安装、配置、数据库连接测试和项目还原。自动检测运行模式（本地 CLI / 云端 Web 沙箱），对已知平台 Bug 自动绕过。
 
 ## 核心原则
 
-1. **环境变量驱动**：所有密码/密钥通过环境变量传入，绝不硬编码
+1. **环境变量驱动**：所有密码/密钥通过环境变量传入，绝不硬编码到代码
 2. **幂等执行**：重复运行不会破坏已有环境
 3. **真实验证**：不靠假设，连真实数据库验证连通性
-4. **最小依赖**：只装项目需要的，不装多余的
+4. **双模自适应**：自动区分本地 CLI 与 Web 沙箱，选择对应安装策略
+
+---
+
+## 零、两种运行模式（重要前置知识）
+
+| 维度 | 本地 CLI 模式 | Claude Code Web 沙箱模式 |
+|------|-------------|------------------------|
+| 运行环境 | 用户本机终端 | Anthropic 托管 Ubuntu 容器 |
+| .NET SDK | 用户自行安装，完全可控 | 需通过 `dotnet-install.sh` 安装 |
+| `dotnet restore` | 正常工作 | **需启动代理中继**（.NET HttpClient 代理认证 Bug） |
+| `apt-get` | 正常工作 | 受限（部分源不可达） |
+| 网络访问 | 无限制 | JWT 认证代理，存在已知兼容性问题 |
+| 外部数据库 | 正常连接 | 部分端口/IP 可能受限 |
+
+### 如何判断当前模式
+
+```bash
+# 检查是否在 Web 沙箱中
+if [ -n "$HTTPS_PROXY" ] && echo "$HTTPS_PROXY" | grep -q "container_"; then
+  echo "Web sandbox mode"
+else
+  echo "Local CLI mode"
+fi
+```
 
 ---
 
@@ -19,16 +43,15 @@
 
 | SDK | 版本要求 | 用途 | 安装方式 |
 |-----|---------|------|---------|
-| .NET SDK | 8.0.x | 后端 `prd-api` (C# 12, ASP.NET Core 8) | Microsoft 官方脚本 |
-| Node.js | 22.x | 前端 `prd-admin`, `prd-desktop`, `prd-video` | nvm |
-| pnpm | latest | 前端包管理器 | npm install -g |
-| Rust | stable (edition 2021) | Tauri 桌面端 `prd-desktop/src-tauri` | rustup |
+| .NET SDK | 8.0.x | 后端 `prd-api` (C# 12, ASP.NET Core 8) | `dotnet-install.sh`（推荐，本地/Web 通用） |
+| Node.js | 22.x | 前端 `prd-admin`, `prd-desktop`, `prd-video` | nvm（Web 沙箱已预装） |
+| pnpm | latest | 前端包管理器 | npm install -g（Web 沙箱已预装） |
+| Rust | stable (edition 2021) | Tauri 桌面端 `prd-desktop/src-tauri` | rustup（Web 沙箱已预装） |
 | tauri-cli | latest | Tauri 构建工具 | cargo install |
-| Python 3 | 3.10+ | `prd-video/scripts` 字幕生成等 | 系统包管理器 |
+| Python 3 | 3.10+ | `prd-video/scripts` 字幕生成 + NuGet 代理中继 | 系统包管理器 |
 
-### Linux 系统依赖 (Ubuntu/Debian)
+### Linux 系统依赖 (Ubuntu/Debian, 仅本地模式需要)
 
-Tauri 编译需要以下系统库：
 ```bash
 sudo apt-get install -y \
   build-essential pkg-config libssl-dev \
@@ -39,71 +62,97 @@ sudo apt-get install -y \
 
 ---
 
-## 二、一键安装脚本
+## 二、一键安装
+
+### 方式 A：完整一键脚本（本地推荐）
 
 ```bash
-# 完整一键安装（从零开始）
 bash scripts/setup-dev-env.sh
 ```
 
-### 手动分步安装
-
-#### 2.1 .NET 8 SDK
+### 方式 B：SessionStart Hook（Web 沙箱自动触发）
 
 ```bash
-# 下载并安装（推荐方式）
-curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 8.0
+# 每次 Web 会话开始时自动执行
+bash .claude/hooks/session-start.sh
+```
 
-# 配置 PATH（写入 ~/.bashrc 持久化）
+Hook 自动完成：
+1. 检测环境（Web/本地）
+2. 安装 .NET 8 SDK（如缺失）
+3. 启动 NuGet 代理中继（仅 Web 沙箱）
+4. 执行 `dotnet restore`
+
+### 方式 C：手动分步安装
+
+#### .NET 8 SDK（本地/Web 通用）
+
+```bash
+curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 8.0
 export DOTNET_ROOT="$HOME/.dotnet"
 export PATH="$DOTNET_ROOT:$DOTNET_ROOT/tools:$PATH"
-
-# 验证
-dotnet --version  # 应输出 8.0.xxx
+dotnet --version  # 8.0.xxx
 ```
 
-#### 2.2 Node.js 22 + pnpm
+#### Node.js 22 + pnpm（本地安装，Web 已预装）
 
 ```bash
-# 通过 nvm 安装
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
-source ~/.bashrc
-nvm install 22
-nvm alias default 22
-
-# 安装 pnpm
+source ~/.bashrc && nvm install 22 && nvm alias default 22
 npm install -g pnpm
-
-# 验证
-node -v   # v22.x.x
-pnpm -v   # 10.x.x
 ```
 
-#### 2.3 Rust + Tauri CLI
+#### Rust + Tauri CLI（本地安装，Web 已预装）
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source "$HOME/.cargo/env"
 cargo install tauri-cli
-
-# 验证
-rustc --version  # rustc 1.x.x
 ```
 
 ---
 
-## 三、环境变量配置
+## 三、dotnet restore 在 Web 沙箱中的特殊处理
 
-### 3.1 必需环境变量
+### 问题根源
 
-从 `.env.template` 复制并填入实际值：
+Claude Code Web 的出口代理使用 JWT Token 认证（`http://container_id:jwt_token@proxy:port`）。
+.NET HttpClient 在 Linux 上存在已知 Bug（[dotnet/runtime#114066](https://github.com/dotnet/runtime/issues/114066)），
+无法正确发送 `Proxy-Authorization` 头，导致 NuGet restore 返回 `401 Unauthorized`。
+
+### 解决方案：NuGet 代理中继
+
+项目内置了 Python 代理中继脚本 `scripts/nuget-proxy-relay.py`，原理：
+1. 在本地 `127.0.0.1:18080` 启动 HTTP 代理
+2. 拦截 dotnet 的请求，注入正确的 `Proxy-Authorization` 头
+3. 转发到上游 JWT 代理
 
 ```bash
-cp .env.template .env
-# 编辑 .env 填入实际值
+# 启动代理中继
+python3 scripts/nuget-proxy-relay.py &
+RELAY_PID=$!
+
+# 通过中继执行 restore（关键：覆盖 HTTPS_PROXY 指向本地）
+HTTPS_PROXY=http://127.0.0.1:18080 HTTP_PROXY=http://127.0.0.1:18080 \
+  dotnet restore PrdAgent.sln
+
+# 完成后停止中继
+kill $RELAY_PID
 ```
 
-**关键变量映射关系**（环境变量 → appsettings 配置路径）：
+### 验证状态
+
+此方案已在 Claude Code Web 沙箱中实际验证通过：
+- `dotnet restore PrdAgent.sln` -- 4 个项目全部成功 restore
+- `dotnet build --no-restore` -- Build succeeded, 0 error
+
+---
+
+## 四、环境变量配置
+
+### 必需环境变量
+
+从 `.env.template` 复制：`cp .env.template .env`
 
 | 环境变量 | 映射到 | 默认值 | 说明 |
 |---------|--------|--------|------|
@@ -113,17 +162,16 @@ cp .env.template .env
 | `Jwt__Secret` | `Jwt:Secret` | (dev 有默认值) | JWT 签名密钥，>=32 字节 |
 | `ASPNETCORE_ENVIRONMENT` | - | `Production` | 设为 `Development` 开启调试 |
 
-**带密码的连接串格式**：
+**带密码的连接串格式**（密码中特殊字符需 URL 编码）：
 
 ```bash
-# MongoDB（密码中的特殊字符需 URL 编码）
-MongoDB__ConnectionString="mongodb://root:<password>@<host>:27017/?authSource=admin"
-
+# MongoDB
+MongoDB__ConnectionString="mongodb://root:<url-encoded-password>@<host>:27017/?authSource=admin"
 # Redis
 Redis__ConnectionString="<host>:6379,password=<password>"
 ```
 
-### 3.2 可选环境变量
+### 可选环境变量
 
 | 环境变量 | 说明 |
 |---------|------|
@@ -133,107 +181,138 @@ Redis__ConnectionString="<host>:6379,password=<password>"
 
 ---
 
-## 四、项目还原（Restore）
+## 五、项目还原（Restore）
 
 ```bash
 # 后端 NuGet 包还原
 cd prd-api && dotnet restore PrdAgent.sln
 
-# 验证编译
-dotnet build --no-restore 2>&1 | grep -E "error CS|Build succeeded"
+# 验证编译（CLAUDE.md 强制规则：0 error 才算通过）
+cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | head -30
 
 # 前端依赖安装
-cd ../prd-admin && pnpm install
-cd ../prd-desktop && pnpm install
-cd ../prd-video && pnpm install  # 如果存在
+cd prd-admin && pnpm install
+cd prd-desktop && pnpm install
+cd prd-video && pnpm install
 ```
 
 ---
 
-## 五、数据库连接测试
+## 六、数据库连接测试
 
-### 5.1 快速连通性测试
-
-创建临时测试项目验证连接：
+### 6.1 快速连通性测试
 
 ```bash
-# 准备环境变量（从 .env 加载或手动 export）
+# 设置环境变量（绝不硬编码密码）
 export MONGODB_HOST=<host>
 export MONGODB_PASSWORD='<password>'
 export REDIS_HOST=<host>
 export REDIS_PASSWORD='<password>'
-
-# 运行连通性测试脚本
-dotnet run --project /tmp/dbtest
 ```
 
-测试项目代码参考 `scripts/test-connectivity.csx`。
+创建临时 .NET 项目测试：
 
-### 5.2 通过 dotnet test 验证
+```csharp
+// 关键代码：MongoDB
+var mongoCs = $"mongodb://root:{Uri.EscapeDataString(password)}@{host}:27017/?authSource=admin";
+var client = new MongoClient(mongoCs);
+var db = client.GetDatabase("prdagent");
+var cols = db.ListCollectionNames().ToList();
+// 成功：返回集合列表；空库：返回 0 个集合（正常）
 
-```bash
-# 设置环境变量后运行集成测试
-export MongoDB__ConnectionString="mongodb://root:<password>@<host>:27017/?authSource=admin"
-export MongoDB__DatabaseName="prdagent_test"  # 建议用独立测试库
-export Redis__ConnectionString="<host>:6379,password=<password>"
-export Jwt__Secret="test-secret-key-32bytes-minimum!!"
-
-cd prd-api
-dotnet test --no-build --filter "Category=Integration" 2>&1
+// 关键代码：Redis
+var redis = ConnectionMultiplexer.Connect($"{host}:6379,password={password}");
+var pong = redis.GetDatabase().Ping();
+// 成功：返回 PONG 延迟
 ```
 
-### 5.3 启动 API 服务验证
+### 6.2 通过 API 服务验证
 
 ```bash
 export ASPNETCORE_ENVIRONMENT=Development
-export MongoDB__ConnectionString="mongodb://root:<password>@<host>:27017/?authSource=admin"
-export Redis__ConnectionString="<host>:6379,password=<password>"
 export Jwt__Secret="dev-only-change-me-32bytes-minimum!!"
+cd prd-api && dotnet run --project src/PrdAgent.Api -- --urls "http://localhost:5000"
 
-cd prd-api
-dotnet run --project src/PrdAgent.Api -- --urls "http://localhost:5000"
-
-# 另一个终端验证
+# 另一终端
 curl http://localhost:5000/swagger/index.html -o /dev/null -w "HTTP %{http_code}\n"
+# 应返回 HTTP 200
 ```
 
 ---
 
-## 六、常见问题排查
+## 七、常见问题排查
 
-| 问题 | 排查方式 |
-|------|---------|
-| `dotnet: command not found` | 检查 `DOTNET_ROOT` 和 `PATH` 是否配置 |
-| MongoDB 连接超时 | 检查防火墙 27017 端口、密码中特殊字符是否 URL 编码 |
-| Redis 连接失败 | 检查 6379 端口、`requirepass` 配置是否匹配 |
-| NuGet 还原失败 | 检查网络，或使用 `dotnet nuget locals all --clear` 清除缓存 |
-| Tauri 编译失败 | 检查系统库是否安装完整（webkit2gtk 等） |
-| `error CS*` 编译错误 | 运行 `dotnet build --no-restore 2>&1 | grep "error CS"` 定位 |
+| 问题 | 模式 | 排查方式 |
+|------|------|---------|
+| `dotnet: command not found` | 两者 | 检查 `DOTNET_ROOT` 和 `PATH`，运行 `source ~/.bashrc` |
+| NuGet `401 Unauthorized` | Web | 启动 `nuget-proxy-relay.py` 后重试 |
+| NuGet `403 Access Denied` | Web | .NET CDN 被代理拦截，用 `dotnet-install.sh` 替代 `apt install` |
+| `apt-get update` 失败 | Web | 沙箱网络限制，改用 curl 直接下载 |
+| MongoDB 连接超时 | Web | 沙箱可能不允许访问外部 IP，改用 Docker 本地 MongoDB |
+| MongoDB 连接超时 | 本地 | 检查防火墙 27017、密码特殊字符 URL 编码 |
+| Redis 连接失败 | 两者 | 检查 6379 端口、`requirepass` 配置 |
+| Tauri 编译失败 | 本地 | 检查 webkit2gtk 等系统库是否安装 |
 
 ---
 
-## 七、Docker 一键启动（替代方案）
+## 八、Docker 一键启动（替代方案）
 
-如果不想安装 SDK，可以直接用 Docker：
+不安装 SDK，直接用 Docker：
 
 ```bash
-# 本地构建 + 启动全部服务（API + MongoDB + Redis + Nginx）
+# 本地构建全栈（API + MongoDB + Redis + Nginx）
 docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
 
-# 开发模式（暴露端口，热加载）
+# 开发模式
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 ```
 
 ---
 
-## 八、AI 执行此技能时的操作流程
+## 九、AI 执行此技能时的操作流程
 
 当 AI 被要求搭建/调试环境时，按以下顺序执行：
 
-1. **检测已安装的 SDK**：`dotnet --version`, `node -v`, `rustc --version`
-2. **安装缺失的 SDK**：优先使用官方安装脚本
-3. **配置环境变量**：从用户提供的值设置，绝不在代码中暴露
-4. **执行 restore**：`dotnet restore` + `pnpm install`
-5. **编译验证**：`dotnet build` 确认 0 error
-6. **连通性测试**：创建临时项目测试 MongoDB + Redis 连接
-7. **报告结果**：列出各组件版本和连接状态
+### 步骤 1：环境检测
+```bash
+dotnet --version 2>/dev/null || echo "MISSING"
+node -v 2>/dev/null || echo "MISSING"
+rustc --version 2>/dev/null || echo "MISSING"
+# 检测是否在 Web 沙箱
+echo $HTTPS_PROXY | grep -q "container_" && echo "WEB_SANDBOX" || echo "LOCAL"
+```
+
+### 步骤 2：安装缺失 SDK
+- .NET: `curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 8.0`
+- Node: `nvm install 22`（如缺失）
+- Rust: `rustup install stable`（如缺失）
+
+### 步骤 3：Web 沙箱专属 - 启动 NuGet 代理中继
+```bash
+python3 scripts/nuget-proxy-relay.py &
+```
+
+### 步骤 4：dotnet restore
+```bash
+# Web 沙箱
+HTTPS_PROXY=http://127.0.0.1:18080 HTTP_PROXY=http://127.0.0.1:18080 dotnet restore PrdAgent.sln
+# 本地
+dotnet restore PrdAgent.sln
+```
+
+### 步骤 5：编译验证
+```bash
+cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | head -30
+# 必须 0 error
+```
+
+### 步骤 6：配置环境变量（用户提供时）
+- 从用户提供的值设置 `MongoDB__ConnectionString`、`Redis__ConnectionString` 等
+- **绝不在代码/日志中暴露实际密码值**
+
+### 步骤 7：连通性测试（用户提供 DB 凭据时）
+- 创建临时 .NET 项目测试 MongoDB + Redis 连接
+- 报告连接状态和延迟
+
+### 步骤 8：报告结果
+列出各组件版本、连接状态、已知问题

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ============================================================
 # PrdAgent - Dev Environment One-Click Setup
-# Supported: Ubuntu/Debian (apt), macOS (brew)
+# Auto-detects: Local CLI vs Claude Code Web sandbox
 # Installs: .NET 8 SDK, Node.js 22 + pnpm, Rust (stable), system libs
-# Then: dotnet restore, npm install for all frontend projects
+# Then: dotnet restore (with proxy relay for Web sandbox), pnpm install
 # ============================================================
 set -euo pipefail
 
@@ -16,7 +16,7 @@ info()  { echo -e "${GREEN}[INFO]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
 
-# ---------- detect OS ----------
+# ---------- detect OS & mode ----------
 OS="$(uname -s)"
 case "$OS" in
   Linux*)  PLATFORM="linux" ;;
@@ -24,16 +24,27 @@ case "$OS" in
   *)       error "Unsupported OS: $OS" ;;
 esac
 
+IS_WEB_SANDBOX=false
+if [ -n "${HTTPS_PROXY:-}" ] && echo "${HTTPS_PROXY:-}" | grep -q "container_" 2>/dev/null; then
+  IS_WEB_SANDBOX=true
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 info "Project root: $PROJECT_ROOT"
 info "Platform: $PLATFORM"
+info "Mode: $([ "$IS_WEB_SANDBOX" = true ] && echo 'Claude Code Web (sandbox)' || echo 'Local CLI')"
 
 # ============================================================
-# 1. System dependencies
+# 1. System dependencies (skip in Web sandbox - most tools preinstalled)
 # ============================================================
 install_system_deps() {
+  if [ "$IS_WEB_SANDBOX" = true ]; then
+    info "Web sandbox detected, skipping apt-get (use dotnet-install.sh instead)"
+    return
+  fi
+
   info "Installing system dependencies..."
   if [ "$PLATFORM" = "linux" ]; then
     sudo apt-get update -qq
@@ -54,33 +65,33 @@ install_system_deps() {
 }
 
 # ============================================================
-# 2. .NET 8 SDK
+# 2. .NET 8 SDK (dotnet-install.sh works in both modes)
 # ============================================================
 install_dotnet() {
+  # Check existing install (including ~/.dotnet)
+  export DOTNET_ROOT="${DOTNET_ROOT:-$HOME/.dotnet}"
+  export PATH="$DOTNET_ROOT:$DOTNET_ROOT/tools:$PATH"
+
   if command -v dotnet &>/dev/null && dotnet --list-sdks 2>/dev/null | grep -q "^8\."; then
     info ".NET 8 SDK already installed: $(dotnet --version)"
     return
   fi
-  info "Installing .NET 8 SDK..."
-  if [ "$PLATFORM" = "linux" ]; then
-    # Microsoft official install script
-    curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
-    chmod +x /tmp/dotnet-install.sh
-    /tmp/dotnet-install.sh --channel 8.0 --install-dir "$HOME/.dotnet"
-    export DOTNET_ROOT="$HOME/.dotnet"
-    export PATH="$DOTNET_ROOT:$DOTNET_ROOT/tools:$PATH"
-    # persist to profile
-    grep -q 'DOTNET_ROOT' "$HOME/.bashrc" 2>/dev/null || {
-      cat >> "$HOME/.bashrc" <<'DOTNET_EOF'
+
+  info "Installing .NET 8 SDK via dotnet-install.sh..."
+  curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+  chmod +x /tmp/dotnet-install.sh
+  /tmp/dotnet-install.sh --channel 8.0 --install-dir "$HOME/.dotnet"
+  rm -f /tmp/dotnet-install.sh
+
+  # Persist PATH
+  grep -q 'DOTNET_ROOT' "$HOME/.bashrc" 2>/dev/null || {
+    cat >> "$HOME/.bashrc" <<'DOTNET_EOF'
 
 # .NET SDK
 export DOTNET_ROOT="$HOME/.dotnet"
 export PATH="$DOTNET_ROOT:$DOTNET_ROOT/tools:$PATH"
 DOTNET_EOF
-    }
-  elif [ "$PLATFORM" = "mac" ]; then
-    brew install --cask dotnet-sdk 2>/dev/null || brew install dotnet@8
-  fi
+  }
   info ".NET SDK version: $(dotnet --version)"
 }
 
@@ -136,7 +147,6 @@ install_nvm_and_node() {
 install_rust() {
   if command -v rustc &>/dev/null; then
     info "Rust already installed: $(rustc --version)"
-    # Ensure stable and up to date
     rustup update stable 2>/dev/null || true
   else
     info "Installing Rust via rustup..."
@@ -147,7 +157,7 @@ install_rust() {
   # Tauri CLI
   if ! command -v cargo-tauri &>/dev/null && ! cargo install --list 2>/dev/null | grep -q "tauri-cli"; then
     info "Installing Tauri CLI..."
-    cargo install tauri-cli 2>/dev/null || warn "tauri-cli install failed, you can install it later"
+    cargo install tauri-cli 2>/dev/null || warn "tauri-cli install failed, install later if needed"
   fi
 
   info "Rust version: $(rustc --version)"
@@ -155,16 +165,71 @@ install_rust() {
 }
 
 # ============================================================
-# 5. Project restore / install
+# 5. NuGet Proxy Relay (Web sandbox only)
+# ============================================================
+RELAY_PID=""
+
+start_nuget_relay() {
+  if [ "$IS_WEB_SANDBOX" != true ]; then
+    return
+  fi
+
+  local RELAY_SCRIPT="$PROJECT_ROOT/scripts/nuget-proxy-relay.py"
+  if [ ! -f "$RELAY_SCRIPT" ]; then
+    warn "nuget-proxy-relay.py not found, dotnet restore may fail"
+    return
+  fi
+
+  # Kill any existing relay
+  pkill -f "nuget-proxy-relay.py" 2>/dev/null || true
+
+  info "Starting NuGet proxy relay (Web sandbox workaround for dotnet/runtime#114066)..."
+  python3 "$RELAY_SCRIPT" &
+  RELAY_PID=$!
+  sleep 1
+
+  if kill -0 $RELAY_PID 2>/dev/null; then
+    info "NuGet proxy relay running (PID: $RELAY_PID)"
+  else
+    warn "NuGet proxy relay failed to start"
+    RELAY_PID=""
+  fi
+}
+
+stop_nuget_relay() {
+  if [ -n "$RELAY_PID" ] && kill -0 $RELAY_PID 2>/dev/null; then
+    kill $RELAY_PID 2>/dev/null || true
+    wait $RELAY_PID 2>/dev/null || true
+    info "NuGet proxy relay stopped"
+  fi
+}
+
+# ============================================================
+# 6. Project restore / install
 # ============================================================
 restore_dotnet() {
   info "Restoring .NET packages (dotnet restore)..."
   cd "$PROJECT_ROOT/prd-api"
-  dotnet restore PrdAgent.sln
+
+  if [ "$IS_WEB_SANDBOX" = true ] && [ -n "$RELAY_PID" ]; then
+    # Route NuGet traffic through proxy relay
+    HTTPS_PROXY=http://127.0.0.1:18080 HTTP_PROXY=http://127.0.0.1:18080 \
+      dotnet restore PrdAgent.sln
+  else
+    dotnet restore PrdAgent.sln
+  fi
   info "dotnet restore completed."
 
   info "Verifying build..."
-  dotnet build --no-restore 2>&1 | tail -5
+  BUILD_OUTPUT=$(dotnet build --no-restore 2>&1)
+  if echo "$BUILD_OUTPUT" | grep -q "Build succeeded"; then
+    ERRORS=$(echo "$BUILD_OUTPUT" | grep -c "error CS" || true)
+    WARNINGS=$(echo "$BUILD_OUTPUT" | grep -c "warning CS" || true)
+    info "Build succeeded. ${ERRORS} error(s), ${WARNINGS} warning(s)"
+  else
+    warn "Build output (last 10 lines):"
+    echo "$BUILD_OUTPUT" | tail -10
+  fi
   cd "$PROJECT_ROOT"
 }
 
@@ -188,13 +253,15 @@ install_frontend_deps() {
 }
 
 # ============================================================
-# 6. Summary
+# 7. Summary
 # ============================================================
 print_summary() {
   echo ""
   echo "============================================================"
   info "Dev environment setup complete!"
   echo "============================================================"
+  echo ""
+  echo "  Mode: $([ "$IS_WEB_SANDBOX" = true ] && echo 'Claude Code Web (sandbox)' || echo 'Local CLI')"
   echo ""
   echo "  Installed SDKs:"
   command -v dotnet &>/dev/null && echo "    .NET SDK     : $(dotnet --version)"
@@ -218,10 +285,27 @@ print_summary() {
   echo ""
   echo "    # Docker (full stack)"
   echo "    docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build"
+
+  if [ "$IS_WEB_SANDBOX" = true ]; then
+    echo ""
+    echo "  Web sandbox notes:"
+    echo "    - NuGet restore requires proxy relay: python3 scripts/nuget-proxy-relay.py &"
+    echo "    - Then: HTTPS_PROXY=http://127.0.0.1:18080 dotnet restore"
+    echo "    - External DB connections may be blocked by sandbox network"
+  fi
+
   echo ""
   echo "  NOTE: Run 'source ~/.bashrc' or open a new terminal if PATH is not updated."
   echo "============================================================"
 }
+
+# ============================================================
+# Cleanup
+# ============================================================
+cleanup() {
+  stop_nuget_relay
+}
+trap cleanup EXIT
 
 # ============================================================
 # Main
@@ -234,6 +318,7 @@ main() {
   install_dotnet
   install_node
   install_rust
+  start_nuget_relay
   restore_dotnet
   install_frontend_deps
   print_summary
