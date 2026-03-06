@@ -508,6 +508,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         buildCommand: 'dotnet build --no-restore',
         runCommand: 'dotnet run --no-build --project src/PrdAgent.Api/PrdAgent.Api.csproj --urls http://0.0.0.0:8080',
         containerPort: 8080,
+        cacheMounts: [
+          { hostPath: '/tmp/cds-cache/nuget', containerPath: '/root/.nuget/packages' },
+        ],
       },
       {
         id: 'admin',
@@ -517,6 +520,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         installCommand: 'npm install',
         runCommand: 'npx vite --host 0.0.0.0 --port 5173',
         containerPort: 5173,
+        cacheMounts: [
+          { hostPath: '/tmp/cds-cache/npm', containerPath: '/root/.npm' },
+        ],
       },
     ];
 
