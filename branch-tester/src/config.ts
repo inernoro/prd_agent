@@ -19,9 +19,9 @@ const DEFAULT_CONFIG: CdsConfig = {
 /** Collect shared environment from host (DB, Redis, asset providers, etc.) */
 function buildSharedEnv(): Record<string, string> {
   const keys = [
-    // Database
+    // Database (raw values, kept for backward compat)
     'MONGODB_HOST', 'MONGODB_PASSWORD',
-    // Redis
+    // Redis (raw values)
     'REDIS_HOST', 'REDIS_PASSWORD',
     // Asset providers
     'ASSETS_PROVIDER',
@@ -38,6 +38,26 @@ function buildSharedEnv(): Record<string, string> {
       env[key] = val;
     }
   }
+
+  // Synthesize .NET-style connection strings from individual host/password vars.
+  // The .NET app reads MongoDB:ConnectionString (env: MongoDB__ConnectionString)
+  // and Redis:ConnectionString (env: Redis__ConnectionString).
+  const mongoHost = process.env.MONGODB_HOST;
+  const mongoPass = process.env.MONGODB_PASSWORD;
+  if (mongoHost && !env['MongoDB__ConnectionString']) {
+    env['MongoDB__ConnectionString'] = mongoPass
+      ? `mongodb://root:${mongoPass}@${mongoHost}:27017`
+      : `mongodb://${mongoHost}:27017`;
+  }
+
+  const redisHost = process.env.REDIS_HOST;
+  const redisPass = process.env.REDIS_PASSWORD;
+  if (redisHost && !env['Redis__ConnectionString']) {
+    env['Redis__ConnectionString'] = redisPass
+      ? `${redisHost}:6379,password=${redisPass}`
+      : `${redisHost}:6379`;
+  }
+
   return env;
 }
 
