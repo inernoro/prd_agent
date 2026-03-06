@@ -18,6 +18,7 @@ public class PrdCommentsController : ControllerBase
     private readonly IUserService _userService;
     private readonly IPrdCommentRepository _commentRepo;
     private readonly IIdGenerator _idGenerator;
+    private readonly ISessionService _sessionService;
 
     private static string? GetUserId(ClaimsPrincipal user)
     {
@@ -28,15 +29,17 @@ public class PrdCommentsController : ControllerBase
     }
 
     public PrdCommentsController(
-        IGroupService groupService, 
-        IUserService userService, 
+        IGroupService groupService,
+        IUserService userService,
         IPrdCommentRepository commentRepo,
-        IIdGenerator idGenerator)
+        IIdGenerator idGenerator,
+        ISessionService sessionService)
     {
         _groupService = groupService;
         _userService = userService;
         _commentRepo = commentRepo;
         _idGenerator = idGenerator;
+        _sessionService = sessionService;
     }
 
     private async Task<(bool Ok, IActionResult? ErrorResult)> EnsureCanAccessDocumentAsync(string documentId, string groupId)
@@ -65,10 +68,16 @@ public class PrdCommentsController : ControllerBase
                 ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "您不是该群组成员")));
         }
 
-        if (!string.Equals(group.PrdDocumentId, documentId, StringComparison.OrdinalIgnoreCase))
+        var isGroupPrimary = string.Equals(group.PrdDocumentId, documentId, StringComparison.OrdinalIgnoreCase);
+        if (!isGroupPrimary)
         {
-            return (false, StatusCode(StatusCodes.Status403Forbidden,
-                ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "该文档未绑定到当前群组")));
+            var session = await _sessionService.GetByGroupIdAsync(groupId);
+            var isSessionDoc = session?.GetAllDocumentIds().Contains(documentId, StringComparer.OrdinalIgnoreCase) == true;
+            if (!isSessionDoc)
+            {
+                return (false, StatusCode(StatusCodes.Status403Forbidden,
+                    ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "该文档未绑定到当前群组")));
+            }
         }
 
         return (true, null);

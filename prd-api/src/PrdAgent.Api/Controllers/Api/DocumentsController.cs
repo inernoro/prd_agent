@@ -18,11 +18,13 @@ public class DocumentsController : ControllerBase
 {
     private readonly IDocumentService _documentService;
     private readonly IGroupService _groupService;
+    private readonly ISessionService _sessionService;
 
-    public DocumentsController(IDocumentService documentService, IGroupService groupService)
+    public DocumentsController(IDocumentService documentService, IGroupService groupService, ISessionService sessionService)
     {
         _documentService = documentService;
         _groupService = groupService;
+        _sessionService = sessionService;
     }
 
     /// <summary>
@@ -47,11 +49,17 @@ public class DocumentsController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.GROUP_NOT_FOUND, "群组不存在"));
         }
 
-        // 安全兜底：即便是管理员，也只允许读取“该群组当前绑定的 PRD”
-        if (!string.Equals(group.PrdDocumentId, documentId, StringComparison.OrdinalIgnoreCase))
+        // 安全兜底：即便是管理员，也只允许读取”该群组当前绑定的 PRD”或会话级补充文档
+        var isGroupPrimary = string.Equals(group.PrdDocumentId, documentId, StringComparison.OrdinalIgnoreCase);
+        if (!isGroupPrimary)
         {
-            return StatusCode(StatusCodes.Status403Forbidden,
-                ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "该文档未绑定到当前群组"));
+            var session = await _sessionService.GetByGroupIdAsync(groupId);
+            var isSessionDoc = session?.GetAllDocumentIds().Contains(documentId, StringComparer.OrdinalIgnoreCase) == true;
+            if (!isSessionDoc)
+            {
+                return StatusCode(StatusCodes.Status403Forbidden,
+                    ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, “该文档未绑定到当前群组”));
+            }
         }
 
         var document = await _documentService.GetByIdAsync(documentId);

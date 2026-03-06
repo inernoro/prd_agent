@@ -217,10 +217,18 @@ public class DocumentsController : ControllerBase
                 ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "您不是该群组成员"));
         }
 
-        if (!string.Equals(group.PrdDocumentId, documentId, StringComparison.OrdinalIgnoreCase))
+        // 绑定校验：文档必须是群组主文档 OR 群组会话的辅助文档
+        var isGroupPrimary = string.Equals(group.PrdDocumentId, documentId, StringComparison.OrdinalIgnoreCase);
+        if (!isGroupPrimary)
         {
-            return StatusCode(StatusCodes.Status403Forbidden,
-                ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "该文档未绑定到当前群组"));
+            // 检查辅助文档：群组 session 的 DocumentIds 是否包含该文档
+            var session = await _sessionService.GetByGroupIdAsync(groupId);
+            var isSessionDoc = session?.GetAllDocumentIds().Contains(documentId, StringComparer.OrdinalIgnoreCase) == true;
+            if (!isSessionDoc)
+            {
+                return StatusCode(StatusCodes.Status403Forbidden,
+                    ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "该文档未绑定到当前群组"));
+            }
         }
 
         var document = await _documentService.GetByIdAsync(documentId);

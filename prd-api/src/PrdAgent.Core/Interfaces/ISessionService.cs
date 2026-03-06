@@ -12,6 +12,9 @@ public interface ISessionService
     
     /// <summary>获取会话</summary>
     Task<Session?> GetByIdAsync(string sessionId);
+
+    /// <summary>获取群组关联的会话（单群单会话模式）</summary>
+    Task<Session?> GetByGroupIdAsync(string groupId);
     
     /// <summary>更新会话</summary>
     Task<Session> UpdateAsync(Session session);

@@ -22,6 +22,14 @@ public class MongoSessionService : ISessionService
         _cache = cache;
     }
 
+    public async Task<Session?> GetByGroupIdAsync(string groupId)
+    {
+        if (string.IsNullOrWhiteSpace(groupId)) return null;
+        return await _db.Sessions
+            .Find(s => s.GroupId == groupId && s.DeletedAtUtc == null)
+            .FirstOrDefaultAsync();
+    }
+
     public async Task<Session> CreateAsync(string documentId, string? groupId = null)
     {
         var gid = (groupId ?? string.Empty).Trim();
