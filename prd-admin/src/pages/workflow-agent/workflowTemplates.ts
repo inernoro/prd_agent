@@ -508,7 +508,7 @@ const smartHttpTemplate: WorkflowTemplate = {
 const smartHttpAcceptanceTemplate: WorkflowTemplate = {
   id: 'smart-http-acceptance',
   name: 'Smart-HTTP 增强验收',
-  description: '一键验收：启动 mock → 导入此模板 → 点运行。自动测试 cursor 分页 + 自定义 dataPath + 请求延迟 + 失败重试，校验 50 条数据完整性',
+  description: '一键验收：导入此模板 → 点运行。自动测试 cursor 分页 + 自定义 dataPath + 请求延迟 + 失败重试，校验 50 条数据完整性（使用系统内置 Mock）',
   icon: '🧪',
   tags: ['test', 'smart-http', 'acceptance', 'mock'],
   requiredInputs: [],  // 零表单，直接跑
@@ -520,7 +520,7 @@ const smartHttpAcceptanceTemplate: WorkflowTemplate = {
         nodeId: 'n-trigger',
         name: '手动触发',
         nodeType: 'manual-trigger',
-        config: { inputPrompt: '先确认 mock 已启动: node scripts/mock-paginated-api.js' },
+        config: { inputPrompt: '点击运行即可（系统内置 Mock，无需额外操作）' },
         inputSlots: [],
         outputSlots: [{ slotId: 'manual-out', name: 'input', dataType: 'json', required: true }],
         position: { x: 80, y: 300 },
@@ -531,7 +531,7 @@ const smartHttpAcceptanceTemplate: WorkflowTemplate = {
         name: '智能 HTTP (cursor + dataPath)',
         nodeType: 'smart-http',
         config: {
-          url: 'http://localhost:7799/api/cursor-list?cursor=0&limit=10',
+          url: '{{API_BASE}}/api/v1/stub/pagination/cursor?cursor=0&limit=10',
           method: 'GET',
           paginationType: 'cursor',
           dataPath: 'response.result.list',
