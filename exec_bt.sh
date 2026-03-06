@@ -1,13 +1,13 @@
 #!/usr/bin/env sh
 set -eu
 
-# Branch Tester 一键部署脚本
+# Branch Tester 一键部署/开发脚本
 #
 # 用法：
-#   ./exec_bt.sh              # 安装依赖 + 编译 + 启动（前台）
-#   ./exec_bt.sh start        # 同上
-#   ./exec_bt.sh stop         # 停止后台运行的 BT 进程
-#   ./exec_bt.sh restart      # 重启
+#   ./exec_bt.sh              # 生产部署：npm install + tsc 编译 + node 启动
+#   ./exec_bt.sh dev          # 开发调试：npm install + tsx watch（热重载）
+#   ./exec_bt.sh stop         # 停止后台进程
+#   ./exec_bt.sh restart      # 重启（生产模式）
 #   ./exec_bt.sh status       # 查看运行状态
 #   ./exec_bt.sh logs         # 查看日志（后台模式）
 #   ./exec_bt.sh daemon       # 后台运行（nohup）
@@ -72,13 +72,26 @@ start_foreground() {
   install_deps
   build
 
-  info "启动 Branch Tester（前台模式）..."
+  info "启动 Branch Tester（生产模式）..."
   info "Dashboard: http://localhost:${BT_PORT:-9900}"
   info "按 Ctrl+C 停止"
   echo ""
 
   cd "$BT_DIR"
   exec node dist/index.js
+}
+
+start_dev() {
+  check_deps
+  install_deps
+
+  info "启动 Branch Tester（开发模式，热重载）..."
+  info "Dashboard: http://localhost:${BT_PORT:-9900}"
+  info "按 Ctrl+C 停止"
+  echo ""
+
+  cd "$BT_DIR"
+  exec npx tsx watch src/index.ts
 }
 
 is_running() {
@@ -163,8 +176,9 @@ show_help() {
   echo "用法: ./exec_bt.sh [命令]"
   echo ""
   echo "命令:"
-  echo "  start (默认)  安装依赖 + 编译 + 前台启动"
-  echo "  daemon        安装依赖 + 编译 + 后台启动"
+  echo "  (默认)        安装依赖 + 编译 + 前台启动（生产）"
+  echo "  dev           安装依赖 + tsx watch 热重载（开发）"
+  echo "  daemon        安装依赖 + 编译 + 后台启动（生产）"
   echo "  stop          停止后台进程"
   echo "  restart       重启（后台模式）"
   echo "  status        查看运行状态"
@@ -182,6 +196,7 @@ CMD="${1:-start}"
 
 case "$CMD" in
   start)   start_foreground ;;
+  dev)     start_dev ;;
   daemon)  start_daemon ;;
   stop)    stop_bt ;;
   restart) stop_bt; start_daemon ;;
