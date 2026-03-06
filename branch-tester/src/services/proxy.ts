@@ -213,6 +213,7 @@ export class ProxyService {
     }
 
     // Proxy the request
+    console.log(`[proxy] ${req.method} ${req.url} → ${upstream} (branch=${branchSlug}, profile=${profileId || 'default'})`);
     this.proxyRequest(req, res, upstream);
   }
 
@@ -261,6 +262,7 @@ export class ProxyService {
     });
 
     proxyReq.on('error', (err) => {
+      console.error(`[proxy] upstream error: ${err.message} → ${upstream}`);
       if (!clientRes.headersSent) {
         clientRes.writeHead(502, { 'Content-Type': 'application/json' });
         clientRes.end(JSON.stringify({ error: `Upstream error: ${err.message}` }));

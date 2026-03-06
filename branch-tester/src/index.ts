@@ -133,9 +133,10 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
       const svc = entry.services[profile.id];
       svc.status = 'building';
 
+      const customEnv = stateService.getCustomEnv();
       await containerService.runService(entry, profile, svc, (chunk) => {
         sendEvent('log', { profileId: profile.id, chunk });
-      });
+      }, customEnv);
 
       svc.status = 'running';
       sendEvent('step', { step: `build-${profile.id}`, status: 'done', title: `${profile.name} ready on :${svc.hostPort}` });
