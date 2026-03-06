@@ -40,7 +40,7 @@ public class SkillExecuteAuthzTests : IClassFixture<WebApplicationFactory<Progra
     {
         // Login via root account to get a valid access token
         var client = _factory.CreateClient();
-        var loginResponse = await client.PostAsJsonAsync("/api/auth/login", new
+        var loginResponse = await client.PostAsJsonAsync("/api/v1/auth/login", new
         {
             username = Environment.GetEnvironmentVariable("ROOT_ACCESS_USERNAME") ?? "root",
             password = Environment.GetEnvironmentVariable("ROOT_ACCESS_PASSWORD") ?? "root",
