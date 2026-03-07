@@ -2941,6 +2941,16 @@ public static class CapsuleExecutor
             reportLogs.AppendLine($"  ❌ Gateway 错误: [{errorCode}] {errorMessage}");
         }
 
+        // HTML 格式时提取完整 HTML 文档，去除 LLM 多余输出
+        if (format == "html" && !string.IsNullOrWhiteSpace(content))
+        {
+            var dtIdx = content.IndexOf("<!DOCTYPE html", StringComparison.OrdinalIgnoreCase);
+            if (dtIdx < 0) dtIdx = content.IndexOf("<html", StringComparison.OrdinalIgnoreCase);
+            var endIdx = content.LastIndexOf("</html>", StringComparison.OrdinalIgnoreCase);
+            if (dtIdx >= 0 && endIdx > dtIdx)
+                content = content[dtIdx..(endIdx + "</html>".Length)].Trim();
+        }
+
         reportLogs.AppendLine($"  LLM 响应 ({content.Length} chars):");
         reportLogs.AppendLine(content);
 
@@ -3001,14 +3011,78 @@ public static class CapsuleExecutor
             _ => "" // custom: 不额外描述
         };
 
-        var systemPrompt = @"你是一位资深前端开发专家，擅长生成精美的单页 HTML 报告网页。
+        var systemPrompt = @"你是一位资深前端开发专家，擅长生成**演示文稿风格**的精美 HTML 报告。
 
 ## 输出要求
 1. 输出一个**完整的、自包含的 HTML 文件**（从 <!DOCTYPE html> 开始到 </html> 结束）
-2. 所有 CSS 必须**内嵌在 <style> 标签**中，不依赖外部样式表
-3. 网页必须是**响应式设计**，在桌面和移动端都能良好显示
-4. 使用**语义化 HTML5** 标签
-5. **不要**输出任何 markdown 代码块标记（不要 ```html ... ```），直接输出 HTML 代码";
+2. 所有 CSS 和 JS 必须**内嵌**，不依赖外部样式表（Chart.js CDN 除外）
+3. **不要**输出任何 markdown 代码块标记（不要 ```html ... ```），直接输出 HTML 代码
+4. **不要**在 HTML 之前或之后输出任何额外的解释文字
+
+## 幻灯片演示架构（核心！）
+整个报告采用 **PPT 幻灯片分页模式**，每个章节是一张独立的全屏幻灯片（slide）：
+
+### HTML 结构
+```
+<div class=""slides-container"">
+  <section class=""slide"" id=""slide-0"">封面</section>
+  <section class=""slide"" id=""slide-1"">KPI 概览</section>
+  <section class=""slide"" id=""slide-2"">图表分析</section>
+  <section class=""slide"" id=""slide-3"">数据表格</section>
+  ...更多幻灯片...
+  <section class=""slide"" id=""slide-N"">结论与建议</section>
+</div>
+```
+
+### CSS 要求
+```css
+/* 幻灯片容器 - 竖向 scroll-snap */
+.slides-container {
+  height: 100vh; overflow-y: auto; scroll-snap-type: y mandatory;
+  scroll-behavior: smooth;
+}
+/* 每张幻灯片占满视口 */
+.slide {
+  min-height: 100vh; scroll-snap-align: start;
+  display: flex; flex-direction: column; justify-content: center;
+  padding: 60px 80px; box-sizing: border-box; position: relative;
+}
+```
+
+### 导航系统（必须实现）
+1. **右侧导航圆点**：固定在右侧的竖排小圆点，点击跳转对应幻灯片，当前页高亮
+2. **键盘导航**：↑↓ 方向键切换幻灯片
+3. **页码指示器**：右下角显示「3 / 8」格式的当前页/总页数
+4. **IntersectionObserver**：用 IntersectionObserver 监听当前可见 slide 来更新导航状态
+
+### JavaScript 导航示例
+```js
+const slides = document.querySelectorAll('.slide');
+const dots = document.querySelectorAll('.nav-dot');
+const pageIndicator = document.getElementById('page-indicator');
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      const idx = [...slides].indexOf(e.target);
+      dots.forEach((d,i) => d.classList.toggle('active', i===idx));
+      pageIndicator.textContent = `${idx+1} / ${slides.length}`;
+    }
+  });
+}, { threshold: 0.5 });
+slides.forEach(s => observer.observe(s));
+document.addEventListener('keydown', (e) => {
+  const current = [...slides].findIndex(s => s.getBoundingClientRect().top >= -10);
+  if (e.key==='ArrowDown'||e.key===' ') { e.preventDefault(); slides[Math.min(current+1,slides.length-1)]?.scrollIntoView({behavior:'smooth'}); }
+  if (e.key==='ArrowUp') { e.preventDefault(); slides[Math.max(current-1,0)]?.scrollIntoView({behavior:'smooth'}); }
+});
+```
+
+## 幻灯片内容编排
+- **封面**：大标题 + 副标题(日期/团队) + 装饰性背景图形
+- **KPI 概览**：3-5 个关键指标大数字卡片(grid)，每个卡片带图标、数值、趋势箭头
+- **图表分析**（可多页）：每页聚焦 1-2 个图表，图表要大而清晰，配简短解读文字
+- **数据表格**（可多页）：表格简洁，关键数据高亮，每页不超过 15 行
+- **结论与建议**：要点列表 + 行动建议，每条建议用卡片呈现";
 
         if (!string.IsNullOrWhiteSpace(styleDesc))
         {
@@ -3017,6 +3091,20 @@ public static class CapsuleExecutor
 ## 视觉风格
 {styleDesc}";
         }
+        else
+        {
+            // 默认深色玻璃拟态风格
+            systemPrompt += @"
+
+## 视觉风格
+深色玻璃拟态风格 (dark glassmorphism)：
+- 背景：深色渐变 (#0f0f23 → #171738)
+- 卡片：半透明毛玻璃 (rgba(255,255,255,0.05) + backdrop-filter: blur(15px))，1px solid rgba(255,255,255,0.1) 边框
+- 标题：渐变色文字 (linear-gradient 亮青 → 金色)
+- 强调色：亮青 #22d3ee、金色 #f59e0b、蓝色 #3b82f6
+- 导航圆点：半透明白色，active 状态发光
+- 字体：系统字体栈 (-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif)";
+        }
 
         if (includeCharts)
         {
@@ -3024,23 +3112,24 @@ public static class CapsuleExecutor
 
 ## 图表要求
 - 使用 Chart.js (通过 CDN: https://cdn.jsdelivr.net/npm/chart.js)
-- 根据数据特征选择合适的图表类型（柱状图、饼图、折线图、环形图等）
-- 图表配色与整体网页风格协调
-- 每个图表需要有清晰的标题和图例";
+- 图表配色与整体网页风格协调（深色背景下使用明亮色系）
+- 每个图表独占或最多两个共享一张幻灯片
+- 图表需要有清晰的标题和图例
+- canvas 需设置合理的 max-height，避免图表过大";
         }
 
         systemPrompt += @"
 
-## HTML 结构建议
-- 顶部：报告标题 + 生成时间 + 关键指标摘要卡片
-- 中部：数据图表可视化 + 详细数据表格
-- 底部：结论/建议 + 页脚
+## 响应式与打印
+- 桌面：幻灯片内容居中，最大宽度 1200px
+- 移动端：padding 缩小为 24px 16px，卡片改为单列
+- @media print：每张幻灯片 page-break-after: always，隐藏导航组件，白色背景
 
 ## 质量标准
-- 排版专业美观，有合理的留白和层次感
-- 表格数据清晰可读，支持横向滚动
-- 颜色对比度满足可读性要求
-- 打印友好（@media print 适当处理）";
+- 每张幻灯片内容精练，**不堆砌**，留白充足
+- 文字对比度满足 WCAG AA (4.5:1)
+- 动画使用 prefers-reduced-motion 检测
+- 表格支持横向滚动（overflow-x: auto）";
 
         var userPrompt = string.IsNullOrWhiteSpace(reportTemplate)
             ? $"请根据以下数据生成一份精美的 HTML 网页报告：\n\n{inputText}"
@@ -3051,8 +3140,8 @@ public static class CapsuleExecutor
 
         var request = new PrdAgent.Infrastructure.LlmGateway.GatewayRequest
         {
-            AppCallerCode = PrdAgent.Core.Models.AppCallerRegistry.WorkflowAgent.WebpageGenerator.Chat,
-            ModelType = "chat",
+            AppCallerCode = PrdAgent.Core.Models.AppCallerRegistry.WorkflowAgent.WebpageGenerator.Code,
+            ModelType = "code",
             TimeoutSeconds = 300,
             RequestBody = new System.Text.Json.Nodes.JsonObject
             {
@@ -3142,13 +3231,25 @@ public static class CapsuleExecutor
         streamSw.Stop();
         var htmlContent = contentBuilder.ToString();
 
-        // 清理 LLM 可能添加的 markdown 代码块标记
-        if (htmlContent.StartsWith("```html", StringComparison.OrdinalIgnoreCase))
-            htmlContent = htmlContent["```html".Length..];
-        else if (htmlContent.StartsWith("```"))
-            htmlContent = htmlContent[3..];
-        if (htmlContent.EndsWith("```"))
-            htmlContent = htmlContent[..^3];
+        // 清理 LLM 可能添加的 markdown 代码块标记和多余内容
+        // 策略：优先提取 <!DOCTYPE html> ... </html> 之间的完整 HTML 文档
+        var doctypeIdx = htmlContent.IndexOf("<!DOCTYPE html", StringComparison.OrdinalIgnoreCase);
+        if (doctypeIdx < 0) doctypeIdx = htmlContent.IndexOf("<html", StringComparison.OrdinalIgnoreCase);
+        var htmlEndIdx = htmlContent.LastIndexOf("</html>", StringComparison.OrdinalIgnoreCase);
+        if (doctypeIdx >= 0 && htmlEndIdx > doctypeIdx)
+        {
+            htmlContent = htmlContent[doctypeIdx..(htmlEndIdx + "</html>".Length)];
+        }
+        else
+        {
+            // 回退：简单清理 markdown 围栏
+            if (htmlContent.StartsWith("```html", StringComparison.OrdinalIgnoreCase))
+                htmlContent = htmlContent["```html".Length..];
+            else if (htmlContent.StartsWith("```"))
+                htmlContent = htmlContent[3..];
+            if (htmlContent.EndsWith("```"))
+                htmlContent = htmlContent[..^3];
+        }
         htmlContent = htmlContent.Trim();
 
         if (emitEvent != null)
