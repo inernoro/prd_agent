@@ -3,7 +3,7 @@
 #   .\quick.ps1          - Start backend server
 #   .\quick.ps1 admin    - Start admin panel
 #   .\quick.ps1 desktop  - Start desktop client
-#   .\quick.ps1 bt       - Start Branch Tester
+#   .\quick.ps1 bt       - Start CDS
 #   .\quick.ps1 all      - Start all services together
 #   .\quick.ps1 check    - Run desktop CI checks
 #   .\quick.ps1 ci       - Run full CI checks
@@ -221,10 +221,10 @@ function Ensure-PnpmInstalled {
     }
 }
 
-# Start branch tester
+# Start CDS
 function Start-BranchTester {
-    Write-Info "Starting Branch Tester..."
-    $btDir = "$ScriptDir\branch-tester"
+    Write-Info "Starting CDS..."
+    $btDir = "$ScriptDir\cds"
     if (-not (Test-Path (Join-Path $btDir "node_modules"))) {
         Write-Warn "node_modules not found, running: npm install"
         npm -C "$btDir" install
@@ -418,7 +418,7 @@ function Show-Help {
     Write-Host "  (default)  Start backend server"
     Write-Host "  admin      Start admin panel (prd-admin)"
     Write-Host "  desktop    Start desktop client (prd-desktop)"
-    Write-Host "  bt         Start Branch Tester (branch-tester)"
+    Write-Host "  bt         Start CDS (cds)"
     Write-Host "  all        Start backend + admin + desktop together (single console output)"
     Write-Host "  check      Run desktop CI-equivalent checks"
     Write-Host "  ci         Run local CI checks (server + admin + desktop)"

@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────
-# branch-tester 部署脚本
+# cds 部署脚本
 #
-# 作用：把 branch-tester 源码复制到独立目录运行，
+# 作用：把 cds 源码复制到独立目录运行，
 #       与 prd_agent 仓库完全解耦，互不干扰。
 #
 # 用法：
 #   cd prd_agent
-#   bash branch-tester/scripts/install.sh          # 使用默认目录 /opt/branch-tester
-#   bash branch-tester/scripts/install.sh /my/path  # 自定义安装目录
+#   bash cds/scripts/install.sh          # 使用默认目录 /opt/cds
+#   bash cds/scripts/install.sh /my/path  # 自定义安装目录
 # ──────────────────────────────────────────────
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-SOURCE_DIR="${REPO_ROOT}/branch-tester"
-INSTALL_DIR="${1:-/opt/branch-tester}"
+SOURCE_DIR="${REPO_ROOT}/cds"
+INSTALL_DIR="${1:-/opt/cds}"
 
 echo ""
-echo "  Branch Tester 安装"
+echo "  CDS 安装"
 echo "  ────────────────────"
 echo "  源码目录:   ${SOURCE_DIR}"
 echo "  安装目录:   ${INSTALL_DIR}"

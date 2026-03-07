@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-# Branch Tester 一键部署/开发脚本
+# CDS 一键部署/开发脚本
 #
 # 用法：
 #   ./exec_bt.sh              # 生产部署：npm install + tsc 编译 + node 启动
@@ -18,7 +18,7 @@ set -eu
 #   BT_PASSWORD=xxx     登录密码
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-BT_DIR="$SCRIPT_DIR/branch-tester"
+BT_DIR="$SCRIPT_DIR/cds"
 PID_FILE="$BT_DIR/.bt.pid"
 LOG_FILE="$BT_DIR/.bt.log"
 
@@ -44,7 +44,7 @@ check_deps() {
   fi
 
   if ! command -v docker >/dev/null 2>&1; then
-    err "未找到 docker（Branch Tester 需要 Docker 来管理分支容器）"
+    err "未找到 docker（CDS 需要 Docker 来管理分支容器）"
     exit 1
   fi
 }
@@ -72,7 +72,7 @@ start_foreground() {
   install_deps
   build
 
-  info "启动 Branch Tester（生产模式）..."
+  info "启动 CDS（生产模式）..."
   info "Dashboard: http://localhost:${BT_PORT:-9900}"
   info "按 Ctrl+C 停止"
   echo ""
@@ -85,7 +85,7 @@ start_dev() {
   check_deps
   install_deps
 
-  info "启动 Branch Tester（开发模式，热重载）..."
+  info "启动 CDS（开发模式，热重载）..."
   info "Dashboard: http://localhost:${BT_PORT:-9900}"
   info "按 Ctrl+C 停止"
   echo ""
@@ -104,11 +104,11 @@ start_daemon() {
   build
 
   if is_running; then
-    warn "Branch Tester 已在运行 (PID: $(cat "$PID_FILE"))"
+    warn "CDS 已在运行 (PID: $(cat "$PID_FILE"))"
     return
   fi
 
-  info "启动 Branch Tester（后台模式）..."
+  info "启动 CDS（后台模式）..."
   cd "$BT_DIR"
   nohup node dist/index.js > "$LOG_FILE" 2>&1 &
   echo $! > "$PID_FILE"
@@ -116,7 +116,7 @@ start_daemon() {
 
   sleep 1
   if is_running; then
-    ok "Branch Tester 已启动 (PID: $(cat "$PID_FILE"))"
+    ok "CDS 已启动 (PID: $(cat "$PID_FILE"))"
     info "Dashboard: http://localhost:${BT_PORT:-9900}"
     info "日志: $LOG_FILE"
   else
@@ -128,12 +128,12 @@ start_daemon() {
 
 stop_bt() {
   if ! is_running; then
-    warn "Branch Tester 未在运行"
+    warn "CDS 未在运行"
     return
   fi
 
   PID="$(cat "$PID_FILE")"
-  info "停止 Branch Tester (PID: $PID)..."
+  info "停止 CDS (PID: $PID)..."
   kill "$PID" 2>/dev/null || true
 
   i=0
@@ -154,10 +154,10 @@ stop_bt() {
 show_status() {
   if is_running; then
     PID="$(cat "$PID_FILE")"
-    ok "Branch Tester 运行中 (PID: $PID)"
+    ok "CDS 运行中 (PID: $PID)"
     info "Dashboard: http://localhost:${BT_PORT:-9900}"
   else
-    warn "Branch Tester 未运行"
+    warn "CDS 未运行"
     [ -f "$PID_FILE" ] && rm -f "$PID_FILE"
   fi
 }
@@ -171,7 +171,7 @@ show_logs() {
 }
 
 show_help() {
-  echo "Branch Tester 部署脚本"
+  echo "CDS 部署脚本"
   echo ""
   echo "用法: ./exec_bt.sh [命令]"
   echo ""

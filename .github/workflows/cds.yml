@@ -1,16 +1,16 @@
-name: Branch Tester CI
+name: CDS CI
 
 on:
   push:
     branches: [main, develop]
     paths:
-      - 'branch-tester/**'
-      - '.github/workflows/branch-tester.yml'
+      - 'cds/**'
+      - '.github/workflows/cds.yml'
   pull_request:
     branches: [main, develop]
     paths:
-      - 'branch-tester/**'
-      - '.github/workflows/branch-tester.yml'
+      - 'cds/**'
+      - '.github/workflows/cds.yml'
 
 env:
   NODE_VERSION: '20'
@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: branch-tester
+        working-directory: cds
 
     steps:
       - name: Checkout
@@ -48,7 +48,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ steps.pnpm_store.outputs.path }}
-          key: ${{ runner.os }}-pnpm-bt-${{ hashFiles('branch-tester/pnpm-lock.yaml', 'branch-tester/package.json') }}
+          key: ${{ runner.os }}-pnpm-bt-${{ hashFiles('cds/pnpm-lock.yaml', 'cds/package.json') }}
           restore-keys: |
             ${{ runner.os }}-pnpm-bt-
 
@@ -73,10 +73,10 @@ jobs:
       - name: Build Docker image
         run: |
           docker build \
-            -f branch-tester/Dockerfile \
-            -t branch-tester:ci-${{ github.sha }} \
-            branch-tester/
+            -f cds/Dockerfile \
+            -t cds:ci-${{ github.sha }} \
+            cds/
 
       - name: Verify image
         run: |
-          docker run --rm branch-tester:ci-${{ github.sha }} node --version
+          docker run --rm cds:ci-${{ github.sha }} node --version
