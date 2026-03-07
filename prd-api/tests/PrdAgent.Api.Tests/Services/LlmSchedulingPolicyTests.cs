@@ -134,6 +134,8 @@ public class LlmSchedulingPolicyTests
     {
         public string BuildSystemPrompt(UserRole role, string prdContent) => string.Empty;
         public string BuildPrdContextMessage(string prdContent) => string.Empty;
+        public string BuildMultiPrdContextMessage(List<ParsedPrd> documents) => string.Empty;
+        public string BuildMultiPrdContextMessage(List<ParsedPrd> documents, Func<string, string> getDocumentType, int tokenBudget) => string.Empty;
         public List<GuideOutlineItem> GetGuideOutline(UserRole role) => new();
         public string BuildGapDetectionPrompt(string prdContent, string question) => string.Empty;
     }

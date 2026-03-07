@@ -65,7 +65,7 @@ export interface MobileAssetsResponse {
 }
 
 export type GetMobileAssetsContract = (args?: {
-  category?: 'image' | 'document' | 'attachment';
+  category?: 'image' | 'document' | 'attachment' | 'webpage';
   limit?: number;
   skip?: number;
 }) => Promise<ApiResponse<MobileAssetsResponse>>;

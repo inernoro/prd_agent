@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
@@ -33,7 +33,6 @@ import {
   Check,
   X,
   Lock,
-  Globe,
   Clock,
   RefreshCw,
   Link2,
@@ -178,7 +177,7 @@ export default function WebPagesPage() {
         description="上传 HTML 或 ZIP 压缩包，托管并分享你的网页"
         actions={
           <div className="flex items-center gap-2">
-            <Button size="sm" variant="outline" onClick={() => setShowSharesPanel(true)}>
+            <Button size="sm" variant="secondary" onClick={() => setShowSharesPanel(true)}>
               <Link2 size={14} className="mr-1" /> 分享管理
             </Button>
             <Button size="sm" onClick={() => { setEditItem(null); setShowUploadDialog(true); }}>
@@ -309,7 +308,7 @@ export default function WebPagesPage() {
         {selectedIds.size > 0 && (
           <div className="flex items-center gap-2 mt-3 pt-3" style={{ borderTop: '1px solid var(--border-default)' }}>
             <span className="text-sm" style={{ color: 'var(--text-muted)' }}>已选 {selectedIds.size} 项</span>
-            <Button size="xs" variant="outline" onClick={handleBatchShare}><Share2 size={12} className="mr-1" /> 合集分享</Button>
+            <Button size="xs" variant="secondary" onClick={handleBatchShare}><Share2 size={12} className="mr-1" /> 合集分享</Button>
             <Button size="xs" variant="danger" onClick={handleBatchDelete}><Trash2 size={12} className="mr-1" /> 批量删除</Button>
             <Button size="xs" variant="ghost" onClick={() => setSelectedIds(new Set())}>取消选择</Button>
           </div>
@@ -497,7 +496,7 @@ function SiteCard({ site, selected, onSelect, onEdit, onDelete, onShare }: {
         </div>
         {/* Source badge */}
         <div className="absolute top-1.5 right-1.5 z-10">
-          <Badge variant={site.sourceType === 'workflow' ? 'info' : site.sourceType === 'api' ? 'warning' : 'default'}>
+          <Badge variant={site.sourceType === 'workflow' ? 'subtle' : site.sourceType === 'api' ? 'warning' : 'subtle'}>
             {sourceTypeLabels[site.sourceType] ?? site.sourceType}
           </Badge>
         </div>
@@ -588,7 +587,7 @@ function SiteListItem({ site, selected, onSelect, onEdit, onDelete, onShare }: {
           >
             {site.title}
           </span>
-          <Badge variant={site.sourceType === 'workflow' ? 'info' : site.sourceType === 'api' ? 'warning' : 'default'}>
+          <Badge variant={site.sourceType === 'workflow' ? 'subtle' : site.sourceType === 'api' ? 'warning' : 'subtle'}>
             {sourceTypeLabels[site.sourceType] ?? site.sourceType}
           </Badge>
         </div>
@@ -737,7 +736,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved }: {
                   <p className="text-sm" style={{ color: 'var(--text-primary)' }}>{item.entryFile}</p>
                   <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{item.files.length} 个文件, {fmtSize(item.totalSize)}</p>
                 </div>
-                <Button size="xs" variant="outline" onClick={() => fileInputRef.current?.click()}>
+                <Button size="xs" variant="secondary" onClick={() => fileInputRef.current?.click()}>
                   <Upload size={12} className="mr-1" /> 重新上传
                 </Button>
                 <input
@@ -1052,7 +1051,7 @@ function SharesPanel({ shares, setShares, onClose }: {
                         {share.accessLevel === 'password' ? '密码保护' : '公开'}
                       </Badge>
                       {share.shareType === 'collection' && (
-                        <Badge variant="info">{share.siteIds.length} 站合集</Badge>
+                        <Badge variant="subtle">{share.siteIds.length} 站合集</Badge>
                       )}
                     </div>
                     <div className="flex items-center gap-3 mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
