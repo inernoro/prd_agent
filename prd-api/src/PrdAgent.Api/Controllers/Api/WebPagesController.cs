@@ -1,12 +1,8 @@
-using System.IO.Compression;
 using System.Security.Claims;
-using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using MongoDB.Driver;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
-using PrdAgent.Infrastructure.Database;
-using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -20,56 +16,13 @@ namespace PrdAgent.Api.Controllers.Api;
 [AdminController("web-pages", AdminPermissionCatalog.WebPagesRead, WritePermission = AdminPermissionCatalog.WebPagesWrite)]
 public class WebPagesController : ControllerBase
 {
-    private readonly MongoDbContext _db;
-    private readonly IAssetStorage _storage;
-    private readonly ILogger<WebPagesController> _logger;
+    private readonly IHostedSiteService _siteService;
 
     private const long MaxSingleFileSize = 50 * 1024 * 1024; // 50MB
-    private const long MaxExtractedSize = 200 * 1024 * 1024; // 200MB
-    private const int MaxFileCount = 500;
 
-    private static readonly HashSet<string> BlockedExtensions = new(StringComparer.OrdinalIgnoreCase)
+    public WebPagesController(IHostedSiteService siteService)
     {
-        ".exe", ".dll", ".sh", ".bat", ".cmd", ".ps1", ".msi", ".com", ".scr", ".pif",
-        ".vbs", ".vbe", ".wsf", ".wsh", ".jar", ".class", ".py", ".rb", ".php",
-    };
-
-    private static readonly Dictionary<string, string> MimeMap = new(StringComparer.OrdinalIgnoreCase)
-    {
-        [".html"] = "text/html",
-        [".htm"] = "text/html",
-        [".css"] = "text/css",
-        [".js"] = "application/javascript",
-        [".mjs"] = "application/javascript",
-        [".json"] = "application/json",
-        [".xml"] = "application/xml",
-        [".svg"] = "image/svg+xml",
-        [".png"] = "image/png",
-        [".jpg"] = "image/png",
-        [".jpeg"] = "image/jpeg",
-        [".gif"] = "image/gif",
-        [".webp"] = "image/webp",
-        [".ico"] = "image/x-icon",
-        [".woff"] = "font/woff",
-        [".woff2"] = "font/woff2",
-        [".ttf"] = "font/ttf",
-        [".otf"] = "font/otf",
-        [".eot"] = "application/vnd.ms-fontobject",
-        [".mp4"] = "video/mp4",
-        [".webm"] = "video/webm",
-        [".mp3"] = "audio/mpeg",
-        [".wav"] = "audio/wav",
-        [".pdf"] = "application/pdf",
-        [".txt"] = "text/plain",
-        [".md"] = "text/markdown",
-        [".map"] = "application/json",
-    };
-
-    public WebPagesController(MongoDbContext db, IAssetStorage storage, ILogger<WebPagesController> logger)
-    {
-        _db = db;
-        _storage = storage;
-        _logger = logger;
+        _siteService = siteService;
     }
 
     private string GetUserId()
@@ -104,72 +57,38 @@ public class WebPagesController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"文件大小不能超过 {MaxSingleFileSize / 1024 / 1024}MB"));
 
         var userId = GetUserId();
-        var siteId = Guid.NewGuid().ToString("N");
         var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
-
-        List<HostedSiteFile> siteFiles;
-        string entryFile;
-        long totalSize;
 
         using var ms = new MemoryStream();
         await file.CopyToAsync(ms);
         var fileBytes = ms.ToArray();
 
-        if (ext == ".zip")
-        {
-            var result = await ExtractAndUploadZip(siteId, fileBytes);
-            if (result.Error != null)
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, result.Error));
-            siteFiles = result.Files;
-            entryFile = result.EntryFile;
-            totalSize = result.TotalSize;
-        }
-        else if (ext is ".html" or ".htm")
-        {
-            var rewritten = RewriteAbsolutePathsInHtml(fileBytes, "index.html");
-            var cosKey = _storage.BuildSiteKey(siteId, "index.html");
-            await _storage.UploadToKeyAsync(cosKey, rewritten, "text/html; charset=utf-8", CancellationToken.None);
-
-            siteFiles = new List<HostedSiteFile>
-            {
-                new() { Path = "index.html", CosKey = cosKey, Size = rewritten.Length, MimeType = "text/html" }
-            };
-            entryFile = "index.html";
-            totalSize = rewritten.Length;
-        }
-        else
-        {
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅支持 .html/.htm/.zip 文件"));
-        }
-
-        var cosPrefix = $"web-hosting/sites/{siteId}/";
-        var siteUrl = _storage.BuildUrlForKey(_storage.BuildSiteKey(siteId, entryFile));
-
         var tagList = string.IsNullOrWhiteSpace(tags)
             ? new List<string>()
             : tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
 
-        var site = new HostedSite
+        try
         {
-            Id = siteId,
-            Title = title?.Trim() ?? Path.GetFileNameWithoutExtension(file.FileName),
-            Description = description?.Trim(),
-            SourceType = "upload",
-            CosPrefix = cosPrefix,
-            EntryFile = entryFile,
-            SiteUrl = siteUrl,
-            Files = siteFiles,
-            TotalSize = totalSize,
-            Tags = tagList,
-            Folder = folder?.Trim(),
-            OwnerUserId = userId,
-        };
+            HostedSite site;
+            if (ext == ".zip")
+            {
+                site = await _siteService.CreateFromZipAsync(userId, fileBytes, title, description, folder, tagList);
+            }
+            else if (ext is ".html" or ".htm")
+            {
+                site = await _siteService.CreateFromHtmlAsync(userId, fileBytes, file.FileName, title, description, folder, tagList);
+            }
+            else
+            {
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅支持 .html/.htm/.zip 文件"));
+            }
 
-        await _db.HostedSites.InsertOneAsync(site);
-        _logger.LogInformation("用户 {UserId} 上传托管站点 {SiteId}: {Title}, {FileCount} 个文件, {TotalSize} bytes",
-            userId, siteId, site.Title, siteFiles.Count, totalSize);
-
-        return Ok(ApiResponse<object>.Ok(site));
+            return Ok(ApiResponse<object>.Ok(site));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
     }
 
     /// <summary>从 HTML 内容直接创建站点（供工作流/API 调用）</summary>
@@ -179,40 +98,11 @@ public class WebPagesController : ControllerBase
         if (string.IsNullOrWhiteSpace(req.HtmlContent))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "htmlContent 不能为空"));
 
-        var userId = GetUserId();
-        var siteId = Guid.NewGuid().ToString("N");
-        var htmlBytes = RewriteAbsolutePathsInHtml(
-            System.Text.Encoding.UTF8.GetBytes(req.HtmlContent), "index.html");
-
-        var cosKey = _storage.BuildSiteKey(siteId, "index.html");
-        await _storage.UploadToKeyAsync(cosKey, htmlBytes, "text/html; charset=utf-8", CancellationToken.None);
-
-        var siteUrl = _storage.BuildUrlForKey(cosKey);
-        var cosPrefix = $"web-hosting/sites/{siteId}/";
-
-        var site = new HostedSite
-        {
-            Id = siteId,
-            Title = req.Title?.Trim() ?? "未命名站点",
-            Description = req.Description?.Trim(),
-            SourceType = req.SourceType ?? "api",
-            SourceRef = req.SourceRef?.Trim(),
-            CosPrefix = cosPrefix,
-            EntryFile = "index.html",
-            SiteUrl = siteUrl,
-            Files = new List<HostedSiteFile>
-            {
-                new() { Path = "index.html", CosKey = cosKey, Size = htmlBytes.Length, MimeType = "text/html" }
-            },
-            TotalSize = htmlBytes.Length,
-            Tags = req.Tags ?? new List<string>(),
-            Folder = req.Folder?.Trim(),
-            OwnerUserId = userId,
-        };
-
-        await _db.HostedSites.InsertOneAsync(site);
-        _logger.LogInformation("用户 {UserId} 通过 {SourceType} 创建托管站点 {SiteId}: {Title}",
-            userId, site.SourceType, siteId, site.Title);
+        var site = await _siteService.CreateFromContentAsync(
+            GetUserId(), req.HtmlContent,
+            req.Title, req.Description,
+            req.SourceType ?? "api", req.SourceRef,
+            req.Tags, req.Folder);
 
         return Ok(ApiResponse<object>.Ok(site));
     }
@@ -232,46 +122,8 @@ public class WebPagesController : ControllerBase
         [FromQuery] int skip = 0,
         [FromQuery] int limit = 50)
     {
-        var userId = GetUserId();
-        var fb = Builders<HostedSite>.Filter;
-        var filter = fb.Eq(x => x.OwnerUserId, userId);
-
-        if (!string.IsNullOrWhiteSpace(keyword))
-        {
-            var kw = keyword.Trim();
-            filter &= fb.Or(
-                fb.Regex(x => x.Title, new MongoDB.Bson.BsonRegularExpression(kw, "i")),
-                fb.Regex(x => x.Description, new MongoDB.Bson.BsonRegularExpression(kw, "i"))
-            );
-        }
-
-        if (!string.IsNullOrWhiteSpace(folder))
-            filter &= fb.Eq(x => x.Folder, folder.Trim());
-
-        if (!string.IsNullOrWhiteSpace(tag))
-            filter &= fb.AnyEq(x => x.Tags, tag.Trim());
-
-        if (!string.IsNullOrWhiteSpace(sourceType))
-            filter &= fb.Eq(x => x.SourceType, sourceType.Trim());
-
-        limit = Math.Clamp(limit, 1, 200);
-
-        var sortDef = sort switch
-        {
-            "oldest" => Builders<HostedSite>.Sort.Ascending(x => x.CreatedAt),
-            "title" => Builders<HostedSite>.Sort.Ascending(x => x.Title),
-            "most-viewed" => Builders<HostedSite>.Sort.Descending(x => x.ViewCount),
-            "largest" => Builders<HostedSite>.Sort.Descending(x => x.TotalSize),
-            _ => Builders<HostedSite>.Sort.Descending(x => x.CreatedAt),
-        };
-
-        var total = await _db.HostedSites.CountDocumentsAsync(filter);
-        var items = await _db.HostedSites.Find(filter)
-            .Sort(sortDef)
-            .Skip(skip)
-            .Limit(limit)
-            .ToListAsync();
-
+        var (items, total) = await _siteService.ListAsync(
+            GetUserId(), keyword, folder, tag, sourceType, sort, skip, limit);
         return Ok(ApiResponse<object>.Ok(new { items, total }));
     }
 
@@ -279,8 +131,7 @@ public class WebPagesController : ControllerBase
     [HttpGet("{id}")]
     public async Task<IActionResult> Get(string id)
     {
-        var userId = GetUserId();
-        var site = await _db.HostedSites.Find(x => x.Id == id && x.OwnerUserId == userId).FirstOrDefaultAsync();
+        var site = await _siteService.GetByIdAsync(id, GetUserId());
         if (site == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在"));
         return Ok(ApiResponse<object>.Ok(site));
     }
@@ -289,29 +140,15 @@ public class WebPagesController : ControllerBase
     [HttpPut("{id}")]
     public async Task<IActionResult> Update(string id, [FromBody] UpdateHostedSiteRequest req)
     {
-        var userId = GetUserId();
-        var ub = Builders<HostedSite>.Update;
-        var updates = new List<UpdateDefinition<HostedSite>>();
-
-        if (req.Title != null) updates.Add(ub.Set(x => x.Title, req.Title.Trim()));
-        if (req.Description != null) updates.Add(ub.Set(x => x.Description, req.Description.Trim()));
-        if (req.Tags != null) updates.Add(ub.Set(x => x.Tags, req.Tags));
-        if (req.Folder != null) updates.Add(ub.Set(x => x.Folder, req.Folder.Trim()));
-        if (req.CoverImageUrl != null) updates.Add(ub.Set(x => x.CoverImageUrl, req.CoverImageUrl.Trim()));
-
-        if (updates.Count == 0)
+        if (req.Title == null && req.Description == null && req.Tags == null && req.Folder == null && req.CoverImageUrl == null)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "没有需要更新的字段"));
 
-        updates.Add(ub.Set(x => x.UpdatedAt, DateTime.UtcNow));
+        var updated = await _siteService.UpdateAsync(
+            id, GetUserId(), req.Title, req.Description, req.Tags, req.Folder, req.CoverImageUrl);
 
-        var result = await _db.HostedSites.UpdateOneAsync(
-            x => x.Id == id && x.OwnerUserId == userId,
-            ub.Combine(updates));
-
-        if (result.MatchedCount == 0)
+        if (updated == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在"));
 
-        var updated = await _db.HostedSites.Find(x => x.Id == id).FirstOrDefaultAsync();
         return Ok(ApiResponse<object>.Ok(updated));
     }
 
@@ -323,85 +160,30 @@ public class WebPagesController : ControllerBase
         if (file == null || file.Length == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请上传文件"));
 
-        var userId = GetUserId();
-        var site = await _db.HostedSites.Find(x => x.Id == id && x.OwnerUserId == userId).FirstOrDefaultAsync();
-        if (site == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在"));
-
-        // 清理旧 COS 文件
-        foreach (var f in site.Files)
-        {
-            try { await _storage.DeleteByKeyAsync(f.CosKey, CancellationToken.None); }
-            catch (Exception ex) { _logger.LogWarning(ex, "删除旧文件失败: {CosKey}", f.CosKey); }
-        }
-
-        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
         using var ms = new MemoryStream();
         await file.CopyToAsync(ms);
-        var fileBytes = ms.ToArray();
 
-        List<HostedSiteFile> siteFiles;
-        string entryFile;
-        long totalSize;
-
-        if (ext == ".zip")
+        try
         {
-            var result = await ExtractAndUploadZip(id, fileBytes);
-            if (result.Error != null)
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, result.Error));
-            siteFiles = result.Files;
-            entryFile = result.EntryFile;
-            totalSize = result.TotalSize;
+            var updated = await _siteService.ReuploadAsync(id, GetUserId(), ms.ToArray(), file.FileName);
+            return Ok(ApiResponse<object>.Ok(updated));
         }
-        else if (ext is ".html" or ".htm")
+        catch (KeyNotFoundException)
         {
-            var rewritten = RewriteAbsolutePathsInHtml(fileBytes, "index.html");
-            var cosKey = _storage.BuildSiteKey(id, "index.html");
-            await _storage.UploadToKeyAsync(cosKey, rewritten, "text/html; charset=utf-8", CancellationToken.None);
-            siteFiles = new List<HostedSiteFile>
-            {
-                new() { Path = "index.html", CosKey = cosKey, Size = rewritten.Length, MimeType = "text/html" }
-            };
-            entryFile = "index.html";
-            totalSize = rewritten.Length;
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在"));
         }
-        else
+        catch (InvalidOperationException ex)
         {
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅支持 .html/.htm/.zip 文件"));
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
         }
-
-        var siteUrl = _storage.BuildUrlForKey(_storage.BuildSiteKey(id, entryFile));
-
-        await _db.HostedSites.UpdateOneAsync(
-            x => x.Id == id,
-            Builders<HostedSite>.Update
-                .Set(x => x.EntryFile, entryFile)
-                .Set(x => x.SiteUrl, siteUrl)
-                .Set(x => x.Files, siteFiles)
-                .Set(x => x.TotalSize, totalSize)
-                .Set(x => x.UpdatedAt, DateTime.UtcNow));
-
-        var updated = await _db.HostedSites.Find(x => x.Id == id).FirstOrDefaultAsync();
-        return Ok(ApiResponse<object>.Ok(updated));
     }
 
     /// <summary>删除站点（含 COS 文件清理）</summary>
     [HttpDelete("{id}")]
     public async Task<IActionResult> Delete(string id)
     {
-        var userId = GetUserId();
-        var site = await _db.HostedSites.Find(x => x.Id == id && x.OwnerUserId == userId).FirstOrDefaultAsync();
-        if (site == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在"));
-
-        // 删除 COS 文件
-        foreach (var f in site.Files)
-        {
-            try { await _storage.DeleteByKeyAsync(f.CosKey, CancellationToken.None); }
-            catch (Exception ex) { _logger.LogWarning(ex, "删除 COS 文件失败: {CosKey}", f.CosKey); }
-        }
-
-        await _db.HostedSites.DeleteOneAsync(x => x.Id == id);
-        await _db.WebPageShareLinks.DeleteManyAsync(x => x.SiteId == id && x.CreatedBy == userId);
-
+        var ok = await _siteService.DeleteAsync(id, GetUserId());
+        if (!ok) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在"));
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
@@ -412,39 +194,15 @@ public class WebPagesController : ControllerBase
         if (req.Ids == null || req.Ids.Count == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请提供要删除的 ID 列表"));
 
-        var userId = GetUserId();
-        var sites = await _db.HostedSites.Find(
-            x => req.Ids.Contains(x.Id) && x.OwnerUserId == userId).ToListAsync();
-
-        // 删除 COS 文件
-        foreach (var site in sites)
-        {
-            foreach (var f in site.Files)
-            {
-                try { await _storage.DeleteByKeyAsync(f.CosKey, CancellationToken.None); }
-                catch (Exception ex) { _logger.LogWarning(ex, "批量删除 COS 文件失败: {CosKey}", f.CosKey); }
-            }
-        }
-
-        var result = await _db.HostedSites.DeleteManyAsync(
-            x => req.Ids.Contains(x.Id) && x.OwnerUserId == userId);
-
-        await _db.WebPageShareLinks.DeleteManyAsync(
-            x => req.Ids.Contains(x.SiteId!) && x.CreatedBy == userId);
-
-        return Ok(ApiResponse<object>.Ok(new { deletedCount = result.DeletedCount }));
+        var deletedCount = await _siteService.BatchDeleteAsync(req.Ids, GetUserId());
+        return Ok(ApiResponse<object>.Ok(new { deletedCount }));
     }
 
     /// <summary>获取用户所有文件夹列表</summary>
     [HttpGet("folders")]
     public async Task<IActionResult> ListFolders()
     {
-        var userId = GetUserId();
-        var sites = await _db.HostedSites.Find(x => x.OwnerUserId == userId && x.Folder != null)
-            .Project(x => x.Folder)
-            .ToListAsync();
-
-        var folders = sites.Where(f => !string.IsNullOrWhiteSpace(f)).Distinct().OrderBy(f => f).ToList();
+        var folders = await _siteService.ListFoldersAsync(GetUserId());
         return Ok(ApiResponse<object>.Ok(new { folders }));
     }
 
@@ -452,19 +210,8 @@ public class WebPagesController : ControllerBase
     [HttpGet("tags")]
     public async Task<IActionResult> ListTags()
     {
-        var userId = GetUserId();
-        var tagLists = await _db.HostedSites.Find(x => x.OwnerUserId == userId)
-            .Project(x => x.Tags)
-            .ToListAsync();
-
-        var tagCounts = tagLists
-            .SelectMany(t => t)
-            .GroupBy(t => t)
-            .Select(g => new { tag = g.Key, count = g.Count() })
-            .OrderByDescending(x => x.count)
-            .ToList();
-
-        return Ok(ApiResponse<object>.Ok(new { tags = tagCounts }));
+        var tags = await _siteService.ListTagsAsync(GetUserId());
+        return Ok(ApiResponse<object>.Ok(new { tags }));
     }
 
     // ─────────────────────────────────────────────
@@ -475,90 +222,48 @@ public class WebPagesController : ControllerBase
     [HttpPost("share")]
     public async Task<IActionResult> CreateShare([FromBody] CreateWebPageShareRequest req)
     {
-        var userId = GetUserId();
-
-        var siteIds = req.ShareType == "collection" ? (req.SiteIds ?? new()) : new List<string>();
-        if (req.ShareType != "collection")
+        try
         {
-            if (string.IsNullOrWhiteSpace(req.SiteId))
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "单站点分享需提供 siteId"));
-            siteIds = new List<string> { req.SiteId };
+            var share = await _siteService.CreateShareAsync(
+                GetUserId(), GetDisplayName(),
+                req.SiteId, req.SiteIds, req.ShareType ?? "single",
+                req.Title, req.Description,
+                req.Password, req.ExpiresInDays);
+
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                share.Id,
+                share.Token,
+                share.ShareType,
+                share.AccessLevel,
+                share.ExpiresAt,
+                shareUrl = $"/s/wp/{share.Token}",
+            }));
         }
-
-        if (siteIds.Count == 0)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "至少选择一个站点"));
-
-        var ownedCount = await _db.HostedSites.CountDocumentsAsync(
-            x => siteIds.Contains(x.Id) && x.OwnerUserId == userId);
-
-        if (ownedCount != siteIds.Count)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "包含非自己的站点"));
-
-        // 自动生成分享标题：{displayName} 分享给你的 {siteTitle}
-        var title = req.Title?.Trim();
-        if (string.IsNullOrWhiteSpace(title))
+        catch (ArgumentException ex)
         {
-            var displayName = GetDisplayName();
-            var firstSite = await _db.HostedSites.Find(x => x.Id == siteIds[0])
-                .Project(Builders<HostedSite>.Projection.Expression(s => s.Title))
-                .FirstOrDefaultAsync();
-            title = req.ShareType == "collection"
-                ? $"{displayName} 分享给你的 {siteIds.Count} 个站点合集"
-                : $"{displayName} 分享给你的「{firstSite ?? "站点"}」";
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
         }
-
-        var share = new WebPageShareLink
+        catch (UnauthorizedAccessException ex)
         {
-            SiteId = req.ShareType != "collection" ? req.SiteId : null,
-            SiteIds = siteIds,
-            ShareType = req.ShareType ?? "single",
-            Title = title,
-            Description = req.Description?.Trim(),
-            AccessLevel = string.IsNullOrWhiteSpace(req.Password) ? "public" : "password",
-            Password = req.Password,
-            ExpiresAt = req.ExpiresInDays > 0 ? DateTime.UtcNow.AddDays(req.ExpiresInDays) : null,
-            CreatedBy = userId,
-        };
-
-        await _db.WebPageShareLinks.InsertOneAsync(share);
-        _logger.LogInformation("用户 {UserId} 创建站点分享 {ShareId}, type={Type}", userId, share.Id, share.ShareType);
-
-        return Ok(ApiResponse<object>.Ok(new
-        {
-            share.Id,
-            share.Token,
-            share.ShareType,
-            share.AccessLevel,
-            share.ExpiresAt,
-            shareUrl = $"/s/wp/{share.Token}",
-        }));
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, ex.Message));
+        }
     }
 
     /// <summary>获取当前用户的分享链接列表</summary>
     [HttpGet("shares")]
     public async Task<IActionResult> ListShares()
     {
-        var userId = GetUserId();
-        var shares = await _db.WebPageShareLinks.Find(x => x.CreatedBy == userId && !x.IsRevoked)
-            .SortByDescending(x => x.CreatedAt)
-            .Limit(100)
-            .ToListAsync();
-
-        return Ok(ApiResponse<object>.Ok(new { items = shares }));
+        var items = await _siteService.ListSharesAsync(GetUserId());
+        return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
     /// <summary>撤销分享链接</summary>
     [HttpDelete("shares/{shareId}")]
     public async Task<IActionResult> RevokeShare(string shareId)
     {
-        var userId = GetUserId();
-        var result = await _db.WebPageShareLinks.UpdateOneAsync(
-            x => x.Id == shareId && x.CreatedBy == userId,
-            Builders<WebPageShareLink>.Update.Set(x => x.IsRevoked, true));
-
-        if (result.MatchedCount == 0)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接不存在"));
-
+        var ok = await _siteService.RevokeShareAsync(shareId, GetUserId());
+        if (!ok) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接不存在"));
         return Ok(ApiResponse<object>.Ok(new { revoked = true }));
     }
 
@@ -567,206 +272,28 @@ public class WebPagesController : ControllerBase
     [AllowAnonymous]
     public async Task<IActionResult> ViewShare(string token, [FromQuery] string? password)
     {
-        var share = await _db.WebPageShareLinks.Find(x => x.Token == token).FirstOrDefaultAsync();
-        if (share == null || share.IsRevoked)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接不存在或已失效"));
+        var result = await _siteService.ViewShareAsync(token, password);
+        if (result == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接不存在"));
 
-        if (share.ExpiresAt.HasValue && share.ExpiresAt.Value < DateTime.UtcNow)
-            return BadRequest(ApiResponse<object>.Fail("EXPIRED", "分享链接已过期"));
-
-        if (share.AccessLevel == "password")
+        if (result.Error != null)
         {
-            if (string.IsNullOrWhiteSpace(password) || password != share.Password)
-                return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "需要提供正确的访问密码"));
-        }
-
-        // 更新浏览量
-        await _db.WebPageShareLinks.UpdateOneAsync(
-            x => x.Id == share.Id,
-            Builders<WebPageShareLink>.Update
-                .Inc(x => x.ViewCount, 1)
-                .Set(x => x.LastViewedAt, DateTime.UtcNow));
-
-        // 获取关联的站点
-        var siteIds = share.SiteIds.Count > 0 ? share.SiteIds : new List<string>();
-        if (share.SiteId != null && !siteIds.Contains(share.SiteId))
-            siteIds.Insert(0, share.SiteId);
-
-        var sites = await _db.HostedSites.Find(x => siteIds.Contains(x.Id))
-            .Project(Builders<HostedSite>.Projection.Expression(s => new
+            return result.HttpStatus switch
             {
-                s.Id,
-                s.Title,
-                s.Description,
-                s.SiteUrl,
-                s.EntryFile,
-                s.TotalSize,
-                FileCount = s.Files.Count,
-                s.CoverImageUrl,
-            }))
-            .ToListAsync();
-
-        // 增加站点浏览量
-        await _db.HostedSites.UpdateManyAsync(
-            x => siteIds.Contains(x.Id),
-            Builders<HostedSite>.Update.Inc(x => x.ViewCount, 1));
+                401 => Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, result.Error)),
+                400 => BadRequest(ApiResponse<object>.Fail("EXPIRED", result.Error)),
+                _ => NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, result.Error)),
+            };
+        }
 
         return Ok(ApiResponse<object>.Ok(new
         {
-            share.Title,
-            share.Description,
-            share.ShareType,
-            share.CreatedAt,
-            sites,
+            result.Title,
+            result.Description,
+            result.ShareType,
+            result.CreatedAt,
+            result.Sites,
         }));
-    }
-
-    // ─────────────────────────────────────────────
-    // ZIP 解压上传
-    // ─────────────────────────────────────────────
-
-    private async Task<ZipExtractResult> ExtractAndUploadZip(string siteId, byte[] zipBytes)
-    {
-        var files = new List<HostedSiteFile>();
-        long totalSize = 0;
-        string? entryFile = null;
-
-        try
-        {
-            using var zipStream = new MemoryStream(zipBytes);
-            using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read);
-
-            if (archive.Entries.Count > MaxFileCount)
-                return new ZipExtractResult { Error = $"ZIP 包含的文件数超过限制 ({MaxFileCount})" };
-
-            // 检测根目录前缀（有些 ZIP 整个内容在一个文件夹下）
-            var rootPrefix = DetectRootPrefix(archive);
-
-            foreach (var entry in archive.Entries)
-            {
-                // 跳过目录条目
-                if (string.IsNullOrEmpty(entry.Name)) continue;
-
-                var relativePath = entry.FullName;
-                // 去掉根目录前缀
-                if (!string.IsNullOrEmpty(rootPrefix) && relativePath.StartsWith(rootPrefix))
-                    relativePath = relativePath[rootPrefix.Length..];
-
-                // 安全检查：防止路径遍历
-                if (relativePath.Contains("..") || Path.IsPathRooted(relativePath))
-                    continue;
-
-                // 跳过隐藏文件和 macOS 元数据
-                if (relativePath.StartsWith('.') || relativePath.Contains("/__MACOSX/") || relativePath.StartsWith("__MACOSX/"))
-                    continue;
-
-                var fileExt = Path.GetExtension(entry.Name);
-                if (BlockedExtensions.Contains(fileExt))
-                    continue;
-
-                // 大小检查
-                totalSize += entry.Length;
-                if (totalSize > MaxExtractedSize)
-                    return new ZipExtractResult { Error = $"解压后总大小超过限制 ({MaxExtractedSize / 1024 / 1024}MB)" };
-
-                // 读取文件内容
-                using var entryStream = entry.Open();
-                using var entryMs = new MemoryStream();
-                await entryStream.CopyToAsync(entryMs);
-                var entryBytes = entryMs.ToArray();
-
-                var mimeType = GetMimeType(fileExt);
-
-                // 对 HTML 文件做绝对路径重写，确保 /xxx 引用在 COS 子目录下能正常加载
-                if (mimeType == "text/html")
-                    entryBytes = RewriteAbsolutePathsInHtml(entryBytes, relativePath);
-
-                var cosKey = _storage.BuildSiteKey(siteId, relativePath);
-
-                await _storage.UploadToKeyAsync(cosKey, entryBytes, mimeType == "text/html" ? "text/html; charset=utf-8" : mimeType, CancellationToken.None);
-
-                files.Add(new HostedSiteFile
-                {
-                    Path = relativePath,
-                    CosKey = cosKey,
-                    Size = entryBytes.Length,
-                    MimeType = mimeType,
-                });
-            }
-        }
-        catch (InvalidDataException)
-        {
-            return new ZipExtractResult { Error = "无效的 ZIP 文件" };
-        }
-
-        if (files.Count == 0)
-            return new ZipExtractResult { Error = "ZIP 中没有有效文件" };
-
-        // 检测入口文件
-        entryFile = files.FirstOrDefault(f => f.Path.Equals("index.html", StringComparison.OrdinalIgnoreCase))?.Path
-            ?? files.FirstOrDefault(f => f.Path.Equals("index.htm", StringComparison.OrdinalIgnoreCase))?.Path
-            ?? files.FirstOrDefault(f => f.MimeType == "text/html")?.Path
-            ?? files[0].Path;
-
-        return new ZipExtractResult
-        {
-            Files = files,
-            EntryFile = entryFile,
-            TotalSize = totalSize,
-        };
-    }
-
-    private static string? DetectRootPrefix(ZipArchive archive)
-    {
-        // 如果所有文件都在同一个顶层目录下，返回该目录前缀
-        string? commonPrefix = null;
-        foreach (var entry in archive.Entries)
-        {
-            if (string.IsNullOrEmpty(entry.Name)) continue; // 目录条目
-            var slashIdx = entry.FullName.IndexOf('/');
-            if (slashIdx < 0) return null; // 有文件在根目录，不需要去前缀
-            var prefix = entry.FullName[..(slashIdx + 1)];
-            if (commonPrefix == null) commonPrefix = prefix;
-            else if (commonPrefix != prefix) return null; // 不同的顶层目录
-        }
-        return commonPrefix;
-    }
-
-    private static string GetMimeType(string ext)
-    {
-        if (string.IsNullOrEmpty(ext)) return "application/octet-stream";
-        return MimeMap.TryGetValue(ext, out var mime) ? mime : "application/octet-stream";
-    }
-
-    /// <summary>
-    /// 将 HTML 中 src="/xxx" 和 href="/xxx" 的绝对路径改为相对路径 src="./xxx"，
-    /// 使站点在 COS 子目录下也能正确加载 JS/CSS/图片等资源。
-    /// 同时注入 <base> 标签确保其他相对路径也正确解析。
-    /// </summary>
-    private static byte[] RewriteAbsolutePathsInHtml(byte[] htmlBytes, string entryFile)
-    {
-        var html = System.Text.Encoding.UTF8.GetString(htmlBytes);
-
-        // 计算入口文件到站点根目录的相对路径前缀
-        // 例如 entryFile="sub/index.html" → prefix="../"，entryFile="index.html" → prefix="./"
-        var depth = entryFile.Count(c => c == '/');
-        var prefix = depth > 0 ? string.Concat(Enumerable.Repeat("../", depth)) : "./";
-
-        // 替换 src="/..." 和 href="/..." 中的绝对路径（排除 // 开头的协议相对 URL）
-        // 匹配模式: (src|href|action)="/path" 但排除 (src|href|action)="//"
-        html = Regex.Replace(html, """(?<attr>(?:src|href|action)\s*=\s*["'])\/(?!\/)""",
-            m => m.Groups["attr"].Value + prefix,
-            RegexOptions.IgnoreCase);
-
-        return System.Text.Encoding.UTF8.GetBytes(html);
-    }
-
-    private sealed class ZipExtractResult
-    {
-        public List<HostedSiteFile> Files { get; set; } = new();
-        public string EntryFile { get; set; } = "index.html";
-        public long TotalSize { get; set; }
-        public string? Error { get; set; }
     }
 }
 
