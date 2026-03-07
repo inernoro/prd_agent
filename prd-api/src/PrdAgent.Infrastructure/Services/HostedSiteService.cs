@@ -557,6 +557,9 @@ public class HostedSiteService : IHostedSiteService
                 if (totalSize > MaxExtractedSize)
                     return new ZipExtractResult { Error = $"解压后总大小超过限制 ({MaxExtractedSize / 1024 / 1024}MB)" };
 
+                if (entry.Length == 0)
+                    continue;
+
                 using var entryStream = entry.Open();
                 using var entryMs = new MemoryStream();
                 await entryStream.CopyToAsync(entryMs);
