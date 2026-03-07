@@ -25,6 +25,7 @@ public class WorkflowAgentController : ControllerBase
     private readonly IRunQueue _runQueue;
     private readonly IRunEventStore _eventStore;
     private readonly ILlmGateway _gateway;
+    private readonly WorkflowAiFillService _aiFillService;
     private readonly ILogger<WorkflowAgentController> _logger;
 
     public WorkflowAgentController(
@@ -32,12 +33,14 @@ public class WorkflowAgentController : ControllerBase
         IRunQueue runQueue,
         IRunEventStore eventStore,
         ILlmGateway gateway,
+        WorkflowAiFillService aiFillService,
         ILogger<WorkflowAgentController> logger)
     {
         _db = db;
         _runQueue = runQueue;
         _eventStore = eventStore;
         _gateway = gateway;
+        _aiFillService = aiFillService;
         _logger = logger;
     }
 
@@ -1209,6 +1212,55 @@ public class WorkflowAgentController : ControllerBase
     }
 
     // ─────────────────────────────────────────────────────────
+    // AI 辅助填写舱参数
+    // ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// AI 辅助填写：根据舱类型 Schema、上下文和历史执行数据，推荐配置参数值
+    /// </summary>
+    [HttpPost("ai-fill")]
+    public async Task<IActionResult> AiFillParameters([FromBody] AiFillRequest request)
+    {
+        // 加载工作流
+        var workflow = await _db.Workflows
+            .Find(w => w.Id == request.WorkflowId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+
+        if (workflow == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "工作流不存在"));
+
+        // 如果没指定 lastExecutionId，自动找最近一次成功执行
+        var lastExecutionId = request.LastExecutionId;
+        if (string.IsNullOrWhiteSpace(lastExecutionId))
+        {
+            var lastExec = await _db.WorkflowExecutions
+                .Find(e => e.WorkflowId == request.WorkflowId && e.Status == WorkflowExecutionStatus.Completed)
+                .SortByDescending(e => e.CreatedAt)
+                .Limit(1)
+                .FirstOrDefaultAsync(CancellationToken.None);
+            lastExecutionId = lastExec?.Id;
+        }
+
+        var input = new AiFillInput
+        {
+            NodeId = request.NodeId,
+            Workflow = workflow,
+            LastExecutionId = lastExecutionId,
+            UserHint = request.UserHint,
+            Mode = request.Mode ?? "full",
+        };
+
+        var result = await _aiFillService.FillAsync(input, CancellationToken.None);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            suggestions = result.Suggestions,
+            explanation = result.Explanation,
+            confidence = result.Confidence,
+        }));
+    }
+
+    // ─────────────────────────────────────────────────────────
     // SSE 实时流
     // ─────────────────────────────────────────────────────────
 
@@ -1926,6 +1978,26 @@ public class AnalyzeExecutionRequest
 {
     /// <summary>用户补充说明（可选）</summary>
     public string? Instruction { get; set; }
+}
+
+// ─────────────────────── AI 辅助填写 ───────────────────────
+
+public class AiFillRequest
+{
+    /// <summary>工作流 ID</summary>
+    public string WorkflowId { get; set; } = string.Empty;
+
+    /// <summary>目标节点 ID</summary>
+    public string NodeId { get; set; } = string.Empty;
+
+    /// <summary>上次执行 ID（可选，为空则自动查找最近成功执行）</summary>
+    public string? LastExecutionId { get; set; }
+
+    /// <summary>用户自然语言补充说明（可选）</summary>
+    public string? UserHint { get; set; }
+
+    /// <summary>填写模式: full（全部填写）| optimize（优化已有配置）</summary>
+    public string? Mode { get; set; } = "full";
 }
 
 #endregion

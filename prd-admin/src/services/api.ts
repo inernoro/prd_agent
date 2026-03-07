@@ -696,6 +696,7 @@ export const api = {
       history: (workflowId: string) => `/api/workflow-agent/workflows/${workflowId}/chat-history`,
       analyze: (executionId: string) => `/api/workflow-agent/executions/${executionId}/analyze`,
     },
+    aiFill: () => '/api/workflow-agent/ai-fill',
   },
 
   // ============ Video Agent 视频创作 ============

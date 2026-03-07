@@ -4,12 +4,12 @@ import {
   Play, Loader2, CheckCircle2, AlertCircle,
   Download, FileText, ArrowLeft, Save, Plus,
   ChevronDown, ChevronRight, Settings2, XCircle,
-  Zap, FlaskConical, Trash2, Wand2, Terminal, Eye, Copy, Check, CirclePause,
+  Zap, FlaskConical, Trash2, Wand2, Terminal, Eye, Copy, Check, CirclePause, Sparkles,
 } from 'lucide-react';
 import {
   getWorkflow, updateWorkflow, executeWorkflow, getExecution,
   getNodeLogs, listExecutions, cancelExecution,
-  listCapsuleTypes, testRunCapsule,
+  listCapsuleTypes, testRunCapsule, aiFillParameters,
 } from '@/services';
 import { replayNode } from '@/services/real/workflowAgent';
 import type {
@@ -550,10 +550,11 @@ const SECTION_STYLES = {
   },
 } as const;
 
-function SectionBox({ title, type, children }: {
+function SectionBox({ title, type, children, action }: {
   title: string;
   type: keyof typeof SECTION_STYLES;
   children: React.ReactNode;
+  action?: React.ReactNode;
 }) {
   const s = SECTION_STYLES[type];
   return (
@@ -562,7 +563,8 @@ function SectionBox({ title, type, children }: {
         className="px-3 py-1.5 flex items-center gap-1.5"
         style={{ background: s.headerBg, borderBottom: `1px solid ${s.border}` }}
       >
-        <span className="text-[11px] font-semibold" style={{ color: s.title }}>{title}</span>
+        <span className="text-[11px] font-semibold flex-1" style={{ color: s.title }}>{title}</span>
+        {action}
       </div>
       <div className="p-3" style={{ background: s.bg }}>{children}</div>
     </div>
@@ -571,7 +573,7 @@ function SectionBox({ title, type, children }: {
 
 // ──── 右侧舱卡片 ────
 
-function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpanded, onToggle, onRemove, onTestRun, onReplay, onConfigChange, onToggleBreakpoint, capsuleMeta, isRunning, testRunResult, isTestRunning, formatWarnings, onPreviewArtifact }: {
+function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpanded, onToggle, onRemove, onTestRun, onReplay, onConfigChange, onToggleBreakpoint, capsuleMeta, isRunning, testRunResult, isTestRunning, formatWarnings, onPreviewArtifact, workflowId }: {
   node: WorkflowNode;
   index: number;
   nodeExec?: NodeExecution;
@@ -590,6 +592,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
   isTestRunning?: boolean;
   formatWarnings?: { nodeId: string; message: string }[];
   onPreviewArtifact?: (art: ExecutionArtifact) => void;
+  workflowId?: string;
 }) {
   const typeDef = getCapsuleType(node.nodeType);
   const status = nodeExec?.status || 'idle';
@@ -614,6 +617,38 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
   function handleConfigBatchChange(changes: Record<string, string>) {
     const updated = { ...node.config, ...changes };
     onConfigChange(node.nodeId, updated);
+  }
+
+  // AI 辅助填写状态
+  const [isAiFilling, setIsAiFilling] = useState(false);
+  const [aiFillExplanation, setAiFillExplanation] = useState<string | null>(null);
+
+  async function handleAiFill() {
+    if (!workflowId || isAiFilling) return;
+    setIsAiFilling(true);
+    setAiFillExplanation(null);
+    try {
+      const res = await aiFillParameters({
+        workflowId,
+        nodeId: node.nodeId,
+        mode: Object.values(configValues).some(v => v && v.trim()) ? 'optimize' : 'full',
+      });
+      if (res.success && res.data) {
+        const { suggestions, explanation } = res.data;
+        if (Object.keys(suggestions).length > 0) {
+          handleConfigBatchChange(suggestions);
+          setAiFillExplanation(explanation);
+        } else {
+          setAiFillExplanation(explanation || 'AI 未生成建议');
+        }
+      } else {
+        setAiFillExplanation('AI 填写失败');
+      }
+    } catch {
+      setAiFillExplanation('AI 填写请求失败');
+    } finally {
+      setIsAiFilling(false);
+    }
   }
 
   const [expandedArtifacts, setExpandedArtifacts] = useState<Set<string>>(new Set());
@@ -958,7 +993,26 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
 
             {/* ──── ⚙ 配置区 ──── */}
             {(isHttpType || (capsuleMeta && capsuleMeta.configSchema.length > 0)) && (
-              <SectionBox title="⚙ 配置" type="config">
+              <SectionBox title="⚙ 配置" type="config" action={
+                workflowId ? (
+                  <button
+                    className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-[6px] transition-all"
+                    style={{
+                      color: isAiFilling ? 'var(--text-muted)' : 'rgba(168,85,247,0.9)',
+                      background: isAiFilling ? 'transparent' : 'rgba(168,85,247,0.08)',
+                      cursor: isAiFilling ? 'wait' : 'pointer',
+                    }}
+                    onClick={(e) => { e.stopPropagation(); handleAiFill(); }}
+                    disabled={isAiFilling || isRunning}
+                    title="AI 根据舱类型和上下文智能推荐配置参数"
+                  >
+                    {isAiFilling
+                      ? <Loader2 className="w-3 h-3 animate-spin" />
+                      : <Sparkles className="w-3 h-3" />}
+                    {isAiFilling ? 'AI 填写中...' : 'AI 填写'}
+                  </button>
+                ) : undefined
+              }>
                 {isHttpType ? (
                   <HttpConfigPanel
                     values={configValues}
@@ -974,6 +1028,26 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
                     disabled={isRunning}
                     nodeType={node.nodeType}
                   />
+                )}
+                {aiFillExplanation && (
+                  <div
+                    className="mt-2 p-2 rounded-[8px] text-[10px] flex items-start gap-1.5"
+                    style={{
+                      background: 'rgba(168,85,247,0.06)',
+                      border: '1px solid rgba(168,85,247,0.15)',
+                      color: 'var(--text-secondary)',
+                    }}
+                  >
+                    <Sparkles className="w-3 h-3 mt-0.5 flex-shrink-0" style={{ color: 'rgba(168,85,247,0.7)' }} />
+                    <span>{aiFillExplanation}</span>
+                    <button
+                      className="ml-auto flex-shrink-0"
+                      style={{ color: 'var(--text-muted)' }}
+                      onClick={() => setAiFillExplanation(null)}
+                    >
+                      <XCircle className="w-3 h-3" />
+                    </button>
+                  </div>
                 )}
               </SectionBox>
             )}
@@ -2063,6 +2137,7 @@ export function WorkflowEditorPage() {
                         isTestRunning={testRunning === node.nodeId}
                         formatWarnings={warnings}
                         onPreviewArtifact={setPreviewArtifact}
+                        workflowId={workflow.id}
                       />
                     );
                   });

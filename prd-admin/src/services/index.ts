@@ -1117,6 +1117,7 @@ import type {
   GetCapsuleTypeContract,
   TestRunCapsuleContract,
   GetChatHistoryContract,
+  AiFillParametersContract,
 } from '@/services/contracts/workflowAgent';
 import {
   listWorkflowsReal,
@@ -1138,6 +1139,7 @@ import {
   getCapsuleTypeReal,
   testRunCapsuleReal,
   getChatHistoryReal,
+  aiFillParametersReal,
 } from '@/services/real/workflowAgent';
 
 export const listWorkflows: ListWorkflowsContract = withAuth(listWorkflowsReal);
@@ -1162,6 +1164,7 @@ export const getChatHistory: GetChatHistoryContract = withAuth(getChatHistoryRea
 export { chatWorkflowReal as chatWorkflow } from '@/services/real/workflowAgent';
 export { analyzeExecutionReal as analyzeExecution } from '@/services/real/workflowAgent';
 export { validateTapdCookie } from '@/services/real/workflowAgent';
+export const aiFillParameters: AiFillParametersContract = withAuth(aiFillParametersReal);
 
 // 数据迁移服务
 import type {

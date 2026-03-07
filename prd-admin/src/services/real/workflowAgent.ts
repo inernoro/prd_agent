@@ -23,6 +23,8 @@ import type {
   GetChatHistoryContract,
   ChatWorkflowContract,
   AnalyzeExecutionContract,
+  AiFillParametersContract,
+  AiFillResult,
   Workflow,
   WorkflowExecution,
   WorkflowChatMessage,
@@ -258,4 +260,13 @@ export const analyzeExecutionReal: AnalyzeExecutionContract = async (input) => {
     body: JSON.stringify({ instruction: input.instruction }),
   });
   return res;
+};
+
+// ========== AI Fill (AI 辅助填写舱参数) ==========
+
+export const aiFillParametersReal: AiFillParametersContract = async (input) => {
+  return await apiRequest<AiFillResult>(
+    api.workflowAgent.aiFill(),
+    { method: 'POST', body: input }
+  );
 };
