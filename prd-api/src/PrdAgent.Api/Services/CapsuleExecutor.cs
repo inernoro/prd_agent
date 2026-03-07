@@ -1354,7 +1354,7 @@ public static class CapsuleExecutor
                 fieldNames.Add(prop.Name);
             logs.AppendLine($"  [DEBUG] Bug fields ({fieldNames.Count}): {string.Join(", ", fieldNames.Take(40))}");
             // 打印自定义字段的实际值，方便调试空值问题
-            logs.AppendLine($"  [DEBUG] custom_field_one={Get("custom_field_one")} | custom_field_11={Get("custom_field_11")} | custom_field_13={Get("custom_field_13")}");
+            logs.AppendLine($"  [DEBUG] custom_field_one={Get("custom_field_one")} | custom_field_three={Get("custom_field_three")} | custom_field_11={Get("custom_field_11")} | custom_field_13={Get("custom_field_13")}");
         }
 
         var resolved = Get("resolved");
@@ -1421,6 +1421,7 @@ public static class CapsuleExecutor
             ["反馈时间"] = Get("custom_field_12"),
             ["影响范围"] = Get("custom_field_13"),
             ["结构归母"] = Get("custom_field_one"),
+            ["逻辑归因"] = Get("custom_field_three"),
             ["URL链接"] = finalUrl,
             ["描述中的链接"] = descriptionLinks.Count > 0 ? string.Join(" | ", descriptionLinks) : "",
             ["是否历史问题"] = isHistorical,
@@ -1472,6 +1473,7 @@ public static class CapsuleExecutor
             ["反馈时间"] = Get("custom_field_12"),
             ["影响范围"] = Get("custom_field_13"),
             ["结构归母"] = Get("custom_field_one"),
+            ["逻辑归因"] = Get("custom_field_three"),
             ["URL链接"] = url,
             ["描述中的链接"] = descriptionLinks.Count > 0 ? string.Join(" | ", descriptionLinks) : "",
             ["是否历史问题"] = "",

@@ -254,6 +254,21 @@ techBugs.forEach(function(i) {
   }
 });
 
+// 收集描述中的文档链接（溯源报告、运维文档等）
+var docLinks = [];
+var seenUrls = {};
+data.forEach(function(i) {
+  var raw = (i["描述中的链接"] || "").trim();
+  if (!raw) return;
+  raw.split(" | ").forEach(function(url) {
+    url = url.trim();
+    if (url && !seenUrls[url]) {
+      seenUrls[url] = true;
+      docLinks.push({url: url, fromBug: i["标题"] || i["缺陷ID"] || ""});
+    }
+  });
+});
+
 // 时间戳
 var now = new Date();
 var pad = function(n) { return String(n).padStart(2, "0"); };
@@ -277,6 +292,7 @@ result = {
   criticalAlerts: critAlerts,
   problemItems: problemItems,
   defectDetails: defectDetails,
+  docLinks: docLinks,
   summary: summary,
   verification: {
     severityOk: p0.length+p1.length+p2.length+p3.length+p4.length <= techBugs.length,
@@ -358,6 +374,19 @@ H.push('.smg{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr
 H.push('.smc{background:var(--card);border:1px solid var(--bdr);border-radius:12px;padding:18px 20px;display:flex;align-items:flex-start;gap:14px}');
 H.push('.smi{flex-shrink:0;width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center}');
 H.push('.ft{text-align:center;padding:32px 0;border-top:1px solid var(--bdr);color:var(--t2);font-size:0.8rem}');
+H.push('.doc-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:12px}');
+H.push('.doc-card{background:var(--card);border:1px solid var(--bdr);border-radius:8px;padding:14px 18px;display:flex;align-items:center;gap:12px;transition:0.2s}');
+H.push('.doc-card:hover{border-color:var(--blue);transform:translateY(-2px)}.doc-card a{color:var(--blue);text-decoration:none;font-size:0.85rem;font-weight:600}');
+H.push('.doc-card a:hover{text-decoration:underline}.doc-from{font-size:0.7rem;color:var(--t2);margin-top:2px}');
+H.push('.edit-sec{background:var(--card);border:1px solid var(--bdr);border-radius:12px;padding:24px;margin-top:24px}');
+H.push('.edit-sec h4{font-size:1rem;font-weight:700;margin-bottom:12px;color:var(--t1)}');
+H.push('.edit-area{min-height:120px;padding:16px;background:var(--elev);border:1px dashed var(--bdr);border-radius:8px;color:var(--t1);font-size:0.9rem;line-height:1.8;outline:none}');
+H.push('.edit-area:focus{border-color:var(--blue)}.edit-area:empty:before{content:attr(data-placeholder);color:var(--t2)}');
+H.push('.edit-hint{font-size:0.7rem;color:var(--t2);margin-top:8px;font-style:italic}');
+H.push('.improve-item{display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid rgba(48,54,61,0.5)}');
+H.push('.improve-cb{width:18px;height:18px;border:2px solid var(--bdr);border-radius:4px;flex-shrink:0;margin-top:2px;cursor:pointer;display:flex;align-items:center;justify-content:center}');
+H.push('.improve-cb.checked{background:var(--green);border-color:var(--green)}.improve-cb.checked:after{content:"\\2713";color:#fff;font-size:11px}');
+H.push('.improve-tag{padding:1px 6px;border-radius:3px;font-size:0.65rem;font-weight:600;background:rgba(30,111,217,0.15);color:var(--blue);flex-shrink:0}');
 H.push('@media(max-width:768px){.kg{grid-template-columns:repeat(2,1fr)}.cg{grid-template-columns:1fr}.bi-l{flex:0 0 80px;font-size:0.7rem}}');
 H.push('</style></head><body>');
 
@@ -488,6 +517,42 @@ if (sums.length > 0) {
   H.push('</div>');
 }
 
+// Document Links (溯源报告、运维文档)
+var dls = d.docLinks || [];
+if (dls.length > 0) {
+  H.push('<h3 class="sec-t" style="margin-top:32px">相关文档链接</h3>');
+  H.push('<div class="doc-list">');
+  dls.forEach(function(dl) {
+    var label = dl.url;
+    if (dl.url.indexOf('yuque') >= 0) label = '语雀文档';
+    else if (dl.url.indexOf('tapd') >= 0) label = 'TAPD 链接';
+    else { var m = dl.url.match(/\/([^\/]+)$/); if (m) label = m[1]; }
+    H.push('<div class="doc-card"><div>');
+    H.push('<a href="' + dl.url + '" target="_blank" rel="noopener">' + label + ' &rarr;</a>');
+    if (dl.fromBug) H.push('<div class="doc-from">来自: ' + dl.fromBug + '</div>');
+    H.push('</div></div>');
+  });
+  H.push('</div>');
+}
+
+// Editable: 缺陷总结 (会后补充)
+H.push('<div class="edit-sec"><h4>缺陷总结</h4>');
+H.push('<div class="edit-area" contenteditable="true" data-placeholder="会后在此补充缺陷总结要点...&#10;&#10;示例：&#10;1. 复合根因占比高：技术分析不足与测试覆盖不足超30%缺陷由多环节共同导致&#10;2. 发布规范问题突出&#10;3. 无效反馈仍较多，占用研发团队大量时间"></div>');
+H.push('<div class="edit-hint">* 此区域可直接编辑，内容仅保存在当前页面中（建议编辑后 Ctrl+S 保存网页）</div>');
+H.push('</div>');
+
+// Editable: 改进措施 (会后补充)
+H.push('<div class="edit-sec"><h4>改进措施</h4>');
+H.push('<div id="improveList"></div>');
+H.push('<div style="margin-top:12px;display:flex;gap:8px">');
+H.push('<input id="improveInput" type="text" placeholder="输入改进措施后按 Enter 添加..." style="flex:1;background:var(--elev);border:1px solid var(--bdr);border-radius:6px;padding:8px 12px;color:var(--t1);font-size:0.85rem;outline:none">');
+H.push('<select id="improveTag" style="background:var(--elev);border:1px solid var(--bdr);border-radius:6px;padding:8px;color:var(--t1);font-size:0.8rem;outline:none">');
+H.push('<option value="流程">流程</option><option value="测试">测试</option><option value="监控">监控</option><option value="运维">运维</option>');
+H.push('<option value="规范">规范</option><option value="安全">安全</option><option value="代码">代码</option><option value="性能">性能</option><option value="质量">质量</option>');
+H.push('</select></div>');
+H.push('<div class="edit-hint">* 输入改进措施后按 Enter 添加到列表，点击复选框标记完成</div>');
+H.push('</div>');
+
 H.push('</div></div>');
 H.push('<footer class="ft"><div class="ctn">' + (d.generatedAt||"") + ' | 由工作流自动生成</div></footer>');
 
@@ -511,7 +576,24 @@ H.push('{value:' + (sev.P3||0) + ',name:"P3 一般",itemStyle:{color:"#1E6FD9"}}
 H.push('{value:' + (sev.P4||0) + ',name:"P4 轻微",itemStyle:{color:"#4ECDC4"}}');
 H.push(']}]});');
 H.push('window.addEventListener("resize",function(){ch.resize();});');
-H.push('}});');
+H.push('}');
+// Improvement list interaction
+H.push('var iList=document.getElementById("improveList");');
+H.push('var iInput=document.getElementById("improveInput");');
+H.push('var iTag=document.getElementById("improveTag");');
+H.push('var iCount=0;');
+H.push('function addImproveItem(text,tag){');
+H.push('  iCount++;var d=document.createElement("div");d.className="improve-item";');
+H.push('  var cb=document.createElement("div");cb.className="improve-cb";');
+H.push('  cb.onclick=function(){this.classList.toggle("checked")};');
+H.push('  var tg=document.createElement("span");tg.className="improve-tag";tg.textContent="["+tag+"]";');
+H.push('  var tx=document.createElement("span");tx.style.cssText="flex:1;font-size:0.85rem";tx.textContent=iCount+". "+text;');
+H.push('  d.appendChild(cb);d.appendChild(tg);d.appendChild(tx);iList.appendChild(d);');
+H.push('}');
+H.push('if(iInput){iInput.addEventListener("keydown",function(e){');
+H.push('  if(e.key==="Enter"&&this.value.trim()){addImproveItem(this.value.trim(),iTag.value);this.value="";}');
+H.push('});}');
+H.push('});');
 H.push(SE);
 H.push('</body></html>');
 result = H.join("\\n");`,
