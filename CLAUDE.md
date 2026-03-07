@@ -134,6 +134,31 @@ public async Task<IActionResult> CreateImageGenRun([FromBody] Request request)
 
 ---
 
+## 数据关系审计原则
+
+**核心原则**：当实体 A 新增了对实体 B 的引用关系（如 `Session.DocumentIds` 引用 `Document`），必须审计所有访问实体 B 的端点，确保权限校验覆盖新关系。
+
+> **根因案例**：多文档功能上线后，补充文档无法预览（"该文档未绑定到当前群组"）。原因是 `Session.DocumentIds` 存储了补充文档引用，但 `DocumentsController`、`PrdCommentsController`、`Api/DocumentsController` 三个端点的绑定校验仍只查 `Group.PrdDocumentId`。写入路径做了，读取路径漏了。
+
+### 审计清单
+
+当新增数据关系时（Model 类新增 `List<string> xxxIds` 字段、新增外键引用、新增"A 拥有 B"的业务逻辑）：
+
+- [ ] **Grep 实体 B 的所有消费端点**：搜索 `documentId`、`DocumentId`、`GetByIdAsync` 等关键词
+- [ ] **逐个检查权限校验**：是否覆盖了新的访问路径（不只是旧的唯一入口）
+- [ ] **逐个检查硬编码假设**：是否有 `group.PrdDocumentId == id` 这类只认单一来源的写法
+- [ ] **检查反向路径**：删除实体 A 时，实体 B 的引用是否需要清理
+
+### 典型触发场景
+
+| 变更类型 | 审计动作 |
+|----------|----------|
+| Model 新增 `List<string> XxxIds` | Grep 被引用实体的所有 Controller，检查访问校验 |
+| 新增"A 包含 B"关系 | 检查 B 的 CRUD 端点是否识别新的所属关系 |
+| 将单引用改为多引用 | 所有 `== id` 比较改为 `Contains(id)` |
+
+---
+
 ## LLM Gateway 统一调用规则
 
 **核心原则**：所有大模型调用必须通过 `ILlmGateway` 守门员接口，禁止直接调用底层 LLM 客户端。
@@ -497,12 +522,20 @@ VisualAgent (DB 名保留 image_master)：`image_master_workspaces`, `image_asse
 
 当更新文档时，务必做以下交叉：
 
+**存在性校验（有没有）**：
+
 1. **代码→文档**：Controller/Service 存在 → SRS 功能模块有描述
 2. **文档→代码**：SRS 描述的功能 → 代码中存在对应实现
 3. **Git log→文档**：近期 commit 的功能变更 → 已反映到文档
 4. **DB→数据字典**：MongoDbContext 集合 → rule.data-dictionary.md 有记录
 5. **目录结构→文档**：实际目录 → SRS 目录结构图一致
 6. **未实现标注**：文档中描述但代码不存在的功能 → 必须标注 ⚠️ 状态
+
+**完整性校验（全不全）**：
+
+7. **关系→访问路径**：Model 新增引用字段 → 所有消费该实体的端点已更新权限校验（参见「数据关系审计原则」）
+8. **写入→读取对称**：能写入的数据 → 必须有对应的读取/展示路径，不允许"断头功能"（能存不能看）
+9. **UI→API 闭环**：前端有入口的功能 → 对应 API 端点完整可用（增删改查全链路通）
 
 ---
 
