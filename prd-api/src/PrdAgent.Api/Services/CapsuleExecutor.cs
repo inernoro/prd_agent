@@ -2224,6 +2224,20 @@ public static class CapsuleExecutor
         List<string> Ids(List<Dictionary<string, string>> items) =>
             items.Select(i => Get(i, "缺陷ID")).Where(id => !string.IsNullOrWhiteSpace(id)).ToList();
 
+        // 辅助：提取缺陷明细列表（用于报告中展示具体问题）
+        List<object> Details(List<Dictionary<string, string>> items) =>
+            items.Select(i => (object)new Dictionary<string, string>
+            {
+                ["缺陷ID"] = Get(i, "缺陷ID"),
+                ["标题"] = Get(i, "标题"),
+                ["URL链接"] = Get(i, "URL链接"),
+                ["处理人"] = Get(i, "处理人"),
+                ["创建人"] = Get(i, "创建人"),
+                ["状态"] = Get(i, "状态"),
+                ["缺陷等级"] = Get(i, "缺陷等级"),
+                ["结构归母"] = Get(i, "结构归母"),
+            }).ToList();
+
         // 辅助：构建一个维度对象
         object Dim(int num, string name, int count, List<string> ids, string? logic = null, string? extra = null)
         {
@@ -2233,6 +2247,23 @@ public static class CapsuleExecutor
                 ["name"] = name,
                 ["count"] = count,
                 ["ids"] = ids,
+            };
+            if (logic != null) d["logic"] = logic;
+            if (extra != null) d["extra"] = extra;
+            return d;
+        }
+
+        // 辅助：构建带明细的维度对象
+        object DimWithDetails(int num, string name, int count, List<string> ids,
+            List<object> details, string? logic = null, string? extra = null)
+        {
+            var d = new Dictionary<string, object>
+            {
+                ["dim"] = num,
+                ["name"] = name,
+                ["count"] = count,
+                ["ids"] = ids,
+                ["details"] = details,
             };
             if (logic != null) d["logic"] = logic;
             if (extra != null) d["extra"] = extra;
@@ -2276,13 +2307,21 @@ public static class CapsuleExecutor
         dimensions.Add(Dim(9, "P2级及以下技术缺陷数量", p2Below.Count, Ids(p2Below),
             "缺陷划分=\"技术缺陷\" 且 缺陷等级∈{P2,P3,P4}"));
 
-        // 10-15. 各等级技术缺陷
+        // 10-15. 各等级技术缺陷（P0/P1 附带明细，便于报告展示）
         var severityLevels = new[] { ("P0", 10), ("P1", 11), ("P2", 12), ("P3", 13), ("P4", 14) };
         foreach (var (level, dimNum) in severityLevels)
         {
             var subset = techBugs.Where(i => Get(i, "缺陷等级").Equals(level, StringComparison.OrdinalIgnoreCase)).ToList();
-            dimensions.Add(Dim(dimNum, $"{level}级别技术缺陷数量", subset.Count, Ids(subset),
-                $"缺陷划分=\"技术缺陷\" 且 缺陷等级=\"{level}\""));
+            if (level is "P0" or "P1")
+            {
+                dimensions.Add(DimWithDetails(dimNum, $"{level}级别技术缺陷数量", subset.Count, Ids(subset),
+                    Details(subset), $"缺陷划分=\"技术缺陷\" 且 缺陷等级=\"{level}\""));
+            }
+            else
+            {
+                dimensions.Add(Dim(dimNum, $"{level}级别技术缺陷数量", subset.Count, Ids(subset),
+                    $"缺陷划分=\"技术缺陷\" 且 缺陷等级=\"{level}\""));
+            }
         }
 
         var techNoLevel = techBugs.Where(i => string.IsNullOrWhiteSpace(Get(i, "缺陷等级"))).ToList();
@@ -2324,8 +2363,8 @@ public static class CapsuleExecutor
             "P2及以下技术缺陷中 及时处理=\"是\""));
 
         var p2NotTimely = p2Below.Where(i => Get(i, "及时处理") == "否").ToList();
-        dimensions.Add(Dim(22, "P2及以下技术缺陷中未及时处理数量", p2NotTimely.Count, Ids(p2NotTimely),
-            "P2及以下技术缺陷中 及时处理=\"否\""));
+        dimensions.Add(DimWithDetails(22, "P2及以下技术缺陷中未及时处理数量", p2NotTimely.Count, Ids(p2NotTimely),
+            Details(p2NotTimely), "P2及以下技术缺陷中 及时处理=\"否\""));
 
         var p2TimelyUnknown = p2Below.Where(i =>
         {
@@ -2363,7 +2402,7 @@ public static class CapsuleExecutor
             $"{p2Timely.Count}/{p2Below.Count}×100%={processRate}%",
             $"比率={processRate}%，评级={processRating}"));
 
-        // 28. 结构归母统计
+        // 28. 结构归母统计（含每个类别的缺陷明细，便于开会选取代表性案例分析）
         var structureGroups = techBugs
             .GroupBy(i =>
             {
@@ -2371,21 +2410,49 @@ public static class CapsuleExecutor
                 return string.IsNullOrWhiteSpace(v) ? "暂未归母" : v;
             })
             .OrderByDescending(g => g.Count())
-            .Select(g => new
+            .Select(g => new Dictionary<string, object>
             {
-                category = g.Key,
-                count = g.Count(),
-                ids = g.Select(i => Get(i, "缺陷ID")).Where(id => !string.IsNullOrWhiteSpace(id)).ToList()
+                ["category"] = g.Key,
+                ["count"] = g.Count(),
+                ["ids"] = g.Select(i => Get(i, "缺陷ID")).Where(id => !string.IsNullOrWhiteSpace(id)).ToList(),
+                ["details"] = g.Select(i => (object)new Dictionary<string, string>
+                {
+                    ["缺陷ID"] = Get(i, "缺陷ID"),
+                    ["标题"] = Get(i, "标题"),
+                    ["URL链接"] = Get(i, "URL链接"),
+                    ["处理人"] = Get(i, "处理人"),
+                    ["创建人"] = Get(i, "创建人"),
+                    ["缺陷等级"] = Get(i, "缺陷等级"),
+                    ["状态"] = Get(i, "状态"),
+                }).ToList(),
             })
             .ToList();
         dimensions.Add(new Dictionary<string, object>
         {
             ["dim"] = 28,
             ["name"] = "技术缺陷结构归母统计",
-            ["logic"] = "按结构归母分组统计技术缺陷",
+            ["logic"] = "按结构归母分组统计技术缺陷，每个归母类别附带缺陷明细列表",
             ["groups"] = structureGroups,
             ["totalTechBugs"] = techBugs.Count,
         });
+
+        // 29. 挂起状态的缺陷（含明细）
+        var suspendedBugs = all.Where(i =>
+        {
+            var status = Get(i, "状态");
+            return status.Contains("挂起") || status.Equals("suspended", StringComparison.OrdinalIgnoreCase);
+        }).ToList();
+        dimensions.Add(DimWithDetails(29, "挂起状态缺陷", suspendedBugs.Count, Ids(suspendedBugs),
+            Details(suspendedBugs), "状态包含\"挂起\""));
+
+        // 30. 临时解决的缺陷（含明细）
+        var tempFixBugs = all.Where(i =>
+        {
+            var status = Get(i, "状态");
+            return status.Contains("临时解决") || status.Contains("workaround");
+        }).ToList();
+        dimensions.Add(DimWithDetails(30, "临时解决缺陷", tempFixBugs.Count, Ids(tempFixBugs),
+            Details(tempFixBugs), "状态包含\"临时解决\""));
 
         // ── 组装输出 ──
         var output = new Dictionary<string, object>
@@ -2395,15 +2462,16 @@ public static class CapsuleExecutor
                 aggregationType = "tapd-bug-28d",
                 totalRecords = all.Count,
                 generatedAt = DateTime.UtcNow.ToString("O"),
-                note = "所有统计由代码精确计算，非 LLM 估算",
+                note = "所有统计由代码精确计算，非 LLM 估算。dim 10/11/22/28/29/30 含 details 明细列表",
             },
             ["dimensions"] = dimensions,
         };
 
         var outputJson = JsonSerializer.Serialize(output, JsonPretty);
-        logs.AppendLine($"  28 维度统计完成");
+        logs.AppendLine($"  30 维度统计完成");
         logs.AppendLine($"  输出摘要: {outputJson.Length} chars ({Encoding.UTF8.GetByteCount(outputJson)} bytes)");
         logs.AppendLine($"  关键指标: 总数={all.Count}, 技术缺陷={techBugs.Count}, P2及以下={p2Below.Count}");
+        logs.AppendLine($"  挂起={suspendedBugs.Count}, 临时解决={tempFixBugs.Count}, 未及时处理={p2NotTimely.Count}");
         logs.AppendLine($"  及时修复率={fixRate}%({fixRating}), 及时处理率={processRate}%({processRating})");
 
         var outputArtifact = MakeTextArtifact(node, "agg-out", "TAPD 28维度统计", outputJson, "application/json");
@@ -3082,7 +3150,53 @@ document.addEventListener('keydown', (e) => {
 - **KPI 概览**：3-5 个关键指标大数字卡片(grid)，每个卡片带图标、数值、趋势箭头
 - **图表分析**（可多页）：每页聚焦 1-2 个图表，图表要大而清晰，配简短解读文字
 - **数据表格**（可多页）：表格简洁，关键数据高亮，每页不超过 15 行
-- **结论与建议**：要点列表 + 行动建议，每条建议用卡片呈现";
+- **结论与建议**：要点列表 + 行动建议，每条建议用卡片呈现
+
+## 缺陷统计报告专用渲染规则（当数据包含 dimensions 且 aggregationType 为 tapd-bug-28d 时适用）
+
+### 重大缺陷页（P0/P1）
+如果 dim 10 (P0) 或 dim 11 (P1) 的 details 数组非空，**必须**为其生成独立幻灯片「近期重大缺陷」：
+- 按等级分组展示（先 P0 后 P1）
+- 每条缺陷渲染为一个卡片，包含：
+  - **问题描述**（标题字段），作为**可点击的超链接**，`<a href=""URL链接"" target=""_blank"">` 跳转到 TAPD
+  - 链接文字使用蓝色高亮，带下划线 hover 效果
+  - 处理人/创建人 显示在缺陷描述下方
+- 示例 HTML 结构：
+```html
+<h3>P0</h3>
+<div class=""defect-card"">
+  <a href=""https://www.tapd.cn/..."" target=""_blank"" class=""defect-link"">问题描述：XXX功能异常无法使用</a>
+  <div class=""defect-meta"">处理人：张三 | 创建人：李四</div>
+</div>
+```
+
+### 缺陷分析页（挂起 / 临时解决 / 未及时处理）
+如果 dim 29 (挂起)、dim 30 (临时解决)、dim 22 (未及时处理) 的 details 数组非空，**必须**生成「缺陷分析」幻灯片（可拆分多页）：
+- 每个类别作为独立分区，标题如「挂起：N个」「临时解决：N个」「未及时处理：N个」
+- 每条缺陷用**带编号的列表**展示：
+  - 缺陷标题作为**可点击超链接**跳转 TAPD
+  - 标题后面或下方显示「处理人：XXX，创建人：YYY」
+- 链接样式：蓝色文字 (`color: #38bdf8` 深色模式 / `color: #1d4ed8` 浅色模式)，hover 加下划线
+
+### 结构归母分析页
+如果 dim 28 的 groups 数组非空，**必须**生成「结构归母分析」幻灯片（可拆分多页）：
+- 先用柱状图或进度条展示各归母类别的数量排名
+- 然后每个归母类别下列出其对应的缺陷明细：
+  - 归母类别名作为小标题
+  - 每条缺陷：标题（可点击超链接跳转TAPD） + 缺陷等级标签 + 处理人
+  - 为开会讨论方便，**标记代表性案例**（每个类别默认标记前 2-3 条作为讨论重点，用高亮边框或星标图标区分）
+- 如果缺陷过多（单个类别超过 8 条），仅展示前 5 条并注明「还有 N 条...」
+
+### 通用链接样式
+所有缺陷链接必须使用以下样式：
+```css
+.defect-link {
+  color: #38bdf8; text-decoration: none; border-bottom: 1px dashed rgba(56,189,248,0.4);
+  transition: all 200ms ease; cursor: pointer;
+}
+.defect-link:hover { color: #7dd3fc; border-bottom-color: #7dd3fc; }
+.defect-meta { font-size: 13px; opacity: 0.65; margin-top: 4px; }
+```";
 
         if (!string.IsNullOrWhiteSpace(styleDesc))
         {
