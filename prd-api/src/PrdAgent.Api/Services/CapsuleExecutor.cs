@@ -2963,16 +2963,76 @@ function safeChart(canvasId, config) {
 
         systemPrompt += @"
 
+## 专业 UI 设计规范 (ui-ux-pro-max)
+
+### 图标与视觉元素
+- **禁止使用 emoji 作为 UI 图标**（如 🎨 🚀 ⚙️）。用内联 SVG 图标替代，推荐 Heroicons/Lucide 风格：
+  ```html
+  <!-- 正确：内联 SVG 图标 -->
+  <svg viewBox=""0 0 24 24"" width=""20"" height=""20"" fill=""none"" stroke=""currentColor"" stroke-width=""2""><path d=""M13 7l5 5m0 0l-5 5m5-5H6""/></svg>
+  <!-- 错误：emoji 图标 -->
+  <span>📈</span>
+  ```
+- 所有图标统一尺寸：KPI 卡片图标 32×32，正文图标 20×20，导航图标 16×16
+
+### 交互与动效
+- 所有可点击元素（卡片、按钮、链接、导航点）必须设置 `cursor: pointer`
+- Hover 状态使用 `transition: all 200ms ease`，变化属性：颜色、透明度、box-shadow
+- **禁止** hover 时 `transform: scale()` 导致布局偏移，改用 `box-shadow` 或 `border-color` 变化
+- 微交互动画时长：150-300ms，缓动函数 `cubic-bezier(0.4, 0, 0.2, 1)`
+- 入场动画：卡片 staggered fadeIn（每张延迟 80ms），使用 `@keyframes` + `animation-delay`
+
+### 排版系统
+- 字体栈：`'Inter', 'PingFang SC', 'Microsoft YaHei', -apple-system, sans-serif`
+- 数据看板备选：`'Fira Code', 'JetBrains Mono', monospace`（用于数字/代码）
+- 字体层级：封面标题 48-64px/700, 章节标题 28-36px/600, 正文 16px/400, 辅助 13px/400
+- 正文行高 1.6-1.75，每行限制 65-75 字符（`max-width: 65ch`）
+- 大数字使用 `font-variant-numeric: tabular-nums` 等宽对齐
+- 渐变标题：`background: linear-gradient(...); -webkit-background-clip: text; -webkit-text-fill-color: transparent`
+
+### 深色模式专业配色
+- 背景层次：底层 #0a0a1a → 卡片 rgba(255,255,255,0.04) → 悬浮 rgba(255,255,255,0.08)
+- 文字层次：主文字 rgba(255,255,255,0.92) → 次要 rgba(255,255,255,0.6) → 禁用 rgba(255,255,255,0.3)
+- 边框：默认 rgba(255,255,255,0.08)，hover rgba(255,255,255,0.15)
+- 发光效果：`box-shadow: 0 0 20px rgba(56,189,248,0.08), 0 8px 32px rgba(0,0,0,0.3)`
+- 图表配色序列（深色友好）：#38bdf8(天蓝) #a78bfa(紫) #34d399(绿) #fbbf24(金) #fb7185(粉) #22d3ee(青)
+
+### 图表配色科学
+- 分类数据：最多 6 种颜色，超过则合并为""其他""
+- 趋势数据：单色渐变（#1e40af → #38bdf8）表示从低到高
+- 对比数据：对比色对（#34d399 正面 / #fb7185 负面）
+- 饼图/环形图：填充透明度 0.8，描边 2px #0a0a1a 分隔
+- 图表区域 `border-radius: 12px` + 适当 padding
+
+### 卡片设计系统
+```css
+.glass-card {
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px; padding: 24px;
+  transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.glass-card:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.15);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+}
+```
+
 ## 响应式与打印
 - 桌面：幻灯片内容居中，最大宽度 1200px
-- 移动端：padding 缩小为 24px 16px，卡片改为单列
-- @media print：每张幻灯片 page-break-after: always，隐藏导航组件，白色背景
+- 移动端 (@media max-width: 768px)：padding 缩小为 24px 16px，卡片单列，字体缩小一级
+- @media print：page-break-after: always，隐藏导航，白色背景，文字改深色
 
-## 质量标准
-- 每张幻灯片内容精练，**不堆砌**，留白充足
-- 文字对比度满足 WCAG AA (4.5:1)
-- 动画使用 prefers-reduced-motion 检测
-- 表格支持横向滚动（overflow-x: auto）";
+## 质量标准（交付检查清单）
+- 每张幻灯片留白充足，内容不超过面积 60%
+- 文字对比度 WCAG AA (4.5:1)，深色背景主文字不低于 rgba(255,255,255,0.87)
+- 动画必须 `@media (prefers-reduced-motion: reduce)` 禁用检测
+- 表格横向滚动（overflow-x: auto），表头固定背景色
+- 所有可交互元素带 `cursor: pointer`
+- **无 emoji 图标**，全部使用内联 SVG
+- 导航圆点和页码指示器 `z-index: 50` 悬浮于内容上方";
 
         var userPrompt = string.IsNullOrWhiteSpace(reportTemplate)
             ? $"请根据以下数据生成一份精美的 HTML 网页报告：\n\n{inputText}"
