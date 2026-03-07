@@ -1,3 +1,76 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+---
+
+## Build & Development Commands
+
+### Backend (prd-api/) — .NET 8, C# 12
+
+```bash
+cd prd-api
+dotnet restore
+dotnet build                             # Build all projects
+dotnet watch run --project src/PrdAgent.Api  # Dev server (port 5000)
+dotnet test PrdAgent.sln                 # Run all tests (xunit)
+dotnet test PrdAgent.sln --filter "Category!=Integration"  # Unit tests only
+dotnet test --filter "FullyQualifiedName~ClassName.MethodName"  # Single test
+```
+
+Docker build (no .NET SDK required): `./scripts/build-server-docker.sh`
+
+### Admin Web (prd-admin/) — React 18, Vite, TypeScript, Zustand, Radix UI
+
+```bash
+cd prd-admin
+pnpm install
+pnpm dev          # Dev server (port 8000, proxies /api → localhost:5000)
+pnpm build        # tsc && vite build → dist/
+pnpm lint         # ESLint
+pnpm tsc          # Type check only
+pnpm test         # vitest
+```
+
+### Desktop (prd-desktop/) — Tauri 2.0 (Rust + React)
+
+```bash
+cd prd-desktop
+pnpm install
+pnpm tauri:dev    # Dev with hot reload (port 1420)
+pnpm tauri:build  # Production bundle
+pnpm lint         # ESLint
+pnpm theme:scan   # Theme consistency check
+```
+
+Version must stay in sync across: `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`. Use `./quick.sh version vX.Y.Z` to sync.
+
+### Video (prd-video/) — Remotion 4.0
+
+```bash
+cd prd-video
+npm install
+npm start         # Remotion Studio
+npm run build     # Render to out/tutorial.mp4
+```
+
+### Docker Compose
+
+```bash
+docker compose -f docker-compose.dev.yml up -d --build  # Dev stack (all services)
+# Web: localhost:5500, API: localhost:5000, Mongo: localhost:18081, Redis: localhost:18082
+```
+
+### Quick Start (Windows)
+
+```powershell
+.\quick.ps1           # Backend only
+.\quick.ps1 all       # Server + desktop + admin
+.\quick.ps1 ci        # Full CI checks
+```
+
+---
+
 # C# 代码静态分析规则
 
 **强制规则**：任何涉及 C#（`.cs` 文件）的改动，完成后**必须**使用 Roslyn 进行代码静态分析，确认零错误后才算完成。
@@ -194,6 +267,38 @@ Gateway 自动记录以下信息到 `llmrequestlogs`：
 | `ModelResolutionType` | 调度来源（DedicatedPool / DefaultPool / Legacy） |
 | `ModelGroupId` / `ModelGroupName` | 使用的模型池 |
 | `Model` | 实际使用的模型名称 |
+
+---
+
+## 默认可编辑原则
+
+**核心原则**：系统开发初期，减少约束。除非业务明确禁止或具有破坏性，所有表单字段默认可编辑，不主动加 `disabled` / `readOnly` 限制。
+
+- 仅在**业务明确禁止**（如已发布合同编号）、**破坏性较重**（修改导致大量数据不一致且无法自动修复）、**安全要求**（审计日志不可篡改）时才禁用
+- "编辑时可能不太合适"、"一般不会改"、"改了需要同步" → 均不构成禁用理由
+
+> 详细规则见 `doc/rule.default-editable.md`
+
+---
+
+## 前端组件复用原则
+
+**核心原则**：全局同属性元素，能复用则复用。多个页面需要相同语义的 UI 元素时，必须抽取为 `src/components/` 下的共享组件，禁止在各页面硬编码重复的选项列表或选择器。
+
+### 规则说明
+
+1. **两个以上页面**出现同一业务概念的选择/展示 → 必须提取共享组件
+2. 数据源（枚举定义、常量列表）统一维护在 `src/lib/` 下的单一文件
+3. 新增/修改页面时，先搜索现有共享组件，已有则直接使用
+
+### 已注册共享组件
+
+| 组件 | 路径 | 数据源 |
+|------|------|--------|
+| `ModelTypePicker` | `components/model/ModelTypePicker.tsx` | `lib/appCallerUtils.ts → MODEL_TYPE_DEFINITIONS` |
+| `ModelTypeFilterBar` | `components/model/ModelTypePicker.tsx` | 同上 |
+
+> 详细规则见 `doc/rule.frontend-component-reuse.md`
 
 ---
 

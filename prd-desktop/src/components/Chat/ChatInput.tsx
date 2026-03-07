@@ -8,7 +8,7 @@ import { useUiPrefsStore } from '../../stores/uiPrefsStore';
 import { useSkillStore } from '../../stores/skillStore';
 import { ApiResponse, AttachmentInfo, Message, Skill, SkillsResponse } from '../../types';
 import AttachmentPreview from './AttachmentPreview';
-import SkillManagerModal from './SkillManagerModal';
+import SkillManagerModal, { type SkillFormData } from './SkillManagerModal';
 import { open as tauriDialogOpen } from '@tauri-apps/plugin-dialog';
 
 export default function ChatInput() {
@@ -34,6 +34,7 @@ export default function ChatInput() {
 
   // 技能管理弹窗
   const [showSkillManager, setShowSkillManager] = useState(false);
+  const [skillFormPrefill, setSkillFormPrefill] = useState<Partial<SkillFormData> | null>(null);
 
   // 技能 store
   const { skills, setSkills, setLoading, getVisibleSkills, pinnedSkillKeys } = useSkillStore();
@@ -71,6 +72,19 @@ export default function ChatInput() {
     };
     window.addEventListener('prdAgent:prefillChatInput' as any, onPrefill as EventListener);
     return () => window.removeEventListener('prdAgent:prefillChatInput' as any, onPrefill as EventListener);
+  }, []);
+
+  // 外部触发：从消息创建技能（MessageList 中点击 "保存为技能" 按钮）
+  useEffect(() => {
+    const onCreateSkill = (e: Event) => {
+      const ce = e as CustomEvent<{ formData: Partial<SkillFormData> }>;
+      if (ce?.detail?.formData) {
+        setSkillFormPrefill(ce.detail.formData);
+        setShowSkillManager(true);
+      }
+    };
+    window.addEventListener('prdAgent:createSkillFromMessage' as any, onCreateSkill as EventListener);
+    return () => window.removeEventListener('prdAgent:createSkillFromMessage' as any, onCreateSkill as EventListener);
   }, []);
 
   // 从新 API 加载技能列表
@@ -455,8 +469,10 @@ export default function ChatInput() {
       {/* 技能管理弹窗 */}
       <SkillManagerModal
         open={showSkillManager}
+        initialFormData={skillFormPrefill}
         onClose={() => {
           setShowSkillManager(false);
+          setSkillFormPrefill(null);
           // 关闭弹窗后刷新技能列表
           if (sessionId) {
             invoke<ApiResponse<SkillsResponse>>('get_skills', { role: currentRole })

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ModelTypePicker } from '@/components/model/ModelTypePicker';
 import { GlassCard } from '@/components/design/GlassCard';
 import { PageHeader } from '@/components/design/PageHeader';
 import { Badge } from '@/components/design/Badge';
@@ -828,8 +829,11 @@ export default function SkillsPage() {
                           className="field-input min-h-[80px] font-mono text-xs" placeholder="留空使用默认角色系统提示词" />
                       </Field>
                       <Field label="模型类型" className="mt-3">
-                        <input value={modelType} onChange={e => setModelType(e.target.value)}
-                          className="field-input" placeholder="chat" />
+                        <ModelTypePicker
+                          value={modelType}
+                          onChange={setModelType}
+                          compact
+                        />
                       </Field>
                     </Section>
 

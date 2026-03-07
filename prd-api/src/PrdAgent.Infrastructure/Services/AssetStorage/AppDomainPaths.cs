@@ -51,6 +51,7 @@ public static class AppDomainPaths
     public const string TypeFont = "font";
     public const string TypeVideo = "video";
     public const string TypeSite = "site";
+    public const string TypeAudio = "audio";
 
     private static readonly HashSet<string> DomainAllow = new(StringComparer.Ordinal)
     {
@@ -64,7 +65,7 @@ public static class AppDomainPaths
 
     private static readonly HashSet<string> TypeAllow = new(StringComparer.Ordinal)
     {
-        TypeImg, TypeBin, TypeLog, TypeDoc, TypeMeta, TypeFont, TypeVideo, TypeSite,
+        TypeImg, TypeBin, TypeLog, TypeDoc, TypeMeta, TypeFont, TypeVideo, TypeSite, TypeAudio,
     };
 
     private static readonly Regex SafeSeg = new("^[a-z0-9][a-z0-9_-]*$", RegexOptions.Compiled);
