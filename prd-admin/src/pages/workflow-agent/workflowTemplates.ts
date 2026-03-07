@@ -53,9 +53,9 @@ function edge(src: string, srcSlot: string, tgt: string, tgtSlot: string): Workf
 //     ↓
 //   🐛 TAPD 数据采集（含 common_get_info 详情）
 //     ↓
-//   📊 数据预处理（JS 精确统计 → Markdown 报告）
+//   📊 数据统计（JS → 结构化 JSON）
 //     ↓
-//   🌐 网页报告生成（LLM → 精美 HTML）
+//   🌐 HTML 渲染（JS 确定性生成，无 LLM 依赖）
 //     ↓      ↓
 //   💾 导出  🔔 通知
 //
@@ -63,7 +63,7 @@ function edge(src: string, srcSlot: string, tgt: string, tgtSlot: string): Workf
 const tapdBugCollectionTemplate: WorkflowTemplate = {
   id: 'tapd-bug-collection',
   name: 'TAPD 缺陷采集与分析',
-  description: '从 TAPD 拉取缺陷数据 → JS 精确统计生成 Markdown → LLM 生成精美 HTML 网页 → 文件导出 + 站内通知',
+  description: '从 TAPD 拉取缺陷数据 → 统计分析 → AI 趋势解读 → 生成质量报告 → 文件导出 + 站内通知',
   icon: '🐛',
   tags: ['tapd', 'quality', 'report'],
   requiredInputs: [
@@ -106,19 +106,7 @@ const tapdBugCollectionTemplate: WorkflowTemplate = {
       required: false,
       defaultValue: new Date().toISOString().slice(0, 7),
     },
-    {
-      key: 'style',
-      label: '网页风格',
-      type: 'select',
-      required: false,
-      defaultValue: 'modern-dark',
-      options: [
-        { value: 'modern-dark', label: '现代深色 (Glassmorphism)' },
-        { value: 'modern-light', label: '现代浅色 (Clean Light)' },
-        { value: 'dashboard', label: '数据看板 (Dashboard)' },
-        { value: 'report', label: '正式报告 (Professional)' },
-      ],
-    },
+    // style 输入已移除：HTML 由 ScriptExecutor 确定性生成，不依赖 LLM
   ],
   build: (inputs) => {
     _edgeIdx = 0;
@@ -156,219 +144,115 @@ const tapdBugCollectionTemplate: WorkflowTemplate = {
         nodeType: 'script-executor',
         config: {
           language: 'javascript',
-          code: `// data = 上游 TAPD 缺陷数组（由上游节点传入）
-const total = data.length;
-const BT = String.fromCharCode(96);
-const sid = (arr) => arr.map(i => (i["缺陷ID"] || i.id || "").slice(-7)).filter(Boolean).sort();
-const fmtIds = (arr) => "[" + sid(arr).join(", ") + "]";
-const fields = total > 0 ? Object.keys(data[0]) : [];
+          code: `// ═══ TAPD 缺陷统计 → 输出结构化 JSON（供下游 HTML 渲染器使用）═══
+// data = 上游 TAPD 缺陷数组
+var total = data.length;
+var f = function(field, val) { return data.filter(function(i) { return (i[field] || "") === val; }); };
 
 // 按缺陷划分分组
-const f缺陷划分 = (v) => data.filter(i => (i["缺陷划分"] || "") === v);
-const 非缺陷 = f缺陷划分("非缺陷");
-const 产品缺陷 = f缺陷划分("产品缺陷");
-const 技术缺陷 = f缺陷划分("技术缺陷");
-const 无法判断 = f缺陷划分("无法判断");
-const 未判断 = data.filter(i => !(i["缺陷划分"] || "").trim());
+var techBugs = f("缺陷划分", "技术缺陷");
+var prodBugs = f("缺陷划分", "产品缺陷");
+var nonBugs  = f("缺陷划分", "非缺陷");
+var validFB  = f("有效报告", "是");
+var invalidFB = f("有效报告", "否");
 
-// 有效报告
-const 无效反馈 = data.filter(i => i["有效报告"] === "否");
-const 有效反馈 = data.filter(i => i["有效报告"] === "是");
+// 技术缺陷按等级
+var byLv = function(lv) { return techBugs.filter(function(i) { return (i["缺陷等级"] || "").toUpperCase() === lv; }); };
+var p0 = byLv("P0"), p1 = byLv("P1"), p2 = byLv("P2"), p3 = byLv("P3"), p4 = byLv("P4");
+var p2plus = techBugs.filter(function(i) { return ["P2","P3","P4"].indexOf((i["缺陷等级"]||"").toUpperCase()) >= 0; });
 
-// 技术缺陷按等级（统一转大写匹配，兼容 p3/P3 混写）
-const byLv = (lv) => 技术缺陷.filter(i => (i["缺陷等级"] || "").toUpperCase() === lv);
-const p0 = byLv("P0"), p1 = byLv("P1"), p2 = byLv("P2"), p3 = byLv("P3"), p4 = byLv("P4");
-const p未判断 = 技术缺陷.filter(i => !(i["缺陷等级"] || "").trim());
-const p2及以下 = 技术缺陷.filter(i => ["P2","P3","P4"].includes((i["缺陷等级"] || "").toUpperCase()));
-const p2总 = p2及以下.length;
-
-// P2及以下逾期统计
-const p2逾期 = p2及以下.filter(i => i["是否逾期"] === "是");
-const p2未逾期 = p2及以下.filter(i => i["是否逾期"] === "否");
-const p2逾期空 = p2及以下.filter(i => !(i["是否逾期"] || "").trim());
-
-// P2及以下及时处理统计
-const isClosed = (i) => ["closed","已关闭"].includes((i["状态"] || "").toLowerCase());
-const p2及时 = p2及以下.filter(i => i["及时处理"] === "是");
-const p2未及时 = p2及以下.filter(i => i["及时处理"] === "否");
-const p2及时空 = p2及以下.filter(i => !(i["及时处理"] || "").trim() || i["及时处理"] === "无法判断");
-
-// P2及以下已修复 & 及时修复
-const p2已修复 = p2及以下.filter(i => isClosed(i));
-const p2及时修复 = p2及以下.filter(i => i["及时处理"] === "是" && isClosed(i));
-
-// 比率 & 评级
-const pct = (n, d) => d > 0 ? (n / d * 100) : 0;
-const fmtPct = (v) => v.toFixed(2) + "%";
-const 修复率 = pct(p2及时修复.length, p2总);
-const 处理率 = pct(p2及时.length, p2总);
-const rating = (v) => v >= 90 ? "优秀 🏆" : v >= 80 ? "良好 👍" : v >= 60 ? "需改进 ⚠️" : "较差 🔴";
+// 及时处理 & 修复率
+var isClosed = function(i) { return ["closed","已关闭"].indexOf((i["状态"]||"").toLowerCase()) >= 0; };
+var p2Timely = p2plus.filter(function(i) { return i["及时处理"] === "是"; });
+var p2Fixed = p2plus.filter(function(i) { return isClosed(i); });
+var p2TimelyFixed = p2plus.filter(function(i) { return i["及时处理"] === "是" && isClosed(i); });
+var p2Overdue = p2plus.filter(function(i) { return i["是否逾期"] === "是"; });
+var pct = function(n, d) { return d > 0 ? parseFloat((n/d*100).toFixed(2)) : 0; };
+var timelyRate = pct(p2Timely.length, p2plus.length);
+var fixRate = pct(p2TimelyFixed.length, p2plus.length);
 
 // 结构归母统计
-const 归母Map = {};
-技术缺陷.forEach(i => {
-  const v = (i["结构归母"] || "").trim() || "暂未归母";
-  if (!归母Map[v]) 归母Map[v] = [];
-  归母Map[v].push(i);
+var rcMap = {};
+techBugs.forEach(function(i) {
+  var v = (i["结构归母"] || "").trim() || "暂未归母";
+  if (!rcMap[v]) rcMap[v] = [];
+  rcMap[v].push(i);
+});
+var rcColors = ["#E84040","#F5A623","#FF6B35","#1E6FD9","#4ECDC4","#27C97F","#7D8590","#9CA3AF"];
+var rootCauses = Object.keys(rcMap).map(function(k) { return {name:k, count:rcMap[k].length}; })
+  .sort(function(a,b) { return b.count - a.count; })
+  .map(function(rc, idx) { rc.color = rcColors[idx % rcColors.length]; return rc; });
+
+// 处理状态
+var statusMap = {"已修复":0, "临时解决":0, "处理中":0, "挂起":0, "逾期":0};
+techBugs.forEach(function(i) {
+  var s = (i["状态"] || "").toLowerCase().trim();
+  if (s === "closed" || s === "已关闭") statusMap["已修复"]++;
+  else if (s === "resolved" || s === "已解决") statusMap["临时解决"]++;
+  else if (s === "suspended" || s === "挂起") statusMap["挂起"]++;
+  else statusMap["处理中"]++;
+});
+statusMap["逾期"] = p2Overdue.length;
+
+// 缺陷详情按根因分组
+var defectDetails = rootCauses.map(function(rc) {
+  return {
+    category: rc.name, color: rc.color,
+    items: (rcMap[rc.name] || []).slice(0, 8).map(function(i) {
+      return {
+        desc: i["标题"] || i.title || i["缺陷ID"] || "",
+        cause: (i["逻辑归因"] || i["根本原因"] || "").trim(),
+        handler: i["处理人"] || i["当前处理人"] || ""
+      };
+    })
+  };
 });
 
-// 验证辅助
-const verify = (sum, t, label) => sum === t
-  ? "**✓ 验证通过**: 统计总和与" + label + "一致"
-  : "**✗ 验证失败**: 统计总和(" + sum + ")与" + label + "(" + t + ")不一致";
-const 等级sum = p0.length+p1.length+p2.length+p3.length+p4.length+p未判断.length;
-const 逾期sum = p2逾期.length+p2未逾期.length+p2逾期空.length;
-const 及时sum = p2及时.length+p2未及时.length+p2及时空.length;
-const 归母sum = Object.values(归母Map).reduce((a,b) => a+b.length, 0);
+// 自动摘要
+var summary = [];
+summary.push({icon:"bar-chart",color:"#1E6FD9",text:"技术缺陷总数 "+techBugs.length+" 个，P0/P1 重大缺陷 "+(p0.length+p1.length)+" 个"});
+if (timelyRate >= 90) summary.push({icon:"check-circle",color:"#27C97F",text:"及时处理率 "+timelyRate+"%，表现优秀"});
+else if (timelyRate >= 80) summary.push({icon:"alert-triangle",color:"#F5A623",text:"及时处理率 "+timelyRate+"%，表现良好但仍有提升空间"});
+else summary.push({icon:"alert-octagon",color:"#E84040",text:"及时处理率 "+timelyRate+"%，需要重点改进"});
+if (fixRate < 80) summary.push({icon:"trending-down",color:"#E84040",text:"修复率 "+fixRate+"%，临时解决占比偏高，需重点跟进"});
+else summary.push({icon:"check-circle",color:"#27C97F",text:"修复率 "+fixRate+"%，修复情况良好"});
+if (p2Overdue.length > 0) summary.push({icon:"clock",color:"#F5A623",text:"有 "+p2Overdue.length+" 个 P2 及以下缺陷逾期"});
+if (rootCauses.length > 0) summary.push({icon:"git-branch",color:"#4ECDC4",text:"主要根因: "+rootCauses.slice(0,3).map(function(r){return r.name+"("+r.count+")";}).join(", ")});
+
+// P0/P1 警告
+var critAlerts = [];
+p0.forEach(function(i) { critAlerts.push({level:"P0",title:i["标题"]||i.title||"",desc:i["逻辑归因"]||""}); });
+p1.forEach(function(i) { critAlerts.push({level:"P1",title:i["标题"]||i.title||"",desc:i["逻辑归因"]||""}); });
 
 // 时间戳
-const now = new Date();
-const pad = (n) => String(n).padStart(2, "0");
-const ts = now.getFullYear()+"-"+pad(now.getMonth()+1)+"-"+pad(now.getDate())+" "+pad(now.getHours())+":"+pad(now.getMinutes())+":"+pad(now.getSeconds());
+var now = new Date();
+var pad = function(n) { return String(n).padStart(2, "0"); };
+var ts = now.getFullYear()+"-"+pad(now.getMonth()+1)+"-"+pad(now.getDate())+" "+pad(now.getHours())+":"+pad(now.getMinutes());
 
-// ═══ 拼接 Markdown 报告 ═══
-const L = [];
-L.push("# 📊 缺陷统计分析报告");
-L.push("**🕐 生成时间**: " + ts);
-L.push("**📁 数据文件**: 缺陷统计数据.xlsx");
-L.push("**📈 数据总行数**: " + total);
-
-L.push("## 1. 🏷️ 缺陷总数");
-L.push("**📋 统计逻辑**: 统计Excel文件中所有行的数量");
-L.push("**🔢 数量**: " + total);
-L.push("**📝 缺陷ID列表**: " + BT + fmtIds(data) + BT);
-
-[[2,"❌","非缺陷数量","筛选'缺陷划分'字段值为'非缺陷'的记录","非缺陷",非缺陷],
-[3,"📱","产品缺陷数量","筛选'缺陷划分'字段值为'产品缺陷'的记录","产品缺陷",产品缺陷],
-[4,"🔧","技术缺陷数量","筛选'缺陷划分'字段值为'技术缺陷'的记录","技术缺陷",技术缺陷],
-[5,"❓","无法判断的数量","筛选'缺陷划分'字段值为'无法判断'的记录","无法判断",无法判断],
-[6,"⚪","未判断（空）的数量","筛选'缺陷划分'字段值为空的记录","未判断",未判断],
-[7,"🚫","无效反馈数量","筛选'有效报告'字段值为'否'的记录","无效反馈",无效反馈],
-[8,"✅","有效反馈数量","筛选'有效报告'字段值为'是'的记录","有效反馈",有效反馈]
-].forEach(([n,icon,title,logic,label,arr]) => {
-  L.push("## "+n+". "+icon+" "+title);
-  L.push("**📋 统计逻辑**: "+logic);
-  L.push("**🔢 数量**: "+arr.length);
-  L.push("**📝 "+label+"ID列表**: "+BT+fmtIds(arr)+BT);
-});
-
-L.push("## 9. 📉 P2级及以下技术缺陷数量");
-L.push("**📋 统计逻辑**: 在技术缺陷中筛选'缺陷等级'为P2、P3、P4的记录");
-L.push("**🔢 数量**: "+p2总);
-L.push("**📝 P2级及以下技术缺陷ID列表**: "+BT+fmtIds(p2及以下)+BT);
-
-[[10,"🔴","P0",p0],[11,"🟠","P1",p1],[12,"🟡","P2",p2],[13,"🟢","P3",p3],[14,"🔵","P4",p4]
-].forEach(([n,icon,lv,arr]) => {
-  L.push("## "+n+". "+icon+" "+lv+"级别技术缺陷数量");
-  L.push("**📋 统计逻辑**: 在技术缺陷中筛选'缺陷等级'为"+lv+"的记录");
-  L.push("**🔢 数量**: "+arr.length);
-  L.push("**📝 "+lv+"级别技术缺陷ID列表**: "+BT+fmtIds(arr)+BT);
-});
-
-L.push("## 15. ⚪ 未判断缺陷等级技术缺陷数量");
-L.push("**📋 统计逻辑**: 在技术缺陷中筛选'缺陷等级'字段为空的记录");
-L.push("**🔢 数量**: "+p未判断.length);
-L.push("**📝 未判断等级技术缺陷ID列表**: "+BT+fmtIds(p未判断)+BT);
-
-L.push("## 16. ✅ 技术缺陷等级统计总和验证");
-L.push("**📋 统计逻辑**: 验证各等级技术缺陷数量之和是否等于技术缺陷总数");
-L.push("**📊 统计总和**: "+等级sum);
-L.push("**📈 技术缺陷总数**: "+技术缺陷.length);
-L.push(verify(等级sum, 技术缺陷.length, "技术缺陷总数"));
-
-L.push("## 17. ⏰ P2级及以下技术缺陷中简报逾期的数量");
-L.push("**📋 统计逻辑**: 在P2级及以下技术缺陷中筛选'是否逾期'字段值为'是'的记录");
-L.push("**🔢 数量**: "+p2逾期.length);
-L.push("**📝 逾期缺陷ID列表**: "+BT+fmtIds(p2逾期)+BT);
-
-L.push("## 18. ✅ P2级及以下技术缺陷中未逾期的数量");
-L.push("**📋 统计逻辑**: 在P2级及以下技术缺陷中筛选'是否逾期'字段值为'否'的记录");
-L.push("**🔢 数量**: "+p2未逾期.length);
-L.push("**📝 未逾期缺陷ID列表**: "+BT+fmtIds(p2未逾期)+BT);
-
-L.push("## 19. ❓ P2级及以下技术缺陷中简报是否逾期为空（无法判断）的数量");
-L.push("**📋 统计逻辑**: 在P2级及以下技术缺陷中筛选'是否逾期'字段为空的记录");
-L.push("**🔢 数量**: "+p2逾期空.length);
-L.push("**📝 逾期状态为空缺陷ID列表**: "+BT+fmtIds(p2逾期空)+BT);
-
-L.push("## 20. ✅ P2级及以下技术缺陷逾期统计总和验证");
-L.push("**📋 统计逻辑**: 验证各逾期状态技术缺陷数量之和是否等于P2级及以下技术缺陷总数");
-L.push("**📊 统计总和**: "+逾期sum);
-L.push("**📈 P2级及以下技术缺陷总数**: "+p2总);
-L.push(verify(逾期sum, p2总, "总数"));
-
-L.push("## 21. ⚡ P2级及以下技术缺陷中及时处理的数量");
-L.push("**📋 统计逻辑**: 在P2级及以下技术缺陷中筛选'及时处理'字段值为'是'的记录");
-L.push("**🔢 数量**: "+p2及时.length);
-L.push("**📝 及时处理缺陷ID列表**: "+BT+fmtIds(p2及时)+BT);
-
-L.push("## 22. 🐌 P2级及以下技术缺陷中未及时处理的数量");
-L.push("**📋 统计逻辑**: 在P2级及以下技术缺陷中筛选'及时处理'字段值为'否'的记录");
-L.push("**🔢 数量**: "+p2未及时.length);
-L.push("**📝 未及时处理缺陷ID列表**: "+BT+fmtIds(p2未及时)+BT);
-
-L.push("## 23. ❓ P2级及以下技术缺陷中无法判断是否及时处理的数量");
-L.push("**📋 统计逻辑**: 在P2级及以下技术缺陷中筛选'及时处理'字段为空或值为'无法判断'的记录");
-L.push("**🔢 数量**: "+p2及时空.length);
-L.push("**📝 无法判断及时处理缺陷ID列表**: "+BT+fmtIds(p2及时空)+BT);
-
-L.push("## 24. ✅ P2级及以下技术缺陷及时处理统计总和验证");
-L.push("**📋 统计逻辑**: 验证各及时处理状态技术缺陷数量之和是否等于P2级及以下技术缺陷总数");
-L.push("**📊 统计总和**: "+及时sum);
-L.push("**📈 P2级及以下技术缺陷总数**: "+p2总);
-L.push(verify(及时sum, p2总, "总数"));
-
-L.push("## 25. ✅ P2级及以下技术缺陷中已修复的数量");
-L.push("**📋 统计逻辑**: 在P2级及以下技术缺陷中筛选'状态'字段值为'closed'或'已关闭'的记录");
-L.push("**🔢 数量**: "+p2已修复.length);
-L.push("**📝 已修复缺陷ID列表**: "+BT+fmtIds(p2已修复)+BT);
-
-L.push("## 26. ⚡ P2级及以下技术缺陷中及时修复的数量");
-L.push("**📋 统计逻辑**: 在P2级及以下技术缺陷中筛选'及时处理'字段值为'是'且'状态'为'已关闭'的记录");
-L.push("**🔢 数量**: "+p2及时修复.length);
-L.push("**📝 及时修复缺陷ID列表**: "+BT+fmtIds(p2及时修复)+BT);
-
-L.push("## 27. 📈 P2级及以下技术缺陷及时修复率");
-L.push("**📋 统计逻辑**: P2级及以下及时修复率 = P2级及以下技术缺陷中及时修复的数量 / P2级及以下技术缺陷的数量");
-L.push("**🧮 计算公式**: 及时修复率 = 及时修复数量 / P2级及以下技术缺陷总数");
-L.push("**🔍 及时修复定义**: 预计结束时间 >= 解决时间 且 状态为已关闭");
-L.push("**🔢 及时修复数量**: "+p2及时修复.length);
-L.push("**📊 分母（P2级及以下技术缺陷总数）**: "+p2总);
-L.push("**📈 及时修复率**: "+fmtPct(修复率));
-L.push("**📊 百分比**: "+fmtPct(修复率));
-L.push("**🏅 评级**: "+rating(修复率));
-L.push("**ℹ️ 说明**: 基于第26项统计的及时修复数量计算");
-
-L.push("## 27. 📈 P2级及以下技术缺陷及时处理率");
-L.push("**📋 统计逻辑**: P2级及以下及时处理率 = P2级及以下技术缺陷中及时处理的数量 / P2级及以下技术缺陷的数量");
-L.push("**🧮 计算公式**: 及时处理率 = 及时处理数量 / P2级及以下技术缺陷总数");
-L.push("**🔢 及时处理数量**: "+p2及时.length);
-L.push("**🔢 未及时处理数量**: "+p2未及时.length);
-L.push("**🔢 无法判断数量**: "+p2及时空.length);
-L.push("**📊 分母（P2级及以下技术缺陷总数）**: "+p2总);
-L.push("**📈 及时处理率**: "+fmtPct(处理率));
-L.push("**📊 百分比**: "+fmtPct(处理率));
-L.push("**🏅 评级**: "+rating(处理率));
-L.push("**ℹ️ 说明**: 有"+p2及时空.length+"条记录无法判断是否及时处理，已计入分母");
-
-L.push("## 28. 🏗️ 技术缺陷中\u201C结构归母\u201D字段统计");
-L.push("**📋 统计逻辑**: 统计技术缺陷中'结构归母'字段各值的数量，包括空值");
-Object.entries(归母Map).forEach(([key, arr]) => {
-  L.push("### 📍 "+key);
-  L.push("**🔢 数量**: "+arr.length);
-  L.push("**📝 缺陷ID列表**: "+BT+fmtIds(arr)+BT);
-});
-L.push("### ✅ 统计总和验证");
-L.push("**📋 统计逻辑**: 验证'结构归母'字段统计总和是否等于技术缺陷总数");
-L.push("**📊 统计总和**: "+归母sum);
-L.push("**📈 技术缺陷总数**: "+技术缺陷.length);
-L.push(verify(归母sum, 技术缺陷.length, "技术缺陷总数"));
-
-L.push("## 📋 数据字段信息");
-L.push("### 📊 可用字段");
-L.push(BT+JSON.stringify(fields)+BT);
-
-result = L.join("\\n");`,
+result = {
+  title: "TAPD 缺陷质量分析报告",
+  generatedAt: ts,
+  total: total,
+  kpis: [
+    {label:"技术缺陷总数",value:techBugs.length,color:"#1E6FD9"},
+    {label:"P0/P1 重大缺陷",value:p0.length+p1.length,color:p0.length+p1.length===0?"#27C97F":"#E84040"},
+    {label:"及时处理率",value:timelyRate,format:"percent",color:timelyRate>=90?"#27C97F":timelyRate>=80?"#F5A623":"#E84040"},
+    {label:"修复率(P2及以下)",value:fixRate,format:"percent",color:fixRate>=90?"#27C97F":fixRate>=80?"#F5A623":"#E84040"},
+    {label:"有效反馈数",value:validFB.length,color:"#4ECDC4"},
+    {label:"无效反馈数",value:invalidFB.length,color:"#7D8590"}
+  ],
+  severity: {P0:p0.length,P1:p1.length,P2:p2.length,P3:p3.length,P4:p4.length},
+  processingStatus: statusMap,
+  rootCauses: rootCauses,
+  criticalAlerts: critAlerts,
+  defectDetails: defectDetails,
+  summary: summary,
+  verification: {
+    severityOk: p0.length+p1.length+p2.length+p3.length+p4.length <= techBugs.length,
+    timelyOk: p2Timely.length <= p2plus.length,
+    rootCauseOk: rootCauses.reduce(function(s,r){return s+r.count;},0) === techBugs.length
+  }
+};`,
           timeoutSeconds: '30',
         },
         inputSlots: [{ slotId: 'script-in', name: 'input', dataType: 'json', required: true }],
@@ -376,25 +260,172 @@ result = L.join("\\n");`,
         position: { x: 700, y: 300 },
       },
       {
-        nodeId: 'n-webpage',
-        name: '生成精美网页报告',
-        nodeType: 'webpage-generator',
+        nodeId: 'n-html',
+        name: 'HTML 网页渲染（确定性）',
+        nodeType: 'script-executor',
         config: {
-          reportTemplate: `请将以下 Markdown 格式的缺陷统计报告转换为一份精美的 HTML 网页。
+          language: 'javascript',
+          timeoutSeconds: '30',
+          code: `// data = upstream stats JSON (kpis, severity, rootCauses, defectDetails, etc.)
+var d = data;
+var H = [];
+var S = '<' + 'script>';
+var SE = '<' + '/' + 'script>';
 
-要求：
-1. 顶部显示报告标题、生成时间、关键指标摘要卡片（总缺陷数、技术缺陷数、及时修复率等）
-2. 中部用图表展示：缺陷分类饼图、等级分布柱状图、P2及以下缺陷处理分析
-3. 结构归母分布用水平条形图展示
-4. 底部用表格展示详细数据和结论建议
-5. 整体风格要有科技感和数据分析报告的专业感
-6. 保留原始 Markdown 中的所有数据和验证结果，确保数据准确性`,
-          style: inputs.style || 'modern-dark',
-          title: 'TAPD 缺陷质量分析报告',
-          includeCharts: 'true',
+H.push('<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">');
+H.push('<meta name="viewport" content="width=device-width,initial-scale=1.0">');
+H.push('<title>' + (d.title || 'Quality Report') + '</title>');
+H.push('<link rel="preconnect" href="https://fonts.googleapis.com">');
+H.push('<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Noto+Sans+SC:wght@400;600;700&display=swap" rel="stylesheet">');
+H.push(S.replace('>', ' src="https://cdn.jsdelivr.net/npm/chart.js">') + SE);
+H.push('<style>');
+H.push(':root{--bg:#0D1117;--card:#161B22;--elev:#1C2128;--bdr:#30363D;--t1:#E6EDF3;--t2:#7D8590;--blue:#1E6FD9;--orange:#F5A623;--green:#27C97F;--red:#E84040;--cyan:#4ECDC4}');
+H.push('*{box-sizing:border-box;margin:0;padding:0}body{font-family:"Noto Sans SC",sans-serif;background:var(--bg);color:var(--t1);line-height:1.6;min-height:100vh}');
+H.push('.ctn{max-width:1400px;margin:0 auto;padding:0 24px}');
+H.push('.nav{position:sticky;top:0;z-index:100;background:rgba(13,17,23,0.85);backdrop-filter:blur(16px);border-bottom:1px solid var(--bdr);padding:16px 24px}');
+H.push('.nav-in{max-width:1400px;margin:0 auto;display:flex;align-items:center;gap:12px}');
+H.push('.logo{width:32px;height:32px;background:linear-gradient(135deg,var(--blue),var(--cyan));border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700}');
+H.push('.nav-t{font-weight:700;font-size:1.1rem}.nav-ts{margin-left:auto;font-size:0.8rem;color:var(--t2)}');
+H.push('.sec{padding:40px 0}.sec-t{font-size:1.4rem;font-weight:700;margin-bottom:24px;background:linear-gradient(135deg,var(--t1),var(--blue));-webkit-background-clip:text;-webkit-text-fill-color:transparent}');
+H.push('.kg{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:40px}');
+H.push('.kpi{background:var(--card);border:1px solid var(--bdr);border-radius:12px;padding:20px;transition:0.3s}.kpi:hover{transform:translateY(-4px);box-shadow:0 8px 24px rgba(0,0,0,0.3)}');
+H.push('.kpi-l{font-size:0.8rem;color:var(--t2);margin-bottom:6px;font-weight:600}');
+H.push('.kpi-v{font-family:"Bebas Neue",monospace;font-size:2.8rem;line-height:1}');
+H.push('.cg{display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:20px;margin-bottom:32px}');
+H.push('.cc{background:var(--card);border:1px solid var(--bdr);border-radius:12px;padding:24px}.cc h3{font-size:1rem;margin-bottom:16px}');
+H.push('.alert{background:rgba(232,64,64,0.08);border:1px solid rgba(232,64,64,0.3);border-radius:12px;padding:16px 20px;margin-bottom:16px;display:flex;align-items:flex-start;gap:12px}');
+H.push('.alert-b{background:var(--red);color:#fff;padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:700;flex-shrink:0}');
+H.push('.alert-t{font-weight:600;color:var(--red)}.alert-d{font-size:0.8rem;color:var(--t2);margin-top:2px}');
+H.push('.sg{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-bottom:24px}');
+H.push('.sc{background:var(--card);border:1px solid var(--bdr);border-radius:8px;padding:14px;text-align:center}');
+H.push('.sc-n{font-family:"Bebas Neue",monospace;font-size:1.8rem}.sc-l{font-size:0.75rem;color:var(--t2)}');
+H.push('.bl{display:flex;flex-direction:column;gap:10px}');
+H.push('.bi{display:flex;align-items:center;gap:10px}.bi-l{flex:0 0 160px;font-size:0.85rem;text-align:right;color:var(--t2)}');
+H.push('.bi-t{flex:1;height:24px;background:var(--elev);border-radius:4px;overflow:hidden}');
+H.push('.bi-f{height:100%;border-radius:4px;display:flex;align-items:center;justify-content:flex-end;padding-right:8px;font-size:0.7rem;font-weight:700;color:rgba(255,255,255,0.9);transition:width 0.8s ease}');
+H.push('.acc{display:flex;flex-direction:column;gap:8px}');
+H.push('.ag{background:var(--card);border:1px solid var(--bdr);border-radius:8px;overflow:hidden}');
+H.push('.ah{display:flex;align-items:center;gap:10px;padding:12px 16px;cursor:pointer}.ah:hover{background:rgba(255,255,255,0.03)}');
+H.push('.ad{width:8px;height:8px;border-radius:50%;flex-shrink:0}.ac{font-weight:600;flex:1}');
+H.push('.ab{background:rgba(30,111,217,0.15);color:var(--blue);padding:2px 10px;border-radius:12px;font-size:0.7rem;font-weight:700}');
+H.push('.abdy{max-height:0;overflow:hidden;transition:max-height 0.4s ease}.ag.open .abdy{max-height:2000px}');
+H.push('.dl{padding:0 16px 16px;display:flex;flex-direction:column;gap:6px}');
+H.push('.df{display:flex;gap:10px;padding:10px;background:var(--elev);border-radius:6px;border-left:3px solid var(--blue);font-size:0.85rem}');
+H.push('.di{flex-shrink:0;width:20px;height:20px;background:rgba(30,111,217,0.15);color:var(--blue);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.65rem;font-weight:700}');
+H.push('.dc{margin-top:3px;font-size:0.8rem;color:var(--orange)}');
+H.push('.dh{display:inline-block;margin-top:3px;background:rgba(125,133,144,0.15);color:var(--t2);padding:1px 6px;border-radius:8px;font-size:0.65rem}');
+H.push('.smg{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}');
+H.push('.smc{background:var(--card);border:1px solid var(--bdr);border-radius:12px;padding:18px 20px;display:flex;align-items:flex-start;gap:14px}');
+H.push('.smi{flex-shrink:0;width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center}');
+H.push('.ft{text-align:center;padding:32px 0;border-top:1px solid var(--bdr);color:var(--t2);font-size:0.8rem}');
+H.push('@media(max-width:768px){.kg{grid-template-columns:repeat(2,1fr)}.cg{grid-template-columns:1fr}.bi-l{flex:0 0 80px;font-size:0.7rem}}');
+H.push('</style></head><body>');
+
+// Navbar
+H.push('<nav class="nav"><div class="nav-in"><div class="logo">Q</div>');
+H.push('<span class="nav-t">' + (d.title || "Quality Report") + '</span>');
+H.push('<span class="nav-ts">' + (d.generatedAt || "") + '</span></div></nav>');
+
+// KPI Cards
+H.push('<div class="sec"><div class="ctn"><div class="kg">');
+(d.kpis || []).forEach(function(k) {
+  var val = k.format === "percent" ? k.value + "%" : k.value;
+  H.push('<div class="kpi"><div class="kpi-l">' + k.label + '</div>');
+  H.push('<div class="kpi-v" style="color:' + (k.color||"#1E6FD9") + '">' + val + '</div></div>');
+});
+H.push('</div>');
+
+// Critical Alerts
+if (d.criticalAlerts && d.criticalAlerts.length > 0) {
+  d.criticalAlerts.forEach(function(a) {
+    H.push('<div class="alert"><span class="alert-b">' + a.level + '</span><div>');
+    H.push('<div class="alert-t">' + a.title + '</div>');
+    if (a.desc) H.push('<div class="alert-d">' + a.desc + '</div>');
+    H.push('</div></div>');
+  });
+}
+
+// Charts
+var sev = d.severity || {};
+H.push('<div class="cg">');
+H.push('<div class="cc"><h3>缺陷级别分布</h3><div style="max-width:350px;margin:0 auto"><canvas id="sevChart"></canvas></div></div>');
+var rcs = d.rootCauses || [];
+var rcMax = rcs.length > 0 ? rcs[0].count : 1;
+H.push('<div class="cc"><h3>缺陷根因分布</h3><div class="bl">');
+rcs.forEach(function(rc) {
+  var pW = Math.max(rc.count / rcMax * 100, 8);
+  H.push('<div class="bi"><div class="bi-l">' + rc.name + '</div>');
+  H.push('<div class="bi-t"><div class="bi-f" style="width:'+pW+'%;background:'+(rc.color||"#1E6FD9")+'">' + rc.count + '</div></div></div>');
+});
+H.push('</div></div></div>');
+
+// Status
+H.push('<h3 class="sec-t" style="margin-top:32px">处理状态总览</h3>');
+var stMap = d.processingStatus || {};
+var stC = {"已修复":"var(--green)","临时解决":"var(--orange)","处理中":"var(--blue)","挂起":"var(--t2)","逾期":"var(--red)"};
+H.push('<div class="sg">');
+Object.keys(stMap).forEach(function(k) {
+  H.push('<div class="sc"><div class="sc-n" style="color:'+(stC[k]||"var(--t1)")+'">' + stMap[k] + '</div><div class="sc-l">' + k + '</div></div>');
+});
+H.push('</div>');
+
+// Defect Accordion
+var dets = d.defectDetails || [];
+if (dets.length > 0) {
+  H.push('<h3 class="sec-t">典型缺陷详情</h3><div class="acc">');
+  dets.forEach(function(grp, gi) {
+    var q = String.fromCharCode(39);
+    H.push('<div class="ag" data-g="' + gi + '">');
+    H.push('<div class="ah" onclick="var g=this.parentElement;g.classList.toggle('+q+'open'+q+')">');
+    H.push('<div class="ad" style="background:' + (grp.color||"#1E6FD9") + '"></div>');
+    H.push('<div class="ac">' + grp.category + '</div>');
+    H.push('<div class="ab">' + grp.items.length + '</div>');
+    H.push('<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--t2)"><path d="M6 9l6 6 6-6"/></svg>');
+    H.push('</div><div class="abdy"><div class="dl">');
+    grp.items.forEach(function(item, ii) {
+      H.push('<div class="df" style="border-left-color:' + (grp.color||"#1E6FD9") + '">');
+      H.push('<div class="di">' + (ii+1) + '</div><div>');
+      H.push('<div>' + item.desc + '</div>');
+      if (item.cause) H.push('<div class="dc">' + item.cause + '</div>');
+      if (item.handler) H.push('<span class="dh">' + item.handler + '</span>');
+      H.push('</div></div>');
+    });
+    H.push('</div></div></div>');
+  });
+  H.push('</div>');
+}
+
+// Summary
+var sums = d.summary || [];
+if (sums.length > 0) {
+  H.push('<h3 class="sec-t" style="margin-top:32px">分析总结</h3><div class="smg">');
+  sums.forEach(function(s) {
+    var bg = (s.color || "#1E6FD9") + "22";
+    H.push('<div class="smc"><div class="smi" style="background:'+bg+';color:'+s.color+'">&#9679;</div>');
+    H.push('<div style="font-size:0.9rem">' + s.text + '</div></div>');
+  });
+  H.push('</div>');
+}
+
+H.push('</div></div>');
+H.push('<footer class="ft"><div class="ctn">' + (d.generatedAt||"") + ' | 由工作流自动生成</div></footer>');
+
+// Chart.js init
+H.push(S);
+H.push('document.addEventListener("DOMContentLoaded",function(){');
+H.push('var ctx=document.getElementById("sevChart");');
+H.push('if(ctx){new Chart(ctx,{type:"doughnut",data:{');
+H.push('labels:["P0 致命","P1 重大","P2 严重","P3 一般","P4 轻微"],');
+H.push('datasets:[{data:[' + (sev.P0||0)+','+(sev.P1||0)+','+(sev.P2||0)+','+(sev.P3||0)+','+(sev.P4||0) + '],');
+H.push('backgroundColor:["#E84040","#F5A623","#FF6B35","#1E6FD9","#4ECDC4"],borderColor:"#161B22",borderWidth:3}]},');
+H.push('options:{responsive:true,cutout:"60%",plugins:{legend:{position:"right",labels:{color:"#7D8590",usePointStyle:true,padding:12}}}}');
+H.push('});}});');
+H.push(SE);
+H.push('</body></html>');
+result = H.join("\\n");`,
         },
-        inputSlots: [{ slotId: 'webpage-in', name: 'data', dataType: 'json', required: true }],
-        outputSlots: [{ slotId: 'webpage-out', name: 'webpage', dataType: 'text', required: true }],
+        inputSlots: [{ slotId: 'script-in', name: 'input', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'script-out', name: 'output', dataType: 'text', required: true }],
         position: { x: 1000, y: 300 },
       },
       {
@@ -428,9 +459,9 @@ result = L.join("\\n");`,
     const edges: WorkflowEdge[] = [
       edge('n-trigger', 'manual-out', 'n-tapd', 'tapd-in'),
       edge('n-tapd', 'tapd-out', 'n-agg', 'script-in'),
-      edge('n-agg', 'script-out', 'n-webpage', 'webpage-in'),
-      edge('n-webpage', 'webpage-out', 'n-export', 'export-in'),
-      edge('n-webpage', 'webpage-out', 'n-notify', 'notify-in'),
+      edge('n-agg', 'script-out', 'n-html', 'script-in'),
+      edge('n-html', 'script-out', 'n-export', 'export-in'),
+      edge('n-html', 'script-out', 'n-notify', 'notify-in'),
     ];
 
     const variables: WorkflowVariable[] = [];
