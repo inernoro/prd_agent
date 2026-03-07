@@ -155,6 +155,16 @@ public static class AdminPermissionCatalog
     public const string ReportAgentDataSourceManage = "report-agent.datasource.manage";
 
     /// <summary>
+    /// 网页托管权限（读）：查看托管站点列表
+    /// </summary>
+    public const string WebPagesRead = "web-pages.read";
+
+    /// <summary>
+    /// 网页托管权限（写）：上传/编辑/删除/分享托管站点
+    /// </summary>
+    public const string WebPagesWrite = "web-pages.write";
+
+    /// <summary>
     /// 超级权限（当路由未配置映射时，用于兜底放行；同时也可用于 root 破窗全权限）。
     /// </summary>
     public const string Super = "super";
@@ -221,6 +231,9 @@ public static class AdminPermissionCatalog
         new(ReportAgentViewAll, "周报-查看全部", "查看所有团队周报"),
         new(ReportAgentDataSourceManage, "周报-数据源管理", "配置 Git/SVN 仓库连接"),
         new(WorkflowAgentManage, "工作流引擎-管理", "管理所有工作流与执行记录"),
+
+        new(WebPagesRead, "网页托管-读", "查看托管站点列表与详情"),
+        new(WebPagesWrite, "网页托管-写", "上传/编辑/删除/分享托管站点"),
 
         new(Super, "超级权限", "兜底放行：建议仅给 root/超级管理员"),
     };

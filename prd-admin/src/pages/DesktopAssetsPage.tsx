@@ -4,6 +4,7 @@ import {
   Image,
   FileText,
   Paperclip,
+  Globe,
   Loader2,
   Search,
   LayoutGrid,
@@ -28,7 +29,7 @@ import { getMobileAssets } from '@/services';
 import type { MobileAssetItem } from '@/services/contracts/mobile';
 
 /* ── Types ── */
-type AssetTab = 'all' | 'image' | 'document' | 'attachment';
+type AssetTab = 'all' | 'image' | 'document' | 'attachment' | 'webpage';
 type SortBy = 'date' | 'size' | 'name';
 type ViewMode = 'grid' | 'list';
 
@@ -38,6 +39,7 @@ const TABS: { key: AssetTab; label: string; icon: typeof Image }[] = [
   { key: 'image', label: '图片', icon: Image },
   { key: 'document', label: '文档', icon: FileText },
   { key: 'attachment', label: '附件', icon: Paperclip },
+  { key: 'webpage', label: '网页', icon: Globe },
 ];
 
 const PAGE_SIZE = 50;
@@ -79,6 +81,7 @@ const TYPE_CONFIG: Record<string, { label: string; bg: string; text: string }> =
   image: { label: '图片', bg: 'rgba(251,146,60,0.15)', text: '#FB923C' },
   document: { label: '文档', bg: 'rgba(129,140,248,0.15)', text: '#818CF8' },
   attachment: { label: '附件', bg: 'rgba(255,255,255,0.08)', text: 'var(--text-muted)' },
+  webpage: { label: '网页', bg: 'rgba(34,197,94,0.15)', text: '#22C55E' },
 };
 
 /** 判断是否为图片：type 为 image 或 MIME 以 image/ 开头 */

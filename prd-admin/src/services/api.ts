@@ -757,6 +757,21 @@ export const api = {
     myWorkspaces: () => '/api/account/data-transfers/my-workspaces',
     myConfigs: () => '/api/account/data-transfers/my-configs',
   },
+  // ============ Web Hosting 网页托管 ============
+  webPages: {
+    upload: () => '/api/web-pages/upload',
+    fromContent: () => '/api/web-pages/from-content',
+    list: () => '/api/web-pages',
+    byId: (id: string) => `/api/web-pages/${id}`,
+    reupload: (id: string) => `/api/web-pages/${id}/reupload`,
+    batchDelete: () => '/api/web-pages/batch-delete',
+    folders: () => '/api/web-pages/folders',
+    tags: () => '/api/web-pages/tags',
+    share: () => '/api/web-pages/share',
+    shares: () => '/api/web-pages/shares',
+    revokeShare: (shareId: string) => `/api/web-pages/shares/${shareId}`,
+    viewShare: (token: string) => `/api/web-pages/shares/view/${token}`,
+  },
 } as const;
 
 export default api;

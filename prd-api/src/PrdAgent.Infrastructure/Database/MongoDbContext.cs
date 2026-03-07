@@ -168,6 +168,10 @@ public class MongoDbContext
     // Video Agent 文章转视频
     public IMongoCollection<VideoGenRun> VideoGenRuns => _database.GetCollection<VideoGenRun>("video_gen_runs");
 
+    // Web Hosting 网页托管与分享
+    public IMongoCollection<HostedSite> HostedSites => _database.GetCollection<HostedSite>("hosted_sites");
+    public IMongoCollection<WebPageShareLink> WebPageShareLinks => _database.GetCollection<WebPageShareLink>("web_page_share_links");
+
     // Video Agent 视频转文档
     public IMongoCollection<VideoToDocRun> VideoToDocRuns => _database.GetCollection<VideoToDocRun>("video_to_doc_runs");
 
@@ -1094,5 +1098,40 @@ public class MongoDbContext
         ArenaBattles.Indexes.CreateOne(new CreateIndexModel<ArenaBattle>(
             Builders<ArenaBattle>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_arena_battles_user_created" }));
+
+        // ========== Hosted Sites 网页托管索引 ==========
+
+        // HostedSites：按用户 + 创建时间查询
+        HostedSites.Indexes.CreateOne(new CreateIndexModel<HostedSite>(
+            Builders<HostedSite>.IndexKeys.Ascending(x => x.OwnerUserId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_hosted_sites_owner_created" }));
+        // HostedSites：按标签多值索引
+        HostedSites.Indexes.CreateOne(new CreateIndexModel<HostedSite>(
+            Builders<HostedSite>.IndexKeys.Ascending(x => x.Tags),
+            new CreateIndexOptions { Name = "idx_hosted_sites_tags" }));
+        // HostedSites：按来源类型查询
+        HostedSites.Indexes.CreateOne(new CreateIndexModel<HostedSite>(
+            Builders<HostedSite>.IndexKeys.Ascending(x => x.OwnerUserId).Ascending(x => x.SourceType),
+            new CreateIndexOptions { Name = "idx_hosted_sites_owner_source" }));
+        // HostedSites：按文件夹查询
+        HostedSites.Indexes.CreateOne(new CreateIndexModel<HostedSite>(
+            Builders<HostedSite>.IndexKeys.Ascending(x => x.OwnerUserId).Ascending(x => x.Folder),
+            new CreateIndexOptions { Name = "idx_hosted_sites_owner_folder" }));
+
+        // WebPageShareLinks：按 Token 唯一
+        try
+        {
+            WebPageShareLinks.Indexes.CreateOne(new CreateIndexModel<WebPageShareLink>(
+                Builders<WebPageShareLink>.IndexKeys.Ascending(x => x.Token),
+                new CreateIndexOptions { Name = "uniq_web_page_share_links_token", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        // WebPageShareLinks：按创建者 + 时间
+        WebPageShareLinks.Indexes.CreateOne(new CreateIndexModel<WebPageShareLink>(
+            Builders<WebPageShareLink>.IndexKeys.Ascending(x => x.CreatedBy).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_web_page_share_links_creator_created" }));
     }
 }

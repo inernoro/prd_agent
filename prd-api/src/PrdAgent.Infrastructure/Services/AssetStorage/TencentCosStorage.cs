@@ -457,6 +457,32 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         return BuildPublicUrl(key);
     }
 
+    public async Task UploadToKeyAsync(string key, byte[] bytes, string? contentType, CancellationToken ct)
+    {
+        await UploadBytesAsync(key, bytes, contentType, ct).ConfigureAwait(false);
+    }
+
+    public string BuildUrlForKey(string key)
+    {
+        return BuildPublicUrl(key);
+    }
+
+    public async Task DeleteByKeyAsync(string key, CancellationToken ct)
+    {
+        await DeleteAsync(key, ct).ConfigureAwait(false);
+    }
+
+    public string BuildSiteKey(string siteId, string filePath)
+    {
+        var sid = (siteId ?? string.Empty).Trim();
+        var fp = (filePath ?? string.Empty).Trim().TrimStart('/');
+        if (string.IsNullOrWhiteSpace(sid)) throw new ArgumentException("siteId empty", nameof(siteId));
+        if (string.IsNullOrWhiteSpace(fp)) throw new ArgumentException("filePath empty", nameof(filePath));
+        var rel = $"web-hosting/sites/{sid}/{fp}";
+        if (string.IsNullOrWhiteSpace(_prefix)) return rel;
+        return $"{_prefix}/{rel}";
+    }
+
     private static bool LooksLikeNotFound(CosServerException ex)
     {
         // SDK 版本差异较大：避免引用不确定的 statusCode 属性名，退化为字符串判断，确保可编译/可运行。

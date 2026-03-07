@@ -450,14 +450,17 @@ prd_agent/
 | 周报管理 Agent | ✅ Phase 1-3 DONE | ReportAgentController, ReportAgentPage (6 tabs)，详见 `doc/plan.report-agent-impl.md` |
 | **附件上传** | ✅ DONE | AttachmentsController + Rust upload_attachment + Desktop UI (图片选择/预览/上传) |
 | **技能系统** | ✅ DONE | SkillSettings 模型 + SkillsController + Desktop SkillPanel/SkillManagerModal (服务端公共技能 + 客户端本地自定义技能) |
+| **网页托管** | ✅ DONE | WebPagesController + IHostedSiteService + HostedSiteService, WebPagesPage + ShareViewPage, COS 站点托管 + 分享链接，详见 `doc/design.web-hosting.md` |
 | **知识库** | ⚠️ PARTIAL | KnowledgeBasePage UI 占位，"资料文件"标注开发中 |
 | **i18n** | ❌ NOT_IMPL | 无任何 i18n 基础设施，文案硬编码中文 |
 | **K8s 部署** | ❌ NOT_IMPL | 仅 docker-compose，无 K8s manifests |
 | **告警通知 (邮件/Webhook)** | ❌ NOT_IMPL | 仅 AdminNotification 面板内通知 |
 
-### MongoDB 集合清单 (96 个)
+### MongoDB 集合清单 (98 个)
 
 核心业务：`users`, `groups`, `groupmembers`, `documents`, `sessions`, `messages`, `group_message_counters`, `contentgaps`, `attachments`, `prdcomments`, `share_links`
+
+网页托管：`hosted_sites`, `web_page_share_links`
 
 LLM/AI：`llmconfigs`, `llmplatforms`, `llmmodels`, `llmrequestlogs`, `model_groups`, `model_scheduler_config`, `model_test_stubs`, `llm_app_callers`, `model_exchanges`
 
