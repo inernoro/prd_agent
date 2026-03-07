@@ -3041,11 +3041,11 @@ public static class CapsuleExecutor
         var sb = new StringBuilder();
 
         // 从配置或上游输入获取文章内容
-        var articleMarkdown = GetConfigValue(node, "articleMarkdown", variables) ?? string.Empty;
-        var articleTitle = GetConfigValue(node, "articleTitle", variables);
-        var systemPrompt = GetConfigValue(node, "systemPrompt", variables);
-        var styleDescription = GetConfigValue(node, "styleDescription", variables);
-        var timeoutMinutesStr = GetConfigValue(node, "timeoutMinutes", variables) ?? "30";
+        var articleMarkdown = ReplaceVariables(GetConfigString(node, "articleMarkdown") ?? "", variables);
+        var articleTitle = ReplaceVariables(GetConfigString(node, "articleTitle") ?? "", variables);
+        var systemPrompt = ReplaceVariables(GetConfigString(node, "systemPrompt") ?? "", variables);
+        var styleDescription = ReplaceVariables(GetConfigString(node, "styleDescription") ?? "", variables);
+        var timeoutMinutesStr = GetConfigString(node, "timeoutMinutes") ?? "30";
 
         // 上游输入可覆盖 articleMarkdown
         var inputText = inputArtifacts.FirstOrDefault(a => a.SlotId == "vg-in")?.InlineContent;
@@ -3064,7 +3064,7 @@ public static class CapsuleExecutor
 
         // 从工作流上下文获取真实用户 ID（由 WorkflowRunWorker 注入）
         var ownerAdminId = variables.GetValueOrDefault("__triggeredBy") ?? "workflow-system";
-        var outputFormat = GetConfigValue(node, "outputFormat", variables) ?? "mp4";
+        var outputFormat = GetConfigString(node, "outputFormat") ?? "mp4";
 
         sb.AppendLine($"[VideoGeneration] 开始，文章长度={articleMarkdown.Length}，超时={timeoutMinutes}分钟，格式={outputFormat}，owner={ownerAdminId}");
         if (emitEvent != null)

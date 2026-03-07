@@ -781,7 +781,6 @@ public class VideoGenRunWorker : BackgroundService
         Directory.CreateDirectory(outDir);
 
         string assetUrl;
-        string assetMimeType;
 
         if (run.OutputFormat == "html")
         {
@@ -792,7 +791,7 @@ public class VideoGenRunWorker : BackgroundService
             var htmlStored = await _assetStorage.SaveAsync(htmlBytes, "text/html", CancellationToken.None,
                 domain: AppDomainPaths.DomainVideoAgent, type: AppDomainPaths.TypeVideo);
             assetUrl = htmlStored.Url;
-            assetMimeType = "text/html";
+
             await UpdatePhaseAsync(run, "rendering", 90);
             _logger.LogInformation("VideoGen HTML 已上传 COS: runId={RunId}, url={Url}, size={Size}",
                 run.Id, htmlStored.Url, htmlStored.SizeBytes);
@@ -808,7 +807,7 @@ public class VideoGenRunWorker : BackgroundService
             var videoStored = await _assetStorage.SaveAsync(videoBytes, "video/mp4", CancellationToken.None,
                 domain: AppDomainPaths.DomainVideoAgent, type: AppDomainPaths.TypeVideo);
             assetUrl = videoStored.Url;
-            assetMimeType = "video/mp4";
+
             _logger.LogInformation("VideoGen 完整视频已上传 COS: runId={RunId}, url={Url}, size={Size}",
                 run.Id, videoStored.Url, videoStored.SizeBytes);
         }
@@ -838,7 +837,7 @@ public class VideoGenRunWorker : BackgroundService
 
         await PublishEventAsync(run.Id, "run.completed", new
         {
-            videoUrl = videoStored.Url,
+            videoUrl = assetUrl,
             totalDuration = run.TotalDurationSeconds,
             scenesCount = run.Scenes.Count,
         });
