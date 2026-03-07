@@ -76,6 +76,12 @@ public class WebPagesController : ControllerBase
            ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
            ?? "unknown";
 
+    private string GetDisplayName()
+        => User.FindFirst("name")?.Value
+           ?? User.FindFirst("display_name")?.Value
+           ?? User.FindFirst(ClaimTypes.Name)?.Value
+           ?? "用户";
+
     // ─────────────────────────────────────────────
     // 上传 / 创建
     // ─────────────────────────────────────────────
@@ -484,12 +490,25 @@ public class WebPagesController : ControllerBase
         if (ownedCount != siteIds.Count)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "包含非自己的站点"));
 
+        // 自动生成分享标题：{displayName} 分享给你的 {siteTitle}
+        var title = req.Title?.Trim();
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            var displayName = GetDisplayName();
+            var firstSite = await _db.HostedSites.Find(x => x.Id == siteIds[0])
+                .Project(Builders<HostedSite>.Projection.Expression(s => s.Title))
+                .FirstOrDefaultAsync();
+            title = req.ShareType == "collection"
+                ? $"{displayName} 分享给你的 {siteIds.Count} 个站点合集"
+                : $"{displayName} 分享给你的「{firstSite ?? "站点"}」";
+        }
+
         var share = new WebPageShareLink
         {
             SiteId = req.ShareType != "collection" ? req.SiteId : null,
             SiteIds = siteIds,
             ShareType = req.ShareType ?? "single",
-            Title = req.Title?.Trim(),
+            Title = title,
             Description = req.Description?.Trim(),
             AccessLevel = string.IsNullOrWhiteSpace(req.Password) ? "public" : "password",
             Password = req.Password,

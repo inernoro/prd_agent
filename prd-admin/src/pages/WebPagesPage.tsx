@@ -771,39 +771,47 @@ function UploadEditDialog({ item, folders, onClose, onSaved }: {
 
 // ─── Share Dialog ───
 
+function genPassword(len = 6) {
+  const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
+  return Array.from(crypto.getRandomValues(new Uint8Array(len)))
+    .map(b => chars[b % chars.length]).join('');
+}
+
 function ShareDialog({ siteId, siteIds, onClose }: {
   siteId: string | null;
   siteIds?: string[];
   onClose: () => void;
 }) {
+  const [creating, setCreating] = useState(false);
+  const [result, setResult] = useState<{ shareUrl: string; token: string; password?: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [showOptions, setShowOptions] = useState(false);
+  const [usePassword, setUsePassword] = useState(false);
   const [password, setPassword] = useState('');
   const [expiresInDays, setExpiresInDays] = useState(0);
-  const [title, setTitle] = useState('');
-  const [creating, setCreating] = useState(false);
-  const [result, setResult] = useState<{ shareUrl: string; token: string } | null>(null);
-  const [copied, setCopied] = useState(false);
 
   const isCollection = !siteId && siteIds && siteIds.length > 1;
 
   const handleCreate = async () => {
     setCreating(true);
+    const pwd = usePassword ? (password.trim() || genPassword()) : undefined;
     const res = await createSiteShareLink({
       siteId: siteId || undefined,
       siteIds: isCollection ? siteIds : undefined,
       shareType: isCollection ? 'collection' : 'single',
-      title: title.trim() || undefined,
-      password: password.trim() || undefined,
+      password: pwd,
       expiresInDays,
     });
     setCreating(false);
     if (res.success) {
-      setResult({ shareUrl: res.data.shareUrl, token: res.data.token });
+      setResult({ shareUrl: res.data.shareUrl, token: res.data.token, password: pwd });
     }
   };
 
   const handleCopy = () => {
-    const fullUrl = `${window.location.origin}${result!.shareUrl}`;
-    navigator.clipboard.writeText(fullUrl);
+    let text = `${window.location.origin}${result!.shareUrl}`;
+    if (result!.password) text += `\n访问密码：${result!.password}`;
+    navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -818,7 +826,7 @@ function ShareDialog({ siteId, siteIds, onClose }: {
     <Dialog
       open={true}
       onOpenChange={v => { if (!v) onClose(); }}
-      title={result ? '分享链接已创建' : '创建分享链接'}
+      title={result ? '分享链接已创建' : '快速分享'}
       content={
         result ? (
           <div className="flex flex-col gap-4">
@@ -838,6 +846,15 @@ function ShareDialog({ siteId, siteIds, onClose }: {
                 {copied ? <Check size={14} /> : <Copy size={14} />}
               </Button>
             </div>
+            {result.password && (
+              <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--text-secondary)' }}>
+                <Lock size={12} />
+                <span>访问密码：<code className="px-1.5 py-0.5 rounded" style={{ background: 'var(--bg-sunken)' }}>{result.password}</code></span>
+              </div>
+            )}
+            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              复制按钮会同时复制链接{result.password ? '和密码' : ''}
+            </p>
             <div className="flex justify-end">
               <Button variant="ghost" onClick={onClose}>关闭</Button>
             </div>
@@ -849,51 +866,75 @@ function ShareDialog({ siteId, siteIds, onClose }: {
                 将分享 {siteIds!.length} 个站点的合集
               </p>
             )}
-            <label className="flex flex-col gap-1">
-              <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>分享标题（可选）</span>
-              <input
-                type="text"
-                value={title}
-                onChange={e => setTitle(e.target.value)}
-                placeholder="给分享起个名字"
-                className="px-3 py-2 rounded-lg text-sm outline-none"
-                style={inputStyle}
-              />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
-                <Lock size={12} className="inline mr-1" />访问密码（留空则公开）
-              </span>
-              <input
-                type="text"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                placeholder="留空 = 任何人可访问"
-                className="px-3 py-2 rounded-lg text-sm outline-none"
-                style={inputStyle}
-              />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
-                <Clock size={12} className="inline mr-1" />过期时间
-              </span>
-              <select
-                value={expiresInDays}
-                onChange={e => setExpiresInDays(Number(e.target.value))}
-                className="px-3 py-2 rounded-lg text-sm outline-none cursor-pointer"
-                style={inputStyle}
-              >
-                <option value={0}>永不过期</option>
-                <option value={1}>1 天</option>
-                <option value={7}>7 天</option>
-                <option value={30}>30 天</option>
-                <option value={90}>90 天</option>
-              </select>
-            </label>
+            <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+              点击下方按钮即可一键生成分享链接，标题会自动生成。
+            </p>
+
+            {/* 可选设置折叠区 */}
+            <button
+              type="button"
+              onClick={() => setShowOptions(!showOptions)}
+              className="flex items-center gap-1 text-xs cursor-pointer"
+              style={{ color: 'var(--text-muted)', background: 'none', border: 'none', padding: 0 }}
+            >
+              <span style={{ transform: showOptions ? 'rotate(90deg)' : undefined, transition: 'transform 0.15s', display: 'inline-block' }}>▸</span>
+              高级选项
+            </button>
+
+            {showOptions && (
+              <div className="flex flex-col gap-3 pl-2" style={{ borderLeft: '2px solid var(--border-default)' }}>
+                <label className="flex items-center gap-2 cursor-pointer text-sm">
+                  <input
+                    type="checkbox"
+                    checked={usePassword}
+                    onChange={e => {
+                      setUsePassword(e.target.checked);
+                      if (e.target.checked && !password) setPassword(genPassword());
+                    }}
+                  />
+                  <Lock size={12} style={{ color: 'var(--text-muted)' }} />
+                  <span style={{ color: 'var(--text-secondary)' }}>密码保护</span>
+                </label>
+                {usePassword && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={password}
+                      onChange={e => setPassword(e.target.value)}
+                      placeholder="自动生成"
+                      className="flex-1 px-3 py-1.5 rounded-lg text-sm outline-none"
+                      style={inputStyle}
+                    />
+                    <Button size="xs" variant="ghost" onClick={() => setPassword(genPassword())} title="重新生成">
+                      <RefreshCw size={12} />
+                    </Button>
+                  </div>
+                )}
+
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    <Clock size={12} className="inline mr-1" />过期时间
+                  </span>
+                  <select
+                    value={expiresInDays}
+                    onChange={e => setExpiresInDays(Number(e.target.value))}
+                    className="px-3 py-1.5 rounded-lg text-sm outline-none cursor-pointer"
+                    style={inputStyle}
+                  >
+                    <option value={0}>永不过期</option>
+                    <option value={1}>1 天</option>
+                    <option value={7}>7 天</option>
+                    <option value={30}>30 天</option>
+                    <option value={90}>90 天</option>
+                  </select>
+                </label>
+              </div>
+            )}
+
             <div className="flex justify-end gap-2 mt-2">
               <Button variant="ghost" onClick={onClose}>取消</Button>
               <Button onClick={handleCreate} disabled={creating}>
-                {creating ? '生成中...' : '生成链接'}
+                {creating ? '生成中...' : '一键分享'}
               </Button>
             </div>
           </div>

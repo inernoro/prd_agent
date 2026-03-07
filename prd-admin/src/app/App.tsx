@@ -26,6 +26,7 @@ import AutomationRulesPage from '@/pages/AutomationRulesPage';
 import SettingsPage from '@/pages/SettingsPage';
 import DataTransferPage from '@/pages/DataTransferPage';
 import WebPagesPage from '@/pages/WebPagesPage';
+import ShareViewPage from '@/pages/ShareViewPage';
 import ExecutiveDashboardPage from '@/pages/ExecutiveDashboardPage';
 import { PrdAgentTabsPage } from '@/pages/PrdAgentTabsPage';
 import AgentLauncherPage from '@/pages/AgentLauncherPage';
@@ -180,6 +181,9 @@ export default function App() {
         <Route path="/home" element={<LandingPage />} />
 
         <Route path="/login" element={<LoginPage />} />
+
+        {/* 公开分享页面 - 无需登录 */}
+        <Route path="/s/wp/:token" element={<ShareViewPage />} />
 
         {/* 开发试验场 - 无需权限 */}
         <Route path="/_dev/rich-composer-lab" element={<RichComposerLab />} />

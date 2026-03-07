@@ -770,6 +770,7 @@ export const api = {
     share: () => '/api/web-pages/share',
     shares: () => '/api/web-pages/shares',
     revokeShare: (shareId: string) => `/api/web-pages/shares/${shareId}`,
+    viewShare: (token: string) => `/s/wp/${token}`,
   },
 } as const;
 

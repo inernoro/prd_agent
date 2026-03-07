@@ -204,3 +204,37 @@ export async function listShares(): Promise<ApiResponse<{ items: ShareLinkItem[]
 export async function revokeShare(shareId: string): Promise<ApiResponse<{ revoked: boolean }>> {
   return apiRequest(api.webPages.revokeShare(encodeURIComponent(shareId)), { method: 'DELETE' });
 }
+
+// ─── Public Share View ───
+
+export interface SharedSiteInfo {
+  id: string;
+  title: string;
+  description?: string;
+  siteUrl: string;
+  entryFile: string;
+  totalSize: number;
+  fileCount: number;
+  coverImageUrl?: string;
+}
+
+export interface ShareViewData {
+  title: string;
+  description?: string;
+  shareType: string;
+  createdAt: string;
+  sites: SharedSiteInfo[];
+}
+
+export async function viewShare(token: string, password?: string): Promise<ApiResponse<ShareViewData>> {
+  const q = password ? `?password=${encodeURIComponent(password)}` : '';
+  // 使用 raw fetch 避免 apiRequest 的 401 自动 refresh/redirect 逻辑，此端点是公开的
+  const url = joinUrl(getApiBaseUrl(), `${api.webPages.viewShare(encodeURIComponent(token))}${q}`);
+  try {
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    const json = await res.json();
+    return json as ApiResponse<ShareViewData>;
+  } catch {
+    return { success: false, data: null as never, error: { code: 'NETWORK_ERROR', message: '网络请求失败' } };
+  }
+}
