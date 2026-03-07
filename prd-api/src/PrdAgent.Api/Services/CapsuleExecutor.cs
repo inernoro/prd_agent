@@ -897,7 +897,9 @@ public static class CapsuleExecutor
 
             logs.AppendLine($"  输出: {outputJson.Length} chars");
 
-            var artifact = MakeTextArtifact(node, "script-out", "脚本输出", outputJson, "application/json");
+            // 根据实际内容推断 MIME 类型，而非始终用 application/json
+            var outputMime = InferMimeType(outputJson);
+            var artifact = MakeTextArtifact(node, "script-out", "脚本输出", outputJson, outputMime);
             return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs.ToString());
         }
         catch (TimeoutException)
@@ -3072,21 +3074,38 @@ public static class CapsuleExecutor
             message = string.Join("\n", summaryParts);
         }
 
-        // 收集附件：从上游产物的 COS URL 中提取
+        // 收集附件：优先 COS URL，回退到 inline content（生成 data URI）
         List<NotificationAttachment>? attachments = null;
         var attachMode = GetConfigString(node, "attachFromInput") ?? "none";
         if (attachMode == "cos" && inputArtifacts.Count > 0)
         {
-            attachments = inputArtifacts
-                .Where(a => !string.IsNullOrWhiteSpace(a.CosUrl))
-                .Select(a => new NotificationAttachment
+            attachments = new List<NotificationAttachment>();
+            foreach (var a in inputArtifacts)
+            {
+                if (!string.IsNullOrWhiteSpace(a.CosUrl))
                 {
-                    Name = a.Name,
-                    Url = a.CosUrl!,
-                    SizeBytes = a.SizeBytes,
-                    MimeType = a.MimeType,
-                })
-                .ToList();
+                    attachments.Add(new NotificationAttachment
+                    {
+                        Name = a.Name,
+                        Url = a.CosUrl!,
+                        SizeBytes = a.SizeBytes,
+                        MimeType = a.MimeType,
+                    });
+                }
+                else if (!string.IsNullOrWhiteSpace(a.InlineContent))
+                {
+                    // 内联内容 → data URI，确保通知附件可下载
+                    var mime = a.MimeType ?? "text/plain";
+                    var base64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(a.InlineContent));
+                    attachments.Add(new NotificationAttachment
+                    {
+                        Name = a.Name,
+                        Url = $"data:{mime};base64,{base64}",
+                        SizeBytes = a.SizeBytes,
+                        MimeType = mime,
+                    });
+                }
+            }
             if (attachments.Count == 0) attachments = null;
         }
 
@@ -3155,6 +3174,22 @@ public static class CapsuleExecutor
             _ => ".txt",
         };
         return name + ext;
+    }
+
+    /// <summary>
+    /// 根据内容推断 MIME 类型：Markdown 特征 → text/markdown，JSON 对象/数组 → application/json，否则 text/plain
+    /// </summary>
+    private static string InferMimeType(string content)
+    {
+        if (string.IsNullOrWhiteSpace(content)) return "text/plain";
+        var trimmed = content.TrimStart();
+        // JSON 对象或数组
+        if (trimmed.StartsWith('{') || trimmed.StartsWith('['))
+            return "application/json";
+        // Markdown 特征：标题、列表、表格
+        if (trimmed.StartsWith('#') || trimmed.Contains("\n# ") || trimmed.Contains("\n| ") || trimmed.Contains("\n- "))
+            return "text/markdown";
+        return "text/plain";
     }
 
     public static string? GetConfigString(WorkflowNode node, string key)

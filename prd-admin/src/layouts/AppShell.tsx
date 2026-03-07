@@ -69,6 +69,26 @@ function ensureDownloadName(name: string | undefined | null, mimeType?: string |
   return n + '.txt';
 }
 
+/** 轻量 Markdown → HTML（仅用于通知摘要：标题、粗体、列表） */
+function renderNotificationMarkdown(text: string): string {
+  return text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/^### (.+)$/gm, '<strong style="font-size:11px">$1</strong>')
+    .replace(/^## (.+)$/gm, '<strong style="font-size:12px">$1</strong>')
+    .replace(/^# (.+)$/gm, '<strong style="font-size:13px">$1</strong>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/^- (.+)$/gm, '• $1')
+    .replace(/\|[^\n]+\|/g, (m) => m.replace(/\|/g, ' ').trim())
+    .replace(/^[\s|:-]+$/gm, '')
+    .replace(/\n\n+/g, '<br/>')
+    .replace(/\n/g, '<br/>');
+}
+
+/** 判断文本是否包含 Markdown 特征 */
+function looksLikeMarkdown(text: string): boolean {
+  return /^#{1,3}\s/m.test(text) || /\*\*.+\*\*/.test(text) || /^\|.+\|$/m.test(text);
+}
+
 // 图标映射：后端下发的图标名称 → Lucide 图标组件
 const iconMap: Record<string, LucideIcon> = {
   LayoutDashboard,
@@ -353,9 +373,17 @@ export default function AppShell() {
                   {toastNotification.title}
                 </div>
                 {toastNotification.message && (
-                  <div className="mt-1 text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-                    {toastNotification.message}
-                  </div>
+                  looksLikeMarkdown(toastNotification.message) ? (
+                    <div
+                      className="mt-1 text-[12px] leading-relaxed"
+                      style={{ color: 'var(--text-muted)' }}
+                      dangerouslySetInnerHTML={{ __html: renderNotificationMarkdown(toastNotification.message) }}
+                    />
+                  ) : (
+                    <div className="mt-1 text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                      {toastNotification.message}
+                    </div>
+                  )
                 )}
                 {toastNotification.attachments && toastNotification.attachments.length > 0 && (
                   <div className="mt-2 flex flex-col gap-1">
@@ -995,9 +1023,17 @@ export default function AppShell() {
                               {item.title}
                             </div>
                             {item.message && (
-                              <div className="mt-1 text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-                                {item.message}
-                              </div>
+                              looksLikeMarkdown(item.message) ? (
+                                <div
+                                  className="mt-1 text-[12px] leading-relaxed"
+                                  style={{ color: 'var(--text-muted)' }}
+                                  dangerouslySetInnerHTML={{ __html: renderNotificationMarkdown(item.message) }}
+                                />
+                              ) : (
+                                <div className="mt-1 text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                                  {item.message}
+                                </div>
+                              )
                             )}
                             {item.attachments && item.attachments.length > 0 && (
                               <div className="mt-2 flex flex-wrap gap-1.5">
