@@ -1,15 +1,16 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { TabBar } from '@/components/design/TabBar';
 import { useDefectStore } from '@/stores/defectStore';
 import { toast } from '@/lib/toast';
 import { DefectStatus } from '@/services/contracts/defectAgent';
-import { Bug, Plus, FileText, RefreshCw, LayoutGrid, List } from 'lucide-react';
+import { Bug, Plus, FileText, RefreshCw, LayoutGrid, List, FolderKanban } from 'lucide-react';
 import { DefectList } from './components/DefectList';
 import { DefectSubmitPanel } from './components/DefectSubmitPanel';
 import { DefectDetailPanel } from './components/DefectDetailPanel';
 import { TemplateDialog } from './components/TemplateDialog';
+import { ProjectDialog } from './components/ProjectDialog';
 
 const NOTIFICATION_STORAGE_KEY = 'defect-agent-notified-ids';
 
@@ -36,6 +37,7 @@ export default function DefectAgentPage() {
     setTeamFilter,
   } = useDefectStore();
 
+  const [showProjectDialog, setShowProjectDialog] = useState(false);
   const notifiedRef = useRef(false);
 
   useEffect(() => {
@@ -163,6 +165,14 @@ export default function DefectAgentPage() {
             <Button
               variant="secondary"
               size="sm"
+              onClick={() => setShowProjectDialog(true)}
+            >
+              <FolderKanban size={14} />
+              项目管理
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => setShowTemplateDialog(true)}
             >
               <FileText size={14} />
@@ -226,6 +236,9 @@ export default function DefectAgentPage() {
 
       {/* Template Dialog */}
       {showTemplateDialog && <TemplateDialog />}
+
+      {/* Project Dialog */}
+      {showProjectDialog && <ProjectDialog onClose={() => setShowProjectDialog(false)} />}
     </div>
   );
 }
