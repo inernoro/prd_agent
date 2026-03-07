@@ -643,122 +643,129 @@ function UploadEditDialog({ item, folders, onClose, onSaved }: {
   };
 
   return (
-    <Dialog open onClose={onClose} title={isEdit ? '编辑站点' : '上传站点'}>
-      <div className="flex flex-col gap-3 max-h-[65vh] overflow-y-auto pr-1">
+    <Dialog
+      open={true}
+      onOpenChange={v => { if (!v) onClose(); }}
+      title={isEdit ? '编辑站点' : '上传站点'}
+      content={
+        <>
+          <div className="flex flex-col gap-3 max-h-[65vh] overflow-y-auto pr-1">
 
-        {/* File drop zone */}
-        {(!isEdit || file !== null) ? (
-          <div
-            className="flex flex-col items-center justify-center gap-2 p-6 rounded-lg cursor-pointer transition-colors"
-            style={{
-              background: dragOver ? 'rgba(59, 130, 246, 0.1)' : 'var(--bg-sunken)',
-              border: `2px dashed ${dragOver ? 'var(--accent-primary)' : 'var(--border-default)'}`,
-            }}
-            onClick={() => fileInputRef.current?.click()}
-            onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={handleDrop}
-          >
-            <UploadCloud size={32} style={{ color: 'var(--text-muted)' }} />
-            {file ? (
-              <div className="text-center">
-                <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{file.name}</p>
-                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{fmtSize(file.size)}</p>
+            {/* File drop zone */}
+            {(!isEdit || file !== null) ? (
+              <div
+                className="flex flex-col items-center justify-center gap-2 p-6 rounded-lg cursor-pointer transition-colors"
+                style={{
+                  background: dragOver ? 'rgba(59, 130, 246, 0.1)' : 'var(--bg-sunken)',
+                  border: `2px dashed ${dragOver ? 'var(--accent-primary)' : 'var(--border-default)'}`,
+                }}
+                onClick={() => fileInputRef.current?.click()}
+                onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={handleDrop}
+              >
+                <UploadCloud size={32} style={{ color: 'var(--text-muted)' }} />
+                {file ? (
+                  <div className="text-center">
+                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{file.name}</p>
+                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{fmtSize(file.size)}</p>
+                  </div>
+                ) : (
+                  <div className="text-center">
+                    <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>拖拽文件到此处，或点击选择</p>
+                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>支持 .html / .htm / .zip 文件，最大 50MB</p>
+                  </div>
+                )}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".html,.htm,.zip"
+                  className="hidden"
+                  onChange={e => { const f = e.target.files?.[0]; if (f) setFile(f); }}
+                />
               </div>
             ) : (
-              <div className="text-center">
-                <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>拖拽文件到此处，或点击选择</p>
-                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>支持 .html / .htm / .zip 文件，最大 50MB</p>
+              <div className="flex items-center gap-3 p-3 rounded-lg" style={{ background: 'var(--bg-sunken)', border: '1px solid var(--border-default)' }}>
+                <FileCode2 size={20} style={{ color: 'var(--accent-primary)' }} />
+                <div className="flex-1">
+                  <p className="text-sm" style={{ color: 'var(--text-primary)' }}>{item.entryFile}</p>
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{item.files.length} 个文件, {fmtSize(item.totalSize)}</p>
+                </div>
+                <Button size="xs" variant="outline" onClick={() => fileInputRef.current?.click()}>
+                  <Upload size={12} className="mr-1" /> 重新上传
+                </Button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".html,.htm,.zip"
+                  className="hidden"
+                  onChange={e => { const f = e.target.files?.[0]; if (f) setFile(f); }}
+                />
               </div>
             )}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".html,.htm,.zip"
-              className="hidden"
-              onChange={e => { const f = e.target.files?.[0]; if (f) setFile(f); }}
-            />
+
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>站点标题</span>
+              <input
+                type="text"
+                value={title}
+                onChange={e => setTitle(e.target.value)}
+                placeholder="站点标题（留空使用文件名）"
+                className="px-3 py-2 rounded-lg text-sm outline-none"
+                style={inputStyle}
+              />
+            </label>
+
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>描述</span>
+              <textarea
+                value={description}
+                onChange={e => setDescription(e.target.value)}
+                placeholder="站点描述..."
+                rows={2}
+                className="px-3 py-2 rounded-lg text-sm outline-none resize-none"
+                style={inputStyle}
+              />
+            </label>
+
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>标签（逗号分隔）</span>
+              <input
+                type="text"
+                value={tagInput}
+                onChange={e => setTagInput(e.target.value)}
+                placeholder="前端, React, 教程"
+                className="px-3 py-2 rounded-lg text-sm outline-none"
+                style={inputStyle}
+              />
+            </label>
+
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>文件夹</span>
+              <input
+                type="text"
+                value={folder}
+                onChange={e => setFolder(e.target.value)}
+                placeholder="输入文件夹名或留空"
+                list="folder-suggestions"
+                className="px-3 py-2 rounded-lg text-sm outline-none"
+                style={inputStyle}
+              />
+              <datalist id="folder-suggestions">
+                {folders.map(f => <option key={f} value={f} />)}
+              </datalist>
+            </label>
           </div>
-        ) : (
-          <div className="flex items-center gap-3 p-3 rounded-lg" style={{ background: 'var(--bg-sunken)', border: '1px solid var(--border-default)' }}>
-            <FileCode2 size={20} style={{ color: 'var(--accent-primary)' }} />
-            <div className="flex-1">
-              <p className="text-sm" style={{ color: 'var(--text-primary)' }}>{item.entryFile}</p>
-              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{item.files.length} 个文件, {fmtSize(item.totalSize)}</p>
-            </div>
-            <Button size="xs" variant="outline" onClick={() => fileInputRef.current?.click()}>
-              <Upload size={12} className="mr-1" /> 重新上传
+
+          <div className="flex justify-end gap-2 mt-4 pt-3" style={{ borderTop: '1px solid var(--border-default)' }}>
+            <Button variant="ghost" onClick={onClose}>取消</Button>
+            <Button onClick={handleSave} disabled={saving || (!isEdit && !file)}>
+              {saving ? '处理中...' : isEdit ? '保存' : '上传并创建'}
             </Button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".html,.htm,.zip"
-              className="hidden"
-              onChange={e => { const f = e.target.files?.[0]; if (f) setFile(f); }}
-            />
           </div>
-        )}
-
-        <label className="flex flex-col gap-1">
-          <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>站点标题</span>
-          <input
-            type="text"
-            value={title}
-            onChange={e => setTitle(e.target.value)}
-            placeholder="站点标题（留空使用文件名）"
-            className="px-3 py-2 rounded-lg text-sm outline-none"
-            style={inputStyle}
-          />
-        </label>
-
-        <label className="flex flex-col gap-1">
-          <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>描述</span>
-          <textarea
-            value={description}
-            onChange={e => setDescription(e.target.value)}
-            placeholder="站点描述..."
-            rows={2}
-            className="px-3 py-2 rounded-lg text-sm outline-none resize-none"
-            style={inputStyle}
-          />
-        </label>
-
-        <label className="flex flex-col gap-1">
-          <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>标签（逗号分隔）</span>
-          <input
-            type="text"
-            value={tagInput}
-            onChange={e => setTagInput(e.target.value)}
-            placeholder="前端, React, 教程"
-            className="px-3 py-2 rounded-lg text-sm outline-none"
-            style={inputStyle}
-          />
-        </label>
-
-        <label className="flex flex-col gap-1">
-          <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>文件夹</span>
-          <input
-            type="text"
-            value={folder}
-            onChange={e => setFolder(e.target.value)}
-            placeholder="输入文件夹名或留空"
-            list="folder-suggestions"
-            className="px-3 py-2 rounded-lg text-sm outline-none"
-            style={inputStyle}
-          />
-          <datalist id="folder-suggestions">
-            {folders.map(f => <option key={f} value={f} />)}
-          </datalist>
-        </label>
-      </div>
-
-      <div className="flex justify-end gap-2 mt-4 pt-3" style={{ borderTop: '1px solid var(--border-default)' }}>
-        <Button variant="ghost" onClick={onClose}>取消</Button>
-        <Button onClick={handleSave} disabled={saving || (!isEdit && !file)}>
-          {saving ? '处理中...' : isEdit ? '保存' : '上传并创建'}
-        </Button>
-      </div>
-    </Dialog>
+        </>
+      }
+    />
   );
 }
 
@@ -808,86 +815,91 @@ function ShareDialog({ siteId, siteIds, onClose }: {
   };
 
   return (
-    <Dialog open onClose={onClose} title={result ? '分享链接已创建' : '创建分享链接'}>
-      {result ? (
-        <div className="flex flex-col gap-4">
-          <div className="flex items-center gap-2 p-3 rounded-lg" style={{ background: 'rgba(34, 197, 94, 0.1)', border: '1px solid rgba(34, 197, 94, 0.3)' }}>
-            <Check size={16} style={{ color: '#22c55e' }} />
-            <span className="text-sm" style={{ color: '#22c55e' }}>分享链接已生成</span>
+    <Dialog
+      open={true}
+      onOpenChange={v => { if (!v) onClose(); }}
+      title={result ? '分享链接已创建' : '创建分享链接'}
+      content={
+        result ? (
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center gap-2 p-3 rounded-lg" style={{ background: 'rgba(34, 197, 94, 0.1)', border: '1px solid rgba(34, 197, 94, 0.3)' }}>
+              <Check size={16} style={{ color: '#22c55e' }} />
+              <span className="text-sm" style={{ color: '#22c55e' }}>分享链接已生成</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={`${window.location.origin}${result.shareUrl}`}
+                readOnly
+                className="flex-1 px-3 py-2 rounded-lg text-sm outline-none"
+                style={inputStyle}
+              />
+              <Button size="sm" onClick={handleCopy}>
+                {copied ? <Check size={14} /> : <Copy size={14} />}
+              </Button>
+            </div>
+            <div className="flex justify-end">
+              <Button variant="ghost" onClick={onClose}>关闭</Button>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              value={`${window.location.origin}${result.shareUrl}`}
-              readOnly
-              className="flex-1 px-3 py-2 rounded-lg text-sm outline-none"
-              style={inputStyle}
-            />
-            <Button size="sm" onClick={handleCopy}>
-              {copied ? <Check size={14} /> : <Copy size={14} />}
-            </Button>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {isCollection && (
+              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                将分享 {siteIds!.length} 个站点的合集
+              </p>
+            )}
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>分享标题（可选）</span>
+              <input
+                type="text"
+                value={title}
+                onChange={e => setTitle(e.target.value)}
+                placeholder="给分享起个名字"
+                className="px-3 py-2 rounded-lg text-sm outline-none"
+                style={inputStyle}
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
+                <Lock size={12} className="inline mr-1" />访问密码（留空则公开）
+              </span>
+              <input
+                type="text"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                placeholder="留空 = 任何人可访问"
+                className="px-3 py-2 rounded-lg text-sm outline-none"
+                style={inputStyle}
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
+                <Clock size={12} className="inline mr-1" />过期时间
+              </span>
+              <select
+                value={expiresInDays}
+                onChange={e => setExpiresInDays(Number(e.target.value))}
+                className="px-3 py-2 rounded-lg text-sm outline-none cursor-pointer"
+                style={inputStyle}
+              >
+                <option value={0}>永不过期</option>
+                <option value={1}>1 天</option>
+                <option value={7}>7 天</option>
+                <option value={30}>30 天</option>
+                <option value={90}>90 天</option>
+              </select>
+            </label>
+            <div className="flex justify-end gap-2 mt-2">
+              <Button variant="ghost" onClick={onClose}>取消</Button>
+              <Button onClick={handleCreate} disabled={creating}>
+                {creating ? '生成中...' : '生成链接'}
+              </Button>
+            </div>
           </div>
-          <div className="flex justify-end">
-            <Button variant="ghost" onClick={onClose}>关闭</Button>
-          </div>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-3">
-          {isCollection && (
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-              将分享 {siteIds!.length} 个站点的合集
-            </p>
-          )}
-          <label className="flex flex-col gap-1">
-            <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>分享标题（可选）</span>
-            <input
-              type="text"
-              value={title}
-              onChange={e => setTitle(e.target.value)}
-              placeholder="给分享起个名字"
-              className="px-3 py-2 rounded-lg text-sm outline-none"
-              style={inputStyle}
-            />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
-              <Lock size={12} className="inline mr-1" />访问密码（留空则公开）
-            </span>
-            <input
-              type="text"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              placeholder="留空 = 任何人可访问"
-              className="px-3 py-2 rounded-lg text-sm outline-none"
-              style={inputStyle}
-            />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
-              <Clock size={12} className="inline mr-1" />过期时间
-            </span>
-            <select
-              value={expiresInDays}
-              onChange={e => setExpiresInDays(Number(e.target.value))}
-              className="px-3 py-2 rounded-lg text-sm outline-none cursor-pointer"
-              style={inputStyle}
-            >
-              <option value={0}>永不过期</option>
-              <option value={1}>1 天</option>
-              <option value={7}>7 天</option>
-              <option value={30}>30 天</option>
-              <option value={90}>90 天</option>
-            </select>
-          </label>
-          <div className="flex justify-end gap-2 mt-2">
-            <Button variant="ghost" onClick={onClose}>取消</Button>
-            <Button onClick={handleCreate} disabled={creating}>
-              {creating ? '生成中...' : '生成链接'}
-            </Button>
-          </div>
-        </div>
-      )}
-    </Dialog>
+        )
+      }
+    />
   );
 }
 
@@ -922,58 +934,66 @@ function SharesPanel({ shares, setShares, onClose }: {
   };
 
   return (
-    <Dialog open onClose={onClose} title="分享管理" wide>
-      {loading ? (
-        <div className="py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>加载中...</div>
-      ) : shares.length === 0 ? (
-        <div className="py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
-          还没有创建过分享链接
-        </div>
-      ) : (
-        <div className="flex flex-col gap-2 max-h-[60vh] overflow-y-auto">
-          {shares.map(share => (
-            <div
-              key={share.id}
-              className="flex items-center gap-3 p-3 rounded-lg"
-              style={{ background: 'var(--bg-sunken)', border: '1px solid var(--border-default)' }}
-            >
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <Link2 size={14} style={{ color: 'var(--text-muted)' }} />
-                  <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                    {share.title || (share.shareType === 'collection' ? `合集 (${share.siteIds.length} 站)` : '单站点分享')}
-                  </span>
-                  <Badge variant={share.accessLevel === 'password' ? 'warning' : 'success'}>
-                    {share.accessLevel === 'password' ? '密码保护' : '公开'}
-                  </Badge>
-                  {share.shareType === 'collection' && (
-                    <Badge variant="info">{share.siteIds.length} 站合集</Badge>
-                  )}
-                </div>
-                <div className="flex items-center gap-3 mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-                  <span className="flex items-center gap-1"><Eye size={10} /> {share.viewCount} 次浏览</span>
-                  <span>创建于 {fmtDate(share.createdAt)}</span>
-                  {share.expiresAt && <span>过期于 {fmtDate(share.expiresAt)}</span>}
-                </div>
-              </div>
-              <div className="flex items-center gap-1 shrink-0">
-                <Button size="xs" variant="ghost" onClick={() => handleCopy(share.token)} title="复制链接">
-                  <Copy size={12} />
-                </Button>
-                <Button size="xs" variant="ghost" onClick={() => window.open(`/s/wp/${share.token}`, '_blank')} title="预览">
-                  <ExternalLink size={12} />
-                </Button>
-                <Button size="xs" variant="danger" onClick={() => handleRevoke(share.id)} title="撤销">
-                  <X size={12} />
-                </Button>
-              </div>
+    <Dialog
+      open={true}
+      onOpenChange={v => { if (!v) onClose(); }}
+      title="分享管理"
+      maxWidth={900}
+      content={
+        <>
+          {loading ? (
+            <div className="py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>加载中...</div>
+          ) : shares.length === 0 ? (
+            <div className="py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
+              还没有创建过分享链接
             </div>
-          ))}
-        </div>
-      )}
-      <div className="flex justify-end mt-4 pt-3" style={{ borderTop: '1px solid var(--border-default)' }}>
-        <Button variant="ghost" onClick={onClose}>关闭</Button>
-      </div>
-    </Dialog>
+          ) : (
+            <div className="flex flex-col gap-2 max-h-[60vh] overflow-y-auto">
+              {shares.map(share => (
+                <div
+                  key={share.id}
+                  className="flex items-center gap-3 p-3 rounded-lg"
+                  style={{ background: 'var(--bg-sunken)', border: '1px solid var(--border-default)' }}
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <Link2 size={14} style={{ color: 'var(--text-muted)' }} />
+                      <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                        {share.title || (share.shareType === 'collection' ? `合集 (${share.siteIds.length} 站)` : '单站点分享')}
+                      </span>
+                      <Badge variant={share.accessLevel === 'password' ? 'warning' : 'success'}>
+                        {share.accessLevel === 'password' ? '密码保护' : '公开'}
+                      </Badge>
+                      {share.shareType === 'collection' && (
+                        <Badge variant="info">{share.siteIds.length} 站合集</Badge>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3 mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                      <span className="flex items-center gap-1"><Eye size={10} /> {share.viewCount} 次浏览</span>
+                      <span>创建于 {fmtDate(share.createdAt)}</span>
+                      {share.expiresAt && <span>过期于 {fmtDate(share.expiresAt)}</span>}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button size="xs" variant="ghost" onClick={() => handleCopy(share.token)} title="复制链接">
+                      <Copy size={12} />
+                    </Button>
+                    <Button size="xs" variant="ghost" onClick={() => window.open(`/s/wp/${share.token}`, '_blank')} title="预览">
+                      <ExternalLink size={12} />
+                    </Button>
+                    <Button size="xs" variant="danger" onClick={() => handleRevoke(share.id)} title="撤销">
+                      <X size={12} />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex justify-end mt-4 pt-3" style={{ borderTop: '1px solid var(--border-default)' }}>
+            <Button variant="ghost" onClick={onClose}>关闭</Button>
+          </div>
+        </>
+      }
+    />
   );
 }
