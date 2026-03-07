@@ -2,8 +2,9 @@ import React from "react";
 import { useCurrentFrame, useVideoConfig, interpolate } from "remotion";
 import { noise2D } from "@remotion/noise";
 import { COLORS } from "../utils/colors";
+import { kenBurns, vignetteOpacity } from "../utils/animations";
 
-/** 动态多层背景 — 噪声渐变 + 视差光晕 + 扫描线 + 呼吸光带 */
+/** 动态多层背景 — 噪声渐变 + 视差光晕 + 扫描线 + 呼吸光带 + Ken Burns + 暗角 */
 export const Background: React.FC<{
   accentColor?: string;
   showGrid?: boolean;
@@ -18,7 +19,7 @@ export const Background: React.FC<{
   noiseSeed = "bg",
 }) => {
   const frame = useCurrentFrame();
-  const { width, height } = useVideoConfig();
+  const { width, height, durationInFrames } = useVideoConfig();
 
   const gradientAngle = interpolate(frame, [0, 300], [0, 360], {
     extrapolateRight: "extend",
@@ -37,6 +38,19 @@ export const Background: React.FC<{
   const noiseScale = noise2D(noiseSeed, frame * 0.003, frame * 0.003) * 0.3 + 1;
 
   const hueShift = Math.sin(frame * 0.01) * 10;
+
+  // Ken Burns 效果（背景图可用时启用）
+  const kb = kenBurns(frame, durationInFrames, {
+    startScale: 1.05,
+    endScale: 1.15,
+    startX: 10,
+    endX: -10,
+    startY: 5,
+    endY: -5,
+  });
+
+  // 暗角效果
+  const vignette = vignetteOpacity(frame, 0, 20);
 
   const bgGradient =
     variant === "diagonal"
@@ -61,24 +75,26 @@ export const Background: React.FC<{
         overflow: "hidden",
       }}
     >
-      {/* AI 背景图层 */}
+      {/* AI 背景图层 — Ken Burns 缓慢推拉 */}
       {backgroundImageUrl && (
         <>
           <img
             src={backgroundImageUrl}
             style={{
               position: "absolute",
-              inset: 0,
-              width: "100%",
-              height: "100%",
+              top: "50%",
+              left: "50%",
+              width: "110%",
+              height: "110%",
               objectFit: "cover",
+              transform: `translate(-50%, -50%) scale(${kb.scale}) translate(${kb.x}px, ${kb.y}px)`,
             }}
           />
           <div
             style={{
               position: "absolute",
               inset: 0,
-              background: `linear-gradient(180deg, ${COLORS.bg.primary}cc 0%, ${COLORS.bg.primary}88 40%, ${COLORS.bg.primary}bb 100%)`,
+              background: `linear-gradient(180deg, ${COLORS.bg.primary}cc 0%, ${COLORS.bg.primary}77 40%, ${COLORS.bg.primary}aa 100%)`,
             }}
           />
         </>
@@ -205,6 +221,17 @@ export const Background: React.FC<{
           right: 0,
           height: 120,
           background: `linear-gradient(0deg, ${accentColor}0a 0%, transparent 100%)`,
+        }}
+      />
+
+      {/* 暗角 — 四角压暗增加电影感 */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          background: `radial-gradient(ellipse at 50% 50%, transparent 50%, ${COLORS.bg.primary} 150%)`,
+          opacity: vignette,
+          pointerEvents: "none",
         }}
       />
     </div>

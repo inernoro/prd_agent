@@ -29,6 +29,7 @@ public class OpenAIGatewayAdapter : IGatewayAdapter
             {
                 "generation" => $"{baseUrl}/images/generations",
                 "embedding" => $"{baseUrl}/embeddings",
+                "tts" => $"{baseUrl}/audio/speech",
                 _ => $"{baseUrl}/chat/completions"
             };
         }
@@ -38,6 +39,7 @@ public class OpenAIGatewayAdapter : IGatewayAdapter
         {
             "generation" => $"{baseUrl}/v1/images/generations",
             "embedding" => $"{baseUrl}/v1/embeddings",
+            "tts" => $"{baseUrl}/v1/audio/speech",
             _ => $"{baseUrl}/v1/chat/completions"
         };
     }

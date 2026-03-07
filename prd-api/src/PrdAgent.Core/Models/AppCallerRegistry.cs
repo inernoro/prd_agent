@@ -596,6 +596,17 @@ public static class VideoAgent
         )]
         public const string Text2Img = "video-agent.image.text2img::generation";
     }
+
+    public static class Audio
+    {
+        [AppCallerMetadata(
+            "视频旁白-语音合成",
+            "将分镜旁白文本合成为 TTS 语音音频",
+            ModelTypes = new[] { ModelTypes.TTS },
+            Category = "Video"
+        )]
+        public const string Tts = "video-agent.audio::tts";
+    }
 }
 
 /// <summary>

@@ -122,9 +122,12 @@ public static class ModelTypes
     /// <summary>重排序（预留）</summary>
     public const string Rerank = "rerank";
 
+    /// <summary>语音合成 TTS（OpenAI 兼容 /v1/audio/speech）</summary>
+    public const string TTS = "tts";
+
     /// <summary>获取所有基础类型</summary>
     public static readonly string[] BaseTypes = { Chat, Intent, Vision, ImageGen };
 
     /// <summary>获取所有类型（包括扩展）</summary>
-    public static readonly string[] AllTypes = { Chat, Intent, Vision, ImageGen, Code, LongContext, Embedding, Rerank };
+    public static readonly string[] AllTypes = { Chat, Intent, Vision, ImageGen, Code, LongContext, Embedding, Rerank, TTS };
 }

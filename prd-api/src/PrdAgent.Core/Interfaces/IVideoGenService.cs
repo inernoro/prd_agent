@@ -72,4 +72,14 @@ public interface IVideoGenService
     /// <param name="ct">取消令牌</param>
     /// <returns>完成的 VideoGenRun，超时则返回 null</returns>
     Task<VideoGenRun?> WaitForCompletionAsync(string runId, TimeSpan timeout, CancellationToken ct = default);
+
+    /// <summary>
+    /// 标记单个分镜的 TTS 音频为生成中（audioStatus=running），Worker 自动拾取
+    /// </summary>
+    Task RequestSceneAudioAsync(string runId, string ownerAdminId, int sceneIndex, string? appKey = null, CancellationToken ct = default);
+
+    /// <summary>
+    /// 批量标记所有分镜的 TTS 音频为生成中
+    /// </summary>
+    Task RequestAllAudioAsync(string runId, string ownerAdminId, string? appKey = null, CancellationToken ct = default);
 }

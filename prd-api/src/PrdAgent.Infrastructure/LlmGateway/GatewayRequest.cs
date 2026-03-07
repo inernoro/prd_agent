@@ -287,9 +287,19 @@ public class GatewayRawResponse
     public int StatusCode { get; init; }
 
     /// <summary>
-    /// 响应内容（原始字符串）
+    /// 响应内容（原始字符串，文本响应用）
     /// </summary>
     public string? Content { get; init; }
+
+    /// <summary>
+    /// 二进制响应内容（TTS 音频等二进制响应用）
+    /// </summary>
+    public byte[]? BinaryContent { get; init; }
+
+    /// <summary>
+    /// 响应的 Content-Type
+    /// </summary>
+    public string? ContentType { get; init; }
 
     /// <summary>
     /// 响应头

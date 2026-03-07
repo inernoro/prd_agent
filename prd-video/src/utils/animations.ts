@@ -310,3 +310,108 @@ export const EASINGS = {
   back: Easing.back(1.7),
   snap: Easing.out(Easing.exp),
 } as const;
+
+// ============================================================
+// 9. 电影级场景动画
+// ============================================================
+
+/** Ken Burns 缩放平移效果 — 模拟摄像机缓慢推拉 */
+export function kenBurns(
+  frame: number,
+  durationInFrames: number,
+  config?: {
+    startScale?: number;
+    endScale?: number;
+    startX?: number;
+    endX?: number;
+    startY?: number;
+    endY?: number;
+  }
+): { scale: number; x: number; y: number } {
+  const {
+    startScale = 1.0,
+    endScale = 1.08,
+    startX = 0,
+    endX = -15,
+    startY = 0,
+    endY = -10,
+  } = config ?? {};
+  const progress = interpolate(frame, [0, durationInFrames], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+    easing: Easing.inOut(Easing.quad),
+  });
+  return {
+    scale: startScale + (endScale - startScale) * progress,
+    x: startX + (endX - startX) * progress,
+    y: startY + (endY - startY) * progress,
+  };
+}
+
+/** 暗角效果强度 — 四角压暗 */
+export function vignetteOpacity(
+  frame: number,
+  startFrame: number = 0,
+  fadeInDuration: number = 30
+): number {
+  return interpolate(frame, [startFrame, startFrame + fadeInDuration], [0, 0.6], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+}
+
+/** 摄像机推进效果 — 从远到近持续缩放 */
+export function cameraZoom(
+  frame: number,
+  durationInFrames: number,
+  startScale: number = 1.0,
+  endScale: number = 1.12
+): number {
+  return interpolate(frame, [0, durationInFrames], [startScale, endScale], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+    easing: Easing.out(Easing.quad),
+  });
+}
+
+/** 能量脉冲环扩散 — 从中心向外扩散的环 */
+export function energyRing(
+  frame: number,
+  periodFrames: number = 90,
+  maxRadius: number = 300,
+  delay: number = 0
+): { radius: number; opacity: number } {
+  const elapsed = Math.max(0, frame - delay);
+  const phase = (elapsed % periodFrames) / periodFrames;
+  return {
+    radius: phase * maxRadius,
+    opacity: (1 - phase) * 0.5,
+  };
+}
+
+/** 光点沿路径移动 — 返回 0~1 的进度位置 */
+export function flowingDot(
+  frame: number,
+  periodFrames: number = 60,
+  delay: number = 0
+): number {
+  const elapsed = Math.max(0, frame - delay);
+  return (elapsed % periodFrames) / periodFrames;
+}
+
+/** 聚焦缩放 — 当前项放大，其他项缩小 */
+export function focusScale(
+  isActive: boolean,
+  frame: number,
+  fps: number,
+  activeFrame: number
+): number {
+  if (!isActive) return 0.85;
+  const progress = springIn(frame, fps, activeFrame, { damping: 14, stiffness: 120 });
+  return 0.85 + 0.15 * Math.min(progress, 1);
+}
+
+/** 打字机光标闪烁 */
+export function cursorBlink(frame: number, periodFrames: number = 30): number {
+  return Math.floor(frame / periodFrames) % 2 === 0 ? 1 : 0;
+}

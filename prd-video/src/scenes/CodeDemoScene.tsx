@@ -3,17 +3,24 @@ import { useCurrentFrame, useVideoConfig, interpolate } from "remotion";
 import { Background } from "../components/Background";
 import { ParticleField } from "../components/ParticleField";
 import { COLORS } from "../utils/colors";
-import { springIn, typewriterCount, sceneFadeOut, glowPulse } from "../utils/animations";
+import {
+  springIn,
+  typewriterCount,
+  sceneFadeOut,
+  cameraZoom,
+  cursorBlink,
+  pulse,
+} from "../utils/animations";
 import type { SceneData } from "../types";
 
 /** 简单的语法着色 — 关键词高亮 */
 function colorizeCode(line: string): React.ReactNode[] {
-  const keywords = /\b(const|let|var|function|return|import|export|from|async|await|class|extends|new|if|else|for|while|switch|case|break|default|try|catch|throw|typeof|instanceof|this|null|undefined|true|false)\b/g;
+  const keywords =
+    /\b(const|let|var|function|return|import|export|from|async|await|class|extends|new|if|else|for|while|switch|case|break|default|try|catch|throw|typeof|instanceof|this|null|undefined|true|false)\b/g;
   const strings = /(["'`])(?:(?=(\\?))\2.)*?\1/g;
   const comments = /(\/\/.*$|\/\*[\s\S]*?\*\/)/g;
   const numbers = /\b(\d+\.?\d*)\b/g;
 
-  // 简化实现：按位置标记着色
   const tokens: { start: number; end: number; color: string }[] = [];
 
   let m: RegExpExecArray | null;
@@ -32,7 +39,6 @@ function colorizeCode(line: string): React.ReactNode[] {
 
   tokens.sort((a, b) => a.start - b.start);
 
-  // 消除重叠
   const result: React.ReactNode[] = [];
   let pos = 0;
   for (const token of tokens) {
@@ -70,14 +76,19 @@ export const CodeDemoScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
   const visibleChars = typewriterCount(frame, codeContent, fps, 15, 25);
   const displayText = codeContent.substring(0, visibleChars);
   const lines = displayText.split("\n");
-  const totalLines = codeContent.split("\n").length;
-  const showCursor = visibleChars < codeContent.length && Math.floor(frame / 15) % 2 === 0;
+  const showCursor = visibleChars < codeContent.length && cursorBlink(frame) === 1;
 
-  // 当前活跃行（最后一行）
+  // 当前活跃行
   const activeLine = lines.length - 1;
 
   // 卡片入场
   const cardProgress = springIn(frame, fps, 8);
+
+  // 持续缩放
+  const zoom = cameraZoom(frame, durationInFrames, 1.0, 1.04);
+
+  // 行号闪烁效果 — 活跃行行号微脉冲
+  const lineNumPulse = pulse(frame, 40, 0.6, 1.0);
 
   return (
     <div
@@ -91,18 +102,33 @@ export const CodeDemoScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
         opacity: fadeOut,
       }}
     >
-      <Background accentColor={COLORS.neon.cyan} showGrid={false} variant="diagonal" backgroundImageUrl={scene.backgroundImageUrl} noiseSeed="code" />
+      <Background
+        accentColor={COLORS.neon.cyan}
+        showGrid={false}
+        variant="diagonal"
+        backgroundImageUrl={scene.backgroundImageUrl}
+        noiseSeed="code"
+      />
       <ParticleField count={40} accentColor={COLORS.neon.cyan} seed={303} speed={0.3} showTrails={false} />
 
-      <div style={{ position: "relative", zIndex: 1, padding: "0 100px", maxWidth: 1500, width: "100%" }}>
+      <div
+        style={{
+          position: "relative",
+          zIndex: 1,
+          padding: "0 100px",
+          maxWidth: 1500,
+          width: "100%",
+          transform: `scale(${zoom})`,
+        }}
+      >
         {/* 标题 */}
         <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 28 }}>
           <div
             style={{
               opacity: Math.min(springIn(frame, fps, 3), 1),
-              width: 40,
-              height: 40,
-              borderRadius: 8,
+              width: 44,
+              height: 44,
+              borderRadius: 10,
               background: `${COLORS.neon.cyan}15`,
               border: `1px solid ${COLORS.neon.cyan}30`,
               display: "flex",
@@ -110,7 +136,7 @@ export const CodeDemoScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
               justifyContent: "center",
               fontSize: 18,
               color: COLORS.neon.cyan,
-              boxShadow: `0 0 12px ${COLORS.neon.cyan}20`,
+              boxShadow: `0 0 16px ${COLORS.neon.cyan}25`,
             }}
           >
             {"</>"}
@@ -118,10 +144,10 @@ export const CodeDemoScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
           <div
             style={{
               opacity: Math.min(springIn(frame, fps, 5), 1),
-              fontSize: 36,
+              fontSize: 38,
               fontWeight: 700,
               color: COLORS.text.primary,
-              textShadow: `0 0 20px ${COLORS.neon.cyan}30`,
+              textShadow: `0 0 24px ${COLORS.neon.cyan}30`,
             }}
           >
             {scene.topic}
@@ -132,12 +158,12 @@ export const CodeDemoScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
         <div
           style={{
             opacity: Math.min(cardProgress, 1),
-            transform: `scale(${0.95 + 0.05 * cardProgress})`,
-            borderRadius: 12,
+            transform: `scale(${0.95 + 0.05 * cardProgress}) perspective(1000px) rotateX(${(1 - Math.min(cardProgress, 1)) * 5}deg)`,
+            borderRadius: 14,
             overflow: "hidden",
             background: "#1e1e2e",
             border: `1px solid ${COLORS.glass.border}`,
-            boxShadow: `0 0 30px rgba(0,0,0,0.5), 0 0 15px ${COLORS.neon.cyan}10`,
+            boxShadow: `0 8px 40px rgba(0,0,0,0.6), 0 0 20px ${COLORS.neon.cyan}10`,
           }}
         >
           {/* 标题栏 */}
@@ -146,7 +172,7 @@ export const CodeDemoScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
               display: "flex",
               alignItems: "center",
               gap: 8,
-              padding: "10px 16px",
+              padding: "12px 18px",
               background: "rgba(255,255,255,0.03)",
               borderBottom: `1px solid ${COLORS.glass.border}`,
             }}
@@ -154,11 +180,34 @@ export const CodeDemoScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
             <div style={{ width: 12, height: 12, borderRadius: "50%", background: "#ff5f57" }} />
             <div style={{ width: 12, height: 12, borderRadius: "50%", background: "#febc2e" }} />
             <div style={{ width: 12, height: 12, borderRadius: "50%", background: "#28c840" }} />
-            <span style={{ marginLeft: 12, fontSize: 13, color: COLORS.text.muted }}>typescript</span>
+            <span style={{ marginLeft: 16, fontSize: 13, color: COLORS.text.muted }}>
+              typescript
+            </span>
+            {/* 右侧迷你地图装饰 */}
+            <div style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
+              {[40, 60, 35, 50, 25].map((w, i) => (
+                <div
+                  key={i}
+                  style={{
+                    width: w * 0.3,
+                    height: 2,
+                    borderRadius: 1,
+                    background: `${COLORS.neon.cyan}${i === activeLine % 5 ? "40" : "15"}`,
+                  }}
+                />
+              ))}
+            </div>
           </div>
 
-          {/* 代码内容 — 带行号 + 活跃行高亮 */}
-          <div style={{ padding: "16px 0", fontFamily: "'JetBrains Mono', 'Fira Code', monospace", fontSize: 17, lineHeight: 1.7 }}>
+          {/* 代码内容 */}
+          <div
+            style={{
+              padding: "18px 0",
+              fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+              fontSize: 17,
+              lineHeight: 1.8,
+            }}
+          >
             {lines.map((line, li) => {
               const isActive = li === activeLine && visibleChars < codeContent.length;
               return (
@@ -168,29 +217,47 @@ export const CodeDemoScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
                     display: "flex",
                     padding: "0 24px 0 0",
                     background: isActive ? `${COLORS.neon.cyan}08` : "transparent",
-                    borderLeft: isActive ? `2px solid ${COLORS.neon.cyan}60` : "2px solid transparent",
+                    borderLeft: isActive
+                      ? `3px solid ${COLORS.neon.cyan}80`
+                      : "3px solid transparent",
                   }}
                 >
                   {/* 行号 */}
                   <span
                     style={{
-                      width: 50,
+                      width: 54,
                       textAlign: "right",
-                      paddingRight: 16,
+                      paddingRight: 18,
                       color: isActive ? COLORS.neon.cyan : COLORS.text.muted,
                       fontSize: 14,
                       userSelect: "none",
                       flexShrink: 0,
-                      opacity: 0.5,
+                      opacity: isActive ? lineNumPulse : 0.4,
                     }}
                   >
                     {li + 1}
                   </span>
                   {/* 代码 — 语法着色 */}
-                  <span style={{ color: COLORS.neon.cyan, whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+                  <span
+                    style={{
+                      color: COLORS.neon.cyan,
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-all",
+                    }}
+                  >
                     {colorizeCode(line)}
                     {li === lines.length - 1 && showCursor && (
-                      <span style={{ color: COLORS.neon.blue }}>|</span>
+                      <span
+                        style={{
+                          display: "inline-block",
+                          width: 2,
+                          height: 20,
+                          background: COLORS.neon.blue,
+                          marginLeft: 1,
+                          verticalAlign: "text-bottom",
+                          boxShadow: `0 0 6px ${COLORS.neon.blue}`,
+                        }}
+                      />
                     )}
                   </span>
                 </div>
@@ -205,12 +272,12 @@ export const CodeDemoScene: React.FC<{ scene: SceneData }> = ({ scene }) => {
             style={{
               opacity: Math.min(narrationProgress, 1) * 0.8,
               transform: `translateY(${(1 - narrationProgress) * 10}px)`,
-              marginTop: 20,
+              marginTop: 22,
               fontSize: 18,
               color: COLORS.text.secondary,
               lineHeight: 1.5,
-              paddingLeft: 16,
-              borderLeft: `2px solid ${COLORS.neon.cyan}40`,
+              paddingLeft: 18,
+              borderLeft: `3px solid ${COLORS.neon.cyan}40`,
             }}
           >
             {scene.narration}

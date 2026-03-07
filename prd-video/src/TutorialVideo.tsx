@@ -1,4 +1,5 @@
 import React from "react";
+import { Audio } from "remotion";
 import {
   TransitionSeries,
   linearTiming,
@@ -82,6 +83,8 @@ export const TutorialVideo: React.FC<VideoData> = ({
             durationInFrames={scene.durationInFrames}
           >
             <SceneComponent scene={scene} videoTitle={title} />
+            {/* TTS 语音旁白 */}
+            {scene.audioUrl && <Audio src={scene.audioUrl} />}
           </TransitionSeries.Sequence>
         );
 

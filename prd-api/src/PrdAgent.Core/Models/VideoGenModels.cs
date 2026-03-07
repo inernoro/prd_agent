@@ -77,6 +77,13 @@ public class VideoGenRun
     /// <summary>输出格式：mp4（默认）或 html</summary>
     public string OutputFormat { get; set; } = "mp4";
 
+    // ─── TTS 配置 ───
+    /// <summary>是否启用 TTS 语音生成</summary>
+    public bool EnableTts { get; set; }
+
+    /// <summary>TTS 声音 ID（用户可选，由平台决定可用值）</summary>
+    public string? VoiceId { get; set; }
+
     // ─── 元数据 ───
     public string OwnerAdminId { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
@@ -123,6 +130,17 @@ public class VideoGenScene
 
     /// <summary>背景图生成状态：idle / running / done / error</summary>
     public string BackgroundImageStatus { get; set; } = "idle";
+
+    // ─── TTS 语音（火山引擎 TTS 生成旁白音频） ───
+
+    /// <summary>TTS 生成的音频文件 URL</summary>
+    public string? AudioUrl { get; set; }
+
+    /// <summary>TTS 音频生成状态：idle / running / done / error</summary>
+    public string AudioStatus { get; set; } = "idle";
+
+    /// <summary>TTS 音频生成错误信息</summary>
+    public string? AudioErrorMessage { get; set; }
 }
 
 /// <summary>
@@ -140,6 +158,12 @@ public class CreateVideoGenRunRequest
 
     /// <summary>输出格式：mp4（默认）或 html</summary>
     public string OutputFormat { get; set; } = "mp4";
+
+    /// <summary>是否启用 TTS 语音生成</summary>
+    public bool EnableTts { get; set; }
+
+    /// <summary>TTS 声音 ID</summary>
+    public string? VoiceId { get; set; }
 }
 
 /// <summary>

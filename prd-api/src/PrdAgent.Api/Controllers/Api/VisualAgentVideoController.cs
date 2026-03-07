@@ -250,6 +250,50 @@ public class VisualAgentVideoController : ControllerBase
     }
 
     /// <summary>
+    /// 为指定分镜生成 TTS 语音
+    /// </summary>
+    [HttpPost("runs/{runId}/scenes/{sceneIndex:int}/generate-audio")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GenerateSceneAudio(string runId, int sceneIndex, CancellationToken ct)
+    {
+        try
+        {
+            await _videoGenService.RequestSceneAudioAsync(runId, GetAdminId(), sceneIndex, AppKey, ct);
+            return Ok(ApiResponse<object>.Ok(true));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentOutOfRangeException)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+    }
+
+    /// <summary>
+    /// 批量生成所有分镜的 TTS 语音
+    /// </summary>
+    [HttpPost("runs/{runId}/generate-all-audio")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GenerateAllAudio(string runId, CancellationToken ct)
+    {
+        try
+        {
+            await _videoGenService.RequestAllAudioAsync(runId, GetAdminId(), AppKey, ct);
+            return Ok(ApiResponse<object>.Ok(true));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentOutOfRangeException)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+    }
+
+    /// <summary>
     /// SSE 流式获取任务事件
     /// </summary>
     [HttpGet("runs/{runId}/stream")]

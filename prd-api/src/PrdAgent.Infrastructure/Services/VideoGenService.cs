@@ -50,6 +50,8 @@ public class VideoGenService : IVideoGenService
             StyleDescription = request?.StyleDescription?.Trim(),
             AutoRender = request?.AutoRender ?? false,
             OutputFormat = outputFormat,
+            EnableTts = request?.EnableTts ?? false,
+            VoiceId = request?.VoiceId?.Trim(),
             CreatedAt = DateTime.UtcNow
         };
 
@@ -246,6 +248,53 @@ public class VideoGenService : IVideoGenService
         }
 
         return await _db.VideoGenRuns.Find(x => x.Id == runId).FirstOrDefaultAsync(ct);
+    }
+
+    public async Task RequestSceneAudioAsync(string runId, string ownerAdminId, int sceneIndex, string? appKey = null, CancellationToken ct = default)
+    {
+        var fb = Builders<VideoGenRun>.Filter;
+        var filter = fb.Eq(x => x.Id, runId) & fb.Eq(x => x.OwnerAdminId, ownerAdminId)
+                   & fb.Eq(x => x.Status, VideoGenRunStatus.Editing);
+        if (appKey != null) filter &= fb.Eq(x => x.AppKey, appKey);
+
+        var update = Builders<VideoGenRun>.Update
+            .Set($"Scenes.{sceneIndex}.AudioStatus", "running")
+            .Set($"Scenes.{sceneIndex}.AudioErrorMessage", (string?)null);
+
+        var res = await _db.VideoGenRuns.UpdateOneAsync(filter, update, cancellationToken: ct);
+        if (res.MatchedCount == 0) throw new InvalidOperationException("Run not found or not in Editing phase");
+
+        await PublishEventAsync(runId, "scene.audio.queued", new { sceneIndex });
+    }
+
+    public async Task RequestAllAudioAsync(string runId, string ownerAdminId, string? appKey = null, CancellationToken ct = default)
+    {
+        var fb = Builders<VideoGenRun>.Filter;
+        var filter = fb.Eq(x => x.Id, runId) & fb.Eq(x => x.OwnerAdminId, ownerAdminId)
+                   & fb.Eq(x => x.Status, VideoGenRunStatus.Editing);
+        if (appKey != null) filter &= fb.Eq(x => x.AppKey, appKey);
+
+        var run = await _db.VideoGenRuns.Find(filter).FirstOrDefaultAsync(ct);
+        if (run == null) throw new InvalidOperationException("Run not found or not in Editing phase");
+
+        // 批量设置所有场景的 audioStatus 为 running
+        var updates = new List<UpdateDefinition<VideoGenRun>>();
+        for (int i = 0; i < run.Scenes.Count; i++)
+        {
+            if (string.IsNullOrEmpty(run.Scenes[i].Narration)) continue;
+            updates.Add(Builders<VideoGenRun>.Update
+                .Set($"Scenes.{i}.AudioStatus", "running")
+                .Set($"Scenes.{i}.AudioErrorMessage", (string?)null));
+        }
+
+        if (updates.Count > 0)
+        {
+            var combined = Builders<VideoGenRun>.Update.Combine(updates);
+            combined = combined.Set(x => x.EnableTts, true);
+            await _db.VideoGenRuns.UpdateOneAsync(fb.Eq(x => x.Id, runId), combined, cancellationToken: ct);
+        }
+
+        await PublishEventAsync(runId, "audio.all.queued", new { sceneCount = updates.Count });
     }
 
     private async Task PublishEventAsync(string runId, string eventName, object payload)

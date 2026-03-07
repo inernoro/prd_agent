@@ -181,6 +181,45 @@ public class VideoGenRunWorker : BackgroundService
                     }
                     continue;
                 }
+
+                // 路径 6: Editing 状态中有 audioStatus=running 的分镜 → TTS 音频生成
+                var audioPending = await FindEditingRunWithPendingAudioAsync(stoppingToken);
+                if (audioPending != null)
+                {
+                    try
+                    {
+                        await ProcessSceneAudioGenerationAsync(audioPending);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "VideoGenRunWorker TTS 音频生成失败: runId={RunId}", audioPending.Id);
+                        try
+                        {
+                            var changed = false;
+                            foreach (var s in audioPending.Scenes)
+                            {
+                                if (s.AudioStatus == "running")
+                                {
+                                    s.AudioStatus = "error";
+                                    s.AudioErrorMessage = ex.Message;
+                                    changed = true;
+                                }
+                            }
+                            if (changed)
+                            {
+                                await _db.VideoGenRuns.UpdateOneAsync(
+                                    x => x.Id == audioPending.Id,
+                                    Builders<VideoGenRun>.Update.Set(x => x.Scenes, audioPending.Scenes),
+                                    cancellationToken: CancellationToken.None);
+                            }
+                        }
+                        catch (Exception innerEx)
+                        {
+                            _logger.LogError(innerEx, "VideoGenRunWorker 标记音频失败状态异常: runId={RunId}", audioPending.Id);
+                        }
+                    }
+                    continue;
+                }
             }
             catch (OperationCanceledException)
             {
@@ -328,6 +367,106 @@ public class VideoGenRunWorker : BackgroundService
         }
 
         return sb.ToString();
+    }
+
+    // ─── 路径 6: TTS 音频生成 ───
+
+    private async Task<VideoGenRun?> FindEditingRunWithPendingAudioAsync(CancellationToken ct)
+    {
+        var filter = Builders<VideoGenRun>.Filter.And(
+            Builders<VideoGenRun>.Filter.Eq(x => x.Status, VideoGenRunStatus.Editing),
+            Builders<VideoGenRun>.Filter.ElemMatch(x => x.Scenes,
+                Builders<VideoGenScene>.Filter.Eq(s => s.AudioStatus, "running")));
+
+        return await _db.VideoGenRuns.Find(filter).FirstOrDefaultAsync(ct);
+    }
+
+    private async Task ProcessSceneAudioGenerationAsync(VideoGenRun run)
+    {
+        var sceneIdx = run.Scenes.FindIndex(s => s.AudioStatus == "running");
+        if (sceneIdx < 0) return;
+
+        var scene = run.Scenes[sceneIdx];
+        if (string.IsNullOrWhiteSpace(scene.Narration))
+        {
+            run.Scenes[sceneIdx].AudioStatus = "done";
+            await _db.VideoGenRuns.UpdateOneAsync(
+                x => x.Id == run.Id,
+                Builders<VideoGenRun>.Update.Set(x => x.Scenes, run.Scenes),
+                cancellationToken: CancellationToken.None);
+            return;
+        }
+
+        _logger.LogInformation("VideoGen TTS 音频生成: runId={RunId}, sceneIndex={Index}, narrationLen={Len}",
+            run.Id, sceneIdx, scene.Narration.Length);
+
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var gateway = scope.ServiceProvider.GetRequiredService<ILlmGateway>();
+
+            // 构建 TTS 请求（OpenAI 兼容格式）
+            var requestBody = new JsonObject
+            {
+                ["input"] = scene.Narration,
+                ["voice"] = run.VoiceId ?? "alloy",
+                ["response_format"] = "mp3"
+            };
+
+            var ttsRequest = new GatewayRawRequest
+            {
+                AppCallerCode = AppCallerRegistry.VideoAgent.Audio.Tts,
+                ModelType = ModelTypes.TTS,
+                RequestBody = requestBody,
+                TimeoutSeconds = 120
+            };
+
+            var ttsResponse = await gateway.SendRawAsync(ttsRequest, CancellationToken.None);
+
+            if (!ttsResponse.Success || ttsResponse.BinaryContent == null || ttsResponse.BinaryContent.Length == 0)
+            {
+                throw new InvalidOperationException(
+                    $"TTS 生成失败: {ttsResponse.ErrorMessage ?? "无音频数据返回"}");
+            }
+
+            // 上传音频到存储
+            var stored = await _assetStorage.SaveAsync(
+                ttsResponse.BinaryContent, "audio/mpeg", CancellationToken.None,
+                domain: "video-gen", type: "audio");
+            var audioUrl = stored.Url;
+
+            run.Scenes[sceneIdx].AudioUrl = audioUrl;
+            run.Scenes[sceneIdx].AudioStatus = "done";
+            run.Scenes[sceneIdx].AudioErrorMessage = null;
+
+            await _db.VideoGenRuns.UpdateOneAsync(
+                x => x.Id == run.Id,
+                Builders<VideoGenRun>.Update.Set(x => x.Scenes, run.Scenes),
+                cancellationToken: CancellationToken.None);
+
+            // 发布事件
+            using var eventScope = _scopeFactory.CreateScope();
+            var runStore = eventScope.ServiceProvider.GetRequiredService<IRunEventStore>();
+            await runStore.AppendEventAsync(RunKinds.VideoGen, run.Id, "scene.audio.done",
+                new { sceneIndex = sceneIdx, audioUrl },
+                ttl: TimeSpan.FromHours(2), ct: CancellationToken.None);
+
+            _logger.LogInformation("VideoGen TTS 音频完成: runId={RunId}, scene={Index}, audioLen={Len}bytes",
+                run.Id, sceneIdx, ttsResponse.BinaryContent.Length);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "VideoGen TTS 音频生成失败: runId={RunId}, scene={Index}", run.Id, sceneIdx);
+
+            run.Scenes[sceneIdx].AudioStatus = "error";
+            run.Scenes[sceneIdx].AudioErrorMessage = ex.Message;
+            run.Scenes[sceneIdx].AudioUrl = null;
+
+            await _db.VideoGenRuns.UpdateOneAsync(
+                x => x.Id == run.Id,
+                Builders<VideoGenRun>.Update.Set(x => x.Scenes, run.Scenes),
+                cancellationToken: CancellationToken.None);
+        }
     }
 
     // ─── 路径 4: Remotion 渲染单场景预览视频 ───
@@ -764,7 +903,9 @@ public class VideoGenRunWorker : BackgroundService
                 durationInFrames = (int)Math.Ceiling(s.DurationSeconds * 30),
                 sceneType = s.SceneType,
                 backgroundImageUrl = s.BackgroundImageUrl,
-            }).ToList()
+                audioUrl = s.AudioUrl,
+            }).ToList(),
+            enableTts = run.EnableTts
         };
 
         var dataJson = JsonSerializer.Serialize(videoData, new JsonSerializerOptions
