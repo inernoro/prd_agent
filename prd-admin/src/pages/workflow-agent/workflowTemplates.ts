@@ -277,7 +277,7 @@ H.push('<meta name="viewport" content="width=device-width,initial-scale=1.0">');
 H.push('<title>' + (d.title || 'Quality Report') + '</title>');
 H.push('<link rel="preconnect" href="https://fonts.googleapis.com">');
 H.push('<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Noto+Sans+SC:wght@400;600;700&display=swap" rel="stylesheet">');
-H.push(S.replace('>', ' src="https://cdn.jsdelivr.net/npm/chart.js">') + SE);
+H.push(S.replace('>', ' src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js">') + SE);
 H.push('<style>');
 H.push(':root{--bg:#0D1117;--card:#161B22;--elev:#1C2128;--bdr:#30363D;--t1:#E6EDF3;--t2:#7D8590;--blue:#1E6FD9;--orange:#F5A623;--green:#27C97F;--red:#E84040;--cyan:#4ECDC4}');
 H.push('*{box-sizing:border-box;margin:0;padding:0}body{font-family:"Noto Sans SC",sans-serif;background:var(--bg);color:var(--t1);line-height:1.6;min-height:100vh}');
@@ -348,7 +348,7 @@ if (d.criticalAlerts && d.criticalAlerts.length > 0) {
 // Charts
 var sev = d.severity || {};
 H.push('<div class="cg">');
-H.push('<div class="cc"><h3>缺陷级别分布</h3><div style="max-width:350px;margin:0 auto"><canvas id="sevChart"></canvas></div></div>');
+H.push('<div class="cc"><h3>缺陷级别分布</h3><div id="sevChart" style="width:100%;height:320px"></div></div>');
 var rcs = d.rootCauses || [];
 var rcMax = rcs.length > 0 ? rcs[0].count : 1;
 H.push('<div class="cc"><h3>缺陷根因分布</h3><div class="bl">');
@@ -410,16 +410,27 @@ if (sums.length > 0) {
 H.push('</div></div>');
 H.push('<footer class="ft"><div class="ctn">' + (d.generatedAt||"") + ' | 由工作流自动生成</div></footer>');
 
-// Chart.js init
+// ECharts init
 H.push(S);
 H.push('document.addEventListener("DOMContentLoaded",function(){');
-H.push('var ctx=document.getElementById("sevChart");');
-H.push('if(ctx){new Chart(ctx,{type:"doughnut",data:{');
-H.push('labels:["P0 致命","P1 重大","P2 严重","P3 一般","P4 轻微"],');
-H.push('datasets:[{data:[' + (sev.P0||0)+','+(sev.P1||0)+','+(sev.P2||0)+','+(sev.P3||0)+','+(sev.P4||0) + '],');
-H.push('backgroundColor:["#E84040","#F5A623","#FF6B35","#1E6FD9","#4ECDC4"],borderColor:"#161B22",borderWidth:3}]},');
-H.push('options:{responsive:true,cutout:"60%",plugins:{legend:{position:"right",labels:{color:"#7D8590",usePointStyle:true,padding:12}}}}');
-H.push('});}});');
+H.push('var dom=document.getElementById("sevChart");');
+H.push('if(dom&&typeof echarts!=="undefined"){');
+H.push('var ch=echarts.init(dom,null,{renderer:"canvas"});');
+H.push('ch.setOption({');
+H.push('tooltip:{trigger:"item",backgroundColor:"rgba(22,27,34,0.95)",borderColor:"#30363D",textStyle:{color:"#E6EDF3"}},');
+H.push('legend:{orient:"vertical",right:10,top:"center",textStyle:{color:"#7D8590",fontSize:12},itemGap:14},');
+H.push('series:[{type:"pie",radius:["50%","75%"],center:["40%","50%"],avoidLabelOverlap:false,');
+H.push('itemStyle:{borderRadius:6,borderColor:"#161B22",borderWidth:3},');
+H.push('label:{show:false},emphasis:{label:{show:true,fontSize:14,fontWeight:"bold",color:"#E6EDF3"}},');
+H.push('data:[');
+H.push('{value:' + (sev.P0||0) + ',name:"P0 致命",itemStyle:{color:"#E84040"}},');
+H.push('{value:' + (sev.P1||0) + ',name:"P1 重大",itemStyle:{color:"#F5A623"}},');
+H.push('{value:' + (sev.P2||0) + ',name:"P2 严重",itemStyle:{color:"#FF6B35"}},');
+H.push('{value:' + (sev.P3||0) + ',name:"P3 一般",itemStyle:{color:"#1E6FD9"}},');
+H.push('{value:' + (sev.P4||0) + ',name:"P4 轻微",itemStyle:{color:"#4ECDC4"}}');
+H.push(']}]});');
+H.push('window.addEventListener("resize",function(){ch.resize();});');
+H.push('}});');
 H.push(SE);
 H.push('</body></html>');
 result = H.join("\\n");`,
