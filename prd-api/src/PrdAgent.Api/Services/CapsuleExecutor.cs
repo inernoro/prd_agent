@@ -3062,23 +3062,29 @@ public static class CapsuleExecutor
         if (!int.TryParse(timeoutMinutesStr, out var timeoutMinutes) || timeoutMinutes < 1)
             timeoutMinutes = 30;
 
-        sb.AppendLine($"[VideoGeneration] 开始，文章长度={articleMarkdown.Length}，超时={timeoutMinutes}分钟");
+        // 从工作流上下文获取真实用户 ID（由 WorkflowRunWorker 注入）
+        var ownerAdminId = variables.GetValueOrDefault("__triggeredBy") ?? "workflow-system";
+        var outputFormat = GetConfigValue(node, "outputFormat", variables) ?? "mp4";
+
+        sb.AppendLine($"[VideoGeneration] 开始，文章长度={articleMarkdown.Length}，超时={timeoutMinutes}分钟，格式={outputFormat}，owner={ownerAdminId}");
         if (emitEvent != null)
             await emitEvent("capsule-progress", new { message = "创建视频生成任务…" });
 
-        // 使用 workflow-agent 的 appKey 创建 run
+        // 创建 run：AutoRender=true 跳过 Editing 直接渲染
         var request = new PrdAgent.Core.Models.CreateVideoGenRunRequest
         {
             ArticleMarkdown = articleMarkdown,
             ArticleTitle = articleTitle,
             SystemPrompt = systemPrompt,
             StyleDescription = styleDescription,
+            AutoRender = true,
+            OutputFormat = outputFormat,
         };
 
         string runId;
         try
         {
-            runId = await videoGenService.CreateRunAsync("video-agent", "workflow-system", request);
+            runId = await videoGenService.CreateRunAsync("video-agent", ownerAdminId, request);
         }
         catch (ArgumentException ex)
         {

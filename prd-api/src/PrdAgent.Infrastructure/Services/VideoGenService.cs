@@ -36,6 +36,9 @@ public class VideoGenService : IVideoGenService
         var title = (request?.ArticleTitle ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(title)) title = null;
 
+        var outputFormat = (request?.OutputFormat ?? "mp4").Trim().ToLowerInvariant();
+        if (outputFormat is not ("mp4" or "html")) outputFormat = "mp4";
+
         var run = new VideoGenRun
         {
             AppKey = appKey,
@@ -45,6 +48,8 @@ public class VideoGenService : IVideoGenService
             ArticleTitle = title,
             SystemPrompt = request?.SystemPrompt?.Trim(),
             StyleDescription = request?.StyleDescription?.Trim(),
+            AutoRender = request?.AutoRender ?? false,
+            OutputFormat = outputFormat,
             CreatedAt = DateTime.UtcNow
         };
 

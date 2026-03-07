@@ -644,7 +644,7 @@ public static class CapsuleTypeRegistry
     {
         TypeKey = CapsuleTypes.VideoGeneration,
         Name = "视频生成",
-        Description = "将文章/Markdown 内容转化为教程视频，自动生成分镜脚本并渲染为 MP4",
+        Description = "将文章/Markdown 内容转化为教程视频，自动生成分镜脚本并渲染为 MP4 或 HTML",
         Icon = "video",
         Category = CapsuleCategory.Output,
         AccentHue = 270,
@@ -654,6 +654,7 @@ public static class CapsuleTypeRegistry
             new() { Key = "articleTitle", Label = "文章标题", FieldType = "text", Required = false, Placeholder = "视频标题（可选）" },
             new() { Key = "systemPrompt", Label = "系统提示词", FieldType = "textarea", Required = false, Placeholder = "自定义分镜生成的系统提示词（可选）" },
             new() { Key = "styleDescription", Label = "风格描述", FieldType = "textarea", Required = false, Placeholder = "视频视觉风格描述（可选）" },
+            new() { Key = "outputFormat", Label = "输出格式", FieldType = "select", Required = false, DefaultValue = "mp4", HelpTip = "mp4: Remotion 渲染视频；html: 自包含 HTML 交互页面", Placeholder = "mp4|html" },
             new() { Key = "timeoutMinutes", Label = "超时时间（分钟）", FieldType = "number", Required = false, DefaultValue = "30", HelpTip = "等待视频渲染完成的最大时间，默认 30 分钟" },
         },
         DefaultInputSlots = new()

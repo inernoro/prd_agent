@@ -96,6 +96,13 @@ public sealed class WorkflowRunWorker : BackgroundService
 
         _logger.LogInformation("Processing execution: {ExecutionId} workflow={WorkflowName}", executionId, execution.WorkflowName);
 
+        // 1b. 注入系统变量：将执行上下文信息注入 Variables 供胶囊使用
+        if (!string.IsNullOrEmpty(execution.TriggeredBy))
+            execution.Variables["__triggeredBy"] = execution.TriggeredBy;
+        if (!string.IsNullOrEmpty(execution.TriggeredByName))
+            execution.Variables["__triggeredByName"] = execution.TriggeredByName;
+        execution.Variables["__executionId"] = executionId;
+
         // 2. 标记为运行中 + 推送 SSE 事件
         var sw = Stopwatch.StartNew();
         await db.WorkflowExecutions.UpdateOneAsync(

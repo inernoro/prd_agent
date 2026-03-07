@@ -617,6 +617,34 @@ public class VideoGenRunWorker : BackgroundService
         var scriptMd = GenerateScriptMarkdown(scenes, run.ArticleTitle);
         var narrationDoc = GenerateNarrationDoc(scenes, run.ArticleTitle);
 
+        // AutoRender 模式：跳过 Editing 直接进入 Rendering
+        if (run.AutoRender)
+        {
+            await _db.VideoGenRuns.UpdateOneAsync(
+                x => x.Id == run.Id,
+                Builders<VideoGenRun>.Update
+                    .Set(x => x.Status, VideoGenRunStatus.Rendering)
+                    .Set(x => x.Scenes, scenes)
+                    .Set(x => x.TotalDurationSeconds, totalDuration)
+                    .Set(x => x.ScriptMarkdown, scriptMd)
+                    .Set(x => x.NarrationDoc, narrationDoc)
+                    .Set(x => x.CurrentPhase, "rendering")
+                    .Set(x => x.PhaseProgress, 0),
+                cancellationToken: CancellationToken.None);
+
+            await PublishEventAsync(run.Id, "script.done", new
+            {
+                scenes,
+                totalDuration,
+                autoRender = true,
+                status = VideoGenRunStatus.Rendering
+            });
+
+            _logger.LogInformation("VideoGen 分镜生成完成 (AutoRender): runId={RunId}, scenes={Count}, duration={Duration}s → Rendering",
+                run.Id, scenes.Count, totalDuration);
+            return;
+        }
+
         // 关键：状态切换为 Editing（等待用户交互）
         await _db.VideoGenRuns.UpdateOneAsync(
             x => x.Id == run.Id,
@@ -748,13 +776,42 @@ public class VideoGenRunWorker : BackgroundService
         var dataFilePath = Path.Combine(dataDir, $"{run.Id}.json");
         await File.WriteAllTextAsync(dataFilePath, dataJson, CancellationToken.None);
 
-        // 2b: 执行 Remotion 渲染
+        // 2b: 根据 OutputFormat 选择渲染方式
         var outDir = Path.Combine(videoProjectPath, "out");
         Directory.CreateDirectory(outDir);
-        var outputMp4 = Path.Combine(outDir, $"{run.Id}.mp4");
 
-        await UpdatePhaseAsync(run, "rendering", 10);
-        await RunRemotionRenderAsync(run, videoProjectPath, dataFilePath, outputMp4);
+        string assetUrl;
+        string assetMimeType;
+
+        if (run.OutputFormat == "html")
+        {
+            // HTML 模式：生成自包含 HTML 播放页面（嵌入 JSON 数据 + 场景展示）
+            await UpdatePhaseAsync(run, "rendering", 10);
+            var htmlContent = GenerateHtmlPlayer(dataJson, run);
+            var htmlBytes = Encoding.UTF8.GetBytes(htmlContent);
+            var htmlStored = await _assetStorage.SaveAsync(htmlBytes, "text/html", CancellationToken.None,
+                domain: AppDomainPaths.DomainVideoAgent, type: AppDomainPaths.TypeVideo);
+            assetUrl = htmlStored.Url;
+            assetMimeType = "text/html";
+            await UpdatePhaseAsync(run, "rendering", 90);
+            _logger.LogInformation("VideoGen HTML 已上传 COS: runId={RunId}, url={Url}, size={Size}",
+                run.Id, htmlStored.Url, htmlStored.SizeBytes);
+        }
+        else
+        {
+            // MP4 模式：执行 Remotion 渲染
+            var outputMp4 = Path.Combine(outDir, $"{run.Id}.mp4");
+            await UpdatePhaseAsync(run, "rendering", 10);
+            await RunRemotionRenderAsync(run, videoProjectPath, dataFilePath, outputMp4);
+
+            var videoBytes = await File.ReadAllBytesAsync(outputMp4, CancellationToken.None);
+            var videoStored = await _assetStorage.SaveAsync(videoBytes, "video/mp4", CancellationToken.None,
+                domain: AppDomainPaths.DomainVideoAgent, type: AppDomainPaths.TypeVideo);
+            assetUrl = videoStored.Url;
+            assetMimeType = "video/mp4";
+            _logger.LogInformation("VideoGen 完整视频已上传 COS: runId={RunId}, url={Url}, size={Size}",
+                run.Id, videoStored.Url, videoStored.SizeBytes);
+        }
 
         // 2c: 生成 SRT 字幕
         var srtContent = GenerateSrt(run.Scenes);
@@ -765,20 +822,12 @@ public class VideoGenRunWorker : BackgroundService
         var scriptMd = GenerateScriptMarkdown(run.Scenes, run.ArticleTitle);
         var narrationDoc = GenerateNarrationDoc(run.Scenes, run.ArticleTitle);
 
-        // 2e: 上传完整视频到 COS
-        var videoBytes = await File.ReadAllBytesAsync(outputMp4, CancellationToken.None);
-        var videoStored = await _assetStorage.SaveAsync(videoBytes, "video/mp4", CancellationToken.None,
-            domain: AppDomainPaths.DomainVideoAgent, type: AppDomainPaths.TypeVideo);
-
-        _logger.LogInformation("VideoGen 完整视频已上传 COS: runId={RunId}, url={Url}, size={Size}",
-            run.Id, videoStored.Url, videoStored.SizeBytes);
-
-        // 2f: 完成
+        // 2e: 完成
         await _db.VideoGenRuns.UpdateOneAsync(
             x => x.Id == run.Id,
             Builders<VideoGenRun>.Update
                 .Set(x => x.Status, VideoGenRunStatus.Completed)
-                .Set(x => x.VideoAssetUrl, videoStored.Url)
+                .Set(x => x.VideoAssetUrl, assetUrl)
                 .Set(x => x.SrtContent, srtContent)
                 .Set(x => x.ScriptMarkdown, scriptMd)
                 .Set(x => x.NarrationDoc, narrationDoc)
@@ -1230,6 +1279,80 @@ public class VideoGenRunWorker : BackgroundService
         }
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// 生成自包含 HTML 播放页面，将场景数据嵌入为交互式幻灯片展示
+    /// </summary>
+    private static string GenerateHtmlPlayer(string dataJson, VideoGenRun run)
+    {
+        var title = System.Net.WebUtility.HtmlEncode(run.ArticleTitle ?? "技术教程");
+        return $"""
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{title}</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0a0a0a;color:#e8e8e8;min-height:100vh;display:flex;flex-direction:column;align-items:center}}
+.header{{padding:2rem;text-align:center;max-width:900px}}
+.header h1{{font-size:1.8rem;margin-bottom:.5rem}}
+.header p{{color:#888;font-size:.9rem}}
+.scene-container{{max-width:900px;width:100%;padding:0 1.5rem 3rem}}
+.scene{{background:#1a1a1a;border-radius:12px;margin-bottom:1.5rem;overflow:hidden;border:1px solid #2a2a2a;transition:border-color .2s}}
+.scene:hover{{border-color:#444}}
+.scene-header{{display:flex;align-items:center;gap:.75rem;padding:1rem 1.25rem;background:#111;border-bottom:1px solid #2a2a2a}}
+.scene-num{{background:#333;color:#ccc;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.75rem;font-weight:600;flex-shrink:0}}
+.scene-topic{{font-weight:600;font-size:1rem}}
+.scene-dur{{margin-left:auto;color:#666;font-size:.8rem}}
+.scene-body{{padding:1.25rem}}
+.scene-body .narration{{line-height:1.7;margin-bottom:1rem;color:#ccc}}
+.scene-body .visual{{color:#888;font-size:.85rem;font-style:italic;padding:.75rem;background:#111;border-radius:8px}}
+.bg-img{{width:100%;max-height:400px;object-fit:cover}}
+.controls{{position:fixed;bottom:0;left:0;right:0;background:rgba(10,10,10,.95);backdrop-filter:blur(10px);padding:.75rem 1.5rem;display:flex;align-items:center;justify-content:center;gap:1rem;border-top:1px solid #222}}
+.controls button{{background:#333;color:#e8e8e8;border:none;padding:.5rem 1.25rem;border-radius:8px;cursor:pointer;font-size:.85rem}}
+.controls button:hover{{background:#444}}
+.controls .current{{color:#888;font-size:.85rem;min-width:80px;text-align:center}}
+.scene.active{{border-color:#4a9eff}}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>{title}</h1>
+  <p>共 <span id="total"></span> 个场景 · 总时长 <span id="duration"></span></p>
+</div>
+<div class="scene-container" id="scenes"></div>
+<div class="controls">
+  <button onclick="go(-1)">◀ 上一场景</button>
+  <span class="current" id="indicator"></span>
+  <button onclick="go(1)">下一场景 ▶</button>
+</div>
+<script>
+const data = {dataJson};
+let cur = 0;
+document.getElementById('total').textContent = data.scenes.length;
+document.getElementById('duration').textContent = data.scenes.reduce((s,x)=>s+x.durationSeconds,0).toFixed(1)+'s';
+const container = document.getElementById('scenes');
+data.scenes.forEach((s,i) => {{
+  const el = document.createElement('div');
+  el.className = 'scene' + (i===0?' active':'');
+  el.id = 'scene-'+i;
+  el.innerHTML = `<div class="scene-header"><span class="scene-num">${{i+1}}</span><span class="scene-topic">${{esc(s.topic)}}</span><span class="scene-dur">${{s.durationSeconds}}s</span></div>`
+    + (s.backgroundImageUrl ? `<img class="bg-img" src="${{esc(s.backgroundImageUrl)}}" alt="">` : '')
+    + `<div class="scene-body"><div class="narration">${{esc(s.narration)}}</div><div class="visual">${{esc(s.visualDescription)}}</div></div>`;
+  container.appendChild(el);
+}});
+updateIndicator();
+function go(d){{cur=Math.max(0,Math.min(data.scenes.length-1,cur+d));document.querySelectorAll('.scene').forEach((e,i)=>e.classList.toggle('active',i===cur));document.getElementById('scene-'+cur).scrollIntoView({{behavior:'smooth',block:'center'}});updateIndicator()}}
+function updateIndicator(){{document.getElementById('indicator').textContent=(cur+1)+' / '+data.scenes.length}}
+function esc(s){{const d=document.createElement('div');d.textContent=s||'';return d.innerHTML}}
+document.addEventListener('keydown',e=>{{if(e.key==='ArrowRight'||e.key==='ArrowDown')go(1);if(e.key==='ArrowLeft'||e.key==='ArrowUp')go(-1)}});
+</script>
+</body>
+</html>
+""";
     }
 
     private static string GenerateSrt(List<VideoGenScene> scenes)

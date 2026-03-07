@@ -70,6 +70,13 @@ public class VideoGenRun
     public string CurrentPhase { get; set; } = "scripting";
     public int PhaseProgress { get; set; }
 
+    // ─── 自动化控制 ───
+    /// <summary>跳过 Editing 阶段，分镜生成后直接渲染（工作流胶囊使用）</summary>
+    public bool AutoRender { get; set; }
+
+    /// <summary>输出格式：mp4（默认）或 html</summary>
+    public string OutputFormat { get; set; } = "mp4";
+
     // ─── 元数据 ───
     public string OwnerAdminId { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
@@ -127,6 +134,12 @@ public class CreateVideoGenRunRequest
     public string? ArticleTitle { get; set; }
     public string? SystemPrompt { get; set; }
     public string? StyleDescription { get; set; }
+
+    /// <summary>跳过 Editing 阶段，分镜生成后直接渲染（工作流胶囊使用）</summary>
+    public bool AutoRender { get; set; }
+
+    /// <summary>输出格式：mp4（默认）或 html</summary>
+    public string OutputFormat { get; set; } = "mp4";
 }
 
 /// <summary>
