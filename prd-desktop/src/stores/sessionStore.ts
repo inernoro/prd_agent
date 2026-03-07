@@ -150,9 +150,8 @@ export const useSessionStore = create<SessionState>()(
         sessionId: s.sessionId,
         activeGroupId: s.activeGroupId,
         lastGroupSeqByGroup: s.lastGroupSeqByGroup,
-        documentLoaded: s.documentLoaded,
-        document: s.document,
-        documents: s.documents,
+        // 不持久化 document/documents/documentLoaded：文档数据必须从后端拉取，
+        // 持久化会导致切换群组或重启后显示上一个 session 的脏数据。
         currentRole: s.currentRole,
         mode: s.mode,
         previousMode: s.previousMode,
@@ -165,10 +164,6 @@ export const useSessionStore = create<SessionState>()(
           // 修复：刷新/重启时停留在 PrdPreview，会导致用户误以为”聊天丢失”
           if (s.mode === 'PrdPreview' && typeof s.backFromPrdPreview === 'function') {
             try { s.backFromPrdPreview(); } catch { /* ignore */ }
-          }
-          // 修复：旧 localStorage 无 documents 字段，从 document 补齐（单一数据源兼容）
-          if ((!Array.isArray(s.documents) || s.documents.length === 0) && s.document) {
-            try { s.setDocuments([s.document]); } catch { /* ignore */ }
           }
         }
       },
