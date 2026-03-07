@@ -202,7 +202,10 @@ var defectDetails = rootCauses.map(function(rc) {
       return {
         desc: i["标题"] || i.title || i["缺陷ID"] || "",
         cause: (i["逻辑归因"] || i["根本原因"] || "").trim(),
-        handler: i["处理人"] || i["当前处理人"] || ""
+        handler: i["处理人"] || i["当前处理人"] || "",
+        reporter: i["创建人"] || "",
+        url: i["URL链接"] || "",
+        level: (i["缺陷等级"] || "").toUpperCase()
       };
     })
   };
@@ -219,10 +222,37 @@ else summary.push({icon:"check-circle",color:"#27C97F",text:"修复率 "+fixRate
 if (p2Overdue.length > 0) summary.push({icon:"clock",color:"#F5A623",text:"有 "+p2Overdue.length+" 个 P2 及以下缺陷逾期"});
 if (rootCauses.length > 0) summary.push({icon:"git-branch",color:"#4ECDC4",text:"主要根因: "+rootCauses.slice(0,3).map(function(r){return r.name+"("+r.count+")";}).join(", ")});
 
-// P0/P1 警告
+// P0/P1 警告（含链接、处理人、创建人）
 var critAlerts = [];
-p0.forEach(function(i) { critAlerts.push({level:"P0",title:i["标题"]||i.title||"",desc:i["逻辑归因"]||""}); });
-p1.forEach(function(i) { critAlerts.push({level:"P1",title:i["标题"]||i.title||"",desc:i["逻辑归因"]||""}); });
+p0.forEach(function(i) { critAlerts.push({level:"P0",title:i["标题"]||i.title||"",desc:i["逻辑归因"]||i["结构归母"]||"",url:i["URL链接"]||"",handler:i["处理人"]||i["当前处理人"]||"",reporter:i["创建人"]||"",bugId:i["缺陷ID"]||""}); });
+p1.forEach(function(i) { critAlerts.push({level:"P1",title:i["标题"]||i.title||"",desc:i["逻辑归因"]||i["结构归母"]||"",url:i["URL链接"]||"",handler:i["处理人"]||i["当前处理人"]||"",reporter:i["创建人"]||"",bugId:i["缺陷ID"]||""}); });
+
+// 挂起/临时解决/逾期/未及时处理的问题列表
+var problemItems = [];
+techBugs.forEach(function(i) {
+  var s = (i["状态"] || "").toLowerCase().trim();
+  var isSuspended = (s === "suspended" || s === "挂起");
+  var isResolved = (s === "resolved" || s === "已解决");
+  var isOverdue = (i["是否逾期"] === "是");
+  var isUntimely = (i["及时处理"] === "否");
+  if (isSuspended || isResolved || isOverdue || isUntimely) {
+    var tags = [];
+    if (isSuspended) tags.push("挂起");
+    if (isResolved) tags.push("临时解决");
+    if (isOverdue) tags.push("逾期");
+    if (isUntimely) tags.push("未及时处理");
+    problemItems.push({
+      title: i["标题"] || i.title || "",
+      bugId: i["缺陷ID"] || "",
+      url: i["URL链接"] || "",
+      level: (i["缺陷等级"] || "").toUpperCase(),
+      handler: i["处理人"] || i["当前处理人"] || "",
+      reporter: i["创建人"] || "",
+      responsible: i["责任人"] || "",
+      tags: tags
+    });
+  }
+});
 
 // 时间戳
 var now = new Date();
@@ -245,6 +275,7 @@ result = {
   processingStatus: statusMap,
   rootCauses: rootCauses,
   criticalAlerts: critAlerts,
+  problemItems: problemItems,
   defectDetails: defectDetails,
   summary: summary,
   verification: {
@@ -295,7 +326,16 @@ H.push('.cg{display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr)
 H.push('.cc{background:var(--card);border:1px solid var(--bdr);border-radius:12px;padding:24px}.cc h3{font-size:1rem;margin-bottom:16px}');
 H.push('.alert{background:rgba(232,64,64,0.08);border:1px solid rgba(232,64,64,0.3);border-radius:12px;padding:16px 20px;margin-bottom:16px;display:flex;align-items:flex-start;gap:12px}');
 H.push('.alert-b{background:var(--red);color:#fff;padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:700;flex-shrink:0}');
-H.push('.alert-t{font-weight:600;color:var(--red)}.alert-d{font-size:0.8rem;color:var(--t2);margin-top:2px}');
+H.push('.alert-t{font-weight:600;color:var(--red)}.alert-t a{color:var(--red);text-decoration:underline;text-underline-offset:3px}.alert-t a:hover{color:#FF6B6B}');
+H.push('.alert-d{font-size:0.8rem;color:var(--t2);margin-top:2px}');
+H.push('.alert-meta{display:flex;gap:12px;margin-top:6px;font-size:0.75rem;color:var(--t2)}.alert-meta span{display:inline-flex;align-items:center;gap:4px}');
+H.push('.tag{display:inline-block;padding:1px 6px;border-radius:3px;font-size:0.65rem;font-weight:600}');
+H.push('.tag-suspend{background:rgba(125,133,144,0.2);color:#7D8590}.tag-tmp{background:rgba(245,166,35,0.2);color:#F5A623}');
+H.push('.tag-overdue{background:rgba(232,64,64,0.2);color:#E84040}.tag-untimely{background:rgba(255,107,53,0.2);color:#FF6B35}');
+H.push('.prob-list{display:flex;flex-direction:column;gap:10px;margin-top:16px}');
+H.push('.prob-item{background:var(--elev);border:1px solid var(--bdr);border-radius:8px;padding:12px 16px;display:flex;flex-direction:column;gap:6px}');
+H.push('.prob-title{font-size:0.85rem;font-weight:600}.prob-title a{color:var(--t1);text-decoration:none}.prob-title a:hover{text-decoration:underline;color:var(--blue)}');
+H.push('.prob-tags{display:flex;gap:6px;flex-wrap:wrap}.prob-meta{font-size:0.75rem;color:var(--t2);display:flex;gap:12px}');
 H.push('.sg{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-bottom:24px}');
 H.push('.sc{background:var(--card);border:1px solid var(--bdr);border-radius:8px;padding:14px;text-align:center}');
 H.push('.sc-n{font-family:"Bebas Neue",monospace;font-size:1.8rem}.sc-l{font-size:0.75rem;color:var(--t2)}');
@@ -338,9 +378,18 @@ H.push('</div>');
 // Critical Alerts
 if (d.criticalAlerts && d.criticalAlerts.length > 0) {
   d.criticalAlerts.forEach(function(a) {
-    H.push('<div class="alert"><span class="alert-b">' + a.level + '</span><div>');
-    H.push('<div class="alert-t">' + a.title + '</div>');
+    H.push('<div class="alert"><span class="alert-b">' + a.level + '</span><div style="flex:1">');
+    if (a.url) {
+      H.push('<div class="alert-t"><a href="' + a.url + '" target="_blank" rel="noopener">' + a.title + ' &rarr;</a></div>');
+    } else {
+      H.push('<div class="alert-t">' + a.title + '</div>');
+    }
     if (a.desc) H.push('<div class="alert-d">' + a.desc + '</div>');
+    var metaParts = [];
+    if (a.handler) metaParts.push('<span>&#128736; ' + a.handler + '</span>');
+    if (a.reporter) metaParts.push('<span>&#128221; ' + a.reporter + '</span>');
+    if (a.bugId) metaParts.push('<span>#' + a.bugId + '</span>');
+    if (metaParts.length > 0) H.push('<div class="alert-meta">' + metaParts.join('') + '</div>');
     H.push('</div></div>');
   });
 }
@@ -369,6 +418,31 @@ Object.keys(stMap).forEach(function(k) {
 });
 H.push('</div>');
 
+// Problem Items (挂起/临时解决/逾期/未及时处理)
+var probs = d.problemItems || [];
+if (probs.length > 0) {
+  H.push('<h3 class="sec-t" style="margin-top:32px">需跟进问题清单 (' + probs.length + ')</h3>');
+  H.push('<div class="prob-list">');
+  var tagClassMap = {"挂起":"tag-suspend","临时解决":"tag-tmp","逾期":"tag-overdue","未及时处理":"tag-untimely"};
+  probs.forEach(function(p) {
+    H.push('<div class="prob-item">');
+    var titleHtml = p.title;
+    if (p.url) titleHtml = '<a href="' + p.url + '" target="_blank" rel="noopener">' + p.title + ' &rarr;</a>';
+    H.push('<div class="prob-title">' + (p.level ? '<span class="alert-b" style="font-size:0.6rem;margin-right:6px;vertical-align:middle">' + p.level + '</span>' : '') + titleHtml + '</div>');
+    H.push('<div class="prob-tags">');
+    p.tags.forEach(function(t) { H.push('<span class="tag ' + (tagClassMap[t]||"") + '">' + t + '</span>'); });
+    H.push('</div>');
+    var meta = [];
+    if (p.handler) meta.push('&#128736; ' + p.handler);
+    if (p.responsible) meta.push('&#128100; ' + p.responsible);
+    if (p.reporter) meta.push('&#128221; ' + p.reporter);
+    if (p.bugId) meta.push('#' + p.bugId);
+    if (meta.length > 0) H.push('<div class="prob-meta">' + meta.map(function(m){return '<span>'+m+'</span>';}).join('') + '</div>');
+    H.push('</div>');
+  });
+  H.push('</div>');
+}
+
 // Defect Accordion
 var dets = d.defectDetails || [];
 if (dets.length > 0) {
@@ -384,10 +458,17 @@ if (dets.length > 0) {
     H.push('</div><div class="abdy"><div class="dl">');
     grp.items.forEach(function(item, ii) {
       H.push('<div class="df" style="border-left-color:' + (grp.color||"#1E6FD9") + '">');
-      H.push('<div class="di">' + (ii+1) + '</div><div>');
-      H.push('<div>' + item.desc + '</div>');
+      H.push('<div class="di">' + (ii+1) + '</div><div style="flex:1">');
+      if (item.url) {
+        H.push('<div><a href="' + item.url + '" target="_blank" rel="noopener" style="color:var(--t1);text-decoration:none">' + item.desc + ' &rarr;</a></div>');
+      } else {
+        H.push('<div>' + item.desc + '</div>');
+      }
       if (item.cause) H.push('<div class="dc">' + item.cause + '</div>');
-      if (item.handler) H.push('<span class="dh">' + item.handler + '</span>');
+      var dm = [];
+      if (item.handler) dm.push('&#128736; ' + item.handler);
+      if (item.reporter) dm.push('&#128221; ' + item.reporter);
+      if (dm.length > 0) H.push('<div class="alert-meta">' + dm.map(function(m){return '<span>'+m+'</span>';}).join('') + '</div>');
       H.push('</div></div>');
     });
     H.push('</div></div></div>');
