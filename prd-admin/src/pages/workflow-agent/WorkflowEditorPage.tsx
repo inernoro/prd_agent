@@ -9,7 +9,7 @@ import {
 import {
   getWorkflow, updateWorkflow, executeWorkflow, getExecution,
   getNodeLogs, listExecutions, cancelExecution,
-  listCapsuleTypes, testRunCapsule, aiFillParameters,
+  listCapsuleTypes, testRunCapsule,
 } from '@/services';
 import { replayNode } from '@/services/real/workflowAgent';
 import type {
@@ -573,7 +573,7 @@ function SectionBox({ title, type, children, action }: {
 
 // ──── 右侧舱卡片 ────
 
-function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpanded, onToggle, onRemove, onTestRun, onReplay, onConfigChange, onToggleBreakpoint, capsuleMeta, isRunning, testRunResult, isTestRunning, formatWarnings, onPreviewArtifact, workflowId }: {
+function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpanded, onToggle, onRemove, onTestRun, onReplay, onConfigChange, onToggleBreakpoint, capsuleMeta, isRunning, testRunResult, isTestRunning, formatWarnings, onPreviewArtifact, onAiFill }: {
   node: WorkflowNode;
   index: number;
   nodeExec?: NodeExecution;
@@ -592,7 +592,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
   isTestRunning?: boolean;
   formatWarnings?: { nodeId: string; message: string }[];
   onPreviewArtifact?: (art: ExecutionArtifact) => void;
-  workflowId?: string;
+  onAiFill?: (nodeName: string, nodeType: string) => void;
 }) {
   const typeDef = getCapsuleType(node.nodeType);
   const status = nodeExec?.status || 'idle';
@@ -617,38 +617,6 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
   function handleConfigBatchChange(changes: Record<string, string>) {
     const updated = { ...node.config, ...changes };
     onConfigChange(node.nodeId, updated);
-  }
-
-  // AI 辅助填写状态
-  const [isAiFilling, setIsAiFilling] = useState(false);
-  const [aiFillExplanation, setAiFillExplanation] = useState<string | null>(null);
-
-  async function handleAiFill() {
-    if (!workflowId || isAiFilling) return;
-    setIsAiFilling(true);
-    setAiFillExplanation(null);
-    try {
-      const res = await aiFillParameters({
-        workflowId,
-        nodeId: node.nodeId,
-        mode: Object.values(configValues).some(v => v && v.trim()) ? 'optimize' : 'full',
-      });
-      if (res.success && res.data) {
-        const { suggestions, explanation } = res.data;
-        if (Object.keys(suggestions).length > 0) {
-          handleConfigBatchChange(suggestions);
-          setAiFillExplanation(explanation);
-        } else {
-          setAiFillExplanation(explanation || 'AI 未生成建议');
-        }
-      } else {
-        setAiFillExplanation('AI 填写失败');
-      }
-    } catch {
-      setAiFillExplanation('AI 填写请求失败');
-    } finally {
-      setIsAiFilling(false);
-    }
   }
 
   const [expandedArtifacts, setExpandedArtifacts] = useState<Set<string>>(new Set());
@@ -994,22 +962,24 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
             {/* ──── ⚙ 配置区 ──── */}
             {(isHttpType || (capsuleMeta && capsuleMeta.configSchema.length > 0)) && (
               <SectionBox title="⚙ 配置" type="config" action={
-                workflowId ? (
+                onAiFill ? (
                   <button
                     className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-[6px] transition-all"
                     style={{
-                      color: isAiFilling ? 'var(--text-muted)' : 'rgba(168,85,247,0.9)',
-                      background: isAiFilling ? 'transparent' : 'rgba(168,85,247,0.08)',
-                      cursor: isAiFilling ? 'wait' : 'pointer',
+                      color: 'rgba(168,85,247,0.9)',
+                      background: 'rgba(168,85,247,0.08)',
+                      cursor: 'pointer',
                     }}
-                    onClick={(e) => { e.stopPropagation(); handleAiFill(); }}
-                    disabled={isAiFilling || isRunning}
-                    title="AI 根据舱类型和上下文智能推荐配置参数"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const typeLabel = capsuleMeta?.name || node.nodeType;
+                      onAiFill(node.name || typeLabel, typeLabel);
+                    }}
+                    disabled={isRunning}
+                    title="在工作流助手中描述你的需求，AI 帮你填写配置"
                   >
-                    {isAiFilling
-                      ? <Loader2 className="w-3 h-3 animate-spin" />
-                      : <Sparkles className="w-3 h-3" />}
-                    {isAiFilling ? 'AI 填写中...' : 'AI 填写'}
+                    <Sparkles className="w-3 h-3" />
+                    AI 填写
                   </button>
                 ) : undefined
               }>
@@ -1028,26 +998,6 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
                     disabled={isRunning}
                     nodeType={node.nodeType}
                   />
-                )}
-                {aiFillExplanation && (
-                  <div
-                    className="mt-2 p-2 rounded-[8px] text-[10px] flex items-start gap-1.5"
-                    style={{
-                      background: 'rgba(168,85,247,0.06)',
-                      border: '1px solid rgba(168,85,247,0.15)',
-                      color: 'var(--text-secondary)',
-                    }}
-                  >
-                    <Sparkles className="w-3 h-3 mt-0.5 flex-shrink-0" style={{ color: 'rgba(168,85,247,0.7)' }} />
-                    <span>{aiFillExplanation}</span>
-                    <button
-                      className="ml-auto flex-shrink-0"
-                      style={{ color: 'var(--text-muted)' }}
-                      onClick={() => setAiFillExplanation(null)}
-                    >
-                      <XCircle className="w-3 h-3" />
-                    </button>
-                  </div>
                 )}
               </SectionBox>
             )}
@@ -1395,6 +1345,8 @@ export function WorkflowEditorPage() {
 
   // 右侧面板模式: 'chat' | 'log'
   const [rightPanel, setRightPanel] = useState<'chat' | 'log' | null>(null);
+  // AI 填写 → 工作流助手的预填文字
+  const [chatInitialInput, setChatInitialInput] = useState<string | undefined>(undefined);
 
   // 实时日志
   interface LogEntry {
@@ -2137,7 +2089,10 @@ export function WorkflowEditorPage() {
                         isTestRunning={testRunning === node.nodeId}
                         formatWarnings={warnings}
                         onPreviewArtifact={setPreviewArtifact}
-                        workflowId={workflow.id}
+                        onAiFill={(nodeName, nodeType) => {
+                          setChatInitialInput(`请帮我填写「${nodeName}」(${nodeType}) 舱的配置参数，`);
+                          setRightPanel('chat');
+                        }}
                       />
                     );
                   });
@@ -2201,6 +2156,8 @@ export function WorkflowEditorPage() {
             workflowId={workflowId}
             onApplyWorkflow={handleApplyWorkflow}
             onClose={() => setRightPanel(null)}
+            initialInput={chatInitialInput}
+            onInitialInputConsumed={() => setChatInitialInput(undefined)}
           />
         )}
       </div>

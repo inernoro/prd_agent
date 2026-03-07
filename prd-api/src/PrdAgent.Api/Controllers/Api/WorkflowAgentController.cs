@@ -1221,17 +1221,36 @@ public class WorkflowAgentController : ControllerBase
     [HttpPost("ai-fill")]
     public async Task<IActionResult> AiFillParameters([FromBody] AiFillRequest request)
     {
-        // 加载工作流
-        var workflow = await _db.Workflows
-            .Find(w => w.Id == request.WorkflowId)
-            .FirstOrDefaultAsync(CancellationToken.None);
-
-        if (workflow == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "工作流不存在"));
+        // 优先使用前端传入的快照（支持未保存的工作流），否则从 DB 加载
+        Workflow workflow;
+        if (request.Snapshot != null && request.Snapshot.Nodes.Count > 0)
+        {
+            workflow = new Workflow
+            {
+                Id = request.WorkflowId ?? "",
+                Name = request.Snapshot.Name ?? "未命名工作流",
+                Description = request.Snapshot.Description,
+                Nodes = request.Snapshot.Nodes,
+                Edges = request.Snapshot.Edges,
+            };
+        }
+        else if (!string.IsNullOrWhiteSpace(request.WorkflowId))
+        {
+            var dbWorkflow = await _db.Workflows
+                .Find(w => w.Id == request.WorkflowId)
+                .FirstOrDefaultAsync(CancellationToken.None);
+            if (dbWorkflow == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "工作流不存在"));
+            workflow = dbWorkflow;
+        }
+        else
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请提供工作流快照或工作流 ID"));
+        }
 
         // 如果没指定 lastExecutionId，自动找最近一次成功执行
         var lastExecutionId = request.LastExecutionId;
-        if (string.IsNullOrWhiteSpace(lastExecutionId))
+        if (string.IsNullOrWhiteSpace(lastExecutionId) && !string.IsNullOrWhiteSpace(request.WorkflowId))
         {
             var lastExec = await _db.WorkflowExecutions
                 .Find(e => e.WorkflowId == request.WorkflowId && e.Status == WorkflowExecutionStatus.Completed)
@@ -1984,11 +2003,14 @@ public class AnalyzeExecutionRequest
 
 public class AiFillRequest
 {
-    /// <summary>工作流 ID</summary>
-    public string WorkflowId { get; set; } = string.Empty;
+    /// <summary>工作流 ID（用于查找历史执行，可选）</summary>
+    public string? WorkflowId { get; set; }
 
     /// <summary>目标节点 ID</summary>
     public string NodeId { get; set; } = string.Empty;
+
+    /// <summary>当前工作流快照（前端传入，支持未保存的工作流）</summary>
+    public AiFillWorkflowSnapshot? Snapshot { get; set; }
 
     /// <summary>上次执行 ID（可选，为空则自动查找最近成功执行）</summary>
     public string? LastExecutionId { get; set; }
@@ -1998,6 +2020,14 @@ public class AiFillRequest
 
     /// <summary>填写模式: full（全部填写）| optimize（优化已有配置）</summary>
     public string? Mode { get; set; } = "full";
+}
+
+public class AiFillWorkflowSnapshot
+{
+    public string? Name { get; set; }
+    public string? Description { get; set; }
+    public List<WorkflowNode> Nodes { get; set; } = new();
+    public List<WorkflowEdge> Edges { get; set; } = new();
 }
 
 #endregion
