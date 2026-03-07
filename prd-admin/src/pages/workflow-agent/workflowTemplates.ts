@@ -490,10 +490,380 @@ const smartHttpTemplate: WorkflowTemplate = {
 };
 
 // ═══════════════════════════════════════════════════════════════
+// 模板 3: Smart-HTTP 增强验收（零配置一键跑）
+// ═══════════════════════════════════════════════════════════════
+//
+// 前置：node scripts/mock-paginated-api.js
+//
+// 拓扑图：
+//   👆 手动触发
+//     ↓
+//   🤖 智能 HTTP（cursor 分页 + dataPath + delay + retry）
+//     ↓
+//   💻 JS 校验（总数/去重/分布/PASS|FAIL）
+//     ↓      ↓
+//   💾 导出  🔔 通知
+//
+
+const smartHttpAcceptanceTemplate: WorkflowTemplate = {
+  id: 'smart-http-acceptance',
+  name: 'Smart-HTTP 增强验收',
+  description: '一键验收：导入此模板 → 点运行。自动测试 cursor 分页 + 自定义 dataPath + 请求延迟 + 失败重试，校验 50 条数据完整性（使用系统内置 Mock）',
+  icon: '🧪',
+  tags: ['test', 'smart-http', 'acceptance', 'mock'],
+  requiredInputs: [],  // 零表单，直接跑
+  build: () => {
+    _edgeIdx = 0;
+
+    const nodes: WorkflowNode[] = [
+      {
+        nodeId: 'n-trigger',
+        name: '手动触发',
+        nodeType: 'manual-trigger',
+        config: { inputPrompt: '点击运行即可（系统内置 Mock，无需额外操作）' },
+        inputSlots: [],
+        outputSlots: [{ slotId: 'manual-out', name: 'input', dataType: 'json', required: true }],
+        position: { x: 80, y: 300 },
+      },
+      // ── cursor 分页 + dataPath + delay + retry 全覆盖 ──
+      {
+        nodeId: 'n-smart',
+        name: '智能 HTTP (cursor + dataPath)',
+        nodeType: 'smart-http',
+        config: {
+          url: '{{API_BASE}}/api/v1/stub/pagination/cursor?cursor=0&limit=10',
+          method: 'GET',
+          paginationType: 'cursor',
+          dataPath: 'response.result.list',
+          cursorField: 'paging.next_cursor',
+          cursorParam: 'cursor',
+          maxPages: '10',
+          requestDelayMs: '100',
+          retryCount: '1',
+        },
+        inputSlots: [{ slotId: 'smart-in', name: 'context', dataType: 'json', required: false }],
+        outputSlots: [
+          { slotId: 'smart-out', name: 'data', dataType: 'json', required: true },
+          { slotId: 'smart-meta', name: 'meta', dataType: 'json', required: false },
+        ],
+        position: { x: 380, y: 300 },
+      },
+      // ── JS 校验：总数 50、无重复、字段分布 ──
+      {
+        nodeId: 'n-verify',
+        name: '数据校验',
+        nodeType: 'script-executor',
+        config: {
+          language: 'javascript',
+          code: `var items = Array.isArray(data) ? data : [];
+var total = items.length;
+var ids = items.map(function(i){ return i.id; });
+var seen = {};
+var dupes = 0;
+ids.forEach(function(id){ if(seen[id]) dupes++; seen[id]=true; });
+
+var statusMap = {};
+var priorityMap = {};
+items.forEach(function(i){
+  statusMap[i.status] = (statusMap[i.status]||0)+1;
+  priorityMap[i.priority] = (priorityMap[i.priority]||0)+1;
+});
+
+var pass = total === 50 && dupes === 0;
+var L = [];
+L.push("# Smart-HTTP 增强验收报告");
+L.push("");
+L.push("## 结论: " + (pass ? "PASS" : "FAIL"));
+L.push("");
+L.push("## 基础校验");
+L.push("| 指标 | 实际 | 期望 | 结果 |");
+L.push("|------|------|------|------|");
+L.push("| 总条数 | " + total + " | 50 | " + (total===50?"OK":"FAIL") + " |");
+L.push("| 重复记录 | " + dupes + " | 0 | " + (dupes===0?"OK":"FAIL") + " |");
+L.push("| 首条 ID | " + (ids[0]||"?") + " | item-001 | " + (ids[0]==="item-001"?"OK":"FAIL") + " |");
+L.push("| 末条 ID | " + (ids[total-1]||"?") + " | item-050 | " + (ids[total-1]==="item-050"?"OK":"FAIL") + " |");
+L.push("");
+L.push("## 覆盖特性");
+L.push("- cursor 分页: 5 页 x 10 条 = 50 条");
+L.push("- dataPath: response.result.list (嵌套 3 层)");
+L.push("- requestDelayMs: 100ms (每页间隔)");
+L.push("- retryCount: 1 (遇错重试 1 次)");
+L.push("");
+L.push("## 状态分布");
+Object.keys(statusMap).forEach(function(k){ L.push("- "+k+": "+statusMap[k]); });
+L.push("");
+L.push("## 优先级分布");
+Object.keys(priorityMap).forEach(function(k){ L.push("- "+k+": "+priorityMap[k]); });
+
+result = L.join("\\n");`,
+          timeoutSeconds: '10',
+        },
+        inputSlots: [{ slotId: 'script-in', name: 'input', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'script-out', name: 'output', dataType: 'text', required: true }],
+        position: { x: 700, y: 300 },
+      },
+      {
+        nodeId: 'n-export',
+        name: '导出验收报告',
+        nodeType: 'file-exporter',
+        config: { fileFormat: 'markdown', fileName: 'smart-http-acceptance-{{date}}' },
+        inputSlots: [{ slotId: 'export-in', name: 'data', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'export-out', name: 'file', dataType: 'binary', required: true }],
+        position: { x: 1050, y: 180 },
+      },
+      {
+        nodeId: 'n-notify',
+        name: '验收通知',
+        nodeType: 'notification-sender',
+        config: { title: 'Smart-HTTP 验收完成', content: '', level: 'info', attachFromInput: 'cos' },
+        inputSlots: [{ slotId: 'notify-in', name: 'data', dataType: 'json', required: false }],
+        outputSlots: [{ slotId: 'notify-out', name: 'result', dataType: 'json', required: true }],
+        position: { x: 1050, y: 420 },
+      },
+    ];
+
+    const edges: WorkflowEdge[] = [
+      edge('n-trigger', 'manual-out', 'n-smart', 'smart-in'),
+      edge('n-smart', 'smart-out', 'n-verify', 'script-in'),
+      edge('n-verify', 'script-out', 'n-export', 'export-in'),
+      edge('n-verify', 'script-out', 'n-notify', 'notify-in'),
+    ];
+
+    return { nodes, edges, variables: [] };
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════
+// 模板 4: API 数据采集审查（完整表单，正式使用）
+// ═══════════════════════════════════════════════════════════════
+//
+// 拓扑图：
+//   👆 手动触发
+//     ↓
+//   🤖 智能 HTTP（全配置：分页/路径/重试/延迟）
+//     ↓
+//   💻 JS 数据预处理（统计摘要 + 字段分布）
+//     ↓
+//   📝 LLM 报告生成（基于分析指令生成可读报告）
+//     ↓      ↓
+//   💾 导出  🔔 通知
+//
+
+const apiReviewWorkflowTemplate: WorkflowTemplate = {
+  id: 'api-review-workflow',
+  name: 'API 数据采集与审查',
+  description: '配置外部 API → 数据预处理 → LLM 分析报告 → 文件导出 + 站内通知。支持 cursor/offset/page 分页、自定义数据路径、失败重试',
+  icon: '🔍',
+  tags: ['api', 'review', 'smart-http', 'report', 'llm'],
+  requiredInputs: [
+    {
+      key: 'curlCommand',
+      label: 'cURL 命令 / 请求 URL',
+      type: 'textarea',
+      placeholder: "curl 'https://api.example.com/v1/items?page=1&pageSize=20' \\\n  -H 'Authorization: Bearer your-token'",
+      helpTip: '粘贴完整 cURL（自动解析 URL/Headers/Body），或直接填 URL',
+      required: true,
+    },
+    {
+      key: 'method',
+      label: '请求方法',
+      type: 'select',
+      required: true,
+      defaultValue: 'GET',
+      options: [
+        { value: 'GET', label: 'GET' },
+        { value: 'POST', label: 'POST' },
+      ],
+    },
+    {
+      key: 'headers',
+      label: '请求头 (JSON)',
+      type: 'textarea',
+      placeholder: '{"Authorization": "Bearer xxx"}',
+      helpTip: 'cURL 中已包含 Headers 可留空',
+      required: false,
+    },
+    {
+      key: 'paginationType',
+      label: '分页策略',
+      type: 'select',
+      required: true,
+      defaultValue: 'auto',
+      options: [
+        { value: 'auto', label: 'AI 自动检测（推荐）' },
+        { value: 'page', label: 'page/pageSize 页码分页' },
+        { value: 'offset', label: 'offset/limit 偏移分页' },
+        { value: 'cursor', label: 'cursor 游标分页' },
+        { value: 'none', label: '不分页（单次请求）' },
+      ],
+    },
+    {
+      key: 'dataPath',
+      label: '数据路径（留空自动检测）',
+      type: 'text',
+      placeholder: 'response.data.list',
+      helpTip: '响应 JSON 中数据数组的路径，如 result.list。留空自动检测 data/items/results',
+      required: false,
+    },
+    {
+      key: 'cursorField',
+      label: '游标字段路径（cursor 分页时填）',
+      type: 'text',
+      placeholder: 'paging.next_cursor',
+      required: false,
+    },
+  ],
+  build: (inputs) => {
+    _edgeIdx = 0;
+    const curlOrUrl = inputs.curlCommand || '';
+    const method = inputs.method || 'GET';
+    const headers = inputs.headers || '';
+    const paginationType = inputs.paginationType || 'auto';
+    const dataPath = inputs.dataPath || '';
+    const cursorField = inputs.cursorField || '';
+
+    const isCurl = /^\s*curl[\s'"]/.test(curlOrUrl);
+    const smartConfig: Record<string, string> = {
+      paginationType,
+      maxPages: '20',
+      requestDelayMs: '200',
+      retryCount: '1',
+    };
+    if (isCurl) {
+      smartConfig.curlCommand = curlOrUrl;
+    } else {
+      smartConfig.url = curlOrUrl;
+      smartConfig.method = method;
+    }
+    if (headers) smartConfig.headers = headers;
+    if (dataPath) smartConfig.dataPath = dataPath;
+    if (cursorField) smartConfig.cursorField = cursorField;
+
+    const defaultAnalysis = `请对以下数据进行全面分析，输出结构化的审查报告：
+
+1. **数据概览**：总条数、字段列表、数据时间范围
+2. **分组统计**：自动识别分类字段，按每个字段分组计数
+3. **异常检测**：数据缺失、重复记录、异常值
+4. **趋势分析**：如有日期字段，按周/月统计趋势
+5. **关键发现与建议**：基于数据给出 3-5 条核心洞察
+
+以 Markdown 格式输出，包含标题、表格和要点列表。`;
+
+    const nodes: WorkflowNode[] = [
+      {
+        nodeId: 'n-trigger',
+        name: '手动触发',
+        nodeType: 'manual-trigger',
+        config: { inputPrompt: '点击开始采集' },
+        inputSlots: [],
+        outputSlots: [{ slotId: 'manual-out', name: 'input', dataType: 'json', required: true }],
+        position: { x: 80, y: 300 },
+      },
+      {
+        nodeId: 'n-smart',
+        name: '智能 HTTP 采集',
+        nodeType: 'smart-http',
+        config: smartConfig,
+        inputSlots: [{ slotId: 'smart-in', name: 'context', dataType: 'json', required: false }],
+        outputSlots: [
+          { slotId: 'smart-out', name: 'data', dataType: 'json', required: true },
+          { slotId: 'smart-meta', name: 'meta', dataType: 'json', required: false },
+        ],
+        position: { x: 380, y: 300 },
+      },
+      {
+        nodeId: 'n-preprocess',
+        name: '数据预处理',
+        nodeType: 'script-executor',
+        config: {
+          language: 'javascript',
+          code: `var items = Array.isArray(data) ? data : (data ? [data] : []);
+var total = items.length;
+var fieldCounts = {};
+items.forEach(function(item) {
+  Object.keys(item).forEach(function(k) {
+    fieldCounts[k] = (fieldCounts[k] || 0) + (item[k] != null && item[k] !== '' ? 1 : 0);
+  });
+});
+var groupStats = {};
+Object.keys(fieldCounts).forEach(function(field) {
+  var values = {};
+  var uniqueCount = 0;
+  items.forEach(function(item) {
+    var v = String(item[field] || '(空)');
+    if (!values[v]) { values[v] = 0; uniqueCount++; }
+    if (uniqueCount <= 30) values[v]++;
+  });
+  if (uniqueCount > 1 && uniqueCount <= 30) {
+    groupStats[field] = values;
+  }
+});
+var emptyRates = {};
+Object.keys(fieldCounts).forEach(function(k) {
+  var emptyCount = total - fieldCounts[k];
+  if (emptyCount > 0) emptyRates[k] = (emptyCount / total * 100).toFixed(1) + '%';
+});
+result = {
+  summary: { totalRecords: total, fieldCount: Object.keys(fieldCounts).length, fields: Object.keys(fieldCounts) },
+  groupStats: groupStats,
+  dataQuality: { emptyRates: emptyRates },
+  rawData: items,
+  sampleRecords: items.slice(0, 5)
+};`,
+          timeoutSeconds: '30',
+        },
+        inputSlots: [{ slotId: 'script-in', name: 'input', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'script-out', name: 'output', dataType: 'json', required: true }],
+        position: { x: 680, y: 300 },
+      },
+      {
+        nodeId: 'n-report',
+        name: 'LLM 分析报告',
+        nodeType: 'report-generator',
+        config: { reportTemplate: defaultAnalysis, format: 'markdown' },
+        inputSlots: [{ slotId: 'report-in', name: 'data', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'report-out', name: 'report', dataType: 'text', required: true }],
+        position: { x: 980, y: 300 },
+      },
+      {
+        nodeId: 'n-export',
+        name: '导出报告',
+        nodeType: 'file-exporter',
+        config: { fileFormat: 'markdown', fileName: 'api-review-{{date}}' },
+        inputSlots: [{ slotId: 'export-in', name: 'data', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'export-out', name: 'file', dataType: 'binary', required: true }],
+        position: { x: 1300, y: 180 },
+      },
+      {
+        nodeId: 'n-notify',
+        name: '完成通知',
+        nodeType: 'notification-sender',
+        config: { title: 'API 数据审查报告已生成', content: '', level: 'success', attachFromInput: 'cos' },
+        inputSlots: [{ slotId: 'notify-in', name: 'data', dataType: 'json', required: false }],
+        outputSlots: [{ slotId: 'notify-out', name: 'result', dataType: 'json', required: true }],
+        position: { x: 1300, y: 420 },
+      },
+    ];
+
+    const edges: WorkflowEdge[] = [
+      edge('n-trigger', 'manual-out', 'n-smart', 'smart-in'),
+      edge('n-smart', 'smart-out', 'n-preprocess', 'script-in'),
+      edge('n-preprocess', 'script-out', 'n-report', 'report-in'),
+      edge('n-report', 'report-out', 'n-export', 'export-in'),
+      edge('n-report', 'report-out', 'n-notify', 'notify-in'),
+    ];
+
+    return { nodes, edges, variables: [] };
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════
 // 注册表
 // ═══════════════════════════════════════════════════════════════
 
 export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   tapdBugCollectionTemplate,
   smartHttpTemplate,
+  smartHttpAcceptanceTemplate,
+  apiReviewWorkflowTemplate,
 ];

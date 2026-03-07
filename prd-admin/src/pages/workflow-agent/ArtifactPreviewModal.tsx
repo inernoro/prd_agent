@@ -365,7 +365,22 @@ function escapeHtml(s: string): string {
 }
 
 function renderMarkdown(md: string): string {
-  const html = md
+  // ── 1. 先提取 Markdown 表格，转为 HTML table ──
+  const tableRegex = /^(\|.+\|)\n(\|[\s:|-]+\|)\n((?:\|.+\|\n?)+)/gm;
+  let processed = md.replace(tableRegex, (_match, headerLine: string, _sepLine: string, bodyBlock: string) => {
+    const headers = headerLine.split('|').filter((_: string, i: number, a: string[]) => i > 0 && i < a.length - 1).map((h: string) => h.trim());
+    const rows = bodyBlock.trim().split('\n').map((row: string) =>
+      row.split('|').filter((_: string, i: number, a: string[]) => i > 0 && i < a.length - 1).map((c: string) => c.trim())
+    );
+    const thStyle = 'padding:6px 10px;text-align:left;border-bottom:2px solid rgba(255,255,255,0.15);font-size:12px;font-weight:600;color:var(--text-primary)';
+    const tdStyle = 'padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.06);font-size:12px;color:var(--text-secondary)';
+    const ths = headers.map((h: string) => `<th style="${thStyle}">${h}</th>`).join('');
+    const trs = rows.map((cols: string[]) => `<tr>${cols.map((c: string) => `<td style="${tdStyle}">${c}</td>`).join('')}</tr>`).join('');
+    return `<table style="width:100%;border-collapse:collapse;margin:12px 0;border:1px solid rgba(255,255,255,0.08);border-radius:6px;overflow:hidden"><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`;
+  });
+
+  // ── 2. 其余 Markdown 元素 ──
+  const html = processed
     .replace(/```[\s\S]*?```/g, (m) => {
       const code = m.replace(/```\w*\n?/, '').replace(/\n?```$/, '');
       return `<pre style="background:rgba(0,0,0,0.3);padding:12px;border-radius:8px;overflow-x:auto;font-size:12px;line-height:1.5;border:1px solid rgba(255,255,255,0.08)"><code>${escapeHtml(code)}</code></pre>`;
