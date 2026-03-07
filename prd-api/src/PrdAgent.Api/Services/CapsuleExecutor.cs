@@ -1379,7 +1379,14 @@ public static class CapsuleExecutor
         if (string.IsNullOrWhiteSpace(finalUrl) && !string.IsNullOrWhiteSpace(workspaceId) && !string.IsNullOrWhiteSpace(bugIdValue))
             finalUrl = $"https://www.tapd.cn/tapd_fe/{workspaceId}/bug/detail/{bugIdValue}";
 
-        return new JsonObject
+        // 从 description 字段中提取外部链接（如语雀溯源报告链接）
+        var descriptionRaw = Get("description");
+        var descriptionLinks = ExtractUrlsFromHtmlOrText(descriptionRaw);
+
+        if (logs != null && descriptionLinks.Count > 0)
+            logs.AppendLine($"  [DEBUG] 描述中提取到 {descriptionLinks.Count} 个链接: {string.Join(", ", descriptionLinks.Take(3))}");
+
+        var result = new JsonObject
         {
             ["缺陷ID"] = bugIdValue,
             ["标题"] = Get("title"),
@@ -1404,9 +1411,11 @@ public static class CapsuleExecutor
             ["影响范围"] = Get("custom_field_13"),
             ["结构归母"] = Get("custom_field_one"),
             ["URL链接"] = finalUrl,
+            ["描述中的链接"] = descriptionLinks.Count > 0 ? string.Join(" | ", descriptionLinks) : "",
             ["是否历史问题"] = isHistorical,
             ["及时处理"] = timelyFixed,
         };
+        return result;
     }
 
     /// <summary>
@@ -1424,6 +1433,9 @@ public static class CapsuleExecutor
         var url = "";
         if (!string.IsNullOrWhiteSpace(workspaceId) && !string.IsNullOrWhiteSpace(bugIdValue))
             url = $"https://www.tapd.cn/tapd_fe/{workspaceId}/bug/detail/{bugIdValue}";
+
+        // Phase 1 搜索结果中也可能包含 description 字段
+        var descriptionLinks = ExtractUrlsFromHtmlOrText(Get("description"));
 
         return new JsonObject
         {
@@ -1450,6 +1462,7 @@ public static class CapsuleExecutor
             ["影响范围"] = Get("custom_field_13"),
             ["结构归母"] = Get("custom_field_one"),
             ["URL链接"] = url,
+            ["描述中的链接"] = descriptionLinks.Count > 0 ? string.Join(" | ", descriptionLinks) : "",
             ["是否历史问题"] = "",
             ["及时处理"] = "",
         };
@@ -2231,6 +2244,7 @@ public static class CapsuleExecutor
                 ["缺陷ID"] = Get(i, "缺陷ID"),
                 ["标题"] = Get(i, "标题"),
                 ["URL链接"] = Get(i, "URL链接"),
+                ["描述中的链接"] = Get(i, "描述中的链接"),
                 ["处理人"] = Get(i, "处理人"),
                 ["创建人"] = Get(i, "创建人"),
                 ["状态"] = Get(i, "状态"),
@@ -2420,6 +2434,7 @@ public static class CapsuleExecutor
                     ["缺陷ID"] = Get(i, "缺陷ID"),
                     ["标题"] = Get(i, "标题"),
                     ["URL链接"] = Get(i, "URL链接"),
+                    ["描述中的链接"] = Get(i, "描述中的链接"),
                     ["处理人"] = Get(i, "处理人"),
                     ["创建人"] = Get(i, "创建人"),
                     ["缺陷等级"] = Get(i, "缺陷等级"),
@@ -2499,6 +2514,34 @@ public static class CapsuleExecutor
     }
 
     /// <summary>从 JSON 元素中提取字段值（支持嵌套路径如 "Bug.severity"）</summary>
+    /// <summary>
+    /// 从 HTML 或纯文本中提取所有 http/https URL（过滤 TAPD 内部链接，保留外部文档链接如语雀等）。
+    /// TAPD description 字段可能是 HTML（含 &lt;a href="..."&gt;）或纯文本。
+    /// </summary>
+    private static List<string> ExtractUrlsFromHtmlOrText(string content)
+    {
+        var urls = new List<string>();
+        if (string.IsNullOrWhiteSpace(content)) return urls;
+
+        // 匹配 href="url" 中的 URL（HTML 模式）和纯文本中的 URL
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (System.Text.RegularExpressions.Match m in
+            System.Text.RegularExpressions.Regex.Matches(content,
+                @"(?:href\s*=\s*[""']?\s*|(?<!\w))(https?://[^\s""'<>\]）》]+)",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+        {
+            var url = m.Groups[1].Value.TrimEnd('.', ',', ')', '>', '）', '》', ';');
+            // 跳过 TAPD 内部链接（已有 URL链接 字段）和常见静态资源
+            if (url.Contains("tapd.cn", StringComparison.OrdinalIgnoreCase)) continue;
+            if (url.EndsWith(".js", StringComparison.OrdinalIgnoreCase) ||
+                url.EndsWith(".css", StringComparison.OrdinalIgnoreCase) ||
+                url.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ||
+                url.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)) continue;
+            if (seen.Add(url)) urls.Add(url);
+        }
+        return urls;
+    }
+
     private static string? ExtractFieldValue(JsonElement item, string fieldPath)
     {
         var current = item;
@@ -3159,6 +3202,10 @@ document.addEventListener('keydown', (e) => {
 - 按等级分组展示（先 P0 后 P1）
 - 每条缺陷渲染为一个卡片，包含：
   - **问题描述**（标题字段），作为**可点击的超链接**，`<a href=""URL链接"" target=""_blank"">` 跳转到 TAPD
+  - 如果该缺陷的 `描述中的链接` 字段非空，**必须额外渲染为独立的链接行**（通常是语雀溯源报告等外部文档）。格式：
+    - 将 `描述中的链接` 按 ` | ` 分隔拆分为多个 URL
+    - 每个 URL 渲染为 `<a href=""url"" target=""_blank"" class=""doc-link"">url</a>`
+    - 如果能从 URL 路径推断文档标题（如语雀链接），可在链接后附加描述
   - 链接文字使用蓝色高亮，带下划线 hover 效果
   - 处理人/创建人 显示在缺陷描述下方
 - 示例 HTML 结构：
@@ -3166,6 +3213,9 @@ document.addEventListener('keydown', (e) => {
 <h3>P0</h3>
 <div class=""defect-card"">
   <a href=""https://www.tapd.cn/..."" target=""_blank"" class=""defect-link"">问题描述：XXX功能异常无法使用</a>
+  <div class=""defect-doc-links"">
+    <a href=""https://xxx.yuque.com/..."" target=""_blank"" class=""doc-link"">https://xxx.yuque.com/...《溯源报告》</a>
+  </div>
   <div class=""defect-meta"">处理人：张三 | 创建人：李四</div>
 </div>
 ```
@@ -3175,6 +3225,7 @@ document.addEventListener('keydown', (e) => {
 - 每个类别作为独立分区，标题如「挂起：N个」「临时解决：N个」「未及时处理：N个」
 - 每条缺陷用**带编号的列表**展示：
   - 缺陷标题作为**可点击超链接**跳转 TAPD
+  - 如果 `描述中的链接` 非空，在标题下方额外渲染为独立链接行（语雀等外部文档链接）
   - 标题后面或下方显示「处理人：XXX，创建人：YYY」
 - 链接样式：蓝色文字 (`color: #38bdf8` 深色模式 / `color: #1d4ed8` 浅色模式)，hover 加下划线
 
@@ -3195,6 +3246,12 @@ document.addEventListener('keydown', (e) => {
   transition: all 200ms ease; cursor: pointer;
 }
 .defect-link:hover { color: #7dd3fc; border-bottom-color: #7dd3fc; }
+.doc-link {
+  color: #38bdf8; text-decoration: none; font-size: 14px; word-break: break-all;
+  border-bottom: 1px dashed rgba(56,189,248,0.3); transition: all 200ms ease; cursor: pointer;
+}
+.doc-link:hover { color: #7dd3fc; border-bottom-color: #7dd3fc; }
+.defect-doc-links { margin: 6px 0 4px 0; padding-left: 8px; border-left: 2px solid rgba(56,189,248,0.3); }
 .defect-meta { font-size: 13px; opacity: 0.65; margin-top: 4px; }
 ```";
 
