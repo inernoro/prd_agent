@@ -94,23 +94,21 @@ export default function DefectAgentPage() {
         actions={
           <>
             {/* 项目/团队筛选 */}
-            {projects.length > 0 && (
-              <select
-                value={projectFilter}
-                onChange={(e) => setProjectFilter(e.target.value)}
-                className="h-7 px-2 rounded-lg text-[12px] outline-none"
-                style={{
-                  background: 'rgba(255,255,255,0.06)',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  color: projectFilter ? 'var(--text-primary)' : 'var(--text-muted)',
-                }}
-              >
-                <option value="">全部项目</option>
-                {projects.filter(p => !p.isArchived).map((p) => (
-                  <option key={p.id} value={p.id}>[{p.key}] {p.name}</option>
-                ))}
-              </select>
-            )}
+            <select
+              value={projectFilter}
+              onChange={(e) => setProjectFilter(e.target.value)}
+              className="h-7 px-2 rounded-lg text-[12px] outline-none"
+              style={{
+                background: 'rgba(255,255,255,0.06)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                color: projectFilter ? 'var(--text-primary)' : 'var(--text-muted)',
+              }}
+            >
+              <option value="">全部项目</option>
+              {projects.filter(p => !p.isArchived).map((p) => (
+                <option key={p.id} value={p.id}>[{p.key}] {p.name}</option>
+              ))}
+            </select>
             {teams.length > 0 && (
               <select
                 value={teamFilter}
