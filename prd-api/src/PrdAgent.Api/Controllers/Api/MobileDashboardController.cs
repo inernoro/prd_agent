@@ -228,6 +228,7 @@ public class MobileDashboardController : ControllerBase
             ["image"] = allAssets.Count(a => a.Type == "image"),
             ["document"] = allAssets.Count(a => a.Type == "document"),
             ["attachment"] = allAssets.Count(a => a.Type == "attachment"),
+            ["webpage"] = allAssets.Count(a => a.Type == "webpage"),
         };
         var totalSizeBytes = allAssets.Sum(a => a.SizeBytes);
 

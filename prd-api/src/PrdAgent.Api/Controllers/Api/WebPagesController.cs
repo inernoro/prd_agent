@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Security.Claims;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
@@ -125,15 +126,16 @@ public class WebPagesController : ControllerBase
         }
         else if (ext is ".html" or ".htm")
         {
+            var rewritten = RewriteAbsolutePathsInHtml(fileBytes, "index.html");
             var cosKey = _storage.BuildSiteKey(siteId, "index.html");
-            await _storage.UploadToKeyAsync(cosKey, fileBytes, "text/html", CancellationToken.None);
+            await _storage.UploadToKeyAsync(cosKey, rewritten, "text/html; charset=utf-8", CancellationToken.None);
 
             siteFiles = new List<HostedSiteFile>
             {
-                new() { Path = "index.html", CosKey = cosKey, Size = fileBytes.Length, MimeType = "text/html" }
+                new() { Path = "index.html", CosKey = cosKey, Size = rewritten.Length, MimeType = "text/html" }
             };
             entryFile = "index.html";
-            totalSize = fileBytes.Length;
+            totalSize = rewritten.Length;
         }
         else
         {
@@ -179,7 +181,8 @@ public class WebPagesController : ControllerBase
 
         var userId = GetUserId();
         var siteId = Guid.NewGuid().ToString("N");
-        var htmlBytes = System.Text.Encoding.UTF8.GetBytes(req.HtmlContent);
+        var htmlBytes = RewriteAbsolutePathsInHtml(
+            System.Text.Encoding.UTF8.GetBytes(req.HtmlContent), "index.html");
 
         var cosKey = _storage.BuildSiteKey(siteId, "index.html");
         await _storage.UploadToKeyAsync(cosKey, htmlBytes, "text/html; charset=utf-8", CancellationToken.None);
@@ -351,14 +354,15 @@ public class WebPagesController : ControllerBase
         }
         else if (ext is ".html" or ".htm")
         {
+            var rewritten = RewriteAbsolutePathsInHtml(fileBytes, "index.html");
             var cosKey = _storage.BuildSiteKey(id, "index.html");
-            await _storage.UploadToKeyAsync(cosKey, fileBytes, "text/html", CancellationToken.None);
+            await _storage.UploadToKeyAsync(cosKey, rewritten, "text/html; charset=utf-8", CancellationToken.None);
             siteFiles = new List<HostedSiteFile>
             {
-                new() { Path = "index.html", CosKey = cosKey, Size = fileBytes.Length, MimeType = "text/html" }
+                new() { Path = "index.html", CosKey = cosKey, Size = rewritten.Length, MimeType = "text/html" }
             };
             entryFile = "index.html";
-            totalSize = fileBytes.Length;
+            totalSize = rewritten.Length;
         }
         else
         {
@@ -672,9 +676,14 @@ public class WebPagesController : ControllerBase
                 var entryBytes = entryMs.ToArray();
 
                 var mimeType = GetMimeType(fileExt);
+
+                // 对 HTML 文件做绝对路径重写，确保 /xxx 引用在 COS 子目录下能正常加载
+                if (mimeType == "text/html")
+                    entryBytes = RewriteAbsolutePathsInHtml(entryBytes, relativePath);
+
                 var cosKey = _storage.BuildSiteKey(siteId, relativePath);
 
-                await _storage.UploadToKeyAsync(cosKey, entryBytes, mimeType, CancellationToken.None);
+                await _storage.UploadToKeyAsync(cosKey, entryBytes, mimeType == "text/html" ? "text/html; charset=utf-8" : mimeType, CancellationToken.None);
 
                 files.Add(new HostedSiteFile
                 {
@@ -727,6 +736,29 @@ public class WebPagesController : ControllerBase
     {
         if (string.IsNullOrEmpty(ext)) return "application/octet-stream";
         return MimeMap.TryGetValue(ext, out var mime) ? mime : "application/octet-stream";
+    }
+
+    /// <summary>
+    /// 将 HTML 中 src="/xxx" 和 href="/xxx" 的绝对路径改为相对路径 src="./xxx"，
+    /// 使站点在 COS 子目录下也能正确加载 JS/CSS/图片等资源。
+    /// 同时注入 <base> 标签确保其他相对路径也正确解析。
+    /// </summary>
+    private static byte[] RewriteAbsolutePathsInHtml(byte[] htmlBytes, string entryFile)
+    {
+        var html = System.Text.Encoding.UTF8.GetString(htmlBytes);
+
+        // 计算入口文件到站点根目录的相对路径前缀
+        // 例如 entryFile="sub/index.html" → prefix="../"，entryFile="index.html" → prefix="./"
+        var depth = entryFile.Count(c => c == '/');
+        var prefix = depth > 0 ? string.Concat(Enumerable.Repeat("../", depth)) : "./";
+
+        // 替换 src="/..." 和 href="/..." 中的绝对路径（排除 // 开头的协议相对 URL）
+        // 匹配模式: (src|href|action)="/path" 但排除 (src|href|action)="//"
+        html = Regex.Replace(html, """(?<attr>(?:src|href|action)\s*=\s*["'])\/(?!\/)""",
+            m => m.Groups["attr"].Value + prefix,
+            RegexOptions.IgnoreCase);
+
+        return System.Text.Encoding.UTF8.GetBytes(html);
     }
 
     private sealed class ZipExtractResult

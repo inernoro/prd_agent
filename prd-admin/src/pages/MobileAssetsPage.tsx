@@ -1,16 +1,17 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
-import { Image, FileText, Paperclip, FolderOpen, Loader2 } from 'lucide-react';
+import { Image, FileText, Paperclip, FolderOpen, Globe, Loader2 } from 'lucide-react';
 import { getMobileAssets } from '@/services';
 import type { MobileAssetItem } from '@/services/contracts/mobile';
 
 /* ── Tab 定义 ── */
-type AssetTab = 'all' | 'image' | 'document' | 'attachment';
+type AssetTab = 'all' | 'image' | 'document' | 'attachment' | 'webpage';
 
 const TABS: { key: AssetTab; label: string; icon: typeof Image }[] = [
   { key: 'all',        label: '全部', icon: FolderOpen },
   { key: 'image',      label: '图片', icon: Image },
   { key: 'document',   label: '文档', icon: FileText },
   { key: 'attachment', label: '附件', icon: Paperclip },
+  { key: 'webpage',    label: '网页', icon: Globe },
 ];
 
 /**
