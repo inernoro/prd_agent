@@ -350,7 +350,7 @@ export function ArtifactPreviewModal({ artifact, onClose }: ArtifactPreviewModal
                 className="w-full h-full rounded-xl"
                 style={{
                   border: '1px solid rgba(255,255,255,0.08)',
-                  background: '#fff',
+                  background: 'transparent',
                 }}
                 title={artifact.name}
               />

@@ -2938,8 +2938,24 @@ document.addEventListener('keydown', (e) => {
             systemPrompt += @"
 
 ## 图表要求
-- 使用 Chart.js (通过 CDN: https://cdn.jsdelivr.net/npm/chart.js)
-- 图表配色与整体网页风格协调（深色背景下使用明亮色系）
+- 优先使用**纯 CSS + HTML**实现简单图表（进度条、占比条、数字卡片）
+- 如果数据复杂确实需要饼图/折线图/柱状图，使用 Chart.js (CDN: https://cdn.jsdelivr.net/npm/chart.js)
+- **Chart.js 必须容错加载**，使用以下模式：
+```html
+<script src=""https://cdn.jsdelivr.net/npm/chart.js"" onerror=""window.__chartjsFailed=true""></script>
+<script>
+// 每个图表初始化都包裹在检查中
+function safeChart(canvasId, config) {
+  if (window.__chartjsFailed || typeof Chart === 'undefined') {
+    var el = document.getElementById(canvasId);
+    if (el) el.parentElement.innerHTML = '<div style=""padding:20px;text-align:center;opacity:0.5"">图表库加载失败，请在新标签页打开查看</div>';
+    return;
+  }
+  new Chart(document.getElementById(canvasId), config);
+}
+</script>
+```
+- 图表配色与整体风格协调（深色背景下使用明亮色系）
 - 每个图表独占或最多两个共享一张幻灯片
 - 图表需要有清晰的标题和图例
 - canvas 需设置合理的 max-height，避免图表过大";
