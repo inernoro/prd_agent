@@ -2,7 +2,7 @@ import {
   Timer, Webhook, Hand, Upload,
   Database, Globe, Brain, Code2, Filter, Merge, Repeat, BarChart3,
   Clock, GitBranch,
-  FileText, Download, Send, Bell, Box,
+  FileText, Download, Send, Bell, Box, AppWindow,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -219,6 +219,16 @@ export const CAPSULE_TYPE_REGISTRY: Record<string, CapsuleTypeDef> = {
     accentHue: 150,
     testable: true,
   },
+  'webpage-generator': {
+    typeKey: 'webpage-generator',
+    name: '网页报告',
+    description: 'LLM 生成精美可下载 HTML 网页',
+    Icon: AppWindow,
+    emoji: '🌐',
+    category: 'output',
+    accentHue: 220,
+    testable: true,
+  },
   'file-exporter': {
     typeKey: 'file-exporter',
     name: '文件导出',
@@ -310,6 +320,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   'send': Send,
   'bell': Bell,
   'bar-chart': BarChart3,
+  'app-window': AppWindow,
 };
 
 const EMOJI_MAP: Record<string, string> = {
@@ -329,6 +340,7 @@ const EMOJI_MAP: Record<string, string> = {
   'delay': '⏳',
   'condition': '🔀',
   'report-generator': '📝',
+  'webpage-generator': '🌐',
   'file-exporter': '💾',
   'webhook-sender': '📡',
   'notification-sender': '🔔',

@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { X, Download, Copy, Check, FileText, Code, Eye, Table2, ChevronDown } from 'lucide-react';
+import { useMemo, useRef, useState } from 'react';
+import { X, Download, Copy, Check, FileText, Code, Eye, Table2, ChevronDown, ExternalLink, Maximize2, Minimize2 } from 'lucide-react';
 import type { ExecutionArtifact } from '@/services/contracts/workflowAgent';
 
 interface ArtifactPreviewModalProps {
@@ -11,11 +11,15 @@ export function ArtifactPreviewModal({ artifact, onClose }: ArtifactPreviewModal
   const [copied, setCopied] = useState(false);
   const [viewMode, setViewMode] = useState<'preview' | 'raw'>('preview');
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
+  const [iframeFullscreen, setIframeFullscreen] = useState(false);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
 
   const content = artifact.inlineContent || '';
   const isMarkdown = artifact.mimeType === 'text/markdown' || artifact.name.endsWith('.md');
   const isHtml = artifact.mimeType === 'text/html';
   const isJson = artifact.mimeType === 'application/json';
+  // 检测是否为完整 HTML 文档（含 <!DOCTYPE 或 <html 标签）
+  const isFullHtmlPage = isHtml && /<!doctype\s+html|<html[\s>]/i.test(content.slice(0, 200));
 
   // 检测是否为 JSON 数组（TAPD bugs 等表格数据），不依赖 mimeType
   const jsonArray = useMemo<Record<string, unknown>[] | null>(() => {
@@ -78,6 +82,14 @@ export function ArtifactPreviewModal({ artifact, onClose }: ArtifactPreviewModal
     downloadBlob(mdContent, `${baseName}.md`, 'text/markdown');
   }
 
+  const handleOpenInNewTab = () => {
+    const blob = new Blob([content], { type: 'text/html; charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+    // 延迟回收，给浏览器时间加载
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  };
+
   const handleDownloadDefault = () => {
     if (artifact.cosUrl) { window.open(artifact.cosUrl, '_blank'); return; }
     const ext = artifact.mimeType === 'text/markdown' ? '.md'
@@ -135,6 +147,17 @@ export function ArtifactPreviewModal({ artifact, onClose }: ArtifactPreviewModal
                   ? (jsonArray ? <Code className="w-4 h-4" /> : <Code className="w-4 h-4" />)
                   : (jsonArray ? <Table2 className="w-4 h-4" /> : <Eye className="w-4 h-4" />)
                 }
+              </button>
+            )}
+            {/* 在新标签页打开 (仅完整 HTML) */}
+            {isFullHtmlPage && (
+              <button
+                onClick={handleOpenInNewTab}
+                className="p-1.5 rounded-lg transition-colors"
+                style={{ color: 'var(--text-muted)' }}
+                title="在新标签页打开"
+              >
+                <ExternalLink className="w-4 h-4" />
               </button>
             )}
             {/* 复制 */}
@@ -300,7 +323,41 @@ export function ArtifactPreviewModal({ artifact, onClose }: ArtifactPreviewModal
             />
           )}
 
-          {content && viewMode === 'preview' && isHtml && (
+          {content && viewMode === 'preview' && isHtml && isFullHtmlPage && (
+            <div className="relative" style={{ height: iframeFullscreen ? '100%' : 'calc(85vh - 120px)' }}>
+              <div className="absolute top-2 right-2 z-10 flex items-center gap-1">
+                <button
+                  onClick={handleOpenInNewTab}
+                  className="p-1.5 rounded-lg transition-colors"
+                  style={{ background: 'rgba(0,0,0,0.6)', color: 'rgba(255,255,255,0.8)' }}
+                  title="在新标签页打开"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => setIframeFullscreen(!iframeFullscreen)}
+                  className="p-1.5 rounded-lg transition-colors"
+                  style={{ background: 'rgba(0,0,0,0.6)', color: 'rgba(255,255,255,0.8)' }}
+                  title={iframeFullscreen ? '退出全屏' : '全屏预览'}
+                >
+                  {iframeFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+              <iframe
+                ref={iframeRef}
+                srcDoc={content}
+                sandbox="allow-scripts allow-same-origin"
+                className="w-full h-full rounded-xl"
+                style={{
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  background: '#fff',
+                }}
+                title={artifact.name}
+              />
+            </div>
+          )}
+
+          {content && viewMode === 'preview' && isHtml && !isFullHtmlPage && (
             <div
               className="text-[13px] leading-relaxed"
               style={{ color: 'var(--text-secondary)' }}
