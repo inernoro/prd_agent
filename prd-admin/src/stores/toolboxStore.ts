@@ -258,6 +258,7 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
 
   // Load all items (builtin + custom)
   loadItems: async () => {
+    if (get().itemsLoading) return; // 防止并发重复加载
     set({ itemsLoading: true });
     try {
       const res = await listToolboxItems();
