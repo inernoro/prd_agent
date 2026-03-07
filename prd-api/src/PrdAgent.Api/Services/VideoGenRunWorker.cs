@@ -1287,40 +1287,40 @@ public class VideoGenRunWorker : BackgroundService
     private static string GenerateHtmlPlayer(string dataJson, VideoGenRun run)
     {
         var title = System.Net.WebUtility.HtmlEncode(run.ArticleTitle ?? "技术教程");
-        return $"""
+        return $$"""
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{title}</title>
+<title>{{title}}</title>
 <style>
-*{{margin:0;padding:0;box-sizing:border-box}}
-body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0a0a0a;color:#e8e8e8;min-height:100vh;display:flex;flex-direction:column;align-items:center}}
-.header{{padding:2rem;text-align:center;max-width:900px}}
-.header h1{{font-size:1.8rem;margin-bottom:.5rem}}
-.header p{{color:#888;font-size:.9rem}}
-.scene-container{{max-width:900px;width:100%;padding:0 1.5rem 3rem}}
-.scene{{background:#1a1a1a;border-radius:12px;margin-bottom:1.5rem;overflow:hidden;border:1px solid #2a2a2a;transition:border-color .2s}}
-.scene:hover{{border-color:#444}}
-.scene-header{{display:flex;align-items:center;gap:.75rem;padding:1rem 1.25rem;background:#111;border-bottom:1px solid #2a2a2a}}
-.scene-num{{background:#333;color:#ccc;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.75rem;font-weight:600;flex-shrink:0}}
-.scene-topic{{font-weight:600;font-size:1rem}}
-.scene-dur{{margin-left:auto;color:#666;font-size:.8rem}}
-.scene-body{{padding:1.25rem}}
-.scene-body .narration{{line-height:1.7;margin-bottom:1rem;color:#ccc}}
-.scene-body .visual{{color:#888;font-size:.85rem;font-style:italic;padding:.75rem;background:#111;border-radius:8px}}
-.bg-img{{width:100%;max-height:400px;object-fit:cover}}
-.controls{{position:fixed;bottom:0;left:0;right:0;background:rgba(10,10,10,.95);backdrop-filter:blur(10px);padding:.75rem 1.5rem;display:flex;align-items:center;justify-content:center;gap:1rem;border-top:1px solid #222}}
-.controls button{{background:#333;color:#e8e8e8;border:none;padding:.5rem 1.25rem;border-radius:8px;cursor:pointer;font-size:.85rem}}
-.controls button:hover{{background:#444}}
-.controls .current{{color:#888;font-size:.85rem;min-width:80px;text-align:center}}
-.scene.active{{border-color:#4a9eff}}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0a0a0a;color:#e8e8e8;min-height:100vh;display:flex;flex-direction:column;align-items:center}
+.header{padding:2rem;text-align:center;max-width:900px}
+.header h1{font-size:1.8rem;margin-bottom:.5rem}
+.header p{color:#888;font-size:.9rem}
+.scene-container{max-width:900px;width:100%;padding:0 1.5rem 3rem}
+.scene{background:#1a1a1a;border-radius:12px;margin-bottom:1.5rem;overflow:hidden;border:1px solid #2a2a2a;transition:border-color .2s}
+.scene:hover{border-color:#444}
+.scene-header{display:flex;align-items:center;gap:.75rem;padding:1rem 1.25rem;background:#111;border-bottom:1px solid #2a2a2a}
+.scene-num{background:#333;color:#ccc;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.75rem;font-weight:600;flex-shrink:0}
+.scene-topic{font-weight:600;font-size:1rem}
+.scene-dur{margin-left:auto;color:#666;font-size:.8rem}
+.scene-body{padding:1.25rem}
+.scene-body .narration{line-height:1.7;margin-bottom:1rem;color:#ccc}
+.scene-body .visual{color:#888;font-size:.85rem;font-style:italic;padding:.75rem;background:#111;border-radius:8px}
+.bg-img{width:100%;max-height:400px;object-fit:cover}
+.controls{position:fixed;bottom:0;left:0;right:0;background:rgba(10,10,10,.95);backdrop-filter:blur(10px);padding:.75rem 1.5rem;display:flex;align-items:center;justify-content:center;gap:1rem;border-top:1px solid #222}
+.controls button{background:#333;color:#e8e8e8;border:none;padding:.5rem 1.25rem;border-radius:8px;cursor:pointer;font-size:.85rem}
+.controls button:hover{background:#444}
+.controls .current{color:#888;font-size:.85rem;min-width:80px;text-align:center}
+.scene.active{border-color:#4a9eff}
 </style>
 </head>
 <body>
 <div class="header">
-  <h1>{title}</h1>
+  <h1>{{title}}</h1>
   <p>共 <span id="total"></span> 个场景 · 总时长 <span id="duration"></span></p>
 </div>
 <div class="scene-container" id="scenes"></div>
@@ -1330,25 +1330,25 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
   <button onclick="go(1)">下一场景 ▶</button>
 </div>
 <script>
-const data = {dataJson};
+const data = {{dataJson}};
 let cur = 0;
 document.getElementById('total').textContent = data.scenes.length;
 document.getElementById('duration').textContent = data.scenes.reduce((s,x)=>s+x.durationSeconds,0).toFixed(1)+'s';
 const container = document.getElementById('scenes');
-data.scenes.forEach((s,i) => {{
+data.scenes.forEach((s,i) => {
   const el = document.createElement('div');
   el.className = 'scene' + (i===0?' active':'');
   el.id = 'scene-'+i;
-  el.innerHTML = `<div class="scene-header"><span class="scene-num">${{i+1}}</span><span class="scene-topic">${{esc(s.topic)}}</span><span class="scene-dur">${{s.durationSeconds}}s</span></div>`
-    + (s.backgroundImageUrl ? `<img class="bg-img" src="${{esc(s.backgroundImageUrl)}}" alt="">` : '')
-    + `<div class="scene-body"><div class="narration">${{esc(s.narration)}}</div><div class="visual">${{esc(s.visualDescription)}}</div></div>`;
+  el.innerHTML = `<div class="scene-header"><span class="scene-num">${i+1}</span><span class="scene-topic">${esc(s.topic)}</span><span class="scene-dur">${s.durationSeconds}s</span></div>`
+    + (s.backgroundImageUrl ? `<img class="bg-img" src="${esc(s.backgroundImageUrl)}" alt="">` : '')
+    + `<div class="scene-body"><div class="narration">${esc(s.narration)}</div><div class="visual">${esc(s.visualDescription)}</div></div>`;
   container.appendChild(el);
-}});
+});
 updateIndicator();
-function go(d){{cur=Math.max(0,Math.min(data.scenes.length-1,cur+d));document.querySelectorAll('.scene').forEach((e,i)=>e.classList.toggle('active',i===cur));document.getElementById('scene-'+cur).scrollIntoView({{behavior:'smooth',block:'center'}});updateIndicator()}}
-function updateIndicator(){{document.getElementById('indicator').textContent=(cur+1)+' / '+data.scenes.length}}
-function esc(s){{const d=document.createElement('div');d.textContent=s||'';return d.innerHTML}}
-document.addEventListener('keydown',e=>{{if(e.key==='ArrowRight'||e.key==='ArrowDown')go(1);if(e.key==='ArrowLeft'||e.key==='ArrowUp')go(-1)}});
+function go(d){cur=Math.max(0,Math.min(data.scenes.length-1,cur+d));document.querySelectorAll('.scene').forEach((e,i)=>e.classList.toggle('active',i===cur));document.getElementById('scene-'+cur).scrollIntoView({behavior:'smooth',block:'center'});updateIndicator()}
+function updateIndicator(){document.getElementById('indicator').textContent=(cur+1)+' / '+data.scenes.length}
+function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
+document.addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key==='ArrowDown')go(1);if(e.key==='ArrowLeft'||e.key==='ArrowUp')go(-1)});
 </script>
 </body>
 </html>
