@@ -14,21 +14,15 @@ import {
 import type { PersonalSource, PersonalStats } from '@/services/contracts/reportAgent';
 
 const SOURCE_TYPES = [
-  { value: 'github', label: 'GitHub', icon: Github, placeholder: 'https://github.com/user/repo' },
-  { value: 'yuque', label: '语雀', icon: BookOpen, placeholder: '语雀空间 ID 或地址' },
-  { value: 'gitlab', label: 'GitLab', icon: GitBranch, placeholder: 'https://gitlab.com/user/repo' },
+  { value: 'github', label: 'GitHub', icon: Github, color: 'rgba(36, 41, 47, 0.9)', bg: 'rgba(36, 41, 47, 0.08)', placeholder: 'https://github.com/user/repo' },
+  { value: 'yuque', label: '语雀', icon: BookOpen, color: 'rgba(52, 199, 89, 0.9)', bg: 'rgba(52, 199, 89, 0.08)', placeholder: '语雀空间 ID 或地址' },
+  { value: 'gitlab', label: 'GitLab', icon: GitBranch, color: 'rgba(226, 67, 41, 0.9)', bg: 'rgba(226, 67, 41, 0.08)', placeholder: 'https://gitlab.com/user/repo' },
 ] as const;
 
-const statusColors: Record<string, string> = {
-  success: 'var(--text-success, #22c55e)',
-  failed: 'var(--text-error, #ef4444)',
-  never: 'var(--text-tertiary)',
-};
-
-const statusLabels: Record<string, string> = {
-  success: '已连接',
-  failed: '连接失败',
-  never: '未同步',
+const statusStyles: Record<string, { label: string; color: string; bg: string }> = {
+  success: { label: '已连接', color: 'rgba(34, 197, 94, 0.9)', bg: 'rgba(34, 197, 94, 0.08)' },
+  failed:  { label: '连接失败', color: 'rgba(239, 68, 68, 0.9)', bg: 'rgba(239, 68, 68, 0.08)' },
+  never:   { label: '未同步', color: 'rgba(156, 163, 175, 0.7)', bg: 'rgba(156, 163, 175, 0.08)' },
 };
 
 export function PersonalSourcesPanel() {
@@ -39,7 +33,6 @@ export function PersonalSourcesPanel() {
   const [testingId, setTestingId] = useState<string | null>(null);
   const [syncingId, setSyncingId] = useState<string | null>(null);
 
-  // Create form state
   const [formType, setFormType] = useState('github');
   const [formName, setFormName] = useState('');
   const [formRepoUrl, setFormRepoUrl] = useState('');
@@ -119,19 +112,22 @@ export function PersonalSourcesPanel() {
     setFormToken('');
   };
 
-  const getSourceIcon = (type: string) => {
-    const found = SOURCE_TYPES.find(s => s.value === type);
-    if (!found) return Link2;
-    return found.icon;
+  const getSourceType = (type: string) => {
+    return SOURCE_TYPES.find(s => s.value === type) || { value: type, label: type, icon: Link2, color: 'var(--text-muted)', bg: 'var(--bg-tertiary)', placeholder: '' };
   };
 
   return (
-    <div className="space-y-4">
+    <div className="flex flex-col gap-5">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-[14px] font-medium" style={{ color: 'var(--text-primary)' }}>我的数据源</h3>
-          <p className="text-[12px]" style={{ color: 'var(--text-tertiary)' }}>绑定个人 GitHub / 语雀 / GitLab 账号，系统自动采集产出数据</p>
+          <div className="flex items-center gap-2">
+            <Link2 size={16} style={{ color: 'var(--text-secondary)' }} />
+            <h3 className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>我的数据源</h3>
+          </div>
+          <p className="text-[12px] mt-1" style={{ color: 'var(--text-muted)' }}>
+            绑定个人 GitHub / 语雀 / GitLab 账号，系统自动采集产出数据
+          </p>
         </div>
         <div className="flex gap-2">
           <Button variant="secondary" size="sm" onClick={() => load()} disabled={loading}>
@@ -145,16 +141,16 @@ export function PersonalSourcesPanel() {
 
       {/* Stats Preview */}
       {stats && stats.sources.length > 0 && (
-        <GlassCard className="p-3">
-          <div className="text-[12px] font-medium mb-2" style={{ color: 'var(--text-secondary)' }}>本周统计预览</div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <GlassCard variant="subtle" className="p-4">
+          <div className="text-[12px] font-medium mb-3" style={{ color: 'var(--text-secondary)' }}>本周统计预览</div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
             {stats.sources.map((s, i) => (
-              <div key={i} className="flex flex-col gap-1">
-                <div className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>{s.displayName}</div>
+              <div key={i} className="flex flex-col gap-1.5">
+                <div className="text-[11px] font-medium" style={{ color: 'var(--text-muted)' }}>{s.displayName}</div>
                 {Object.entries(s.summary).map(([key, value]) => (
                   <div key={key} className="flex items-center justify-between text-[12px]">
                     <span style={{ color: 'var(--text-secondary)' }}>{key}</span>
-                    <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{value}</span>
+                    <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{value}</span>
                   </div>
                 ))}
               </div>
@@ -163,71 +159,111 @@ export function PersonalSourcesPanel() {
         </GlassCard>
       )}
 
-      {/* Source List */}
+      {/* Empty state */}
       {sources.length === 0 && !loading && (
-        <GlassCard className="p-6 text-center">
-          <Link2 size={24} className="mx-auto mb-2" style={{ color: 'var(--text-tertiary)' }} />
-          <div className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>暂无数据源</div>
-          <div className="text-[11px] mt-1" style={{ color: 'var(--text-tertiary)' }}>点击"添加数据源"绑定你的 GitHub 或语雀账号</div>
-        </GlassCard>
+        <div className="flex items-center justify-center" style={{ minHeight: 300 }}>
+          <div className="text-center">
+            <Link2 size={32} style={{ color: 'var(--text-muted)', opacity: 0.4, margin: '0 auto' }} />
+            <div className="text-[13px] mt-3" style={{ color: 'var(--text-secondary)' }}>暂无数据源</div>
+            <div className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>
+              点击"添加数据源"绑定你的 GitHub 或语雀账号
+            </div>
+          </div>
+        </div>
       )}
 
-      {sources.map((source) => {
-        const Icon = getSourceIcon(source.sourceType);
-        return (
-          <GlassCard key={source.id} className="p-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Icon size={16} style={{ color: 'var(--text-secondary)' }} />
-                <span className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>{source.displayName}</span>
-                <span className="text-[11px] px-1.5 py-0.5 rounded" style={{
-                  color: statusColors[source.lastSyncStatus] || 'var(--text-tertiary)',
-                  background: 'var(--bg-secondary)',
-                }}>
-                  {statusLabels[source.lastSyncStatus] || source.lastSyncStatus}
-                </span>
-                {!source.enabled && (
-                  <span className="text-[11px] px-1.5 py-0.5 rounded" style={{ color: 'var(--text-tertiary)', background: 'var(--bg-secondary)' }}>
-                    已禁用
-                  </span>
+      {/* Source cards */}
+      <div className="flex flex-col gap-3">
+        {sources.map((source) => {
+          const st = getSourceType(source.sourceType);
+          const Icon = st.icon;
+          const ss = statusStyles[source.lastSyncStatus] || statusStyles.never;
+
+          return (
+            <div
+              key={source.id}
+              className="rounded-xl transition-all duration-200"
+              style={{
+                background: 'var(--surface-glass)',
+                backdropFilter: 'blur(12px)',
+                border: '1px solid var(--border-primary)',
+                borderLeft: `3px solid ${st.color}`,
+                opacity: source.enabled ? 1 : 0.6,
+              }}
+            >
+              <div className="p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="w-8 h-8 rounded-lg flex items-center justify-center"
+                      style={{ background: st.bg }}
+                    >
+                      <Icon size={15} style={{ color: st.color }} />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
+                          {source.displayName}
+                        </span>
+                        <span
+                          className="text-[10px] px-1.5 py-0.5 rounded-full"
+                          style={{ color: ss.color, background: ss.bg }}
+                        >
+                          {ss.label}
+                        </span>
+                        {!source.enabled && (
+                          <span
+                            className="text-[10px] px-1.5 py-0.5 rounded-full"
+                            style={{ color: 'var(--text-muted)', background: 'var(--bg-tertiary)' }}
+                          >
+                            已禁用
+                          </span>
+                        )}
+                      </div>
+                      {source.config.repoUrl && (
+                        <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                          {source.config.repoUrl}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Button variant="ghost" size="sm" onClick={() => handleToggle(source)} title={source.enabled ? '禁用' : '启用'}>
+                      {source.enabled ? <Check size={12} /> : <X size={12} />}
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => handleTest(source.id)} disabled={testingId === source.id}>
+                      <TestTube size={12} className={testingId === source.id ? 'animate-pulse' : ''} />
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => handleSync(source.id)} disabled={syncingId === source.id}>
+                      <RefreshCw size={12} className={syncingId === source.id ? 'animate-spin' : ''} />
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => handleDelete(source.id)}>
+                      <Trash2 size={12} />
+                    </Button>
+                  </div>
+                </div>
+                {source.lastSyncAt && (
+                  <div className="text-[10px] mt-2 ml-11" style={{ color: 'var(--text-muted)' }}>
+                    上次同步: {new Date(source.lastSyncAt).toLocaleString()}
+                  </div>
+                )}
+                {source.lastSyncError && (
+                  <div className="text-[10px] mt-1 ml-11" style={{ color: 'rgba(239, 68, 68, 0.85)' }}>
+                    {source.lastSyncError}
+                  </div>
                 )}
               </div>
-              <div className="flex items-center gap-1">
-                <Button variant="ghost" size="sm" onClick={() => handleToggle(source)} title={source.enabled ? '禁用' : '启用'}>
-                  {source.enabled ? <Check size={12} /> : <X size={12} />}
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => handleTest(source.id)} disabled={testingId === source.id}>
-                  <TestTube size={12} className={testingId === source.id ? 'animate-pulse' : ''} />
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => handleSync(source.id)} disabled={syncingId === source.id}>
-                  <RefreshCw size={12} className={syncingId === source.id ? 'animate-spin' : ''} />
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => handleDelete(source.id)}>
-                  <Trash2 size={12} />
-                </Button>
-              </div>
             </div>
-            {source.config.repoUrl && (
-              <div className="text-[11px] mt-1 ml-6" style={{ color: 'var(--text-tertiary)' }}>{source.config.repoUrl}</div>
-            )}
-            {source.lastSyncAt && (
-              <div className="text-[11px] mt-1 ml-6" style={{ color: 'var(--text-tertiary)' }}>
-                上次同步: {new Date(source.lastSyncAt).toLocaleString()}
-              </div>
-            )}
-            {source.lastSyncError && (
-              <div className="text-[11px] mt-1 ml-6" style={{ color: 'var(--text-error, #ef4444)' }}>{source.lastSyncError}</div>
-            )}
-          </GlassCard>
-        );
-      })}
+          );
+        })}
+      </div>
 
       {/* Create Dialog */}
       {showCreate && (
-        <div className="fixed inset-0 flex items-center justify-center z-50" style={{ background: 'rgba(0,0,0,0.5)' }}>
-          <GlassCard className="w-[420px] p-4 space-y-3">
+        <div className="fixed inset-0 flex items-center justify-center z-50" style={{ background: 'rgba(0,0,0,0.4)' }}>
+          <GlassCard className="w-[440px] p-5 space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-[14px] font-medium" style={{ color: 'var(--text-primary)' }}>添加数据源</h3>
+              <h3 className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>添加数据源</h3>
               <Button variant="ghost" size="sm" onClick={() => { setShowCreate(false); resetForm(); }}>
                 <X size={14} />
               </Button>
@@ -236,19 +272,23 @@ export function PersonalSourcesPanel() {
             <div className="space-y-2">
               <label className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>数据源类型</label>
               <div className="flex gap-2">
-                {SOURCE_TYPES.map(st => (
-                  <button
-                    key={st.value}
-                    onClick={() => setFormType(st.value)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded text-[12px] transition-colors"
-                    style={{
-                      background: formType === st.value ? 'var(--accent-primary)' : 'var(--bg-secondary)',
-                      color: formType === st.value ? '#fff' : 'var(--text-secondary)',
-                    }}
-                  >
-                    <st.icon size={12} /> {st.label}
-                  </button>
-                ))}
+                {SOURCE_TYPES.map(stype => {
+                  const isActive = formType === stype.value;
+                  return (
+                    <button
+                      key={stype.value}
+                      onClick={() => setFormType(stype.value)}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-[12px] transition-all duration-200"
+                      style={{
+                        background: isActive ? stype.bg : 'var(--bg-secondary)',
+                        color: isActive ? stype.color : 'var(--text-secondary)',
+                        border: `1px solid ${isActive ? stype.color.replace('0.9', '0.3') : 'var(--border-primary)'}`,
+                      }}
+                    >
+                      <stype.icon size={13} /> {stype.label}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -258,7 +298,7 @@ export function PersonalSourcesPanel() {
                 value={formName}
                 onChange={e => setFormName(e.target.value)}
                 placeholder={`我的 ${SOURCE_TYPES.find(s => s.value === formType)?.label || ''}`}
-                className="w-full px-2.5 py-1.5 rounded text-[12px]"
+                className="w-full px-3 py-2 rounded-xl text-[13px]"
                 style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
               />
             </div>
@@ -271,7 +311,7 @@ export function PersonalSourcesPanel() {
                 value={formRepoUrl}
                 onChange={e => setFormRepoUrl(e.target.value)}
                 placeholder={SOURCE_TYPES.find(s => s.value === formType)?.placeholder || ''}
-                className="w-full px-2.5 py-1.5 rounded text-[12px]"
+                className="w-full px-3 py-2 rounded-xl text-[13px]"
                 style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
               />
             </div>
@@ -283,7 +323,7 @@ export function PersonalSourcesPanel() {
                   value={formUsername}
                   onChange={e => setFormUsername(e.target.value)}
                   placeholder="GitHub/GitLab 用户名"
-                  className="w-full px-2.5 py-1.5 rounded text-[12px]"
+                  className="w-full px-3 py-2 rounded-xl text-[13px]"
                   style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
                 />
               </div>
@@ -296,12 +336,12 @@ export function PersonalSourcesPanel() {
                 value={formToken}
                 onChange={e => setFormToken(e.target.value)}
                 placeholder={formType === 'github' ? 'ghp_...' : formType === 'yuque' ? '语雀 Token' : 'GitLab Token'}
-                className="w-full px-2.5 py-1.5 rounded text-[12px]"
+                className="w-full px-3 py-2 rounded-xl text-[13px]"
                 style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
               />
             </div>
 
-            <div className="flex justify-end gap-2 pt-2">
+            <div className="flex justify-end gap-2 pt-1">
               <Button variant="secondary" size="sm" onClick={() => { setShowCreate(false); resetForm(); }}>取消</Button>
               <Button variant="primary" size="sm" onClick={handleCreate} disabled={!formName.trim() || !formToken.trim()}>确认绑定</Button>
             </div>
