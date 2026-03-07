@@ -327,6 +327,7 @@ prd_agent/
 | **LLM Gateway** | `ILlmGateway` + `ModelResolver` + 三级调度 + 健康管理 |
 | **ModelPool** | 独立策略引擎组件 (`Infrastructure/ModelPool/`)，6 种策略 (FailFast/Race/Sequential/RoundRobin/WeightedRandom/LeastLatency)，`ModelPoolFactory` 桥接 `ModelGroup` + `LLMPlatform` |
 | **Marketplace Registry** | `CONFIG_TYPE_REGISTRY` 类型注册 + `IForkable` 白名单复制 |
+| **VideoGen Service** | `IVideoGenService` 领域服务封装视频生成 CRUD + 状态流转，供 Controller + 工作流胶囊复用 |
 
 ### 功能注册表
 
@@ -351,8 +352,9 @@ prd_agent/
 | 数据管理面板 | ✅ DONE | DataManagePage |
 | 管理通知 | ✅ DONE | NotificationsController, admin_notifications |
 | 缺陷管理 Agent | ✅ DONE | DefectAgentController, DefectAgentTests (25 tests) |
-| 视频 Agent | ✅ DONE | VideoAgentController, VideoGenRunWorker, prd-video/ (Remotion: TransitionSeries 转场、ParticleField 粒子、AnimatedText 动画文字、PathDraw SVG 描边、@remotion/transitions+paths+noise) |
-| 视觉创作视频生成 | ✅ DONE | VisualAgentVideoController (appKey=visual-agent, 每日限额1次, MongoDB 计数), 共享 VideoGenRunWorker |
+| 视频 Agent | ✅ DONE | VideoAgentController, VideoGenRunWorker, IVideoGenService (领域服务), prd-video/ (Remotion: TransitionSeries 转场、ParticleField 粒子、AnimatedText 动画文字、PathDraw SVG 描边、@remotion/transitions+paths+noise) |
+| 视觉创作视频生成 | ✅ DONE | VisualAgentVideoController (appKey=visual-agent, 每日限额1次), 共享 IVideoGenService + VideoGenRunWorker |
+| 视频生成工作流胶囊 | ✅ DONE | CapsuleTypes.VideoGeneration ("video-generation"), CapsuleExecutor.ExecuteVideoGenerationAsync, 支持从工作流中创建视频任务并等待完成 |
 | 配置市场 (海鲜市场) | ✅ DONE | CONFIG_TYPE_REGISTRY, MarketplaceCard, IForkable, ForkService |
 | 周报管理 Agent | ✅ Phase 1-3 DONE | ReportAgentController, ReportAgentPage (6 tabs)，详见 `doc/plan.report-agent-impl.md` |
 | **附件上传** | ✅ DONE | AttachmentsController + Rust upload_attachment + Desktop UI (图片选择/预览/上传) |
