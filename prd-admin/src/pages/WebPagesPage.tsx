@@ -839,7 +839,8 @@ function ShareDialog({ siteId, siteIds, onClose }: {
 
   const handleCreate = async () => {
     setCreating(true);
-    const pwd = usePassword ? (password.trim() || genPassword()) : undefined;
+    // 只有用户主动开启密码保护时才传密码，绝不擅自生成
+    const pwd = usePassword ? (password.trim() || undefined) : undefined;
     const res = await createSiteShareLink({
       siteId: siteId || undefined,
       siteIds: isCollection ? siteIds : undefined,
@@ -892,13 +893,21 @@ function ShareDialog({ siteId, siteIds, onClose }: {
               </Button>
             </div>
             {result.password && (
-              <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--text-secondary)' }}>
-                <Lock size={12} />
-                <span>访问密码：<code className="px-1.5 py-0.5 rounded" style={{ background: 'var(--bg-sunken)' }}>{result.password}</code></span>
+              <div className="flex items-center gap-2 p-3 rounded-lg" style={{ background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.25)' }}>
+                <Lock size={16} style={{ color: 'rgba(59, 130, 246, 0.9)', flexShrink: 0 }} />
+                <div className="flex-1">
+                  <div className="text-xs mb-1" style={{ color: 'rgba(59, 130, 246, 0.8)' }}>访问密码</div>
+                  <code className="text-sm font-mono font-bold tracking-wider" style={{ color: 'var(--text-primary)' }}>{result.password}</code>
+                </div>
+                <Button size="sm" variant="ghost" onClick={() => {
+                  navigator.clipboard.writeText(result!.password!);
+                }}>
+                  <Copy size={14} />
+                </Button>
               </div>
             )}
             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-              复制按钮会同时复制链接{result.password ? '和密码' : ''}
+              {result.password ? '复制按钮会同时复制链接和密码' : '此链接无需密码，任何人可直接访问'}
             </p>
             <div className="flex justify-end">
               <Button variant="ghost" onClick={onClose}>关闭</Button>
@@ -934,25 +943,31 @@ function ShareDialog({ siteId, siteIds, onClose }: {
                     checked={usePassword}
                     onChange={e => {
                       setUsePassword(e.target.checked);
-                      if (e.target.checked && !password) setPassword(genPassword());
+                      if (!e.target.checked) setPassword('');
                     }}
                   />
                   <Lock size={12} style={{ color: 'var(--text-muted)' }} />
                   <span style={{ color: 'var(--text-secondary)' }}>密码保护</span>
                 </label>
                 {usePassword && (
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={password}
-                      onChange={e => setPassword(e.target.value)}
-                      placeholder="自动生成"
-                      className="flex-1 px-3 py-1.5 rounded-lg text-sm outline-none"
-                      style={inputStyle}
-                    />
-                    <Button size="xs" variant="ghost" onClick={() => setPassword(genPassword())} title="重新生成">
-                      <RefreshCw size={12} />
-                    </Button>
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={password}
+                        onChange={e => setPassword(e.target.value)}
+                        placeholder="输入密码（留空则不设密码）"
+                        autoFocus
+                        className="flex-1 px-3 py-1.5 rounded-lg text-sm outline-none"
+                        style={inputStyle}
+                      />
+                      <Button size="xs" variant="ghost" onClick={() => setPassword(genPassword())} title="随机生成密码">
+                        <RefreshCw size={12} />
+                      </Button>
+                    </div>
+                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                      留空将创建无密码的公开链接，点击右侧按钮可随机生成
+                    </span>
                   </div>
                 )}
 
