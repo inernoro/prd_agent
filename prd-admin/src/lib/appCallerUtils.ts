@@ -4,7 +4,7 @@
  */
 
 import type { ComponentType } from 'react';
-import { 
+import {
   ArrowUpDown,    // 重排序
   Brain,          // 意图识别
   Code2,          // 代码生成
@@ -15,6 +15,11 @@ import {
   MessageSquare,  // 对话模型
   Palette,        // 图像生成
   ScrollText,     // 长上下文
+  Mic,            // 语音识别 (ASR)
+  Volume2,        // 语音合成 (TTS)
+  Film,           // 视频生成
+  Music,          // 音频生成
+  ShieldCheck,    // 内容审核
 } from 'lucide-react';
 
 /**
@@ -45,6 +50,11 @@ export type ExpectedModelType =
   | 'long-context'
   | 'embedding'
   | 'rerank'
+  | 'asr'
+  | 'tts'
+  | 'video-gen'
+  | 'audio-gen'
+  | 'moderation'
   | 'unknown';
 
 export function normalizeModelType(rawModelType: string | null | undefined): ExpectedModelType {
@@ -85,6 +95,21 @@ export function normalizeModelType(rawModelType: string | null | undefined): Exp
 
   // 重排
   if (v === 'rerank' || v === 're-rank' || v === 'ranking' || v === 'rank') return 'rerank';
+
+  // 语音识别
+  if (v === 'asr' || v === 'speech-recognition' || v === 'stt' || v === 'transcription') return 'asr';
+
+  // 语音合成
+  if (v === 'tts' || v === 'text-to-speech' || v === 'speech-synthesis') return 'tts';
+
+  // 视频生成
+  if (v === 'video-gen' || v === 'videogen' || v === 'video-generation' || v === 'video') return 'video-gen';
+
+  // 音频生成
+  if (v === 'audio-gen' || v === 'audiogen' || v === 'audio-generation' || v === 'music-gen') return 'audio-gen';
+
+  // 内容审核
+  if (v === 'moderation' || v === 'content-moderation' || v === 'safety') return 'moderation';
 
   return 'unknown';
 }
@@ -240,6 +265,11 @@ export function getModelTypeDisplayName(modelType: string): string {
     'long-context': '长上下文',
     'embedding': '向量嵌入',
     'rerank': '重排序',
+    'asr': '语音识别',
+    'tts': '语音合成',
+    'video-gen': '视频生成',
+    'audio-gen': '音频生成',
+    'moderation': '内容审核',
     'unknown': '未知类型',
   };
   return names[mt] || '未知类型';
@@ -262,9 +292,54 @@ export function getModelTypeIcon(modelType: string): ComponentType<any> {
     'long-context': ScrollText, // 长文档 - 长上下文
     'embedding': Layers,      // 层叠 - 向量嵌入
     'rerank': ArrowUpDown,    // 上下箭头 - 重排序
+    'asr': Mic,               // 麦克风 - 语音识别
+    'tts': Volume2,           // 扬声器 - 语音合成
+    'video-gen': Film,        // 胶片 - 视频生成
+    'audio-gen': Music,       // 音符 - 音频生成
+    'moderation': ShieldCheck, // 盾牌 - 内容审核
     'unknown': HelpCircle,
   };
 
   return icons[mt] || HelpCircle;
 }
+
+/**
+ * 模型类型定义（统一数据源）
+ * 所有需要展示模型类型列表的地方都应使用此数组，禁止各处重复硬编码。
+ */
+export interface ModelTypeDefinition {
+  value: string;
+  label: string;
+  description: string;
+  icon: ComponentType<any>;
+  category: 'core' | 'extended' | 'media';
+}
+
+export const MODEL_TYPE_DEFINITIONS: ModelTypeDefinition[] = [
+  // ── 核心类型 ──
+  { value: 'chat',         label: '对话模型',   description: '通用对话、推理、文本生成',       icon: MessageSquare, category: 'core' },
+  { value: 'intent',       label: '意图识别',   description: '快速意图分类、结构化 JSON 返回', icon: Brain,         category: 'core' },
+  { value: 'vision',       label: '视觉理解',   description: '图片识别、多模态内容理解',       icon: Eye,           category: 'core' },
+  { value: 'generation',   label: '图像生成',   description: '文生图、图生图、风格迁移',       icon: Palette,       category: 'core' },
+  // ── 扩展类型 ──
+  { value: 'code',         label: '代码生成',   description: '代码补全、代码审查、重构',       icon: Code2,         category: 'extended' },
+  { value: 'long-context', label: '长上下文',   description: '长文档摘要、大规模上下文分析',   icon: ScrollText,    category: 'extended' },
+  { value: 'embedding',    label: '向量嵌入',   description: '文本向量化、语义搜索',           icon: Layers,        category: 'extended' },
+  { value: 'rerank',       label: '重排序',     description: '搜索结果重排、相关性优化',       icon: ArrowUpDown,   category: 'extended' },
+  { value: 'moderation',   label: '内容审核',   description: '内容安全检测、合规过滤',         icon: ShieldCheck,   category: 'extended' },
+  // ── 多媒体类型 ──
+  { value: 'asr',          label: '语音识别',   description: 'ASR 语音转文字、会议转录',       icon: Mic,           category: 'media' },
+  { value: 'tts',          label: '语音合成',   description: 'TTS 文字转语音、旁白朗读',       icon: Volume2,       category: 'media' },
+  { value: 'video-gen',    label: '视频生成',   description: '文生视频、图生视频',             icon: Film,          category: 'media' },
+  { value: 'audio-gen',    label: '音频生成',   description: '音乐生成、音效合成',             icon: Music,         category: 'media' },
+];
+
+/**
+ * 模型类型分类标签
+ */
+export const MODEL_TYPE_CATEGORIES: Record<string, string> = {
+  core: '核心能力',
+  extended: '扩展能力',
+  media: '多媒体',
+};
 

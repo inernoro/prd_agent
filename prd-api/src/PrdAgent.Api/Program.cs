@@ -203,6 +203,9 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.WorkflowRunWorker>();
 // 视频生成后台执行器（文章→脚本→Remotion渲染→字幕→打包）
 builder.Services.AddHostedService<PrdAgent.Api.Services.VideoGenRunWorker>();
 
+// 视频转文档后台执行器（视频→音频提取→STT转写→多模态LLM分析→Markdown文档）
+builder.Services.AddHostedService<PrdAgent.Api.Services.VideoToDocRunWorker>();
+
 // 竞技场 Run 后台执行器（多模型并行 + afterSeq 断线重连）
 builder.Services.AddHostedService<PrdAgent.Api.Services.ArenaRunWorker>();
 

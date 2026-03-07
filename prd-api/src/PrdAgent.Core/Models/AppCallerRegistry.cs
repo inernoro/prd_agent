@@ -596,6 +596,36 @@ public static class VideoAgent
         )]
         public const string Text2Img = "video-agent.image.text2img::generation";
     }
+
+    /// <summary>
+    /// 视频转文档 - 语音转写 + 多模态分析（帧+文字→结构化文档）
+    /// </summary>
+    public static class VideoToDoc
+    {
+        [AppCallerMetadata(
+            "视频转文档-语音转写",
+            "将视频音频转换为带时间戳的文字（ASR）",
+            ModelTypes = new[] { ModelTypes.Asr },
+            Category = "Video"
+        )]
+        public const string Transcribe = "video-agent.v2d.transcribe::asr";
+
+        [AppCallerMetadata(
+            "视频转文档-分析",
+            "分析视频关键帧和转写文本，生成结构化文档",
+            ModelTypes = new[] { ModelTypes.Vision },
+            Category = "Video"
+        )]
+        public const string Analyze = "video-agent.v2d.analyze::vision";
+
+        [AppCallerMetadata(
+            "视频转文档-润色",
+            "对生成的文档进行润色和结构优化",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Video"
+        )]
+        public const string Polish = "video-agent.v2d.polish::chat";
+    }
 }
 
 /// <summary>
