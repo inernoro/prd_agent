@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
@@ -338,7 +338,7 @@ export default function WebPagesPage() {
           </Button>
         </div>
       ) : viewMode === 'grid' ? (
-        <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' }}>
+        <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))' }}>
           {sites.map(site => (
             <SiteCard
               key={site.id}
@@ -400,6 +400,56 @@ export default function WebPagesPage() {
 
 // ─── Card View ───
 
+// ─── Iframe Thumbnail Preview ───
+
+function SitePreview({ url, className, style }: { url: string; className?: string; style?: React.CSSProperties }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [containerW, setContainerW] = useState(240);
+  const iframeWidth = 1280;
+  const iframeHeight = 800;
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => setContainerW(entry.contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const scale = containerW / iframeWidth;
+
+  return (
+    <div ref={containerRef} className={className} style={{ position: 'relative', overflow: 'hidden', ...style }}>
+      {!loaded && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1">
+          <FileCode2 size={20} style={{ color: 'var(--accent-primary)', opacity: 0.4 }} />
+        </div>
+      )}
+      <iframe
+        src={url}
+        title="preview"
+        sandbox="allow-scripts allow-same-origin"
+        loading="lazy"
+        onLoad={() => setLoaded(true)}
+        style={{
+          width: iframeWidth,
+          height: iframeHeight,
+          transform: `scale(${scale})`,
+          transformOrigin: 'top left',
+          border: 'none',
+          pointerEvents: 'none',
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          opacity: loaded ? 1 : 0,
+          transition: 'opacity 0.3s',
+        }}
+      />
+    </div>
+  );
+}
+
 function SiteCard({ site, selected, onSelect, onEdit, onDelete, onShare }: {
   site: HostedSite;
   selected: boolean;
@@ -413,95 +463,85 @@ function SiteCard({ site, selected, onSelect, onEdit, onDelete, onShare }: {
       className="group relative flex flex-col overflow-hidden transition-all duration-200"
       style={{ border: selected ? '2px solid var(--accent-primary)' : undefined }}
     >
-      {/* Preview header */}
+      {/* Thumbnail preview */}
       <div
-        className="h-28 flex flex-col items-center justify-center gap-2 cursor-pointer relative"
-        style={{ background: 'var(--bg-sunken)' }}
+        className="relative cursor-pointer"
+        style={{ aspectRatio: '16 / 9', background: 'var(--bg-sunken)' }}
         onClick={() => window.open(site.siteUrl, '_blank')}
       >
         {site.coverImageUrl ? (
           <img src={site.coverImageUrl} alt="" className="absolute inset-0 w-full h-full object-cover" />
         ) : (
-          <>
-            <FileCode2 size={28} style={{ color: 'var(--accent-primary)', opacity: 0.6 }} />
-            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{site.entryFile}</span>
-          </>
+          <SitePreview url={site.siteUrl} className="w-full h-full" />
         )}
+        {/* Hover overlay with actions */}
+        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all duration-200 flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100">
+          <button onClick={(e) => { e.stopPropagation(); window.open(site.siteUrl, '_blank'); }} className="p-1.5 rounded-full bg-white/20 backdrop-blur-sm hover:bg-white/30" title="访问">
+            <ExternalLink size={14} style={{ color: '#fff' }} />
+          </button>
+          <button onClick={(e) => { e.stopPropagation(); onShare(); }} className="p-1.5 rounded-full bg-white/20 backdrop-blur-sm hover:bg-white/30" title="分享">
+            <Share2 size={14} style={{ color: '#fff' }} />
+          </button>
+          <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="p-1.5 rounded-full bg-white/20 backdrop-blur-sm hover:bg-white/30" title="编辑">
+            <Edit3 size={14} style={{ color: '#fff' }} />
+          </button>
+          <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="p-1.5 rounded-full bg-white/20 backdrop-blur-sm hover:bg-white/30" title="删除">
+            <Trash2 size={14} style={{ color: '#ef4444' }} />
+          </button>
+        </div>
+        {/* Select checkbox */}
+        <div className="absolute top-1.5 left-1.5 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button onClick={(e) => { e.stopPropagation(); onSelect(); }} className="p-0.5 rounded bg-black/30 backdrop-blur-sm">
+            <input type="checkbox" checked={selected} readOnly className="pointer-events-none" style={{ accentColor: 'var(--accent-primary)' }} />
+          </button>
+        </div>
         {/* Source badge */}
-        <div className="absolute top-2 right-2">
+        <div className="absolute top-1.5 right-1.5 z-10">
           <Badge variant={site.sourceType === 'workflow' ? 'info' : site.sourceType === 'api' ? 'warning' : 'default'}>
             {sourceTypeLabels[site.sourceType] ?? site.sourceType}
           </Badge>
         </div>
       </div>
 
-      {/* Content */}
-      <div className="flex-1 p-4 flex flex-col gap-2">
-        <div className="flex items-start justify-between gap-2">
-          <h3
-            className="text-sm font-medium truncate cursor-pointer hover:underline"
-            style={{ color: 'var(--text-primary)' }}
-            onClick={() => window.open(site.siteUrl, '_blank')}
-            title={site.title}
-          >
-            {site.title}
-          </h3>
-        </div>
+      {/* Content — compact */}
+      <div className="flex-1 px-3 py-2 flex flex-col gap-1">
+        <h3
+          className="text-[13px] font-medium truncate cursor-pointer hover:underline leading-tight"
+          style={{ color: 'var(--text-primary)' }}
+          onClick={() => window.open(site.siteUrl, '_blank')}
+          title={site.title}
+        >
+          {site.title}
+        </h3>
 
         {site.description && (
-          <p className="text-xs line-clamp-2" style={{ color: 'var(--text-secondary)' }}>
+          <p className="text-[11px] line-clamp-1 leading-tight" style={{ color: 'var(--text-secondary)' }}>
             {site.description}
           </p>
         )}
 
-        {/* File info */}
-        <div className="flex items-center gap-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-          <span className="flex items-center gap-1"><FileArchive size={10} /> {site.files.length} 个文件</span>
-          <span className="flex items-center gap-1"><HardDrive size={10} /> {fmtSize(site.totalSize)}</span>
+        {/* Meta row: file count + size + tags inline */}
+        <div className="flex items-center gap-1.5 flex-wrap text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+          <span className="flex items-center gap-0.5"><FileArchive size={9} />{site.files.length}文件</span>
+          <span style={{ opacity: 0.4 }}>·</span>
+          <span className="flex items-center gap-0.5"><HardDrive size={9} />{fmtSize(site.totalSize)}</span>
+          {site.tags.slice(0, 2).map(tag => (
+            <span
+              key={tag}
+              className="px-1 py-px rounded"
+              style={{ background: 'var(--bg-sunken)', fontSize: '9px' }}
+            >
+              {tag}
+            </span>
+          ))}
+          {site.tags.length > 2 && <span style={{ fontSize: '9px' }}>+{site.tags.length - 2}</span>}
         </div>
 
-        {site.tags.length > 0 && (
-          <div className="flex flex-wrap gap-1 mt-1">
-            {site.tags.slice(0, 4).map(tag => (
-              <span
-                key={tag}
-                className="px-1.5 py-0.5 rounded text-[10px]"
-                style={{ background: 'var(--bg-sunken)', color: 'var(--text-muted)' }}
-              >
-                {tag}
-              </span>
-            ))}
-            {site.tags.length > 4 && (
-              <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>+{site.tags.length - 4}</span>
-            )}
-          </div>
-        )}
-
-        <div className="flex items-center justify-between mt-auto pt-2" style={{ borderTop: '1px solid var(--border-subtle)' }}>
-          <div className="flex items-center gap-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-            <span className="flex items-center gap-1"><Eye size={10} /> {site.viewCount}</span>
-            <span className="flex items-center gap-1"><Clock size={10} /> {relativeTime(site.createdAt)}</span>
-            {site.folder && (
-              <span className="flex items-center gap-1"><FolderOpen size={10} /> {site.folder}</span>
-            )}
-          </div>
-          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            <button onClick={onSelect} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="选择">
-              <input type="checkbox" checked={selected} readOnly className="pointer-events-none" style={{ accentColor: 'var(--accent-primary)' }} />
-            </button>
-            <button onClick={() => window.open(site.siteUrl, '_blank')} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="访问">
-              <ExternalLink size={13} style={{ color: 'var(--text-muted)' }} />
-            </button>
-            <button onClick={onShare} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="分享">
-              <Share2 size={13} style={{ color: 'var(--text-muted)' }} />
-            </button>
-            <button onClick={onEdit} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="编辑">
-              <Edit3 size={13} style={{ color: 'var(--text-muted)' }} />
-            </button>
-            <button onClick={onDelete} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="删除">
-              <Trash2 size={13} style={{ color: '#ef4444' }} />
-            </button>
-          </div>
+        {/* Footer */}
+        <div className="flex items-center gap-2 mt-auto pt-1.5 text-[10px]" style={{ borderTop: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
+          <span className="flex items-center gap-0.5"><Eye size={9} />{site.viewCount}</span>
+          <span className="flex items-center gap-0.5"><Clock size={9} />{relativeTime(site.createdAt)}</span>
+          {site.folder && <span className="flex items-center gap-0.5 ml-auto"><FolderOpen size={9} />{site.folder}</span>}
         </div>
       </div>
     </GlassCard>
@@ -531,7 +571,13 @@ function SiteListItem({ site, selected, onSelect, onEdit, onDelete, onShare }: {
         style={{ accentColor: 'var(--accent-primary)' }}
       />
 
-      <FileCode2 size={20} className="shrink-0" style={{ color: 'var(--accent-primary)' }} />
+      {site.coverImageUrl ? (
+        <img src={site.coverImageUrl} alt="" className="shrink-0 w-10 h-10 rounded object-cover" />
+      ) : (
+        <div className="shrink-0 w-10 h-10 rounded overflow-hidden" style={{ background: 'var(--bg-sunken)' }}>
+          <SitePreview url={site.siteUrl} className="w-full h-full" />
+        </div>
+      )}
 
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
