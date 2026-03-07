@@ -901,7 +901,18 @@ public static class CapsuleExecutor
             // 根据实际内容推断 MIME 类型，而非始终用 application/json
             var outputMime = InferMimeType(outputJson);
             var artifact = MakeTextArtifact(node, "script-out", "脚本输出", outputJson, outputMime);
-            return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs.ToString());
+            var artifacts = new List<ExecutionArtifact> { artifact };
+
+            // ── 5. 自动透传源数据引用（精简版：仅保留 ID/标题/URL，供下游 LLM 生成带链接的报告）──
+            var sourceRef = BuildSourceDataReference(allItems);
+            if (!string.IsNullOrEmpty(sourceRef))
+            {
+                var refArtifact = MakeTextArtifact(node, "script-out", "源数据引用", sourceRef, "application/json");
+                artifacts.Add(refArtifact);
+                logs.AppendLine($"  源数据引用: {sourceRef.Length} chars ({allItems.Count} 条记录)");
+            }
+
+            return new CapsuleResult(artifacts, logs.ToString());
         }
         catch (TimeoutException)
         {
@@ -2514,6 +2525,60 @@ public static class CapsuleExecutor
     }
 
     /// <summary>从 JSON 元素中提取字段值（支持嵌套路径如 "Bug.severity"）</summary>
+    /// <summary>
+    /// 从脚本执行器的输入数据中提取精简的源数据引用（仅保留 ID/标题/URL 相关字段），
+    /// 供下游 LLM 节点生成带链接的报告。这样即使 JS 脚本只输出统计结果，
+    /// 下游仍能获取每条记录的 URL 和标题信息。
+    /// </summary>
+    private static string? BuildSourceDataReference(List<JsonElement> allItems)
+    {
+        if (allItems.Count == 0) return null;
+
+        // 检测是否有 URL 相关字段（只有包含链接信息时才透传，避免无用数据）
+        var urlFieldNames = new[] { "URL链接", "url", "URL", "link", "href", "描述中的链接" };
+        var idFieldNames = new[] { "缺陷ID", "id", "ID", "bug_id", "标题", "title", "name" };
+
+        var first = allItems[0];
+        if (first.ValueKind != JsonValueKind.Object) return null;
+
+        var hasUrlField = false;
+        var relevantFields = new List<string>();
+        foreach (var prop in first.EnumerateObject())
+        {
+            if (urlFieldNames.Any(u => prop.Name.Equals(u, StringComparison.OrdinalIgnoreCase)))
+            {
+                hasUrlField = true;
+                relevantFields.Add(prop.Name);
+            }
+            else if (idFieldNames.Any(u => prop.Name.Equals(u, StringComparison.OrdinalIgnoreCase)))
+            {
+                relevantFields.Add(prop.Name);
+            }
+        }
+
+        if (!hasUrlField || relevantFields.Count == 0) return null;
+
+        // 构建精简引用：每条记录只保留 ID/标题/URL 字段
+        var refs = new JsonArray();
+        foreach (var item in allItems)
+        {
+            if (item.ValueKind != JsonValueKind.Object) continue;
+            var refObj = new JsonObject();
+            foreach (var field in relevantFields)
+            {
+                if (item.TryGetProperty(field, out var val))
+                {
+                    var strVal = val.ValueKind == JsonValueKind.String ? val.GetString() : val.GetRawText();
+                    if (!string.IsNullOrWhiteSpace(strVal))
+                        refObj[field] = strVal;
+                }
+            }
+            if (refObj.Count > 0) refs.Add(refObj);
+        }
+
+        return refs.Count > 0 ? refs.ToJsonString(JsonCompact) : null;
+    }
+
     /// <summary>
     /// 从 HTML 或纯文本中提取所有 http/https URL（过滤 TAPD 内部链接，保留外部文档链接如语雀等）。
     /// TAPD description 字段可能是 HTML（含 &lt;a href="..."&gt;）或纯文本。
