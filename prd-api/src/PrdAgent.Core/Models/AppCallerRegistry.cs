@@ -549,11 +549,11 @@ public static class WorkflowAgent
     {
         [AppCallerMetadata(
             "工作流-网页报告生成",
-            "工作流中使用LLM将结构化数据渲染为精美可下载的HTML网页报告",
-            ModelTypes = new[] { ModelTypes.Chat },
+            "工作流中使用LLM将结构化数据渲染为精美可下载的HTML网页报告(生成完整HTML/CSS/JS代码)",
+            ModelTypes = new[] { ModelTypes.Code },
             Category = "Workflow"
         )]
-        public const string Chat = "workflow-agent.webpage-generator::chat";
+        public const string Code = "workflow-agent.webpage-generator::code";
     }
 
     public static class ChatAssistant
