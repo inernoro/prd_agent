@@ -3015,7 +3015,7 @@ public static class CapsuleExecutor
 
 ## 输出要求
 1. 输出一个**完整的、自包含的 HTML 文件**（从 <!DOCTYPE html> 开始到 </html> 结束）
-2. 所有 CSS 和 JS 必须**内嵌**，不依赖外部样式表（Chart.js CDN 除外）
+2. 所有 CSS 和 JS 必须**内嵌**，不依赖外部样式表（Chart.js 等图表库可使用 CDN，服务器会自动下载内联）
 3. **不要**输出任何 markdown 代码块标记（不要 ```html ... ```），直接输出 HTML 代码
 4. **不要**在 HTML 之前或之后输出任何额外的解释文字
 
@@ -3112,10 +3112,10 @@ document.addEventListener('keydown', (e) => {
 
 ## 图表要求
 - 优先使用**纯 CSS + HTML**实现简单图表（进度条、占比条、数字卡片）
-- 如果数据复杂确实需要饼图/折线图/柱状图，使用 Chart.js (CDN: https://cdn.jsdelivr.net/npm/chart.js)
+- 如果数据复杂确实需要饼图/折线图/柱状图，使用 Chart.js (CDN: https://cdn.bootcdn.net/ajax/libs/Chart.js/4.4.7/chart.umd.min.js)
 - **Chart.js 必须容错加载**，使用以下模式：
 ```html
-<script src=""https://cdn.jsdelivr.net/npm/chart.js"" onerror=""window.__chartjsFailed=true""></script>
+<script src=""https://cdn.bootcdn.net/ajax/libs/Chart.js/4.4.7/chart.umd.min.js"" onerror=""window.__chartjsFailed=true""></script>
 <script>
 // 每个图表初始化都包裹在检查中
 function safeChart(canvasId, config) {
@@ -3293,6 +3293,10 @@ function safeChart(canvasId, config) {
             logs.AppendLine($"  警告: 网页内容为空 ({reason})");
         }
 
+        // ── CDN 资源内联：下载外部 JS/CSS 并嵌入 HTML，避免内网无法访问 ──
+        var factory = sp.GetRequiredService<IHttpClientFactory>();
+        htmlContent = await InlineExternalResourcesAsync(factory, htmlContent, logs);
+
         var fileName = !string.IsNullOrWhiteSpace(title) ? $"{title}.html" : "网页报告.html";
         var artifact = MakeTextArtifact(node, "webpage-out", fileName, htmlContent, "text/html");
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs.ToString());
@@ -3464,6 +3468,146 @@ function safeChart(canvasId, config) {
         var artifact = MakeTextArtifact(node, "notification", "通知", JsonSerializer.Serialize(new { title, sent = true }));
         return new CapsuleResult(new List<ExecutionArtifact> { artifact },
             $"Notification sent: {title}");
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // CDN 资源内联（网页报告用）
+    // ═══════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// 扫描 HTML 中的外部 &lt;script src&gt; 和 &lt;link rel="stylesheet" href&gt; 标签，
+    /// 通过服务器代理下载后内联到 HTML 中，使网页完全自包含。
+    /// </summary>
+    internal static async Task<string> InlineExternalResourcesAsync(
+        IHttpClientFactory factory, string html, StringBuilder logs)
+    {
+        var sw = Stopwatch.StartNew();
+        var inlinedCount = 0;
+        var failedCount = 0;
+
+        using var client = factory.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(15);
+        client.DefaultRequestHeaders.UserAgent.ParseAdd(
+            "Mozilla/5.0 (PrdAgent-Server) AppleWebKit/537.36");
+
+        // 大陆 CDN 镜像映射：海外 CDN → 国内镜像，提高下载成功率
+        string ResolveMirrorUrl(string url)
+        {
+            // jsdelivr → 国内镜像
+            if (url.Contains("cdn.jsdelivr.net"))
+                return url.Replace("cdn.jsdelivr.net", "cdn.jsdmirror.com");
+            // unpkg → npmmirror
+            if (url.Contains("unpkg.com"))
+                return url.Replace("unpkg.com", "registry.npmmirror.com").Replace("/npm/", "/-/").Replace("@", "") + "/files/";
+            // cdnjs → bootcdn
+            if (url.Contains("cdnjs.cloudflare.com"))
+                return url.Replace("cdnjs.cloudflare.com/ajax/libs", "cdn.bootcdn.net/ajax/libs");
+            return url;
+        }
+
+        // 带镜像回退的下载
+        async Task<string> DownloadWithMirrorAsync(string url)
+        {
+            try
+            {
+                return await client.GetStringAsync(url);
+            }
+            catch
+            {
+                var mirror = ResolveMirrorUrl(url);
+                if (mirror != url)
+                {
+                    logs.AppendLine($"    → 原始URL失败，尝试镜像: {mirror}");
+                    return await client.GetStringAsync(mirror);
+                }
+                throw;
+            }
+        }
+
+        // ── 1. 内联外部 <script src="https://..."></script> ──
+        var scriptPattern = new System.Text.RegularExpressions.Regex(
+            @"<script\b[^>]*\bsrc\s*=\s*[""'](https?://[^""']+)[""'][^>]*>\s*</script>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Singleline);
+
+        var scriptMatches = scriptPattern.Matches(html);
+        // 逆序替换以保持索引稳定
+        for (int i = scriptMatches.Count - 1; i >= 0; i--)
+        {
+            var m = scriptMatches[i];
+            var url = m.Groups[1].Value;
+            logs.AppendLine($"  [CDN内联] 下载 JS: {url}");
+            try
+            {
+                var content = await DownloadWithMirrorAsync(url);
+                var inlineTag = $"<script>/* inlined: {url} */\n{content}\n</script>";
+                html = string.Concat(html.AsSpan(0, m.Index), inlineTag, html.AsSpan(m.Index + m.Length));
+                inlinedCount++;
+                logs.AppendLine($"    → 成功 ({content.Length} chars)");
+            }
+            catch (Exception ex)
+            {
+                failedCount++;
+                logs.AppendLine($"    → 失败: {ex.Message}");
+                // 保留原始标签不动，浏览器仍可尝试加载
+            }
+        }
+
+        // ── 2. 内联外部 <link rel="stylesheet" href="https://..."> ──
+        var linkPattern = new System.Text.RegularExpressions.Regex(
+            @"<link\b[^>]*\brel\s*=\s*[""']stylesheet[""'][^>]*\bhref\s*=\s*[""'](https?://[^""']+)[""'][^>]*/?\s*>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Singleline);
+
+        var linkMatches = linkPattern.Matches(html);
+        for (int i = linkMatches.Count - 1; i >= 0; i--)
+        {
+            var m = linkMatches[i];
+            var url = m.Groups[1].Value;
+            logs.AppendLine($"  [CDN内联] 下载 CSS: {url}");
+            try
+            {
+                var content = await DownloadWithMirrorAsync(url);
+                var inlineTag = $"<style>/* inlined: {url} */\n{content}\n</style>";
+                html = string.Concat(html.AsSpan(0, m.Index), inlineTag, html.AsSpan(m.Index + m.Length));
+                inlinedCount++;
+                logs.AppendLine($"    → 成功 ({content.Length} chars)");
+            }
+            catch (Exception ex)
+            {
+                failedCount++;
+                logs.AppendLine($"    → 失败: {ex.Message}");
+            }
+        }
+
+        // ── 3. 也处理 href 在 rel 前面的情况 ──
+        var linkPattern2 = new System.Text.RegularExpressions.Regex(
+            @"<link\b[^>]*\bhref\s*=\s*[""'](https?://[^""']+)[""'][^>]*\brel\s*=\s*[""']stylesheet[""'][^>]*/?\s*>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Singleline);
+
+        var linkMatches2 = linkPattern2.Matches(html);
+        for (int i = linkMatches2.Count - 1; i >= 0; i--)
+        {
+            var m = linkMatches2[i];
+            var url = m.Groups[1].Value;
+            // 避免重复处理（如果已经被上面的 pattern 内联了，这里不会匹配到 <link> 了）
+            logs.AppendLine($"  [CDN内联] 下载 CSS: {url}");
+            try
+            {
+                var content = await DownloadWithMirrorAsync(url);
+                var inlineTag = $"<style>/* inlined: {url} */\n{content}\n</style>";
+                html = string.Concat(html.AsSpan(0, m.Index), inlineTag, html.AsSpan(m.Index + m.Length));
+                inlinedCount++;
+                logs.AppendLine($"    → 成功 ({content.Length} chars)");
+            }
+            catch (Exception ex)
+            {
+                failedCount++;
+                logs.AppendLine($"    → 失败: {ex.Message}");
+            }
+        }
+
+        sw.Stop();
+        logs.AppendLine($"  [CDN内联] 完成: 内联 {inlinedCount} 个, 失败 {failedCount} 个, 耗时 {sw.ElapsedMilliseconds}ms");
+        return html;
     }
 
     // ═══════════════════════════════════════════════════════════
