@@ -610,8 +610,10 @@ public class PlatformsController : ControllerBase
     /// </summary>
     private async Task<List<AvailableModelDto>> GetModelsForPlatform(LLMPlatform platform, string? requestPurpose = null)
     {
-        // OpenAI兼容的平台尝试从API获取模型列表
-        if (platform.PlatformType == "openai" || platform.PlatformType == "other")
+        // 除 Anthropic 外的所有平台均尝试从 OpenAI 兼容的 /models 端点获取列表
+        // （Anthropic 使用 x-api-key 认证，FetchModelsFromApi 固定使用 Bearer，因此跳过）
+        var isAnthropic = string.Equals(platform.PlatformType, "anthropic", StringComparison.OrdinalIgnoreCase);
+        if (!isAnthropic)
         {
             try
             {
@@ -635,7 +637,7 @@ public class PlatformsController : ControllerBase
             }
         }
 
-        // 不提供任何“预设(demo)模型”兜底：没有就返回空
+        // 不提供任何”预设(demo)模型”兜底：没有就返回空
         return new List<AvailableModelDto>();
     }
 
