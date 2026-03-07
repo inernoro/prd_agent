@@ -74,6 +74,7 @@ public static class CapsuleExecutor
 
             // ── 输出类 ──
             CapsuleTypes.ReportGenerator => await ExecuteReportGeneratorAsync(sp, node, variables, inputArtifacts, emitEvent),
+            CapsuleTypes.WebpageGenerator => await ExecuteWebpageGeneratorAsync(sp, node, variables, inputArtifacts, emitEvent),
             CapsuleTypes.FileExporter => ExecuteFileExporter(node, inputArtifacts),
             CapsuleTypes.WebhookSender => await ExecuteWebhookSenderAsync(sp, node, inputArtifacts),
             CapsuleTypes.NotificationSender => await ExecuteNotificationSenderAsync(sp, node, variables, inputArtifacts),
@@ -2954,6 +2955,230 @@ public static class CapsuleExecutor
         var mimeType = format == "html" ? "text/html" : "text/markdown";
         var artifact = MakeTextArtifact(node, "report", "报告", content, mimeType);
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, reportLogs.ToString());
+    }
+
+    // ── 网页报告生成器 ──────────────────────────────────────────
+
+    public static async Task<CapsuleResult> ExecuteWebpageGeneratorAsync(
+        IServiceProvider sp, WorkflowNode node, Dictionary<string, string> variables,
+        List<ExecutionArtifact> inputArtifacts, EmitEventDelegate? emitEvent = null)
+    {
+        var gateway = sp.GetService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>();
+        if (gateway == null)
+            throw new InvalidOperationException("LLM Gateway 未配置，无法生成网页报告");
+
+        var reportTemplate = ReplaceVariables(GetConfigString(node, "reportTemplate") ?? "", variables);
+        var style = GetConfigString(node, "style") ?? "modern-dark";
+        var title = ReplaceVariables(GetConfigString(node, "title") ?? "", variables);
+        var includeCharts = GetConfigString(node, "includeCharts") != "false";
+        var maxInputTokens = 80000;
+
+        var logs = new StringBuilder();
+        logs.AppendLine($"[网页报告生成器] 节点: {node.Name}");
+        logs.AppendLine($"  Style: {style}, IncludeCharts: {includeCharts}");
+        logs.AppendLine($"  InputArtifacts: {inputArtifacts.Count} 个");
+        foreach (var ia in inputArtifacts)
+            logs.AppendLine($"    - [{ia.Name}] SlotId={ia.SlotId} InlineContent={ia.InlineContent?.Length ?? 0} chars");
+
+        var inputText = string.Join("\n---\n", inputArtifacts
+            .Where(a => !string.IsNullOrWhiteSpace(a.InlineContent))
+            .Select(a => $"[{a.Name}]\n{a.InlineContent}"));
+
+        // Token 感知截断
+        var templateTokens = EstimateTokens(reportTemplate);
+        var dataTokenBudget = maxInputTokens - templateTokens - 2000; // 预留更多给系统提示词
+        if (dataTokenBudget < 1000) dataTokenBudget = 1000;
+        var (truncatedInput, _, wasTruncated) = TruncateToTokenBudget(inputText, dataTokenBudget, logs);
+        if (wasTruncated) inputText = truncatedInput;
+
+        // 构建风格描述
+        var styleDesc = style switch
+        {
+            "modern-dark" => "深色玻璃拟态风格 (dark glassmorphism)：深色背景 (#0f0f23)，半透明毛玻璃卡片 (rgba(255,255,255,0.05) + backdrop-filter: blur)，渐变色标题，柔和的发光边框。配色以深蓝/紫色为主调，辅以亮青色和金色高亮。",
+            "modern-light" => "现代浅色风格：白色/浅灰背景，卡片带轻微阴影，清爽蓝绿配色，简约排版。",
+            "dashboard" => "数据看板风格：类似 Grafana/Superset 看板，深色背景，卡片网格布局，大数字指标卡 (KPI cards) 在顶部，图表区域整齐排列。",
+            "report" => "正式报告风格：类似企业 PDF 报告，白色背景，衬线标题，表格和段落为主，配色低调专业。",
+            _ => "" // custom: 不额外描述
+        };
+
+        var systemPrompt = @"你是一位资深前端开发专家，擅长生成精美的单页 HTML 报告网页。
+
+## 输出要求
+1. 输出一个**完整的、自包含的 HTML 文件**（从 <!DOCTYPE html> 开始到 </html> 结束）
+2. 所有 CSS 必须**内嵌在 <style> 标签**中，不依赖外部样式表
+3. 网页必须是**响应式设计**，在桌面和移动端都能良好显示
+4. 使用**语义化 HTML5** 标签
+5. **不要**输出任何 markdown 代码块标记（不要 ```html ... ```），直接输出 HTML 代码";
+
+        if (!string.IsNullOrWhiteSpace(styleDesc))
+        {
+            systemPrompt += $@"
+
+## 视觉风格
+{styleDesc}";
+        }
+
+        if (includeCharts)
+        {
+            systemPrompt += @"
+
+## 图表要求
+- 使用 Chart.js (通过 CDN: https://cdn.jsdelivr.net/npm/chart.js)
+- 根据数据特征选择合适的图表类型（柱状图、饼图、折线图、环形图等）
+- 图表配色与整体网页风格协调
+- 每个图表需要有清晰的标题和图例";
+        }
+
+        systemPrompt += @"
+
+## HTML 结构建议
+- 顶部：报告标题 + 生成时间 + 关键指标摘要卡片
+- 中部：数据图表可视化 + 详细数据表格
+- 底部：结论/建议 + 页脚
+
+## 质量标准
+- 排版专业美观，有合理的留白和层次感
+- 表格数据清晰可读，支持横向滚动
+- 颜色对比度满足可读性要求
+- 打印友好（@media print 适当处理）";
+
+        var userPrompt = string.IsNullOrWhiteSpace(reportTemplate)
+            ? $"请根据以下数据生成一份精美的 HTML 网页报告：\n\n{inputText}"
+            : $"{reportTemplate}\n\n## 数据\n\n{inputText}";
+
+        if (!string.IsNullOrWhiteSpace(title))
+            userPrompt = $"网页标题：{title}\n\n{userPrompt}";
+
+        var request = new PrdAgent.Infrastructure.LlmGateway.GatewayRequest
+        {
+            AppCallerCode = PrdAgent.Core.Models.AppCallerRegistry.WorkflowAgent.WebpageGenerator.Chat,
+            ModelType = "chat",
+            TimeoutSeconds = 300,
+            RequestBody = new System.Text.Json.Nodes.JsonObject
+            {
+                ["messages"] = new System.Text.Json.Nodes.JsonArray
+                {
+                    new System.Text.Json.Nodes.JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                    new System.Text.Json.Nodes.JsonObject { ["role"] = "user", ["content"] = userPrompt }
+                }
+            }
+        };
+
+        logs.AppendLine($"  SystemPrompt: {systemPrompt.Length} chars");
+        logs.AppendLine($"  UserPrompt: {userPrompt.Length} chars (估算 {EstimateTokens(userPrompt)} tokens)");
+        logs.AppendLine("  --- 调用 LLM Gateway (streaming) ---");
+
+        // ── 流式调用 ──
+        var contentBuilder = new StringBuilder();
+        var model = "(unknown)";
+        int inputTokens = 0, outputTokens = 0;
+        string? errorCode = null, errorMessage = null;
+
+        const int CHUNK_BATCH_SIZE = 200;
+        var pendingChunk = new StringBuilder();
+        var streamSw = Stopwatch.StartNew();
+
+        if (emitEvent != null)
+            await emitEvent("llm-stream-start", new { nodeId = node.NodeId, nodeName = node.Name });
+
+        try
+        {
+            await foreach (var chunk in gateway.StreamAsync(request, CancellationToken.None))
+            {
+                switch (chunk.Type)
+                {
+                    case PrdAgent.Infrastructure.LlmGateway.GatewayChunkType.Start:
+                        model = chunk.Resolution?.ActualModel ?? "(unknown)";
+                        if (emitEvent != null)
+                            await emitEvent("llm-stream-start", new { nodeId = node.NodeId, nodeName = node.Name, model });
+                        break;
+
+                    case PrdAgent.Infrastructure.LlmGateway.GatewayChunkType.Text:
+                        if (!string.IsNullOrEmpty(chunk.Content))
+                        {
+                            contentBuilder.Append(chunk.Content);
+                            pendingChunk.Append(chunk.Content);
+                            if (emitEvent != null && pendingChunk.Length >= CHUNK_BATCH_SIZE)
+                            {
+                                await emitEvent("llm-chunk", new
+                                {
+                                    nodeId = node.NodeId,
+                                    content = pendingChunk.ToString(),
+                                    accumulatedLength = contentBuilder.Length,
+                                });
+                                pendingChunk.Clear();
+                            }
+                        }
+                        break;
+
+                    case PrdAgent.Infrastructure.LlmGateway.GatewayChunkType.Done:
+                        inputTokens = chunk.TokenUsage?.InputTokens ?? 0;
+                        outputTokens = chunk.TokenUsage?.OutputTokens ?? 0;
+                        break;
+
+                    case PrdAgent.Infrastructure.LlmGateway.GatewayChunkType.Error:
+                        errorCode = "STREAM_ERROR";
+                        errorMessage = chunk.Error;
+                        break;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            errorCode = "STREAM_EXCEPTION";
+            errorMessage = ex.Message;
+        }
+
+        if (emitEvent != null && pendingChunk.Length > 0)
+        {
+            await emitEvent("llm-chunk", new
+            {
+                nodeId = node.NodeId,
+                content = pendingChunk.ToString(),
+                accumulatedLength = contentBuilder.Length,
+            });
+        }
+
+        streamSw.Stop();
+        var htmlContent = contentBuilder.ToString();
+
+        // 清理 LLM 可能添加的 markdown 代码块标记
+        if (htmlContent.StartsWith("```html", StringComparison.OrdinalIgnoreCase))
+            htmlContent = htmlContent["```html".Length..];
+        else if (htmlContent.StartsWith("```"))
+            htmlContent = htmlContent[3..];
+        if (htmlContent.EndsWith("```"))
+            htmlContent = htmlContent[..^3];
+        htmlContent = htmlContent.Trim();
+
+        if (emitEvent != null)
+        {
+            await emitEvent("llm-stream-end", new
+            {
+                nodeId = node.NodeId,
+                totalLength = htmlContent.Length,
+                durationMs = streamSw.ElapsedMilliseconds,
+                model, inputTokens, outputTokens,
+            });
+        }
+
+        logs.AppendLine($"  Model: {model}");
+        logs.AppendLine($"  Tokens: input={inputTokens} output={outputTokens}");
+        logs.AppendLine($"  Streaming duration: {streamSw.ElapsedMilliseconds}ms");
+        logs.AppendLine($"  HTML output: {htmlContent.Length} chars");
+
+        if (!string.IsNullOrWhiteSpace(errorCode))
+            logs.AppendLine($"  Gateway 错误: [{errorCode}] {errorMessage}");
+
+        if (string.IsNullOrWhiteSpace(htmlContent))
+        {
+            var reason = !string.IsNullOrWhiteSpace(errorMessage) ? $"Gateway 错误: {errorMessage}" : "LLM 未返回内容";
+            logs.AppendLine($"  警告: 网页内容为空 ({reason})");
+        }
+
+        var fileName = !string.IsNullOrWhiteSpace(title) ? $"{title}.html" : "网页报告.html";
+        var artifact = MakeTextArtifact(node, "webpage-out", fileName, htmlContent, "text/html");
+        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs.ToString());
     }
 
     public static CapsuleResult ExecuteFileExporter(WorkflowNode node, List<ExecutionArtifact> inputArtifacts)

@@ -442,6 +442,7 @@ public static class CapsuleTypes
 
     // 输出类
     public const string ReportGenerator = "report-generator";
+    public const string WebpageGenerator = "webpage-generator";
     public const string FileExporter = "file-exporter";
     public const string WebhookSender = "webhook-sender";
     public const string NotificationSender = "notification-sender";
@@ -460,7 +461,7 @@ public static class CapsuleTypes
         // 流程控制类
         Delay, Condition,
         // 输出类
-        ReportGenerator, FileExporter, WebhookSender, NotificationSender,
+        ReportGenerator, WebpageGenerator, FileExporter, WebhookSender, NotificationSender,
         // 旧类型兼容
         DataCollectorLegacy, LlmCodeExecutorLegacy, RendererLegacy,
     };
