@@ -137,4 +137,7 @@ public static class WeeklyReportStatus
     public const string Viewed = "viewed";
 
     public static readonly string[] All = { NotStarted, Draft, Submitted, Reviewed, Returned, Overdue, Vacation, Viewed };
+
+    /// <summary>v2.0 简化状态流：Draft → Submitted → Viewed（不含退回/逾期）</summary>
+    public static readonly string[] V2Simplified = { Draft, Submitted, Viewed };
 }

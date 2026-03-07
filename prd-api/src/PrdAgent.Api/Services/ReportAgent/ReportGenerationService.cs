@@ -588,12 +588,33 @@ public class ReportGenerationService
         for (var i = 0; i < template.Sections.Count; i++)
         {
             var section = template.Sections[i];
+            var sectionType = section.SectionType ?? ReportSectionType.AutoList;
             sb.AppendLine($"### 板块 {i + 1}: {section.Title}");
             if (!string.IsNullOrEmpty(section.Description))
                 sb.AppendLine($"填写指引: {section.Description}");
             sb.AppendLine($"输入类型: {section.InputType}");
+            sb.AppendLine($"板块类型: {sectionType}");
+            if (section.DataSources is { Count: > 0 })
+                sb.AppendLine($"数据来源: {string.Join(", ", section.DataSources)}");
             if (section.MaxItems.HasValue)
                 sb.AppendLine($"最多条目: {section.MaxItems}");
+
+            // 指导 AI 如何处理不同板块类型
+            switch (sectionType)
+            {
+                case ReportSectionType.AutoStats:
+                    sb.AppendLine("⚡ 此板块为自动统计, 请用 key-value 格式输出统计数字 (content=指标名, sourceRef=数值)");
+                    break;
+                case ReportSectionType.AutoList:
+                    sb.AppendLine("⚡ 此板块由 AI 归纳, 请将零散数据归纳为有意义的工作项, 每条不超过30字");
+                    break;
+                case ReportSectionType.ManualList:
+                    sb.AppendLine("⚡ 此板块由用户手动填写, 请输出空 items 数组");
+                    break;
+                case ReportSectionType.FreeText:
+                    sb.AppendLine("⚡ 此板块为自由文本, 请输出空 items 数组");
+                    break;
+            }
             sb.AppendLine();
         }
 

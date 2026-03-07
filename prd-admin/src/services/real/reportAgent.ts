@@ -47,6 +47,17 @@ import type {
   GetTeamTrendsContract,
   MarkVacationContract,
   CancelVacationContract,
+  ListPersonalSourcesContract,
+  CreatePersonalSourceContract,
+  UpdatePersonalSourceContract,
+  DeletePersonalSourceContract,
+  TestPersonalSourceContract,
+  SyncPersonalSourceContract,
+  GetPersonalStatsContract,
+  GetTeamWorkflowContract,
+  RunTeamWorkflowContract,
+  UpdateIdentityMappingsContract,
+  SeedSystemTemplatesContract,
   PersonalTrendItem,
   TeamTrendItem,
   DailyLog,
@@ -62,6 +73,9 @@ import type {
   ReportComment,
   PlanComparison,
   TeamSummary,
+  PersonalSource,
+  PersonalStats,
+  TeamWorkflowInfo,
 } from '../contracts/reportAgent';
 
 // ========== Teams ==========
@@ -485,5 +499,94 @@ export const cancelVacationReal: CancelVacationContract = async (input) => {
   return await apiRequest<{ deleted: boolean }>(
     `/api/report-agent/teams/${encodeURIComponent(input.teamId)}/members/${encodeURIComponent(input.userId)}/vacation${q ? `?${q}` : ''}`,
     { method: 'DELETE' }
+  );
+};
+
+// ========== Phase 5/6 v2.0: Personal Sources ==========
+
+export const listPersonalSourcesReal: ListPersonalSourcesContract = async () => {
+  return await apiRequest<{ items: PersonalSource[] }>(api.reportAgent.personalSources.list(), { method: 'GET' });
+};
+
+export const createPersonalSourceReal: CreatePersonalSourceContract = async (input) => {
+  return await apiRequest<{ source: PersonalSource }>(api.reportAgent.personalSources.list(), {
+    method: 'POST',
+    body: input,
+  });
+};
+
+export const updatePersonalSourceReal: UpdatePersonalSourceContract = async (input) => {
+  const { id, ...body } = input;
+  return await apiRequest<{ source: PersonalSource }>(
+    api.reportAgent.personalSources.byId(encodeURIComponent(id)),
+    { method: 'PUT', body }
+  );
+};
+
+export const deletePersonalSourceReal: DeletePersonalSourceContract = async (input) => {
+  return await apiRequest<object>(
+    api.reportAgent.personalSources.byId(encodeURIComponent(input.id)),
+    { method: 'DELETE' }
+  );
+};
+
+export const testPersonalSourceReal: TestPersonalSourceContract = async (input) => {
+  return await apiRequest<{ success: boolean }>(
+    api.reportAgent.personalSources.test(encodeURIComponent(input.id)),
+    { method: 'POST' }
+  );
+};
+
+export const syncPersonalSourceReal: SyncPersonalSourceContract = async (input) => {
+  return await apiRequest<{ success: boolean }>(
+    api.reportAgent.personalSources.sync(encodeURIComponent(input.id)),
+    { method: 'POST' }
+  );
+};
+
+export const getPersonalStatsReal: GetPersonalStatsContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input?.weekYear != null) qs.set('weekYear', String(input.weekYear));
+  if (input?.weekNumber != null) qs.set('weekNumber', String(input.weekNumber));
+  const q = qs.toString();
+  return await apiRequest<PersonalStats>(
+    `${api.reportAgent.personalStats()}${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
+};
+
+// ========== Phase 5/6 v2.0: Team Workflow ==========
+
+export const getTeamWorkflowReal: GetTeamWorkflowContract = async (input) => {
+  return await apiRequest<TeamWorkflowInfo>(
+    api.reportAgent.teamWorkflow(encodeURIComponent(input.teamId)),
+    { method: 'GET' }
+  );
+};
+
+export const runTeamWorkflowReal: RunTeamWorkflowContract = async (input) => {
+  const { teamId, ...body } = input;
+  return await apiRequest<{ executionId: string }>(
+    api.reportAgent.teamWorkflowRun(encodeURIComponent(teamId)),
+    { method: 'POST', body }
+  );
+};
+
+// ========== Phase 5/6 v2.0: Identity Mappings ==========
+
+export const updateIdentityMappingsReal: UpdateIdentityMappingsContract = async (input) => {
+  const { teamId, userId, ...body } = input;
+  return await apiRequest<{ member: ReportTeamMember }>(
+    api.reportAgent.identityMappings(encodeURIComponent(teamId), encodeURIComponent(userId)),
+    { method: 'PUT', body }
+  );
+};
+
+// ========== Phase 6: Seed Templates ==========
+
+export const seedSystemTemplatesReal: SeedSystemTemplatesContract = async () => {
+  return await apiRequest<{ inserted: string[]; skipped: number }>(
+    api.reportAgent.seedTemplates(),
+    { method: 'POST' }
   );
 };

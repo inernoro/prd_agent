@@ -533,6 +533,17 @@ import type {
   GetTeamTrendsContract,
   MarkVacationContract,
   CancelVacationContract,
+  ListPersonalSourcesContract,
+  CreatePersonalSourceContract,
+  UpdatePersonalSourceContract,
+  DeletePersonalSourceContract,
+  TestPersonalSourceContract,
+  SyncPersonalSourceContract,
+  GetPersonalStatsContract,
+  GetTeamWorkflowContract,
+  RunTeamWorkflowContract,
+  UpdateIdentityMappingsContract,
+  SeedSystemTemplatesContract,
 } from '@/services/contracts/reportAgent';
 import {
   listReportTeamsReal,
@@ -583,6 +594,17 @@ import {
   exportTeamSummaryMarkdownReal,
   markVacationReal,
   cancelVacationReal,
+  listPersonalSourcesReal,
+  createPersonalSourceReal,
+  updatePersonalSourceReal,
+  deletePersonalSourceReal,
+  testPersonalSourceReal,
+  syncPersonalSourceReal,
+  getPersonalStatsReal,
+  getTeamWorkflowReal,
+  runTeamWorkflowReal,
+  updateIdentityMappingsReal,
+  seedSystemTemplatesReal,
 } from '@/services/real/reportAgent';
 
 function withAuth<TArgs extends unknown[], TResult>(
@@ -928,6 +950,18 @@ export const exportReportMarkdown = exportReportMarkdownReal;
 export const exportTeamSummaryMarkdown = exportTeamSummaryMarkdownReal;
 export const markVacation: MarkVacationContract = withAuth(markVacationReal);
 export const cancelVacation: CancelVacationContract = withAuth(cancelVacationReal);
+// Report Agent Phase 5/6 v2.0: Personal Sources + Workflow + Identity Mappings
+export const listPersonalSources: ListPersonalSourcesContract = withAuth(listPersonalSourcesReal);
+export const createPersonalSource: CreatePersonalSourceContract = withAuth(createPersonalSourceReal);
+export const updatePersonalSource: UpdatePersonalSourceContract = withAuth(updatePersonalSourceReal);
+export const deletePersonalSource: DeletePersonalSourceContract = withAuth(deletePersonalSourceReal);
+export const testPersonalSource: TestPersonalSourceContract = withAuth(testPersonalSourceReal);
+export const syncPersonalSource: SyncPersonalSourceContract = withAuth(syncPersonalSourceReal);
+export const getPersonalStats: GetPersonalStatsContract = withAuth(getPersonalStatsReal);
+export const getTeamWorkflow: GetTeamWorkflowContract = withAuth(getTeamWorkflowReal);
+export const runTeamWorkflow: RunTeamWorkflowContract = withAuth(runTeamWorkflowReal);
+export const updateIdentityMappings: UpdateIdentityMappingsContract = withAuth(updateIdentityMappingsReal);
+export const seedSystemTemplates: SeedSystemTemplatesContract = withAuth(seedSystemTemplatesReal);
 
 // Arena 竞技场
 import {

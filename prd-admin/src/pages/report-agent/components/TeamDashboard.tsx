@@ -9,6 +9,7 @@ import { reviewWeeklyReport, returnWeeklyReport, generateTeamSummary, getTeamSum
 import { WeeklyReportStatus } from '@/services/contracts/reportAgent';
 import type { TeamSummary } from '@/services/contracts/reportAgent';
 import { ReportDetailPanel } from './ReportDetailPanel';
+import { TeamWorkflowPanel } from './TeamWorkflowPanel';
 
 function getISOWeek(date: Date): { weekYear: number; weekNumber: number } {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -251,6 +252,9 @@ export function TeamDashboard() {
           </div>
         </div>
       </GlassCard>
+
+      {/* Workflow Panel */}
+      {selectedTeamId && <TeamWorkflowPanel teamId={selectedTeamId} />}
 
       {/* Stats */}
       {dashboard && (

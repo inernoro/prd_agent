@@ -89,6 +89,19 @@ public class ReportAgentController : ControllerBase
         return (weekYear, weekNumber, monday, sunday);
     }
 
+    private static ReportTemplateSection MapSection(TemplateSectionInput s, int i) => new()
+    {
+        Title = s.Title?.Trim() ?? $"章节{i + 1}",
+        Description = s.Description,
+        InputType = ReportInputType.All.Contains(s.InputType ?? "") ? s.InputType! : ReportInputType.BulletList,
+        IsRequired = s.IsRequired ?? true,
+        SortOrder = s.SortOrder ?? i,
+        DataSourceHint = s.DataSourceHint,
+        MaxItems = s.MaxItems,
+        SectionType = s.SectionType != null && ReportSectionType.All.Contains(s.SectionType) ? s.SectionType : null,
+        DataSources = s.DataSources,
+    };
+
     #endregion
 
     #region Team Management
@@ -494,16 +507,7 @@ public class ReportAgentController : ControllerBase
         {
             Name = req.Name.Trim(),
             Description = req.Description,
-            Sections = req.Sections.Select((s, i) => new ReportTemplateSection
-            {
-                Title = s.Title?.Trim() ?? $"章节{i + 1}",
-                Description = s.Description,
-                InputType = ReportInputType.All.Contains(s.InputType ?? "") ? s.InputType! : ReportInputType.BulletList,
-                IsRequired = s.IsRequired ?? true,
-                SortOrder = s.SortOrder ?? i,
-                DataSourceHint = s.DataSourceHint,
-                MaxItems = s.MaxItems
-            }).ToList(),
+            Sections = req.Sections.Select((s, i) => MapSection(s, i)).ToList(),
             TeamId = req.TeamId,
             JobTitle = req.JobTitle,
             IsDefault = req.IsDefault ?? false,
@@ -536,16 +540,7 @@ public class ReportAgentController : ControllerBase
             update = update.Set(t => t.Description, req.Description);
         if (req.Sections != null)
         {
-            update = update.Set(t => t.Sections, req.Sections.Select((s, i) => new ReportTemplateSection
-            {
-                Title = s.Title?.Trim() ?? $"章节{i + 1}",
-                Description = s.Description,
-                InputType = ReportInputType.All.Contains(s.InputType ?? "") ? s.InputType! : ReportInputType.BulletList,
-                IsRequired = s.IsRequired ?? true,
-                SortOrder = s.SortOrder ?? i,
-                DataSourceHint = s.DataSourceHint,
-                MaxItems = s.MaxItems
-            }).ToList());
+            update = update.Set(t => t.Sections, req.Sections.Select((s, i) => MapSection(s, i)).ToList());
         }
         if (req.TeamId != null)
             update = update.Set(t => t.TeamId, req.TeamId);
@@ -569,11 +564,41 @@ public class ReportAgentController : ControllerBase
         if (!HasPermission(AdminPermissionCatalog.ReportAgentTemplateManage))
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "缺少模板管理权限"));
 
-        var result = await _db.ReportTemplates.DeleteOneAsync(t => t.Id == id);
-        if (result.DeletedCount == 0)
+        var template = await _db.ReportTemplates.Find(t => t.Id == id).FirstOrDefaultAsync();
+        if (template == null)
             return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "模板不存在"));
+        if (template.IsSystem)
+            return BadRequest(ApiResponse<object>.Fail("SYSTEM_TEMPLATE", "系统预置模板不可删除"));
 
+        await _db.ReportTemplates.DeleteOneAsync(t => t.Id == id);
         return Ok(ApiResponse<object>.Ok(new { }));
+    }
+
+    /// <summary>
+    /// 初始化系统预置模板（幂等：已存在的 TemplateKey 跳过）
+    /// </summary>
+    [HttpPost("templates/seed")]
+    public async Task<IActionResult> SeedSystemTemplates()
+    {
+        if (!HasPermission(AdminPermissionCatalog.ReportAgentTemplateManage))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "缺少模板管理权限"));
+
+        var systemTemplates = SystemTemplates.GetAllSystemTemplates();
+        var existingKeys = (await _db.ReportTemplates
+            .Find(t => t.IsSystem && t.TemplateKey != null)
+            .Project(t => t.TemplateKey)
+            .ToListAsync())
+            .ToHashSet();
+
+        var inserted = new List<string>();
+        foreach (var tpl in systemTemplates)
+        {
+            if (existingKeys.Contains(tpl.TemplateKey)) continue;
+            await _db.ReportTemplates.InsertOneAsync(tpl);
+            inserted.Add(tpl.TemplateKey!);
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { inserted, skipped = existingKeys.Count }));
     }
 
     #endregion
@@ -812,6 +837,23 @@ public class ReportAgentController : ControllerBase
         if (report.Status != WeeklyReportStatus.Draft && report.Status != WeeklyReportStatus.Returned && report.Status != WeeklyReportStatus.Overdue)
             return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "只有草稿、已退回或逾期状态的周报可以提交"));
 
+        // 构建 StatsSnapshot：快照 auto-stats 板块数据
+        var snapshot = new Dictionary<string, object>();
+        foreach (var section in report.Sections)
+        {
+            if (section.TemplateSection.SectionType == ReportSectionType.AutoStats && section.Items.Count > 0)
+            {
+                var stats = new Dictionary<string, string>();
+                foreach (var item in section.Items)
+                {
+                    if (!string.IsNullOrWhiteSpace(item.Content))
+                        stats[item.Content] = item.SourceRef ?? "";
+                }
+                if (stats.Count > 0)
+                    snapshot[section.TemplateSection.Title] = stats;
+            }
+        }
+
         var update = Builders<WeeklyReport>.Update
             .Set(r => r.Status, WeeklyReportStatus.Submitted)
             .Set(r => r.SubmittedAt, DateTime.UtcNow)
@@ -820,6 +862,9 @@ public class ReportAgentController : ControllerBase
             .Set(r => r.ReturnedByName, null as string)
             .Set(r => r.ReturnedAt, null as DateTime?)
             .Set(r => r.UpdatedAt, DateTime.UtcNow);
+
+        if (snapshot.Count > 0)
+            update = update.Set(r => r.StatsSnapshot, snapshot);
 
         await _db.WeeklyReports.UpdateOneAsync(r => r.Id == id, update);
 
@@ -1051,6 +1096,10 @@ public class ReportAgentController : ControllerBase
         public int? SortOrder { get; set; }
         public string? DataSourceHint { get; set; }
         public int? MaxItems { get; set; }
+        /// <summary>v2.0 板块类型：auto-stats / auto-list / manual-list / free-text</summary>
+        public string? SectionType { get; set; }
+        /// <summary>v2.0 关联的数据源类型（如 ["github", "tapd"]）</summary>
+        public List<string>? DataSources { get; set; }
     }
 
     public class CreateReportRequest

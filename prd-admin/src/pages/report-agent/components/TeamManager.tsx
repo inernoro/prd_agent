@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Pencil, Trash2, Users, UserPlus } from 'lucide-react';
+import { Plus, Pencil, Trash2, Users, UserPlus, Link2 } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
@@ -13,6 +13,8 @@ import {
   updateReportTeamMember,
 } from '@/services';
 import { ReportTeamRole } from '@/services/contracts/reportAgent';
+import type { ReportTeamMember } from '@/services/contracts/reportAgent';
+import { IdentityMappingEditor } from './IdentityMappingEditor';
 
 const roleLabels: Record<string, string> = {
   [ReportTeamRole.Leader]: '负责人',
@@ -37,6 +39,7 @@ export function TeamManager() {
   const [memberRole, setMemberRole] = useState<string>(ReportTeamRole.Member);
   const [memberJobTitle, setMemberJobTitle] = useState('');
   const [saving, setSaving] = useState(false);
+  const [editingMappingMember, setEditingMappingMember] = useState<ReportTeamMember | null>(null);
 
   useEffect(() => {
     void loadUsers();
@@ -225,6 +228,9 @@ export function TeamManager() {
                           <option key={k} value={k}>{v}</option>
                         ))}
                       </select>
+                      <Button variant="ghost" size="sm" onClick={() => setEditingMappingMember(m)} title="身份映射">
+                        <Link2 size={12} />
+                      </Button>
                       <Button variant="ghost" size="sm" onClick={() => handleRemoveMember(m.userId)}>
                         <Trash2 size={12} />
                       </Button>
@@ -332,6 +338,16 @@ export function TeamManager() {
             </div>
           </GlassCard>
         </div>
+      )}
+
+      {/* Identity Mapping Editor */}
+      {editingMappingMember && selectedTeamId && (
+        <IdentityMappingEditor
+          teamId={selectedTeamId}
+          member={editingMappingMember}
+          onClose={() => setEditingMappingMember(null)}
+          onSaved={() => { if (selectedTeamId) void loadTeamDetail(selectedTeamId); }}
+        />
       )}
     </div>
   );

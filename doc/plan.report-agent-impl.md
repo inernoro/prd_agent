@@ -1,6 +1,6 @@
 # 周报 Agent — 实施进度追踪
 
-> **最后更新**：2026-03-05 | **当前阶段**：Phase 5 ✅ DONE
+> **最后更新**：2026-03-07 | **当前阶段**：Phase 6-7 ✅ DONE
 >
 > **用途**：跨 session 的实施进度单一信息源。新 session 读此文档即可恢复上下文，无需全盘扫描。
 >
@@ -22,6 +22,8 @@
 | 4 | 体验优化 | ✅ DONE | — | 2026-03-01 |
 | PRD v2.0 | Workflow as Data Pipeline PRD | ✅ DONE | — | 2026-03-05 |
 | 5 | Workflow 管道 + 个人数据源 | ✅ DONE | `0c3e00f` | 2026-03-05 |
+| 6 | 模板 + 生成引擎适配 | ✅ DONE | — | 2026-03-07 |
+| 7 | UI + 团队仪表盘 | ✅ DONE | — | 2026-03-07 |
 
 ---
 
@@ -319,6 +321,74 @@
 | 模板查找 | 级联: 岗位 → 团队 → 系统默认 | 灵活度与简洁度平衡 |
 | 工作流等待 | 渐进轮询 2s→10s，最长 5min | 避免频繁 DB 查询，又不至于等太久 |
 | Token 存储 | AES-256 加密 (ApiKeyCrypto) | 复用已有加密基础设施 |
+
+---
+
+## Phase 6：模板 + 生成引擎适配 — ✅ DONE
+
+> 完成日期：2026-03-07
+
+### 目标
+
+将 v2.0 板块类型（SectionType）融入模板系统和 AI 生成引擎，支持系统预置模板和智能提示词生成。
+
+### 交付物
+
+| 类别 | 交付物 | 说明 |
+|------|--------|------|
+| 模型 | `ReportSectionType` 常量类 | `auto-stats`, `auto-list`, `manual-list`, `free-text` |
+| 模型 | `ReportTemplateSection.SectionType/DataSources` | 模板板块扩展字段 |
+| 模型 | `SystemTemplates` 静态工厂 | 3 个预置模板 (dev-general, product-general, minimal) |
+| 模型 | `ReportTemplate.IsSystem/TemplateKey` | 系统模板标识 + 幂等 Key |
+| API | `POST templates/seed` | 幂等种子模板接入端点 |
+| API | 模板删除保护 | `IsSystem=true` 禁止删除 |
+| API | `MapSection` 辅助方法 | DRY 化模板章节映射 |
+| 引擎 | SectionType 感知提示词 | `BuildUserPromptV2` 按板块类型输出不同 AI 指令 |
+| 引擎 | StatsSnapshot 采集 | 提交时自动采集 auto-stats 板块的 key-value 数据 |
+| 状态 | `WeeklyReportStatus.V2Simplified` | v2.0 精简状态集 (Draft, Submitted, Viewed) |
+
+### 架构决策
+
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| 系统模板存储 | DB + TemplateKey 幂等种子 | 支持管理员覆盖修改，seed 幂等不重复创建 |
+| SectionType 枚举 | 字符串常量 + All 列表校验 | 灵活扩展，前后端统一 |
+| StatsSnapshot 时机 | Submit 时一次性采集 | 历史切片，提交后不变 |
+| AI 提示词分支 | switch(sectionType) | 每种板块的 AI 指令完全不同 |
+
+---
+
+## Phase 7：UI + 团队仪表盘 — ✅ DONE
+
+> 完成日期：2026-03-07
+
+### 目标
+
+构建 v2.0 前端组件，包括个人数据源管理、工作流面板、身份映射编辑器，以及团队仪表盘中的工作流集成。
+
+### 交付物
+
+| 类别 | 交付物 | 说明 |
+|------|--------|------|
+| 页面 | `PersonalSourcesPanel` | 个人数据源 CRUD + 测试/同步/开关 |
+| 组件 | `TeamWorkflowPanel` | 工作流状态展示 + 手动触发执行 |
+| 组件 | `IdentityMappingEditor` | 4 平台身份映射 (github/tapd/yuque/gitlab) |
+| 组件 | `TeamStatsPanel` | 团队产出统计概览 + 成员表格 |
+| 集成 | `TeamDashboard` + WorkflowPanel | 工作流面板嵌入团队仪表盘 |
+| 集成 | `TeamManager` + IdentityMapping | 成员行添加身份映射入口 |
+| Tab | `my-sources` Tab | ReportAgentPage 新增"我的数据源"标签 |
+| 契约 | v2.0 前端契约类型 | PersonalSource, TeamWorkflowInfo 等完整类型 |
+| API | 11 个 real 实现 | personalSources CRUD, stats, workflow, identityMappings |
+| 路由 | v2.0 路由注册 | api.ts 新增 personalSources/workflow/identityMappings 路由 |
+
+### 架构决策
+
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| 数据源管理入口 | 独立 Tab (非弹窗) | 操作较多(CRUD+测试+同步)，弹窗放不下 |
+| 身份映射 | Modal 编辑器 | 操作简单(4 个输入框)，弹窗足够 |
+| 工作流面板位置 | 团队仪表盘 Controls 与 Stats 之间 | 逻辑上属于团队级别操作 |
+| TeamStatsPanel 独立 | 可复用独立组件 | 未来可在趋势页面复用 |
 
 ---
 
