@@ -49,7 +49,7 @@ public class DocumentsController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.GROUP_NOT_FOUND, "群组不存在"));
         }
 
-        // 安全兜底：即便是管理员，也只允许读取”该群组当前绑定的 PRD”或会话级补充文档
+        // 安全兜底：即便是管理员，也只允许读取"该群组当前绑定的 PRD"或会话级补充文档
         var isGroupPrimary = string.Equals(group.PrdDocumentId, documentId, StringComparison.OrdinalIgnoreCase);
         if (!isGroupPrimary)
         {
@@ -58,7 +58,7 @@ public class DocumentsController : ControllerBase
             if (!isSessionDoc)
             {
                 return StatusCode(StatusCodes.Status403Forbidden,
-                    ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, “该文档未绑定到当前群组”));
+                    ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "该文档未绑定到当前群组"));
             }
         }
 

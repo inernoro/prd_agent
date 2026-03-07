@@ -166,6 +166,13 @@ public class SessionService : ISessionService
         return session;
     }
 
+    public Task<Session?> GetByGroupIdAsync(string groupId)
+    {
+        // Cache-based implementation: not supported (no query by groupId on cache store)
+        // The MongoDB-backed MongoSessionService handles this; return null as fallback.
+        return Task.FromResult<Session?>(null);
+    }
+
     public async Task<Session> UpdateDocumentTypeAsync(string sessionId, string documentId, string documentType)
     {
         var session = await GetByIdAsync(sessionId)
