@@ -185,3 +185,34 @@ pub async fn delete_skill(skill_key: String) -> Result<ApiResponse<serde_json::V
         .delete(&format!("/api/prd-agent/skills/{}", skill_key))
         .await
 }
+
+// ━━━ 从消息提炼提示词模板 ━━━━━━━━
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerateSkillFromMessageRequest {
+    pub user_message: Option<String>,
+    pub assistant_message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtractPromptTemplateResponse {
+    pub prompt_template: String,
+}
+
+/// 从对话消息提炼可复用的提示词模板
+#[command]
+pub async fn generate_skill_from_message(
+    user_message: Option<String>,
+    assistant_message: String,
+) -> Result<ApiResponse<ExtractPromptTemplateResponse>, String> {
+    let client = ApiClient::new();
+    let request = GenerateSkillFromMessageRequest {
+        user_message,
+        assistant_message,
+    };
+    client
+        .post("/api/prd-agent/skills/generate-from-message", &request)
+        .await
+}

@@ -1219,6 +1219,25 @@ export type {
   TutorialEmailStep,
 } from '@/services/real/tutorialEmail';
 
+// ── Web Hosting 网页托管 ──
+export {
+  uploadSite,
+  reuploadSite,
+  createFromContent,
+  listSites,
+  getSite,
+  updateSite,
+  deleteSite,
+  batchDeleteSites,
+  listFolders as listSiteFolders,
+  listTags as listSiteTags,
+  createShareLink as createSiteShareLink,
+  listShares as listSiteShares,
+  revokeShare as revokeSiteShare,
+  viewShare as viewSiteShare,
+} from '@/services/real/webPages';
+export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, SharedSiteInfo, ShareViewData } from '@/services/real/webPages';
+
 // ── Account Data Transfer 数据分享 ──
 export {
   listTransfersReal as listTransfers,

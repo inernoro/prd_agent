@@ -148,7 +148,20 @@ function checkPermissionFingerprint(res: Response): void {
   }
 }
 
+// 去重：多个并发 401 共享同一个 refresh 请求，避免 refresh 风暴
+let inflightRefresh: Promise<boolean> | null = null;
+
 async function tryRefreshAdminToken(): Promise<boolean> {
+  if (inflightRefresh) return inflightRefresh;
+  inflightRefresh = doRefreshAdminToken();
+  try {
+    return await inflightRefresh;
+  } finally {
+    inflightRefresh = null;
+  }
+}
+
+async function doRefreshAdminToken(): Promise<boolean> {
   const authStore = useAuthStore.getState();
   const token = authStore.token;
   const refreshToken = authStore.refreshToken;
@@ -226,7 +239,12 @@ async function apiRequestInner<T>(
   const auth = options?.auth ?? true;
   if (auth) {
     const token = useAuthStore.getState().token;
-    if (token) headers.Authorization = `Bearer ${token}`;
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    } else {
+      // 未登录时直接返回 UNAUTHORIZED，避免发出注定 401 的请求
+      return fail('UNAUTHORIZED', '未登录') as unknown as ApiResponse<T>;
+    }
   }
 
   let body: string | undefined;

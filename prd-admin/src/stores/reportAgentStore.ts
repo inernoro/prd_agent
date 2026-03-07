@@ -157,6 +157,7 @@ export const useReportAgentStore = create<ReportAgentState>((set, get) => ({
   },
 
   loadAll: async () => {
+    if (get().loading) return; // 防止并发重复加载
     set({ loading: true, error: '' });
     try {
       await Promise.all([

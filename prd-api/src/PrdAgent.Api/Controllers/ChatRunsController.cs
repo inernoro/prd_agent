@@ -49,7 +49,77 @@ public class ChatRunsController : ControllerBase
     }
 
     private static string? GetUserId(ClaimsPrincipal user)
-        => user.FindFirst("sub")?.Value ?? user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        => user.FindFirst("userId")?.Value
+           ?? user.FindFirst("sub")?.Value
+           ?? user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+    private async Task<(UserRole EffectiveAnswerRole, IActionResult? Error)> ResolveSessionAccessAsync(
+        Session session,
+        string userId,
+        CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(session.OwnerUserId))
+        {
+            if (!string.Equals(session.OwnerUserId, userId, StringComparison.Ordinal))
+            {
+                return (default, StatusCode(StatusCodes.Status403Forbidden,
+                    ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限")));
+            }
+
+            return (session.CurrentRole, null);
+        }
+
+        if (!string.IsNullOrWhiteSpace(session.GroupId))
+        {
+            var gid = session.GroupId.Trim();
+            var member = await _db.GroupMembers.Find(x => x.GroupId == gid && x.UserId == userId).FirstOrDefaultAsync(ct);
+            if (member == null)
+            {
+                return (default, StatusCode(StatusCodes.Status403Forbidden,
+                    ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "您不是该群组成员")));
+            }
+
+            return (member.MemberRole, null);
+        }
+
+        return (default, StatusCode(StatusCodes.Status403Forbidden,
+            ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限")));
+    }
+
+    private async Task<IActionResult?> EnsureRunAccessAsync(RunMeta meta, string userId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(meta.SessionId))
+        {
+            if (string.Equals(meta.CreatedByUserId, userId, StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+        }
+
+        var session = await _sessionService.GetByIdAsync(meta.SessionId);
+        if (session == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.SESSION_NOT_FOUND, "会话不存在或已过期"));
+        }
+
+        var (_, accessError) = await ResolveSessionAccessAsync(session, userId, ct);
+        return accessError;
+    }
+
+    private async Task WriteStreamErrorAsync(string errorCode, string errorMessage, CancellationToken cancellationToken)
+    {
+        var err = new StreamErrorEvent
+        {
+            Type = "error",
+            ErrorCode = errorCode,
+            ErrorMessage = errorMessage
+        };
+        await Response.WriteAsync($"event: error\ndata: {JsonSerializer.Serialize(err, AppJsonContext.Default.StreamErrorEvent)}\n\n", cancellationToken);
+        await Response.Body.FlushAsync(cancellationToken);
+    }
 
     /// <summary>
     /// 创建对话 Run：立即落库/广播 user message，并返回 runId；LLM 由后台 worker 执行。
@@ -76,18 +146,12 @@ public class ChatRunsController : ControllerBase
         // 计算本次回答机器人角色：
         // - 群会话：按成员身份（GroupMember.MemberRole）
         // - 个人会话：仅 ADMIN 可用 request.Role 覆盖（用于“选择回答机器人”）
-        var effectiveAnswerRole = session.CurrentRole;
-        if (!string.IsNullOrWhiteSpace(session.GroupId))
+        var (effectiveAnswerRole, accessError) = await ResolveSessionAccessAsync(session, userId, ct);
+        if (accessError != null)
         {
-            var gid2 = session.GroupId.Trim();
-            var member = await _db.GroupMembers.Find(x => x.GroupId == gid2 && x.UserId == userId).FirstOrDefaultAsync(ct);
-            if (member == null)
-            {
-                return StatusCode(StatusCodes.Status403Forbidden,
-                    ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "您不是该群组成员"));
-            }
-            effectiveAnswerRole = member.MemberRole;
+            return accessError;
         }
+
         if (request.Role.HasValue)
         {
             var u = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
@@ -244,9 +308,15 @@ public class ChatRunsController : ControllerBase
         var rid = (runId ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(rid))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "runId 不能为空"));
+        var userId = GetUserId(User);
+        if (string.IsNullOrWhiteSpace(userId))
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
         var meta = await _runStore.GetRunAsync(RunKinds.Chat, rid, ct);
         if (meta == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.SESSION_NOT_FOUND, "run 不存在或已过期"));
+        var accessError = await EnsureRunAccessAsync(meta, userId, ct);
+        if (accessError != null)
+            return accessError;
         return Ok(ApiResponse<object>.Ok(meta));
     }
 
@@ -256,6 +326,15 @@ public class ChatRunsController : ControllerBase
         var rid = (runId ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(rid))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "runId 不能为空"));
+        var userId = GetUserId(User);
+        if (string.IsNullOrWhiteSpace(userId))
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+        var meta = await _runStore.GetRunAsync(RunKinds.Chat, rid, ct);
+        if (meta == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.SESSION_NOT_FOUND, "run 不存在或已过期"));
+        var accessError = await EnsureRunAccessAsync(meta, userId, ct);
+        if (accessError != null)
+            return accessError;
         await _runStore.TryMarkCancelRequestedAsync(RunKinds.Chat, rid, ct);
         return Ok(ApiResponse<object>.Ok(new { runId = rid, cancelRequested = true }));
     }
@@ -274,8 +353,35 @@ public class ChatRunsController : ControllerBase
         var rid = (runId ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(rid))
         {
-            var err = new StreamErrorEvent { Type = "error", ErrorCode = ErrorCodes.INVALID_FORMAT, ErrorMessage = "runId 不能为空" };
-            await Response.WriteAsync($"event: error\ndata: {JsonSerializer.Serialize(err, AppJsonContext.Default.StreamErrorEvent)}\n\n", cancellationToken);
+            await WriteStreamErrorAsync(ErrorCodes.INVALID_FORMAT, "runId 不能为空", cancellationToken);
+            return;
+        }
+
+        var userId = GetUserId(User);
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            await WriteStreamErrorAsync(ErrorCodes.UNAUTHORIZED, "未授权", cancellationToken);
+            return;
+        }
+
+        var meta = await _runStore.GetRunAsync(RunKinds.Chat, rid, cancellationToken);
+        if (meta == null)
+        {
+            await WriteStreamErrorAsync(ErrorCodes.SESSION_NOT_FOUND, "run 不存在或已过期", cancellationToken);
+            return;
+        }
+
+        var streamAccessError = await EnsureRunAccessAsync(meta, userId, cancellationToken);
+        if (streamAccessError is ObjectResult objectResult &&
+            objectResult.Value is ApiResponse<object> apiError &&
+            apiError.Error != null)
+        {
+            await WriteStreamErrorAsync(apiError.Error.Code, apiError.Error.Message, cancellationToken);
+            return;
+        }
+        if (streamAccessError != null)
+        {
+            await WriteStreamErrorAsync(ErrorCodes.PERMISSION_DENIED, "无权限", cancellationToken);
             return;
         }
 

@@ -12,7 +12,7 @@ export const DEFAULT_NOHEAD_FILE = 'nohead.png';
  * 用户头像信息接口
  * 
  * 【重要】在模型中存储用户信息时，必须使用 avatarFileName 而非 username 来获取头像！
- * - username 会被拼接成 `{username}.png`，无法正确显示 .gif 等其他格式的头像
+ * - username 已不再用于拼接头像 URL（之前会拼成 `{username}.png` 但文件不存在）
  * - avatarFileName 是用户实际的头像文件名，如 `admin.gif`、`test.png` 等
  * 
  * 示例（后端模型）：
@@ -97,9 +97,7 @@ export function resolveAvatarUrl(args: {
     return joinUrl(base, DEFAULT_BOT_AVATAR_FILES.dev.toLowerCase());
   }
 
-  const username = String(args.username || '').trim().toLowerCase();
-  if (username) return joinUrl(base, `${username}.png`);
-
+  // 人类用户未设置头像：直接使用 nohead.png（避免拼接不存在的 {username}.png）
   return joinUrl(base, DEFAULT_NOHEAD_FILE);
 }
 

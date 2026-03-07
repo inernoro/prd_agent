@@ -24,6 +24,27 @@ public interface IAssetStorage
     /// 按 sha256 和 mime 类型构建公开访问 URL（不下载文件）。
     /// </summary>
     string? TryBuildUrlBySha(string sha256, string mime, string? domain = null, string? type = null);
+
+    /// <summary>
+    /// 上传 bytes 到指定的自定义 key（绕过 SHA256 去重，用于站点托管等场景）。
+    /// key 需包含完整路径（含 prefix），可通过 BuildSiteKey 生成。
+    /// </summary>
+    Task UploadToKeyAsync(string key, byte[] bytes, string? contentType, CancellationToken ct);
+
+    /// <summary>
+    /// 根据 key 构建公开访问 URL。
+    /// </summary>
+    string BuildUrlForKey(string key);
+
+    /// <summary>
+    /// 删除指定 key 的对象。
+    /// </summary>
+    Task DeleteByKeyAsync(string key, CancellationToken ct);
+
+    /// <summary>
+    /// 构建站点托管文件的 COS key（含 prefix），格式：{prefix}/web-hosting/sites/{siteId}/{filePath}
+    /// </summary>
+    string BuildSiteKey(string siteId, string filePath);
 }
 
 
