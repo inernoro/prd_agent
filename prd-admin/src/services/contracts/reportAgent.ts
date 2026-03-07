@@ -155,6 +155,7 @@ export interface DailyLogItem {
   content: string;
   category: string;
   durationMinutes?: number;
+  createdAt?: string;
 }
 
 export const DailyLogCategory = {
@@ -390,7 +391,7 @@ export type GetTeamDashboardContract = (input: {
 // --- Daily Logs ---
 export type SaveDailyLogContract = (input: {
   date: string;
-  items: { content: string; category: string; durationMinutes?: number }[];
+  items: { content: string; category: string; durationMinutes?: number; createdAt?: string }[];
 }) => Promise<ApiResponse<DailyLog>>;
 
 export type ListDailyLogsContract = (input?: {

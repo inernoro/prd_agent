@@ -41,6 +41,9 @@ public class DailyLogItem
 
     /// <summary>耗时（分钟，选填）</summary>
     public int? DurationMinutes { get; set; }
+
+    /// <summary>条目创建时间（UTC）</summary>
+    public DateTime? CreatedAt { get; set; }
 }
 
 /// <summary>

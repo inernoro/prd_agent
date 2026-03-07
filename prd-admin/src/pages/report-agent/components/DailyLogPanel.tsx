@@ -76,6 +76,7 @@ interface LogItemInput {
   content: string;
   category: string;
   durationMinutes: number | undefined;
+  createdAt?: string;
 }
 
 // ── Main Component ─────────────────────────────────────
@@ -135,6 +136,7 @@ export function DailyLogPanel() {
           content: i.content,
           category: i.category,
           durationMinutes: i.durationMinutes,
+          createdAt: i.createdAt,
         }))
       );
     } else {
@@ -210,6 +212,7 @@ export function DailyLogPanel() {
         content: i.content.trim(),
         category: i.category,
         durationMinutes: i.durationMinutes,
+        createdAt: i.createdAt,
       })),
     });
     setSaving(false);
@@ -586,17 +589,21 @@ export function DailyLogPanel() {
                   </div>
                   {items.map((item, idx) => {
                     const cfg = CATEGORY_CONFIG[item.category] || CATEGORY_CONFIG.other;
-                    const Icon = cfg.icon;
                     const isEditing = editingIdx === idx;
 
                     return (
                       <div key={idx} className="group flex items-start gap-3 py-2 px-3 rounded-xl transition-colors duration-150 hover:bg-[var(--bg-tertiary)]">
-                        {/* Timeline dot */}
-                        <div
-                          className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5"
-                          style={{ background: cfg.bg }}
-                        >
-                          <Icon size={13} style={{ color: cfg.color }} />
+                        {/* Colored dot + timestamp */}
+                        <div className="flex flex-col items-center gap-1 flex-shrink-0 mt-1">
+                          <div
+                            className="w-3 h-3 rounded-full"
+                            style={{ background: cfg.color }}
+                          />
+                          {item.createdAt && (
+                            <span className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
+                              {formatTime(item.createdAt)}
+                            </span>
+                          )}
                         </div>
 
                         {/* Content */}

@@ -1143,6 +1143,7 @@ public class ReportAgentController : ControllerBase
         public string? Content { get; set; }
         public string? Category { get; set; }
         public int? DurationMinutes { get; set; }
+        public DateTime? CreatedAt { get; set; }
     }
 
     public class CreateDataSourceRequest
@@ -1190,11 +1191,13 @@ public class ReportAgentController : ControllerBase
         var date = parsedDate.Date; // normalize to date only
         var userId = GetUserId();
 
+        var now = DateTime.UtcNow;
         var items = request.Items.Select(i => new DailyLogItem
         {
             Content = i.Content ?? string.Empty,
             Category = DailyLogCategory.All.Contains(i.Category ?? "") ? i.Category! : DailyLogCategory.Other,
-            DurationMinutes = i.DurationMinutes
+            DurationMinutes = i.DurationMinutes,
+            CreatedAt = i.CreatedAt ?? now
         }).Where(i => !string.IsNullOrWhiteSpace(i.Content)).ToList();
 
         if (items.Count == 0)
