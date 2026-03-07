@@ -99,13 +99,7 @@ public static class AvatarUrlBuilder
             return file;
         }
 
-        // 3) 人类用户：默认固定规则为 {login}.png（即使对象不存在也能作为 src 占位；渲染失败由 nohead.png 兜底）
-        if (!string.IsNullOrWhiteSpace(usernameLower))
-        {
-            return $"{usernameLower}.png";
-        }
-
-        // 4) 最终兜底：nohead.png
+        // 3) 人类用户未设置头像：直接使用 nohead.png（避免拼接不存在的 {username}.png 导致图片永远加载失败）
         return DefaultNoHeadFile;
     }
 }

@@ -4,18 +4,20 @@ import {
   Play, Loader2, CheckCircle2, AlertCircle,
   Download, FileText, ArrowLeft, Save, Plus,
   ChevronDown, ChevronRight, Settings2, XCircle,
-  Zap, FlaskConical, Trash2, Wand2, Terminal, Eye, Copy, Check,
+  Zap, FlaskConical, Trash2, Wand2, Terminal, Eye, Copy, Check, CirclePause,
 } from 'lucide-react';
 import {
   getWorkflow, updateWorkflow, executeWorkflow, getExecution,
   getNodeLogs, listExecutions, cancelExecution,
   listCapsuleTypes, testRunCapsule,
 } from '@/services';
+import { replayNode } from '@/services/real/workflowAgent';
 import type {
   Workflow, WorkflowNode, WorkflowExecution, ExecutionArtifact,
   NodeExecution, CapsuleTypeMeta, CapsuleCategoryInfo,
   CapsuleConfigField,
 } from '@/services/contracts/workflowAgent';
+import { useAuthStore } from '@/stores/authStore';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Badge } from '@/components/design/Badge';
 import { Button } from '@/components/design/Button';
@@ -66,6 +68,30 @@ function getDefaultMonth() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
+/** 根据 mimeType 推断文件扩展名 */
+function inferExtension(mimeType?: string): string {
+  if (!mimeType) return '.txt';
+  if (mimeType.includes('markdown')) return '.md';
+  if (mimeType.includes('html')) return '.html';
+  if (mimeType.includes('json')) return '.json';
+  if (mimeType.includes('csv')) return '.csv';
+  if (mimeType.includes('xml')) return '.xml';
+  if (mimeType.includes('yaml') || mimeType.includes('yml')) return '.yaml';
+  if (mimeType.includes('javascript')) return '.js';
+  if (mimeType.includes('pdf')) return '.pdf';
+  if (mimeType.includes('png')) return '.png';
+  if (mimeType.includes('jpeg') || mimeType.includes('jpg')) return '.jpg';
+  return '.txt';
+}
+
+/** 确保文件名有正确的扩展名 */
+function ensureExtension(name: string, mimeType?: string): string {
+  if (!name) name = 'output';
+  // 已有扩展名则直接返回
+  if (/\.\w{1,5}$/.test(name)) return name;
+  return name + inferExtension(mimeType);
+}
+
 /** 通用产物操作按钮：预览 + 下载 */
 function ArtifactActionButtons({ artifact, onPreview, size = 'sm' }: {
   artifact: { name: string; mimeType: string; sizeBytes: number; inlineContent?: string; cosUrl?: string };
@@ -74,9 +100,35 @@ function ArtifactActionButtons({ artifact, onPreview, size = 'sm' }: {
 }) {
   const iconSize = size === 'sm' ? 'w-3.5 h-3.5' : 'w-4 h-4';
   const padding = size === 'sm' ? 'p-1' : 'p-1.5';
+  const downloadName = ensureExtension(artifact.name, artifact.mimeType);
+  const hasContent = !!(artifact.inlineContent || artifact.cosUrl);
+
+  /** 下载：inlineContent 直接 blob，COS URL fetch 后转 blob（跨域 <a download> 不生效） */
+  async function handleDownload(e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      let blob: Blob;
+      if (artifact.inlineContent) {
+        blob = new Blob([artifact.inlineContent], { type: artifact.mimeType || 'text/plain' });
+      } else if (artifact.cosUrl) {
+        const resp = await fetch(artifact.cosUrl);
+        blob = await resp.blob();
+      } else return;
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = downloadName;
+      link.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      if (artifact.cosUrl) window.open(artifact.cosUrl, '_blank');
+    }
+  }
+
   return (
     <>
-      {(artifact.inlineContent || artifact.cosUrl) && onPreview && (
+      {hasContent && onPreview && (
         <button
           onClick={(e) => { e.stopPropagation(); onPreview(artifact as ExecutionArtifact); }}
           className={`${padding} rounded-[6px] flex-shrink-0 transition-colors`}
@@ -86,37 +138,17 @@ function ArtifactActionButtons({ artifact, onPreview, size = 'sm' }: {
           <Eye className={iconSize} />
         </button>
       )}
-      {artifact.cosUrl && (
+      {hasContent && (
         <a
-          href={artifact.cosUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={(e) => e.stopPropagation()}
+          href={artifact.cosUrl || '#'}
+          download={downloadName}
+          onClick={handleDownload}
           className={`${padding} rounded-[6px] flex-shrink-0 transition-colors`}
-          title="下载"
+          title={`下载 ${downloadName}`}
           style={{ color: 'var(--text-muted)' }}
         >
           <Download className={iconSize} />
         </a>
-      )}
-      {!artifact.cosUrl && artifact.inlineContent && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            const blob = new Blob([artifact.inlineContent!], { type: artifact.mimeType || 'text/plain' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = artifact.name || 'output';
-            a.click();
-            URL.revokeObjectURL(url);
-          }}
-          className={`${padding} rounded-[6px] flex-shrink-0 transition-colors`}
-          title="下载"
-          style={{ color: 'var(--text-muted)' }}
-        >
-          <Download className={iconSize} />
-        </button>
       )}
     </>
   );
@@ -539,16 +571,19 @@ function SectionBox({ title, type, children }: {
 
 // ──── 右侧舱卡片 ────
 
-function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, onRemove, onTestRun, onConfigChange, capsuleMeta, isRunning, testRunResult, isTestRunning, formatWarnings, onPreviewArtifact }: {
+function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpanded, onToggle, onRemove, onTestRun, onReplay, onConfigChange, onToggleBreakpoint, capsuleMeta, isRunning, testRunResult, isTestRunning, formatWarnings, onPreviewArtifact }: {
   node: WorkflowNode;
   index: number;
   nodeExec?: NodeExecution;
   nodeOutput?: { logs: string; artifacts: ExecutionArtifact[] };
+  streamingText?: string;
   isExpanded: boolean;
   onToggle: () => void;
   onRemove: () => void;
   onTestRun: (testInput?: string) => void;
+  onReplay?: () => void;
   onConfigChange: (nodeId: string, config: Record<string, unknown>) => void;
+  onToggleBreakpoint: () => void;
   capsuleMeta?: CapsuleTypeMeta;
   isRunning: boolean;
   testRunResult?: import('@/services/contracts/workflowAgent').CapsuleTestRunResult | null;
@@ -558,7 +593,6 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
 }) {
   const typeDef = getCapsuleType(node.nodeType);
   const status = nodeExec?.status || 'idle';
-  const isActive = status === 'running';
   const accentHue = typeDef?.accentHue ?? capsuleMeta?.accentHue ?? 210;
   const CIcon = typeDef?.Icon;
   const emoji = typeDef?.emoji ?? '📦';
@@ -621,10 +655,10 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
   const resultSource: 'test' | 'exec' | null = testRunResult ? 'test' : currentExecOutput ? 'exec' : null;
 
   return (
-    <div className={isActive ? 'capsule-running-border' : ''}>
+    <div>
       <GlassCard
         animated
-        glow={isActive}
+        glow={false}
         padding="none"
         className=""
       >
@@ -655,6 +689,15 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
           >
             {status === 'completed' ? '✓' : index + 1}
           </span>
+
+          {/* 断点红点指示 */}
+          {node.breakpoint && (
+            <div
+              className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+              style={{ background: 'rgba(239,68,68,0.9)', boxShadow: '0 0 4px rgba(239,68,68,0.5)' }}
+              title="断点：执行完此节点后暂停"
+            />
+          )}
 
           {/* 图标 + 名称 */}
           <div
@@ -710,6 +753,50 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
             </div>
           </div>
 
+          {/* 产物芯片（完成后，折叠态也能看到和操作产物） */}
+          {status === 'completed' && nodeOutput?.artifacts && nodeOutput.artifacts.length > 0 && (
+            <div className="flex items-center gap-1 flex-shrink-0">
+              {nodeOutput.artifacts.map((art, ai) => (
+                <span
+                  key={ai}
+                  className="inline-flex items-center gap-1 text-[10px] pl-1.5 pr-0.5 py-0.5 rounded-full"
+                  style={{
+                    background: 'rgba(34,197,94,0.08)',
+                    color: 'rgba(34,197,94,0.85)',
+                    border: '1px solid rgba(34,197,94,0.15)',
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <FileText className="w-3 h-3" />
+                  <span className="truncate max-w-[80px]">{ensureExtension(art.name, art.mimeType)}</span>
+                  <span className="text-[9px] opacity-60">{formatBytes(art.sizeBytes)}</span>
+                  {(art.inlineContent || art.cosUrl) && onPreviewArtifact && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onPreviewArtifact(art); }}
+                      className="p-0.5 rounded hover:bg-white/10 transition-colors"
+                      title="预览"
+                    >
+                      <Eye className="w-3 h-3" />
+                    </button>
+                  )}
+                  {art.cosUrl && (
+                    <a
+                      href={art.cosUrl}
+                      download={ensureExtension(art.name, art.mimeType)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="p-0.5 rounded hover:bg-white/10 transition-colors"
+                      title="下载"
+                    >
+                      <Download className="w-3 h-3" />
+                    </a>
+                  )}
+                </span>
+              ))}
+            </div>
+          )}
+
           {/* 状态 */}
           <StepStatusBadge status={status} durationMs={nodeExec?.durationMs} />
 
@@ -720,16 +807,46 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
           }
         </div>
 
-        {/* 执行中进度条 */}
+        {/* 执行中进度条 + LLM 流式输出 */}
         {status === 'running' && (
-          <div className="mt-2 flex items-center gap-2 ml-[68px]">
-            <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+          <div className="mt-2 ml-[68px] space-y-2">
+            <div
+              className="w-full h-3 rounded-full overflow-hidden"
+              style={{ background: 'rgba(255,255,255,0.06)' }}
+            >
               <div
-                className="h-full rounded-full animate-pulse"
-                style={{ width: '60%', background: 'var(--gold-gradient, linear-gradient(90deg, rgba(99,102,241,0.6), rgba(99,102,241,0.3)))' }}
+                className="h-full rounded-full"
+                style={{
+                  background: `linear-gradient(90deg, transparent 0%, hsla(${accentHue},70%,55%,0.7) 30%, hsla(${accentHue},80%,65%,0.9) 50%, hsla(${accentHue},70%,55%,0.7) 70%, transparent 100%)`,
+                  backgroundSize: '200% 100%',
+                  animation: 'progress-slide 1.8s ease-in-out infinite',
+                }}
               />
             </div>
-            <span className="text-[10px]" style={{ color: 'var(--accent-gold)' }}>处理中...</span>
+            {/* LLM 实时流式输出 */}
+            {streamingText != null && streamingText.length > 0 && (
+              <div
+                className="rounded-[8px] px-3 py-2 text-[11px] font-mono overflow-auto"
+                style={{
+                  maxHeight: '240px',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-all',
+                  background: 'rgba(255,255,255,0.03)',
+                  border: `1px solid hsla(${accentHue},50%,50%,0.15)`,
+                  color: 'var(--text-secondary)',
+                }}
+              >
+                {streamingText}
+                <span
+                  className="inline-block w-1.5 h-3.5 ml-0.5 rounded-sm"
+                  style={{
+                    background: `hsl(${accentHue}, 70%, 60%)`,
+                    animation: 'pulse 1s ease-in-out infinite',
+                    verticalAlign: 'text-bottom',
+                  }}
+                />
+              </div>
+            )}
           </div>
         )}
 
@@ -759,54 +876,83 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
             {/* ──── 📥 输入区 ──── */}
             {hasAnyInputSlot && capsuleMeta?.testable && (
               <SectionBox title="📥 输入" type="input">
-                <div className="space-y-2">
-                  <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                    {isHttpType
-                      ? '上游数据 — JSON 对象，键名对应 URL/Headers/Body 中的 {{变量}} 占位符'
-                      : hasRequiredInput ? '此舱需要输入数据才能测试' : '测试输入（可选，空则使用模拟数据）'}
+                {/* 有历史执行数据时显示真实上游输入（只读） */}
+                {nodeExec && nodeExec.inputArtifacts && nodeExec.inputArtifacts.length > 0 ? (
+                  <div className="space-y-2">
+                    <div className="text-[10px] flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
+                      <CheckCircle2 className="w-3 h-3" style={{ color: `hsl(${accentHue}, 70%, 60%)` }} />
+                      上游实际传入数据（{nodeExec.inputArtifacts.length} 份产物）
+                    </div>
+                    {nodeExec.inputArtifacts.map((art, i) => (
+                      <div key={art.artifactId || i}>
+                        <div className="text-[10px] mb-0.5" style={{ color: 'var(--text-secondary)' }}>
+                          {art.name} ({art.mimeType}, {art.sizeBytes > 1024 ? `${(art.sizeBytes / 1024).toFixed(1)}KB` : `${art.sizeBytes}B`})
+                        </div>
+                        <pre
+                          className="prd-field w-full px-3 py-2 rounded-[8px] text-[10px] font-mono overflow-auto"
+                          style={{ maxHeight: '200px', whiteSpace: 'pre-wrap', wordBreak: 'break-all', opacity: 0.85 }}
+                        >
+                          {art.inlineContent
+                            ? art.inlineContent.length > 3000
+                              ? art.inlineContent.slice(0, 3000) + '\n...[truncated]'
+                              : art.inlineContent
+                            : art.cosUrl
+                              ? `[COS] ${art.cosUrl}`
+                              : '(无内联内容)'}
+                        </pre>
+                      </div>
+                    ))}
                   </div>
-                  <textarea
-                    value={testInput}
-                    onChange={(e) => setTestInput(e.target.value)}
-                    placeholder={isHttpType
-                      ? '{"userId": "123", "token": "xxx"}'
-                      : hasRequiredInput
-                        ? '粘贴 JSON 数据或上传文件内容…'
-                        : '空则使用默认模拟数据'}
-                    rows={2}
-                    className="prd-field w-full px-3 py-2 rounded-[8px] text-[11px] outline-none resize-y font-mono"
-                  />
-                  <div className="flex items-center gap-2">
-                    <label
-                      className="text-[10px] px-2 py-0.5 rounded-[6px] cursor-pointer transition-colors"
-                      style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.08)' }}
-                    >
-                      📎 上传
-                      <input
-                        type="file"
-                        className="hidden"
-                        accept=".json,.csv,.txt,.xml"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (!file) return;
-                          const reader = new FileReader();
-                          reader.onload = () => setTestInput(reader.result as string);
-                          reader.readAsText(file);
-                          e.target.value = '';
+                ) : (
+                  <div className="space-y-2">
+                    <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                      {isHttpType
+                        ? '上游数据 — JSON 对象，键名对应 URL/Headers/Body 中的 {{变量}} 占位符'
+                        : hasRequiredInput ? '此舱需要输入数据才能测试' : '测试输入（可选，空则使用模拟数据）'}
+                    </div>
+                    <textarea
+                      value={testInput}
+                      onChange={(e) => setTestInput(e.target.value)}
+                      placeholder={isHttpType
+                        ? '{"userId": "123", "token": "xxx"}'
+                        : hasRequiredInput
+                          ? '粘贴 JSON 数据或上传文件内容…'
+                          : '空则使用默认模拟数据'}
+                      rows={2}
+                      className="prd-field w-full px-3 py-2 rounded-[8px] text-[11px] outline-none resize-y font-mono"
+                    />
+                    <div className="flex items-center gap-2">
+                      <label
+                        className="text-[10px] px-2 py-0.5 rounded-[6px] cursor-pointer transition-colors"
+                        style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.08)' }}
+                      >
+                        📎 上传
+                        <input
+                          type="file"
+                          className="hidden"
+                          accept=".json,.csv,.txt,.xml"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            const reader = new FileReader();
+                            reader.onload = () => setTestInput(reader.result as string);
+                            reader.readAsText(file);
+                            e.target.value = '';
+                          }}
+                        />
+                      </label>
+                      <button
+                        className="text-[10px] px-2 py-0.5 rounded-[6px] transition-colors"
+                        style={{ color: 'var(--text-muted)' }}
+                        onClick={() => {
+                          try { setTestInput(JSON.stringify(JSON.parse(testInput), null, 2)); } catch { /* not json */ }
                         }}
-                      />
-                    </label>
-                    <button
-                      className="text-[10px] px-2 py-0.5 rounded-[6px] transition-colors"
-                      style={{ color: 'var(--text-muted)' }}
-                      onClick={() => {
-                        try { setTestInput(JSON.stringify(JSON.parse(testInput), null, 2)); } catch { /* not json */ }
-                      }}
-                    >
-                      格式化
-                    </button>
+                      >
+                        格式化
+                      </button>
+                    </div>
                   </div>
-                </div>
+                )}
               </SectionBox>
             )}
 
@@ -846,6 +992,20 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
                 >
                   {isTestRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <FlaskConical className="w-3 h-3" />}
                   {isTestRunning ? '执行中...' : '▶ 单舱测试'}
+                </Button>
+              )}
+              {onReplay && nodeExec?.inputArtifacts && nodeExec.inputArtifacts.length > 0 && (
+                <Button
+                  size="xs"
+                  variant="secondary"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onReplay();
+                  }}
+                  disabled={isRunning || isTestRunning}
+                >
+                  <Play className="w-3 h-3" />
+                  回放（真实数据）
                 </Button>
               )}
               {node.nodeType === 'tapd-collector' && (
@@ -909,6 +1069,16 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, isExpanded, onToggle, 
                   {curlCopied ? '已复制' : '复制 cURL'}
                 </Button>
               )}
+              <Button
+                size="xs"
+                variant={node.breakpoint ? 'danger' : 'ghost'}
+                onClick={(e) => { e.stopPropagation(); onToggleBreakpoint(); }}
+                disabled={isRunning}
+                title={node.breakpoint ? '移除断点' : '添加断点（执行完此节点后暂停）'}
+              >
+                <CirclePause className="w-3 h-3" />
+                {node.breakpoint ? '断点' : '断点'}
+              </Button>
               <Button
                 size="xs"
                 variant="danger"
@@ -1036,7 +1206,7 @@ function UnifiedResultPanel({ result, source, expandedArtifacts, toggleArtifact,
                     >
                       <FileText className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
                       <span className="text-[12px] font-medium flex-1 truncate" style={{ color: 'var(--text-primary)' }}>
-                        {art.name}
+                        {ensureExtension(art.name, art.mimeType)}
                       </span>
                       <span className="text-[10px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
                         {formatBytes(art.sizeBytes)}
@@ -1179,6 +1349,10 @@ export function WorkflowEditorPage() {
     }]);
   }
 
+  // LLM 流式输出（按 nodeId 追踪实时文本）
+  const [streamingTexts, setStreamingTexts] = useState<Record<string, string>>({});
+  const sseAbortRef = useRef<AbortController | null>(null);
+
   // 轮询
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fetchedNodesRef = useRef(new Set<string>());
@@ -1225,6 +1399,7 @@ export function WorkflowEditorPage() {
           const latest = execRes.data.items[0];
           setLatestExec(latest);
           if (['queued', 'running'].includes(latest.status)) {
+            startSseStream(latest.id);
             startPolling(latest.id);
           } else {
             fetchAllNodeOutputs(latest);
@@ -1288,6 +1463,77 @@ export function WorkflowEditorPage() {
       clearInterval(pollingRef.current);
       pollingRef.current = null;
     }
+    // 同时关闭 SSE 流
+    if (sseAbortRef.current) {
+      sseAbortRef.current.abort();
+      sseAbortRef.current = null;
+    }
+  }
+
+  /** 通过 fetch ReadableStream 订阅 SSE 事件，获取 LLM 实时流式输出 */
+  function startSseStream(execId: string) {
+    if (sseAbortRef.current) sseAbortRef.current.abort();
+    const abort = new AbortController();
+    sseAbortRef.current = abort;
+    setStreamingTexts({});
+
+    const token = useAuthStore.getState().token;
+    const baseUrl = (import.meta.env.VITE_API_BASE_URL as string || '').replace(/\/+$/, '');
+    const url = `${baseUrl}/api/workflow-agent/executions/${execId}/stream`;
+
+    (async () => {
+      try {
+        const headers: Record<string, string> = { Accept: 'text/event-stream' };
+        if (token) headers.Authorization = `Bearer ${token}`;
+        const resp = await fetch(url, { headers, signal: abort.signal });
+        if (!resp.ok || !resp.body) {
+          console.warn('[SSE] Stream failed:', resp.status, resp.statusText);
+          return;
+        }
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+
+          // 解析 SSE：按 \n\n 分割事件
+          const parts = buf.split('\n\n');
+          buf = parts.pop() || '';
+
+          for (const part of parts) {
+            if (!part.trim()) continue;
+            let eventName = '';
+            let data = '';
+            for (const line of part.split('\n')) {
+              if (line.startsWith('event: ')) eventName = line.slice(7);
+              else if (line.startsWith('data: ')) data = line.slice(6);
+            }
+            if (!eventName || !data) continue;
+
+            try {
+              const payload = JSON.parse(data);
+              if (eventName === 'llm-chunk' && payload.nodeId && payload.content) {
+                setStreamingTexts(prev => ({
+                  ...prev,
+                  [payload.nodeId]: (prev[payload.nodeId] || '') + payload.content,
+                }));
+              } else if (eventName === 'llm-stream-start' && payload.nodeId) {
+                console.log('[SSE] llm-stream-start:', payload.nodeId, payload.nodeName);
+                setStreamingTexts(prev => ({ ...prev, [payload.nodeId]: '' }));
+              } else if (eventName === 'llm-stream-end' && payload.nodeId) {
+                console.log('[SSE] llm-stream-end:', payload.nodeId, 'totalLength:', payload.totalLength);
+                // 流结束，保留文本直到轮询获取最终结果后自然被替代
+              }
+            } catch { /* ignore parse errors */ }
+          }
+        }
+      } catch {
+        // fetch aborted or network error — ignore
+      }
+    })();
   }
 
   async function fetchNodeOutput(execId: string, nodeId: string) {
@@ -1306,34 +1552,54 @@ export function WorkflowEditorPage() {
     } catch { /* ignore */ }
   }
 
-  /** 将后端舱执行详细日志注入到右侧日志面板 */
+  /** 将后端舱执行详细日志的关键摘要注入到右侧日志面板（仅提取关键事件，详细日志在节点卡片展开查看） */
   function injectBackendLogs(nodeId: string, logs: string, artifacts: ExecutionArtifact[]) {
     if (!logs && artifacts.length === 0) return;
     const nodeName = workflow?.nodes.find(n => n.nodeId === nodeId)?.name
       || latestExec?.nodeExecutions.find(n => n.nodeId === nodeId)?.nodeName
       || nodeId;
-    // 解析后端日志：几乎所有非空行都注入（除了标题行 [xxx]）
+
+    // 只从后端日志中提取关键摘要行，不逐行注入
     if (logs) {
-      const lines = logs.split('\n').filter(l => l.trim());
+      const lines = logs.split('\n');
       for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        // 跳过标题行（如 "[LLM 分析器] 节点: xxx"）
-        if (trimmed.startsWith('[') && trimmed.includes(']') && trimmed.includes('节点:')) continue;
-        // 跳过分隔线
-        if (trimmed === '--- 调用 LLM Gateway ---') {
+        const t = line.trim();
+        if (!t) continue;
+
+        // 提取关键指标行（AppCallerCode、Model、Tokens、耗时、产物数等）
+        if (t.startsWith('AppCallerCode:')) {
+          addLog('info', t, { nodeId, nodeName });
+        } else if (t.startsWith('Model:') || t.startsWith('Tokens:')) {
+          addLog('info', t, { nodeId, nodeName });
+        } else if (t.match(/^(StreamDuration|Streaming duration):/i)) {
+          addLog('info', t, { nodeId, nodeName });
+        } else if (t.startsWith('InputArtifacts:')) {
+          addLog('info', t, { nodeId, nodeName });
+        } else if (t.match(/^原始 InputText:/) || t.match(/^Prompt 总长:/)) {
+          addLog('info', t, { nodeId, nodeName });
+        } else if (t.match(/^总估算 Tokens:/)) {
+          addLog('info', t, { nodeId, nodeName });
+        } else if (t.includes('调用 LLM Gateway')) {
           addLog('info', '调用 LLM Gateway...', { nodeId, nodeName });
-          continue;
         }
-        // 错误行
-        const level = (trimmed.includes('⚠️') || trimmed.includes('警告'))
-          ? 'warn' as const
-          : trimmed.includes('❌')
-            ? 'error' as const
-            : 'info' as const;
-        addLog(level, trimmed, { nodeId, nodeName });
+        // TAPD 采集关键信息
+        else if (t.match(/^TAPD Cookie mode:|^Total count:|^Done:.*total items|^Phase 2 done:/)) {
+          addLog('info', t, { nodeId, nodeName });
+        }
+        // 脚本执行关键信息
+        else if (t.match(/^输入数据:|^执行耗时:|^输出:/)) {
+          addLog('info', t, { nodeId, nodeName });
+        }
+        // 错误/警告
+        else if (t.includes('❌')) {
+          addLog('error', t, { nodeId, nodeName });
+        } else if (t.includes('⚠️') || t.includes('警告')) {
+          addLog('warn', t, { nodeId, nodeName });
+        }
+        // 其他行全部跳过（prompt 内容、LLM 响应、JSON 数据等留在节点详情里查看）
       }
     }
+
     // 产物摘要
     if (artifacts.length > 0) {
       const summary = artifacts.map(a => `${a.name} (${formatBytes(a.sizeBytes)})`).join(', ');
@@ -1419,6 +1685,17 @@ export function WorkflowEditorPage() {
     if (expandedNodeId === nodeId) setExpandedNodeId(null);
   }
 
+  function handleToggleBreakpoint(nodeId: string) {
+    if (!workflow) return;
+    setWorkflow((prev) => prev ? {
+      ...prev,
+      nodes: prev.nodes.map(n =>
+        n.nodeId === nodeId ? { ...n, breakpoint: !n.breakpoint } : n
+      ),
+    } : prev);
+    setDirty(true);
+  }
+
   // ── 执行 ──
 
   async function handleExecute() {
@@ -1437,6 +1714,7 @@ export function WorkflowEditorPage() {
 
     setIsExecuting(true);
     setNodeOutputs({});
+    setStreamingTexts({});
     fetchedNodesRef.current.clear();
     prevNodeStatusRef.current = {};
     setLogEntries([]);
@@ -1449,6 +1727,7 @@ export function WorkflowEditorPage() {
         const exec = res.data.execution;
         setLatestExec(exec);
         addLog('info', `工作流已入队，共 ${exec.nodeExecutions.length} 个节点`);
+        startSseStream(exec.id);
         startPolling(exec.id);
       } else {
         alert('执行失败: ' + (res.error?.message || '未知错误'));
@@ -1514,6 +1793,38 @@ export function WorkflowEditorPage() {
         nodeId,
         result: {
           typeKey: node.nodeType, typeName: node.name,
+          status: 'failed', startedAt: '', completedAt: '', durationMs: 0,
+          errorMessage: e instanceof Error ? e.message : '请求失败',
+        },
+      });
+    } finally {
+      setTestRunning(null);
+    }
+  }
+
+  async function handleReplayNode(nodeId: string) {
+    if (!latestExec) return;
+    setTestRunning(nodeId);
+    setTestRunResult(null);
+    try {
+      const res = await replayNode(latestExec.id, nodeId);
+      if (res.success && res.data?.result) {
+        setTestRunResult({ nodeId, result: res.data.result });
+      } else {
+        setTestRunResult({
+          nodeId,
+          result: {
+            typeKey: '', typeName: '',
+            status: 'failed', startedAt: '', completedAt: '', durationMs: 0,
+            errorMessage: res.error?.message || '回放失败',
+          },
+        });
+      }
+    } catch (e: unknown) {
+      setTestRunResult({
+        nodeId,
+        result: {
+          typeKey: '', typeName: '',
           status: 'failed', startedAt: '', completedAt: '', durationMs: 0,
           errorMessage: e instanceof Error ? e.message : '请求失败',
         },
@@ -1738,11 +2049,14 @@ export function WorkflowEditorPage() {
                         index={idx}
                         nodeExec={latestExec?.nodeExecutions.find(ne => ne.nodeId === node.nodeId)}
                         nodeOutput={nodeOutputs[node.nodeId]}
+                        streamingText={streamingTexts[node.nodeId]}
                         isExpanded={expandedNodeId === node.nodeId}
                         onToggle={() => setExpandedNodeId(expandedNodeId === node.nodeId ? null : node.nodeId)}
                         onRemove={() => handleRemoveNode(node.nodeId)}
                         onTestRun={(testInput) => handleTestRun(node.nodeId, testInput)}
+                        onReplay={() => handleReplayNode(node.nodeId)}
                         onConfigChange={handleNodeConfigChange}
+                        onToggleBreakpoint={() => handleToggleBreakpoint(node.nodeId)}
                         capsuleMeta={capsuleTypes.find(ct => ct.typeKey === node.nodeType)}
                         isRunning={isRunning}
                         testRunResult={testRunResult?.nodeId === node.nodeId ? testRunResult.result : null}
@@ -1780,7 +2094,7 @@ export function WorkflowEditorPage() {
                     >
                       <FileText className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
                       <span className="text-[12px] font-medium flex-1 truncate" style={{ color: 'var(--text-primary)' }}>
-                        {art.name}
+                        {ensureExtension(art.name, art.mimeType)}
                       </span>
                       <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
                         {formatBytes(art.sizeBytes)}
@@ -1798,6 +2112,11 @@ export function WorkflowEditorPage() {
         {rightPanel === 'log' && (
           <ExecutionLogPanel
             entries={logEntries}
+            totalNodeCount={workflow?.nodes.length ?? 0}
+            completedNodeCount={latestExec?.nodeExecutions.filter(ne => ['completed', 'failed', 'skipped'].includes(ne.status)).length ?? 0}
+            isRunning={['queued', 'running'].includes(latestExec?.status ?? '')}
+            nodeOutputs={nodeOutputs}
+            onPreviewArtifact={setPreviewArtifact}
             onClear={() => setLogEntries([])}
             onClose={() => setRightPanel(null)}
           />
@@ -1824,15 +2143,20 @@ export function WorkflowEditorPage() {
 
 // ──── 执行日志面板 ────
 
-const LOG_LEVEL_COLORS: Record<string, string> = {
-  info: 'rgba(99,102,241,0.9)',
-  success: 'rgba(34,197,94,0.9)',
-  error: 'rgba(239,68,68,0.9)',
-  warn: 'rgba(234,179,8,0.9)',
+const LOG_LEVEL_STYLE: Record<string, { dot: string; bg: string }> = {
+  info:    { dot: 'rgba(99,102,241,0.9)',  bg: 'rgba(99,102,241,0.04)' },
+  success: { dot: 'rgba(34,197,94,0.9)',   bg: 'rgba(34,197,94,0.06)' },
+  error:   { dot: 'rgba(239,68,68,0.9)',   bg: 'rgba(239,68,68,0.06)' },
+  warn:    { dot: 'rgba(234,179,8,0.9)',   bg: 'rgba(234,179,8,0.06)' },
 };
 
-function ExecutionLogPanel({ entries, onClear, onClose }: {
+function ExecutionLogPanel({ entries, totalNodeCount, completedNodeCount, isRunning, nodeOutputs, onPreviewArtifact, onClear, onClose }: {
   entries: { id: string; ts: string; level: string; nodeId?: string; nodeName?: string; message: string }[];
+  totalNodeCount: number;
+  completedNodeCount: number;
+  isRunning: boolean;
+  nodeOutputs: Record<string, { logs: string; artifacts: ExecutionArtifact[] }>;
+  onPreviewArtifact?: (art: ExecutionArtifact) => void;
   onClear: () => void;
   onClose: () => void;
 }) {
@@ -1851,100 +2175,189 @@ function ExecutionLogPanel({ entries, onClear, onClose }: {
     setAutoScroll(scrollHeight - scrollTop - clientHeight < 40);
   }
 
+  const totalNodes = totalNodeCount;
+  const completedNodes = completedNodeCount;
+
   return (
     <div
       className="flex flex-col h-full"
       style={{
-        width: 340,
+        width: 420,
         flexShrink: 0,
         borderLeft: '1px solid rgba(255,255,255,0.08)',
-        background: 'rgba(0,0,0,0.2)',
+        background: 'rgba(0,0,0,0.25)',
       }}
     >
       {/* Header */}
       <div
-        className="flex items-center gap-2 px-3 py-2.5 flex-shrink-0"
+        className="flex items-center gap-2.5 px-4 py-3 flex-shrink-0"
         style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
       >
-        <Terminal className="w-3.5 h-3.5" style={{ color: 'rgba(99,102,241,0.8)' }} />
-        <span className="text-[12px] font-semibold flex-1" style={{ color: 'var(--text-primary)' }}>
+        <Terminal className="w-4 h-4" style={{ color: 'rgba(99,102,241,0.8)' }} />
+        <span className="text-[14px] font-semibold flex-1" style={{ color: 'var(--text-primary)' }}>
           执行日志
         </span>
-        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        <span
+          className="text-[12px] px-2 py-0.5 rounded-full"
+          style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+        >
           {entries.length} 条
         </span>
         {entries.length > 0 && (
           <button
             onClick={onClear}
-            className="p-1 rounded-[6px] transition-colors"
+            className="p-1.5 rounded-[6px] transition-colors hover:bg-white/5"
             style={{ color: 'var(--text-muted)' }}
             title="清空日志"
           >
-            <Trash2 className="w-3 h-3" />
+            <Trash2 className="w-3.5 h-3.5" />
           </button>
         )}
         <button
           onClick={onClose}
-          className="p-1 rounded-[6px] transition-colors"
+          className="p-1.5 rounded-[6px] transition-colors hover:bg-white/5"
           style={{ color: 'var(--text-muted)' }}
           title="关闭"
         >
-          <XCircle className="w-3 h-3" />
+          <XCircle className="w-3.5 h-3.5" />
         </button>
       </div>
+
+      {/* 总体进度条 */}
+      {totalNodes > 0 && (
+        <div className="px-4 py-2 flex-shrink-0" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+              节点进度
+            </span>
+            <span className="text-[12px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+              {completedNodes} / {totalNodes}
+            </span>
+          </div>
+          <div className="w-full h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+            <div
+              className="h-full rounded-full transition-all duration-700 ease-out"
+              style={{
+                width: `${totalNodes > 0 ? (completedNodes / totalNodes) * 100 : 0}%`,
+                background: completedNodes === totalNodes
+                  ? 'rgba(34,197,94,0.8)'
+                  : 'linear-gradient(90deg, rgba(99,102,241,0.7), rgba(168,85,247,0.8))',
+                ...(isRunning && completedNodes < totalNodes ? { animation: 'pulse 2s ease-in-out infinite' } : {}),
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Log entries */}
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto px-2 py-2 space-y-0.5"
+        className="flex-1 overflow-y-auto px-3 py-2 space-y-1"
         onScroll={handleScroll}
-        style={{ fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace' }}
       >
         {entries.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full gap-2 opacity-40">
-            <Terminal className="w-6 h-6" />
-            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+          <div className="flex flex-col items-center justify-center h-full gap-3 opacity-40">
+            <Terminal className="w-8 h-8" />
+            <span className="text-[14px]" style={{ color: 'var(--text-muted)' }}>
               执行工作流后日志将在此显示
             </span>
           </div>
         )}
 
-        {entries.map((entry) => (
-          <div
-            key={entry.id}
-            className="flex items-start gap-1.5 px-2 py-1 rounded-[6px] transition-colors"
-            style={{ background: entry.level === 'error' ? 'rgba(239,68,68,0.04)' : 'transparent' }}
-          >
-            {/* Level dot */}
-            <span
-              className="w-1.5 h-1.5 rounded-full flex-shrink-0 mt-[5px]"
-              style={{ background: LOG_LEVEL_COLORS[entry.level] || LOG_LEVEL_COLORS.info }}
-            />
-            {/* Content */}
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>
-                  {entry.ts}
-                </span>
-                {entry.nodeName && (
-                  <span
-                    className="text-[9px] px-1.5 py-0 rounded-[4px] font-medium"
-                    style={{
-                      background: 'rgba(99,102,241,0.1)',
-                      color: 'rgba(99,102,241,0.8)',
-                      border: '1px solid rgba(99,102,241,0.15)',
-                    }}
-                  >
-                    {entry.nodeName}
+        {entries.map((entry, i) => {
+          const style = LOG_LEVEL_STYLE[entry.level] || LOG_LEVEL_STYLE.info;
+          return (
+            <div
+              key={entry.id}
+              className="flex items-start gap-2.5 px-3 py-2 rounded-[8px] transition-all duration-300"
+              style={{
+                background: style.bg,
+                animation: `log-entry-in 0.3s ease-out ${Math.min(i * 0.03, 0.5)}s both`,
+              }}
+            >
+              {/* Level dot */}
+              <span
+                className="w-2.5 h-2.5 rounded-full flex-shrink-0 mt-[7px]"
+                style={{ background: style.dot }}
+              />
+
+              {/* Content */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                  <span className="text-[12px] font-mono" style={{ color: 'var(--text-muted)' }}>
+                    {entry.ts}
                   </span>
+                  {entry.nodeName && (
+                    <span
+                      className="text-[12px] px-2.5 py-0.5 rounded-full font-medium truncate max-w-[180px]"
+                      style={{
+                        background: entry.level === 'success'
+                          ? 'rgba(34,197,94,0.12)' : entry.level === 'error'
+                          ? 'rgba(239,68,68,0.12)' : 'rgba(99,102,241,0.12)',
+                        color: entry.level === 'success'
+                          ? 'rgba(34,197,94,0.9)' : entry.level === 'error'
+                          ? 'rgba(239,68,68,0.9)' : 'rgba(99,102,241,0.9)',
+                        border: `1px solid ${entry.level === 'success'
+                          ? 'rgba(34,197,94,0.2)' : entry.level === 'error'
+                          ? 'rgba(239,68,68,0.2)' : 'rgba(99,102,241,0.2)'}`,
+                      }}
+                    >
+                      {entry.nodeName}
+                    </span>
+                  )}
+                </div>
+                <div
+                  className="text-[13px] leading-relaxed"
+                  style={{ color: 'var(--text-secondary)', wordBreak: 'break-word' }}
+                >
+                  {entry.message}
+                </div>
+                {/* 产物芯片：在完成日志条目下方展示该节点的产物 */}
+                {entry.level === 'success' && entry.nodeId && nodeOutputs[entry.nodeId]?.artifacts?.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-1.5">
+                    {nodeOutputs[entry.nodeId].artifacts.map((art, ai) => (
+                      <span
+                        key={ai}
+                        className="inline-flex items-center gap-1.5 text-[11px] pl-2 pr-1 py-0.5 rounded-full cursor-pointer transition-colors"
+                        style={{
+                          background: 'rgba(99,102,241,0.1)',
+                          color: 'rgba(99,102,241,0.9)',
+                          border: '1px solid rgba(99,102,241,0.18)',
+                        }}
+                        title={`${art.name} (${art.mimeType}, ${formatBytes(art.sizeBytes)})`}
+                      >
+                        <FileText className="w-3 h-3" />
+                        <span className="truncate max-w-[120px]">{ensureExtension(art.name, art.mimeType)}</span>
+                        <span className="text-[10px] opacity-60">{formatBytes(art.sizeBytes)}</span>
+                        {(art.inlineContent || art.cosUrl) && onPreviewArtifact && (
+                          <button
+                            onClick={() => onPreviewArtifact(art as ExecutionArtifact)}
+                            className="p-0.5 rounded hover:bg-white/10 transition-colors"
+                            title="预览"
+                          >
+                            <Eye className="w-3 h-3" />
+                          </button>
+                        )}
+                        {art.cosUrl && (
+                          <a
+                            href={art.cosUrl}
+                            download={ensureExtension(art.name, art.mimeType)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-0.5 rounded hover:bg-white/10 transition-colors"
+                            title="下载"
+                          >
+                            <Download className="w-3 h-3" />
+                          </a>
+                        )}
+                      </span>
+                    ))}
+                  </div>
                 )}
               </div>
-              <div className="text-[10px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-                {entry.message}
-              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

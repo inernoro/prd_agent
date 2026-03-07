@@ -6,7 +6,7 @@ import type {
   GetMobileAssetsContract,
   FeedItem,
   MobileStats,
-  MobileAssetItem,
+  MobileAssetsResponse,
 } from '@/services/contracts/mobile';
 
 export const getMobileFeedReal: GetMobileFeedContract = async (args) => {
@@ -29,5 +29,5 @@ export const getMobileAssetsReal: GetMobileAssetsContract = async (args) => {
   if (args?.limit) params.set('limit', String(args.limit));
   if (args?.skip) params.set('skip', String(args.skip));
   const qs = params.toString() ? `?${params}` : '';
-  return await apiRequest<{ items: MobileAssetItem[]; total: number; hasMore: boolean }>(`${api.mobile.assets()}${qs}`, { method: 'GET' });
+  return await apiRequest<MobileAssetsResponse>(`${api.mobile.assets()}${qs}`, { method: 'GET' });
 };

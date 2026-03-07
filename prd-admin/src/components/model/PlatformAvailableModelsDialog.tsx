@@ -6,7 +6,7 @@ import { apiRequest } from '@/services/real/apiClient';
 import type { Platform } from '@/types/admin';
 import { resolveCherryGroupKey } from '@/lib/cherryModelGrouping';
 import { inferPresetTagKeys, matchAvailableModelsTab, type PresetTagKey } from '@/lib/modelPresetTags';
-import { getAvatarUrlByGroup, getAvatarUrlByModelName } from '@/assets/model-avatars';
+import { getAvatarUrlByGroup, getAvatarUrlByModelName, useAvatarUpdates } from '@/assets/model-avatars';
 import { ArrowDown, DatabaseZap, ImagePlus, Link2, Minus, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Wand2, Zap, Settings } from 'lucide-react';
 import { matchAdapterConfig } from '@/lib/imageGenAdapterConfigs';
 import { Tooltip } from '@/components/ui/Tooltip';
@@ -148,6 +148,7 @@ export function PlatformAvailableModelsDialog({
   onBulkAddGroup: (groupName: string, ms: AvailableModel[]) => void | Promise<void>;
   onAfterWriteBack?: () => void | Promise<void>;
 }) {
+  useAvatarUpdates();
   const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
   const [availableLoading, setAvailableLoading] = useState(false);
   const [availableError, setAvailableError] = useState<string | null>(null);

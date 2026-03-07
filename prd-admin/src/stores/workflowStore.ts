@@ -69,6 +69,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   ...initialState,
 
   loadWorkflows: async (tag) => {
+    if (get().loading) return; // 防止并发重复加载
     set({ loading: true, error: '' });
     try {
       const res = await listWorkflows({ tag: tag || get().tagFilter || undefined, pageSize: 100 });

@@ -8,6 +8,8 @@ import { useSkillStore } from '../../stores/skillStore';
 interface Props {
   open: boolean;
   onClose: () => void;
+  /** Pre-fill form data for "create from message" flow */
+  initialFormData?: Partial<SkillFormData> | null;
 }
 
 const CATEGORY_OPTIONS = [
@@ -28,7 +30,7 @@ const EMOJI_LIST = [
   '🧩', '📌', '🏷️', '✅', '🔄', '📦', '🗂️', '💻',
 ];
 
-interface SkillFormData {
+export interface SkillFormData {
   title: string;
   description: string;
   icon: string;
@@ -48,7 +50,7 @@ const EMPTY_FORM: SkillFormData = {
   promptTemplate: '',
 };
 
-export default function SkillManagerModal({ open, onClose }: Props) {
+export default function SkillManagerModal({ open, onClose, initialFormData }: Props) {
   const { currentRole } = useSessionStore();
   const { skills } = useSkillStore();
   const [editingKey, setEditingKey] = useState<string | null>(null);
@@ -60,6 +62,16 @@ export default function SkillManagerModal({ open, onClose }: Props) {
 
   // 只显示个人技能
   const personalSkills = skills.filter((s) => s.visibility === 'personal');
+
+  // Auto-enter creation mode when initialFormData is provided
+  useEffect(() => {
+    if (open && initialFormData) {
+      setForm({ ...EMPTY_FORM, ...initialFormData });
+      setEditingKey('__new__');
+      setIsNew(true);
+      setShowEmojiPicker(false);
+    }
+  }, [open, initialFormData]);
 
   useEffect(() => {
     if (!showEmojiPicker) return;

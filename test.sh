@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ══════════════════════════════════════════════════════════════════════════
-# PRD Agent Branch-Tester 全量验收测试
+# PRD Agent CDS 全量验收测试
 #
 # 用法：
 #   ./test.sh                  # 运行全部测试
@@ -27,7 +27,7 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
-BT_DIR="${REPO_ROOT}/branch-tester"
+BT_DIR="${REPO_ROOT}/cds"
 BT_API="http://localhost:9900/api"
 GATEWAY="http://localhost:5500"
 PID_FILE="${BT_DIR}/.bt/bt.pid"
@@ -368,7 +368,7 @@ bt_curl_sse() {
 # ══════════════════════════════════════════════════════════════════════════
 echo ""
 echo -e "  ${BOLD}${CYAN}╔══════════════════════════════════════════════════╗${NC}"
-echo -e "  ${BOLD}${CYAN}║  PRD Agent Branch-Tester 全量验收测试             ║${NC}"
+echo -e "  ${BOLD}${CYAN}║  PRD Agent CDS 全量验收测试             ║${NC}"
 echo -e "  ${BOLD}${CYAN}║  $(date '+%Y-%m-%d %H:%M:%S')                            ║${NC}"
 echo -e "  ${BOLD}${CYAN}╚══════════════════════════════════════════════════╝${NC}"
 
@@ -386,7 +386,7 @@ T "E06" "curl 可用"                       curl --version
 T "E07" "ss 可用"                         ss --version
 T "E08" "仓库根目录正确"                  test -f "$REPO_ROOT/docker-compose.yml"
 T "E09" "exec_bt.sh 存在且可执行"         test -x "$REPO_ROOT/exec_bt.sh"
-T "E10" "branch-tester 目录存在"          test -d "$BT_DIR"
+T "E10" "cds 目录存在"                    test -d "$BT_DIR"
 T "E11" "_disconnected.conf 存在"         test -f "$REPO_ROOT/deploy/nginx/conf.d/branches/_disconnected.conf"
 T "E12" "docker-compose.yml 包含 gateway" grep -q "gateway" "$REPO_ROOT/docker-compose.yml"
 T "E13" "测试分支 ($TEST_BRANCH) 存在"    git rev-parse --verify "$TEST_BRANCH"
@@ -413,7 +413,7 @@ T_MATCH "S03" "输出包含 Dashboard 地址"            "9900" echo "${EXEC_OUT
 T_MATCH "S04" "输出包含 Login 凭据"                "admin" echo "${EXEC_OUTPUT:-}"
 T "S05" "PID file 已创建"                          test -f "$PID_FILE"
 
-msg "等待 Branch-Tester 启动..."
+msg "等待 CDS 启动..."
 
 T_WAIT "S06" "BT :9900 可达"  30  curl -sf --max-time 3 http://localhost:9900
 T_WAIT "S07" "BT API 可达"    10  curl -sf --max-time 3 "${BT_API}/branches"
@@ -751,7 +751,7 @@ if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
   PID_REUSE_OUTPUT=$(./exec_bt.sh -d 2>&1) || true
 fi
 
-T_MATCH "C06" "检测到 PID reuse, 跳过 kill"       "NOT branch-tester\|PID reuse\|Skipping" echo "${PID_REUSE_OUTPUT:-}"
+T_MATCH "C06" "检测到 PID reuse, 跳过 kill"       "NOT cds\|PID reuse\|Skipping" echo "${PID_REUSE_OUTPUT:-}"
 T_WAIT "C07" "PID reuse 后仍能启动"  30  curl -sf --max-time 3 http://localhost:9900
 
 # 验证 PID 1 仍然存活 (没被误杀)

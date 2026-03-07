@@ -444,7 +444,7 @@ function buildTestWorkflowTemplate(): {
       nodeType: 'script-executor',
       config: {
         language: 'javascript',
-        code: '// 透传输入数据，可在此添加自定义处理\nmodule.exports = (input) => {\n  return { processed: true, count: Array.isArray(input) ? input.length : 1, data: input };\n};',
+        code: '// 上游数据在 data 变量中，处理结果赋值给 result\nresult = {\n  processed: true,\n  count: Array.isArray(data) ? data.length : 1,\n  items: data\n};',
         timeoutSeconds: '30',
       },
       inputSlots: [{ slotId: 'script-in', name: 'input', dataType: 'json', required: true }],

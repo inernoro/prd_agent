@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -10,7 +11,7 @@ namespace PrdAgent.Infrastructure.Services;
 /// </summary>
 public sealed class InMemoryRunEventStore : IRunEventStore
 {
-    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
     private readonly ConcurrentDictionary<string, RunMeta> _meta = new();
     private readonly ConcurrentDictionary<string, long> _seq = new();

@@ -6,7 +6,7 @@ import { PlatformLabel } from '@/components/design/PlatformLabel';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/cn';
 import { readSseStream } from '@/lib/sse';
-import { getAvatarUrlByModelName, getAvatarUrlByPlatformType } from '@/assets/model-avatars';
+import { getAvatarUrlByModelName, getAvatarUrlByPlatformType, useAvatarUpdates } from '@/assets/model-avatars';
 import {
   getArenaLineup,
   revealArenaSlots,
@@ -267,6 +267,7 @@ function ThinkingBlock({ thinking, color, streaming }: { thinking: string; color
 }
 
 export function ArenaPage() {
+  useAvatarUpdates();
   // --- Lineup state ---
   const [groups, setGroups] = useState<ArenaGroup[]>([]);
   const [selectedGroupKey, setSelectedGroupKey] = useState<string>('');

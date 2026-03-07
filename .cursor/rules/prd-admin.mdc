@@ -42,8 +42,8 @@ globs: prd-admin/**
 **【重要】获取用户头像必须使用 `avatarFileName`，禁止使用 `username`！**
 
 原因：
-- `username` 会被 `resolveAvatarUrl` 拼接成 `{username}.png`
-- 用户头像可能是 `.gif`、`.jpg` 等其他格式，使用 `username` 会导致 404
+- `username` 已不再用于拼接头像 URL（未设置头像时统一使用 `nohead.png` 兜底）
+- 用户头像可能是 `.gif`、`.jpg` 等其他格式，必须使用 `avatarFileName` 获取正确文件名
 
 正确做法：
 

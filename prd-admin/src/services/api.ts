@@ -666,10 +666,13 @@ export const api = {
       list: () => '/api/workflow-agent/executions',
       byId: (id: string) => `/api/workflow-agent/executions/${id}`,
       cancel: (id: string) => `/api/workflow-agent/executions/${id}/cancel`,
+      continue: (id: string) => `/api/workflow-agent/executions/${id}/continue`,
       resumeFrom: (executionId: string, nodeId: string) =>
         `/api/workflow-agent/executions/${executionId}/resume-from/${nodeId}`,
       nodeLogs: (executionId: string, nodeId: string) =>
         `/api/workflow-agent/executions/${executionId}/nodes/${nodeId}/logs`,
+      nodeReplay: (executionId: string, nodeId: string) =>
+        `/api/workflow-agent/executions/${executionId}/nodes/${nodeId}/replay`,
       stream: (executionId: string) =>
         `/api/workflow-agent/executions/${executionId}/stream`,
     },
@@ -742,6 +745,17 @@ export const api = {
       list: () => '/api/lab/arena/battles',
       byId: (id: string) => `/api/lab/arena/battles/${id}`,
     },
+  },
+  // ============ Account Data Transfer 数据分享 ============
+  accountDataTransfer: {
+    list: () => '/api/account/data-transfers',
+    create: () => '/api/account/data-transfers',
+    byId: (id: string) => `/api/account/data-transfers/${id}`,
+    accept: (id: string) => `/api/account/data-transfers/${id}/accept`,
+    reject: (id: string) => `/api/account/data-transfers/${id}/reject`,
+    cancel: (id: string) => `/api/account/data-transfers/${id}/cancel`,
+    myWorkspaces: () => '/api/account/data-transfers/my-workspaces',
+    myConfigs: () => '/api/account/data-transfers/my-configs',
   },
 } as const;
 
