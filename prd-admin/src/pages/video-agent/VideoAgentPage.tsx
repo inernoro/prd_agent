@@ -18,6 +18,8 @@ import {
   Play,
   X,
   ImageIcon,
+  Pencil,
+  Eye,
 } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import {
@@ -115,6 +117,7 @@ export const VideoAgentPage: React.FC = () => {
   const [articleContent, setArticleContent] = useState('');
   const [articleTitle, setArticleTitle] = useState('');
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [isEditingArticle, setIsEditingArticle] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ─── Config state ───
@@ -542,6 +545,7 @@ export const VideoAgentPage: React.FC = () => {
     setArticleContent('');
     setArticleTitle('');
     setUploadedFileName(null);
+    setIsEditingArticle(false);
     setPhase(0);
   };
 
@@ -594,15 +598,28 @@ export const VideoAgentPage: React.FC = () => {
                   </span>
                 )}
               </div>
-              {phase > 0 && !isActive && (
-                <button
-                  className="text-[11px] px-2.5 py-1 rounded-md hover:bg-white/10 transition-colors flex-shrink-0 border"
-                  style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
-                  onClick={handleNewTask}
-                >
-                  新建任务
-                </button>
-              )}
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                {/* Edit / Preview toggle — only in article preview phase (not during scripting/queued) */}
+                {phase > 0 && !(selectedRun && (selectedRun.status === 'Scripting' || selectedRun.status === 'Queued')) && (
+                  <button
+                    className="text-[11px] px-2 py-1 rounded-md hover:bg-white/10 transition-colors border flex items-center gap-1"
+                    style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
+                    onClick={() => setIsEditingArticle((v) => !v)}
+                  >
+                    {isEditingArticle ? <Eye size={12} /> : <Pencil size={12} />}
+                    {isEditingArticle ? '预览' : '编辑'}
+                  </button>
+                )}
+                {phase > 0 && !isActive && (
+                  <button
+                    className="text-[11px] px-2.5 py-1 rounded-md hover:bg-white/10 transition-colors border"
+                    style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
+                    onClick={handleNewTask}
+                  >
+                    新建任务
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Content area */}
@@ -698,9 +715,17 @@ export const VideoAgentPage: React.FC = () => {
                     <div ref={streamEndRef} />
                   </div>
                 </div>
+              ) : isEditingArticle ? (
+                /* Article editing mode */
+                <textarea
+                  value={articleContent}
+                  onChange={(e) => setArticleContent(e.target.value)}
+                  className="h-full w-full rounded-[14px] px-3 py-2.5 text-sm outline-none resize-none prd-field font-mono"
+                  style={{ minHeight: 200 }}
+                />
               ) : (
                 /* Article preview (markdown render) */
-                <div className="prd-md">
+                <div className="prd-md p-2">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {articleContent}
                   </ReactMarkdown>
