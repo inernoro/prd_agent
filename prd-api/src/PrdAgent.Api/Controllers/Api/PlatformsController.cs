@@ -341,7 +341,7 @@ public class PlatformsController : ControllerBase
     }
 
     /// <summary>
-    /// 使用“主模型”对平台可用模型列表做智能分类/分组，并写回已配置模型（llmmodels）
+    /// 使用"主模型"对平台可用模型列表做智能分类/分组，并写回已配置模型（llmmodels）
     /// </summary>
     [HttpPost("{id}/reclassify-models")]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
@@ -537,7 +537,7 @@ public class PlatformsController : ControllerBase
         CancellationToken ct)
     {
         var systemPrompt =
-            "你是模型管理后台的分类器。你的任务：为给定平台的一组模型做“分组(group) + 多标签(tags)”分类。\n" +
+            "你是模型管理后台的分类器。你的任务：为给定平台的一组模型做 分组(group) + 多标签(tags) 分类。\n" +
             "你必须严格只输出 JSON 数组（不要 Markdown、不要解释、不要多余文本）。\n\n" +
             "输出数组每个元素结构：\n" +
             "{\n" +
@@ -610,34 +610,29 @@ public class PlatformsController : ControllerBase
     /// </summary>
     private async Task<List<AvailableModelDto>> GetModelsForPlatform(LLMPlatform platform, string? requestPurpose = null)
     {
-        // 除 Anthropic 外的所有平台均尝试从 OpenAI 兼容的 /models 端点获取列表
-        // （Anthropic 使用 x-api-key 认证，FetchModelsFromApi 固定使用 Bearer，因此跳过）
-        var isAnthropic = string.Equals(platform.PlatformType, "anthropic", StringComparison.OrdinalIgnoreCase);
-        if (!isAnthropic)
+        // 所有平台均尝试从 /models 端点获取列表（认证方式由 FetchModelsFromApi 根据 platformType 自动适配）
+        try
         {
-            try
+            var apiModels = await FetchModelsFromApi(platform, requestPurpose);
+            if (apiModels.Count > 0)
             {
-                var apiModels = await FetchModelsFromApi(platform, requestPurpose);
-                if (apiModels.Count > 0)
-                {
-                    return apiModels;
-                }
-            }
-            catch (Exception ex)
-            {
-                var providerId =
-                    (string.IsNullOrWhiteSpace(platform.ProviderId) ? platform.PlatformType : platform.ProviderId!).Trim()
-                        .ToLowerInvariant();
-                var endpoint = GetModelsEndpoint(platform.ApiUrl);
-                _logger.LogWarning(ex,
-                    "Failed to fetch models from API for platform {PlatformId}. provider={ProviderId} endpoint={Endpoint}",
-                    platform.Id,
-                    providerId,
-                    endpoint);
+                return apiModels;
             }
         }
+        catch (Exception ex)
+        {
+            var providerId =
+                (string.IsNullOrWhiteSpace(platform.ProviderId) ? platform.PlatformType : platform.ProviderId!).Trim()
+                    .ToLowerInvariant();
+            var endpoint = GetModelsEndpoint(platform.ApiUrl);
+            _logger.LogWarning(ex,
+                "Failed to fetch models from API for platform {PlatformId}. provider={ProviderId} endpoint={Endpoint}",
+                platform.Id,
+                providerId,
+                endpoint);
+        }
 
-        // 不提供任何”预设(demo)模型”兜底：没有就返回空
+        // 不提供任何"预设(demo)模型"兜底：没有就返回空
         return new List<AvailableModelDto>();
     }
 
@@ -653,7 +648,19 @@ public class PlatformsController : ControllerBase
 
         using var client = _httpClientFactory.CreateClient("LoggedHttpClient");
         client.Timeout = TimeSpan.FromSeconds(30);
-        client.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
+
+        // 根据 platformType 选择认证方式
+        var isAnthropic = string.Equals(platform.PlatformType, "anthropic", StringComparison.OrdinalIgnoreCase)
+                          || (platform.ApiUrl ?? "").Contains("anthropic.com", StringComparison.OrdinalIgnoreCase);
+        if (isAnthropic)
+        {
+            client.DefaultRequestHeaders.Add("x-api-key", apiKey);
+            client.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
+        }
+        else
+        {
+            client.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
+        }
 
         // 写入 LLM 请求日志：平台拉取 models 接口也需要被记录（类型：更新模型）
         var requestId = Guid.NewGuid().ToString("N");
@@ -663,7 +670,7 @@ public class PlatformsController : ControllerBase
 
         if (apiKeyEmpty)
         {
-            // 不记录明文密钥；仅提示“可能没有解密出有效 key”（常见原因：Jwt:Secret 变更/长度不足导致解密失败、或平台未保存 key）
+            // 不记录明文密钥；仅提示"可能没有解密出有效 key"（常见原因：Jwt:Secret 变更/长度不足导致解密失败、或平台未保存 key）
             _logger.LogWarning(
                 "Platform API key is empty when fetching /models. platformId={PlatformId} provider={ProviderId} endpoint={Endpoint}",
                 platform.Id,
@@ -680,8 +687,8 @@ public class PlatformsController : ControllerBase
             HttpMethod: "GET",
             RequestHeadersRedacted: new Dictionary<string, string>
             {
-                // 仅用于诊断是否“带了 key”：不泄露任何真实值
-                ["Authorization"] = apiKeyEmpty ? "Bearer (empty)" : "Bearer ***"
+                // 仅用于诊断是否"带了 key"：不泄露任何真实值
+                [isAnthropic ? "x-api-key" : "Authorization"] = apiKeyEmpty ? "(empty)" : "***"
             },
             RequestBodyRedacted: "",
             RequestBodyHash: null,
@@ -712,7 +719,7 @@ public class PlatformsController : ControllerBase
             response = await client.GetAsync(endpoint);
             if (!string.IsNullOrWhiteSpace(logId))
             {
-                // 这里以“拿到响应头”的时刻作为 FirstByteAt（GET models 不走 SSE，足够用于监控）
+                // 这里以"拿到响应头"的时刻作为 FirstByteAt（GET models 不走 SSE，足够用于监控）
                 _logWriter.MarkFirstByte(logId!, DateTime.UtcNow);
             }
 
@@ -894,7 +901,7 @@ public class PlatformsController : ControllerBase
     private string GetModelsEndpoint(string apiUrl)
     {
         // 统一按配置规则拼接（/、#、默认）
-        // 注意：# 结尾表示“原样使用”，因此若要拉取 models，用户需直接填写 models endpoint#
+        // 注意：# 结尾表示"原样使用"，因此若要拉取 models，用户需直接填写 models endpoint#
         return PrdAgent.Infrastructure.LLM.OpenAICompatUrl.BuildEndpoint(apiUrl, "models");
     }
 
