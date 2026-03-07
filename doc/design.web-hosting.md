@@ -266,6 +266,8 @@ public class VideoGenRunWorker
 | `web-pages.read` | 查看托管站点列表与详情 |
 | `web-pages.write` | 上传/编辑/删除/分享托管站点 |
 
+**基础功能**：网页托管属于基础功能，所有内置角色（admin / operator / viewer / agent_tester）默认授予 read + write 权限。
+
 菜单: `AdminMenuCatalog` → appKey `web-pages`, 路由 `/web-pages`, 图标 `Globe`
 
 ---
@@ -305,3 +307,60 @@ public class VideoGenRunWorker
 | `prd-admin/src/pages/WebPagesPage.tsx` | 站点管理页面 |
 | `prd-admin/src/pages/ShareViewPage.tsx` | 分享查看页面 |
 | `prd-admin/src/services/real/webPages.ts` | 前端 API 服务层 |
+
+---
+
+## 用户隔离设计
+
+### 原则
+
+网页托管数据严格按用户隔离，每个用户只能看到和操作自己的数据。
+
+### 隔离范围
+
+| 数据 | 隔离方式 | 说明 |
+|------|----------|------|
+| `hosted_sites` | `OwnerUserId` 过滤 | 所有查询/更新/删除都必须携带 userId 条件 |
+| `web_page_share_links` | `CreatedBy` 过滤 | 分享链接只对创建者可见和可管理 |
+| COS 文件 | `web-hosting/sites/{siteId}/` | 站点级隔离，siteId 全局唯一 |
+| 文件夹 / 标签 | `OwnerUserId` 聚合 | 仅返回当前用户自己的文件夹和标签 |
+
+### 实现要点
+
+1. **Service 层强制 userId**：`IHostedSiteService` 所有方法都要求传入 `userId`，在 MongoDB 查询中作为必填过滤条件
+2. **Controller 层提取身份**：从 JWT Claims 提取当前用户 ID，不接受前端传入的 userId
+3. **匿名分享例外**：`ViewShareAsync` 不需要登录，通过 Token 查找分享链接后返回站点数据（只返回站点公开信息，不暴露 OwnerUserId）
+
+### 不隔离的数据
+
+- **匿名分享页面**：任何人持有 Token 即可访问（密码保护可选）
+- **统一资产视图**：`WebPageAssetProvider` 也通过 userId 过滤，仅展示当前用户资产
+
+---
+
+## 后续事项
+
+> 此处记录已识别但尚未实现的改进方向，供未来迭代参考。
+
+### P1 — 近期优化
+
+| 事项 | 说明 | 依赖 |
+|------|------|------|
+| AI 文本辅助 | 上传 HTML 后自动提取/生成标题、描述、标签 | `IHostedSiteService` + LLM Gateway，详见 `doc/plan.ai-text-assist.md` |
+| 数据字典补全 | `hosted_sites` 和 `web_page_share_links` 需补录到 `rule.data-dictionary.md` | 无 |
+
+### P2 — 中期增强
+
+| 事项 | 说明 | 依赖 |
+|------|------|------|
+| 站点版本历史 | 每次 reupload 保留历史版本，支持回滚 | COS 版本管理或独立快照 |
+| 站点访问统计 | 详细的 PV/UV 统计、来源追踪 | 需独立统计服务或嵌入打点脚本 |
+| 自定义域名绑定 | 用户为站点绑定自有域名（CNAME） | COS/CDN 域名管理 API |
+
+### P3 — 远期方向
+
+| 事项 | 说明 | 依赖 |
+|------|------|------|
+| 团队协作 | 站点共享给团队成员（非匿名分享） | 团队/Group 权限体系 |
+| 模板市场 | 站点模板发布到海鲜市场 | `IForkable` + `CONFIG_TYPE_REGISTRY` 集成 |
+| 在线编辑器 | 浏览器内编辑 HTML/CSS/JS | Monaco Editor 集成 |
