@@ -404,7 +404,237 @@ result = L.join("\\n");`,
 };
 
 // ═══════════════════════════════════════════════════════════════
-// 模板 2: 通用 API 数据采集 (通过 cURL 粘贴)
+// 模板 2: TAPD 缺陷统计 → 精美网页报告 (LLM 生成可下载 HTML)
+// ═══════════════════════════════════════════════════════════════
+//
+// 拓扑图：
+//   👆 手动触发
+//     ↓
+//   🐛 TAPD 数据采集
+//     ↓
+//   📊 JS 预处理统计
+//     ↓
+//   🌐 网页报告生成 (LLM → 精美 HTML)
+//     ↓      ↓
+//   💾 导出  🔔 通知
+//
+
+const tapdWebpageReportTemplate: WorkflowTemplate = {
+  id: 'tapd-webpage-report',
+  name: 'TAPD 缺陷精美网页报告',
+  description: '从 TAPD 拉取缺陷数据 → JS 预处理统计 → LLM 生成精美可下载 HTML 网页 → 文件导出 + 通知',
+  icon: '🌐',
+  tags: ['tapd', 'quality', 'webpage', 'html', 'report'],
+  requiredInputs: [
+    {
+      key: 'cookie',
+      label: 'Cookie',
+      type: 'textarea',
+      placeholder: 'tapdsession=xxx; t_u=xxx; _wt=xxx; ...',
+      helpTip: '浏览器登录 TAPD → F12 → Network → 点任意请求 → Headers → 找到 Cookie → 复制整段粘贴到这里',
+      required: true,
+    },
+    {
+      key: 'workspaceId',
+      label: '工作空间 ID',
+      type: 'text',
+      placeholder: '50116108',
+      defaultValue: '50116108',
+      helpTip: 'TAPD 项目 URL 中的数字 ID',
+      required: true,
+    },
+    {
+      key: 'dataType',
+      label: '数据类型',
+      type: 'select',
+      required: true,
+      defaultValue: 'bugs',
+      options: [
+        { value: 'bugs', label: '缺陷 (Bugs)' },
+        { value: 'stories', label: '需求 (Stories)' },
+        { value: 'tasks', label: '任务 (Tasks)' },
+      ],
+    },
+    {
+      key: 'dateRange',
+      label: '时间范围（可选）',
+      type: 'month',
+      placeholder: '2026-03',
+      helpTip: '留空取全部，选择月份按月筛选',
+      required: false,
+      defaultValue: new Date().toISOString().slice(0, 7),
+    },
+    {
+      key: 'style',
+      label: '网页风格',
+      type: 'select',
+      required: false,
+      defaultValue: 'modern-dark',
+      options: [
+        { value: 'modern-dark', label: '现代深色 (Glassmorphism)' },
+        { value: 'modern-light', label: '现代浅色 (Clean Light)' },
+        { value: 'dashboard', label: '数据看板 (Dashboard)' },
+        { value: 'report', label: '正式报告 (Professional)' },
+      ],
+    },
+  ],
+  build: (inputs) => {
+    _edgeIdx = 0;
+
+    const nodes: WorkflowNode[] = [
+      {
+        nodeId: 'n-trigger',
+        name: '手动触发',
+        nodeType: 'manual-trigger',
+        config: { inputPrompt: '点击开始采集 TAPD 数据并生成精美网页报告' },
+        inputSlots: [],
+        outputSlots: [{ slotId: 'manual-out', name: 'input', dataType: 'json', required: true }],
+        position: { x: 100, y: 300 },
+      },
+      {
+        nodeId: 'n-tapd',
+        name: 'TAPD 数据采集',
+        nodeType: 'tapd-collector',
+        config: {
+          authMode: 'cookie',
+          workspaceId: inputs.workspaceId || '',
+          cookie: inputs.cookie || '',
+          dataType: inputs.dataType || 'bugs',
+          dateRange: inputs.dateRange || '',
+          maxPages: '50',
+          fetchDetail: 'true',
+        },
+        inputSlots: [{ slotId: 'tapd-in', name: 'trigger', dataType: 'json', required: false }],
+        outputSlots: [{ slotId: 'tapd-out', name: 'data', dataType: 'json', required: true }],
+        position: { x: 400, y: 300 },
+      },
+      {
+        nodeId: 'n-agg',
+        name: '缺陷统计预处理（JS脚本）',
+        nodeType: 'script-executor',
+        config: {
+          language: 'javascript',
+          code: `// 精简统计，为网页报告准备结构化 JSON 数据
+const total = data.length;
+const byField = (field, val) => data.filter(i => (i[field] || "") === val);
+const byFieldEmpty = (field) => data.filter(i => !(i[field] || "").trim());
+const isClosed = (i) => ["closed","已关闭"].includes((i["状态"] || "").toLowerCase());
+
+// 缺陷划分
+const 非缺陷 = byField("缺陷划分", "非缺陷").length;
+const 产品缺陷 = byField("缺陷划分", "产品缺陷").length;
+const 技术缺陷list = byField("缺陷划分", "技术缺陷");
+const 技术缺陷 = 技术缺陷list.length;
+const 未判断 = byFieldEmpty("缺陷划分").length;
+
+// 技术缺陷等级分布
+const byLv = (lv) => 技术缺陷list.filter(i => (i["缺陷等级"] || "").toUpperCase() === lv);
+const levelDist = { P0: byLv("P0").length, P1: byLv("P1").length, P2: byLv("P2").length, P3: byLv("P3").length, P4: byLv("P4").length };
+
+// P2及以下
+const p2below = 技术缺陷list.filter(i => ["P2","P3","P4"].includes((i["缺陷等级"] || "").toUpperCase()));
+const p2total = p2below.length;
+const p2overdue = p2below.filter(i => i["是否逾期"] === "是").length;
+const p2timely = p2below.filter(i => i["及时处理"] === "是").length;
+const p2fixed = p2below.filter(i => isClosed(i)).length;
+const p2timelyFixed = p2below.filter(i => i["及时处理"] === "是" && isClosed(i)).length;
+const pct = (n, d) => d > 0 ? +(n / d * 100).toFixed(2) : 0;
+
+// 结构归母统计
+const 归母Map = {};
+技术缺陷list.forEach(i => {
+  const v = (i["结构归母"] || "").trim() || "暂未归母";
+  归母Map[v] = (归母Map[v] || 0) + 1;
+});
+
+// 有效报告
+const 有效 = byField("有效报告", "是").length;
+const 无效 = byField("有效报告", "否").length;
+
+result = JSON.stringify({
+  summary: { total, 非缺陷, 产品缺陷, 技术缺陷, 未判断, 有效, 无效 },
+  levelDistribution: levelDist,
+  p2Analysis: {
+    total: p2total,
+    overdue: p2overdue,
+    timelyHandled: p2timely,
+    fixed: p2fixed,
+    timelyFixed: p2timelyFixed,
+    timelyFixRate: pct(p2timelyFixed, p2total),
+    timelyHandleRate: pct(p2timely, p2total),
+  },
+  structureOwnership: 归母Map,
+  generatedAt: new Date().toISOString(),
+});`,
+          timeoutSeconds: '30',
+        },
+        inputSlots: [{ slotId: 'script-in', name: 'input', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'script-out', name: 'output', dataType: 'text', required: true }],
+        position: { x: 700, y: 300 },
+      },
+      {
+        nodeId: 'n-webpage',
+        name: '生成精美网页报告',
+        nodeType: 'webpage-generator',
+        config: {
+          reportTemplate: `请将以下缺陷统计数据生成为一份精美的质量分析报告网页。
+
+要求：
+1. 顶部显示报告标题、生成时间、关键指标摘要卡片（总缺陷数、技术缺陷数、及时修复率等）
+2. 中部用图表展示：缺陷分类饼图、等级分布柱状图、P2及以下缺陷处理分析
+3. 结构归母分布用水平条形图展示
+4. 底部用表格展示详细数据和结论建议
+5. 整体风格要有科技感和数据分析报告的专业感`,
+          style: inputs.style || 'modern-dark',
+          title: `TAPD 缺陷质量分析报告`,
+          includeCharts: 'true',
+        },
+        inputSlots: [{ slotId: 'webpage-in', name: 'data', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'webpage-out', name: 'webpage', dataType: 'text', required: true }],
+        position: { x: 1000, y: 300 },
+      },
+      {
+        nodeId: 'n-export',
+        name: '导出 HTML 网页',
+        nodeType: 'file-exporter',
+        config: {
+          fileFormat: 'html',
+          fileName: `tapd-quality-report-{{date}}-${inputs.workspaceId || 'unknown'}`,
+        },
+        inputSlots: [{ slotId: 'export-in', name: 'data', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'export-out', name: 'file', dataType: 'binary', required: true }],
+        position: { x: 1300, y: 180 },
+      },
+      {
+        nodeId: 'n-notify',
+        name: '完成通知',
+        nodeType: 'notification-sender',
+        config: {
+          title: 'TAPD 缺陷质量网页报告已生成',
+          content: '已完成缺陷数据采集与精美网页报告生成，请查看执行结果预览或下载 HTML 文件',
+          level: 'success',
+          attachFromInput: 'cos',
+        },
+        inputSlots: [{ slotId: 'notify-in', name: 'data', dataType: 'json', required: false }],
+        outputSlots: [{ slotId: 'notify-out', name: 'result', dataType: 'json', required: true }],
+        position: { x: 1300, y: 420 },
+      },
+    ];
+
+    const edges: WorkflowEdge[] = [
+      edge('n-trigger', 'manual-out', 'n-tapd', 'tapd-in'),
+      edge('n-tapd', 'tapd-out', 'n-agg', 'script-in'),
+      edge('n-agg', 'script-out', 'n-webpage', 'webpage-in'),
+      edge('n-webpage', 'webpage-out', 'n-export', 'export-in'),
+      edge('n-webpage', 'webpage-out', 'n-notify', 'notify-in'),
+    ];
+
+    return { nodes, edges, variables: [] };
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════
+// 模板 3: 通用 API 数据采集 (通过 cURL 粘贴)
 // ═══════════════════════════════════════════════════════════════
 
 const smartHttpTemplate: WorkflowTemplate = {
@@ -863,6 +1093,7 @@ result = {
 
 export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   tapdBugCollectionTemplate,
+  tapdWebpageReportTemplate,
   smartHttpTemplate,
   smartHttpAcceptanceTemplate,
   apiReviewWorkflowTemplate,
