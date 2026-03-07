@@ -23,3 +23,29 @@ public class UploadDocumentRequest
         return (true, null);
     }
 }
+
+/// <summary>
+/// 向会话追加文档请求
+/// </summary>
+public class AddDocumentToSessionRequest
+{
+    /// <summary>Markdown文档内容</summary>
+    public string Content { get; set; } = string.Empty;
+
+    /// <summary>文档类型（可选：product/technical/design/reference，默认 reference）</summary>
+    public string? DocumentType { get; set; }
+}
+
+/// <summary>
+/// 更新文档类型请求
+/// </summary>
+public class UpdateDocumentTypeRequest
+{
+    /// <summary>文档类型：product/technical/design/reference</summary>
+    public string DocumentType { get; set; } = string.Empty;
+
+    private static readonly HashSet<string> ValidTypes = new(StringComparer.OrdinalIgnoreCase)
+        { "product", "technical", "design", "reference" };
+
+    public bool IsValid() => ValidTypes.Contains(DocumentType);
+}

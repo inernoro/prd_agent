@@ -637,6 +637,8 @@ export const api = {
       messages: (sessionId: string) => `/api/v1/sessions/${sessionId}/messages`,
       archive: (sessionId: string) => `/api/v1/sessions/${sessionId}/archive`,
       unarchive: (sessionId: string) => `/api/v1/sessions/${sessionId}/unarchive`,
+      documents: (sessionId: string) => `/api/v1/sessions/${sessionId}/documents`,
+      document: (sessionId: string, documentId: string) => `/api/v1/sessions/${sessionId}/documents/${documentId}`,
     },
     groups: {
       list: () => '/api/v1/groups',

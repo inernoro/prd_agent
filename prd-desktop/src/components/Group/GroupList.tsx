@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { invoke } from '../../lib/tauri';
-import { ApiResponse, Document, Session, UserRole } from '../../types';
+import { ApiResponse, UserRole } from '../../types';
 import { useAuthStore } from '../../stores/authStore';
 import { useSessionStore } from '../../stores/sessionStore';
+import { openGroupSessionAndSetStore } from '../../lib/openGroupSession';
 import { useGroupListStore } from '../../stores/groupListStore';
 import { useMessageStore } from '../../stores/messageStore';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -20,7 +21,7 @@ type GroupMemberInfo = {
 export default function GroupList() {
   const { user } = useAuthStore();
   const { groups, loading, loadGroups } = useGroupListStore();
-  const { activeGroupId, setSession, setActiveGroupContext, clearSession } = useSessionStore();
+  const { activeGroupId, setActiveGroupContext, clearSession } = useSessionStore();
   const syncFromServer = useMessageStore((s) => s.syncFromServer);
   const triggerScrollToBottom = useMessageStore((s) => s.triggerScrollToBottom);
   const bindGroupContext = useMessageStore((s) => s.bindGroupContext);
@@ -39,15 +40,24 @@ export default function GroupList() {
   // 移除此处的 loadGroups 调用，因为 App.tsx 已经在登录后统一加载
   // 这样可以避免重复请求（特别是在 StrictMode 下会被调用两次）
 
+  const documentLoaded = useSessionStore((s) => s.documentLoaded);
+
   useEffect(() => {
-    // 有群组时默认选中第一个群组
-    // 注意：只在 activeGroupId 为空时才自动选中，避免 loadGroups 刷新时打断当前群组
-    if (!activeGroupId && groups.length > 0) {
+    if (groups.length === 0) return;
+
+    if (!activeGroupId) {
+      // 无选中群组 → 默认选第一个
       void openGroup(groups[0]);
+    } else if (!documentLoaded) {
+      // 有选中群组但文档未加载（重启/刷新后 localStorage 恢复了 activeGroupId 但不再持久化文档）
+      // → 重新打开 session 拉取文档
+      const g = groups.find((g) => g.groupId === activeGroupId);
+      if (g) {
+        void openGroup(g);
+      }
     }
-    // 只依赖 activeGroupId 和 groups.length，避免 groups 引用变化导致不必要的重新执行
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groups.length, activeGroupId]);
+  }, [groups.length, activeGroupId, documentLoaded]);
 
   const openGroup = async (group: (typeof groups)[number]) => {
     // 切换群组：先重置消息/分页/滚动状态，再切换 session/document，避免残留状态导致：
@@ -68,29 +78,7 @@ export default function GroupList() {
         : 'PM';
 
     try {
-      const openResp = await invoke<ApiResponse<{ sessionId: string; groupId: string; documentId: string; currentRole: string }>>(
-        'open_group_session',
-        { groupId: group.groupId, userRole: role }
-      );
-
-      if (!openResp.success || !openResp.data) return;
-
-      const docResp = await invoke<ApiResponse<Document>>('get_document', {
-        documentId: openResp.data.documentId,
-      });
-
-      if (!docResp.success || !docResp.data) return;
-
-      const session: Session = {
-        sessionId: openResp.data.sessionId,
-        groupId: openResp.data.groupId,
-        documentId: openResp.data.documentId,
-        currentRole: (openResp.data.currentRole as UserRole) || role,
-        mode: 'QA',
-      };
-
-      setSession(session, docResp.data);
-      // setActiveGroupId 已由 setSession 内部设置（session.groupId），不再重复调用
+      await openGroupSessionAndSetStore(group.groupId, role);
 
       // 关键体验：点击群组 = 拉一次最新消息 + 跳到最新
       // - 即使点击的是“当前群组”，也执行一次（用户期望刷新）

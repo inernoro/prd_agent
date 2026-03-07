@@ -99,6 +99,45 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 ---
 
+# 质量保障技能链
+
+> AI 辅助开发的完整质量保障流程，6 个技能覆盖从设计到上线的全生命周期。
+
+### 全景链路
+
+```
+设计阶段              实现阶段              验收阶段              上线阶段
+    │                    │                    │                    │
+ /risk                /trace               /verify              /handoff
+ 风险矩阵              路径追踪              交叉验证              交接清单
+ "有什么风险"          "怎么跑的"            "做对了吗"            "能上线吗"
+    │                    │                    │                    │
+    └──────── /smoke-test（冒烟测试，贯穿各阶段）─────────┘          │
+                                                              /weekly
+                                                              周报总结
+                                                             "做了什么"
+```
+
+### 技能速查表
+
+| 技能 | 触发词 | 用途 | 适合谁 |
+|------|--------|------|--------|
+| **risk-matrix** | "风险评估"、"/risk" | MECE 六维度风险评估（正确性/兼容性/性能/安全/运维/体验） | 技术负责人、架构师 |
+| **flow-trace** | "追踪"、"/trace" | 全链路数据流+控制流追踪，大白话输出路径图 | 产品、开发、新人 |
+| **human-verify** | "验证一下"、"/verify" | 多角度模拟验证（逆向验证/边界测试/数据流追踪） | 开发者 |
+| **smoke-test** | "冒烟测试"、"/smoke" | 自动生成链式 curl 命令端到端测试 | 开发者、QA |
+| **task-handoff-checklist** | "交接"、"/handoff" | 8 维度交接清单（导航/文档/规则/流程/测试/风险/质量/后续） | 所有人 |
+| **weekly-update-summary** | "生成周报"、"/weekly" | 从 git 历史自动生成结构化周报 | 项目负责人 |
+
+### 使用指引
+
+1. **方案评审时** → 先 `/risk` 评估风险，再 `/trace` 追踪关键链路
+2. **开发完成后** → 先 `/verify` 交叉验证，再 `/smoke-test` 跑端到端
+3. **准备上线时** → `/handoff` 生成交接清单（涉及 3+ 文件时自动触发）
+4. **周五收尾时** → `/weekly` 生成本周总结
+
+---
+
 # 项目架构规则
 
 ## 应用身份隔离原则
@@ -165,6 +204,31 @@ public async Task<IActionResult> CreateImageGenRun([FromBody] Request request)
 ## 水印配置
 
 水印配置基于 `appKey` 绑定，只有绑定了特定 appKey 的应用才会应用对应的水印配置。
+
+---
+
+## 数据关系审计原则
+
+**核心原则**：当实体 A 新增了对实体 B 的引用关系（如 `Session.DocumentIds` 引用 `Document`），必须审计所有访问实体 B 的端点，确保权限校验覆盖新关系。
+
+> **根因案例**：多文档功能上线后，补充文档无法预览（"该文档未绑定到当前群组"）。原因是 `Session.DocumentIds` 存储了补充文档引用，但 `DocumentsController`、`PrdCommentsController`、`Api/DocumentsController` 三个端点的绑定校验仍只查 `Group.PrdDocumentId`。写入路径做了，读取路径漏了。
+
+### 审计清单
+
+当新增数据关系时（Model 类新增 `List<string> xxxIds` 字段、新增外键引用、新增"A 拥有 B"的业务逻辑）：
+
+- [ ] **Grep 实体 B 的所有消费端点**：搜索 `documentId`、`DocumentId`、`GetByIdAsync` 等关键词
+- [ ] **逐个检查权限校验**：是否覆盖了新的访问路径（不只是旧的唯一入口）
+- [ ] **逐个检查硬编码假设**：是否有 `group.PrdDocumentId == id` 这类只认单一来源的写法
+- [ ] **检查反向路径**：删除实体 A 时，实体 B 的引用是否需要清理
+
+### 典型触发场景
+
+| 变更类型 | 审计动作 |
+|----------|----------|
+| Model 新增 `List<string> XxxIds` | Grep 被引用实体的所有 Controller，检查访问校验 |
+| 新增"A 包含 B"关系 | 检查 B 的 CRUD 端点是否识别新的所属关系 |
+| 将单引用改为多引用 | 所有 `== id` 比较改为 `Contains(id)` |
 
 ---
 
@@ -360,6 +424,54 @@ const appNameMap = {
 
 ---
 
+## 单一数据源渲染原则 (Single Source of Truth for Rendering)
+
+**核心原则**：同一个组件、同一处 UI、同一个业务功能的渲染，禁止从两个数据源获取数据。
+
+> 业界参考：Redux SSOT (Single Source of Truth)、TanStack Query 的 queryKey 唯一缓存、React 单向数据流。
+
+### 规则说明
+
+1. **一个列表 = 一个数据源**
+   - 一个 UI 列表只能由一个 Store 字段（或一个 query cache entry）驱动
+   - 禁止：组件 A 通过接口 X 填充列表，组件 B 通过接口 Y 填充同一列表
+   - 正确：列表数据统一存储在一个 Store 字段，所有写入路径最终都更新同一个字段
+
+2. **mutation 后刷新**
+   - 修改操作（增/删/改）完成后，必须更新同一个 Store 字段
+   - 禁止在 mutation 回调中绕过 Store 直接操作 UI 状态
+
+3. **rehydrate 兼容**
+   - 当 Store 新增字段时，必须在 `onRehydrateStorage` 中处理旧数据兼容
+   - 确保旧 localStorage 缺失新字段时，能从已有字段派生出正确初始值
+
+### 示例
+
+```typescript
+// ✅ 正确做法：统一数据源
+// sessionStore 中只有 documents[] 一个字段
+// openGroupSession → setDocuments(allDocs)
+// addDocument → setDocuments(updatedDocs)
+// removeDocument → setDocuments(updatedDocs)
+// KnowledgeBasePage 读取 → sessionStore.documents
+// Sidebar 读取 → sessionStore.documents
+
+// ❌ 错误做法：两个数据源
+// openGroupSession → 填充 sessionStore.document (单数)
+// addDocument → 直接 fetch 并维护 KnowledgeBasePage 本地 state
+// 结果：切换页面/刷新后数据不一致
+```
+
+### 检查清单
+
+当新增/修改 Store 字段时：
+- [ ] 确认该字段是否为某个 UI 列表的唯一数据源
+- [ ] 确认所有写入路径（初始化、mutation、rehydrate）都更新同一个字段
+- [ ] 确认 `onRehydrateStorage` 能兼容旧数据
+- [ ] 确认没有组件通过本地 state 维护该字段的"影子副本"
+
+---
+
 ## 服务器权威性设计
 
 > 详细设计文档：`doc/design.server-authority.md`
@@ -518,12 +630,20 @@ VisualAgent (DB 名保留 image_master)：`image_master_workspaces`, `image_asse
 
 当更新文档时，务必做以下交叉：
 
+**存在性校验（有没有）**：
+
 1. **代码→文档**：Controller/Service 存在 → SRS 功能模块有描述
 2. **文档→代码**：SRS 描述的功能 → 代码中存在对应实现
 3. **Git log→文档**：近期 commit 的功能变更 → 已反映到文档
 4. **DB→数据字典**：MongoDbContext 集合 → rule.data-dictionary.md 有记录
 5. **目录结构→文档**：实际目录 → SRS 目录结构图一致
 6. **未实现标注**：文档中描述但代码不存在的功能 → 必须标注 ⚠️ 状态
+
+**完整性校验（全不全）**：
+
+7. **关系→访问路径**：Model 新增引用字段 → 所有消费该实体的端点已更新权限校验（参见「数据关系审计原则」）
+8. **写入→读取对称**：能写入的数据 → 必须有对应的读取/展示路径，不允许"断头功能"（能存不能看）
+9. **UI→API 闭环**：前端有入口的功能 → 对应 API 端点完整可用（增删改查全链路通）
 
 ---
 

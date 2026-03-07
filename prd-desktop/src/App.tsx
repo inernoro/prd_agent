@@ -22,7 +22,8 @@ import { isSystemErrorCode } from './lib/systemError';
 import { useConnectionStore } from './stores/connectionStore';
 import { useDesktopBrandingStore } from './stores/desktopBrandingStore';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import type { ApiResponse, Document, PromptsClientResponse, Session, UserRole } from './types';
+import type { ApiResponse, PromptsClientResponse, UserRole } from './types';
+import { openGroupSessionAndSetStore } from './lib/openGroupSession';
 
 const THEME_STORAGE_KEY = 'prd-desktop-theme';
 
@@ -367,27 +368,7 @@ function App() {
 
         // Deep link 加入群组后强制刷新列表（silent 避免 ChatContainer 卸载重挂）
         await useGroupListStore.getState().loadGroups({ force: true, silent: true });
-
-        const openResp = await invoke<ApiResponse<{ sessionId: string; groupId: string; documentId: string; currentRole: string }>>(
-          'open_group_session',
-          { groupId: joinResp.data.groupId, userRole: effectiveRole }
-        );
-        if (!openResp.success || !openResp.data) return;
-
-        const docResp = await invoke<ApiResponse<Document>>('get_document', {
-          documentId: openResp.data.documentId,
-        });
-        if (!docResp.success || !docResp.data) return;
-
-        const session: Session = {
-          sessionId: openResp.data.sessionId,
-          groupId: openResp.data.groupId,
-          documentId: openResp.data.documentId,
-          currentRole: (openResp.data.currentRole as UserRole) || effectiveRole,
-          mode: 'QA',
-        };
-
-        useSessionStore.getState().setSession(session, docResp.data);
+        await openGroupSessionAndSetStore(joinResp.data.groupId, effectiveRole);
       } catch (err) {
         console.error('Failed to handle deep link join:', err);
         // invoke reject 已由全局弹窗接管

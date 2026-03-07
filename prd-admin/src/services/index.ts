@@ -314,7 +314,7 @@ import {
   streamImageGenRunWithRetryReal,
 } from '@/services/real/imageGen';
 import { deleteModelLabGroupReal, listModelLabGroupsReal, upsertModelLabGroupReal } from '@/services/real/modelLabGroups';
-import { getAiChatHistoryReal, uploadAiChatDocumentReal } from '@/services/real/aiChat';
+import { getAiChatHistoryReal, uploadAiChatDocumentReal, addDocumentToSession as addDocumentToSessionReal, removeDocumentFromSession as removeDocumentFromSessionReal } from '@/services/real/aiChat';
 import { suggestGroupNameReal } from '@/services/real/intent';
 import {
   addVisualAgentMessageReal,
@@ -726,6 +726,8 @@ export const deleteModelLabGroup: DeleteModelLabGroupContract = withAuth(deleteM
 
 export const uploadAiChatDocument: AiChatUploadDocumentContract = withAuth(uploadAiChatDocumentReal);
 export const getAiChatHistory: AiChatGetHistoryContract = withAuth(getAiChatHistoryReal);
+export const addDocumentToSession = withAuth(addDocumentToSessionReal);
+export const removeDocumentFromSession = withAuth(removeDocumentFromSessionReal);
 
 export const suggestGroupName: SuggestGroupNameContract = withAuth(suggestGroupNameReal);
 

@@ -28,6 +28,7 @@ export interface Session {
   sessionId: string;
   groupId?: string;
   documentId: string;
+  documentIds?: string[];
   currentRole: UserRole;
   mode: InteractionMode;
 }
@@ -44,11 +45,26 @@ export interface PromptsClientResponse {
   prompts: PromptItem[];
 }
 
+export type DocumentType = 'product' | 'technical' | 'design' | 'reference';
+
+export const DOCUMENT_TYPE_LABELS: Record<DocumentType, string> = {
+  product: '产品文档',
+  technical: '技术文档',
+  design: '设计文档',
+  reference: '参考资料',
+};
+
+export interface DocumentMeta {
+  documentId: string;
+  documentType: DocumentType;
+}
+
 export interface Document {
   id: string;
   title: string;
   charCount: number;
   tokenEstimate: number;
+  documentType?: DocumentType;
 }
 
 export interface DocumentContent {

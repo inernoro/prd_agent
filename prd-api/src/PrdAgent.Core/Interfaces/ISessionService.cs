@@ -12,6 +12,9 @@ public interface ISessionService
     
     /// <summary>获取会话</summary>
     Task<Session?> GetByIdAsync(string sessionId);
+
+    /// <summary>获取群组关联的会话（单群单会话模式）</summary>
+    Task<Session?> GetByGroupIdAsync(string groupId);
     
     /// <summary>更新会话</summary>
     Task<Session> UpdateAsync(Session session);
@@ -25,9 +28,18 @@ public interface ISessionService
     /// <summary>刷新会话活跃时间</summary>
     Task RefreshActivityAsync(string sessionId);
     
+    /// <summary>向会话追加文档</summary>
+    Task<Session> AddDocumentAsync(string sessionId, string documentId, string documentType = "reference");
+
+    /// <summary>从会话移除文档</summary>
+    Task<Session> RemoveDocumentAsync(string sessionId, string documentId);
+
+    /// <summary>更新文档类型</summary>
+    Task<Session> UpdateDocumentTypeAsync(string sessionId, string documentId, string documentType);
+
     /// <summary>删除会话</summary>
     Task DeleteAsync(string sessionId);
-    
+
     /// <summary>清理过期会话</summary>
     Task CleanupExpiredSessionsAsync();
 }
