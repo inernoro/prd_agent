@@ -532,10 +532,10 @@ export function DailyLogPanel() {
             <div className="flex-1 flex items-center justify-center" style={{ minHeight: 300 }}>
               <div className="flex flex-col items-center gap-5 text-center max-w-sm">
                 <div
-                  className="w-16 h-16 rounded-2xl flex items-center justify-center text-[28px]"
-                  style={{ background: 'var(--bg-tertiary)' }}
+                  className="w-16 h-16 rounded-2xl flex items-center justify-center"
+                  style={{ background: 'rgba(59, 130, 246, 0.06)', border: '1px solid rgba(59, 130, 246, 0.1)' }}
                 >
-                  {isToday ? '☀️' : '📋'}
+                  <Calendar size={28} style={{ color: 'rgba(59, 130, 246, 0.5)' }} />
                 </div>
                 <div>
                   <div className="text-[15px] font-medium mb-1.5" style={{ color: 'var(--text-primary)' }}>
@@ -580,12 +580,16 @@ export function DailyLogPanel() {
               </div>
             </div>
           ) : (
-            <div className="flex flex-col gap-1">
+            <GlassCard variant="subtle" className="p-4 flex flex-col gap-1">
               {/* ── 今日记录 (手动) ── */}
               {items.length > 0 && (
                 <>
-                  <div className="text-[11px] font-medium px-1 mb-1" style={{ color: 'var(--text-muted)' }}>
-                    ── 今日记录 ──
+                  <div className="flex items-center gap-2 px-2 mb-2">
+                    <div className="h-px flex-1" style={{ background: 'var(--border-primary)' }} />
+                    <span className="text-[11px] font-medium px-2" style={{ color: 'var(--text-muted)' }}>
+                      今日记录
+                    </span>
+                    <div className="h-px flex-1" style={{ background: 'var(--border-primary)' }} />
                   </div>
                   {items.map((item, idx) => {
                     const cfg = CATEGORY_CONFIG[item.category] || CATEGORY_CONFIG.other;
@@ -723,10 +727,14 @@ export function DailyLogPanel() {
               {/* ── 来自数据源 (自动) ── */}
               {dayCommits.length > 0 && (
                 <>
-                  <div className="text-[11px] font-medium px-1 mt-4 mb-1 flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
-                    <GitCommit size={11} />
-                    ── 来自数据源 (自动) ──
-                    {commitsLoading && <span className="text-[10px]">加载中...</span>}
+                  <div className="flex items-center gap-2 px-2 mt-4 mb-2">
+                    <div className="h-px flex-1" style={{ background: 'var(--border-primary)' }} />
+                    <span className="text-[11px] font-medium px-2 flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
+                      <GitCommit size={11} />
+                      来自数据源
+                      {commitsLoading && <span className="text-[10px]">加载中...</span>}
+                    </span>
+                    <div className="h-px flex-1" style={{ background: 'var(--border-primary)' }} />
                   </div>
                   {dayCommits.map((commit) => (
                     <div
@@ -785,15 +793,16 @@ export function DailyLogPanel() {
               )}
 
               {/* AI tip at bottom */}
-              <div className="mt-2 px-3">
+              <div className="mt-3 px-1">
                 <div
-                  className="text-[10px] px-3 py-1.5 rounded-lg inline-block"
+                  className="text-[11px] px-3 py-2 rounded-lg inline-flex items-center gap-1.5"
                   style={{ color: 'var(--text-muted)', background: 'var(--bg-tertiary)' }}
                 >
-                  💡 这些记录会在生成周报时被 AI 自动汇总
+                  <Sparkles size={11} style={{ color: 'rgba(168, 85, 247, 0.6)' }} />
+                  这些记录会在生成周报时被 AI 自动汇总
                 </div>
               </div>
-            </div>
+            </GlassCard>
           )}
         </div>
 

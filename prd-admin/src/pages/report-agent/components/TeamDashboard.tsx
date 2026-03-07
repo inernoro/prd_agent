@@ -30,6 +30,16 @@ const statusConfig: Record<string, { label: string; color: string; bg: string; i
   vacation:                         { label: '请假',   color: 'rgba(139, 92, 246, 0.9)',  bg: 'rgba(139, 92, 246, 0.08)',  icon: Palmtree },
 };
 
+// Summary section colors
+const summaryColors = [
+  'rgba(59, 130, 246, 0.9)',
+  'rgba(34, 197, 94, 0.9)',
+  'rgba(168, 85, 247, 0.9)',
+  'rgba(249, 115, 22, 0.9)',
+  'rgba(236, 72, 153, 0.9)',
+  'rgba(20, 184, 166, 0.9)',
+];
+
 export function TeamDashboard() {
   const { teams, dashboard, loadDashboard } = useReportAgentStore();
   const userId = useAuthStore((s) => s.user?.userId);
@@ -165,9 +175,11 @@ export function TeamDashboard() {
   if (leaderTeams.length === 0) {
     return (
       <div className="flex items-center justify-center" style={{ minHeight: 400 }}>
-        <div className="text-center">
-          <Users size={32} style={{ color: 'var(--text-muted)', opacity: 0.4, margin: '0 auto' }} />
-          <div className="text-[13px] mt-3" style={{ color: 'var(--text-muted)' }}>你不是任何团队的负责人</div>
+        <div className="flex flex-col items-center gap-4 text-center">
+          <div className="w-16 h-16 rounded-2xl flex items-center justify-center" style={{ background: 'var(--bg-tertiary)' }}>
+            <Users size={28} style={{ color: 'var(--text-muted)', opacity: 0.4 }} />
+          </div>
+          <div className="text-[14px]" style={{ color: 'var(--text-muted)' }}>你不是任何团队的负责人</div>
         </div>
       </div>
     );
@@ -186,12 +198,12 @@ export function TeamDashboard() {
 
       {/* Return Dialog */}
       {returnDialogId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.4)' }}>
-          <GlassCard className="p-5 w-[420px]">
-            <div className="text-[15px] font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>退回周报</div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)' }}>
+          <GlassCard className="p-6 w-[440px]">
+            <div className="text-[16px] font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>退回周报</div>
             <textarea
-              className="w-full text-[13px] px-3 py-2.5 rounded-xl resize-none"
-              style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)', minHeight: 80 }}
+              className="w-full text-[13px] px-4 py-3 rounded-xl resize-none"
+              style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)', minHeight: 100 }}
               placeholder="请输入退回原因..."
               value={returnReason}
               onChange={(e) => setReturnReason(e.target.value)}
@@ -207,17 +219,17 @@ export function TeamDashboard() {
 
       {/* Vacation Dialog */}
       {vacationDialogUserId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.4)' }}>
-          <GlassCard className="p-5 w-[420px]">
-            <div className="text-[15px] font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)' }}>
+          <GlassCard className="p-6 w-[440px]">
+            <div className="text-[16px] font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
               标记请假
             </div>
-            <div className="text-[12px] mb-3" style={{ color: 'var(--text-secondary)' }}>
+            <div className="text-[12px] mb-4" style={{ color: 'var(--text-secondary)' }}>
               将标记该成员 {weekYear} 年第 {weekNumber} 周为请假，无需提交周报。
             </div>
             <textarea
-              className="w-full text-[13px] px-3 py-2.5 rounded-xl resize-none"
-              style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)', minHeight: 60 }}
+              className="w-full text-[13px] px-4 py-3 rounded-xl resize-none"
+              style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)', minHeight: 80 }}
               placeholder="请假原因（选填）..."
               value={vacationReason}
               onChange={(e) => setVacationReason(e.target.value)}
@@ -230,79 +242,57 @@ export function TeamDashboard() {
         </div>
       )}
 
-      {/* Controls — Week nav + team selector */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-3">
-          {leaderTeams.length > 1 && (
-            <select
-              className="px-3 py-1.5 rounded-lg text-[13px]"
-              style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
-              value={selectedTeamId}
-              onChange={(e) => setSelectedTeamId(e.target.value)}
-            >
-              {leaderTeams.map((t) => (
-                <option key={t.id} value={t.id}>{t.name}</option>
-              ))}
-            </select>
-          )}
+      {/* Controls bar — card-wrapped */}
+      <GlassCard variant="subtle" className="px-5 py-3">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-3">
+            {leaderTeams.length > 1 && (
+              <select
+                className="px-3 py-2 rounded-xl text-[13px]"
+                style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
+                value={selectedTeamId}
+                onChange={(e) => setSelectedTeamId(e.target.value)}
+              >
+                {leaderTeams.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+            )}
+          </div>
+          <div className="flex items-center gap-2.5">
+            <Calendar size={16} style={{ color: 'var(--text-muted)' }} />
+            <Button variant="ghost" size="sm" onClick={handlePrevWeek}><ChevronLeft size={15} /></Button>
+            <span className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              {weekYear} 年第 {weekNumber} 周
+            </span>
+            <Button variant="ghost" size="sm" onClick={handleNextWeek}><ChevronRight size={15} /></Button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Calendar size={15} style={{ color: 'var(--text-muted)' }} />
-          <Button variant="ghost" size="sm" onClick={handlePrevWeek}><ChevronLeft size={14} /></Button>
-          <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-            {weekYear} 年第 {weekNumber} 周
-          </span>
-          <Button variant="ghost" size="sm" onClick={handleNextWeek}><ChevronRight size={14} /></Button>
-        </div>
-      </div>
+      </GlassCard>
 
       {/* Workflow Panel */}
       {selectedTeamId && <TeamWorkflowPanel teamId={selectedTeamId} />}
 
-      {/* Stats Cards — colored accents */}
+      {/* Stats Cards — larger, with gradient tint */}
       {dashboard && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <StatCard
-            label="总人数"
-            value={dashboard.stats.total}
-            icon={<Users size={16} />}
-            color="rgba(148, 163, 184, 0.9)"
-            bg="rgba(148, 163, 184, 0.08)"
-          />
-          <StatCard
-            label="已提交"
-            value={dashboard.stats.submitted}
-            icon={<FileClock size={16} />}
-            color="rgba(59, 130, 246, 0.9)"
-            bg="rgba(59, 130, 246, 0.08)"
-          />
-          <StatCard
-            label="已审阅"
-            value={dashboard.stats.reviewed}
-            icon={<FileCheck size={16} />}
-            color="rgba(34, 197, 94, 0.9)"
-            bg="rgba(34, 197, 94, 0.08)"
-          />
-          <StatCard
-            label="未开始"
-            value={dashboard.stats.notStarted}
-            icon={<Clock size={16} />}
-            color="rgba(156, 163, 175, 0.6)"
-            bg="rgba(156, 163, 175, 0.06)"
-          />
+          <StatCard label="总人数" value={dashboard.stats.total} icon={<Users size={18} />} color="rgba(148, 163, 184, 0.9)" bg="rgba(148, 163, 184, 0.06)" />
+          <StatCard label="已提交" value={dashboard.stats.submitted} icon={<FileClock size={18} />} color="rgba(59, 130, 246, 0.9)" bg="rgba(59, 130, 246, 0.06)" />
+          <StatCard label="已审阅" value={dashboard.stats.reviewed} icon={<FileCheck size={18} />} color="rgba(34, 197, 94, 0.9)" bg="rgba(34, 197, 94, 0.06)" />
+          <StatCard label="未开始" value={dashboard.stats.notStarted} icon={<Clock size={18} />} color="rgba(156, 163, 175, 0.6)" bg="rgba(156, 163, 175, 0.04)" />
         </div>
       )}
 
-      {/* Submission progress bar */}
+      {/* Submission progress bar — card-wrapped */}
       {dashboard && dashboard.stats.total > 0 && (
-        <div className="px-1">
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>提交进度</span>
-            <span className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+        <GlassCard variant="subtle" className="px-5 py-3">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[12px] font-medium" style={{ color: 'var(--text-secondary)' }}>提交进度</span>
+            <span className="text-[12px] font-semibold" style={{ color: submissionRate === 100 ? 'rgba(34, 197, 94, 0.9)' : 'var(--text-primary)' }}>
               {dashboard.stats.submitted + dashboard.stats.reviewed}/{dashboard.stats.total} ({submissionRate}%)
             </span>
           </div>
-          <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--bg-tertiary)' }}>
+          <div className="h-2 rounded-full overflow-hidden" style={{ background: 'var(--bg-tertiary)' }}>
             <div
               className="h-full rounded-full transition-all duration-500"
               style={{
@@ -313,36 +303,42 @@ export function TeamDashboard() {
               }}
             />
           </div>
-        </div>
+        </GlassCard>
       )}
 
       {/* Member list */}
       {dashboard && (
         <GlassCard variant="subtle" className="p-0 overflow-hidden">
+          <div className="px-5 py-3" style={{ borderBottom: '1px solid var(--border-primary)' }}>
+            <span className="text-[13px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+              团队成员
+            </span>
+            <span className="text-[11px] ml-2" style={{ color: 'var(--text-muted)' }}>
+              {dashboard.members.length} 人
+            </span>
+          </div>
           {dashboard.members.map((member, idx) => {
             const cfg = statusConfig[member.reportStatus] || statusConfig[WeeklyReportStatus.NotStarted];
             const StatusIcon = cfg.icon;
             return (
               <div
                 key={member.userId}
-                className="flex items-center justify-between px-4 py-3 transition-colors duration-150 hover:bg-[var(--bg-tertiary)]"
+                className="flex items-center justify-between px-5 py-3.5 transition-colors duration-150 hover:bg-[var(--bg-tertiary)]"
                 style={{
                   borderTop: idx > 0 ? '1px solid var(--border-primary)' : undefined,
                 }}
               >
                 <div className="flex items-center gap-3">
                   {/* Avatar with status ring */}
-                  <div className="relative">
-                    <div
-                      className="w-9 h-9 rounded-full flex items-center justify-center text-[13px] font-medium"
-                      style={{
-                        background: 'var(--bg-tertiary)',
-                        color: 'var(--text-secondary)',
-                        border: `2px solid ${cfg.color}`,
-                      }}
-                    >
-                      {(member.userName || '?')[0]}
-                    </div>
+                  <div
+                    className="w-10 h-10 rounded-full flex items-center justify-center text-[14px] font-medium"
+                    style={{
+                      background: 'var(--bg-tertiary)',
+                      color: 'var(--text-secondary)',
+                      border: `2px solid ${cfg.color}`,
+                    }}
+                  >
+                    {(member.userName || '?')[0]}
                   </div>
                   <div>
                     <div className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
@@ -353,7 +349,7 @@ export function TeamDashboard() {
                         <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{member.jobTitle}</span>
                       )}
                       <span
-                        className="flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full"
+                        className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-medium"
                         style={{ color: cfg.color, background: cfg.bg }}
                       >
                         <StatusIcon size={10} />
@@ -368,7 +364,7 @@ export function TeamDashboard() {
                   {member.reportId && member.reportStatus === WeeklyReportStatus.Submitted && (
                     <>
                       <Button variant="ghost" size="sm" onClick={() => setViewingReportId(member.reportId!)}>
-                        <Eye size={12} />
+                        <Eye size={13} />
                       </Button>
                       <Button variant="primary" size="sm" onClick={() => handleReview(member.reportId!)}>
                         审阅
@@ -385,12 +381,12 @@ export function TeamDashboard() {
                   )}
                   {member.reportId && member.reportStatus !== WeeklyReportStatus.Submitted && member.reportStatus !== WeeklyReportStatus.NotStarted && member.reportStatus !== 'vacation' && (
                     <Button variant="ghost" size="sm" onClick={() => setViewingReportId(member.reportId!)}>
-                      <Eye size={12} /> 查看
+                      <Eye size={13} /> 查看
                     </Button>
                   )}
                   {(!member.reportId || member.reportStatus === WeeklyReportStatus.NotStarted || member.reportStatus === WeeklyReportStatus.Draft) && member.reportStatus !== 'vacation' && (
                     <Button variant="ghost" size="sm" onClick={() => setVacationDialogUserId(member.userId)} title="标记请假">
-                      <Palmtree size={12} />
+                      <Palmtree size={13} />
                     </Button>
                   )}
                 </div>
@@ -400,17 +396,26 @@ export function TeamDashboard() {
         </GlassCard>
       )}
 
-      {/* Team Summary */}
-      <GlassCard variant="subtle" className="p-5">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <Sparkles size={15} style={{ color: 'rgba(168, 85, 247, 0.8)' }} />
-            <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>团队周报汇总</span>
+      {/* Team Summary — with colored section indicators */}
+      <GlassCard variant="subtle" className="p-0 overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid var(--border-primary)' }}>
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'rgba(168, 85, 247, 0.08)' }}>
+              <Sparkles size={16} style={{ color: 'rgba(168, 85, 247, 0.8)' }} />
+            </div>
+            <div>
+              <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>团队周报汇总</span>
+              {summary && (
+                <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                  汇总 {summary.submittedCount}/{summary.memberCount} 份周报 · 由 {summary.generatedByName || '系统'} 生成于 {new Date(summary.generatedAt).toLocaleString()}
+                </div>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             {summary && (
               <Button variant="ghost" size="sm" onClick={handleExportSummary} title="导出 Markdown">
-                <Download size={12} />
+                <Download size={13} />
               </Button>
             )}
             <Button
@@ -419,46 +424,57 @@ export function TeamDashboard() {
               onClick={handleGenerateSummary}
               disabled={generatingSummary}
             >
-              {generatingSummary ? <Loader2 size={12} className="animate-spin mr-1" /> : <Sparkles size={12} className="mr-1" />}
+              {generatingSummary ? <Loader2 size={13} className="animate-spin mr-1" /> : <Sparkles size={13} className="mr-1" />}
               {summary ? '重新生成' : '生成汇总'}
             </Button>
           </div>
         </div>
 
-        {summaryLoading ? (
-          <div className="text-[12px] text-center py-6" style={{ color: 'var(--text-muted)' }}>加载中...</div>
-        ) : summary ? (
-          <div className="space-y-4">
-            <div className="text-[11px] flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
-              <span>汇总 {summary.submittedCount}/{summary.memberCount} 份周报</span>
-              <span style={{ opacity: 0.4 }}>|</span>
-              <span>由 {summary.generatedByName || '系统'} 生成于 {new Date(summary.generatedAt).toLocaleString()}</span>
+        <div className="px-5 py-4">
+          {summaryLoading ? (
+            <div className="text-[12px] text-center py-8" style={{ color: 'var(--text-muted)' }}>加载中...</div>
+          ) : summary ? (
+            <div className="flex flex-col gap-4">
+              {summary.sections.map((section, idx) => {
+                const color = summaryColors[idx % summaryColors.length];
+                return (
+                  <div key={idx}>
+                    <div className="flex items-center gap-2.5 mb-2">
+                      <div
+                        className="w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0"
+                        style={{ background: color }}
+                      >
+                        {idx + 1}
+                      </div>
+                      <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>{section.title}</span>
+                    </div>
+                    {section.items.length === 0 ? (
+                      <div className="text-[12px] ml-7" style={{ color: 'var(--text-muted)' }}>（无内容）</div>
+                    ) : (
+                      <ul className="ml-7 space-y-1.5">
+                        {section.items.map((item, i) => (
+                          <li key={i} className="flex items-start gap-2">
+                            <span className="text-[12px] mt-0.5 font-medium" style={{ color }}>•</span>
+                            <span className="text-[12px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{item}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-            {summary.sections.map((section, idx) => (
-              <div key={idx}>
-                <div className="text-[13px] font-medium mb-1.5" style={{ color: 'var(--text-primary)' }}>{section.title}</div>
-                {section.items.length === 0 ? (
-                  <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>（无内容）</div>
-                ) : (
-                  <ul className="space-y-1">
-                    {section.items.map((item, i) => (
-                      <li key={i} className="flex items-start gap-2">
-                        <span className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>•</span>
-                        <span className="text-[12px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{item}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+          ) : (
+            <div className="text-center py-10">
+              <div className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto mb-3" style={{ background: 'var(--bg-tertiary)' }}>
+                <Sparkles size={20} style={{ color: 'var(--text-muted)', opacity: 0.5 }} />
               </div>
-            ))}
-          </div>
-        ) : (
-          <div className="text-center py-6">
-            <div className="text-[13px]" style={{ color: 'var(--text-muted)' }}>
-              暂无汇总，点击"生成汇总"自动聚合团队周报
+              <div className="text-[13px]" style={{ color: 'var(--text-muted)' }}>
+                暂无汇总，点击"生成汇总"自动聚合团队周报
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </GlassCard>
     </div>
   );
@@ -473,23 +489,24 @@ function StatCard({ label, value, icon, color, bg }: {
 }) {
   return (
     <div
-      className="rounded-xl px-4 py-3"
+      className="rounded-xl px-5 py-4 transition-all duration-200 hover:translate-y-[-1px]"
       style={{
-        background: 'var(--surface-glass)',
+        background: `linear-gradient(135deg, ${bg}, var(--surface-glass))`,
         backdropFilter: 'blur(12px)',
         border: '1px solid var(--border-primary)',
+        boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
       }}
     >
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-center justify-between mb-3">
         <div
-          className="w-8 h-8 rounded-lg flex items-center justify-center"
+          className="w-9 h-9 rounded-xl flex items-center justify-center"
           style={{ background: bg }}
         >
           <div style={{ color }}>{icon}</div>
         </div>
       </div>
-      <div className="text-[22px] font-bold" style={{ color }}>{value}</div>
-      <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{label}</div>
+      <div className="text-[26px] font-bold leading-none" style={{ color }}>{value}</div>
+      <div className="text-[12px] mt-1.5 font-medium" style={{ color: 'var(--text-muted)' }}>{label}</div>
     </div>
   );
 }

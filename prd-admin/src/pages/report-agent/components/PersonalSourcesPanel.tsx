@@ -118,26 +118,30 @@ export function PersonalSourcesPanel() {
 
   return (
     <div className="flex flex-col gap-5">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <Link2 size={16} style={{ color: 'var(--text-secondary)' }} />
-            <h3 className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>我的数据源</h3>
+      {/* Header — card-wrapped */}
+      <GlassCard variant="subtle" className="px-5 py-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'rgba(59, 130, 246, 0.06)' }}>
+              <Link2 size={16} style={{ color: 'rgba(59, 130, 246, 0.8)' }} />
+            </div>
+            <div>
+              <h3 className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>我的数据源</h3>
+              <p className="text-[12px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                绑定个人 GitHub / 语雀 / GitLab 账号，系统自动采集产出数据
+              </p>
+            </div>
           </div>
-          <p className="text-[12px] mt-1" style={{ color: 'var(--text-muted)' }}>
-            绑定个人 GitHub / 语雀 / GitLab 账号，系统自动采集产出数据
-          </p>
+          <div className="flex gap-2">
+            <Button variant="secondary" size="sm" onClick={() => load()} disabled={loading}>
+              <RefreshCw size={12} className={loading ? 'animate-spin' : ''} /> 刷新
+            </Button>
+            <Button variant="primary" size="sm" onClick={() => setShowCreate(true)}>
+              <Plus size={12} /> 添加数据源
+            </Button>
+          </div>
         </div>
-        <div className="flex gap-2">
-          <Button variant="secondary" size="sm" onClick={() => load()} disabled={loading}>
-            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} /> 刷新
-          </Button>
-          <Button variant="primary" size="sm" onClick={() => setShowCreate(true)}>
-            <Plus size={12} /> 添加数据源
-          </Button>
-        </div>
-      </div>
+      </GlassCard>
 
       {/* Stats Preview */}
       {stats && stats.sources.length > 0 && (
@@ -161,13 +165,31 @@ export function PersonalSourcesPanel() {
 
       {/* Empty state */}
       {sources.length === 0 && !loading && (
-        <div className="flex items-center justify-center" style={{ minHeight: 300 }}>
-          <div className="text-center">
-            <Link2 size={32} style={{ color: 'var(--text-muted)', opacity: 0.4, margin: '0 auto' }} />
-            <div className="text-[13px] mt-3" style={{ color: 'var(--text-secondary)' }}>暂无数据源</div>
-            <div className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>
-              点击"添加数据源"绑定你的 GitHub 或语雀账号
+        <div className="flex items-center justify-center" style={{ minHeight: 320 }}>
+          <div className="flex flex-col items-center gap-5 text-center max-w-sm">
+            <div className="w-20 h-20 rounded-2xl flex items-center justify-center" style={{ background: 'var(--bg-tertiary)' }}>
+              <Link2 size={32} style={{ color: 'var(--text-muted)', opacity: 0.4 }} />
             </div>
+            <div>
+              <div className="text-[15px] font-medium mb-1.5" style={{ color: 'var(--text-primary)' }}>暂无数据源</div>
+              <div className="text-[13px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                绑定 GitHub、语雀 或 GitLab 账号后，系统将自动采集你的代码提交和文档产出
+              </div>
+            </div>
+            <div className="flex gap-3">
+              {SOURCE_TYPES.map(stype => (
+                <div
+                  key={stype.value}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-[12px]"
+                  style={{ background: stype.bg, color: stype.color, border: `1px solid ${stype.color.replace('0.9', '0.15')}` }}
+                >
+                  <stype.icon size={13} /> {stype.label}
+                </div>
+              ))}
+            </div>
+            <Button variant="primary" onClick={() => setShowCreate(true)}>
+              <Plus size={14} /> 添加数据源
+            </Button>
           </div>
         </div>
       )}
@@ -229,16 +251,16 @@ export function PersonalSourcesPanel() {
                   </div>
                   <div className="flex items-center gap-1">
                     <Button variant="ghost" size="sm" onClick={() => handleToggle(source)} title={source.enabled ? '禁用' : '启用'}>
-                      {source.enabled ? <Check size={12} /> : <X size={12} />}
+                      {source.enabled ? <Check size={13} /> : <X size={13} />}
                     </Button>
-                    <Button variant="ghost" size="sm" onClick={() => handleTest(source.id)} disabled={testingId === source.id}>
-                      <TestTube size={12} className={testingId === source.id ? 'animate-pulse' : ''} />
+                    <Button variant="ghost" size="sm" onClick={() => handleTest(source.id)} disabled={testingId === source.id} title="测试连接">
+                      <TestTube size={13} className={testingId === source.id ? 'animate-pulse' : ''} />
                     </Button>
-                    <Button variant="ghost" size="sm" onClick={() => handleSync(source.id)} disabled={syncingId === source.id}>
-                      <RefreshCw size={12} className={syncingId === source.id ? 'animate-spin' : ''} />
+                    <Button variant="ghost" size="sm" onClick={() => handleSync(source.id)} disabled={syncingId === source.id} title="同步数据">
+                      <RefreshCw size={13} className={syncingId === source.id ? 'animate-spin' : ''} />
                     </Button>
-                    <Button variant="ghost" size="sm" onClick={() => handleDelete(source.id)}>
-                      <Trash2 size={12} />
+                    <Button variant="ghost" size="sm" onClick={() => handleDelete(source.id)} title="解除绑定">
+                      <Trash2 size={13} />
                     </Button>
                   </div>
                 </div>

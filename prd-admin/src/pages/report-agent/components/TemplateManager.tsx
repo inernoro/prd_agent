@@ -134,24 +134,30 @@ export function TemplateManager() {
 
   return (
     <div className="flex flex-col gap-5">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <FileBarChart size={16} style={{ color: 'var(--text-secondary)' }} />
-          <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-            模板管理
-          </span>
-          <span
-            className="text-[11px] px-2 py-0.5 rounded-full"
-            style={{ color: 'var(--text-muted)', background: 'var(--bg-tertiary)' }}
-          >
-            {templates.length}
-          </span>
+      {/* Header — card-wrapped */}
+      <GlassCard variant="subtle" className="px-5 py-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ background: 'rgba(168, 85, 247, 0.06)' }}>
+              <FileBarChart size={16} style={{ color: 'rgba(168, 85, 247, 0.8)' }} />
+            </div>
+            <div>
+              <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                模板管理
+              </span>
+              <span
+                className="text-[11px] px-2 py-0.5 rounded-full ml-2"
+                style={{ color: 'var(--text-muted)', background: 'var(--bg-tertiary)' }}
+              >
+                {templates.length} 个模板
+              </span>
+            </div>
+          </div>
+          <Button variant="primary" size="sm" onClick={handleCreate}>
+            <Plus size={14} /> 新建模板
+          </Button>
         </div>
-        <Button variant="primary" size="sm" onClick={handleCreate}>
-          <Plus size={14} /> 新建模板
-        </Button>
-      </div>
+      </GlassCard>
 
       {/* Template grid */}
       {templates.length === 0 ? (
@@ -177,12 +183,12 @@ export function TemplateManager() {
                 boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
               }}
             >
-              <div className="p-4">
+              <div className="p-5">
                 {/* Header */}
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-[14px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                      <span className="text-[15px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                         {tpl.name}
                       </span>
                       {tpl.isDefault && (
@@ -216,21 +222,28 @@ export function TemplateManager() {
                   </div>
                 </div>
 
-                {/* Section tags */}
+                {/* Section tags with accent colors */}
                 <div className="flex flex-wrap gap-1.5">
-                  {tpl.sections.map((s, i) => (
-                    <span
-                      key={i}
-                      className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full"
-                      style={{
-                        color: 'var(--text-secondary)',
-                        background: 'var(--bg-tertiary)',
-                      }}
-                    >
-                      {s.isRequired && <CheckSquare size={8} />}
-                      {s.title}
-                    </span>
-                  ))}
+                  {tpl.sections.map((s, i) => {
+                    const tagColors = [
+                      { color: 'rgba(59, 130, 246, 0.85)', bg: 'rgba(59, 130, 246, 0.08)' },
+                      { color: 'rgba(34, 197, 94, 0.85)', bg: 'rgba(34, 197, 94, 0.08)' },
+                      { color: 'rgba(168, 85, 247, 0.85)', bg: 'rgba(168, 85, 247, 0.08)' },
+                      { color: 'rgba(249, 115, 22, 0.85)', bg: 'rgba(249, 115, 22, 0.08)' },
+                      { color: 'rgba(236, 72, 153, 0.85)', bg: 'rgba(236, 72, 153, 0.08)' },
+                    ];
+                    const tc = tagColors[i % tagColors.length];
+                    return (
+                      <span
+                        key={i}
+                        className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-full font-medium"
+                        style={{ color: tc.color, background: tc.bg }}
+                      >
+                        {s.isRequired && <CheckSquare size={8} />}
+                        {s.title}
+                      </span>
+                    );
+                  })}
                 </div>
               </div>
             </div>

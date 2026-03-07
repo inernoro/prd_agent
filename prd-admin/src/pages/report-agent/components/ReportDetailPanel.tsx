@@ -103,15 +103,15 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.4)' }}>
-      <GlassCard className="p-0 w-[680px] max-h-[85vh] flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)' }}>
+      <GlassCard className="p-0 w-[720px] max-h-[85vh] flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid var(--border-primary)' }}>
+        <div className="flex items-center justify-between px-6 py-4" style={{ borderBottom: '1px solid var(--border-primary)' }}>
           <div>
-            <div className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+            <div className="text-[16px] font-semibold" style={{ color: 'var(--text-primary)' }}>
               {report.userName} 的周报
             </div>
-            <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+            <div className="text-[12px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
               {report.teamName} · {report.weekYear} 年第 {report.weekNumber} 周
             </div>
           </div>
@@ -148,25 +148,25 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
         )}
 
         {/* Tabs */}
-        <div className="flex items-center gap-1 px-5 pt-3" style={{ borderBottom: '1px solid var(--border-primary)' }}>
+        <div className="flex items-center gap-1 px-6 pt-3" style={{ borderBottom: '1px solid var(--border-primary)' }}>
           {tabs.map((tab) => (
             <button
               key={tab.key}
-              className="px-3 py-2 text-[12px] rounded-t-lg transition-all duration-200"
+              className="px-4 py-2.5 text-[13px] rounded-t-lg transition-all duration-200"
               style={{
                 color: activeTab === tab.key ? 'var(--text-primary)' : 'var(--text-muted)',
                 background: activeTab === tab.key ? 'var(--bg-secondary)' : 'transparent',
-                fontWeight: activeTab === tab.key ? 500 : 400,
-                borderBottom: activeTab === tab.key ? '2px solid var(--text-primary)' : '2px solid transparent',
+                fontWeight: activeTab === tab.key ? 600 : 400,
+                borderBottom: activeTab === tab.key ? '2px solid rgba(59, 130, 246, 0.8)' : '2px solid transparent',
               }}
               onClick={() => setActiveTab(tab.key)}
             >
-              {tab.key === 'plan-comparison' && <GitCompare size={11} className="inline mr-1" />}
+              {tab.key === 'plan-comparison' && <GitCompare size={12} className="inline mr-1.5" />}
               {tab.label}
               {tab.key === 'content' && comments.length > 0 && (
                 <span
-                  className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full"
-                  style={{ background: 'var(--bg-tertiary)', color: 'var(--text-muted)' }}
+                  className="ml-2 text-[10px] px-2 py-0.5 rounded-full font-medium"
+                  style={{ background: 'rgba(59, 130, 246, 0.08)', color: 'rgba(59, 130, 246, 0.9)' }}
                 >
                   {comments.length}
                 </span>
@@ -176,7 +176,7 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
         </div>
 
         {/* Content */}
-        <div className="flex-1 min-h-0 overflow-auto px-5 py-4">
+        <div className="flex-1 min-h-0 overflow-auto px-6 py-5">
           {activeTab === 'content' && (
             <>
               {report.sections.map((section, idx) => {
@@ -186,14 +186,14 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
 
                 return (
                   <div key={idx} className="mb-5">
-                    <div className="flex items-center gap-2 mb-2">
+                    <div className="flex items-center gap-2.5 mb-3">
                       <div
-                        className="w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0"
-                        style={{ background: accentColor }}
+                        className="w-6 h-6 rounded-md flex items-center justify-center text-[11px] font-bold text-white flex-shrink-0"
+                        style={{ background: accentColor, boxShadow: `0 1px 4px ${accentColor.replace('0.9', '0.25')}` }}
                       >
                         {idx + 1}
                       </div>
-                      <span className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
+                      <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                         {section.templateSection.title}
                       </span>
                     </div>
@@ -286,7 +286,7 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
 
         {/* Footer */}
         {report.status === WeeklyReportStatus.Submitted && (onReview || onReturn) && (
-          <div className="flex items-center justify-end gap-2 px-5 py-4" style={{ borderTop: '1px solid var(--border-primary)' }}>
+          <div className="flex items-center justify-end gap-2 px-6 py-4" style={{ borderTop: '1px solid var(--border-primary)' }}>
             {onReturn && (
               <Button variant="secondary" size="sm" onClick={onReturn}>退回</Button>
             )}
@@ -318,14 +318,14 @@ function CommentItem({
       {isReply && <CornerDownRight size={10} style={{ color: 'var(--text-muted)', marginTop: 2 }} />}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
-          <span className="text-[11px] font-medium" style={{ color: 'var(--text-primary)' }}>
+          <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>
             {comment.authorDisplayName}
           </span>
-          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
             {new Date(comment.createdAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
           </span>
         </div>
-        <div className="text-[11px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{comment.content}</div>
+        <div className="text-[12px] leading-relaxed mt-0.5" style={{ color: 'var(--text-secondary)' }}>{comment.content}</div>
       </div>
       <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
         <button className="p-0.5 rounded hover:bg-[var(--bg-tertiary)]" onClick={onReply} title="回复">

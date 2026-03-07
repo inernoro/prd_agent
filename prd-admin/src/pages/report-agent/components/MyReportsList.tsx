@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { Plus, FileText, ChevronLeft, ChevronRight, Calendar, CheckCircle2, Clock, AlertCircle, Send, Pencil } from 'lucide-react';
+import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { useReportAgentStore } from '@/stores/reportAgentStore';
 import { WeeklyReportStatus } from '@/services/contracts/reportAgent';
@@ -82,64 +83,66 @@ export function MyReportsList() {
 
   return (
     <div className="flex flex-col gap-5">
-      {/* Week selector — clean, centered */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Calendar size={15} style={{ color: 'var(--text-muted)' }} />
-          <Button variant="ghost" size="sm" onClick={handlePrevWeek}>
-            <ChevronLeft size={14} />
-          </Button>
-          <div className="flex items-center gap-2">
-            <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-              {weekYear} 年第 {weekNumber} 周
-            </span>
-            {isCurrentWeek && (
-              <span
-                className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
-                style={{ color: 'rgba(59, 130, 246, 0.9)', background: 'rgba(59, 130, 246, 0.1)' }}
-              >
-                本周
+      {/* Week selector — card-wrapped */}
+      <GlassCard variant="subtle" className="px-5 py-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <Calendar size={16} style={{ color: 'var(--text-muted)' }} />
+            <Button variant="ghost" size="sm" onClick={handlePrevWeek}>
+              <ChevronLeft size={15} />
+            </Button>
+            <div className="flex items-center gap-2">
+              <span className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                {weekYear} 年第 {weekNumber} 周
               </span>
+              {isCurrentWeek && (
+                <span
+                  className="text-[10px] px-2 py-0.5 rounded-full font-medium"
+                  style={{ color: 'rgba(59, 130, 246, 0.9)', background: 'rgba(59, 130, 246, 0.1)' }}
+                >
+                  本周
+                </span>
+              )}
+            </div>
+            <Button variant="ghost" size="sm" onClick={handleNextWeek}>
+              <ChevronRight size={15} />
+            </Button>
+            {!isCurrentWeek && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => { setWeekYear(now.weekYear); setWeekNumber(now.weekNumber); }}
+              >
+                回到本周
+              </Button>
             )}
           </div>
-          <Button variant="ghost" size="sm" onClick={handleNextWeek}>
-            <ChevronRight size={14} />
+          <Button variant="primary" size="sm" onClick={handleCreateReport}>
+            <Plus size={14} /> 写周报
           </Button>
-          {!isCurrentWeek && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => { setWeekYear(now.weekYear); setWeekNumber(now.weekNumber); }}
-            >
-              回到本周
-            </Button>
-          )}
         </div>
-        <Button variant="primary" size="sm" onClick={handleCreateReport}>
-          <Plus size={14} /> 写周报
-        </Button>
-      </div>
+      </GlassCard>
 
       {/* Reports grid */}
       {filteredReports.length === 0 ? (
-        <div className="flex-1 flex items-center justify-center" style={{ minHeight: 400 }}>
-          <div className="flex flex-col items-center gap-4 text-center max-w-sm">
+        <div className="flex-1 flex items-center justify-center" style={{ minHeight: 360 }}>
+          <div className="flex flex-col items-center gap-5 text-center max-w-sm">
             <div
-              className="w-16 h-16 rounded-2xl flex items-center justify-center"
+              className="w-20 h-20 rounded-2xl flex items-center justify-center"
               style={{ background: 'var(--bg-tertiary)' }}
             >
-              <FileText size={28} style={{ color: 'var(--text-muted)', opacity: 0.5 }} />
+              <FileText size={32} style={{ color: 'var(--text-muted)', opacity: 0.4 }} />
             </div>
             <div>
-              <div className="text-[15px] font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
+              <div className="text-[16px] font-medium mb-1.5" style={{ color: 'var(--text-primary)' }}>
                 本周暂无周报
               </div>
-              <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
-                点击"写周报"开始记录本周工作
+              <div className="text-[13px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                点击右上角"写周报"开始记录本周工作成果
               </div>
             </div>
-            <Button variant="primary" size="sm" onClick={handleCreateReport}>
-              <Plus size={12} /> 创建周报
+            <Button variant="primary" onClick={handleCreateReport}>
+              <Plus size={14} /> 创建周报
             </Button>
           </div>
         </div>
@@ -164,39 +167,56 @@ export function MyReportsList() {
                   backdropFilter: 'blur(12px)',
                   border: '1px solid var(--border-primary)',
                   borderLeft: `3px solid ${cfg.borderColor}`,
-                  boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
                 }}
                 onClick={() => handleEditReport(report.id)}
               >
-                <div className="p-4">
+                <div className="p-5">
                   {/* Header: team + status */}
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex-1 min-w-0">
-                      <div className="text-[14px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                      <div className="text-[15px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                         {report.teamName || '未知团队'}
                       </div>
                     </div>
                     <span
-                      className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full flex-shrink-0 ml-2"
+                      className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full flex-shrink-0 ml-2 font-medium"
                       style={{ color: cfg.color, backgroundColor: cfg.bg }}
                     >
-                      <StatusIcon size={10} />
+                      <StatusIcon size={11} />
                       {cfg.label}
                     </span>
                   </div>
 
-                  {/* Section summary */}
-                  <div className="flex items-center gap-2 mb-3">
-                    <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                      {report.sections.length} 个章节
-                    </span>
-                    <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
-                      {totalItems} 条内容
-                    </span>
+                  {/* Section list preview */}
+                  <div className="flex flex-col gap-1 mb-3">
+                    {report.sections.slice(0, 3).map((s, i) => (
+                      <div key={i} className="flex items-center gap-2">
+                        <div
+                          className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                          style={{
+                            background: s.items.some(it => it.content.trim())
+                              ? 'rgba(34, 197, 94, 0.6)'
+                              : 'rgba(156, 163, 175, 0.3)',
+                          }}
+                        />
+                        <span className="text-[12px] truncate" style={{ color: 'var(--text-secondary)' }}>
+                          {s.templateSection?.title || `章节 ${i + 1}`}
+                        </span>
+                        <span className="text-[10px] ml-auto flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+                          {s.items.filter(it => it.content.trim()).length}/{s.items.length}
+                        </span>
+                      </div>
+                    ))}
+                    {report.sections.length > 3 && (
+                      <span className="text-[10px] ml-3.5" style={{ color: 'var(--text-muted)' }}>
+                        +{report.sections.length - 3} 个章节
+                      </span>
+                    )}
                   </div>
 
-                  {/* Progress bar */}
-                  {report.status === WeeklyReportStatus.Draft && totalItems > 0 && (
+                  {/* Progress bar — always show for better info density */}
+                  {totalItems > 0 && (
                     <div className="mb-3">
                       <div className="flex items-center justify-between mb-1">
                         <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
@@ -206,14 +226,14 @@ export function MyReportsList() {
                           {progress}%
                         </span>
                       </div>
-                      <div className="h-1 rounded-full overflow-hidden" style={{ background: 'var(--bg-tertiary)' }}>
+                      <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--bg-tertiary)' }}>
                         <div
                           className="h-full rounded-full transition-all duration-500"
                           style={{
                             width: `${progress}%`,
                             background: progress === 100
                               ? 'rgba(34, 197, 94, 0.7)'
-                              : 'rgba(59, 130, 246, 0.6)',
+                              : `linear-gradient(90deg, ${cfg.borderColor}, ${cfg.borderColor.replace(/[\d.]+\)$/, '0.3)')})`,
                           }}
                         />
                       </div>
@@ -223,20 +243,25 @@ export function MyReportsList() {
                   {/* Return reason */}
                   {report.returnReason && (
                     <div
-                      className="text-[11px] px-2.5 py-1.5 rounded-lg leading-relaxed"
+                      className="text-[11px] px-3 py-2 rounded-lg leading-relaxed mb-3"
                       style={{ color: 'rgba(239, 68, 68, 0.85)', backgroundColor: 'rgba(239, 68, 68, 0.06)', border: '1px solid rgba(239, 68, 68, 0.1)' }}
                     >
                       {report.returnReason}
                     </div>
                   )}
 
-                  {/* Submitted/reviewed time */}
-                  {report.submittedAt && (
-                    <div className="text-[10px] mt-2" style={{ color: 'var(--text-muted)' }}>
-                      {report.status === WeeklyReportStatus.Reviewed ? '审阅于' : '提交于'}{' '}
-                      {new Date(report.reviewedAt || report.submittedAt).toLocaleDateString('zh-CN')}
-                    </div>
-                  )}
+                  {/* Footer: time */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      {report.sections.length} 个章节 · {totalItems} 条内容
+                    </span>
+                    {report.submittedAt && (
+                      <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                        {report.status === WeeklyReportStatus.Reviewed ? '审阅于' : '提交于'}{' '}
+                        {new Date(report.reviewedAt || report.submittedAt).toLocaleDateString('zh-CN')}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
             );

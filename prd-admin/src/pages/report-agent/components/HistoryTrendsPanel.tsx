@@ -86,10 +86,13 @@ export function HistoryTrendsPanel() {
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-5 overflow-auto">
-      {/* Controls */}
+      {/* Controls — card-wrapped */}
+      <GlassCard variant="subtle" className="px-5 py-3">
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-2">
-          <BarChart3 size={16} style={{ color: 'var(--text-secondary)' }} />
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ background: 'rgba(59, 130, 246, 0.06)' }}>
+            <BarChart3 size={16} style={{ color: 'rgba(59, 130, 246, 0.8)' }} />
+          </div>
           <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>数据统计</span>
         </div>
 
@@ -165,6 +168,7 @@ export function HistoryTrendsPanel() {
           </div>
         </div>
       </div>
+      </GlassCard>
 
       {loading && (
         <div className="text-center py-12 text-[12px]" style={{ color: 'var(--text-muted)' }}>加载中...</div>
@@ -231,7 +235,7 @@ export function HistoryTrendsPanel() {
                         {status.label}
                       </span>
                     </div>
-                    <div className="flex-1 min-w-0 h-5 rounded-md overflow-hidden" style={{ background: 'var(--bg-tertiary)' }}>
+                    <div className="flex-1 min-w-0 h-6 rounded-md overflow-hidden" style={{ background: 'var(--bg-tertiary)' }}>
                       <div
                         className="h-full rounded-md transition-all duration-300"
                         style={{
@@ -318,7 +322,7 @@ export function HistoryTrendsPanel() {
                     </div>
                     <div className="flex-1 min-w-0 flex flex-col gap-0.5">
                       <div className="flex items-center gap-1.5">
-                        <div className="flex-1 h-[12px] rounded-sm overflow-hidden" style={{ background: 'var(--bg-tertiary)' }}>
+                        <div className="flex-1 h-[16px] rounded-sm overflow-hidden" style={{ background: 'var(--bg-tertiary)' }}>
                           <div
                             className="h-full rounded-sm"
                             style={{
@@ -332,7 +336,7 @@ export function HistoryTrendsPanel() {
                         </span>
                       </div>
                       <div className="flex items-center gap-1.5">
-                        <div className="flex-1 h-[12px] rounded-sm overflow-hidden" style={{ background: 'var(--bg-tertiary)' }}>
+                        <div className="flex-1 h-[16px] rounded-sm overflow-hidden" style={{ background: 'var(--bg-tertiary)' }}>
                           <div
                             className="h-full rounded-sm"
                             style={{
@@ -391,23 +395,24 @@ function MetricCard({ icon, label, value, color, bg }: {
 }) {
   return (
     <div
-      className="rounded-xl px-4 py-3"
+      className="rounded-xl px-5 py-4 transition-all duration-200 hover:translate-y-[-1px]"
       style={{
-        background: 'var(--surface-glass)',
+        background: `linear-gradient(135deg, ${bg}, var(--surface-glass))`,
         backdropFilter: 'blur(12px)',
         border: '1px solid var(--border-primary)',
+        boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
       }}
     >
-      <div className="flex items-center gap-2 mb-2">
+      <div className="flex items-center justify-between mb-3">
         <div
-          className="w-7 h-7 rounded-lg flex items-center justify-center"
+          className="w-9 h-9 rounded-xl flex items-center justify-center"
           style={{ background: bg }}
         >
           <div style={{ color }}>{icon}</div>
         </div>
-        <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{label}</span>
       </div>
-      <div className="text-[20px] font-bold" style={{ color }}>{value}</div>
+      <div className="text-[24px] font-bold leading-none" style={{ color }}>{value}</div>
+      <div className="text-[12px] mt-1.5 font-medium" style={{ color: 'var(--text-muted)' }}>{label}</div>
     </div>
   );
 }

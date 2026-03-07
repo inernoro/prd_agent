@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ArrowLeft, Save, Send, Plus, Trash2, Sparkles, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Save, Send, Plus, Trash2, Sparkles, RefreshCw, FileText } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
@@ -171,121 +171,180 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
 
   const canEdit = !report || report.status === WeeklyReportStatus.Draft || report.status === WeeklyReportStatus.Returned;
 
-  // Section colors for numbered indicators
-  const sectionColors = [
-    'rgba(59, 130, 246, 0.9)',
-    'rgba(34, 197, 94, 0.9)',
-    'rgba(168, 85, 247, 0.9)',
-    'rgba(249, 115, 22, 0.9)',
-    'rgba(236, 72, 153, 0.9)',
-    'rgba(20, 184, 166, 0.9)',
+  // Section colors — gradient pairs for headers
+  const sectionThemes = [
+    { color: 'rgba(59, 130, 246, 0.9)',  bg: 'rgba(59, 130, 246, 0.06)',  border: 'rgba(59, 130, 246, 0.15)' },
+    { color: 'rgba(34, 197, 94, 0.9)',   bg: 'rgba(34, 197, 94, 0.06)',   border: 'rgba(34, 197, 94, 0.15)' },
+    { color: 'rgba(168, 85, 247, 0.9)',  bg: 'rgba(168, 85, 247, 0.06)',  border: 'rgba(168, 85, 247, 0.15)' },
+    { color: 'rgba(249, 115, 22, 0.9)',  bg: 'rgba(249, 115, 22, 0.06)',  border: 'rgba(249, 115, 22, 0.15)' },
+    { color: 'rgba(236, 72, 153, 0.9)',  bg: 'rgba(236, 72, 153, 0.06)',  border: 'rgba(236, 72, 153, 0.15)' },
+    { color: 'rgba(20, 184, 166, 0.9)',  bg: 'rgba(20, 184, 166, 0.06)',  border: 'rgba(20, 184, 166, 0.15)' },
   ];
 
   // Create flow
   if (isNew && !report) {
     return (
-      <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-6">
+        {/* Back + title */}
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="sm" onClick={onClose}>
-            <ArrowLeft size={14} />
+            <ArrowLeft size={16} />
           </Button>
-          <span className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-            创建周报 — {weekYear} 年第 {weekNumber} 周
-          </span>
+          <div>
+            <div className="text-[16px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              创建周报
+            </div>
+            <div className="text-[12px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+              {weekYear} 年第 {weekNumber} 周
+            </div>
+          </div>
         </div>
 
-        <GlassCard className="p-5 max-w-lg">
-          <div className="flex flex-col gap-4">
-            <div>
-              <label className="text-[12px] font-medium mb-1.5 block" style={{ color: 'var(--text-secondary)' }}>选择团队</label>
-              <select
-                className="w-full px-3 py-2.5 rounded-xl text-[13px]"
-                style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
-                value={selectedTeamId}
-                onChange={(e) => setSelectedTeamId(e.target.value)}
+        {/* Create card */}
+        <div className="max-w-lg">
+          <GlassCard className="p-6">
+            <div className="flex items-center gap-3 mb-5">
+              <div
+                className="w-10 h-10 rounded-xl flex items-center justify-center"
+                style={{ background: 'rgba(59, 130, 246, 0.08)' }}
               >
-                <option value="">请选择团队</option>
-                {teams.map((t) => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
-                ))}
-              </select>
+                <FileText size={18} style={{ color: 'rgba(59, 130, 246, 0.9)' }} />
+              </div>
+              <div>
+                <div className="text-[14px] font-medium" style={{ color: 'var(--text-primary)' }}>选择团队和模板</div>
+                <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>创建后可随时编辑和保存</div>
+              </div>
             </div>
-            <div>
-              <label className="text-[12px] font-medium mb-1.5 block" style={{ color: 'var(--text-secondary)' }}>选择模板</label>
-              <select
-                className="w-full px-3 py-2.5 rounded-xl text-[13px]"
-                style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
-                value={selectedTemplateId}
-                onChange={(e) => setSelectedTemplateId(e.target.value)}
+            <div className="flex flex-col gap-4">
+              <div>
+                <label className="text-[12px] font-medium mb-2 block" style={{ color: 'var(--text-secondary)' }}>所属团队</label>
+                <select
+                  className="w-full px-3.5 py-2.5 rounded-xl text-[13px]"
+                  style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
+                  value={selectedTeamId}
+                  onChange={(e) => setSelectedTeamId(e.target.value)}
+                >
+                  <option value="">请选择团队</option>
+                  {teams.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-[12px] font-medium mb-2 block" style={{ color: 'var(--text-secondary)' }}>周报模板</label>
+                <select
+                  className="w-full px-3.5 py-2.5 rounded-xl text-[13px]"
+                  style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
+                  value={selectedTemplateId}
+                  onChange={(e) => setSelectedTemplateId(e.target.value)}
+                >
+                  <option value="">请选择模板</option>
+                  {templates.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}{t.isDefault ? ' (默认)' : ''}</option>
+                  ))}
+                </select>
+              </div>
+              <Button
+                variant="primary"
+                onClick={handleCreate}
+                disabled={saving || !selectedTeamId || !selectedTemplateId}
+                className="mt-1"
               >
-                <option value="">请选择模板</option>
-                {templates.map((t) => (
-                  <option key={t.id} value={t.id}>{t.name}{t.isDefault ? ' (默认)' : ''}</option>
-                ))}
-              </select>
+                {saving ? '创建中...' : '开始编写周报'}
+              </Button>
             </div>
-            <Button variant="primary" onClick={handleCreate} disabled={saving || !selectedTeamId || !selectedTemplateId}>
-              {saving ? '创建中...' : '创建周报'}
-            </Button>
-          </div>
-        </GlassCard>
+          </GlassCard>
+        </div>
       </div>
     );
   }
 
   if (!report) return null;
 
+  // Calculate progress
+  const totalItems = sections.reduce((sum, s) => sum + s.items.length, 0);
+  const filledItems = sections.reduce(
+    (sum, s) => sum + s.items.filter((i) => i.content.trim()).length, 0
+  );
+  const progress = totalItems > 0 ? Math.round((filledItems / totalItems) * 100) : 0;
+
   return (
     <div className="flex flex-col gap-5 h-full min-h-0">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={onClose}>
-            <ArrowLeft size={14} />
-          </Button>
-          <div>
-            <span className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-              {report.teamName}
-            </span>
-            <span className="text-[13px] ml-2" style={{ color: 'var(--text-muted)' }}>
-              {report.weekYear} 年第 {report.weekNumber} 周
-            </span>
-          </div>
-        </div>
-        {canEdit && (
-          <div className="flex items-center gap-2">
-            <Button variant="secondary" size="sm" onClick={handleGenerate} disabled={generating || saving}>
-              {generating ? (
-                <><RefreshCw size={12} className="animate-spin" /> 生成中...</>
-              ) : (
-                <><Sparkles size={12} /> AI 填充</>
+      {/* Header toolbar — now in a card */}
+      <GlassCard variant="subtle" className="px-5 py-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Button variant="ghost" size="sm" onClick={onClose}>
+              <ArrowLeft size={16} />
+            </Button>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  {report.teamName}
+                </span>
+                <span
+                  className="text-[11px] px-2 py-0.5 rounded-full"
+                  style={{ color: 'var(--text-muted)', background: 'var(--bg-tertiary)' }}
+                >
+                  {report.weekYear} 年第 {report.weekNumber} 周
+                </span>
+              </div>
+              {/* Mini progress bar */}
+              {canEdit && totalItems > 0 && (
+                <div className="flex items-center gap-2 mt-1.5">
+                  <div className="w-24 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--bg-tertiary)' }}>
+                    <div
+                      className="h-full rounded-full transition-all duration-500"
+                      style={{
+                        width: `${progress}%`,
+                        background: progress === 100
+                          ? 'rgba(34, 197, 94, 0.7)'
+                          : 'rgba(59, 130, 246, 0.6)',
+                      }}
+                    />
+                  </div>
+                  <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                    {filledItems}/{totalItems} 已填写
+                  </span>
+                </div>
               )}
-            </Button>
-            <Button variant="secondary" size="sm" onClick={handleSave} disabled={saving}>
-              <Save size={12} /> 保存
-            </Button>
-            <Button variant="primary" size="sm" onClick={handleSubmit} disabled={saving}>
-              <Send size={12} /> 提交
-            </Button>
+            </div>
           </div>
-        )}
-      </div>
+          {canEdit && (
+            <div className="flex items-center gap-2">
+              <Button variant="secondary" size="sm" onClick={handleGenerate} disabled={generating || saving}>
+                {generating ? (
+                  <><RefreshCw size={13} className="animate-spin" /> 生成中...</>
+                ) : (
+                  <><Sparkles size={13} /> AI 填充</>
+                )}
+              </Button>
+              <Button variant="secondary" size="sm" onClick={handleSave} disabled={saving}>
+                <Save size={13} /> 保存
+              </Button>
+              <Button variant="primary" size="sm" onClick={handleSubmit} disabled={saving}>
+                <Send size={13} /> 提交
+              </Button>
+            </div>
+          )}
+        </div>
+      </GlassCard>
 
       {/* AI banner */}
       {report.autoGeneratedAt && (
         <div
-          className="flex items-center gap-2 text-[12px] px-4 py-2.5 rounded-xl"
+          className="flex items-center gap-2.5 text-[12px] px-5 py-3 rounded-xl"
           style={{ color: 'rgba(168, 85, 247, 0.9)', background: 'rgba(168, 85, 247, 0.06)', border: '1px solid rgba(168, 85, 247, 0.12)' }}
         >
-          <Sparkles size={13} />
-          AI 于 {new Date(report.autoGeneratedAt).toLocaleString('zh-CN')} 自动生成，请审阅后提交
+          <Sparkles size={14} />
+          <span>AI 于 {new Date(report.autoGeneratedAt).toLocaleString('zh-CN')} 自动生成，请审阅后提交</span>
         </div>
       )}
 
       {/* Return reason */}
       {report.returnReason && (
         <div
-          className="flex items-center gap-2 text-[12px] px-4 py-2.5 rounded-xl"
+          className="flex items-center gap-2.5 text-[12px] px-5 py-3 rounded-xl"
           style={{ color: 'rgba(239, 68, 68, 0.9)', background: 'rgba(239, 68, 68, 0.06)', border: '1px solid rgba(239, 68, 68, 0.12)' }}
         >
           退回原因: {report.returnReason}
@@ -296,7 +355,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
       <div className="flex-1 min-h-0 overflow-auto">
         <div className="flex flex-col gap-5">
           {report.sections.map((section, sIdx) => {
-            const accentColor = sectionColors[sIdx % sectionColors.length];
+            const theme = sectionThemes[sIdx % sectionThemes.length];
             return (
               <div
                 key={sIdx}
@@ -307,46 +366,64 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                   border: '1px solid var(--border-primary)',
                 }}
               >
-                {/* Section header with numbered indicator */}
-                <div className="px-5 py-3 flex items-center gap-3" style={{ borderBottom: '1px solid var(--border-primary)' }}>
+                {/* Section header — colored background band */}
+                <div
+                  className="px-5 py-4 flex items-center gap-3.5"
+                  style={{
+                    background: theme.bg,
+                    borderBottom: `1px solid ${theme.border}`,
+                  }}
+                >
                   <div
-                    className="w-6 h-6 rounded-md flex items-center justify-center text-[11px] font-bold text-white flex-shrink-0"
-                    style={{ background: accentColor }}
+                    className="w-8 h-8 rounded-lg flex items-center justify-center text-[13px] font-bold text-white flex-shrink-0"
+                    style={{ background: theme.color, boxShadow: `0 2px 8px ${theme.color.replace('0.9', '0.3')}` }}
                   >
                     {sIdx + 1}
                   </div>
                   <div className="flex-1">
-                    <span className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
-                      {section.templateSection.title}
-                    </span>
-                    {section.templateSection.isRequired && (
-                      <span className="text-[11px] ml-1" style={{ color: 'rgba(239, 68, 68, 0.8)' }}>*</span>
-                    )}
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                        {section.templateSection.title}
+                      </span>
+                      {section.templateSection.isRequired && (
+                        <span className="text-[11px] px-1.5 py-0.5 rounded" style={{ color: 'rgba(239, 68, 68, 0.8)', background: 'rgba(239, 68, 68, 0.06)' }}>
+                          必填
+                        </span>
+                      )}
+                    </div>
                     {section.templateSection.description && (
-                      <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                      <div className="text-[12px] mt-1" style={{ color: 'var(--text-muted)' }}>
                         {section.templateSection.description}
                       </div>
                     )}
                   </div>
+                  <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    {(sections[sIdx]?.items || []).filter(i => i.content.trim()).length} 条
+                  </span>
                 </div>
 
                 {/* Items */}
-                <div className="px-5 py-4 flex flex-col gap-2.5">
+                <div className="px-5 py-4 flex flex-col gap-3">
                   {(sections[sIdx]?.items || []).map((item, iIdx) => (
-                    <div key={iIdx} className="flex items-start gap-2.5">
+                    <div key={iIdx} className="flex items-start gap-3 group">
                       {section.templateSection.inputType === ReportInputType.BulletList && (
-                        <span className="text-[13px] mt-2 font-medium" style={{ color: accentColor }}>•</span>
+                        <div
+                          className="w-2 h-2 rounded-full mt-3 flex-shrink-0"
+                          style={{ background: theme.color }}
+                        />
                       )}
                       {section.templateSection.inputType === ReportInputType.RichText ? (
                         <textarea
-                          className="flex-1 px-3 py-2.5 rounded-xl text-[13px] resize-none transition-all duration-150 focus:ring-1"
+                          className="flex-1 px-4 py-3 rounded-xl text-[13px] resize-none transition-all duration-200"
                           style={{
                             background: 'var(--bg-secondary)',
                             color: 'var(--text-primary)',
                             border: '1px solid var(--border-primary)',
-                            minHeight: 80,
-                            outlineColor: accentColor,
+                            minHeight: 100,
+                            outline: 'none',
                           }}
+                          onFocus={(e) => { e.currentTarget.style.borderColor = theme.color.replace('0.9', '0.4'); e.currentTarget.style.boxShadow = `0 0 0 2px ${theme.color.replace('0.9', '0.08')}`; }}
+                          onBlur={(e) => { e.currentTarget.style.borderColor = 'var(--border-primary)'; e.currentTarget.style.boxShadow = 'none'; }}
                           value={item.content}
                           onChange={(e) => updateItem(sIdx, iIdx, e.target.value)}
                           placeholder="请输入内容..."
@@ -354,13 +431,15 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                         />
                       ) : (
                         <input
-                          className="flex-1 px-3 py-2.5 rounded-xl text-[13px] transition-all duration-150 focus:ring-1"
+                          className="flex-1 px-4 py-3 rounded-xl text-[13px] transition-all duration-200"
                           style={{
                             background: 'var(--bg-secondary)',
                             color: 'var(--text-primary)',
                             border: '1px solid var(--border-primary)',
-                            outlineColor: accentColor,
+                            outline: 'none',
                           }}
+                          onFocus={(e) => { e.currentTarget.style.borderColor = theme.color.replace('0.9', '0.4'); e.currentTarget.style.boxShadow = `0 0 0 2px ${theme.color.replace('0.9', '0.08')}`; }}
+                          onBlur={(e) => { e.currentTarget.style.borderColor = 'var(--border-primary)'; e.currentTarget.style.boxShadow = 'none'; }}
                           value={item.content}
                           onChange={(e) => updateItem(sIdx, iIdx, e.target.value)}
                           placeholder="请输入内容..."
@@ -369,7 +448,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                       )}
                       {item.source && item.source !== 'manual' && (
                         <span
-                          className="text-[9px] px-1.5 py-0.5 rounded-full self-center flex-shrink-0"
+                          className="text-[10px] px-2 py-1 rounded-full self-center flex-shrink-0 font-medium"
                           style={{
                             color: item.source === 'ai' ? 'rgba(168, 85, 247, 0.9)' : 'rgba(59, 130, 246, 0.9)',
                             background: item.source === 'ai' ? 'rgba(168, 85, 247, 0.08)' : 'rgba(59, 130, 246, 0.08)',
@@ -380,21 +459,25 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                       )}
                       {canEdit && sections[sIdx]?.items.length > 1 && (
                         <button
-                          className="p-1.5 rounded-lg hover:bg-[rgba(239,68,68,0.08)] transition-colors self-center"
+                          className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-[rgba(239,68,68,0.08)] transition-all self-center"
                           onClick={() => removeItem(sIdx, iIdx)}
                         >
-                          <Trash2 size={12} style={{ color: 'var(--text-muted)' }} />
+                          <Trash2 size={13} style={{ color: 'var(--text-muted)' }} />
                         </button>
                       )}
                     </div>
                   ))}
                   {canEdit && (
                     <button
-                      className="self-start flex items-center gap-1 text-[12px] px-2 py-1 rounded-lg hover:bg-[var(--bg-tertiary)] transition-colors"
-                      style={{ color: accentColor }}
+                      className="self-start flex items-center gap-1.5 text-[12px] px-3 py-2 rounded-lg transition-all duration-150"
+                      style={{
+                        color: theme.color,
+                        background: theme.bg,
+                        border: `1px dashed ${theme.border}`,
+                      }}
                       onClick={() => addItem(sIdx)}
                     >
-                      <Plus size={12} /> 添加一条
+                      <Plus size={13} /> 添加一条
                     </button>
                   )}
                 </div>
