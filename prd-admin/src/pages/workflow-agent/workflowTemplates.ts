@@ -386,7 +386,7 @@ H.push('.edit-area:focus{border-color:var(--blue)}.edit-area:empty:before{conten
 H.push('.edit-hint{font-size:0.7rem;color:var(--t2);margin-top:8px;font-style:italic}');
 H.push('.improve-item{display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid rgba(48,54,61,0.5)}');
 H.push('.improve-cb{width:18px;height:18px;border:2px solid var(--bdr);border-radius:4px;flex-shrink:0;margin-top:2px;cursor:pointer;display:flex;align-items:center;justify-content:center}');
-H.push('.improve-cb.checked{background:var(--green);border-color:var(--green)}.improve-cb.checked:after{content:"\\2713";color:#fff;font-size:11px}');
+H.push('.improve-cb.checked{background:var(--green);border-color:var(--green)}.improve-cb.checked:after{content:"\\\\2713";color:#fff;font-size:11px}');
 H.push('.improve-tag{padding:1px 6px;border-radius:3px;font-size:0.65rem;font-weight:600;background:rgba(30,111,217,0.15);color:var(--blue);flex-shrink:0}');
 H.push('@media(max-width:768px){.kg{grid-template-columns:repeat(2,1fr)}.cg{grid-template-columns:1fr}.bi-l{flex:0 0 80px;font-size:0.7rem}}');
 H.push('</style></head><body>');
@@ -527,7 +527,7 @@ if (dls.length > 0) {
     var label = dl.url;
     if (dl.url.indexOf('yuque') >= 0) label = '语雀文档';
     else if (dl.url.indexOf('tapd') >= 0) label = 'TAPD 链接';
-    else { var m = dl.url.match(/\/([^\/]+)$/); if (m) label = m[1]; }
+    else { var parts = dl.url.split("/"); if (parts.length > 0) label = parts[parts.length - 1] || dl.url; }
     H.push('<div class="doc-card"><div>');
     H.push('<a href="' + dl.url + '" target="_blank" rel="noopener">' + label + ' &rarr;</a>');
     if (dl.fromBug) H.push('<div class="doc-from">来自: ' + dl.fromBug + '</div>');
