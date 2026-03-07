@@ -1,4 +1,5 @@
 import type { WorkflowNode, WorkflowEdge, WorkflowVariable } from '@/services/contracts/workflowAgent';
+import { qualityMonthlyTemplate } from './qualityMonthlyTemplate';
 
 // ═══════════════════════════════════════════════════════════════
 // 工作流模板注册表 — 预定义的一键导入模板
@@ -736,5 +737,6 @@ const smartHttpTemplate: WorkflowTemplate = {
 
 export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   tapdBugCollectionTemplate,
+  qualityMonthlyTemplate as WorkflowTemplate,
   smartHttpTemplate,
 ];
