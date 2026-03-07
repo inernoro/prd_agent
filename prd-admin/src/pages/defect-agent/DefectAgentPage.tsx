@@ -5,12 +5,14 @@ import { TabBar } from '@/components/design/TabBar';
 import { useDefectStore } from '@/stores/defectStore';
 import { toast } from '@/lib/toast';
 import { DefectStatus } from '@/services/contracts/defectAgent';
-import { Bug, Plus, FileText, RefreshCw, LayoutGrid, List, FolderKanban } from 'lucide-react';
+import { Bug, Plus, FileText, RefreshCw, LayoutGrid, List, Columns3, BarChart3, FolderKanban } from 'lucide-react';
 import { DefectList } from './components/DefectList';
 import { DefectSubmitPanel } from './components/DefectSubmitPanel';
 import { DefectDetailPanel } from './components/DefectDetailPanel';
 import { TemplateDialog } from './components/TemplateDialog';
 import { ProjectDialog } from './components/ProjectDialog';
+import { KanbanBoard } from './components/KanbanBoard';
+import { StatsPanel } from './components/StatsPanel';
 
 const NOTIFICATION_STORAGE_KEY = 'defect-agent-notified-ids';
 
@@ -84,6 +86,15 @@ export default function DefectAgentPage() {
     []
   );
 
+  const viewButtons: { key: typeof viewMode; icon: typeof LayoutGrid; title: string }[] = [
+    { key: 'card', icon: LayoutGrid, title: '卡片视图' },
+    { key: 'list', icon: List, title: '列表视图' },
+    { key: 'kanban', icon: Columns3, title: '看板视图' },
+    { key: 'stats', icon: BarChart3, title: '统计看板' },
+  ];
+
+  const isStatsView = viewMode === 'stats';
+
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
       {/* Header */}
@@ -129,7 +140,7 @@ export default function DefectAgentPage() {
               </select>
             )}
 
-            {/* 视图切换 */}
+            {/* 视图切换：卡片 / 列表 / 看板 / 统计 */}
             <div
               className="flex items-center rounded-lg overflow-hidden"
               style={{
@@ -137,30 +148,21 @@ export default function DefectAgentPage() {
                 border: '1px solid rgba(255,255,255,0.1)',
               }}
             >
-              <button
-                type="button"
-                className="flex items-center justify-center w-7 h-7 transition-colors"
-                style={{
-                  background: viewMode === 'card' ? 'rgba(255,255,255,0.12)' : 'transparent',
-                  color: viewMode === 'card' ? 'var(--text-primary)' : 'var(--text-muted)',
-                }}
-                onClick={() => setViewMode('card')}
-                title="卡片视图"
-              >
-                <LayoutGrid size={14} />
-              </button>
-              <button
-                type="button"
-                className="flex items-center justify-center w-7 h-7 transition-colors"
-                style={{
-                  background: viewMode === 'list' ? 'rgba(255,255,255,0.12)' : 'transparent',
-                  color: viewMode === 'list' ? 'var(--text-primary)' : 'var(--text-muted)',
-                }}
-                onClick={() => setViewMode('list')}
-                title="列表视图"
-              >
-                <List size={14} />
-              </button>
+              {viewButtons.map(({ key, icon: Icon, title }) => (
+                <button
+                  key={key}
+                  type="button"
+                  className="flex items-center justify-center w-7 h-7 transition-colors"
+                  style={{
+                    background: viewMode === key ? 'rgba(255,255,255,0.12)' : 'transparent',
+                    color: viewMode === key ? 'var(--text-primary)' : 'var(--text-muted)',
+                  }}
+                  onClick={() => setViewMode(key)}
+                  title={title}
+                >
+                  <Icon size={14} />
+                </button>
+              ))}
             </div>
             <Button
               variant="secondary"
@@ -221,12 +223,25 @@ export default function DefectAgentPage() {
         </GlassCard>
       )}
 
-      {/* Content - 用 GlassCard 包裹整个列表区域 */}
-      <GlassCard animated variant="subtle" className="flex-1 min-h-0">
-        <div className="h-full min-h-0 overflow-auto">
-          <DefectList />
+      {/* Content */}
+      {isStatsView ? (
+        /* 统计看板：不需要外层 GlassCard 包裹，StatsPanel 内部自己用 */
+        <div className="flex-1 min-h-0 overflow-auto">
+          <StatsPanel />
         </div>
-      </GlassCard>
+      ) : viewMode === 'kanban' ? (
+        /* 看板视图 */
+        <div className="flex-1 min-h-0">
+          <KanbanBoard />
+        </div>
+      ) : (
+        /* 卡片/列表视图 */
+        <GlassCard animated variant="subtle" className="flex-1 min-h-0">
+          <div className="h-full min-h-0 overflow-auto">
+            <DefectList />
+          </div>
+        </GlassCard>
+      )}
 
       {/* Detail Modal */}
       {selectedDefectId && <DefectDetailPanel />}

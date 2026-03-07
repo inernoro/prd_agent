@@ -17,7 +17,7 @@ import type {
 } from '@/services/contracts/defectAgent';
 
 type FilterType = 'submitted' | 'assigned' | 'all';
-type ViewMode = 'card' | 'list';
+type ViewMode = 'card' | 'list' | 'kanban' | 'stats';
 
 const VIEW_MODE_STORAGE_KEY = 'defect-view-mode';
 const READ_IDS_STORAGE_KEY = 'defect-read-ids';
@@ -25,7 +25,8 @@ const READ_IDS_STORAGE_KEY = 'defect-read-ids';
 function loadViewMode(): ViewMode {
   try {
     const v = localStorage.getItem(VIEW_MODE_STORAGE_KEY);
-    return v === 'list' ? 'list' : 'card';
+    if (v === 'list' || v === 'kanban' || v === 'stats') return v;
+    return 'card';
   } catch { return 'card'; }
 }
 
