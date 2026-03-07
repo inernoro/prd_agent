@@ -559,7 +559,7 @@ public class WebPagesController : ControllerBase
     }
 
     /// <summary>公开访问分享链接（无需登录）</summary>
-    [HttpGet("/s/wp/{token}")]
+    [HttpGet("shares/view/{token}")]
     [AllowAnonymous]
     public async Task<IActionResult> ViewShare(string token, [FromQuery] string? password)
     {
