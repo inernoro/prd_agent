@@ -174,13 +174,12 @@ public class VideoGenService : IVideoGenService
         if (sceneIndex < 0 || sceneIndex >= run.Scenes.Count)
             throw new ArgumentOutOfRangeException(nameof(sceneIndex), "分镜序号超出范围");
 
-        run.Scenes[sceneIndex].ImageStatus = "running";
-        run.Scenes[sceneIndex].ImageUrl = null;
+        // 使用位置索引更新，避免并发批量请求时整组覆盖导致的竞态
+        var update = Builders<VideoGenRun>.Update
+            .Set($"Scenes.{sceneIndex}.ImageStatus", "running")
+            .Set($"Scenes.{sceneIndex}.ImageUrl", (string?)null);
 
-        await _db.VideoGenRuns.UpdateOneAsync(
-            x => x.Id == runId,
-            Builders<VideoGenRun>.Update.Set(x => x.Scenes, run.Scenes),
-            cancellationToken: ct);
+        await _db.VideoGenRuns.UpdateOneAsync(x => x.Id == runId, update, cancellationToken: ct);
 
         _logger.LogInformation("VideoGen 分镜预览排队: runId={RunId}, scene={Scene}", runId, sceneIndex);
     }
@@ -196,13 +195,12 @@ public class VideoGenService : IVideoGenService
         if (sceneIndex < 0 || sceneIndex >= run.Scenes.Count)
             throw new ArgumentOutOfRangeException(nameof(sceneIndex), "分镜序号超出范围");
 
-        run.Scenes[sceneIndex].BackgroundImageStatus = "running";
-        run.Scenes[sceneIndex].BackgroundImageUrl = null;
+        // 使用位置索引更新，避免并发批量请求时整组覆盖导致的竞态
+        var update = Builders<VideoGenRun>.Update
+            .Set($"Scenes.{sceneIndex}.BackgroundImageStatus", "running")
+            .Set($"Scenes.{sceneIndex}.BackgroundImageUrl", (string?)null);
 
-        await _db.VideoGenRuns.UpdateOneAsync(
-            x => x.Id == runId,
-            Builders<VideoGenRun>.Update.Set(x => x.Scenes, run.Scenes),
-            cancellationToken: ct);
+        await _db.VideoGenRuns.UpdateOneAsync(x => x.Id == runId, update, cancellationToken: ct);
 
         _logger.LogInformation("VideoGen 背景图排队: runId={RunId}, scene={Scene}", runId, sceneIndex);
     }

@@ -118,21 +118,21 @@ public class VideoGenRunWorker : BackgroundService
                         // 兜底：将所有仍处于 running 的分镜标记为 error，避免前端永远卡在"渲染中"
                         try
                         {
-                            var changed = false;
-                            foreach (var s in previewPending.Scenes)
+                            var updates = new List<UpdateDefinition<VideoGenRun>>();
+                            for (int i = 0; i < previewPending.Scenes.Count; i++)
                             {
-                                if (s.ImageStatus == "running")
+                                if (previewPending.Scenes[i].ImageStatus == "running")
                                 {
-                                    s.ImageStatus = "error";
-                                    s.ImageUrl = null;
-                                    changed = true;
+                                    updates.Add(Builders<VideoGenRun>.Update
+                                        .Set($"Scenes.{i}.ImageStatus", "error")
+                                        .Set($"Scenes.{i}.ImageUrl", (string?)null));
                                 }
                             }
-                            if (changed)
+                            if (updates.Count > 0)
                             {
                                 await _db.VideoGenRuns.UpdateOneAsync(
                                     x => x.Id == previewPending.Id,
-                                    Builders<VideoGenRun>.Update.Set(x => x.Scenes, previewPending.Scenes),
+                                    Builders<VideoGenRun>.Update.Combine(updates),
                                     cancellationToken: CancellationToken.None);
                             }
                         }
@@ -157,20 +157,21 @@ public class VideoGenRunWorker : BackgroundService
                         _logger.LogError(ex, "VideoGenRunWorker 背景图生成失败: runId={RunId}", bgPending.Id);
                         try
                         {
-                            var changed = false;
-                            foreach (var s in bgPending.Scenes)
+                            var updates = new List<UpdateDefinition<VideoGenRun>>();
+                            for (int i = 0; i < bgPending.Scenes.Count; i++)
                             {
-                                if (s.BackgroundImageStatus == "running")
+                                if (bgPending.Scenes[i].BackgroundImageStatus == "running")
                                 {
-                                    s.BackgroundImageStatus = "error";
-                                    changed = true;
+                                    updates.Add(Builders<VideoGenRun>.Update
+                                        .Set($"Scenes.{i}.BackgroundImageStatus", "error")
+                                        .Set($"Scenes.{i}.BackgroundImageUrl", (string?)null));
                                 }
                             }
-                            if (changed)
+                            if (updates.Count > 0)
                             {
                                 await _db.VideoGenRuns.UpdateOneAsync(
                                     x => x.Id == bgPending.Id,
-                                    Builders<VideoGenRun>.Update.Set(x => x.Scenes, bgPending.Scenes),
+                                    Builders<VideoGenRun>.Update.Combine(updates),
                                     cancellationToken: CancellationToken.None);
                             }
                         }
@@ -195,21 +196,21 @@ public class VideoGenRunWorker : BackgroundService
                         _logger.LogError(ex, "VideoGenRunWorker TTS 音频生成失败: runId={RunId}", audioPending.Id);
                         try
                         {
-                            var changed = false;
-                            foreach (var s in audioPending.Scenes)
+                            var updates = new List<UpdateDefinition<VideoGenRun>>();
+                            for (int i = 0; i < audioPending.Scenes.Count; i++)
                             {
-                                if (s.AudioStatus == "running")
+                                if (audioPending.Scenes[i].AudioStatus == "running")
                                 {
-                                    s.AudioStatus = "error";
-                                    s.AudioErrorMessage = ex.Message;
-                                    changed = true;
+                                    updates.Add(Builders<VideoGenRun>.Update
+                                        .Set($"Scenes.{i}.AudioStatus", "error")
+                                        .Set($"Scenes.{i}.AudioErrorMessage", ex.Message));
                                 }
                             }
-                            if (changed)
+                            if (updates.Count > 0)
                             {
                                 await _db.VideoGenRuns.UpdateOneAsync(
                                     x => x.Id == audioPending.Id,
-                                    Builders<VideoGenRun>.Update.Set(x => x.Scenes, audioPending.Scenes),
+                                    Builders<VideoGenRun>.Update.Combine(updates),
                                     cancellationToken: CancellationToken.None);
                             }
                         }
@@ -326,12 +327,12 @@ public class VideoGenRunWorker : BackgroundService
                 imageUrl = $"data:image/png;base64,{result.Data.Images[0].Base64}";
             }
 
-            run.Scenes[sceneIdx].BackgroundImageUrl = imageUrl;
-            run.Scenes[sceneIdx].BackgroundImageStatus = "done";
-
+            // 使用位置索引更新，避免覆盖其他正在并行处理的分镜
             await _db.VideoGenRuns.UpdateOneAsync(
                 x => x.Id == run.Id,
-                Builders<VideoGenRun>.Update.Set(x => x.Scenes, run.Scenes),
+                Builders<VideoGenRun>.Update
+                    .Set($"Scenes.{sceneIdx}.BackgroundImageUrl", imageUrl)
+                    .Set($"Scenes.{sceneIdx}.BackgroundImageStatus", "done"),
                 cancellationToken: CancellationToken.None);
 
             _logger.LogInformation("VideoGen 背景图完成: runId={RunId}, scene={Index}", run.Id, sceneIdx);
@@ -340,12 +341,11 @@ public class VideoGenRunWorker : BackgroundService
         {
             _logger.LogError(ex, "VideoGen 背景图生成失败: runId={RunId}, scene={Index}", run.Id, sceneIdx);
 
-            run.Scenes[sceneIdx].BackgroundImageStatus = "error";
-            run.Scenes[sceneIdx].BackgroundImageUrl = null;
-
             await _db.VideoGenRuns.UpdateOneAsync(
                 x => x.Id == run.Id,
-                Builders<VideoGenRun>.Update.Set(x => x.Scenes, run.Scenes),
+                Builders<VideoGenRun>.Update
+                    .Set($"Scenes.{sceneIdx}.BackgroundImageStatus", "error")
+                    .Set($"Scenes.{sceneIdx}.BackgroundImageUrl", (string?)null),
                 cancellationToken: CancellationToken.None);
         }
     }
@@ -389,10 +389,9 @@ public class VideoGenRunWorker : BackgroundService
         var scene = run.Scenes[sceneIdx];
         if (string.IsNullOrWhiteSpace(scene.Narration))
         {
-            run.Scenes[sceneIdx].AudioStatus = "done";
             await _db.VideoGenRuns.UpdateOneAsync(
                 x => x.Id == run.Id,
-                Builders<VideoGenRun>.Update.Set(x => x.Scenes, run.Scenes),
+                Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIdx}.AudioStatus", "done"),
                 cancellationToken: CancellationToken.None);
             return;
         }
@@ -435,13 +434,13 @@ public class VideoGenRunWorker : BackgroundService
                 domain: "video-gen", type: "audio");
             var audioUrl = stored.Url;
 
-            run.Scenes[sceneIdx].AudioUrl = audioUrl;
-            run.Scenes[sceneIdx].AudioStatus = "done";
-            run.Scenes[sceneIdx].AudioErrorMessage = null;
-
+            // 使用位置索引更新，避免覆盖其他正在并行处理的分镜
             await _db.VideoGenRuns.UpdateOneAsync(
                 x => x.Id == run.Id,
-                Builders<VideoGenRun>.Update.Set(x => x.Scenes, run.Scenes),
+                Builders<VideoGenRun>.Update
+                    .Set($"Scenes.{sceneIdx}.AudioUrl", audioUrl)
+                    .Set($"Scenes.{sceneIdx}.AudioStatus", "done")
+                    .Set($"Scenes.{sceneIdx}.AudioErrorMessage", (string?)null),
                 cancellationToken: CancellationToken.None);
 
             // 发布事件
@@ -458,13 +457,12 @@ public class VideoGenRunWorker : BackgroundService
         {
             _logger.LogError(ex, "VideoGen TTS 音频生成失败: runId={RunId}, scene={Index}", run.Id, sceneIdx);
 
-            run.Scenes[sceneIdx].AudioStatus = "error";
-            run.Scenes[sceneIdx].AudioErrorMessage = ex.Message;
-            run.Scenes[sceneIdx].AudioUrl = null;
-
             await _db.VideoGenRuns.UpdateOneAsync(
                 x => x.Id == run.Id,
-                Builders<VideoGenRun>.Update.Set(x => x.Scenes, run.Scenes),
+                Builders<VideoGenRun>.Update
+                    .Set($"Scenes.{sceneIdx}.AudioStatus", "error")
+                    .Set($"Scenes.{sceneIdx}.AudioErrorMessage", ex.Message)
+                    .Set($"Scenes.{sceneIdx}.AudioUrl", (string?)null),
                 cancellationToken: CancellationToken.None);
         }
     }
@@ -564,15 +562,15 @@ public class VideoGenRunWorker : BackgroundService
             var stored = await _assetStorage.SaveAsync(mp4Bytes, "video/mp4", CancellationToken.None,
                 domain: AppDomainPaths.DomainVideoAgent, type: AppDomainPaths.TypeVideo);
 
-            run.Scenes[sceneIdx].ImageUrl = stored.Url;
-            run.Scenes[sceneIdx].ImageStatus = "done";
-
             _logger.LogInformation("VideoGen 分镜视频已上传 COS: runId={RunId}, scene={Index}, url={Url}, size={Size}",
                 run.Id, sceneIdx, stored.Url, stored.SizeBytes);
 
+            // 使用位置索引更新，避免覆盖其他正在并行处理的分镜
             await _db.VideoGenRuns.UpdateOneAsync(
                 x => x.Id == run.Id,
-                Builders<VideoGenRun>.Update.Set(x => x.Scenes, run.Scenes),
+                Builders<VideoGenRun>.Update
+                    .Set($"Scenes.{sceneIdx}.ImageUrl", stored.Url)
+                    .Set($"Scenes.{sceneIdx}.ImageStatus", "done"),
                 cancellationToken: CancellationToken.None);
 
             _logger.LogInformation("VideoGen 分镜预览完成: runId={RunId}, scene={Index}, output={Output}",
@@ -582,13 +580,12 @@ public class VideoGenRunWorker : BackgroundService
         {
             _logger.LogError(ex, "VideoGen 分镜预览渲染失败: runId={RunId}, scene={Index}", run.Id, sceneIdx);
 
-            // 标记失败
-            run.Scenes[sceneIdx].ImageStatus = "error";
-            run.Scenes[sceneIdx].ImageUrl = null;
-
+            // 使用位置索引更新，避免覆盖其他正在并行处理的分镜
             await _db.VideoGenRuns.UpdateOneAsync(
                 x => x.Id == run.Id,
-                Builders<VideoGenRun>.Update.Set(x => x.Scenes, run.Scenes),
+                Builders<VideoGenRun>.Update
+                    .Set($"Scenes.{sceneIdx}.ImageStatus", "error")
+                    .Set($"Scenes.{sceneIdx}.ImageUrl", (string?)null),
                 cancellationToken: CancellationToken.None);
         }
     }

@@ -607,6 +607,17 @@ public static class VideoAgent
         )]
         public const string Tts = "video-agent.audio::tts";
     }
+
+    public static class Scene
+    {
+        [AppCallerMetadata(
+            "视频场景-代码生成",
+            "基于 Remotion 组件库和动效工具为分镜生成定制化视觉代码",
+            ModelTypes = new[] { ModelTypes.Code },
+            Category = "Video"
+        )]
+        public const string Codegen = "video-agent.scene.codegen::code";
+    }
 }
 
 /// <summary>
