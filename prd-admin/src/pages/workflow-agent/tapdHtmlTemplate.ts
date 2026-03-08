@@ -3,8 +3,8 @@
 // 数据字段: title, generatedAt, total, kpis, severity, processingStatus,
 //           rootCauses, criticalAlerts, problemItems, defectDetails, docLinks, summary
 
-export const tapdHtmlGenCode = `// data = upstream stats JSON
-var d = data;
+export const tapdHtmlGenCode = `// data = upstream stats JSON (may be wrapped in array when source ref is passed through)
+var d = Array.isArray(data) ? data[0] : data;
 var H = [];
 var S = '<' + 'script>';
 var SE = '<' + '/' + 'script>';
