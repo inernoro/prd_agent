@@ -114,6 +114,10 @@ public class WebPageShareLink
     public DateTime? LastViewedAt { get; set; }
 
     public string CreatedBy { get; set; } = string.Empty;
+
+    /// <summary>创建者显示名称（快照）</summary>
+    public string? CreatedByName { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? ExpiresAt { get; set; }
     public bool IsRevoked { get; set; }

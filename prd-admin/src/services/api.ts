@@ -773,6 +773,7 @@ export const api = {
     shares: () => '/api/web-pages/shares',
     revokeShare: (shareId: string) => `/api/web-pages/shares/${shareId}`,
     viewShare: (token: string) => `/api/web-pages/shares/view/${token}`,
+    saveShare: (token: string) => `/api/web-pages/shares/${token}/save`,
   },
 } as const;
 

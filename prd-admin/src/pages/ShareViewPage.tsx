@@ -1,8 +1,9 @@
-import { useEffect, useState, useRef } from 'react';
-import { useParams } from 'react-router-dom';
-import { viewSiteShare } from '@/services';
+import { useEffect, useState, useRef, useCallback } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { viewSiteShare, saveSharedSite } from '@/services';
 import type { ShareViewData } from '@/services';
-import { Lock, ExternalLink, FileCode2, Eye, EyeOff, AlertCircle, ShieldCheck, Unlock } from 'lucide-react';
+import { useAuthStore } from '@/stores/authStore';
+import { Lock, ExternalLink, FileCode2, Eye, EyeOff, AlertCircle, ShieldCheck, Unlock, Download, Check, LogIn } from 'lucide-react';
 import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
 import { BlurText } from '@/components/reactbits';
 
@@ -14,6 +15,8 @@ function fmtSize(b: number) {
 
 export default function ShareViewPage() {
   const { token } = useParams<{ token: string }>();
+  const navigate = useNavigate();
+  const isAuthenticated = useAuthStore(s => s.isAuthenticated);
   const [data, setData] = useState<ShareViewData | null>(null);
   const [error, setError] = useState<{ code: string; message: string } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -24,6 +27,30 @@ export default function ShareViewPage() {
   const [wrongPassword, setWrongPassword] = useState(false);
   const [shakeKey, setShakeKey] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'already'>('idle');
+
+  const handleSave = useCallback(async () => {
+    if (!token) return;
+    if (!isAuthenticated) {
+      // 记住当前页面，跳转登录
+      const currentPath = window.location.pathname + window.location.search;
+      navigate(`/login?redirect=${encodeURIComponent(currentPath)}`);
+      return;
+    }
+    setSaving(true);
+    const res = await saveSharedSite(token, password || undefined);
+    setSaving(false);
+    if (res.success) {
+      if (res.data.alreadySaved) {
+        setSaveStatus('already');
+      } else {
+        setSaveStatus('saved');
+      }
+      // 3秒后恢复
+      setTimeout(() => setSaveStatus('idle'), 3000);
+    }
+  }, [token, password, isAuthenticated, navigate]);
 
   const fetchShare = async (pwd?: string) => {
     if (!token) return;
@@ -267,17 +294,52 @@ export default function ShareViewPage() {
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <ShieldCheck size={14} color="rgba(34, 197, 94, 0.8)" />
-            <span style={{ color: '#fff', fontSize: 14, fontWeight: 500 }}>{data.title || site.title}</span>
+            {data.createdByName && (
+              <span style={{ color: 'rgba(34, 197, 94, 0.9)', fontSize: 13, fontWeight: 600 }}>{data.createdByName}</span>
+            )}
+            <span style={{ color: '#fff', fontSize: 14, fontWeight: 500 }}>
+              {data.createdByName ? `分享给你的「${site.title}」` : (data.title || site.title)}
+            </span>
           </div>
-          <a
-            href={site.siteUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#3b82f6', fontSize: 13, textDecoration: 'none' }}
-          >
-            <ExternalLink size={12} />
-            新窗口打开
-          </a>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <button
+              onClick={handleSave}
+              disabled={saving || saveStatus !== 'idle'}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 4,
+                padding: '4px 10px', borderRadius: 6, border: 'none',
+                fontSize: 13, cursor: saving || saveStatus !== 'idle' ? 'default' : 'pointer',
+                background: saveStatus === 'saved' ? 'rgba(34, 197, 94, 0.2)'
+                  : saveStatus === 'already' ? 'rgba(234, 179, 8, 0.2)'
+                  : 'rgba(59, 130, 246, 0.15)',
+                color: saveStatus === 'saved' ? 'rgba(34, 197, 94, 0.9)'
+                  : saveStatus === 'already' ? 'rgba(234, 179, 8, 0.9)'
+                  : 'rgba(59, 130, 246, 0.9)',
+                transition: 'all 0.2s',
+              }}
+            >
+              {saving ? (
+                <><div style={{ ...styles.miniSpinner }} /> 保存中...</>
+              ) : saveStatus === 'saved' ? (
+                <><Check size={12} /> 已保存</>
+              ) : saveStatus === 'already' ? (
+                <><Check size={12} /> 你已经保存过了</>
+              ) : !isAuthenticated ? (
+                <><LogIn size={12} /> 登录并保存</>
+              ) : (
+                <><Download size={12} /> 保存到我的托管</>
+              )}
+            </button>
+            <a
+              href={site.siteUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#3b82f6', fontSize: 13, textDecoration: 'none' }}
+            >
+              <ExternalLink size={12} />
+              新窗口打开
+            </a>
+          </div>
         </div>
         {/* Iframe */}
         <iframe
@@ -296,9 +358,45 @@ export default function ShareViewPage() {
       <div style={{ position: 'absolute', inset: 0 }}><BlackHoleVortex /></div>
       <div style={styles.overlay} />
       <div style={{ maxWidth: 720, width: '100%', padding: '20px 16px', position: 'relative', zIndex: 1 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-          <Unlock size={18} color="rgba(34, 197, 94, 0.8)" />
-          <h1 style={{ color: '#fff', fontSize: 22, margin: 0, fontWeight: 600 }}>{data.title || '站点合集'}</h1>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Unlock size={18} color="rgba(34, 197, 94, 0.8)" />
+            {data.createdByName && (
+              <span style={{ color: 'rgba(34, 197, 94, 0.9)', fontSize: 16, fontWeight: 600 }}>{data.createdByName}</span>
+            )}
+            <h1 style={{ color: '#fff', fontSize: 22, margin: 0, fontWeight: 600 }}>
+              {data.createdByName ? `分享的 ${data.sites.length} 个站点合集` : (data.title || '站点合集')}
+            </h1>
+          </div>
+          <button
+            onClick={handleSave}
+            disabled={saving || saveStatus !== 'idle'}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0,
+              padding: '6px 14px', borderRadius: 8, border: 'none',
+              fontSize: 13, cursor: saving || saveStatus !== 'idle' ? 'default' : 'pointer',
+              background: saveStatus === 'saved' ? 'rgba(34, 197, 94, 0.2)'
+                : saveStatus === 'already' ? 'rgba(234, 179, 8, 0.2)'
+                : 'rgba(59, 130, 246, 0.15)',
+              color: saveStatus === 'saved' ? 'rgba(34, 197, 94, 0.9)'
+                : saveStatus === 'already' ? 'rgba(234, 179, 8, 0.9)'
+                : 'rgba(59, 130, 246, 0.9)',
+              backdropFilter: 'blur(8px)',
+              transition: 'all 0.2s',
+            }}
+          >
+            {saving ? (
+              <><div style={{ ...styles.miniSpinner }} /> 保存中...</>
+            ) : saveStatus === 'saved' ? (
+              <><Check size={13} /> 已保存</>
+            ) : saveStatus === 'already' ? (
+              <><Check size={13} /> 你已经保存过了</>
+            ) : !isAuthenticated ? (
+              <><LogIn size={13} /> 登录并保存</>
+            ) : (
+              <><Download size={13} /> 保存到我的托管</>
+            )}
+          </button>
         </div>
         {data.description && <p style={{ color: 'rgba(255,255,255,0.5)', margin: '0 0 16px', fontSize: 14 }}>{data.description}</p>}
         <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: 12, margin: '0 0 20px' }}>{data.sites.length} 个站点</p>
@@ -398,6 +496,14 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '50%',
     animation: 'share-spin 0.8s linear infinite',
     margin: '0 auto',
+  },
+  miniSpinner: {
+    width: 12,
+    height: 12,
+    border: '2px solid rgba(255,255,255,0.1)',
+    borderTop: '2px solid currentColor',
+    borderRadius: '50%',
+    animation: 'share-spin 0.8s linear infinite',
   },
 };
 

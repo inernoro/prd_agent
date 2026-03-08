@@ -292,8 +292,31 @@ public class WebPagesController : ControllerBase
             result.Description,
             result.ShareType,
             result.CreatedAt,
+            result.CreatedByName,
             result.Sites,
         }));
+    }
+
+    /// <summary>保存分享的站点到自己的托管（需登录，去重）</summary>
+    [HttpPost("shares/{token}/save")]
+    public async Task<IActionResult> SaveSharedSite(string token, [FromQuery] string? password)
+    {
+        var result = await _siteService.SaveSharedSiteAsync(token, password, GetUserId());
+
+        if (result.Error != null)
+        {
+            return result.HttpStatus switch
+            {
+                401 => Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, result.Error)),
+                400 => BadRequest(ApiResponse<object>.Fail("EXPIRED", result.Error)),
+                _ => NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, result.Error)),
+            };
+        }
+
+        if (result.AlreadySaved)
+            return Ok(ApiResponse<object>.Ok(new { alreadySaved = true }));
+
+        return Ok(ApiResponse<object>.Ok(new { saved = true, siteCount = result.Sites.Count }));
     }
 }
 

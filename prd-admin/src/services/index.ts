@@ -1235,6 +1235,7 @@ export {
   listShares as listSiteShares,
   revokeShare as revokeSiteShare,
   viewShare as viewSiteShare,
+  saveSharedSite,
 } from '@/services/real/webPages';
 export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, SharedSiteInfo, ShareViewData } from '@/services/real/webPages';
 

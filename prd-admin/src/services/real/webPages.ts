@@ -223,6 +223,7 @@ export interface ShareViewData {
   description?: string;
   shareType: string;
   createdAt: string;
+  createdByName?: string;
   sites: SharedSiteInfo[];
 }
 
@@ -237,4 +238,11 @@ export async function viewShare(token: string, password?: string): Promise<ApiRe
   } catch {
     return { success: false, data: null as never, error: { code: 'NETWORK_ERROR', message: '网络请求失败' } };
   }
+}
+
+// ─── Save Shared Site ───
+
+export async function saveSharedSite(token: string, password?: string): Promise<ApiResponse<{ saved?: boolean; alreadySaved?: boolean; siteCount?: number }>> {
+  const q = password ? `?password=${encodeURIComponent(password)}` : '';
+  return apiRequest(`${api.webPages.saveShare(encodeURIComponent(token))}${q}`, { method: 'POST' });
 }
