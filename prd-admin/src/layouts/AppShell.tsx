@@ -225,13 +225,15 @@ export default function AppShell() {
   }, [menuCatalog, menuCatalogLoaded, navOrder]);
   
   // 若用户在首页（仪表盘）但菜单中不含仪表盘，自动跳转到第一个可用页面
+  // 仅桌面端执行：移动端首页由 MobileHomePage 独立渲染，不依赖导航菜单
   useEffect(() => {
+    if (isMobile) return;
     if (location.pathname !== '/' || !menuCatalogLoaded || visibleItems.length === 0) return;
     const hasDashboard = visibleItems.some((item) => item.key === '/');
     if (!hasDashboard) {
       navigate(visibleItems[0].key, { replace: true });
     }
-  }, [location.pathname, menuCatalogLoaded, visibleItems, navigate]);
+  }, [isMobile, location.pathname, menuCatalogLoaded, visibleItems, navigate]);
 
   const activeKey = location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`;
   const isLabPage = location.pathname.startsWith('/lab');

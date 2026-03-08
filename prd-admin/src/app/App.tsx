@@ -34,6 +34,7 @@ import MobileHomePage from '@/pages/MobileHomePage';
 import MobileAssetsPage from '@/pages/MobileAssetsPage';
 import DesktopAssetsPage from '@/pages/DesktopAssetsPage';
 import MobileProfilePage from '@/pages/MobileProfilePage';
+import MobileNotificationsPage from '@/pages/MobileNotificationsPage';
 import RichComposerLab from '@/pages/_dev/RichComposerLab';
 import MobileAuditPage from '@/pages/_dev/MobileAuditPage';
 import { getAdminAuthzMe, getAdminMenuCatalog } from '@/services';
@@ -286,6 +287,7 @@ export default function App() {
         <Route path="my-assets" element={<RequirePermission perm="access"><MyAssetsPage /></RequirePermission>} />
         {/* 移动端专属路由 */}
         <Route path="profile" element={<RequirePermission perm="access"><MobileProfilePage /></RequirePermission>} />
+        <Route path="notifications" element={<RequirePermission perm="access"><MobileNotificationsPage /></RequirePermission>} />
         <Route path="stats" element={<Navigate to="/" replace />} />
       </Route>
 

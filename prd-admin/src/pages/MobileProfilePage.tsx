@@ -1,12 +1,15 @@
+import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Palette,
   Bell,
   ScrollText,
-  Settings,
+  ListOrdered,
   LogOut,
   ChevronRight,
   Shield,
+  Database,
+  Image,
   type LucideIcon,
 } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
@@ -30,8 +33,10 @@ export default function MobileProfilePage() {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const isRoot = useAuthStore((s) => s.isRoot);
+  const perms = useAuthStore((s) => s.permissions);
 
   const avatarUrl = user ? resolveAvatarUrl(user) : null;
+  const hasPerm = (p: string) => isRoot || perms.includes(p) || perms.includes('super');
 
   const roleLabel = (() => {
     if (isRoot) return '超级管理员';
@@ -44,16 +49,28 @@ export default function MobileProfilePage() {
     }
   })();
 
-  const menuItems: MenuItem[] = [
-    { key: 'theme',    label: '主题设置',   icon: Palette,    color: '#818CF8', path: '/settings' },
-    { key: 'notify',   label: '系统通知',   icon: Bell,       color: '#FB923C', path: '/settings' },
-    { key: 'logs',     label: '请求日志',   icon: ScrollText, color: '#34D399', path: '/logs' },
-    { key: 'settings', label: '通用设置',   icon: Settings,   color: '#60A5FA', path: '/settings' },
-  ];
+  /* ── 常规菜单 ── */
+  const menuItems: MenuItem[] = useMemo(() => {
+    const items: MenuItem[] = [
+      { key: 'theme',     label: '主题设置',   icon: Palette,     color: '#818CF8', path: '/settings?tab=skin' },
+      { key: 'notify',    label: '系统通知',   icon: Bell,        color: '#FB923C', path: '/notifications' },
+      { key: 'logs',      label: '请求日志',   icon: ScrollText,  color: '#34D399', path: '/logs' },
+      { key: 'nav-order', label: '导航顺序',   icon: ListOrdered, color: '#60A5FA', path: '/settings?tab=nav-order' },
+    ];
 
-  if (isRoot) {
-    menuItems.push({ key: 'authz', label: '权限管理', icon: Shield, color: '#F472B6', path: '/settings' });
-  }
+    if (hasPerm('assets.read')) {
+      items.push({ key: 'assets', label: '资源管理', icon: Image, color: '#A78BFA', path: '/settings?tab=assets' });
+    }
+    if (hasPerm('authz.manage')) {
+      items.push({ key: 'authz', label: '权限管理', icon: Shield, color: '#F472B6', path: '/settings?tab=authz' });
+    }
+    if (hasPerm('data.read')) {
+      items.push({ key: 'data', label: '数据管理', icon: Database, color: '#FBBF24', path: '/settings?tab=data' });
+    }
+
+    return items;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRoot, perms]);
 
   const handleLogout = () => {
     logout();
