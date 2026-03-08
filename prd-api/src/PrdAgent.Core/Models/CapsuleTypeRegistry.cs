@@ -780,6 +780,36 @@ public static class CapsuleTypeRegistry
         },
     };
 
+    public static readonly CapsuleTypeMeta EmailSender = new()
+    {
+        TypeKey = CapsuleTypes.EmailSender,
+        Name = "邮件发送",
+        Description = "使用系统 SMTP 配置发送邮件，无需手动配置邮箱参数",
+        Icon = "mail",
+        Category = CapsuleCategory.Output,
+        AccentHue = 210,
+        ConfigSchema = new()
+        {
+            new() { Key = "toEmail", Label = "收件人邮箱", FieldType = "text", Required = true, Placeholder = "user@example.com", HelpTip = "收件人邮箱地址，支持 {{变量}} 替换" },
+            new() { Key = "toName", Label = "收件人姓名", FieldType = "text", Required = false, Placeholder = "张三", HelpTip = "可选，留空则使用邮箱地址。支持 {{变量}} 替换" },
+            new() { Key = "subject", Label = "邮件主题", FieldType = "text", Required = true, Placeholder = "月度质量报告", HelpTip = "邮件标题，支持 {{变量}} 替换" },
+            new() { Key = "bodyTemplate", Label = "邮件正文", FieldType = "textarea", Required = false, Placeholder = "请查看附件中的报告内容…", HelpTip = "留空则自动使用上游产物内容作为邮件正文。支持 HTML 和 {{变量}} 替换" },
+            new() { Key = "useHtml", Label = "HTML 格式", FieldType = "select", Required = false, DefaultValue = "true", Options = new()
+            {
+                new() { Value = "true", Label = "是（支持富文本格式）" },
+                new() { Value = "false", Label = "否（纯文本）" },
+            }, HelpTip = "是否以 HTML 格式发送邮件正文" },
+        },
+        DefaultInputSlots = new()
+        {
+            new() { SlotId = "email-in", Name = "content", DataType = "text", Required = false, Description = "上游内容（作为邮件正文或附加内容）" },
+        },
+        DefaultOutputSlots = new()
+        {
+            new() { SlotId = "email-out", Name = "result", DataType = "json", Required = true, Description = "发送结果（含 success、toEmail 等）" },
+        },
+    };
+
     /// <summary>
     /// 按分类排序的全部舱类型
     /// </summary>
@@ -792,7 +822,7 @@ public static class CapsuleTypeRegistry
         // 流程控制类
         Delay, Condition,
         // 输出类
-        ReportGenerator, WebpageGenerator, FileExporter, WebhookSender, NotificationSender, VideoGeneration, SitePublisher,
+        ReportGenerator, WebpageGenerator, FileExporter, WebhookSender, NotificationSender, VideoGeneration, SitePublisher, EmailSender,
     };
 
     /// <summary>按 TypeKey 查找</summary>

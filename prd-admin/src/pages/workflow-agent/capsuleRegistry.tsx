@@ -2,7 +2,7 @@ import {
   Timer, Webhook, Hand, Upload, Zap,
   Database, Globe, Brain, Code2, Filter, Merge, Repeat, BarChart3,
   Clock, GitBranch,
-  FileText, Download, Send, Bell, Box, AppWindow, GlobeLock,
+  FileText, Download, Send, Bell, Box, AppWindow, GlobeLock, Mail,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -279,6 +279,16 @@ export const CAPSULE_TYPE_REGISTRY: Record<string, CapsuleTypeDef> = {
     accentHue: 160,
     testable: true,
   },
+  'email-sender': {
+    typeKey: 'email-sender',
+    name: '邮件发送',
+    description: '使用系统 SMTP 发送邮件，无需配置邮箱参数',
+    Icon: Mail,
+    emoji: '📧',
+    category: 'output',
+    accentHue: 210,
+    testable: true,
+  },
 };
 
 // ──────── 兼容旧 NodeType ────────
@@ -343,6 +353,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   'app-window': AppWindow,
   'globe-lock': GlobeLock,
   'zap': Zap,
+  'mail': Mail,
 };
 
 const EMOJI_MAP: Record<string, string> = {
@@ -368,6 +379,7 @@ const EMOJI_MAP: Record<string, string> = {
   'notification-sender': '🔔',
   'event-trigger': '⚡',
   'site-publisher': '🌐',
+  'email-sender': '📧',
 };
 
 const CATEGORY_EMOJI: Record<string, string> = {

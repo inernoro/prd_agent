@@ -80,6 +80,7 @@ public static class CapsuleExecutor
             CapsuleTypes.WebhookSender => await ExecuteWebhookSenderAsync(sp, node, inputArtifacts),
             CapsuleTypes.NotificationSender => await ExecuteNotificationSenderAsync(sp, node, variables, inputArtifacts),
             CapsuleTypes.SitePublisher => await ExecuteSitePublisherAsync(sp, node, variables, inputArtifacts),
+            CapsuleTypes.EmailSender => await ExecuteEmailSenderAsync(sp, node, variables, inputArtifacts),
 
             // ── 异步任务类 ──
             CapsuleTypes.VideoGeneration => await ExecuteVideoGenerationAsync(sp, node, variables, inputArtifacts, emitEvent),
@@ -4378,6 +4379,100 @@ function safeChart(canvasId, config) {
 
         var outputJson = JsonSerializer.Serialize(result, JsonPretty);
         var artifact = MakeTextArtifact(node, "site-out", "站点发布结果", outputJson, "application/json");
+        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
+    }
+
+    // ── 邮件发送 ──────────────────────────────────────────────
+
+    public static async Task<CapsuleResult> ExecuteEmailSenderAsync(
+        IServiceProvider sp,
+        WorkflowNode node,
+        Dictionary<string, string> variables,
+        List<ExecutionArtifact> inputArtifacts)
+    {
+        var emailService = sp.GetRequiredService<PrdAgent.Infrastructure.Services.ITutorialEmailService>();
+        var logger = sp.GetRequiredService<ILoggerFactory>().CreateLogger("CapsuleExecutor.EmailSender");
+        var sb = new StringBuilder();
+
+        var toEmail = ReplaceVariables(GetConfigString(node, "toEmail") ?? "", variables).Trim();
+        var toName = ReplaceVariables(GetConfigString(node, "toName") ?? "", variables).Trim();
+        var subject = ReplaceVariables(GetConfigString(node, "subject") ?? "", variables).Trim();
+        var bodyTemplate = ReplaceVariables(GetConfigString(node, "bodyTemplate") ?? "", variables);
+        var useHtml = GetConfigString(node, "useHtml") != "false";
+
+        if (string.IsNullOrWhiteSpace(toEmail))
+        {
+            return new CapsuleResult(
+                new List<ExecutionArtifact> { MakeTextArtifact(node, "email-out", "错误", "{\"success\":false,\"error\":\"收件人邮箱为空\"}") },
+                "收件人邮箱为空，跳过发送");
+        }
+
+        if (string.IsNullOrWhiteSpace(subject))
+            subject = "工作流自动邮件";
+
+        // 邮件正文：优先使用配置模板，否则使用上游产物内容
+        string htmlBody;
+        if (!string.IsNullOrWhiteSpace(bodyTemplate))
+        {
+            htmlBody = bodyTemplate;
+        }
+        else
+        {
+            // 从上游产物获取内容
+            var inputContent = inputArtifacts
+                .FirstOrDefault(a => a.SlotId == "email-in")?.InlineContent;
+            if (string.IsNullOrWhiteSpace(inputContent))
+                inputContent = inputArtifacts.FirstOrDefault()?.InlineContent;
+
+            if (string.IsNullOrWhiteSpace(inputContent))
+            {
+                return new CapsuleResult(
+                    new List<ExecutionArtifact> { MakeTextArtifact(node, "email-out", "错误", "{\"success\":false,\"error\":\"邮件正文为空（无模板且无上游内容）\"}") },
+                    "邮件正文为空，跳过发送");
+            }
+
+            htmlBody = inputContent;
+        }
+
+        // 如果内容不是 HTML 且开启了 HTML 模式，做简单包装
+        if (useHtml && !htmlBody.TrimStart().StartsWith("<", StringComparison.Ordinal))
+        {
+            htmlBody = $"<div style=\"font-family:sans-serif;line-height:1.6;white-space:pre-wrap\">{System.Net.WebUtility.HtmlEncode(htmlBody)}</div>";
+        }
+
+        if (string.IsNullOrWhiteSpace(toName))
+            toName = toEmail;
+
+        sb.AppendLine($"[邮件] 发送至: {toEmail}");
+        sb.AppendLine($"[邮件] 主题: {subject}");
+
+        logger.LogInformation("EmailSender: Sending email to {ToEmail}, subject={Subject}", toEmail, subject);
+
+        var success = await emailService.SendEmailAsync(toEmail, toName, subject, htmlBody, CancellationToken.None);
+
+        var result = new
+        {
+            success,
+            toEmail,
+            toName,
+            subject,
+            sentAt = DateTime.UtcNow.ToString("o"),
+            bodyLength = htmlBody.Length,
+        };
+
+        if (success)
+        {
+            sb.AppendLine("[邮件] ✅ 发送成功");
+            logger.LogInformation("EmailSender: Email sent successfully to {ToEmail}", toEmail);
+        }
+        else
+        {
+            sb.AppendLine("[邮件] ❌ 发送失败（请检查系统 SMTP 配置）");
+            logger.LogWarning("EmailSender: Failed to send email to {ToEmail}", toEmail);
+        }
+
+        var outputJson = JsonSerializer.Serialize(result, JsonPretty);
+        var artifact = MakeTextArtifact(node, "email-out", "邮件发送结果", outputJson, "application/json");
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
     }
 
