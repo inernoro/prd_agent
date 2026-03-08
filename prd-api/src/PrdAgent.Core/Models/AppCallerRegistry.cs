@@ -251,6 +251,17 @@ public static class VisualAgent
         )]
         public const string ExtractStyle = "visual-agent.image-gen.extract-style::vision";
     }
+
+    public static class Scene
+    {
+        [AppCallerMetadata(
+            "视觉创作-场景代码生成",
+            "基于 Remotion 组件库为视觉创作视频分镜生成定制化视觉代码",
+            ModelTypes = new[] { ModelTypes.Code },
+            Category = "Video"
+        )]
+        public const string Codegen = "visual-agent.scene.codegen::code";
+    }
 }
 
 /// <summary>
@@ -617,6 +628,28 @@ public static class VideoAgent
             Category = "Video"
         )]
         public const string Text2Img = "video-agent.image.text2img::generation";
+    }
+
+    public static class Audio
+    {
+        [AppCallerMetadata(
+            "视频旁白-语音合成",
+            "将分镜旁白文本合成为 TTS 语音音频",
+            ModelTypes = new[] { ModelTypes.Tts },
+            Category = "Video"
+        )]
+        public const string Tts = "video-agent.audio::tts";
+    }
+
+    public static class Scene
+    {
+        [AppCallerMetadata(
+            "视频场景-代码生成",
+            "基于 Remotion 组件库和动效工具为分镜生成定制化视觉代码",
+            ModelTypes = new[] { ModelTypes.Code },
+            Category = "Video"
+        )]
+        public const string Codegen = "video-agent.scene.codegen::code";
     }
 
     /// <summary>

@@ -159,6 +159,9 @@ builder.Services.AddScoped<OpenAIImageClient>();
 builder.Services.AddSingleton<WatermarkFontRegistry>();
 builder.Services.AddSingleton<WatermarkRenderer>();
 
+// 视频生成领域服务（供 Controller + 工作流胶囊复用）
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IVideoGenService, PrdAgent.Infrastructure.Services.VideoGenService>();
+
 // Account Data Transfer 数据分享
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.WorkspaceCloneService>();
 // 资产披露 Provider（IAssetProvider 被动注册 — 新模块只需实现接口并在此注册）

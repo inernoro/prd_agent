@@ -654,7 +654,24 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 request.IsMultipart);
 
             var response = await httpClient.SendAsync(httpRequest, ct);
-            var responseBody = await response.Content.ReadAsStringAsync(ct);
+
+            // 检测响应类型：二进制（音频等）还是文本（JSON）
+            var contentType = response.Content.Headers.ContentType?.MediaType ?? "";
+            var isBinaryResponse = contentType.StartsWith("audio/") ||
+                                   contentType == "application/octet-stream";
+
+            string? responseBody = null;
+            byte[]? binaryContent = null;
+
+            if (isBinaryResponse && response.IsSuccessStatusCode)
+            {
+                binaryContent = await response.Content.ReadAsByteArrayAsync(ct);
+                responseBody = $"[binary:{contentType}, {binaryContent.Length} bytes]";
+            }
+            else
+            {
+                responseBody = await response.Content.ReadAsStringAsync(ct);
+            }
 
             var endedAt = DateTime.UtcNow;
             var durationMs = (long)(endedAt - startedAt).TotalMilliseconds;
@@ -672,16 +689,16 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 }
             }
 
-            // 8. Exchange 响应转换
+            // 8. Exchange 响应转换（仅文本响应）
             var finalResponseBody = responseBody;
-            if (isExchange && response.IsSuccessStatusCode)
+            if (isExchange && response.IsSuccessStatusCode && !isBinaryResponse)
             {
                 try
                 {
                     var respTransformer = _transformerRegistry.Get(resolution.ExchangeTransformerType);
                     if (respTransformer != null)
                     {
-                        var rawJson = JsonNode.Parse(responseBody);
+                        var rawJson = JsonNode.Parse(responseBody!);
                         if (rawJson is JsonObject rawObj)
                         {
                             var transformed = respTransformer.TransformResponse(rawObj, resolution.ExchangeTransformerConfig);
@@ -714,7 +731,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             if (!response.IsSuccessStatusCode)
             {
-                var errorMsg = TryExtractErrorMessage(responseBody) ?? $"HTTP {(int)response.StatusCode}";
+                var errorMsg = TryExtractErrorMessage(responseBody!) ?? $"HTTP {(int)response.StatusCode}";
                 return new GatewayRawResponse
                 {
                     Success = false,
@@ -734,6 +751,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 Success = true,
                 StatusCode = (int)response.StatusCode,
                 Content = finalResponseBody,
+                BinaryContent = binaryContent,
+                ContentType = contentType,
                 ResponseHeaders = responseHeaders,
                 Resolution = gatewayResolution,
                 DurationMs = durationMs,

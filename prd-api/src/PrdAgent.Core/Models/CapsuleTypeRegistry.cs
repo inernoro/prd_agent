@@ -693,6 +693,33 @@ public static class CapsuleTypeRegistry
         },
     };
 
+    public static readonly CapsuleTypeMeta VideoGeneration = new()
+    {
+        TypeKey = CapsuleTypes.VideoGeneration,
+        Name = "视频生成",
+        Description = "将文章/Markdown 内容转化为教程视频，自动生成分镜脚本并渲染为 MP4 或 HTML",
+        Icon = "video",
+        Category = CapsuleCategory.Output,
+        AccentHue = 270,
+        ConfigSchema = new()
+        {
+            new() { Key = "articleMarkdown", Label = "文章内容", FieldType = "textarea", Required = true, Placeholder = "输入 Markdown 格式的文章内容…", HelpTip = "支持标准 Markdown，将自动拆分为分镜脚本" },
+            new() { Key = "articleTitle", Label = "文章标题", FieldType = "text", Required = false, Placeholder = "视频标题（可选）" },
+            new() { Key = "systemPrompt", Label = "系统提示词", FieldType = "textarea", Required = false, Placeholder = "自定义分镜生成的系统提示词（可选）" },
+            new() { Key = "styleDescription", Label = "风格描述", FieldType = "textarea", Required = false, Placeholder = "视频视觉风格描述（可选）" },
+            new() { Key = "outputFormat", Label = "输出格式", FieldType = "select", Required = false, DefaultValue = "mp4", HelpTip = "mp4: Remotion 渲染视频；html: 自包含 HTML 交互页面", Placeholder = "mp4|html" },
+            new() { Key = "timeoutMinutes", Label = "超时时间（分钟）", FieldType = "number", Required = false, DefaultValue = "30", HelpTip = "等待视频渲染完成的最大时间，默认 30 分钟" },
+        },
+        DefaultInputSlots = new()
+        {
+            new() { SlotId = "vg-in", Name = "article", DataType = "text", Required = false, Description = "上游文章内容（可覆盖配置中的 articleMarkdown）" },
+        },
+        DefaultOutputSlots = new()
+        {
+            new() { SlotId = "vg-out", Name = "result", DataType = "json", Required = true, Description = "视频生成结果（含 videoUrl、srtContent、状态等）" },
+        },
+    };
+
     /// <summary>
     /// 按分类排序的全部舱类型
     /// </summary>
@@ -705,7 +732,7 @@ public static class CapsuleTypeRegistry
         // 流程控制类
         Delay, Condition,
         // 输出类
-        ReportGenerator, WebpageGenerator, FileExporter, WebhookSender, NotificationSender,
+        ReportGenerator, WebpageGenerator, FileExporter, WebhookSender, NotificationSender, VideoGeneration,
     };
 
     /// <summary>按 TypeKey 查找</summary>

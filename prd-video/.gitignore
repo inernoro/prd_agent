@@ -3,3 +3,5 @@ dist/
 data/*.json
 out/
 .remotion/
+package-lock.json
+yarn.lock

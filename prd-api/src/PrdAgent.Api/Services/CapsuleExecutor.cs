@@ -79,6 +79,9 @@ public static class CapsuleExecutor
             CapsuleTypes.WebhookSender => await ExecuteWebhookSenderAsync(sp, node, inputArtifacts),
             CapsuleTypes.NotificationSender => await ExecuteNotificationSenderAsync(sp, node, variables, inputArtifacts),
 
+            // ── 异步任务类 ──
+            CapsuleTypes.VideoGeneration => await ExecuteVideoGenerationAsync(sp, node, variables, inputArtifacts, emitEvent),
+
             // ── 旧类型兼容 ──
             _ => ExecutePassthrough(node, $"未知舱类型 '{node.NodeType}'，已跳过", variables),
         };
@@ -4202,5 +4205,109 @@ function safeChart(canvasId, config) {
         while (System.Text.Encoding.UTF8.GetByteCount(logs) > maxBytes && logs.Length > 100)
             logs = logs[(logs.Length / 4)..];
         return "[...truncated...]\n" + logs;
+    }
+
+    // ── 视频生成 ──────────────────────────────────────────────
+
+    private static async Task<CapsuleResult> ExecuteVideoGenerationAsync(
+        IServiceProvider sp,
+        WorkflowNode node,
+        Dictionary<string, string> variables,
+        List<ExecutionArtifact> inputArtifacts,
+        EmitEventDelegate? emitEvent)
+    {
+        var videoGenService = sp.GetRequiredService<PrdAgent.Core.Interfaces.IVideoGenService>();
+        var logger = sp.GetRequiredService<ILoggerFactory>().CreateLogger("CapsuleExecutor.VideoGeneration");
+        var sb = new StringBuilder();
+
+        // 从配置或上游输入获取文章内容
+        var articleMarkdown = ReplaceVariables(GetConfigString(node, "articleMarkdown") ?? "", variables);
+        var articleTitle = ReplaceVariables(GetConfigString(node, "articleTitle") ?? "", variables);
+        var systemPrompt = ReplaceVariables(GetConfigString(node, "systemPrompt") ?? "", variables);
+        var styleDescription = ReplaceVariables(GetConfigString(node, "styleDescription") ?? "", variables);
+        var timeoutMinutesStr = GetConfigString(node, "timeoutMinutes") ?? "30";
+
+        // 上游输入可覆盖 articleMarkdown
+        var inputText = inputArtifacts.FirstOrDefault(a => a.SlotId == "vg-in")?.InlineContent;
+        if (!string.IsNullOrWhiteSpace(inputText))
+            articleMarkdown = inputText;
+
+        if (string.IsNullOrWhiteSpace(articleMarkdown))
+        {
+            return new CapsuleResult(
+                new List<ExecutionArtifact> { MakeTextArtifact(node, "vg-out", "错误", "{\"error\":\"文章内容为空\"}") },
+                "文章内容为空，跳过视频生成");
+        }
+
+        if (!int.TryParse(timeoutMinutesStr, out var timeoutMinutes) || timeoutMinutes < 1)
+            timeoutMinutes = 30;
+
+        // 从工作流上下文获取真实用户 ID（由 WorkflowRunWorker 注入）
+        var ownerAdminId = variables.GetValueOrDefault("__triggeredBy") ?? "workflow-system";
+        var outputFormat = GetConfigString(node, "outputFormat") ?? "mp4";
+
+        sb.AppendLine($"[VideoGeneration] 开始，文章长度={articleMarkdown.Length}，超时={timeoutMinutes}分钟，格式={outputFormat}，owner={ownerAdminId}");
+        if (emitEvent != null)
+            await emitEvent("capsule-progress", new { message = "创建视频生成任务…" });
+
+        // 创建 run：AutoRender=true 跳过 Editing 直接渲染
+        var request = new PrdAgent.Core.Models.CreateVideoGenRunRequest
+        {
+            ArticleMarkdown = articleMarkdown,
+            ArticleTitle = articleTitle,
+            SystemPrompt = systemPrompt,
+            StyleDescription = styleDescription,
+            AutoRender = true,
+            OutputFormat = outputFormat,
+        };
+
+        string runId;
+        try
+        {
+            runId = await videoGenService.CreateRunAsync("video-agent", ownerAdminId, request);
+        }
+        catch (ArgumentException ex)
+        {
+            sb.AppendLine($"[VideoGeneration] 创建失败: {ex.Message}");
+            var errResult = JsonSerializer.Serialize(new { error = ex.Message }, JsonCompact);
+            return new CapsuleResult(
+                new List<ExecutionArtifact> { MakeTextArtifact(node, "vg-out", "错误", errResult) },
+                sb.ToString());
+        }
+
+        sb.AppendLine($"[VideoGeneration] Run 已创建: {runId}");
+        if (emitEvent != null)
+            await emitEvent("capsule-progress", new { message = $"视频生成任务已创建: {runId}，等待完成…" });
+
+        // 等待视频生成完成（轮询）
+        var completedRun = await videoGenService.WaitForCompletionAsync(
+            runId, TimeSpan.FromMinutes(timeoutMinutes), CancellationToken.None);
+
+        if (completedRun == null)
+        {
+            sb.AppendLine("[VideoGeneration] 等待超时，任务未完成");
+            var timeoutResult = JsonSerializer.Serialize(new { runId, status = "timeout", error = "等待超时" }, JsonCompact);
+            return new CapsuleResult(
+                new List<ExecutionArtifact> { MakeTextArtifact(node, "vg-out", "超时", timeoutResult) },
+                sb.ToString());
+        }
+
+        sb.AppendLine($"[VideoGeneration] 任务完成: status={completedRun.Status}");
+
+        var output = JsonSerializer.Serialize(new
+        {
+            runId = completedRun.Id,
+            status = completedRun.Status,
+            videoUrl = completedRun.VideoAssetUrl,
+            totalDurationSeconds = completedRun.TotalDurationSeconds,
+            scenesCount = completedRun.Scenes.Count,
+            srtContent = completedRun.SrtContent,
+            articleTitle = completedRun.ArticleTitle,
+            errorMessage = completedRun.ErrorMessage,
+        }, JsonCompact);
+
+        return new CapsuleResult(
+            new List<ExecutionArtifact> { MakeTextArtifact(node, "vg-out", "视频生成结果", output) },
+            sb.ToString());
     }
 }
