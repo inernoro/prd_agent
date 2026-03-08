@@ -4,6 +4,7 @@ import { viewSiteShare } from '@/services';
 import type { ShareViewData } from '@/services';
 import { Lock, ExternalLink, FileCode2, Eye, EyeOff, AlertCircle, ShieldCheck, Unlock } from 'lucide-react';
 import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
+import DecryptedText from '@/components/reactbits/DecryptedText';
 
 function fmtSize(b: number) {
   if (b < 1024) return `${b} B`;
@@ -139,7 +140,12 @@ export default function ShareViewPage() {
           </div>
 
           <h2 style={{ color: '#fff', margin: '0 0 8px', fontSize: 20, fontWeight: 600 }}>
-            {wrongPassword ? '密码不正确' : '此链接需要密码'}
+            <DecryptedText
+              text={wrongPassword ? '密码不正确' : '此链接需要密码'}
+              speed={40}
+              sequential
+              animateOn="view"
+            />
           </h2>
           <p style={{
             color: wrongPassword ? 'rgba(239, 68, 68, 0.7)' : 'rgba(255,255,255,0.5)',
@@ -147,7 +153,12 @@ export default function ShareViewPage() {
             fontSize: 14,
             transition: 'color 0.3s',
           }}>
-            {wrongPassword ? '请检查密码后重新输入' : '请输入访问密码以查看内容'}
+            <DecryptedText
+              text={wrongPassword ? '请检查密码后重新输入' : '请输入访问密码以查看内容'}
+              speed={30}
+              sequential
+              animateOn="view"
+            />
           </p>
 
           <form onSubmit={handlePasswordSubmit} style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
@@ -359,11 +370,11 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: 440,
     width: '90%',
     borderRadius: 20,
-    background: 'rgba(255, 255, 255, 0.06)',
+    background: 'rgba(15, 15, 25, 0.65)',
     backdropFilter: 'blur(40px) saturate(180%)',
     WebkitBackdropFilter: 'blur(40px) saturate(180%)',
-    border: '1px solid rgba(255, 255, 255, 0.12)',
-    boxShadow: '0 8px 32px -4px rgba(0, 0, 0, 0.5), 0 1px 0 0 rgba(255, 255, 255, 0.1) inset',
+    border: '1px solid rgba(255, 255, 255, 0.1)',
+    boxShadow: '0 8px 32px -4px rgba(0, 0, 0, 0.6), 0 1px 0 0 rgba(255, 255, 255, 0.08) inset, 0 0 0 1px rgba(0, 0, 0, 0.3)',
   },
   spinner: {
     width: 32,
