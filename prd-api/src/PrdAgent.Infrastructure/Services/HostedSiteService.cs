@@ -439,6 +439,7 @@ public class HostedSiteService : IHostedSiteService
             Password = password?.Trim(),
             ExpiresAt = expiresInDays > 0 ? DateTime.UtcNow.AddDays(expiresInDays) : null,
             CreatedBy = userId,
+            CreatedByName = displayName,
         };
 
         await _db.WebPageShareLinks.InsertOneAsync(share, cancellationToken: ct);
@@ -464,7 +465,10 @@ public class HostedSiteService : IHostedSiteService
         return result.MatchedCount > 0;
     }
 
-    public async Task<ShareViewResult?> ViewShareAsync(string token, string? password, CancellationToken ct)
+    public async Task<ShareViewResult?> ViewShareAsync(string token, string? password,
+        string? viewerUserId = null, string? viewerName = null,
+        string? ipAddress = null, string? userAgent = null,
+        CancellationToken ct = default)
     {
         var share = await _db.WebPageShareLinks.Find(x => x.Token == token).FirstOrDefaultAsync(ct);
         if (share == null || share.IsRevoked)
@@ -483,6 +487,25 @@ public class HostedSiteService : IHostedSiteService
                 .Inc(x => x.ViewCount, 1)
                 .Set(x => x.LastViewedAt, DateTime.UtcNow),
             cancellationToken: ct);
+
+        // 记录观看日志
+        try
+        {
+            await _db.ShareViewLogs.InsertOneAsync(new ShareViewLog
+            {
+                ShareToken = token,
+                ShareId = share.Id,
+                ViewerUserId = viewerUserId,
+                ViewerName = viewerName,
+                ShareOwnerUserId = share.CreatedBy,
+                IpAddress = ipAddress,
+                UserAgent = userAgent,
+            }, cancellationToken: ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "记录分享观看日志失败: {ShareId}", share.Id);
+        }
 
         var siteIds = share.SiteIds.Count > 0 ? share.SiteIds : new List<string>();
         if (share.SiteId != null && !siteIds.Contains(share.SiteId))
@@ -513,8 +536,116 @@ public class HostedSiteService : IHostedSiteService
             Description = share.Description,
             ShareType = share.ShareType,
             CreatedAt = share.CreatedAt,
+            CreatedBy = share.CreatedBy,
+            CreatedByName = share.CreatedByName ?? await LookupDisplayNameAsync(share.CreatedBy, ct),
             Sites = sites,
         };
+    }
+
+    // ─────────────────────────────────────────────
+    // 观看记录
+    // ─────────────────────────────────────────────
+
+    public async Task<List<ShareViewLog>> ListShareViewLogsAsync(
+        string userId, string? shareToken, int limit = 100, CancellationToken ct = default)
+    {
+        var fb = Builders<ShareViewLog>.Filter;
+        var filter = fb.Eq(x => x.ShareOwnerUserId, userId);
+        if (!string.IsNullOrWhiteSpace(shareToken))
+            filter &= fb.Eq(x => x.ShareToken, shareToken);
+
+        return await _db.ShareViewLogs.Find(filter)
+            .SortByDescending(x => x.ViewedAt)
+            .Limit(Math.Clamp(limit, 1, 500))
+            .ToListAsync(ct);
+    }
+
+    // ─────────────────────────────────────────────
+    // 用户名查找（兼容旧分享没有 CreatedByName 的情况）
+    // ─────────────────────────────────────────────
+
+    private async Task<string?> LookupDisplayNameAsync(string userId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(userId)) return null;
+        var user = await _db.Users.Find(x => x.UserId == userId)
+            .Project(Builders<User>.Projection.Expression(u => u.DisplayName))
+            .FirstOrDefaultAsync(ct);
+        return string.IsNullOrWhiteSpace(user) ? null : user;
+    }
+
+    // ─────────────────────────────────────────────
+    // 保存分享站点
+    // ─────────────────────────────────────────────
+
+    public async Task<SaveSharedSiteResult> SaveSharedSiteAsync(
+        string token, string? password, string userId, CancellationToken ct)
+    {
+        // 1. 验证分享链接
+        var share = await _db.WebPageShareLinks.Find(x => x.Token == token).FirstOrDefaultAsync(ct);
+        if (share == null || share.IsRevoked)
+            return new SaveSharedSiteResult { Error = "分享链接不存在或已失效", HttpStatus = 404 };
+
+        if (share.ExpiresAt.HasValue && share.ExpiresAt.Value < DateTime.UtcNow)
+            return new SaveSharedSiteResult { Error = "分享链接已过期", HttpStatus = 400 };
+
+        if (share.AccessLevel == "password" && (string.IsNullOrWhiteSpace(password) || password.Trim() != share.Password))
+            return new SaveSharedSiteResult { Error = "需要提供正确的访问密码", HttpStatus = 401 };
+
+        // 2. 禁止保存自己的分享
+        if (share.CreatedBy == userId)
+            return new SaveSharedSiteResult { Error = "不能保存自己创建的分享", HttpStatus = 400 };
+
+        // 3. 去重：检查是否已经保存过此分享
+        var alreadyExists = await _db.HostedSites.CountDocumentsAsync(
+            x => x.OwnerUserId == userId && x.SourceType == "saved-share" && x.SourceRef == token,
+            cancellationToken: ct);
+
+        if (alreadyExists > 0)
+            return new SaveSharedSiteResult { AlreadySaved = true };
+
+        // 3. 获取原始站点
+        var siteIds = share.SiteIds.Count > 0 ? share.SiteIds : new List<string>();
+        if (share.SiteId != null && !siteIds.Contains(share.SiteId))
+            siteIds.Insert(0, share.SiteId);
+
+        var originalSites = await _db.HostedSites.Find(x => siteIds.Contains(x.Id)).ToListAsync(ct);
+        if (originalSites.Count == 0)
+            return new SaveSharedSiteResult { Error = "分享的站点已被删除", HttpStatus = 404 };
+
+        // 4. 为用户创建引用副本（复用 COS 文件，不重复上传）
+        var savedSites = new List<HostedSite>();
+        foreach (var original in originalSites)
+        {
+            var saved = new HostedSite
+            {
+                Title = original.Title,
+                Description = original.Description,
+                SourceType = "saved-share",
+                SourceRef = token,
+                CosPrefix = original.CosPrefix,
+                EntryFile = original.EntryFile,
+                SiteUrl = original.SiteUrl,
+                Files = original.Files.Select(f => new HostedSiteFile
+                {
+                    Path = f.Path,
+                    CosKey = f.CosKey,
+                    Size = f.Size,
+                    MimeType = f.MimeType,
+                }).ToList(),
+                TotalSize = original.TotalSize,
+                Tags = original.Tags.ToList(),
+                Folder = original.Folder,
+                CoverImageUrl = original.CoverImageUrl,
+                OwnerUserId = userId,
+            };
+            savedSites.Add(saved);
+        }
+
+        await _db.HostedSites.InsertManyAsync(savedSites, cancellationToken: ct);
+        _logger.LogInformation("用户 {UserId} 保存了分享 {Token} 的 {Count} 个站点",
+            userId, token, savedSites.Count);
+
+        return new SaveSharedSiteResult { Saved = true, Sites = savedSites };
     }
 
     // ─────────────────────────────────────────────

@@ -76,7 +76,16 @@ public interface IHostedSiteService
 
     Task<bool> RevokeShareAsync(string shareId, string userId, CancellationToken ct = default);
 
-    Task<ShareViewResult?> ViewShareAsync(string token, string? password, CancellationToken ct = default);
+    Task<ShareViewResult?> ViewShareAsync(string token, string? password,
+        string? viewerUserId = null, string? viewerName = null,
+        string? ipAddress = null, string? userAgent = null,
+        CancellationToken ct = default);
+
+    /// <summary>获取分享的观看记录（供分享所有者查看）</summary>
+    Task<List<ShareViewLog>> ListShareViewLogsAsync(string userId, string? shareToken, int limit = 100, CancellationToken ct = default);
+
+    /// <summary>将分享的站点保存到自己的托管（去重：同一 token 只保存一次）</summary>
+    Task<SaveSharedSiteResult> SaveSharedSiteAsync(string token, string? password, string userId, CancellationToken ct = default);
 }
 
 public class TagCountResult
@@ -91,7 +100,18 @@ public class ShareViewResult
     public string? Description { get; set; }
     public string ShareType { get; set; } = "single";
     public DateTime CreatedAt { get; set; }
+    public string? CreatedBy { get; set; }
+    public string? CreatedByName { get; set; }
     public List<SharedSiteInfo> Sites { get; set; } = new();
+    public string? Error { get; set; }
+    public int HttpStatus { get; set; } = 200;
+}
+
+public class SaveSharedSiteResult
+{
+    public bool AlreadySaved { get; set; }
+    public bool Saved { get; set; }
+    public List<HostedSite> Sites { get; set; } = new();
     public string? Error { get; set; }
     public int HttpStatus { get; set; } = 200;
 }
