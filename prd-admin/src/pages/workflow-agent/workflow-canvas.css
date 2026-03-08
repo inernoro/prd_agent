@@ -200,3 +200,94 @@
   background: #1a1a2e;
   color: #e8e6e3;
 }
+
+/* ──── 连线中点 "+" 按钮 ──── */
+
+.edge-add-button {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(59,130,246,0.15);
+  border: 1.5px solid rgba(59,130,246,0.4);
+  color: rgba(59,130,246,0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  backdrop-filter: blur(8px);
+}
+
+.edge-add-button:hover {
+  background: rgba(59,130,246,0.25);
+  border-color: rgba(59,130,246,0.6);
+  transform: translate(-50%, -50%) scale(1.15);
+  box-shadow: 0 0 12px rgba(59,130,246,0.3);
+}
+
+/* ──── 连线拖放节点选择菜单 ──── */
+
+.connect-drop-menu {
+  background: rgba(15,15,30,0.95);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 12px;
+  min-width: 200px;
+  max-width: 260px;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  animation: menuFadeIn 0.15s ease-out;
+  overflow: hidden;
+}
+
+@keyframes menuFadeIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 8px) scale(1);
+  }
+}
+
+.connect-drop-menu-item {
+  color: var(--text-secondary, #aaa);
+}
+
+.connect-drop-menu-item:hover {
+  background: rgba(255,255,255,0.06);
+  color: var(--text-primary, #e8e6e3);
+}
+
+/* ──── 快捷键提示浮层 ──── */
+
+.shortcuts-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  background: rgba(0,0,0,0.3);
+  animation: menuFadeIn 0.15s ease-out;
+}
+
+.shortcuts-panel {
+  background: rgba(15,15,30,0.95);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 14px;
+  min-width: 240px;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+
+.shortcut-key {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.1);
+  color: var(--text-primary, #e8e6e3);
+  font-size: 10px;
+  font-family: monospace;
+}
