@@ -1236,8 +1236,9 @@ export {
   revokeShare as revokeSiteShare,
   viewShare as viewSiteShare,
   saveSharedSite,
+  listShareViewLogs,
 } from '@/services/real/webPages';
-export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, SharedSiteInfo, ShareViewData } from '@/services/real/webPages';
+export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, SharedSiteInfo, ShareViewData, ShareViewLogItem } from '@/services/real/webPages';
 
 // ── Account Data Transfer 数据分享 ──
 export {

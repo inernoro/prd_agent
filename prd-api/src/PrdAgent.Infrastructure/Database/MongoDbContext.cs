@@ -171,6 +171,7 @@ public class MongoDbContext
     // Web Hosting 网页托管与分享
     public IMongoCollection<HostedSite> HostedSites => _database.GetCollection<HostedSite>("hosted_sites");
     public IMongoCollection<WebPageShareLink> WebPageShareLinks => _database.GetCollection<WebPageShareLink>("web_page_share_links");
+    public IMongoCollection<ShareViewLog> ShareViewLogs => _database.GetCollection<ShareViewLog>("share_view_logs");
 
     // Video Agent 视频转文档
     public IMongoCollection<VideoToDocRun> VideoToDocRuns => _database.GetCollection<VideoToDocRun>("video_to_doc_runs");
@@ -1133,5 +1134,14 @@ public class MongoDbContext
         WebPageShareLinks.Indexes.CreateOne(new CreateIndexModel<WebPageShareLink>(
             Builders<WebPageShareLink>.IndexKeys.Ascending(x => x.CreatedBy).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_web_page_share_links_creator_created" }));
+
+        // ShareViewLogs：按分享所有者 + 时间（用于分享管理查看记录）
+        ShareViewLogs.Indexes.CreateOne(new CreateIndexModel<ShareViewLog>(
+            Builders<ShareViewLog>.IndexKeys.Ascending(x => x.ShareOwnerUserId).Descending(x => x.ViewedAt),
+            new CreateIndexOptions { Name = "idx_share_view_logs_owner_viewed" }));
+        // ShareViewLogs：按 Token + 时间
+        ShareViewLogs.Indexes.CreateOne(new CreateIndexModel<ShareViewLog>(
+            Builders<ShareViewLog>.IndexKeys.Ascending(x => x.ShareToken).Descending(x => x.ViewedAt),
+            new CreateIndexOptions { Name = "idx_share_view_logs_token_viewed" }));
     }
 }

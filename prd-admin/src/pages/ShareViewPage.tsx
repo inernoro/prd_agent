@@ -17,6 +17,7 @@ export default function ShareViewPage() {
   const { token } = useParams<{ token: string }>();
   const navigate = useNavigate();
   const isAuthenticated = useAuthStore(s => s.isAuthenticated);
+  const currentUserId = useAuthStore(s => s.user?.userId);
   const [data, setData] = useState<ShareViewData | null>(null);
   const [error, setError] = useState<{ code: string; message: string } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -89,19 +90,10 @@ export default function ShareViewPage() {
     setSubmitting(false);
   };
 
-  // ── Loading ──
+  // ── Loading ── (纯黑背景，无动画，避免闪烁)
   if (loading) {
     return (
-      <div style={styles.fullScreen}>
-        <div style={{ position: 'absolute', inset: 0 }}><BlackHoleVortex /></div>
-        <div style={styles.overlay} />
-        <div style={{ ...styles.glassCard, textAlign: 'center', padding: '48px 32px' }}>
-          <div style={styles.spinner} />
-          <p style={{ color: 'rgba(255,255,255,0.6)', marginTop: 16, fontSize: 14 }}>
-            正在加载分享内容...
-          </p>
-        </div>
-      </div>
+      <div style={{ ...styles.fullScreen, background: '#0a0a0a' }} />
     );
   }
 
@@ -276,6 +268,8 @@ export default function ShareViewPage() {
   // ── Success: show site(s) ──
   if (!data) return null;
 
+  const isOwner = isAuthenticated && currentUserId && data.createdBy === currentUserId;
+
   // Single site -> directly embed in iframe
   if (data.sites.length === 1) {
     const site = data.sites[0];
@@ -302,34 +296,36 @@ export default function ShareViewPage() {
             </span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <button
-              onClick={handleSave}
-              disabled={saving || saveStatus !== 'idle'}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 4,
-                padding: '4px 10px', borderRadius: 6, border: 'none',
-                fontSize: 13, cursor: saving || saveStatus !== 'idle' ? 'default' : 'pointer',
-                background: saveStatus === 'saved' ? 'rgba(34, 197, 94, 0.2)'
-                  : saveStatus === 'already' ? 'rgba(234, 179, 8, 0.2)'
-                  : 'rgba(59, 130, 246, 0.15)',
-                color: saveStatus === 'saved' ? 'rgba(34, 197, 94, 0.9)'
-                  : saveStatus === 'already' ? 'rgba(234, 179, 8, 0.9)'
-                  : 'rgba(59, 130, 246, 0.9)',
-                transition: 'all 0.2s',
-              }}
-            >
-              {saving ? (
-                <><div style={{ ...styles.miniSpinner }} /> 保存中...</>
-              ) : saveStatus === 'saved' ? (
-                <><Check size={12} /> 已保存</>
-              ) : saveStatus === 'already' ? (
-                <><Check size={12} /> 你已经保存过了</>
-              ) : !isAuthenticated ? (
-                <><LogIn size={12} /> 登录并保存</>
-              ) : (
-                <><Download size={12} /> 保存到我的托管</>
-              )}
-            </button>
+            {!isOwner && (
+              <button
+                onClick={handleSave}
+                disabled={saving || saveStatus !== 'idle'}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 4,
+                  padding: '4px 10px', borderRadius: 6, border: 'none',
+                  fontSize: 13, cursor: saving || saveStatus !== 'idle' ? 'default' : 'pointer',
+                  background: saveStatus === 'saved' ? 'rgba(34, 197, 94, 0.2)'
+                    : saveStatus === 'already' ? 'rgba(234, 179, 8, 0.2)'
+                    : 'rgba(59, 130, 246, 0.15)',
+                  color: saveStatus === 'saved' ? 'rgba(34, 197, 94, 0.9)'
+                    : saveStatus === 'already' ? 'rgba(234, 179, 8, 0.9)'
+                    : 'rgba(59, 130, 246, 0.9)',
+                  transition: 'all 0.2s',
+                }}
+              >
+                {saving ? (
+                  <><div style={{ ...styles.miniSpinner }} /> 保存中...</>
+                ) : saveStatus === 'saved' ? (
+                  <><Check size={12} /> 已保存</>
+                ) : saveStatus === 'already' ? (
+                  <><Check size={12} /> 你已经保存过了</>
+                ) : !isAuthenticated ? (
+                  <><LogIn size={12} /> 登录并保存</>
+                ) : (
+                  <><Download size={12} /> 保存到我的托管</>
+                )}
+              </button>
+            )}
             <a
               href={site.siteUrl}
               target="_blank"
@@ -368,35 +364,37 @@ export default function ShareViewPage() {
               {data.createdByName ? `分享的 ${data.sites.length} 个站点合集` : (data.title || '站点合集')}
             </h1>
           </div>
-          <button
-            onClick={handleSave}
-            disabled={saving || saveStatus !== 'idle'}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0,
-              padding: '6px 14px', borderRadius: 8, border: 'none',
-              fontSize: 13, cursor: saving || saveStatus !== 'idle' ? 'default' : 'pointer',
-              background: saveStatus === 'saved' ? 'rgba(34, 197, 94, 0.2)'
-                : saveStatus === 'already' ? 'rgba(234, 179, 8, 0.2)'
-                : 'rgba(59, 130, 246, 0.15)',
-              color: saveStatus === 'saved' ? 'rgba(34, 197, 94, 0.9)'
-                : saveStatus === 'already' ? 'rgba(234, 179, 8, 0.9)'
-                : 'rgba(59, 130, 246, 0.9)',
-              backdropFilter: 'blur(8px)',
-              transition: 'all 0.2s',
-            }}
-          >
-            {saving ? (
-              <><div style={{ ...styles.miniSpinner }} /> 保存中...</>
-            ) : saveStatus === 'saved' ? (
-              <><Check size={13} /> 已保存</>
-            ) : saveStatus === 'already' ? (
-              <><Check size={13} /> 你已经保存过了</>
-            ) : !isAuthenticated ? (
-              <><LogIn size={13} /> 登录并保存</>
-            ) : (
-              <><Download size={13} /> 保存到我的托管</>
-            )}
-          </button>
+          {!isOwner && (
+            <button
+              onClick={handleSave}
+              disabled={saving || saveStatus !== 'idle'}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0,
+                padding: '6px 14px', borderRadius: 8, border: 'none',
+                fontSize: 13, cursor: saving || saveStatus !== 'idle' ? 'default' : 'pointer',
+                background: saveStatus === 'saved' ? 'rgba(34, 197, 94, 0.2)'
+                  : saveStatus === 'already' ? 'rgba(234, 179, 8, 0.2)'
+                  : 'rgba(59, 130, 246, 0.15)',
+                color: saveStatus === 'saved' ? 'rgba(34, 197, 94, 0.9)'
+                  : saveStatus === 'already' ? 'rgba(234, 179, 8, 0.9)'
+                  : 'rgba(59, 130, 246, 0.9)',
+                backdropFilter: 'blur(8px)',
+                transition: 'all 0.2s',
+              }}
+            >
+              {saving ? (
+                <><div style={{ ...styles.miniSpinner }} /> 保存中...</>
+              ) : saveStatus === 'saved' ? (
+                <><Check size={13} /> 已保存</>
+              ) : saveStatus === 'already' ? (
+                <><Check size={13} /> 你已经保存过了</>
+              ) : !isAuthenticated ? (
+                <><LogIn size={13} /> 登录并保存</>
+              ) : (
+                <><Download size={13} /> 保存到我的托管</>
+              )}
+            </button>
+          )}
         </div>
         {data.description && <p style={{ color: 'rgba(255,255,255,0.5)', margin: '0 0 16px', fontSize: 14 }}>{data.description}</p>}
         <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: 12, margin: '0 0 20px' }}>{data.sites.length} 个站点</p>

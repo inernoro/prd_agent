@@ -272,7 +272,14 @@ public class WebPagesController : ControllerBase
     [AllowAnonymous]
     public async Task<IActionResult> ViewShare(string token, [FromQuery] string? password)
     {
-        var result = await _siteService.ViewShareAsync(token, password);
+        // 尝试获取登录用户信息（AllowAnonymous 但可能带 token）
+        var viewerUserId = User.Identity?.IsAuthenticated == true ? GetUserId() : null;
+        var viewerName = User.Identity?.IsAuthenticated == true ? GetDisplayName() : null;
+        var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var ua = Request.Headers.UserAgent.ToString();
+
+        var result = await _siteService.ViewShareAsync(token, password,
+            viewerUserId, viewerName, ip, ua);
         if (result == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接不存在"));
 
@@ -292,9 +299,18 @@ public class WebPagesController : ControllerBase
             result.Description,
             result.ShareType,
             result.CreatedAt,
+            result.CreatedBy,
             result.CreatedByName,
             result.Sites,
         }));
+    }
+
+    /// <summary>获取分享的观看记录（仅分享所有者可查看）</summary>
+    [HttpGet("shares/view-logs")]
+    public async Task<IActionResult> ListShareViewLogs([FromQuery] string? shareToken, [FromQuery] int limit = 100)
+    {
+        var logs = await _siteService.ListShareViewLogsAsync(GetUserId(), shareToken, limit);
+        return Ok(ApiResponse<object>.Ok(new { items = logs }));
     }
 
     /// <summary>保存分享的站点到自己的托管（需登录，去重）</summary>

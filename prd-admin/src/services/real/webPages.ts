@@ -223,6 +223,7 @@ export interface ShareViewData {
   description?: string;
   shareType: string;
   createdAt: string;
+  createdBy?: string;
   createdByName?: string;
   sites: SharedSiteInfo[];
 }
@@ -245,4 +246,26 @@ export async function viewShare(token: string, password?: string): Promise<ApiRe
 export async function saveSharedSite(token: string, password?: string): Promise<ApiResponse<{ saved?: boolean; alreadySaved?: boolean; siteCount?: number }>> {
   const q = password ? `?password=${encodeURIComponent(password)}` : '';
   return apiRequest(`${api.webPages.saveShare(encodeURIComponent(token))}${q}`, { method: 'POST' });
+}
+
+// ─── Share View Logs ───
+
+export interface ShareViewLogItem {
+  id: string;
+  shareToken: string;
+  shareId: string;
+  viewerUserId?: string;
+  viewerName?: string;
+  shareOwnerUserId: string;
+  viewedAt: string;
+  ipAddress?: string;
+  userAgent?: string;
+}
+
+export async function listShareViewLogs(shareToken?: string, limit = 100): Promise<ApiResponse<{ items: ShareViewLogItem[] }>> {
+  const params = new URLSearchParams();
+  if (shareToken) params.set('shareToken', shareToken);
+  if (limit !== 100) params.set('limit', String(limit));
+  const q = params.toString();
+  return apiRequest(`${api.webPages.viewLogs}${q ? `?${q}` : ''}`);
 }

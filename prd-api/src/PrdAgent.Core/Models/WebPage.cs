@@ -126,3 +126,35 @@ public class WebPageShareLink
         => Convert.ToBase64String(RandomNumberGenerator.GetBytes(9))
             .Replace("+", "-").Replace("/", "_").TrimEnd('=');
 }
+
+/// <summary>
+/// 分享链接观看记录 — 记录每次访问的来源信息
+/// </summary>
+public class ShareViewLog
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
+    /// <summary>分享链接 Token</summary>
+    public string ShareToken { get; set; } = string.Empty;
+
+    /// <summary>分享链接 ID</summary>
+    public string ShareId { get; set; } = string.Empty;
+
+    /// <summary>观看者用户 ID（未登录为 null）</summary>
+    public string? ViewerUserId { get; set; }
+
+    /// <summary>观看者显示名称（未登录为 null）</summary>
+    public string? ViewerName { get; set; }
+
+    /// <summary>分享创建者用户 ID</summary>
+    public string ShareOwnerUserId { get; set; } = string.Empty;
+
+    /// <summary>观看时间</summary>
+    public DateTime ViewedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>IP 地址</summary>
+    public string? IpAddress { get; set; }
+
+    /// <summary>User-Agent</summary>
+    public string? UserAgent { get; set; }
+}

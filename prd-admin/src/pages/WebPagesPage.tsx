@@ -16,8 +16,9 @@ import {
   createSiteShareLink,
   listSiteShares,
   revokeSiteShare,
+  listShareViewLogs,
 } from '@/services';
-import type { HostedSite, ShareLinkItem, TagCount } from '@/services/real/webPages';
+import type { HostedSite, ShareLinkItem, TagCount, ShareViewLogItem } from '@/services/real/webPages';
 import {
   Upload,
   Search,
@@ -73,6 +74,7 @@ const sourceTypeLabels: Record<string, string> = {
   upload: '手动上传',
   workflow: '工作流',
   api: 'API',
+  'saved-share': '从分享保存',
 };
 
 // ─── Main Page ───
@@ -231,6 +233,7 @@ export default function WebPagesPage() {
             <option value="upload">手动上传</option>
             <option value="workflow">工作流</option>
             <option value="api">API</option>
+            <option value="saved-share">从分享保存</option>
           </select>
 
           {/* Sort */}
@@ -1008,6 +1011,9 @@ function SharesPanel({ shares, setShares, onClose }: {
   onClose: () => void;
 }) {
   const [loading, setLoading] = useState(true);
+  const [viewLogsToken, setViewLogsToken] = useState<string | null>(null);
+  const [viewLogs, setViewLogs] = useState<ShareViewLogItem[]>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -1030,6 +1036,14 @@ function SharesPanel({ shares, setShares, onClose }: {
     navigator.clipboard.writeText(`${window.location.origin}/s/wp/${token}`);
   };
 
+  const handleShowLogs = async (token: string) => {
+    setViewLogsToken(token);
+    setLogsLoading(true);
+    const res = await listShareViewLogs(token, 200);
+    if (res.success) setViewLogs(res.data.items);
+    setLogsLoading(false);
+  };
+
   return (
     <Dialog
       open={true}
@@ -1047,41 +1061,76 @@ function SharesPanel({ shares, setShares, onClose }: {
           ) : (
             <div className="flex flex-col gap-2 max-h-[60vh] overflow-y-auto">
               {shares.map(share => (
-                <div
-                  key={share.id}
-                  className="flex items-center gap-3 p-3 rounded-lg"
-                  style={{ background: 'var(--bg-sunken)', border: '1px solid var(--border-default)' }}
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <Link2 size={14} style={{ color: 'var(--text-muted)' }} />
-                      <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                        {share.title || (share.shareType === 'collection' ? `合集 (${share.siteIds.length} 站)` : '单站点分享')}
-                      </span>
-                      <Badge variant={share.accessLevel === 'password' ? 'warning' : 'success'}>
-                        {share.accessLevel === 'password' ? '密码保护' : '公开'}
-                      </Badge>
-                      {share.shareType === 'collection' && (
-                        <Badge variant="subtle">{share.siteIds.length} 站合集</Badge>
+                <div key={share.id}>
+                  <div
+                    className="flex items-center gap-3 p-3 rounded-lg"
+                    style={{ background: 'var(--bg-sunken)', border: '1px solid var(--border-default)' }}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <Link2 size={14} style={{ color: 'var(--text-muted)' }} />
+                        <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                          {share.title || (share.shareType === 'collection' ? `合集 (${share.siteIds.length} 站)` : '单站点分享')}
+                        </span>
+                        <Badge variant={share.accessLevel === 'password' ? 'warning' : 'success'}>
+                          {share.accessLevel === 'password' ? '密码保护' : '公开'}
+                        </Badge>
+                        {share.shareType === 'collection' && (
+                          <Badge variant="subtle">{share.siteIds.length} 站合集</Badge>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3 mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                        <span className="flex items-center gap-1"><Eye size={10} /> {share.viewCount} 次浏览</span>
+                        <span>创建于 {fmtDate(share.createdAt)}</span>
+                        {share.expiresAt && <span>过期于 {fmtDate(share.expiresAt)}</span>}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button
+                        size="xs"
+                        variant={viewLogsToken === share.token ? 'secondary' : 'ghost'}
+                        onClick={() => viewLogsToken === share.token ? setViewLogsToken(null) : handleShowLogs(share.token)}
+                        title="观看记录"
+                      >
+                        <Eye size={12} />
+                      </Button>
+                      <Button size="xs" variant="ghost" onClick={() => handleCopy(share.token)} title="复制链接">
+                        <Copy size={12} />
+                      </Button>
+                      <Button size="xs" variant="ghost" onClick={() => window.open(`/s/wp/${share.token}`, '_blank')} title="预览">
+                        <ExternalLink size={12} />
+                      </Button>
+                      <Button size="xs" variant="danger" onClick={() => handleRevoke(share.id)} title="撤销">
+                        <X size={12} />
+                      </Button>
+                    </div>
+                  </div>
+                  {/* View logs sub-panel */}
+                  {viewLogsToken === share.token && (
+                    <div
+                      className="ml-6 mt-1 mb-2 p-3 rounded-lg text-xs"
+                      style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}
+                    >
+                      <div className="font-medium mb-2" style={{ color: 'var(--text-secondary)' }}>观看记录</div>
+                      {logsLoading ? (
+                        <div style={{ color: 'var(--text-muted)' }}>加载中...</div>
+                      ) : viewLogs.length === 0 ? (
+                        <div style={{ color: 'var(--text-muted)' }}>暂无观看记录</div>
+                      ) : (
+                        <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto">
+                          {viewLogs.map(log => (
+                            <div key={log.id} className="flex items-center gap-3" style={{ color: 'var(--text-muted)' }}>
+                              <span style={{ color: log.viewerName ? 'var(--text-primary)' : 'var(--text-muted)', minWidth: 70 }}>
+                                {log.viewerName || '匿名访客'}
+                              </span>
+                              <span>{fmtDate(log.viewedAt)}</span>
+                              {log.ipAddress && <span className="opacity-60">{log.ipAddress}</span>}
+                            </div>
+                          ))}
+                        </div>
                       )}
                     </div>
-                    <div className="flex items-center gap-3 mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-                      <span className="flex items-center gap-1"><Eye size={10} /> {share.viewCount} 次浏览</span>
-                      <span>创建于 {fmtDate(share.createdAt)}</span>
-                      {share.expiresAt && <span>过期于 {fmtDate(share.expiresAt)}</span>}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <Button size="xs" variant="ghost" onClick={() => handleCopy(share.token)} title="复制链接">
-                      <Copy size={12} />
-                    </Button>
-                    <Button size="xs" variant="ghost" onClick={() => window.open(`/s/wp/${share.token}`, '_blank')} title="预览">
-                      <ExternalLink size={12} />
-                    </Button>
-                    <Button size="xs" variant="danger" onClick={() => handleRevoke(share.id)} title="撤销">
-                      <X size={12} />
-                    </Button>
-                  </div>
+                  )}
                 </div>
               ))}
             </div>
