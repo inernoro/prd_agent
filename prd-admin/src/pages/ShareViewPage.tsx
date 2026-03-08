@@ -4,7 +4,7 @@ import { viewSiteShare } from '@/services';
 import type { ShareViewData } from '@/services';
 import { Lock, ExternalLink, FileCode2, Eye, EyeOff, AlertCircle, ShieldCheck, Unlock } from 'lucide-react';
 import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
-import DecryptedText from '@/components/reactbits/DecryptedText';
+import { BlurText } from '@/components/reactbits';
 
 function fmtSize(b: number) {
   if (b < 1024) return `${b} B`;
@@ -140,11 +140,17 @@ export default function ShareViewPage() {
           </div>
 
           <h2 style={{ color: '#fff', margin: '0 0 8px', fontSize: 20, fontWeight: 600 }}>
-            <DecryptedText
+            <BlurText
               text={wrongPassword ? '密码不正确' : '此链接需要密码'}
-              speed={40}
-              sequential
-              animateOn="view"
+              delay={80}
+              animateBy="letters"
+              direction="top"
+              animationFrom={{ filter: 'blur(10px)', opacity: 0, y: -15 }}
+              animationTo={[
+                { filter: 'blur(4px)', opacity: 0.6, y: 3 },
+                { filter: 'blur(0px)', opacity: 1, y: 0 },
+              ]}
+              stepDuration={0.35}
             />
           </h2>
           <p style={{
@@ -153,11 +159,17 @@ export default function ShareViewPage() {
             fontSize: 14,
             transition: 'color 0.3s',
           }}>
-            <DecryptedText
+            <BlurText
               text={wrongPassword ? '请检查密码后重新输入' : '请输入访问密码以查看内容'}
-              speed={30}
-              sequential
-              animateOn="view"
+              delay={60}
+              animateBy="letters"
+              direction="top"
+              animationFrom={{ filter: 'blur(8px)', opacity: 0, y: -10 }}
+              animationTo={[
+                { filter: 'blur(3px)', opacity: 0.5, y: 2 },
+                { filter: 'blur(0px)', opacity: 1, y: 0 },
+              ]}
+              stepDuration={0.3}
             />
           </p>
 
