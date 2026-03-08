@@ -1,15 +1,10 @@
-import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Palette,
   Bell,
   ScrollText,
-  ListOrdered,
   LogOut,
   ChevronRight,
-  Shield,
-  Database,
-  Image,
   type LucideIcon,
 } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
@@ -19,24 +14,33 @@ import { resolveAvatarUrl } from '@/lib/avatar';
 interface MenuItem {
   key: string;
   label: string;
+  desc?: string;
   icon: LucideIcon;
   color: string;
   path?: string;
   action?: () => void;
 }
 
+/* ── 固定菜单：只保留用户真正需要的功能 ── */
+const MENU_ITEMS: MenuItem[] = [
+  { key: 'theme',  label: '主题设置', desc: '皮肤、配色、玻璃效果',  icon: Palette,    color: '#818CF8', path: '/settings?tab=skin' },
+  { key: 'notify', label: '系统通知', desc: '查看与处理系统消息',    icon: Bell,       color: '#FB923C', path: '/notifications' },
+  { key: 'logs',   label: '请求日志', desc: '查看 LLM 调用记录',     icon: ScrollText, color: '#34D399', path: '/logs' },
+];
+
 /**
  * 移动端「我的」个人中心页。
+ *
+ * 精简原则：只放用户级功能（主题/通知/日志），
+ * 管理功能（权限/资源/数据/导航顺序）保留在左上角抽屉导航中。
  */
 export default function MobileProfilePage() {
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const isRoot = useAuthStore((s) => s.isRoot);
-  const perms = useAuthStore((s) => s.permissions);
 
   const avatarUrl = user ? resolveAvatarUrl(user) : null;
-  const hasPerm = (p: string) => isRoot || perms.includes(p) || perms.includes('super');
 
   const roleLabel = (() => {
     if (isRoot) return '超级管理员';
@@ -48,29 +52,6 @@ export default function MobileProfilePage() {
       default: return user?.role ?? '用户';
     }
   })();
-
-  /* ── 常规菜单 ── */
-  const menuItems: MenuItem[] = useMemo(() => {
-    const items: MenuItem[] = [
-      { key: 'theme',     label: '主题设置',   icon: Palette,     color: '#818CF8', path: '/settings?tab=skin' },
-      { key: 'notify',    label: '系统通知',   icon: Bell,        color: '#FB923C', path: '/notifications' },
-      { key: 'logs',      label: '请求日志',   icon: ScrollText,  color: '#34D399', path: '/logs' },
-      { key: 'nav-order', label: '导航顺序',   icon: ListOrdered, color: '#60A5FA', path: '/settings?tab=nav-order' },
-    ];
-
-    if (hasPerm('assets.read')) {
-      items.push({ key: 'assets', label: '资源管理', icon: Image, color: '#A78BFA', path: '/settings?tab=assets' });
-    }
-    if (hasPerm('authz.manage')) {
-      items.push({ key: 'authz', label: '权限管理', icon: Shield, color: '#F472B6', path: '/settings?tab=authz' });
-    }
-    if (hasPerm('data.read')) {
-      items.push({ key: 'data', label: '数据管理', icon: Database, color: '#FBBF24', path: '/settings?tab=data' });
-    }
-
-    return items;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isRoot, perms]);
 
   const handleLogout = () => {
     logout();
@@ -112,7 +93,7 @@ export default function MobileProfilePage() {
         <div
           className="surface-inset rounded-2xl overflow-hidden mb-6"
         >
-          {menuItems.map((item, i) => {
+          {MENU_ITEMS.map((item, i) => {
             const MenuIcon = item.icon;
             return (
               <button
@@ -120,7 +101,7 @@ export default function MobileProfilePage() {
                 onClick={() => item.path ? navigate(item.path) : item.action?.()}
                 className="w-full flex items-center gap-3 px-4 py-3.5 text-left transition-all active:bg-white/[0.03]"
                 style={{
-                  borderBottom: i < menuItems.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none',
+                  borderBottom: i < MENU_ITEMS.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none',
                 }}
               >
                 <div
@@ -129,9 +110,16 @@ export default function MobileProfilePage() {
                 >
                   <MenuIcon size={16} style={{ color: item.color }} />
                 </div>
-                <span className="flex-1 text-sm" style={{ color: 'var(--text-primary)' }}>
-                  {item.label}
-                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm" style={{ color: 'var(--text-primary)' }}>
+                    {item.label}
+                  </div>
+                  {item.desc && (
+                    <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                      {item.desc}
+                    </div>
+                  )}
+                </div>
                 <ChevronRight size={16} style={{ color: 'var(--text-muted)' }} />
               </button>
             );
