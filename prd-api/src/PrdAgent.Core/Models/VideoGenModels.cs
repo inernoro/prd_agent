@@ -141,6 +141,14 @@ public class VideoGenScene
 
     /// <summary>TTS 音频生成错误信息</summary>
     public string? AudioErrorMessage { get; set; }
+
+    // ─── LLM 场景代码生成（基于 Remotion 组件库为分镜生成定制化视觉代码） ───
+
+    /// <summary>LLM 生成的 Remotion 场景代码（完整 .tsx 组件代码）</summary>
+    public string? SceneCode { get; set; }
+
+    /// <summary>场景代码生成状态：idle / running / done / error</summary>
+    public string CodeStatus { get; set; } = "idle";
 }
 
 /// <summary>

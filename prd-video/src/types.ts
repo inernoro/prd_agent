@@ -20,6 +20,8 @@ export interface SceneData {
   backgroundImageUrl?: string;
   /** TTS 生成的音频文件 URL（可选，有则作为场景旁白） */
   audioUrl?: string;
+  /** 是否有 LLM 生成的自定义场景代码（由 Worker 写入 generated/ 目录） */
+  hasGeneratedCode?: boolean;
 }
 
 export interface VideoData {

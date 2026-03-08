@@ -9,6 +9,7 @@ import { slide } from "@remotion/transitions/slide";
 import { fade } from "@remotion/transitions/fade";
 import { wipe } from "@remotion/transitions/wipe";
 import type { VideoData, SceneData } from "./types";
+import { GENERATED_SCENES } from "./scenes/generated";
 
 import { IntroScene } from "./scenes/IntroScene";
 import { ConceptScene } from "./scenes/ConceptScene";
@@ -19,7 +20,7 @@ import { DiagramScene } from "./scenes/DiagramScene";
 import { SummaryScene } from "./scenes/SummaryScene";
 import { OutroScene } from "./scenes/OutroScene";
 
-/** 场景类型 → React 组件映射 */
+/** 场景类型 → React 组件映射（硬编码兜底） */
 const SCENE_MAP: Record<
   string,
   React.FC<{ scene: SceneData; videoTitle: string }>
@@ -34,6 +35,19 @@ const SCENE_MAP: Record<
   outro: OutroScene,
 };
 
+/** 获取场景组件：优先 LLM 生成，兜底硬编码 */
+function getSceneComponent(
+  scene: SceneData
+): React.FC<{ scene: SceneData; videoTitle: string }> {
+  if (scene.hasGeneratedCode) {
+    const generated = GENERATED_SCENES[scene.index];
+    if (generated) {
+      return generated as React.FC<{ scene: SceneData; videoTitle: string }>;
+    }
+  }
+  return SCENE_MAP[scene.sceneType] ?? SCENE_MAP.concept;
+}
+
 /** 主视频序列 - TransitionSeries 丝滑转场 */
 export const TutorialVideo: React.FC<VideoData> = ({
   title,
@@ -42,8 +56,7 @@ export const TutorialVideo: React.FC<VideoData> = ({
   return (
     <TransitionSeries>
       {scenes.map((scene, i) => {
-        const SceneComponent =
-          SCENE_MAP[scene.sceneType] ?? SCENE_MAP.concept;
+        const SceneComponent = getSceneComponent(scene);
 
         const elements: React.ReactNode[] = [];
 
