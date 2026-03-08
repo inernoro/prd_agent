@@ -161,7 +161,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | `design.*` | **How** | 怎么做 | 技术设计、技术分析 |
 | `plan.*` | **When** | 什么时候做 | 实施计划 |
 | `rule.*` | **Why not** | 为什么不能那样做 | 规范约定、审计报告 |
-| `ref.*` | **How-to** | 怎么操作 | 参考指南、备忘录 |
+| `guide.*` | **How-to** | 怎么操作 | 操作指南、备忘录 |
 | `report.*` | **What happened** | 做了什么 | 周报 |
 
 详细模板和写作规范见 `doc-writer` 技能（`/doc`）和 `doc/rule.doc-templates.md`。

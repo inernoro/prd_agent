@@ -18,7 +18,7 @@ doc/{type}.{topic}.md
 | `design.` | 技术设计 | 技术设计、技术分析 | `design.server-authority.md`, `design.remotion-gap.md` |
 | `plan.` | 实施计划 | 开发计划、迁移计划 | `plan.report-agent-impl.md` |
 | `rule.` | 规范约定 | 规范约定、审计报告 | `rule.app-identity.md`, `rule.audit-prd-desktop-codebase.md` |
-| `ref.` | 参考资料 | 指南、教程、备忘录 | `ref.quickstart.md`, `ref.multi-image-compose-test.md` |
+| `guide.` | 操作指南 | 指南、教程、备忘录 | `guide.quickstart.md`, `guide.multi-image-compose-test.md` |
 | `report.` | 周报 | 周报 | `report.2026-W09.md` |
 
 ---
