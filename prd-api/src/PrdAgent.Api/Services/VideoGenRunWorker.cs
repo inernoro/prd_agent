@@ -1856,12 +1856,13 @@ document.addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key==='ArrowD
             7. **禁止使用 CSS 动画**（@keyframes, animation, transition）
             8. **禁止使用 setTimeout / setInterval**
             9. **禁止硬编码时长**（使用 durationInFrames 参数）
+            10. **禁止直接调用 spring()**：Remotion 的 `spring()` 需要 `frame` 参数，极易遗漏导致渲染崩溃。请一律使用项目封装的 `springIn(frame, fps, delay?, config?)` 替代，它已正确传递 frame。如果确实需要 `spring()`，必须写成 `spring({ frame, fps, config: {...} })`，其中 `frame` 来自 `useCurrentFrame()`
 
             ## 可用 import
 
             ```typescript
-            // Remotion 核心
-            import { useCurrentFrame, useVideoConfig, interpolate, spring, Easing, AbsoluteFill, Sequence, Audio, Img } from "remotion";
+            // Remotion 核心（注意：不要直接用 spring()，用 springIn() 代替）
+            import { useCurrentFrame, useVideoConfig, interpolate, Easing, AbsoluteFill, Sequence, Audio, Img } from "remotion";
 
             // 项目动效工具库（注意：生成的文件位于 src/scenes/generated/，所以需要 ../../ 回到 src/）
             import {
