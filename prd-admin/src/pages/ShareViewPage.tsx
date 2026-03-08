@@ -145,6 +145,7 @@ export default function ShareViewPage() {
               delay={80}
               animateBy="letters"
               direction="top"
+              className="justify-center"
               animationFrom={{ filter: 'blur(10px)', opacity: 0, y: -15 }}
               animationTo={[
                 { filter: 'blur(4px)', opacity: 0.6, y: 3 },
@@ -164,6 +165,7 @@ export default function ShareViewPage() {
               delay={60}
               animateBy="letters"
               direction="top"
+              className="justify-center"
               animationFrom={{ filter: 'blur(8px)', opacity: 0, y: -10 }}
               animationTo={[
                 { filter: 'blur(3px)', opacity: 0.5, y: 2 },
