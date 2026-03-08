@@ -130,14 +130,14 @@ public sealed class WorkflowRunWorker : BackgroundService
         }
 
         // 5. 确定初始就绪节点（入度为 0 或前驱全部已完成）
-        var ready = new Queue<string>();
+        var ready = new List<string>();
         foreach (var (nodeId, degree) in inDegree)
         {
             if (degree == 0 && !artifactStore.ContainsKey(nodeId))
-                ready.Enqueue(nodeId);
+                ready.Add(nodeId);
         }
 
-        // 6. BFS 逐层推进
+        // 6. BFS 按层并行推进（同层入度=0 的节点用 Task.WhenAll 并发执行）
         var failedAny = false;
         string? errorMsg = null;
 
@@ -153,136 +153,239 @@ public sealed class WorkflowRunWorker : BackgroundService
                 return;
             }
 
-            var nodeId = ready.Dequeue();
-            var nodeExec = execution.NodeExecutions.FirstOrDefault(n => n.NodeId == nodeId);
-            if (nodeExec == null) continue;
-            if (nodeExec.Status == NodeExecutionStatus.Completed) continue; // resume 场景
+            // 取出本批所有就绪节点，清空 ready 供下一轮收集
+            var batch = ready.ToList();
+            ready.Clear();
 
-            var nodeDef = nodeMap.GetValueOrDefault(nodeId);
-            if (nodeDef == null) continue;
-
-            // 标记节点为 running + 推送 SSE 事件
-            nodeExec.Status = NodeExecutionStatus.Running;
-            nodeExec.StartedAt = DateTime.UtcNow;
-            nodeExec.AttemptCount++;
-            await UpdateNodeExecutionAsync(db, executionId, nodeExec);
-
-            await EmitEventAsync(executionId, "node-started", new
+            if (batch.Count > 1)
             {
-                nodeId,
-                nodeName = nodeExec.NodeName,
-                nodeType = nodeExec.NodeType,
-                attemptCount = nodeExec.AttemptCount,
-                inputArtifactCount = CollectInputArtifacts(nodeId, execution.EdgeSnapshot, artifactStore).Count,
-            });
+                _logger.LogInformation("Parallel batch: executing {Count} nodes concurrently: [{NodeIds}]",
+                    batch.Count, string.Join(", ", batch));
+                await EmitEventAsync(executionId, "parallel-batch-started", new
+                {
+                    executionId,
+                    nodeIds = batch,
+                    batchSize = batch.Count,
+                });
+            }
 
-            // 执行舱逻辑
-            var nodeSw = Stopwatch.StartNew();
-            try
+            // 每个节点独立执行，结果收集到线程安全容器
+            var batchResults = new System.Collections.Concurrent.ConcurrentDictionary<string, (NodeExecution nodeExec, WorkflowNode nodeDef, bool needsRetry)>();
+
+            var tasks = batch.Select(async nodeId =>
             {
+                var nodeExec = execution.NodeExecutions.FirstOrDefault(n => n.NodeId == nodeId);
+                if (nodeExec == null) return;
+                if (nodeExec.Status == NodeExecutionStatus.Completed) return; // resume 场景
+
+                var nodeDef = nodeMap.GetValueOrDefault(nodeId);
+                if (nodeDef == null) return;
+
+                // 标记节点为 running + 推送 SSE 事件
+                nodeExec.Status = NodeExecutionStatus.Running;
+                nodeExec.StartedAt = DateTime.UtcNow;
+                nodeExec.AttemptCount++;
+                await UpdateNodeExecutionAsync(db, executionId, nodeExec);
+
+                // 在并行执行之前，每个节点独立收集自己的输入产物（从共享 artifactStore 读取，此时不会有并发写入）
                 var inputArtifacts = CollectInputArtifacts(nodeId, execution.EdgeSnapshot, artifactStore);
 
-                // 持久化实际收到的上游输入（用于调试和回放）
-                nodeExec.InputArtifacts = inputArtifacts;
-
-                var result = await ExecuteCapsuleAsync(scope.ServiceProvider, nodeDef, execution.Variables, inputArtifacts, executionId);
-
-                nodeSw.Stop();
-                nodeExec.Status = NodeExecutionStatus.Completed;
-                nodeExec.CompletedAt = DateTime.UtcNow;
-                nodeExec.DurationMs = nodeSw.ElapsedMilliseconds;
-                nodeExec.OutputArtifacts = result.Artifacts;
-                nodeExec.Logs = CapsuleExecutor.TruncateLogs(result.Logs);
-
-                // 完整日志上传 COS（超过 10KB 时）
-                if (System.Text.Encoding.UTF8.GetByteCount(result.Logs) > 10240)
-                {
-                    nodeExec.LogsCosUrl = await UploadFullLogsToCosAsync(
-                        scope.ServiceProvider, executionId, nodeId, result.Logs);
-                }
-
-                // COS 持久化：上传产物到云存储
-                await UploadArtifactsToCosAsync(scope.ServiceProvider, executionId, nodeId, result.Artifacts);
-
-                artifactStore[nodeId] = result.Artifacts;
-
-                // 日志记录每个产物的数据流信息，方便排查链路问题
-                foreach (var art in result.Artifacts)
-                {
-                    _logger.LogInformation(
-                        "Artifact stored: node={NodeId} name={Name} slotId={SlotId} inlineLen={InlineLen} sizeBytes={Size} cosUrl={CosUrl}",
-                        nodeId, art.Name, art.SlotId,
-                        art.InlineContent?.Length ?? 0, art.SizeBytes,
-                        art.CosUrl ?? "(none)");
-                }
-
-                await EmitEventAsync(executionId, "node-completed", new
+                await EmitEventAsync(executionId, "node-started", new
                 {
                     nodeId,
                     nodeName = nodeExec.NodeName,
                     nodeType = nodeExec.NodeType,
-                    durationMs = nodeExec.DurationMs,
-                    artifactCount = result.Artifacts.Count,
-                    logs = CapsuleExecutor.TruncateLogs(result.Logs, 4096),
-                    artifacts = result.Artifacts.Select(a => new
-                    {
-                        a.Name,
-                        a.MimeType,
-                        a.SizeBytes,
-                        a.SlotId,
-                        preview = a.InlineContent?.Length > 300 ? a.InlineContent[..300] + "..." : a.InlineContent,
-                    }),
+                    attemptCount = nodeExec.AttemptCount,
+                    inputArtifactCount = inputArtifacts.Count,
                 });
-            }
-            catch (Exception ex)
-            {
-                nodeSw.Stop();
-                _logger.LogWarning(ex, "Node execution failed: {NodeId} type={NodeType}", nodeId, nodeDef.NodeType);
 
-                // 重试逻辑
-                var maxAttempts = nodeDef.Retry?.MaxAttempts ?? 1;
-                if (nodeExec.AttemptCount < maxAttempts)
+                // 执行舱逻辑
+                var nodeSw = Stopwatch.StartNew();
+                try
                 {
-                    var delay = nodeDef.Retry?.DelaySeconds ?? 5;
-                    _logger.LogInformation("Retrying node {NodeId} (attempt {Attempt}/{Max}) in {Delay}s",
-                        nodeId, nodeExec.AttemptCount + 1, maxAttempts, delay);
-                    await Task.Delay(TimeSpan.FromSeconds(delay), CancellationToken.None);
-                    ready.Enqueue(nodeId); // 重新入队
-                    nodeExec.Status = NodeExecutionStatus.Pending;
-                    await UpdateNodeExecutionAsync(db, executionId, nodeExec);
+                    // 持久化实际收到的上游输入（用于调试和回放）
+                    nodeExec.InputArtifacts = inputArtifacts;
+
+                    var result = await ExecuteCapsuleAsync(scope.ServiceProvider, nodeDef, execution.Variables, inputArtifacts, executionId);
+
+                    nodeSw.Stop();
+                    nodeExec.Status = NodeExecutionStatus.Completed;
+                    nodeExec.CompletedAt = DateTime.UtcNow;
+                    nodeExec.DurationMs = nodeSw.ElapsedMilliseconds;
+                    nodeExec.OutputArtifacts = result.Artifacts;
+                    nodeExec.Logs = CapsuleExecutor.TruncateLogs(result.Logs);
+
+                    // 完整日志上传 COS（超过 10KB 时）
+                    if (System.Text.Encoding.UTF8.GetByteCount(result.Logs) > 10240)
+                    {
+                        nodeExec.LogsCosUrl = await UploadFullLogsToCosAsync(
+                            scope.ServiceProvider, executionId, nodeId, result.Logs);
+                    }
+
+                    // COS 持久化：上传产物到云存储
+                    await UploadArtifactsToCosAsync(scope.ServiceProvider, executionId, nodeId, result.Artifacts);
+
+                    // 日志记录每个产物的数据流信息，方便排查链路问题
+                    foreach (var art in result.Artifacts)
+                    {
+                        _logger.LogInformation(
+                            "Artifact stored: node={NodeId} name={Name} slotId={SlotId} inlineLen={InlineLen} sizeBytes={Size} cosUrl={CosUrl}",
+                            nodeId, art.Name, art.SlotId,
+                            art.InlineContent?.Length ?? 0, art.SizeBytes,
+                            art.CosUrl ?? "(none)");
+                    }
+
+                    await EmitEventAsync(executionId, "node-completed", new
+                    {
+                        nodeId,
+                        nodeName = nodeExec.NodeName,
+                        nodeType = nodeExec.NodeType,
+                        durationMs = nodeExec.DurationMs,
+                        artifactCount = result.Artifacts.Count,
+                        logs = CapsuleExecutor.TruncateLogs(result.Logs, 4096),
+                        artifacts = result.Artifacts.Select(a => new
+                        {
+                            a.Name,
+                            a.MimeType,
+                            a.SizeBytes,
+                            a.SlotId,
+                            preview = a.InlineContent?.Length > 300 ? a.InlineContent[..300] + "..." : a.InlineContent,
+                        }),
+                    });
+
+                    batchResults[nodeId] = (nodeExec, nodeDef, false);
+                }
+                catch (Exception ex)
+                {
+                    nodeSw.Stop();
+                    _logger.LogWarning(ex, "Node execution failed: {NodeId} type={NodeType}", nodeId, nodeDef.NodeType);
+
+                    // 重试逻辑
+                    var maxAttempts = nodeDef.Retry?.MaxAttempts ?? 1;
+                    if (nodeExec.AttemptCount < maxAttempts)
+                    {
+                        var delay = nodeDef.Retry?.DelaySeconds ?? 5;
+                        _logger.LogInformation("Retrying node {NodeId} (attempt {Attempt}/{Max}) in {Delay}s",
+                            nodeId, nodeExec.AttemptCount + 1, maxAttempts, delay);
+                        await Task.Delay(TimeSpan.FromSeconds(delay), CancellationToken.None);
+                        nodeExec.Status = NodeExecutionStatus.Pending;
+                        await UpdateNodeExecutionAsync(db, executionId, nodeExec);
+                        batchResults[nodeId] = (nodeExec, nodeDef, true); // needsRetry
+                        return;
+                    }
+
+                    nodeExec.Status = NodeExecutionStatus.Failed;
+                    nodeExec.CompletedAt = DateTime.UtcNow;
+                    nodeExec.DurationMs = nodeSw.ElapsedMilliseconds;
+                    nodeExec.ErrorMessage = ex.Message;
+                    nodeExec.Logs = CapsuleExecutor.TruncateLogs($"[ERROR] {ex.Message}\n{ex.StackTrace}");
+
+                    await EmitEventAsync(executionId, "node-failed", new
+                    {
+                        nodeId,
+                        nodeName = nodeExec.NodeName,
+                        nodeType = nodeExec.NodeType,
+                        errorMessage = ex.Message,
+                        durationMs = nodeExec.DurationMs,
+                        logs = CapsuleExecutor.TruncateLogs($"[ERROR] {ex.Message}\n{ex.StackTrace}", 4096),
+                    });
+
+                    batchResults[nodeId] = (nodeExec, nodeDef, false);
+                }
+            });
+
+            await Task.WhenAll(tasks);
+
+            // ── 批次完成后：顺序处理结果、更新 DAG 状态 ──
+            // 此段在单线程中执行，无竞态问题
+            var pauseRequested = false;
+            foreach (var nodeId in batch)
+            {
+                if (!batchResults.TryGetValue(nodeId, out var r)) continue;
+                var (nodeExec, nodeDef, needsRetry) = r;
+
+                if (needsRetry)
+                {
+                    ready.Add(nodeId); // 重新加入下一轮
                     continue;
                 }
 
-                nodeExec.Status = NodeExecutionStatus.Failed;
-                nodeExec.CompletedAt = DateTime.UtcNow;
-                nodeExec.DurationMs = nodeSw.ElapsedMilliseconds;
-                nodeExec.ErrorMessage = ex.Message;
-                nodeExec.Logs = CapsuleExecutor.TruncateLogs($"[ERROR] {ex.Message}\n{ex.StackTrace}");
-                failedAny = true;
-                errorMsg = $"节点 '{nodeExec.NodeName}' 执行失败: {ex.Message}";
+                // 写入 artifactStore（单线程，安全）
+                if (nodeExec.Status == NodeExecutionStatus.Completed)
+                    artifactStore[nodeId] = nodeExec.OutputArtifacts;
 
-                await EmitEventAsync(executionId, "node-failed", new
-                {
-                    nodeId,
-                    nodeName = nodeExec.NodeName,
-                    nodeType = nodeExec.NodeType,
-                    errorMessage = ex.Message,
-                    durationMs = nodeExec.DurationMs,
-                    logs = CapsuleExecutor.TruncateLogs($"[ERROR] {ex.Message}\n{ex.StackTrace}", 4096),
-                });
-            }
-
-            await UpdateNodeExecutionAsync(db, executionId, nodeExec);
-
-            // 断点：节点完成后暂停工作流
-            if (nodeExec.Status == NodeExecutionStatus.Completed && nodeDef.Breakpoint)
-            {
-                _logger.LogInformation("Breakpoint hit at node {NodeId} ({NodeName}), pausing execution {ExecutionId}",
-                    nodeId, nodeExec.NodeName, executionId);
-
-                nodeExec.Status = NodeExecutionStatus.Paused;
                 await UpdateNodeExecutionAsync(db, executionId, nodeExec);
 
+                // 断点：节点完成后暂停工作流
+                if (nodeExec.Status == NodeExecutionStatus.Completed && nodeDef.Breakpoint)
+                {
+                    _logger.LogInformation("Breakpoint hit at node {NodeId} ({NodeName}), pausing execution {ExecutionId}",
+                        nodeId, nodeExec.NodeName, executionId);
+
+                    nodeExec.Status = NodeExecutionStatus.Paused;
+                    await UpdateNodeExecutionAsync(db, executionId, nodeExec);
+                    pauseRequested = true;
+                    continue; // 继续处理其他批次结果的 DB 更新，但不再激活下游
+                }
+
+                if (pauseRequested) continue; // 有断点，不再激活下游
+
+                // 如果节点成功，检查下游节点是否就绪
+                if (nodeExec.Status == NodeExecutionStatus.Completed)
+                {
+                    // 条件舱特殊处理：只激活匹配分支，跳过另一个分支
+                    if (nodeDef.NodeType == CapsuleTypes.Condition)
+                    {
+                        var activeSlotIds = nodeExec.OutputArtifacts.Select(a => a.SlotId).ToHashSet();
+                        var outEdges = execution.EdgeSnapshot.Where(e => e.SourceNodeId == nodeId).ToList();
+
+                        foreach (var edge in outEdges)
+                        {
+                            var childId = edge.TargetNodeId;
+                            if (activeSlotIds.Contains(edge.SourceSlotId))
+                            {
+                                if (inDegree.ContainsKey(childId))
+                                {
+                                    inDegree[childId]--;
+                                    if (inDegree[childId] <= 0 && !ready.Contains(childId))
+                                        ready.Add(childId);
+                                }
+                            }
+                            else
+                            {
+                                SkipDownstream(childId, downstream, execution.NodeExecutions);
+                            }
+                        }
+
+                        await BulkUpdateNodeExecutionsAsync(db, executionId, execution.NodeExecutions);
+                    }
+                    else if (downstream.TryGetValue(nodeId, out var children))
+                    {
+                        foreach (var childId in children)
+                        {
+                            if (inDegree.ContainsKey(childId))
+                            {
+                                inDegree[childId]--;
+                                if (inDegree[childId] <= 0 && !ready.Contains(childId))
+                                    ready.Add(childId);
+                            }
+                        }
+                    }
+                }
+
+                // 如果节点失败，将所有下游标记为 skipped
+                if (nodeExec.Status == NodeExecutionStatus.Failed)
+                {
+                    failedAny = true;
+                    errorMsg = $"节点 '{nodeExec.NodeName}' 执行失败: {nodeExec.ErrorMessage}";
+                    SkipDownstream(nodeId, downstream, execution.NodeExecutions);
+                    await BulkUpdateNodeExecutionsAsync(db, executionId, execution.NodeExecutions);
+                }
+            }
+
+            // 断点暂停
+            if (pauseRequested)
+            {
                 sw.Stop();
                 await db.WorkflowExecutions.UpdateOneAsync(
                     e => e.Id == executionId,
@@ -291,69 +394,21 @@ public sealed class WorkflowRunWorker : BackgroundService
                         .Set(e => e.DurationMs, sw.ElapsedMilliseconds),
                     cancellationToken: CancellationToken.None);
 
+                var pausedNode = batch
+                    .Where(nid => batchResults.TryGetValue(nid, out var r) && r.nodeExec.Status == NodeExecutionStatus.Paused)
+                    .FirstOrDefault();
+                var pausedExec = pausedNode != null ? batchResults[pausedNode].nodeExec : null;
+
                 await EmitEventAsync(executionId, "execution-paused", new
                 {
                     executionId,
-                    pausedAtNodeId = nodeId,
-                    pausedAtNodeName = nodeExec.NodeName,
+                    pausedAtNodeId = pausedNode,
+                    pausedAtNodeName = pausedExec?.NodeName,
                     durationMs = sw.ElapsedMilliseconds,
                     completedNodes = execution.NodeExecutions.Count(n => n.Status is NodeExecutionStatus.Completed or NodeExecutionStatus.Paused),
                 });
 
-                return; // 停止执行，等用户继续
-            }
-
-            // 如果节点成功，检查下游节点是否就绪
-            if (nodeExec.Status == NodeExecutionStatus.Completed)
-            {
-                // 条件舱特殊处理：只激活匹配分支，跳过另一个分支
-                if (nodeDef.NodeType == CapsuleTypes.Condition)
-                {
-                    var activeSlotIds = nodeExec.OutputArtifacts.Select(a => a.SlotId).ToHashSet();
-                    var outEdges = execution.EdgeSnapshot.Where(e => e.SourceNodeId == nodeId).ToList();
-
-                    foreach (var edge in outEdges)
-                    {
-                        var childId = edge.TargetNodeId;
-                        if (activeSlotIds.Contains(edge.SourceSlotId))
-                        {
-                            // 激活的分支：减少入度
-                            if (inDegree.ContainsKey(childId))
-                            {
-                                inDegree[childId]--;
-                                if (inDegree[childId] <= 0)
-                                    ready.Enqueue(childId);
-                            }
-                        }
-                        else
-                        {
-                            // 未激活的分支：跳过下游
-                            SkipDownstream(childId, downstream, execution.NodeExecutions);
-                        }
-                    }
-
-                    await BulkUpdateNodeExecutionsAsync(db, executionId, execution.NodeExecutions);
-                }
-                else if (downstream.TryGetValue(nodeId, out var children))
-                {
-                    // 普通节点：激活所有下游
-                    foreach (var childId in children)
-                    {
-                        if (inDegree.ContainsKey(childId))
-                        {
-                            inDegree[childId]--;
-                            if (inDegree[childId] <= 0)
-                                ready.Enqueue(childId);
-                        }
-                    }
-                }
-            }
-
-            // 如果节点失败，将所有下游标记为 skipped
-            if (nodeExec.Status == NodeExecutionStatus.Failed)
-            {
-                SkipDownstream(nodeId, downstream, execution.NodeExecutions);
-                await BulkUpdateNodeExecutionsAsync(db, executionId, execution.NodeExecutions);
+                return;
             }
         }
 
