@@ -20,7 +20,7 @@ import './workflow-canvas.css';
 
 import {
   ArrowLeft, Save, Loader2, GripVertical,
-  Plus, Trash2,
+  Plus, Trash2, X, Settings2,
 } from 'lucide-react';
 import { CapsuleNode, type CapsuleNodeData } from './CapsuleNode';
 import { FlowEdge } from './FlowEdge';
@@ -31,6 +31,7 @@ import { listCapsuleTypes, updateWorkflow } from '@/services';
 import type {
   Workflow, WorkflowNode, WorkflowEdge as WfEdge,
   CapsuleTypeMeta, CapsuleCategoryInfo, WorkflowExecution,
+  CapsuleConfigField,
 } from '@/services/contracts/workflowAgent';
 
 // ═══════════════════════════════════════════════════════════════
@@ -107,12 +108,15 @@ function workflowToFlow(
 
 // ─── React Flow → 后端格式 ───
 
-function flowToWorkflowNodes(nodes: Node<CapsuleNodeData>[]): WorkflowNode[] {
+function flowToWorkflowNodes(
+  nodes: Node<CapsuleNodeData>[],
+  configs?: Record<string, Record<string, unknown>>,
+): WorkflowNode[] {
   return nodes.map((n) => ({
     nodeId: n.id,
     name: n.data.label,
     nodeType: n.data.capsuleType,
-    config: {},
+    config: configs?.[n.id] ?? {},
     inputSlots: n.data.inputSlots,
     outputSlots: n.data.outputSlots,
     position: { x: n.position.x, y: n.position.y },
@@ -181,6 +185,17 @@ function CanvasInner({
   const [categories, setCategories] = useState<CapsuleCategoryInfo[]>([]);
   const [paletteOpen, setPaletteOpen] = useState(true);
 
+  // 节点编辑面板
+  const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
+  const [nodeConfigs, setNodeConfigs] = useState<Record<string, Record<string, unknown>>>(() => {
+    // 从 workflow 初始化节点配置
+    const configs: Record<string, Record<string, unknown>> = {};
+    for (const n of workflow.nodes) {
+      configs[n.nodeId] = n.config ?? {};
+    }
+    return configs;
+  });
+
   useEffect(() => {
     listCapsuleTypes().then((res) => {
       if (res.success && res.data) {
@@ -236,6 +251,30 @@ function CanvasInner({
     );
   }, [handleToggleBreakpoint, setNodes]);
 
+  // 点击节点 → 打开编辑面板
+  const onNodeClick = useCallback((_: React.MouseEvent, node: Node<CapsuleNodeData>) => {
+    setEditingNodeId(node.id);
+  }, []);
+
+  // 获取编辑中的节点
+  const editingNode = editingNodeId ? nodes.find((n) => n.id === editingNodeId) : null;
+  const editingMeta = editingNode ? capsuleTypes.find((t) => t.typeKey === editingNode.data.capsuleType) : null;
+
+  // 更新节点名称
+  const handleNodeNameChange = useCallback((nodeId: string, name: string) => {
+    setNodes((prev) => prev.map((n) => n.id === nodeId ? { ...n, data: { ...n.data, label: name } } : n));
+    setDirty(true);
+  }, [setNodes]);
+
+  // 更新节点配置字段
+  const handleConfigChange = useCallback((nodeId: string, key: string, value: unknown) => {
+    setNodeConfigs((prev) => ({
+      ...prev,
+      [nodeId]: { ...(prev[nodeId] ?? {}), [key]: value },
+    }));
+    setDirty(true);
+  }, []);
+
   // 拖拽变更
   const onNodesDragStop = useCallback(() => setDirty(true), []);
 
@@ -248,7 +287,7 @@ function CanvasInner({
     try {
       const res = await updateWorkflow({
         id: workflow.id,
-        nodes: flowToWorkflowNodes(nodes),
+        nodes: flowToWorkflowNodes(nodes, nodeConfigs),
         edges: flowToWorkflowEdges(edges),
       });
       if (res.success && res.data) {
@@ -409,6 +448,7 @@ function CanvasInner({
             onEdgesDelete={onDelete}
             onDragOver={onDragOver}
             onDrop={onDrop}
+            onNodeClick={onNodeClick}
             onNodeContextMenu={(e, node) => {
               e.preventDefault();
               handleToggleBreakpoint(node.id);
@@ -463,7 +503,275 @@ function CanvasInner({
             </Panel>
           </ReactFlow>
         </div>
+
+        {/* 右侧节点编辑面板 */}
+        {editingNode && editingMeta && (
+          <NodeEditPanel
+            node={editingNode}
+            meta={editingMeta}
+            config={nodeConfigs[editingNode.id] ?? {}}
+            onNameChange={(name) => handleNodeNameChange(editingNode.id, name)}
+            onConfigChange={(key, value) => handleConfigChange(editingNode.id, key, value)}
+            onClose={() => setEditingNodeId(null)}
+          />
+        )}
       </div>
+    </div>
+  );
+}
+
+// ─── 节点编辑面板 ───
+
+function NodeEditPanel({
+  node,
+  meta,
+  config,
+  onNameChange,
+  onConfigChange,
+  onClose,
+}: {
+  node: Node<CapsuleNodeData>;
+  meta: CapsuleTypeMeta;
+  config: Record<string, unknown>;
+  onNameChange: (name: string) => void;
+  onConfigChange: (key: string, value: unknown) => void;
+  onClose: () => void;
+}) {
+  const Icon = getIconForCapsule(node.data.icon);
+  const emoji = getEmojiForCapsule(node.data.capsuleType);
+
+  return (
+    <div
+      className="w-72 flex-shrink-0 overflow-y-auto border-l node-edit-panel"
+      style={{
+        background: 'rgba(0,0,0,0.25)',
+        borderColor: 'rgba(255,255,255,0.08)',
+      }}
+    >
+      {/* 面板头部 */}
+      <div
+        className="flex items-center justify-between px-3 py-2.5 border-b"
+        style={{ borderColor: 'rgba(255,255,255,0.08)' }}
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <Settings2 className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--text-muted, #888)' }} />
+          <span className="text-[11px] font-semibold truncate" style={{ color: 'var(--text-primary, #e8e6e3)' }}>
+            节点配置
+          </span>
+        </div>
+        <button
+          onClick={onClose}
+          className="p-1 rounded-md transition-colors"
+          style={{ color: 'var(--text-muted, #888)' }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      <div className="p-3 space-y-4">
+        {/* 节点标识 */}
+        <div className="flex items-center gap-2.5">
+          <div
+            className="w-8 h-8 rounded-[10px] flex items-center justify-center flex-shrink-0"
+            style={{
+              background: `hsla(${node.data.accentHue}, 60%, 55%, 0.15)`,
+              color: `hsla(${node.data.accentHue}, 60%, 65%, 0.95)`,
+            }}
+          >
+            <Icon className="w-4 h-4" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-[10px]" style={{ color: 'var(--text-muted, #888)' }}>
+              {emoji} {meta.name}
+            </div>
+          </div>
+        </div>
+
+        {/* 节点名称 */}
+        <div>
+          <label className="block text-[10px] font-medium mb-1" style={{ color: 'var(--text-muted, #888)' }}>
+            节点名称
+          </label>
+          <input
+            type="text"
+            value={node.data.label}
+            onChange={(e) => onNameChange(e.target.value)}
+            className="w-full px-2.5 py-1.5 rounded-lg text-[12px] outline-none transition-colors"
+            style={{
+              background: 'rgba(255,255,255,0.04)',
+              border: '1px solid rgba(255,255,255,0.1)',
+              color: 'var(--text-primary, #e8e6e3)',
+            }}
+            onFocus={(e) => { e.currentTarget.style.borderColor = `hsla(${node.data.accentHue}, 60%, 55%, 0.4)`; }}
+            onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; }}
+          />
+        </div>
+
+        {/* 配置字段（来自 configSchema） */}
+        {meta.configSchema.length > 0 ? (
+          <div className="space-y-3">
+            <div className="text-[10px] font-medium" style={{ color: 'var(--text-muted, #888)' }}>
+              参数配置
+            </div>
+            {meta.configSchema.map((field) => (
+              <ConfigFieldInput
+                key={field.key}
+                field={field}
+                value={config[field.key]}
+                accentHue={node.data.accentHue}
+                onChange={(val) => onConfigChange(field.key, val)}
+              />
+            ))}
+          </div>
+        ) : (
+          <div
+            className="text-[11px] text-center py-4 rounded-lg"
+            style={{
+              color: 'var(--text-muted, #888)',
+              background: 'rgba(255,255,255,0.02)',
+              border: '1px dashed rgba(255,255,255,0.06)',
+            }}
+          >
+            该舱类型暂无可配参数
+          </div>
+        )}
+
+        {/* 输入/输出插槽信息 */}
+        {(node.data.inputSlots.length > 0 || node.data.outputSlots.length > 0) && (
+          <div className="space-y-2">
+            <div className="text-[10px] font-medium" style={{ color: 'var(--text-muted, #888)' }}>
+              数据端口
+            </div>
+            {node.data.inputSlots.map((slot) => (
+              <div key={slot.slotId} className="flex items-center gap-1.5 text-[10px]">
+                <span className="px-1 py-0.5 rounded" style={{
+                  background: 'rgba(255,255,255,0.05)',
+                  color: 'var(--text-muted, #888)',
+                }}>入</span>
+                <span style={{ color: 'var(--text-secondary, #aaa)' }}>{slot.name}</span>
+                <span style={{ color: 'var(--text-muted, #666)' }}>({slot.dataType})</span>
+              </div>
+            ))}
+            {node.data.outputSlots.map((slot) => (
+              <div key={slot.slotId} className="flex items-center gap-1.5 text-[10px]">
+                <span className="px-1 py-0.5 rounded" style={{
+                  background: 'rgba(34,197,94,0.08)',
+                  color: 'rgba(34,197,94,0.7)',
+                }}>出</span>
+                <span style={{ color: 'var(--text-secondary, #aaa)' }}>{slot.name}</span>
+                <span style={{ color: 'var(--text-muted, #666)' }}>({slot.dataType})</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── 配置字段输入组件 ───
+
+function ConfigFieldInput({
+  field,
+  value,
+  accentHue,
+  onChange,
+}: {
+  field: CapsuleConfigField;
+  value: unknown;
+  accentHue: number;
+  onChange: (value: unknown) => void;
+}) {
+  const strVal = (value ?? field.defaultValue ?? '') as string;
+
+  const baseInputStyle = {
+    background: 'rgba(255,255,255,0.04)',
+    border: '1px solid rgba(255,255,255,0.1)',
+    color: 'var(--text-primary, #e8e6e3)',
+  };
+
+  const focusBorder = `hsla(${accentHue}, 60%, 55%, 0.4)`;
+
+  return (
+    <div>
+      <label className="flex items-center gap-1 text-[10px] font-medium mb-1">
+        <span style={{ color: 'var(--text-secondary, #aaa)' }}>{field.label}</span>
+        {field.required && <span style={{ color: 'rgba(239,68,68,0.7)' }}>*</span>}
+      </label>
+      {field.helpTip && (
+        <div className="text-[9px] mb-1" style={{ color: 'var(--text-muted, #666)' }}>
+          {field.helpTip}
+        </div>
+      )}
+
+      {field.fieldType === 'select' && field.options ? (
+        <select
+          value={strVal}
+          onChange={(e) => onChange(e.target.value)}
+          className="w-full px-2.5 py-1.5 rounded-lg text-[12px] outline-none"
+          style={baseInputStyle}
+        >
+          <option value="">{field.placeholder || '请选择...'}</option>
+          {field.options.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+      ) : field.fieldType === 'textarea' ? (
+        <textarea
+          value={strVal}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={field.placeholder}
+          rows={4}
+          className="w-full px-2.5 py-1.5 rounded-lg text-[12px] outline-none resize-y"
+          style={baseInputStyle}
+          onFocus={(e) => { e.currentTarget.style.borderColor = focusBorder; }}
+          onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; }}
+        />
+      ) : field.fieldType === 'number' ? (
+        <input
+          type="number"
+          value={strVal}
+          onChange={(e) => onChange(e.target.value ? Number(e.target.value) : '')}
+          placeholder={field.placeholder}
+          className="w-full px-2.5 py-1.5 rounded-lg text-[12px] outline-none"
+          style={baseInputStyle}
+          onFocus={(e) => { e.currentTarget.style.borderColor = focusBorder; }}
+          onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; }}
+        />
+      ) : field.fieldType === 'boolean' ? (
+        <button
+          onClick={() => onChange(!value)}
+          className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] transition-colors"
+          style={{
+            ...baseInputStyle,
+            background: value ? `hsla(${accentHue}, 60%, 55%, 0.12)` : baseInputStyle.background,
+          }}
+        >
+          <div
+            className="w-3.5 h-3.5 rounded border-2 flex items-center justify-center"
+            style={{
+              borderColor: value ? `hsla(${accentHue}, 60%, 55%, 0.6)` : 'rgba(255,255,255,0.2)',
+              background: value ? `hsla(${accentHue}, 60%, 55%, 0.3)` : 'transparent',
+            }}
+          >
+            {!!value && <span className="text-[8px]" style={{ color: `hsla(${accentHue}, 60%, 65%, 0.95)` }}>✓</span>}
+          </div>
+          <span style={{ color: 'var(--text-secondary, #aaa)' }}>{value ? '启用' : '关闭'}</span>
+        </button>
+      ) : (
+        <input
+          type="text"
+          value={strVal}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={field.placeholder}
+          className="w-full px-2.5 py-1.5 rounded-lg text-[12px] outline-none"
+          style={baseInputStyle}
+          onFocus={(e) => { e.currentTarget.style.borderColor = focusBorder; }}
+          onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; }}
+        />
+      )}
     </div>
   );
 }

@@ -77,8 +77,40 @@
   box-shadow: 0 2px 8px rgba(0,0,0,0.3);
 }
 
-/* ──── 端口 (Handle) ──── */
+/* ──── 端口 (Handle) ────
+   视觉尺寸 14px，但点击热区 30px（3x 于原 10px），
+   通过 ::after 伪元素扩展交互区域。 */
 
+.capsule-handle {
+  transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+  z-index: 10;
+}
+
+/* 扩展点击热区到 30px —— 不影响视觉外观 */
+.capsule-handle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 30px;
+  height: 30px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  /* debug: background: rgba(255,0,0,0.1); */
+}
+
+.capsule-handle:hover {
+  transform: scale(1.4);
+  filter: brightness(1.5);
+  box-shadow: 0 0 10px rgba(255,255,255,0.35);
+}
+
+/* 连线拖拽中的端口高亮 */
+.react-flow__handle.connecting {
+  box-shadow: 0 0 12px rgba(59,130,246,0.5);
+}
+
+/* 保持旧的通用 handle hover 兼容 */
 .react-flow__handle:hover {
   filter: brightness(1.5);
   box-shadow: 0 0 6px rgba(255,255,255,0.25);
@@ -131,4 +163,40 @@
 .workflow-canvas .react-flow__minimap {
   border-radius: 12px !important;
   overflow: hidden;
+}
+
+/* ──── 节点编辑面板 ──── */
+
+.node-edit-panel {
+  animation: panelSlideIn 0.2s ease-out;
+}
+
+@keyframes panelSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.node-edit-panel input:focus,
+.node-edit-panel textarea:focus,
+.node-edit-panel select:focus {
+  outline: none;
+}
+
+.node-edit-panel select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 24px;
+}
+
+.node-edit-panel select option {
+  background: #1a1a2e;
+  color: #e8e6e3;
 }
