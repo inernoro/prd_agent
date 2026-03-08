@@ -65,7 +65,7 @@ export default function ShareViewPage() {
   if (loading) {
     return (
       <div style={styles.fullScreen}>
-        <BlackHoleVortex className="absolute inset-0" />
+        <div style={{ position: 'absolute', inset: 0 }}><BlackHoleVortex /></div>
         <div style={styles.overlay} />
         <div style={{ ...styles.glassCard, textAlign: 'center', padding: '48px 32px' }}>
           <div style={styles.spinner} />
@@ -83,7 +83,7 @@ export default function ShareViewPage() {
     const isExpired = error.code === 'EXPIRED';
     return (
       <div style={styles.fullScreen}>
-        <BlackHoleVortex className="absolute inset-0" />
+        <div style={{ position: 'absolute', inset: 0 }}><BlackHoleVortex /></div>
         <div style={styles.overlay} />
         <div style={{ ...styles.glassCard, textAlign: 'center', padding: '40px 32px' }}>
           <div style={{
@@ -113,7 +113,7 @@ export default function ShareViewPage() {
   if (needPassword) {
     return (
       <div style={styles.fullScreen}>
-        <BlackHoleVortex className="absolute inset-0" />
+        <div style={{ position: 'absolute', inset: 0 }}><BlackHoleVortex /></div>
         <div style={styles.overlay} />
         <div
           key={shakeKey}
@@ -268,7 +268,7 @@ export default function ShareViewPage() {
   // Collection -> list cards
   return (
     <div style={{ ...styles.fullScreen, alignItems: 'flex-start', paddingTop: 60 }}>
-      <BlackHoleVortex className="absolute inset-0" />
+      <div style={{ position: 'absolute', inset: 0 }}><BlackHoleVortex /></div>
       <div style={styles.overlay} />
       <div style={{ maxWidth: 720, width: '100%', padding: '20px 16px', position: 'relative', zIndex: 1 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
