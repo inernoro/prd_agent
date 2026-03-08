@@ -245,6 +245,10 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IWorkflowExecutionService, P
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ArtifactStatsParser>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.PersonalSourceService>();
 
+// Defect Agent: 催办 Worker + Webhook 通知服务
+builder.Services.AddHostedService<PrdAgent.Api.Services.DefectAgent.DefectEscalationWorker>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DefectWebhookService>();
+
 // ImageMaster 资产存储：默认本地文件（可替换为对象存储实现）
 builder.Services.AddSingleton<IAssetStorage>(sp =>
 {

@@ -37,7 +37,20 @@ import type {
   MoveDefectToFolderContract,
   BatchMoveDefectsContract,
   PreviewApiLogsContract,
-  ApiLogPreviewItem,
+  VerifyPassContract,
+  VerifyFailContract,
+  ListDefectProjectsContract,
+  CreateDefectProjectContract,
+  UpdateDefectProjectContract,
+  ArchiveDefectProjectContract,
+  ListDefectTeamsContract,
+  GetDefectStatsOverviewContract,
+  GetDefectStatsTrendContract,
+  GetDefectStatsByUserContract,
+  ListDefectWebhooksContract,
+  CreateDefectWebhookContract,
+  UpdateDefectWebhookContract,
+  DeleteDefectWebhookContract,
   DefectTemplate,
   DefectReport,
   DefectMessage,
@@ -45,6 +58,12 @@ import type {
   DefectStats,
   DefectUser,
   DefectFolder,
+  DefectProject,
+  DefectTeam,
+  DefectStatsOverview,
+  DefectWebhookConfig,
+  UserStatItem,
+  ApiLogPreviewItem,
 } from '../contracts/defectAgent';
 
 // ========== Templates ==========
@@ -97,6 +116,8 @@ export const listDefectsReal: ListDefectsContract = async (input) => {
   if (input?.filter) qs.set('filter', input.filter);
   if (input?.status) qs.set('status', input.status);
   if (input?.folderId) qs.set('folderId', input.folderId);
+  if (input?.projectId) qs.set('projectId', input.projectId);
+  if (input?.teamId) qs.set('teamId', input.teamId);
   if (input?.limit) qs.set('limit', String(input.limit));
   if (input?.offset) qs.set('offset', String(input.offset));
   const q = qs.toString();
@@ -250,8 +271,15 @@ export const deleteDefectAttachmentReal: DeleteDefectAttachmentContract = async 
 
 // ========== Stats & Users ==========
 
-export const getDefectStatsReal: GetDefectStatsContract = async () => {
-  return await apiRequest<DefectStats>(api.defectAgent.stats(), { method: 'GET' });
+export const getDefectStatsReal: GetDefectStatsContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input?.projectId) qs.set('projectId', input.projectId);
+  if (input?.teamId) qs.set('teamId', input.teamId);
+  const q = qs.toString();
+  return await apiRequest<DefectStats>(
+    `${api.defectAgent.stats()}${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
 };
 
 export const getDefectUsersReal: GetDefectUsersContract = async () => {
@@ -350,6 +378,133 @@ export const batchMoveDefectsReal: BatchMoveDefectsContract = async (input) => {
     method: 'POST',
     body: input,
   });
+};
+
+// ========== 验收 ==========
+
+export const verifyPassReal: VerifyPassContract = async (input) => {
+  return await apiRequest<{ defect: DefectReport }>(
+    api.defectAgent.defects.verifyPass(encodeURIComponent(input.id)),
+    { method: 'POST' }
+  );
+};
+
+export const verifyFailReal: VerifyFailContract = async (input) => {
+  const { id, ...data } = input;
+  return await apiRequest<{ defect: DefectReport }>(
+    api.defectAgent.defects.verifyFail(encodeURIComponent(id)),
+    { method: 'POST', body: data }
+  );
+};
+
+// ========== 项目管理 ==========
+
+export const listDefectProjectsReal: ListDefectProjectsContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input?.keyword) qs.set('keyword', input.keyword);
+  const q = qs.toString();
+  return await apiRequest<{ items: DefectProject[] }>(
+    `${api.defectAgent.projects.list()}${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
+};
+
+export const createDefectProjectReal: CreateDefectProjectContract = async (input) => {
+  return await apiRequest<{ project: DefectProject }>(api.defectAgent.projects.list(), {
+    method: 'POST',
+    body: input,
+  });
+};
+
+export const updateDefectProjectReal: UpdateDefectProjectContract = async (input) => {
+  const { id, ...data } = input;
+  return await apiRequest<{ project: DefectProject }>(
+    api.defectAgent.projects.byId(encodeURIComponent(id)),
+    { method: 'PUT', body: data }
+  );
+};
+
+export const archiveDefectProjectReal: ArchiveDefectProjectContract = async (input) => {
+  return await apiRequest<{ archived: boolean }>(
+    api.defectAgent.projects.byId(encodeURIComponent(input.id)),
+    { method: 'DELETE' }
+  );
+};
+
+// ========== 团队查询 ==========
+
+export const listDefectTeamsReal: ListDefectTeamsContract = async () => {
+  return await apiRequest<{ items: DefectTeam[] }>(api.defectAgent.teams(), { method: 'GET' });
+};
+
+// ========== 统计看板 ==========
+
+export const getDefectStatsOverviewReal: GetDefectStatsOverviewContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input?.projectId) qs.set('projectId', input.projectId);
+  if (input?.teamId) qs.set('teamId', input.teamId);
+  if (input?.from) qs.set('from', input.from);
+  if (input?.to) qs.set('to', input.to);
+  const q = qs.toString();
+  return await apiRequest<DefectStatsOverview>(
+    `${api.defectAgent.statsOverview()}${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
+};
+
+export const getDefectStatsTrendReal: GetDefectStatsTrendContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input?.projectId) qs.set('projectId', input.projectId);
+  if (input?.teamId) qs.set('teamId', input.teamId);
+  if (input?.from) qs.set('from', input.from);
+  if (input?.to) qs.set('to', input.to);
+  if (input?.period) qs.set('period', input.period);
+  const q = qs.toString();
+  return await apiRequest<{ created: Record<string, number>; closed: Record<string, number>; period: string }>(
+    `${api.defectAgent.statsTrend()}${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
+};
+
+export const getDefectStatsByUserReal: GetDefectStatsByUserContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input?.projectId) qs.set('projectId', input.projectId);
+  if (input?.teamId) qs.set('teamId', input.teamId);
+  if (input?.from) qs.set('from', input.from);
+  if (input?.to) qs.set('to', input.to);
+  const q = qs.toString();
+  return await apiRequest<{ byAssignee: UserStatItem[]; byReporter: UserStatItem[] }>(
+    `${api.defectAgent.statsByUser()}${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
+};
+
+// ========== Webhook 配置 ==========
+
+export const listDefectWebhooksReal: ListDefectWebhooksContract = async () => {
+  return await apiRequest<{ items: DefectWebhookConfig[] }>(api.defectAgent.webhooks.list(), { method: 'GET' });
+};
+
+export const createDefectWebhookReal: CreateDefectWebhookContract = async (input) => {
+  return await apiRequest<{ webhook: DefectWebhookConfig }>(api.defectAgent.webhooks.list(), {
+    method: 'POST',
+    body: input,
+  });
+};
+
+export const updateDefectWebhookReal: UpdateDefectWebhookContract = async (input) => {
+  const { id, ...data } = input;
+  return await apiRequest<{ webhook: DefectWebhookConfig }>(
+    api.defectAgent.webhooks.byId(encodeURIComponent(id)),
+    { method: 'PUT', body: data }
+  );
+};
+
+export const deleteDefectWebhookReal: DeleteDefectWebhookContract = async (input) => {
+  return await apiRequest<{ deleted: boolean }>(
+    api.defectAgent.webhooks.byId(encodeURIComponent(input.id)),
+    { method: 'DELETE' }
+  );
 };
 
 // ========== 日志预览 ==========

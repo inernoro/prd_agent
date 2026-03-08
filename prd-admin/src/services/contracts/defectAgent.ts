@@ -109,6 +109,19 @@ export interface DefectReport {
   deletedBy?: string;
   // 文件夹
   folderId?: string;
+  // Phase 1: 项目 + 团队
+  projectId?: string;
+  projectName?: string;
+  teamId?: string;
+  teamName?: string;
+  // Phase 2: 待验收
+  verifiedById?: string;
+  verifiedByName?: string;
+  verifiedAt?: string;
+  verifyFailReason?: string;
+  // Phase 3: 催办
+  lastEscalatedAt?: string;
+  escalationCount?: number;
 }
 
 /**
@@ -152,6 +165,7 @@ export const DefectStatus = {
   Resolved: 'resolved',
   Rejected: 'rejected',
   Closed: 'closed',
+  Verifying: 'verifying',
 } as const;
 
 /**
@@ -244,6 +258,8 @@ export type ListDefectsContract = (input?: {
   filter?: 'submitted' | 'assigned' | 'completed' | 'rejected' | 'all';
   status?: string;
   folderId?: string;
+  projectId?: string;
+  teamId?: string;
   limit?: number;
   offset?: number;
 }) => Promise<ApiResponse<{ items: DefectReport[]; total: number }>>;
@@ -257,6 +273,8 @@ export type CreateDefectContract = (input: {
   assigneeUserId: string;
   severity?: string;
   priority?: string;
+  projectId?: string;
+  teamId?: string;
 }) => Promise<ApiResponse<{ defect: DefectReport }>>;
 
 export type UpdateDefectContract = (input: {
@@ -321,9 +339,150 @@ export type AnalyzeDefectImageContract = (input: {
   mimeType: string;
 }) => Promise<ApiResponse<{ description: string }>>;
 
-export type GetDefectStatsContract = () => Promise<ApiResponse<DefectStats>>;
+export type GetDefectStatsContract = (input?: {
+  projectId?: string;
+  teamId?: string;
+}) => Promise<ApiResponse<DefectStats>>;
 
 export type GetDefectUsersContract = () => Promise<ApiResponse<{ items: DefectUser[] }>>;
+
+// Phase 2: 验收
+export type VerifyPassContract = (input: { id: string }) => Promise<ApiResponse<{ defect: DefectReport }>>;
+
+export type VerifyFailContract = (input: {
+  id: string;
+  reason?: string;
+}) => Promise<ApiResponse<{ defect: DefectReport }>>;
+
+// Phase 1: 项目管理
+export interface DefectProject {
+  id: string;
+  name: string;
+  key: string;
+  description?: string;
+  ownerUserId?: string;
+  ownerName?: string;
+  defaultTemplateId?: string;
+  isArchived: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ListDefectProjectsContract = (input?: {
+  keyword?: string;
+}) => Promise<ApiResponse<{ items: DefectProject[] }>>;
+
+export type CreateDefectProjectContract = (input: {
+  name: string;
+  key: string;
+  description?: string;
+  defaultTemplateId?: string;
+}) => Promise<ApiResponse<{ project: DefectProject }>>;
+
+export type UpdateDefectProjectContract = (input: {
+  id: string;
+  name?: string;
+  description?: string;
+  defaultTemplateId?: string;
+  ownerUserId?: string;
+}) => Promise<ApiResponse<{ project: DefectProject }>>;
+
+export type ArchiveDefectProjectContract = (input: { id: string }) => Promise<ApiResponse<{ archived: boolean }>>;
+
+// 团队查询
+export interface DefectTeam {
+  id: string;
+  name: string;
+  leaderUserId?: string;
+  leaderName?: string;
+  description?: string;
+}
+
+export type ListDefectTeamsContract = () => Promise<ApiResponse<{ items: DefectTeam[] }>>;
+
+// Phase 4: 统计看板
+export interface DefectStatsOverview {
+  total: number;
+  openCount: number;
+  thisWeekCount: number;
+  avgResolutionHours: number;
+  statusCounts: Record<string, number>;
+  severityCounts: Record<string, number>;
+}
+
+export type GetDefectStatsOverviewContract = (input?: {
+  projectId?: string;
+  teamId?: string;
+  from?: string;
+  to?: string;
+}) => Promise<ApiResponse<DefectStatsOverview>>;
+
+export type GetDefectStatsTrendContract = (input?: {
+  projectId?: string;
+  teamId?: string;
+  from?: string;
+  to?: string;
+  period?: 'day' | 'week' | 'month';
+}) => Promise<ApiResponse<{
+  created: Record<string, number>;
+  closed: Record<string, number>;
+  period: string;
+}>>;
+
+export interface UserStatItem {
+  userId: string;
+  userName: string;
+  assignedCount?: number;
+  resolvedCount?: number;
+  avgResolutionHours?: number;
+  submittedCount?: number;
+}
+
+export type GetDefectStatsByUserContract = (input?: {
+  projectId?: string;
+  teamId?: string;
+  from?: string;
+  to?: string;
+}) => Promise<ApiResponse<{
+  byAssignee: UserStatItem[];
+  byReporter: UserStatItem[];
+}>>;
+
+// Phase 5: Webhook 配置
+export interface DefectWebhookConfig {
+  id: string;
+  teamId?: string;
+  projectId?: string;
+  channel: string;
+  webhookUrl: string;
+  triggerEvents: string[];
+  isEnabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ListDefectWebhooksContract = () => Promise<ApiResponse<{ items: DefectWebhookConfig[] }>>;
+
+export type CreateDefectWebhookContract = (input: {
+  teamId?: string;
+  projectId?: string;
+  channel?: string;
+  webhookUrl: string;
+  triggerEvents?: string[];
+  isEnabled?: boolean;
+}) => Promise<ApiResponse<{ webhook: DefectWebhookConfig }>>;
+
+export type UpdateDefectWebhookContract = (input: {
+  id: string;
+  teamId?: string;
+  projectId?: string;
+  channel?: string;
+  webhookUrl?: string;
+  triggerEvents?: string[];
+  isEnabled?: boolean;
+}) => Promise<ApiResponse<{ webhook: DefectWebhookConfig }>>;
+
+export type DeleteDefectWebhookContract = (input: { id: string }) => Promise<ApiResponse<{ deleted: boolean }>>;
 
 // 回收站相关
 export type ListDeletedDefectsContract = (input?: {

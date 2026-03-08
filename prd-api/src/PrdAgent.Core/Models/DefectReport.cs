@@ -136,6 +136,42 @@ public class DefectReport
 
     /// <summary>所属文件夹 ID（null 表示未分类/根目录）</summary>
     public string? FolderId { get; set; }
+
+    // ===== Phase 1: 项目 + 团队维度 =====
+
+    /// <summary>所属项目 ID</summary>
+    public string? ProjectId { get; set; }
+
+    /// <summary>所属项目名称（冗余，便于展示和搜索）</summary>
+    public string? ProjectName { get; set; }
+
+    /// <summary>所属团队 ID（复用 report_teams）</summary>
+    public string? TeamId { get; set; }
+
+    /// <summary>所属团队名称（冗余）</summary>
+    public string? TeamName { get; set; }
+
+    // ===== Phase 2: 待验收 =====
+
+    /// <summary>验收人 UserId（通常是 reporter）</summary>
+    public string? VerifiedById { get; set; }
+
+    /// <summary>验收人名称</summary>
+    public string? VerifiedByName { get; set; }
+
+    /// <summary>验收时间</summary>
+    public DateTime? VerifiedAt { get; set; }
+
+    /// <summary>验收不通过原因</summary>
+    public string? VerifyFailReason { get; set; }
+
+    // ===== Phase 3: 超时催办 =====
+
+    /// <summary>最后催办时间（防止重复催办）</summary>
+    public DateTime? LastEscalatedAt { get; set; }
+
+    /// <summary>催办次数</summary>
+    public int EscalationCount { get; set; } = 0;
 }
 
 /// <summary>
@@ -239,7 +275,10 @@ public static class DefectStatus
     public const string Rejected = "rejected";
     public const string Closed = "closed";
 
-    public static readonly string[] All = { Draft, Reviewing, Awaiting, Submitted, Assigned, Processing, Resolved, Rejected, Closed };
+    /// <summary>待验收（处理人标记解决后，由报告人验收）</summary>
+    public const string Verifying = "verifying";
+
+    public static readonly string[] All = { Draft, Reviewing, Awaiting, Submitted, Assigned, Processing, Resolved, Rejected, Closed, Verifying };
 }
 
 /// <summary>

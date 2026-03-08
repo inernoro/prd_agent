@@ -177,7 +177,7 @@ public static class AdminPermissionCatalog
         new(VisualAgentUse, "视觉创作 Agent", "高级视觉创作工作区"),
         new(LiteraryAgentUse, "文学创作 Agent", "文章配图智能生成"),
         new(DefectAgentUse, "缺陷管理 Agent", "提交和查看缺陷"),
-        new(DefectAgentManage, "缺陷管理 Agent-管理", "设置模板、指派处理人"),
+        new(DefectAgentManage, "缺陷管理 Agent-管理", "设置模板、指派、项目/Webhook管理"),
         new(VideoAgentUse, "视频 Agent", "文章转视频教程生成"),
         new(ArenaAgentUse, "竞技场 Agent", "模型盲评对战"),
         new(AiToolboxUse, "AI 百宝箱", "使用 AI 百宝箱功能"),

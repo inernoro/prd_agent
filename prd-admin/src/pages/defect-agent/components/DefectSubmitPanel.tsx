@@ -71,6 +71,7 @@ export function DefectSubmitPanel() {
   const {
     templates,
     users,
+    projects,
     setShowSubmitPanel,
     addDefectToList,
     loadStats,
@@ -83,6 +84,7 @@ export function DefectSubmitPanel() {
   const [assigneeUserId, setAssigneeUserId] = useState<string>(() => {
     return localStorage.getItem(STORAGE_KEY_ASSIGNEE) || '';
   });
+  const [projectId, setProjectId] = useState<string>('');
   const [content, setContent] = useState('');
   const [focused, setFocused] = useState(false);
   const [severity, setSeverity] = useState<DefectSeverityValue>(DefectSeverity.Trivial);
@@ -268,6 +270,7 @@ export function DefectSubmitPanel() {
         content: content.trim(),
         assigneeUserId,
         severity,
+        projectId: projectId || undefined,
       });
 
       if (!createRes.success || !createRes.data) {
@@ -418,6 +421,35 @@ export function DefectSubmitPanel() {
                   ))}
               </select>
             </div>
+
+            {/* Project */}
+            {projects.length > 0 && (
+              <div className="flex items-center gap-2 flex-1">
+                <label
+                  className="text-[12px] flex-shrink-0"
+                  style={{ color: 'var(--text-muted)' }}
+                >
+                  项目
+                </label>
+                <select
+                  value={projectId}
+                  onChange={(e) => setProjectId(e.target.value)}
+                  className="flex-1 px-3 py-2 rounded-lg text-[13px] outline-none transition-colors"
+                  style={{
+                    background: 'var(--bg-input-hover)',
+                    border: '1px solid var(--border-default)',
+                    color: 'var(--text-primary)',
+                  }}
+                >
+                  <option value="">不关联项目</option>
+                  {projects.filter(p => !p.isArchived).map((p) => (
+                    <option key={p.id} value={p.id}>
+                      [{p.key}] {p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
           {/* Template Hint + Example */}

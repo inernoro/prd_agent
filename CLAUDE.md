@@ -566,7 +566,7 @@ prd_agent/
 | 会话归档 | ✅ DONE | SessionsController (archive/unarchive) |
 | 数据管理面板 | ✅ DONE | DataManagePage |
 | 管理通知 | ✅ DONE | NotificationsController, admin_notifications |
-| 缺陷管理 Agent | ✅ DONE | DefectAgentController, DefectAgentTests (25 tests) |
+| 缺陷管理 Agent | ✅ DONE | DefectAgentController, DefectEscalationWorker, DefectWebhookService, DefectAgentTests (25 tests)。含项目维度、待验收流程、超时催办、统计看板、Webhook 通知 |
 | 视频 Agent | ✅ DONE | VideoAgentController, VideoGenRunWorker, IVideoGenService (领域服务), prd-video/ (Remotion: TransitionSeries 转场、ParticleField 粒子、AnimatedText 动画文字、PathDraw SVG 描边、@remotion/transitions+paths+noise) |
 | 视觉创作视频生成 | ✅ DONE | VisualAgentVideoController (appKey=visual-agent, 每日限额1次), 共享 IVideoGenService + VideoGenRunWorker |
 | 视频生成工作流胶囊 | ✅ DONE | CapsuleTypes.VideoGeneration ("video-generation"), CapsuleExecutor.ExecuteVideoGenerationAsync, 支持从工作流中创建视频任务并等待完成 |
@@ -604,7 +604,7 @@ VisualAgent (DB 名保留 image_master)：`image_master_workspaces`, `image_asse
 
 开放平台：`openplatformapps`, `openplatformrequestlogs`
 
-缺陷管理：`defect_templates`, `defect_reports`, `defect_messages`, `defect_folders`
+缺陷管理：`defect_templates`, `defect_reports`, `defect_messages`, `defect_folders`, `defect_projects`, `defect_webhook_configs`
 
 视频 Agent：`video_gen_runs`
 

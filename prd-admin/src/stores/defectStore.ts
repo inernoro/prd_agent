@@ -4,16 +4,20 @@ import {
   listDefectTemplates,
   getDefectUsers,
   getDefectStats,
+  listDefectProjects,
+  listDefectTeams,
 } from '@/services';
 import type {
   DefectReport,
   DefectTemplate,
   DefectUser,
   DefectStats,
+  DefectProject,
+  DefectTeam,
 } from '@/services/contracts/defectAgent';
 
 type FilterType = 'submitted' | 'assigned' | 'all';
-type ViewMode = 'card' | 'list';
+type ViewMode = 'card' | 'list' | 'kanban' | 'stats';
 
 const VIEW_MODE_STORAGE_KEY = 'defect-view-mode';
 const READ_IDS_STORAGE_KEY = 'defect-read-ids';
@@ -21,7 +25,8 @@ const READ_IDS_STORAGE_KEY = 'defect-read-ids';
 function loadViewMode(): ViewMode {
   try {
     const v = localStorage.getItem(VIEW_MODE_STORAGE_KEY);
-    return v === 'list' ? 'list' : 'card';
+    if (v === 'list' || v === 'kanban' || v === 'stats') return v;
+    return 'card';
   } catch { return 'card'; }
 }
 
@@ -44,12 +49,16 @@ interface DefectState {
   templates: DefectTemplate[];
   users: DefectUser[];
   stats: DefectStats | null;
+  projects: DefectProject[];
+  teams: DefectTeam[];
 
   // UI State
   loading: boolean;
   error: string;
   filter: FilterType;
   statusFilter: string;
+  projectFilter: string;
+  teamFilter: string;
   selectedDefectId: string | null;
   showSubmitPanel: boolean;
   showTemplateDialog: boolean;
@@ -61,10 +70,14 @@ interface DefectState {
   loadTemplates: () => Promise<void>;
   loadUsers: () => Promise<void>;
   loadStats: () => Promise<void>;
+  loadProjects: () => Promise<void>;
+  loadTeams: () => Promise<void>;
   loadAll: () => Promise<void>;
 
   setFilter: (filter: FilterType) => void;
   setStatusFilter: (status: string) => void;
+  setProjectFilter: (projectId: string) => void;
+  setTeamFilter: (teamId: string) => void;
   setSelectedDefectId: (id: string | null) => void;
   setShowSubmitPanel: (show: boolean) => void;
   setShowTemplateDialog: (show: boolean) => void;
@@ -89,10 +102,14 @@ export const useDefectStore = create<DefectState>((set, get) => ({
   templates: [],
   users: [],
   stats: null,
+  projects: [],
+  teams: [],
   loading: false,
   error: '',
   filter: 'assigned',
   statusFilter: '',
+  projectFilter: '',
+  teamFilter: '',
   selectedDefectId: null,
   showSubmitPanel: false,
   showTemplateDialog: false,
@@ -102,12 +119,14 @@ export const useDefectStore = create<DefectState>((set, get) => ({
   // Load defects
   loadDefects: async () => {
     if (get().loading) return; // 防止并发重复加载
-    const { filter, statusFilter } = get();
+    const { filter, statusFilter, projectFilter, teamFilter } = get();
     set({ loading: true, error: '' });
     try {
       const res = await listDefects({
         filter,
         status: statusFilter || undefined,
+        projectId: projectFilter || undefined,
+        teamId: teamFilter || undefined,
         limit: 100,
       });
       if (res.success && res.data) {
@@ -156,6 +175,30 @@ export const useDefectStore = create<DefectState>((set, get) => ({
     }
   },
 
+  // Load projects
+  loadProjects: async () => {
+    try {
+      const res = await listDefectProjects();
+      if (res.success && res.data) {
+        set({ projects: res.data.items });
+      }
+    } catch {
+      // Silent fail
+    }
+  },
+
+  // Load teams
+  loadTeams: async () => {
+    try {
+      const res = await listDefectTeams();
+      if (res.success && res.data) {
+        set({ teams: res.data.items });
+      }
+    } catch {
+      // Silent fail
+    }
+  },
+
   // Load all data
   loadAll: async () => {
     const state = get();
@@ -164,6 +207,8 @@ export const useDefectStore = create<DefectState>((set, get) => ({
       state.loadTemplates(),
       state.loadUsers(),
       state.loadStats(),
+      state.loadProjects(),
+      state.loadTeams(),
     ]);
   },
 
@@ -175,6 +220,16 @@ export const useDefectStore = create<DefectState>((set, get) => ({
 
   setStatusFilter: (status) => {
     set({ statusFilter: status });
+    get().loadDefects();
+  },
+
+  setProjectFilter: (projectId) => {
+    set({ projectFilter: projectId });
+    get().loadDefects();
+  },
+
+  setTeamFilter: (teamId) => {
+    set({ teamFilter: teamId });
     get().loadDefects();
   },
 
@@ -245,10 +300,14 @@ export const useDefectStore = create<DefectState>((set, get) => ({
       templates: [],
       users: [],
       stats: null,
+      projects: [],
+      teams: [],
       loading: false,
       error: '',
       filter: 'submitted',
       statusFilter: '',
+      projectFilter: '',
+      teamFilter: '',
       selectedDefectId: null,
       showSubmitPanel: false,
       showTemplateDialog: false,

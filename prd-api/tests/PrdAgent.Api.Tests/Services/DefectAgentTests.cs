@@ -66,8 +66,9 @@ public class DefectAgentTests
         Assert.Contains(DefectStatus.Processing, DefectStatus.All);
         Assert.Contains(DefectStatus.Resolved, DefectStatus.All);
         Assert.Contains(DefectStatus.Rejected, DefectStatus.All);
+        Assert.Contains(DefectStatus.Verifying, DefectStatus.All);
         Assert.Contains(DefectStatus.Closed, DefectStatus.All);
-        Assert.Equal(9, DefectStatus.All.Length);
+        Assert.Equal(10, DefectStatus.All.Length);
     }
 
     [Fact]
