@@ -1255,6 +1255,7 @@ public class VideoGenRunWorker : BackgroundService
             4. 画面描述要具体，包含可视化的元素（标题、卡片、代码块、流程图等）
             5. 确保所有关键信息都被覆盖，不遗漏重要内容
             6. 只输出 JSON 数组，不要包含 markdown 代码块标记
+            7. **所有输出必须使用中文**，包括 topic、narration 和 visualDescription，即使原文是英文也要翻译为中文
             """);
 
         if (!string.IsNullOrWhiteSpace(userSystemPrompt))
@@ -1290,6 +1291,7 @@ public class VideoGenRunWorker : BackgroundService
             }
             ```
 
+            所有输出必须使用中文，即使原文是英文也要翻译为中文。
             只输出 JSON，不要包含其他文字。
             """);
 
@@ -1861,7 +1863,7 @@ document.addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key==='ArrowD
             // Remotion 核心
             import { useCurrentFrame, useVideoConfig, interpolate, spring, Easing, AbsoluteFill, Sequence, Audio, Img } from "remotion";
 
-            // 项目动效工具库
+            // 项目动效工具库（注意：生成的文件位于 src/scenes/generated/，所以需要 ../../ 回到 src/）
             import {
               springIn, fadeIn, fadeOut, slideInFromBottom, sceneFadeOut,
               typewriterCount, counterValue,
@@ -1871,25 +1873,25 @@ document.addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key==='ArrowD
               circularMotion, easedProgress,
               shimmerScan, ripple,
               kenBurns, vignetteOpacity, cameraZoom, energyRing, flowingDot, focusScale, cursorBlink
-            } from "../utils/animations";
+            } from "../../utils/animations";
 
             // 色彩系统
-            import { COLORS, getSceneAccentColor } from "../utils/colors";
+            import { COLORS, getSceneAccentColor } from "../../utils/colors";
 
             // 可复用组件
-            import { Background } from "../components/Background";
-            import { ParticleField } from "../components/ParticleField";
-            import { AnimatedText } from "../components/AnimatedText";
-            import { GlassCard } from "../components/GlassCard";
-            import { CodeBlock } from "../components/CodeBlock";
-            import { CompareCard } from "../components/CompareCard";
-            import { StepFlow } from "../components/StepFlow";
-            import { PathDraw } from "../components/PathDraw";
-            import { NumberCounter } from "../components/NumberCounter";
-            import { ProgressBar } from "../components/ProgressBar";
+            import { Background } from "../../components/Background";
+            import { ParticleField } from "../../components/ParticleField";
+            import { AnimatedText } from "../../components/AnimatedText";
+            import { GlassCard } from "../../components/GlassCard";
+            import { CodeBlock } from "../../components/CodeBlock";
+            import { CompareCard } from "../../components/CompareCard";
+            import { StepFlow } from "../../components/StepFlow";
+            import { PathDraw } from "../../components/PathDraw";
+            import { NumberCounter } from "../../components/NumberCounter";
+            import { ProgressBar } from "../../components/ProgressBar";
 
             // 类型
-            import type { SceneData } from "../types";
+            import type { SceneData } from "../../types";
             ```
 
             ## 动效工具函数说明
