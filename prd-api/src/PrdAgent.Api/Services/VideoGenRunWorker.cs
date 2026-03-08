@@ -266,7 +266,8 @@ public class VideoGenRunWorker : BackgroundService
             Builders<VideoGenRun>.Filter.ElemMatch(x => x.Scenes,
                 Builders<VideoGenScene>.Filter.Eq(s => s.Status, SceneItemStatus.Generating)));
 
-        return await _db.VideoGenRuns.Find(filter).FirstOrDefaultAsync(ct);
+        // 轮询查询使用 CancellationToken.None，避免 stoppingToken 取消导致查询中断后触发兜底错误标记
+        return await _db.VideoGenRuns.Find(filter).FirstOrDefaultAsync(CancellationToken.None);
     }
 
     private async Task<VideoGenRun?> FindEditingRunWithPendingPreviewAsync(CancellationToken ct)
@@ -276,7 +277,7 @@ public class VideoGenRunWorker : BackgroundService
             Builders<VideoGenRun>.Filter.ElemMatch(x => x.Scenes,
                 Builders<VideoGenScene>.Filter.Eq(s => s.ImageStatus, "running")));
 
-        return await _db.VideoGenRuns.Find(filter).FirstOrDefaultAsync(ct);
+        return await _db.VideoGenRuns.Find(filter).FirstOrDefaultAsync(CancellationToken.None);
     }
 
     private async Task<VideoGenRun?> FindEditingRunWithPendingBgImageAsync(CancellationToken ct)
@@ -286,7 +287,7 @@ public class VideoGenRunWorker : BackgroundService
             Builders<VideoGenRun>.Filter.ElemMatch(x => x.Scenes,
                 Builders<VideoGenScene>.Filter.Eq(s => s.BackgroundImageStatus, "running")));
 
-        return await _db.VideoGenRuns.Find(filter).FirstOrDefaultAsync(ct);
+        return await _db.VideoGenRuns.Find(filter).FirstOrDefaultAsync(CancellationToken.None);
     }
 
     // ─── 路径 5: AI 图生模型生成场景背景图 ───
@@ -378,7 +379,7 @@ public class VideoGenRunWorker : BackgroundService
             Builders<VideoGenRun>.Filter.ElemMatch(x => x.Scenes,
                 Builders<VideoGenScene>.Filter.Eq(s => s.AudioStatus, "running")));
 
-        return await _db.VideoGenRuns.Find(filter).FirstOrDefaultAsync(ct);
+        return await _db.VideoGenRuns.Find(filter).FirstOrDefaultAsync(CancellationToken.None);
     }
 
     private async Task ProcessSceneAudioGenerationAsync(VideoGenRun run)
