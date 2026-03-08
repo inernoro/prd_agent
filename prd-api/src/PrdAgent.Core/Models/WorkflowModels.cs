@@ -429,6 +429,7 @@ public static class CapsuleTypes
     public const string WebhookReceiver = "webhook-receiver";
     public const string ManualTrigger = "manual-trigger";
     public const string FileUpload = "file-upload";
+    public const string EventTrigger = "event-trigger";
 
     // 处理类
     public const string TapdCollector = "tapd-collector";
@@ -461,7 +462,7 @@ public static class CapsuleTypes
     public static readonly string[] All =
     {
         // 触发类
-        Timer, WebhookReceiver, ManualTrigger, FileUpload,
+        Timer, WebhookReceiver, ManualTrigger, FileUpload, EventTrigger,
         // 处理类
         TapdCollector, HttpRequest, SmartHttp, LlmAnalyzer, ScriptExecutor, DataExtractor, DataMerger, FormatConverter, DataAggregator,
         // 流程控制类

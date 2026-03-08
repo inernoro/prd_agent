@@ -160,6 +160,34 @@ public static class CapsuleTypeRegistry
         },
     };
 
+    public static readonly CapsuleTypeMeta EventTrigger = new()
+    {
+        TypeKey = CapsuleTypes.EventTrigger,
+        Name = "事件触发",
+        Description = "监听系统事件（如生图完成、缺陷创建等），事件发生时自动触发流水线",
+        Icon = "zap",
+        Category = CapsuleCategory.Trigger,
+        AccentHue = 45,
+        Testable = true,
+        ConfigSchema = new()
+        {
+            new() { Key = "eventType", Label = "事件类型", FieldType = "select", Required = true, HelpTip = "选择要监听的系统事件，支持通配符（如 visual-agent.*）", Options = new()
+            {
+                new() { Value = "open-platform.quota.warning", Label = "开放平台 - 额度预警" },
+                new() { Value = "visual-agent.image-gen.completed", Label = "视觉创作 - 生图完成" },
+                new() { Value = "visual-agent.image-gen.failed", Label = "视觉创作 - 生图失败" },
+                new() { Value = "visual-agent.image-gen.*", Label = "视觉创作 - 所有生图事件" },
+                new() { Value = "defect-agent.report.created", Label = "缺陷管理 - 缺陷报告创建" },
+                new() { Value = "literary-agent.illustration.completed", Label = "文学创作 - 配图生成完成" },
+            }},
+            new() { Key = "customEventType", Label = "自定义事件类型", FieldType = "text", Required = false, Placeholder = "my-app.custom-event", HelpTip = "如果下拉列表中没有需要的事件，可以在此输入自定义事件类型" },
+        },
+        DefaultOutputSlots = new()
+        {
+            new() { SlotId = "event-out", Name = "eventPayload", DataType = "json", Required = true, Description = "事件载荷（包含 eventType、title、content、variables 等）" },
+        },
+    };
+
     // ──────────── 处理类 ────────────
 
     public static readonly CapsuleTypeMeta TapdCollector = new()
@@ -726,7 +754,7 @@ public static class CapsuleTypeRegistry
     public static readonly IReadOnlyList<CapsuleTypeMeta> All = new List<CapsuleTypeMeta>
     {
         // 触发类
-        Timer, WebhookReceiver, ManualTrigger, FileUpload,
+        Timer, WebhookReceiver, ManualTrigger, FileUpload, EventTrigger,
         // 处理类
         TapdCollector, HttpRequest, SmartHttp, LlmAnalyzer, ScriptExecutor, DataExtractor, DataMerger, FormatConverter, DataAggregator,
         // 流程控制类

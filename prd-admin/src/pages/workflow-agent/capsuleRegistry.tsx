@@ -1,5 +1,5 @@
 import {
-  Timer, Webhook, Hand, Upload,
+  Timer, Webhook, Hand, Upload, Zap,
   Database, Globe, Brain, Code2, Filter, Merge, Repeat, BarChart3,
   Clock, GitBranch,
   FileText, Download, Send, Bell, Box, AppWindow,
@@ -91,6 +91,16 @@ export const CAPSULE_TYPE_REGISTRY: Record<string, CapsuleTypeDef> = {
     accentHue: 170,
     testable: true,
     disabledReason: '🚧 需要执行时文件选择器支持，开发中',
+  },
+  'event-trigger': {
+    typeKey: 'event-trigger',
+    name: '事件触发',
+    description: '监听系统事件自动触发流水线',
+    Icon: Zap,
+    emoji: '⚡',
+    category: 'trigger',
+    accentHue: 45,
+    testable: true,
   },
 
   // ──────── 处理类 ────────

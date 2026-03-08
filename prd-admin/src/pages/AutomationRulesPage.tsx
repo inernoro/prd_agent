@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { glassPopoverCompact } from '@/lib/glassStyles';
 import { Button } from '@/components/design/Button';
@@ -10,7 +11,7 @@ import {
   selectContentStyle,
   selectItemClass,
 } from '@/components/design/selectStyles';
-import { automationsService } from '@/services';
+import { automationsService, listWorkflows } from '@/services';
 import { toast } from '@/lib/toast';
 import {
   Plus,
@@ -30,6 +31,8 @@ import {
   Users,
   Save,
   Terminal,
+  Workflow as WorkflowIcon,
+  ArrowRight,
 } from 'lucide-react';
 import type {
   RuleListItem,
@@ -38,6 +41,7 @@ import type {
   CreateRuleRequest,
   NotifyTarget,
 } from '@/services/contracts/automations';
+import type { Workflow } from '@/services/contracts/workflowAgent';
 
 // ── 常量 & 小组件 ──
 
@@ -234,12 +238,16 @@ function ruleToEdit(rule: RuleListItem): EditState {
 
 export default function AutomationRulesPage() {
   const { isMobile } = useBreakpoint();
+  const navigate = useNavigate();
   const [rules, setRules] = useState<RuleListItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [eventTypes, setEventTypes] = useState<EventTypeDef[]>([]);
   const [notifyTargets, setNotifyTargets] = useState<NotifyTarget[]>([]);
   const [showNewMenu, setShowNewMenu] = useState(false);
   const newMenuRef = useRef<HTMLDivElement>(null);
+
+  // 事件驱动工作流
+  const [eventWorkflows, setEventWorkflows] = useState<Workflow[]>([]);
 
   // 编辑状态
   const [edit, setEdit] = useState<EditState | null>(null);
@@ -272,6 +280,19 @@ export default function AutomationRulesPage() {
     }
   }, []);
 
+  const loadEventWorkflows = useCallback(async () => {
+    try {
+      const res = await listWorkflows({ page: 1, pageSize: 100 });
+      if (res.success && res.data) {
+        // 筛选出包含 event-trigger 节点的工作流
+        const filtered = res.data.items.filter((wf: Workflow) =>
+          wf.nodes.some((n) => n.nodeType === 'event-trigger')
+        );
+        setEventWorkflows(filtered);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
   const loadMeta = useCallback(async () => {
     try {
       const [types, targets] = await Promise.all([
@@ -283,7 +304,7 @@ export default function AutomationRulesPage() {
     } catch { /* ignore */ }
   }, []);
 
-  useEffect(() => { loadRules(); loadMeta(); }, [loadRules, loadMeta]);
+  useEffect(() => { loadRules(); loadMeta(); loadEventWorkflows(); }, [loadRules, loadMeta, loadEventWorkflows]);
 
   // ── 事件处理 ──
 
@@ -423,8 +444,65 @@ export default function AutomationRulesPage() {
 
   // ══════════════════ 渲染 ══════════════════
 
+  /** 从 event-trigger 节点配置中提取监听的事件类型 */
+  const getWorkflowEventType = (wf: Workflow): string => {
+    const node = wf.nodes.find((n) => n.nodeType === 'event-trigger');
+    if (!node) return '未知';
+    const custom = node.config?.customEventType as string;
+    const selected = node.config?.eventType as string;
+    return custom || selected || '未配置';
+  };
+
   return (
     <div className="h-full min-h-0 flex flex-col gap-4 overflow-x-hidden">
+      {/* ── 事件驱动工作流提示 ── */}
+      {eventWorkflows.length > 0 && (
+        <GlassCard className="flex-shrink-0">
+          <div className="px-4 py-3">
+            <div className="flex items-center gap-2 mb-3">
+              <WorkflowIcon size={16} style={{ color: 'rgba(168,85,247,0.8)' }} />
+              <span className="text-sm font-medium">事件驱动工作流</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{
+                background: 'rgba(168,85,247,0.08)', color: 'rgba(168,85,247,0.8)',
+                border: '1px solid rgba(168,85,247,0.15)',
+              }}>{eventWorkflows.length}</span>
+              <div className="flex-1" />
+              <Button variant="secondary" size="sm" onClick={() => navigate('/workflow-agent')}>
+                <WorkflowIcon size={12} /> 工作流编辑器
+              </Button>
+            </div>
+            <div className="space-y-1.5">
+              {eventWorkflows.map((wf) => (
+                <div key={wf.id}
+                  onClick={() => navigate(`/workflow-agent/${wf.id}`)}
+                  className="flex items-center gap-3 px-3 py-2 rounded-[10px] cursor-pointer transition-all surface-row"
+                >
+                  <Zap size={14} style={{ color: 'rgba(234,179,8,0.8)', flexShrink: 0 }} />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate">{wf.name}</div>
+                    <div className="text-[11px] flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
+                      <span>监听: {getWorkflowEventType(wf)}</span>
+                      <span>{wf.nodes.length} 个节点</span>
+                      {wf.executionCount > 0 && <span>已执行 {wf.executionCount} 次</span>}
+                    </div>
+                  </div>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${wf.isEnabled ? '' : 'opacity-50'}`} style={{
+                    background: wf.isEnabled ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)',
+                    color: wf.isEnabled ? 'rgba(34,197,94,0.8)' : 'rgba(239,68,68,0.8)',
+                    border: `1px solid ${wf.isEnabled ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)'}`,
+                  }}>{wf.isEnabled ? '已启用' : '已禁用'}</span>
+                  <ArrowRight size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 px-1 py-2 rounded-[10px] text-xs" style={{ background: 'rgba(168,85,247,0.04)', border: '1px solid rgba(168,85,247,0.08)', color: 'var(--text-muted)' }}>
+              事件驱动工作流比简单规则更强大：可以添加条件判断、数据处理、LLM 分析等中间步骤。
+              推荐在<button onClick={() => navigate('/workflow-agent')} className="underline mx-0.5" style={{ color: 'rgba(168,85,247,0.8)' }}>工作流编辑器</button>中创建事件触发的工作流来替代简单自动化规则。
+            </div>
+          </div>
+        </GlassCard>
+      )}
+
       {/* 主从面板 */}
       <GlassCard animated glow className="flex-1 min-h-0 overflow-hidden">
         <div className="grid h-full" style={{ gridTemplateColumns: isMobile ? '1fr' : '280px minmax(0, 1fr)', gridTemplateRows: isMobile ? 'auto minmax(0, 1fr)' : undefined }}>
@@ -463,6 +541,16 @@ export default function AutomationRulesPage() {
                         <div>
                           <div className="text-sm">传入 Webhook</div>
                           <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>外部系统 POST 触发</div>
+                        </div>
+                      </button>
+                      <div className="mx-2 my-1" style={{ borderTop: '1px solid var(--nested-block-border)' }} />
+                      <button onClick={() => { setShowNewMenu(false); navigate('/workflow-agent'); }}
+                        className={selectItemClass + ' w-full text-left flex items-center gap-2'}
+                        style={{ color: 'var(--text-primary)' }}>
+                        <WorkflowIcon size={14} style={{ color: 'rgba(168,85,247,0.8)' }} />
+                        <div>
+                          <div className="text-sm">事件工作流</div>
+                          <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>更强大的事件驱动流水线</div>
                         </div>
                       </button>
                     </div>

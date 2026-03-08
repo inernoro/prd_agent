@@ -56,6 +56,7 @@ public static class CapsuleExecutor
             CapsuleTypes.Timer => ExecutePassthrough(node, "定时触发器已触发", variables),
             CapsuleTypes.WebhookReceiver => ExecutePassthrough(node, "Webhook 触发器已触发", variables),
             CapsuleTypes.FileUpload => ExecuteFileUpload(node, variables),
+            CapsuleTypes.EventTrigger => ExecuteEventTrigger(node, variables),
 
             // ── 处理类 ──
             CapsuleTypes.HttpRequest => await ExecuteHttpRequestAsync(sp, node, variables, inputArtifacts),
@@ -109,6 +110,38 @@ public static class CapsuleExecutor
         var output = JsonSerializer.Serialize(new { filePath, variables, timestamp = DateTime.UtcNow });
         var artifact = MakeTextArtifact(node, "file-data", "文件数据", output);
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, $"文件上传: {filePath}");
+    }
+
+    public static CapsuleResult ExecuteEventTrigger(WorkflowNode node, Dictionary<string, string> variables)
+    {
+        // 事件触发器：从 variables 中提取事件载荷（由 AutomationHub 注入）
+        var eventType = variables.GetValueOrDefault("__eventType", "unknown");
+        var eventTitle = variables.GetValueOrDefault("__eventTitle", "");
+        var eventContent = variables.GetValueOrDefault("__eventContent", "");
+        var eventSourceId = variables.GetValueOrDefault("__eventSourceId", "");
+
+        // 构建事件变量（排除系统变量）
+        var eventVariables = new Dictionary<string, string>();
+        foreach (var kvp in variables)
+        {
+            if (kvp.Key.StartsWith("__event_"))
+                eventVariables[kvp.Key["__event_".Length..]] = kvp.Value;
+        }
+
+        var payload = new
+        {
+            trigger = "event",
+            eventType,
+            title = eventTitle,
+            content = eventContent,
+            sourceId = eventSourceId,
+            variables = eventVariables,
+            timestamp = DateTime.UtcNow
+        };
+
+        var output = JsonSerializer.Serialize(payload, JsonCompact);
+        var artifact = MakeTextArtifact(node, "event-out", "事件载荷", output);
+        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, $"事件触发: {eventType} - {eventTitle}");
     }
 
     // ── 处理类 ──────────────────────────────────────────────
