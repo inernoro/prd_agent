@@ -1652,18 +1652,18 @@ document.addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key==='ArrowD
             var gateway = scope.ServiceProvider.GetRequiredService<ILlmGateway>();
 
             var systemPrompt = BuildSceneCodegenSystemPrompt();
-            var userPrompt = $"""
+            var userPrompt = $$"""
                 请为以下视频分镜生成 Remotion 场景组件代码。
 
                 分镜信息：
-                - 序号：{scene.Index + 1}
-                - 主题：{scene.Topic}
-                - 类型：{scene.SceneType}
-                - 旁白：{scene.Narration}
-                - 画面描述：{scene.VisualDescription}
+                - 序号：{{scene.Index + 1}}
+                - 主题：{{scene.Topic}}
+                - 类型：{{scene.SceneType}}
+                - 旁白：{{scene.Narration}}
+                - 画面描述：{{scene.VisualDescription}}
 
                 请输出完整的 TypeScript React 组件代码（.tsx），包含所有 import 语句。
-                组件必须导出为 default export，接收 {{ scene: SceneData; videoTitle?: string }} props。
+                组件必须导出为 default export，接收 { scene: SceneData; videoTitle?: string } props。
                 只输出代码，不要包含 markdown 代码块标记或任何解释文字。
                 """;
 
