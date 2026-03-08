@@ -671,140 +671,148 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
           <div className="flex-1 min-w-0 p-4">
         {/* 头部：点击展开/折叠 */}
         <div
-          className="flex items-center gap-3 cursor-pointer select-none"
+          className="cursor-pointer select-none"
           onClick={onToggle}
         >
-          {/* 序号 */}
-          <span
-            className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0"
-            style={
-              status === 'completed'
-                ? { background: 'rgba(34,197,94,0.2)', color: 'rgba(34,197,94,0.95)' }
-                : status === 'running'
-                  ? { background: 'rgba(99,102,241,0.18)', color: 'var(--accent-gold)' }
-                  : status === 'failed'
-                    ? { background: 'rgba(239,68,68,0.15)', color: 'rgba(239,68,68,0.9)' }
-                    : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }
-            }
-          >
-            {status === 'completed' ? '✓' : index + 1}
-          </span>
+          {/* 主行：状态 + 名称 + 类型 + 时长 */}
+          <div className="flex items-center gap-3">
+            {/* 序号/状态 */}
+            <span
+              className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0"
+              style={
+                status === 'completed'
+                  ? { background: 'rgba(34,197,94,0.2)', color: 'rgba(34,197,94,0.95)' }
+                  : status === 'running'
+                    ? { background: 'rgba(99,102,241,0.18)', color: 'var(--accent-gold)' }
+                    : status === 'failed'
+                      ? { background: 'rgba(239,68,68,0.15)', color: 'rgba(239,68,68,0.9)' }
+                      : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }
+              }
+            >
+              {status === 'completed' ? '✓' : index + 1}
+            </span>
 
-          {/* 断点红点指示 */}
-          {node.breakpoint && (
+            {/* 断点红点 */}
+            {node.breakpoint && (
+              <div
+                className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                style={{ background: 'rgba(239,68,68,0.9)', boxShadow: '0 0 4px rgba(239,68,68,0.5)' }}
+                title="断点：执行完此节点后暂停"
+              />
+            )}
+
+            {/* 图标 */}
             <div
-              className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-              style={{ background: 'rgba(239,68,68,0.9)', boxShadow: '0 0 4px rgba(239,68,68,0.5)' }}
-              title="断点：执行完此节点后暂停"
-            />
-          )}
-
-          {/* 图标 + 名称 */}
-          <div
-            className="w-8 h-8 rounded-[8px] flex items-center justify-center flex-shrink-0"
-            style={{
-              background: `hsla(${accentHue}, 60%, 55%, 0.12)`,
-              color: `hsla(${accentHue}, 60%, 65%, 0.9)`,
-            }}
-          >
-            {CIcon ? <CIcon className="w-4 h-4" /> : <span>{emoji}</span>}
-          </div>
-
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-1.5">
-              <h3 className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                {node.name}
-              </h3>
-              <span
-                className="text-[10px] px-1.5 py-0.5 rounded-full"
-                style={{
-                  background: 'rgba(255,255,255,0.06)',
-                  color: 'var(--text-muted)',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                }}
-              >
-                {typeDef?.name ?? node.nodeType}
-              </span>
-              {/* 紧凑插槽标识：蓝圈=输入  绿圈=输出  悬浮显示详情 */}
-              {node.inputSlots.length > 0 && (
-                <span
-                  className="relative group px-1 py-0.5 rounded text-[9px] font-mono cursor-default"
-                  style={{ background: `hsla(${accentHue}, 50%, 50%, 0.1)`, color: `hsla(${accentHue}, 55%, 70%, 0.85)`, border: `1px solid hsla(${accentHue}, 50%, 50%, 0.15)` }}
-                >
-                  ← {node.inputSlots.length}
-                  <span className="absolute left-0 top-full mt-1 z-50 hidden group-hover:block whitespace-nowrap rounded-[8px] px-2.5 py-1.5 text-[10px] leading-relaxed"
-                    style={{ background: 'rgba(0,0,0,0.85)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.12)', backdropFilter: 'blur(12px)' }}>
-                    {node.inputSlots.map(s => `${s.name} (${s.dataType})${s.required ? ' *' : ''}`).join('\n')}
-                  </span>
-                </span>
-              )}
-              {node.outputSlots.length > 0 && (
-                <span
-                  className="relative group px-1 py-0.5 rounded text-[9px] font-mono cursor-default"
-                  style={{ background: 'rgba(34,197,94,0.08)', color: 'rgba(34,197,94,0.8)', border: '1px solid rgba(34,197,94,0.12)' }}
-                >
-                  → {node.outputSlots.length}
-                  <span className="absolute left-0 top-full mt-1 z-50 hidden group-hover:block whitespace-nowrap rounded-[8px] px-2.5 py-1.5 text-[10px] leading-relaxed"
-                    style={{ background: 'rgba(0,0,0,0.85)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.12)', backdropFilter: 'blur(12px)' }}>
-                    {node.outputSlots.map(s => `${s.name} (${s.dataType})`).join('\n')}
-                  </span>
-                </span>
-              )}
+              className="w-8 h-8 rounded-[8px] flex items-center justify-center flex-shrink-0"
+              style={{
+                background: `hsla(${accentHue}, 60%, 55%, 0.12)`,
+                color: `hsla(${accentHue}, 60%, 65%, 0.9)`,
+              }}
+            >
+              {CIcon ? <CIcon className="w-4 h-4" /> : <span>{emoji}</span>}
             </div>
-          </div>
 
-          {/* 产物芯片（完成后，折叠态也能看到和操作产物） */}
-          {status === 'completed' && nodeOutput?.artifacts && nodeOutput.artifacts.length > 0 && (
-            <div className="flex items-center gap-1 flex-shrink-0">
-              {nodeOutput.artifacts.map((art, ai) => (
+            {/* 名称 + 类型 + 插槽 */}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5">
+                <h3 className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                  {node.name}
+                </h3>
                 <span
-                  key={ai}
-                  className="inline-flex items-center gap-1 text-[10px] pl-1.5 pr-0.5 py-0.5 rounded-full"
+                  className="text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0"
                   style={{
-                    background: 'rgba(34,197,94,0.08)',
-                    color: 'rgba(34,197,94,0.85)',
-                    border: '1px solid rgba(34,197,94,0.15)',
+                    background: 'rgba(255,255,255,0.06)',
+                    color: 'var(--text-muted)',
+                    border: '1px solid rgba(255,255,255,0.08)',
                   }}
-                  onClick={(e) => e.stopPropagation()}
                 >
-                  <FileText className="w-3 h-3" />
-                  <span className="truncate max-w-[80px]">{ensureExtension(art.name, art.mimeType)}</span>
-                  <span className="text-[9px] opacity-60">{formatBytes(art.sizeBytes)}</span>
-                  {(art.inlineContent || art.cosUrl) && onPreviewArtifact && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onPreviewArtifact(art); }}
-                      className="p-0.5 rounded hover:bg-white/10 transition-colors"
-                      title="预览"
-                    >
-                      <Eye className="w-3 h-3" />
-                    </button>
-                  )}
-                  {art.cosUrl && (
-                    <a
-                      href={art.cosUrl}
-                      download={ensureExtension(art.name, art.mimeType)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={(e) => e.stopPropagation()}
-                      className="p-0.5 rounded hover:bg-white/10 transition-colors"
-                      title="下载"
-                    >
-                      <Download className="w-3 h-3" />
-                    </a>
-                  )}
+                  {typeDef?.name ?? node.nodeType}
                 </span>
-              ))}
+                {node.inputSlots.length > 0 && (
+                  <span
+                    className="relative group px-1 py-0.5 rounded text-[9px] font-mono cursor-default flex-shrink-0"
+                    style={{ background: `hsla(${accentHue}, 50%, 50%, 0.1)`, color: `hsla(${accentHue}, 55%, 70%, 0.85)`, border: `1px solid hsla(${accentHue}, 50%, 50%, 0.15)` }}
+                  >
+                    ← {node.inputSlots.length}
+                    <span className="absolute left-0 top-full mt-1 z-50 hidden group-hover:block whitespace-nowrap rounded-[8px] px-2.5 py-1.5 text-[10px] leading-relaxed"
+                      style={{ background: 'rgba(0,0,0,0.85)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.12)', backdropFilter: 'blur(12px)' }}>
+                      {node.inputSlots.map(s => `${s.name} (${s.dataType})${s.required ? ' *' : ''}`).join('\n')}
+                    </span>
+                  </span>
+                )}
+                {node.outputSlots.length > 0 && (
+                  <span
+                    className="relative group px-1 py-0.5 rounded text-[9px] font-mono cursor-default flex-shrink-0"
+                    style={{ background: 'rgba(34,197,94,0.08)', color: 'rgba(34,197,94,0.8)', border: '1px solid rgba(34,197,94,0.12)' }}
+                  >
+                    → {node.outputSlots.length}
+                    <span className="absolute left-0 top-full mt-1 z-50 hidden group-hover:block whitespace-nowrap rounded-[8px] px-2.5 py-1.5 text-[10px] leading-relaxed"
+                      style={{ background: 'rgba(0,0,0,0.85)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.12)', backdropFilter: 'blur(12px)' }}>
+                      {node.outputSlots.map(s => `${s.name} (${s.dataType})`).join('\n')}
+                    </span>
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* 状态 */}
+            <StepStatusBadge status={status} durationMs={nodeExec?.durationMs} />
+
+            {/* 展开/折叠 */}
+            {isExpanded
+              ? <ChevronDown className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
+              : <ChevronRight className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
+            }
+          </div>
+
+          {/* 产物行：折叠态时在头部下方独立展示，不挤占主行 */}
+          {!isExpanded && status === 'completed' && nodeOutput?.artifacts && nodeOutput.artifacts.length > 0 && (
+            <div
+              className="flex items-center gap-1.5 flex-wrap mt-2 ml-[68px]"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {nodeOutput.artifacts.map((art, ai) => {
+                const isAuto = art.tags?.includes('auto-generated');
+                return (
+                  <span
+                    key={ai}
+                    className="inline-flex items-center gap-1 text-[10px] pl-2 pr-1 py-0.5 rounded-full"
+                    style={isAuto
+                      ? { background: 'rgba(139,92,246,0.08)', color: 'rgba(139,92,246,0.7)', border: '1px solid rgba(139,92,246,0.15)' }
+                      : { background: 'rgba(34,197,94,0.08)', color: 'rgba(34,197,94,0.85)', border: '1px solid rgba(34,197,94,0.15)' }
+                    }
+                  >
+                    <FileText className="w-3 h-3" />
+                    <span className="truncate max-w-[140px]">{ensureExtension(art.name, art.mimeType)}</span>
+                    <span className="text-[9px] opacity-60">{formatBytes(art.sizeBytes)}</span>
+                    {isAuto && <span className="text-[8px] opacity-50">透传</span>}
+                    {(art.inlineContent || art.cosUrl) && onPreviewArtifact && (
+                      <button
+                        onClick={() => onPreviewArtifact(art)}
+                        className="p-0.5 rounded hover:bg-white/10 transition-colors"
+                        title="预览"
+                      >
+                        <Eye className="w-3 h-3" />
+                      </button>
+                    )}
+                    {art.cosUrl && (
+                      <a
+                        href={art.cosUrl}
+                        download={ensureExtension(art.name, art.mimeType)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="p-0.5 rounded hover:bg-white/10 transition-colors"
+                        title="下载"
+                      >
+                        <Download className="w-3 h-3" />
+                      </a>
+                    )}
+                  </span>
+                );
+              })}
             </div>
           )}
-
-          {/* 状态 */}
-          <StepStatusBadge status={status} durationMs={nodeExec?.durationMs} />
-
-          {/* 展开/折叠 */}
-          {isExpanded
-            ? <ChevronDown className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
-            : <ChevronRight className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
-          }
         </div>
 
         {/* 执行中进度条 + LLM 流式输出 */}
