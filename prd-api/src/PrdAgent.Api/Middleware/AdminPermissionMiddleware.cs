@@ -93,6 +93,16 @@ public sealed class AdminPermissionMiddleware
             has = false;
         }
 
+        // 将有效权限注入 User claims，供下游 Controller 中的 HasPermission() 使用
+        var identity = context.User.Identity as System.Security.Claims.ClaimsIdentity;
+        if (identity != null)
+        {
+            foreach (var p in perms)
+            {
+                identity.AddClaim(new System.Security.Claims.Claim("permissions", p));
+            }
+        }
+
         if (!has)
         {
             var clientIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";

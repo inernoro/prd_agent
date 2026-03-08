@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'react';
-import { FileBarChart, Users, FileText, Building2, RefreshCw, CalendarCheck, GitBranch } from 'lucide-react';
+import { FileBarChart, Users, FileText, Building2, RefreshCw, CalendarCheck, GitBranch, BarChart3, Link2 } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
@@ -11,6 +11,8 @@ import { TemplateManager } from './components/TemplateManager';
 import { TeamManager } from './components/TeamManager';
 import { DailyLogPanel } from './components/DailyLogPanel';
 import { DataSourceManager } from './components/DataSourceManager';
+import { HistoryTrendsPanel } from './components/HistoryTrendsPanel';
+import { PersonalSourcesPanel } from './components/PersonalSourcesPanel';
 
 export default function ReportAgentPage() {
   const {
@@ -42,10 +44,13 @@ export default function ReportAgentPage() {
     const items = [
       { key: 'my-reports', label: '我的周报', icon: <FileText size={14} /> },
       { key: 'daily-log', label: '每日打点', icon: <CalendarCheck size={14} /> },
+      { key: 'my-sources', label: '我的数据源', icon: <Link2 size={14} /> },
     ];
     if (isLeader) {
       items.push({ key: 'team-dashboard', label: '团队面板', icon: <Users size={14} /> });
     }
+    // Trends tab - visible to everyone
+    items.push({ key: 'trends', label: '数据统计', icon: <BarChart3 size={14} /> });
     if (hasTemplateManage) {
       items.push({ key: 'templates', label: '模板管理', icon: <FileBarChart size={14} /> });
     }
@@ -91,7 +96,9 @@ export default function ReportAgentPage() {
       <div className="flex-1 min-h-0">
         {activeTab === 'my-reports' && <MyReportsList />}
         {activeTab === 'daily-log' && <DailyLogPanel />}
+        {activeTab === 'my-sources' && <PersonalSourcesPanel />}
         {activeTab === 'team-dashboard' && <TeamDashboard />}
+        {activeTab === 'trends' && <HistoryTrendsPanel />}
         {activeTab === 'templates' && <TemplateManager />}
         {activeTab === 'teams' && <TeamManager />}
         {activeTab === 'data-sources' && <DataSourceManager />}

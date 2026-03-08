@@ -492,6 +492,23 @@ export const api = {
     },
     activity: () => '/api/report-agent/activity',
     users: () => '/api/report-agent/users',
+    trends: {
+      personal: () => '/api/report-agent/trends/personal',
+      team: (teamId: string) => `/api/report-agent/trends/team/${teamId}`,
+    },
+    // v2.0 endpoints
+    personalSources: {
+      list: () => '/api/report-agent/my/sources',
+      byId: (id: string) => `/api/report-agent/my/sources/${id}`,
+      test: (id: string) => `/api/report-agent/my/sources/${id}/test`,
+      sync: (id: string) => `/api/report-agent/my/sources/${id}/sync`,
+    },
+    personalStats: () => '/api/report-agent/my/stats',
+    teamWorkflow: (teamId: string) => `/api/report-agent/teams/${teamId}/workflow`,
+    teamWorkflowRun: (teamId: string) => `/api/report-agent/teams/${teamId}/workflow/run`,
+    identityMappings: (teamId: string, userId: string) =>
+      `/api/report-agent/teams/${teamId}/members/${userId}/identity-mappings`,
+    seedTemplates: () => '/api/report-agent/templates/seed',
   },
 
   // ============ Open Platform 开放平台 ============

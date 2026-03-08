@@ -117,6 +117,7 @@ public class MongoDbContext
     public IMongoCollection<ReportCommit> ReportCommits => _database.GetCollection<ReportCommit>("report_commits");
     public IMongoCollection<ReportComment> ReportComments => _database.GetCollection<ReportComment>("report_comments");
     public IMongoCollection<TeamSummary> ReportTeamSummaries => _database.GetCollection<TeamSummary>("report_team_summaries");
+    public IMongoCollection<PersonalSource> PersonalSources => _database.GetCollection<PersonalSource>("report_personal_sources");
 
     // Channel Adapter 多通道适配器
     public IMongoCollection<ChannelWhitelist> ChannelWhitelists => _database.GetCollection<ChannelWhitelist>("channel_whitelist");
@@ -1081,6 +1082,11 @@ public class MongoDbContext
                 new CreateIndexOptions { Unique = true, Name = "idx_team_summaries_team_week" }));
         }
         catch (MongoCommandException) { /* 索引已存在 */ }
+
+        // PersonalSources：(UserId, SourceType) 组合查询；按 UserId 查询
+        PersonalSources.Indexes.CreateOne(new CreateIndexModel<PersonalSource>(
+            Builders<PersonalSource>.IndexKeys.Ascending(x => x.UserId).Ascending(x => x.SourceType),
+            new CreateIndexOptions { Name = "idx_personal_sources_user_type" }));
 
         // Arena 竞技场索引
         try

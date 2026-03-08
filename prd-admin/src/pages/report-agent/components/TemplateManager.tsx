@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Pencil, Trash2, ChevronUp, ChevronDown } from 'lucide-react';
+import { Plus, Pencil, Trash2, ChevronUp, ChevronDown, FileBarChart, CheckSquare, ListChecks } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
@@ -133,66 +133,141 @@ export function TemplateManager() {
   };
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <div className="text-[13px] font-medium" style={{ color: 'var(--text-secondary)' }}>
-          共 {templates.length} 个模板
+    <div className="flex flex-col gap-5">
+      {/* Header — card-wrapped */}
+      <GlassCard variant="subtle" className="px-5 py-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ background: 'rgba(168, 85, 247, 0.06)' }}>
+              <FileBarChart size={16} style={{ color: 'rgba(168, 85, 247, 0.8)' }} />
+            </div>
+            <div>
+              <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                模板管理
+              </span>
+              <span
+                className="text-[11px] px-2 py-0.5 rounded-full ml-2"
+                style={{ color: 'var(--text-muted)', background: 'var(--bg-tertiary)' }}
+              >
+                {templates.length} 个模板
+              </span>
+            </div>
+          </div>
+          <Button variant="primary" size="sm" onClick={handleCreate}>
+            <Plus size={14} /> 新建模板
+          </Button>
         </div>
-        <Button variant="primary" size="sm" onClick={handleCreate}>
-          <Plus size={14} /> 新建模板
-        </Button>
-      </div>
+      </GlassCard>
 
-      {/* Template list */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {templates.map((tpl) => (
-          <GlassCard key={tpl.id} className="p-4">
-            <div className="flex items-start justify-between mb-2">
-              <div>
-                <div className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
-                  {tpl.name}
-                  {tpl.isDefault && (
-                    <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded" style={{ color: 'rgba(59, 130, 246, 0.9)', background: 'rgba(59, 130, 246, 0.1)' }}>默认</span>
-                  )}
+      {/* Template grid */}
+      {templates.length === 0 ? (
+        <div className="flex items-center justify-center" style={{ minHeight: 300 }}>
+          <div className="text-center">
+            <ListChecks size={32} style={{ color: 'var(--text-muted)', opacity: 0.4, margin: '0 auto' }} />
+            <div className="text-[13px] mt-3" style={{ color: 'var(--text-muted)' }}>暂无模板</div>
+            <Button variant="primary" size="sm" className="mt-3" onClick={handleCreate}>
+              <Plus size={12} /> 创建模板
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {templates.map((tpl) => (
+            <div
+              key={tpl.id}
+              className="group rounded-xl transition-all duration-200 hover:translate-y-[-1px]"
+              style={{
+                background: 'var(--surface-glass)',
+                backdropFilter: 'blur(12px)',
+                border: '1px solid var(--border-primary)',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+              }}
+            >
+              <div className="p-5">
+                {/* Header */}
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[15px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                        {tpl.name}
+                      </span>
+                      {tpl.isDefault && (
+                        <span
+                          className="text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0"
+                          style={{ color: 'rgba(59, 130, 246, 0.9)', background: 'rgba(59, 130, 246, 0.1)' }}
+                        >
+                          默认
+                        </span>
+                      )}
+                    </div>
+                    {tpl.description && (
+                      <div className="text-[12px] mt-1 line-clamp-2" style={{ color: 'var(--text-muted)' }}>
+                        {tpl.description}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity ml-2">
+                    <button
+                      className="p-1.5 rounded-lg hover:bg-[var(--bg-tertiary)] transition-colors"
+                      onClick={() => handleEdit(tpl.id)}
+                    >
+                      <Pencil size={12} style={{ color: 'var(--text-muted)' }} />
+                    </button>
+                    <button
+                      className="p-1.5 rounded-lg hover:bg-[rgba(239,68,68,0.08)] transition-colors"
+                      onClick={() => handleDelete(tpl.id)}
+                    >
+                      <Trash2 size={12} style={{ color: 'var(--text-muted)' }} />
+                    </button>
+                  </div>
                 </div>
-                {tpl.description && (
-                  <div className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>{tpl.description}</div>
-                )}
-              </div>
-              <div className="flex items-center gap-1">
-                <Button variant="ghost" size="sm" onClick={() => handleEdit(tpl.id)}>
-                  <Pencil size={12} />
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => handleDelete(tpl.id)}>
-                  <Trash2 size={12} />
-                </Button>
+
+                {/* Section tags with accent colors */}
+                <div className="flex flex-wrap gap-1.5">
+                  {tpl.sections.map((s, i) => {
+                    const tagColors = [
+                      { color: 'rgba(59, 130, 246, 0.85)', bg: 'rgba(59, 130, 246, 0.08)' },
+                      { color: 'rgba(34, 197, 94, 0.85)', bg: 'rgba(34, 197, 94, 0.08)' },
+                      { color: 'rgba(168, 85, 247, 0.85)', bg: 'rgba(168, 85, 247, 0.08)' },
+                      { color: 'rgba(249, 115, 22, 0.85)', bg: 'rgba(249, 115, 22, 0.08)' },
+                      { color: 'rgba(236, 72, 153, 0.85)', bg: 'rgba(236, 72, 153, 0.08)' },
+                    ];
+                    const tc = tagColors[i % tagColors.length];
+                    return (
+                      <span
+                        key={i}
+                        className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-full font-medium"
+                        style={{ color: tc.color, background: tc.bg }}
+                      >
+                        {s.isRequired && <CheckSquare size={8} />}
+                        {s.title}
+                      </span>
+                    );
+                  })}
+                </div>
               </div>
             </div>
-            <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-              {tpl.sections.length} 个章节
-              {tpl.sections.map((s) => ` · ${s.title}`).join('')}
-            </div>
-          </GlassCard>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
       {/* Dialog */}
       {showDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.3)' }}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.4)' }}>
           <GlassCard className="p-0 w-[600px] max-h-[80vh] flex flex-col">
-            <div className="px-4 py-3 font-medium text-[14px]" style={{ color: 'var(--text-primary)', borderBottom: '1px solid var(--border-primary)' }}>
+            <div className="px-5 py-4 font-semibold text-[15px]" style={{ color: 'var(--text-primary)', borderBottom: '1px solid var(--border-primary)' }}>
               {editingId ? '编辑模板' : '新建模板'}
             </div>
-            <div className="flex-1 min-h-0 overflow-auto px-4 py-3 flex flex-col gap-3">
+            <div className="flex-1 min-h-0 overflow-auto px-5 py-4 flex flex-col gap-4">
               <input
-                className="w-full px-3 py-2 rounded-lg text-[13px]"
+                className="w-full px-3 py-2.5 rounded-xl text-[13px]"
                 style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
                 placeholder="模板名称"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
               />
               <input
-                className="w-full px-3 py-2 rounded-lg text-[13px]"
+                className="w-full px-3 py-2.5 rounded-xl text-[13px]"
                 style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
                 placeholder="模板描述（可选）"
                 value={description}
@@ -200,7 +275,7 @@ export function TemplateManager() {
               />
               <div className="flex items-center gap-3">
                 <select
-                  className="flex-1 px-3 py-2 rounded-lg text-[13px]"
+                  className="flex-1 px-3 py-2.5 rounded-xl text-[13px]"
                   style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
                   value={teamId}
                   onChange={(e) => setTeamId(e.target.value)}
@@ -214,20 +289,30 @@ export function TemplateManager() {
                 </label>
               </div>
 
-              <div className="text-[12px] font-medium mt-2" style={{ color: 'var(--text-secondary)' }}>章节配置</div>
+              <div className="text-[13px] font-medium mt-1" style={{ color: 'var(--text-secondary)' }}>章节配置</div>
               {sections.map((sec, idx) => (
-                <GlassCard key={idx} variant="subtle" className="p-3 flex flex-col gap-2">
+                <div
+                  key={idx}
+                  className="p-3 rounded-xl flex flex-col gap-2.5"
+                  style={{
+                    background: 'var(--bg-tertiary)',
+                    border: '1px solid var(--border-secondary)',
+                  }}
+                >
                   <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-mono w-5 text-center" style={{ color: 'var(--text-muted)' }}>
+                      {idx + 1}
+                    </span>
                     <input
-                      className="flex-1 px-2 py-1.5 rounded text-[12px]"
-                      style={{ background: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: '1px solid var(--border-secondary)' }}
+                      className="flex-1 px-2.5 py-1.5 rounded-lg text-[12px]"
+                      style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
                       placeholder="章节标题"
                       value={sec.title}
                       onChange={(e) => updateSection(idx, 'title', e.target.value)}
                     />
                     <select
-                      className="px-2 py-1.5 rounded text-[12px]"
-                      style={{ background: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: '1px solid var(--border-secondary)' }}
+                      className="px-2.5 py-1.5 rounded-lg text-[12px]"
+                      style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
                       value={sec.inputType}
                       onChange={(e) => updateSection(idx, 'inputType', e.target.value)}
                     >
@@ -244,19 +329,19 @@ export function TemplateManager() {
                     <Button variant="ghost" size="sm" onClick={() => removeSection(idx)}><Trash2 size={12} /></Button>
                   </div>
                   <input
-                    className="w-full px-2 py-1.5 rounded text-[11px]"
-                    style={{ background: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: '1px solid var(--border-secondary)' }}
+                    className="w-full px-2.5 py-1.5 rounded-lg text-[11px] ml-7"
+                    style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)', maxWidth: 'calc(100% - 1.75rem)' }}
                     placeholder="填写提示（可选）"
                     value={sec.description}
                     onChange={(e) => updateSection(idx, 'description', e.target.value)}
                   />
-                </GlassCard>
+                </div>
               ))}
               <Button variant="ghost" size="sm" className="self-start" onClick={addSection}>
                 <Plus size={12} /> 添加章节
               </Button>
             </div>
-            <div className="flex items-center justify-end gap-2 px-4 py-3" style={{ borderTop: '1px solid var(--border-primary)' }}>
+            <div className="flex items-center justify-end gap-2 px-5 py-4" style={{ borderTop: '1px solid var(--border-primary)' }}>
               <Button variant="secondary" size="sm" onClick={() => setShowDialog(false)}>取消</Button>
               <Button variant="primary" size="sm" onClick={handleSave} disabled={saving}>
                 {saving ? '保存中...' : '保存'}
