@@ -136,15 +136,16 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | **human-verify** | "验证一下"、"/verify" | 多角度模拟验证（逆向验证/边界测试/数据流追踪） | 开发者 |
 | **smoke-test** | "冒烟测试"、"/smoke" | 自动生成链式 curl 命令端到端测试 | 开发者、QA |
 | **task-handoff-checklist** | "交接"、"/handoff" | 8 维度交接清单（导航/文档/规则/流程/测试/风险/质量/后续） | 所有人 |
-| **conflict-resolution** | "解决冲突"、"/resolve" | 安全合并冲突（三级分类、禁止静默丢弃、强制人类确认高风险） | 开发者 |
+| **conflict-resolution** | "合并主分支"、"/resolve" | PR 前预合并 main 到特性分支（三级冲突分类、禁止丢弃代码、高风险交人类） | 开发者 |
 | **weekly-update-summary** | "生成周报"、"/weekly" | 从 git 历史自动生成结构化周报 | 项目负责人 |
 
 ### 使用指引
 
 1. **方案评审时** → 先 `/risk` 评估风险，再 `/trace` 追踪关键链路
 2. **开发完成后** → 先 `/verify` 交叉验证，再 `/smoke-test` 跑端到端
-3. **准备上线时** → `/handoff` 生成交接清单（涉及 3+ 文件时自动触发）
-4. **周五收尾时** → `/weekly` 生成本周总结
+3. **提 PR 前** → `/resolve` 预合并主分支，AI 代替人类解决冲突
+4. **准备上线时** → `/handoff` 生成交接清单（涉及 3+ 文件时自动触发）
+5. **周五收尾时** → `/weekly` 生成本周总结
 
 ---
 
