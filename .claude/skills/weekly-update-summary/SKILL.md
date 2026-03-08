@@ -1,11 +1,73 @@
 ---
 name: weekly-update-summary
-description: 自动生成项目周报。从 git 历史收集提交、PR、贡献者数据，分析分类后生成结构化中文周报（概览 → 完成事项 → 下周方向），输出到 doc/weekly-report-YYYY-WXX.md。触发词："生成周报"、"写周报"、"weekly report"、"本周总结"。
+description: 自动生成项目周报。从 git 历史收集提交、PR、贡献者数据，分析分类后生成结构化中文周报（概览 → 完成事项 → 下周方向），输出到 doc/report.YYYY-WXX.md。触发词："生成周报"、"写周报"、"weekly report"、"本周总结"。
 ---
 
 # Weekly Update Summary — 自动化周报生成
 
 每周自动从 git 历史中收集数据，分析归类后生成结构化中文周报。
+
+## ⚠️ 核心纪律（必须遵守）
+
+### 纪律 1：PR 范围从上周报告的最后一个 PR 之后开始
+
+> **根因案例**：W10 周报首次生成时，仅按日期范围 (03-02~03-08) 搜索 merge commit，遗漏了 #163~#165（周日凌晨合并，时区偏移落在边界外），导致 PR 范围错误 (#166~#206 vs 正确的 #163~#206)。
+
+**正确做法**：
+1. 找到上周周报文件，读取其 PR 范围（如 `#128 ~ #162`）
+2. 本周 PR 从 `上周最后一个 PR + 1` 开始（如从 #163 开始）
+3. 本周 PR 到当前 `git log --merges` 能找到的最大 PR 编号结束
+4. 如果上周周报不存在，才退化为纯日期范围搜索
+
+```bash
+# 1. 读取上周报告的最后一个 PR
+PREV_LAST_PR=$(grep -oP '#\d+ ~ #\K\d+' "$PREV_FILE" | head -1)
+# 2. 本周起始 PR = 上周最后 + 1
+THIS_FIRST_PR=$((PREV_LAST_PR + 1))
+# 3. 本周最后 PR = 当前 git 历史中最大 PR 号
+THIS_LAST_PR=$(git log --all --merges --format="%s" | grep -oP 'Merge pull request #\K\d+' | sort -n | tail -1)
+```
+
+### 纪律 2：深读 PR 实际 commits，不信 merge commit 标题
+
+> **根因案例**：PR #201 的 merge commit 标题是 `remove: delete TAPD 缺陷趋势看板 workflow template`，但其实际 25 个 commits 中包含 TAPD 质量报告 ECharts 重构、多月趋势看板、PPT 风格模板等重大功能。按标题分类会将重大功能误归为 "清理"。
+
+**正确做法**：对每个 PR，用 `git log HASH^1..HASH^2 --oneline` 读取其全部 commits，基于 commits 内容判断 PR 真实主题。
+
+```bash
+for PR_NUM in $(seq $THIS_FIRST_PR $THIS_LAST_PR); do
+  HASH=$(git log --all --merges --format="%H %s" | grep "Merge pull request #${PR_NUM} " | head -1 | awk '{print $1}')
+  if [ -n "$HASH" ]; then
+    echo "=== PR #$PR_NUM ==="
+    git log "$HASH^1..$HASH^2" --oneline 2>/dev/null | head -10
+  fi
+done
+```
+
+### 纪律 3：先列脉络确认，再写完整报告
+
+> **根因案例**：首次直接生成完整报告，脉络分组有误（如将 TAPD 报告系统升级拆散到多个不相关类别），修改成本高。第二次先列出 12 条脉络候选让用户确认，用户一次通过。
+
+**正确做法**：完成数据收集和 PR 深读后，**必须先向用户展示重大脉络候选列表**（按影响程度排序），等用户确认后再生成完整报告。
+
+输出格式：
+```
+**W{NUM} ({DATE_RANGE}) | PR #{FIRST} ~ #{LAST} ({COUNT} 个 PR)**
+
+### 重大脉络候选（按影响程度排序）：
+
+1. **{脉络名}** — {一句话总结} ({相关PR列表})
+2. **{脉络名}** — {一句话总结} ({相关PR列表})
+...
+
+这些脉络你觉得对吗？有哪些需要调整、合并或拆分的？
+```
+
+### 纪律 4：文件命名使用 `report.YYYY-WXX.md`
+
+> **根因案例**：历史报告均为 `report.2026-W06.md` 格式，但技能模板中写的是 `weekly-report-YYYY-WXX.md`，导致命名不一致。
+
+**正确做法**：文件名为 `doc/report.{ISO_YEAR}-W{WEEK_NUM}.md`，搜索上周报告时也要用此格式。
 
 ## 触发词
 
@@ -48,7 +110,7 @@ NEXT_MONDAY=$(date -d "$MONDAY + 7 days" +%Y-%m-%d)
 WEEK_NUM=$(date -d "$MONDAY" +%V)
 ISO_YEAR=$(date -d "$MONDAY" +%G)
 
-REPORT_FILE="doc/weekly-report-${ISO_YEAR}-W${WEEK_NUM}.md"
+REPORT_FILE="doc/report.${ISO_YEAR}-W${WEEK_NUM}.md"
 ```
 
 **重要**：使用 `%G` (ISO 年份) 和 `%V` (ISO 周号)，不要用 `%Y`，避免跨年边界错误。
@@ -93,30 +155,49 @@ echo "$STATS"
 # 输出格式: "325 files changed, 37362 insertions(+), 5449 deletions(-)"
 ```
 
-#### 2.3 PR 列表
+#### 2.3 PR 列表与深度分析
 
-**方式 A — gh CLI 可用时**（优先）：
+**Step 1 — 确定 PR 范围**（基于上周报告，见纪律 1）：
 
 ```bash
-gh pr list --state merged \
-  --search "merged:$MONDAY..$NEXT_MONDAY" \
-  --json number,title,mergedAt \
-  --limit 100 \
-  --jq '.[] | "#\(.number) | \(.title)"'
+# 从上周报告读取最后一个 PR 号
+PREV_LAST_PR=$(grep -oP '#\d+ ~ #\K\d+' "$PREV_FILE" 2>/dev/null | head -1)
+if [ -n "$PREV_LAST_PR" ]; then
+  THIS_FIRST_PR=$((PREV_LAST_PR + 1))
+else
+  # 退化：从 merge commit 日期范围搜索
+  THIS_FIRST_PR=$(git log --all --merges --format="%s" --since="$MONDAY" --until="$NEXT_MONDAY" | grep -oP 'Merge pull request #\K\d+' | sort -n | head -1)
+fi
+THIS_LAST_PR=$(git log --all --merges --format="%s" | grep -oP 'Merge pull request #\K\d+' | sort -n | tail -1)
 ```
 
-**方式 B — gh 不可用时**（从 merge commit 提取）：
+**Step 2 — 获取 PR 列表**：
 
 ```bash
-git log --merges --since="$MONDAY" --until="$NEXT_MONDAY" --format="%H %s" | \
-while read HASH MSG; do
-  PR_NUM=$(echo "$MSG" | sed -n 's/^Merge pull request #\([0-9]*\) .*/\1/p')
-  if [ -n "$PR_NUM" ]; then
+for PR_NUM in $(seq $THIS_FIRST_PR $THIS_LAST_PR); do
+  HASH=$(git log --all --merges --format="%H %s" | grep "Merge pull request #${PR_NUM} " | head -1 | awk '{print $1}')
+  if [ -n "$HASH" ]; then
     TITLE=$(git log "$HASH^2" --oneline -1 --format="%s" 2>/dev/null)
-    echo "#$PR_NUM | $TITLE"
+    COMMITS=$(git log "$HASH^1..$HASH^2" --oneline 2>/dev/null | wc -l)
+    echo "#$PR_NUM ($COMMITS commits) | $TITLE"
   fi
-done | sort -t'#' -k2 -n
+done
 ```
+
+**Step 3 — 深读每个 PR 的实际 commits**（见纪律 2）：
+
+```bash
+# 对每个 PR，读取其完整 commit 列表
+for PR_NUM in $(seq $THIS_FIRST_PR $THIS_LAST_PR); do
+  HASH=$(git log --all --merges --format="%H %s" | grep "Merge pull request #${PR_NUM} " | head -1 | awk '{print $1}')
+  if [ -n "$HASH" ]; then
+    echo "=== PR #$PR_NUM ==="
+    git log "$HASH^1..$HASH^2" --oneline 2>/dev/null | head -10
+  fi
+done
+```
+
+> **⚠️ 为什么必须深读**：merge commit 标题往往是 PR 分支的最后一次 commit 消息（可能是 merge/fix），不代表 PR 的真实主题。例如 PR #201 标题为 `remove: delete TAPD template`，但实际包含 25 个 commits 的 ECharts 报告系统重构。
 
 #### 2.4 贡献者统计
 
@@ -154,7 +235,7 @@ if [ "$PREV_WEEK_NUM" -lt 1 ]; then
 else
   PREV_ISO_YEAR=$ISO_YEAR
 fi
-PREV_FILE="doc/weekly-report-${PREV_ISO_YEAR}-W$(printf '%02d' $PREV_WEEK_NUM).md"
+PREV_FILE="doc/report.${PREV_ISO_YEAR}-W$(printf '%02d' $PREV_WEEK_NUM).md"
 ```
 
 如果 `$PREV_FILE` 存在：
@@ -171,6 +252,17 @@ PREV_FILE="doc/weekly-report-${PREV_ISO_YEAR}-W$(printf '%02d' $PREV_WEEK_NUM).m
 ### Phase 4: 分析与分类
 
 阅读全部 commit message 和 PR 列表，执行以下分析。
+
+#### 4.0 ⛔ 脉络确认检查点（必须执行，见纪律 3）
+
+在进入详细分类前，**必须先完成以下步骤**：
+
+1. 基于 Step 3 深读的 PR commits，将所有 PR 按功能主题聚类
+2. 按影响程度排序，形成 8~15 条重大脉络候选
+3. 每条脉络标注：名称 + 一句话总结 + 关联 PR 列表
+4. **向用户展示脉络列表，等待确认后才进入 Phase 5 生成报告**
+
+> **禁止跳过此步骤直接生成报告。** 脉络分组的准确性决定了整篇报告的质量。
 
 #### 4.1 按功能主题分组
 
@@ -360,11 +452,11 @@ timeline
 
 ### Phase 6: 输出与确认
 
-1. 将报告写入 `doc/weekly-report-{ISO_YEAR}-W{WEEK_NUM}.md`
+1. 将报告写入 `doc/report.{ISO_YEAR}-W{WEEK_NUM}.md`
 2. 向用户展示摘要：
 
 ```
-✅ 周报已生成：doc/weekly-report-2026-W08.md
+✅ 周报已生成：doc/report.2026-W08.md
 
 📊 本周概要：
 - {COMMIT_COUNT} 次提交，{PR_COUNT} 个 PR 合并
