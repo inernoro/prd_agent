@@ -139,7 +139,7 @@ export default function ShareViewPage() {
             }
           </div>
 
-          <h2 style={{ color: '#fff', margin: '0 0 8px', fontSize: 20, fontWeight: 600 }}>
+          <div style={{ color: '#fff', margin: '0 0 8px', fontSize: 20, fontWeight: 600 }}>
             <BlurText
               text={wrongPassword ? '密码不正确' : '此链接需要密码'}
               delay={80}
@@ -153,8 +153,8 @@ export default function ShareViewPage() {
               ]}
               stepDuration={0.35}
             />
-          </h2>
-          <p style={{
+          </div>
+          <div style={{
             color: wrongPassword ? 'rgba(239, 68, 68, 0.7)' : 'rgba(255,255,255,0.5)',
             margin: '0 0 24px',
             fontSize: 14,
@@ -173,7 +173,7 @@ export default function ShareViewPage() {
               ]}
               stepDuration={0.3}
             />
-          </p>
+          </div>
 
           <form onSubmit={handlePasswordSubmit} style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
             <div style={{ position: 'relative' }}>
