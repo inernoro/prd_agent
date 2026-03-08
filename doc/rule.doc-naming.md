@@ -1,6 +1,6 @@
 # 文档命名规则（doc/）
 
-> **版本**：v2.0 | **日期**：2026-03-04 | **状态**：已落地
+> **版本**：v3.0 | **日期**：2026-03-08 | **状态**：已落地
 
 ## 文件命名格式
 
@@ -12,16 +12,14 @@ doc/{type}.{topic}.md
 
 ### 类型前缀
 
-| 前缀 | 含义 | 示例 |
-|------|------|------|
-| `spec.` | 产品规格（PRD、SRS、Agent 需求） | `spec.srs.md` |
-| `design.` | 技术设计（架构、方案） | `design.server-authority.md` |
-| `plan.` | 实施计划（开发计划、迁移计划） | `plan.report-agent-impl.md` |
-| `rule.` | 规范约定（命名、测试、开发流程） | `rule.app-identity.md` |
-| `ref.` | 参考资料（指南、教程、快速开始） | `ref.quickstart.md` |
-| `report.` | 周报 | `report.2026-W09.md` |
-| `audit.` | 审计报告 | `audit.prd-desktop-codebase.md` |
-| `memo.` | 备忘录 | `memo.multi-image-compose-test.md` |
+| 前缀 | 含义 | 包含子类型 | 示例 |
+|------|------|-----------|------|
+| `spec.` | 产品规格 | 产品规格、Agent 产品文档、用户故事 | `spec.srs.md`, `spec.report-agent.v2.md` |
+| `design.` | 技术设计 | 技术设计、技术分析 | `design.server-authority.md`, `design.remotion-gap.md` |
+| `plan.` | 实施计划 | 开发计划、迁移计划 | `plan.report-agent-impl.md` |
+| `rule.` | 规范约定 | 规范约定、审计报告 | `rule.app-identity.md`, `rule.audit-prd-desktop-codebase.md` |
+| `ref.` | 参考资料 | 指南、教程、备忘录 | `ref.quickstart.md`, `ref.multi-image-compose-test.md` |
+| `report.` | 周报 | 周报 | `report.2026-W09.md` |
 
 ---
 
@@ -44,7 +42,7 @@ doc/{type}.{topic}.md
 | **版本** | 必须 | `v1.0` / `v2.0` | 大改动升主版本，小修改升次版本 |
 | **日期** | 必须 | `YYYY-MM-DD` | 最后更新日期 |
 | **状态** | 必须 | 见下表 | 文档当前生命阶段 |
-| **appKey** | 仅 agent 文档 | `defect-agent` | 关联的应用标识 |
+| **appKey** | 仅 Agent 规格文档 | `defect-agent` | 关联的应用标识 |
 
 ### 状态枚举
 

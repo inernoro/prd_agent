@@ -1,6 +1,6 @@
 # 周报 Agent Phase 5 — 用户故事
 
-> **版本**: v1.0 | **创建日期**: 2026-03-05 | **关联 PRD**: `doc/agent.report-agent.v2.md`
+> **版本**: v1.0 | **创建日期**: 2026-03-05 | **关联 PRD**: `doc/spec.report-agent.v2.md`
 >
 > **Phase 主题**: Workflow as Data Pipeline — 复用工作流引擎采集数据，AI 一键生成周报
 
@@ -298,6 +298,6 @@
 
 | 文档 | 关系 |
 |------|------|
-| `doc/agent.report-agent.v2.md` | PRD v2.0 (产品需求) |
+| `doc/spec.report-agent.v2.md` | PRD v2.0 (产品需求) |
 | `doc/plan.report-agent-impl.md` | 实施进度追踪 |
-| `doc/agent.report-agent.md` | PRD v1.0 (存档) |
+| `doc/spec.report-agent.md` | PRD v1.0 (存档，已删除) |
