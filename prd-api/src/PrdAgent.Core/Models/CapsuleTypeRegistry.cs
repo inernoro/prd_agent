@@ -192,6 +192,11 @@ public static class CapsuleTypeRegistry
                 new() { Value = "true", Label = "是 (调用 common_get_info 获取完整字段)" },
                 new() { Value = "false", Label = "否 (仅使用搜索列表数据)" },
             }, HelpTip = "开启后会逐条调用详情接口获取全部自定义字段（缺陷等级、缺陷划分、有效报告等），用于统计分析" },
+            new() { Key = "trendMode", Label = "趋势模式", FieldType = "select", Required = false, DefaultValue = "false", Options = new() {
+                new() { Value = "false", Label = "否（单月采集）" },
+                new() { Value = "true", Label = "是（多月趋势，仅采集每月总数）" },
+            }, HelpTip = "开启后按月循环采集 total_count，输出趋势数组，适合画折线图" },
+            new() { Key = "trendMonths", Label = "趋势月数", FieldType = "number", Required = false, DefaultValue = "6", HelpTip = "从当前月往回追溯几个月（含当前月），默认 6" },
             new() { Key = "customCurl", Label = "自定义 cURL（兜底）", FieldType = "textarea", Required = false,
                 Placeholder = "curl 'https://www.tapd.cn/api/...' -H 'Cookie: ...' --data-raw '{...}'",
                 HelpTip = "从浏览器 / Postman 复制可用的 cURL 命令粘贴到这里。填写后将直接执行此请求，不再自动构造请求。支持自动分页" },

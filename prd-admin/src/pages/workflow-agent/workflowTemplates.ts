@@ -1,5 +1,6 @@
 import type { WorkflowNode, WorkflowEdge, WorkflowVariable } from '@/services/contracts/workflowAgent';
 import { qualityMonthlyTemplate } from './qualityMonthlyTemplate';
+import { tapdTrendTemplate } from './tapdTrendTemplate';
 import { tapdHtmlGenCode } from './tapdHtmlTemplate';
 
 // ═══════════════════════════════════════════════════════════════
@@ -823,6 +824,7 @@ result = {
 
 export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   tapdBugCollectionTemplate,
+  tapdTrendTemplate,
   qualityMonthlyTemplate as WorkflowTemplate,
   smartHttpTemplate,
   smartHttpAcceptanceTemplate,

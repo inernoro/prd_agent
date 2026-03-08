@@ -964,10 +964,178 @@ public static class CapsuleExecutor
 
         var factory = sp.GetRequiredService<IHttpClientFactory>();
 
+        // ── 趋势模式：多月循环采集 total_count ──
+        var trendMode = GetConfigString(node, "trendMode") ?? "false";
+        if (trendMode == "true" && authMode == "cookie")
+            return await ExecuteTapdTrendModeAsync(factory, node, variables, workspaceId, dataType);
+
         if (authMode == "cookie")
             return await ExecuteTapdCookieModeAsync(factory, node, variables, workspaceId, dataType, dateRange);
         else
             return await ExecuteTapdBasicAuthModeAsync(factory, node, variables, workspaceId, dataType, dateRange);
+    }
+
+    /// <summary>
+    /// 趋势模式：从当前月往回追溯 N 个月，每月仅发 1 次搜索请求（perpage=1）读取 total_count，
+    /// 输出 JSON 数组 [{month, totalBugs}]，适合下游 ScriptExecutor 画折线图。
+    /// </summary>
+    private static async Task<CapsuleResult> ExecuteTapdTrendModeAsync(
+        IHttpClientFactory factory, WorkflowNode node, Dictionary<string, string> variables,
+        string workspaceId, string dataType)
+    {
+        var trendMonths = int.TryParse(GetConfigString(node, "trendMonths"), out var tm) ? Math.Clamp(tm, 1, 24) : 6;
+        var cookieStr = ReplaceVariables(GetConfigString(node, "cookie") ?? "", variables);
+        var dscToken = GetConfigString(node, "dscToken") ?? GetConfigString(node, "dsc_token") ?? "";
+
+        if (string.IsNullOrWhiteSpace(cookieStr))
+            throw new InvalidOperationException("Cookie 未配置。趋势模式需要 Cookie 认证");
+
+        // 尝试从 cookie 中提取 dsc-token
+        if (string.IsNullOrWhiteSpace(dscToken))
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(cookieStr, @"dsc-token=([^;\s]+)");
+            if (match.Success) dscToken = match.Groups[1].Value;
+        }
+
+        var logs = new StringBuilder();
+        logs.AppendLine($"[TAPD 趋势模式] workspace={workspaceId} dataType={dataType} months={trendMonths}");
+
+        var trendData = new JsonArray();
+        var now = DateTime.Now;
+
+        for (var i = trendMonths - 1; i >= 0; i--)
+        {
+            var targetMonth = now.AddMonths(-i);
+            var monthStr = targetMonth.ToString("yyyy-MM");
+
+            using var client = factory.CreateClient();
+            client.Timeout = TimeSpan.FromSeconds(30);
+
+            var searchUrl = "https://www.tapd.cn/api/search_filter/search_filter/search";
+            var entityType = dataType == "bugs" ? "bug" : dataType.TrimEnd('s');
+
+            var filterData = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["entity"] = entityType,
+                    ["fieldDisplayName"] = "反馈时间",
+                    ["fieldSubEntityType"] = "",
+                    ["fieldIsSystem"] = "0",
+                    ["fieldOption"] = "like",
+                    ["fieldSystemName"] = "反馈时间",
+                    ["fieldType"] = "text",
+                    ["selectOption"] = new JsonArray(),
+                    ["value"] = monthStr,
+                    ["id"] = "4",
+                }
+            };
+
+            var searchData = new JsonObject
+            {
+                ["workspace_ids"] = workspaceId,
+                ["search_data"] = JsonSerializer.Serialize(new
+                {
+                    data = filterData,
+                    optionType = "AND",
+                    needInit = "1",
+                }),
+                ["obj_type"] = entityType,
+                ["search_type"] = "advanced",
+                ["page"] = 1,
+                ["perpage"] = "1", // 只需要 total_count，不需要实际数据
+                ["block_size"] = 50,
+                ["parallel_token"] = "",
+                ["order_field"] = "created",
+                ["order_value"] = "desc",
+                ["show_fields"] = new JsonArray(),
+                ["extra_fields"] = new JsonArray(),
+                ["display_mode"] = "list",
+                ["version"] = "1.1.0",
+                ["only_gen_token"] = 0,
+                ["exclude_workspace_configs"] = new JsonArray(),
+                ["from_pro_dashboard"] = 1,
+            };
+            if (!string.IsNullOrWhiteSpace(dscToken))
+                searchData["dsc_token"] = dscToken;
+
+            var request = new HttpRequestMessage(HttpMethod.Post, searchUrl);
+            request.Headers.Add("Cookie", cookieStr);
+            request.Headers.Add("Accept", "application/json, text/plain, */*");
+            request.Headers.Add("Accept-Language", "zh-CN,zh;q=0.9");
+            request.Headers.Add("Origin", "https://www.tapd.cn");
+            request.Headers.Add("Referer", $"https://www.tapd.cn/tapd_fe/{workspaceId}/bug/list");
+            request.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36");
+            request.Headers.Add("sec-ch-ua", "\"Not:A-Brand\";v=\"99\", \"Google Chrome\";v=\"145\", \"Chromium\";v=\"145\"");
+            request.Headers.Add("sec-ch-ua-mobile", "?0");
+            request.Headers.Add("sec-ch-ua-platform", "\"Windows\"");
+            request.Headers.Add("Sec-Fetch-Dest", "empty");
+            request.Headers.Add("Sec-Fetch-Mode", "cors");
+            request.Headers.Add("Sec-Fetch-Site", "same-origin");
+            request.Headers.Add("DNT", "1");
+            request.Content = new StringContent(searchData.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
+
+            try
+            {
+                var response = await client.SendAsync(request, CancellationToken.None);
+                var body = await response.Content.ReadAsStringAsync(CancellationToken.None);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    logs.AppendLine($"  {monthStr}: HTTP {(int)response.StatusCode} failed");
+                    trendData.Add(new JsonObject { ["month"] = monthStr, ["totalBugs"] = 0, ["error"] = true });
+                    continue;
+                }
+
+                var trimmedBody = body.TrimStart();
+                if (trimmedBody.Length == 0 || (trimmedBody[0] != '{' && trimmedBody[0] != '['))
+                {
+                    logs.AppendLine($"  {monthStr}: 非 JSON 响应（Cookie 可能已过期）");
+                    throw new InvalidOperationException("TAPD Cookie 可能已过期，请重新从浏览器复制 Cookie。");
+                }
+
+                using var doc = JsonDocument.Parse(body);
+                var root = doc.RootElement;
+
+                var totalCount = 0;
+                if (root.TryGetProperty("data", out var dataEl) &&
+                    dataEl.ValueKind == JsonValueKind.Object &&
+                    dataEl.TryGetProperty("total_count", out var totalEl))
+                {
+                    var totalStr = totalEl.ValueKind == JsonValueKind.Number
+                        ? totalEl.GetInt32().ToString()
+                        : totalEl.GetString() ?? "0";
+                    totalCount = int.TryParse(totalStr, out var tc) ? tc : 0;
+                }
+
+                // 月份显示标签：取月份数字 + "月"
+                var monthLabel = $"{targetMonth.Month}月";
+                trendData.Add(new JsonObject
+                {
+                    ["month"] = monthStr,
+                    ["monthLabel"] = monthLabel,
+                    ["totalBugs"] = totalCount,
+                });
+
+                logs.AppendLine($"  {monthStr} ({monthLabel}): {totalCount} 条");
+            }
+            catch (InvalidOperationException) { throw; }
+            catch (Exception ex)
+            {
+                logs.AppendLine($"  {monthStr}: 请求异常 - {ex.Message}");
+                trendData.Add(new JsonObject { ["month"] = monthStr, ["totalBugs"] = 0, ["error"] = true });
+            }
+
+            // 避免请求过快
+            if (i > 0)
+                await Task.Delay(300, CancellationToken.None);
+        }
+
+        logs.AppendLine($"趋势采集完成: {trendData.Count} 个月");
+
+        var resultJson = trendData.ToJsonString(JsonCompact);
+        var artifact = MakeTextArtifact(node, "tapd-out", $"TAPD {dataType} 趋势数据", resultJson, "application/json");
+        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs.ToString());
     }
 
     /// <summary>Cookie 模式：使用浏览器 Cookie 调用 TAPD 内部 Web API，支持分页</summary>
