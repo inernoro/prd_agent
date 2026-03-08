@@ -54,6 +54,26 @@ public sealed class NullAssetStorage : IAssetStorage
     {
         return null;
     }
+
+    public Task UploadToKeyAsync(string key, byte[] bytes, string? contentType, CancellationToken ct)
+    {
+        return Task.CompletedTask;
+    }
+
+    public string BuildUrlForKey(string key)
+    {
+        return string.Empty;
+    }
+
+    public Task DeleteByKeyAsync(string key, CancellationToken ct)
+    {
+        return Task.CompletedTask;
+    }
+
+    public string BuildSiteKey(string siteId, string filePath)
+    {
+        return $"test/{siteId}/{filePath}";
+    }
 }
 
 public sealed class EmptyWatermarkFontAssetSource : IWatermarkFontAssetSource

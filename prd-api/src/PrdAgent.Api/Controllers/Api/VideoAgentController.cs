@@ -381,6 +381,236 @@ public class VideoAgentController : ControllerBase
         };
     }
 
+    // ═══════════════════════════════════════════════════════════
+    // 视频转文档（Video-to-Doc）端点
+    // ═══════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// 创建视频转文档任务
+    /// </summary>
+    [HttpPost("v2d/runs")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> CreateV2dRun([FromBody] CreateVideoToDocRunRequest request, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+
+        var videoUrl = (request?.VideoUrl ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(videoUrl))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "视频 URL 不能为空"));
+        }
+
+        if (!Uri.TryCreate(videoUrl, UriKind.Absolute, out _))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "视频 URL 格式无效"));
+        }
+
+        var run = new VideoToDocRun
+        {
+            OwnerAdminId = adminId,
+            Status = VideoToDocRunStatus.Queued,
+            VideoUrl = videoUrl,
+            VideoTitle = request?.VideoTitle?.Trim(),
+            SystemPrompt = request?.SystemPrompt?.Trim(),
+            Language = (request?.Language ?? "auto").Trim(),
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _db.VideoToDocRuns.InsertOneAsync(run, cancellationToken: ct);
+
+        _logger.LogInformation("VideoToDoc Run 已创建: runId={RunId}, videoUrl={Url}",
+            run.Id, videoUrl);
+
+        return Ok(ApiResponse<object>.Ok(new { runId = run.Id }));
+    }
+
+    /// <summary>
+    /// 列出当前用户的视频转文档任务
+    /// </summary>
+    [HttpGet("v2d/runs")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> ListV2dRuns([FromQuery] int limit = 20, [FromQuery] int skip = 0, CancellationToken ct = default)
+    {
+        var adminId = GetAdminId();
+        limit = Math.Clamp(limit, 1, 50);
+        skip = Math.Max(skip, 0);
+
+        var filter = Builders<VideoToDocRun>.Filter.Eq(x => x.OwnerAdminId, adminId);
+        var sort = Builders<VideoToDocRun>.Sort.Descending(x => x.CreatedAt);
+
+        var total = await _db.VideoToDocRuns.CountDocumentsAsync(filter, cancellationToken: ct);
+        var items = await _db.VideoToDocRuns.Find(filter).Sort(sort).Skip(skip).Limit(limit).ToListAsync(ct);
+
+        var lite = items.Select(r => new
+        {
+            r.Id,
+            r.Status,
+            r.VideoTitle,
+            r.VideoUrl,
+            r.CurrentPhase,
+            r.PhaseProgress,
+            r.DurationSeconds,
+            r.KeyFrameCount,
+            r.DetectedLanguage,
+            r.CreatedAt,
+            r.StartedAt,
+            r.EndedAt,
+            r.ErrorMessage,
+            HasDocument = !string.IsNullOrEmpty(r.OutputMarkdown),
+        });
+
+        return Ok(ApiResponse<object>.Ok(new { total, items = lite }));
+    }
+
+    /// <summary>
+    /// 获取视频转文档任务详情
+    /// </summary>
+    [HttpGet("v2d/runs/{runId}")]
+    [ProducesResponseType(typeof(ApiResponse<VideoToDocRun>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetV2dRun(string runId, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        runId = (runId ?? string.Empty).Trim();
+
+        var run = await _db.VideoToDocRuns
+            .Find(x => x.Id == runId && x.OwnerAdminId == adminId)
+            .FirstOrDefaultAsync(ct);
+
+        if (run == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
+        }
+
+        return Ok(ApiResponse<VideoToDocRun>.Ok(run));
+    }
+
+    /// <summary>
+    /// 下载视频转文档产出物
+    /// </summary>
+    [HttpGet("v2d/runs/{runId}/download/{type}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> DownloadV2d(string runId, string type, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var run = await _db.VideoToDocRuns
+            .Find(x => x.Id == runId && x.OwnerAdminId == adminId)
+            .FirstOrDefaultAsync(ct);
+
+        if (run == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
+        }
+
+        if (run.Status != VideoToDocRunStatus.Completed)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "任务尚未完成"));
+        }
+
+        return type.ToLowerInvariant() switch
+        {
+            "markdown" => Content(run.OutputMarkdown ?? string.Empty, "text/markdown; charset=utf-8", System.Text.Encoding.UTF8),
+            "transcript" => Content(run.PlainTranscript ?? string.Empty, "text/plain; charset=utf-8", System.Text.Encoding.UTF8),
+            _ => BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不支持的下载类型，可选: markdown, transcript")),
+        };
+    }
+
+    /// <summary>
+    /// SSE 流式获取视频转文档任务事件
+    /// </summary>
+    [HttpGet("v2d/runs/{runId}/stream")]
+    [Produces("text/event-stream")]
+    public async Task StreamV2dRun(string runId, [FromQuery] int? afterSeq, CancellationToken cancellationToken)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers.Connection = "keep-alive";
+        Response.Headers["X-Accel-Buffering"] = "no";
+
+        var bodyFeature = HttpContext.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpResponseBodyFeature>();
+        bodyFeature?.DisableBuffering();
+
+        var adminId = GetAdminId();
+        runId = (runId ?? string.Empty).Trim();
+
+        var run = await _db.VideoToDocRuns
+            .Find(x => x.Id == runId && x.OwnerAdminId == adminId)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (run == null)
+        {
+            await WriteEventAsync(null, "error",
+                JsonSerializer.Serialize(new { code = ErrorCodes.NOT_FOUND, message = "任务不存在" }, JsonOptions),
+                cancellationToken);
+            return;
+        }
+
+        await Response.WriteAsync(": connected\n\n", cancellationToken);
+        await Response.Body.FlushAsync(cancellationToken);
+
+        long lastSeq = afterSeq ?? 0;
+        var lastKeepAliveAt = DateTime.UtcNow;
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            var events = await _runStore.GetEventsAsync(RunKinds.VideoToDoc, runId, lastSeq, limit: 100, cancellationToken);
+            if (events.Count > 0)
+            {
+                foreach (var ev in events)
+                {
+                    await WriteEventAsync(ev.Seq.ToString(), ev.EventName, ev.PayloadJson, cancellationToken);
+                    lastSeq = ev.Seq;
+                }
+                lastKeepAliveAt = DateTime.UtcNow;
+            }
+            else
+            {
+                if ((DateTime.UtcNow - lastKeepAliveAt).TotalSeconds >= 10)
+                {
+                    await Response.WriteAsync(": keepalive\n\n", cancellationToken);
+                    await Response.Body.FlushAsync(cancellationToken);
+                    lastKeepAliveAt = DateTime.UtcNow;
+                }
+
+                run = await _db.VideoToDocRuns
+                    .Find(x => x.Id == runId && x.OwnerAdminId == adminId)
+                    .FirstOrDefaultAsync(cancellationToken);
+                if (run == null) break;
+                if (run.Status is VideoToDocRunStatus.Completed or VideoToDocRunStatus.Failed or VideoToDocRunStatus.Cancelled)
+                {
+                    if ((DateTime.UtcNow - lastKeepAliveAt).TotalSeconds >= 2) break;
+                }
+
+                await Task.Delay(650, cancellationToken);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 取消视频转文档任务
+    /// </summary>
+    [HttpPost("v2d/runs/{runId}/cancel")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> CancelV2dRun(string runId, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        runId = (runId ?? string.Empty).Trim();
+
+        var res = await _db.VideoToDocRuns.UpdateOneAsync(
+            x => x.Id == runId && x.OwnerAdminId == adminId,
+            Builders<VideoToDocRun>.Update.Set(x => x.CancelRequested, true),
+            cancellationToken: ct);
+
+        if (res.MatchedCount == 0)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
+        }
+
+        return Ok(ApiResponse<object>.Ok(true));
+    }
+
     // ─── Helpers ───
 
     private async Task WriteEventAsync(string? id, string eventName, string dataJson, CancellationToken ct)

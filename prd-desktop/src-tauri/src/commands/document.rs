@@ -1,7 +1,7 @@
 use serde::Serialize;
 use tauri::command;
 
-use crate::models::{ApiResponse, DocumentContentInfo, DocumentInfo, UploadDocumentResponse};
+use crate::models::{ApiResponse, DocumentContentInfo, DocumentInfo, SessionInfo, UploadDocumentResponse};
 use crate::services::ApiClient;
 
 #[derive(Serialize)]
@@ -36,5 +36,65 @@ pub async fn get_document_content(
             "/documents/{}/content?groupId={}",
             document_id, group_id
         ))
+        .await
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AddDocumentToSessionRequest {
+    content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    document_type: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateDocumentTypeRequest {
+    document_type: String,
+}
+
+#[command]
+pub async fn add_document_to_session(
+    session_id: String,
+    content: String,
+    document_type: Option<String>,
+) -> Result<ApiResponse<SessionInfo>, String> {
+    let client = ApiClient::new();
+    let request = AddDocumentToSessionRequest { content, document_type };
+    client
+        .post(
+            &format!("/sessions/{}/documents", session_id),
+            &request,
+        )
+        .await
+}
+
+#[command]
+pub async fn remove_document_from_session(
+    session_id: String,
+    document_id: String,
+) -> Result<ApiResponse<SessionInfo>, String> {
+    let client = ApiClient::new();
+    client
+        .delete(&format!(
+            "/sessions/{}/documents/{}",
+            session_id, document_id
+        ))
+        .await
+}
+
+#[command]
+pub async fn update_document_type(
+    session_id: String,
+    document_id: String,
+    document_type: String,
+) -> Result<ApiResponse<SessionInfo>, String> {
+    let client = ApiClient::new();
+    let request = UpdateDocumentTypeRequest { document_type };
+    client
+        .patch(
+            &format!("/sessions/{}/documents/{}/type", session_id, document_id),
+            &request,
+        )
         .await
 }

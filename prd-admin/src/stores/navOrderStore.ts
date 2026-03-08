@@ -27,6 +27,7 @@ export const useNavOrderStore = create<NavOrderState>()(
       saving: false,
 
       loadFromServer: async () => {
+        if (get().loaded) return; // 已加载过，不再重复请求
         try {
           const res = await getUserPreferences();
           if (res.success && res.data) {

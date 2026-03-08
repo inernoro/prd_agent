@@ -11,6 +11,8 @@ public class SessionResponse
     public string? GroupId { get; set; }
     public string? OwnerUserId { get; set; }
     public string DocumentId { get; set; } = string.Empty;
+    public List<string> DocumentIds { get; set; } = new();
+    public List<SessionDocumentMetaDto> DocumentMetas { get; set; } = new();
     public string? Title { get; set; }
     public UserRole CurrentRole { get; set; }
     public InteractionMode Mode { get; set; }
@@ -35,6 +37,15 @@ public class SwitchRoleResponse
 public class SessionListResponse
 {
     public List<SessionResponse> Items { get; set; } = new();
+}
+
+/// <summary>
+/// 文档元数据 DTO
+/// </summary>
+public class SessionDocumentMetaDto
+{
+    public string DocumentId { get; set; } = string.Empty;
+    public string DocumentType { get; set; } = "reference";
 }
 
 // 引导讲解相关响应已删除（去阶段化）

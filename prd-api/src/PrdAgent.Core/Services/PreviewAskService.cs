@@ -90,7 +90,9 @@ public class PreviewAskService : IPreviewAskService
         // “本章提问”也视为会话活跃：刷新 LastActiveAt 与 TTL，避免用户在预览页连续使用但会话仍自然过期。
         await _sessionService.RefreshActivityAsync(sessionId);
 
-        var document = await _documentService.GetByIdAsync(session.DocumentId);
+        // "本章提问"基于主文档（首个文档）的章节内容进行回答
+        var primaryDocId = session.GetAllDocumentIds().FirstOrDefault() ?? session.DocumentId;
+        var document = await _documentService.GetByIdAsync(primaryDocId);
         if (document == null)
         {
             yield return new PreviewAskStreamEvent

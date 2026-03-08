@@ -314,7 +314,7 @@ import {
   streamImageGenRunWithRetryReal,
 } from '@/services/real/imageGen';
 import { deleteModelLabGroupReal, listModelLabGroupsReal, upsertModelLabGroupReal } from '@/services/real/modelLabGroups';
-import { getAiChatHistoryReal, uploadAiChatDocumentReal } from '@/services/real/aiChat';
+import { getAiChatHistoryReal, uploadAiChatDocumentReal, addDocumentToSession as addDocumentToSessionReal, removeDocumentFromSession as removeDocumentFromSessionReal } from '@/services/real/aiChat';
 import { suggestGroupNameReal } from '@/services/real/intent';
 import {
   addVisualAgentMessageReal,
@@ -726,6 +726,8 @@ export const deleteModelLabGroup: DeleteModelLabGroupContract = withAuth(deleteM
 
 export const uploadAiChatDocument: AiChatUploadDocumentContract = withAuth(uploadAiChatDocumentReal);
 export const getAiChatHistory: AiChatGetHistoryContract = withAuth(getAiChatHistoryReal);
+export const addDocumentToSession = withAuth(addDocumentToSessionReal);
+export const removeDocumentFromSession = withAuth(removeDocumentFromSessionReal);
 
 export const suggestGroupName: SuggestGroupNameContract = withAuth(suggestGroupNameReal);
 
@@ -1216,6 +1218,27 @@ export type {
   TutorialEmailEnrollment,
   TutorialEmailStep,
 } from '@/services/real/tutorialEmail';
+
+// ── Web Hosting 网页托管 ──
+export {
+  uploadSite,
+  reuploadSite,
+  createFromContent,
+  listSites,
+  getSite,
+  updateSite,
+  deleteSite,
+  batchDeleteSites,
+  listFolders as listSiteFolders,
+  listTags as listSiteTags,
+  createShareLink as createSiteShareLink,
+  listShares as listSiteShares,
+  revokeShare as revokeSiteShare,
+  viewShare as viewSiteShare,
+  saveSharedSite,
+  listShareViewLogs,
+} from '@/services/real/webPages';
+export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, SharedSiteInfo, ShareViewData, ShareViewLogItem } from '@/services/real/webPages';
 
 // ── Account Data Transfer 数据分享 ──
 export {

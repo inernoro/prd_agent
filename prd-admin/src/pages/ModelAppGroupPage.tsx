@@ -68,29 +68,10 @@ import {
   AppCallerKeyIcon,
 } from '@/lib/appCallerUtils';
 import type { AppGroup } from '@/lib/appCallerUtils';
+import { ModelTypePicker, ModelTypeFilterBar } from '@/components/model/ModelTypePicker';
 
-const MODEL_TYPES = [
-  { value: 'chat', label: '对话模型' },
-  { value: 'intent', label: '意图识别' },
-  { value: 'vision', label: '视觉理解' },
-  { value: 'generation', label: '图像生成' },
-  { value: 'code', label: '代码生成' },
-  { value: 'long-context', label: '长上下文' },
-  { value: 'embedding', label: '向量嵌入' },
-  { value: 'rerank', label: '重排序' },
-];
-
-const MODEL_TYPE_FILTERS = [
-  { value: 'all', label: '全部类型' },
-  { value: 'chat', label: '对话模型' },
-  { value: 'vision', label: '视觉理解' },
-  { value: 'intent', label: '意图识别' },
-  { value: 'generation', label: '图像生成' },
-  { value: 'code', label: '代码生成' },
-  { value: 'long-context', label: '长上下文' },
-  { value: 'embedding', label: '向量嵌入' },
-  { value: 'rerank', label: '重排' },
-];
+// MODEL_TYPES 和 MODEL_TYPE_FILTERS 已迁移到 appCallerUtils.ts 的 MODEL_TYPE_DEFINITIONS
+// 所有消费方统一从 MODEL_TYPE_DEFINITIONS 读取，禁止各处硬编码
 
 const HEALTH_STATUS_MAP = {
   Healthy: { label: '健康', color: 'rgba(34,197,94,0.95)', bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.28)' },
@@ -897,41 +878,26 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
       <div className="grid gap-4 flex-1 min-h-0 lg:grid-cols-[320px_1fr]">
         {/* 左侧：应用列表 */}
         <GlassCard animated glow className="flex flex-col min-h-0 p-0 overflow-hidden">
-          <div className="p-4 border-b border-white/10">
-            <div className="flex items-center gap-2">
-              <div className="w-[140px] shrink-0">
-                <Select
-                  value={modelTypeFilter}
-                  onChange={(e) => setModelTypeFilter(e.target.value)}
-                  className="h-9 rounded-[11px] text-[13px]"
-                  style={{
-                    background: 'var(--bg-input)',
-                    border: '1px solid var(--border-subtle)',
-                  }}
-                >
-                  {MODEL_TYPE_FILTERS.map((type) => (
-                    <option key={type.value} value={type.value}>
-                      {type.label}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="relative flex-1">
-                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
-                <input
-                  type="text"
-                  placeholder="搜索应用..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full h-9 pl-9 pr-3 rounded-[11px] outline-none text-[13px]"
-                  style={{
-                    background: 'var(--bg-input)',
-                    border: '1px solid var(--border-subtle)',
-                    color: 'var(--text-primary)',
-                  }}
-                />
-              </div>
+          <div className="p-3 border-b border-white/10 space-y-2">
+            <div className="relative">
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+              <input
+                type="text"
+                placeholder="搜索应用..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full h-9 pl-9 pr-3 rounded-[11px] outline-none text-[13px]"
+                style={{
+                  background: 'var(--bg-input)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-primary)',
+                }}
+              />
             </div>
+            <ModelTypeFilterBar
+              value={modelTypeFilter}
+              onChange={setModelTypeFilter}
+            />
           </div>
 
           <div className="flex-1 overflow-auto">
@@ -1749,16 +1715,10 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                 <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
                   模型类型
                 </label>
-                <Select
+                <ModelTypePicker
                   value={requirementForm.modelType}
-                  onChange={(e) => setRequirementForm({ ...requirementForm, modelType: e.target.value })}
-                >
-                  {MODEL_TYPES.map((type) => (
-                    <option key={type.value} value={type.value}>
-                      {type.label}
-                    </option>
-                  ))}
-                </Select>
+                  onChange={(v) => setRequirementForm({ ...requirementForm, modelType: v })}
+                />
               </div>
 
               <div>
@@ -1894,18 +1854,11 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                 <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
                   模型类型
                 </label>
-                <Select
+                <ModelTypePicker
                   value={groupForm.modelType}
-                  onChange={(e) => setGroupForm({ ...groupForm, modelType: e.target.value })}
+                  onChange={(v) => setGroupForm({ ...groupForm, modelType: v })}
                   disabled={!!editingGroup}
-                  style={{ opacity: editingGroup ? 0.6 : 1 }}
-                >
-                  {MODEL_TYPES.map((type) => (
-                    <option key={type.value} value={type.value}>
-                      {type.label}
-                    </option>
-                  ))}
-                </Select>
+                />
               </div>
 
               <div>

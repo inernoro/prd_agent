@@ -53,10 +53,21 @@ pub struct PrdCommentInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SessionDocumentMeta {
+    pub document_id: String,
+    pub document_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionInfo {
     pub session_id: String,
     pub group_id: Option<String>,
     pub document_id: String,
+    #[serde(default)]
+    pub document_ids: Vec<String>,
+    #[serde(default)]
+    pub document_metas: Vec<SessionDocumentMeta>,
     pub current_role: String,
     pub mode: String,
     pub guide_step: Option<i32>,
@@ -136,6 +147,10 @@ pub struct OpenGroupSessionResponse {
     pub session_id: String,
     pub group_id: String,
     pub document_id: String,
+    #[serde(default)]
+    pub document_ids: Vec<String>,
+    #[serde(default)]
+    pub document_metas: Vec<SessionDocumentMeta>,
     pub current_role: String,
 }
 

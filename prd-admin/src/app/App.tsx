@@ -25,6 +25,8 @@ import OpenPlatformTabsPage from '@/pages/OpenPlatformTabsPage';
 import AutomationRulesPage from '@/pages/AutomationRulesPage';
 import SettingsPage from '@/pages/SettingsPage';
 import DataTransferPage from '@/pages/DataTransferPage';
+import WebPagesPage from '@/pages/WebPagesPage';
+import ShareViewPage from '@/pages/ShareViewPage';
 import ExecutiveDashboardPage from '@/pages/ExecutiveDashboardPage';
 import { PrdAgentTabsPage } from '@/pages/PrdAgentTabsPage';
 import AgentLauncherPage from '@/pages/AgentLauncherPage';
@@ -180,6 +182,9 @@ export default function App() {
 
         <Route path="/login" element={<LoginPage />} />
 
+        {/* 公开分享页面 - 无需登录 */}
+        <Route path="/s/wp/:token" element={<ShareViewPage />} />
+
         {/* 开发试验场 - 无需权限 */}
         <Route path="/_dev/rich-composer-lab" element={<RichComposerLab />} />
         <Route path="/_dev/mobile-audit" element={<MobileAuditPage />} />
@@ -271,6 +276,7 @@ export default function App() {
 
         <Route path="assets" element={<RequirePermission perm="assets.read"><AssetsManagePage /></RequirePermission>} />
         <Route path="skills" element={<RequirePermission perm="skills.read"><SkillsPage /></RequirePermission>} />
+        <Route path="web-pages" element={<RequirePermission perm="web-pages.read"><WebPagesPage /></RequirePermission>} />
         <Route path="arena" element={<RequirePermission perm="arena-agent.use"><ArenaPage /></RequirePermission>} />
         <Route path="lab" element={<RequirePermission perm="lab.read"><LabPage /></RequirePermission>} />
         <Route path="settings" element={<RequirePermission perm="access"><SettingsPage /></RequirePermission>} />

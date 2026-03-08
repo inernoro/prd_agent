@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Cloud Development Suite</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="header-left">
+        <h1>Cloud Dev Suite</h1>
+        <span class="header-subtitle" id="branchCount"></span>
+      </div>
+      <div class="header-actions">
+        <button class="icon-btn" onclick="togglePanel('envPanel')" title="Environment Variables">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2.5 2a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h11a.5.5 0 00.5-.5v-11a.5.5 0 00-.5-.5h-11zM1 2.5A1.5 1.5 0 012.5 1h11A1.5 1.5 0 0115 2.5v11a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 011 13.5v-11zM4 5h2v1H4V5zm3 0h5v1H7V5zM4 8h2v1H4V8zm3 0h5v1H7V8zM4 11h2v1H4v-1zm3 0h5v1H7v-1z"/></svg>
+        </button>
+        <button class="icon-btn" onclick="togglePanel('routingPanel')" title="Routing Rules">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 0113 0h-2.1a8.3 8.3 0 00-.4-2.2 9 9 0 00-1-1.9A4.5 4.5 0 017 7.5H4.5A8.3 8.3 0 001.5 8zm5.5 5.5a6.5 6.5 0 01-5.4-3h2.3c.3 1.2.8 2.2 1.5 3H7zm1-5.5a7.8 7.8 0 014-3.8c.5.6.9 1.2 1.2 1.8H8zm0 1h5.4a8.3 8.3 0 01-.3 2H8.9 8V9zm0 3h3.8c-.6 1.3-1.5 2.4-2.8 3A6.5 6.5 0 018 9z"/></svg>
+        </button>
+        <button class="icon-btn" onclick="togglePanel('profilePanel')" title="Build Profiles">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M7.429 1.525a3.5 3.5 0 011.142 0 .75.75 0 01.57.63l.185 1.29a.25.25 0 00.35.193l1.178-.592a.75.75 0 01.808.098 3.5 3.5 0 01.571.571.75.75 0 01.098.808l-.592 1.178a.25.25 0 00.193.35l1.29.185a.75.75 0 01.63.57 3.5 3.5 0 010 1.142.75.75 0 01-.63.57l-1.29.185a.25.25 0 00-.193.35l.592 1.178a.75.75 0 01-.098.808 3.5 3.5 0 01-.571.571.75.75 0 01-.808.098l-1.178-.592a.25.25 0 00-.35.193l-.185 1.29a.75.75 0 01-.57.63 3.5 3.5 0 01-1.142 0 .75.75 0 01-.57-.63l-.185-1.29a.25.25 0 00-.35-.193l-1.178.592a.75.75 0 01-.808-.098 3.5 3.5 0 01-.571-.571.75.75 0 01-.098-.808l.592-1.178a.25.25 0 00-.193-.35l-1.29-.185a.75.75 0 01-.63-.57 3.5 3.5 0 010-1.142.75.75 0 01.63-.57l1.29-.185a.25.25 0 00.193-.35l-.592-1.178a.75.75 0 01.098-.808 3.5 3.5 0 01.571-.571.75.75 0 01.808-.098l1.178.592a.25.25 0 00.35-.193l.185-1.29a.75.75 0 01.57-.63zM8 6a2 2 0 100 4 2 2 0 000-4z"/></svg>
+        </button>
+        <button id="cleanupBtn" class="icon-btn danger-icon" onclick="cleanupAll()" disabled title="Clean up">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM11 3V1.75A1.75 1.75 0 009.25 0h-2.5A1.75 1.75 0 005 1.75V3H2.75a.75.75 0 000 1.5h.3l.8 8.2A1.75 1.75 0 005.6 14.5h4.8a1.75 1.75 0 001.75-1.8l.8-8.2h.3a.75.75 0 000-1.5H11z"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Worker status bar -->
+    <div class="gateway-bar">
+      <div class="gateway-left">
+        <span class="gateway-dot active" id="workerDot"></span>
+        <span class="gateway-label" id="workerLabel">Worker</span>
+      </div>
+      <div class="gateway-right">
+        <select id="defaultBranch" onchange="setDefaultBranch(this.value)">
+          <option value="">No default</option>
+        </select>
+        <span class="gateway-hint" id="routingHint">X-Branch / routing rules</span>
+      </div>
+    </div>
+
+    <!-- Routing rules panel -->
+    <div id="routingPanel" class="config-panel hidden">
+      <div class="config-panel-header">
+        <span>Routing Rules</span>
+        <button class="sm primary" onclick="showAddRuleForm()">+ Add</button>
+      </div>
+      <p class="config-panel-desc">
+        Route requests to branches by <code>X-Branch</code> header, domain pattern, or URL pattern.
+        Use <code>{{"{{"}}wildcard_*{{"}}"}}</code> placeholders (e.g., <code>{{"{{"}}feature_*{{"}}"}}.dev.example.com</code>).
+      </p>
+      <div id="routingRulesList"></div>
+      <div id="addRuleForm" class="hidden">
+        <div class="form-row">
+          <input id="ruleId" placeholder="Rule ID" class="form-input sm">
+          <input id="ruleName" placeholder="Name" class="form-input sm">
+        </div>
+        <div class="form-row">
+          <select id="ruleType" class="form-input sm">
+            <option value="domain">Domain</option>
+            <option value="header">Header</option>
+            <option value="pattern">URL Pattern</option>
+          </select>
+          <input id="ruleMatch" placeholder="Match pattern" class="form-input">
+        </div>
+        <div class="form-row">
+          <input id="ruleBranch" placeholder="Target branch (use $1 for capture groups)" class="form-input">
+          <input id="rulePriority" type="number" value="0" placeholder="Priority" class="form-input xs">
+        </div>
+        <div class="form-row">
+          <button class="primary sm" onclick="saveRule()">Save</button>
+          <button class="sm" onclick="hideAddRuleForm()">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Build profiles panel -->
+    <div id="profilePanel" class="config-panel hidden">
+      <div class="config-panel-header">
+        <span>Build Profiles</span>
+        <button class="sm primary" onclick="showAddProfileForm()">+ Add</button>
+      </div>
+      <p class="config-panel-desc">
+        Define how to build and run services. Each profile maps to a Docker container with custom commands.
+      </p>
+      <div id="profilesList"></div>
+      <div id="addProfileForm" class="hidden">
+        <div class="form-row">
+          <input id="profileId" placeholder="Profile ID (e.g., api, web)" class="form-input sm">
+          <input id="profileName" placeholder="Display Name" class="form-input sm">
+        </div>
+        <div class="form-row">
+          <select id="profileImage" class="form-input" onchange="onImageSelect(this.value)">
+            <option value="">-- Select Docker image --</option>
+            <optgroup label="Presets" id="presetImages">
+              <option value="mcr.microsoft.com/dotnet/sdk:8.0">.NET 8 SDK</option>
+              <option value="node:20-slim">Node.js 20</option>
+              <option value="node:22-slim">Node.js 22</option>
+              <option value="python:3.12-slim">Python 3.12</option>
+              <option value="golang:1.22-alpine">Go 1.22</option>
+              <option value="rust:1.77-slim">Rust 1.77</option>
+            </optgroup>
+            <optgroup label="Local Images" id="localImages"></optgroup>
+            <option value="__custom__">Custom...</option>
+          </select>
+          <input id="profileImageCustom" placeholder="Custom image" class="form-input hidden">
+        </div>
+        <div class="form-row">
+          <input id="profileWorkDir" placeholder="Work dir (default: .)" class="form-input sm" value=".">
+          <input id="profilePort" type="number" value="8080" placeholder="Port" class="form-input xs">
+        </div>
+        <div class="form-row">
+          <input id="profileRun" placeholder="Run command (required)" class="form-input">
+        </div>
+        <div id="advancedFields" class="hidden">
+          <div class="form-row">
+            <input id="profileInstall" placeholder="Install command (optional)" class="form-input">
+          </div>
+          <div class="form-row">
+            <input id="profileBuild" placeholder="Build command (optional)" class="form-input">
+          </div>
+        </div>
+        <div class="form-row">
+          <button class="primary sm" onclick="saveProfile()">Save</button>
+          <button class="sm" onclick="hideAddProfileForm()">Cancel</button>
+          <button class="sm text-btn" onclick="toggleAdvanced()">Advanced</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Environment variables panel -->
+    <div id="envPanel" class="config-panel hidden">
+      <div class="config-panel-header">
+        <span>Environment Variables</span>
+        <button class="sm primary" onclick="showAddEnvForm()">+ Add</button>
+      </div>
+      <p class="config-panel-desc">
+        Custom environment variables injected into all containers. Overrides auto-detected host variables.
+        Values with <code>PASSWORD</code> or <code>SECRET</code> in the key are masked in display.
+      </p>
+      <div id="envVarsList"></div>
+      <div id="addEnvForm" class="hidden">
+        <div class="form-row">
+          <input id="envKey" placeholder="KEY (e.g., MongoDB__ConnectionString)" class="form-input">
+          <input id="envValue" placeholder="Value" class="form-input">
+        </div>
+        <div class="form-row">
+          <button class="primary sm" onclick="saveEnvVar()">Save</button>
+          <button class="sm" onclick="hideAddEnvForm()">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quickstart banner (shown when no profiles) -->
+    <div id="quickstartBanner" class="quickstart-banner hidden">
+      <div class="quickstart-content">
+        <strong>No build profiles configured.</strong>
+        <span>Load default profiles for this project?</span>
+      </div>
+      <button class="primary sm" onclick="runQuickstart()">Quickstart</button>
+    </div>
+
+    <!-- Branch picker -->
+    <section class="branch-picker-section">
+      <div class="branch-picker">
+        <div class="branch-picker-input-wrap">
+          <svg class="search-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M11.5 7a4.499 4.499 0 11-8.998 0A4.499 4.499 0 0111.5 7zm-.82 4.74a6 6 0 111.06-1.06l3.04 3.04a.75.75 0 11-1.06 1.06l-3.04-3.04z"/></svg>
+          <input id="branchSearch" type="text" placeholder="Search remote branches..." autocomplete="off">
+          <button id="refreshRemoteBtn" class="icon-btn sm" onclick="refreshRemoteBranches()" title="Refresh">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
+          </button>
+        </div>
+        <div id="branchDropdown" class="branch-dropdown hidden"></div>
+      </div>
+    </section>
+
+    <!-- Branch list -->
+    <section id="branchList" class="branch-list">
+      <div class="empty-state">No branches yet. Search and add one above.</div>
+    </section>
+
+    <div id="toast" class="toast hidden"></div>
+  </div>
+
+  <!-- Log modal -->
+  <div id="logModal" class="modal hidden">
+    <div class="modal-backdrop" onclick="closeLogModal()"></div>
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h2 id="logModalTitle">Logs</h2>
+        <button class="modal-close" onclick="closeLogModal()">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/></svg>
+        </button>
+      </div>
+      <div id="logModalBody" class="modal-body"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

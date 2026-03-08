@@ -12,7 +12,20 @@ import type {
   VisualAgentPreferences,
 } from '@/services/contracts/userPreferences';
 
+// 去重：navOrderStore + themeStore + VisualAgentTab 可能同时调用，共享一个 in-flight 请求
+let inflightPrefs: Promise<ApiResponse<UserPreferences>> | null = null;
+
 export const getUserPreferencesReal: GetUserPreferencesContract = async (): Promise<ApiResponse<UserPreferences>> => {
+  if (inflightPrefs) return inflightPrefs;
+  inflightPrefs = doGetUserPreferences();
+  try {
+    return await inflightPrefs;
+  } finally {
+    inflightPrefs = null;
+  }
+};
+
+async function doGetUserPreferences(): Promise<ApiResponse<UserPreferences>> {
   const res = await apiRequest<{ navOrder: string[]; themeConfig?: ThemeConfigResponse; visualAgentPreferences?: VisualAgentPreferences }>(
     api.dashboard.userPreferences.get()
   );
@@ -22,7 +35,7 @@ export const getUserPreferencesReal: GetUserPreferencesContract = async (): Prom
     themeConfig: res.data.themeConfig,
     visualAgentPreferences: res.data.visualAgentPreferences,
   });
-};
+}
 
 export const updateNavOrderReal: UpdateNavOrderContract = async (navOrder: string[]): Promise<ApiResponse<void>> => {
   const res = await apiRequest<void>(api.dashboard.userPreferences.navOrder(), {

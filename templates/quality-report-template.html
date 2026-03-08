@@ -1,0 +1,1555 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title id="pageTitle">技术质量月报</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Noto+Sans+SC:wght@400;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js"></script>
+<style>
+/* ============================================================
+   CSS Variables & Reset
+   ============================================================ */
+:root {
+  --bg-primary:    #0D1117;
+  --bg-card:       #161B22;
+  --bg-elevated:   #1C2128;
+  --border:        #30363D;
+  --text-primary:  #E6EDF3;
+  --text-secondary:#7D8590;
+  --accent-blue:   #1E6FD9;
+  --accent-orange: #F5A623;
+  --accent-green:  #27C97F;
+  --accent-red:    #E84040;
+  --accent-cyan:   #4ECDC4;
+  --accent-deep-orange: #FF6B35;
+  --font-display:  'Bebas Neue', 'DIN Alternate', monospace;
+  --font-body:     'Noto Sans SC', sans-serif;
+  --radius:        12px;
+  --radius-sm:     8px;
+  --transition:    0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: var(--font-body);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.6;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ============================================================
+   Scrollbar
+   ============================================================ */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-primary); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
+
+/* ============================================================
+   Layout
+   ============================================================ */
+.container { max-width: 1400px; margin: 0 auto; padding: 0 24px; }
+
+/* ============================================================
+   Sticky Navbar
+   ============================================================ */
+.navbar {
+  position: sticky; top: 0; z-index: 100;
+  background: rgba(13, 17, 23, 0.85);
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--border);
+  padding: 0 24px;
+}
+.navbar-inner {
+  max-width: 1400px; margin: 0 auto;
+  display: flex; align-items: center; justify-content: space-between;
+  height: 64px;
+}
+.navbar-brand {
+  display: flex; align-items: center; gap: 12px;
+  font-weight: 700; font-size: 1.1rem; color: var(--text-primary);
+}
+.navbar-brand .logo-icon {
+  width: 32px; height: 32px;
+  background: linear-gradient(135deg, var(--accent-blue), var(--accent-cyan));
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-display); font-size: 1.2rem; color: #fff;
+}
+.navbar-tabs {
+  display: flex; gap: 4px; background: var(--bg-elevated);
+  border-radius: var(--radius-sm); padding: 4px;
+}
+.tab-btn {
+  padding: 8px 20px; border: none; background: none;
+  color: var(--text-secondary); font-family: var(--font-body);
+  font-size: 0.9rem; font-weight: 600;
+  border-radius: 6px; cursor: pointer;
+  transition: var(--transition);
+}
+.tab-btn:hover { color: var(--text-primary); background: rgba(255,255,255,0.05); }
+.tab-btn.active {
+  color: #fff; background: var(--accent-blue);
+  box-shadow: 0 2px 8px rgba(30, 111, 217, 0.3);
+}
+
+/* ============================================================
+   Section
+   ============================================================ */
+.section {
+  padding: 48px 0;
+  opacity: 0; transform: translateY(20px);
+  transition: opacity 0.6s ease, transform 0.6s ease;
+}
+.section.visible { opacity: 1; transform: translateY(0); }
+.section-header {
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 32px;
+}
+.section-icon {
+  width: 40px; height: 40px;
+  background: rgba(30, 111, 217, 0.15);
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--accent-blue);
+}
+.section-title {
+  font-size: 1.5rem; font-weight: 700;
+  background: linear-gradient(135deg, var(--text-primary), var(--accent-blue));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+
+/* ============================================================
+   Hero KPI Cards
+   ============================================================ */
+.hero { padding: 40px 0 24px; }
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+.kpi-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  position: relative; overflow: hidden;
+  transition: var(--transition);
+  cursor: pointer;
+}
+.kpi-card::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0;
+  height: 3px; background: var(--accent-blue);
+  transform: scaleX(0); transform-origin: left;
+  transition: transform 0.3s ease;
+}
+.kpi-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+}
+.kpi-card:hover::before { transform: scaleX(1); }
+.kpi-label {
+  font-size: 0.85rem; color: var(--text-secondary);
+  margin-bottom: 8px; font-weight: 600;
+}
+.kpi-value {
+  font-family: var(--font-display);
+  font-size: 3rem; line-height: 1;
+  letter-spacing: 1px;
+}
+.kpi-trend {
+  margin-top: 8px; font-size: 0.8rem; font-weight: 600;
+}
+.kpi-trend.up { color: var(--accent-green); }
+.kpi-trend.down { color: var(--accent-red); }
+.kpi-trend.neutral { color: var(--text-secondary); }
+.kpi-zero-badge {
+  display: inline-block; margin-top: 8px;
+  background: rgba(39, 201, 127, 0.15); color: var(--accent-green);
+  padding: 2px 10px; border-radius: 12px;
+  font-size: 0.75rem; font-weight: 600;
+}
+
+/* ============================================================
+   Chart Cards
+   ============================================================ */
+.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+  gap: 20px;
+}
+.chart-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  transition: var(--transition);
+}
+.chart-card:hover {
+  border-color: rgba(30, 111, 217, 0.3);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+}
+.chart-title {
+  font-size: 1rem; font-weight: 700;
+  margin-bottom: 4px;
+}
+.chart-subtitle {
+  font-size: 0.8rem; color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+.chart-container { position: relative; width: 100%; }
+.chart-container canvas { width: 100% !important; }
+.chart-note {
+  margin-top: 12px; font-size: 0.75rem; color: var(--text-secondary);
+  padding: 8px 12px; background: rgba(255,255,255,0.03);
+  border-radius: 6px; border-left: 3px solid var(--accent-blue);
+}
+
+/* ============================================================
+   Status Cards (Defect Processing)
+   ============================================================ */
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px; margin-bottom: 24px;
+}
+.status-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 16px; text-align: center;
+  transition: var(--transition);
+}
+.status-card:hover { transform: translateY(-2px); }
+.status-count {
+  font-family: var(--font-display);
+  font-size: 2rem; line-height: 1;
+}
+.status-label {
+  font-size: 0.8rem; color: var(--text-secondary);
+  margin-top: 4px;
+}
+.status-bar {
+  height: 6px; border-radius: 3px;
+  margin-top: 12px; background: var(--bg-elevated);
+  overflow: hidden; display: flex;
+}
+.status-bar-segment { height: 100%; transition: width 0.6s ease; }
+
+/* ============================================================
+   Horizontal Bar Chart (Root Cause)
+   ============================================================ */
+.hbar-list { display: flex; flex-direction: column; gap: 12px; }
+.hbar-item { display: flex; align-items: center; gap: 12px; }
+.hbar-label {
+  flex: 0 0 180px; font-size: 0.85rem;
+  text-align: right; color: var(--text-secondary);
+}
+.hbar-track {
+  flex: 1; height: 28px; background: var(--bg-elevated);
+  border-radius: 4px; overflow: hidden; position: relative;
+}
+.hbar-fill {
+  height: 100%; border-radius: 4px;
+  transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex; align-items: center; justify-content: flex-end;
+  padding-right: 8px; font-size: 0.75rem; font-weight: 700;
+  color: rgba(255,255,255,0.9);
+}
+
+/* ============================================================
+   Accordion (Defect Details)
+   ============================================================ */
+.accordion { display: flex; flex-direction: column; gap: 8px; }
+.accordion-group {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.accordion-header {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 16px; cursor: pointer;
+  transition: var(--transition);
+  user-select: none;
+}
+.accordion-header:hover { background: rgba(255,255,255,0.03); }
+.accordion-icon {
+  width: 8px; height: 8px; border-radius: 50%;
+  flex-shrink: 0;
+}
+.accordion-category { font-weight: 600; font-size: 0.95rem; flex: 1; }
+.accordion-badge {
+  background: rgba(30, 111, 217, 0.15); color: var(--accent-blue);
+  padding: 2px 10px; border-radius: 12px;
+  font-size: 0.75rem; font-weight: 700;
+}
+.accordion-chevron {
+  color: var(--text-secondary); transition: transform 0.3s ease;
+}
+.accordion-group.open .accordion-chevron { transform: rotate(180deg); }
+.accordion-body {
+  max-height: 0; overflow: hidden;
+  transition: max-height 0.4s ease;
+}
+.accordion-group.open .accordion-body { max-height: 2000px; }
+.defect-list { padding: 0 16px 16px; display: flex; flex-direction: column; gap: 8px; }
+.defect-item {
+  display: flex; gap: 12px; padding: 12px;
+  background: var(--bg-elevated); border-radius: 6px;
+  border-left: 3px solid var(--accent-blue);
+  font-size: 0.85rem; line-height: 1.5;
+}
+.defect-item .defect-index {
+  flex-shrink: 0; width: 22px; height: 22px;
+  background: rgba(30, 111, 217, 0.15); color: var(--accent-blue);
+  border-radius: 50%; display: flex; align-items: center;
+  justify-content: center; font-size: 0.7rem; font-weight: 700;
+}
+.defect-item .defect-content { flex: 1; }
+.defect-item .defect-desc { color: var(--text-primary); }
+.defect-item .defect-cause {
+  margin-top: 4px; font-size: 0.8rem;
+  color: var(--accent-orange);
+}
+.defect-item .defect-handler {
+  display: inline-block; margin-top: 4px;
+  background: rgba(125, 133, 144, 0.15);
+  color: var(--text-secondary);
+  padding: 1px 8px; border-radius: 10px;
+  font-size: 0.7rem;
+}
+
+/* ============================================================
+   Alert Card (Critical Defects)
+   ============================================================ */
+.alert-card {
+  background: rgba(232, 64, 64, 0.08);
+  border: 1px solid rgba(232, 64, 64, 0.3);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+  margin-bottom: 24px;
+  display: flex; align-items: flex-start; gap: 16px;
+}
+.alert-icon {
+  flex-shrink: 0; width: 40px; height: 40px;
+  background: rgba(232, 64, 64, 0.15);
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--accent-red);
+}
+.alert-title { font-weight: 700; color: var(--accent-red); margin-bottom: 4px; }
+.alert-desc { font-size: 0.85rem; color: var(--text-secondary); }
+
+/* ============================================================
+   Summary Cards
+   ============================================================ */
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+  gap: 16px;
+}
+.summary-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+  display: flex; align-items: flex-start; gap: 16px;
+  transition: var(--transition);
+}
+.summary-card:hover { border-color: rgba(30, 111, 217, 0.3); }
+.summary-icon-wrap {
+  flex-shrink: 0; width: 40px; height: 40px;
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.2rem;
+}
+.summary-text { font-size: 0.9rem; line-height: 1.6; }
+
+/* ============================================================
+   Improvement Plan (Todo List)
+   ============================================================ */
+.plan-list { display: flex; flex-direction: column; gap: 12px; }
+.plan-item {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 16px 20px;
+  display: flex; align-items: flex-start; gap: 14px;
+  transition: var(--transition);
+}
+.plan-item:hover { border-color: rgba(30, 111, 217, 0.3); }
+.plan-index {
+  flex-shrink: 0; width: 28px; height: 28px;
+  background: rgba(30, 111, 217, 0.15); color: var(--accent-blue);
+  border-radius: 50%; display: flex; align-items: center;
+  justify-content: center; font-family: var(--font-display);
+  font-size: 1rem;
+}
+.plan-tag {
+  display: inline-block; padding: 1px 8px;
+  border-radius: 4px; font-size: 0.7rem; font-weight: 700;
+  margin-right: 8px;
+}
+.plan-tag[data-priority="high"] { background: rgba(232, 64, 64, 0.15); color: var(--accent-red); }
+.plan-tag[data-priority="medium"] { background: rgba(245, 166, 35, 0.15); color: var(--accent-orange); }
+.plan-tag[data-priority="low"] { background: rgba(30, 111, 217, 0.15); color: var(--accent-blue); }
+.plan-text { font-size: 0.9rem; line-height: 1.5; }
+
+/* ============================================================
+   Special Section (Links + Notes)
+   ============================================================ */
+.link-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px; margin-bottom: 24px;
+}
+.link-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 16px 20px;
+  display: flex; align-items: center; gap: 12px;
+  cursor: pointer; transition: var(--transition);
+  text-decoration: none; color: var(--text-primary);
+}
+.link-card:hover {
+  border-color: var(--accent-blue);
+  background: rgba(30, 111, 217, 0.05);
+}
+.link-icon {
+  width: 36px; height: 36px;
+  background: rgba(30, 111, 217, 0.15); color: var(--accent-blue);
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+}
+.link-title { font-size: 0.9rem; font-weight: 600; }
+.note-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+}
+.note-title { font-weight: 700; margin-bottom: 8px; }
+.note-content { font-size: 0.9rem; color: var(--text-secondary); line-height: 1.7; }
+
+/* ============================================================
+   Footer
+   ============================================================ */
+.footer {
+  text-align: center; padding: 32px 0;
+  border-top: 1px solid var(--border);
+  color: var(--text-secondary); font-size: 0.8rem;
+}
+
+/* ============================================================
+   Responsive
+   ============================================================ */
+@media (max-width: 768px) {
+  .navbar-inner { flex-direction: column; height: auto; padding: 12px 0; gap: 8px; }
+  .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+  .chart-grid { grid-template-columns: 1fr; }
+  .chart-grid .chart-card { min-width: 0; }
+  .hbar-label { flex: 0 0 100px; font-size: 0.75rem; }
+  .summary-grid { grid-template-columns: 1fr; }
+  .kpi-value { font-size: 2.2rem; }
+}
+
+/* ============================================================
+   Animations
+   ============================================================ */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fade-in-up { animation: fadeInUp 0.5s ease forwards; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+</style>
+</head>
+<body>
+
+<!-- ============================================================
+     NAVBAR
+     ============================================================ -->
+<nav class="navbar">
+  <div class="navbar-inner">
+    <div class="navbar-brand">
+      <div class="logo-icon" id="logoIcon">Q</div>
+      <span id="navTitle">技术质量月报</span>
+    </div>
+    <div class="navbar-tabs" id="monthTabs"></div>
+  </div>
+</nav>
+
+<!-- ============================================================
+     HERO: KPI Cards
+     ============================================================ -->
+<div class="hero">
+  <div class="container">
+    <div class="kpi-grid" id="kpiGrid"></div>
+  </div>
+</div>
+
+<!-- ============================================================
+     SECTION 1: Data Overview
+     ============================================================ -->
+<div class="section" id="sectionOverview">
+  <div class="container">
+    <div class="section-header">
+      <div class="section-icon"><i data-lucide="bar-chart-3" style="width:20px;height:20px"></i></div>
+      <h2 class="section-title" id="overviewTitle">数据概况</h2>
+    </div>
+    <div class="chart-grid" id="chartGrid"></div>
+  </div>
+</div>
+
+<!-- ============================================================
+     SECTION 2: Defect Analysis
+     ============================================================ -->
+<div class="section" id="sectionAnalysis">
+  <div class="container">
+    <div class="section-header">
+      <div class="section-icon"><i data-lucide="search" style="width:20px;height:20px"></i></div>
+      <h2 class="section-title" id="analysisTitle">缺陷分析</h2>
+    </div>
+    <!-- Critical Alerts -->
+    <div id="alertContainer"></div>
+    <!-- Status Overview -->
+    <h3 style="font-size:1.1rem;margin-bottom:16px;color:var(--text-secondary)">处理状态总览</h3>
+    <div id="statusGrid" class="status-grid"></div>
+    <div id="statusBarContainer" style="margin-bottom:32px"></div>
+    <!-- Root Cause Distribution -->
+    <h3 style="font-size:1.1rem;margin:24px 0 16px;color:var(--text-secondary)">缺陷根因分布</h3>
+    <div id="rootCauseChart"></div>
+    <!-- Defect Details Accordion -->
+    <h3 style="font-size:1.1rem;margin:32px 0 16px;color:var(--text-secondary)">典型缺陷详情</h3>
+    <div class="accordion" id="defectAccordion"></div>
+  </div>
+</div>
+
+<!-- ============================================================
+     SECTION 3: Summary
+     ============================================================ -->
+<div class="section" id="sectionSummary">
+  <div class="container">
+    <div class="section-header">
+      <div class="section-icon"><i data-lucide="clipboard-check" style="width:20px;height:20px"></i></div>
+      <h2 class="section-title" id="summaryTitle">缺陷总结</h2>
+    </div>
+    <div class="summary-grid" id="summaryGrid"></div>
+  </div>
+</div>
+
+<!-- ============================================================
+     SECTION 4: Improvement Plan
+     ============================================================ -->
+<div class="section" id="sectionPlan">
+  <div class="container">
+    <div class="section-header">
+      <div class="section-icon"><i data-lucide="list-checks" style="width:20px;height:20px"></i></div>
+      <h2 class="section-title" id="planTitle">改进计划</h2>
+    </div>
+    <div class="plan-list" id="planList"></div>
+  </div>
+</div>
+
+<!-- ============================================================
+     SECTION 5: Special Content
+     ============================================================ -->
+<div class="section" id="sectionSpecial" style="display:none">
+  <div class="container">
+    <div class="section-header">
+      <div class="section-icon"><i data-lucide="star" style="width:20px;height:20px"></i></div>
+      <h2 class="section-title" id="specialTitle">专项内容</h2>
+    </div>
+    <div id="specialContent"></div>
+  </div>
+</div>
+
+<!-- ============================================================
+     FOOTER
+     ============================================================ -->
+<footer class="footer">
+  <div class="container">
+    <span id="footerText"></span>
+  </div>
+</footer>
+
+<!-- ============================================================
+     DATA CONFIGURATION
+     ============================================================ -->
+<script>
+// ================================================================
+// CONFIG: All report data goes here. Replace with your own data.
+// This is the ONLY section you need to modify.
+// ================================================================
+const CONFIG = {
+  // -- Branding --
+  title: '技术专业委员会 · 线上质量月报看板',
+  shortTitle: '技术质量月报',
+  logoLetter: 'Q',
+  footer: '本报告由工作流自动生成',
+
+  // -- Month tabs (array of periods) --
+  months: ['10月', '11月', '12月'],
+
+  // -- KPI definitions --
+  kpis: [
+    {
+      label: '技术缺陷总数',
+      values: [29, 23, 39],
+      colorFn: (v) => 'var(--accent-blue)',
+      format: 'integer',
+    },
+    {
+      label: 'P0/P1 重大缺陷',
+      values: [0, 2, 1],
+      colorFn: (v) => v === 0 ? 'var(--accent-green)' : 'var(--accent-red)',
+      format: 'integer',
+      zeroBadge: '本月清零',
+    },
+    {
+      label: '及时处理率',
+      values: [93.1, 95.24, 89.19],
+      colorFn: (v) => v >= 90 ? 'var(--accent-green)' : v >= 80 ? 'var(--accent-orange)' : 'var(--accent-red)',
+      format: 'percent',
+    },
+    {
+      label: '修复率(P2及以下)',
+      values: [86.2, 85.7, 71.05],
+      colorFn: (v) => v >= 90 ? 'var(--accent-green)' : v >= 80 ? 'var(--accent-orange)' : 'var(--accent-red)',
+      format: 'percent',
+    },
+    {
+      label: '有效反馈数',
+      values: [43, 43, 54],
+      colorFn: (v) => 'var(--accent-cyan)',
+      format: 'integer',
+    },
+  ],
+
+  // -- Charts configuration --
+  charts: [
+    {
+      id: 'trendChart',
+      title: '线上问题概况',
+      subtitle: '有效/无效反馈趋势',
+      type: 'line',
+      note: '有效反馈：通过寻常业务逻辑无法解决，需技术或其他协助。无效反馈：通过业务逻辑能解决，如设置/操作不当。',
+      // Static data (same across all months)
+      labels: ['5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'],
+      datasets: [
+        { label: '有效报告', data: [47,41,52,58,70,43,43,54], borderColor: 'var(--accent-blue)', backgroundColor: 'rgba(30,111,217,0.1)', fill: true },
+        { label: '无效报告', data: [12,10,8,7,17,13,12,17], borderColor: 'var(--text-secondary)', borderDash: [5,5], backgroundColor: 'transparent', fill: false },
+        { label: '总数量', data: [59,51,60,65,87,56,55,71], borderColor: 'var(--accent-orange)', backgroundColor: 'transparent', fill: false },
+      ],
+    },
+    {
+      id: 'defectTrendChart',
+      title: '线上技术缺陷趋势',
+      subtitle: '近一年半缺陷数量变化',
+      type: 'line',
+      labels: ['5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月', '1月', '2月', '3月'],
+      datasets: [
+        { label: '缺陷数', data: [26,18,22,43,33,29,23,39,null,null,null], borderColor: 'var(--accent-blue)', backgroundColor: 'rgba(30,111,217,0.1)', fill: true, spanGaps: true },
+      ],
+      // Highlight current month data point per month index
+      highlightIndex: [5, 6, 7],
+    },
+    {
+      id: 'severityChart',
+      title: '缺陷级别分布',
+      subtitle: '按严重程度分类',
+      type: 'doughnut',
+      // Per-month data for doughnut
+      labels: ['P0 致命', 'P1 重大', 'P2 严重', 'P3 一般', 'P4 轻微'],
+      datasetsPerMonth: [
+        [0, 0, 5, 23, 1],   // October
+        [1, 1, 2, 19, 0],   // November
+        [1, 0, 7, 29, 2],   // December
+      ],
+      colors: ['#E84040', '#F5A623', '#FF6B35', '#1E6FD9', '#4ECDC4'],
+    },
+    {
+      id: 'timelyRateChart',
+      title: 'P2及以下缺陷及时处理率',
+      subtitle: '目标线: 80%',
+      type: 'line',
+      labels: ['6月', '7月', '8月', '9月', '10月', '11月', '12月'],
+      datasets: [
+        { label: '及时处理率', data: [57.1,76.7,72.5,81.4,93.1,95.24,89.19], borderColor: 'var(--accent-green)', backgroundColor: 'rgba(39,201,127,0.1)', fill: true },
+      ],
+      referenceLine: { value: 80, label: '目标线 80%', color: 'var(--accent-orange)' },
+      yMin: 50, yMax: 100,
+    },
+    {
+      id: 'fixRateChart',
+      title: 'P2及以下缺陷修复率',
+      subtitle: '已修复 / 总缺陷',
+      type: 'line',
+      labels: ['7月', '8月', '9月', '10月', '11月', '12月'],
+      datasets: [
+        { label: '修复率', data: [76.7,57.5,72.1,86.2,85.7,71.05], borderColor: 'var(--accent-cyan)', backgroundColor: 'rgba(78,205,196,0.1)', fill: true },
+      ],
+      yMin: 50, yMax: 100,
+    },
+    {
+      id: 'majorDefectChart',
+      title: 'P0/P1 重大缺陷趋势',
+      subtitle: '按月份统计',
+      type: 'bar',
+      labels: ['3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'],
+      datasets: [
+        { label: 'P0', data: [0,1,0,2,0,0,0,0,1,1], backgroundColor: 'rgba(232,64,64,0.8)' },
+        { label: 'P1', data: [3,0,0,1,2,3,2,0,1,0], backgroundColor: 'rgba(245,166,35,0.8)' },
+      ],
+    },
+  ],
+
+  // -- Defect Analysis: Processing Status per month --
+  processingStatus: [
+    // October
+    { fixed: 25, tempFixed: 3, inProgress: 1, suspended: 0, overdue: 0 },
+    // November
+    { fixed: 18, tempFixed: 3, inProgress: 1, suspended: 1, overdue: 0 },
+    // December
+    { fixed: 27, tempFixed: 6, inProgress: 3, suspended: 2, overdue: 4 },
+  ],
+
+  // -- Root Cause Distribution per month --
+  rootCauses: [
+    // October
+    [
+      { name: '技术分析不足', count: 16, color: '#E84040' },
+      { name: '测试体系不完善', count: 14, color: '#F5A623' },
+      { name: '性能设计不足', count: 5, color: '#FF6B35' },
+      { name: '产品设计不完善', count: 3, color: '#1E6FD9' },
+      { name: '发布不规范', count: 2, color: '#4ECDC4' },
+      { name: '监控建设不完善', count: 2, color: '#7D8590' },
+    ],
+    // November
+    [
+      { name: '技术分析不足', count: 12, color: '#E84040' },
+      { name: '测试体系不完善', count: 6, color: '#F5A623' },
+      { name: '应用架构/监控不完善', count: 3, color: '#FF6B35' },
+      { name: '暂未归母', count: 3, color: '#7D8590' },
+      { name: '重复问题', count: 2, color: '#1E6FD9' },
+      { name: '性能设计不足', count: 1, color: '#4ECDC4' },
+    ],
+    // December
+    [
+      { name: '测试体系不完善', count: 12, color: '#F5A623' },
+      { name: '技术分析不足', count: 10, color: '#E84040' },
+      { name: '性能设计不足', count: 3, color: '#FF6B35' },
+      { name: '资源管理不规范', count: 3, color: '#1E6FD9' },
+      { name: '发布不规范', count: 2, color: '#4ECDC4' },
+      { name: '产品设计不完善', count: 2, color: '#27C97F' },
+      { name: '监控体系不完善', count: 1, color: '#7D8590' },
+      { name: '暂未归母', count: 2, color: '#9CA3AF' },
+    ],
+  ],
+
+  // -- Critical Alerts per month (null = none) --
+  criticalAlerts: [
+    null, // October: no critical
+    [
+      { level: 'P0', title: '按箱指定发奖超发一等奖（再来一瓶提领券大量超发）', desc: '溯源报告已出' },
+      { level: 'P1', title: '全平台瘫痪——大数据引擎无法登陆，消费者扫码获取商家信息失败', desc: '全平台回溯报告已出' },
+    ],
+    [
+      { level: 'P0', title: '扫码跳转不良网址', desc: 'WiFi链路劫持，非服务器问题，联合腾讯云/网警排查' },
+    ],
+  ],
+
+  // -- Defect Details (Accordion) per month --
+  defectDetails: [
+    // October
+    [
+      {
+        category: '测试体系不完善', color: '#F5A623',
+        items: [
+          { desc: '终端动销领奖导出"奖品发放"栏信息显示错误', cause: '逻辑错误·状态处理问题（数组索引依赖约定被打破）' },
+          { desc: '经销商列表无法加载、重复出现', cause: 'API调用参数错误·重构测试覆盖不足' },
+          { desc: '礼品兑换加载失败', cause: '条件判断错误（未查询到分类时错误返回）' },
+          { desc: '批量导入发货600条长时卡死', cause: '业务规则实现不完整（未处理不存在订单场景）' },
+          { desc: '生码小标数量缺失', cause: '数据格式错误（起始流水号未清空导致范围重叠）' },
+        ],
+      },
+      {
+        category: '技术分析不足', color: '#E84040',
+        items: [
+          { desc: '渠道返利数据导出生成失败', cause: '' },
+          { desc: '导购积分商城订单导出门店编号/名称缺失', cause: '接口未返回 AttachData 字段' },
+          { desc: '出货数据未自动同步', cause: '开放平台接口缺少动销码字段，旧数据未赋值' },
+          { desc: '会员小程序我的奖品加载超时', cause: '查询范围近2年大数据接口超时' },
+          { desc: '托盘出货报"未将对象引用设置到对象的实例"', cause: '托盘传值未做防空判断' },
+          { desc: '自有礼品下架后仍提示需要下架', cause: '旧版积分商城缺少导购积分商城数据过滤' },
+        ],
+      },
+      {
+        category: '发布不规范', color: '#4ECDC4',
+        items: [
+          { desc: '核销提领券显示"系统繁忙"', cause: '发布前未同步关联同事/SVN分支未规范' },
+          { desc: '扫码提示"系统维护中"', cause: '代码逻辑未逐行复查' },
+        ],
+      },
+      {
+        category: '监控建设不完善', color: '#7D8590',
+        items: [
+          { desc: '消费者扫码未触发渠道返利', cause: '' },
+          { desc: '店铺开箱数据显示暂无', cause: '服务器重启导致存储过程中断，重复数据异常' },
+        ],
+      },
+    ],
+    // November
+    [
+      {
+        category: '重大缺陷（P0/P1）', color: '#E84040',
+        items: [
+          { desc: 'P0：按箱指定发奖超发一等奖（再来一瓶提领券大量超发）', cause: '溯源报告已出' },
+          { desc: 'P1：全平台瘫痪——大数据引擎无法登陆，消费者扫码获取商家信息失败', cause: '全平台回溯报告已出' },
+        ],
+      },
+      {
+        category: '测试体系不完善', color: '#F5A623',
+        items: [
+          { desc: '扫码领奖扫码地址超出数据库字段长度导致报错', cause: '' },
+          { desc: '防伪码流水号查找失败返回错误数据', cause: '' },
+          { desc: '万能溯源码扫码报 System.Exception', cause: '接口新增入参未设默认值' },
+          { desc: '按箱发奖超发（同P0）', cause: '' },
+          { desc: '门店扫码领奖显示"总部未出货"但实际已出货', cause: '' },
+          { desc: '微信红包发放明细导出数据与查询不一致', cause: '' },
+        ],
+      },
+      {
+        category: '技术分析不足', color: '#E84040',
+        items: [
+          { desc: '宴席订单导出重复记录', cause: 'Goose组件分页未指定排序规则' },
+          { desc: 'BDE后台生成订单报服务器错误', cause: '对象非空判断缺失' },
+          { desc: '云店分销二维码扫码只进入总店', cause: '接口返回37008时未加地理位置逻辑' },
+          { desc: '红包发放明细导出失败', cause: 'ES查询字段 d_id 不存在' },
+          { desc: '订单付款后状态不刷新', cause: '支付回调慢时状态非7（待处理）不触发轮询' },
+          { desc: '中山市门店注册定位失败', cause: '腾讯地图更新与本地地址库不匹配' },
+        ],
+      },
+      {
+        category: '应用架构/监控不完善', color: '#FF6B35',
+        items: [
+          { desc: '出货600件只同步160件', cause: '死锁（顺德酒厂码关系表）' },
+          { desc: '奖品订单"该地区不支持配送"+500报错', cause: '日志增长过快磁盘爆满，告警阈值设置不当' },
+          { desc: '全平台瘫痪（同P1）', cause: '' },
+          { desc: '微信绑定收不到验证码', cause: '环境配置错误' },
+        ],
+      },
+    ],
+    // December
+    [
+      {
+        category: '重大缺陷（P0）', color: '#E84040',
+        items: [
+          { desc: 'P0（待定）：扫码跳转不良网址', cause: 'WiFi链路劫持，非服务器问题，联合腾讯云/网警排查' },
+        ],
+      },
+      {
+        category: '测试体系不完善', color: '#F5A623',
+        items: [
+          { desc: '天津市（直辖市）扫码地区统计无法显示下级市区', cause: '地址默认三级，直辖市二级未做兼容' },
+          { desc: '客户列表导入手机号提示"尚未拥有用户标签"', cause: '提前判断标签存在，非必填项不应阻断' },
+          { desc: '订单10个月/14个月未自动签收', cause: '自动签收逻辑仅覆盖会员小程序，未兼容导购小程序' },
+          { desc: '品牌红包开票申请提交失败', cause: '多条订单ID拼接超数据库字段长度' },
+          { desc: '发奖策略按行政区域+GPS双重条件未用"或"逻辑判断导致大范围区域无人领奖', cause: '' },
+          { desc: '同一二维码可重复关联', cause: '数据关联未做去重检查' },
+        ],
+      },
+      {
+        category: '技术分析不足', color: '#E84040',
+        items: [
+          { desc: '微信授权验证失败（历史登录信息只判断第一条）', cause: '' },
+          { desc: '二返积分补发失败', cause: '资产接口超时但实际发放成功，业务数据未同步更新' },
+          { desc: '经销商报销生成二维码失败', cause: 'Linux环境.NET6不支持Common库' },
+          { desc: '大标签收未完成导致出货失败', cause: '签收时码关系更新接口未排除经销商ID/门店ID' },
+          { desc: '批量导入发货失败', cause: 'Nginx跨域配置遗漏域名' },
+          { desc: '新客开通套餐报错', cause: '外勤管理模块错误关联到付费套餐' },
+        ],
+      },
+      {
+        category: '性能设计不足', color: '#FF6B35',
+        items: [
+          { desc: '发放明细查不到发放失败记录', cause: '接口响应超时，无自动补发机制' },
+          { desc: '导入22万溯源码超时（1小时未完成）', cause: '' },
+          { desc: '红包发放失败提示系统繁忙', cause: '' },
+        ],
+      },
+      {
+        category: '资源管理不规范', color: '#1E6FD9',
+        items: [
+          { desc: '导购中心显示乱码', cause: '某台服务器缺少依赖文件' },
+          { desc: '箱码扫描显示接口通讯异常', cause: '灰度测试误操作更新错误站点配置' },
+          { desc: '智能营销首页昨日扫码量为0', cause: '新购服务器磁盘未挂载，无监控' },
+        ],
+      },
+    ],
+  ],
+
+  // -- Summary per month --
+  summaries: [
+    // October
+    [
+      { icon: 'alert-triangle', color: 'var(--accent-orange)', text: '复合根因占比高：技术分析不足与测试覆盖不足超 30% 缺陷由多环节共同导致' },
+      { icon: 'file-warning', color: 'var(--accent-red)', text: '发布规范问题突出：项目杂乱，发布前未同步关联同事' },
+      { icon: 'check-circle', color: 'var(--accent-green)', text: '系统稳定性问题较上月减少：与重启服务器内存有效释放有关' },
+    ],
+    // November
+    [
+      { icon: 'bell', color: 'var(--accent-orange)', text: '无效反馈仍较多，占用研发团队大量时间' },
+      { icon: 'refresh-cw', color: 'var(--accent-blue)', text: '方案改动未及时同步导致问题发生，项目部分流程缺失' },
+      { icon: 'shield-alert', color: 'var(--accent-red)', text: '主库权限开放过高，操作风险极大' },
+      { icon: 'repeat', color: 'var(--accent-cyan)', text: '分页问题重复出现' },
+    ],
+    // December
+    [
+      { icon: 'trending-up', color: 'var(--accent-blue)', text: '反馈问题数量较11月增加，有效反馈维持较高水平（约76%）' },
+      { icon: 'bar-chart', color: 'var(--accent-orange)', text: '及时处理率89.19%较高，但修复率仅71.05%，临时解决占比偏高需重点跟进' },
+      { icon: 'alert-octagon', color: 'var(--accent-red)', text: 'P0重大缺陷1个（WiFi链路劫持，非服务器问题）' },
+    ],
+  ],
+
+  // -- Improvement Plans per month --
+  plans: [
+    // October
+    [
+      { tag: '流程', priority: 'high', text: '每天在一杆枪群同步问题进度；未解决问题重新评估预计时间' },
+      { tag: '测试', priority: 'high', text: '建立公共测试用例库，供所有项目复用' },
+      { tag: '运维', priority: 'medium', text: '指定运维重启服务器注意事项；监测好资源利用率' },
+      { tag: '规范', priority: 'medium', text: '制定项目发布规范（SVN/GIT拉分支规范）' },
+      { tag: '性能', priority: 'low', text: '月度分析报告：数据库索引碎片、SQL慢查询、Nginx访问响应慢监控' },
+    ],
+    // November
+    [
+      { tag: '监控', priority: 'high', text: '线上所有 ERROR 都应告警；统计各 appname ERROR 情况，清理无效日志后按项目负责人推送' },
+      { tag: '工单', priority: 'high', text: '接入工单系统，告警形成工单推送至负责人微信，记录查看时间与完结时间，处理时效纳入考核' },
+      { tag: '流程', priority: 'medium', text: '方案改动须及时同步项目团队；测试用例不论项目大小均需评审；改动后全盘复测' },
+      { tag: '文档', priority: 'medium', text: '测试报告按模板填写，放在技术分析文档子文档下' },
+      { tag: '安全', priority: 'high', text: '非必要不在堡垒机操作，操作需向上反馈' },
+      { tag: '代码', priority: 'low', text: 'Java 项目避免再出现分页问题' },
+    ],
+    // December
+    [
+      { tag: '安全', priority: 'high', text: '客户敏感信息不截图，保护账户密码' },
+      { tag: '监控', priority: 'high', text: '品牌红包发放加监控，先加重试次数观察' },
+      { tag: '规范', priority: 'medium', text: '建立：用例评审清单 / 技术分析清单 / 运维操作注意清单' },
+      { tag: '测试', priority: 'medium', text: '空白数据需用新品牌商测试' },
+      { tag: '质量', priority: 'medium', text: '排查问题举一反三，类似问题一并修复' },
+      { tag: '兼容', priority: 'low', text: '组件升级向下兼容，升级覆盖测试，发版前发公告' },
+      { tag: '监控', priority: 'low', text: '生码过程加入监控' },
+    ],
+  ],
+
+  // -- Special Content per month (null = hidden) --
+  specialContent: [
+    null, // October: none
+    {
+      links: [
+        { title: '11月 SQL慢查询分析报告', icon: 'file-text' },
+        { title: '11月 慢查询分析报告', icon: 'file-text' },
+        { title: '11月 数据索引分析报告', icon: 'file-text' },
+        { title: '运维SLA月度统计报告', icon: 'file-text' },
+      ],
+      notes: [
+        { title: 'AI提效工程专项', content: 'Cursor Plan 模式培训 ——《让 AI 从"盲从"进化到"思考"》' },
+      ],
+    },
+    {
+      links: [
+        { title: '12月 数据库索引分析报告', icon: 'file-text' },
+        { title: '12月 SQL慢查询分析报告', icon: 'file-text' },
+        { title: '2026-01-05 日志统计', icon: 'file-text' },
+      ],
+      notes: [
+        { title: 'AI提效工程专项', content: '原计划与质量会议同时进行的 AI 培训专题，调整至 2026年1月13日下午5点至7点进行' },
+      ],
+    },
+  ],
+};
+</script>
+
+<!-- ============================================================
+     RENDERING ENGINE
+     ============================================================ -->
+<script>
+// ================================================================
+// State
+// ================================================================
+let currentMonth = 0;
+let chartInstances = {};
+
+// ================================================================
+// Utility: Resolve CSS variable colors for Chart.js
+// ================================================================
+function resolveColor(c) {
+  if (!c || !c.startsWith('var(')) return c;
+  const varName = c.replace('var(', '').replace(')', '');
+  return getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+}
+
+// ================================================================
+// Number animation
+// ================================================================
+function animateNumber(el, target, format, duration = 600) {
+  const start = parseFloat(el.dataset.current || '0');
+  const startTime = performance.now();
+
+  function update(now) {
+    const elapsed = now - startTime;
+    const progress = Math.min(elapsed / duration, 1);
+    const eased = 1 - Math.pow(1 - progress, 3); // easeOutCubic
+    const current = start + (target - start) * eased;
+
+    if (format === 'percent') {
+      el.textContent = current.toFixed(current === Math.round(current) ? 0 : 2) + '%';
+    } else {
+      el.textContent = Math.round(current);
+    }
+
+    if (progress < 1) requestAnimationFrame(update);
+    else el.dataset.current = target;
+  }
+  requestAnimationFrame(update);
+}
+
+// ================================================================
+// Intersection Observer for sections
+// ================================================================
+function setupIntersectionObserver() {
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('visible');
+      }
+    });
+  }, { threshold: 0.1 });
+
+  document.querySelectorAll('.section').forEach(s => observer.observe(s));
+}
+
+// ================================================================
+// Render: Month Tabs
+// ================================================================
+function renderTabs() {
+  const container = document.getElementById('monthTabs');
+  container.innerHTML = CONFIG.months.map((m, i) =>
+    `<button class="tab-btn ${i === currentMonth ? 'active' : ''}" data-index="${i}">${m}</button>`
+  ).join('');
+
+  container.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      currentMonth = parseInt(btn.dataset.index);
+      renderTabs();
+      renderAll();
+    });
+  });
+}
+
+// ================================================================
+// Render: KPI Cards
+// ================================================================
+function renderKPIs() {
+  const grid = document.getElementById('kpiGrid');
+  grid.innerHTML = CONFIG.kpis.map((kpi, i) => {
+    const val = kpi.values[currentMonth];
+    const prevVal = currentMonth > 0 ? kpi.values[currentMonth - 1] : null;
+    const color = typeof kpi.colorFn === 'function' ? kpi.colorFn(val) : 'var(--accent-blue)';
+
+    let trendHtml = '';
+    if (prevVal !== null && prevVal !== undefined) {
+      const diff = val - prevVal;
+      const sign = diff > 0 ? '+' : '';
+      const cls = diff > 0
+        ? (kpi.format === 'percent' || kpi.label.includes('修复') || kpi.label.includes('处理') ? 'up' : 'down')
+        : diff < 0
+          ? (kpi.format === 'percent' || kpi.label.includes('修复') || kpi.label.includes('处理') ? 'down' : 'up')
+          : 'neutral';
+      // For defect count, "up" means more defects = bad (down arrow color)
+      const arrow = diff > 0 ? '\u2191' : diff < 0 ? '\u2193' : '\u2192';
+      const displayDiff = kpi.format === 'percent' ? diff.toFixed(2) + ' pp' : Math.abs(diff);
+      trendHtml = `<div class="kpi-trend ${cls}">${arrow} ${sign}${displayDiff} 较上月</div>`;
+    }
+
+    let zeroHtml = '';
+    if (val === 0 && kpi.zeroBadge) {
+      zeroHtml = `<div class="kpi-zero-badge">\u2713 ${kpi.zeroBadge}</div>`;
+    }
+
+    const displayVal = kpi.format === 'percent' ? val + '%' : val;
+
+    return `
+      <div class="kpi-card" style="--card-accent: ${color}">
+        <div class="kpi-label">${kpi.label}</div>
+        <div class="kpi-value" style="color: ${color}" data-target="${val}" data-format="${kpi.format}" data-kpi="${i}">${displayVal}</div>
+        ${zeroHtml}
+        ${trendHtml}
+      </div>`;
+  }).join('');
+
+  // Animate numbers
+  grid.querySelectorAll('.kpi-value').forEach(el => {
+    animateNumber(el, parseFloat(el.dataset.target), el.dataset.format);
+  });
+}
+
+// ================================================================
+// Render: Charts
+// ================================================================
+function renderCharts() {
+  const grid = document.getElementById('chartGrid');
+
+  // Create chart cards if not yet created
+  if (!grid.querySelector('.chart-card')) {
+    grid.innerHTML = CONFIG.charts.map(chart => `
+      <div class="chart-card">
+        <div class="chart-title">${chart.title}</div>
+        <div class="chart-subtitle">${chart.subtitle || ''}</div>
+        <div class="chart-container"><canvas id="${chart.id}"></canvas></div>
+        ${chart.note ? `<div class="chart-note">${chart.note}</div>` : ''}
+      </div>
+    `).join('');
+  }
+
+  CONFIG.charts.forEach(chartCfg => {
+    const canvas = document.getElementById(chartCfg.id);
+    if (!canvas) return;
+
+    // Destroy existing chart instance
+    if (chartInstances[chartCfg.id]) {
+      chartInstances[chartCfg.id].destroy();
+    }
+
+    const ctx = canvas.getContext('2d');
+
+    if (chartCfg.type === 'doughnut') {
+      renderDoughnut(ctx, chartCfg);
+    } else if (chartCfg.type === 'bar') {
+      renderBar(ctx, chartCfg);
+    } else {
+      renderLine(ctx, chartCfg);
+    }
+  });
+}
+
+function renderLine(ctx, cfg) {
+  const datasets = cfg.datasets.map(ds => ({
+    label: ds.label,
+    data: ds.data,
+    borderColor: resolveColor(ds.borderColor),
+    backgroundColor: resolveColor(ds.backgroundColor),
+    fill: ds.fill || false,
+    tension: 0.4,
+    borderWidth: 2,
+    pointRadius: 4,
+    pointHoverRadius: 6,
+    borderDash: ds.borderDash || [],
+    spanGaps: ds.spanGaps || false,
+  }));
+
+  const plugins = [];
+  const annotations = {};
+
+  if (cfg.referenceLine) {
+    annotations.refLine = {
+      type: 'line',
+      yMin: cfg.referenceLine.value,
+      yMax: cfg.referenceLine.value,
+      borderColor: resolveColor(cfg.referenceLine.color),
+      borderDash: [6, 4],
+      borderWidth: 1,
+      label: {
+        display: true,
+        content: cfg.referenceLine.label,
+        position: 'end',
+      },
+    };
+  }
+
+  chartInstances[cfg.id] = new Chart(ctx, {
+    type: 'line',
+    data: { labels: cfg.labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      aspectRatio: 2,
+      animation: { duration: 800, easing: 'easeOutQuart' },
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { labels: { color: resolveColor('var(--text-secondary)'), usePointStyle: true, padding: 16 } },
+        tooltip: {
+          backgroundColor: resolveColor('var(--bg-elevated)'),
+          titleColor: resolveColor('var(--text-primary)'),
+          bodyColor: resolveColor('var(--text-secondary)'),
+          borderColor: resolveColor('var(--border)'),
+          borderWidth: 1,
+          padding: 12,
+          cornerRadius: 8,
+        },
+      },
+      scales: {
+        x: {
+          grid: { color: 'rgba(48,54,61,0.5)' },
+          ticks: { color: resolveColor('var(--text-secondary)') },
+        },
+        y: {
+          min: cfg.yMin,
+          max: cfg.yMax,
+          grid: { color: 'rgba(48,54,61,0.5)' },
+          ticks: {
+            color: resolveColor('var(--text-secondary)'),
+            callback: cfg.yMax === 100 ? (v) => v + '%' : undefined,
+          },
+        },
+      },
+    },
+  });
+}
+
+function renderDoughnut(ctx, cfg) {
+  const monthData = cfg.datasetsPerMonth[currentMonth];
+  const total = monthData.reduce((s, v) => s + v, 0);
+
+  chartInstances[cfg.id] = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: cfg.labels,
+      datasets: [{
+        data: monthData,
+        backgroundColor: cfg.colors,
+        borderColor: resolveColor('var(--bg-card)'),
+        borderWidth: 3,
+        hoverOffset: 8,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      aspectRatio: 1.5,
+      cutout: '65%',
+      animation: { duration: 800, easing: 'easeOutQuart' },
+      plugins: {
+        legend: {
+          position: 'right',
+          labels: { color: resolveColor('var(--text-secondary)'), usePointStyle: true, padding: 12 },
+        },
+        tooltip: {
+          backgroundColor: resolveColor('var(--bg-elevated)'),
+          titleColor: resolveColor('var(--text-primary)'),
+          bodyColor: resolveColor('var(--text-secondary)'),
+          borderColor: resolveColor('var(--border)'),
+          borderWidth: 1,
+        },
+      },
+    },
+    plugins: [{
+      id: 'centerText',
+      afterDraw(chart) {
+        const { width, height, ctx: c } = chart;
+        c.save();
+        const centerX = chart.chartArea.left + (chart.chartArea.right - chart.chartArea.left) / 2;
+        const centerY = chart.chartArea.top + (chart.chartArea.bottom - chart.chartArea.top) / 2;
+
+        c.textAlign = 'center';
+        c.textBaseline = 'middle';
+
+        c.font = `bold 2rem ${getComputedStyle(document.body).getPropertyValue('--font-display')}`;
+        c.fillStyle = resolveColor('var(--text-primary)');
+        c.fillText(total, centerX, centerY - 8);
+
+        c.font = `0.75rem ${getComputedStyle(document.body).getPropertyValue('--font-body')}`;
+        c.fillStyle = resolveColor('var(--text-secondary)');
+        c.fillText('本月缺陷', centerX, centerY + 18);
+        c.restore();
+      }
+    }],
+  });
+}
+
+function renderBar(ctx, cfg) {
+  const datasets = cfg.datasets.map(ds => ({
+    label: ds.label,
+    data: ds.data,
+    backgroundColor: ds.backgroundColor,
+    borderRadius: 4,
+    barPercentage: 0.6,
+  }));
+
+  chartInstances[cfg.id] = new Chart(ctx, {
+    type: 'bar',
+    data: { labels: cfg.labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      aspectRatio: 2,
+      animation: { duration: 800, easing: 'easeOutQuart' },
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { labels: { color: resolveColor('var(--text-secondary)'), usePointStyle: true, padding: 16 } },
+        tooltip: {
+          backgroundColor: resolveColor('var(--bg-elevated)'),
+          titleColor: resolveColor('var(--text-primary)'),
+          bodyColor: resolveColor('var(--text-secondary)'),
+          borderColor: resolveColor('var(--border)'),
+          borderWidth: 1,
+        },
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: { color: resolveColor('var(--text-secondary)') },
+        },
+        y: {
+          beginAtZero: true,
+          grid: { color: 'rgba(48,54,61,0.5)' },
+          ticks: { color: resolveColor('var(--text-secondary)'), stepSize: 1 },
+        },
+      },
+    },
+  });
+}
+
+// ================================================================
+// Render: Processing Status
+// ================================================================
+function renderStatus() {
+  const data = CONFIG.processingStatus[currentMonth];
+  const statusDefs = [
+    { key: 'fixed', label: '已修复', color: 'var(--accent-green)' },
+    { key: 'tempFixed', label: '临时解决', color: 'var(--accent-orange)' },
+    { key: 'inProgress', label: '处理中', color: 'var(--accent-blue)' },
+    { key: 'suspended', label: '挂起', color: 'var(--text-secondary)' },
+    { key: 'overdue', label: '逾期', color: 'var(--accent-red)' },
+  ];
+  const total = statusDefs.reduce((s, d) => s + (data[d.key] || 0), 0);
+
+  document.getElementById('statusGrid').innerHTML = statusDefs.map(d => `
+    <div class="status-card">
+      <div class="status-count" style="color: ${d.color}">${data[d.key] || 0}</div>
+      <div class="status-label">${d.label}</div>
+    </div>
+  `).join('');
+
+  document.getElementById('statusBarContainer').innerHTML = `
+    <div class="status-bar">
+      ${statusDefs.map(d => {
+        const pct = total > 0 ? (data[d.key] || 0) / total * 100 : 0;
+        return `<div class="status-bar-segment" style="width:${pct}%;background:${d.color}" title="${d.label}: ${data[d.key] || 0}"></div>`;
+      }).join('')}
+    </div>
+  `;
+}
+
+// ================================================================
+// Render: Root Cause (Horizontal Bars)
+// ================================================================
+function renderRootCauses() {
+  const causes = CONFIG.rootCauses[currentMonth];
+  const max = Math.max(...causes.map(c => c.count));
+
+  document.getElementById('rootCauseChart').innerHTML = `<div class="hbar-list">
+    ${causes.map(c => `
+      <div class="hbar-item">
+        <div class="hbar-label">${c.name}</div>
+        <div class="hbar-track">
+          <div class="hbar-fill" style="width:${c.count / max * 100}%;background:${c.color}">${c.count}</div>
+        </div>
+      </div>
+    `).join('')}
+  </div>`;
+
+  // Trigger animation
+  setTimeout(() => {
+    document.querySelectorAll('.hbar-fill').forEach(el => {
+      const w = el.style.width;
+      el.style.width = '0';
+      requestAnimationFrame(() => { el.style.width = w; });
+    });
+  }, 100);
+}
+
+// ================================================================
+// Render: Critical Alerts
+// ================================================================
+function renderAlerts() {
+  const alerts = CONFIG.criticalAlerts[currentMonth];
+  const container = document.getElementById('alertContainer');
+  if (!alerts || alerts.length === 0) {
+    container.innerHTML = '';
+    return;
+  }
+  container.innerHTML = alerts.map(a => `
+    <div class="alert-card">
+      <div class="alert-icon"><i data-lucide="alert-triangle" style="width:20px;height:20px"></i></div>
+      <div>
+        <div class="alert-title">${a.level}：${a.title}</div>
+        <div class="alert-desc">${a.desc}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ================================================================
+// Render: Defect Accordion
+// ================================================================
+function renderAccordion() {
+  const details = CONFIG.defectDetails[currentMonth];
+  const container = document.getElementById('defectAccordion');
+
+  container.innerHTML = details.map((group, gi) => `
+    <div class="accordion-group" data-group="${gi}">
+      <div class="accordion-header" onclick="toggleAccordion(${gi})">
+        <div class="accordion-icon" style="background:${group.color}"></div>
+        <div class="accordion-category">${group.category}</div>
+        <div class="accordion-badge">${group.items.length}</div>
+        <svg class="accordion-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+      </div>
+      <div class="accordion-body">
+        <div class="defect-list">
+          ${group.items.map((item, ii) => `
+            <div class="defect-item" style="border-left-color:${group.color}">
+              <div class="defect-index">${ii + 1}</div>
+              <div class="defect-content">
+                <div class="defect-desc">${item.desc}</div>
+                ${item.cause ? `<div class="defect-cause">${item.cause}</div>` : ''}
+                ${item.handler ? `<span class="defect-handler">${item.handler}</span>` : ''}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function toggleAccordion(index) {
+  const group = document.querySelector(`.accordion-group[data-group="${index}"]`);
+  group.classList.toggle('open');
+}
+
+// ================================================================
+// Render: Summary
+// ================================================================
+function renderSummary() {
+  const items = CONFIG.summaries[currentMonth];
+  document.getElementById('summaryGrid').innerHTML = items.map(item => `
+    <div class="summary-card">
+      <div class="summary-icon-wrap" style="background:${item.color}22;color:${item.color}">
+        <i data-lucide="${item.icon}" style="width:20px;height:20px"></i>
+      </div>
+      <div class="summary-text">${item.text}</div>
+    </div>
+  `).join('');
+}
+
+// ================================================================
+// Render: Plans
+// ================================================================
+function renderPlans() {
+  const items = CONFIG.plans[currentMonth];
+  document.getElementById('planList').innerHTML = items.map((item, i) => `
+    <div class="plan-item">
+      <div class="plan-index">${i + 1}</div>
+      <div>
+        <span class="plan-tag" data-priority="${item.priority}">${item.tag}</span>
+        <span class="plan-text">${item.text}</span>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ================================================================
+// Render: Special Content
+// ================================================================
+function renderSpecial() {
+  const data = CONFIG.specialContent[currentMonth];
+  const section = document.getElementById('sectionSpecial');
+  if (!data) {
+    section.style.display = 'none';
+    return;
+  }
+  section.style.display = '';
+
+  let html = '';
+  if (data.links && data.links.length > 0) {
+    html += `<h3 style="font-size:1.1rem;margin-bottom:16px;color:var(--text-secondary)">运维总结报告</h3>`;
+    html += `<div class="link-grid">`;
+    html += data.links.map(l => `
+      <div class="link-card">
+        <div class="link-icon"><i data-lucide="${l.icon || 'file-text'}" style="width:18px;height:18px"></i></div>
+        <div class="link-title">${l.title}</div>
+      </div>
+    `).join('');
+    html += `</div>`;
+  }
+
+  if (data.notes && data.notes.length > 0) {
+    html += data.notes.map(n => `
+      <div class="note-card">
+        <div class="note-title">${n.title}</div>
+        <div class="note-content">${n.content}</div>
+      </div>
+    `).join('');
+  }
+
+  document.getElementById('specialContent').innerHTML = html;
+}
+
+// ================================================================
+// Render All
+// ================================================================
+function renderAll() {
+  renderKPIs();
+  renderCharts();
+  renderStatus();
+  renderAlerts();
+  renderRootCauses();
+  renderAccordion();
+  renderSummary();
+  renderPlans();
+  renderSpecial();
+
+  // Re-init Lucide icons
+  if (window.lucide) lucide.createIcons();
+}
+
+// ================================================================
+// Init
+// ================================================================
+document.addEventListener('DOMContentLoaded', () => {
+  // Set branding
+  document.getElementById('pageTitle').textContent = CONFIG.shortTitle || CONFIG.title;
+  document.getElementById('navTitle').textContent = CONFIG.title;
+  document.getElementById('logoIcon').textContent = CONFIG.logoLetter;
+  document.getElementById('footerText').textContent = CONFIG.footer;
+
+  renderTabs();
+  renderAll();
+  setupIntersectionObserver();
+
+  // Init Lucide icons
+  if (window.lucide) lucide.createIcons();
+});
+</script>
+
+</body>
+</html>

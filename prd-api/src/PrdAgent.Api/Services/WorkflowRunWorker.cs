@@ -463,7 +463,7 @@ public sealed class WorkflowRunWorker : BackgroundService
     {
         // LLM 类舱支持流式输出事件（分析器 + 报告生成器）
         CapsuleExecutor.EmitEventDelegate? emitEvent = null;
-        if (node.NodeType is CapsuleTypes.LlmAnalyzer or CapsuleTypes.ReportGenerator)
+        if (node.NodeType is CapsuleTypes.LlmAnalyzer or CapsuleTypes.ReportGenerator or CapsuleTypes.WebpageGenerator)
         {
             emitEvent = (eventName, payload) => EmitEventAsync(executionId, eventName, payload);
         }

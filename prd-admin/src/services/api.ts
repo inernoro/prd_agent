@@ -637,6 +637,8 @@ export const api = {
       messages: (sessionId: string) => `/api/v1/sessions/${sessionId}/messages`,
       archive: (sessionId: string) => `/api/v1/sessions/${sessionId}/archive`,
       unarchive: (sessionId: string) => `/api/v1/sessions/${sessionId}/unarchive`,
+      documents: (sessionId: string) => `/api/v1/sessions/${sessionId}/documents`,
+      document: (sessionId: string, documentId: string) => `/api/v1/sessions/${sessionId}/documents/${documentId}`,
     },
     groups: {
       list: () => '/api/v1/groups',
@@ -756,6 +758,23 @@ export const api = {
     cancel: (id: string) => `/api/account/data-transfers/${id}/cancel`,
     myWorkspaces: () => '/api/account/data-transfers/my-workspaces',
     myConfigs: () => '/api/account/data-transfers/my-configs',
+  },
+  // ============ Web Hosting 网页托管 ============
+  webPages: {
+    upload: () => '/api/web-pages/upload',
+    fromContent: () => '/api/web-pages/from-content',
+    list: () => '/api/web-pages',
+    byId: (id: string) => `/api/web-pages/${id}`,
+    reupload: (id: string) => `/api/web-pages/${id}/reupload`,
+    batchDelete: () => '/api/web-pages/batch-delete',
+    folders: () => '/api/web-pages/folders',
+    tags: () => '/api/web-pages/tags',
+    share: () => '/api/web-pages/share',
+    shares: () => '/api/web-pages/shares',
+    revokeShare: (shareId: string) => `/api/web-pages/shares/${shareId}`,
+    viewShare: (token: string) => `/api/web-pages/shares/view/${token}`,
+    saveShare: (token: string) => `/api/web-pages/shares/${token}/save`,
+    viewLogs: '/api/web-pages/shares/view-logs',
   },
 } as const;
 

@@ -192,6 +192,11 @@ public static class CapsuleTypeRegistry
                 new() { Value = "true", Label = "是 (调用 common_get_info 获取完整字段)" },
                 new() { Value = "false", Label = "否 (仅使用搜索列表数据)" },
             }, HelpTip = "开启后会逐条调用详情接口获取全部自定义字段（缺陷等级、缺陷划分、有效报告等），用于统计分析" },
+            new() { Key = "trendMode", Label = "趋势模式", FieldType = "select", Required = false, DefaultValue = "false", Options = new() {
+                new() { Value = "false", Label = "否（单月采集）" },
+                new() { Value = "true", Label = "是（多月趋势，仅采集每月总数）" },
+            }, HelpTip = "开启后按月循环采集 total_count，输出趋势数组，适合画折线图" },
+            new() { Key = "trendMonths", Label = "趋势月数", FieldType = "number", Required = false, DefaultValue = "6", HelpTip = "从当前月往回追溯几个月（含当前月），默认 6" },
             new() { Key = "customCurl", Label = "自定义 cURL（兜底）", FieldType = "textarea", Required = false,
                 Placeholder = "curl 'https://www.tapd.cn/api/...' -H 'Cookie: ...' --data-raw '{...}'",
                 HelpTip = "从浏览器 / Postman 复制可用的 cURL 命令粘贴到这里。填写后将直接执行此请求，不再自动构造请求。支持自动分页" },
@@ -267,6 +272,12 @@ public static class CapsuleTypeRegistry
                     new() { Value = "none", Label = "不分页（单次请求）" },
                 }},
             new() { Key = "maxPages", Label = "最大页数", FieldType = "number", Required = false, DefaultValue = "10", HelpTip = "防止无限请求，最大抓取页数上限" },
+            new() { Key = "dataPath", Label = "数据路径", FieldType = "text", Required = false, Placeholder = "result.list", HelpTip = "响应 JSON 中数据数组的路径（点号分隔），如 result.list、data.records。留空则自动检测 data/items/results" },
+            new() { Key = "cursorField", Label = "游标字段", FieldType = "text", Required = false, Placeholder = "next_cursor", HelpTip = "cursor 分页时，从响应 JSON 中提取下一页游标的字段路径，如 paging.next_cursor" },
+            new() { Key = "cursorParam", Label = "游标参数名", FieldType = "text", Required = false, DefaultValue = "cursor", HelpTip = "cursor 分页时，将游标值放入 URL 的哪个 query 参数中（默认 cursor）" },
+            new() { Key = "requestDelayMs", Label = "请求间隔 (ms)", FieldType = "number", Required = false, DefaultValue = "0", HelpTip = "每次翻页请求之间的延迟毫秒数，防止触发外部 API 限流（0 表示不延迟）" },
+            new() { Key = "retryCount", Label = "失败重试次数", FieldType = "number", Required = false, DefaultValue = "0", HelpTip = "单次请求失败后的重试次数（0 表示不重试，最大 3）" },
+            new() { Key = "bodyPageField", Label = "Body 分页字段", FieldType = "text", Required = false, Placeholder = "pageIndex", HelpTip = "POST 分页时，请求体 JSON 中的页码字段路径。留空则仅在 URL query 中翻页" },
         },
         DefaultInputSlots = new()
         {
@@ -555,6 +566,48 @@ public static class CapsuleTypeRegistry
         },
     };
 
+    public static readonly CapsuleTypeMeta WebpageGenerator = new()
+    {
+        TypeKey = CapsuleTypes.WebpageGenerator,
+        Name = "网页报告",
+        Description = "使用 LLM 将数据渲染为精美可下载的单页 HTML 网页（含内嵌样式与图表）",
+        Icon = "globe",
+        Category = CapsuleCategory.Output,
+        AccentHue = 220,
+        ConfigSchema = new()
+        {
+            new() { Key = "reportTemplate", Label = "报告模板/指令", FieldType = "textarea", Required = true,
+                Placeholder = "请将以下数据生成为一份精美的单页 HTML 网页报告，使用现代化的 UI 设计...",
+                HelpTip = "LLM 会基于此指令将输入数据渲染为完整的 HTML 网页。建议描述期望的视觉风格、配色方案、图表类型等" },
+            new() { Key = "style", Label = "视觉风格", FieldType = "select", Required = false, DefaultValue = "modern-dark",
+                Options = new()
+                {
+                    new() { Value = "modern-dark", Label = "现代深色 (Dark Glassmorphism)" },
+                    new() { Value = "modern-light", Label = "现代浅色 (Clean Light)" },
+                    new() { Value = "dashboard", Label = "数据看板 (Dashboard)" },
+                    new() { Value = "report", Label = "正式报告 (Professional)" },
+                    new() { Value = "custom", Label = "自定义 (仅使用模板指令)" },
+                }},
+            new() { Key = "title", Label = "网页标题", FieldType = "text", Required = false, Placeholder = "月度质量分析报告",
+                HelpTip = "HTML <title> 标题，留空则由 LLM 自动生成" },
+            new() { Key = "includeCharts", Label = "内嵌图表", FieldType = "select", Required = false, DefaultValue = "true",
+                Options = new()
+                {
+                    new() { Value = "true", Label = "是 (使用 Chart.js CDN)" },
+                    new() { Value = "false", Label = "否 (纯文本 + 表格)" },
+                },
+                HelpTip = "启用后 LLM 会在网页中内嵌 Chart.js 图表可视化数据" },
+        },
+        DefaultInputSlots = new()
+        {
+            new() { SlotId = "webpage-in", Name = "data", DataType = "json", Required = true, Description = "待渲染的结构化数据" },
+        },
+        DefaultOutputSlots = new()
+        {
+            new() { SlotId = "webpage-out", Name = "webpage", DataType = "text", Required = true, Description = "生成的完整 HTML 网页" },
+        },
+    };
+
     public static readonly CapsuleTypeMeta FileExporter = new()
     {
         TypeKey = CapsuleTypes.FileExporter,
@@ -679,7 +732,7 @@ public static class CapsuleTypeRegistry
         // 流程控制类
         Delay, Condition,
         // 输出类
-        ReportGenerator, FileExporter, WebhookSender, NotificationSender, VideoGeneration,
+        ReportGenerator, WebpageGenerator, FileExporter, WebhookSender, NotificationSender, VideoGeneration,
     };
 
     /// <summary>按 TypeKey 查找</summary>

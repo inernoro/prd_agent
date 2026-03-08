@@ -465,7 +465,7 @@ public class VideoGenRunWorker : BackgroundService
             var ttsRequest = new GatewayRawRequest
             {
                 AppCallerCode = AppCallerRegistry.VideoAgent.Audio.Tts,
-                ModelType = ModelTypes.TTS,
+                ModelType = ModelTypes.Tts,
                 RequestBody = requestBody,
                 TimeoutSeconds = 120
             };
@@ -1671,7 +1671,9 @@ document.addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key==='ArrowD
 
             var request = new GatewayRequest
             {
-                AppCallerCode = AppCallerRegistry.VideoAgent.Scene.Codegen,
+                AppCallerCode = run.AppKey == "visual-agent"
+                    ? AppCallerRegistry.VisualAgent.Scene.Codegen
+                    : AppCallerRegistry.VideoAgent.Scene.Codegen,
                 ModelType = ModelTypes.Code,
                 RequestBody = new JsonObject
                 {

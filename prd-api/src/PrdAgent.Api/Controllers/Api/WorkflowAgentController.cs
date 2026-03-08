@@ -656,6 +656,13 @@ public class WorkflowAgentController : ControllerBase
                 return BadRequest(ApiResponse<object>.Fail("MISSING_VARIABLE", $"缺少必填变量: {v.Label} ({v.Key})"));
         }
 
+        // 注入内置变量（用户定义的同名变量优先）
+        if (!variables.ContainsKey("API_BASE"))
+        {
+            var req = HttpContext.Request;
+            variables["API_BASE"] = $"{req.Scheme}://{req.Host}";
+        }
+
         // 创建执行实例
         var execution = new WorkflowExecution
         {
