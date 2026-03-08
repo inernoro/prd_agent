@@ -419,6 +419,24 @@ export type AnalyzeExecutionContract = (input: {
   instruction?: string;
 }) => Promise<Response>;
 
+// ─────────────────────────────────────────────
+// AI 辅助填写 Models & Contracts
+// ─────────────────────────────────────────────
+
+export interface AiFillResult {
+  suggestions: Record<string, string>;
+  explanation: string;
+  confidence: 'low' | 'medium' | 'high';
+}
+
+export type AiFillParametersContract = (input: {
+  workflowId: string;
+  nodeId: string;
+  lastExecutionId?: string;
+  userHint?: string;
+  mode?: 'full' | 'optimize';
+}) => Promise<ApiResponse<AiFillResult>>;
+
 /** SSE streaming — returns raw Response for readSseStream */
 export type ChatWorkflowContract = (input: {
   workflowId?: string;

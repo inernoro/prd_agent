@@ -4,7 +4,7 @@ import {
   Play, Loader2, CheckCircle2, AlertCircle,
   Download, FileText, ArrowLeft, Save, Plus,
   ChevronDown, ChevronRight, Settings2, XCircle,
-  Zap, FlaskConical, Trash2, Wand2, Terminal, Eye, Copy, Check, CirclePause,
+  Zap, FlaskConical, Trash2, Wand2, Terminal, Eye, Copy, Check, CirclePause, Sparkles,
 } from 'lucide-react';
 import {
   getWorkflow, updateWorkflow, executeWorkflow, getExecution,
@@ -550,10 +550,11 @@ const SECTION_STYLES = {
   },
 } as const;
 
-function SectionBox({ title, type, children }: {
+function SectionBox({ title, type, children, action }: {
   title: string;
   type: keyof typeof SECTION_STYLES;
   children: React.ReactNode;
+  action?: React.ReactNode;
 }) {
   const s = SECTION_STYLES[type];
   return (
@@ -562,7 +563,8 @@ function SectionBox({ title, type, children }: {
         className="px-3 py-1.5 flex items-center gap-1.5"
         style={{ background: s.headerBg, borderBottom: `1px solid ${s.border}` }}
       >
-        <span className="text-[11px] font-semibold" style={{ color: s.title }}>{title}</span>
+        <span className="text-[11px] font-semibold flex-1" style={{ color: s.title }}>{title}</span>
+        {action}
       </div>
       <div className="p-3" style={{ background: s.bg }}>{children}</div>
     </div>
@@ -571,7 +573,7 @@ function SectionBox({ title, type, children }: {
 
 // ──── 右侧舱卡片 ────
 
-function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpanded, onToggle, onRemove, onTestRun, onReplay, onConfigChange, onToggleBreakpoint, capsuleMeta, isRunning, testRunResult, isTestRunning, formatWarnings, onPreviewArtifact }: {
+function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpanded, onToggle, onRemove, onTestRun, onReplay, onConfigChange, onToggleBreakpoint, capsuleMeta, isRunning, testRunResult, isTestRunning, formatWarnings, onPreviewArtifact, onAiFill }: {
   node: WorkflowNode;
   index: number;
   nodeExec?: NodeExecution;
@@ -590,6 +592,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
   isTestRunning?: boolean;
   formatWarnings?: { nodeId: string; message: string }[];
   onPreviewArtifact?: (art: ExecutionArtifact) => void;
+  onAiFill?: (nodeName: string, nodeType: string) => void;
 }) {
   const typeDef = getCapsuleType(node.nodeType);
   const status = nodeExec?.status || 'idle';
@@ -966,7 +969,28 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
 
             {/* ──── ⚙ 配置区 ──── */}
             {(isHttpType || (capsuleMeta && capsuleMeta.configSchema.length > 0)) && (
-              <SectionBox title="⚙ 配置" type="config">
+              <SectionBox title="⚙ 配置" type="config" action={
+                onAiFill ? (
+                  <button
+                    className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-[6px] transition-all"
+                    style={{
+                      color: 'rgba(168,85,247,0.9)',
+                      background: 'rgba(168,85,247,0.08)',
+                      cursor: 'pointer',
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const typeLabel = capsuleMeta?.name || node.nodeType;
+                      onAiFill(node.name || typeLabel, typeLabel);
+                    }}
+                    disabled={isRunning}
+                    title="在工作流助手中描述你的需求，AI 帮你填写配置"
+                  >
+                    <Sparkles className="w-3 h-3" />
+                    AI 填写
+                  </button>
+                ) : undefined
+              }>
                 {isHttpType ? (
                   <HttpConfigPanel
                     values={configValues}
@@ -1329,6 +1353,8 @@ export function WorkflowEditorPage() {
 
   // 右侧面板模式: 'chat' | 'log'
   const [rightPanel, setRightPanel] = useState<'chat' | 'log' | null>(null);
+  // AI 填写 → 工作流助手的预填文字
+  const [chatInitialInput, setChatInitialInput] = useState<string | undefined>(undefined);
 
   // 实时日志
   interface LogEntry {
@@ -2071,6 +2097,10 @@ export function WorkflowEditorPage() {
                         isTestRunning={testRunning === node.nodeId}
                         formatWarnings={warnings}
                         onPreviewArtifact={setPreviewArtifact}
+                        onAiFill={(nodeName, nodeType) => {
+                          setChatInitialInput(`请帮我填写「${nodeName}」(${nodeType}) 舱的配置参数，`);
+                          setRightPanel('chat');
+                        }}
                       />
                     );
                   });
@@ -2134,6 +2164,8 @@ export function WorkflowEditorPage() {
             workflowId={workflowId}
             onApplyWorkflow={handleApplyWorkflow}
             onClose={() => setRightPanel(null)}
+            initialInput={chatInitialInput}
+            onInitialInputConsumed={() => setChatInitialInput(undefined)}
           />
         )}
       </div>

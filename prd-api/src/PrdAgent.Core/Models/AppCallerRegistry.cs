@@ -577,6 +577,17 @@ public static class WorkflowAgent
         )]
         public const string Chat = "workflow-agent.error-analyzer::chat";
     }
+
+    public static class AiFill
+    {
+        [AppCallerMetadata(
+            "工作流-AI参数填写",
+            "根据舱类型Schema和上下文智能推荐配置参数值",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Workflow"
+        )]
+        public const string Chat = "workflow-agent.ai-fill::chat";
+    }
 }
 
 /// <summary>

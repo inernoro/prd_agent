@@ -201,6 +201,7 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.ChatRunWorker>();
 
 // 工作流后台执行器（DAG 拓扑排序 → 逐节点推进）
 builder.Services.AddHostedService<PrdAgent.Api.Services.WorkflowRunWorker>();
+builder.Services.AddScoped<PrdAgent.Api.Services.WorkflowAiFillService>();
 
 // 视频生成后台执行器（文章→脚本→Remotion渲染→字幕→打包）
 builder.Services.AddHostedService<PrdAgent.Api.Services.VideoGenRunWorker>();

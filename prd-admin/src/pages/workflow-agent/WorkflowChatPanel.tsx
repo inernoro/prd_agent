@@ -13,6 +13,10 @@ interface Props {
   workflowId?: string;
   onApplyWorkflow: (generated: WorkflowChatGenerated, workflowId?: string) => void;
   onClose: () => void;
+  /** 外部注入的初始输入（如"AI 填写"按钮预填的提示文字），设置后自动填入输入框并聚焦 */
+  initialInput?: string;
+  /** initialInput 被消费后通知外部清空，避免重复填入 */
+  onInitialInputConsumed?: () => void;
 }
 
 interface UiMessage {
@@ -25,7 +29,7 @@ interface UiMessage {
   timestamp: string;
 }
 
-export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose }: Props) {
+export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initialInput, onInitialInputConsumed }: Props) {
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [input, setInput] = useState('');
   const [codeSnippet, setCodeSnippet] = useState('');
@@ -57,6 +61,16 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose }: Prop
       })
       .finally(() => setLoadingHistory(false));
   }, [workflowId]);
+
+  // 外部注入初始输入（如"AI 填写"预填）
+  useEffect(() => {
+    if (initialInput) {
+      setInput(initialInput);
+      onInitialInputConsumed?.();
+      // 延迟聚焦，等 DOM 渲染完
+      setTimeout(() => inputRef.current?.focus(), 100);
+    }
+  }, [initialInput, onInitialInputConsumed]);
 
   // 自动滚动到底部
   useEffect(() => {
