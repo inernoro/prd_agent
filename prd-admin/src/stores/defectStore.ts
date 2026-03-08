@@ -118,6 +118,7 @@ export const useDefectStore = create<DefectState>((set, get) => ({
 
   // Load defects
   loadDefects: async () => {
+    if (get().loading) return; // 防止并发重复加载
     const { filter, statusFilter, projectFilter, teamFilter } = get();
     set({ loading: true, error: '' });
     try {

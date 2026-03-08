@@ -3,13 +3,13 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { GlassSwitch } from '@/components/design/GlassSwitch';
 import { Dialog } from '@/components/ui/Dialog';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
-import { getAiChatHistory, uploadAiChatDocument } from '@/services';
+import { getAiChatHistory, uploadAiChatDocument, addDocumentToSession, removeDocumentFromSession } from '@/services';
 import { useAuthStore } from '@/stores/authStore';
 import type { ApiResponse } from '@/types/api';
 import { readSseStream } from '@/lib/sse';
 import { apiRequest } from '@/services/real/apiClient';
 import { api } from '@/services/api';
-import { Paperclip, Plus, Send, Square } from 'lucide-react';
+import { FileText, Paperclip, Plus, Send, Square, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
@@ -19,10 +19,25 @@ import type { AiChatStreamEvent } from '@/services/contracts/aiChat';
 import { toast } from '@/lib/toast';
 import { useLocation } from 'react-router-dom';
 
+const DOC_TYPE_LABELS: Record<string, string> = {
+  product: '产品',
+  technical: '技术',
+  design: '设计',
+  reference: '参考',
+};
+
+type LocalDocInfo = {
+  documentId: string;
+  documentTitle: string;
+  documentType?: string;
+};
+
 type LocalSession = {
   sessionId: string;
   documentId: string;
   documentTitle: string;
+  /** 多文档列表（新字段；为空时回退到 documentId/documentTitle） */
+  documents?: LocalDocInfo[];
   title: string;
   createdAt: number;
   updatedAt: number;
@@ -417,10 +432,19 @@ export default function AiChatPage() {
             const title = String(x?.title ?? '').trim() || `会话 ${sid.slice(0, 8)}`;
             const createdAt = x?.createdAt ? new Date(String(x.createdAt)).getTime() : Date.now();
             const lastActiveAt = x?.lastActiveAt ? new Date(String(x.lastActiveAt)).getTime() : createdAt;
+            // 多文档：从服务端 documentIds + documentMetas 构建 documents 数组
+            const docIds: string[] = Array.isArray(x?.documentIds) ? x.documentIds : [];
+            const metas: Array<{ documentId: string; documentType: string }> = Array.isArray(x?.documentMetas) ? x.documentMetas : [];
+            const metaMap = new Map(metas.map((m: any) => [String(m.documentId), String(m.documentType)]));
+            const documents: LocalDocInfo[] = docIds.length > 0
+              ? docIds.map((id: string) => ({ documentId: String(id), documentTitle: '', documentType: metaMap.get(String(id)) }))
+              : [{ documentId: did, documentTitle: String(x?.documentTitle ?? '').trim(), documentType: 'product' }];
+
             return {
               sessionId: sid,
               documentId: did,
               documentTitle: String(x?.documentTitle ?? '').trim(),
+              documents,
               title,
               createdAt,
               updatedAt: lastActiveAt,
@@ -935,6 +959,7 @@ export default function AiChatPage() {
       sessionId: sid,
       documentId: docId,
       documentTitle: docTitle,
+      documents: [{ documentId: docId, documentTitle: docTitle }],
       title: finalTitle,
       createdAt: now,
       updatedAt: now,
@@ -1167,6 +1192,110 @@ export default function AiChatPage() {
     </>
   );
 
+  // ── 多文档追加 ──
+  const addDocFileRef = useRef<HTMLInputElement>(null);
+
+  const handleAddDocument = useCallback(async (file: File) => {
+    if (!activeSessionId || !userId) return;
+    const ext = getLowerExt(file.name || '');
+    if (ext && !ALLOWED_TEXT_EXTS.includes(ext)) {
+      toast.warning(`暂仅支持文本文件：${ALLOWED_TEXT_EXTS.join(', ')}`);
+      return;
+    }
+    try {
+      const content = await file.text();
+      if (!content.trim()) {
+        toast.warning('文件内容为空');
+        return;
+      }
+      const res = await addDocumentToSession(activeSessionId, content);
+      if (!res.success) {
+        toast.error(res.error?.message || '追加文档失败');
+        return;
+      }
+      toast.success('文档已追加');
+      void refreshSessionsFromServer({ silent: true });
+    } catch {
+      toast.error('追加文档失败（网络错误）');
+    }
+  }, [activeSessionId, userId, refreshSessionsFromServer]);
+
+  const handleRemoveDocument = useCallback(async (documentId: string) => {
+    if (!activeSessionId || !userId) return;
+    try {
+      const res = await removeDocumentFromSession(activeSessionId, documentId);
+      if (!res.success) {
+        toast.error(res.error?.message || '移除文档失败');
+        return;
+      }
+      toast.success('文档已移除');
+      void refreshSessionsFromServer({ silent: true });
+    } catch {
+      toast.error('移除文档失败（网络错误）');
+    }
+  }, [activeSessionId, userId, refreshSessionsFromServer]);
+
+  // 当前会话的文档列表
+  const activeDocuments = useMemo(() => {
+    if (!activeSession) return [];
+    if (activeSession.documents && activeSession.documents.length > 0) return activeSession.documents;
+    if (activeSession.documentId) return [{ documentId: activeSession.documentId, documentTitle: activeSession.documentTitle || '' }];
+    return [];
+  }, [activeSession]);
+
+  // 多文档条（仅会话存在且有文档时显示）
+  const documentBar = activeSessionId && activeDocuments.length > 0 ? (
+    <div className="flex items-center gap-1.5 px-1 flex-wrap">
+      <FileText size={13} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+      {activeDocuments.map((doc, i) => (
+        <span
+          key={doc.documentId}
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] max-w-[180px]"
+          style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-secondary)' }}
+          title={doc.documentTitle || doc.documentId.slice(0, 12)}
+        >
+          <span className="truncate">{doc.documentTitle || `文档${i + 1}`}</span>
+          {doc.documentType && DOC_TYPE_LABELS[doc.documentType] && (
+            <span className="text-[9px] px-1 py-px rounded opacity-60 whitespace-nowrap" style={{ background: 'var(--bg-muted)' }}>
+              {DOC_TYPE_LABELS[doc.documentType]}
+            </span>
+          )}
+          {activeDocuments.length > 1 && (
+            <button
+              type="button"
+              className="hover:text-red-400 transition-colors ml-0.5 flex-shrink-0"
+              onClick={() => handleRemoveDocument(doc.documentId)}
+              title="移除此文档"
+            >
+              <X size={11} />
+            </button>
+          )}
+        </span>
+      ))}
+      <button
+        type="button"
+        className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[11px] hover:bg-white/5 transition-colors"
+        style={{ border: '1px dashed var(--border-default)', color: 'var(--text-muted)' }}
+        onClick={() => addDocFileRef.current?.click()}
+        title="追加文档到当前会话"
+      >
+        <Plus size={11} />
+        追加
+      </button>
+      <input
+        ref={addDocFileRef}
+        type="file"
+        accept=".md,.mdc,.txt"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) handleAddDocument(f);
+          e.target.value = '';
+        }}
+      />
+    </div>
+  ) : null;
+
   const chatPanel = (
     <div className="h-full min-h-0 flex flex-col gap-2">
       {/* 紧凑操作栏（不再使用独立 TabBar，由父级 PrdAgentTabsPage 提供标签栏） */}
@@ -1176,6 +1305,9 @@ export default function AiChatPage() {
           {headerRightActions}
         </div>
       </div>
+
+      {/* 多文档标签条 */}
+      {documentBar}
 
       {/* 内容区 */}
       <GlassCard animated className="flex-1 min-h-0 flex flex-col ai-chat-card" overflow="hidden" padding="none" glow accentHue={240}>

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using MongoDB.Driver;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
@@ -17,6 +18,8 @@ public class ReportGenerationService
     private readonly ILlmGateway _gateway;
     private readonly MapActivityCollector _collector;
     private readonly ILogger<ReportGenerationService> _logger;
+    private readonly IWorkflowExecutionService _workflowExecService;
+    private readonly PersonalSourceService _personalSourceService;
 
     private const string SystemPrompt = """
         你是一位专业的周报撰写助手。你的任务是将原始工作数据整理为清晰、简洁的周报内容。
@@ -36,12 +39,16 @@ public class ReportGenerationService
         MongoDbContext db,
         ILlmGateway gateway,
         MapActivityCollector collector,
-        ILogger<ReportGenerationService> logger)
+        ILogger<ReportGenerationService> logger,
+        IWorkflowExecutionService workflowExecService,
+        PersonalSourceService personalSourceService)
     {
         _db = db;
         _gateway = gateway;
         _collector = collector;
         _logger = logger;
+        _workflowExecService = workflowExecService;
+        _personalSourceService = personalSourceService;
     }
 
     /// <summary>
@@ -336,5 +343,352 @@ public class ReportGenerationService
             return content[firstBrace..(lastBrace + 1)];
 
         return null;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // v2.0 — Workflow Pipeline Generation
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// v2.0 生成：触发团队采集工作流 → 读 Artifact → 合并个人源 → 按成员拆分 → AI 生成
+    /// </summary>
+    public async Task<List<WeeklyReport>> GenerateForTeamV2Async(
+        string teamId, int weekYear, int weekNumber, CancellationToken ct)
+    {
+        var team = await _db.ReportTeams.Find(t => t.Id == teamId).FirstOrDefaultAsync(CancellationToken.None);
+        if (team == null)
+            throw new InvalidOperationException($"团队不存在: {teamId}");
+
+        var members = await _db.ReportTeamMembers
+            .Find(m => m.TeamId == teamId)
+            .ToListAsync(CancellationToken.None);
+
+        var monday = ISOWeek.ToDateTime(weekYear, weekNumber, DayOfWeek.Monday);
+        var sunday = monday.AddDays(6).AddHours(23).AddMinutes(59).AddSeconds(59);
+
+        // Step 1: 触发团队采集工作流（如果有绑定）
+        TeamCollectedStats teamStats = new();
+        string? executionId = null;
+
+        if (!string.IsNullOrEmpty(team.DataCollectionWorkflowId))
+        {
+            try
+            {
+                var execution = await _workflowExecService.ExecuteInternalAsync(
+                    team.DataCollectionWorkflowId,
+                    new Dictionary<string, string>
+                    {
+                        ["weekYear"] = weekYear.ToString(),
+                        ["weekNumber"] = weekNumber.ToString(),
+                        ["dateFrom"] = monday.ToString("yyyy-MM-dd"),
+                        ["dateTo"] = sunday.ToString("yyyy-MM-dd"),
+                        ["teamId"] = teamId
+                    },
+                    triggeredBy: "report-agent-auto-generate",
+                    ct: CancellationToken.None);
+
+                var completed = await _workflowExecService.WaitForCompletionAsync(
+                    execution.Id, TimeSpan.FromMinutes(5), CancellationToken.None);
+
+                teamStats = ArtifactStatsParser.Parse(completed.FinalArtifacts);
+                executionId = completed.Id;
+
+                _logger.LogInformation("[ReportGenV2] Workflow completed for team {TeamId}: {Sources} sources, {ArtifactCount} artifacts",
+                    teamId, teamStats.Sources.Count, completed.FinalArtifacts.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[ReportGenV2] Workflow execution failed for team {TeamId}, proceeding with personal sources only", teamId);
+            }
+        }
+
+        // Step 2: 按成员拆分团队数据
+        var memberStatsMap = ArtifactStatsParser.SplitByMember(teamStats, members)
+            .ToDictionary(m => m.UserId);
+
+        // Step 3: 为每个成员生成周报
+        var reports = new List<WeeklyReport>();
+        foreach (var member in members)
+        {
+            try
+            {
+                var report = await GenerateForMemberV2Async(
+                    member, team, weekYear, weekNumber, monday, sunday,
+                    memberStatsMap.GetValueOrDefault(member.UserId),
+                    executionId, ct);
+                reports.Add(report);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[ReportGenV2] Failed to generate for member {UserId} in team {TeamId}",
+                    member.UserId, teamId);
+            }
+        }
+
+        return reports;
+    }
+
+    private async Task<WeeklyReport> GenerateForMemberV2Async(
+        ReportTeamMember member, ReportTeam team,
+        int weekYear, int weekNumber, DateTime monday, DateTime sunday,
+        MemberCollectedStats? teamMemberStats, string? executionId,
+        CancellationToken ct)
+    {
+        // 查找适用的模板
+        var template = await FindTemplateAsync(team.Id, member.JobTitle, ct);
+        if (template == null)
+            throw new InvalidOperationException($"找不到适用的模板（团队={team.Id}，岗位={member.JobTitle}）");
+
+        // 合并个人数据源
+        var personalStats = await _personalSourceService.CollectAllAsync(member.UserId, monday, sunday, CancellationToken.None);
+
+        // 同时采集 v1.0 的系统活动数据
+        var activity = await _collector.CollectAsync(member.UserId, monday, sunday, CancellationToken.None);
+
+        // 构建 v2.0 Prompt
+        var userPrompt = BuildUserPromptV2(template, teamMemberStats, personalStats, activity, weekYear, weekNumber);
+
+        // 调用 LLM
+        var request = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.ReportAgent.Generate.Draft,
+            ModelType = ModelTypes.Chat,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = SystemPrompt },
+                    new JsonObject { ["role"] = "user", ["content"] = userPrompt }
+                },
+                ["temperature"] = 0.3,
+                ["max_tokens"] = 4096
+            }
+        };
+
+        var response = await _gateway.SendAsync(request, CancellationToken.None);
+
+        List<WeeklyReportSection>? generatedSections = null;
+        if (response.Success && !string.IsNullOrWhiteSpace(response.Content))
+            generatedSections = ParseGeneratedSections(response.Content, template);
+
+        if (generatedSections == null)
+        {
+            generatedSections = template.Sections.Select(s => new WeeklyReportSection
+            {
+                TemplateSection = s,
+                Items = new()
+            }).ToList();
+        }
+
+        // 构建 StatsSnapshot
+        var snapshot = teamMemberStats?.ToSnapshot() ?? new Dictionary<string, object>();
+        foreach (var ps in personalStats)
+        {
+            if (!snapshot.ContainsKey(ps.SourceType))
+                snapshot[ps.SourceType] = ps.Summary;
+        }
+
+        // Upsert 周报
+        var filter = Builders<WeeklyReport>.Filter.Eq(x => x.UserId, member.UserId)
+                   & Builders<WeeklyReport>.Filter.Eq(x => x.TeamId, team.Id)
+                   & Builders<WeeklyReport>.Filter.Eq(x => x.WeekYear, weekYear)
+                   & Builders<WeeklyReport>.Filter.Eq(x => x.WeekNumber, weekNumber);
+
+        var existing = await _db.WeeklyReports.Find(filter).FirstOrDefaultAsync(CancellationToken.None);
+
+        if (existing != null)
+        {
+            var update = Builders<WeeklyReport>.Update
+                .Set(x => x.Sections, generatedSections)
+                .Set(x => x.AutoGeneratedAt, DateTime.UtcNow)
+                .Set(x => x.WorkflowExecutionId, executionId)
+                .Set(x => x.StatsSnapshot, snapshot)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+            await _db.WeeklyReports.UpdateOneAsync(filter, update, cancellationToken: CancellationToken.None);
+            existing.Sections = generatedSections;
+            existing.StatsSnapshot = snapshot;
+            existing.WorkflowExecutionId = executionId;
+            return existing;
+        }
+
+        var user = await _db.Users.Find(u => u.Id == member.UserId).FirstOrDefaultAsync(CancellationToken.None);
+
+        var report = new WeeklyReport
+        {
+            UserId = member.UserId,
+            UserName = user?.DisplayName ?? member.UserName,
+            AvatarFileName = user?.AvatarFileName ?? member.AvatarFileName,
+            TeamId = team.Id,
+            TeamName = team.Name,
+            TemplateId = template.Id,
+            WeekYear = weekYear,
+            WeekNumber = weekNumber,
+            PeriodStart = monday,
+            PeriodEnd = sunday,
+            Status = WeeklyReportStatus.Draft,
+            Sections = generatedSections,
+            AutoGeneratedAt = DateTime.UtcNow,
+            WorkflowExecutionId = executionId,
+            StatsSnapshot = snapshot
+        };
+
+        try
+        {
+            await _db.WeeklyReports.InsertOneAsync(report, cancellationToken: CancellationToken.None);
+        }
+        catch (MongoDB.Driver.MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            return await _db.WeeklyReports.Find(filter).FirstOrDefaultAsync(CancellationToken.None) ?? report;
+        }
+
+        return report;
+    }
+
+    private async Task<ReportTemplate?> FindTemplateAsync(string teamId, string? jobTitle, CancellationToken ct)
+    {
+        // 1. 团队 + 岗位特定模板
+        if (!string.IsNullOrEmpty(jobTitle))
+        {
+            var specific = await _db.ReportTemplates
+                .Find(t => t.TeamId == teamId && t.JobTitle == jobTitle)
+                .FirstOrDefaultAsync(ct);
+            if (specific != null) return specific;
+        }
+
+        // 2. 团队通用模板
+        var teamTemplate = await _db.ReportTemplates
+            .Find(t => t.TeamId == teamId && t.JobTitle == null)
+            .FirstOrDefaultAsync(ct);
+        if (teamTemplate != null) return teamTemplate;
+
+        // 3. 系统默认模板
+        return await _db.ReportTemplates
+            .Find(t => t.IsDefault)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    private string BuildUserPromptV2(
+        ReportTemplate template,
+        MemberCollectedStats? teamStats,
+        List<SourceStats> personalStats,
+        CollectedActivity activity,
+        int weekYear, int weekNumber)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"## 周报周期: {weekYear} 年第 {weekNumber} 周");
+        sb.AppendLine();
+
+        // 模板结构
+        sb.AppendLine("## 模板结构（请严格按此结构输出 JSON）");
+        sb.AppendLine("输出格式: { \"sections\": [ { \"items\": [ { \"content\": \"...\", \"source\": \"...\" } ] } ] }");
+        sb.AppendLine("sections 数组长度必须与以下板块数量一致。");
+        sb.AppendLine();
+
+        for (var i = 0; i < template.Sections.Count; i++)
+        {
+            var section = template.Sections[i];
+            var sectionType = section.SectionType ?? ReportSectionType.AutoList;
+            sb.AppendLine($"### 板块 {i + 1}: {section.Title}");
+            if (!string.IsNullOrEmpty(section.Description))
+                sb.AppendLine($"填写指引: {section.Description}");
+            sb.AppendLine($"输入类型: {section.InputType}");
+            sb.AppendLine($"板块类型: {sectionType}");
+            if (section.DataSources is { Count: > 0 })
+                sb.AppendLine($"数据来源: {string.Join(", ", section.DataSources)}");
+            if (section.MaxItems.HasValue)
+                sb.AppendLine($"最多条目: {section.MaxItems}");
+
+            // 指导 AI 如何处理不同板块类型
+            switch (sectionType)
+            {
+                case ReportSectionType.AutoStats:
+                    sb.AppendLine("⚡ 此板块为自动统计, 请用 key-value 格式输出统计数字 (content=指标名, sourceRef=数值)");
+                    break;
+                case ReportSectionType.AutoList:
+                    sb.AppendLine("⚡ 此板块由 AI 归纳, 请将零散数据归纳为有意义的工作项, 每条不超过30字");
+                    break;
+                case ReportSectionType.ManualList:
+                    sb.AppendLine("⚡ 此板块由用户手动填写, 请输出空 items 数组");
+                    break;
+                case ReportSectionType.FreeText:
+                    sb.AppendLine("⚡ 此板块为自由文本, 请输出空 items 数组");
+                    break;
+            }
+            sb.AppendLine();
+        }
+
+        // 采集数据 — 团队工作流数据
+        sb.AppendLine("## 采集到的原始数据");
+        sb.AppendLine();
+
+        if (teamStats != null && teamStats.Sources.Count > 0)
+        {
+            sb.AppendLine("### 来自团队采集工作流的数据");
+            foreach (var source in teamStats.Sources)
+            {
+                sb.AppendLine($"#### {source.SourceType} 统计");
+                foreach (var kv in source.Summary)
+                    sb.AppendLine($"- {kv.Key}: {kv.Value}");
+                if (source.Details.Count > 0)
+                {
+                    sb.AppendLine("明细:");
+                    foreach (var d in source.Details.Take(30))
+                        sb.AppendLine($"- [{d.Type}] {d.Title}");
+                }
+                sb.AppendLine();
+            }
+        }
+
+        // 个人数据源
+        if (personalStats.Count > 0)
+        {
+            sb.AppendLine("### 来自个人数据源的数据");
+            foreach (var source in personalStats)
+            {
+                sb.AppendLine($"#### {source.SourceType} 统计");
+                foreach (var kv in source.Summary)
+                    sb.AppendLine($"- {kv.Key}: {kv.Value}");
+                if (source.Details.Count > 0)
+                {
+                    sb.AppendLine("明细:");
+                    foreach (var d in source.Details.Take(30))
+                        sb.AppendLine($"- [{d.Type}] {d.Title}");
+                }
+                sb.AppendLine();
+            }
+        }
+
+        // v1.0 兼容数据
+        if (activity.Commits.Count > 0)
+        {
+            sb.AppendLine("### Git 提交记录（团队数据源）");
+            foreach (var c in activity.Commits.Take(50))
+                sb.AppendLine($"- [{c.CommittedAt:MM-dd}] {c.Message}");
+            sb.AppendLine($"总计: {activity.Commits.Count} 次提交, +{activity.Commits.Sum(c => c.Additions)} -{activity.Commits.Sum(c => c.Deletions)}");
+            sb.AppendLine();
+        }
+
+        if (activity.DailyLogs.Count > 0)
+        {
+            sb.AppendLine("### 每日打点");
+            foreach (var log in activity.DailyLogs)
+            {
+                sb.AppendLine($"#### {log.Date:yyyy-MM-dd}");
+                foreach (var item in log.Items)
+                {
+                    var dur = item.DurationMinutes.HasValue ? $" ({item.DurationMinutes}min)" : "";
+                    sb.AppendLine($"- [{item.Category}] {item.Content}{dur}");
+                }
+            }
+            sb.AppendLine();
+        }
+
+        sb.AppendLine("### 系统活动统计");
+        sb.AppendLine($"- PRD 对话: {activity.PrdSessions} 次, 缺陷: {activity.DefectsSubmitted} 个, 视觉创作: {activity.VisualSessions} 次, AI 调用: {activity.LlmCalls} 次");
+        sb.AppendLine();
+        sb.AppendLine("请基于以上数据生成周报，source 可选值: git / tapd / yuque / daily_log / system_activity / ai");
+
+        return sb.ToString();
     }
 }

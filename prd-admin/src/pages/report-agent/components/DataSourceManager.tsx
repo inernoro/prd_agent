@@ -28,6 +28,7 @@ export function DataSourceManager() {
 
   // Form state
   const [teamId, setTeamId] = useState(teams[0]?.id || '');
+  const [sourceType, setSourceType] = useState<'git' | 'svn'>('git');
   const [name, setName] = useState('');
   const [repoUrl, setRepoUrl] = useState('');
   const [accessToken, setAccessToken] = useState('');
@@ -55,6 +56,7 @@ export function DataSourceManager() {
 
   const resetForm = () => {
     setName('');
+    setSourceType('git');
     setRepoUrl('');
     setAccessToken('');
     setBranchFilter('');
@@ -72,6 +74,7 @@ export function DataSourceManager() {
   const handleEdit = (ds: ReportDataSource) => {
     setEditingId(ds.id);
     setName(ds.name);
+    setSourceType((ds.sourceType as 'git' | 'svn') || 'git');
     setRepoUrl(ds.repoUrl);
     setAccessToken(''); // never expose token
     setBranchFilter(ds.branchFilter || '');
@@ -120,6 +123,7 @@ export function DataSourceManager() {
     } else {
       const res = await createDataSource({
         teamId,
+        sourceType,
         name: name.trim(),
         repoUrl: repoUrl.trim(),
         accessToken: accessToken || undefined,
@@ -213,7 +217,7 @@ export function DataSourceManager() {
         <GlassCard variant="subtle" className="py-12 text-center">
           <GitBranch size={40} style={{ color: 'var(--text-muted)', opacity: 0.5, margin: '0 auto' }} />
           <div className="text-[13px] mt-3" style={{ color: 'var(--text-secondary)' }}>
-            暂无数据源，请添加 Git 仓库
+            暂无数据源，请添加 Git 或 SVN 仓库
           </div>
         </GlassCard>
       ) : (
@@ -228,6 +232,12 @@ export function DataSourceManager() {
                       <GitBranch size={14} style={{ color: 'var(--text-muted)' }} />
                       <span className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
                         {ds.name}
+                      </span>
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded"
+                        style={{ color: 'var(--text-muted)', background: 'var(--bg-tertiary)' }}
+                      >
+                        {ds.sourceType === 'svn' ? 'SVN' : 'Git'}
                       </span>
                       <span
                         className="text-[10px] px-1.5 py-0.5 rounded"
@@ -328,12 +338,34 @@ export function DataSourceManager() {
                   </select>
                 </div>
               )}
+              {!editingId && (
+                <div>
+                  <label className="text-[12px] font-medium mb-1 block" style={{ color: 'var(--text-secondary)' }}>数据源类型</label>
+                  <div className="flex items-center gap-2">
+                    {(['git', 'svn'] as const).map((t) => (
+                      <button
+                        key={t}
+                        className="px-3 py-1.5 rounded-lg text-[12px] transition-colors"
+                        style={{
+                          background: sourceType === t ? 'var(--bg-tertiary)' : 'transparent',
+                          color: sourceType === t ? 'var(--text-primary)' : 'var(--text-muted)',
+                          border: `1px solid ${sourceType === t ? 'var(--border-accent, var(--border-primary))' : 'var(--border-primary)'}`,
+                          fontWeight: sourceType === t ? 500 : 400,
+                        }}
+                        onClick={() => setSourceType(t)}
+                      >
+                        {t === 'git' ? 'Git' : 'SVN'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div>
                 <label className="text-[12px] font-medium mb-1 block" style={{ color: 'var(--text-secondary)' }}>仓库地址</label>
                 <input
                   className="w-full px-3 py-2 rounded-lg text-[13px]"
                   style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
-                  placeholder="https://github.com/owner/repo"
+                  placeholder={sourceType === 'svn' ? 'svn://host/repo 或 https://svn.example.com/repo' : 'https://github.com/owner/repo'}
                   value={repoUrl}
                   onChange={(e) => setRepoUrl(e.target.value)}
                 />
@@ -346,7 +378,7 @@ export function DataSourceManager() {
                   type="password"
                   className="w-full px-3 py-2 rounded-lg text-[13px]"
                   style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
-                  placeholder="ghp_xxxx"
+                  placeholder={sourceType === 'svn' ? 'SVN 密码或 Token' : 'ghp_xxxx'}
                   value={accessToken}
                   onChange={(e) => setAccessToken(e.target.value)}
                 />
@@ -387,14 +419,14 @@ export function DataSourceManager() {
                   </Button>
                 </div>
                 <div className="text-[11px] mb-2" style={{ color: 'var(--text-muted)' }}>
-                  将 Git 提交者邮箱映射到系统用户，用于自动归属周报条目
+                  将{sourceType === 'svn' ? ' SVN ' : ' Git '}提交者邮箱/用户名映射到系统用户，用于自动归属周报条目
                 </div>
                 {userMapping.map((entry, idx) => (
                   <div key={idx} className="flex items-center gap-2 mb-2">
                     <input
                       className="flex-1 px-2 py-1.5 rounded text-[12px]"
                       style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
-                      placeholder="Git 邮箱/用户名"
+                      placeholder={sourceType === 'svn' ? 'SVN 用户名' : 'Git 邮箱/用户名'}
                       value={entry.gitAuthor}
                       onChange={(e) => updateMappingEntry(idx, 'gitAuthor', e.target.value)}
                     />

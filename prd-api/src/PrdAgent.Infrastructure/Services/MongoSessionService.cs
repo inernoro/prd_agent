@@ -22,6 +22,14 @@ public class MongoSessionService : ISessionService
         _cache = cache;
     }
 
+    public async Task<Session?> GetByGroupIdAsync(string groupId)
+    {
+        if (string.IsNullOrWhiteSpace(groupId)) return null;
+        return await _db.Sessions
+            .Find(s => s.GroupId == groupId && s.DeletedAtUtc == null)
+            .FirstOrDefaultAsync();
+    }
+
     public async Task<Session> CreateAsync(string documentId, string? groupId = null)
     {
         var gid = (groupId ?? string.Empty).Trim();
@@ -39,7 +47,21 @@ public class MongoSessionService : ISessionService
             {
                 if (!string.Equals(existing.DocumentId, did, StringComparison.Ordinal))
                 {
+                    // 主 PRD 被替换：更新 DocumentId，并同步 DocumentIds（替换旧主文档，保留补充资料）
+                    var oldPrimary = existing.DocumentId;
                     existing.DocumentId = did;
+
+                    if (existing.DocumentIds.Count > 0)
+                    {
+                        // 移除旧主文档，插入新主文档到首位
+                        existing.DocumentIds.Remove(oldPrimary);
+                        existing.DocumentIds.Insert(0, did);
+                    }
+                    else
+                    {
+                        // 旧数据无 DocumentIds，直接初始化
+                        existing.DocumentIds = new List<string> { did };
+                    }
                 }
 
                 existing.LastActiveAt = DateTime.UtcNow;
@@ -52,6 +74,7 @@ public class MongoSessionService : ISessionService
         {
             SessionId = await _idGenerator.GenerateIdAsync("session"),
             DocumentId = did,
+            DocumentIds = new List<string> { did },
             GroupId = string.IsNullOrWhiteSpace(gid) ? null : gid,
             CurrentRole = UserRole.PM,
             Mode = InteractionMode.QA,
@@ -131,6 +154,74 @@ public class MongoSessionService : ISessionService
         await _db.Sessions.UpdateOneAsync(
             x => x.SessionId == sid && x.DeletedAtUtc == null,
             Builders<Session>.Update.Set(x => x.LastActiveAt, DateTime.UtcNow));
+    }
+
+    public async Task<Session> AddDocumentAsync(string sessionId, string documentId, string documentType = "reference")
+    {
+        var session = await GetByIdAsync(sessionId) ?? throw new KeyNotFoundException("会话不存在");
+        var did = (documentId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(did)) throw new ArgumentException("documentId 不能为空", nameof(documentId));
+
+        // 兼容旧数据：如果 DocumentIds 为空但 DocumentId 有值，先迁移
+        if (session.DocumentIds.Count == 0 && !string.IsNullOrEmpty(session.DocumentId))
+        {
+            session.DocumentIds.Add(session.DocumentId);
+            if (!session.DocumentMetas.Any(m => m.DocumentId == session.DocumentId))
+                session.DocumentMetas.Add(new SessionDocumentMeta { DocumentId = session.DocumentId, DocumentType = "product" });
+        }
+
+        if (!session.DocumentIds.Contains(did))
+        {
+            session.DocumentIds.Add(did);
+            session.DocumentMetas.Add(new SessionDocumentMeta { DocumentId = did, DocumentType = documentType });
+        }
+
+        session.LastActiveAt = DateTime.UtcNow;
+        await UpsertAsync(session);
+        return session;
+    }
+
+    public async Task<Session> RemoveDocumentAsync(string sessionId, string documentId)
+    {
+        var session = await GetByIdAsync(sessionId) ?? throw new KeyNotFoundException("会话不存在");
+        var did = (documentId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(did)) throw new ArgumentException("documentId 不能为空", nameof(documentId));
+
+        // 不允许移除最后一个文档
+        if (session.GetAllDocumentIds().Count <= 1)
+            throw new InvalidOperationException("至少保留一个文档");
+
+        session.DocumentIds.Remove(did);
+        session.DocumentMetas.RemoveAll(m => m.DocumentId == did);
+
+        // 如果移除的是主文档，更新 DocumentId 指向新的首项
+        if (string.Equals(session.DocumentId, did, StringComparison.Ordinal) && session.DocumentIds.Count > 0)
+        {
+            session.DocumentId = session.DocumentIds[0];
+        }
+
+        session.LastActiveAt = DateTime.UtcNow;
+        await UpsertAsync(session);
+        return session;
+    }
+
+    public async Task<Session> UpdateDocumentTypeAsync(string sessionId, string documentId, string documentType)
+    {
+        var session = await GetByIdAsync(sessionId) ?? throw new KeyNotFoundException("会话不存在");
+
+        var meta = session.DocumentMetas.FirstOrDefault(m => m.DocumentId == documentId);
+        if (meta != null)
+        {
+            meta.DocumentType = documentType;
+        }
+        else
+        {
+            session.DocumentMetas.Add(new SessionDocumentMeta { DocumentId = documentId, DocumentType = documentType });
+        }
+
+        session.LastActiveAt = DateTime.UtcNow;
+        await UpsertAsync(session);
+        return session;
     }
 
     public async Task DeleteAsync(string sessionId)

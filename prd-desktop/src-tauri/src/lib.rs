@@ -176,6 +176,9 @@ pub fn run() {
             commands::document::upload_document,
             commands::document::get_document,
             commands::document::get_document_content,
+            commands::document::add_document_to_session,
+            commands::document::remove_document_from_session,
+            commands::document::update_document_type,
             commands::intent::suggest_group_name,
             commands::session::get_session,
             commands::session::get_message_history,
@@ -241,6 +244,7 @@ pub fn run() {
             commands::skill::create_skill,
             commands::skill::update_skill,
             commands::skill::delete_skill,
+            commands::skill::generate_skill_from_message,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

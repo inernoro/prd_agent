@@ -1,5 +1,6 @@
 import React from "react";
 import type { SceneData } from "./types";
+import { GENERATED_SCENES } from "./scenes/generated";
 
 import { IntroScene } from "./scenes/IntroScene";
 import { ConceptScene } from "./scenes/ConceptScene";
@@ -10,7 +11,7 @@ import { DiagramScene } from "./scenes/DiagramScene";
 import { SummaryScene } from "./scenes/SummaryScene";
 import { OutroScene } from "./scenes/OutroScene";
 
-/** 场景类型 → React 组件映射 */
+/** 场景类型 → React 组件映射（硬编码兜底） */
 const SCENE_MAP: Record<
   string,
   React.FC<{ scene: SceneData; videoTitle: string }>
@@ -30,6 +31,15 @@ export const SingleScene: React.FC<{ title: string; scene: SceneData }> = ({
   title,
   scene,
 }) => {
+  // 优先使用 LLM 生成的定制化场景组件
+  const GeneratedComponent = scene.hasGeneratedCode
+    ? GENERATED_SCENES[scene.index]
+    : undefined;
+  if (GeneratedComponent) {
+    return <GeneratedComponent scene={scene} videoTitle={title} />;
+  }
+
+  // 兜底：使用硬编码场景组件
   const SceneComponent = SCENE_MAP[scene.sceneType] ?? SCENE_MAP.concept;
   return <SceneComponent scene={scene} videoTitle={title} />;
 };

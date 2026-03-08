@@ -506,6 +506,23 @@ export const api = {
     },
     activity: () => '/api/report-agent/activity',
     users: () => '/api/report-agent/users',
+    trends: {
+      personal: () => '/api/report-agent/trends/personal',
+      team: (teamId: string) => `/api/report-agent/trends/team/${teamId}`,
+    },
+    // v2.0 endpoints
+    personalSources: {
+      list: () => '/api/report-agent/my/sources',
+      byId: (id: string) => `/api/report-agent/my/sources/${id}`,
+      test: (id: string) => `/api/report-agent/my/sources/${id}/test`,
+      sync: (id: string) => `/api/report-agent/my/sources/${id}/sync`,
+    },
+    personalStats: () => '/api/report-agent/my/stats',
+    teamWorkflow: (teamId: string) => `/api/report-agent/teams/${teamId}/workflow`,
+    teamWorkflowRun: (teamId: string) => `/api/report-agent/teams/${teamId}/workflow/run`,
+    identityMappings: (teamId: string, userId: string) =>
+      `/api/report-agent/teams/${teamId}/members/${userId}/identity-mappings`,
+    seedTemplates: () => '/api/report-agent/templates/seed',
   },
 
   // ============ Open Platform 开放平台 ============
@@ -651,6 +668,8 @@ export const api = {
       messages: (sessionId: string) => `/api/v1/sessions/${sessionId}/messages`,
       archive: (sessionId: string) => `/api/v1/sessions/${sessionId}/archive`,
       unarchive: (sessionId: string) => `/api/v1/sessions/${sessionId}/unarchive`,
+      documents: (sessionId: string) => `/api/v1/sessions/${sessionId}/documents`,
+      document: (sessionId: string, documentId: string) => `/api/v1/sessions/${sessionId}/documents/${documentId}`,
     },
     groups: {
       list: () => '/api/v1/groups',
@@ -708,6 +727,7 @@ export const api = {
       history: (workflowId: string) => `/api/workflow-agent/workflows/${workflowId}/chat-history`,
       analyze: (executionId: string) => `/api/workflow-agent/executions/${executionId}/analyze`,
     },
+    aiFill: () => '/api/workflow-agent/ai-fill',
   },
 
   // ============ Video Agent 视频创作 ============
@@ -770,6 +790,23 @@ export const api = {
     cancel: (id: string) => `/api/account/data-transfers/${id}/cancel`,
     myWorkspaces: () => '/api/account/data-transfers/my-workspaces',
     myConfigs: () => '/api/account/data-transfers/my-configs',
+  },
+  // ============ Web Hosting 网页托管 ============
+  webPages: {
+    upload: () => '/api/web-pages/upload',
+    fromContent: () => '/api/web-pages/from-content',
+    list: () => '/api/web-pages',
+    byId: (id: string) => `/api/web-pages/${id}`,
+    reupload: (id: string) => `/api/web-pages/${id}/reupload`,
+    batchDelete: () => '/api/web-pages/batch-delete',
+    folders: () => '/api/web-pages/folders',
+    tags: () => '/api/web-pages/tags',
+    share: () => '/api/web-pages/share',
+    shares: () => '/api/web-pages/shares',
+    revokeShare: (shareId: string) => `/api/web-pages/shares/${shareId}`,
+    viewShare: (token: string) => `/api/web-pages/shares/view/${token}`,
+    saveShare: (token: string) => `/api/web-pages/shares/${token}/save`,
+    viewLogs: '/api/web-pages/shares/view-logs',
   },
 } as const;
 

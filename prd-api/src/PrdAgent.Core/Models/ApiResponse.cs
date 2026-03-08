@@ -83,6 +83,9 @@ public static class ErrorCodes
     // 生图相关
     public const string IMAGE_GEN_RUN_NOT_FOUND = "IMAGE_GEN_RUN_NOT_FOUND";
 
+    // 配额相关
+    public const string QUOTA_EXCEEDED = "QUOTA_EXCEEDED";
+
     // 通用业务
     public const string DUPLICATE = "DUPLICATE";
 }

@@ -251,6 +251,17 @@ public static class VisualAgent
         )]
         public const string ExtractStyle = "visual-agent.image-gen.extract-style::vision";
     }
+
+    public static class Scene
+    {
+        [AppCallerMetadata(
+            "视觉创作-场景代码生成",
+            "基于 Remotion 组件库为视觉创作视频分镜生成定制化视觉代码",
+            ModelTypes = new[] { ModelTypes.Code },
+            Category = "Video"
+        )]
+        public const string Codegen = "visual-agent.scene.codegen::code";
+    }
 }
 
 /// <summary>
@@ -545,6 +556,17 @@ public static class WorkflowAgent
         public const string Chat = "workflow-agent.report-generator::chat";
     }
 
+    public static class WebpageGenerator
+    {
+        [AppCallerMetadata(
+            "工作流-网页报告生成",
+            "工作流中使用LLM将结构化数据渲染为精美可下载的HTML网页报告(生成完整HTML/CSS/JS代码)",
+            ModelTypes = new[] { ModelTypes.Code },
+            Category = "Workflow"
+        )]
+        public const string Code = "workflow-agent.webpage-generator::code";
+    }
+
     public static class ChatAssistant
     {
         [AppCallerMetadata(
@@ -565,6 +587,17 @@ public static class WorkflowAgent
             Category = "Workflow"
         )]
         public const string Chat = "workflow-agent.error-analyzer::chat";
+    }
+
+    public static class AiFill
+    {
+        [AppCallerMetadata(
+            "工作流-AI参数填写",
+            "根据舱类型Schema和上下文智能推荐配置参数值",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Workflow"
+        )]
+        public const string Chat = "workflow-agent.ai-fill::chat";
     }
 }
 
@@ -595,6 +628,58 @@ public static class VideoAgent
             Category = "Video"
         )]
         public const string Text2Img = "video-agent.image.text2img::generation";
+    }
+
+    public static class Audio
+    {
+        [AppCallerMetadata(
+            "视频旁白-语音合成",
+            "将分镜旁白文本合成为 TTS 语音音频",
+            ModelTypes = new[] { ModelTypes.Tts },
+            Category = "Video"
+        )]
+        public const string Tts = "video-agent.audio::tts";
+    }
+
+    public static class Scene
+    {
+        [AppCallerMetadata(
+            "视频场景-代码生成",
+            "基于 Remotion 组件库和动效工具为分镜生成定制化视觉代码",
+            ModelTypes = new[] { ModelTypes.Code },
+            Category = "Video"
+        )]
+        public const string Codegen = "video-agent.scene.codegen::code";
+    }
+
+    /// <summary>
+    /// 视频转文档 - 语音转写 + 多模态分析（帧+文字→结构化文档）
+    /// </summary>
+    public static class VideoToDoc
+    {
+        [AppCallerMetadata(
+            "视频转文档-语音转写",
+            "将视频音频转换为带时间戳的文字（ASR）",
+            ModelTypes = new[] { ModelTypes.Asr },
+            Category = "Video"
+        )]
+        public const string Transcribe = "video-agent.v2d.transcribe::asr";
+
+        [AppCallerMetadata(
+            "视频转文档-分析",
+            "分析视频关键帧和转写文本，生成结构化文档",
+            ModelTypes = new[] { ModelTypes.Vision },
+            Category = "Video"
+        )]
+        public const string Analyze = "video-agent.v2d.analyze::vision";
+
+        [AppCallerMetadata(
+            "视频转文档-润色",
+            "对生成的文档进行润色和结构优化",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Video"
+        )]
+        public const string Polish = "video-agent.v2d.polish::chat";
     }
 }
 

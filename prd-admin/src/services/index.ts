@@ -328,7 +328,7 @@ import {
   streamImageGenRunWithRetryReal,
 } from '@/services/real/imageGen';
 import { deleteModelLabGroupReal, listModelLabGroupsReal, upsertModelLabGroupReal } from '@/services/real/modelLabGroups';
-import { getAiChatHistoryReal, uploadAiChatDocumentReal } from '@/services/real/aiChat';
+import { getAiChatHistoryReal, uploadAiChatDocumentReal, addDocumentToSession as addDocumentToSessionReal, removeDocumentFromSession as removeDocumentFromSessionReal } from '@/services/real/aiChat';
 import { suggestGroupNameReal } from '@/services/real/intent';
 import {
   addVisualAgentMessageReal,
@@ -557,6 +557,21 @@ import type {
   GetPlanComparisonContract,
   GenerateTeamSummaryContract,
   GetTeamSummaryContract,
+  GetPersonalTrendsContract,
+  GetTeamTrendsContract,
+  MarkVacationContract,
+  CancelVacationContract,
+  ListPersonalSourcesContract,
+  CreatePersonalSourceContract,
+  UpdatePersonalSourceContract,
+  DeletePersonalSourceContract,
+  TestPersonalSourceContract,
+  SyncPersonalSourceContract,
+  GetPersonalStatsContract,
+  GetTeamWorkflowContract,
+  RunTeamWorkflowContract,
+  UpdateIdentityMappingsContract,
+  SeedSystemTemplatesContract,
 } from '@/services/contracts/reportAgent';
 import {
   listReportTeamsReal,
@@ -601,6 +616,23 @@ import {
   getPlanComparisonReal,
   generateTeamSummaryReal,
   getTeamSummaryReal,
+  getPersonalTrendsReal,
+  getTeamTrendsReal,
+  exportReportMarkdownReal,
+  exportTeamSummaryMarkdownReal,
+  markVacationReal,
+  cancelVacationReal,
+  listPersonalSourcesReal,
+  createPersonalSourceReal,
+  updatePersonalSourceReal,
+  deletePersonalSourceReal,
+  testPersonalSourceReal,
+  syncPersonalSourceReal,
+  getPersonalStatsReal,
+  getTeamWorkflowReal,
+  runTeamWorkflowReal,
+  updateIdentityMappingsReal,
+  seedSystemTemplatesReal,
 } from '@/services/real/reportAgent';
 
 function withAuth<TArgs extends unknown[], TResult>(
@@ -754,6 +786,8 @@ export const deleteModelLabGroup: DeleteModelLabGroupContract = withAuth(deleteM
 
 export const uploadAiChatDocument: AiChatUploadDocumentContract = withAuth(uploadAiChatDocumentReal);
 export const getAiChatHistory: AiChatGetHistoryContract = withAuth(getAiChatHistoryReal);
+export const addDocumentToSession = withAuth(addDocumentToSessionReal);
+export const removeDocumentFromSession = withAuth(removeDocumentFromSessionReal);
 
 export const suggestGroupName: SuggestGroupNameContract = withAuth(suggestGroupNameReal);
 
@@ -957,6 +991,25 @@ export const deleteComment: DeleteCommentContract = withAuth(deleteCommentReal);
 export const getPlanComparison: GetPlanComparisonContract = withAuth(getPlanComparisonReal);
 export const generateTeamSummary: GenerateTeamSummaryContract = withAuth(generateTeamSummaryReal);
 export const getTeamSummary: GetTeamSummaryContract = withAuth(getTeamSummaryReal);
+// Report Agent Phase 4: Trends + Export + Vacation
+export const getPersonalTrends: GetPersonalTrendsContract = withAuth(getPersonalTrendsReal);
+export const getTeamTrends: GetTeamTrendsContract = withAuth(getTeamTrendsReal);
+export const exportReportMarkdown = exportReportMarkdownReal;
+export const exportTeamSummaryMarkdown = exportTeamSummaryMarkdownReal;
+export const markVacation: MarkVacationContract = withAuth(markVacationReal);
+export const cancelVacation: CancelVacationContract = withAuth(cancelVacationReal);
+// Report Agent Phase 5/6 v2.0: Personal Sources + Workflow + Identity Mappings
+export const listPersonalSources: ListPersonalSourcesContract = withAuth(listPersonalSourcesReal);
+export const createPersonalSource: CreatePersonalSourceContract = withAuth(createPersonalSourceReal);
+export const updatePersonalSource: UpdatePersonalSourceContract = withAuth(updatePersonalSourceReal);
+export const deletePersonalSource: DeletePersonalSourceContract = withAuth(deletePersonalSourceReal);
+export const testPersonalSource: TestPersonalSourceContract = withAuth(testPersonalSourceReal);
+export const syncPersonalSource: SyncPersonalSourceContract = withAuth(syncPersonalSourceReal);
+export const getPersonalStats: GetPersonalStatsContract = withAuth(getPersonalStatsReal);
+export const getTeamWorkflow: GetTeamWorkflowContract = withAuth(getTeamWorkflowReal);
+export const runTeamWorkflow: RunTeamWorkflowContract = withAuth(runTeamWorkflowReal);
+export const updateIdentityMappings: UpdateIdentityMappingsContract = withAuth(updateIdentityMappingsReal);
+export const seedSystemTemplates: SeedSystemTemplatesContract = withAuth(seedSystemTemplatesReal);
 
 // Arena 竞技场
 import {
@@ -1161,6 +1214,7 @@ import type {
   GetCapsuleTypeContract,
   TestRunCapsuleContract,
   GetChatHistoryContract,
+  AiFillParametersContract,
 } from '@/services/contracts/workflowAgent';
 import {
   listWorkflowsReal,
@@ -1182,6 +1236,7 @@ import {
   getCapsuleTypeReal,
   testRunCapsuleReal,
   getChatHistoryReal,
+  aiFillParametersReal,
 } from '@/services/real/workflowAgent';
 
 export const listWorkflows: ListWorkflowsContract = withAuth(listWorkflowsReal);
@@ -1206,6 +1261,7 @@ export const getChatHistory: GetChatHistoryContract = withAuth(getChatHistoryRea
 export { chatWorkflowReal as chatWorkflow } from '@/services/real/workflowAgent';
 export { analyzeExecutionReal as analyzeExecution } from '@/services/real/workflowAgent';
 export { validateTapdCookie } from '@/services/real/workflowAgent';
+export const aiFillParameters: AiFillParametersContract = withAuth(aiFillParametersReal);
 
 // 数据迁移服务
 import type {
@@ -1262,6 +1318,27 @@ export type {
   TutorialEmailEnrollment,
   TutorialEmailStep,
 } from '@/services/real/tutorialEmail';
+
+// ── Web Hosting 网页托管 ──
+export {
+  uploadSite,
+  reuploadSite,
+  createFromContent,
+  listSites,
+  getSite,
+  updateSite,
+  deleteSite,
+  batchDeleteSites,
+  listFolders as listSiteFolders,
+  listTags as listSiteTags,
+  createShareLink as createSiteShareLink,
+  listShares as listSiteShares,
+  revokeShare as revokeSiteShare,
+  viewShare as viewSiteShare,
+  saveSharedSite,
+  listShareViewLogs,
+} from '@/services/real/webPages';
+export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, SharedSiteInfo, ShareViewData, ShareViewLogItem } from '@/services/real/webPages';
 
 // ── Account Data Transfer 数据分享 ──
 export {

@@ -83,18 +83,21 @@ export const RemotionRoot: React.FC = () => {
     <>
       <Composition
         id="TutorialVideo"
-        component={TutorialVideo}
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        component={TutorialVideo as any}
         durationInFrames={getTotalFrames(defaultProps.scenes)}
         fps={defaultProps.fps}
         width={defaultProps.width}
         height={defaultProps.height}
-        defaultProps={defaultProps}
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        defaultProps={defaultProps as any}
         calculateMetadata={({ props }) => {
+          const p = props as unknown as VideoData;
           return {
-            durationInFrames: getTotalFrames(props.scenes),
-            fps: props.fps,
-            width: props.width,
-            height: props.height,
+            durationInFrames: getTotalFrames(p.scenes),
+            fps: p.fps,
+            width: p.width,
+            height: p.height,
           };
         }}
       />

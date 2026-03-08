@@ -16,7 +16,7 @@ import type {
   TeamDashboardData,
 } from '@/services/contracts/reportAgent';
 
-type TabKey = 'my-reports' | 'daily-log' | 'team-dashboard' | 'templates' | 'teams' | 'data-sources';
+type TabKey = 'my-reports' | 'daily-log' | 'my-sources' | 'team-dashboard' | 'templates' | 'teams' | 'data-sources' | 'trends';
 
 interface ReportAgentState {
   // Data
@@ -157,6 +157,7 @@ export const useReportAgentStore = create<ReportAgentState>((set, get) => ({
   },
 
   loadAll: async () => {
+    if (get().loading) return; // 防止并发重复加载
     set({ loading: true, error: '' });
     try {
       await Promise.all([

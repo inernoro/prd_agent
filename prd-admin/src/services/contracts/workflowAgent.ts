@@ -109,6 +109,7 @@ export interface ExecutionArtifact {
   cosKey?: string;
   cosUrl?: string;
   sizeBytes: number;
+  tags?: string[];
 }
 
 export interface WorkflowExecution {
@@ -417,6 +418,24 @@ export type AnalyzeExecutionContract = (input: {
   executionId: string;
   instruction?: string;
 }) => Promise<Response>;
+
+// ─────────────────────────────────────────────
+// AI 辅助填写 Models & Contracts
+// ─────────────────────────────────────────────
+
+export interface AiFillResult {
+  suggestions: Record<string, string>;
+  explanation: string;
+  confidence: 'low' | 'medium' | 'high';
+}
+
+export type AiFillParametersContract = (input: {
+  workflowId: string;
+  nodeId: string;
+  lastExecutionId?: string;
+  userHint?: string;
+  mode?: 'full' | 'optimize';
+}) => Promise<ApiResponse<AiFillResult>>;
 
 /** SSE streaming — returns raw Response for readSseStream */
 export type ChatWorkflowContract = (input: {

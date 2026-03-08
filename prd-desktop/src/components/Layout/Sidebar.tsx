@@ -6,14 +6,16 @@ import { useAuthStore } from '../../stores/authStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useGroupListStore } from '../../stores/groupListStore';
 import { useMessageStore } from '../../stores/messageStore';
-import type { ApiResponse, Document, Session, UserRole } from '../../types';
+import type { ApiResponse, Document, UserRole } from '../../types';
+import { DOCUMENT_TYPE_LABELS } from '../../types';
+import { openGroupSessionAndSetStore } from '../../lib/openGroupSession';
 import GroupList from '../Group/GroupList';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { extractMarkdownTitle, isMeaninglessName, normalizeCandidateName, stripFileExtension } from '../utils/nameHeuristics';
 
 export default function Sidebar() {
   const { user, logout } = useAuthStore();
-  const { setSession, activeGroupId, documentLoaded, document: prdDocument, mode, sessionId, setMode, openPrdPreviewPage } = useSessionStore();
+  const { activeGroupId, documentLoaded, document: prdDocument, documents, sessionId, mode, setMode, openPrdPreviewPage, setDocuments } = useSessionStore();
   const { loadGroups } = useGroupListStore();
   const clearCurrentContext = useMessageStore((s) => s.clearCurrentContext);
   const stopStreaming = useMessageStore((s) => s.stopStreaming);
@@ -28,6 +30,43 @@ export default function Sidebar() {
   const createPrdInputRef = useRef<HTMLInputElement | null>(null);
   const [createPrdFileName, setCreatePrdFileName] = useState<string>('');
   const [createPrdContent, setCreatePrdContent] = useState<string>('');
+  const sidebarDocInputRef = useRef<HTMLInputElement | null>(null);
+  const [addingDoc, setAddingDoc] = useState(false);
+
+  // 侧边栏追加资料
+  const handleSidebarAddDoc = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const input = e.currentTarget;
+    const file = input.files?.[0] ?? null;
+    input.value = '';
+    if (!file || !sessionId) return;
+    const ext = file.name.toLowerCase();
+    if (!ext.endsWith('.md') && !ext.endsWith('.mdc') && !ext.endsWith('.txt')) return;
+    try {
+      setAddingDoc(true);
+      const content = await file.text();
+      const resp = await invoke<ApiResponse<{ sessionId: string; documentIds: string[]; documentMetas?: Array<{ documentId: string; documentType: string }> }>>(
+        'add_document_to_session',
+        { sessionId, content }
+      );
+      if (!resp.success || !resp.data) return;
+      const metaMap = new Map((resp.data.documentMetas ?? []).map(m => [m.documentId, m.documentType]));
+      const newDocs: Document[] = [];
+      for (const did of resp.data.documentIds) {
+        try {
+          const r = await invoke<ApiResponse<Document>>('get_document', { documentId: did });
+          if (r.success && r.data) {
+            r.data.documentType = (metaMap.get(did) ?? (did === resp.data!.documentIds[0] ? 'product' : 'reference')) as Document['documentType'];
+            newDocs.push(r.data);
+          }
+        } catch { /* skip */ }
+      }
+      setDocuments(newDocs);
+    } catch {
+      // ignore
+    } finally {
+      setAddingDoc(false);
+    }
+  }, [sessionId, setDocuments]);
 
   const COLLAPSED_WIDTH = 56; // Tailwind w-14
   const DEFAULT_EXPANDED_WIDTH = 224; // Tailwind w-56
@@ -98,33 +137,13 @@ export default function Sidebar() {
     window.dispatchEvent(new Event('prdAgent:openBindPrdPicker'));
   }, []);
 
-  const openGroupSession = async (groupId: string) => {
+  const openGroupSession = useCallback(async (groupId: string) => {
     const role: UserRole =
       user?.role === 'DEV' || user?.role === 'QA' || user?.role === 'PM'
         ? user.role
         : 'PM';
-
-    const openResp = await invoke<ApiResponse<{ sessionId: string; groupId: string; documentId: string; currentRole: string }>>(
-      'open_group_session',
-      { groupId, userRole: role }
-    );
-    if (!openResp.success || !openResp.data) return;
-
-    const docResp = await invoke<ApiResponse<Document>>('get_document', {
-      documentId: openResp.data.documentId,
-    });
-    if (!docResp.success || !docResp.data) return;
-
-    const session: Session = {
-      sessionId: openResp.data.sessionId,
-      groupId: openResp.data.groupId,
-      documentId: openResp.data.documentId,
-      currentRole: (openResp.data.currentRole as UserRole) || role,
-      mode: 'QA',
-    };
-
-    setSession(session, docResp.data);
-  };
+    await openGroupSessionAndSetStore(groupId, role);
+  }, [user?.role]);
 
   type GroupMemberInfo = { userId: string; isOwner: boolean };
   const [activeOwner, setActiveOwner] = useState<boolean>(false);
@@ -647,6 +666,7 @@ export default function Sidebar() {
             </div>
             <div className="px-2 pb-2 max-h-44 overflow-y-auto space-y-1">
 
+              {/* 主文档 */}
               <div
                 role="button"
                 tabIndex={0}
@@ -717,6 +737,73 @@ export default function Sidebar() {
                   ) : null}
                 </div>
               </div>
+
+              {/* 补充资料文档 */}
+              {documentLoaded && prdDocument && documents.filter(d => d.id !== prdDocument.id).map((doc) => (
+                <div
+                  key={doc.id}
+                  className="w-full px-3 py-1.5 rounded-lg text-left text-sm text-text-secondary hover:bg-black/5 dark:hover:bg-white/5 transition-colors flex items-center gap-2 min-w-0 group"
+                  title={doc.title}
+                >
+                  <svg className="w-3.5 h-3.5 shrink-0 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                  </svg>
+                  <div className="flex items-center gap-1 min-w-0 flex-1">
+                    <span className="truncate text-xs">{doc.title || '未命名文档'}</span>
+                    {doc.documentType && doc.documentType !== 'reference' && (
+                      <span className="text-[9px] px-1 py-px rounded bg-black/5 dark:bg-white/10 text-text-secondary whitespace-nowrap shrink-0">
+                        {DOCUMENT_TYPE_LABELS[doc.documentType] || doc.documentType}
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      import('../../stores/prdCitationPreviewStore').then(({ usePrdCitationPreviewStore }) => {
+                        usePrdCitationPreviewStore.getState().open({
+                          documentId: doc.id,
+                          groupId: activeGroupId || '',
+                          citations: [],
+                        });
+                      });
+                    }}
+                    className="h-6 w-6 hidden group-hover:inline-flex items-center justify-center rounded-md text-text-secondary hover:text-primary-500 hover:bg-black/5 dark:hover:bg-white/5 transition-colors shrink-0"
+                    title="预览文档"
+                    aria-label="预览文档"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                  </button>
+                </div>
+              ))}
+
+              {/* 追加资料入口 */}
+              {documentLoaded && prdDocument && (
+                <>
+                  <button
+                    type="button"
+                    disabled={addingDoc}
+                    onClick={() => sidebarDocInputRef.current?.click()}
+                    className="w-full px-3 py-1.5 rounded-lg text-left text-xs text-text-secondary hover:text-primary-500 hover:bg-black/5 dark:hover:bg-white/5 transition-colors flex items-center gap-2 disabled:opacity-50"
+                  >
+                    <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                    <span>{addingDoc ? '上传中...' : '追加资料'}</span>
+                  </button>
+                  <input
+                    ref={sidebarDocInputRef}
+                    type="file"
+                    accept=".md,.mdc,.txt"
+                    className="hidden"
+                    onChange={handleSidebarAddDoc}
+                  />
+                </>
+              )}
             </div>
           </div>
         )}

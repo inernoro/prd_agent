@@ -89,6 +89,19 @@ public class ReportAgentController : ControllerBase
         return (weekYear, weekNumber, monday, sunday);
     }
 
+    private static ReportTemplateSection MapSection(TemplateSectionInput s, int i) => new()
+    {
+        Title = s.Title?.Trim() ?? $"章节{i + 1}",
+        Description = s.Description,
+        InputType = ReportInputType.All.Contains(s.InputType ?? "") ? s.InputType! : ReportInputType.BulletList,
+        IsRequired = s.IsRequired ?? true,
+        SortOrder = s.SortOrder ?? i,
+        DataSourceHint = s.DataSourceHint,
+        MaxItems = s.MaxItems,
+        SectionType = s.SectionType != null && ReportSectionType.All.Contains(s.SectionType) ? s.SectionType : null,
+        DataSources = s.DataSources,
+    };
+
     #endregion
 
     #region Team Management
@@ -307,6 +320,8 @@ public class ReportAgentController : ControllerBase
             update = update.Set(m => m.Role, req.Role);
         if (req.JobTitle != null)
             update = update.Set(m => m.JobTitle, req.JobTitle);
+        if (req.IdentityMappings != null)
+            update = update.Set(m => m.IdentityMappings, req.IdentityMappings);
 
         var result = await _db.ReportTeamMembers.UpdateOneAsync(
             m => m.TeamId == id && m.UserId == userId, update);
@@ -316,6 +331,112 @@ public class ReportAgentController : ControllerBase
         var updated = await _db.ReportTeamMembers.Find(
             m => m.TeamId == id && m.UserId == userId).FirstOrDefaultAsync();
         return Ok(ApiResponse<object>.Ok(new { member = updated }));
+    }
+
+    /// <summary>
+    /// 更新成员多平台身份映射（v2.0）
+    /// </summary>
+    [HttpPut("teams/{id}/members/{userId}/identity-mappings")]
+    public async Task<IActionResult> UpdateIdentityMappings(
+        string id, string userId, [FromBody] Dictionary<string, string> mappings)
+    {
+        if (!HasPermission(AdminPermissionCatalog.ReportAgentTeamManage) &&
+            !await IsTeamLeaderOrDeputy(id, GetUserId()))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "缺少团队管理权限"));
+
+        var result = await _db.ReportTeamMembers.UpdateOneAsync(
+            m => m.TeamId == id && m.UserId == userId,
+            Builders<ReportTeamMember>.Update.Set(m => m.IdentityMappings, mappings));
+
+        if (result.MatchedCount == 0)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "成员不存在"));
+
+        return Ok(ApiResponse<object>.Ok(new { updated = true }));
+    }
+
+    /// <summary>
+    /// 获取团队采集工作流信息（v2.0）
+    /// </summary>
+    [HttpGet("teams/{id}/workflow")]
+    public async Task<IActionResult> GetTeamWorkflow(string id)
+    {
+        var team = await _db.ReportTeams.Find(t => t.Id == id).FirstOrDefaultAsync();
+        if (team == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "团队不存在"));
+
+        if (string.IsNullOrEmpty(team.DataCollectionWorkflowId))
+            return Ok(ApiResponse<object>.Ok(new { workflow = (object?)null, templateKey = team.WorkflowTemplateKey }));
+
+        var workflow = await _db.Workflows.Find(w => w.Id == team.DataCollectionWorkflowId).FirstOrDefaultAsync();
+        // 获取最近一次执行
+        var lastExecution = await _db.WorkflowExecutions
+            .Find(e => e.WorkflowId == team.DataCollectionWorkflowId)
+            .SortByDescending(e => e.CreatedAt)
+            .Limit(1)
+            .FirstOrDefaultAsync();
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            workflow = workflow != null ? new
+            {
+                workflow.Id,
+                workflow.Name,
+                nodeCount = workflow.Nodes.Count,
+                workflow.IsEnabled,
+                workflow.LastExecutedAt
+            } : null,
+            templateKey = team.WorkflowTemplateKey,
+            lastExecution = lastExecution != null ? new
+            {
+                lastExecution.Id,
+                lastExecution.Status,
+                lastExecution.CreatedAt,
+                lastExecution.CompletedAt,
+                lastExecution.DurationMs,
+                artifactCount = lastExecution.FinalArtifacts.Count,
+                lastExecution.ErrorMessage
+            } : null
+        }));
+    }
+
+    /// <summary>
+    /// 手动触发团队采集工作流（v2.0）
+    /// </summary>
+    [HttpPost("teams/{id}/workflow/run")]
+    public async Task<IActionResult> RunTeamWorkflow(string id, CancellationToken ct)
+    {
+        var team = await _db.ReportTeams.Find(t => t.Id == id).FirstOrDefaultAsync(ct);
+        if (team == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "团队不存在"));
+
+        if (string.IsNullOrEmpty(team.DataCollectionWorkflowId))
+            return BadRequest(ApiResponse<object>.Fail("NO_WORKFLOW", "团队未绑定采集工作流"));
+
+        if (!await IsTeamLeaderOrDeputy(id, GetUserId()) &&
+            !HasPermission(AdminPermissionCatalog.ReportAgentTeamManage))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "仅团队负责人可触发采集"));
+
+        var now = DateTime.UtcNow;
+        var wy = ISOWeek.GetYear(now);
+        var wn = ISOWeek.GetWeekOfYear(now);
+        var weekStart = ISOWeek.ToDateTime(wy, wn, DayOfWeek.Monday);
+        var weekEnd = weekStart.AddDays(4); // 周五
+
+        var wfService = HttpContext.RequestServices.GetRequiredService<PrdAgent.Core.Interfaces.IWorkflowExecutionService>();
+        var execution = await wfService.ExecuteInternalAsync(
+            team.DataCollectionWorkflowId,
+            new Dictionary<string, string>
+            {
+                ["weekYear"] = wy.ToString(),
+                ["weekNumber"] = wn.ToString(),
+                ["dateFrom"] = weekStart.ToString("yyyy-MM-dd"),
+                ["dateTo"] = weekEnd.ToString("yyyy-MM-dd"),
+                ["teamId"] = id
+            },
+            triggeredBy: $"report-agent:{GetUserId()}",
+            ct: ct);
+
+        return Ok(ApiResponse<object>.Ok(new { executionId = execution.Id, status = execution.Status }));
     }
 
     /// <summary>
@@ -386,16 +507,7 @@ public class ReportAgentController : ControllerBase
         {
             Name = req.Name.Trim(),
             Description = req.Description,
-            Sections = req.Sections.Select((s, i) => new ReportTemplateSection
-            {
-                Title = s.Title?.Trim() ?? $"章节{i + 1}",
-                Description = s.Description,
-                InputType = ReportInputType.All.Contains(s.InputType ?? "") ? s.InputType! : ReportInputType.BulletList,
-                IsRequired = s.IsRequired ?? true,
-                SortOrder = s.SortOrder ?? i,
-                DataSourceHint = s.DataSourceHint,
-                MaxItems = s.MaxItems
-            }).ToList(),
+            Sections = req.Sections.Select((s, i) => MapSection(s, i)).ToList(),
             TeamId = req.TeamId,
             JobTitle = req.JobTitle,
             IsDefault = req.IsDefault ?? false,
@@ -428,16 +540,7 @@ public class ReportAgentController : ControllerBase
             update = update.Set(t => t.Description, req.Description);
         if (req.Sections != null)
         {
-            update = update.Set(t => t.Sections, req.Sections.Select((s, i) => new ReportTemplateSection
-            {
-                Title = s.Title?.Trim() ?? $"章节{i + 1}",
-                Description = s.Description,
-                InputType = ReportInputType.All.Contains(s.InputType ?? "") ? s.InputType! : ReportInputType.BulletList,
-                IsRequired = s.IsRequired ?? true,
-                SortOrder = s.SortOrder ?? i,
-                DataSourceHint = s.DataSourceHint,
-                MaxItems = s.MaxItems
-            }).ToList());
+            update = update.Set(t => t.Sections, req.Sections.Select((s, i) => MapSection(s, i)).ToList());
         }
         if (req.TeamId != null)
             update = update.Set(t => t.TeamId, req.TeamId);
@@ -461,11 +564,41 @@ public class ReportAgentController : ControllerBase
         if (!HasPermission(AdminPermissionCatalog.ReportAgentTemplateManage))
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "缺少模板管理权限"));
 
-        var result = await _db.ReportTemplates.DeleteOneAsync(t => t.Id == id);
-        if (result.DeletedCount == 0)
+        var template = await _db.ReportTemplates.Find(t => t.Id == id).FirstOrDefaultAsync();
+        if (template == null)
             return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "模板不存在"));
+        if (template.IsSystem)
+            return BadRequest(ApiResponse<object>.Fail("SYSTEM_TEMPLATE", "系统预置模板不可删除"));
 
+        await _db.ReportTemplates.DeleteOneAsync(t => t.Id == id);
         return Ok(ApiResponse<object>.Ok(new { }));
+    }
+
+    /// <summary>
+    /// 初始化系统预置模板（幂等：已存在的 TemplateKey 跳过）
+    /// </summary>
+    [HttpPost("templates/seed")]
+    public async Task<IActionResult> SeedSystemTemplates()
+    {
+        if (!HasPermission(AdminPermissionCatalog.ReportAgentTemplateManage))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "缺少模板管理权限"));
+
+        var systemTemplates = SystemTemplates.GetAllSystemTemplates();
+        var existingKeys = (await _db.ReportTemplates
+            .Find(t => t.IsSystem && t.TemplateKey != null)
+            .Project(t => t.TemplateKey)
+            .ToListAsync())
+            .ToHashSet();
+
+        var inserted = new List<string>();
+        foreach (var tpl in systemTemplates)
+        {
+            if (existingKeys.Contains(tpl.TemplateKey)) continue;
+            await _db.ReportTemplates.InsertOneAsync(tpl);
+            inserted.Add(tpl.TemplateKey!);
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { inserted, skipped = existingKeys.Count }));
     }
 
     #endregion
@@ -704,6 +837,23 @@ public class ReportAgentController : ControllerBase
         if (report.Status != WeeklyReportStatus.Draft && report.Status != WeeklyReportStatus.Returned && report.Status != WeeklyReportStatus.Overdue)
             return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "只有草稿、已退回或逾期状态的周报可以提交"));
 
+        // 构建 StatsSnapshot：快照 auto-stats 板块数据
+        var snapshot = new Dictionary<string, object>();
+        foreach (var section in report.Sections)
+        {
+            if (section.TemplateSection.SectionType == ReportSectionType.AutoStats && section.Items.Count > 0)
+            {
+                var stats = new Dictionary<string, string>();
+                foreach (var item in section.Items)
+                {
+                    if (!string.IsNullOrWhiteSpace(item.Content))
+                        stats[item.Content] = item.SourceRef ?? "";
+                }
+                if (stats.Count > 0)
+                    snapshot[section.TemplateSection.Title] = stats;
+            }
+        }
+
         var update = Builders<WeeklyReport>.Update
             .Set(r => r.Status, WeeklyReportStatus.Submitted)
             .Set(r => r.SubmittedAt, DateTime.UtcNow)
@@ -712,6 +862,9 @@ public class ReportAgentController : ControllerBase
             .Set(r => r.ReturnedByName, null as string)
             .Set(r => r.ReturnedAt, null as DateTime?)
             .Set(r => r.UpdatedAt, DateTime.UtcNow);
+
+        if (snapshot.Count > 0)
+            update = update.Set(r => r.StatsSnapshot, snapshot);
 
         await _db.WeeklyReports.UpdateOneAsync(r => r.Id == id, update);
 
@@ -910,6 +1063,8 @@ public class ReportAgentController : ControllerBase
     {
         public string? Role { get; set; }
         public string? JobTitle { get; set; }
+        /// <summary>多平台身份映射（v2.0）如 { "github": "zhangsan", "tapd": "zhangsan@company.com" }</summary>
+        public Dictionary<string, string>? IdentityMappings { get; set; }
     }
 
     public class CreateTemplateRequest
@@ -941,6 +1096,10 @@ public class ReportAgentController : ControllerBase
         public int? SortOrder { get; set; }
         public string? DataSourceHint { get; set; }
         public int? MaxItems { get; set; }
+        /// <summary>v2.0 板块类型：auto-stats / auto-list / manual-list / free-text</summary>
+        public string? SectionType { get; set; }
+        /// <summary>v2.0 关联的数据源类型（如 ["github", "tapd"]）</summary>
+        public List<string>? DataSources { get; set; }
     }
 
     public class CreateReportRequest
@@ -984,11 +1143,13 @@ public class ReportAgentController : ControllerBase
         public string? Content { get; set; }
         public string? Category { get; set; }
         public int? DurationMinutes { get; set; }
+        public DateTime? CreatedAt { get; set; }
     }
 
     public class CreateDataSourceRequest
     {
         public string TeamId { get; set; } = string.Empty;
+        public string SourceType { get; set; } = DataSourceType.Git;
         public string Name { get; set; } = string.Empty;
         public string RepoUrl { get; set; } = string.Empty;
         public string? AccessToken { get; set; }
@@ -1030,11 +1191,13 @@ public class ReportAgentController : ControllerBase
         var date = parsedDate.Date; // normalize to date only
         var userId = GetUserId();
 
+        var now = DateTime.UtcNow;
         var items = request.Items.Select(i => new DailyLogItem
         {
             Content = i.Content ?? string.Empty,
             Category = DailyLogCategory.All.Contains(i.Category ?? "") ? i.Category! : DailyLogCategory.Other,
-            DurationMinutes = i.DurationMinutes
+            DurationMinutes = i.DurationMinutes,
+            CreatedAt = i.CreatedAt ?? now
         }).Where(i => !string.IsNullOrWhiteSpace(i.Content)).ToList();
 
         if (items.Count == 0)
@@ -1133,6 +1296,166 @@ public class ReportAgentController : ControllerBase
 
     #endregion
 
+    #region Personal Sources (v2.0)
+
+    /// <summary>
+    /// 我的个人数据源列表
+    /// </summary>
+    [HttpGet("my/sources")]
+    public async Task<IActionResult> ListPersonalSources()
+    {
+        var svc = HttpContext.RequestServices.GetRequiredService<PersonalSourceService>();
+        var sources = await svc.ListAsync(GetUserId());
+
+        var cryptoKey = GetCryptoKey();
+        var items = sources.Select(s => new
+        {
+            s.Id,
+            s.SourceType,
+            s.DisplayName,
+            s.Config,
+            tokenMasked = ApiKeyCrypto.Mask(
+                string.IsNullOrEmpty(s.EncryptedToken) ? null
+                : ApiKeyCrypto.Decrypt(s.EncryptedToken, cryptoKey)),
+            s.Enabled,
+            s.LastSyncAt,
+            s.LastSyncStatus,
+            s.LastSyncError,
+            s.CreatedAt
+        });
+
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>
+    /// 绑定个人数据源
+    /// </summary>
+    [HttpPost("my/sources")]
+    public async Task<IActionResult> CreatePersonalSource([FromBody] CreatePersonalSourceRequest req)
+    {
+        if (string.IsNullOrWhiteSpace(req.SourceType) || !PersonalSourceType.All.Contains(req.SourceType))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_SOURCE_TYPE", $"不支持的数据源类型: {req.SourceType}"));
+
+        var svc = HttpContext.RequestServices.GetRequiredService<PersonalSourceService>();
+        var source = await svc.CreateAsync(
+            GetUserId(),
+            req.SourceType,
+            req.DisplayName ?? req.SourceType,
+            new PersonalSourceConfig
+            {
+                RepoUrl = req.RepoUrl,
+                Username = req.Username,
+                SpaceId = req.SpaceId,
+                ApiEndpoint = req.ApiEndpoint
+            },
+            req.Token);
+
+        return Ok(ApiResponse<object>.Ok(new { source = new { source.Id, source.SourceType, source.DisplayName } }));
+    }
+
+    /// <summary>
+    /// 更新个人数据源
+    /// </summary>
+    [HttpPut("my/sources/{id}")]
+    public async Task<IActionResult> UpdatePersonalSource(string id, [FromBody] UpdatePersonalSourceRequest req)
+    {
+        var svc = HttpContext.RequestServices.GetRequiredService<PersonalSourceService>();
+        PersonalSourceConfig? config = (req.RepoUrl != null || req.Username != null || req.SpaceId != null || req.ApiEndpoint != null)
+            ? new PersonalSourceConfig
+            {
+                RepoUrl = req.RepoUrl,
+                Username = req.Username,
+                SpaceId = req.SpaceId,
+                ApiEndpoint = req.ApiEndpoint
+            }
+            : null;
+
+        var ok = await svc.UpdateAsync(id, GetUserId(), req.DisplayName, config, req.Token, req.Enabled);
+        if (!ok)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "数据源不存在"));
+
+        return Ok(ApiResponse<object>.Ok(new { updated = true }));
+    }
+
+    /// <summary>
+    /// 解绑个人数据源
+    /// </summary>
+    [HttpDelete("my/sources/{id}")]
+    public async Task<IActionResult> DeletePersonalSource(string id)
+    {
+        var svc = HttpContext.RequestServices.GetRequiredService<PersonalSourceService>();
+        var ok = await svc.DeleteAsync(id, GetUserId());
+        if (!ok)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "数据源不存在"));
+
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    /// <summary>
+    /// 测试个人数据源连接
+    /// </summary>
+    [HttpPost("my/sources/{id}/test")]
+    public async Task<IActionResult> TestPersonalSource(string id, CancellationToken ct)
+    {
+        var svc = HttpContext.RequestServices.GetRequiredService<PersonalSourceService>();
+        var ok = await svc.TestConnectionAsync(id, GetUserId(), ct);
+        return Ok(ApiResponse<object>.Ok(new { connected = ok }));
+    }
+
+    /// <summary>
+    /// 手动同步个人数据源
+    /// </summary>
+    [HttpPost("my/sources/{id}/sync")]
+    public async Task<IActionResult> SyncPersonalSource(string id, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var wy = ISOWeek.GetYear(now);
+        var wn = ISOWeek.GetWeekOfYear(now);
+        var weekStart = ISOWeek.ToDateTime(wy, wn, DayOfWeek.Monday);
+        var weekEnd = weekStart.AddDays(6).AddHours(23).AddMinutes(59);
+
+        var svc = HttpContext.RequestServices.GetRequiredService<PersonalSourceService>();
+        var stats = await svc.SyncAsync(id, GetUserId(), weekStart, weekEnd, ct);
+
+        if (stats == null)
+            return Ok(ApiResponse<object>.Ok(new { synced = false, error = "同步失败，请检查数据源配置" }));
+
+        return Ok(ApiResponse<object>.Ok(new { synced = true, stats = new { stats.Summary, detailCount = stats.Details.Count } }));
+    }
+
+    /// <summary>
+    /// 我的本周统计预览
+    /// </summary>
+    [HttpGet("my/stats")]
+    public async Task<IActionResult> GetMyStats([FromQuery] int? weekYear, [FromQuery] int? weekNumber, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var wy = weekYear ?? ISOWeek.GetYear(now);
+        var wn = weekNumber ?? ISOWeek.GetWeekOfYear(now);
+        var weekStart = ISOWeek.ToDateTime(wy, wn, DayOfWeek.Monday);
+        var weekEnd = weekStart.AddDays(6).AddHours(23).AddMinutes(59);
+
+        var svc = HttpContext.RequestServices.GetRequiredService<PersonalSourceService>();
+        var allStats = await svc.CollectAllAsync(GetUserId(), weekStart, weekEnd, ct);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            weekYear = wy,
+            weekNumber = wn,
+            periodStart = weekStart,
+            periodEnd = weekEnd,
+            sources = allStats.Select(s => new
+            {
+                s.SourceType,
+                s.Summary,
+                detailCount = s.Details.Count,
+                s.CollectedAt
+            })
+        }));
+    }
+
+    #endregion
+
     #region Data Sources
 
     /// <summary>
@@ -1204,9 +1527,14 @@ public class ReportAgentController : ControllerBase
             return Forbid();
         }
 
+        var sourceType = request.SourceType?.ToLowerInvariant() ?? DataSourceType.Git;
+        if (!DataSourceType.All.Contains(sourceType))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", $"不支持的数据源类型: {sourceType}"));
+
         var source = new ReportDataSource
         {
             TeamId = request.TeamId,
+            SourceType = sourceType,
             Name = request.Name,
             RepoUrl = request.RepoUrl,
             BranchFilter = request.BranchFilter,
@@ -1382,6 +1710,7 @@ public class ReportAgentController : ControllerBase
         return source.SourceType switch
         {
             DataSourceType.Git => new GitHubConnector(source, token, _db, _logger),
+            DataSourceType.Svn => new SvnConnector(source, token, _db, _logger),
             _ => throw new NotSupportedException($"数据源类型 {source.SourceType} 暂不支持")
         };
     }
@@ -1687,6 +2016,344 @@ public class ReportAgentController : ControllerBase
     }
 
     #endregion
+
+    #region Phase 4: History Trends
+
+    /// <summary>
+    /// 获取个人历史趋势数据（最近 N 周）
+    /// </summary>
+    [HttpGet("trends/personal")]
+    public async Task<IActionResult> GetPersonalTrends([FromQuery] int weeks = 12)
+    {
+        var userId = GetUserId();
+        weeks = Math.Clamp(weeks, 4, 52);
+        var now = DateTime.UtcNow;
+
+        var items = new List<object>();
+        for (var i = weeks - 1; i >= 0; i--)
+        {
+            var targetDate = now.AddDays(-7 * i);
+            var wy = ISOWeek.GetYear(targetDate);
+            var wn = ISOWeek.GetWeekOfYear(targetDate);
+            var monday = ISOWeek.ToDateTime(wy, wn, DayOfWeek.Monday);
+            var sunday = monday.AddDays(6);
+
+            // 周报状态
+            var report = await _db.WeeklyReports.Find(
+                r => r.UserId == userId && r.WeekYear == wy && r.WeekNumber == wn
+            ).FirstOrDefaultAsync();
+
+            // 提交记录数
+            var commitCount = await _db.ReportCommits.CountDocumentsAsync(
+                c => c.MappedUserId == userId && c.CommittedAt >= monday && c.CommittedAt <= sunday.AddDays(1));
+
+            // 每日打点天数
+            var dailyLogDays = await _db.ReportDailyLogs.CountDocumentsAsync(
+                d => d.UserId == userId && d.Date >= monday && d.Date <= sunday.AddDays(1));
+
+            items.Add(new
+            {
+                weekYear = wy,
+                weekNumber = wn,
+                periodStart = monday,
+                periodEnd = sunday,
+                reportStatus = report?.Status ?? WeeklyReportStatus.NotStarted,
+                sectionCount = report?.Sections.Sum(s => s.Items.Count) ?? 0,
+                commitCount,
+                dailyLogDays,
+                submittedAt = report?.SubmittedAt,
+            });
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { items, weeks }));
+    }
+
+    /// <summary>
+    /// 获取团队历史趋势数据（最近 N 周）
+    /// </summary>
+    [HttpGet("trends/team/{teamId}")]
+    public async Task<IActionResult> GetTeamTrends(string teamId, [FromQuery] int weeks = 12)
+    {
+        var userId = GetUserId();
+        if (!await IsTeamLeaderOrDeputy(teamId, userId) &&
+            !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权查看团队趋势"));
+
+        weeks = Math.Clamp(weeks, 4, 52);
+        var now = DateTime.UtcNow;
+
+        var members = await _db.ReportTeamMembers.Find(m => m.TeamId == teamId).ToListAsync();
+        var memberCount = members.Count;
+
+        var items = new List<object>();
+        for (var i = weeks - 1; i >= 0; i--)
+        {
+            var targetDate = now.AddDays(-7 * i);
+            var wy = ISOWeek.GetYear(targetDate);
+            var wn = ISOWeek.GetWeekOfYear(targetDate);
+            var monday = ISOWeek.ToDateTime(wy, wn, DayOfWeek.Monday);
+            var sunday = monday.AddDays(6);
+
+            var reports = await _db.WeeklyReports.Find(
+                r => r.TeamId == teamId && r.WeekYear == wy && r.WeekNumber == wn
+            ).ToListAsync();
+
+            var submittedCount = reports.Count(r =>
+                r.Status == WeeklyReportStatus.Submitted ||
+                r.Status == WeeklyReportStatus.Reviewed);
+            var reviewedCount = reports.Count(r => r.Status == WeeklyReportStatus.Reviewed);
+            var overdueCount = reports.Count(r => r.Status == WeeklyReportStatus.Overdue);
+
+            // 团队提交记录数
+            var memberIds = members.Select(m => m.UserId).ToList();
+            var commitCount = await _db.ReportCommits.CountDocumentsAsync(
+                c => memberIds.Contains(c.MappedUserId!) && c.CommittedAt >= monday && c.CommittedAt <= sunday.AddDays(1));
+
+            items.Add(new
+            {
+                weekYear = wy,
+                weekNumber = wn,
+                periodStart = monday,
+                periodEnd = sunday,
+                memberCount,
+                submittedCount,
+                reviewedCount,
+                overdueCount,
+                submissionRate = memberCount > 0 ? Math.Round((double)submittedCount / memberCount * 100, 1) : 0,
+                commitCount,
+            });
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { items, weeks, teamId }));
+    }
+
+    #endregion
+
+    #region Phase 4: Export
+
+    /// <summary>
+    /// 导出周报为 Markdown
+    /// </summary>
+    [HttpGet("reports/{id}/export/markdown")]
+    public async Task<IActionResult> ExportReportMarkdown(string id)
+    {
+        var userId = GetUserId();
+        var report = await _db.WeeklyReports.Find(r => r.Id == id).FirstOrDefaultAsync();
+        if (report == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "周报不存在"));
+
+        // 验证可见性
+        if (report.UserId != userId &&
+            !await IsTeamLeaderOrDeputy(report.TeamId, userId) &&
+            !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权导出该周报"));
+
+        var md = BuildMarkdownExport(report);
+        var fileName = $"周报_{report.UserName ?? report.UserId}_{report.WeekYear}W{report.WeekNumber:D2}.md";
+
+        return File(System.Text.Encoding.UTF8.GetBytes(md), "text/markdown; charset=utf-8", fileName);
+    }
+
+    /// <summary>
+    /// 导出团队汇总为 Markdown
+    /// </summary>
+    [HttpGet("teams/{teamId}/summary/export/markdown")]
+    public async Task<IActionResult> ExportTeamSummaryMarkdown(string teamId,
+        [FromQuery] int? weekYear, [FromQuery] int? weekNumber)
+    {
+        var userId = GetUserId();
+        if (!await IsTeamLeaderOrDeputy(teamId, userId) &&
+            !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权导出团队汇总"));
+
+        var now = DateTime.UtcNow;
+        var wy = weekYear ?? ISOWeek.GetYear(now);
+        var wn = weekNumber ?? ISOWeek.GetWeekOfYear(now);
+
+        var summary = await _db.ReportTeamSummaries.Find(
+            s => s.TeamId == teamId && s.WeekYear == wy && s.WeekNumber == wn
+        ).FirstOrDefaultAsync();
+
+        if (summary == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "暂无团队汇总数据"));
+
+        var md = BuildTeamSummaryMarkdown(summary);
+        var fileName = $"团队汇总_{summary.TeamName}_{wy}W{wn:D2}.md";
+
+        return File(System.Text.Encoding.UTF8.GetBytes(md), "text/markdown; charset=utf-8", fileName);
+    }
+
+    private static string BuildMarkdownExport(WeeklyReport report)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"# 周报 — {report.UserName ?? report.UserId}");
+        sb.AppendLine();
+        sb.AppendLine($"- **周期**：{report.WeekYear} 年第 {report.WeekNumber} 周（{report.PeriodStart:yyyy-MM-dd} ~ {report.PeriodEnd:yyyy-MM-dd}）");
+        sb.AppendLine($"- **团队**：{report.TeamName ?? report.TeamId}");
+        sb.AppendLine($"- **状态**：{report.Status}");
+        if (report.SubmittedAt.HasValue)
+            sb.AppendLine($"- **提交时间**：{report.SubmittedAt:yyyy-MM-dd HH:mm}");
+        sb.AppendLine();
+        sb.AppendLine("---");
+        sb.AppendLine();
+
+        foreach (var section in report.Sections)
+        {
+            sb.AppendLine($"## {section.TemplateSection.Title}");
+            sb.AppendLine();
+
+            if (section.Items.Count == 0)
+            {
+                sb.AppendLine("_（暂无内容）_");
+            }
+            else
+            {
+                foreach (var item in section.Items)
+                {
+                    var source = item.Source != "manual" ? $" `[{item.Source}]`" : "";
+                    sb.AppendLine($"- {item.Content}{source}");
+                }
+            }
+            sb.AppendLine();
+        }
+
+        sb.AppendLine("---");
+        sb.AppendLine($"_导出时间：{DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC_");
+        return sb.ToString();
+    }
+
+    private static string BuildTeamSummaryMarkdown(TeamSummary summary)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"# 团队周报汇总 — {summary.TeamName}");
+        sb.AppendLine();
+        sb.AppendLine($"- **周期**：{summary.WeekYear} 年第 {summary.WeekNumber} 周（{summary.PeriodStart:yyyy-MM-dd} ~ {summary.PeriodEnd:yyyy-MM-dd}）");
+        sb.AppendLine($"- **成员数**：{summary.MemberCount}，已提交：{summary.SubmittedCount}");
+        sb.AppendLine($"- **生成人**：{summary.GeneratedByName}");
+        sb.AppendLine($"- **生成时间**：{summary.GeneratedAt:yyyy-MM-dd HH:mm}");
+        sb.AppendLine();
+        sb.AppendLine("---");
+        sb.AppendLine();
+
+        foreach (var section in summary.Sections)
+        {
+            sb.AppendLine($"## {section.Title}");
+            sb.AppendLine();
+            foreach (var item in section.Items)
+            {
+                sb.AppendLine($"- {item}");
+            }
+            sb.AppendLine();
+        }
+
+        sb.AppendLine("---");
+        sb.AppendLine($"_导出时间：{DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC_");
+        return sb.ToString();
+    }
+
+    #endregion
+
+    #region Phase 4: Holiday / Vacation
+
+    /// <summary>
+    /// 标记成员本周请假（团队负责人操作）
+    /// </summary>
+    [HttpPost("teams/{teamId}/members/{userId}/vacation")]
+    public async Task<IActionResult> MarkVacation(string teamId, string userId,
+        [FromBody] MarkVacationRequest req)
+    {
+        var currentUserId = GetUserId();
+
+        if (!await IsTeamLeaderOrDeputy(teamId, currentUserId) &&
+            !HasPermission(AdminPermissionCatalog.ReportAgentTeamManage))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只有团队负责人可以标记请假"));
+
+        if (!await IsTeamMember(teamId, userId))
+            return BadRequest(ApiResponse<object>.Fail("NOT_FOUND", "该用户不是团队成员"));
+
+        var now = DateTime.UtcNow;
+        var wy = req.WeekYear ?? ISOWeek.GetYear(now);
+        var wn = req.WeekNumber ?? ISOWeek.GetWeekOfYear(now);
+
+        // 查看该周是否已有周报
+        var existingReport = await _db.WeeklyReports.Find(
+            r => r.UserId == userId && r.TeamId == teamId && r.WeekYear == wy && r.WeekNumber == wn
+        ).FirstOrDefaultAsync();
+
+        if (existingReport != null &&
+            (existingReport.Status == WeeklyReportStatus.Submitted || existingReport.Status == WeeklyReportStatus.Reviewed))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_REQUEST", "该周报已提交/审阅，无法标记请假"));
+
+        // 如果已有 draft/overdue 周报，删除
+        if (existingReport != null)
+        {
+            await _db.WeeklyReports.DeleteOneAsync(r => r.Id == existingReport.Id);
+        }
+
+        // 创建请假标记周报（特殊 status = vacation）
+        var monday = ISOWeek.ToDateTime(wy, wn, DayOfWeek.Monday);
+        var sunday = monday.AddDays(6);
+        var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
+
+        var vacationReport = new WeeklyReport
+        {
+            UserId = userId,
+            UserName = user?.DisplayName,
+            AvatarFileName = user?.AvatarFileName,
+            TeamId = teamId,
+            TeamName = (await _db.ReportTeams.Find(t => t.Id == teamId).FirstOrDefaultAsync())?.Name,
+            TemplateId = "",
+            WeekYear = wy,
+            WeekNumber = wn,
+            PeriodStart = monday,
+            PeriodEnd = sunday,
+            Status = "vacation",
+            Sections = new List<WeeklyReportSection>
+            {
+                new() {
+                    TemplateSection = new ReportTemplateSection { Title = "请假说明" },
+                    Items = new List<WeeklyReportItem>
+                    {
+                        new() { Content = req.Reason ?? "本周请假", Source = "system" }
+                    }
+                }
+            }
+        };
+
+        await _db.WeeklyReports.InsertOneAsync(vacationReport);
+
+        return Ok(ApiResponse<object>.Ok(new { report = vacationReport }));
+    }
+
+    /// <summary>
+    /// 取消请假标记
+    /// </summary>
+    [HttpDelete("teams/{teamId}/members/{userId}/vacation")]
+    public async Task<IActionResult> CancelVacation(string teamId, string userId,
+        [FromQuery] int? weekYear, [FromQuery] int? weekNumber)
+    {
+        var currentUserId = GetUserId();
+
+        if (!await IsTeamLeaderOrDeputy(teamId, currentUserId) &&
+            !HasPermission(AdminPermissionCatalog.ReportAgentTeamManage))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只有团队负责人可以取消请假标记"));
+
+        var now = DateTime.UtcNow;
+        var wy = weekYear ?? ISOWeek.GetYear(now);
+        var wn = weekNumber ?? ISOWeek.GetWeekOfYear(now);
+
+        var result = await _db.WeeklyReports.DeleteOneAsync(
+            r => r.UserId == userId && r.TeamId == teamId &&
+                 r.WeekYear == wy && r.WeekNumber == wn &&
+                 r.Status == "vacation");
+
+        if (result.DeletedCount == 0)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "未找到请假标记"));
+
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    #endregion
 }
 
 public class CreateCommentRequest
@@ -1694,4 +2361,34 @@ public class CreateCommentRequest
     public int SectionIndex { get; set; }
     public string Content { get; set; } = string.Empty;
     public string? ParentCommentId { get; set; }
+}
+
+public class MarkVacationRequest
+{
+    public int? WeekYear { get; set; }
+    public int? WeekNumber { get; set; }
+    public string? Reason { get; set; }
+}
+
+// v2.0 Personal Source DTOs
+public class CreatePersonalSourceRequest
+{
+    public string SourceType { get; set; } = string.Empty;
+    public string? DisplayName { get; set; }
+    public string? Token { get; set; }
+    public string? RepoUrl { get; set; }
+    public string? Username { get; set; }
+    public string? SpaceId { get; set; }
+    public string? ApiEndpoint { get; set; }
+}
+
+public class UpdatePersonalSourceRequest
+{
+    public string? DisplayName { get; set; }
+    public string? Token { get; set; }
+    public bool? Enabled { get; set; }
+    public string? RepoUrl { get; set; }
+    public string? Username { get; set; }
+    public string? SpaceId { get; set; }
+    public string? ApiEndpoint { get; set; }
 }

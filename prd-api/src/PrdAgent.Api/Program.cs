@@ -159,6 +159,9 @@ builder.Services.AddScoped<OpenAIImageClient>();
 builder.Services.AddSingleton<WatermarkFontRegistry>();
 builder.Services.AddSingleton<WatermarkRenderer>();
 
+// 视频生成领域服务（供 Controller + 工作流胶囊复用）
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IVideoGenService, PrdAgent.Infrastructure.Services.VideoGenService>();
+
 // Account Data Transfer 数据分享
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.WorkspaceCloneService>();
 // 资产披露 Provider（IAssetProvider 被动注册 — 新模块只需实现接口并在此注册）
@@ -166,6 +169,8 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Inf
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.AttachmentAssetProvider>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.PrdDocumentAssetProvider>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.VideoAssetProvider>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.WebPageAssetProvider>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteService, PrdAgent.Infrastructure.Services.HostedSiteService>();
 
 // Visual Agent 多图组合服务（图片描述提取 + 多图意图解析）
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.VisualAgent.IImageDescriptionService, PrdAgent.Infrastructure.Services.VisualAgent.ImageDescriptionService>();
@@ -199,9 +204,13 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.ChatRunWorker>();
 
 // 工作流后台执行器（DAG 拓扑排序 → 逐节点推进）
 builder.Services.AddHostedService<PrdAgent.Api.Services.WorkflowRunWorker>();
+builder.Services.AddScoped<PrdAgent.Api.Services.WorkflowAiFillService>();
 
 // 视频生成后台执行器（文章→脚本→Remotion渲染→字幕→打包）
 builder.Services.AddHostedService<PrdAgent.Api.Services.VideoGenRunWorker>();
+
+// 视频转文档后台执行器（视频→音频提取→STT转写→多模态LLM分析→Markdown文档）
+builder.Services.AddHostedService<PrdAgent.Api.Services.VideoToDocRunWorker>();
 
 // 竞技场 Run 后台执行器（多模型并行 + afterSeq 断线重连）
 builder.Services.AddHostedService<PrdAgent.Api.Services.ArenaRunWorker>();
@@ -231,6 +240,10 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.ReportAgent.ReportAutoGe
 // Report Agent Phase 3: 管理增强服务
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ReportNotificationService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.TeamSummaryService>();
+// Report Agent v2.0: 工作流管道 + 个人数据源
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IWorkflowExecutionService, PrdAgent.Api.Services.ReportAgent.WorkflowExecutionService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ArtifactStatsParser>();
+builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.PersonalSourceService>();
 
 // Defect Agent: 催办 Worker + Webhook 通知服务
 builder.Services.AddHostedService<PrdAgent.Api.Services.DefectAgent.DefectEscalationWorker>();

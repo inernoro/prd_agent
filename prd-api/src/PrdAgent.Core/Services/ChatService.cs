@@ -100,9 +100,15 @@ public class ChatService : IChatService
         // 回答机器人/提示词选择角色：优先使用调用方传入（例如按群成员身份决定），否则回退到 session 的 CurrentRole（兼容历史）。
         var effectiveAnswerRole = answerAsRole ?? session.CurrentRole;
 
-        // 获取文档
-        var document = await _documentService.GetByIdAsync(session.DocumentId);
-        if (document == null)
+        // 获取文档（多文档支持）
+        var allDocIds = session.GetAllDocumentIds();
+        var documents = new List<ParsedPrd>();
+        foreach (var docId in allDocIds)
+        {
+            var doc = await _documentService.GetByIdAsync(docId);
+            if (doc != null) documents.Add(doc);
+        }
+        if (documents.Count == 0)
         {
             yield return new ChatStreamEvent
             {
@@ -112,6 +118,8 @@ public class ChatService : IChatService
             };
             yield break;
         }
+        // 主文档（用于兼容需要单文档引用的场景：hash、charCount 等）
+        var document = documents[0];
 
         // 获取发送者信息
         SenderInfo? senderInfo = null;
@@ -195,20 +203,48 @@ public class ChatService : IChatService
             }
         }
 
-        // 获取对话历史（disableGroupContext=true 时跳过，仅使用系统提示词+PRD+当前消息）
+        // === 渐进式上下文组装（Token 预算管理） ===
+        // 总预算分配策略：
+        //   - 文档上下文：占总预算 60%
+        //   - 对话历史：占总预算 30%
+        //   - 当前消息 + 系统提示词：占总预算 10%（不在此处管控）
+        const int TotalContextBudget = 100_000; // 约 100K tokens（适配主流 128K 上下文窗口）
+        const int DocBudget = 60_000;
+        const int HistoryBudget = 30_000;
+
+        // 构建 PRD 上下文（带 token 预算 + 文档类型加权）
+        var prdContext = documents.Count > 1
+            ? _promptManager.BuildMultiPrdContextMessage(documents, docId => session.GetDocumentType(docId), DocBudget)
+            : _promptManager.BuildMultiPrdContextMessage(documents);
+
         var messages = new List<LLMMessage>
         {
-            // 首条 user message：PRD 资料（日志侧会按标记脱敏，不落库 PRD 原文）
-            new() { Role = "user", Content = _promptManager.BuildPrdContextMessage(document.RawContent) }
+            // 首条 user message：PRD 资料（多文档合并；日志侧会按标记脱敏，不落库 PRD 原文）
+            new() { Role = "user", Content = prdContext }
         };
+
         if (!disableGroupContext)
         {
-            var history = await GetHistoryAsync(sessionId, 20);
-            messages.AddRange(history.Select(m => new LLMMessage
+            // 动态历史窗口：基于 token 预算而非固定条数
+            var history = await GetHistoryAsync(sessionId, 50); // 取较多条，由 token 预算裁剪
+            var historyTokensUsed = 0;
+            var trimmedHistory = new List<LLMMessage>();
+            // 从最新往最旧遍历，优先保留最近消息
+            foreach (var m in ((IEnumerable<Message>)history).Reverse())
             {
-                Role = m.Role == MessageRole.User ? "user" : "assistant",
-                Content = m.Content
-            }));
+                var tokenEstimate = (int)Math.Ceiling((m.Content?.Length ?? 0) / 3.0);
+                if (historyTokensUsed + tokenEstimate > HistoryBudget)
+                    break;
+                trimmedHistory.Add(new LLMMessage
+                {
+                    Role = m.Role == MessageRole.User ? "user" : "assistant",
+                    Content = m.Content
+                });
+                historyTokensUsed += tokenEstimate;
+            }
+            // 恢复时间顺序（从旧到新）
+            trimmedHistory.Reverse();
+            messages.AddRange(trimmedHistory);
         }
 
         // 添加当前消息
@@ -239,7 +275,7 @@ public class ChatService : IChatService
             SessionId: sessionId,
             UserId: userId,
             ViewRole: effectiveAnswerRole.ToString(),
-            DocumentChars: document.RawContent?.Length ?? 0,
+            DocumentChars: documents.Sum(d => d.RawContent?.Length ?? 0),
             DocumentHash: docHash,
             SystemPromptRedacted: systemPromptRedacted,
             RequestType: "reasoning",

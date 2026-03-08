@@ -1,6 +1,6 @@
 # 周报 Agent — 实施进度追踪
 
-> **最后更新**：2026-02-27 | **当前阶段**：Phase 3 ✅ → Phase 4 待启动
+> **最后更新**：2026-03-07 | **当前阶段**：Phase 6-7 ✅ DONE
 >
 > **用途**：跨 session 的实施进度单一信息源。新 session 读此文档即可恢复上下文，无需全盘扫描。
 >
@@ -19,7 +19,11 @@
 | 1 | 基础闭环 | ✅ DONE | `46c6d15` | 2026-02-24 |
 | 2 | 自动采集 | ✅ DONE | `ffce7fd` | 2026-02-26 |
 | 3 | 管理增强 | ✅ DONE | `005de06` | 2026-02-27 |
-| 4 | 体验优化 | 🔵 PLANNED | — | — |
+| 4 | 体验优化 | ✅ DONE | — | 2026-03-01 |
+| PRD v2.0 | Workflow as Data Pipeline PRD | ✅ DONE | — | 2026-03-05 |
+| 5 | Workflow 管道 + 个人数据源 | ✅ DONE | `0c3e00f` | 2026-03-05 |
+| 6 | 模板 + 生成引擎适配 | ✅ DONE | — | 2026-03-07 |
+| 7 | UI + 团队仪表盘 | ✅ DONE | — | 2026-03-07 |
 
 ---
 
@@ -197,19 +201,194 @@
 
 ---
 
-## Phase 4：体验优化 — 🔵 PLANNED
+## Phase 4：体验优化 — ✅ DONE
 
-> 来源：PRD `doc/agent.report-agent.md` §八 Phase 4
+> 完成日期: 2026-03-01
+> 功能：SVN 连接器 + 历史趋势 + Markdown 导出 + 假期标记
 
-### 待实现
+### 交付物
 
-| 功能点 | 说明 |
-|--------|------|
-| SVN 连接器 | 扩展 `ICodeSourceConnector` 实现 SVN |
-| 历史趋势 | 个人/团队趋势图表 |
-| 导出功能 | PDF / Markdown 导出 |
-| 桌面端打点 | Tauri 托盘快捷打点 |
-| 假期/补报 | 请假标记、补报流程 |
+**后端新增 — 服务 (1 个)**：
+- `SvnConnector.cs` — SVN 仓库连接器（`ICodeSourceConnector` 实现，CLI `svn log --xml` 方式）
+
+**后端修改**：
+- `ReportAgentController.cs` — +8 端点（趋势 2 + 导出 2 + 假期 2 + 创建数据源 sourceType 支持），+MarkVacationRequest DTO
+- `WeeklyReport.cs` — +Vacation 状态常量
+- `GitSyncWorker.cs` — 扩展支持 SVN 数据源同步
+- `CreateDataSourceRequest` — +SourceType 字段
+
+**前端新增**：
+- `HistoryTrendsPanel.tsx` — 个人/团队历史趋势图表（柱状图 + 统计卡片，~280 行）
+
+**前端修改**：
+- `DataSourceManager.tsx` — +SVN 类型选择器 +类型标签显示 +动态占位文案
+- `ReportDetailPanel.tsx` — +Markdown 导出按钮
+- `TeamDashboard.tsx` — +假期标记/取消 +团队汇总导出 +Vacation 状态配置
+- `ReportAgentPage.tsx` — +数据统计 Tab（HistoryTrendsPanel）
+- `contracts/reportAgent.ts` — +PersonalTrendItem/TeamTrendItem 类型 +6 contract types +Vacation 状态 +sourceType
+- `real/reportAgent.ts` — +6 API 实现（趋势/导出/假期）
+- `reportAgentStore.ts` — +trends TabKey
+- `services/index.ts` — +6 导出
+
+### API 端点清单（Phase 4 新增 8 个）
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/report-agent/trends/personal` | GET | 个人历史趋势（?weeks=12） |
+| `/api/report-agent/trends/team/{teamId}` | GET | 团队历史趋势（?weeks=12） |
+| `/api/report-agent/reports/{id}/export/markdown` | GET | 周报 Markdown 导出 |
+| `/api/report-agent/teams/{teamId}/summary/export/markdown` | GET | 团队汇总 Markdown 导出 |
+| `/api/report-agent/teams/{teamId}/members/{userId}/vacation` | POST | 标记请假 |
+| `/api/report-agent/teams/{teamId}/members/{userId}/vacation` | DELETE | 取消请假 |
+
+### 架构决策
+
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| SVN 接入方式 | CLI `svn log --xml` | 无 C# SVN 库依赖，XML 输出易解析 |
+| 趋势数据 | 实时聚合查询 | 数据量可控（12-52 周），避免额外缓存 |
+| 导出格式 | Markdown（非 PDF） | 轻量级、无额外库依赖、GitHub 友好 |
+| 假期实现 | 特殊 WeeklyReport (status=vacation) | 复用现有数据模型，Dashboard 自动兼容 |
+| 桌面端打点 | 🔵 延后 | 需要 Tauri 环境，独立实现 |
+
+### 未实现
+
+| 功能点 | 状态 | 说明 |
+|--------|------|------|
+| 桌面端打点 | 🔵 延后 | 依赖 Tauri 环境，需独立实现 |
+
+---
+
+## Phase 5：Workflow 管道 + 个人数据源 — ✅ DONE
+
+> Commit: `0c3e00f` (2026-03-05)
+> 功能：工作流引擎对接 + Artifact 解析 + 成员身份映射 + 个人数据源 + V2.0 生成引擎
+> 用户故事文档：`doc/story.report-agent-phase5.md` (11 个用户故事, 14 个单元测试)
+
+### 交付物
+
+**后端新增 — 模型 (2 个文件)**：
+- `PersonalSource.cs` — 个人数据源模型 (PersonalSource + PersonalSourceConfig + PersonalSourceType + PersonalSourceSyncStatus)
+- `ReportCollectedStats.cs` — 采集统计模型 (TeamCollectedStats + SourceStats + StatsDetail + MemberCollectedStats)
+
+**后端新增 — 接口 (1 个)**：
+- `IWorkflowExecutionService.cs` — 内部工作流执行接口 (ExecuteInternalAsync + WaitForCompletionAsync)
+
+**后端新增 — 服务 (3 个文件)**：
+- `WorkflowExecutionService.cs` — 工作流执行服务（变量注入 + 入队 + 渐进轮询等待）
+- `ArtifactStatsParser.cs` — Artifact 解析器 (Parse + SplitByMember + RecalculateSummary)
+- `PersonalSourceConnectors.cs` — 个人数据源连接器 (IPersonalSourceConnector + PersonalGitHubConnector + PersonalYuqueConnector)
+- `PersonalSourceService.cs` — 个人数据源 CRUD + 连接测试 + 同步 + 统计聚合
+
+**后端修改**：
+- `ReportTeam.cs` — +2 字段 (DataCollectionWorkflowId, WorkflowTemplateKey)
+- `ReportTeamMember.cs` — +1 字段 (IdentityMappings)
+- `WeeklyReport.cs` — +2 字段 (WorkflowExecutionId, StatsSnapshot) + Viewed 状态
+- `ReportGenerationService.cs` — +V2.0 生成引擎 (GenerateForTeamV2Async + GenerateForMemberV2Async + FindTemplateAsync + BuildUserPromptV2)
+- `ReportAgentController.cs` — +10 个端点 (身份映射 + 工作流 + 个人数据源)
+- `MongoDbContext.cs` — +1 集合 (report_personal_sources) +1 复合索引
+- `Program.cs` — +3 DI 注册
+
+**单元测试**：
+- `ReportAgentV2Tests.cs` — 14 个测试用例（模型验证 + Artifact 解析 + 成员拆分 + 快照）
+
+**DB 新增集合**: `report_personal_sources`
+
+### API 端点清单（Phase 5 新增 10 个）
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/report-agent/teams/{id}/members/{userId}/identity-mappings` | PUT | 更新成员身份映射 |
+| `/api/report-agent/teams/{id}/workflow` | GET | 团队采集工作流信息 |
+| `/api/report-agent/teams/{id}/workflow/run` | POST | 手动触发采集 |
+| `/api/report-agent/my/sources` | GET | 我的数据源列表 |
+| `/api/report-agent/my/sources` | POST | 绑定数据源 |
+| `/api/report-agent/my/sources/{id}` | PUT | 更新数据源 |
+| `/api/report-agent/my/sources/{id}` | DELETE | 解绑数据源 |
+| `/api/report-agent/my/sources/{id}/test` | POST | 测试连接 |
+| `/api/report-agent/my/sources/{id}/sync` | POST | 手动同步 |
+| `/api/report-agent/my/stats` | GET | 本周统计预览 |
+
+### 架构决策
+
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| 数据采集方式 | 复用工作流引擎 (非自建 Connector) | 工作流已有 TapdCollector/HttpRequest 等胶囊，避免重复 |
+| 个人数据源 | 轻量 Connector 模式 (非工作流) | 配置简单，一个 Token 搞定，100 用户不需要 100 个工作流 |
+| Artifact 解析 | 静态方法 ArtifactStatsParser | 纯函数，无副作用，易测试 |
+| 成员拆分 | identity mapping + assignee 匹配 | 跨平台用户名不同，需要显式映射 |
+| Summary 重算 | 按 details 数量比例分配 | 无法精确还原每个成员的 summary，用比例近似 |
+| 模板查找 | 级联: 岗位 → 团队 → 系统默认 | 灵活度与简洁度平衡 |
+| 工作流等待 | 渐进轮询 2s→10s，最长 5min | 避免频繁 DB 查询，又不至于等太久 |
+| Token 存储 | AES-256 加密 (ApiKeyCrypto) | 复用已有加密基础设施 |
+
+---
+
+## Phase 6：模板 + 生成引擎适配 — ✅ DONE
+
+> 完成日期：2026-03-07
+
+### 目标
+
+将 v2.0 板块类型（SectionType）融入模板系统和 AI 生成引擎，支持系统预置模板和智能提示词生成。
+
+### 交付物
+
+| 类别 | 交付物 | 说明 |
+|------|--------|------|
+| 模型 | `ReportSectionType` 常量类 | `auto-stats`, `auto-list`, `manual-list`, `free-text` |
+| 模型 | `ReportTemplateSection.SectionType/DataSources` | 模板板块扩展字段 |
+| 模型 | `SystemTemplates` 静态工厂 | 3 个预置模板 (dev-general, product-general, minimal) |
+| 模型 | `ReportTemplate.IsSystem/TemplateKey` | 系统模板标识 + 幂等 Key |
+| API | `POST templates/seed` | 幂等种子模板接入端点 |
+| API | 模板删除保护 | `IsSystem=true` 禁止删除 |
+| API | `MapSection` 辅助方法 | DRY 化模板章节映射 |
+| 引擎 | SectionType 感知提示词 | `BuildUserPromptV2` 按板块类型输出不同 AI 指令 |
+| 引擎 | StatsSnapshot 采集 | 提交时自动采集 auto-stats 板块的 key-value 数据 |
+| 状态 | `WeeklyReportStatus.V2Simplified` | v2.0 精简状态集 (Draft, Submitted, Viewed) |
+
+### 架构决策
+
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| 系统模板存储 | DB + TemplateKey 幂等种子 | 支持管理员覆盖修改，seed 幂等不重复创建 |
+| SectionType 枚举 | 字符串常量 + All 列表校验 | 灵活扩展，前后端统一 |
+| StatsSnapshot 时机 | Submit 时一次性采集 | 历史切片，提交后不变 |
+| AI 提示词分支 | switch(sectionType) | 每种板块的 AI 指令完全不同 |
+
+---
+
+## Phase 7：UI + 团队仪表盘 — ✅ DONE
+
+> 完成日期：2026-03-07
+
+### 目标
+
+构建 v2.0 前端组件，包括个人数据源管理、工作流面板、身份映射编辑器，以及团队仪表盘中的工作流集成。
+
+### 交付物
+
+| 类别 | 交付物 | 说明 |
+|------|--------|------|
+| 页面 | `PersonalSourcesPanel` | 个人数据源 CRUD + 测试/同步/开关 |
+| 组件 | `TeamWorkflowPanel` | 工作流状态展示 + 手动触发执行 |
+| 组件 | `IdentityMappingEditor` | 4 平台身份映射 (github/tapd/yuque/gitlab) |
+| 组件 | `TeamStatsPanel` | 团队产出统计概览 + 成员表格 |
+| 集成 | `TeamDashboard` + WorkflowPanel | 工作流面板嵌入团队仪表盘 |
+| 集成 | `TeamManager` + IdentityMapping | 成员行添加身份映射入口 |
+| Tab | `my-sources` Tab | ReportAgentPage 新增"我的数据源"标签 |
+| 契约 | v2.0 前端契约类型 | PersonalSource, TeamWorkflowInfo 等完整类型 |
+| API | 11 个 real 实现 | personalSources CRUD, stats, workflow, identityMappings |
+| 路由 | v2.0 路由注册 | api.ts 新增 personalSources/workflow/identityMappings 路由 |
+
+### 架构决策
+
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| 数据源管理入口 | 独立 Tab (非弹窗) | 操作较多(CRUD+测试+同步)，弹窗放不下 |
+| 身份映射 | Modal 编辑器 | 操作简单(4 个输入框)，弹窗足够 |
+| 工作流面板位置 | 团队仪表盘 Controls 与 Stats 之间 | 逻辑上属于团队级别操作 |
+| TeamStatsPanel 独立 | 可复用独立组件 | 未来可在趋势页面复用 |
 
 ---
 
@@ -218,6 +397,8 @@
 | 文档 | 用途 |
 |------|------|
 | `doc/agent.report-agent.md` | PRD 产品需求（v1.0，定义 WHAT） |
+| `doc/agent.report-agent.v2.md` | PRD 产品需求（v2.0，Workflow as Data Pipeline） |
+| `doc/story.report-agent-phase5.md` | Phase 5 用户故事（11 个故事，14 个测试） |
 | `CLAUDE.md` 功能注册表 | 全局功能状态一览 |
 | `doc/rule.data-dictionary.md` | MongoDB 集合字段定义 |
 | `doc/rule.app-feature-definition.md` | AppCallerCode 定义 |

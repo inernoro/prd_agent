@@ -89,6 +89,8 @@
 | `defect_folders` | `DefectFolder` | 缺陷分组文件夹 | `ownerUserId` |
 | `defect_projects` | `DefectProject` | 缺陷项目维度（关联缺陷到项目） | `key` 唯一；`ownerUserId` |
 | `defect_webhook_configs` | `DefectWebhookConfig` | 缺陷事件 Webhook 推送配置（WeCom/DingTalk/Feishu/Custom） | `(teamId, projectId)` |
+| `hosted_sites` | `HostedSite` | 托管站点（用户上传 HTML/ZIP 或工作流生成的可运行网页） | `(ownerUserId, createdAt desc)`；`tags` 多值索引；`(ownerUserId, sourceType)`；`(ownerUserId, folder)` |
+| `web_page_share_links` | `WebPageShareLink` | 网页分享链接（Token + 密码保护 + 过期时间） | `token` 唯一；`(createdBy, createdAt desc)` |
 
 ---
 
@@ -151,6 +153,7 @@
 | `icon/desktop/{skin}/{key}.{ext}` | Desktop 皮肤资源 | `DesktopAsset.RelativePath` | `skin` 为皮肤名（如 `white`、`dark`），全小写；回退逻辑：若皮肤资源不存在，回退到默认 |
 | `icon/backups/head/nohead.png` | 头像兜底图（固定文件名） | - | 当用户头像不存在或加载失败时的兜底图 |
 | `icon/backups/head/{avatarFileName}` | 用户头像文件 | `User.AvatarFileName` | `avatarFileName` 格式为 `{usernameLower}.{ext}`（全小写），数据库只存文件名，服务端拼接完整 URL 下发 |
+| `web-hosting/sites/{siteId}/{filePath}` | 托管站点文件 | `HostedSite.Files[].CosKey` | 每个站点独立目录，不走 SHA 去重；`filePath` 为相对路径（如 `index.html`、`css/style.css`）；通过 `IAssetStorage.BuildSiteKey()` 生成 |
 
 **关键约束**：
 - **全小写**：所有 key 与 skin 名称必须全小写。

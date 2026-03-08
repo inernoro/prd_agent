@@ -6,6 +6,7 @@ public static class RunKinds
     public const string ImageGen = "imageGen";
     public const string Workflow = "workflow";
     public const string VideoGen = "videoGen";
+    public const string VideoToDoc = "videoToDoc";
     public const string Arena = "arena";
 }
 

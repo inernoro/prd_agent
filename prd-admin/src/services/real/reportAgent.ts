@@ -43,6 +43,23 @@ import type {
   GetPlanComparisonContract,
   GenerateTeamSummaryContract,
   GetTeamSummaryContract,
+  GetPersonalTrendsContract,
+  GetTeamTrendsContract,
+  MarkVacationContract,
+  CancelVacationContract,
+  ListPersonalSourcesContract,
+  CreatePersonalSourceContract,
+  UpdatePersonalSourceContract,
+  DeletePersonalSourceContract,
+  TestPersonalSourceContract,
+  SyncPersonalSourceContract,
+  GetPersonalStatsContract,
+  GetTeamWorkflowContract,
+  RunTeamWorkflowContract,
+  UpdateIdentityMappingsContract,
+  SeedSystemTemplatesContract,
+  PersonalTrendItem,
+  TeamTrendItem,
   DailyLog,
   ReportDataSource,
   ReportCommit,
@@ -56,6 +73,9 @@ import type {
   ReportComment,
   PlanComparison,
   TeamSummary,
+  PersonalSource,
+  PersonalStats,
+  TeamWorkflowInfo,
 } from '../contracts/reportAgent';
 
 // ========== Teams ==========
@@ -409,5 +429,164 @@ export const getTeamSummaryReal: GetTeamSummaryContract = async (input) => {
   return await apiRequest<{ summary: TeamSummary | null }>(
     `${api.reportAgent.teams.summary(encodeURIComponent(input.teamId))}${q ? `?${q}` : ''}`,
     { method: 'GET' }
+  );
+};
+
+// ========== Phase 4: History Trends ==========
+
+export const getPersonalTrendsReal: GetPersonalTrendsContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input?.weeks != null) qs.set('weeks', String(input.weeks));
+  const q = qs.toString();
+  return await apiRequest<{ items: PersonalTrendItem[]; weeks: number }>(
+    `${api.reportAgent.trends.personal()}${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
+};
+
+export const getTeamTrendsReal: GetTeamTrendsContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input.weeks != null) qs.set('weeks', String(input.weeks));
+  const q = qs.toString();
+  return await apiRequest<{ items: TeamTrendItem[]; weeks: number; teamId: string }>(
+    `${api.reportAgent.trends.team(encodeURIComponent(input.teamId))}${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
+};
+
+// ========== Phase 4: Export ==========
+
+export const exportReportMarkdownReal = async (input: { id: string }): Promise<Blob> => {
+  const token = localStorage.getItem('accessToken');
+  const res = await fetch(`${api.reportAgent.reports.byId(encodeURIComponent(input.id))}/export/markdown`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error('导出失败');
+  return res.blob();
+};
+
+export const exportTeamSummaryMarkdownReal = async (input: {
+  teamId: string; weekYear?: number; weekNumber?: number;
+}): Promise<Blob> => {
+  const qs = new URLSearchParams();
+  if (input.weekYear != null) qs.set('weekYear', String(input.weekYear));
+  if (input.weekNumber != null) qs.set('weekNumber', String(input.weekNumber));
+  const q = qs.toString();
+  const token = localStorage.getItem('accessToken');
+  const res = await fetch(
+    `${api.reportAgent.teams.summary(encodeURIComponent(input.teamId))}/export/markdown${q ? `?${q}` : ''}`,
+    { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+  );
+  if (!res.ok) throw new Error('导出失败');
+  return res.blob();
+};
+
+// ========== Phase 4: Vacation ==========
+
+export const markVacationReal: MarkVacationContract = async (input) => {
+  const { teamId, userId, ...body } = input;
+  return await apiRequest<{ report: WeeklyReport }>(
+    `/api/report-agent/teams/${encodeURIComponent(teamId)}/members/${encodeURIComponent(userId)}/vacation`,
+    { method: 'POST', body }
+  );
+};
+
+export const cancelVacationReal: CancelVacationContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input.weekYear != null) qs.set('weekYear', String(input.weekYear));
+  if (input.weekNumber != null) qs.set('weekNumber', String(input.weekNumber));
+  const q = qs.toString();
+  return await apiRequest<{ deleted: boolean }>(
+    `/api/report-agent/teams/${encodeURIComponent(input.teamId)}/members/${encodeURIComponent(input.userId)}/vacation${q ? `?${q}` : ''}`,
+    { method: 'DELETE' }
+  );
+};
+
+// ========== Phase 5/6 v2.0: Personal Sources ==========
+
+export const listPersonalSourcesReal: ListPersonalSourcesContract = async () => {
+  return await apiRequest<{ items: PersonalSource[] }>(api.reportAgent.personalSources.list(), { method: 'GET' });
+};
+
+export const createPersonalSourceReal: CreatePersonalSourceContract = async (input) => {
+  return await apiRequest<{ source: PersonalSource }>(api.reportAgent.personalSources.list(), {
+    method: 'POST',
+    body: input,
+  });
+};
+
+export const updatePersonalSourceReal: UpdatePersonalSourceContract = async (input) => {
+  const { id, ...body } = input;
+  return await apiRequest<{ source: PersonalSource }>(
+    api.reportAgent.personalSources.byId(encodeURIComponent(id)),
+    { method: 'PUT', body }
+  );
+};
+
+export const deletePersonalSourceReal: DeletePersonalSourceContract = async (input) => {
+  return await apiRequest<object>(
+    api.reportAgent.personalSources.byId(encodeURIComponent(input.id)),
+    { method: 'DELETE' }
+  );
+};
+
+export const testPersonalSourceReal: TestPersonalSourceContract = async (input) => {
+  return await apiRequest<{ success: boolean }>(
+    api.reportAgent.personalSources.test(encodeURIComponent(input.id)),
+    { method: 'POST' }
+  );
+};
+
+export const syncPersonalSourceReal: SyncPersonalSourceContract = async (input) => {
+  return await apiRequest<{ success: boolean }>(
+    api.reportAgent.personalSources.sync(encodeURIComponent(input.id)),
+    { method: 'POST' }
+  );
+};
+
+export const getPersonalStatsReal: GetPersonalStatsContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input?.weekYear != null) qs.set('weekYear', String(input.weekYear));
+  if (input?.weekNumber != null) qs.set('weekNumber', String(input.weekNumber));
+  const q = qs.toString();
+  return await apiRequest<PersonalStats>(
+    `${api.reportAgent.personalStats()}${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
+};
+
+// ========== Phase 5/6 v2.0: Team Workflow ==========
+
+export const getTeamWorkflowReal: GetTeamWorkflowContract = async (input) => {
+  return await apiRequest<TeamWorkflowInfo>(
+    api.reportAgent.teamWorkflow(encodeURIComponent(input.teamId)),
+    { method: 'GET' }
+  );
+};
+
+export const runTeamWorkflowReal: RunTeamWorkflowContract = async (input) => {
+  const { teamId, ...body } = input;
+  return await apiRequest<{ executionId: string }>(
+    api.reportAgent.teamWorkflowRun(encodeURIComponent(teamId)),
+    { method: 'POST', body }
+  );
+};
+
+// ========== Phase 5/6 v2.0: Identity Mappings ==========
+
+export const updateIdentityMappingsReal: UpdateIdentityMappingsContract = async (input) => {
+  const { teamId, userId, ...body } = input;
+  return await apiRequest<{ member: ReportTeamMember }>(
+    api.reportAgent.identityMappings(encodeURIComponent(teamId), encodeURIComponent(userId)),
+    { method: 'PUT', body }
+  );
+};
+
+// ========== Phase 6: Seed Templates ==========
+
+export const seedSystemTemplatesReal: SeedSystemTemplatesContract = async () => {
+  return await apiRequest<{ inserted: string[]; skipped: number }>(
+    api.reportAgent.seedTemplates(),
+    { method: 'POST' }
   );
 };

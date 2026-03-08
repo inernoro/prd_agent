@@ -1,3 +1,85 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+---
+
+## Build & Development Commands
+
+### Backend (prd-api/) — .NET 8, C# 12
+
+```bash
+cd prd-api
+dotnet restore
+dotnet build                             # Build all projects
+dotnet watch run --project src/PrdAgent.Api  # Dev server (port 5000)
+dotnet test PrdAgent.sln                 # Run all tests (xunit)
+dotnet test PrdAgent.sln --filter "Category!=Integration"  # Unit tests only
+dotnet test --filter "FullyQualifiedName~ClassName.MethodName"  # Single test
+```
+
+Docker build (no .NET SDK required): `./scripts/build-server-docker.sh`
+
+### Admin Web (prd-admin/) — React 18, Vite, TypeScript, Zustand, Radix UI
+
+```bash
+cd prd-admin
+pnpm install
+pnpm dev          # Dev server (port 8000, proxies /api → localhost:5000)
+pnpm build        # tsc && vite build → dist/
+pnpm lint         # ESLint
+pnpm tsc          # Type check only
+pnpm test         # vitest
+```
+
+### Desktop (prd-desktop/) — Tauri 2.0 (Rust + React)
+
+```bash
+cd prd-desktop
+pnpm install
+pnpm tauri:dev    # Dev with hot reload (port 1420)
+pnpm tauri:build  # Production bundle
+pnpm lint         # ESLint
+pnpm theme:scan   # Theme consistency check
+```
+
+Version must stay in sync across: `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`. Use `./quick.sh version vX.Y.Z` to sync.
+
+### Video (prd-video/) — Remotion 4.0
+
+```bash
+cd prd-video
+npm install
+npm start         # Remotion Studio
+npm run build     # Render to out/tutorial.mp4
+```
+
+### Docker Compose
+
+```bash
+docker compose -f docker-compose.dev.yml up -d --build  # Dev stack (all services)
+# Web: localhost:5500, API: localhost:5000, Mongo: localhost:18081, Redis: localhost:18082
+```
+
+### Quick Start (Windows)
+
+```powershell
+.\quick.ps1           # Backend only
+.\quick.ps1 all       # Server + desktop + admin
+.\quick.ps1 ci        # Full CI checks
+```
+
+# 前端包管理器规则
+
+**强制规则**：本项目所有 Node.js / 前端项目（`prd-admin`、`prd-desktop`、`prd-video` 等）统一使用 **pnpm**，禁止使用 npm 或 yarn。
+
+- 安装依赖：`pnpm install`
+- 添加依赖：`pnpm add <package>`
+- 运行脚本：`pnpm run <script>` 或 `pnpm <script>`
+- Lockfile：仅保留 `pnpm-lock.yaml`，禁止提交 `package-lock.json` 或 `yarn.lock`
+
+---
+
 # C# 代码静态分析规则
 
 **强制规则**：任何涉及 C#（`.cs` 文件）的改动，完成后**必须**使用 Roslyn 进行代码静态分析，确认零错误后才算完成。
@@ -23,6 +105,45 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 判断标准：
 - 涉及 **3 个以上文件变更**，或涉及 **新增/修改 API 端点**，或涉及 **UI 页面变更** → 生成完整交接清单（8 个维度）
 - 仅 **1-2 个文件的小修改**（如修个 typo、改个样式） → 不需要生成，直接告知改了什么即可
+
+---
+
+# 质量保障技能链
+
+> AI 辅助开发的完整质量保障流程，6 个技能覆盖从设计到上线的全生命周期。
+
+### 全景链路
+
+```
+设计阶段              实现阶段              验收阶段              上线阶段
+    │                    │                    │                    │
+ /risk                /trace               /verify              /handoff
+ 风险矩阵              路径追踪              交叉验证              交接清单
+ "有什么风险"          "怎么跑的"            "做对了吗"            "能上线吗"
+    │                    │                    │                    │
+    └──────── /smoke-test（冒烟测试，贯穿各阶段）─────────┘          │
+                                                              /weekly
+                                                              周报总结
+                                                             "做了什么"
+```
+
+### 技能速查表
+
+| 技能 | 触发词 | 用途 | 适合谁 |
+|------|--------|------|--------|
+| **risk-matrix** | "风险评估"、"/risk" | MECE 六维度风险评估（正确性/兼容性/性能/安全/运维/体验） | 技术负责人、架构师 |
+| **flow-trace** | "追踪"、"/trace" | 全链路数据流+控制流追踪，大白话输出路径图 | 产品、开发、新人 |
+| **human-verify** | "验证一下"、"/verify" | 多角度模拟验证（逆向验证/边界测试/数据流追踪） | 开发者 |
+| **smoke-test** | "冒烟测试"、"/smoke" | 自动生成链式 curl 命令端到端测试 | 开发者、QA |
+| **task-handoff-checklist** | "交接"、"/handoff" | 8 维度交接清单（导航/文档/规则/流程/测试/风险/质量/后续） | 所有人 |
+| **weekly-update-summary** | "生成周报"、"/weekly" | 从 git 历史自动生成结构化周报 | 项目负责人 |
+
+### 使用指引
+
+1. **方案评审时** → 先 `/risk` 评估风险，再 `/trace` 追踪关键链路
+2. **开发完成后** → 先 `/verify` 交叉验证，再 `/smoke-test` 跑端到端
+3. **准备上线时** → `/handoff` 生成交接清单（涉及 3+ 文件时自动触发）
+4. **周五收尾时** → `/weekly` 生成本周总结
 
 ---
 
@@ -92,6 +213,31 @@ public async Task<IActionResult> CreateImageGenRun([FromBody] Request request)
 ## 水印配置
 
 水印配置基于 `appKey` 绑定，只有绑定了特定 appKey 的应用才会应用对应的水印配置。
+
+---
+
+## 数据关系审计原则
+
+**核心原则**：当实体 A 新增了对实体 B 的引用关系（如 `Session.DocumentIds` 引用 `Document`），必须审计所有访问实体 B 的端点，确保权限校验覆盖新关系。
+
+> **根因案例**：多文档功能上线后，补充文档无法预览（"该文档未绑定到当前群组"）。原因是 `Session.DocumentIds` 存储了补充文档引用，但 `DocumentsController`、`PrdCommentsController`、`Api/DocumentsController` 三个端点的绑定校验仍只查 `Group.PrdDocumentId`。写入路径做了，读取路径漏了。
+
+### 审计清单
+
+当新增数据关系时（Model 类新增 `List<string> xxxIds` 字段、新增外键引用、新增"A 拥有 B"的业务逻辑）：
+
+- [ ] **Grep 实体 B 的所有消费端点**：搜索 `documentId`、`DocumentId`、`GetByIdAsync` 等关键词
+- [ ] **逐个检查权限校验**：是否覆盖了新的访问路径（不只是旧的唯一入口）
+- [ ] **逐个检查硬编码假设**：是否有 `group.PrdDocumentId == id` 这类只认单一来源的写法
+- [ ] **检查反向路径**：删除实体 A 时，实体 B 的引用是否需要清理
+
+### 典型触发场景
+
+| 变更类型 | 审计动作 |
+|----------|----------|
+| Model 新增 `List<string> XxxIds` | Grep 被引用实体的所有 Controller，检查访问校验 |
+| 新增"A 包含 B"关系 | 检查 B 的 CRUD 端点是否识别新的所属关系 |
+| 将单引用改为多引用 | 所有 `== id` 比较改为 `Contains(id)` |
 
 ---
 
@@ -197,6 +343,38 @@ Gateway 自动记录以下信息到 `llmrequestlogs`：
 
 ---
 
+## 默认可编辑原则
+
+**核心原则**：系统开发初期，减少约束。除非业务明确禁止或具有破坏性，所有表单字段默认可编辑，不主动加 `disabled` / `readOnly` 限制。
+
+- 仅在**业务明确禁止**（如已发布合同编号）、**破坏性较重**（修改导致大量数据不一致且无法自动修复）、**安全要求**（审计日志不可篡改）时才禁用
+- "编辑时可能不太合适"、"一般不会改"、"改了需要同步" → 均不构成禁用理由
+
+> 详细规则见 `doc/rule.default-editable.md`
+
+---
+
+## 前端组件复用原则
+
+**核心原则**：全局同属性元素，能复用则复用。多个页面需要相同语义的 UI 元素时，必须抽取为 `src/components/` 下的共享组件，禁止在各页面硬编码重复的选项列表或选择器。
+
+### 规则说明
+
+1. **两个以上页面**出现同一业务概念的选择/展示 → 必须提取共享组件
+2. 数据源（枚举定义、常量列表）统一维护在 `src/lib/` 下的单一文件
+3. 新增/修改页面时，先搜索现有共享组件，已有则直接使用
+
+### 已注册共享组件
+
+| 组件 | 路径 | 数据源 |
+|------|------|--------|
+| `ModelTypePicker` | `components/model/ModelTypePicker.tsx` | `lib/appCallerUtils.ts → MODEL_TYPE_DEFINITIONS` |
+| `ModelTypeFilterBar` | `components/model/ModelTypePicker.tsx` | 同上 |
+
+> 详细规则见 `doc/rule.frontend-component-reuse.md`
+
+---
+
 ## 前端架构原则
 
 **核心原则**：前端仅作为指令发送者与状态观察者，所有业务逻辑与状态流转必须在后端形成完整闭环，前端不得维护或修改任何中间态。
@@ -252,6 +430,54 @@ const appNameMap = {
 | AppCallerCode 显示 | `AppCallerRegistry` 维护 displayName，写入日志/API 返回 | 直接显示 `displayName` 字段 |
 | 日志 requestPurpose | 写入时保存 `RequestPurposeDisplayName` | 显示 `requestPurposeDisplayName` |
 | 元数据下拉选项 | API 返回 `{ value, displayName }` 数组 | 使用 `value` 作为值，`displayName` 作为标签 |
+
+---
+
+## 单一数据源渲染原则 (Single Source of Truth for Rendering)
+
+**核心原则**：同一个组件、同一处 UI、同一个业务功能的渲染，禁止从两个数据源获取数据。
+
+> 业界参考：Redux SSOT (Single Source of Truth)、TanStack Query 的 queryKey 唯一缓存、React 单向数据流。
+
+### 规则说明
+
+1. **一个列表 = 一个数据源**
+   - 一个 UI 列表只能由一个 Store 字段（或一个 query cache entry）驱动
+   - 禁止：组件 A 通过接口 X 填充列表，组件 B 通过接口 Y 填充同一列表
+   - 正确：列表数据统一存储在一个 Store 字段，所有写入路径最终都更新同一个字段
+
+2. **mutation 后刷新**
+   - 修改操作（增/删/改）完成后，必须更新同一个 Store 字段
+   - 禁止在 mutation 回调中绕过 Store 直接操作 UI 状态
+
+3. **rehydrate 兼容**
+   - 当 Store 新增字段时，必须在 `onRehydrateStorage` 中处理旧数据兼容
+   - 确保旧 localStorage 缺失新字段时，能从已有字段派生出正确初始值
+
+### 示例
+
+```typescript
+// ✅ 正确做法：统一数据源
+// sessionStore 中只有 documents[] 一个字段
+// openGroupSession → setDocuments(allDocs)
+// addDocument → setDocuments(updatedDocs)
+// removeDocument → setDocuments(updatedDocs)
+// KnowledgeBasePage 读取 → sessionStore.documents
+// Sidebar 读取 → sessionStore.documents
+
+// ❌ 错误做法：两个数据源
+// openGroupSession → 填充 sessionStore.document (单数)
+// addDocument → 直接 fetch 并维护 KnowledgeBasePage 本地 state
+// 结果：切换页面/刷新后数据不一致
+```
+
+### 检查清单
+
+当新增/修改 Store 字段时：
+- [ ] 确认该字段是否为某个 UI 列表的唯一数据源
+- [ ] 确认所有写入路径（初始化、mutation、rehydrate）都更新同一个字段
+- [ ] 确认 `onRehydrateStorage` 能兼容旧数据
+- [ ] 确认没有组件通过本地 state 维护该字段的"影子副本"
 
 ---
 
@@ -316,6 +542,7 @@ prd_agent/
 | **LLM Gateway** | `ILlmGateway` + `ModelResolver` + 三级调度 + 健康管理 |
 | **ModelPool** | 独立策略引擎组件 (`Infrastructure/ModelPool/`)，6 种策略 (FailFast/Race/Sequential/RoundRobin/WeightedRandom/LeastLatency)，`ModelPoolFactory` 桥接 `ModelGroup` + `LLMPlatform` |
 | **Marketplace Registry** | `CONFIG_TYPE_REGISTRY` 类型注册 + `IForkable` 白名单复制 |
+| **VideoGen Service** | `IVideoGenService` 领域服务封装视频生成 CRUD + 状态流转，供 Controller + 工作流胶囊复用 |
 
 ### 功能注册表
 
@@ -340,11 +567,14 @@ prd_agent/
 | 数据管理面板 | ✅ DONE | DataManagePage |
 | 管理通知 | ✅ DONE | NotificationsController, admin_notifications |
 | 缺陷管理 Agent | ✅ DONE | DefectAgentController, DefectEscalationWorker, DefectWebhookService, DefectAgentTests (25 tests)。含项目维度、待验收流程、超时催办、统计看板、Webhook 通知 |
-| 视频 Agent | ✅ DONE | VideoAgentController, VideoGenRunWorker, prd-video/ (Remotion) |
+| 视频 Agent | ✅ DONE | VideoAgentController, VideoGenRunWorker, IVideoGenService (领域服务), prd-video/ (Remotion: TransitionSeries 转场、ParticleField 粒子、AnimatedText 动画文字、PathDraw SVG 描边、@remotion/transitions+paths+noise) |
+| 视觉创作视频生成 | ✅ DONE | VisualAgentVideoController (appKey=visual-agent, 每日限额1次), 共享 IVideoGenService + VideoGenRunWorker |
+| 视频生成工作流胶囊 | ✅ DONE | CapsuleTypes.VideoGeneration ("video-generation"), CapsuleExecutor.ExecuteVideoGenerationAsync, 支持从工作流中创建视频任务并等待完成 |
 | 配置市场 (海鲜市场) | ✅ DONE | CONFIG_TYPE_REGISTRY, MarketplaceCard, IForkable, ForkService |
-| 周报管理 Agent | ✅ Phase 1-3 DONE | ReportAgentController, ReportAgentPage (6 tabs)，详见 `doc/plan.report-agent-impl.md` |
+| 周报管理 Agent | ✅ Phase 1-4 DONE | ReportAgentController, ReportAgentPage (7 tabs)，详见 `doc/plan.report-agent-impl.md` |
 | **附件上传** | ✅ DONE | AttachmentsController + Rust upload_attachment + Desktop UI (图片选择/预览/上传) |
 | **技能系统** | ✅ DONE | SkillSettings 模型 + SkillsController + Desktop SkillPanel/SkillManagerModal (服务端公共技能 + 客户端本地自定义技能) |
+| **网页托管** | ✅ DONE | WebPagesController + IHostedSiteService + HostedSiteService, WebPagesPage + ShareViewPage, COS 站点托管 + 分享链接，详见 `doc/design.web-hosting.md` |
 | **知识库** | ⚠️ PARTIAL | KnowledgeBasePage UI 占位，"资料文件"标注开发中 |
 | **i18n** | ❌ NOT_IMPL | 无任何 i18n 基础设施，文案硬编码中文 |
 | **K8s 部署** | ❌ NOT_IMPL | 仅 docker-compose，无 K8s manifests |
@@ -353,6 +583,8 @@ prd_agent/
 ### MongoDB 集合清单 (98 个)
 
 核心业务：`users`, `groups`, `groupmembers`, `documents`, `sessions`, `messages`, `group_message_counters`, `contentgaps`, `attachments`, `prdcomments`, `share_links`
+
+网页托管：`hosted_sites`, `web_page_share_links`
 
 LLM/AI：`llmconfigs`, `llmplatforms`, `llmmodels`, `llmrequestlogs`, `model_groups`, `model_scheduler_config`, `model_test_stubs`, `llm_app_callers`, `model_exchanges`
 
@@ -410,12 +642,20 @@ VisualAgent (DB 名保留 image_master)：`image_master_workspaces`, `image_asse
 
 当更新文档时，务必做以下交叉：
 
+**存在性校验（有没有）**：
+
 1. **代码→文档**：Controller/Service 存在 → SRS 功能模块有描述
 2. **文档→代码**：SRS 描述的功能 → 代码中存在对应实现
 3. **Git log→文档**：近期 commit 的功能变更 → 已反映到文档
 4. **DB→数据字典**：MongoDbContext 集合 → rule.data-dictionary.md 有记录
 5. **目录结构→文档**：实际目录 → SRS 目录结构图一致
 6. **未实现标注**：文档中描述但代码不存在的功能 → 必须标注 ⚠️ 状态
+
+**完整性校验（全不全）**：
+
+7. **关系→访问路径**：Model 新增引用字段 → 所有消费该实体的端点已更新权限校验（参见「数据关系审计原则」）
+8. **写入→读取对称**：能写入的数据 → 必须有对应的读取/展示路径，不允许"断头功能"（能存不能看）
+9. **UI→API 闭环**：前端有入口的功能 → 对应 API 端点完整可用（增删改查全链路通）
 
 ---
 

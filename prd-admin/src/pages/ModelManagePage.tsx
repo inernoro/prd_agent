@@ -48,6 +48,7 @@ import { ModelListItem } from '@/components/model/ModelListItem';
 import { formatDuration } from '@/lib/formatStats';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
+import { ModelTypePicker } from '@/components/model/ModelTypePicker';
 
 type PlatformForm = {
   name: string;
@@ -2389,39 +2390,26 @@ export default function ModelManagePage() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="grid gap-2">
-                  <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>模型类型</div>
-                  <Select
-                    value={addToPoolForm.modelType}
-                    onChange={(e) => setAddToPoolForm((s) => ({ ...s, modelType: e.target.value }))}
-                    className="h-10 w-full rounded-[14px] text-sm"
-                    style={inputStyle}
-                  >
-                    <option value="chat">对话模型</option>
-                    <option value="intent">意图识别</option>
-                    <option value="vision">视觉理解</option>
-                    <option value="generation">图像生成</option>
-                    <option value="code">代码生成</option>
-                    <option value="long-context">长上下文</option>
-                    <option value="embedding">向量嵌入</option>
-                    <option value="rerank">重排序</option>
-                  </Select>
-                </div>
+              <div className="grid gap-2">
+                <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>模型类型</div>
+                <ModelTypePicker
+                  value={addToPoolForm.modelType}
+                  onChange={(v) => setAddToPoolForm((s) => ({ ...s, modelType: v }))}
+                />
+              </div>
 
-                <div className="grid gap-2">
-                  <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>优先级</div>
-                  <input
-                    type="number"
-                    value={addToPoolForm.priority}
-                    onChange={(e) => setAddToPoolForm((s) => ({ ...s, priority: parseInt(e.target.value) || 50 }))}
-                    className="h-10 w-full rounded-[14px] px-4 text-sm outline-none"
-                    style={inputStyle}
-                    min={1}
-                    max={100}
-                    title="数字越小优先级越高"
-                  />
-                </div>
+              <div className="grid gap-2">
+                <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>优先级</div>
+                <input
+                  type="number"
+                  value={addToPoolForm.priority}
+                  onChange={(e) => setAddToPoolForm((s) => ({ ...s, priority: parseInt(e.target.value) || 50 }))}
+                  className="h-10 w-full rounded-[14px] px-4 text-sm outline-none"
+                  style={inputStyle}
+                  min={1}
+                  max={100}
+                  title="数字越小优先级越高"
+                />
               </div>
 
               <div className="grid gap-2">

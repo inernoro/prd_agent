@@ -1,8 +1,12 @@
+using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Interfaces.LlmGateway;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Controllers;
 
@@ -18,28 +22,79 @@ public class PrdAgentSkillsController : ControllerBase
 {
     private const string AppKey = "prd-agent";
 
+    private readonly MongoDbContext _db;
     private readonly ISkillService _skillService;
     private readonly IRunEventStore _runStore;
     private readonly IRunQueue _runQueue;
     private readonly ISessionService _sessionService;
+    private readonly ILlmGateway _gateway;
+    private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly ILogger<PrdAgentSkillsController> _logger;
 
     public PrdAgentSkillsController(
+        MongoDbContext db,
         ISkillService skillService,
         IRunEventStore runStore,
         IRunQueue runQueue,
         ISessionService sessionService,
+        ILlmGateway gateway,
+        ILLMRequestContextAccessor llmRequestContext,
         ILogger<PrdAgentSkillsController> logger)
     {
+        _db = db;
         _skillService = skillService;
         _runStore = runStore;
         _runQueue = runQueue;
         _sessionService = sessionService;
+        _gateway = gateway;
+        _llmRequestContext = llmRequestContext;
         _logger = logger;
     }
 
     private string GetUserId()
         => User.FindFirst("userId")?.Value ?? User.FindFirst("sub")?.Value ?? "";
+
+    private async Task<(Session? Session, UserRole EffectiveAnswerRole, IActionResult? Error)> ResolveAccessibleSessionAsync(
+        string sessionId,
+        string userId,
+        CancellationToken ct)
+    {
+        var sid = (sessionId ?? string.Empty).Trim();
+        var session = await _sessionService.GetByIdAsync(sid);
+        if (session == null)
+        {
+            return (null, default, NotFound(ApiResponse<object>.Fail(ErrorCodes.SESSION_NOT_FOUND, "会话不存在")));
+        }
+
+        if (!string.IsNullOrWhiteSpace(session.OwnerUserId))
+        {
+            if (!string.Equals(session.OwnerUserId, userId, StringComparison.Ordinal))
+            {
+                return (session, default, StatusCode(StatusCodes.Status403Forbidden,
+                    ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权访问该会话")));
+            }
+
+            return (session, session.CurrentRole, null);
+        }
+
+        if (!string.IsNullOrWhiteSpace(session.GroupId))
+        {
+            var gid = session.GroupId.Trim();
+            var member = await _db.GroupMembers
+                .Find(x => x.GroupId == gid && x.UserId == userId)
+                .FirstOrDefaultAsync(ct);
+            if (member == null)
+            {
+                return (session, default, StatusCode(StatusCodes.Status403Forbidden,
+                    ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "您不是该群组成员")));
+            }
+
+            return (session, member.MemberRole, null);
+        }
+
+        return (session, default, StatusCode(StatusCodes.Status403Forbidden,
+            ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权访问该会话")));
+    }
 
     /// <summary>
     /// 获取当前用户可见的技能列表（系统 + 公共 + 个人）
@@ -202,10 +257,17 @@ public class PrdAgentSkillsController : ControllerBase
         if (skill.Visibility == SkillVisibility.Personal && skill.OwnerUserId != userId)
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权执行此技能"));
 
-        // 会话检查
-        var session = await _sessionService.GetByIdAsync(request.SessionId);
-        if (session == null)
-            return NotFound(ApiResponse<object>.Fail("SESSION_NOT_FOUND", "会话不存在"));
+        // 会话访问校验：个人会话必须 owner，群会话必须是成员。
+        // 群会话回答角色始终以 GroupMembers.MemberRole 为准，避免直接信任 session.CurrentRole。
+        var (session, effectiveAnswerRole, accessError) = await ResolveAccessibleSessionAsync(request.SessionId, userId, ct);
+        if (accessError != null)
+            return accessError;
+
+        if (skill.Roles.Count > 0 && !skill.Roles.Contains(effectiveAnswerRole))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "当前角色无权执行此技能"));
+        }
 
         // 解析模板参数
         var promptTemplate = skill.Execution.PromptTemplate;
@@ -235,7 +297,7 @@ public class PrdAgentSkillsController : ControllerBase
             RunId = runId,
             Kind = RunKinds.Chat,
             Status = RunStatuses.Queued,
-            GroupId = string.IsNullOrWhiteSpace(session.GroupId) ? null : session.GroupId.Trim(),
+            GroupId = string.IsNullOrWhiteSpace(session!.GroupId) ? null : session.GroupId.Trim(),
             SessionId = request.SessionId,
             CreatedByUserId = userId,
             UserMessageId = userMessageId,
@@ -251,7 +313,7 @@ public class PrdAgentSkillsController : ControllerBase
                 // 同时传递解析后的模板供 ChatRunWorker 直接使用
                 promptKey = skill.SkillKey,
                 resolvedPromptTemplate = promptTemplate,
-                answerAsRole = session.CurrentRole.ToString(),
+                answerAsRole = effectiveAnswerRole.ToString(),
                 attachmentIds = request.AttachmentIds ?? new List<string>(),
                 userId,
                 // 技能元数据
@@ -280,6 +342,80 @@ public class PrdAgentSkillsController : ControllerBase
     }
 
     /// <summary>
+    /// 从对话消息提炼可复用的提示词模板（纯文本）
+    /// LLM 只负责提炼 promptTemplate，元数据由前端表单填写
+    /// </summary>
+    [HttpPost("generate-from-message")]
+    public async Task<IActionResult> GenerateFromMessage([FromBody] GenerateSkillFromMessageRequest request, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        if (string.IsNullOrWhiteSpace(userId))
+            return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "未授权"));
+
+        if (string.IsNullOrWhiteSpace(request.AssistantMessage))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "AI 回复内容不能为空"));
+
+        const string appCallerCode = "prd-agent.skill-gen::chat";
+        var llmClient = _gateway.CreateClient(appCallerCode, "chat", maxTokens: 2048, temperature: 0.3);
+
+        var requestId = Guid.NewGuid().ToString();
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: requestId,
+            GroupId: null,
+            SessionId: null,
+            UserId: userId,
+            ViewRole: null,
+            DocumentChars: (request.UserMessage?.Length ?? 0) + request.AssistantMessage.Length,
+            DocumentHash: null,
+            SystemPromptRedacted: "skill-gen-system-prompt",
+            RequestType: "skill-generation",
+            AppCallerCode: appCallerCode));
+
+        var systemPrompt = @"你是一个提示词模板提炼助手。根据用户提供的对话片段（用户问题 + AI 回复），从中提炼出一个可复用的提示词模板。
+
+直接输出提示词模板的纯文本，不要包含任何额外说明、不要用 JSON、不要用代码块包裹。
+
+提炼规则：
+1. 从 AI 回复中提炼核心指令和输出格式要求，去除具体细节，保留通用结构
+2. 如果回复中包含分步骤指令，保留步骤结构
+3. 如果回复中有输出格式规范（表格、列表等），在模板中明确要求
+4. 用 {{userInput}} 作为用户输入占位符（如果模板需要用户提供额外信息）
+5. 不要在模板中包含具体的项目信息或一次性内容";
+
+        var userContent = new StringBuilder();
+        if (!string.IsNullOrWhiteSpace(request.UserMessage))
+        {
+            userContent.AppendLine("## 用户消息");
+            userContent.AppendLine(request.UserMessage);
+            userContent.AppendLine();
+        }
+        userContent.AppendLine("## AI 回复");
+        userContent.AppendLine(request.AssistantMessage);
+
+        var messages = new List<LLMMessage>
+        {
+            new() { Role = "user", Content = userContent.ToString() }
+        };
+
+        var resultBuilder = new StringBuilder();
+        await foreach (var chunk in llmClient.StreamGenerateAsync(systemPrompt, messages, false, CancellationToken.None))
+        {
+            if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
+                resultBuilder.Append(chunk.Content);
+        }
+
+        var promptTemplate = resultBuilder.ToString().Trim();
+
+        if (string.IsNullOrWhiteSpace(promptTemplate))
+            return StatusCode(500, ApiResponse<object>.Fail("GENERATION_FAILED", "AI 未生成有效内容"));
+
+        _logger.LogInformation("Skill promptTemplate extracted from message by {UserId}, length={Length}",
+            userId, promptTemplate.Length);
+
+        return Ok(ApiResponse<object>.Ok(new { promptTemplate }));
+    }
+
+    /// <summary>
     /// 从 prompt_stages 迁移到 skills（管理员操作）
     /// </summary>
     [HttpPost("migrate-prompts")]
@@ -303,3 +439,14 @@ public class CreateSkillRequest
     public SkillExecutionConfig? Execution { get; set; }
     public SkillOutputConfig? Output { get; set; }
 }
+
+/// <summary>从消息生成技能草案的请求体</summary>
+public class GenerateSkillFromMessageRequest
+{
+    /// <summary>用户的原始消息（可选，提供更多上下文）</summary>
+    public string? UserMessage { get; set; }
+
+    /// <summary>AI 的回复内容（必填，从中提炼技能模板）</summary>
+    public string AssistantMessage { get; set; } = string.Empty;
+}
+

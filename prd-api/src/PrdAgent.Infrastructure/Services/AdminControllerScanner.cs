@@ -26,6 +26,7 @@ public sealed class AdminControllerScanner : IAdminControllerScanner
         "/api/authz/catalog",
         "/api/authz/menu-catalog",
         "/api/dashboard/notifications",
+        "/api/web-pages/shares/view/",
     };
 
     public AdminControllerScanner(ILogger<AdminControllerScanner> logger, Assembly? controllerAssembly = null)

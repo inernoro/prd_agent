@@ -119,6 +119,7 @@ public class MongoDbContext
     public IMongoCollection<ReportCommit> ReportCommits => _database.GetCollection<ReportCommit>("report_commits");
     public IMongoCollection<ReportComment> ReportComments => _database.GetCollection<ReportComment>("report_comments");
     public IMongoCollection<TeamSummary> ReportTeamSummaries => _database.GetCollection<TeamSummary>("report_team_summaries");
+    public IMongoCollection<PersonalSource> PersonalSources => _database.GetCollection<PersonalSource>("report_personal_sources");
 
     // Channel Adapter 多通道适配器
     public IMongoCollection<ChannelWhitelist> ChannelWhitelists => _database.GetCollection<ChannelWhitelist>("channel_whitelist");
@@ -169,6 +170,14 @@ public class MongoDbContext
 
     // Video Agent 文章转视频
     public IMongoCollection<VideoGenRun> VideoGenRuns => _database.GetCollection<VideoGenRun>("video_gen_runs");
+
+    // Web Hosting 网页托管与分享
+    public IMongoCollection<HostedSite> HostedSites => _database.GetCollection<HostedSite>("hosted_sites");
+    public IMongoCollection<WebPageShareLink> WebPageShareLinks => _database.GetCollection<WebPageShareLink>("web_page_share_links");
+    public IMongoCollection<ShareViewLog> ShareViewLogs => _database.GetCollection<ShareViewLog>("share_view_logs");
+
+    // Video Agent 视频转文档
+    public IMongoCollection<VideoToDocRun> VideoToDocRuns => _database.GetCollection<VideoToDocRun>("video_to_doc_runs");
 
     // Tutorial Email 教程邮件
     public IMongoCollection<TutorialEmailSequence> TutorialEmailSequences => _database.GetCollection<TutorialEmailSequence>("tutorial_email_sequences");
@@ -1109,6 +1118,11 @@ public class MongoDbContext
         }
         catch (MongoCommandException) { /* 索引已存在 */ }
 
+        // PersonalSources：(UserId, SourceType) 组合查询；按 UserId 查询
+        PersonalSources.Indexes.CreateOne(new CreateIndexModel<PersonalSource>(
+            Builders<PersonalSource>.IndexKeys.Ascending(x => x.UserId).Ascending(x => x.SourceType),
+            new CreateIndexOptions { Name = "idx_personal_sources_user_type" }));
+
         // Arena 竞技场索引
         try
         {
@@ -1126,5 +1140,49 @@ public class MongoDbContext
         ArenaBattles.Indexes.CreateOne(new CreateIndexModel<ArenaBattle>(
             Builders<ArenaBattle>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_arena_battles_user_created" }));
+
+        // ========== Hosted Sites 网页托管索引 ==========
+
+        // HostedSites：按用户 + 创建时间查询
+        HostedSites.Indexes.CreateOne(new CreateIndexModel<HostedSite>(
+            Builders<HostedSite>.IndexKeys.Ascending(x => x.OwnerUserId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_hosted_sites_owner_created" }));
+        // HostedSites：按标签多值索引
+        HostedSites.Indexes.CreateOne(new CreateIndexModel<HostedSite>(
+            Builders<HostedSite>.IndexKeys.Ascending(x => x.Tags),
+            new CreateIndexOptions { Name = "idx_hosted_sites_tags" }));
+        // HostedSites：按来源类型查询
+        HostedSites.Indexes.CreateOne(new CreateIndexModel<HostedSite>(
+            Builders<HostedSite>.IndexKeys.Ascending(x => x.OwnerUserId).Ascending(x => x.SourceType),
+            new CreateIndexOptions { Name = "idx_hosted_sites_owner_source" }));
+        // HostedSites：按文件夹查询
+        HostedSites.Indexes.CreateOne(new CreateIndexModel<HostedSite>(
+            Builders<HostedSite>.IndexKeys.Ascending(x => x.OwnerUserId).Ascending(x => x.Folder),
+            new CreateIndexOptions { Name = "idx_hosted_sites_owner_folder" }));
+
+        // WebPageShareLinks：按 Token 唯一
+        try
+        {
+            WebPageShareLinks.Indexes.CreateOne(new CreateIndexModel<WebPageShareLink>(
+                Builders<WebPageShareLink>.IndexKeys.Ascending(x => x.Token),
+                new CreateIndexOptions { Name = "uniq_web_page_share_links_token", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        // WebPageShareLinks：按创建者 + 时间
+        WebPageShareLinks.Indexes.CreateOne(new CreateIndexModel<WebPageShareLink>(
+            Builders<WebPageShareLink>.IndexKeys.Ascending(x => x.CreatedBy).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_web_page_share_links_creator_created" }));
+
+        // ShareViewLogs：按分享所有者 + 时间（用于分享管理查看记录）
+        ShareViewLogs.Indexes.CreateOne(new CreateIndexModel<ShareViewLog>(
+            Builders<ShareViewLog>.IndexKeys.Ascending(x => x.ShareOwnerUserId).Descending(x => x.ViewedAt),
+            new CreateIndexOptions { Name = "idx_share_view_logs_owner_viewed" }));
+        // ShareViewLogs：按 Token + 时间
+        ShareViewLogs.Indexes.CreateOne(new CreateIndexModel<ShareViewLog>(
+            Builders<ShareViewLog>.IndexKeys.Ascending(x => x.ShareToken).Descending(x => x.ViewedAt),
+            new CreateIndexOptions { Name = "idx_share_view_logs_token_viewed" }));
     }
 }

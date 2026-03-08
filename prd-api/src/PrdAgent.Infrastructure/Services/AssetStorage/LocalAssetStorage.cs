@@ -134,6 +134,31 @@ public class LocalAssetStorage : IAssetStorage
         return $"/api/v1/admin/image-master/assets/file/{sha}.{ext}";
     }
 
+    public async Task UploadToKeyAsync(string key, byte[] bytes, string? contentType, CancellationToken ct)
+    {
+        var filePath = Path.Combine(_baseDir, key.Replace('/', Path.DirectorySeparatorChar));
+        var dir = Path.GetDirectoryName(filePath);
+        if (dir != null) Directory.CreateDirectory(dir);
+        await File.WriteAllBytesAsync(filePath, bytes, ct);
+    }
+
+    public string BuildUrlForKey(string key)
+    {
+        return $"/local-assets/{key}";
+    }
+
+    public Task DeleteByKeyAsync(string key, CancellationToken ct)
+    {
+        var filePath = Path.Combine(_baseDir, key.Replace('/', Path.DirectorySeparatorChar));
+        if (File.Exists(filePath)) File.Delete(filePath);
+        return Task.CompletedTask;
+    }
+
+    public string BuildSiteKey(string siteId, string filePath)
+    {
+        return $"web-hosting/sites/{siteId}/{filePath.TrimStart('/')}";
+    }
+
     private static string Sha256Hex(byte[] bytes)
     {
         using var sha = SHA256.Create();

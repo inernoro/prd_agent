@@ -18,6 +18,9 @@ import {
   Play,
   X,
   ImageIcon,
+  Pencil,
+  Eye,
+  Bug,
 } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import {
@@ -115,6 +118,8 @@ export const VideoAgentPage: React.FC = () => {
   const [articleContent, setArticleContent] = useState('');
   const [articleTitle, setArticleTitle] = useState('');
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [isEditingArticle, setIsEditingArticle] = useState(false);
+  const [showDebugModal, setShowDebugModal] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ─── Config state ───
@@ -542,6 +547,7 @@ export const VideoAgentPage: React.FC = () => {
     setArticleContent('');
     setArticleTitle('');
     setUploadedFileName(null);
+    setIsEditingArticle(false);
     setPhase(0);
   };
 
@@ -594,15 +600,40 @@ export const VideoAgentPage: React.FC = () => {
                   </span>
                 )}
               </div>
-              {phase > 0 && !isActive && (
-                <button
-                  className="text-[11px] px-2.5 py-1 rounded-md hover:bg-white/10 transition-colors flex-shrink-0 border"
-                  style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
-                  onClick={handleNewTask}
-                >
-                  新建任务
-                </button>
-              )}
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                {/* Debug button — show LLM response data */}
+                {selectedRun && selectedRun.scenes?.length > 0 && (
+                  <button
+                    className="text-[11px] px-2 py-1 rounded-md hover:bg-white/10 transition-colors border flex items-center gap-1"
+                    style={{ color: 'rgba(251, 191, 36, 0.7)', borderColor: 'rgba(251, 191, 36, 0.2)' }}
+                    onClick={() => setShowDebugModal(true)}
+                    title="查看 LLM 生成数据"
+                  >
+                    <Bug size={12} />
+                    调试
+                  </button>
+                )}
+                {/* Edit / Preview toggle — only in article preview phase (not during scripting/queued) */}
+                {phase > 0 && !(selectedRun && (selectedRun.status === 'Scripting' || selectedRun.status === 'Queued')) && (
+                  <button
+                    className="text-[11px] px-2 py-1 rounded-md hover:bg-white/10 transition-colors border flex items-center gap-1"
+                    style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
+                    onClick={() => setIsEditingArticle((v) => !v)}
+                  >
+                    {isEditingArticle ? <Eye size={12} /> : <Pencil size={12} />}
+                    {isEditingArticle ? '预览' : '编辑'}
+                  </button>
+                )}
+                {phase > 0 && !isActive && (
+                  <button
+                    className="text-[11px] px-2.5 py-1 rounded-md hover:bg-white/10 transition-colors border"
+                    style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
+                    onClick={handleNewTask}
+                  >
+                    新建任务
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Content area */}
@@ -698,9 +729,17 @@ export const VideoAgentPage: React.FC = () => {
                     <div ref={streamEndRef} />
                   </div>
                 </div>
+              ) : isEditingArticle ? (
+                /* Article editing mode */
+                <textarea
+                  value={articleContent}
+                  onChange={(e) => setArticleContent(e.target.value)}
+                  className="h-full w-full rounded-[14px] px-3 py-2.5 text-sm outline-none resize-none prd-field font-mono"
+                  style={{ minHeight: 200 }}
+                />
               ) : (
                 /* Article preview (markdown render) */
-                <div className="prd-md">
+                <div className="prd-md p-2">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {articleContent}
                   </ReactMarkdown>
@@ -1219,6 +1258,142 @@ export const VideoAgentPage: React.FC = () => {
           )}
         </div>
       </div>
+      {/* ═══ Debug Modal ═══ */}
+      {showDebugModal && selectedRun && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}
+          onClick={() => setShowDebugModal(false)}
+        >
+          <div
+            className="w-full max-w-3xl max-h-[85vh] rounded-xl overflow-hidden flex flex-col"
+            style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
+              <div className="flex items-center gap-2">
+                <Bug size={16} style={{ color: 'rgba(251, 191, 36, 0.7)' }} />
+                <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>LLM 生成数据调试</span>
+              </div>
+              <button onClick={() => setShowDebugModal(false)} className="p-1 rounded hover:bg-white/10">
+                <X size={16} style={{ color: 'var(--text-muted)' }} />
+              </button>
+            </div>
+            {/* Modal body */}
+            <div className="flex-1 overflow-auto p-4 space-y-4">
+              {/* Scene summary table */}
+              <section>
+                <h3 className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>场景概览 ({selectedRun.scenes?.length || 0} 个)</h3>
+                <div className="rounded-lg overflow-hidden border" style={{ borderColor: 'var(--border-subtle)' }}>
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr style={{ background: 'rgba(255,255,255,0.04)' }}>
+                        <th className="px-3 py-1.5 text-left font-medium" style={{ color: 'var(--text-muted)' }}>#</th>
+                        <th className="px-3 py-1.5 text-left font-medium" style={{ color: 'var(--text-muted)' }}>类型</th>
+                        <th className="px-3 py-1.5 text-left font-medium" style={{ color: 'var(--text-muted)' }}>主题</th>
+                        <th className="px-3 py-1.5 text-left font-medium" style={{ color: 'var(--text-muted)' }}>旁白长度</th>
+                        <th className="px-3 py-1.5 text-left font-medium" style={{ color: 'var(--text-muted)' }}>时长</th>
+                        <th className="px-3 py-1.5 text-left font-medium" style={{ color: 'var(--text-muted)' }}>背景图</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedRun.scenes?.map((s, i) => (
+                        <tr key={i} className="border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+                          <td className="px-3 py-1.5" style={{ color: 'var(--text-secondary)' }}>{i}</td>
+                          <td className="px-3 py-1.5">
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-mono" style={{
+                              background: ['intro','outro'].includes(s.sceneType) ? 'rgba(99,102,241,0.15)' : 'rgba(236,72,153,0.1)',
+                              color: ['intro','outro'].includes(s.sceneType) ? 'rgba(129,140,248,0.9)' : 'rgba(236,72,153,0.8)',
+                            }}>
+                              {s.sceneType}
+                            </span>
+                          </td>
+                          <td className="px-3 py-1.5 max-w-[200px] truncate" style={{ color: 'var(--text-primary)' }}>{s.topic}</td>
+                          <td className="px-3 py-1.5" style={{ color: 'var(--text-secondary)' }}>{s.narration?.length || 0} 字</td>
+                          <td className="px-3 py-1.5" style={{ color: 'var(--text-secondary)' }}>{s.durationSeconds}s</td>
+                          <td className="px-3 py-1.5" style={{ color: s.backgroundImageUrl ? 'rgba(34,197,94,0.8)' : 'var(--text-muted)' }}>
+                            {s.backgroundImageUrl ? '✓ 有' : '✗ 无'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+
+              {/* Script Markdown */}
+              {selectedRun.scriptMarkdown && (
+                <section>
+                  <h3 className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>脚本 Markdown</h3>
+                  <pre className="text-xs p-3 rounded-lg overflow-auto max-h-[200px] whitespace-pre-wrap font-mono"
+                    style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)' }}>
+                    {selectedRun.scriptMarkdown}
+                  </pre>
+                </section>
+              )}
+
+              {/* Narration Doc */}
+              {selectedRun.narrationDoc && (
+                <section>
+                  <h3 className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>旁白文档</h3>
+                  <pre className="text-xs p-3 rounded-lg overflow-auto max-h-[200px] whitespace-pre-wrap font-mono"
+                    style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)' }}>
+                    {selectedRun.narrationDoc}
+                  </pre>
+                </section>
+              )}
+
+              {/* Raw scene JSON */}
+              <section>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>场景原始 JSON（传给 Remotion 的数据）</h3>
+                  <button
+                    className="text-[10px] px-2 py-0.5 rounded hover:bg-white/10"
+                    style={{ color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}
+                    onClick={() => {
+                      const remotionData = {
+                        title: selectedRun.articleTitle || '技术教程',
+                        fps: 30, width: 1920, height: 1080,
+                        scenes: selectedRun.scenes?.map(s => ({
+                          index: s.index, topic: s.topic, narration: s.narration,
+                          visualDescription: s.visualDescription, durationSeconds: s.durationSeconds,
+                          durationInFrames: Math.ceil(s.durationSeconds * 30),
+                          sceneType: s.sceneType, backgroundImageUrl: s.backgroundImageUrl,
+                        })),
+                      };
+                      navigator.clipboard.writeText(JSON.stringify(remotionData, null, 2));
+                      toast.success('已复制 Remotion JSON');
+                    }}
+                  >
+                    复制
+                  </button>
+                </div>
+                <pre className="text-xs p-3 rounded-lg overflow-auto max-h-[300px] whitespace-pre-wrap font-mono"
+                  style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)' }}>
+                  {JSON.stringify(selectedRun.scenes?.map(s => ({
+                    index: s.index, sceneType: s.sceneType, topic: s.topic,
+                    narration: s.narration, visualDescription: s.visualDescription,
+                    durationSeconds: s.durationSeconds,
+                    backgroundImageUrl: s.backgroundImageUrl || null,
+                  })), null, 2)}
+                </pre>
+              </section>
+
+              {/* Error info */}
+              {selectedRun.errorMessage && (
+                <section>
+                  <h3 className="text-xs font-semibold mb-2" style={{ color: 'rgba(239,68,68,0.8)' }}>错误信息</h3>
+                  <pre className="text-xs p-3 rounded-lg overflow-auto whitespace-pre-wrap font-mono"
+                    style={{ background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.9)', border: '1px solid rgba(239,68,68,0.2)' }}>
+                    {selectedRun.errorCode && `[${selectedRun.errorCode}] `}{selectedRun.errorMessage}
+                  </pre>
+                </section>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

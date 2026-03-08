@@ -1,0 +1,82 @@
+name: CDS CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'cds/**'
+      - '.github/workflows/cds.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'cds/**'
+      - '.github/workflows/cds.yml'
+
+env:
+  NODE_VERSION: '20'
+  PNPM_VERSION: '9'
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cds
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Get pnpm store directory
+        id: pnpm_store
+        shell: bash
+        run: |
+          echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm_store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-bt-${{ hashFiles('cds/pnpm-lock.yaml', 'cds/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-bt-
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Type check
+        run: pnpm build
+
+      - name: Run tests
+        run: pnpm test
+
+  docker-build:
+    name: Docker Build Check
+    runs-on: ubuntu-latest
+    needs: build-and-test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -f cds/Dockerfile \
+            -t cds:ci-${{ github.sha }} \
+            cds/
+
+      - name: Verify image
+        run: |
+          docker run --rm cds:ci-${{ github.sha }} node --version
