@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
+using MongoDB.Driver;
 using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -22,6 +23,7 @@ public class VideoAgentController : ControllerBase
 {
     private readonly IVideoGenService _videoGenService;
     private readonly IRunEventStore _runStore;
+    private readonly MongoDbContext _db;
     private readonly ILogger<VideoAgentController> _logger;
 
     private const string AppKey = "video-agent";
@@ -30,10 +32,12 @@ public class VideoAgentController : ControllerBase
     public VideoAgentController(
         IVideoGenService videoGenService,
         IRunEventStore runStore,
+        MongoDbContext db,
         ILogger<VideoAgentController> logger)
     {
         _videoGenService = videoGenService;
         _runStore = runStore;
+        _db = db;
         _logger = logger;
     }
 
