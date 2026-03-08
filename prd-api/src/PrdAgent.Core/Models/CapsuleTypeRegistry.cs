@@ -748,6 +748,38 @@ public static class CapsuleTypeRegistry
         },
     };
 
+    public static readonly CapsuleTypeMeta SitePublisher = new()
+    {
+        TypeKey = CapsuleTypes.SitePublisher,
+        Name = "站点发布",
+        Description = "将上游 HTML 内容发布到网页托管，生成可公开访问的网页链接",
+        Icon = "globe-lock",
+        Category = CapsuleCategory.Output,
+        AccentHue = 160,
+        ConfigSchema = new()
+        {
+            new() { Key = "title", Label = "站点标题", FieldType = "text", Required = false, Placeholder = "月度质量报告", HelpTip = "留空则从上游产物名称自动生成。支持 {{变量}} 替换" },
+            new() { Key = "description", Label = "站点描述", FieldType = "textarea", Required = false, Placeholder = "自动生成的报告网页", HelpTip = "留空则自动填充。支持 {{变量}} 替换" },
+            new() { Key = "folder", Label = "存储文件夹", FieldType = "text", Required = false, Placeholder = "reports", HelpTip = "可选。将站点归类到指定文件夹，便于管理" },
+            new() { Key = "tags", Label = "标签", FieldType = "text", Required = false, Placeholder = "report,auto-gen,2026", HelpTip = "逗号分隔的标签列表，便于搜索和过滤" },
+            new() { Key = "autoShare", Label = "自动创建分享链接", FieldType = "select", Required = false, DefaultValue = "false", Options = new()
+            {
+                new() { Value = "false", Label = "不创建" },
+                new() { Value = "public", Label = "公开链接（无需密码）" },
+                new() { Value = "password", Label = "加密链接（自动生成密码）" },
+            }, HelpTip = "发布后自动创建分享链接，适合自动化通知场景" },
+            new() { Key = "shareExpiryDays", Label = "分享链接有效天数", FieldType = "number", Required = false, DefaultValue = "30", HelpTip = "自动创建分享链接时的有效期（天），默认 30 天" },
+        },
+        DefaultInputSlots = new()
+        {
+            new() { SlotId = "site-in", Name = "html", DataType = "text", Required = true, Description = "待发布的 HTML 内容（来自网页报告或其他生成器）" },
+        },
+        DefaultOutputSlots = new()
+        {
+            new() { SlotId = "site-out", Name = "result", DataType = "json", Required = true, Description = "发布结果（含 siteUrl、siteId、shareUrl 等）" },
+        },
+    };
+
     /// <summary>
     /// 按分类排序的全部舱类型
     /// </summary>
@@ -760,7 +792,7 @@ public static class CapsuleTypeRegistry
         // 流程控制类
         Delay, Condition,
         // 输出类
-        ReportGenerator, WebpageGenerator, FileExporter, WebhookSender, NotificationSender, VideoGeneration,
+        ReportGenerator, WebpageGenerator, FileExporter, WebhookSender, NotificationSender, VideoGeneration, SitePublisher,
     };
 
     /// <summary>按 TypeKey 查找</summary>

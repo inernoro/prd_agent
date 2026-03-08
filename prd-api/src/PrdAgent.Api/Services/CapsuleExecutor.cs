@@ -79,6 +79,7 @@ public static class CapsuleExecutor
             CapsuleTypes.FileExporter => ExecuteFileExporter(node, inputArtifacts),
             CapsuleTypes.WebhookSender => await ExecuteWebhookSenderAsync(sp, node, inputArtifacts),
             CapsuleTypes.NotificationSender => await ExecuteNotificationSenderAsync(sp, node, variables, inputArtifacts),
+            CapsuleTypes.SitePublisher => await ExecuteSitePublisherAsync(sp, node, variables, inputArtifacts),
 
             // ── 异步任务类 ──
             CapsuleTypes.VideoGeneration => await ExecuteVideoGenerationAsync(sp, node, variables, inputArtifacts, emitEvent),
@@ -4238,6 +4239,146 @@ function safeChart(canvasId, config) {
         while (System.Text.Encoding.UTF8.GetByteCount(logs) > maxBytes && logs.Length > 100)
             logs = logs[(logs.Length / 4)..];
         return "[...truncated...]\n" + logs;
+    }
+
+    // ── 站点发布 ──────────────────────────────────────────────
+
+    public static async Task<CapsuleResult> ExecuteSitePublisherAsync(
+        IServiceProvider sp, WorkflowNode node, Dictionary<string, string> variables,
+        List<ExecutionArtifact> inputArtifacts)
+    {
+        var siteService = sp.GetRequiredService<PrdAgent.Core.Interfaces.IHostedSiteService>();
+        var logger = sp.GetRequiredService<ILoggerFactory>().CreateLogger("CapsuleExecutor.SitePublisher");
+        var sb = new StringBuilder();
+
+        // 1. 从上游产物中提取 HTML 内容
+        var htmlContent = "";
+        foreach (var input in inputArtifacts)
+        {
+            var content = input.InlineContent ?? "";
+            if (string.IsNullOrWhiteSpace(content)) continue;
+            // 优先选择 HTML MIME 类型的产物
+            if (input.MimeType == "text/html" || content.Contains("<!DOCTYPE html", StringComparison.OrdinalIgnoreCase)
+                                               || content.Contains("<html", StringComparison.OrdinalIgnoreCase))
+            {
+                htmlContent = content;
+                sb.AppendLine($"[输入] 使用产物 '{input.Name}' ({input.SizeBytes} bytes) 作为 HTML 源");
+                break;
+            }
+        }
+
+        // 如果没找到 HTML 产物，取第一个有内容的产物包装为 HTML
+        if (string.IsNullOrWhiteSpace(htmlContent))
+        {
+            var firstContent = inputArtifacts
+                .FirstOrDefault(a => !string.IsNullOrWhiteSpace(a.InlineContent));
+            if (firstContent != null)
+            {
+                htmlContent = $"<!DOCTYPE html><html><head><meta charset='utf-8'><title>Auto Generated</title></head><body><pre>{System.Net.WebUtility.HtmlEncode(firstContent.InlineContent!)}</pre></body></html>";
+                sb.AppendLine($"[输入] 无 HTML 产物，将 '{firstContent.Name}' 包装为纯文本 HTML");
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(htmlContent))
+            throw new InvalidOperationException("站点发布失败：上游无可用的 HTML 内容。请在此节点前连接一个「网页报告」或其他生成 HTML 的节点。");
+
+        // 2. 解析配置
+        var title = ReplaceVariables(GetConfigString(node, "title") ?? "", variables);
+        var description = ReplaceVariables(GetConfigString(node, "description") ?? "", variables);
+        var folder = ReplaceVariables(GetConfigString(node, "folder") ?? "", variables);
+        var tagsStr = ReplaceVariables(GetConfigString(node, "tags") ?? "", variables);
+        var autoShare = GetConfigString(node, "autoShare") ?? "false";
+        var shareExpiryDays = int.TryParse(GetConfigString(node, "shareExpiryDays"), out var days) ? days : 30;
+
+        var tags = string.IsNullOrWhiteSpace(tagsStr)
+            ? new List<string> { "auto-gen", "workflow" }
+            : tagsStr.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+
+        if (string.IsNullOrWhiteSpace(title))
+            title = $"工作流自动发布 - {DateTime.Now:yyyy-MM-dd HH:mm}";
+
+        // 3. 确定 userId（从执行上下文变量中获取）
+        var userId = variables.GetValueOrDefault("__triggeredBy") ?? "system";
+        var executionId = variables.GetValueOrDefault("__executionId") ?? "";
+
+        sb.AppendLine($"[配置] 标题={title}, 文件夹={folder}, 标签=[{string.Join(", ", tags)}]");
+        sb.AppendLine($"[配置] 自动分享={autoShare}, 有效期={shareExpiryDays}天");
+
+        // 4. 调用 IHostedSiteService 发布
+        logger.LogInformation("SitePublisher: Publishing HTML ({Length} chars) for user {UserId}",
+            htmlContent.Length, userId);
+
+        var site = await siteService.CreateFromContentAsync(
+            userId: userId,
+            htmlContent: htmlContent,
+            title: title,
+            description: string.IsNullOrWhiteSpace(description) ? null : description,
+            sourceType: "workflow",
+            sourceRef: executionId,
+            tags: tags,
+            folder: string.IsNullOrWhiteSpace(folder) ? null : folder,
+            ct: CancellationToken.None);
+
+        sb.AppendLine($"[发布] 站点已创建: id={site.Id}");
+        sb.AppendLine($"[发布] 访问地址: {site.SiteUrl}");
+        sb.AppendLine($"[发布] 文件数: {site.Files.Count}, 总大小: {site.TotalSize} bytes");
+
+        // 5. 构建输出
+        var result = new Dictionary<string, object?>
+        {
+            ["siteId"] = site.Id,
+            ["siteUrl"] = site.SiteUrl,
+            ["title"] = site.Title,
+            ["fileCount"] = site.Files.Count,
+            ["totalSize"] = site.TotalSize,
+            ["folder"] = site.Folder,
+            ["tags"] = site.Tags,
+        };
+
+        // 6. 自动创建分享链接（可选）
+        if (autoShare is "public" or "password")
+        {
+            try
+            {
+                var displayName = variables.GetValueOrDefault("__triggeredByName") ?? "系统";
+                var password = autoShare == "password"
+                    ? Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(6))
+                        .Replace("+", "").Replace("/", "")[..8]
+                    : null;
+
+                var shareLink = await siteService.CreateShareAsync(
+                    userId: userId,
+                    displayName: displayName,
+                    siteId: site.Id,
+                    siteIds: null,
+                    shareType: "single",
+                    title: title,
+                    description: description,
+                    password: password,
+                    expiresInDays: shareExpiryDays,
+                    ct: CancellationToken.None);
+
+                var shareUrl = $"/share/web/{shareLink.Token}";
+                result["shareUrl"] = shareUrl;
+                result["shareToken"] = shareLink.Token;
+                result["sharePassword"] = password;
+                result["shareExpiresAt"] = shareLink.ExpiresAt?.ToString("O");
+
+                sb.AppendLine($"[分享] 链接已创建: token={shareLink.Token}");
+                if (password != null)
+                    sb.AppendLine($"[分享] 访问密码: {password}");
+                sb.AppendLine($"[分享] 有效期至: {shareLink.ExpiresAt:yyyy-MM-dd}");
+            }
+            catch (Exception ex)
+            {
+                sb.AppendLine($"[分享] 创建分享链接失败: {ex.Message}");
+                logger.LogWarning(ex, "SitePublisher: Failed to create share link for site {SiteId}", site.Id);
+            }
+        }
+
+        var outputJson = JsonSerializer.Serialize(result, JsonPretty);
+        var artifact = MakeTextArtifact(node, "site-out", "站点发布结果", outputJson, "application/json");
+        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
     }
 
     // ── 视频生成 ──────────────────────────────────────────────

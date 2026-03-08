@@ -2,7 +2,7 @@ import {
   Timer, Webhook, Hand, Upload, Zap,
   Database, Globe, Brain, Code2, Filter, Merge, Repeat, BarChart3,
   Clock, GitBranch,
-  FileText, Download, Send, Bell, Box, AppWindow,
+  FileText, Download, Send, Bell, Box, AppWindow, GlobeLock,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -269,6 +269,16 @@ export const CAPSULE_TYPE_REGISTRY: Record<string, CapsuleTypeDef> = {
     accentHue: 340,
     testable: true,
   },
+  'site-publisher': {
+    typeKey: 'site-publisher',
+    name: '站点发布',
+    description: '发布 HTML 到网页托管，生成公开链接',
+    Icon: GlobeLock,
+    emoji: '🌐',
+    category: 'output',
+    accentHue: 160,
+    testable: true,
+  },
 };
 
 // ──────── 兼容旧 NodeType ────────
@@ -331,6 +341,8 @@ const ICON_MAP: Record<string, LucideIcon> = {
   'bell': Bell,
   'bar-chart': BarChart3,
   'app-window': AppWindow,
+  'globe-lock': GlobeLock,
+  'zap': Zap,
 };
 
 const EMOJI_MAP: Record<string, string> = {
@@ -354,6 +366,8 @@ const EMOJI_MAP: Record<string, string> = {
   'file-exporter': '💾',
   'webhook-sender': '📡',
   'notification-sender': '🔔',
+  'event-trigger': '⚡',
+  'site-publisher': '🌐',
 };
 
 const CATEGORY_EMOJI: Record<string, string> = {
