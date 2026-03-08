@@ -830,7 +830,6 @@ function ShareDialog({ siteId, siteIds, onClose }: {
   const [creating, setCreating] = useState(false);
   const [result, setResult] = useState<{ shareUrl: string; token: string; password?: string } | null>(null);
   const [copied, setCopied] = useState(false);
-  const [showOptions, setShowOptions] = useState(false);
   const [usePassword, setUsePassword] = useState(false);
   const [password, setPassword] = useState('');
   const [expiresInDays, setExpiresInDays] = useState(0);
@@ -839,7 +838,7 @@ function ShareDialog({ siteId, siteIds, onClose }: {
 
   const handleCreate = async () => {
     setCreating(true);
-    const pwd = usePassword ? (password.trim() || genPassword()) : undefined;
+    const pwd = usePassword ? (password.trim() || undefined) : undefined;
     const res = await createSiteShareLink({
       siteId: siteId || undefined,
       siteIds: isCollection ? siteIds : undefined,
@@ -849,7 +848,14 @@ function ShareDialog({ siteId, siteIds, onClose }: {
     });
     setCreating(false);
     if (res.success) {
-      setResult({ shareUrl: res.data.shareUrl, token: res.data.token, password: pwd });
+      const shareResult = { shareUrl: res.data.shareUrl, token: res.data.token, password: pwd };
+      setResult(shareResult);
+      // 自动复制链接和密码
+      let text = `${window.location.origin}${shareResult.shareUrl}`;
+      if (shareResult.password) text += `\n访问密码：${shareResult.password}`;
+      navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     }
   };
 
@@ -877,7 +883,7 @@ function ShareDialog({ siteId, siteIds, onClose }: {
           <div className="flex flex-col gap-4">
             <div className="flex items-center gap-2 p-3 rounded-lg" style={{ background: 'rgba(34, 197, 94, 0.1)', border: '1px solid rgba(34, 197, 94, 0.3)' }}>
               <Check size={16} style={{ color: '#22c55e' }} />
-              <span className="text-sm" style={{ color: '#22c55e' }}>分享链接已生成</span>
+              <span className="text-sm" style={{ color: '#22c55e' }}>分享链接已生成，已复制到剪贴板</span>
             </div>
             <div className="flex items-center gap-2">
               <input
@@ -892,13 +898,21 @@ function ShareDialog({ siteId, siteIds, onClose }: {
               </Button>
             </div>
             {result.password && (
-              <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--text-secondary)' }}>
-                <Lock size={12} />
-                <span>访问密码：<code className="px-1.5 py-0.5 rounded" style={{ background: 'var(--bg-sunken)' }}>{result.password}</code></span>
+              <div className="flex items-center gap-2 p-3 rounded-lg" style={{ background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.25)' }}>
+                <Lock size={16} style={{ color: 'rgba(59, 130, 246, 0.9)', flexShrink: 0 }} />
+                <div className="flex-1">
+                  <div className="text-xs mb-1" style={{ color: 'rgba(59, 130, 246, 0.8)' }}>访问密码</div>
+                  <code className="text-sm font-mono font-bold tracking-wider" style={{ color: 'var(--text-primary)' }}>{result.password}</code>
+                </div>
+                <Button size="sm" variant="ghost" onClick={() => {
+                  navigator.clipboard.writeText(result!.password!);
+                }}>
+                  <Copy size={14} />
+                </Button>
               </div>
             )}
             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-              复制按钮会同时复制链接{result.password ? '和密码' : ''}
+              {result.password ? '复制按钮会同时复制链接和密码' : '此链接无需密码，任何人可直接访问'}
             </p>
             <div className="flex justify-end">
               <Button variant="ghost" onClick={onClose}>关闭</Button>
@@ -915,66 +929,63 @@ function ShareDialog({ siteId, siteIds, onClose }: {
               点击下方按钮即可一键生成分享链接，标题会自动生成。
             </p>
 
-            {/* 可选设置折叠区 */}
-            <button
-              type="button"
-              onClick={() => setShowOptions(!showOptions)}
-              className="flex items-center gap-1 text-xs cursor-pointer"
-              style={{ color: 'var(--text-muted)', background: 'none', border: 'none', padding: 0 }}
-            >
-              <span style={{ transform: showOptions ? 'rotate(90deg)' : undefined, transition: 'transform 0.15s', display: 'inline-block' }}>▸</span>
-              高级选项
-            </button>
-
-            {showOptions && (
-              <div className="flex flex-col gap-3 pl-2" style={{ borderLeft: '2px solid var(--border-default)' }}>
-                <label className="flex items-center gap-2 cursor-pointer text-sm">
-                  <input
-                    type="checkbox"
-                    checked={usePassword}
-                    onChange={e => {
-                      setUsePassword(e.target.checked);
-                      if (e.target.checked && !password) setPassword(genPassword());
-                    }}
-                  />
-                  <Lock size={12} style={{ color: 'var(--text-muted)' }} />
-                  <span style={{ color: 'var(--text-secondary)' }}>密码保护</span>
-                </label>
-                {usePassword && (
+            {/* 分享选项 */}
+            <div className="flex flex-col gap-3">
+              <label className="flex items-center gap-2 cursor-pointer text-sm">
+                <input
+                  type="checkbox"
+                  checked={usePassword}
+                  onChange={e => {
+                    setUsePassword(e.target.checked);
+                    if (e.target.checked) {
+                      setPassword(genPassword());
+                    } else {
+                      setPassword('');
+                    }
+                  }}
+                />
+                <Lock size={12} style={{ color: 'var(--text-muted)' }} />
+                <span style={{ color: 'var(--text-secondary)' }}>密码保护</span>
+              </label>
+              {usePassword && (
+                <div className="flex flex-col gap-1.5">
                   <div className="flex items-center gap-2">
                     <input
                       type="text"
                       value={password}
                       onChange={e => setPassword(e.target.value)}
-                      placeholder="自动生成"
+                      placeholder="输入密码"
                       className="flex-1 px-3 py-1.5 rounded-lg text-sm outline-none"
                       style={inputStyle}
                     />
-                    <Button size="xs" variant="ghost" onClick={() => setPassword(genPassword())} title="重新生成">
+                    <Button size="xs" variant="ghost" onClick={() => setPassword(genPassword())} title="随机生成密码">
                       <RefreshCw size={12} />
                     </Button>
                   </div>
-                )}
-
-                <label className="flex flex-col gap-1">
                   <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                    <Clock size={12} className="inline mr-1" />过期时间
+                    可修改密码或点击右侧按钮重新生成
                   </span>
-                  <select
-                    value={expiresInDays}
-                    onChange={e => setExpiresInDays(Number(e.target.value))}
-                    className="px-3 py-1.5 rounded-lg text-sm outline-none cursor-pointer"
-                    style={inputStyle}
-                  >
-                    <option value={0}>永不过期</option>
-                    <option value={1}>1 天</option>
-                    <option value={7}>7 天</option>
-                    <option value={30}>30 天</option>
-                    <option value={90}>90 天</option>
-                  </select>
-                </label>
-              </div>
-            )}
+                </div>
+              )}
+
+              <label className="flex flex-col gap-1">
+                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  <Clock size={12} className="inline mr-1" />过期时间
+                </span>
+                <select
+                  value={expiresInDays}
+                  onChange={e => setExpiresInDays(Number(e.target.value))}
+                  className="px-3 py-1.5 rounded-lg text-sm outline-none cursor-pointer"
+                  style={inputStyle}
+                >
+                  <option value={0}>永不过期</option>
+                  <option value={1}>1 天</option>
+                  <option value={7}>7 天</option>
+                  <option value={30}>30 天</option>
+                  <option value={90}>90 天</option>
+                </select>
+              </label>
+            </div>
 
             <div className="flex justify-end gap-2 mt-2">
               <Button variant="ghost" onClick={onClose}>取消</Button>

@@ -436,7 +436,7 @@ public class HostedSiteService : IHostedSiteService
             Title = shareTitle,
             Description = description?.Trim(),
             AccessLevel = string.IsNullOrWhiteSpace(password) ? "public" : "password",
-            Password = password,
+            Password = password?.Trim(),
             ExpiresAt = expiresInDays > 0 ? DateTime.UtcNow.AddDays(expiresInDays) : null,
             CreatedBy = userId,
         };
@@ -473,7 +473,7 @@ public class HostedSiteService : IHostedSiteService
         if (share.ExpiresAt.HasValue && share.ExpiresAt.Value < DateTime.UtcNow)
             return new ShareViewResult { Error = "分享链接已过期", HttpStatus = 400 };
 
-        if (share.AccessLevel == "password" && (string.IsNullOrWhiteSpace(password) || password != share.Password))
+        if (share.AccessLevel == "password" && (string.IsNullOrWhiteSpace(password) || password.Trim() != share.Password))
             return new ShareViewResult { Error = "需要提供正确的访问密码", HttpStatus = 401 };
 
         // 更新浏览量
