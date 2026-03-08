@@ -771,43 +771,46 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
               className="flex items-center gap-1.5 flex-wrap mt-2 ml-[68px]"
               onClick={(e) => e.stopPropagation()}
             >
-              {nodeOutput.artifacts.map((art, ai) => (
-                <span
-                  key={ai}
-                  className="inline-flex items-center gap-1 text-[10px] pl-2 pr-1 py-0.5 rounded-full"
-                  style={{
-                    background: 'rgba(34,197,94,0.08)',
-                    color: 'rgba(34,197,94,0.85)',
-                    border: '1px solid rgba(34,197,94,0.15)',
-                  }}
-                >
-                  <FileText className="w-3 h-3" />
-                  <span className="truncate max-w-[140px]">{ensureExtension(art.name, art.mimeType)}</span>
-                  <span className="text-[9px] opacity-60">{formatBytes(art.sizeBytes)}</span>
-                  {(art.inlineContent || art.cosUrl) && onPreviewArtifact && (
-                    <button
-                      onClick={() => onPreviewArtifact(art)}
-                      className="p-0.5 rounded hover:bg-white/10 transition-colors"
-                      title="预览"
-                    >
-                      <Eye className="w-3 h-3" />
-                    </button>
-                  )}
-                  {art.cosUrl && (
-                    <a
-                      href={art.cosUrl}
-                      download={ensureExtension(art.name, art.mimeType)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={(e) => e.stopPropagation()}
-                      className="p-0.5 rounded hover:bg-white/10 transition-colors"
-                      title="下载"
-                    >
-                      <Download className="w-3 h-3" />
-                    </a>
-                  )}
-                </span>
-              ))}
+              {nodeOutput.artifacts.map((art, ai) => {
+                const isAuto = art.tags?.includes('auto-generated');
+                return (
+                  <span
+                    key={ai}
+                    className="inline-flex items-center gap-1 text-[10px] pl-2 pr-1 py-0.5 rounded-full"
+                    style={isAuto
+                      ? { background: 'rgba(139,92,246,0.08)', color: 'rgba(139,92,246,0.7)', border: '1px solid rgba(139,92,246,0.15)' }
+                      : { background: 'rgba(34,197,94,0.08)', color: 'rgba(34,197,94,0.85)', border: '1px solid rgba(34,197,94,0.15)' }
+                    }
+                  >
+                    <FileText className="w-3 h-3" />
+                    <span className="truncate max-w-[140px]">{ensureExtension(art.name, art.mimeType)}</span>
+                    <span className="text-[9px] opacity-60">{formatBytes(art.sizeBytes)}</span>
+                    {isAuto && <span className="text-[8px] opacity-50">透传</span>}
+                    {(art.inlineContent || art.cosUrl) && onPreviewArtifact && (
+                      <button
+                        onClick={() => onPreviewArtifact(art)}
+                        className="p-0.5 rounded hover:bg-white/10 transition-colors"
+                        title="预览"
+                      >
+                        <Eye className="w-3 h-3" />
+                      </button>
+                    )}
+                    {art.cosUrl && (
+                      <a
+                        href={art.cosUrl}
+                        download={ensureExtension(art.name, art.mimeType)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="p-0.5 rounded hover:bg-white/10 transition-colors"
+                        title="下载"
+                      >
+                        <Download className="w-3 h-3" />
+                      </a>
+                    )}
+                  </span>
+                );
+              })}
             </div>
           )}
         </div>

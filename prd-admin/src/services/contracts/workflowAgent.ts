@@ -109,6 +109,7 @@ export interface ExecutionArtifact {
   cosKey?: string;
   cosUrl?: string;
   sizeBytes: number;
+  tags?: string[];
 }
 
 export interface WorkflowExecution {

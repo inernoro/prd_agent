@@ -908,6 +908,7 @@ public static class CapsuleExecutor
             if (!string.IsNullOrEmpty(sourceRef))
             {
                 var refArtifact = MakeTextArtifact(node, "script-out", "源数据引用", sourceRef, "application/json");
+                refArtifact.Tags = new List<string> { "auto-generated" };
                 artifacts.Add(refArtifact);
                 logs.AppendLine($"  源数据引用: {sourceRef.Length} chars ({allItems.Count} 条记录)");
             }
@@ -4135,12 +4136,33 @@ function safeChart(canvasId, config) {
     {
         if (string.IsNullOrWhiteSpace(content)) return "text/plain";
         var trimmed = content.TrimStart();
+
+        // HTML 文档（高置信度：DOCTYPE 或 <html 开头）
+        if (trimmed.StartsWith("<!DOCTYPE", StringComparison.OrdinalIgnoreCase)
+            || trimmed.StartsWith("<html", StringComparison.OrdinalIgnoreCase))
+            return "text/html";
+
         // JSON 对象或数组
         if (trimmed.StartsWith('{') || trimmed.StartsWith('['))
             return "application/json";
+
+        // CSV：非 JSON/HTML/Markdown，前两行逗号数一致且 >= 2
+        if (!trimmed.StartsWith('#') && !trimmed.StartsWith('<'))
+        {
+            var lines = trimmed.Split('\n', 3);
+            if (lines.Length >= 2)
+            {
+                var c1 = lines[0].Count(c => c == ',');
+                var c2 = lines[1].Count(c => c == ',');
+                if (c1 >= 2 && c1 == c2)
+                    return "text/csv";
+            }
+        }
+
         // Markdown 特征：标题、列表、表格
         if (trimmed.StartsWith('#') || trimmed.Contains("\n# ") || trimmed.Contains("\n| ") || trimmed.Contains("\n- "))
             return "text/markdown";
+
         return "text/plain";
     }
 

@@ -307,6 +307,11 @@ public class ExecutionArtifact
 
     public long SizeBytes { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// 标签（auto-generated = 自动透传产物，供前端区分显示）
+    /// </summary>
+    public List<string>? Tags { get; set; }
 }
 
 // ─────────────────────────────────────────────────────────────
