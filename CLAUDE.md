@@ -136,6 +136,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | **human-verify** | "验证一下"、"/verify" | 多角度模拟验证（逆向验证/边界测试/数据流追踪） | 开发者 |
 | **smoke-test** | "冒烟测试"、"/smoke" | 自动生成链式 curl 命令端到端测试 | 开发者、QA |
 | **task-handoff-checklist** | "交接"、"/handoff" | 8 维度交接清单（导航/文档/规则/流程/测试/风险/质量/后续） | 所有人 |
+| **conflict-resolution** | "解决冲突"、"/resolve" | 安全合并冲突（三级分类、禁止静默丢弃、强制人类确认高风险） | 开发者 |
 | **weekly-update-summary** | "生成周报"、"/weekly" | 从 git 历史自动生成结构化周报 | 项目负责人 |
 
 ### 使用指引
