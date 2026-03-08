@@ -530,7 +530,8 @@ public class VideoGenRunWorker : BackgroundService
         try
         {
             var videoProjectPath = GetVideoProjectPath();
-            var dataDir = Path.Combine(videoProjectPath, "data");
+            var videoWorkDir = GetVideoWorkDir();
+            var dataDir = Path.Combine(videoWorkDir, "data");
             Directory.CreateDirectory(dataDir);
 
             // 写入生成的场景代码到磁盘（如有）
@@ -565,7 +566,7 @@ public class VideoGenRunWorker : BackgroundService
             await File.WriteAllTextAsync(dataFilePath, dataJson, CancellationToken.None);
 
             // 渲染输出
-            var outDir = Path.Combine(videoProjectPath, "out");
+            var outDir = Path.Combine(videoWorkDir, "out");
             Directory.CreateDirectory(outDir);
             var outputMp4 = Path.Combine(outDir, $"{run.Id}_scene_{sceneIdx}.mp4");
 
@@ -942,7 +943,8 @@ public class VideoGenRunWorker : BackgroundService
         await PublishEventAsync(run.Id, "phase.changed", new { phase = "rendering", progress = 5 });
 
         var videoProjectPath = GetVideoProjectPath();
-        var dataDir = Path.Combine(videoProjectPath, "data");
+        var videoWorkDir = GetVideoWorkDir();
+        var dataDir = Path.Combine(videoWorkDir, "data");
         Directory.CreateDirectory(dataDir);
 
         // 写入生成的场景代码到磁盘（如有）
@@ -980,7 +982,7 @@ public class VideoGenRunWorker : BackgroundService
         await File.WriteAllTextAsync(dataFilePath, dataJson, CancellationToken.None);
 
         // 2b: 根据 OutputFormat 选择渲染方式
-        var outDir = Path.Combine(videoProjectPath, "out");
+        var outDir = Path.Combine(videoWorkDir, "out");
         Directory.CreateDirectory(outDir);
 
         string assetUrl;
@@ -1750,8 +1752,8 @@ document.addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key==='ArrowD
     /// </summary>
     private void WriteGeneratedScenesToDisk(VideoGenRun run)
     {
-        var videoProjectPath = GetVideoProjectPath();
-        var generatedDir = Path.Combine(videoProjectPath, "src", "scenes", "generated");
+        var videoWorkDir = GetVideoWorkDir();
+        var generatedDir = Path.Combine(videoWorkDir, "src", "scenes", "generated");
         Directory.CreateDirectory(generatedDir);
 
         // 收集有生成代码的场景
@@ -1805,8 +1807,8 @@ document.addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key==='ArrowD
     {
         try
         {
-            var videoProjectPath = GetVideoProjectPath();
-            var generatedDir = Path.Combine(videoProjectPath, "src", "scenes", "generated");
+            var videoWorkDir = GetVideoWorkDir();
+            var generatedDir = Path.Combine(videoWorkDir, "src", "scenes", "generated");
 
             // 删除所有 Scene_*.tsx 文件
             if (Directory.Exists(generatedDir))
@@ -2010,6 +2012,35 @@ document.addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key==='ArrowD
             path = Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "..", "..", "..", "prd-video"));
         }
         return path;
+    }
+
+    /// <summary>
+    /// 获取视频生成的可写工作目录。
+    /// Docker 容器中文件系统为只读（read_only: true），只有 /tmp 可写。
+    /// 本地开发时直接使用 prd-video 项目目录。
+    /// </summary>
+    private string GetVideoWorkDir()
+    {
+        var workDir = _configuration["VideoAgent:WorkDir"];
+        if (!string.IsNullOrWhiteSpace(workDir))
+            return workDir;
+
+        var videoProjectPath = GetVideoProjectPath();
+        try
+        {
+            // 尝试在项目目录创建测试目录，判断是否可写
+            var testDir = Path.Combine(videoProjectPath, ".write-test");
+            Directory.CreateDirectory(testDir);
+            Directory.Delete(testDir);
+            return videoProjectPath;
+        }
+        catch (IOException)
+        {
+            // 只读文件系统（Docker read_only: true），回退到 /tmp
+            var tmpWorkDir = Path.Combine(Path.GetTempPath(), "prd-video-work");
+            Directory.CreateDirectory(tmpWorkDir);
+            return tmpWorkDir;
+        }
     }
 
     private async Task UpdatePhaseAsync(VideoGenRun run, string phase, int progress)
