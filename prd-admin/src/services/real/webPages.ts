@@ -231,9 +231,13 @@ export interface ShareViewData {
 export async function viewShare(token: string, password?: string): Promise<ApiResponse<ShareViewData>> {
   const q = password ? `?password=${encodeURIComponent(password)}` : '';
   // 使用 raw fetch 避免 apiRequest 的 401 自动 refresh/redirect 逻辑，此端点是公开的
+  // 但仍需携带 auth token（如果已登录），以便后端识别观看者身份
   const url = joinUrl(getApiBaseUrl(), `${api.webPages.viewShare(encodeURIComponent(token))}${q}`);
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  const authToken = useAuthStore.getState().token;
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
   try {
-    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    const res = await fetch(url, { headers });
     const json = await res.json();
     return json as ApiResponse<ShareViewData>;
   } catch {
