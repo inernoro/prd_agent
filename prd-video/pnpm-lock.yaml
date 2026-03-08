@@ -14,6 +14,18 @@ importers:
       '@remotion/cli':
         specifier: 4.0.242
         version: 4.0.242(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      '@remotion/motion-blur':
+        specifier: 4.0.242
+        version: 4.0.242(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      '@remotion/noise':
+        specifier: 4.0.242
+        version: 4.0.242(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      '@remotion/paths':
+        specifier: 4.0.242
+        version: 4.0.242
+      '@remotion/transitions':
+        specifier: 4.0.242
+        version: 4.0.242(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -274,6 +286,18 @@ packages:
       react: '>=16.8.0'
       react-dom: '>=16.8.0'
 
+  '@remotion/motion-blur@4.0.242':
+    resolution: {integrity: sha512-FvXAnLX5jYH/nMVZ5JQH1QmKVSn1SNqIcsjXgJCiP/elzLRYbXMx+gZeZws5CkNpGaCfmSt5phBb06oBpSXO+w==}
+    peerDependencies:
+      react: '>=16.8.0'
+      react-dom: '>=16.8.0'
+
+  '@remotion/noise@4.0.242':
+    resolution: {integrity: sha512-0rRFMCv7+JOcGZGPCLclK3EfLQrINUaYAGyAfF8Sk+K/SoL5XQghqfxa9bw7uE21V997+G3QJ2p04ZnIks5fYA==}
+
+  '@remotion/paths@4.0.242':
+    resolution: {integrity: sha512-dWNX6PlNBBvZZQUGcgrOjuxZ5pmMqRRv+d2CHMM/sDf+NcXO46GB3V5wp9GkWdiHG6lEmjh59qHkptIcfqRrHw==}
+
   '@remotion/player@4.0.242':
     resolution: {integrity: sha512-ZcQQOoVQ/3R5jj9JumE5Z0+byG8vuA0uaFGF6UB3deTjhVr/8O4tavRi/XZ3vDk/NQBTwV68BcxAAN7a8bEyAg==}
     peerDependencies:
@@ -282,6 +306,12 @@ packages:
 
   '@remotion/renderer@4.0.242':
     resolution: {integrity: sha512-GqedGvaAKn9HFYLBQb9DpU4ixVeyXAHMSPXrE6r7pJA4oCp7Wxd2QLWLhmynjyFa+EAoAR/6ZkQJNuAUnhZS7A==}
+    peerDependencies:
+      react: '>=16.8.0'
+      react-dom: '>=16.8.0'
+
+  '@remotion/shapes@4.0.242':
+    resolution: {integrity: sha512-VNRB5v+HUSFZzJk5Eh/GbW7gvZktzoYhbdds6taAAb323mTbpu6zHN2xHixOJgk9foIixZN7rKBNeg85NO0YQA==}
     peerDependencies:
       react: '>=16.8.0'
       react-dom: '>=16.8.0'
@@ -297,6 +327,12 @@ packages:
 
   '@remotion/studio@4.0.242':
     resolution: {integrity: sha512-MEmw8naMlgMDPz8//KA6SoQx4scZoFa9lOlVgMKidQSvNhc/H8bBR2oq8erIVNNYAFZdThuUjRkR/Pl5MiIJWQ==}
+
+  '@remotion/transitions@4.0.242':
+    resolution: {integrity: sha512-HLx8RZNRPnCD2jrVbfknnT+w231DvOX+1JUwfj9sAW4xa7jbEPYd1H1I5+jg/KeZB2Y/uB6qSGJmrwDYOooeqA==}
+    peerDependencies:
+      react: '>=16.8.0'
+      react-dom: '>=16.8.0'
 
   '@types/eslint-scope@3.7.7':
     resolution: {integrity: sha512-MzMFlSLBqNF2gcHWO0G1vP/YQyfvrxZ0bF+u7mzUdZ1/xK4A4sru+nraZz5i3iEIk1l1uyicaDVTB4QbbEkAYg==}
@@ -804,6 +840,9 @@ packages:
   signal-exit@3.0.7:
     resolution: {integrity: sha512-wnD2ZE+l+SPC/uoS0vXeE9L1+0wuaMqKlfz9AMUo38JsyLSBWSFcHR1Rri62LZc12vLr1gb3jl7iwQhgwpAbGQ==}
 
+  simplex-noise@4.0.1:
+    resolution: {integrity: sha512-zl/+bdSqW7HJOQ0oDbxrNYaF4F5ik0i7M6YOYmEoIJNtg16NpvWaTTM1Y7oV/7T0jFljawLgYPS81Uu2rsfo1A==}
+
   sisteransi@1.0.5:
     resolution: {integrity: sha512-bLGGlR1QxBcynn2d5YmDX4MGjlZvy2MRBDRNHLJ8VI6l6+9FUiyTFNJ0IveOSP0bcXgVDPRcfGqA0pjaqUpfVg==}
 
@@ -1055,14 +1094,14 @@ snapshots:
     dependencies:
       '@remotion/studio': 4.0.242(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@remotion/studio-shared': 4.0.242(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
-      css-loader: 5.2.7(webpack@5.96.1)
+      css-loader: 5.2.7(webpack@5.96.1(esbuild@0.24.0))
       esbuild: 0.24.0
       react: 18.3.1
       react-dom: 18.3.1(react@18.3.1)
       react-refresh: 0.9.0
       remotion: 4.0.242(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       source-map: 0.7.3
-      style-loader: 2.0.0(webpack@5.96.1)
+      style-loader: 2.0.0(webpack@5.96.1(esbuild@0.24.0))
       webpack: 5.96.1(esbuild@0.24.0)
     transitivePeerDependencies:
       - '@swc/core'
@@ -1124,6 +1163,22 @@ snapshots:
       react-dom: 18.3.1(react@18.3.1)
       remotion: 4.0.242(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
 
+  '@remotion/motion-blur@4.0.242(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
+    dependencies:
+      react: 18.3.1
+      react-dom: 18.3.1(react@18.3.1)
+      remotion: 4.0.242(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+
+  '@remotion/noise@4.0.242(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
+    dependencies:
+      remotion: 4.0.242(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      simplex-noise: 4.0.1
+    transitivePeerDependencies:
+      - react
+      - react-dom
+
+  '@remotion/paths@4.0.242': {}
+
   '@remotion/player@4.0.242(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
     dependencies:
       react: 18.3.1
@@ -1152,6 +1207,12 @@ snapshots:
       - bufferutil
       - supports-color
       - utf-8-validate
+
+  '@remotion/shapes@4.0.242(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
+    dependencies:
+      '@remotion/paths': 4.0.242
+      react: 18.3.1
+      react-dom: 18.3.1(react@18.3.1)
 
   '@remotion/streaming@4.0.242': {}
 
@@ -1202,6 +1263,14 @@ snapshots:
       - react-dom
       - supports-color
       - utf-8-validate
+
+  '@remotion/transitions@4.0.242(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
+    dependencies:
+      '@remotion/paths': 4.0.242
+      '@remotion/shapes': 4.0.242(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      react: 18.3.1
+      react-dom: 18.3.1(react@18.3.1)
+      remotion: 4.0.242(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
 
   '@types/eslint-scope@3.7.7':
     dependencies:
@@ -1378,7 +1447,7 @@ snapshots:
       shebang-command: 2.0.0
       which: 2.0.2
 
-  css-loader@5.2.7(webpack@5.96.1):
+  css-loader@5.2.7(webpack@5.96.1(esbuild@0.24.0)):
     dependencies:
       icss-utils: 5.1.0(postcss@8.5.8)
       loader-utils: 2.0.4
@@ -1715,6 +1784,8 @@ snapshots:
 
   signal-exit@3.0.7: {}
 
+  simplex-noise@4.0.1: {}
+
   sisteransi@1.0.5: {}
 
   source-map-js@1.2.1: {}
@@ -1734,7 +1805,7 @@ snapshots:
 
   strip-final-newline@2.0.0: {}
 
-  style-loader@2.0.0(webpack@5.96.1):
+  style-loader@2.0.0(webpack@5.96.1(esbuild@0.24.0)):
     dependencies:
       loader-utils: 2.0.4
       schema-utils: 3.3.0
