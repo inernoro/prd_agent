@@ -429,6 +429,7 @@ public static class CapsuleTypes
     public const string WebhookReceiver = "webhook-receiver";
     public const string ManualTrigger = "manual-trigger";
     public const string FileUpload = "file-upload";
+    public const string EventTrigger = "event-trigger";
 
     // 处理类
     public const string TapdCollector = "tapd-collector";
@@ -452,6 +453,8 @@ public static class CapsuleTypes
     public const string WebhookSender = "webhook-sender";
     public const string NotificationSender = "notification-sender";
     public const string VideoGeneration = "video-generation";
+    public const string SitePublisher = "site-publisher";
+    public const string EmailSender = "email-sender";
 
     // 兼容旧类型映射
     public const string DataCollectorLegacy = "data-collector";
@@ -461,13 +464,13 @@ public static class CapsuleTypes
     public static readonly string[] All =
     {
         // 触发类
-        Timer, WebhookReceiver, ManualTrigger, FileUpload,
+        Timer, WebhookReceiver, ManualTrigger, FileUpload, EventTrigger,
         // 处理类
         TapdCollector, HttpRequest, SmartHttp, LlmAnalyzer, ScriptExecutor, DataExtractor, DataMerger, FormatConverter, DataAggregator,
         // 流程控制类
         Delay, Condition,
         // 输出类
-        ReportGenerator, WebpageGenerator, FileExporter, WebhookSender, NotificationSender, VideoGeneration,
+        ReportGenerator, WebpageGenerator, FileExporter, WebhookSender, NotificationSender, VideoGeneration, SitePublisher, EmailSender,
         // 旧类型兼容
         DataCollectorLegacy, LlmCodeExecutorLegacy, RendererLegacy,
     };

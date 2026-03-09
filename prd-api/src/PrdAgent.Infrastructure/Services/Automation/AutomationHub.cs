@@ -7,21 +7,24 @@ using PrdAgent.Infrastructure.Database;
 namespace PrdAgent.Infrastructure.Services.Automation;
 
 /// <summary>
-/// 自动化中枢实现：接收事件 → 匹配规则 → 分发动作
+/// 自动化中枢实现：接收事件 → 匹配规则 → 分发动作 + 触发事件驱动工作流
 /// </summary>
 public class AutomationHub : IAutomationHub
 {
     private readonly MongoDbContext _db;
     private readonly Dictionary<string, IActionExecutor> _executors;
+    private readonly IRunQueue _runQueue;
     private readonly ILogger<AutomationHub> _logger;
 
     public AutomationHub(
         MongoDbContext db,
         IEnumerable<IActionExecutor> executors,
+        IRunQueue runQueue,
         ILogger<AutomationHub> logger)
     {
         _db = db;
         _executors = executors.ToDictionary(e => e.ActionType, e => e);
+        _runQueue = runQueue;
         _logger = logger;
     }
 
@@ -45,40 +48,37 @@ public class AutomationHub : IAutomationHub
                 SourceId = sourceId
             };
 
-            // 查找匹配的规则
+            // ── 1. 传统自动化规则 ──
             var rules = await FindMatchingRulesAsync(eventType);
 
-            if (rules.Count == 0)
+            if (rules.Count > 0)
             {
-                _logger.LogDebug("No automation rules matched for event {EventType}", eventType);
-                return;
-            }
+                _logger.LogInformation(
+                    "Event {EventType} matched {Count} automation rule(s)",
+                    eventType, rules.Count);
 
-            _logger.LogInformation(
-                "Event {EventType} matched {Count} automation rule(s)",
-                eventType, rules.Count);
-
-            foreach (var rule in rules)
-            {
-                try
+                foreach (var rule in rules)
                 {
-                    // 应用模板覆盖
-                    var effectivePayload = ApplyTemplates(rule, payload);
+                    try
+                    {
+                        var effectivePayload = ApplyTemplates(rule, payload);
+                        await ExecuteActionsAsync(rule, effectivePayload);
 
-                    await ExecuteActionsAsync(rule, effectivePayload);
-
-                    // 更新触发统计
-                    var update = Builders<AutomationRule>.Update
-                        .Set(r => r.LastTriggeredAt, DateTime.UtcNow)
-                        .Inc(r => r.TriggerCount, 1);
-                    await _db.AutomationRules.UpdateOneAsync(r => r.Id == rule.Id, update);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to execute rule {RuleId} for event {EventType}",
-                        rule.Id, eventType);
+                        var update = Builders<AutomationRule>.Update
+                            .Set(r => r.LastTriggeredAt, DateTime.UtcNow)
+                            .Inc(r => r.TriggerCount, 1);
+                        await _db.AutomationRules.UpdateOneAsync(r => r.Id == rule.Id, update);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Failed to execute rule {RuleId} for event {EventType}",
+                            rule.Id, eventType);
+                    }
                 }
             }
+
+            // ── 2. 事件驱动工作流 ──
+            await TriggerEventWorkflowsAsync(eventType, payload);
         }
         catch (Exception ex)
         {
@@ -264,5 +264,183 @@ public class AutomationHub : IAutomationHub
             result = result[..idx] + value + result[(idx + "{{value}}".Length)..];
         }
         return result;
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // 事件驱动工作流集成
+    // ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// 查找包含匹配事件触发器的已启用工作流，为每个创建执行实例并入队。
+    /// </summary>
+    private async Task TriggerEventWorkflowsAsync(string eventType, AutomationEventPayload payload)
+    {
+        try
+        {
+            // 查找所有已启用的工作流
+            var workflows = await _db.Workflows
+                .Find(w => w.IsEnabled)
+                .ToListAsync();
+
+            var matched = new List<Workflow>();
+            foreach (var wf in workflows)
+            {
+                // 检查是否有 event-trigger 节点且 eventType 匹配
+                foreach (var node in wf.Nodes)
+                {
+                    if (node.NodeType != CapsuleTypes.EventTrigger) continue;
+
+                    var nodeEventType = GetNodeConfigString(node, "eventType");
+                    var customEventType = GetNodeConfigString(node, "customEventType");
+
+                    // 优先使用自定义事件类型
+                    var effectiveEventType = !string.IsNullOrWhiteSpace(customEventType) ? customEventType : nodeEventType;
+                    if (string.IsNullOrWhiteSpace(effectiveEventType)) continue;
+
+                    if (IsEventMatch(effectiveEventType, eventType))
+                    {
+                        matched.Add(wf);
+                        break; // 一个工作流匹配一次即可
+                    }
+                }
+
+                // 也检查 Trigger 配置中的 event 触发器（兼容旧模型）
+                foreach (var trigger in wf.Triggers)
+                {
+                    if (trigger.Type != WorkflowTriggerTypes.Event) continue;
+                    if (string.IsNullOrWhiteSpace(trigger.EventType)) continue;
+
+                    if (IsEventMatch(trigger.EventType, eventType))
+                    {
+                        if (!matched.Contains(wf))
+                            matched.Add(wf);
+                        break;
+                    }
+                }
+            }
+
+            if (matched.Count == 0)
+            {
+                _logger.LogDebug("No event-triggered workflows matched for {EventType}", eventType);
+                return;
+            }
+
+            _logger.LogInformation(
+                "Event {EventType} matched {Count} workflow(s)",
+                eventType, matched.Count);
+
+            foreach (var wf in matched)
+            {
+                try
+                {
+                    await CreateAndEnqueueWorkflowExecutionAsync(wf, eventType, payload);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to trigger workflow {WorkflowId} for event {EventType}",
+                        wf.Id, eventType);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "TriggerEventWorkflowsAsync failed for {EventType}", eventType);
+        }
+    }
+
+    /// <summary>
+    /// 创建工作流执行实例，注入事件载荷变量，入队到 RunQueue。
+    /// </summary>
+    private async Task CreateAndEnqueueWorkflowExecutionAsync(
+        Workflow workflow,
+        string eventType,
+        AutomationEventPayload payload)
+    {
+        // 构建执行变量：将事件数据注入为系统变量供 event-trigger 节点使用
+        var variables = new Dictionary<string, string>();
+
+        // 工作流定义的默认变量
+        foreach (var v in workflow.Variables)
+        {
+            if (!string.IsNullOrEmpty(v.DefaultValue))
+                variables[v.Key] = v.DefaultValue;
+        }
+
+        // 注入事件上下文（双下划线前缀为系统保留变量）
+        variables["__eventType"] = eventType;
+        variables["__eventTitle"] = payload.Title;
+        variables["__eventContent"] = payload.Content;
+        variables["__eventSourceId"] = payload.SourceId ?? "";
+
+        // 注入事件自定义变量（带 __event_ 前缀，避免与用户变量冲突）
+        if (payload.Variables != null)
+        {
+            foreach (var kvp in payload.Variables)
+            {
+                variables[$"__event_{kvp.Key}"] = kvp.Value;
+            }
+        }
+
+        // 创建执行实例
+        var execution = new WorkflowExecution
+        {
+            WorkflowId = workflow.Id,
+            WorkflowName = workflow.Name,
+            TriggerType = WorkflowTriggerTypes.Event,
+            TriggeredBy = "system",
+            TriggeredByName = $"事件: {eventType}",
+            Variables = variables,
+            NodeSnapshot = workflow.Nodes,
+            EdgeSnapshot = workflow.Edges,
+            NodeExecutions = workflow.Nodes.Select(n => new NodeExecution
+            {
+                NodeId = n.NodeId,
+                NodeName = n.Name,
+                NodeType = n.NodeType,
+                Status = NodeExecutionStatus.Pending,
+            }).ToList(),
+        };
+
+        await _db.WorkflowExecutions.InsertOneAsync(execution);
+
+        // 更新工作流统计
+        var wfUpdate = Builders<Workflow>.Update
+            .Set(w => w.LastExecutedAt, DateTime.UtcNow)
+            .Inc(w => w.ExecutionCount, 1);
+        await _db.Workflows.UpdateOneAsync(w => w.Id == workflow.Id, wfUpdate);
+
+        // 入队执行
+        await _runQueue.EnqueueAsync(RunKinds.Workflow, execution.Id);
+
+        _logger.LogInformation(
+            "Event-triggered workflow execution created: {ExecutionId} for workflow {WorkflowName} ({WorkflowId}), event={EventType}",
+            execution.Id, workflow.Name, workflow.Id, eventType);
+    }
+
+    /// <summary>
+    /// 判断配置的事件类型模式是否匹配实际事件（支持通配符 *）
+    /// </summary>
+    private static bool IsEventMatch(string pattern, string actualEventType)
+    {
+        if (pattern == actualEventType) return true;
+
+        // 通配符匹配：visual-agent.* 匹配 visual-agent.image-gen.completed
+        if (pattern.EndsWith(".*"))
+        {
+            var prefix = pattern[..^1]; // remove trailing *
+            return actualEventType.StartsWith(prefix, StringComparison.Ordinal);
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// 从节点配置中获取字符串值
+    /// </summary>
+    private static string? GetNodeConfigString(WorkflowNode node, string key)
+    {
+        if (!node.Config.TryGetValue(key, out var value) || value == null)
+            return null;
+        return value.ToString();
     }
 }

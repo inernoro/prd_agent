@@ -160,6 +160,34 @@ public static class CapsuleTypeRegistry
         },
     };
 
+    public static readonly CapsuleTypeMeta EventTrigger = new()
+    {
+        TypeKey = CapsuleTypes.EventTrigger,
+        Name = "事件触发",
+        Description = "监听系统事件（如生图完成、缺陷创建等），事件发生时自动触发流水线",
+        Icon = "zap",
+        Category = CapsuleCategory.Trigger,
+        AccentHue = 45,
+        Testable = true,
+        ConfigSchema = new()
+        {
+            new() { Key = "eventType", Label = "事件类型", FieldType = "select", Required = true, HelpTip = "选择要监听的系统事件，支持通配符（如 visual-agent.*）", Options = new()
+            {
+                new() { Value = "open-platform.quota.warning", Label = "开放平台 - 额度预警" },
+                new() { Value = "visual-agent.image-gen.completed", Label = "视觉创作 - 生图完成" },
+                new() { Value = "visual-agent.image-gen.failed", Label = "视觉创作 - 生图失败" },
+                new() { Value = "visual-agent.image-gen.*", Label = "视觉创作 - 所有生图事件" },
+                new() { Value = "defect-agent.report.created", Label = "缺陷管理 - 缺陷报告创建" },
+                new() { Value = "literary-agent.illustration.completed", Label = "文学创作 - 配图生成完成" },
+            }},
+            new() { Key = "customEventType", Label = "自定义事件类型", FieldType = "text", Required = false, Placeholder = "my-app.custom-event", HelpTip = "如果下拉列表中没有需要的事件，可以在此输入自定义事件类型" },
+        },
+        DefaultOutputSlots = new()
+        {
+            new() { SlotId = "event-out", Name = "eventPayload", DataType = "json", Required = true, Description = "事件载荷（包含 eventType、title、content、variables 等）" },
+        },
+    };
+
     // ──────────── 处理类 ────────────
 
     public static readonly CapsuleTypeMeta TapdCollector = new()
@@ -720,19 +748,81 @@ public static class CapsuleTypeRegistry
         },
     };
 
+    public static readonly CapsuleTypeMeta SitePublisher = new()
+    {
+        TypeKey = CapsuleTypes.SitePublisher,
+        Name = "站点发布",
+        Description = "将上游 HTML 内容发布到网页托管，生成可公开访问的网页链接",
+        Icon = "globe-lock",
+        Category = CapsuleCategory.Output,
+        AccentHue = 160,
+        ConfigSchema = new()
+        {
+            new() { Key = "title", Label = "站点标题", FieldType = "text", Required = false, Placeholder = "月度质量报告", HelpTip = "留空则从上游产物名称自动生成。支持 {{变量}} 替换" },
+            new() { Key = "description", Label = "站点描述", FieldType = "textarea", Required = false, Placeholder = "自动生成的报告网页", HelpTip = "留空则自动填充。支持 {{变量}} 替换" },
+            new() { Key = "folder", Label = "存储文件夹", FieldType = "text", Required = false, Placeholder = "reports", HelpTip = "可选。将站点归类到指定文件夹，便于管理" },
+            new() { Key = "tags", Label = "标签", FieldType = "text", Required = false, Placeholder = "report,auto-gen,2026", HelpTip = "逗号分隔的标签列表，便于搜索和过滤" },
+            new() { Key = "autoShare", Label = "自动创建分享链接", FieldType = "select", Required = false, DefaultValue = "false", Options = new()
+            {
+                new() { Value = "false", Label = "不创建" },
+                new() { Value = "public", Label = "公开链接（无需密码）" },
+                new() { Value = "password", Label = "加密链接（自动生成密码）" },
+            }, HelpTip = "发布后自动创建分享链接，适合自动化通知场景" },
+            new() { Key = "shareExpiryDays", Label = "分享链接有效天数", FieldType = "number", Required = false, DefaultValue = "30", HelpTip = "自动创建分享链接时的有效期（天），默认 30 天" },
+        },
+        DefaultInputSlots = new()
+        {
+            new() { SlotId = "site-in", Name = "html", DataType = "text", Required = true, Description = "待发布的 HTML 内容（来自网页报告或其他生成器）" },
+        },
+        DefaultOutputSlots = new()
+        {
+            new() { SlotId = "site-out", Name = "result", DataType = "json", Required = true, Description = "发布结果（含 siteUrl、siteId、shareUrl 等）" },
+        },
+    };
+
+    public static readonly CapsuleTypeMeta EmailSender = new()
+    {
+        TypeKey = CapsuleTypes.EmailSender,
+        Name = "邮件发送",
+        Description = "使用系统 SMTP 配置发送邮件，无需手动配置邮箱参数",
+        Icon = "mail",
+        Category = CapsuleCategory.Output,
+        AccentHue = 210,
+        ConfigSchema = new()
+        {
+            new() { Key = "toEmail", Label = "收件人邮箱", FieldType = "text", Required = true, Placeholder = "user@example.com", HelpTip = "收件人邮箱地址，支持 {{变量}} 替换" },
+            new() { Key = "toName", Label = "收件人姓名", FieldType = "text", Required = false, Placeholder = "张三", HelpTip = "可选，留空则使用邮箱地址。支持 {{变量}} 替换" },
+            new() { Key = "subject", Label = "邮件主题", FieldType = "text", Required = true, Placeholder = "月度质量报告", HelpTip = "邮件标题，支持 {{变量}} 替换" },
+            new() { Key = "bodyTemplate", Label = "邮件正文", FieldType = "textarea", Required = false, Placeholder = "请查看附件中的报告内容…", HelpTip = "留空则自动使用上游产物内容作为邮件正文。支持 HTML 和 {{变量}} 替换" },
+            new() { Key = "useHtml", Label = "HTML 格式", FieldType = "select", Required = false, DefaultValue = "true", Options = new()
+            {
+                new() { Value = "true", Label = "是（支持富文本格式）" },
+                new() { Value = "false", Label = "否（纯文本）" },
+            }, HelpTip = "是否以 HTML 格式发送邮件正文" },
+        },
+        DefaultInputSlots = new()
+        {
+            new() { SlotId = "email-in", Name = "content", DataType = "text", Required = false, Description = "上游内容（作为邮件正文或附加内容）" },
+        },
+        DefaultOutputSlots = new()
+        {
+            new() { SlotId = "email-out", Name = "result", DataType = "json", Required = true, Description = "发送结果（含 success、toEmail 等）" },
+        },
+    };
+
     /// <summary>
     /// 按分类排序的全部舱类型
     /// </summary>
     public static readonly IReadOnlyList<CapsuleTypeMeta> All = new List<CapsuleTypeMeta>
     {
         // 触发类
-        Timer, WebhookReceiver, ManualTrigger, FileUpload,
+        Timer, WebhookReceiver, ManualTrigger, FileUpload, EventTrigger,
         // 处理类
         TapdCollector, HttpRequest, SmartHttp, LlmAnalyzer, ScriptExecutor, DataExtractor, DataMerger, FormatConverter, DataAggregator,
         // 流程控制类
         Delay, Condition,
         // 输出类
-        ReportGenerator, WebpageGenerator, FileExporter, WebhookSender, NotificationSender, VideoGeneration,
+        ReportGenerator, WebpageGenerator, FileExporter, WebhookSender, NotificationSender, VideoGeneration, SitePublisher, EmailSender,
     };
 
     /// <summary>按 TypeKey 查找</summary>

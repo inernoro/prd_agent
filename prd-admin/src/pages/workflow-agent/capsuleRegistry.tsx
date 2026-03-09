@@ -1,8 +1,8 @@
 import {
-  Timer, Webhook, Hand, Upload,
+  Timer, Webhook, Hand, Upload, Zap,
   Database, Globe, Brain, Code2, Filter, Merge, Repeat, BarChart3,
   Clock, GitBranch,
-  FileText, Download, Send, Bell, Box, AppWindow,
+  FileText, Download, Send, Bell, Box, AppWindow, GlobeLock, Mail,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -91,6 +91,16 @@ export const CAPSULE_TYPE_REGISTRY: Record<string, CapsuleTypeDef> = {
     accentHue: 170,
     testable: true,
     disabledReason: '🚧 需要执行时文件选择器支持，开发中',
+  },
+  'event-trigger': {
+    typeKey: 'event-trigger',
+    name: '事件触发',
+    description: '监听系统事件自动触发流水线',
+    Icon: Zap,
+    emoji: '⚡',
+    category: 'trigger',
+    accentHue: 45,
+    testable: true,
   },
 
   // ──────── 处理类 ────────
@@ -259,6 +269,26 @@ export const CAPSULE_TYPE_REGISTRY: Record<string, CapsuleTypeDef> = {
     accentHue: 340,
     testable: true,
   },
+  'site-publisher': {
+    typeKey: 'site-publisher',
+    name: '站点发布',
+    description: '发布 HTML 到网页托管，生成公开链接',
+    Icon: GlobeLock,
+    emoji: '🌐',
+    category: 'output',
+    accentHue: 160,
+    testable: true,
+  },
+  'email-sender': {
+    typeKey: 'email-sender',
+    name: '邮件发送',
+    description: '使用系统 SMTP 发送邮件，无需配置邮箱参数',
+    Icon: Mail,
+    emoji: '📧',
+    category: 'output',
+    accentHue: 210,
+    testable: true,
+  },
 };
 
 // ──────── 兼容旧 NodeType ────────
@@ -321,6 +351,9 @@ const ICON_MAP: Record<string, LucideIcon> = {
   'bell': Bell,
   'bar-chart': BarChart3,
   'app-window': AppWindow,
+  'globe-lock': GlobeLock,
+  'zap': Zap,
+  'mail': Mail,
 };
 
 const EMOJI_MAP: Record<string, string> = {
@@ -344,6 +377,9 @@ const EMOJI_MAP: Record<string, string> = {
   'file-exporter': '💾',
   'webhook-sender': '📡',
   'notification-sender': '🔔',
+  'event-trigger': '⚡',
+  'site-publisher': '🌐',
+  'email-sender': '📧',
 };
 
 const CATEGORY_EMOJI: Record<string, string> = {
