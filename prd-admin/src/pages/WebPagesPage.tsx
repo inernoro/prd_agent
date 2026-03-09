@@ -403,24 +403,9 @@ export default function WebPagesPage() {
       )}
 
       {/* QR Code Dialog */}
-      <Dialog
-        open={!!qrSite}
-        onOpenChange={(open) => { if (!open) setQrSite(null); }}
-        title="扫码访问"
-        description={qrSite?.title}
-        content={
-          qrSite ? (
-            <div className="flex flex-col items-center gap-4 py-4">
-              <div className="p-4 rounded-2xl" style={{ background: '#fff' }}>
-                <QRCodeSVG value={qrSite.siteUrl} size={280} level="H" />
-              </div>
-              <p className="text-xs text-center break-all px-4" style={{ color: 'var(--text-muted)', maxWidth: 320 }}>
-                {qrSite.siteUrl}
-              </p>
-            </div>
-          ) : null
-        }
-      />
+      {qrSite && (
+        <QrCodeDialog site={qrSite} onClose={() => setQrSite(null)} />
+      )}
     </div>
   );
 }
@@ -428,6 +413,64 @@ export default function WebPagesPage() {
 // ─── Card View ───
 
 // ─── Iframe Thumbnail Preview ───
+
+// ─── QR Code Dialog (auto-creates share link) ───
+
+function QrCodeDialog({ site, onClose }: { site: HostedSite; onClose: () => void }) {
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setCreating(true);
+      const res = await createSiteShareLink({
+        siteId: site.id,
+        shareType: 'single',
+        expiresInDays: 0,
+      });
+      if (cancelled) return;
+      setCreating(false);
+      if (res.success) {
+        setShareUrl(`${window.location.origin}${res.data.shareUrl}`);
+      } else {
+        setError('创建分享链接失败');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [site.id]);
+
+  return (
+    <Dialog
+      open={true}
+      onOpenChange={v => { if (!v) onClose(); }}
+      title="扫码访问"
+      description={site.title}
+      content={
+        <div className="flex flex-col items-center gap-4 py-4">
+          {creating ? (
+            <div className="flex items-center gap-2 py-8" style={{ color: 'var(--text-muted)' }}>
+              <RefreshCw size={16} className="animate-spin" />
+              <span className="text-sm">正在生成分享链接…</span>
+            </div>
+          ) : error ? (
+            <p className="text-sm py-8" style={{ color: '#ef4444' }}>{error}</p>
+          ) : shareUrl ? (
+            <>
+              <div className="p-4 rounded-2xl" style={{ background: '#fff' }}>
+                <QRCodeSVG value={shareUrl} size={280} level="H" />
+              </div>
+              <p className="text-xs text-center break-all px-4" style={{ color: 'var(--text-muted)', maxWidth: 320 }}>
+                {shareUrl}
+              </p>
+            </>
+          ) : null}
+        </div>
+      }
+    />
+  );
+}
 
 function SitePreview({ url, className, style }: { url: string; className?: string; style?: React.CSSProperties }) {
   const containerRef = useRef<HTMLDivElement>(null);
