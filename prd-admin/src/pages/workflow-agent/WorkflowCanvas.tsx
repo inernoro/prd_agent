@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
   Background,
-  Controls,
   MiniMap,
   addEdge,
   useNodesState,
@@ -12,6 +11,7 @@ import {
   type Edge,
   ReactFlowProvider,
   useReactFlow,
+  useViewport,
   Panel,
   BackgroundVariant,
 } from '@xyflow/react';
@@ -22,6 +22,7 @@ import {
   ArrowLeft, Save, Loader2, GripVertical,
   Plus, Trash2, X, Settings2,
   Undo2, Redo2, LayoutGrid, Keyboard,
+  ZoomIn, ZoomOut, Maximize2,
 } from 'lucide-react';
 import { CapsuleNode, type CapsuleNodeData } from './CapsuleNode';
 import { FlowEdge } from './FlowEdge';
@@ -628,34 +629,12 @@ function CanvasInner({
 
   return (
     <div className="h-full flex flex-col">
-      {/* 工具栏 */}
+      {/* 顶部标题栏 */}
       <TabBar
         title={workflow.name || '编排画布'}
         icon={<span>{workflow.icon || '🔧'}</span>}
         actions={
           <div className="flex items-center gap-2">
-            {/* 撤销/重做 */}
-            <div className="flex items-center gap-0.5">
-              <Button variant="ghost" size="xs" onClick={handleUndo} disabled={!history.canUndo()} title="撤销 (Ctrl+Z)">
-                <Undo2 className="w-3.5 h-3.5" />
-              </Button>
-              <Button variant="ghost" size="xs" onClick={handleRedo} disabled={!history.canRedo()} title="重做 (Ctrl+Y)">
-                <Redo2 className="w-3.5 h-3.5" />
-              </Button>
-            </div>
-
-            {/* 自动布局 */}
-            <Button variant="ghost" size="xs" onClick={handleAutoLayout} title="自动布局 (L)">
-              <LayoutGrid className="w-3.5 h-3.5" />
-            </Button>
-
-            {/* 快捷键 */}
-            <Button variant="ghost" size="xs" onClick={() => setShowShortcuts((v) => !v)} title="快捷键 (?)">
-              <Keyboard className="w-3.5 h-3.5" />
-            </Button>
-
-            <div className="w-px h-4" style={{ background: 'rgba(255,255,255,0.1)' }} />
-
             {hasSelected && (
               <Button variant="danger" size="xs" onClick={handleDeleteSelected}>
                 <Trash2 className="w-3 h-3" />
@@ -679,49 +658,41 @@ function CanvasInner({
         }
       />
 
-      {/* 画布 + 面板 */}
-      <div className="flex-1 flex min-h-0">
-        {/* 左侧舱目录面板 */}
-        {paletteOpen && (
-          <div
-            className="w-56 flex-shrink-0 overflow-y-auto border-r"
-            style={{
-              background: 'rgba(0,0,0,0.2)',
-              borderColor: 'rgba(255,255,255,0.08)',
-            }}
-          >
-            <div className="p-3 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-semibold" style={{ color: 'var(--text-primary, #e8e6e3)' }}>
-                  舱目录
-                </span>
-                <span className="text-[9px]" style={{ color: 'var(--text-muted, #888)' }}>
-                  拖拽到画布
-                </span>
-              </div>
-              {categories.map((cat) => {
-                const types = grouped[cat.key] || [];
-                if (types.length === 0) return null;
-                return (
-                  <div key={cat.key}>
-                    <div className="text-[10px] font-medium mb-1.5 flex items-center gap-1" style={{ color: 'var(--text-muted, #888)' }}>
-                      <span>{getCategoryEmoji(cat.key)}</span>
-                      {cat.label}
-                    </div>
-                    <div className="space-y-1">
-                      {types.map((meta) => (
-                        <PaletteItem key={meta.typeKey} meta={meta} />
-                      ))}
-                    </div>
+      {/* 顶部舱目录面板（水平布局） */}
+      {paletteOpen && (
+        <div
+          className="flex-shrink-0 border-b overflow-x-auto"
+          style={{
+            background: 'rgba(0,0,0,0.2)',
+            borderColor: 'rgba(255,255,255,0.08)',
+          }}
+        >
+          <div className="flex items-start gap-4 px-3 py-2 min-w-max">
+            {categories.map((cat) => {
+              const types = grouped[cat.key] || [];
+              if (types.length === 0) return null;
+              return (
+                <div key={cat.key} className="flex-shrink-0">
+                  <div className="text-[10px] font-medium mb-1 flex items-center gap-1" style={{ color: 'var(--text-muted, #888)' }}>
+                    <span>{getCategoryEmoji(cat.key)}</span>
+                    {cat.label}
                   </div>
-                );
-              })}
-            </div>
+                  <div className="flex items-center gap-1">
+                    {types.map((meta) => (
+                      <PaletteItem key={meta.typeKey} meta={meta} />
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
           </div>
-        )}
+        </div>
+      )}
 
+      {/* 画布 + 右侧面板 */}
+      <div className="flex-1 flex min-h-0">
         {/* React Flow 画布 */}
-        <div className="flex-1 min-w-0" ref={reactFlowWrapper}>
+        <div className="flex-1 min-w-0 relative" ref={reactFlowWrapper}>
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -756,14 +727,6 @@ function CanvasInner({
               size={0.8}
               color="rgba(255,255,255,0.04)"
             />
-            <Controls
-              showInteractive={false}
-              style={{
-                background: 'rgba(0,0,0,0.4)',
-                border: '1px solid rgba(255,255,255,0.1)',
-                borderRadius: 10,
-              }}
-            />
             <MiniMap
               style={{
                 background: 'rgba(0,0,0,0.3)',
@@ -783,12 +746,26 @@ function CanvasInner({
                   border: '1px solid rgba(255,255,255,0.1)',
                   color: 'var(--text-secondary, #aaa)',
                 }}
-                title={paletteOpen ? '收起面板' : '展开面板'}
+                title={paletteOpen ? '收起舱目录' : '展开舱目录'}
               >
                 <Plus className={`w-4 h-4 transition-transform ${paletteOpen ? 'rotate-45' : ''}`} />
               </button>
             </Panel>
           </ReactFlow>
+
+          {/* ── 顶部居中浮动工具栏 ── */}
+          <CanvasToolbar
+            onZoomIn={() => reactFlowInstance.zoomIn()}
+            onZoomOut={() => reactFlowInstance.zoomOut()}
+            onFitView={() => reactFlowInstance.fitView({ padding: 0.3 })}
+            onZoomReset={() => reactFlowInstance.zoomTo(1)}
+            onAutoLayout={handleAutoLayout}
+            onUndo={handleUndo}
+            onRedo={handleRedo}
+            canUndo={history.canUndo()}
+            canRedo={history.canRedo()}
+            onToggleShortcuts={() => setShowShortcuts((v) => !v)}
+          />
 
           {/* ── 连线拖放节点选择器 ── */}
           {connectDropMenu && (
@@ -819,6 +796,128 @@ function CanvasInner({
             onClose={() => setEditingNodeId(null)}
           />
         )}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 浮动工具栏（缩放 + 适配 + 自动布局 + 撤销重做）
+// ═══════════════════════════════════════════════════════════════
+
+function CanvasToolbar({
+  onZoomIn, onZoomOut, onFitView, onZoomReset, onAutoLayout,
+  onUndo, onRedo, canUndo, canRedo, onToggleShortcuts,
+}: {
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onFitView: () => void;
+  onZoomReset: () => void;
+  onAutoLayout: () => void;
+  onUndo: () => void;
+  onRedo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
+  onToggleShortcuts: () => void;
+}) {
+  const { zoom } = useViewport();
+
+  const btnClass = 'w-7 h-7 flex items-center justify-center rounded-full transition-colors';
+  const btnStyle = { color: 'var(--text-secondary, #aaa)' };
+  const hoverHandlers = {
+    onMouseEnter: (e: React.MouseEvent<HTMLButtonElement>) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; },
+    onMouseLeave: (e: React.MouseEvent<HTMLButtonElement>) => { e.currentTarget.style.background = 'transparent'; },
+  };
+
+  return (
+    <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20">
+      <div
+        className="h-9 rounded-full px-1.5 inline-flex items-center gap-0.5 whitespace-nowrap"
+        style={{
+          background: '#2c2c2e',
+          border: '1px solid rgba(255,255,255,0.08)',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.35)',
+        }}
+      >
+        {/* 缩小 */}
+        <button className={btnClass} style={btnStyle} onClick={onZoomOut} title="缩小" {...hoverHandlers}>
+          <ZoomOut size={15} />
+        </button>
+
+        {/* 缩放百分比 */}
+        <div
+          className="min-w-[38px] text-center text-[11px] font-medium select-none"
+          style={{ color: 'var(--text-primary, #e8e6e3)' }}
+        >
+          {Math.round(zoom * 100)}%
+        </div>
+
+        {/* 放大 */}
+        <button className={btnClass} style={btnStyle} onClick={onZoomIn} title="放大" {...hoverHandlers}>
+          <ZoomIn size={15} />
+        </button>
+
+        {/* 分隔符 */}
+        <div className="w-px h-4 mx-0.5" style={{ background: 'rgba(255,255,255,0.12)' }} />
+
+        {/* 适配画布 */}
+        <button className={btnClass} style={btnStyle} onClick={onFitView} title="适配画布" {...hoverHandlers}>
+          <Maximize2 size={14} />
+        </button>
+
+        {/* 100% */}
+        <button
+          className="h-7 px-1.5 flex items-center justify-center rounded-full text-[10px] font-medium transition-colors"
+          style={{ color: 'var(--text-secondary, #aaa)' }}
+          onClick={onZoomReset}
+          title="重置为 100%"
+          {...hoverHandlers}
+        >
+          100%
+        </button>
+
+        {/* 分隔符 */}
+        <div className="w-px h-4 mx-0.5" style={{ background: 'rgba(255,255,255,0.12)' }} />
+
+        {/* 自动排列 */}
+        <button className={btnClass} style={btnStyle} onClick={onAutoLayout} title="自动排列 (L)" {...hoverHandlers}>
+          <LayoutGrid size={14} />
+        </button>
+
+        {/* 分隔符 */}
+        <div className="w-px h-4 mx-0.5" style={{ background: 'rgba(255,255,255,0.12)' }} />
+
+        {/* 撤销 */}
+        <button
+          className={btnClass}
+          style={{ ...btnStyle, opacity: canUndo ? 1 : 0.35 }}
+          onClick={onUndo}
+          disabled={!canUndo}
+          title="撤销 (Ctrl+Z)"
+          {...hoverHandlers}
+        >
+          <Undo2 size={14} />
+        </button>
+
+        {/* 重做 */}
+        <button
+          className={btnClass}
+          style={{ ...btnStyle, opacity: canRedo ? 1 : 0.35 }}
+          onClick={onRedo}
+          disabled={!canRedo}
+          title="重做 (Ctrl+Y)"
+          {...hoverHandlers}
+        >
+          <Redo2 size={14} />
+        </button>
+
+        {/* 分隔符 */}
+        <div className="w-px h-4 mx-0.5" style={{ background: 'rgba(255,255,255,0.12)' }} />
+
+        {/* 快捷键 */}
+        <button className={btnClass} style={btnStyle} onClick={onToggleShortcuts} title="快捷键 (?)" {...hoverHandlers}>
+          <Keyboard size={14} />
+        </button>
       </div>
     </div>
   );
