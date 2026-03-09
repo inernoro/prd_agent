@@ -41,7 +41,9 @@ import {
   FileArchive,
   HardDrive,
   UploadCloud,
+  QrCode,
 } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 
 // ─── Utility ───
 
@@ -100,6 +102,7 @@ export default function WebPagesPage() {
   const [shareTargetId, setShareTargetId] = useState<string | null>(null);
   const [showSharesPanel, setShowSharesPanel] = useState(false);
   const [shares, setShares] = useState<ShareLinkItem[]>([]);
+  const [qrSite, setQrSite] = useState<HostedSite | null>(null);
 
   // ─── Load ───
 
@@ -350,6 +353,7 @@ export default function WebPagesPage() {
               onEdit={() => { setEditItem(site); setShowUploadDialog(true); }}
               onDelete={() => handleDelete(site.id)}
               onShare={() => handleShare(site.id)}
+              onQrCode={() => setQrSite(site)}
             />
           ))}
         </div>
@@ -364,6 +368,7 @@ export default function WebPagesPage() {
               onEdit={() => { setEditItem(site); setShowUploadDialog(true); }}
               onDelete={() => handleDelete(site.id)}
               onShare={() => handleShare(site.id)}
+              onQrCode={() => setQrSite(site)}
             />
           ))}
         </div>
@@ -396,6 +401,26 @@ export default function WebPagesPage() {
           onClose={() => setShowSharesPanel(false)}
         />
       )}
+
+      {/* QR Code Dialog */}
+      <Dialog
+        open={!!qrSite}
+        onOpenChange={(open) => { if (!open) setQrSite(null); }}
+        title="扫码访问"
+        description={qrSite?.title}
+        content={
+          qrSite ? (
+            <div className="flex flex-col items-center gap-4 py-4">
+              <div className="p-4 rounded-2xl" style={{ background: '#fff' }}>
+                <QRCodeSVG value={qrSite.siteUrl} size={280} level="H" />
+              </div>
+              <p className="text-xs text-center break-all px-4" style={{ color: 'var(--text-muted)', maxWidth: 320 }}>
+                {qrSite.siteUrl}
+              </p>
+            </div>
+          ) : null
+        }
+      />
     </div>
   );
 }
@@ -452,13 +477,14 @@ function SitePreview({ url, className, style }: { url: string; className?: strin
   );
 }
 
-function SiteCard({ site, selected, onSelect, onEdit, onDelete, onShare }: {
+function SiteCard({ site, selected, onSelect, onEdit, onDelete, onShare, onQrCode }: {
   site: HostedSite;
   selected: boolean;
   onSelect: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onShare: () => void;
+  onQrCode: () => void;
 }) {
   return (
     <GlassCard
@@ -483,6 +509,9 @@ function SiteCard({ site, selected, onSelect, onEdit, onDelete, onShare }: {
           </button>
           <button onClick={(e) => { e.stopPropagation(); onShare(); }} className="p-1.5 rounded-full bg-white/20 backdrop-blur-sm hover:bg-white/30" title="分享">
             <Share2 size={14} style={{ color: '#fff' }} />
+          </button>
+          <button onClick={(e) => { e.stopPropagation(); onQrCode(); }} className="p-1.5 rounded-full bg-white/20 backdrop-blur-sm hover:bg-white/30" title="二维码">
+            <QrCode size={14} style={{ color: '#fff' }} />
           </button>
           <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="p-1.5 rounded-full bg-white/20 backdrop-blur-sm hover:bg-white/30" title="编辑">
             <Edit3 size={14} style={{ color: '#fff' }} />
@@ -552,13 +581,14 @@ function SiteCard({ site, selected, onSelect, onEdit, onDelete, onShare }: {
 
 // ─── List View ───
 
-function SiteListItem({ site, selected, onSelect, onEdit, onDelete, onShare }: {
+function SiteListItem({ site, selected, onSelect, onEdit, onDelete, onShare, onQrCode }: {
   site: HostedSite;
   selected: boolean;
   onSelect: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onShare: () => void;
+  onQrCode: () => void;
 }) {
   return (
     <GlassCard
@@ -613,6 +643,9 @@ function SiteListItem({ site, selected, onSelect, onEdit, onDelete, onShare }: {
         </button>
         <button onClick={onShare} className="p-1 rounded hover:bg-[var(--bg-hover)]">
           <Share2 size={14} style={{ color: 'var(--text-muted)' }} />
+        </button>
+        <button onClick={onQrCode} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="二维码">
+          <QrCode size={14} style={{ color: 'var(--text-muted)' }} />
         </button>
         <button onClick={onEdit} className="p-1 rounded hover:bg-[var(--bg-hover)]">
           <Edit3 size={14} style={{ color: 'var(--text-muted)' }} />
