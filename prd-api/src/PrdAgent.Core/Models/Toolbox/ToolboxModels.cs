@@ -435,8 +435,11 @@ public class ToolboxItem
     /// <summary>引导问题</summary>
     public List<string> ConversationStarters { get; set; } = new();
 
-    /// <summary>启用的能力工具 (webSearch, imageGen, codeInterpreter, fileReader)</summary>
+    /// <summary>启用的能力工具 (webSearch, imageGen, codeInterpreter, fileReader, workflowTrigger)</summary>
     public List<string> EnabledTools { get; set; } = new();
+
+    /// <summary>绑定的工作流 ID（当 EnabledTools 包含 workflowTrigger 时使用）</summary>
+    public string? WorkflowId { get; set; }
 
     /// <summary>Temperature 参数</summary>
     public double Temperature { get; set; } = 0.7;

@@ -21,14 +21,11 @@ export interface SkillParameter {
 }
 
 export interface SkillExecutionConfig {
-  executionMode?: string;
   promptTemplate: string;
   systemPromptOverride?: string;
   appCallerCode?: string;
   modelType: string;
   expectedModel?: string;
-  workflowId?: string;
-  workflowTimeoutSeconds?: number;
   toolChain: SkillToolStep[];
 }
 

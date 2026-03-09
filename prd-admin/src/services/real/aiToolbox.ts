@@ -19,6 +19,10 @@ export interface ToolboxItem {
   routePath?: string;
   prompt?: string;
   modelId?: string;
+  /** 启用的能力工具 */
+  enabledTools?: string[];
+  /** 绑定的工作流 ID（当 enabledTools 包含 workflowTrigger 时使用） */
+  workflowId?: string;
   isPublic?: boolean;
   createdBy?: string;
   createdByName?: string;
@@ -312,6 +316,24 @@ export function subscribeToolboxRunEvents(
   return () => {
     abortController.abort();
   };
+}
+
+// ============ Workflow Trigger ============
+
+/**
+ * 触发智能体绑定的工作流
+ */
+export async function triggerAgentWorkflow(
+  itemId: string,
+  params: { message?: string; variables?: Record<string, string> }
+): Promise<ApiResponse<{ executionId: string; workflowId: string; workflowName: string; status: string }>> {
+  return await apiRequest(
+    api.aiToolbox.triggerWorkflow(itemId),
+    {
+      method: 'POST',
+      body: params,
+    }
+  );
 }
 
 // ============ Direct Chat (SSE Streaming) ============

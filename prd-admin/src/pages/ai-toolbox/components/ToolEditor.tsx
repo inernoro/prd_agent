@@ -1,7 +1,9 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
 import { useToolboxStore } from '@/stores/toolboxStore';
+import { listWorkflows } from '@/services';
+import type { Workflow } from '@/services/contracts/workflowAgent';
 import type { LucideIcon } from 'lucide-react';
 import {
   ArrowLeft,
@@ -47,6 +49,7 @@ import {
   Layers,
   Swords,
   Info,
+  Workflow as WorkflowIcon,
 } from 'lucide-react';
 
 // 图标组件映射
@@ -55,6 +58,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   Bot, Lightbulb, Target, Wrench, Sparkles, Rocket, MessageSquare, Zap,
   Brain, Cpu, Database, Globe, Image, Music, Video, BookOpen,
   GraduationCap, Briefcase, Heart, Star, Shield, Lock, Search, Layers, Swords,
+  Workflow: WorkflowIcon,
 };
 
 // 可选的图标列表
@@ -67,7 +71,7 @@ const ICON_HUE_MAP: Record<string, number> = {
   Sparkles: 280, Rocket: 210, MessageSquare: 180, Zap: 45, Brain: 270, Cpu: 200,
   Database: 220, Globe: 180, Image: 330, Music: 300, Video: 0, BookOpen: 140,
   GraduationCap: 220, Briefcase: 30, Heart: 350, Star: 45, Shield: 210, Lock: 200,
-  Search: 180, Layers: 240, Swords: 30,
+  Search: 180, Layers: 240, Swords: 30, Workflow: 270,
 };
 
 // 获取图标组件
@@ -86,6 +90,7 @@ const CAPABILITY_TOOLS = [
   { key: 'imageGen', label: '图片生成', icon: 'Image', description: '使用 AI 生成图片', hue: 330 },
   { key: 'codeInterpreter', label: '代码解释器', icon: 'Code2', description: '执行代码并返回结果', hue: 160 },
   { key: 'fileReader', label: '文件解析', icon: 'FileText', description: '读取和分析文件', hue: 45 },
+  { key: 'workflowTrigger', label: '发送到工作流', icon: 'Workflow', description: '将消息发送到绑定的工作流执行', hue: 270 },
 ];
 
 // Tab 配置
@@ -108,6 +113,7 @@ interface FormState {
   welcomeMessage: string;
   conversationStarters: string[];
   enabledTools: string[];
+  workflowId: string;
   knowledgeBase: string[];
   temperature: number;
   enableMemory: boolean;
@@ -124,7 +130,8 @@ export function ToolEditor() {
     tags: editingItem?.tags?.join(', ') || '',
     welcomeMessage: '你好！我是你的 AI 助手，有什么可以帮你的吗？',
     conversationStarters: ['帮我写一段文案', '分析一下这个数据'],
-    enabledTools: [],
+    enabledTools: editingItem?.enabledTools ?? [],
+    workflowId: editingItem?.workflowId ?? '',
     knowledgeBase: [],
     temperature: 0.7,
     enableMemory: false,
@@ -135,6 +142,23 @@ export function ToolEditor() {
   const [activeTab, setActiveTab] = useState('persona');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [previewInput, setPreviewInput] = useState('');
+  const [workflows, setWorkflows] = useState<Workflow[]>([]);
+  const [workflowsLoading, setWorkflowsLoading] = useState(false);
+
+  // 当启用工作流能力时加载工作流列表
+  const isWorkflowEnabled = form.enabledTools.includes('workflowTrigger');
+  useEffect(() => {
+    if (isWorkflowEnabled && workflows.length === 0) {
+      setWorkflowsLoading(true);
+      listWorkflows({ pageSize: 200 })
+        .then((res) => {
+          if (res.success && res.data) {
+            setWorkflows(res.data.items);
+          }
+        })
+        .finally(() => setWorkflowsLoading(false));
+    }
+  }, [isWorkflowEnabled]);
 
   const title = view === 'edit' ? '编辑智能体' : '创建智能体';
 
@@ -165,6 +189,8 @@ export function ToolEditor() {
       icon: form.icon,
       prompt: form.prompt.trim(),
       tags: parsedTags,
+      enabledTools: form.enabledTools,
+      workflowId: form.enabledTools.includes('workflowTrigger') ? form.workflowId : undefined,
       type: 'custom',
       category: 'custom',
     });
@@ -349,6 +375,62 @@ export function ToolEditor() {
           })}
         </div>
       </div>
+
+      {/* 工作流绑定 — 仅在启用 workflowTrigger 时显示 */}
+      {isWorkflowEnabled && (
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <div
+              className="w-6 h-6 rounded-lg flex items-center justify-center"
+              style={{
+                background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.2) 0%, rgba(168, 85, 247, 0.1) 100%)',
+                border: '1px solid rgba(168, 85, 247, 0.25)',
+              }}
+            >
+              <WorkflowIcon size={12} style={{ color: 'rgb(192, 132, 252)' }} />
+            </div>
+            <label className="text-[12px] font-semibold" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>
+              绑定工作流 <span style={{ color: 'rgb(239, 68, 68)' }}>*</span>
+            </label>
+          </div>
+          <div
+            className="text-[11px] mb-2 px-3 py-2 rounded-lg flex items-start gap-2"
+            style={{
+              background: 'linear-gradient(90deg, rgba(168, 85, 247, 0.08) 0%, rgba(168, 85, 247, 0.02) 100%)',
+              border: '1px solid rgba(168, 85, 247, 0.15)',
+            }}
+          >
+            <Info size={12} className="flex-shrink-0 mt-0.5" style={{ color: 'rgba(192, 132, 252, 0.8)' }} />
+            <span style={{ color: 'rgba(255, 255, 255, 0.65)' }}>
+              选择一个工作流，对话时可将消息发送到该工作流执行
+            </span>
+          </div>
+          {workflowsLoading ? (
+            <div className="flex items-center gap-2 p-3" style={{ color: 'rgba(255, 255, 255, 0.5)' }}>
+              <Loader2 size={14} className="animate-spin" />
+              <span className="text-[12px]">加载工作流列表...</span>
+            </div>
+          ) : (
+            <select
+              value={form.workflowId}
+              onChange={(e) => setForm({ ...form, workflowId: e.target.value })}
+              className="w-full px-3 py-2.5 rounded-xl border text-[13px] outline-none transition-all focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500/30"
+              style={{
+                background: 'rgba(0, 0, 0, 0.2)',
+                borderColor: 'rgba(168, 85, 247, 0.2)',
+                color: 'rgba(255, 255, 255, 0.9)',
+              }}
+            >
+              <option value="" style={{ background: '#1a1a2e' }}>请选择工作流...</option>
+              {workflows.map((wf) => (
+                <option key={wf.id} value={wf.id} style={{ background: '#1a1a2e' }}>
+                  {wf.name}{wf.description ? ` — ${wf.description}` : ''}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+      )}
 
       {/* 知识库 */}
       <div>

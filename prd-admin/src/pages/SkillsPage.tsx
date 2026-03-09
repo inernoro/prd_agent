@@ -15,8 +15,6 @@ import {
   type SkillInputConfig,
   type SkillOutputConfig,
 } from '@/services/real/skills';
-import { listWorkflows } from '@/services';
-import type { Workflow } from '@/services/contracts/workflowAgent';
 
 // ━━━ 技能模板 ━━━━━━━━
 
@@ -159,7 +157,6 @@ const CATEGORY_MAP: Record<string, { label: string; icon: string }> = {
   testing: { label: '测试', icon: '🧪' },
   development: { label: '开发', icon: '💻' },
   general: { label: '通用', icon: '⚡' },
-  workflow: { label: '工作流', icon: '🔄' },
 };
 
 // ━━━ 默认配置 ━━━━━━━━
@@ -172,7 +169,6 @@ const defaultInput: SkillInputConfig = {
 };
 
 const defaultExecution: SkillExecutionConfig = {
-  executionMode: 'prompt',
   promptTemplate: '',
   modelType: 'chat',
   toolChain: [],
@@ -198,10 +194,6 @@ const OUTPUT_MODES = [
 const VISIBILITY_OPTIONS = [
   { value: 'system', label: '系统' },
   { value: 'public', label: '公共' },
-];
-const EXECUTION_MODE_OPTIONS = [
-  { value: 'prompt', label: '提示词 (LLM)' },
-  { value: 'workflow', label: '工作流' },
 ];
 
 // ━━━ Tabs ━━━━━━━━
@@ -244,15 +236,11 @@ export default function SkillsPage() {
   const [contextScope, setContextScope] = useState('prd');
   const [acceptsUserInput, setAcceptsUserInput] = useState(false);
   const [acceptsAttachments, setAcceptsAttachments] = useState(false);
-  const [executionMode, setExecutionMode] = useState('prompt');
   const [promptTemplate, setPromptTemplate] = useState('');
   const [systemPromptOverride, setSystemPromptOverride] = useState('');
   const [modelType, setModelType] = useState('chat');
-  const [workflowId, setWorkflowId] = useState('');
-  const [workflowTimeoutSeconds, setWorkflowTimeoutSeconds] = useState(300);
   const [outputMode, setOutputMode] = useState('chat');
   const [echoToChat, setEchoToChat] = useState(false);
-  const [workflows, setWorkflows] = useState<Workflow[]>([]);
 
   // ━━━ 加载 ━━━
 
@@ -266,13 +254,6 @@ export default function SkillsPage() {
   }, []);
 
   useEffect(() => { fetchSkills(); }, [fetchSkills]);
-
-  // 加载工作流列表（用于工作流模式下拉）
-  useEffect(() => {
-    listWorkflows({ pageSize: 200 }).then(res => {
-      if (res.success && res.data) setWorkflows(res.data.items);
-    });
-  }, []);
 
   // ━━━ 统计 ━━━
 
@@ -292,9 +273,7 @@ export default function SkillsPage() {
       setCategory('general'); setTags(''); setRoles([]); setVisibility('system');
       setOrder(1); setIsEnabled(true); setIsBuiltIn(false);
       setContextScope('prd'); setAcceptsUserInput(false); setAcceptsAttachments(false);
-      setExecutionMode('prompt');
       setPromptTemplate(''); setSystemPromptOverride(''); setModelType('chat');
-      setWorkflowId(''); setWorkflowTimeoutSeconds(300);
       setOutputMode('chat'); setEchoToChat(false);
       return;
     }
@@ -312,12 +291,9 @@ export default function SkillsPage() {
     setContextScope(s.input?.contextScope ?? 'prd');
     setAcceptsUserInput(s.input?.acceptsUserInput ?? false);
     setAcceptsAttachments(s.input?.acceptsAttachments ?? false);
-    setExecutionMode(s.execution?.executionMode ?? 'prompt');
     setPromptTemplate(s.execution?.promptTemplate ?? '');
     setSystemPromptOverride(s.execution?.systemPromptOverride ?? '');
     setModelType(s.execution?.modelType ?? 'chat');
-    setWorkflowId(s.execution?.workflowId ?? '');
-    setWorkflowTimeoutSeconds(s.execution?.workflowTimeoutSeconds ?? 300);
     setOutputMode(s.output?.mode ?? 'chat');
     setEchoToChat(s.output?.echoToChat ?? false);
   }, []);
@@ -353,12 +329,9 @@ export default function SkillsPage() {
     setContextScope(tpl.contextScope);
     setAcceptsUserInput(tpl.acceptsUserInput);
     setAcceptsAttachments(false);
-    setExecutionMode('prompt');
     setPromptTemplate(tpl.promptTemplate);
     setSystemPromptOverride('');
     setModelType('chat');
-    setWorkflowId('');
-    setWorkflowTimeoutSeconds(300);
     setOutputMode(tpl.outputMode);
     setEchoToChat(false);
   }, [skills.length]);
@@ -385,12 +358,9 @@ export default function SkillsPage() {
     },
     execution: {
       ...defaultExecution,
-      executionMode,
       promptTemplate,
       systemPromptOverride: systemPromptOverride || undefined,
       modelType,
-      workflowId: executionMode === 'workflow' ? (workflowId || undefined) : undefined,
-      workflowTimeoutSeconds: executionMode === 'workflow' ? workflowTimeoutSeconds : undefined,
     },
     output: {
       ...defaultOutput,
@@ -399,8 +369,7 @@ export default function SkillsPage() {
     },
   }), [title, description, skillKey, icon, category, tags, roles, visibility, order,
        isEnabled, isBuiltIn, contextScope, acceptsUserInput, acceptsAttachments,
-       executionMode, promptTemplate, systemPromptOverride, modelType,
-       workflowId, workflowTimeoutSeconds, outputMode, echoToChat]);
+       promptTemplate, systemPromptOverride, modelType, outputMode, echoToChat]);
 
   // ━━━ 保存 ━━━
 
@@ -851,62 +820,21 @@ export default function SkillsPage() {
 
                     {/* 执行配置 */}
                     <Section title="执行配置">
-                      <Field label="执行模式">
-                        <div className="flex gap-2">
-                          {EXECUTION_MODE_OPTIONS.map(o => (
-                            <button key={o.value} type="button"
-                              onClick={() => setExecutionMode(o.value)}
-                              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${executionMode === o.value
-                                ? 'bg-white/15 text-white border border-white/25'
-                                : 'bg-white/5 text-white/50 border border-white/10 hover:bg-white/10'}`}
-                            >{o.label}</button>
-                          ))}
-                        </div>
+                      <Field label="提示词模板 (promptTemplate)">
+                        <textarea value={promptTemplate} onChange={e => setPromptTemplate(e.target.value)}
+                          className="field-input min-h-[120px] font-mono text-xs" placeholder="支持 {{变量}} 占位符" />
                       </Field>
-
-                      {executionMode === 'workflow' ? (
-                        <>
-                          <Field label="关联工作流" className="mt-3">
-                            <select value={workflowId} onChange={e => setWorkflowId(e.target.value)} className="field-input">
-                              <option value="">-- 请选择工作流 --</option>
-                              {workflows.map(w => (
-                                <option key={w.id} value={w.id}>
-                                  {w.icon ? `${w.icon} ` : ''}{w.name}{w.description ? ` - ${w.description}` : ''}
-                                </option>
-                              ))}
-                            </select>
-                            {workflowId && (
-                              <div className="mt-1 text-[10px] text-white/40">
-                                ID: {workflowId}
-                              </div>
-                            )}
-                          </Field>
-                          <Field label="执行超时 (秒)" className="mt-3">
-                            <input type="number" value={workflowTimeoutSeconds}
-                              onChange={e => setWorkflowTimeoutSeconds(Math.max(30, Math.min(1800, Number(e.target.value) || 300)))}
-                              className="field-input w-32" min={30} max={1800} />
-                            <span className="text-[10px] text-white/40 ml-2">30~1800 秒</span>
-                          </Field>
-                        </>
-                      ) : (
-                        <>
-                          <Field label="提示词模板 (promptTemplate)" className="mt-3">
-                            <textarea value={promptTemplate} onChange={e => setPromptTemplate(e.target.value)}
-                              className="field-input min-h-[120px] font-mono text-xs" placeholder="支持 {{变量}} 占位符" />
-                          </Field>
-                          <Field label="系统提示词覆盖 (可选)" className="mt-3">
-                            <textarea value={systemPromptOverride} onChange={e => setSystemPromptOverride(e.target.value)}
-                              className="field-input min-h-[80px] font-mono text-xs" placeholder="留空使用默认角色系统提示词" />
-                          </Field>
-                          <Field label="模型类型" className="mt-3">
-                            <ModelTypePicker
-                              value={modelType}
-                              onChange={setModelType}
-                              compact
-                            />
-                          </Field>
-                        </>
-                      )}
+                      <Field label="系统提示词覆盖 (可选)" className="mt-3">
+                        <textarea value={systemPromptOverride} onChange={e => setSystemPromptOverride(e.target.value)}
+                          className="field-input min-h-[80px] font-mono text-xs" placeholder="留空使用默认角色系统提示词" />
+                      </Field>
+                      <Field label="模型类型" className="mt-3">
+                        <ModelTypePicker
+                          value={modelType}
+                          onChange={setModelType}
+                          compact
+                        />
+                      </Field>
                     </Section>
 
                     {/* 输出配置 */}

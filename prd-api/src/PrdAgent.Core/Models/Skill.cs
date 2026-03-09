@@ -106,13 +106,10 @@ public class SkillInputConfig
 /// <summary>技能执行配置（服务端专有，不下发客户端）</summary>
 public class SkillExecutionConfig
 {
-    /// <summary>执行模式: prompt（LLM 提示词） | workflow（触发工作流）</summary>
-    public string ExecutionMode { get; set; } = SkillExecutionModes.Prompt;
-
-    /// <summary>提示词模板（支持 {{变量}} 占位符）— 仅 prompt 模式</summary>
+    /// <summary>提示词模板（支持 {{变量}} 占位符）</summary>
     public string PromptTemplate { get; set; } = string.Empty;
 
-    /// <summary>系统提示词覆盖（null = 使用默认角色系统提示词）— 仅 prompt 模式</summary>
+    /// <summary>系统提示词覆盖（null = 使用默认角色系统提示词）</summary>
     public string? SystemPromptOverride { get; set; }
 
     /// <summary>LLM Gateway 路由标识</summary>
@@ -124,23 +121,8 @@ public class SkillExecutionConfig
     /// <summary>期望模型提示</summary>
     public string? ExpectedModel { get; set; }
 
-    /// <summary>关联的工作流 ID — 仅 workflow 模式</summary>
-    public string? WorkflowId { get; set; }
-
-    /// <summary>工作流执行超时（秒），默认 300 秒（5 分钟）</summary>
-    public int WorkflowTimeoutSeconds { get; set; } = 300;
-
     /// <summary>后处理工具链</summary>
     public List<SkillToolStep> ToolChain { get; set; } = new();
-}
-
-/// <summary>技能执行模式常量</summary>
-public static class SkillExecutionModes
-{
-    /// <summary>LLM 提示词模式（默认）</summary>
-    public const string Prompt = "prompt";
-    /// <summary>工作流触发模式</summary>
-    public const string Workflow = "workflow";
 }
 
 /// <summary>工具链步骤</summary>

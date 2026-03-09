@@ -640,6 +640,7 @@ export const api = {
     items: () => '/api/ai-toolbox/items',
     item: (id: string) => `/api/ai-toolbox/items/${id}`,
     runItem: (itemId: string) => `/api/ai-toolbox/items/${itemId}/run`,
+    triggerWorkflow: (itemId: string) => `/api/ai-toolbox/items/${itemId}/trigger-workflow`,
     agents: () => '/api/ai-toolbox/agents',
     // 直接对话 (SSE)
     directChat: () => '/api/ai-toolbox/direct-chat',
