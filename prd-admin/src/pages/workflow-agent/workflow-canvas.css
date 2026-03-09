@@ -269,7 +269,7 @@
   justify-content: center;
   z-index: 100;
   background: rgba(0,0,0,0.3);
-  animation: menuFadeIn 0.15s ease-out;
+  animation: overlayFadeIn 0.15s ease-out;
 }
 
 .shortcuts-panel {
@@ -279,6 +279,17 @@
   min-width: 240px;
   backdrop-filter: blur(12px);
   box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  animation: panelScaleIn 0.15s ease-out;
+}
+
+@keyframes overlayFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes panelScaleIn {
+  from { opacity: 0; transform: scale(0.95) translateY(8px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
 }
 
 .shortcut-key {

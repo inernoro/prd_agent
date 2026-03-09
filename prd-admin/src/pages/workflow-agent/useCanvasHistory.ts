@@ -9,6 +9,14 @@ interface Snapshot<T extends Record<string, unknown> = Record<string, unknown>> 
 const MAX_HISTORY = 50;
 
 /**
+ * 深拷贝，自动剥离函数等不可序列化属性（structuredClone 无法克隆函数）。
+ * 使用 JSON 往返实现，性能足够满足画布快照场景。
+ */
+function safeClone<V>(value: V): V {
+  return JSON.parse(JSON.stringify(value));
+}
+
+/**
  * 画布历史管理 hook — 支持 undo/redo。
  *
  * 用法：
@@ -27,7 +35,7 @@ export function useCanvasHistory<T extends Record<string, unknown> = Record<stri
     if (currentRef.current) {
       pastRef.current = [...pastRef.current, currentRef.current].slice(-MAX_HISTORY);
     }
-    currentRef.current = { nodes: structuredClone(nodes), edges: structuredClone(edges) };
+    currentRef.current = { nodes: safeClone(nodes), edges: safeClone(edges) };
     futureRef.current = []; // 新操作清空 redo 栈
   }, []);
 
@@ -40,7 +48,7 @@ export function useCanvasHistory<T extends Record<string, unknown> = Record<stri
       futureRef.current = [currentRef.current, ...futureRef.current];
     }
     currentRef.current = prev;
-    return structuredClone(prev);
+    return safeClone(prev);
   }, []);
 
   /** 重做：返回下一个快照 */
@@ -52,7 +60,7 @@ export function useCanvasHistory<T extends Record<string, unknown> = Record<stri
       pastRef.current = [...pastRef.current, currentRef.current];
     }
     currentRef.current = next;
-    return structuredClone(next);
+    return safeClone(next);
   }, []);
 
   const canUndo = useCallback(() => pastRef.current.length > 0, []);
