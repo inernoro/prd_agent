@@ -263,7 +263,7 @@
 
 > Commit: `0c3e00f` (2026-03-05)
 > 功能：工作流引擎对接 + Artifact 解析 + 成员身份映射 + 个人数据源 + V2.0 生成引擎
-> 用户故事文档：`doc/story.report-agent-phase5.md` (11 个用户故事, 14 个单元测试)
+> 用户故事文档：`doc/spec.report-agent-phase5.md` (11 个用户故事, 14 个单元测试)
 
 ### 交付物
 
@@ -396,9 +396,9 @@
 
 | 文档 | 用途 |
 |------|------|
-| `doc/agent.report-agent.md` | PRD 产品需求（v1.0，定义 WHAT） |
-| `doc/agent.report-agent.v2.md` | PRD 产品需求（v2.0，Workflow as Data Pipeline） |
-| `doc/story.report-agent-phase5.md` | Phase 5 用户故事（11 个故事，14 个测试） |
+| `doc/spec.report-agent.md` | PRD 产品需求（v1.0，存档，已删除） |
+| `doc/spec.report-agent.v2.md` | PRD 产品需求（v2.0，Workflow as Data Pipeline） |
+| `doc/spec.report-agent-phase5.md` | Phase 5 用户故事（11 个故事，14 个测试） |
 | `CLAUDE.md` 功能注册表 | 全局功能状态一览 |
 | `doc/rule.data-dictionary.md` | MongoDB 集合字段定义 |
 | `doc/rule.app-feature-definition.md` | AppCallerCode 定义 |

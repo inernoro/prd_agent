@@ -2133,7 +2133,7 @@ sequenceDiagram
 - `report-agent.team.manage` — 团队管理
 - `report-agent.view.all` — 查看所有团队周报
 
-**设计文档**：`doc/agent.report-agent.md`
+**设计文档**：`doc/spec.report-agent.v2.md`
 
 ---
 

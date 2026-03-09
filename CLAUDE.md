@@ -138,6 +138,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | **task-handoff-checklist** | "交接"、"/handoff" | 8 维度交接清单（导航/文档/规则/流程/测试/风险/质量/后续） | 所有人 |
 | **conflict-resolution** | "合并主分支"、"/resolve" | PR 前预合并 main 到特性分支（三级冲突分类、禁止丢弃代码、高风险交人类） | 开发者 |
 | **weekly-update-summary** | "生成周报"、"/weekly" | 从 git 历史自动生成结构化周报 | 项目负责人 |
+| **doc-writer** | "写文档"、"/doc"、自动触发 | doc/ 下文档类型守护（6 种类型模板 + 格式校验） | 所有人 |
 
 ### 使用指引
 
@@ -146,6 +147,24 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 3. **提 PR 前** → `/resolve` 预合并主分支，AI 代替人类解决冲突
 4. **准备上线时** → `/handoff` 生成交接清单（涉及 3+ 文件时自动触发）
 5. **周五收尾时** → `/weekly` 生成本周总结
+6. **写文档时** → `/doc` 查看类型速查，或直接创建文档时自动套用模板
+
+---
+
+## doc/ 文档类型规则
+
+**强制规则**：`doc/` 下所有 `.md` 文件必须属于以下 6 种类型之一，禁止发明新前缀。每种类型回答一个不可替代的问题（4W1H + 回顾）。
+
+| 前缀 | 对应 | 核心问题 | 子类型 |
+|------|------|---------|--------|
+| `spec.*` | **What** | 做什么 | 产品规格、Agent 文档、用户故事 |
+| `design.*` | **How** | 怎么做 | 技术设计、技术分析 |
+| `plan.*` | **When** | 什么时候做 | 实施计划 |
+| `rule.*` | **Why not** | 为什么不能那样做 | 规范约定、审计报告 |
+| `guide.*` | **How-to** | 怎么操作 | 操作指南、备忘录 |
+| `report.*` | **What happened** | 做了什么 | 周报 |
+
+详细模板和写作规范见 `doc-writer` 技能（`/doc`）和 `doc/rule.doc-templates.md`。
 
 ---
 
