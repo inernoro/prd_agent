@@ -418,20 +418,38 @@ export default function WebPagesPage() {
 
 function QrCodeDialog({ site, onClose }: { site: HostedSite; onClose: () => void }) {
   const [shareUrl, setShareUrl] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setCreating(true);
+      setLoading(true);
+      // 1. 查找该 site 已有的、可用的无密码分享链接
+      const listRes = await listSiteShares();
+      if (cancelled) return;
+      if (listRes.success) {
+        const existing = listRes.data.items.find(s =>
+          s.siteId === site.id &&
+          s.shareType === 'single' &&
+          !s.isRevoked &&
+          s.accessLevel === 'public' &&
+          (!s.expiresAt || new Date(s.expiresAt) > new Date())
+        );
+        if (existing) {
+          setShareUrl(`${window.location.origin}/s/wp/${existing.token}`);
+          setLoading(false);
+          return;
+        }
+      }
+      // 2. 没有可复用的，才创建新的
       const res = await createSiteShareLink({
         siteId: site.id,
         shareType: 'single',
         expiresInDays: 0,
       });
       if (cancelled) return;
-      setCreating(false);
+      setLoading(false);
       if (res.success) {
         setShareUrl(`${window.location.origin}${res.data.shareUrl}`);
       } else {
@@ -449,7 +467,7 @@ function QrCodeDialog({ site, onClose }: { site: HostedSite; onClose: () => void
       description={site.title}
       content={
         <div className="flex flex-col items-center gap-4 py-4">
-          {creating ? (
+          {loading ? (
             <div className="flex items-center gap-2 py-8" style={{ color: 'var(--text-muted)' }}>
               <RefreshCw size={16} className="animate-spin" />
               <span className="text-sm">正在生成分享链接…</span>
