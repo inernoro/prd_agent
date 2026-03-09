@@ -7,6 +7,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Interfaces.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Api.Services.ReportAgent;
 
 namespace PrdAgent.Api.Controllers;
 
@@ -29,6 +30,7 @@ public class PrdAgentSkillsController : ControllerBase
     private readonly ISessionService _sessionService;
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
+    private readonly IWorkflowExecutionService _workflowExecutionService;
     private readonly ILogger<PrdAgentSkillsController> _logger;
 
     public PrdAgentSkillsController(
@@ -39,6 +41,7 @@ public class PrdAgentSkillsController : ControllerBase
         ISessionService sessionService,
         ILlmGateway gateway,
         ILLMRequestContextAccessor llmRequestContext,
+        IWorkflowExecutionService workflowExecutionService,
         ILogger<PrdAgentSkillsController> logger)
     {
         _db = db;
@@ -48,6 +51,7 @@ public class PrdAgentSkillsController : ControllerBase
         _sessionService = sessionService;
         _gateway = gateway;
         _llmRequestContext = llmRequestContext;
+        _workflowExecutionService = workflowExecutionService;
         _logger = logger;
     }
 
@@ -269,6 +273,21 @@ public class PrdAgentSkillsController : ControllerBase
                 ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "当前角色无权执行此技能"));
         }
 
+        var executionMode = skill.Execution.ExecutionMode ?? SkillExecutionModes.Prompt;
+
+        // 工作流模式：校验 workflowId
+        if (executionMode == SkillExecutionModes.Workflow)
+        {
+            if (string.IsNullOrWhiteSpace(skill.Execution.WorkflowId))
+                return BadRequest(ApiResponse<object>.Fail("INVALID_CONFIG", "该技能配置为工作流模式但未关联工作流"));
+
+            var workflow = await _db.Workflows
+                .Find(w => w.Id == skill.Execution.WorkflowId)
+                .FirstOrDefaultAsync(CancellationToken.None);
+            if (workflow == null)
+                return BadRequest(ApiResponse<object>.Fail("WORKFLOW_NOT_FOUND", "关联的工作流不存在"));
+        }
+
         // 解析模板参数
         var promptTemplate = skill.Execution.PromptTemplate;
         if (request.Parameters != null)
@@ -321,6 +340,10 @@ public class PrdAgentSkillsController : ControllerBase
                 contextScope,
                 outputMode,
                 systemPromptOverride = skill.Execution.SystemPromptOverride,
+                // 工作流模式元数据
+                executionMode,
+                workflowId = skill.Execution.WorkflowId,
+                workflowTimeoutSeconds = skill.Execution.WorkflowTimeoutSeconds,
             }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase })
         };
 

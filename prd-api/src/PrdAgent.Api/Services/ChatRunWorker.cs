@@ -1,8 +1,10 @@
 using System.Text;
 using System.Text.Json;
+using MongoDB.Driver;
 using PrdAgent.Api.Json;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Services;
 
@@ -33,7 +35,10 @@ public sealed class ChatRunWorker : BackgroundService
         UserRole? AnswerAsRole,
         string? ResolvedPromptTemplate = null,
         string? SystemPromptOverride = null,
-        bool DisableGroupContext = false);
+        bool DisableGroupContext = false,
+        string? ExecutionMode = null,
+        string? WorkflowId = null,
+        int WorkflowTimeoutSeconds = 300);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -135,6 +140,11 @@ public sealed class ChatRunWorker : BackgroundService
             var contextScope = root.TryGetProperty("contextScope", out var cs) ? cs.GetString() : null;
             var disableCtx = contextScope is "prd" or "none";
 
+            // 工作流模式字段
+            var executionMode = root.TryGetProperty("executionMode", out var em) ? em.GetString() : null;
+            var workflowId = root.TryGetProperty("workflowId", out var wfid) ? wfid.GetString() : null;
+            var workflowTimeout = root.TryGetProperty("workflowTimeoutSeconds", out var wft) && wft.TryGetInt32(out var wftVal) ? wftVal : 300;
+
             sessionId = sessionId.Trim();
             content = content.Trim();
             if (string.IsNullOrWhiteSpace(sessionId) || string.IsNullOrWhiteSpace(content)) return null;
@@ -147,7 +157,10 @@ public sealed class ChatRunWorker : BackgroundService
                 answerRole,
                 string.IsNullOrWhiteSpace(resolvedPrompt) ? null : resolvedPrompt.Trim(),
                 string.IsNullOrWhiteSpace(sysOverride) ? null : sysOverride.Trim(),
-                DisableGroupContext: disableCtx);
+                DisableGroupContext: disableCtx,
+                ExecutionMode: executionMode,
+                WorkflowId: workflowId,
+                WorkflowTimeoutSeconds: workflowTimeout);
         }
         catch
         {
@@ -205,6 +218,13 @@ public sealed class ChatRunWorker : BackgroundService
                 new ChatStreamEvent { Type = "error", ErrorCode = ErrorCodes.INVALID_FORMAT, ErrorMessage = "run input 为空或不合法", MessageId = meta.AssistantMessageId },
                 ttl: TimeSpan.FromHours(24),
                 ct: CancellationToken.None);
+            return;
+        }
+
+        // 工作流模式：触发工作流执行，等待完成，将结果写入消息
+        if (input.ExecutionMode == "workflow" && !string.IsNullOrWhiteSpace(input.WorkflowId))
+        {
+            await ProcessWorkflowRunAsync(runId, meta, input, stoppingToken);
             return;
         }
 
@@ -341,6 +361,169 @@ public sealed class ChatRunWorker : BackgroundService
         }
         await _runStore.SetRunAsync(RunKinds.Chat, meta, ttl: TimeSpan.FromHours(24), ct: CancellationToken.None);
     }
+
+    /// <summary>
+    /// 工作流模式：触发工作流执行 → 等待完成 → 将 FinalArtifacts 内容写入消息 + SSE 事件
+    /// </summary>
+    private async Task ProcessWorkflowRunAsync(string runId, RunMeta meta, ChatRunInput input, CancellationToken stoppingToken)
+    {
+        meta.Status = RunStatuses.Running;
+        meta.StartedAt = DateTime.UtcNow;
+        await _runStore.SetRunAsync(RunKinds.Chat, meta, ttl: TimeSpan.FromHours(24), ct: CancellationToken.None);
+
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+        var workflowService = scope.ServiceProvider.GetRequiredService<IWorkflowExecutionService>();
+
+        try
+        {
+            // 1. 存储用户消息
+            var userMsg = new Message
+            {
+                Id = meta.UserMessageId ?? Guid.NewGuid().ToString("N"),
+                GroupId = meta.GroupId ?? "",
+                SessionId = input.SessionId,
+                SenderId = input.UserId,
+                Role = MessageRole.User,
+                Content = input.Content,
+                RunId = runId,
+                Timestamp = DateTime.UtcNow,
+            };
+            await db.Messages.InsertOneAsync(userMsg, cancellationToken: CancellationToken.None);
+
+            // 2. 发送 start 事件
+            await _runStore.AppendEventAsync(RunKinds.Chat, runId, "message",
+                new ChatStreamEvent
+                {
+                    Type = "start",
+                    MessageId = meta.AssistantMessageId,
+                    StartAtUtc = DateTime.UtcNow,
+                },
+                ttl: TimeSpan.FromHours(24),
+                ct: CancellationToken.None);
+
+            // 3. 发送提示事件（告知用户工作流正在执行）
+            await _runStore.AppendEventAsync(RunKinds.Chat, runId, "message",
+                new ChatStreamEvent
+                {
+                    Type = "blockDelta",
+                    MessageId = meta.AssistantMessageId,
+                    Content = "⏳ 正在执行工作流，请稍候...\n\n",
+                },
+                ttl: TimeSpan.FromHours(24),
+                ct: CancellationToken.None);
+
+            // 4. 触发工作流执行
+            var execution = await workflowService.ExecuteInternalAsync(
+                input.WorkflowId!,
+                variables: null,
+                triggeredBy: $"skill:{input.UserId ?? "unknown"}",
+                ct: CancellationToken.None);
+
+            _logger.LogInformation("Workflow triggered from skill: executionId={ExecutionId}, workflowId={WorkflowId}, runId={RunId}",
+                execution.Id, input.WorkflowId, runId);
+
+            // 5. 等待完成
+            var timeout = TimeSpan.FromSeconds(Math.Max(30, Math.Min(input.WorkflowTimeoutSeconds, 1800)));
+            var completed = await workflowService.WaitForCompletionAsync(execution.Id, timeout, CancellationToken.None);
+
+            // 6. 收集结果
+            var resultBuilder = new StringBuilder();
+            if (completed.FinalArtifacts.Count > 0)
+            {
+                foreach (var artifact in completed.FinalArtifacts)
+                {
+                    if (!string.IsNullOrWhiteSpace(artifact.InlineContent))
+                    {
+                        resultBuilder.AppendLine(artifact.InlineContent);
+                        resultBuilder.AppendLine();
+                    }
+                }
+            }
+
+            if (resultBuilder.Length == 0)
+            {
+                resultBuilder.AppendLine("工作流执行完成，但未产生输出内容。");
+            }
+
+            var resultContent = resultBuilder.ToString().TrimEnd();
+
+            // 7. 发送结果事件
+            await _runStore.AppendEventAsync(RunKinds.Chat, runId, "message",
+                new ChatStreamEvent
+                {
+                    Type = "blockDelta",
+                    MessageId = meta.AssistantMessageId,
+                    Content = resultContent,
+                },
+                ttl: TimeSpan.FromHours(24),
+                ct: CancellationToken.None);
+
+            // 8. 存储 assistant 消息
+            var assistantMsg = new Message
+            {
+                Id = meta.AssistantMessageId ?? Guid.NewGuid().ToString("N"),
+                GroupId = meta.GroupId ?? "",
+                SessionId = input.SessionId,
+                Role = MessageRole.Assistant,
+                Content = "⏳ 正在执行工作流，请稍候...\n\n" + resultContent,
+                RunId = runId,
+                ReplyToMessageId = userMsg.Id,
+                ViewRole = input.AnswerAsRole,
+                Timestamp = DateTime.UtcNow,
+            };
+            await db.Messages.InsertOneAsync(assistantMsg, cancellationToken: CancellationToken.None);
+
+            // 9. 发送 done 事件
+            var doneSeq = await _runStore.AppendEventAsync(RunKinds.Chat, runId, "message",
+                new ChatStreamEvent
+                {
+                    Type = "done",
+                    MessageId = meta.AssistantMessageId,
+                    DoneAtUtc = DateTime.UtcNow,
+                },
+                ttl: TimeSpan.FromHours(24),
+                ct: CancellationToken.None);
+
+            // 10. 写入 snapshot
+            var snapEvent = new ChatStreamEvent
+            {
+                Type = "snapshot",
+                MessageId = meta.AssistantMessageId,
+                Content = assistantMsg.Content,
+            };
+            var snapJson = JsonSerializer.Serialize(snapEvent, AppJsonContext.Default.ChatStreamEvent);
+            await _runStore.SetSnapshotAsync(RunKinds.Chat, runId,
+                new RunSnapshot { Seq = doneSeq, SnapshotJson = snapJson, UpdatedAt = DateTime.UtcNow },
+                ttl: TimeSpan.FromHours(24),
+                ct: CancellationToken.None);
+
+            meta.Status = RunStatuses.Done;
+            meta.EndedAt = DateTime.UtcNow;
+            meta.LastSeq = doneSeq;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Workflow skill execution failed: runId={RunId}, workflowId={WorkflowId}", runId, input.WorkflowId);
+
+            var errorMsg = ex is TimeoutException ? "工作流执行超时" : $"工作流执行失败: {ex.Message}";
+            await _runStore.AppendEventAsync(RunKinds.Chat, runId, "message",
+                new ChatStreamEvent
+                {
+                    Type = "error",
+                    MessageId = meta.AssistantMessageId,
+                    ErrorCode = "WORKFLOW_EXECUTION_FAILED",
+                    ErrorMessage = errorMsg,
+                },
+                ttl: TimeSpan.FromHours(24),
+                ct: CancellationToken.None);
+
+            meta.Status = RunStatuses.Error;
+            meta.EndedAt = DateTime.UtcNow;
+            meta.ErrorCode = "WORKFLOW_EXECUTION_FAILED";
+            meta.ErrorMessage = errorMsg;
+        }
+
+        await _runStore.SetRunAsync(RunKinds.Chat, meta, ttl: TimeSpan.FromHours(24), ct: CancellationToken.None);
+    }
 }
-
-
