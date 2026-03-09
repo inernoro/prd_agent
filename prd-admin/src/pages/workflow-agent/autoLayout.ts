@@ -1,9 +1,12 @@
 import dagre from '@dagrejs/dagre';
 import type { Node, Edge } from '@xyflow/react';
 
+const DEFAULT_WIDTH = 220;
+const DEFAULT_HEIGHT = 100;
+
 /**
  * 使用 dagre 对节点进行自动布局（从上到下）。
- * 返回带有更新位置的新节点数组。
+ * 优先使用 ReactFlow 测量的实际节点尺寸，确保居中对齐、连线笔直。
  */
 export function autoLayoutNodes<T extends Record<string, unknown>>(
   nodes: Node<T>[],
@@ -18,14 +21,17 @@ export function autoLayoutNodes<T extends Record<string, unknown>>(
     ranksep: 80,
     marginx: 40,
     marginy: 40,
+    align: 'UL',
   });
 
-  // 估算节点尺寸
-  const nodeWidth = 220;
-  const nodeHeight = 100;
+  // 记录每个节点的实际尺寸（优先用 measured，回退到默认值）
+  const dims = new Map<string, { w: number; h: number }>();
 
   for (const node of nodes) {
-    g.setNode(node.id, { width: nodeWidth, height: nodeHeight });
+    const w = node.measured?.width ?? DEFAULT_WIDTH;
+    const h = node.measured?.height ?? DEFAULT_HEIGHT;
+    dims.set(node.id, { w, h });
+    g.setNode(node.id, { width: w, height: h });
   }
   for (const edge of edges) {
     g.setEdge(edge.source, edge.target);
@@ -35,11 +41,12 @@ export function autoLayoutNodes<T extends Record<string, unknown>>(
 
   return nodes.map((node) => {
     const pos = g.node(node.id);
+    const d = dims.get(node.id)!;
     return {
       ...node,
       position: {
-        x: pos.x - nodeWidth / 2,
-        y: pos.y - nodeHeight / 2,
+        x: pos.x - d.w / 2,
+        y: pos.y - d.h / 2,
       },
     };
   });
