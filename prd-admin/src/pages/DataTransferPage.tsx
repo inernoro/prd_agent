@@ -749,11 +749,36 @@ function TransferDetail({
 
 // =================== Searchable User Picker ===================
 
+/** 相对时间格式化 */
+function fmtRelative(v?: string | null) {
+  if (!v) return '';
+  const t = new Date(v).getTime();
+  if (Number.isNaN(t)) return '';
+  const diff = Date.now() - t;
+  const sec = Math.floor(Math.abs(diff) / 1000);
+  const min = Math.floor(sec / 60);
+  const hr = Math.floor(min / 60);
+  const day = Math.floor(hr / 24);
+  const suffix = diff >= 0 ? '前' : '后';
+  if (sec < 60) return `${sec}秒${suffix}`;
+  if (min < 60) return `${min}分钟${suffix}`;
+  if (hr < 24) return `${hr}小时${suffix}`;
+  if (day < 365) return `${day}天${suffix}`;
+  return '';
+}
+
+const ROLE_COLORS: Record<string, { bg: string; border: string; text: string }> = {
+  PM: { bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.25)', text: 'rgba(59,130,246,0.95)' },
+  DEV: { bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.25)', text: 'rgba(34,197,94,0.95)' },
+  QA: { bg: 'rgba(168,85,247,0.12)', border: 'rgba(168,85,247,0.25)', text: 'rgba(168,85,247,0.95)' },
+  ADMIN: { bg: 'rgba(99,102,241,0.12)', border: 'rgba(99,102,241,0.25)', text: 'var(--accent-gold)' },
+};
+
 function SearchableUserPicker({
   users,
   value,
   onChange,
-  placeholder = '搜索用户...',
+  placeholder = '搜索用户名、昵称...',
 }: {
   users: AdminUser[];
   value: string;
@@ -771,7 +796,8 @@ function SearchableUserPicker({
     ? users.filter(
         (u) =>
           u.displayName.toLowerCase().includes(q) ||
-          u.username.toLowerCase().includes(q)
+          u.username.toLowerCase().includes(q) ||
+          (u.role ?? '').toLowerCase().includes(q)
       )
     : users;
 
@@ -781,39 +807,40 @@ function SearchableUserPicker({
     const handler = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setOpen(false);
+        setFilter('');
       }
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
+  // Auto-focus search input when opened
+  useEffect(() => {
+    if (open) {
+      // Use a small delay to ensure the DOM is ready
+      const timer = setTimeout(() => inputRef.current?.focus(), 50);
+      return () => clearTimeout(timer);
+    }
+  }, [open]);
+
   return (
     <div ref={containerRef} className="relative">
-      <div
-        className="flex items-center gap-2 h-[40px] w-full rounded-[10px] px-3 cursor-pointer transition-all duration-200"
+      {/* Trigger button */}
+      <button
+        type="button"
+        className="flex items-center gap-2 h-[40px] w-full rounded-[10px] px-3 cursor-pointer transition-all duration-200 text-left"
         style={{
           background: 'var(--bg-input)',
           border: open ? '1px solid var(--accent-gold)' : '1px solid var(--border-default)',
           color: 'var(--text-primary)',
         }}
         onClick={() => {
-          setOpen(true);
-          setFilter('');
-          setTimeout(() => inputRef.current?.focus(), 0);
+          setOpen(!open);
+          if (!open) setFilter('');
         }}
       >
         <User size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-        {open ? (
-          <input
-            ref={inputRef}
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            className="flex-1 bg-transparent outline-none text-[13px]"
-            style={{ color: 'var(--text-primary)' }}
-            placeholder={placeholder}
-            onClick={(e) => e.stopPropagation()}
-          />
-        ) : selected ? (
+        {selected ? (
           <div className="flex items-center gap-2 flex-1 min-w-0">
             <img
               src={resolveAvatarUrl({ username: selected.username, userType: selected.userType, botKind: selected.botKind, avatarFileName: selected.avatarFileName })}
@@ -822,61 +849,123 @@ function SearchableUserPicker({
               referrerPolicy="no-referrer"
             />
             <span className="text-[13px] truncate">{selected.displayName}</span>
-            <span className="text-[11px] opacity-50">@{selected.username}</span>
+            <span className="text-[11px] opacity-50 truncate">@{selected.username}</span>
           </div>
         ) : (
           <span className="text-[13px] flex-1" style={{ color: 'var(--text-muted)' }}>
-            {placeholder}
+            选择接收用户...
           </span>
         )}
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: 'var(--text-muted)', flexShrink: 0 }}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0" style={{ color: 'var(--text-muted)', transform: open ? 'rotate(180deg)' : undefined, transition: 'transform 0.15s' }}>
           <path d="M6 9l6 6 6-6" />
         </svg>
-      </div>
+      </button>
 
+      {/* Dropdown panel */}
       {open && (
         <div
-          className="absolute left-0 right-0 top-[calc(100%+4px)] z-50 rounded-[10px] py-1 overflow-auto"
+          className="absolute left-0 right-0 top-[calc(100%+4px)] z-50 rounded-[12px] flex flex-col overflow-hidden"
           style={{
-            maxHeight: '240px',
+            maxHeight: '340px',
             background: 'var(--bg-elevated)',
             border: '1px solid var(--border-default)',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.45)',
           }}
         >
-          {filtered.length === 0 ? (
-            <div className="px-3 py-4 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
-              无匹配用户
+          {/* Search input - always visible at top */}
+          <div className="px-3 pt-3 pb-2 shrink-0" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+            <div className="relative">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--text-muted)' }} />
+              <input
+                ref={inputRef}
+                type="text"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                className="w-full h-[34px] rounded-[8px] pl-8 pr-3 text-[13px] outline-none"
+                style={{
+                  background: 'var(--bg-input)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-primary)',
+                }}
+                placeholder={placeholder}
+                autoFocus
+              />
             </div>
-          ) : (
-            filtered.map((u) => {
-              const ava = resolveAvatarUrl({ username: u.username, userType: u.userType, botKind: u.botKind, avatarFileName: u.avatarFileName });
-              const isSelected = u.userId === value;
-              return (
-                <div
-                  key={u.userId}
-                  className="flex items-center gap-2.5 px-3 py-2 cursor-pointer transition-colors hover:bg-white/8"
-                  style={isSelected ? { background: 'rgba(var(--accent-gold-rgb, 212,175,55), 0.1)' } : undefined}
-                  onClick={() => {
-                    onChange(u.userId);
-                    setOpen(false);
-                    setFilter('');
-                  }}
-                >
-                  <img src={ava} alt="" className="w-6 h-6 rounded-full object-cover shrink-0" referrerPolicy="no-referrer" />
-                  <span className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                    {u.displayName}
-                  </span>
-                  <span className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
-                    @{u.username}
-                  </span>
-                  {isSelected && (
-                    <Check size={14} className="ml-auto shrink-0" style={{ color: 'var(--accent-gold)' }} />
-                  )}
-                </div>
-              );
-            })
-          )}
+          </div>
+
+          {/* User list */}
+          <div className="overflow-auto flex-1 py-1">
+            {filtered.length === 0 ? (
+              <div className="px-3 py-6 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                {q ? `未找到匹配「${filter}」的用户` : '暂无可用用户'}
+              </div>
+            ) : (
+              filtered.map((u) => {
+                const ava = resolveAvatarUrl({ username: u.username, userType: u.userType, botKind: u.botKind, avatarFileName: u.avatarFileName });
+                const isSelected = u.userId === value;
+                const rc = ROLE_COLORS[u.role] || ROLE_COLORS.DEV;
+                const isBot = String(u.userType ?? '').toLowerCase() === 'bot';
+                const activeText = fmtRelative(u.lastActiveAt);
+                const loginText = fmtRelative(u.lastLoginAt);
+                return (
+                  <div
+                    key={u.userId}
+                    className="flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors hover:bg-white/8"
+                    style={isSelected ? { background: 'rgba(var(--accent-gold-rgb, 212,175,55), 0.08)' } : undefined}
+                    onClick={() => {
+                      onChange(u.userId);
+                      setOpen(false);
+                      setFilter('');
+                    }}
+                  >
+                    {/* Avatar */}
+                    <img src={ava} alt="" className="w-8 h-8 rounded-full object-cover shrink-0" referrerPolicy="no-referrer" />
+
+                    {/* Info */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                          {u.displayName}
+                        </span>
+                        {/* Role badge */}
+                        <span
+                          className="shrink-0 text-[9px] font-bold px-1 py-px rounded-[3px] leading-tight"
+                          style={{ background: rc.bg, border: `1px solid ${rc.border}`, color: rc.text }}
+                        >
+                          {u.role}
+                        </span>
+                        {isBot && (
+                          <span className="shrink-0 text-[9px] px-1 py-px rounded-[3px] leading-tight" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.25)', color: 'rgba(34,197,94,0.9)' }}>
+                            BOT
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+                          @{u.username}
+                        </span>
+                        {(activeText || loginText) && (
+                          <span className="text-[10px] shrink-0" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
+                            {activeText ? `活跃 ${activeText}` : loginText ? `登录 ${loginText}` : ''}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Selected indicator */}
+                    {isSelected && (
+                      <Check size={16} className="shrink-0" style={{ color: 'var(--accent-gold)' }} />
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* Footer count */}
+          <div className="px-3 py-1.5 text-[10px] shrink-0" style={{ color: 'var(--text-muted)', borderTop: '1px solid var(--border-subtle)' }}>
+            {q ? `${filtered.length} / ${users.length} 人匹配` : `共 ${users.length} 人`}
+          </div>
         </div>
       )}
     </div>
@@ -1006,16 +1095,39 @@ function CreateTransferDialog({
                 placeholder="搜索用户名或昵称..."
               />
               {selectedReceiver && (
-                <div className="flex items-center gap-2 px-1">
+                <div
+                  className="flex items-center gap-2.5 px-3 py-2 rounded-[8px]"
+                  style={{ background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.15)' }}
+                >
                   <img
                     src={resolveAvatarUrl({ username: selectedReceiver.username, userType: selectedReceiver.userType, botKind: selectedReceiver.botKind, avatarFileName: selectedReceiver.avatarFileName })}
                     alt=""
-                    className="w-5 h-5 rounded-full object-cover"
+                    className="w-7 h-7 rounded-full object-cover shrink-0"
                     referrerPolicy="no-referrer"
                   />
-                  <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                    将发送系统通知给 {selectedReceiver.displayName}
-                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                        {selectedReceiver.displayName}
+                      </span>
+                      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                        @{selectedReceiver.username}
+                      </span>
+                      <span
+                        className="text-[9px] font-bold px-1 py-px rounded-[3px]"
+                        style={{
+                          background: (ROLE_COLORS[selectedReceiver.role] || ROLE_COLORS.DEV).bg,
+                          border: `1px solid ${(ROLE_COLORS[selectedReceiver.role] || ROLE_COLORS.DEV).border}`,
+                          color: (ROLE_COLORS[selectedReceiver.role] || ROLE_COLORS.DEV).text,
+                        }}
+                      >
+                        {selectedReceiver.role}
+                      </span>
+                    </div>
+                    <div className="text-[11px] mt-0.5" style={{ color: 'rgba(34,197,94,0.8)' }}>
+                      将发送系统通知给此用户
+                    </div>
+                  </div>
                 </div>
               )}
             </section>
