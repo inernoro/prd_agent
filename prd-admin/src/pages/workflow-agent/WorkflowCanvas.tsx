@@ -643,8 +643,7 @@ function CanvasInner({
 
   return (
     <div className="h-full flex flex-col">
-      {/* 顶部标题栏 — relative z-10 确保在画布上方 */}
-      <div className="relative z-10">
+      {/* 顶部标题栏 */}
       <TabBar
         title={workflow.name || '编排画布'}
         icon={<span>{workflow.icon || '🔧'}</span>}
@@ -672,7 +671,6 @@ function CanvasInner({
           </div>
         }
       />
-      </div>
 
       {/* 画布 + 面板 */}
       <div className="flex-1 flex min-h-0">
@@ -739,10 +737,8 @@ function CanvasInner({
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             defaultEdgeOptions={defaultEdgeOptions}
-            panOnDrag={false}
-            panOnScroll
-            selectionOnDrag
             selectionMode={SelectionMode.Partial}
+            selectionKeyCode="Shift"
             fitView
             fitViewOptions={{ padding: 0.3 }}
             proOptions={{ hideAttribution: true }}
