@@ -661,6 +661,139 @@ export function QuickCreateWizard() {
     }
   }, [isWorkflowEnabled]);
 
+  // ── 工作流选择器（内联组件，两处复用） ──
+  function WorkflowPicker() {
+    const [open, setOpen] = useState(false);
+    const ref = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+      if (!open) return;
+      const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+      document.addEventListener('mousedown', h);
+      return () => document.removeEventListener('mousedown', h);
+    }, [open]);
+
+    if (workflowsLoading) {
+      return (
+        <div className="flex items-center gap-2 py-2" style={{ color: 'rgba(255, 255, 255, 0.5)' }}>
+          <Loader2 size={12} className="animate-spin" />
+          <span className="text-[10px]">加载工作流...</span>
+        </div>
+      );
+    }
+
+    const selected = workflows.find(w => w.id === form.workflowId);
+
+    return (
+      <div ref={ref} className="relative">
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          className="w-full px-2.5 py-2 rounded-lg border text-left flex items-center gap-2 outline-none transition-all"
+          style={{
+            background: 'rgba(0, 0, 0, 0.2)',
+            borderColor: open ? 'rgba(168, 85, 247, 0.35)' : 'rgba(168, 85, 247, 0.15)',
+            boxShadow: open ? '0 0 0 2px rgba(168, 85, 247, 0.08)' : 'none',
+          }}
+        >
+          {selected ? (
+            <>
+              <div
+                className="w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0 overflow-hidden text-[11px]"
+                style={{
+                  background: selected.avatarUrl ? 'transparent' : 'rgba(99,102,241,0.1)',
+                  border: `1px solid ${selected.avatarUrl ? 'rgba(255,255,255,0.08)' : 'rgba(99,102,241,0.15)'}`,
+                }}
+              >
+                {selected.avatarUrl
+                  ? <img src={selected.avatarUrl} alt="" className="w-full h-full object-cover" />
+                  : (selected.icon || '⚡')
+                }
+              </div>
+              <span className="text-[11px] flex-1 truncate" style={{ color: 'rgba(255, 255, 255, 0.85)' }}>
+                {selected.name}
+              </span>
+            </>
+          ) : (
+            <span className="text-[11px] flex-1" style={{ color: 'rgba(255, 255, 255, 0.35)' }}>
+              请选择工作流...
+            </span>
+          )}
+          <ChevronDown
+            size={12}
+            className="flex-shrink-0 transition-transform"
+            style={{ color: 'rgba(255, 255, 255, 0.3)', transform: open ? 'rotate(180deg)' : 'rotate(0)' }}
+          />
+        </button>
+
+        {open && (
+          <div
+            className="absolute z-50 left-0 right-0 mt-1 rounded-xl overflow-hidden py-1"
+            style={{
+              background: 'rgba(20, 20, 35, 0.98)',
+              border: '1px solid rgba(168, 85, 247, 0.2)',
+              boxShadow: '0 12px 40px -8px rgba(0, 0, 0, 0.6)',
+              backdropFilter: 'blur(16px)',
+              maxHeight: 220,
+              overflowY: 'auto',
+              animation: 'wfPickerIn 0.15s ease-out',
+            }}
+          >
+            {workflows.length === 0 ? (
+              <div className="px-3 py-3 text-center text-[11px]" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>
+                暂无可用工作流
+              </div>
+            ) : workflows.map((wf) => {
+              const isActive = wf.id === form.workflowId;
+              return (
+                <button
+                  key={wf.id}
+                  type="button"
+                  onClick={() => { setForm({ ...form, workflowId: wf.id }); setOpen(false); }}
+                  className="w-full px-2.5 py-1.5 flex items-center gap-2 text-left transition-colors"
+                  style={{ background: isActive ? 'rgba(168, 85, 247, 0.1)' : 'transparent' }}
+                  onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
+                  onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = 'transparent'; }}
+                >
+                  <div
+                    className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 overflow-hidden text-[12px]"
+                    style={{
+                      background: wf.avatarUrl ? 'transparent' : 'rgba(99,102,241,0.08)',
+                      border: `1px solid ${wf.avatarUrl ? 'rgba(255,255,255,0.08)' : 'rgba(99,102,241,0.12)'}`,
+                    }}
+                  >
+                    {wf.avatarUrl
+                      ? <img src={wf.avatarUrl} alt="" className="w-full h-full object-cover" />
+                      : (wf.icon || '⚡')
+                    }
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[11px] font-medium truncate" style={{ color: 'rgba(255, 255, 255, 0.85)' }}>
+                      {wf.name}
+                    </div>
+                    {wf.description && (
+                      <div className="text-[9px] truncate mt-0.5" style={{ color: 'rgba(255, 255, 255, 0.35)' }}>
+                        {wf.description}
+                      </div>
+                    )}
+                  </div>
+                  {isActive && (
+                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: 'rgb(168, 85, 247)' }} />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        <style>{`
+          @keyframes wfPickerIn {
+            from { opacity: 0; transform: translateY(-4px); }
+            to { opacity: 1; transform: translateY(0); }
+          }
+        `}</style>
+      </div>
+    );
+  }
+
   const currentIconHue = getAccentHue(form.icon);
   const CurrentIcon = getIconComponent(form.icon);
 
@@ -1174,24 +1307,7 @@ export function QuickCreateWizard() {
                   <Info size={10} className="flex-shrink-0 mt-0.5" style={{ color: 'rgba(192, 132, 252, 0.7)' }} />
                   <span style={{ color: 'rgba(255, 255, 255, 0.55)' }}>对话时可将消息发送到工作流执行</span>
                 </div>
-                {workflowsLoading ? (
-                  <div className="flex items-center gap-2 py-2" style={{ color: 'rgba(255, 255, 255, 0.5)' }}>
-                    <Loader2 size={12} className="animate-spin" />
-                    <span className="text-[10px]">加载工作流...</span>
-                  </div>
-                ) : (
-                  <select
-                    value={form.workflowId}
-                    onChange={(e) => setForm({ ...form, workflowId: e.target.value })}
-                    className="w-full px-2.5 py-2 rounded-lg border text-[11px] outline-none transition-all focus:ring-1 focus:ring-purple-500/20"
-                    style={{ background: 'rgba(0, 0, 0, 0.2)', borderColor: 'rgba(168, 85, 247, 0.15)', color: 'rgba(255, 255, 255, 0.85)' }}
-                  >
-                    <option value="" style={{ background: '#1a1a2e' }}>请选择工作流...</option>
-                    {workflows.map((wf) => (
-                      <option key={wf.id} value={wf.id} style={{ background: '#1a1a2e' }}>{wf.name}</option>
-                    ))}
-                  </select>
-                )}
+                <WorkflowPicker />
               </div>
             )}
           </div>
@@ -1432,30 +1548,7 @@ export function QuickCreateWizard() {
                   对话时可将消息发送到工作流执行
                 </span>
               </div>
-              {workflowsLoading ? (
-                <div className="flex items-center gap-2 py-2" style={{ color: 'rgba(255, 255, 255, 0.5)' }}>
-                  <Loader2 size={12} className="animate-spin" />
-                  <span className="text-[10px]">加载工作流...</span>
-                </div>
-              ) : (
-                <select
-                  value={form.workflowId}
-                  onChange={(e) => setForm({ ...form, workflowId: e.target.value })}
-                  className="w-full px-2.5 py-2 rounded-lg border text-[11px] outline-none transition-all focus:ring-1 focus:ring-purple-500/20"
-                  style={{
-                    background: 'rgba(0, 0, 0, 0.2)',
-                    borderColor: 'rgba(168, 85, 247, 0.15)',
-                    color: 'rgba(255, 255, 255, 0.85)',
-                  }}
-                >
-                  <option value="" style={{ background: '#1a1a2e' }}>请选择工作流...</option>
-                  {workflows.map((wf) => (
-                    <option key={wf.id} value={wf.id} style={{ background: '#1a1a2e' }}>
-                      {wf.name}
-                    </option>
-                  ))}
-                </select>
-              )}
+              <WorkflowPicker />
             </div>
           )}
         </div>
