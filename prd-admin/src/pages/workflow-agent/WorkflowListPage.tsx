@@ -226,13 +226,16 @@ function WorkflowCard({ workflow, onEdit, onCanvas, onDelete }: {
         <div className="flex items-start justify-between gap-2 mb-3">
           <div className="flex items-center gap-2.5 min-w-0">
             <div
-              className="w-9 h-9 rounded-[10px] flex items-center justify-center flex-shrink-0 text-[18px]"
+              className="w-9 h-9 rounded-[10px] flex items-center justify-center flex-shrink-0 text-[18px] overflow-hidden"
               style={{
-                background: 'rgba(99,102,241,0.08)',
-                border: '1px solid rgba(99,102,241,0.12)',
+                background: workflow.avatarUrl ? 'transparent' : 'rgba(99,102,241,0.08)',
+                border: `1px solid ${workflow.avatarUrl ? 'rgba(255,255,255,0.08)' : 'rgba(99,102,241,0.12)'}`,
               }}
             >
-              {workflow.icon || '⚡'}
+              {workflow.avatarUrl
+                ? <img src={workflow.avatarUrl} alt="" className="w-full h-full object-cover" />
+                : (workflow.icon || '⚡')
+              }
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5">

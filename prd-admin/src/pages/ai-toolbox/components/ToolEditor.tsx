@@ -1,7 +1,9 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
 import { useToolboxStore } from '@/stores/toolboxStore';
+import { listWorkflows } from '@/services';
+import type { Workflow } from '@/services/contracts/workflowAgent';
 import type { LucideIcon } from 'lucide-react';
 import {
   ArrowLeft,
@@ -47,6 +49,7 @@ import {
   Layers,
   Swords,
   Info,
+  Workflow as WorkflowIcon,
 } from 'lucide-react';
 
 // 图标组件映射
@@ -55,6 +58,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   Bot, Lightbulb, Target, Wrench, Sparkles, Rocket, MessageSquare, Zap,
   Brain, Cpu, Database, Globe, Image, Music, Video, BookOpen,
   GraduationCap, Briefcase, Heart, Star, Shield, Lock, Search, Layers, Swords,
+  Workflow: WorkflowIcon,
 };
 
 // 可选的图标列表
@@ -67,7 +71,7 @@ const ICON_HUE_MAP: Record<string, number> = {
   Sparkles: 280, Rocket: 210, MessageSquare: 180, Zap: 45, Brain: 270, Cpu: 200,
   Database: 220, Globe: 180, Image: 330, Music: 300, Video: 0, BookOpen: 140,
   GraduationCap: 220, Briefcase: 30, Heart: 350, Star: 45, Shield: 210, Lock: 200,
-  Search: 180, Layers: 240, Swords: 30,
+  Search: 180, Layers: 240, Swords: 30, Workflow: 270,
 };
 
 // 获取图标组件
@@ -86,6 +90,7 @@ const CAPABILITY_TOOLS = [
   { key: 'imageGen', label: '图片生成', icon: 'Image', description: '使用 AI 生成图片', hue: 330 },
   { key: 'codeInterpreter', label: '代码解释器', icon: 'Code2', description: '执行代码并返回结果', hue: 160 },
   { key: 'fileReader', label: '文件解析', icon: 'FileText', description: '读取和分析文件', hue: 45 },
+  { key: 'workflowTrigger', label: '发送到工作流', icon: 'Workflow', description: '将消息发送到绑定的工作流执行', hue: 270 },
 ];
 
 // Tab 配置
@@ -108,6 +113,7 @@ interface FormState {
   welcomeMessage: string;
   conversationStarters: string[];
   enabledTools: string[];
+  workflowId: string;
   knowledgeBase: string[];
   temperature: number;
   enableMemory: boolean;
@@ -124,7 +130,8 @@ export function ToolEditor() {
     tags: editingItem?.tags?.join(', ') || '',
     welcomeMessage: '你好！我是你的 AI 助手，有什么可以帮你的吗？',
     conversationStarters: ['帮我写一段文案', '分析一下这个数据'],
-    enabledTools: [],
+    enabledTools: editingItem?.enabledTools ?? [],
+    workflowId: editingItem?.workflowId ?? '',
     knowledgeBase: [],
     temperature: 0.7,
     enableMemory: false,
@@ -135,6 +142,37 @@ export function ToolEditor() {
   const [activeTab, setActiveTab] = useState('persona');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [previewInput, setPreviewInput] = useState('');
+  const [workflows, setWorkflows] = useState<Workflow[]>([]);
+  const [workflowsLoading, setWorkflowsLoading] = useState(false);
+  const [wfDropdownOpen, setWfDropdownOpen] = useState(false);
+  const wfDropdownRef = useRef<HTMLDivElement>(null);
+
+  // 当启用工作流能力时加载工作流列表
+  const isWorkflowEnabled = form.enabledTools.includes('workflowTrigger');
+  useEffect(() => {
+    if (isWorkflowEnabled && workflows.length === 0) {
+      setWorkflowsLoading(true);
+      listWorkflows({ pageSize: 200 })
+        .then((res) => {
+          if (res.success && res.data) {
+            setWorkflows(res.data.items);
+          }
+        })
+        .finally(() => setWorkflowsLoading(false));
+    }
+  }, [isWorkflowEnabled]);
+
+  // 点击外部关闭工作流下拉
+  useEffect(() => {
+    if (!wfDropdownOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (wfDropdownRef.current && !wfDropdownRef.current.contains(e.target as Node)) {
+        setWfDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [wfDropdownOpen]);
 
   const title = view === 'edit' ? '编辑智能体' : '创建智能体';
 
@@ -165,6 +203,8 @@ export function ToolEditor() {
       icon: form.icon,
       prompt: form.prompt.trim(),
       tags: parsedTags,
+      enabledTools: form.enabledTools,
+      workflowId: form.enabledTools.includes('workflowTrigger') ? form.workflowId : undefined,
       type: 'custom',
       category: 'custom',
     });
@@ -349,6 +389,163 @@ export function ToolEditor() {
           })}
         </div>
       </div>
+
+      {/* 工作流绑定 — 仅在启用 workflowTrigger 时显示 */}
+      {isWorkflowEnabled && (
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <div
+              className="w-6 h-6 rounded-lg flex items-center justify-center"
+              style={{
+                background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.2) 0%, rgba(168, 85, 247, 0.1) 100%)',
+                border: '1px solid rgba(168, 85, 247, 0.25)',
+              }}
+            >
+              <WorkflowIcon size={12} style={{ color: 'rgb(192, 132, 252)' }} />
+            </div>
+            <label className="text-[12px] font-semibold" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>
+              绑定工作流 <span style={{ color: 'rgb(239, 68, 68)' }}>*</span>
+            </label>
+          </div>
+          <div
+            className="text-[11px] mb-2 px-3 py-2 rounded-lg flex items-start gap-2"
+            style={{
+              background: 'linear-gradient(90deg, rgba(168, 85, 247, 0.08) 0%, rgba(168, 85, 247, 0.02) 100%)',
+              border: '1px solid rgba(168, 85, 247, 0.15)',
+            }}
+          >
+            <Info size={12} className="flex-shrink-0 mt-0.5" style={{ color: 'rgba(192, 132, 252, 0.8)' }} />
+            <span style={{ color: 'rgba(255, 255, 255, 0.65)' }}>
+              选择一个工作流，对话时可将消息发送到该工作流执行
+            </span>
+          </div>
+          {workflowsLoading ? (
+            <div className="flex items-center gap-2 p-3" style={{ color: 'rgba(255, 255, 255, 0.5)' }}>
+              <Loader2 size={14} className="animate-spin" />
+              <span className="text-[12px]">加载工作流列表...</span>
+            </div>
+          ) : (
+            <div ref={wfDropdownRef} className="relative">
+              {/* 触发按钮 */}
+              <button
+                type="button"
+                onClick={() => setWfDropdownOpen(!wfDropdownOpen)}
+                className="w-full px-3 py-2.5 rounded-xl border text-left flex items-center gap-2.5 outline-none transition-all"
+                style={{
+                  background: 'rgba(0, 0, 0, 0.2)',
+                  borderColor: wfDropdownOpen ? 'rgba(168, 85, 247, 0.4)' : 'rgba(168, 85, 247, 0.2)',
+                  boxShadow: wfDropdownOpen ? '0 0 0 2px rgba(168, 85, 247, 0.1)' : 'none',
+                }}
+              >
+                {(() => {
+                  const selected = workflows.find(w => w.id === form.workflowId);
+                  if (!selected) return (
+                    <span className="text-[13px] flex-1" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>
+                      请选择工作流...
+                    </span>
+                  );
+                  return (
+                    <>
+                      <div
+                        className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 overflow-hidden text-[13px]"
+                        style={{
+                          background: selected.avatarUrl ? 'transparent' : 'rgba(99,102,241,0.1)',
+                          border: `1px solid ${selected.avatarUrl ? 'rgba(255,255,255,0.08)' : 'rgba(99,102,241,0.15)'}`,
+                        }}
+                      >
+                        {selected.avatarUrl
+                          ? <img src={selected.avatarUrl} alt="" className="w-full h-full object-cover" />
+                          : (selected.icon || '⚡')
+                        }
+                      </div>
+                      <span className="text-[13px] flex-1 truncate" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>
+                        {selected.name}
+                      </span>
+                    </>
+                  );
+                })()}
+                <ChevronDown
+                  size={14}
+                  className="flex-shrink-0 transition-transform"
+                  style={{
+                    color: 'rgba(255, 255, 255, 0.35)',
+                    transform: wfDropdownOpen ? 'rotate(180deg)' : 'rotate(0)',
+                  }}
+                />
+              </button>
+
+              {/* 下拉菜单 */}
+              {wfDropdownOpen && (
+                <div
+                  className="absolute z-50 left-0 right-0 mt-1.5 rounded-xl overflow-hidden py-1"
+                  style={{
+                    background: 'rgba(20, 20, 35, 0.98)',
+                    border: '1px solid rgba(168, 85, 247, 0.2)',
+                    boxShadow: '0 12px 40px -8px rgba(0, 0, 0, 0.6)',
+                    backdropFilter: 'blur(16px)',
+                    maxHeight: 260,
+                    overflowY: 'auto',
+                    animation: 'wfDropIn 0.15s ease-out',
+                  }}
+                >
+                  {workflows.length === 0 ? (
+                    <div className="px-3 py-4 text-center text-[12px]" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>
+                      暂无可用工作流
+                    </div>
+                  ) : workflows.map((wf) => (
+                    <button
+                      key={wf.id}
+                      type="button"
+                      onClick={() => {
+                        setForm({ ...form, workflowId: wf.id });
+                        setWfDropdownOpen(false);
+                      }}
+                      className="w-full px-3 py-2 flex items-center gap-2.5 text-left transition-colors"
+                      style={{
+                        background: wf.id === form.workflowId ? 'rgba(168, 85, 247, 0.1)' : 'transparent',
+                      }}
+                      onMouseEnter={(e) => { if (wf.id !== form.workflowId) e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
+                      onMouseLeave={(e) => { if (wf.id !== form.workflowId) e.currentTarget.style.background = 'transparent'; }}
+                    >
+                      <div
+                        className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden text-[14px]"
+                        style={{
+                          background: wf.avatarUrl ? 'transparent' : 'rgba(99,102,241,0.08)',
+                          border: `1px solid ${wf.avatarUrl ? 'rgba(255,255,255,0.08)' : 'rgba(99,102,241,0.12)'}`,
+                        }}
+                      >
+                        {wf.avatarUrl
+                          ? <img src={wf.avatarUrl} alt="" className="w-full h-full object-cover" />
+                          : (wf.icon || '⚡')
+                        }
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[12px] font-medium truncate" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>
+                          {wf.name}
+                        </div>
+                        {wf.description && (
+                          <div className="text-[10px] truncate mt-0.5" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>
+                            {wf.description}
+                          </div>
+                        )}
+                      </div>
+                      {wf.id === form.workflowId && (
+                        <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: 'rgb(168, 85, 247)' }} />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <style>{`
+                @keyframes wfDropIn {
+                  from { opacity: 0; transform: translateY(-4px); }
+                  to { opacity: 1; transform: translateY(0); }
+                }
+              `}</style>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 知识库 */}
       <div>

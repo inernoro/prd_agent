@@ -487,6 +487,7 @@ public class AiToolboxController : ControllerBase
             WelcomeMessage = request.WelcomeMessage,
             ConversationStarters = request.ConversationStarters ?? new List<string>(),
             EnabledTools = request.EnabledTools ?? new List<string>(),
+            WorkflowId = request.WorkflowId,
             Temperature = Math.Clamp(request.Temperature ?? 0.7, 0, 1),
             EnableMemory = request.EnableMemory ?? false,
             CreatedByUserId = userId,
@@ -517,6 +518,7 @@ public class AiToolboxController : ControllerBase
             .Set(x => x.WelcomeMessage, request.WelcomeMessage ?? item.WelcomeMessage)
             .Set(x => x.ConversationStarters, request.ConversationStarters ?? item.ConversationStarters)
             .Set(x => x.EnabledTools, request.EnabledTools ?? item.EnabledTools)
+            .Set(x => x.WorkflowId, request.WorkflowId ?? item.WorkflowId)
             .Set(x => x.Temperature, Math.Clamp(request.Temperature ?? item.Temperature, 0, 1))
             .Set(x => x.EnableMemory, request.EnableMemory ?? item.EnableMemory)
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
@@ -563,6 +565,69 @@ public class AiToolboxController : ControllerBase
             runId = ObjectId.GenerateNewId().ToString(),
             itemId = id,
             status = "use_direct_chat"
+        }));
+    }
+
+    #endregion
+
+    #region Workflow Trigger
+
+    /// <summary>
+    /// 触发智能体绑定的工作流
+    /// </summary>
+    [HttpPost("items/{id}/trigger-workflow")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> TriggerWorkflow(
+        string id,
+        [FromBody] TriggerWorkflowRequest request,
+        [FromServices] IWorkflowExecutionService workflowExecutionService,
+        CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var item = await _db.ToolboxItems.Find(x => x.Id == id && x.CreatedByUserId == userId).FirstOrDefaultAsync(ct);
+        if (item == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "智能体不存在"));
+
+        if (!item.EnabledTools.Contains("workflowTrigger") || string.IsNullOrWhiteSpace(item.WorkflowId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该智能体未启用工作流能力或未绑定工作流"));
+
+        // 验证工作流存在
+        var workflow = await _db.Workflows.Find(x => x.Id == item.WorkflowId).FirstOrDefaultAsync(ct);
+        if (workflow == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "绑定的工作流不存在"));
+
+        // 构建变量：将用户消息传入工作流
+        var variables = new Dictionary<string, string>
+        {
+            ["userMessage"] = (request.Message ?? string.Empty).Trim(),
+            ["agentName"] = item.Name,
+            ["triggeredByUserId"] = userId,
+        };
+
+        // 合并用户自定义变量
+        if (request.Variables != null)
+        {
+            foreach (var kv in request.Variables)
+            {
+                variables[kv.Key] = kv.Value;
+            }
+        }
+
+        var execution = await workflowExecutionService.ExecuteInternalAsync(
+            item.WorkflowId,
+            variables,
+            triggeredBy: $"ai-toolbox.agent.{item.Id}",
+            ct: CancellationToken.None);
+
+        _logger.LogInformation("工作流已触发: ItemId={ItemId}, WorkflowId={WorkflowId}, ExecutionId={ExecutionId}",
+            id, item.WorkflowId, execution.Id);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            executionId = execution.Id,
+            workflowId = item.WorkflowId,
+            workflowName = workflow.Name,
+            status = execution.Status.ToString().ToLowerInvariant(),
         }));
     }
 
@@ -1065,6 +1130,7 @@ public class CreateToolboxItemRequest
     public string? WelcomeMessage { get; set; }
     public List<string>? ConversationStarters { get; set; }
     public List<string>? EnabledTools { get; set; }
+    public string? WorkflowId { get; set; }
     public double? Temperature { get; set; }
     public bool? EnableMemory { get; set; }
 }
@@ -1102,6 +1168,18 @@ public class ChatHistoryMessage
 {
     public string Role { get; set; } = "user";
     public string Content { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// 触发工作流请求
+/// </summary>
+public class TriggerWorkflowRequest
+{
+    /// <summary>用户消息（传入工作流变量）</summary>
+    public string? Message { get; set; }
+
+    /// <summary>附加变量</summary>
+    public Dictionary<string, string>? Variables { get; set; }
 }
 
 #endregion
