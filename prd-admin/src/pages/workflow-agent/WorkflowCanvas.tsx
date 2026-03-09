@@ -259,19 +259,27 @@ function CanvasInner({
 
   // ─── 推送历史快照 ───
   const pushHistory = useCallback(() => {
-    // 延迟获取最新的 nodes/edges
-    setNodes((nds) => {
-      setEdges((eds) => {
-        history.push(nds, eds);
-        return eds;
-      });
-      return nds;
-    });
-  }, [history, setNodes, setEdges]);
+    // 延迟到下一帧，确保 React 已提交 batched state 更新
+    setTimeout(() => {
+      history.push(
+        reactFlowInstance.getNodes() as Node<CapsuleNodeData>[],
+        reactFlowInstance.getEdges(),
+      );
+    }, 0);
+  }, [history, reactFlowInstance]);
+
+  // ─── 连线校验：禁止自连接 ───
+  const isValidConnection = useCallback(
+    (connection: Connection | Edge) => {
+      return connection.source !== connection.target;
+    },
+    [],
+  );
 
   // ─── 连线 ───
   const onConnect = useCallback(
     (connection: Connection) => {
+      if (connection.source === connection.target) return; // 防止自连接
       setEdges((eds) => addEdge({ ...connection, type: 'flow', data: { status: 'idle' } }, eds));
       setDirty(true);
       pushHistory();
@@ -713,6 +721,7 @@ function CanvasInner({
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
             onConnectEnd={onConnectEnd}
+            isValidConnection={isValidConnection}
             onNodeDragStop={onNodesDragStop}
             onNodesDelete={onDelete}
             onEdgesDelete={onDelete}
