@@ -41,7 +41,9 @@ import {
   FileArchive,
   HardDrive,
   UploadCloud,
+  QrCode,
 } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 
 // ─── Utility ───
 
@@ -100,6 +102,7 @@ export default function WebPagesPage() {
   const [shareTargetId, setShareTargetId] = useState<string | null>(null);
   const [showSharesPanel, setShowSharesPanel] = useState(false);
   const [shares, setShares] = useState<ShareLinkItem[]>([]);
+  const [qrSite, setQrSite] = useState<HostedSite | null>(null);
 
   // ─── Load ───
 
@@ -350,6 +353,7 @@ export default function WebPagesPage() {
               onEdit={() => { setEditItem(site); setShowUploadDialog(true); }}
               onDelete={() => handleDelete(site.id)}
               onShare={() => handleShare(site.id)}
+              onQrCode={() => setQrSite(site)}
             />
           ))}
         </div>
@@ -364,6 +368,7 @@ export default function WebPagesPage() {
               onEdit={() => { setEditItem(site); setShowUploadDialog(true); }}
               onDelete={() => handleDelete(site.id)}
               onShare={() => handleShare(site.id)}
+              onQrCode={() => setQrSite(site)}
             />
           ))}
         </div>
@@ -396,6 +401,11 @@ export default function WebPagesPage() {
           onClose={() => setShowSharesPanel(false)}
         />
       )}
+
+      {/* QR Code Dialog */}
+      {qrSite && (
+        <QrCodeDialog site={qrSite} onClose={() => setQrSite(null)} />
+      )}
     </div>
   );
 }
@@ -403,6 +413,82 @@ export default function WebPagesPage() {
 // ─── Card View ───
 
 // ─── Iframe Thumbnail Preview ───
+
+// ─── QR Code Dialog (auto-creates share link) ───
+
+function QrCodeDialog({ site, onClose }: { site: HostedSite; onClose: () => void }) {
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      // 1. 查找该 site 已有的、可用的无密码分享链接
+      const listRes = await listSiteShares();
+      if (cancelled) return;
+      if (listRes.success) {
+        const existing = listRes.data.items.find(s =>
+          s.siteId === site.id &&
+          s.shareType === 'single' &&
+          !s.isRevoked &&
+          s.accessLevel === 'public' &&
+          (!s.expiresAt || new Date(s.expiresAt) > new Date())
+        );
+        if (existing) {
+          setShareUrl(`${window.location.origin}/s/wp/${existing.token}`);
+          setLoading(false);
+          return;
+        }
+      }
+      // 2. 没有可复用的，才创建新的
+      const res = await createSiteShareLink({
+        siteId: site.id,
+        shareType: 'single',
+        expiresInDays: 0,
+      });
+      if (cancelled) return;
+      setLoading(false);
+      if (res.success) {
+        setShareUrl(`${window.location.origin}${res.data.shareUrl}`);
+      } else {
+        setError('创建分享链接失败');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [site.id]);
+
+  return (
+    <Dialog
+      open={true}
+      onOpenChange={v => { if (!v) onClose(); }}
+      title="扫码访问"
+      description={site.title}
+      content={
+        <div className="flex flex-col items-center gap-4 py-4">
+          {loading ? (
+            <div className="flex items-center gap-2 py-8" style={{ color: 'var(--text-muted)' }}>
+              <RefreshCw size={16} className="animate-spin" />
+              <span className="text-sm">正在生成分享链接…</span>
+            </div>
+          ) : error ? (
+            <p className="text-sm py-8" style={{ color: '#ef4444' }}>{error}</p>
+          ) : shareUrl ? (
+            <>
+              <div className="p-4 rounded-2xl" style={{ background: '#fff' }}>
+                <QRCodeSVG value={shareUrl} size={280} level="H" />
+              </div>
+              <p className="text-xs text-center break-all px-4" style={{ color: 'var(--text-muted)', maxWidth: 320 }}>
+                {shareUrl}
+              </p>
+            </>
+          ) : null}
+        </div>
+      }
+    />
+  );
+}
 
 function SitePreview({ url, className, style }: { url: string; className?: string; style?: React.CSSProperties }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -452,13 +538,14 @@ function SitePreview({ url, className, style }: { url: string; className?: strin
   );
 }
 
-function SiteCard({ site, selected, onSelect, onEdit, onDelete, onShare }: {
+function SiteCard({ site, selected, onSelect, onEdit, onDelete, onShare, onQrCode }: {
   site: HostedSite;
   selected: boolean;
   onSelect: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onShare: () => void;
+  onQrCode: () => void;
 }) {
   return (
     <GlassCard
@@ -483,6 +570,9 @@ function SiteCard({ site, selected, onSelect, onEdit, onDelete, onShare }: {
           </button>
           <button onClick={(e) => { e.stopPropagation(); onShare(); }} className="p-1.5 rounded-full bg-white/20 backdrop-blur-sm hover:bg-white/30" title="分享">
             <Share2 size={14} style={{ color: '#fff' }} />
+          </button>
+          <button onClick={(e) => { e.stopPropagation(); onQrCode(); }} className="p-1.5 rounded-full bg-white/20 backdrop-blur-sm hover:bg-white/30" title="二维码">
+            <QrCode size={14} style={{ color: '#fff' }} />
           </button>
           <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="p-1.5 rounded-full bg-white/20 backdrop-blur-sm hover:bg-white/30" title="编辑">
             <Edit3 size={14} style={{ color: '#fff' }} />
@@ -552,13 +642,14 @@ function SiteCard({ site, selected, onSelect, onEdit, onDelete, onShare }: {
 
 // ─── List View ───
 
-function SiteListItem({ site, selected, onSelect, onEdit, onDelete, onShare }: {
+function SiteListItem({ site, selected, onSelect, onEdit, onDelete, onShare, onQrCode }: {
   site: HostedSite;
   selected: boolean;
   onSelect: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onShare: () => void;
+  onQrCode: () => void;
 }) {
   return (
     <GlassCard
@@ -613,6 +704,9 @@ function SiteListItem({ site, selected, onSelect, onEdit, onDelete, onShare }: {
         </button>
         <button onClick={onShare} className="p-1 rounded hover:bg-[var(--bg-hover)]">
           <Share2 size={14} style={{ color: 'var(--text-muted)' }} />
+        </button>
+        <button onClick={onQrCode} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="二维码">
+          <QrCode size={14} style={{ color: 'var(--text-muted)' }} />
         </button>
         <button onClick={onEdit} className="p-1 rounded hover:bg-[var(--bg-hover)]">
           <Edit3 size={14} style={{ color: 'var(--text-muted)' }} />
