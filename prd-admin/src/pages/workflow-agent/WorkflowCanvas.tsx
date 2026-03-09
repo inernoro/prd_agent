@@ -186,8 +186,13 @@ function CanvasInner({
   const reactFlowInstance = useReactFlow();
   const history = useCanvasHistory<CapsuleNodeData>();
 
-  // 初始化节点和边
-  const initial = useMemo(() => workflowToFlow(workflow, execution), [workflow, execution]);
+  // 初始化节点和边（自动按 TB 方向排列）
+  const initial = useMemo(() => {
+    const { nodes: rawNodes, edges } = workflowToFlow(workflow, execution);
+    // 始终以上→下方向自动排列，确保连线不绕圈
+    const laid = rawNodes.length > 1 ? autoLayoutNodes(rawNodes, edges, 'TB') : rawNodes;
+    return { nodes: laid, edges };
+  }, [workflow, execution]);
   const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges);
 
@@ -658,39 +663,47 @@ function CanvasInner({
         }
       />
 
-      {/* 顶部舱目录面板（水平布局） */}
-      {paletteOpen && (
-        <div
-          className="flex-shrink-0 border-b overflow-x-auto"
-          style={{
-            background: 'rgba(0,0,0,0.2)',
-            borderColor: 'rgba(255,255,255,0.08)',
-          }}
-        >
-          <div className="flex items-start gap-4 px-3 py-2 min-w-max">
-            {categories.map((cat) => {
-              const types = grouped[cat.key] || [];
-              if (types.length === 0) return null;
-              return (
-                <div key={cat.key} className="flex-shrink-0">
-                  <div className="text-[10px] font-medium mb-1 flex items-center gap-1" style={{ color: 'var(--text-muted, #888)' }}>
-                    <span>{getCategoryEmoji(cat.key)}</span>
-                    {cat.label}
-                  </div>
-                  <div className="flex items-center gap-1">
-                    {types.map((meta) => (
-                      <PaletteItem key={meta.typeKey} meta={meta} />
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* 画布 + 右侧面板 */}
+      {/* 画布 + 面板 */}
       <div className="flex-1 flex min-h-0">
+        {/* 左侧舱目录面板 */}
+        {paletteOpen && (
+          <div
+            className="w-56 flex-shrink-0 overflow-y-auto border-r"
+            style={{
+              background: 'rgba(0,0,0,0.2)',
+              borderColor: 'rgba(255,255,255,0.08)',
+            }}
+          >
+            <div className="p-3 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold" style={{ color: 'var(--text-primary, #e8e6e3)' }}>
+                  舱目录
+                </span>
+                <span className="text-[9px]" style={{ color: 'var(--text-muted, #888)' }}>
+                  拖拽到画布
+                </span>
+              </div>
+              {categories.map((cat) => {
+                const types = grouped[cat.key] || [];
+                if (types.length === 0) return null;
+                return (
+                  <div key={cat.key}>
+                    <div className="text-[10px] font-medium mb-1.5 flex items-center gap-1" style={{ color: 'var(--text-muted, #888)' }}>
+                      <span>{getCategoryEmoji(cat.key)}</span>
+                      {cat.label}
+                    </div>
+                    <div className="space-y-1">
+                      {types.map((meta) => (
+                        <PaletteItem key={meta.typeKey} meta={meta} />
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* React Flow 画布 */}
         <div className="flex-1 min-w-0 relative" ref={reactFlowWrapper}>
           <ReactFlow
