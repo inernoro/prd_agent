@@ -5,6 +5,7 @@ import {
   Download, FileText, ArrowLeft, Save, Plus,
   ChevronDown, ChevronRight, Settings2, XCircle,
   Zap, FlaskConical, Trash2, Wand2, Terminal, Eye, Copy, Check, CirclePause, Sparkles,
+  Camera,
 } from 'lucide-react';
 import {
   getWorkflow, updateWorkflow, executeWorkflow, getExecution,
@@ -1348,6 +1349,10 @@ export function WorkflowEditorPage() {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
 
+  // 头像上传
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+
   // 变量
   const [vars, setVars] = useState<Record<string, string>>({});
 
@@ -1650,6 +1655,34 @@ export function WorkflowEditorPage() {
     }
   }
 
+  // ── 头像上传 ──
+
+  async function handleAvatarUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !workflow) return;
+    e.target.value = '';
+    if (!file.type.startsWith('image/')) return;
+    if (file.size > 5 * 1024 * 1024) return; // 5MB limit
+
+    setAvatarUploading(true);
+    try {
+      const token = useAuthStore.getState().token;
+      const headers: Record<string, string> = { Accept: 'application/json' };
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const fd = new FormData();
+      fd.append('file', file);
+      const rawBase = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').trim().replace(/\/+$/, '');
+      const url = rawBase ? `${rawBase}/api/v1/attachments` : '/api/v1/attachments';
+      const res = await fetch(url, { method: 'POST', headers, body: fd });
+      const json = await res.json();
+      if (json?.success && json.data?.url) {
+        setWorkflow(prev => prev ? { ...prev, avatarUrl: json.data.url } : prev);
+        setDirty(true);
+      }
+    } catch { /* ignore */ }
+    setAvatarUploading(false);
+  }
+
   // ── 保存 ──
 
   async function handleSave() {
@@ -1659,6 +1692,7 @@ export function WorkflowEditorPage() {
       const res = await updateWorkflow({
         id: workflow.id,
         name: workflow.name,
+        avatarUrl: workflow.avatarUrl,
         nodes: workflow.nodes,
         edges: workflow.edges,
         variables: workflow.variables,
@@ -1956,7 +1990,36 @@ export function WorkflowEditorPage() {
             </span>
           )
         }
-        icon={<Zap size={16} />}
+        icon={
+          <>
+            <input ref={avatarInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarUpload} />
+            <button
+              onClick={() => avatarInputRef.current?.click()}
+              className="relative w-7 h-7 rounded-lg overflow-hidden flex items-center justify-center group/av flex-shrink-0"
+              style={{
+                background: workflow.avatarUrl ? 'transparent' : 'rgba(99,102,241,0.1)',
+                border: `1px solid ${workflow.avatarUrl ? 'rgba(255,255,255,0.1)' : 'rgba(99,102,241,0.2)'}`,
+                transition: 'border-color 0.2s',
+              }}
+              title="点击上传头像"
+            >
+              {workflow.avatarUrl ? (
+                <img src={workflow.avatarUrl} alt="" className="w-full h-full object-cover" />
+              ) : (
+                <Zap size={14} style={{ color: 'rgba(99,102,241,0.7)' }} />
+              )}
+              <div
+                className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/av:opacity-100"
+                style={{ background: 'rgba(0,0,0,0.5)', transition: 'opacity 0.2s' }}
+              >
+                {avatarUploading
+                  ? <Loader2 size={12} className="animate-spin" style={{ color: 'white' }} />
+                  : <Camera size={12} style={{ color: 'white' }} />
+                }
+              </div>
+            </button>
+          </>
+        }
         actions={
           <div className="flex items-center gap-2">
             {isRunning ? (

@@ -64,6 +64,7 @@ export interface Workflow {
   name: string;
   description?: string;
   icon?: string;
+  avatarUrl?: string;
   tags: string[];
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
@@ -236,6 +237,7 @@ export type CreateWorkflowContract = (input: {
   name?: string;
   description?: string;
   icon?: string;
+  avatarUrl?: string;
   tags?: string[];
   nodes?: WorkflowNode[];
   edges?: WorkflowEdge[];
@@ -250,6 +252,7 @@ export type UpdateWorkflowContract = (input: {
   name?: string;
   description?: string;
   icon?: string;
+  avatarUrl?: string;
   tags?: string[];
   nodes?: WorkflowNode[];
   edges?: WorkflowEdge[];

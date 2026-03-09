@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
 import { useToolboxStore } from '@/stores/toolboxStore';
@@ -144,6 +144,8 @@ export function ToolEditor() {
   const [previewInput, setPreviewInput] = useState('');
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [workflowsLoading, setWorkflowsLoading] = useState(false);
+  const [wfDropdownOpen, setWfDropdownOpen] = useState(false);
+  const wfDropdownRef = useRef<HTMLDivElement>(null);
 
   // 当启用工作流能力时加载工作流列表
   const isWorkflowEnabled = form.enabledTools.includes('workflowTrigger');
@@ -159,6 +161,18 @@ export function ToolEditor() {
         .finally(() => setWorkflowsLoading(false));
     }
   }, [isWorkflowEnabled]);
+
+  // 点击外部关闭工作流下拉
+  useEffect(() => {
+    if (!wfDropdownOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (wfDropdownRef.current && !wfDropdownRef.current.contains(e.target as Node)) {
+        setWfDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [wfDropdownOpen]);
 
   const title = view === 'edit' ? '编辑智能体' : '创建智能体';
 
@@ -411,23 +425,124 @@ export function ToolEditor() {
               <span className="text-[12px]">加载工作流列表...</span>
             </div>
           ) : (
-            <select
-              value={form.workflowId}
-              onChange={(e) => setForm({ ...form, workflowId: e.target.value })}
-              className="w-full px-3 py-2.5 rounded-xl border text-[13px] outline-none transition-all focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500/30"
-              style={{
-                background: 'rgba(0, 0, 0, 0.2)',
-                borderColor: 'rgba(168, 85, 247, 0.2)',
-                color: 'rgba(255, 255, 255, 0.9)',
-              }}
-            >
-              <option value="" style={{ background: '#1a1a2e' }}>请选择工作流...</option>
-              {workflows.map((wf) => (
-                <option key={wf.id} value={wf.id} style={{ background: '#1a1a2e' }}>
-                  {wf.name}{wf.description ? ` — ${wf.description}` : ''}
-                </option>
-              ))}
-            </select>
+            <div ref={wfDropdownRef} className="relative">
+              {/* 触发按钮 */}
+              <button
+                type="button"
+                onClick={() => setWfDropdownOpen(!wfDropdownOpen)}
+                className="w-full px-3 py-2.5 rounded-xl border text-left flex items-center gap-2.5 outline-none transition-all"
+                style={{
+                  background: 'rgba(0, 0, 0, 0.2)',
+                  borderColor: wfDropdownOpen ? 'rgba(168, 85, 247, 0.4)' : 'rgba(168, 85, 247, 0.2)',
+                  boxShadow: wfDropdownOpen ? '0 0 0 2px rgba(168, 85, 247, 0.1)' : 'none',
+                }}
+              >
+                {(() => {
+                  const selected = workflows.find(w => w.id === form.workflowId);
+                  if (!selected) return (
+                    <span className="text-[13px] flex-1" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>
+                      请选择工作流...
+                    </span>
+                  );
+                  return (
+                    <>
+                      <div
+                        className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 overflow-hidden text-[13px]"
+                        style={{
+                          background: selected.avatarUrl ? 'transparent' : 'rgba(99,102,241,0.1)',
+                          border: `1px solid ${selected.avatarUrl ? 'rgba(255,255,255,0.08)' : 'rgba(99,102,241,0.15)'}`,
+                        }}
+                      >
+                        {selected.avatarUrl
+                          ? <img src={selected.avatarUrl} alt="" className="w-full h-full object-cover" />
+                          : (selected.icon || '⚡')
+                        }
+                      </div>
+                      <span className="text-[13px] flex-1 truncate" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>
+                        {selected.name}
+                      </span>
+                    </>
+                  );
+                })()}
+                <ChevronDown
+                  size={14}
+                  className="flex-shrink-0 transition-transform"
+                  style={{
+                    color: 'rgba(255, 255, 255, 0.35)',
+                    transform: wfDropdownOpen ? 'rotate(180deg)' : 'rotate(0)',
+                  }}
+                />
+              </button>
+
+              {/* 下拉菜单 */}
+              {wfDropdownOpen && (
+                <div
+                  className="absolute z-50 left-0 right-0 mt-1.5 rounded-xl overflow-hidden py-1"
+                  style={{
+                    background: 'rgba(20, 20, 35, 0.98)',
+                    border: '1px solid rgba(168, 85, 247, 0.2)',
+                    boxShadow: '0 12px 40px -8px rgba(0, 0, 0, 0.6)',
+                    backdropFilter: 'blur(16px)',
+                    maxHeight: 260,
+                    overflowY: 'auto',
+                    animation: 'wfDropIn 0.15s ease-out',
+                  }}
+                >
+                  {workflows.length === 0 ? (
+                    <div className="px-3 py-4 text-center text-[12px]" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>
+                      暂无可用工作流
+                    </div>
+                  ) : workflows.map((wf) => (
+                    <button
+                      key={wf.id}
+                      type="button"
+                      onClick={() => {
+                        setForm({ ...form, workflowId: wf.id });
+                        setWfDropdownOpen(false);
+                      }}
+                      className="w-full px-3 py-2 flex items-center gap-2.5 text-left transition-colors"
+                      style={{
+                        background: wf.id === form.workflowId ? 'rgba(168, 85, 247, 0.1)' : 'transparent',
+                      }}
+                      onMouseEnter={(e) => { if (wf.id !== form.workflowId) e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
+                      onMouseLeave={(e) => { if (wf.id !== form.workflowId) e.currentTarget.style.background = 'transparent'; }}
+                    >
+                      <div
+                        className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden text-[14px]"
+                        style={{
+                          background: wf.avatarUrl ? 'transparent' : 'rgba(99,102,241,0.08)',
+                          border: `1px solid ${wf.avatarUrl ? 'rgba(255,255,255,0.08)' : 'rgba(99,102,241,0.12)'}`,
+                        }}
+                      >
+                        {wf.avatarUrl
+                          ? <img src={wf.avatarUrl} alt="" className="w-full h-full object-cover" />
+                          : (wf.icon || '⚡')
+                        }
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[12px] font-medium truncate" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>
+                          {wf.name}
+                        </div>
+                        {wf.description && (
+                          <div className="text-[10px] truncate mt-0.5" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>
+                            {wf.description}
+                          </div>
+                        )}
+                      </div>
+                      {wf.id === form.workflowId && (
+                        <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: 'rgb(168, 85, 247)' }} />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <style>{`
+                @keyframes wfDropIn {
+                  from { opacity: 0; transform: translateY(-4px); }
+                  to { opacity: 1; transform: translateY(0); }
+                }
+              `}</style>
+            </div>
           )}
         </div>
       )}

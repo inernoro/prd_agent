@@ -496,6 +496,7 @@ public class WorkflowAgentController : ControllerBase
             Name = request.Name?.Trim() ?? "未命名工作流",
             Description = request.Description,
             Icon = request.Icon,
+            AvatarUrl = request.AvatarUrl,
             Tags = request.Tags ?? new(),
             Nodes = request.Nodes ?? new(),
             Edges = request.Edges ?? new(),
@@ -591,6 +592,7 @@ public class WorkflowAgentController : ControllerBase
         if (request.Name != null) workflow.Name = request.Name.Trim();
         if (request.Description != null) workflow.Description = request.Description;
         if (request.Icon != null) workflow.Icon = request.Icon;
+        if (request.AvatarUrl != null) workflow.AvatarUrl = request.AvatarUrl;
         if (request.Tags != null) workflow.Tags = request.Tags;
         if (request.Nodes != null) workflow.Nodes = request.Nodes;
         if (request.Edges != null) workflow.Edges = request.Edges;
@@ -1901,6 +1903,7 @@ public class CreateWorkflowRequest
     public string? Name { get; set; }
     public string? Description { get; set; }
     public string? Icon { get; set; }
+    public string? AvatarUrl { get; set; }
     public List<string>? Tags { get; set; }
     public List<WorkflowNode>? Nodes { get; set; }
     public List<WorkflowEdge>? Edges { get; set; }
@@ -1913,6 +1916,7 @@ public class UpdateWorkflowRequest
     public string? Name { get; set; }
     public string? Description { get; set; }
     public string? Icon { get; set; }
+    public string? AvatarUrl { get; set; }
     public List<string>? Tags { get; set; }
     public List<WorkflowNode>? Nodes { get; set; }
     public List<WorkflowEdge>? Edges { get; set; }

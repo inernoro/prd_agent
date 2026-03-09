@@ -13,6 +13,7 @@ public class Workflow
     public string Name { get; set; } = string.Empty;
     public string? Description { get; set; }
     public string? Icon { get; set; }
+    public string? AvatarUrl { get; set; }
     public List<string> Tags { get; set; } = new();
 
     // DAG
