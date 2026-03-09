@@ -1,9 +1,10 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { Button } from '@/components/design/Button';
 import { useToolboxStore } from '@/stores/toolboxStore';
-import { streamDirectChat, getModelGroups } from '@/services';
+import { streamDirectChat, getModelGroups, listWorkflows } from '@/services';
 import type { DirectChatMessage } from '@/services';
 import type { ModelGroup } from '@/types/modelGroup';
+import type { Workflow } from '@/services/contracts/workflowAgent';
 import type { LucideIcon } from 'lucide-react';
 import {
   ArrowLeft,
@@ -41,6 +42,8 @@ import {
   Play,
   PenLine,
   Square,
+  Workflow as WorkflowIcon,
+  Info,
 } from 'lucide-react';
 
 // ============ 图标映射 ============
@@ -637,7 +640,26 @@ export function QuickCreateWizard() {
     conversationStarters: [''],
     tags: '',
     temperature: 0.7,
+    enabledTools: [] as string[],
+    workflowId: '',
   });
+
+  // 工作流列表
+  const [workflows, setWorkflows] = useState<Workflow[]>([]);
+  const [workflowsLoading, setWorkflowsLoading] = useState(false);
+  const isWorkflowEnabled = form.enabledTools.includes('workflowTrigger');
+  useEffect(() => {
+    if (isWorkflowEnabled && workflows.length === 0) {
+      setWorkflowsLoading(true);
+      listWorkflows({ pageSize: 200 })
+        .then((res) => {
+          if (res.success && res.data) {
+            setWorkflows(res.data.items);
+          }
+        })
+        .finally(() => setWorkflowsLoading(false));
+    }
+  }, [isWorkflowEnabled]);
 
   const currentIconHue = getAccentHue(form.icon);
   const CurrentIcon = getIconComponent(form.icon);
@@ -705,7 +727,8 @@ export function QuickCreateWizard() {
 
   const handleSelectTemplate = (template: AgentTemplate) => {
     setSelectedTemplate(template);
-    setForm({
+    setForm((prev) => ({
+      ...prev,
       name: template.name,
       description: template.description,
       icon: template.icon,
@@ -714,13 +737,14 @@ export function QuickCreateWizard() {
       conversationStarters: [...template.conversationStarters],
       tags: template.tags.join(', '),
       temperature: template.temperature,
-    });
+    }));
     setStep(1);
   };
 
   const handleBlankCreate = () => {
     setSelectedTemplate(null);
-    setForm({
+    setForm((prev) => ({
+      ...prev,
       name: '',
       description: '',
       icon: 'Bot',
@@ -729,7 +753,7 @@ export function QuickCreateWizard() {
       conversationStarters: [''],
       tags: '',
       temperature: 0.7,
-    });
+    }));
     setStep(1);
   };
 
@@ -755,6 +779,8 @@ export function QuickCreateWizard() {
       icon: form.icon,
       prompt: form.prompt.trim(),
       tags: parsedTags,
+      enabledTools: form.enabledTools,
+      workflowId: isWorkflowEnabled ? form.workflowId : undefined,
       type: 'custom',
       category: 'custom',
     });
@@ -1099,6 +1125,78 @@ export function QuickCreateWizard() {
           <div className="text-[10px] mt-1.5" style={{ color: 'rgba(255,255,255,0.4)' }}>
             默认由后端根据 ai-toolbox 应用标识自动调度
           </div>
+        </div>
+
+        {/* 发送到工作流 */}
+        <div className="p-3 rounded-xl" style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <WorkflowIcon size={13} style={{ color: 'rgb(192, 132, 252)' }} />
+              <span className="text-[12px] font-semibold" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>发送到工作流</span>
+            </div>
+            <button
+              onClick={() => {
+                const next = isWorkflowEnabled
+                  ? form.enabledTools.filter((t) => t !== 'workflowTrigger')
+                  : [...form.enabledTools, 'workflowTrigger'];
+                setForm({ ...form, enabledTools: next });
+              }}
+              className="w-8 h-4.5 rounded-full relative transition-all duration-200 cursor-pointer"
+              style={{
+                background: isWorkflowEnabled
+                  ? 'linear-gradient(90deg, rgb(168, 85, 247), rgb(139, 92, 246))'
+                  : 'rgba(255, 255, 255, 0.1)',
+              }}
+            >
+              <div
+                className="absolute top-0.5 w-3.5 h-3.5 rounded-full transition-all duration-200"
+                style={{
+                  background: 'white',
+                  left: isWorkflowEnabled ? '17px' : '2px',
+                }}
+              />
+            </button>
+          </div>
+          {isWorkflowEnabled && (
+            <div className="space-y-2">
+              <div
+                className="text-[10px] px-2.5 py-1.5 rounded-lg flex items-start gap-1.5"
+                style={{
+                  background: 'rgba(168, 85, 247, 0.06)',
+                  border: '1px solid rgba(168, 85, 247, 0.12)',
+                }}
+              >
+                <Info size={10} className="flex-shrink-0 mt-0.5" style={{ color: 'rgba(192, 132, 252, 0.7)' }} />
+                <span style={{ color: 'rgba(255, 255, 255, 0.55)' }}>
+                  对话时可将消息发送到工作流执行
+                </span>
+              </div>
+              {workflowsLoading ? (
+                <div className="flex items-center gap-2 py-2" style={{ color: 'rgba(255, 255, 255, 0.5)' }}>
+                  <Loader2 size={12} className="animate-spin" />
+                  <span className="text-[10px]">加载工作流...</span>
+                </div>
+              ) : (
+                <select
+                  value={form.workflowId}
+                  onChange={(e) => setForm({ ...form, workflowId: e.target.value })}
+                  className="w-full px-2.5 py-2 rounded-lg border text-[11px] outline-none transition-all focus:ring-1 focus:ring-purple-500/20"
+                  style={{
+                    background: 'rgba(0, 0, 0, 0.2)',
+                    borderColor: 'rgba(168, 85, 247, 0.15)',
+                    color: 'rgba(255, 255, 255, 0.85)',
+                  }}
+                >
+                  <option value="" style={{ background: '#1a1a2e' }}>请选择工作流...</option>
+                  {workflows.map((wf) => (
+                    <option key={wf.id} value={wf.id} style={{ background: '#1a1a2e' }}>
+                      {wf.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
         </div>
 
         {/* 知识库上传 */}
