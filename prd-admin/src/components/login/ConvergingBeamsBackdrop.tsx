@@ -60,9 +60,9 @@ export default function ConvergingBeamsBackdrop({
 
       // background: deep charcoal with slight diagonal lift
       const bg = ctx.createLinearGradient(w * 0.2, h * 0.15, w, h * 0.75);
-      bg.addColorStop(0, '#050507');
-      bg.addColorStop(0.55, '#07070a');
-      bg.addColorStop(1, '#050507');
+      bg.addColorStop(0, '#0d0d11');
+      bg.addColorStop(0.55, '#101014');
+      bg.addColorStop(1, '#0d0d11');
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, w, h);
 

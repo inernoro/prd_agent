@@ -15,10 +15,10 @@
 
 /* Admin 通用输入控件：柔和边框 + 半透明暗底 + 统一交互态 */
 .prd-field {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.07);
   color: var(--text-primary);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
   caret-color: rgba(129, 140, 248, 0.85);
   transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
 }
@@ -29,7 +29,7 @@
 }
 
 .prd-field:hover {
-  border-color: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.24);
 }
 
 .prd-field:focus {
@@ -68,12 +68,12 @@ select optgroup {
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.14);
   border-radius: 9999px;
   border: 3px solid transparent;
   background-clip: content-box;
 }
-::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.18); background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.24); background-clip: content-box; }
 
 /* 侧边栏导航：隐藏滚动条但保留滚动功能 */
 .nav-scroll-hidden {
@@ -732,7 +732,7 @@ select optgroup {
   background:
     radial-gradient(1000px 820px at 68% 52%, rgba(99, 102, 241, 0.06) 0%, transparent 64%),
     radial-gradient(900px 760px at 32% 56%, rgba(92, 134, 255, 0.05) 0%, transparent 68%),
-    linear-gradient(180deg, #050507 0%, #07070a 55%, #050507 100%);
+    linear-gradient(180deg, #0d0d11 0%, #101014 55%, #0d0d11 100%);
   /* defaults */
   --prd-recgrid-scale: 0.97;
   /* 注意：canvas 不支持 color-mix()，这里用可解析的 rgba，组件也可通过 prop 覆盖 */

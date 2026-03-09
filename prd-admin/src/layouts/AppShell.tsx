@@ -643,8 +643,8 @@ export default function AppShell() {
             transform: 'translateZ(0)',
             willChange: 'transform',
             ...(useSidebarGlass ? glassSidebar : {
-              backgroundColor: 'var(--bg-elevated, #121216)',
-              backgroundImage: 'linear-gradient(180deg, rgba(17,17,22,1) 0%, rgba(12,12,16,1) 100%)',
+              backgroundColor: 'var(--bg-elevated, #1e1e24)',
+              backgroundImage: 'linear-gradient(180deg, rgba(30,30,36,1) 0%, rgba(20,20,24,1) 100%)',
               border: '1px solid rgba(99,102,241,0.08)',
               boxShadow: '0 26px 120px rgba(0,0,0,0.60), 0 0 0 1px rgba(99,102,241,0.04) inset',
             }),
@@ -892,7 +892,7 @@ export default function AppShell() {
               className="pointer-events-none absolute top-0 left-0 right-0 z-10 transition-opacity duration-200"
               style={{
                 height: 32,
-                background: 'linear-gradient(to bottom, var(--bg-elevated, #121216) 0%, transparent 100%)',
+                background: 'linear-gradient(to bottom, var(--bg-elevated, #1e1e24) 0%, transparent 100%)',
                 opacity: navScrollState.canScroll && !navScrollState.atTop ? 0.95 : 0,
               }}
             />
@@ -953,7 +953,7 @@ export default function AppShell() {
               className="pointer-events-none absolute bottom-0 left-0 right-0 z-10 transition-opacity duration-200"
               style={{
                 height: 40,
-                background: 'linear-gradient(to top, var(--bg-elevated, #121216) 0%, transparent 100%)',
+                background: 'linear-gradient(to top, var(--bg-elevated, #1e1e24) 0%, transparent 100%)',
                 opacity: navScrollState.canScroll && !navScrollState.atBottom ? 0.95 : 0,
               }}
             />

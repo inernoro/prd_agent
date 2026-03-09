@@ -226,7 +226,7 @@ const EFFECT_CONFIGS: EffectConfig[] = [
     ],
     performance: { frameRate: '60fps (RAF)', renderer: 'Canvas' },
     render: () => (
-      <div className="relative w-full h-full" style={{ background: '#050507' }}>
+      <div className="relative w-full h-full" style={{ background: '#0d0d11' }}>
         <RecursiveGridBackdrop depth={60} speedDegPerSec={1.5} stroke="rgba(255, 105, 180, 0.6)" />
       </div>
     ),
@@ -243,7 +243,7 @@ const EFFECT_CONFIGS: EffectConfig[] = [
     ],
     performance: { animationDuration: '3-4s', renderer: 'CSS' },
     render: () => (
-      <div className="relative w-full h-full" style={{ background: '#050507' }}>
+      <div className="relative w-full h-full" style={{ background: '#0d0d11' }}>
         <ConvergingBeamsBackdrop durationMs={4000} stopAt={0.6} />
       </div>
     ),

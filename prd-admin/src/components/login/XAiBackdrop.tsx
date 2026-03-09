@@ -8,7 +8,7 @@ export default function XAiBackdrop({ className }: { className?: string }) {
         className="absolute inset-0"
         style={{
           background:
-            'radial-gradient(900px 900px at 68% 42%, rgba(255,255,255,0.03) 0%, transparent 62%), radial-gradient(1200px 980px at 52% 58%, rgba(255,255,255,0.018) 0%, transparent 72%), linear-gradient(180deg, #050507 0%, #07070a 50%, #050507 100%)',
+            'radial-gradient(900px 900px at 68% 42%, rgba(255,255,255,0.04) 0%, transparent 62%), radial-gradient(1200px 980px at 52% 58%, rgba(255,255,255,0.025) 0%, transparent 72%), linear-gradient(180deg, #0d0d11 0%, #101014 50%, #0d0d11 100%)',
         }}
       />
 
