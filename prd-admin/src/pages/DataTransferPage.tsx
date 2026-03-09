@@ -1183,7 +1183,6 @@ function CreateTransferDialog({
                 count={filteredLiteraryWs.length}
                 selectedCount={filteredLiteraryWs.filter(w => selectedIds.has(`workspace:${w.id}`)).length}
                 onToggleAll={() => toggleAll(filteredLiteraryWs.map(w => `workspace:${w.id}`))}
-                grid
               >
                 {filteredLiteraryWs.map(ws => (
                   <WorkspaceCheckItem
@@ -1491,7 +1490,7 @@ function DataSection({
           {selectedCount === count ? '取消全选' : '全选'}
         </button>
       </div>
-      <div className={grid ? 'grid grid-cols-2 gap-2.5' : 'space-y-1.5'}>
+      <div className={grid ? 'grid grid-cols-2 gap-3' : 'space-y-2'}>
         {children}
       </div>
     </section>
@@ -1515,7 +1514,7 @@ function WorkspaceCheckItem({ ws, checked, onChange }: { ws: ShareableWorkspace;
     return a?.url ? (
       <img src={a.url} alt="" className="h-full w-full object-cover" style={style} loading="lazy" referrerPolicy="no-referrer" />
     ) : (
-      <div className="h-full w-full" style={{ ...style, background: 'var(--nested-block-bg)' }} />
+      <div className="h-full w-full" style={{ ...style, background: 'rgba(255,255,255,0.03)' }} />
     );
   };
 
@@ -1540,84 +1539,156 @@ function WorkspaceCheckItem({ ws, checked, onChange }: { ws: ShareableWorkspace;
     );
   };
 
+  // --- Literary workspace: horizontal card layout ---
+  if (isLiterary) {
+    return (
+      <label
+        className="group cursor-pointer block rounded-[12px] overflow-hidden transition-all duration-200"
+        style={{
+          background: 'rgba(255,255,255,0.03)',
+          border: `1px solid ${checked ? 'rgba(99,102,241,0.5)' : 'rgba(255,255,255,0.08)'}`,
+          boxShadow: checked ? '0 0 0 1px rgba(99,102,241,0.3), 0 2px 8px rgba(99,102,241,0.1)' : 'none',
+        }}
+      >
+        <input type="checkbox" checked={checked} onChange={onChange} className="sr-only" />
+        <div className="flex items-start gap-0">
+          {/* Checkbox + Icon area */}
+          <div className="shrink-0 w-10 flex flex-col items-center gap-1.5 py-3 pl-2.5">
+            <div
+              className="w-[18px] h-[18px] rounded-[5px] flex items-center justify-center transition-all duration-150"
+              style={{
+                background: checked ? 'rgba(99,102,241,0.9)' : 'transparent',
+                border: `1.5px solid ${checked ? 'rgba(99,102,241,0.9)' : 'rgba(255,255,255,0.2)'}`,
+              }}
+            >
+              {checked && <Check size={11} className="text-white" />}
+            </div>
+          </div>
+
+          {/* Content area */}
+          <div className="flex-1 min-w-0 py-2.5 pr-3">
+            {/* Header: title + meta */}
+            <div className="flex items-center gap-2 mb-1.5">
+              <PenLine size={12} className="shrink-0" style={{ color: 'rgba(245,158,11,0.7)' }} />
+              <span className="text-[12px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                {ws.title || '未命名'}
+              </span>
+              <span className="text-[10px] shrink-0 ml-auto" style={{ color: 'var(--text-muted)' }}>
+                {ws.assetCount} 张图
+              </span>
+            </div>
+
+            {/* Content preview */}
+            {hasContentPreview && (
+              <div
+                className="text-[11px] leading-[1.6] rounded-[8px] px-2.5 py-2"
+                style={{
+                  color: 'var(--text-secondary)',
+                  background: 'rgba(255,255,255,0.03)',
+                  border: '1px solid rgba(255,255,255,0.05)',
+                  display: '-webkit-box',
+                  WebkitLineClamp: 3,
+                  WebkitBoxOrient: 'vertical',
+                  overflow: 'hidden',
+                }}
+              >
+                {ws.contentPreview}
+              </div>
+            )}
+
+            {/* Folder */}
+            {ws.folderName && (
+              <div className="text-[10px] mt-1.5" style={{ color: 'var(--text-muted)' }}>
+                {ws.folderName}
+              </div>
+            )}
+          </div>
+
+          {/* Jump link */}
+          <a
+            href={wsRoute}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0 w-7 h-7 mt-2.5 mr-2 rounded-[6px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-150"
+            style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.5)' }}
+            onClick={(e) => e.stopPropagation()}
+            title="在新标签页打开"
+          >
+            <ExternalLink size={11} />
+          </a>
+        </div>
+      </label>
+    );
+  }
+
+  // --- Visual workspace: card with cover image ---
   return (
     <label className="group cursor-pointer block">
       <input type="checkbox" checked={checked} onChange={onChange} className="sr-only" />
 
-      {/* Cover area with checkbox overlay */}
+      {/* Cover area */}
       <div
-        className="h-[100px] w-full relative overflow-hidden rounded-[10px] transition-all duration-200"
+        className="aspect-[4/3] w-full relative overflow-hidden rounded-[10px] transition-all duration-200"
         style={{
-          background: hasCover ? 'transparent' : 'var(--bg-input)',
-          border: hasCover ? 'none' : '1px solid var(--nested-block-border)',
-          boxShadow: checked ? '0 0 0 2px rgba(99, 102, 241, 0.6)' : '0 2px 8px rgba(0,0,0,0.15)',
+          background: 'rgba(255,255,255,0.03)',
+          border: `1px solid ${checked ? 'rgba(99,102,241,0.5)' : 'rgba(255,255,255,0.08)'}`,
+          boxShadow: checked ? '0 0 0 1px rgba(99,102,241,0.3), 0 2px 8px rgba(99,102,241,0.1)' : 'none',
         }}
       >
         {hasCover && renderMosaic()}
 
         {/* Checkbox overlay - top left */}
-        <div className="absolute top-1.5 left-1.5 z-10">
+        <div className="absolute top-2 left-2 z-10">
           <div
-            className="w-5 h-5 rounded-[5px] flex items-center justify-center transition-all duration-150 backdrop-blur-sm"
+            className="w-5 h-5 rounded-[5px] flex items-center justify-center transition-all duration-150"
             style={{
-              background: checked ? 'rgba(99, 102, 241, 0.9)' : 'rgba(0,0,0,0.4)',
-              border: `1.5px solid ${checked ? 'rgba(99, 102, 241, 0.9)' : 'rgba(255,255,255,0.3)'}`,
+              background: checked ? 'rgba(99,102,241,0.9)' : 'rgba(0,0,0,0.5)',
+              border: `1.5px solid ${checked ? 'rgba(99,102,241,0.9)' : 'rgba(255,255,255,0.3)'}`,
+              backdropFilter: 'blur(4px)',
             }}
           >
             {checked && <Check size={12} className="text-white" />}
           </div>
         </div>
 
-        {/* Jump link overlay - top right */}
+        {/* Jump link - top right */}
         <a
           href={wsRoute}
           target="_blank"
           rel="noopener noreferrer"
-          className="absolute top-1.5 right-1.5 z-10 w-6 h-6 rounded-[6px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-150 backdrop-blur-sm"
-          style={{ background: 'rgba(0,0,0,0.4)', color: 'rgba(255,255,255,0.8)' }}
+          className="absolute top-2 right-2 z-10 w-6 h-6 rounded-[6px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-150"
+          style={{ background: 'rgba(0,0,0,0.5)', color: 'rgba(255,255,255,0.8)', backdropFilter: 'blur(4px)' }}
           onClick={(e) => e.stopPropagation()}
           title="在新标签页打开"
         >
           <ExternalLink size={11} />
         </a>
 
-        {/* Hover gradient */}
-        <div
-          className="absolute inset-0 opacity-0 transition-opacity duration-200 group-hover:opacity-100 pointer-events-none"
-          style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.5) 0%, transparent 50%)' }}
-        />
-
-        {/* No-cover: content preview for literary, icon placeholder for visual */}
+        {/* No-cover placeholder */}
         {!hasCover && (
-          hasContentPreview ? (
-            <div className="absolute inset-0 p-2.5 overflow-hidden">
-              <div className="flex items-center gap-1 mb-1">
-                <PenLine size={10} style={{ color: 'rgba(245, 158, 11, 0.6)' }} />
-                <span className="text-[9px] font-medium" style={{ color: 'rgba(245, 158, 11, 0.6)' }}>文章预览</span>
-              </div>
-              <div
-                className="text-[10px] leading-[1.5] overflow-hidden"
-                style={{ color: 'var(--text-muted)', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical' }}
-              >
-                {ws.contentPreview}
-              </div>
-            </div>
-          ) : (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <Layers size={24} style={{ color: 'rgba(99, 102, 241, 0.3)' }} />
-            </div>
-          )
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5">
+            <Layers size={22} style={{ color: 'rgba(99,102,241,0.25)' }} />
+            <span className="text-[10px]" style={{ color: 'var(--text-muted)', opacity: 0.5 }}>暂无图片</span>
+          </div>
+        )}
+
+        {/* Bottom gradient overlay for title readability */}
+        {hasCover && (
+          <div
+            className="absolute inset-x-0 bottom-0 h-12 pointer-events-none"
+            style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.6) 0%, transparent 100%)' }}
+          />
         )}
       </div>
 
       {/* Info below cover */}
-      <div className="pt-1.5 px-0.5">
-        <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+      <div className="pt-2 px-0.5">
+        <div className="text-[12px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
           {ws.title || '未命名'}
         </div>
         <div className="text-[10px] flex items-center gap-1.5 mt-0.5" style={{ color: 'var(--text-muted)' }}>
           <span>{ws.assetCount} 张图</span>
-          {ws.folderName && <><span>·</span><span>{ws.folderName}</span></>}
+          {ws.folderName && <><span>·</span><span className="truncate">{ws.folderName}</span></>}
         </div>
       </div>
     </label>
