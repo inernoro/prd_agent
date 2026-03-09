@@ -54,33 +54,33 @@ export const DEFAULT_THEME_CONFIG: ThemeConfig = {
 export const NESTED_BLOCK_STYLES = {
   /** 内嵌块背景透明度 */
   bgAlpha: {
-    solid: 0.04,
-    default: 0.02,
-    translucent: 0.015,
+    solid: 0.07,
+    default: 0.04,
+    translucent: 0.03,
   },
   /** 内嵌块边框透明度 */
   borderAlpha: {
-    solid: 0.08,
-    default: 0.06,
-    translucent: 0.04,
+    solid: 0.12,
+    default: 0.09,
+    translucent: 0.06,
   },
   /** 列表项背景透明度 */
   listItemBgAlpha: {
-    solid: 0.05,
-    default: 0.03,
-    translucent: 0.02,
+    solid: 0.08,
+    default: 0.05,
+    translucent: 0.035,
   },
   /** 列表项边框透明度 */
   listItemBorderAlpha: {
-    solid: 0.08,
-    default: 0.06,
-    translucent: 0.04,
+    solid: 0.12,
+    default: 0.09,
+    translucent: 0.06,
   },
   /** hover 状态背景透明度 */
   hoverBgAlpha: {
-    solid: 0.1,
-    default: 0.06,
-    translucent: 0.04,
+    solid: 0.14,
+    default: 0.09,
+    translucent: 0.06,
   },
 } as const;
 
@@ -90,32 +90,32 @@ export const NESTED_BLOCK_STYLES = {
 export const ACCENT_STYLES = {
   /** 蓝色强调 */
   blue: {
-    bg: 'rgba(59, 130, 246, 0.04)',
-    border: 'rgba(59, 130, 246, 0.1)',
+    bg: 'rgba(59, 130, 246, 0.08)',
+    border: 'rgba(59, 130, 246, 0.16)',
     text: 'rgba(59, 130, 246, 0.95)',
   },
   /** 绿色强调 */
   green: {
-    bg: 'rgba(34, 197, 94, 0.04)',
-    border: 'rgba(34, 197, 94, 0.1)',
+    bg: 'rgba(34, 197, 94, 0.08)',
+    border: 'rgba(34, 197, 94, 0.16)',
     text: 'rgba(34, 197, 94, 0.95)',
   },
   /** 金色强调 */
   gold: {
-    bg: 'rgba(99, 102, 241, 0.04)',
-    border: 'rgba(99, 102, 241, 0.1)',
+    bg: 'rgba(99, 102, 241, 0.08)',
+    border: 'rgba(99, 102, 241, 0.16)',
     text: 'rgba(99, 102, 241, 0.95)',
   },
   /** 紫色强调 */
   purple: {
-    bg: 'rgba(168, 85, 247, 0.04)',
-    border: 'rgba(168, 85, 247, 0.1)',
+    bg: 'rgba(168, 85, 247, 0.08)',
+    border: 'rgba(168, 85, 247, 0.16)',
     text: 'rgba(168, 85, 247, 0.95)',
   },
   /** 红色强调（危险操作） */
   red: {
-    bg: 'rgba(239, 68, 68, 0.04)',
-    border: 'rgba(239, 68, 68, 0.12)',
+    bg: 'rgba(239, 68, 68, 0.08)',
+    border: 'rgba(239, 68, 68, 0.18)',
     text: 'rgba(239, 68, 68, 0.95)',
   },
 } as const;
@@ -135,23 +135,23 @@ export const COLOR_DEPTH_MAP: Record<
   }
 > = {
   darker: {
-    bgBase: '#050507',
-    bgElevated: '#0a0a0c',
-    bgCard: 'rgba(255, 255, 255, 0.02)',
+    bgBase: '#0d0d11',
+    bgElevated: '#151519',
+    bgCard: 'rgba(255, 255, 255, 0.05)',
     glassBrightness: 0.7, // 深色：玻璃更暗
     label: '深色',
   },
   default: {
-    bgBase: '#0b0b0d',
-    bgElevated: '#121216',
-    bgCard: 'rgba(255, 255, 255, 0.03)',
+    bgBase: '#141418',
+    bgElevated: '#1e1e24',
+    bgCard: 'rgba(255, 255, 255, 0.08)',
     glassBrightness: 1.0, // 默认
     label: '默认',
   },
   lighter: {
-    bgBase: '#121216',
-    bgElevated: '#1a1a1e',
-    bgCard: 'rgba(255, 255, 255, 0.04)',
+    bgBase: '#1b1b20',
+    bgElevated: '#262630',
+    bgCard: 'rgba(255, 255, 255, 0.10)',
     glassBrightness: 1.4, // 浅色：玻璃更亮
     label: '浅色',
   },
@@ -170,21 +170,21 @@ export const OPACITY_MAP: Record<
   }
 > = {
   solid: {
-    glassStart: 0.12,
-    glassEnd: 0.06,
-    border: 0.18,
+    glassStart: 0.14,
+    glassEnd: 0.08,
+    border: 0.22,
     label: '不透明',
   },
   default: {
-    glassStart: 0.08,
-    glassEnd: 0.03,
-    border: 0.14,
+    glassStart: 0.10,
+    glassEnd: 0.05,
+    border: 0.18,
     label: '默认',
   },
   translucent: {
-    glassStart: 0.04,
-    glassEnd: 0.015,
-    border: 0.10,
+    glassStart: 0.06,
+    glassEnd: 0.025,
+    border: 0.14,
     label: '半透明',
   },
 };

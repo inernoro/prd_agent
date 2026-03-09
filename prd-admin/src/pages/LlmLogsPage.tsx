@@ -1786,7 +1786,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
             <div className="py-10 text-center" style={{ color: 'var(--text-muted)' }}>暂无详情</div>
           ) : (
             <div className="h-full min-h-0 grid gap-3 grid-cols-1 md:grid-cols-2 overflow-auto md:overflow-hidden">
-              <GlassCard animated glow className="p-3 overflow-hidden flex flex-col min-h-0">
+              <div className="rounded-[16px] p-3 overflow-hidden flex flex-col min-h-0" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.04)' }}>
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Request（密钥已隐藏）</div>
                   <div className="flex items-center gap-2 flex-wrap">
@@ -1993,9 +1993,9 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                     );
                   })()}
                 </div>
-              </GlassCard>
+              </div>
 
-              <GlassCard animated glow className="p-3 overflow-hidden flex flex-col min-h-0">
+              <div className="rounded-[16px] p-3 overflow-hidden flex flex-col min-h-0" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.04)' }}>
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-sm font-semibold shrink-0" style={{ color: 'var(--text-primary)' }}>Response</div>
                   <div className="flex items-center gap-1.5 flex-wrap justify-end">
@@ -2446,7 +2446,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                     )}
                   </div>
                 </div>
-              </GlassCard>
+              </div>
             </div>
           )
         }

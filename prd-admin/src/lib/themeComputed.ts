@@ -47,7 +47,7 @@ export function computeThemeVars(config: ThemeConfig, reduceEffects = false): Co
   const opacity = OPACITY_MAP[config.opacity];
 
   // 边框透明度基于 opacity 配置调整
-  const borderMultiplier = opacity.border / 0.14; // 相对于默认值的倍数
+  const borderMultiplier = opacity.border / 0.18; // 相对于默认值的倍数
 
   // 玻璃亮度倍数（受色深影响）
   const glassBrightness = depth.glassBrightness;
@@ -60,7 +60,7 @@ export function computeThemeVars(config: ThemeConfig, reduceEffects = false): Co
     const b = parseInt(depth.bgElevated.slice(5, 7), 16);
 
     // 基于色深的表面亮度微调
-    const lift = { darker: 6, default: 10, lighter: 16 }[config.colorDepth] ?? 10;
+    const lift = { darker: 8, default: 12, lighter: 18 }[config.colorDepth] ?? 12;
     const sr = Math.min(255, r + lift);
     const sg = Math.min(255, g + lift);
     const sb = Math.min(255, b + lift);
@@ -79,22 +79,22 @@ export function computeThemeVars(config: ThemeConfig, reduceEffects = false): Co
       '--glass-border': `rgba(255, 255, 255, ${(0.07 * glassBrightness).toFixed(4)})`,
 
       // 边框
-      '--border-subtle': `rgba(255, 255, 255, ${(0.06 * borderMultiplier * glassBrightness).toFixed(4)})`,
-      '--border-default': `rgba(255, 255, 255, ${(0.09 * borderMultiplier * glassBrightness).toFixed(4)})`,
-      '--border-hover': `rgba(255, 255, 255, ${(0.14 * borderMultiplier * glassBrightness).toFixed(4)})`,
-      '--border-faint': `rgba(255, 255, 255, ${(0.04 * borderMultiplier * glassBrightness).toFixed(4)})`,
+      '--border-subtle': `rgba(255, 255, 255, ${(0.10 * borderMultiplier * glassBrightness).toFixed(4)})`,
+      '--border-default': `rgba(255, 255, 255, ${(0.14 * borderMultiplier * glassBrightness).toFixed(4)})`,
+      '--border-hover': `rgba(255, 255, 255, ${(0.20 * borderMultiplier * glassBrightness).toFixed(4)})`,
+      '--border-faint': `rgba(255, 255, 255, ${(0.06 * borderMultiplier * glassBrightness).toFixed(4)})`,
 
       // 内嵌块样式
-      '--nested-block-bg': `rgba(255, 255, 255, 0.035)`,
-      '--nested-block-border': `rgba(255, 255, 255, 0.06)`,
-      '--list-item-bg': `rgba(255, 255, 255, 0.03)`,
-      '--list-item-border': `rgba(255, 255, 255, 0.05)`,
-      '--list-item-hover-bg': `rgba(255, 255, 255, 0.06)`,
+      '--nested-block-bg': `rgba(255, 255, 255, 0.05)`,
+      '--nested-block-border': `rgba(255, 255, 255, 0.09)`,
+      '--list-item-bg': `rgba(255, 255, 255, 0.045)`,
+      '--list-item-border': `rgba(255, 255, 255, 0.08)`,
+      '--list-item-hover-bg': `rgba(255, 255, 255, 0.08)`,
 
       // 表格样式
-      '--table-header-bg': `rgba(255, 255, 255, 0.03)`,
-      '--table-row-border': `rgba(255, 255, 255, 0.05)`,
-      '--table-row-hover-bg': `rgba(255, 255, 255, 0.03)`,
+      '--table-header-bg': `rgba(255, 255, 255, 0.045)`,
+      '--table-row-border': `rgba(255, 255, 255, 0.08)`,
+      '--table-row-hover-bg': `rgba(255, 255, 255, 0.05)`,
     };
   }
 
@@ -124,10 +124,10 @@ export function computeThemeVars(config: ThemeConfig, reduceEffects = false): Co
     '--glass-border': `rgba(255, 255, 255, ${glassBorderAlpha.toFixed(4)})`,
 
     // 边框（受色深和透明度双重影响）
-    '--border-subtle': `rgba(255, 255, 255, ${(0.08 * borderMultiplier * glassBrightness).toFixed(4)})`,
-    '--border-default': `rgba(255, 255, 255, ${(0.12 * borderMultiplier * glassBrightness).toFixed(4)})`,
-    '--border-hover': `rgba(255, 255, 255, ${(0.18 * borderMultiplier * glassBrightness).toFixed(4)})`,
-    '--border-faint': `rgba(255, 255, 255, ${(0.05 * borderMultiplier * glassBrightness).toFixed(4)})`,
+    '--border-subtle': `rgba(255, 255, 255, ${(0.12 * borderMultiplier * glassBrightness).toFixed(4)})`,
+    '--border-default': `rgba(255, 255, 255, ${(0.18 * borderMultiplier * glassBrightness).toFixed(4)})`,
+    '--border-hover': `rgba(255, 255, 255, ${(0.24 * borderMultiplier * glassBrightness).toFixed(4)})`,
+    '--border-faint': `rgba(255, 255, 255, ${(0.08 * borderMultiplier * glassBrightness).toFixed(4)})`,
 
     // 内嵌块样式（用于页面内的子容器）
     '--nested-block-bg': `rgba(255, 255, 255, ${nestedBgAlpha})`,
