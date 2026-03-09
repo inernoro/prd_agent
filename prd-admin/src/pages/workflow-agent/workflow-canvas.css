@@ -100,9 +100,8 @@
 }
 
 .capsule-handle:hover {
-  transform: translate(-50%, -50%) scale(1.4);
-  filter: brightness(1.5);
-  box-shadow: 0 0 10px rgba(255,255,255,0.35);
+  filter: brightness(1.8);
+  box-shadow: 0 0 12px rgba(255,255,255,0.4);
 }
 
 /* 连线拖拽中的端口高亮 */

@@ -14,6 +14,7 @@ import {
   useViewport,
   Panel,
   BackgroundVariant,
+  SelectionMode,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import './workflow-canvas.css';
@@ -736,6 +737,9 @@ function CanvasInner({
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             defaultEdgeOptions={defaultEdgeOptions}
+            panOnDrag={false}
+            selectionOnDrag
+            selectionMode={SelectionMode.Partial}
             fitView
             fitViewOptions={{ padding: 0.3 }}
             proOptions={{ hideAttribution: true }}

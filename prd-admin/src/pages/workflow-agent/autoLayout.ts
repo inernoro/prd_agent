@@ -21,7 +21,6 @@ export function autoLayoutNodes<T extends Record<string, unknown>>(
     ranksep: 80,
     marginx: 40,
     marginy: 40,
-    align: 'UL',
   });
 
   // 记录每个节点的实际尺寸（优先用 measured，回退到默认值）
