@@ -199,17 +199,22 @@ export default function AppShell() {
       return [];
     }
 
-    // 构建导航项列表
-    const items = menuCatalog.map((m) => {
-      const IconComp = iconMap[m.icon] ?? LayoutDashboard;
-      return {
-        key: m.path,
-        appKey: m.appKey, // 用于排序匹配
-        label: m.label,
-        icon: <IconComp size={18} />,
-        description: m.description ?? undefined,
-      };
-    });
+    // 工具类菜单移到头像下拉面板，不在侧边栏显示
+    const AVATAR_PANEL_KEYS = new Set(['logs', 'settings']);
+
+    // 构建导航项列表（排除已移到头像面板的项）
+    const items = menuCatalog
+      .filter((m) => !AVATAR_PANEL_KEYS.has(m.appKey))
+      .map((m) => {
+        const IconComp = iconMap[m.icon] ?? LayoutDashboard;
+        return {
+          key: m.path,
+          appKey: m.appKey, // 用于排序匹配
+          label: m.label,
+          icon: <IconComp size={18} />,
+          description: m.description ?? undefined,
+        };
+      });
 
     // 如果有用户自定义顺序，则按该顺序排列
     if (navOrder.length > 0) {
@@ -225,13 +230,15 @@ export default function AppShell() {
   }, [menuCatalog, menuCatalogLoaded, navOrder]);
   
   // 若用户在首页（仪表盘）但菜单中不含仪表盘，自动跳转到第一个可用页面
+  // 仅桌面端执行：移动端首页由 MobileHomePage 独立渲染，不依赖导航菜单
   useEffect(() => {
+    if (isMobile) return;
     if (location.pathname !== '/' || !menuCatalogLoaded || visibleItems.length === 0) return;
     const hasDashboard = visibleItems.some((item) => item.key === '/');
     if (!hasDashboard) {
       navigate(visibleItems[0].key, { replace: true });
     }
-  }, [location.pathname, menuCatalogLoaded, visibleItems, navigate]);
+  }, [isMobile, location.pathname, menuCatalogLoaded, visibleItems, navigate]);
 
   const activeKey = location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`;
   const isLabPage = location.pathname.startsWith('/lab');
@@ -819,6 +826,24 @@ export default function AppShell() {
                 >
                   <Database size={16} className="shrink-0" />
                   <span className="text-[13px]">数据分享</span>
+                </DropdownMenu.Item>
+
+                <DropdownMenu.Item
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
+                  style={{ color: 'var(--text-secondary)' }}
+                  onSelect={() => navigate('/logs')}
+                >
+                  <ScrollText size={16} className="shrink-0" />
+                  <span className="text-[13px]">请求日志</span>
+                </DropdownMenu.Item>
+
+                <DropdownMenu.Item
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
+                  style={{ color: 'var(--text-secondary)' }}
+                  onSelect={() => navigate('/settings')}
+                >
+                  <Settings size={16} className="shrink-0" />
+                  <span className="text-[13px]">系统设置</span>
                 </DropdownMenu.Item>
 
                 <DropdownMenu.Item

@@ -1628,12 +1628,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   });
   const dragItemsRef = useRef<{
     active: boolean;
+    confirmed: boolean; // 移动端拖拽死区：超过阈值后才确认拖拽意图
     pointerId: number;
     startClientX: number;
     startClientY: number;
     keys: string[];
     base: Record<string, { x: number; y: number }>;
-  }>({ active: false, pointerId: -1, startClientX: 0, startClientY: 0, keys: [], base: {} });
+  }>({ active: false, confirmed: false, pointerId: -1, startClientX: 0, startClientY: 0, keys: [], base: {} });
 
   type ResizeCorner = 'nw' | 'ne' | 'sw' | 'se';
   const [resizing, setResizing] = useState(false);
@@ -1864,7 +1865,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   // 内部方法：同步 chip 到当前选中的图片
   const syncChipsToSelection = useCallback((newKeys: string[]) => {
     richComposerRef.current?.clearPending();
-    
+
     for (const key of newKeys) {
       // 优先从 canvasRef 获取（避免闭包问题）
       const item = canvasRef.current.find(x => x.key === key);
@@ -1965,7 +1966,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   const startResize = useCallback(
     (e: ReactPointerEvent, it: CanvasImageItem, corner: ResizeCorner) => {
-      if (effectiveTool === 'hand') return;
+      if (effectiveTool === 'hand' && !isMobile) return;
       // 仅在单选时允许 resize（避免多选整体 resize 的复杂交互）
       if (selectedKeysRef.current.length !== 1 || selectedKeysRef.current[0] !== it.key) return;
 
@@ -2008,7 +2009,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       e.stopPropagation();
       e.preventDefault();
     },
-    [effectiveTool]
+    [effectiveTool, isMobile]
   );
 
 
@@ -5075,7 +5076,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               }
 
               // Space/Hand：在捕获阶段接管拖拽，避免子元素（图片）stopPropagation 导致无法平移
+              // 移动端例外：手型工具在图片上时，让事件透传到子元素，实现"点图选图、空白平移"
               if (effectiveTool === 'hand') {
+                if (isMobile) {
+                  // 移动端：检查是否点在画布元素上（含扩展热区），是则不截获，让 item handler 处理
+                  const target = e.target as HTMLElement;
+                  if (target.closest('.group\\/citem')) return;
+                }
                 stageRef.current?.focus();
                 panRef.current = {
                   active: true,
@@ -5157,8 +5164,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               // dragging selected items
               const drag = dragItemsRef.current;
               if (drag.active && drag.pointerId === e.pointerId) {
-                const dx = (e.clientX - drag.startClientX) / zoomRef.current;
-                const dy = (e.clientY - drag.startClientY) / zoomRef.current;
+                const rawDx = e.clientX - drag.startClientX;
+                const rawDy = e.clientY - drag.startClientY;
+                // 移动端拖拽死区：触摸需超过 10px 屏幕像素才开始拖拽，防止点选时误触
+                if (!drag.confirmed) {
+                  const dist = Math.sqrt(rawDx * rawDx + rawDy * rawDy);
+                  if (dist < (isMobile ? 10 : 3)) return;
+                  drag.confirmed = true;
+                }
+                const dx = rawDx / zoomRef.current;
+                const dy = rawDy / zoomRef.current;
                 const set = new Set(drag.keys);
                 setCanvas((prev) =>
                   prev.map((it) => {
@@ -5361,7 +5376,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 const h = it.h ?? 220;
                 const active = isSelectedKey(it.key);
                 const isPending = isPendingKey(it.key); // 两阶段选择：pending 状态
-                const showSelectOverlay = effectiveTool !== 'hand' && active && (kind === 'image' || kind === 'generator');
+                const showSelectOverlay = (effectiveTool !== 'hand' || isMobile) && active && (kind === 'image' || kind === 'generator');
                 // 单选时显示可交互的四角控制点；多选时也显示但仅作为视觉标识（不可 resize）
                 const isSingleSelect = selectedKeys.length === 1;
                 const showHandles = showSelectOverlay; // 多选时也显示四角圆点
@@ -5380,9 +5395,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 const selW = Math.max(1, inner.w);
                 const selH = Math.max(1, inner.h);
                 const selRadius = clampRadius(fitToImage ? 14 : 16, selW, selH);
+                const handleSize = isMobile ? 20 : 12;
                 const handleBase: React.CSSProperties = {
-                  width: 12,
-                  height: 12,
+                  width: handleSize,
+                  height: handleSize,
                   borderRadius: 999,
                   background: 'rgba(255,255,255,0.92)',
                   border: '2px solid rgba(96,165,250,0.95)',
@@ -5398,10 +5414,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     key={it.key}
                     className="absolute rounded-[16px] group/citem"
                     style={{
-                      left: Math.round(x),
-                      top: Math.round(y),
+                      left: Math.round(x) - (isMobile ? 12 : 0),
+                      top: Math.round(y) - (isMobile ? 12 : 0),
                       width: boxW,
                       height: boxH,
+                      // 移动端：用 padding 扩大触摸热区（12px），content-box 让内容尺寸不变
+                      padding: isMobile ? 12 : 0,
+                      boxSizing: 'content-box',
                       // 外层容器仅负责布局/拖拽命中；边框应贴合图片本体，因此容器不画边框
                       border: '1px solid transparent',
                       // 根因：这里的 background/boxShadow 会永远渲染一个"长方形卡片"
@@ -5409,7 +5428,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       background: 'transparent',
                       boxShadow: 'none',
                       overflow: 'visible',
-                      cursor: panning || effectiveTool === 'hand' ? 'inherit' : 'pointer',
+                      cursor: panning || (effectiveTool === 'hand' && !isMobile) ? 'inherit' : 'pointer',
                     }}
                     onContextMenu={(e) => {
                       // 阻止默认右键菜单，避免选中整个页面
@@ -5435,10 +5454,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       }
                     }}
                     onMouseDown={(e) => {
-                      if (effectiveTool !== 'hand') e.stopPropagation();
+                      if (effectiveTool !== 'hand' || isMobile) e.stopPropagation();
                     }}
                     onPointerDown={(e) => {
-                      if (effectiveTool === 'hand') return;
+                      // 桌面端手型工具不处理元素交互；移动端允许（手型 = 空白平移 + 图上选择）
+                      if (effectiveTool === 'hand' && !isMobile) return;
                       // 右键点击不启动拖拽，让 contextmenu 事件正常触发
                       if (e.button === 2) return;
                       focusStage();
@@ -5497,6 +5517,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       }
                       dragItemsRef.current = {
                         active: true,
+                        confirmed: false, // 需要超过死区阈值才确认拖拽
                         pointerId: e.pointerId,
                         startClientX: e.clientX,
                         startClientY: e.clientY,
@@ -5509,7 +5530,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     onClick={(e) => {
                       focusStage();
                       e.stopPropagation();
-                      if (effectiveTool === 'hand') {
+                      if (effectiveTool === 'hand' && !isMobile) {
                         return;
                       }
                       // 注意：由于 onPointerDown 中的 e.preventDefault()，onClick 实际上不会触发

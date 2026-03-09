@@ -44,6 +44,8 @@ export interface RichComposerRef {
   markChipsReady: () => void;
   /** 移除指定 key 的 chip */
   removeChipByKey: (canvasKey: string) => void;
+  /** 仅移除指定 key 的非 ready chip（保留已确认的 chip） */
+  removePendingChipByKey: (canvasKey: string) => void;
 }
 
 interface RichComposerProps {
@@ -241,6 +243,21 @@ function EditorInner({
             const children = para.getChildren();
             for (const node of children) {
               if ($isImageChipNode(node) && node.getCanvasKey() === canvasKey) {
+                node.remove();
+              }
+            }
+          }
+        });
+      },
+      removePendingChipByKey: (canvasKey: string) => {
+        editor.update(() => {
+          const root = $getRoot();
+          const allNodes = root.getChildren();
+          for (const para of allNodes) {
+            if (!$isElementNode(para)) continue;
+            const children = para.getChildren();
+            for (const node of children) {
+              if ($isImageChipNode(node) && node.getCanvasKey() === canvasKey && !node.getReady()) {
                 node.remove();
               }
             }

@@ -151,14 +151,15 @@ export const TwoPhaseRichComposer = forwardRef<TwoPhaseRichComposerRef, TwoPhase
     const pendingChipKeysRef = useRef(pendingChipKeys);
     pendingChipKeysRef.current = pendingChipKeys;
 
-    // 清除 pending chips
+    // 清除 pending chips（仅移除非 ready 的 chip，保留已确认的）
     const clearPending = useCallback(() => {
       const composer = composerRef.current;
       if (!composer) return;
 
       // 使用 ref 获取最新的 pendingChipKeys，避免闭包捕获旧值
+      // 使用 removePendingChipByKey 而非 removeChipByKey，避免误删同 key 的已确认 chip
       pendingChipKeysRef.current.forEach((key) => {
-        composer.removeChipByKey(key);
+        composer.removePendingChipByKey(key);
       });
       updatePendingKeys(new Set());
     }, [updatePendingKeys]);
