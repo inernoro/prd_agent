@@ -794,86 +794,204 @@ export function QuickCreateWizard() {
 
   const renderStepTemplate = () => (
     <div className="flex-1 min-h-0 overflow-auto px-6 pb-6">
-      <div className="text-center mb-6">
+      {/* 顶部引导 — 淡入 */}
+      <div
+        className="text-center mb-8"
+        style={{ animation: 'wizardFadeIn 0.5s ease-out both' }}
+      >
         <div
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-full text-[12px] mb-3"
+          className="inline-flex items-center gap-2.5 px-5 py-2.5 rounded-full text-[12px] mb-3"
           style={{
-            background: 'linear-gradient(90deg, rgba(168, 85, 247, 0.1) 0%, rgba(99, 102, 241, 0.1) 100%)',
-            border: '1px solid rgba(168, 85, 247, 0.2)',
-            color: 'rgba(192, 132, 252, 0.95)',
+            background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.08) 0%, rgba(99, 102, 241, 0.06) 100%)',
+            border: '1px solid rgba(168, 85, 247, 0.15)',
+            color: 'rgba(192, 132, 252, 0.9)',
+            backdropFilter: 'blur(8px)',
           }}
         >
-          <Sparkles size={13} />
+          <Sparkles size={13} style={{ animation: 'wizardPulse 2s ease-in-out infinite' }} />
           选择一个场景模板，3 步快速创建智能体
         </div>
-        <div className="text-[11px]" style={{ color: 'rgba(255, 255, 255, 0.45)' }}>
+        <div className="text-[11px]" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>
           模板会预填名称、提示词等信息，你可以在下一步自由修改
         </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
-        {AGENT_TEMPLATES.map((template) => {
+      {/* 模板网格 — 交错入场 */}
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-5">
+        {AGENT_TEMPLATES.map((template, idx) => {
           const TemplateIcon = getIconComponent(template.icon);
           const hue = getAccentHue(template.icon);
           return (
             <button
               key={template.key}
               onClick={() => handleSelectTemplate(template)}
-              className="p-4 rounded-xl text-left transition-all group hover:scale-[1.02] hover:shadow-lg"
+              className="relative p-5 rounded-2xl text-left group overflow-hidden"
               style={{
-                background: `linear-gradient(135deg, hsla(${hue}, 70%, 50%, 0.08) 0%, hsla(${hue}, 70%, 30%, 0.03) 100%)`,
-                border: `1px solid hsla(${hue}, 60%, 55%, 0.15)`,
+                background: `linear-gradient(160deg, hsla(${hue}, 50%, 50%, 0.06) 0%, rgba(255,255,255,0.015) 60%)`,
+                border: `1px solid hsla(${hue}, 40%, 55%, 0.1)`,
+                animation: `wizardSlideUp 0.45s cubic-bezier(0.16, 1, 0.3, 1) ${idx * 0.06}s both`,
+                transition: 'border-color 0.3s, box-shadow 0.3s, transform 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
+              }}
+              onMouseEnter={(e) => {
+                const el = e.currentTarget;
+                el.style.borderColor = `hsla(${hue}, 55%, 60%, 0.3)`;
+                el.style.boxShadow = `0 8px 32px -8px hsla(${hue}, 70%, 40%, 0.2), inset 0 1px 0 hsla(${hue}, 60%, 80%, 0.06)`;
+                el.style.transform = 'translateY(-2px)';
+              }}
+              onMouseLeave={(e) => {
+                const el = e.currentTarget;
+                el.style.borderColor = `hsla(${hue}, 40%, 55%, 0.1)`;
+                el.style.boxShadow = 'none';
+                el.style.transform = 'translateY(0)';
               }}
             >
-              <div className="flex items-center gap-3 mb-2">
-                <div
-                  className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition-transform group-hover:scale-110"
-                  style={{
-                    background: `linear-gradient(135deg, hsla(${hue}, 70%, 60%, 0.2) 0%, hsla(${hue}, 70%, 40%, 0.1) 100%)`,
-                    border: `1px solid hsla(${hue}, 60%, 60%, 0.25)`,
-                    boxShadow: `0 2px 8px -2px hsla(${hue}, 70%, 50%, 0.2)`,
-                  }}
-                >
-                  <TemplateIcon size={20} style={{ color: `hsla(${hue}, 70%, 70%, 1)` }} />
-                </div>
-                <div>
-                  <div className="text-[13px] font-semibold" style={{ color: 'rgba(255, 255, 255, 0.95)' }}>
-                    {template.name}
+              {/* 悬浮光晕 */}
+              <div
+                className="absolute inset-0 opacity-0 group-hover:opacity-100 pointer-events-none"
+                style={{
+                  background: `radial-gradient(ellipse 120% 80% at 50% 0%, hsla(${hue}, 70%, 60%, 0.08) 0%, transparent 70%)`,
+                  transition: 'opacity 0.4s ease',
+                }}
+              />
+
+              {/* 内容 */}
+              <div className="relative">
+                {/* 图标 + 标题行 */}
+                <div className="flex items-start gap-3.5 mb-3">
+                  <div
+                    className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0"
+                    style={{
+                      background: `linear-gradient(135deg, hsla(${hue}, 65%, 55%, 0.18) 0%, hsla(${hue}, 65%, 40%, 0.08) 100%)`,
+                      border: `1px solid hsla(${hue}, 55%, 60%, 0.2)`,
+                      boxShadow: `0 2px 8px -2px hsla(${hue}, 70%, 45%, 0.15)`,
+                      transition: 'transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s',
+                    }}
+                  >
+                    <TemplateIcon
+                      size={20}
+                      style={{
+                        color: `hsla(${hue}, 65%, 72%, 1)`,
+                        transition: 'transform 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+                      }}
+                      className="group-hover:scale-110"
+                    />
                   </div>
-                  <div className="text-[11px]" style={{ color: 'rgba(255, 255, 255, 0.5)' }}>
-                    {template.description}
+                  <div className="flex-1 min-w-0 pt-0.5">
+                    <div
+                      className="text-[13px] font-semibold mb-0.5 truncate"
+                      style={{ color: 'rgba(255, 255, 255, 0.92)' }}
+                    >
+                      {template.name}
+                    </div>
+                    <div
+                      className="text-[11px] leading-relaxed line-clamp-2"
+                      style={{ color: 'rgba(255, 255, 255, 0.45)' }}
+                    >
+                      {template.description}
+                    </div>
                   </div>
                 </div>
-              </div>
-              <div className="flex flex-wrap gap-1 mt-2">
-                {template.tags.map((tag) => (
-                  <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: `hsla(${hue}, 70%, 50%, 0.1)`, color: `hsla(${hue}, 70%, 70%, 0.8)` }}>
-                    {tag}
-                  </span>
-                ))}
-              </div>
-              <div className="flex justify-end mt-2">
-                <ChevronRight size={16} className="transition-transform group-hover:translate-x-1" style={{ color: `hsla(${hue}, 60%, 60%, 0.5)` }} />
+
+                {/* 标签 + 箭头 */}
+                <div className="flex items-center justify-between mt-1">
+                  <div className="flex flex-wrap gap-1.5">
+                    {template.tags.map((tag) => (
+                      <span
+                        key={tag}
+                        className="text-[10px] px-2 py-0.5 rounded-md"
+                        style={{
+                          background: `hsla(${hue}, 60%, 50%, 0.08)`,
+                          color: `hsla(${hue}, 60%, 72%, 0.85)`,
+                          border: `1px solid hsla(${hue}, 50%, 60%, 0.1)`,
+                        }}
+                      >
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                  <div
+                    className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 opacity-0 group-hover:opacity-100"
+                    style={{
+                      background: `hsla(${hue}, 60%, 55%, 0.12)`,
+                      transition: 'opacity 0.25s, transform 0.25s',
+                      transform: 'translateX(-4px)',
+                    }}
+                  >
+                    <ChevronRight
+                      size={13}
+                      style={{ color: `hsla(${hue}, 60%, 72%, 0.9)` }}
+                      className="group-hover:translate-x-0.5 transition-transform"
+                    />
+                  </div>
+                </div>
               </div>
             </button>
           );
         })}
       </div>
 
+      {/* 空白创建 — 最后入场 */}
       <button
         onClick={handleBlankCreate}
-        className="w-full p-4 rounded-xl transition-all group hover:bg-white/[0.03] flex items-center gap-3"
-        style={{ border: '1px dashed rgba(255, 255, 255, 0.12)' }}
+        className="w-full p-4 rounded-2xl flex items-center gap-4 group relative overflow-hidden"
+        style={{
+          border: '1px dashed rgba(255, 255, 255, 0.08)',
+          animation: `wizardSlideUp 0.45s cubic-bezier(0.16, 1, 0.3, 1) ${AGENT_TEMPLATES.length * 0.06}s both`,
+          transition: 'border-color 0.3s, background 0.3s',
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.15)';
+          e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
+          e.currentTarget.style.background = 'transparent';
+        }}
       >
-        <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(255, 255, 255, 0.04)', border: '1px solid rgba(255, 255, 255, 0.08)' }}>
-          <Plus size={20} style={{ color: 'rgba(255, 255, 255, 0.5)' }} />
+        <div
+          className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0"
+          style={{
+            background: 'rgba(255, 255, 255, 0.03)',
+            border: '1px solid rgba(255, 255, 255, 0.06)',
+            transition: 'border-color 0.3s, background 0.3s',
+          }}
+        >
+          <Plus
+            size={18}
+            style={{ color: 'rgba(255, 255, 255, 0.4)', transition: 'transform 0.3s, color 0.3s' }}
+            className="group-hover:scale-110 group-hover:rotate-90"
+          />
         </div>
-        <div className="text-left">
-          <div className="text-[13px] font-medium" style={{ color: 'rgba(255, 255, 255, 0.8)' }}>空白创建</div>
-          <div className="text-[11px]" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>从零开始，完全自定义你的智能体</div>
+        <div className="text-left flex-1">
+          <div className="text-[13px] font-medium" style={{ color: 'rgba(255, 255, 255, 0.75)' }}>空白创建</div>
+          <div className="text-[11px]" style={{ color: 'rgba(255, 255, 255, 0.35)' }}>从零开始，完全自定义你的智能体</div>
         </div>
-        <ChevronRight size={16} className="ml-auto transition-transform group-hover:translate-x-1" style={{ color: 'rgba(255, 255, 255, 0.3)' }} />
+        <div
+          className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 opacity-0 group-hover:opacity-100"
+          style={{
+            background: 'rgba(255, 255, 255, 0.06)',
+            transition: 'opacity 0.25s',
+          }}
+        >
+          <ChevronRight size={13} style={{ color: 'rgba(255, 255, 255, 0.5)' }} />
+        </div>
       </button>
+
+      {/* 动画关键帧 */}
+      <style>{`
+        @keyframes wizardSlideUp {
+          from { opacity: 0; transform: translateY(16px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes wizardFadeIn {
+          from { opacity: 0; transform: translateY(-8px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes wizardPulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.6; }
+        }
+      `}</style>
     </div>
   );
 
