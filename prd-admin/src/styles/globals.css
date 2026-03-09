@@ -1388,13 +1388,9 @@ html[data-perf-mode="performance"] .blur-text span {
  * 通过移除 blur 并使用高不透明度实底背景来保证文字清晰。
  */
 .prd-dialog-content {
-  backdrop-filter: saturate(180%) brightness(1.05) !important;
-  -webkit-backdrop-filter: saturate(180%) brightness(1.05) !important;
-  background: linear-gradient(
-    180deg,
-    var(--glass-bg-start, rgba(22, 22, 28, 0.97)) 0%,
-    var(--glass-bg-end, rgba(18, 18, 24, 0.98)) 100%
-  ) !important;
+  backdrop-filter: saturate(150%) brightness(1.05) !important;
+  -webkit-backdrop-filter: saturate(150%) brightness(1.05) !important;
+  background: linear-gradient(180deg, rgba(22, 22, 28, 0.97) 0%, rgba(18, 18, 24, 0.98) 100%) !important;
 }
 
 .prd-dialog-overlay {
