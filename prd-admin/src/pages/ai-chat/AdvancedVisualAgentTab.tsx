@@ -1628,12 +1628,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   });
   const dragItemsRef = useRef<{
     active: boolean;
+    confirmed: boolean; // 移动端拖拽死区：超过阈值后才确认拖拽意图
     pointerId: number;
     startClientX: number;
     startClientY: number;
     keys: string[];
     base: Record<string, { x: number; y: number }>;
-  }>({ active: false, pointerId: -1, startClientX: 0, startClientY: 0, keys: [], base: {} });
+  }>({ active: false, confirmed: false, pointerId: -1, startClientX: 0, startClientY: 0, keys: [], base: {} });
 
   type ResizeCorner = 'nw' | 'ne' | 'sw' | 'se';
   const [resizing, setResizing] = useState(false);
@@ -5157,8 +5158,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               // dragging selected items
               const drag = dragItemsRef.current;
               if (drag.active && drag.pointerId === e.pointerId) {
-                const dx = (e.clientX - drag.startClientX) / zoomRef.current;
-                const dy = (e.clientY - drag.startClientY) / zoomRef.current;
+                const rawDx = e.clientX - drag.startClientX;
+                const rawDy = e.clientY - drag.startClientY;
+                // 移动端拖拽死区：触摸需超过 10px 屏幕像素才开始拖拽，防止点选时误触
+                if (!drag.confirmed) {
+                  const dist = Math.sqrt(rawDx * rawDx + rawDy * rawDy);
+                  if (dist < (isMobile ? 10 : 3)) return;
+                  drag.confirmed = true;
+                }
+                const dx = rawDx / zoomRef.current;
+                const dy = rawDy / zoomRef.current;
                 const set = new Set(drag.keys);
                 setCanvas((prev) =>
                   prev.map((it) => {
@@ -5380,9 +5389,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 const selW = Math.max(1, inner.w);
                 const selH = Math.max(1, inner.h);
                 const selRadius = clampRadius(fitToImage ? 14 : 16, selW, selH);
+                const handleSize = isMobile ? 20 : 12;
                 const handleBase: React.CSSProperties = {
-                  width: 12,
-                  height: 12,
+                  width: handleSize,
+                  height: handleSize,
                   borderRadius: 999,
                   background: 'rgba(255,255,255,0.92)',
                   border: '2px solid rgba(96,165,250,0.95)',
@@ -5398,10 +5408,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     key={it.key}
                     className="absolute rounded-[16px] group/citem"
                     style={{
-                      left: Math.round(x),
-                      top: Math.round(y),
+                      left: Math.round(x) - (isMobile ? 12 : 0),
+                      top: Math.round(y) - (isMobile ? 12 : 0),
                       width: boxW,
                       height: boxH,
+                      // 移动端：用 padding 扩大触摸热区（12px），content-box 让内容尺寸不变
+                      padding: isMobile ? 12 : 0,
+                      boxSizing: 'content-box',
                       // 外层容器仅负责布局/拖拽命中；边框应贴合图片本体，因此容器不画边框
                       border: '1px solid transparent',
                       // 根因：这里的 background/boxShadow 会永远渲染一个"长方形卡片"
@@ -5497,6 +5510,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       }
                       dragItemsRef.current = {
                         active: true,
+                        confirmed: false, // 需要超过死区阈值才确认拖拽
                         pointerId: e.pointerId,
                         startClientX: e.clientX,
                         startClientY: e.clientY,
