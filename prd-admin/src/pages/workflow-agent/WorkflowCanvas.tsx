@@ -579,6 +579,9 @@ function CanvasInner({
       const tag = (e.target as HTMLElement).tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
 
+      // 如果正在编辑节点配置，只响应 Escape
+      if (editingNodeId && e.key !== 'Escape') return;
+
       const isMod = e.ctrlKey || e.metaKey;
 
       // Ctrl+Z 撤销
@@ -599,13 +602,14 @@ function CanvasInner({
         if (dirty) handleSave();
         return;
       }
-      // Delete / Backspace 删除选中
+      // Delete / Backspace 删除选中（阻止默认行为以防浏览器回退）
       if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
         handleDeleteSelected();
         return;
       }
-      // L 自动布局
-      if (e.key === 'l' || e.key === 'L') {
+      // L 自动布局（仅在非组合键时触发）
+      if ((e.key === 'l' || e.key === 'L') && !isMod) {
         handleAutoLayout();
         return;
       }
@@ -642,8 +646,9 @@ function CanvasInner({
   }, [categories, capsuleTypes]);
 
   return (
-    <div className="h-full flex flex-col">
-      {/* 顶部标题栏 */}
+    <div className="h-full flex flex-col" style={{ isolation: 'isolate' }}>
+      {/* 顶部标题栏 — z-index 确保在 ReactFlow 画布之上 */}
+      <div className="shrink-0" style={{ position: 'relative', zIndex: 10 }}>
       <TabBar
         title={workflow.name || '编排画布'}
         icon={<span>{workflow.icon || '🔧'}</span>}
@@ -671,6 +676,7 @@ function CanvasInner({
           </div>
         }
       />
+      </div>
 
       {/* 画布 + 面板 */}
       <div className="flex-1 flex min-h-0">
@@ -713,8 +719,8 @@ function CanvasInner({
           </div>
         )}
 
-        {/* React Flow 画布 */}
-        <div className="flex-1 min-w-0 relative" ref={reactFlowWrapper}>
+        {/* React Flow 画布 — isolation 防止内部 z-index 泄漏到外层 */}
+        <div className="flex-1 min-w-0 relative" ref={reactFlowWrapper} style={{ isolation: 'isolate' }}>
           <ReactFlow
             nodes={nodes}
             edges={edges}
