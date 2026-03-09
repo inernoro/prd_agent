@@ -880,105 +880,248 @@ export function QuickCreateWizard() {
   // ======== 渲染步骤 2: 配置信息（含 AI 润色 + 放大编辑） ========
 
   const renderStepConfigure = () => (
-    <div className="flex-1 min-h-0 overflow-auto px-6 pb-6">
-      <div className="max-w-2xl mx-auto space-y-5">
-        {/* 名称 + 图标 */}
-        <div className="p-4 rounded-xl" style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
-          <div className="flex gap-4">
-            <div className="w-14 h-14 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: `linear-gradient(135deg, hsla(${currentIconHue}, 70%, 60%, 0.15) 0%, hsla(${currentIconHue}, 70%, 40%, 0.08) 100%)`, border: `1px solid hsla(${currentIconHue}, 60%, 60%, 0.3)`, boxShadow: `0 4px 12px -2px hsla(${currentIconHue}, 70%, 50%, 0.2)` }}>
-              <CurrentIcon size={24} style={{ color: `hsla(${currentIconHue}, 70%, 70%, 1)` }} />
-            </div>
-            <div className="flex-1 space-y-3">
-              <div>
-                <label className="block text-[11px] font-medium mb-1.5" style={{ color: 'rgba(255, 255, 255, 0.7)' }}>
-                  智能体名称 <span style={{ color: 'rgb(239, 68, 68)' }}>*</span>
-                </label>
-                <input
-                  type="text"
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value.slice(0, 20) })}
-                  placeholder="给你的智能体起个名字"
-                  className="w-full px-3 py-2.5 rounded-xl border text-[13px] outline-none transition-all focus:ring-2 focus:ring-[var(--accent-primary)]/20"
-                  style={{ background: 'rgba(0, 0, 0, 0.2)', borderColor: 'rgba(255, 255, 255, 0.1)', color: 'rgba(255, 255, 255, 0.95)' }}
-                />
-                <div className="text-right text-[10px] mt-1" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>{form.name.length}/20</div>
+    <div className="flex-1 min-h-0 overflow-hidden px-6 pb-4">
+      <div className="flex gap-5 h-full">
+        {/* 左侧：核心配置 */}
+        <div className="flex-1 min-w-0 overflow-auto space-y-4">
+          {/* 名称 + 描述 */}
+          <div className="p-5 rounded-xl" style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+            <div className="flex gap-4 items-start">
+              <div className="w-14 h-14 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: `linear-gradient(135deg, hsla(${currentIconHue}, 70%, 60%, 0.15) 0%, hsla(${currentIconHue}, 70%, 40%, 0.08) 100%)`, border: `1px solid hsla(${currentIconHue}, 60%, 60%, 0.3)`, boxShadow: `0 4px 12px -2px hsla(${currentIconHue}, 70%, 50%, 0.2)` }}>
+                <CurrentIcon size={24} style={{ color: `hsla(${currentIconHue}, 70%, 70%, 1)` }} />
               </div>
-              <div>
-                <label className="block text-[11px] font-medium mb-1.5" style={{ color: 'rgba(255, 255, 255, 0.7)' }}>简短描述</label>
-                <input
-                  type="text"
-                  value={form.description}
-                  onChange={(e) => setForm({ ...form, description: e.target.value })}
-                  placeholder="简单描述这个智能体能做什么"
-                  className="w-full px-3 py-2.5 rounded-xl border text-[13px] outline-none transition-all focus:ring-2 focus:ring-[var(--accent-primary)]/20"
-                  style={{ background: 'rgba(0, 0, 0, 0.2)', borderColor: 'rgba(255, 255, 255, 0.1)', color: 'rgba(255, 255, 255, 0.95)' }}
-                />
+              <div className="flex-1 space-y-3">
+                <div>
+                  <label className="block text-[11px] font-medium mb-1.5" style={{ color: 'rgba(255, 255, 255, 0.7)' }}>
+                    智能体名称 <span style={{ color: 'rgb(239, 68, 68)' }}>*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={form.name}
+                    onChange={(e) => setForm({ ...form, name: e.target.value.slice(0, 20) })}
+                    placeholder="给你的智能体起个名字"
+                    className="w-full px-3 py-2.5 rounded-xl border text-[13px] outline-none transition-all focus:ring-2 focus:ring-[var(--accent-primary)]/20"
+                    style={{ background: 'rgba(0, 0, 0, 0.2)', borderColor: 'rgba(255, 255, 255, 0.1)', color: 'rgba(255, 255, 255, 0.95)' }}
+                  />
+                  <div className="text-right text-[10px] mt-1" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>{form.name.length}/20</div>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium mb-1.5" style={{ color: 'rgba(255, 255, 255, 0.7)' }}>简短描述</label>
+                  <input
+                    type="text"
+                    value={form.description}
+                    onChange={(e) => setForm({ ...form, description: e.target.value })}
+                    placeholder="简单描述这个智能体能做什么"
+                    className="w-full px-3 py-2.5 rounded-xl border text-[13px] outline-none transition-all focus:ring-2 focus:ring-[var(--accent-primary)]/20"
+                    style={{ background: 'rgba(0, 0, 0, 0.2)', borderColor: 'rgba(255, 255, 255, 0.1)', color: 'rgba(255, 255, 255, 0.95)' }}
+                  />
+                </div>
               </div>
             </div>
           </div>
+
+          {/* 系统提示词 — 撑满剩余空间 */}
+          <div className="p-5 rounded-xl flex flex-col" style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)', border: '1px solid rgba(255, 255, 255, 0.06)', minHeight: '320px' }}>
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.2) 0%, rgba(168, 85, 247, 0.1) 100%)', border: '1px solid rgba(168, 85, 247, 0.25)' }}>
+                  <Brain size={12} style={{ color: 'rgb(192, 132, 252)' }} />
+                </div>
+                <label className="text-[12px] font-semibold" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>
+                  系统提示词 <span style={{ color: 'rgb(239, 68, 68)' }}>*</span>
+                </label>
+                {selectedTemplate && (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: 'rgba(34, 197, 94, 0.1)', color: 'rgba(74, 222, 128, 0.9)', border: '1px solid rgba(34, 197, 94, 0.2)' }}>
+                    已从模板填充
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Button variant="ghost" size="sm" className="h-7 text-[11px] gap-1" onClick={handlePolish} disabled={polishing || !form.prompt.trim()}>
+                  {polishing ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />}
+                  AI 润色
+                </Button>
+                <button
+                  onClick={() => setShowExpandEditor(true)}
+                  className="p-1.5 rounded-lg transition-colors hover:bg-white/10"
+                  style={{ color: 'rgba(255, 255, 255, 0.4)' }}
+                  title="全屏编辑"
+                >
+                  <Maximize2 size={14} />
+                </button>
+              </div>
+            </div>
+            <textarea
+              value={form.prompt}
+              onChange={(e) => setForm({ ...form, prompt: e.target.value })}
+              placeholder={`# 角色\n你是一位...\n\n## 技能\n- ...\n\n## 限制\n- ...`}
+              className="flex-1 w-full p-3 rounded-xl border text-[12px] resize-none outline-none font-mono transition-all focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500/30"
+              style={{ background: 'rgba(0, 0, 0, 0.2)', borderColor: 'rgba(168, 85, 247, 0.15)', color: 'rgba(255, 255, 255, 0.9)', minHeight: '240px' }}
+            />
+          </div>
         </div>
 
-        {/* 系统提示词 + AI 润色 + 放大 */}
-        <div className="p-4 rounded-xl" style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.2) 0%, rgba(168, 85, 247, 0.1) 100%)', border: '1px solid rgba(168, 85, 247, 0.25)' }}>
-                <Brain size={12} style={{ color: 'rgb(192, 132, 252)' }} />
-              </div>
-              <label className="text-[12px] font-semibold" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>
-                系统提示词 <span style={{ color: 'rgb(239, 68, 68)' }}>*</span>
-              </label>
-              {selectedTemplate && (
-                <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: 'rgba(34, 197, 94, 0.1)', color: 'rgba(74, 222, 128, 0.9)', border: '1px solid rgba(34, 197, 94, 0.2)' }}>
-                  已从模板填充
-                </span>
-              )}
+        {/* 右侧：辅助配置 */}
+        <div className="w-72 flex-shrink-0 overflow-auto space-y-3">
+          {/* 图标选择 */}
+          <div className="p-3 rounded-xl" style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+            <div className="flex items-center gap-2 mb-2.5">
+              <CurrentIcon size={13} style={{ color: `hsla(${currentIconHue}, 70%, 70%, 1)` }} />
+              <span className="text-[12px] font-semibold" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>图标</span>
             </div>
-            <div className="flex items-center gap-1.5">
-              <Button variant="ghost" size="sm" className="h-7 text-[11px] gap-1" onClick={handlePolish} disabled={polishing || !form.prompt.trim()}>
-                {polishing ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />}
-                AI 润色
-              </Button>
+            <div className="grid grid-cols-5 gap-1.5">
+              {Object.entries(ICON_MAP).map(([name, Icon]) => {
+                const hue = ICON_HUE_MAP[name] ?? 210;
+                const isSelected = form.icon === name;
+                return (
+                  <button
+                    key={name}
+                    onClick={() => setForm({ ...form, icon: name })}
+                    className="w-full aspect-square rounded-lg flex items-center justify-center transition-all hover:scale-110"
+                    style={{
+                      background: isSelected
+                        ? `linear-gradient(135deg, hsla(${hue}, 70%, 60%, 0.25) 0%, hsla(${hue}, 70%, 40%, 0.12) 100%)`
+                        : 'rgba(255, 255, 255, 0.03)',
+                      border: isSelected
+                        ? `1.5px solid hsla(${hue}, 60%, 60%, 0.5)`
+                        : '1px solid rgba(255, 255, 255, 0.06)',
+                      boxShadow: isSelected ? `0 2px 8px -2px hsla(${hue}, 70%, 50%, 0.3)` : 'none',
+                    }}
+                  >
+                    <Icon size={16} style={{ color: isSelected ? `hsla(${hue}, 70%, 70%, 1)` : 'rgba(255, 255, 255, 0.4)' }} />
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 标签 */}
+          <div className="p-3 rounded-xl" style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+            <label className="block text-[11px] font-medium mb-1.5" style={{ color: 'rgba(255, 255, 255, 0.6)' }}>标签（可选，逗号分隔）</label>
+            <input
+              type="text"
+              value={form.tags}
+              onChange={(e) => setForm({ ...form, tags: e.target.value })}
+              placeholder="例如：写作, 文案, 创意"
+              className="w-full px-3 py-2 rounded-lg border text-[12px] outline-none transition-all focus:ring-2 focus:ring-[var(--accent-primary)]/20"
+              style={{ background: 'rgba(0, 0, 0, 0.15)', borderColor: 'rgba(255, 255, 255, 0.08)', color: 'rgba(255, 255, 255, 0.9)' }}
+            />
+            {parsedTags.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {parsedTags.map((tag) => (
+                  <span key={tag} className="text-[10px] px-2 py-0.5 rounded-md font-medium" style={{ background: `hsla(${currentIconHue}, 70%, 50%, 0.15)`, color: `hsla(${currentIconHue}, 70%, 70%, 1)`, border: `1px solid hsla(${currentIconHue}, 60%, 60%, 0.25)` }}>
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* 发送到工作流 */}
+          <div className="p-3 rounded-xl" style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <WorkflowIcon size={13} style={{ color: 'rgb(192, 132, 252)' }} />
+                <span className="text-[12px] font-semibold" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>发送到工作流</span>
+              </div>
               <button
-                onClick={() => setShowExpandEditor(true)}
-                className="p-1.5 rounded-lg transition-colors hover:bg-white/10"
-                style={{ color: 'rgba(255, 255, 255, 0.4)' }}
-                title="全屏编辑"
+                onClick={() => {
+                  const next = isWorkflowEnabled
+                    ? form.enabledTools.filter((t) => t !== 'workflowTrigger')
+                    : [...form.enabledTools, 'workflowTrigger'];
+                  setForm({ ...form, enabledTools: next });
+                }}
+                className="w-8 h-4.5 rounded-full relative transition-all duration-200 cursor-pointer"
+                style={{
+                  background: isWorkflowEnabled
+                    ? 'linear-gradient(90deg, rgb(168, 85, 247), rgb(139, 92, 246))'
+                    : 'rgba(255, 255, 255, 0.1)',
+                }}
               >
-                <Maximize2 size={14} />
+                <div
+                  className="absolute top-0.5 w-3.5 h-3.5 rounded-full transition-all duration-200"
+                  style={{
+                    background: 'white',
+                    left: isWorkflowEnabled ? '17px' : '2px',
+                  }}
+                />
               </button>
             </div>
+            {isWorkflowEnabled && (
+              <div className="space-y-2">
+                <div
+                  className="text-[10px] px-2.5 py-1.5 rounded-lg flex items-start gap-1.5"
+                  style={{ background: 'rgba(168, 85, 247, 0.06)', border: '1px solid rgba(168, 85, 247, 0.12)' }}
+                >
+                  <Info size={10} className="flex-shrink-0 mt-0.5" style={{ color: 'rgba(192, 132, 252, 0.7)' }} />
+                  <span style={{ color: 'rgba(255, 255, 255, 0.55)' }}>对话时可将消息发送到工作流执行</span>
+                </div>
+                {workflowsLoading ? (
+                  <div className="flex items-center gap-2 py-2" style={{ color: 'rgba(255, 255, 255, 0.5)' }}>
+                    <Loader2 size={12} className="animate-spin" />
+                    <span className="text-[10px]">加载工作流...</span>
+                  </div>
+                ) : (
+                  <select
+                    value={form.workflowId}
+                    onChange={(e) => setForm({ ...form, workflowId: e.target.value })}
+                    className="w-full px-2.5 py-2 rounded-lg border text-[11px] outline-none transition-all focus:ring-1 focus:ring-purple-500/20"
+                    style={{ background: 'rgba(0, 0, 0, 0.2)', borderColor: 'rgba(168, 85, 247, 0.15)', color: 'rgba(255, 255, 255, 0.85)' }}
+                  >
+                    <option value="" style={{ background: '#1a1a2e' }}>请选择工作流...</option>
+                    {workflows.map((wf) => (
+                      <option key={wf.id} value={wf.id} style={{ background: '#1a1a2e' }}>{wf.name}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            )}
           </div>
 
-          <textarea
-            value={form.prompt}
-            onChange={(e) => setForm({ ...form, prompt: e.target.value })}
-            placeholder={`# 角色\n你是一位...\n\n## 技能\n- ...\n\n## 限制\n- ...`}
-            className="w-full h-48 p-3 rounded-xl border text-[12px] resize-none outline-none font-mono transition-all focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500/30"
-            style={{ background: 'rgba(0, 0, 0, 0.2)', borderColor: 'rgba(168, 85, 247, 0.15)', color: 'rgba(255, 255, 255, 0.9)' }}
-          />
-        </div>
-
-        {/* 标签 */}
-        <div className="p-4 rounded-xl" style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.02) 0%, rgba(255,255,255,0.01) 100%)', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
-          <label className="block text-[11px] font-medium mb-1.5" style={{ color: 'rgba(255, 255, 255, 0.6)' }}>标签（可选，用逗号分隔）</label>
-          <input
-            type="text"
-            value={form.tags}
-            onChange={(e) => setForm({ ...form, tags: e.target.value })}
-            placeholder="例如：写作, 文案, 创意"
-            className="w-full px-3 py-2.5 rounded-xl border text-[13px] outline-none transition-all focus:ring-2 focus:ring-[var(--accent-primary)]/20"
-            style={{ background: 'rgba(0, 0, 0, 0.15)', borderColor: 'rgba(255, 255, 255, 0.08)', color: 'rgba(255, 255, 255, 0.9)' }}
-          />
-          {parsedTags.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mt-2">
-              {parsedTags.map((tag) => (
-                <span key={tag} className="text-[10px] px-2 py-1 rounded-lg font-medium" style={{ background: `hsla(${currentIconHue}, 70%, 50%, 0.15)`, color: `hsla(${currentIconHue}, 70%, 70%, 1)`, border: `1px solid hsla(${currentIconHue}, 60%, 60%, 0.25)` }}>
-                  {tag}
-                </span>
-              ))}
+          {/* 创造性 */}
+          <div className="p-3 rounded-xl" style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[12px] font-medium" style={{ color: 'rgba(255, 255, 255, 0.8)' }}>创造性</span>
+              <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.9)' }}>
+                {form.temperature.toFixed(1)}
+              </span>
             </div>
-          )}
+            <input
+              type="range" min="0" max="1" step="0.1"
+              value={form.temperature}
+              onChange={(e) => setForm({ ...form, temperature: parseFloat(e.target.value) })}
+              className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
+              style={{ background: `linear-gradient(90deg, rgb(59, 130, 246) ${form.temperature * 100}%, rgba(255,255,255,0.1) ${form.temperature * 100}%)` }}
+            />
+            <div className="flex justify-between text-[10px] mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>
+              <span>精确</span>
+              <span>创造</span>
+            </div>
+          </div>
+
+          {/* 配置摘要 */}
+          <div className="p-3 rounded-xl text-[11px] space-y-1.5" style={{ background: 'rgba(0,0,0,0.15)', border: '1px solid rgba(255,255,255,0.05)' }}>
+            <div className="flex items-center gap-2" style={{ color: form.name.trim() ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.25)' }}>
+              <Check size={11} style={{ color: form.name.trim() ? 'rgb(74, 222, 128)' : 'rgba(255,255,255,0.15)' }} />
+              <span>{form.name || '未命名'}</span>
+            </div>
+            <div className="flex items-center gap-2" style={{ color: form.prompt.trim() ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.25)' }}>
+              <Check size={11} style={{ color: form.prompt.trim() ? 'rgb(74, 222, 128)' : 'rgba(255,255,255,0.15)' }} />
+              <span>提示词 {form.prompt.length} 字</span>
+            </div>
+            {parsedTags.length > 0 && (
+              <div className="flex items-center gap-2" style={{ color: 'rgba(255,255,255,0.5)' }}>
+                <Check size={11} style={{ color: 'rgb(74, 222, 128)' }} />
+                <span>{parsedTags.join('、')}</span>
+              </div>
+            )}
+            {isWorkflowEnabled && (
+              <div className="flex items-center gap-2" style={{ color: 'rgba(255,255,255,0.5)' }}>
+                <Check size={11} style={{ color: 'rgb(74, 222, 128)' }} />
+                <span>已绑定工作流</span>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
