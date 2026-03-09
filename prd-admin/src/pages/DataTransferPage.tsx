@@ -2,7 +2,6 @@ import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Badge } from '@/components/design/Badge';
 import { TabBar } from '@/components/design/TabBar';
-import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
 import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
 import { BlurText, DecryptedText, ShinyText, SplitText } from '@/components/reactbits';
@@ -55,7 +54,7 @@ import {
   ChevronRight,
   ExternalLink,
 } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { motion } from 'motion/react';
 
@@ -748,6 +747,142 @@ function TransferDetail({
   );
 }
 
+// =================== Searchable User Picker ===================
+
+function SearchableUserPicker({
+  users,
+  value,
+  onChange,
+  placeholder = '搜索用户...',
+}: {
+  users: AdminUser[];
+  value: string;
+  onChange: (userId: string) => void;
+  placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState('');
+  const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const selected = users.find((u) => u.userId === value);
+  const q = filter.trim().toLowerCase();
+  const filtered = q
+    ? users.filter(
+        (u) =>
+          u.displayName.toLowerCase().includes(q) ||
+          u.username.toLowerCase().includes(q)
+      )
+    : users;
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  return (
+    <div ref={containerRef} className="relative">
+      <div
+        className="flex items-center gap-2 h-[40px] w-full rounded-[10px] px-3 cursor-pointer transition-all duration-200"
+        style={{
+          background: 'var(--bg-input)',
+          border: open ? '1px solid var(--accent-gold)' : '1px solid var(--border-default)',
+          color: 'var(--text-primary)',
+        }}
+        onClick={() => {
+          setOpen(true);
+          setFilter('');
+          setTimeout(() => inputRef.current?.focus(), 0);
+        }}
+      >
+        <User size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+        {open ? (
+          <input
+            ref={inputRef}
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            className="flex-1 bg-transparent outline-none text-[13px]"
+            style={{ color: 'var(--text-primary)' }}
+            placeholder={placeholder}
+            onClick={(e) => e.stopPropagation()}
+          />
+        ) : selected ? (
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <img
+              src={resolveAvatarUrl({ username: selected.username, userType: selected.userType, botKind: selected.botKind, avatarFileName: selected.avatarFileName })}
+              alt=""
+              className="w-5 h-5 rounded-full object-cover shrink-0"
+              referrerPolicy="no-referrer"
+            />
+            <span className="text-[13px] truncate">{selected.displayName}</span>
+            <span className="text-[11px] opacity-50">@{selected.username}</span>
+          </div>
+        ) : (
+          <span className="text-[13px] flex-1" style={{ color: 'var(--text-muted)' }}>
+            {placeholder}
+          </span>
+        )}
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: 'var(--text-muted)', flexShrink: 0 }}>
+          <path d="M6 9l6 6 6-6" />
+        </svg>
+      </div>
+
+      {open && (
+        <div
+          className="absolute left-0 right-0 top-[calc(100%+4px)] z-50 rounded-[10px] py-1 overflow-auto"
+          style={{
+            maxHeight: '240px',
+            background: 'var(--bg-elevated)',
+            border: '1px solid var(--border-default)',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+          }}
+        >
+          {filtered.length === 0 ? (
+            <div className="px-3 py-4 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
+              无匹配用户
+            </div>
+          ) : (
+            filtered.map((u) => {
+              const ava = resolveAvatarUrl({ username: u.username, userType: u.userType, botKind: u.botKind, avatarFileName: u.avatarFileName });
+              const isSelected = u.userId === value;
+              return (
+                <div
+                  key={u.userId}
+                  className="flex items-center gap-2.5 px-3 py-2 cursor-pointer transition-colors hover:bg-white/8"
+                  style={isSelected ? { background: 'rgba(var(--accent-gold-rgb, 212,175,55), 0.1)' } : undefined}
+                  onClick={() => {
+                    onChange(u.userId);
+                    setOpen(false);
+                    setFilter('');
+                  }}
+                >
+                  <img src={ava} alt="" className="w-6 h-6 rounded-full object-cover shrink-0" referrerPolicy="no-referrer" />
+                  <span className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                    {u.displayName}
+                  </span>
+                  <span className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+                    @{u.username}
+                  </span>
+                  {isSelected && (
+                    <Check size={14} className="ml-auto shrink-0" style={{ color: 'var(--accent-gold)' }} />
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // =================== Create Transfer Dialog ===================
 
 function CreateTransferDialog({
@@ -864,25 +999,12 @@ function CreateTransferDialog({
               <div className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
                 接收人
               </div>
-              <Select
+              <SearchableUserPicker
+                users={users}
                 value={receiverUserId}
-                onValueChange={setReceiverUserId}
-                placeholder="选择接收用户..."
-                leftIcon={<User size={14} />}
-              >
-                {users.map(u => {
-                  const ava = resolveAvatarUrl({ username: u.username, userType: u.userType, botKind: u.botKind, avatarFileName: u.avatarFileName });
-                  return (
-                    <option key={u.userId} value={u.userId}>
-                      <span className="inline-flex items-center gap-2">
-                        <img src={ava} alt="" className="w-5 h-5 rounded-full object-cover shrink-0" referrerPolicy="no-referrer" />
-                        <span>{u.displayName}</span>
-                        <span className="text-[11px] opacity-50">@{u.username}</span>
-                      </span>
-                    </option>
-                  );
-                })}
-              </Select>
+                onChange={setReceiverUserId}
+                placeholder="搜索用户名或昵称..."
+              />
               {selectedReceiver && (
                 <div className="flex items-center gap-2 px-1">
                   <img

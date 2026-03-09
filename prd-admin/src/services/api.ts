@@ -49,6 +49,7 @@ export const api = {
     inviteCodes: () => '/api/users/invite-codes',
     initialize: () => '/api/users/initialize',
     bulk: () => '/api/users/bulk',
+    bulkDelete: () => '/api/users/bulk-delete',
   },
 
   // ============ Groups 群组管理 ============

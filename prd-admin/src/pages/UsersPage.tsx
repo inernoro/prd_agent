@@ -5,8 +5,8 @@ import { TabBar } from '@/components/design/TabBar';
 import { Select } from '@/components/design/Select';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { Dialog } from '@/components/ui/Dialog';
-import { getUsers, createUser, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, updateUserAvatar, updateUserDisplayName, initializeUsers, adminImpersonate, getSystemRoles, getUserAuthz, updateUserAuthz, getAdminPermissionCatalog, getUserRateLimit, updateUserRateLimit } from '@/services';
-import { MoreVertical, Pencil, Search, UserCog, Users, Gauge } from 'lucide-react';
+import { getUsers, createUser, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, updateUserAvatar, updateUserDisplayName, initializeUsers, adminImpersonate, getSystemRoles, getUserAuthz, updateUserAuthz, getAdminPermissionCatalog, getUserRateLimit, updateUserRateLimit, bulkDeleteUsers } from '@/services';
+import { MoreVertical, Pencil, Search, UserCog, Users, Gauge, Trash2 } from 'lucide-react';
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { UserProfilePopover } from '@/components/ui/UserProfilePopover';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
@@ -136,6 +136,11 @@ export default function UsersPage() {
   const [rateLimitMaxConcurrent, setRateLimitMaxConcurrent] = useState(100);
   const [rateLimitGlobalMaxRpm, setRateLimitGlobalMaxRpm] = useState(600);
   const [rateLimitGlobalMaxConcurrent, setRateLimitGlobalMaxConcurrent] = useState(100);
+
+  // 批量操作
+  const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const currentUserId = useAuthStore((s) => s.user?.userId);
 
   const createUsernameOk = useMemo(() => {
     const u = (createUsername ?? '').trim();
@@ -647,6 +652,72 @@ export default function UsersPage() {
     }
   };
 
+  const toggleUserSelection = (userId: string) => {
+    setSelectedUserIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(userId)) next.delete(userId);
+      else next.add(userId);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    setSelectedUserIds((prev) => {
+      const selectableIds = items.filter((u) => u.userId !== currentUserId).map((u) => u.userId);
+      const allSelected = selectableIds.length > 0 && selectableIds.every((id) => prev.has(id));
+      if (allSelected) return new Set();
+      return new Set(selectableIds);
+    });
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedUserIds.size === 0) return;
+
+    const usernames = items
+      .filter((u) => selectedUserIds.has(u.userId))
+      .map((u) => u.username)
+      .join(', ');
+
+    const ok1 = await systemDialog.confirm({
+      title: '批量删除用户',
+      message: `确定要删除以下 ${selectedUserIds.size} 个用户吗？\n\n${usernames}\n\n此操作不可撤销！`,
+      tone: 'danger',
+      confirmText: '继续',
+      cancelText: '取消',
+    });
+    if (!ok1) return;
+
+    const ok2 = await systemDialog.confirm({
+      title: '再次确认',
+      message: `即将永久删除 ${selectedUserIds.size} 个用户，确认执行？`,
+      tone: 'danger',
+      confirmText: '确认删除',
+      cancelText: '取消',
+    });
+    if (!ok2) return;
+
+    setBulkDeleting(true);
+    try {
+      const res = await bulkDeleteUsers(Array.from(selectedUserIds));
+      if (!res.success) {
+        toast.error('批量删除失败', res.error?.message || '未知错误');
+        return;
+      }
+      toast.success('批量删除成功', `已删除 ${res.data.deletedCount} 个用户`);
+      setSelectedUserIds(new Set());
+      await load();
+    } catch (error) {
+      toast.error('批量删除失败', error instanceof Error ? error.message : '未知错误');
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
+  // Clear selection when page/filter changes
+  useEffect(() => {
+    setSelectedUserIds(new Set());
+  }, [page, search, role, status]);
+
   return (
     <div className="h-full min-h-0 flex flex-col gap-5 overflow-x-hidden">
       <TabBar
@@ -714,6 +785,50 @@ export default function UsersPage() {
             </Button>
           </div>
         </div>
+
+        {/* Bulk action bar */}
+        {selectedUserIds.size > 0 && (
+          <div
+            className="mt-3 flex items-center gap-3 rounded-[10px] px-4 py-2.5"
+            style={{
+              background: 'rgba(239,68,68,0.08)',
+              border: '1px solid rgba(239,68,68,0.25)',
+            }}
+          >
+            <label className="flex items-center gap-2 cursor-pointer shrink-0">
+              <input
+                type="checkbox"
+                checked={items.filter((u) => u.userId !== currentUserId).length > 0 && items.filter((u) => u.userId !== currentUserId).every((u) => selectedUserIds.has(u.userId))}
+                onChange={toggleSelectAll}
+                className="accent-[var(--accent-gold)]"
+              />
+              <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>
+                全选
+              </span>
+            </label>
+            <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+              已选 {selectedUserIds.size} 个用户
+            </span>
+            <div className="ml-auto flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={() => setSelectedUserIds(new Set())}
+              >
+                取消选择
+              </Button>
+              <Button
+                variant="danger"
+                size="xs"
+                disabled={bulkDeleting}
+                onClick={handleBulkDelete}
+              >
+                <Trash2 size={12} className="mr-1" />
+                {bulkDeleting ? '删除中...' : `批量删除 (${selectedUserIds.size})`}
+              </Button>
+            </div>
+          </div>
+        )}
 
         <div
           className="mt-4 flex-1 min-h-0 overflow-auto rounded-[14px] p-4 surface-inset"
@@ -961,6 +1076,19 @@ export default function UsersPage() {
 
                     {/* 紧凑卡片内容 */}
                     <div className="flex items-center gap-2.5">
+                      {/* 选择框 */}
+                      {u.userId !== currentUserId && (
+                        <input
+                          type="checkbox"
+                          checked={selectedUserIds.has(u.userId)}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            toggleUserSelection(u.userId);
+                          }}
+                          className="accent-[var(--accent-gold)] shrink-0 cursor-pointer"
+                          title="选择此用户"
+                        />
+                      )}
                       {/* 头像（悬浮/点击显示用户详情） */}
                       <UserProfilePopover
                         userId={u.userId}

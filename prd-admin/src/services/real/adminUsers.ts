@@ -21,6 +21,8 @@ import type {
   BulkCreateAdminUsersResponse,
   GetUserProfileContract,
   UserProfileResponse,
+  BulkDeleteUsersContract,
+  BulkDeleteUsersResponse,
 } from '@/services/contracts/adminUsers';
 import type { AdminUser, PagedResult, UserRole, UserStatus } from '@/types/admin';
 
@@ -183,5 +185,13 @@ export const bulkCreateUsersReal: BulkCreateAdminUsersContract = async (
 
 export const getUserProfileReal: GetUserProfileContract = async (userId: string): Promise<ApiResponse<UserProfileResponse>> => {
   const res = await apiRequest<UserProfileResponse>(api.users.profile(userId));
+  return res;
+};
+
+export const bulkDeleteUsersReal: BulkDeleteUsersContract = async (userIds: string[]): Promise<ApiResponse<BulkDeleteUsersResponse>> => {
+  const res = await apiRequest<BulkDeleteUsersResponse>(api.users.bulkDelete(), {
+    method: 'POST',
+    body: { userIds },
+  });
   return res;
 };
