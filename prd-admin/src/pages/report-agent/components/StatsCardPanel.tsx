@@ -14,6 +14,8 @@ interface Props {
   showEnhanceGuide?: boolean;
   /** 引导点击回调 */
   onGuideClick?: (target: 'github' | 'workflow' | 'daily-log') => void;
+  /** Mock 数据 — 预览模式下传入，跳过 API 调用 */
+  mockData?: CollectedActivity;
 }
 
 interface CardDef {
@@ -170,11 +172,17 @@ const ENHANCE_GUIDES = [
   },
 ];
 
-export function StatsCardPanel({ weekYear, weekNumber, showEnhanceGuide, onGuideClick }: Props) {
+export function StatsCardPanel({ weekYear, weekNumber, showEnhanceGuide, onGuideClick, mockData }: Props) {
   const [activity, setActivity] = useState<CollectedActivity | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // If mock data provided, use it directly
+    if (mockData) {
+      setActivity(mockData);
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     (async () => {
       setLoading(true);
@@ -185,7 +193,7 @@ export function StatsCardPanel({ weekYear, weekNumber, showEnhanceGuide, onGuide
       if (!cancelled) setLoading(false);
     })();
     return () => { cancelled = true; };
-  }, [weekYear, weekNumber]);
+  }, [weekYear, weekNumber, mockData]);
 
   if (loading) {
     return (
