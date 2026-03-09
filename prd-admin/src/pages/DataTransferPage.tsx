@@ -3,6 +3,7 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { Badge } from '@/components/design/Badge';
 import { TabBar } from '@/components/design/TabBar';
 import { Dialog } from '@/components/ui/Dialog';
+import { glassPanel } from '@/lib/glassStyles';
 import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
 import { BlurText, DecryptedText, ShinyText, SplitText } from '@/components/reactbits';
 import {
@@ -866,10 +867,8 @@ function SearchableUserPicker({
         <div
           className="absolute left-0 right-0 top-[calc(100%+4px)] z-50 rounded-[12px] flex flex-col overflow-hidden"
           style={{
+            ...glassPanel,
             maxHeight: '340px',
-            background: 'var(--bg-elevated)',
-            border: '1px solid var(--border-default)',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.45)',
           }}
         >
           {/* Search input - always visible at top */}
