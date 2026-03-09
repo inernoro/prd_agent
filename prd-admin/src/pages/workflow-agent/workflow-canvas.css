@@ -142,6 +142,16 @@
 
 /* ──── 画布全局微调 ──── */
 
+/* 画布默认箭头光标（覆盖 selectionOnDrag 的 crosshair） */
+.workflow-canvas .react-flow__pane {
+  cursor: default !important;
+}
+
+/* 框选时使用十字光标 */
+.workflow-canvas .react-flow__pane.dragging {
+  cursor: crosshair !important;
+}
+
 .workflow-canvas .react-flow__controls {
   border-radius: 12px !important;
   overflow: hidden;
