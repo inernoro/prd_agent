@@ -3,7 +3,6 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { Badge } from '@/components/design/Badge';
 import { TabBar } from '@/components/design/TabBar';
 import { Dialog } from '@/components/ui/Dialog';
-import { glassPanel } from '@/lib/glassStyles';
 import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
 import { BlurText, DecryptedText, ShinyText, SplitText } from '@/components/reactbits';
 import {
@@ -867,12 +866,16 @@ function SearchableUserPicker({
         <div
           className="absolute left-0 right-0 top-[calc(100%+4px)] z-50 rounded-[12px] flex flex-col overflow-hidden"
           style={{
-            ...glassPanel,
-            maxHeight: '340px',
+            maxHeight: '280px',
+            background: 'var(--glass-bg-end, rgba(22, 22, 28, 0.98))',
+            border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+            boxShadow: '0 18px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+            backdropFilter: 'blur(40px) saturate(180%)',
+            WebkitBackdropFilter: 'blur(40px) saturate(180%)',
           }}
         >
           {/* Search input - always visible at top */}
-          <div className="px-3 pt-3 pb-2 shrink-0" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+          <div className="px-3 pt-2.5 pb-2 shrink-0" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
             <div className="relative">
               <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--text-muted)' }} />
               <input
@@ -880,10 +883,10 @@ function SearchableUserPicker({
                 type="text"
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
-                className="w-full h-[34px] rounded-[8px] pl-8 pr-3 text-[13px] outline-none"
+                className="w-full h-[32px] rounded-[8px] pl-8 pr-3 text-[13px] outline-none"
                 style={{
-                  background: 'var(--bg-input)',
-                  border: '1px solid var(--border-subtle)',
+                  background: 'rgba(255,255,255,0.06)',
+                  border: '1px solid rgba(255,255,255,0.1)',
                   color: 'var(--text-primary)',
                 }}
                 placeholder={placeholder}
@@ -962,7 +965,7 @@ function SearchableUserPicker({
           </div>
 
           {/* Footer count */}
-          <div className="px-3 py-1.5 text-[10px] shrink-0" style={{ color: 'var(--text-muted)', borderTop: '1px solid var(--border-subtle)' }}>
+          <div className="px-3 py-1.5 text-[10px] shrink-0" style={{ color: 'var(--text-muted)', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
             {q ? `${filtered.length} / ${users.length} 人匹配` : `共 ${users.length} 人`}
           </div>
         </div>
