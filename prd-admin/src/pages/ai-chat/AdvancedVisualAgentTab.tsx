@@ -1864,15 +1864,30 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   
   // 内部方法：同步 chip 到当前选中的图片
   const syncChipsToSelection = useCallback((newKeys: string[]) => {
-    richComposerRef.current?.clearPending();
-    
+    const composer = richComposerRef.current;
+    if (!composer) return;
+
+    // 在清除 pending 前，识别已确认（ready）的 chip keys
+    // 清除 pending 后这些 confirmed chips 会保留，不需要重复插入
+    const pendingKeys = composer.getPendingKeys();
+    const allChipKeys = new Set(
+      composer.getStructuredContent().imageRefs.map(r => r.canvasKey)
+    );
+    const confirmedKeys = new Set(
+      [...allChipKeys].filter(k => !pendingKeys.has(k))
+    );
+
+    composer.clearPending();
+
     for (const key of newKeys) {
+      // 跳过已有 confirmed chip 的 key，避免插入重复 pending chip
+      if (confirmedKeys.has(key)) continue;
       // 优先从 canvasRef 获取（避免闭包问题）
       const item = canvasRef.current.find(x => x.key === key);
       if (item && (item.kind ?? 'image') === 'image' && item.src) {
         const refId = item.refId ?? ensureRefIdForKey(key);
         if (refId) {
-          richComposerRef.current?.insertImageChip(
+          composer.insertImageChip(
             { key, refId, src: item.src, label: item.prompt || `img${refId}` },
             { preserveFocus: true }
           );
