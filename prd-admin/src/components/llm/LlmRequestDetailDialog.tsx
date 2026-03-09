@@ -173,7 +173,7 @@ export function LlmRequestDetailDialog({
           <div className="py-10 text-center" style={{ color: 'var(--text-muted)' }}>暂无详情</div>
         ) : (
           <div className="h-full min-h-0 grid gap-3 md:grid-cols-2">
-            <div className="rounded-[16px] p-3 overflow-hidden flex flex-col min-h-0" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
+            <div className="rounded-[16px] p-3 overflow-hidden flex flex-col min-h-0" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.04)' }}>
               <div className="flex items-center justify-between gap-2">
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Request</div>
                 <div className="flex items-center gap-2">
@@ -223,7 +223,7 @@ export function LlmRequestDetailDialog({
                   <div
                     key={row.k}
                     className="rounded-[12px] px-2.5 py-1.5 min-w-0"
-                    style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)', minWidth: 0 }}
+                    style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.04)', minWidth: 0 }}
                     title={String(row.v ?? '')}
                   >
                     <div className="text-[11px] font-medium" style={{ color: 'var(--text-muted)' }}>{row.k}</div>
@@ -242,7 +242,7 @@ export function LlmRequestDetailDialog({
               </div>
             </div>
 
-            <div className="rounded-[16px] p-3 overflow-hidden flex flex-col min-h-0" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
+            <div className="rounded-[16px] p-3 overflow-hidden flex flex-col min-h-0" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.04)' }}>
               <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Response</div>
               <div className="mt-2 flex-1 min-h-0 overflow-auto">
                 <style>{`

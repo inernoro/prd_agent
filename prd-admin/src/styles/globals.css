@@ -1382,6 +1382,30 @@ html[data-perf-mode="performance"] .blur-text span {
   transform: translate(-50%, -50%);
 }
 
+/*
+ * ── Dialog 玻璃伪元素 blur 层 ──
+ * 与 GlassCard 同理：将 backdrop-filter 移至 ::before，
+ * 避免 blur 直接应用在内容层导致文字模糊。
+ * glassPanel 的 inline style 设置了 backdropFilter，这里用 !important 覆盖。
+ */
+.prd-dialog-content {
+  position: relative;
+  isolation: isolate;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+.prd-dialog-content::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  z-index: -1;
+  backdrop-filter: blur(40px) saturate(180%) brightness(1.1);
+  -webkit-backdrop-filter: blur(40px) saturate(180%) brightness(1.1);
+  background: linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.10)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.05)) 100%);
+  pointer-events: none;
+}
+
 .prd-dialog-overlay {
   animation: fadeIn 150ms ease-out;
 }
