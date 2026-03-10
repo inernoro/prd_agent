@@ -7,7 +7,7 @@
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
 | 2026-03-10 | 🟢 新增 | `index.yml` | 文档元数据索引 |
-| 2026-03-10 | 🟢 新增 | `yuque_index.md` | 语雀目录页 |
+| 2026-03-10 | 🟢 新增 | `guide.yuque-directory.md` | 语雀文档目录页 |
 
 ---
 
@@ -32,6 +32,9 @@
 
 - [多图组合功能测试备忘录](guide.multi-image-compose-test) `guide.multi-image-compose-test`
   > 多图组合生成功能的测试用例与验证记录
+
+- [语雀文档目录页](guide.yuque-directory) `guide.yuque-directory`
+  > 语雀同步的目录页内容，包含变更历史与全量文档列表
 
 ### 二、设计文档
 

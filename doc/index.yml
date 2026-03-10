@@ -26,6 +26,7 @@ docs:
   guide.init-strategy: 初始化策略实现总结
   guide.ai-toolbox-ops: AI 百宝箱运维指南
   guide.multi-image-compose-test: 多图组合功能测试备忘录
+  guide.yuque-directory: 语雀文档目录页
 
   # ── 二、设计文档 ──
   design.account-data-sharing: 账户数据共享设计文档
