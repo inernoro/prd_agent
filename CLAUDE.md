@@ -139,6 +139,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | **conflict-resolution** | "合并主分支"、"/resolve" | PR 前预合并 main 到特性分支（三级冲突分类、禁止丢弃代码、高风险交人类） | 开发者 |
 | **weekly-update-summary** | "生成周报"、"/weekly" | 从 git 历史自动生成结构化周报 | 项目负责人 |
 | **doc-writer** | "写文档"、"/doc"、自动触发 | doc/ 下文档类型守护（6 种类型模板 + 格式校验） | 所有人 |
+| **doc-sync** | "同步文档索引"、"/doc-sync"、周报后自动触发 | 扫描 doc/ 对齐 index.yml + guide.list.directory.md | 所有人 |
 
 ### 使用指引
 
@@ -146,8 +147,9 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 2. **开发完成后** → 先 `/verify` 交叉验证，再 `/smoke-test` 跑端到端
 3. **提 PR 前** → `/resolve` 预合并主分支，AI 代替人类解决冲突
 4. **准备上线时** → `/handoff` 生成交接清单（涉及 3+ 文件时自动触发）
-5. **周五收尾时** → `/weekly` 生成本周总结
+5. **周五收尾时** → `/weekly` 生成本周总结（完成后自动触发 `/doc-sync`）
 6. **写文档时** → `/doc` 查看类型速查，或直接创建文档时自动套用模板
+7. **文档变更后** → `/doc-sync` 手动同步索引，或等周报时自动同步
 
 ---
 
@@ -818,3 +820,6 @@ public async Task<IActionResult> Fork(string id)
 2. **白名单字段复制**：`GetCopyableFields()` 定义可 Fork 的业务字段，避免复制敏感信息
 3. **预览渲染器委托**：每种类型有独立的 `PreviewRenderer`，支持完全不同的展示样式
 4. **统一市场字段**：`IMarketplaceItem` 定义公共字段（ForkCount、IsPublic 等）
+
+---
+
