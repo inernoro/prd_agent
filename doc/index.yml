@@ -1,0 +1,112 @@
+# doc/index.yml
+# 文档元数据 — 供 Manus AI 语雀同步脚本使用
+# 维护规则见 CLAUDE.md「PRD Agent 仓库文档维护与语雀同步」
+
+# 文件夹定义：按语雀目录顺序排列
+folders:
+  - prefix: guide
+    name: 一、指南
+  - prefix: design
+    name: 二、设计文档
+  - prefix: rule
+    name: 三、规范与规则
+  - prefix: spec
+    name: 四、产品规格
+  - prefix: plan
+    name: 五、计划与方案
+  - prefix: report
+    name: 六、周报
+
+# 文档映射：文件名（不含 .md）→ 中文标题
+docs:
+  # ── 一、指南 ──
+  guide.quickstart: PRD Agent 快速部署指南
+  guide.development-guide: PRD Agent 开发文档
+  guide.cloud-dev-tutorial: Claude Code 云开发教程
+  guide.init-strategy: 初始化策略实现总结
+  guide.ai-toolbox-ops: AI 百宝箱运维指南
+  guide.multi-image-compose-test: 多图组合功能测试备忘录
+
+  # ── 二、设计文档 ──
+  design.account-data-sharing: 账户数据共享设计文档
+  design.admin: PRD Admin 设计系统规范
+  design.agent-dashboard: Agent Dashboard 设计文档
+  design.ai-arena: AI 竞技场设计方案
+  design.ai-toolbox: AI 百宝箱设计方案
+  design.cds: Branch Tester (bt) 设计文档
+  design.channel-adapter: 多通道适配器设计
+  design.defect-agent: 缺陷管理 Agent 功能设计
+  design.defect-image-analysis: 缺陷截图 VLM 预解析设计文档
+  design.exec-bt-deployment: exec_bt.sh 部署架构与冲突分析
+  design.executive-dashboard: 总裁面板与周报 Agent 设计文档
+  design.im-architecture: PRD Agent IM 架构重设计方案
+  design.image-ref-and-persistence: 图片引用日志与消息持久化架构设计
+  design.inline-image-chat: 内联图片聊天分析功能改进设计
+  design.left-right-layout: 左右布局重新设计总结
+  design.literary-agent: 文学创作 Agent 文章配图功能设计
+  design.model-pool: 大模型池设计（三级调度/三级链路）
+  design.multi-doc-and-citations: 多文档上下文与引用系统重设计
+  design.multi-doc-knowledge: 多文档知识库与文档类型系统设计文档
+  design.multi-image-compose: 多图组合生成设计
+  design.multi-image-vision-api: 多图生成设计文档（Vision API 方案）
+  design.network-diagnostics: 网络诊断功能
+  design.open-platform: 开放平台功能概要
+  design.ops-auth: 桌面端更新与分布式登录/会话审计说明
+  design.remotion-gap: Remotion 视频质量差距分析报告
+  design.reusable-patterns: 可复用组件产品方案
+  design.server-authority: 服务器权威性设计
+  design.toast: Toast 通知系统实现
+  design.video-scene-codegen: 视频场景代码生成架构设计
+  design.web-hosting: 网页托管与分享设计文档
+  design.workflow-control-flow-sse: 工作流引擎 v2 流程控制舱与 SSE 实时推送设计
+  design.workflow-engine: 工作流引擎设计方案
+
+  # ── 三、规范与规则 ──
+  rule.agent-development: Agent 开发交付流程规范
+  rule.agent-permissions: Agent 权限分类规则
+  rule.app-identity: 应用身份定义规则
+  rule.audit-prd-desktop-codebase: PRD Agent 全面代码审计报告
+  rule.data-dictionary: 数据字典
+  rule.default-editable: 默认可编辑原则
+  rule.doc-maintenance: 文档维护说明
+  rule.doc-naming: 文档命名规则
+  rule.doc-templates: 文档模板标准
+  rule.frontend-component-reuse: 前端组件复用规则
+  rule.skill-system: 技能系统规则与创建指南
+  rule.test-organization: 测试组织规范
+
+  # ── 四、产品规格 ──
+  spec.app-registry: 应用注册中心协议规范
+  spec.defect-agent: 缺陷管理 Agent 产品方案
+  spec.marketplace: 海鲜市场（Configuration Marketplace）
+  spec.prd: PRD Agent 产品需求文档
+  spec.project-vision: 项目愿景与背景
+  spec.report-agent: 周报 Agent 产品需求文档
+  spec.report-agent-phase5: 周报 Agent Phase 5 用户故事
+  spec.report-agent.v2: 周报 Agent v2.0 产品需求文档
+  spec.srs: PRD 理解与交互智能体软件需求规格说明书
+
+  # ── 五、计划与方案 ──
+  plan.ai-text-assist: AI 文本辅助通用 Domain 设计
+  plan.ai-toolbox-mvp: AI 百宝箱 MVP 规划
+  plan.ai-toolbox-next-steps: AI 百宝箱未完成项与下一步规划
+  plan.animation-optimization: 动画优化计划
+  plan.desktop-asset-features: Desktop 资产功能方案
+  plan.doc-update: 文档长周期更新计划
+  plan.merge-image-ref-resolver: 合并计划书：三入口守门员统一
+  plan.mobile-adaptation: 移动端适配功能规划
+  plan.mobile-layout-review: 移动端布局分析报告
+  plan.multi-document: PRD Agent 多文档系统设计方案
+  plan.multi-image-ai-interaction: 多图 AI 交互方案
+  plan.report-agent-impl: 周报 Agent 实施进度追踪
+  plan.skill-installation: Claude Code Skill 安装计划
+  plan.unified-defect-management: 统一缺陷管理平台实施计划
+  plan.video-tts-and-scene-upgrade: 视频 TTS 语音接入与场景视觉升级实施方案
+  plan.visual-agent-video-gen-daily-limit: 视觉创作视频生成每日限额实施方案
+  plan.web-hosting: 网页托管与分享实现计划
+
+  # ── 六、周报 ──
+  report.2026-W06: 周报 2026-W06 (02-03 ~ 02-08)
+  report.2026-W07: 周报 2026-W07 (02-09 ~ 02-15)
+  report.2026-W09: 周报 2026-W09 (02-23 ~ 03-01)
+  report.2026-W10: 周报 2026-W10 (03-02 ~ 03-08)
