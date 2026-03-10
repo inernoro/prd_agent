@@ -8,7 +8,7 @@
 
 | 前缀 | 对应 | 示例 |
 |------|------|------|
-| `guide.*` | 操作指南 | `guide.yuque-directory.md` |
+| `guide.*` | 操作指南 | `guide.list.directory.md` |
 | `design.*` | 技术设计 | `design.model-pool.md` |
 | `rule.*` | 规范约定 | `rule.doc-naming.md` |
 | `spec.*` | 产品规格 | `spec.prd.md` |
@@ -24,7 +24,7 @@
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
 | 2026-03-10 | 🟢 新增 | `index.yml` | 文档元数据索引 |
-| 2026-03-10 | 🟢 新增 | `guide.yuque-directory.md` | 语雀文档目录页 |
+| 2026-03-10 | 🟢 新增 | `guide.list.directory.md` | 语雀文档目录页 |
 
 ---
 
@@ -50,7 +50,7 @@
 - [多图组合功能测试备忘录](guide.multi-image-compose-test) `guide.multi-image-compose-test`
   > 多图组合生成功能的测试用例与验证记录
 
-- [语雀文档目录页](guide.yuque-directory) `guide.yuque-directory`
+- [语雀文档目录页](guide.list.directory) `guide.list.directory`
   > 语雀同步的目录页内容，包含变更历史与全量文档列表
 
 ### 二、设计文档
