@@ -2,7 +2,6 @@ import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Badge } from '@/components/design/Badge';
 import { TabBar } from '@/components/design/TabBar';
-import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
 import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
 import { BlurText, DecryptedText, ShinyText, SplitText } from '@/components/reactbits';
@@ -55,7 +54,7 @@ import {
   ChevronRight,
   ExternalLink,
 } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { motion } from 'motion/react';
 
@@ -748,6 +747,233 @@ function TransferDetail({
   );
 }
 
+// =================== Searchable User Picker ===================
+
+/** 相对时间格式化 */
+function fmtRelative(v?: string | null) {
+  if (!v) return '';
+  const t = new Date(v).getTime();
+  if (Number.isNaN(t)) return '';
+  const diff = Date.now() - t;
+  const sec = Math.floor(Math.abs(diff) / 1000);
+  const min = Math.floor(sec / 60);
+  const hr = Math.floor(min / 60);
+  const day = Math.floor(hr / 24);
+  const suffix = diff >= 0 ? '前' : '后';
+  if (sec < 60) return `${sec}秒${suffix}`;
+  if (min < 60) return `${min}分钟${suffix}`;
+  if (hr < 24) return `${hr}小时${suffix}`;
+  if (day < 365) return `${day}天${suffix}`;
+  return '';
+}
+
+const ROLE_COLORS: Record<string, { bg: string; border: string; text: string }> = {
+  PM: { bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.25)', text: 'rgba(59,130,246,0.95)' },
+  DEV: { bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.25)', text: 'rgba(34,197,94,0.95)' },
+  QA: { bg: 'rgba(168,85,247,0.12)', border: 'rgba(168,85,247,0.25)', text: 'rgba(168,85,247,0.95)' },
+  ADMIN: { bg: 'rgba(99,102,241,0.12)', border: 'rgba(99,102,241,0.25)', text: 'var(--accent-gold)' },
+};
+
+function SearchableUserPicker({
+  users,
+  value,
+  onChange,
+  placeholder = '搜索用户名、昵称...',
+}: {
+  users: AdminUser[];
+  value: string;
+  onChange: (userId: string) => void;
+  placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState('');
+  const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const selected = users.find((u) => u.userId === value);
+  const q = filter.trim().toLowerCase();
+  const filtered = q
+    ? users.filter(
+        (u) =>
+          u.displayName.toLowerCase().includes(q) ||
+          u.username.toLowerCase().includes(q) ||
+          (u.role ?? '').toLowerCase().includes(q)
+      )
+    : users;
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        setFilter('');
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  // Auto-focus search input when opened
+  useEffect(() => {
+    if (open) {
+      // Use a small delay to ensure the DOM is ready
+      const timer = setTimeout(() => inputRef.current?.focus(), 50);
+      return () => clearTimeout(timer);
+    }
+  }, [open]);
+
+  return (
+    <div ref={containerRef} className="relative">
+      {/* Trigger button */}
+      <button
+        type="button"
+        className="flex items-center gap-2 h-[40px] w-full rounded-[10px] px-3 cursor-pointer transition-all duration-200 text-left"
+        style={{
+          background: 'var(--bg-input)',
+          border: open ? '1px solid var(--accent-gold)' : '1px solid var(--border-default)',
+          color: 'var(--text-primary)',
+        }}
+        onClick={() => {
+          setOpen(!open);
+          if (!open) setFilter('');
+        }}
+      >
+        <User size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+        {selected ? (
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <img
+              src={resolveAvatarUrl({ username: selected.username, userType: selected.userType, botKind: selected.botKind, avatarFileName: selected.avatarFileName })}
+              alt=""
+              className="w-5 h-5 rounded-full object-cover shrink-0"
+              referrerPolicy="no-referrer"
+            />
+            <span className="text-[13px] truncate">{selected.displayName}</span>
+            <span className="text-[11px] opacity-50 truncate">@{selected.username}</span>
+          </div>
+        ) : (
+          <span className="text-[13px] flex-1" style={{ color: 'var(--text-muted)' }}>
+            选择接收用户...
+          </span>
+        )}
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0" style={{ color: 'var(--text-muted)', transform: open ? 'rotate(180deg)' : undefined, transition: 'transform 0.15s' }}>
+          <path d="M6 9l6 6 6-6" />
+        </svg>
+      </button>
+
+      {/* Dropdown panel */}
+      {open && (
+        <div
+          className="absolute left-0 right-0 top-[calc(100%+4px)] z-50 rounded-[12px] flex flex-col overflow-hidden"
+          style={{
+            maxHeight: '280px',
+            background: 'var(--glass-bg-end, rgba(22, 22, 28, 0.98))',
+            border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+            boxShadow: '0 18px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+            backdropFilter: 'blur(40px) saturate(180%)',
+            WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+          }}
+        >
+          {/* Search input - always visible at top */}
+          <div className="px-3 pt-2.5 pb-2 shrink-0" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+            <div className="relative">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--text-muted)' }} />
+              <input
+                ref={inputRef}
+                type="text"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                className="w-full h-[32px] rounded-[8px] pl-8 pr-3 text-[13px] outline-none"
+                style={{
+                  background: 'rgba(255,255,255,0.06)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  color: 'var(--text-primary)',
+                }}
+                placeholder={placeholder}
+                autoFocus
+              />
+            </div>
+          </div>
+
+          {/* User list */}
+          <div className="overflow-auto flex-1 py-1">
+            {filtered.length === 0 ? (
+              <div className="px-3 py-6 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                {q ? `未找到匹配「${filter}」的用户` : '暂无可用用户'}
+              </div>
+            ) : (
+              filtered.map((u) => {
+                const ava = resolveAvatarUrl({ username: u.username, userType: u.userType, botKind: u.botKind, avatarFileName: u.avatarFileName });
+                const isSelected = u.userId === value;
+                const rc = ROLE_COLORS[u.role] || ROLE_COLORS.DEV;
+                const isBot = String(u.userType ?? '').toLowerCase() === 'bot';
+                const activeText = fmtRelative(u.lastActiveAt);
+                const loginText = fmtRelative(u.lastLoginAt);
+                return (
+                  <div
+                    key={u.userId}
+                    className="flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors hover:bg-white/8"
+                    style={isSelected ? { background: 'rgba(var(--accent-gold-rgb, 212,175,55), 0.08)' } : undefined}
+                    onClick={() => {
+                      onChange(u.userId);
+                      setOpen(false);
+                      setFilter('');
+                    }}
+                  >
+                    {/* Avatar */}
+                    <img src={ava} alt="" className="w-8 h-8 rounded-full object-cover shrink-0" referrerPolicy="no-referrer" />
+
+                    {/* Info */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                          {u.displayName}
+                        </span>
+                        {/* Role badge */}
+                        <span
+                          className="shrink-0 text-[9px] font-bold px-1 py-px rounded-[3px] leading-tight"
+                          style={{ background: rc.bg, border: `1px solid ${rc.border}`, color: rc.text }}
+                        >
+                          {u.role}
+                        </span>
+                        {isBot && (
+                          <span className="shrink-0 text-[9px] px-1 py-px rounded-[3px] leading-tight" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.25)', color: 'rgba(34,197,94,0.9)' }}>
+                            BOT
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+                          @{u.username}
+                        </span>
+                        {(activeText || loginText) && (
+                          <span className="text-[10px] shrink-0" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
+                            {activeText ? `活跃 ${activeText}` : loginText ? `登录 ${loginText}` : ''}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Selected indicator */}
+                    {isSelected && (
+                      <Check size={16} className="shrink-0" style={{ color: 'var(--accent-gold)' }} />
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* Footer count */}
+          <div className="px-3 py-1.5 text-[10px] shrink-0" style={{ color: 'var(--text-muted)', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+            {q ? `${filtered.length} / ${users.length} 人匹配` : `共 ${users.length} 人`}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // =================== Create Transfer Dialog ===================
 
 function CreateTransferDialog({
@@ -864,36 +1090,46 @@ function CreateTransferDialog({
               <div className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
                 接收人
               </div>
-              <Select
+              <SearchableUserPicker
+                users={users}
                 value={receiverUserId}
-                onValueChange={setReceiverUserId}
-                placeholder="选择接收用户..."
-                leftIcon={<User size={14} />}
-              >
-                {users.map(u => {
-                  const ava = resolveAvatarUrl({ username: u.username, userType: u.userType, botKind: u.botKind, avatarFileName: u.avatarFileName });
-                  return (
-                    <option key={u.userId} value={u.userId}>
-                      <span className="inline-flex items-center gap-2">
-                        <img src={ava} alt="" className="w-5 h-5 rounded-full object-cover shrink-0" referrerPolicy="no-referrer" />
-                        <span>{u.displayName}</span>
-                        <span className="text-[11px] opacity-50">@{u.username}</span>
-                      </span>
-                    </option>
-                  );
-                })}
-              </Select>
+                onChange={setReceiverUserId}
+                placeholder="搜索用户名或昵称..."
+              />
               {selectedReceiver && (
-                <div className="flex items-center gap-2 px-1">
+                <div
+                  className="flex items-center gap-2.5 px-3 py-2 rounded-[8px]"
+                  style={{ background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.15)' }}
+                >
                   <img
                     src={resolveAvatarUrl({ username: selectedReceiver.username, userType: selectedReceiver.userType, botKind: selectedReceiver.botKind, avatarFileName: selectedReceiver.avatarFileName })}
                     alt=""
-                    className="w-5 h-5 rounded-full object-cover"
+                    className="w-7 h-7 rounded-full object-cover shrink-0"
                     referrerPolicy="no-referrer"
                   />
-                  <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                    将发送系统通知给 {selectedReceiver.displayName}
-                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                        {selectedReceiver.displayName}
+                      </span>
+                      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                        @{selectedReceiver.username}
+                      </span>
+                      <span
+                        className="text-[9px] font-bold px-1 py-px rounded-[3px]"
+                        style={{
+                          background: (ROLE_COLORS[selectedReceiver.role] || ROLE_COLORS.DEV).bg,
+                          border: `1px solid ${(ROLE_COLORS[selectedReceiver.role] || ROLE_COLORS.DEV).border}`,
+                          color: (ROLE_COLORS[selectedReceiver.role] || ROLE_COLORS.DEV).text,
+                        }}
+                      >
+                        {selectedReceiver.role}
+                      </span>
+                    </div>
+                    <div className="text-[11px] mt-0.5" style={{ color: 'rgba(34,197,94,0.8)' }}>
+                      将发送系统通知给此用户
+                    </div>
+                  </div>
                 </div>
               )}
             </section>
@@ -942,12 +1178,11 @@ function CreateTransferDialog({
             {filteredLiteraryWs.length > 0 && (
               <DataSection
                 title="文学创作"
-                icon={<PenLine size={13} />}
+                icon={<PenLine size={15} />}
                 iconColor="rgba(245, 158, 11, 0.9)"
                 count={filteredLiteraryWs.length}
                 selectedCount={filteredLiteraryWs.filter(w => selectedIds.has(`workspace:${w.id}`)).length}
                 onToggleAll={() => toggleAll(filteredLiteraryWs.map(w => `workspace:${w.id}`))}
-                grid
               >
                 {filteredLiteraryWs.map(ws => (
                   <WorkspaceCheckItem
@@ -964,7 +1199,7 @@ function CreateTransferDialog({
             {filteredVisualWs.length > 0 && (
               <DataSection
                 title="视觉创作"
-                icon={<Palette size={13} />}
+                icon={<Palette size={15} />}
                 iconColor="rgba(99, 102, 241, 0.9)"
                 count={filteredVisualWs.length}
                 selectedCount={filteredVisualWs.filter(w => selectedIds.has(`workspace:${w.id}`)).length}
@@ -986,7 +1221,7 @@ function CreateTransferDialog({
             {(filteredPrompts.length > 0 || filteredRefImages.length > 0) && (
               <DataSection
                 title="配置资源"
-                icon={<FileText size={13} />}
+                icon={<FileText size={15} />}
                 iconColor="rgba(34, 197, 94, 0.9)"
                 count={filteredPrompts.length + filteredRefImages.length}
                 selectedCount={
@@ -1233,16 +1468,16 @@ function DataSection({
 }) {
   return (
     <section>
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-3">
           <div
-            className="w-6 h-6 rounded-[6px] flex items-center justify-center"
+            className="w-7 h-7 rounded-[7px] flex items-center justify-center"
             style={{ background: `${iconColor}15`, border: `1px solid ${iconColor}25` }}
           >
             <span style={{ color: iconColor }}>{icon}</span>
           </div>
-          <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>{title}</span>
-          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+          <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>{title}</span>
+          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
             {selectedCount > 0 ? `${selectedCount}/${count}` : count}
           </span>
         </div>
@@ -1255,7 +1490,7 @@ function DataSection({
           {selectedCount === count ? '取消全选' : '全选'}
         </button>
       </div>
-      <div className={grid ? 'grid grid-cols-2 gap-2.5' : 'space-y-1.5'}>
+      <div className={grid ? 'grid grid-cols-2 gap-3' : 'space-y-2'}>
         {children}
       </div>
     </section>
@@ -1279,7 +1514,7 @@ function WorkspaceCheckItem({ ws, checked, onChange }: { ws: ShareableWorkspace;
     return a?.url ? (
       <img src={a.url} alt="" className="h-full w-full object-cover" style={style} loading="lazy" referrerPolicy="no-referrer" />
     ) : (
-      <div className="h-full w-full" style={{ ...style, background: 'var(--nested-block-bg)' }} />
+      <div className="h-full w-full" style={{ ...style, background: 'rgba(255,255,255,0.03)' }} />
     );
   };
 
@@ -1304,84 +1539,156 @@ function WorkspaceCheckItem({ ws, checked, onChange }: { ws: ShareableWorkspace;
     );
   };
 
+  // --- Literary workspace: horizontal card layout ---
+  if (isLiterary) {
+    return (
+      <label
+        className="group cursor-pointer block rounded-[12px] overflow-hidden transition-all duration-200"
+        style={{
+          background: 'rgba(255,255,255,0.03)',
+          border: `1px solid ${checked ? 'rgba(99,102,241,0.5)' : 'rgba(255,255,255,0.08)'}`,
+          boxShadow: checked ? '0 0 0 1px rgba(99,102,241,0.3), 0 2px 8px rgba(99,102,241,0.1)' : 'none',
+        }}
+      >
+        <input type="checkbox" checked={checked} onChange={onChange} className="sr-only" />
+        <div className="flex items-start gap-0">
+          {/* Checkbox + Icon area */}
+          <div className="shrink-0 w-10 flex flex-col items-center gap-1.5 py-3 pl-2.5">
+            <div
+              className="w-[18px] h-[18px] rounded-[5px] flex items-center justify-center transition-all duration-150"
+              style={{
+                background: checked ? 'rgba(99,102,241,0.9)' : 'transparent',
+                border: `1.5px solid ${checked ? 'rgba(99,102,241,0.9)' : 'rgba(255,255,255,0.2)'}`,
+              }}
+            >
+              {checked && <Check size={11} className="text-white" />}
+            </div>
+          </div>
+
+          {/* Content area */}
+          <div className="flex-1 min-w-0 py-2.5 pr-3">
+            {/* Header: title + meta */}
+            <div className="flex items-center gap-2.5 mb-1.5">
+              <PenLine size={14} className="shrink-0" style={{ color: 'rgba(245,158,11,0.7)' }} />
+              <span className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                {ws.title || '未命名'}
+              </span>
+              <span className="text-[11px] shrink-0 ml-auto" style={{ color: 'var(--text-muted)' }}>
+                {ws.assetCount} 张图
+              </span>
+            </div>
+
+            {/* Content preview */}
+            {hasContentPreview && (
+              <div
+                className="text-[11px] leading-[1.6] rounded-[8px] px-2.5 py-2"
+                style={{
+                  color: 'var(--text-secondary)',
+                  background: 'rgba(255,255,255,0.03)',
+                  border: '1px solid rgba(255,255,255,0.05)',
+                  display: '-webkit-box',
+                  WebkitLineClamp: 3,
+                  WebkitBoxOrient: 'vertical',
+                  overflow: 'hidden',
+                }}
+              >
+                {ws.contentPreview}
+              </div>
+            )}
+
+            {/* Folder */}
+            {ws.folderName && (
+              <div className="text-[10px] mt-1.5" style={{ color: 'var(--text-muted)' }}>
+                {ws.folderName}
+              </div>
+            )}
+          </div>
+
+          {/* Jump link */}
+          <a
+            href={wsRoute}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0 w-7 h-7 mt-2.5 mr-2 rounded-[6px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-150"
+            style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.5)' }}
+            onClick={(e) => e.stopPropagation()}
+            title="在新标签页打开"
+          >
+            <ExternalLink size={11} />
+          </a>
+        </div>
+      </label>
+    );
+  }
+
+  // --- Visual workspace: card with cover image ---
   return (
     <label className="group cursor-pointer block">
       <input type="checkbox" checked={checked} onChange={onChange} className="sr-only" />
 
-      {/* Cover area with checkbox overlay */}
+      {/* Cover area */}
       <div
-        className="h-[100px] w-full relative overflow-hidden rounded-[10px] transition-all duration-200"
+        className="aspect-[4/3] w-full relative overflow-hidden rounded-[10px] transition-all duration-200"
         style={{
-          background: hasCover ? 'transparent' : 'var(--bg-input)',
-          border: hasCover ? 'none' : '1px solid var(--nested-block-border)',
-          boxShadow: checked ? '0 0 0 2px rgba(99, 102, 241, 0.6)' : '0 2px 8px rgba(0,0,0,0.15)',
+          background: 'rgba(255,255,255,0.03)',
+          border: `1px solid ${checked ? 'rgba(99,102,241,0.5)' : 'rgba(255,255,255,0.08)'}`,
+          boxShadow: checked ? '0 0 0 1px rgba(99,102,241,0.3), 0 2px 8px rgba(99,102,241,0.1)' : 'none',
         }}
       >
         {hasCover && renderMosaic()}
 
         {/* Checkbox overlay - top left */}
-        <div className="absolute top-1.5 left-1.5 z-10">
+        <div className="absolute top-2 left-2 z-10">
           <div
-            className="w-5 h-5 rounded-[5px] flex items-center justify-center transition-all duration-150 backdrop-blur-sm"
+            className="w-5 h-5 rounded-[5px] flex items-center justify-center transition-all duration-150"
             style={{
-              background: checked ? 'rgba(99, 102, 241, 0.9)' : 'rgba(0,0,0,0.4)',
-              border: `1.5px solid ${checked ? 'rgba(99, 102, 241, 0.9)' : 'rgba(255,255,255,0.3)'}`,
+              background: checked ? 'rgba(99,102,241,0.9)' : 'rgba(0,0,0,0.5)',
+              border: `1.5px solid ${checked ? 'rgba(99,102,241,0.9)' : 'rgba(255,255,255,0.3)'}`,
+              backdropFilter: 'blur(4px)',
             }}
           >
             {checked && <Check size={12} className="text-white" />}
           </div>
         </div>
 
-        {/* Jump link overlay - top right */}
+        {/* Jump link - top right */}
         <a
           href={wsRoute}
           target="_blank"
           rel="noopener noreferrer"
-          className="absolute top-1.5 right-1.5 z-10 w-6 h-6 rounded-[6px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-150 backdrop-blur-sm"
-          style={{ background: 'rgba(0,0,0,0.4)', color: 'rgba(255,255,255,0.8)' }}
+          className="absolute top-2 right-2 z-10 w-6 h-6 rounded-[6px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-150"
+          style={{ background: 'rgba(0,0,0,0.5)', color: 'rgba(255,255,255,0.8)', backdropFilter: 'blur(4px)' }}
           onClick={(e) => e.stopPropagation()}
           title="在新标签页打开"
         >
           <ExternalLink size={11} />
         </a>
 
-        {/* Hover gradient */}
-        <div
-          className="absolute inset-0 opacity-0 transition-opacity duration-200 group-hover:opacity-100 pointer-events-none"
-          style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.5) 0%, transparent 50%)' }}
-        />
-
-        {/* No-cover: content preview for literary, icon placeholder for visual */}
+        {/* No-cover placeholder */}
         {!hasCover && (
-          hasContentPreview ? (
-            <div className="absolute inset-0 p-2.5 overflow-hidden">
-              <div className="flex items-center gap-1 mb-1">
-                <PenLine size={10} style={{ color: 'rgba(245, 158, 11, 0.6)' }} />
-                <span className="text-[9px] font-medium" style={{ color: 'rgba(245, 158, 11, 0.6)' }}>文章预览</span>
-              </div>
-              <div
-                className="text-[10px] leading-[1.5] overflow-hidden"
-                style={{ color: 'var(--text-muted)', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical' }}
-              >
-                {ws.contentPreview}
-              </div>
-            </div>
-          ) : (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <Layers size={24} style={{ color: 'rgba(99, 102, 241, 0.3)' }} />
-            </div>
-          )
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5">
+            <Layers size={22} style={{ color: 'rgba(99,102,241,0.25)' }} />
+            <span className="text-[10px]" style={{ color: 'var(--text-muted)', opacity: 0.5 }}>暂无图片</span>
+          </div>
+        )}
+
+        {/* Bottom gradient overlay for title readability */}
+        {hasCover && (
+          <div
+            className="absolute inset-x-0 bottom-0 h-12 pointer-events-none"
+            style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.6) 0%, transparent 100%)' }}
+          />
         )}
       </div>
 
       {/* Info below cover */}
-      <div className="pt-1.5 px-0.5">
-        <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+      <div className="pt-2 px-0.5">
+        <div className="text-[12px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
           {ws.title || '未命名'}
         </div>
         <div className="text-[10px] flex items-center gap-1.5 mt-0.5" style={{ color: 'var(--text-muted)' }}>
           <span>{ws.assetCount} 张图</span>
-          {ws.folderName && <><span>·</span><span>{ws.folderName}</span></>}
+          {ws.folderName && <><span>·</span><span className="truncate">{ws.folderName}</span></>}
         </div>
       </div>
     </label>

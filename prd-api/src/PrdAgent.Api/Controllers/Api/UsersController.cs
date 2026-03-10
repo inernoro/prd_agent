@@ -1043,6 +1043,39 @@ public class UsersController : ControllerBase
 
         return Ok(ApiResponse<InitializeUsersResponse>.Ok(response));
     }
+
+    /// <summary>
+    /// 批量删除用户
+    /// </summary>
+    [HttpPost("bulk-delete")]
+    [ProducesResponseType(typeof(ApiResponse<BulkDeleteUsersResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> BulkDeleteUsers([FromBody] BulkDeleteUsersRequest request, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+
+        if (request.UserIds == null || request.UserIds.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_INPUT", "请至少选择一个用户"));
+
+        if (request.UserIds.Count > 200)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_INPUT", "单次最多删除 200 个用户"));
+
+        // Prevent deleting self
+        if (request.UserIds.Contains(adminId))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_INPUT", "不能删除自己"));
+
+        _logger.LogWarning("Admin {AdminId} is bulk deleting {Count} users: {UserIds}", adminId, request.UserIds.Count, string.Join(",", request.UserIds));
+
+        var filter = Builders<User>.Filter.In(u => u.UserId, request.UserIds);
+        var deleteResult = await _db.Users.DeleteManyAsync(filter, ct);
+
+        _logger.LogInformation("Bulk deleted {Count} users", deleteResult.DeletedCount);
+
+        return Ok(ApiResponse<BulkDeleteUsersResponse>.Ok(new BulkDeleteUsersResponse
+        {
+            RequestedCount = request.UserIds.Count,
+            DeletedCount = deleteResult.DeletedCount,
+        }));
+    }
 }
 
 public class UpdateStatusRequest
@@ -1097,6 +1130,17 @@ public class AdminBulkCreateUserItem
     /// <summary>PM/DEV/QA/ADMIN</summary>
     public string Role { get; set; } = string.Empty;
     public string? DisplayName { get; set; }
+}
+
+public class BulkDeleteUsersRequest
+{
+    public List<string> UserIds { get; set; } = new();
+}
+
+public class BulkDeleteUsersResponse
+{
+    public int RequestedCount { get; set; }
+    public long DeletedCount { get; set; }
 }
 
 

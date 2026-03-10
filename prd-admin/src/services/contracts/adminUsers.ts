@@ -108,3 +108,10 @@ export type UserProfileResponse = {
 };
 
 export type GetUserProfileContract = (userId: string) => Promise<ApiResponse<UserProfileResponse>>;
+
+export type BulkDeleteUsersResponse = {
+  requestedCount: number;
+  deletedCount: number;
+};
+
+export type BulkDeleteUsersContract = (userIds: string[]) => Promise<ApiResponse<BulkDeleteUsersResponse>>;
