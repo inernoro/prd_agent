@@ -128,6 +128,10 @@ public class MongoDbContext
     public IMongoCollection<ChannelRequestLog> ChannelRequestLogs => _database.GetCollection<ChannelRequestLog>("channel_request_logs");
     public IMongoCollection<ChannelSettings> ChannelSettings => _database.GetCollection<ChannelSettings>("channel_settings");
 
+    // Apple Shortcuts 快捷指令
+    public IMongoCollection<UserCollection> UserCollections => _database.GetCollection<UserCollection>("user_collections");
+    public IMongoCollection<ShortcutTemplate> ShortcutTemplates => _database.GetCollection<ShortcutTemplate>("shortcut_templates");
+
     // Email Channel 邮件通道
     public IMongoCollection<TodoItem> TodoItems => _database.GetCollection<TodoItem>("todo_items");
     public IMongoCollection<EmailClassification> EmailClassifications => _database.GetCollection<EmailClassification>("email_classifications");
@@ -852,6 +856,24 @@ public class MongoDbContext
         ChannelRequestLogs.Indexes.CreateOne(new CreateIndexModel<ChannelRequestLog>(
             Builders<ChannelRequestLog>.IndexKeys.Ascending(x => x.EndedAt),
             new CreateIndexOptions { Name = "ttl_channel_request_logs", ExpireAfter = TimeSpan.FromDays(30) }));
+        // ========== Apple Shortcuts 快捷指令索引 ==========
+
+        // UserCollections：按 userId + createdAt 查询；按 userId + contentType 筛选；按 userId + platform 筛选
+        UserCollections.Indexes.CreateOne(new CreateIndexModel<UserCollection>(
+            Builders<UserCollection>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_user_collections_user_created" }));
+        UserCollections.Indexes.CreateOne(new CreateIndexModel<UserCollection>(
+            Builders<UserCollection>.IndexKeys.Ascending(x => x.UserId).Ascending(x => x.ContentType),
+            new CreateIndexOptions { Name = "idx_user_collections_user_type" }));
+        UserCollections.Indexes.CreateOne(new CreateIndexModel<UserCollection>(
+            Builders<UserCollection>.IndexKeys.Ascending(x => x.UserId).Ascending(x => x.Platform),
+            new CreateIndexOptions { Name = "idx_user_collections_user_platform" }));
+
+        // ShortcutTemplates：按 isDefault + isActive 查询
+        ShortcutTemplates.Indexes.CreateOne(new CreateIndexModel<ShortcutTemplate>(
+            Builders<ShortcutTemplate>.IndexKeys.Ascending(x => x.IsDefault).Ascending(x => x.IsActive),
+            new CreateIndexOptions { Name = "idx_shortcut_templates_default_active" }));
+
         // ToolboxRuns：按 userId + createdAt 查询；按 status + createdAt 查询
         ToolboxRuns.Indexes.CreateOne(new CreateIndexModel<ToolboxRun>(
             Builders<ToolboxRun>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.CreatedAt),
