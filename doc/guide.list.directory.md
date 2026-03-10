@@ -1,30 +1,24 @@
-# MAP 平台文档
+# MAP 平台文档索引
 
-> 最后更新：{{today}}
+> 最后更新：2026-03-10
+>
+> 本文件是 `doc/` 目录的结构化索引，供外部同步工具（语雀、Confluence 等）消费。
+> 元数据定义见 `doc/index.yml`，命名规范见 `doc/rule.doc-naming.md`。
 
-## 命名规则（Manus 必读）
+## 使用方式
 
-本项目所有 `doc/` 下文档**强制使用** `{prefix}.{name}.md` 命名格式，禁止下划线、禁止发明新前缀。
-
-| 前缀 | 对应 | 示例 |
-|------|------|------|
-| `guide.*` | 操作指南 | `guide.list.directory.md` |
-| `design.*` | 技术设计 | `design.model-pool.md` |
-| `rule.*` | 规范约定 | `rule.doc-naming.md` |
-| `spec.*` | 产品规格 | `spec.prd.md` |
-| `plan.*` | 实施计划 | `plan.web-hosting.md` |
-| `report.*` | 周报 | `report.2026-W10.md` |
-
-- 语雀侧文档标题 = `index.yml` 中的中文标题
-- 语雀侧文档唯一标识 = 文件名（不含 `.md`）
-- **Manus 不得自行命名文件**，所有文件名由本仓库 AI（Claude/Cursor）生成并写入 `index.yml`
+| 角色 | 怎么用 |
+|------|--------|
+| AI（Claude/Cursor） | PR 前运行 `doc-sync` 技能，自动对齐 `index.yml` 和本文件 |
+| 外部同步工具 | `git pull` → 读取 `index.yml`（文件名↔标题映射）+ 本文件（目录结构）→ 调用目标平台 API |
+| 开发者 | 直接浏览本文件了解 doc/ 全貌 |
 
 ## 变更历史
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
 | 2026-03-10 | 🟢 新增 | `index.yml` | 文档元数据索引 |
-| 2026-03-10 | 🟢 新增 | `guide.list.directory.md` | 语雀文档目录页 |
+| 2026-03-10 | 🟢 新增 | `guide.list.directory.md` | 文档索引目录页 |
 
 ---
 
@@ -50,8 +44,8 @@
 - [多图组合功能测试备忘录](guide.multi-image-compose-test) `guide.multi-image-compose-test`
   > 多图组合生成功能的测试用例与验证记录
 
-- [语雀文档目录页](guide.list.directory) `guide.list.directory`
-  > 语雀同步的目录页内容，包含变更历史与全量文档列表
+- [文档索引目录页](guide.list.directory) `guide.list.directory`
+  > doc/ 目录的结构化索引，供外部同步工具消费
 
 ### 二、设计文档
 

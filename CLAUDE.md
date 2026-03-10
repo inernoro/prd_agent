@@ -821,11 +821,3 @@ public async Task<IActionResult> Fork(string id)
 
 ---
 
-## 语雀同步
-
-> 同步操作流程、Manus 接口约定等详见 `doc/guide.list.directory.md`。
-
-- `doc/` 下 `.md` 文件命名格式：`{prefix}.{name}.md`，禁止下划线、禁止无前缀
-- 合法前缀：`guide`、`design`、`rule`、`spec`、`plan`、`report`
-- `index.yml` 是唯一的非 `.md` 元数据文件
-- 同步索引（`index.yml` + `guide.list.directory.md`）在 **PR 前统一更新**，不必每次改 doc 都同步

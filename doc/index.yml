@@ -1,8 +1,8 @@
 # doc/index.yml
-# 文档元数据 — 供 Manus AI 语雀同步脚本使用
-# 维护规则见 CLAUDE.md「PRD Agent 仓库文档维护与语雀同步」
+# 文档元数据 — 供外部同步工具（语雀、Confluence 等）消费
+# 命名规范见 doc/rule.doc-naming.md
 
-# 文件夹定义：按语雀目录顺序排列
+# 文件夹定义：按目录顺序排列
 folders:
   - prefix: guide
     name: 一、指南
@@ -26,7 +26,7 @@ docs:
   guide.init-strategy: 初始化策略实现总结
   guide.ai-toolbox-ops: AI 百宝箱运维指南
   guide.multi-image-compose-test: 多图组合功能测试备忘录
-  guide.list.directory: 语雀文档目录页
+  guide.list.directory: 文档索引目录页
 
   # ── 二、设计文档 ──
   design.account-data-sharing: 账户数据共享设计文档
