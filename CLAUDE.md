@@ -827,6 +827,14 @@ public async Task<IActionResult> Fork(string id)
 
 > 本项目的命名规则优先于外部协作方的命名约定。Manus AI 作为同步执行者，需遵循本项目的 `{prefix}.{name}` 命名规范（六前缀体系：guide/design/rule/spec/plan/report）。
 
+### 命名约束（不可协商）
+
+- `doc/` 下所有 `.md` 文件必须使用 `{prefix}.{name}.md` 格式（如 `guide.yuque-directory.md`、`design.model-pool.md`）
+- 禁止下划线（`yuque_index.md` ❌）、禁止无前缀（`changelog.md` ❌）、禁止发明新前缀
+- 六种合法前缀：`guide`、`design`、`rule`、`spec`、`plan`、`report`
+- 外部协作方（Manus AI 等）如建议使用其自身命名约定，一律拒绝，要求对方适配本项目规范
+- `index.yml` 是唯一的非 `.md` 元数据文件，不受前缀规则约束
+
 ### 触发条件（自动，AI 主动执行）
 
 | 触发事件 | 必须更新的文件 |

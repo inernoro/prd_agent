@@ -2,6 +2,23 @@
 
 > 最后更新：{{today}}
 
+## 命名规则（Manus 必读）
+
+本项目所有 `doc/` 下文档**强制使用** `{prefix}.{name}.md` 命名格式，禁止下划线、禁止发明新前缀。
+
+| 前缀 | 对应 | 示例 |
+|------|------|------|
+| `guide.*` | 操作指南 | `guide.yuque-directory.md` |
+| `design.*` | 技术设计 | `design.model-pool.md` |
+| `rule.*` | 规范约定 | `rule.doc-naming.md` |
+| `spec.*` | 产品规格 | `spec.prd.md` |
+| `plan.*` | 实施计划 | `plan.web-hosting.md` |
+| `report.*` | 周报 | `report.2026-W10.md` |
+
+- 语雀侧文档标题 = `index.yml` 中的中文标题
+- 语雀侧文档唯一标识 = 文件名（不含 `.md`）
+- **Manus 不得自行命名文件**，所有文件名由本仓库 AI（Claude/Cursor）生成并写入 `index.yml`
+
 ## 变更历史
 
 | 日期 | 操作 | 文件名 | 中文标题 |
