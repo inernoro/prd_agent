@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
 import { initializeTheme } from '@/stores/themeStore';
 import AppShell from '@/layouts/AppShell';
@@ -127,6 +127,11 @@ function ExecutivePage() {
 }
 
 export default function App() {
+  // 订阅 location 变化，确保 <Routes> 在路由切换时重新渲染
+  // 修复: ReactFlow 的 zustand 内部订阅可能干扰 React 的更新调度，
+  // 导致 navigate() 改变 URL 但 <Routes> 不重新匹配的问题
+  const location = useLocation();
+
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const setPermissions = useAuthStore((s) => s.setPermissions);
   const permissionsLoaded = useAuthStore((s) => s.permissionsLoaded);
@@ -177,7 +182,7 @@ export default function App() {
     <AgentSwitcherProvider>
       <ToastContainer />
       <BranchBadge />
-      <Routes>
+      <Routes location={location}>
         {/* Landing page - public */}
         <Route path="/home" element={<LandingPage />} />
 

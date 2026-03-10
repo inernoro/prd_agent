@@ -646,9 +646,8 @@ function CanvasInner({
   }, [categories, capsuleTypes]);
 
   return (
-    <div className="h-full flex flex-col" style={{ isolation: 'isolate' }}>
-      {/* 顶部标题栏 — z-index 确保在 ReactFlow 画布之上 */}
-      <div className="shrink-0" style={{ position: 'relative', zIndex: 10 }}>
+    <div className="h-full flex flex-col">
+      {/* 顶部标题栏 */}
       <TabBar
         title={workflow.name || '编排画布'}
         icon={<span>{workflow.icon || '🔧'}</span>}
@@ -676,7 +675,6 @@ function CanvasInner({
           </div>
         }
       />
-      </div>
 
       {/* 画布 + 面板 */}
       <div className="flex-1 flex min-h-0">
@@ -719,8 +717,8 @@ function CanvasInner({
           </div>
         )}
 
-        {/* React Flow 画布 — isolation 防止内部 z-index 泄漏到外层 */}
-        <div className="flex-1 min-w-0 relative" ref={reactFlowWrapper} style={{ isolation: 'isolate' }}>
+        {/* React Flow 画布 */}
+        <div className="flex-1 min-w-0 relative" ref={reactFlowWrapper}>
           <ReactFlow
             nodes={nodes}
             edges={edges}
