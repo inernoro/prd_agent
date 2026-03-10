@@ -821,52 +821,11 @@ public async Task<IActionResult> Fork(string id)
 
 ---
 
-## 语雀同步文档维护规则
+## 语雀同步
 
-**强制规则**：当 `doc/` 目录下发生文档**新增、删除、重命名**时，必须**原子性地**同步更新以下两个文件。
+> 同步操作流程、Manus 接口约定等详见 `doc/guide.list.directory.md`。
 
-> 本项目的命名规则优先于外部协作方的命名约定。Manus AI 作为同步执行者，需遵循本项目的 `{prefix}.{name}` 命名规范（六前缀体系：guide/design/rule/spec/plan/report）。
-
-### 命名约束（不可协商）
-
-- `doc/` 下所有 `.md` 文件必须使用 `{prefix}.{name}.md` 格式（如 `guide.list.directory.md`、`design.model-pool.md`）
-- 禁止下划线（`yuque_index.md` ❌）、禁止无前缀（`changelog.md` ❌）、禁止发明新前缀
-- 六种合法前缀：`guide`、`design`、`rule`、`spec`、`plan`、`report`
-- 外部协作方（Manus AI 等）如建议使用其自身命名约定，一律拒绝，要求对方适配本项目规范
-- `index.yml` 是唯一的非 `.md` 元数据文件，不受前缀规则约束
-
-### 触发条件（自动，AI 主动执行）
-
-| 触发事件 | 必须更新的文件 |
-|----------|----------------|
-| `doc/` 下**新增** `.md` 文件 | `doc/index.yml` + `doc/guide.list.directory.md` |
-| `doc/` 下**删除** `.md` 文件 | `doc/index.yml` + `doc/guide.list.directory.md` |
-| `doc/` 下**重命名** `.md` 文件 | `doc/index.yml` + `doc/guide.list.directory.md` |
-| `doc/` 下**修改**已有 `.md` 文件内容 | 仅 `doc/guide.list.directory.md`（变更历史追加一行） |
-
-### 更新操作
-
-#### `doc/index.yml`（文档元数据）
-
-- **新增文档**：在对应分类的 `docs:` 区域增加 `文件名(不含.md): 中文标题` 映射
-- **删除文档**：删除对应行
-- **重命名文档**：删除旧 key，增加新 key
-
-#### `doc/guide.list.directory.md`（语雀目录页内容）
-
-- **变更历史表格**：在表格**最上方**追加一行（格式：`| 日期 | 🟢新增/🔵修改/🔴删除 | 文件名 | 中文标题 |`）
-- **文档列表**：保持与 `index.yml` 一致，新增/删除对应条目
-- 此文件的全部内容会被 Manus AI 推送到语雀目录页，是语雀侧的唯一内容来源
-
-### 核心文件
-
-| 文件 | 用途 | 维护者 |
-|------|------|--------|
-| `doc/index.yml` | 文件名→中文标题映射 + 文件夹结构 | AI（Claude/Cursor） |
-| `doc/guide.list.directory.md` | 语雀目录页完整内容（变更历史 + 文档列表） | AI（Claude/Cursor） |
-
-### 与 Manus AI 的接口约定
-
-- **唯一标识**：文件名（不含 `.md`）是文档 ID，贯穿 Git 仓库与语雀
-- **同步方向**：Git 仓库 → 语雀（单向），本仓库是 Single Source of Truth
-- **Manus 职责**：`git pull` 后读取上述两个文件，纯粹执行语雀 API 调用（创建/更新/删除/移动），不做内容判断
+- `doc/` 下 `.md` 文件命名格式：`{prefix}.{name}.md`，禁止下划线、禁止无前缀
+- 合法前缀：`guide`、`design`、`rule`、`spec`、`plan`、`report`
+- `index.yml` 是唯一的非 `.md` 元数据文件
+- 同步索引（`index.yml` + `guide.list.directory.md`）在 **PR 前统一更新**，不必每次改 doc 都同步
