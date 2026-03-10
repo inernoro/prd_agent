@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
 import { initializeTheme } from '@/stores/themeStore';
 import AppShell from '@/layouts/AppShell';
@@ -127,11 +127,6 @@ function ExecutivePage() {
 }
 
 export default function App() {
-  // 订阅 location 变化，确保 <Routes> 在路由切换时重新渲染
-  // 修复: ReactFlow 的 zustand 内部订阅可能干扰 React 的更新调度，
-  // 导致 navigate() 改变 URL 但 <Routes> 不重新匹配的问题
-  const location = useLocation();
-
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const setPermissions = useAuthStore((s) => s.setPermissions);
   const permissionsLoaded = useAuthStore((s) => s.permissionsLoaded);
@@ -182,7 +177,7 @@ export default function App() {
     <AgentSwitcherProvider>
       <ToastContainer />
       <BranchBadge />
-      <Routes location={location}>
+      <Routes>
         {/* Landing page - public */}
         <Route path="/home" element={<LandingPage />} />
 
@@ -250,6 +245,18 @@ export default function App() {
           }
         />
 
+        {/* 工作流画布 - 独立全屏页面（ReactFlow 的 zustand 会干扰 AppShell 的 Outlet 路由更新） */}
+        <Route
+          path="/workflow-agent/:workflowId/canvas"
+          element={
+            <RequireAuth>
+              <RequirePermission perm="workflow-agent.use">
+                <WorkflowCanvasPage />
+              </RequirePermission>
+            </RequireAuth>
+          }
+        />
+
       <Route
         path="/"
         element={
@@ -272,7 +279,6 @@ export default function App() {
         <Route path="report-agent" element={<RequirePermission perm="report-agent.use"><ReportAgentPage /></RequirePermission>} />
         <Route path="workflow-agent" element={<RequirePermission perm="workflow-agent.use"><WorkflowListPage /></RequirePermission>} />
         <Route path="workflow-agent/:workflowId" element={<RequirePermission perm="workflow-agent.use"><WorkflowEditorPage /></RequirePermission>} />
-        <Route path="workflow-agent/:workflowId/canvas" element={<RequirePermission perm="workflow-agent.use"><WorkflowCanvasPage /></RequirePermission>} />
         <Route path="ai-toolbox" element={<RequirePermission perm="ai-toolbox.use"><AiToolboxPage /></RequirePermission>} />
         <Route path="logs" element={<RequirePermission perm="logs.read"><LlmLogsPage /></RequirePermission>} />
         <Route path="open-platform" element={<RequirePermission perm="open-platform.manage"><OpenPlatformTabsPage /></RequirePermission>} />
