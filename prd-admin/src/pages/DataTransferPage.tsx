@@ -1178,7 +1178,7 @@ function CreateTransferDialog({
             {filteredLiteraryWs.length > 0 && (
               <DataSection
                 title="文学创作"
-                icon={<PenLine size={13} />}
+                icon={<PenLine size={15} />}
                 iconColor="rgba(245, 158, 11, 0.9)"
                 count={filteredLiteraryWs.length}
                 selectedCount={filteredLiteraryWs.filter(w => selectedIds.has(`workspace:${w.id}`)).length}
@@ -1199,7 +1199,7 @@ function CreateTransferDialog({
             {filteredVisualWs.length > 0 && (
               <DataSection
                 title="视觉创作"
-                icon={<Palette size={13} />}
+                icon={<Palette size={15} />}
                 iconColor="rgba(99, 102, 241, 0.9)"
                 count={filteredVisualWs.length}
                 selectedCount={filteredVisualWs.filter(w => selectedIds.has(`workspace:${w.id}`)).length}
@@ -1221,7 +1221,7 @@ function CreateTransferDialog({
             {(filteredPrompts.length > 0 || filteredRefImages.length > 0) && (
               <DataSection
                 title="配置资源"
-                icon={<FileText size={13} />}
+                icon={<FileText size={15} />}
                 iconColor="rgba(34, 197, 94, 0.9)"
                 count={filteredPrompts.length + filteredRefImages.length}
                 selectedCount={
@@ -1468,16 +1468,16 @@ function DataSection({
 }) {
   return (
     <section>
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-3">
           <div
-            className="w-6 h-6 rounded-[6px] flex items-center justify-center"
+            className="w-7 h-7 rounded-[7px] flex items-center justify-center"
             style={{ background: `${iconColor}15`, border: `1px solid ${iconColor}25` }}
           >
             <span style={{ color: iconColor }}>{icon}</span>
           </div>
-          <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>{title}</span>
-          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+          <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>{title}</span>
+          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
             {selectedCount > 0 ? `${selectedCount}/${count}` : count}
           </span>
         </div>
@@ -1568,12 +1568,12 @@ function WorkspaceCheckItem({ ws, checked, onChange }: { ws: ShareableWorkspace;
           {/* Content area */}
           <div className="flex-1 min-w-0 py-2.5 pr-3">
             {/* Header: title + meta */}
-            <div className="flex items-center gap-2 mb-1.5">
-              <PenLine size={12} className="shrink-0" style={{ color: 'rgba(245,158,11,0.7)' }} />
-              <span className="text-[12px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+            <div className="flex items-center gap-2.5 mb-1.5">
+              <PenLine size={14} className="shrink-0" style={{ color: 'rgba(245,158,11,0.7)' }} />
+              <span className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                 {ws.title || '未命名'}
               </span>
-              <span className="text-[10px] shrink-0 ml-auto" style={{ color: 'var(--text-muted)' }}>
+              <span className="text-[11px] shrink-0 ml-auto" style={{ color: 'var(--text-muted)' }}>
                 {ws.assetCount} 张图
               </span>
             </div>
