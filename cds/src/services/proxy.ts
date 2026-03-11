@@ -314,7 +314,7 @@ export class ProxyService {
 
     // Match found → set cookie, 301 to main domain
     // Cookie Domain: use mainDomain so the cookie is readable on the main site
-    console.log(`[switch] "${suffix}" → matched branch "${matchedSlug}", redirecting to ${mainUrl}`);
+    console.log(`[switch] "${fullPath}" → matched branch "${matchedSlug}", redirecting to ${mainUrl}`);
     res.writeHead(301, {
       'Set-Cookie': `cds_branch=${encodeURIComponent(matchedSlug)}; Path=/; SameSite=Lax; Domain=${mainDomain}`,
       Location: mainUrl,
