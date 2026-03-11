@@ -20,7 +20,7 @@ const DEFAULT_CONFIG: CdsConfig = {
 function buildSharedEnv(): Record<string, string> {
   const keys = [
     // Database (raw values, kept for backward compat)
-    'MONGODB_HOST', 'MONGODB_PASSWORD',
+    'MONGODB_HOST', 'MONGODB_USERNAME', 'MONGODB_PASSWORD',
     // Redis (raw values)
     'REDIS_HOST', 'REDIS_PASSWORD',
     // Asset providers
@@ -28,8 +28,11 @@ function buildSharedEnv(): Record<string, string> {
     'TENCENT_COS_BUCKET', 'TENCENT_COS_REGION',
     'TENCENT_COS_SECRET_ID', 'TENCENT_COS_SECRET_KEY',
     'TENCENT_COS_PUBLIC_BASE_URL', 'TENCENT_COS_PREFIX',
-    // Auth
+    // Auth & secrets
     'ROOT_ACCESS_USERNAME', 'ROOT_ACCESS_PASSWORD',
+    'AI_ACCESS_KEY', 'JWT_SECRET', 'GITHUB_PAT',
+    // Pages
+    'PAGES_BASE_URL',
   ];
   const env: Record<string, string> = {};
   for (const key of keys) {
@@ -43,19 +46,24 @@ function buildSharedEnv(): Record<string, string> {
   // The .NET app reads MongoDB:ConnectionString (env: MongoDB__ConnectionString)
   // and Redis:ConnectionString (env: Redis__ConnectionString).
   const mongoHost = process.env.MONGODB_HOST;
+  const mongoUser = process.env.MONGODB_USERNAME || 'root';
   const mongoPass = process.env.MONGODB_PASSWORD;
   if (mongoHost && !env['MongoDB__ConnectionString']) {
+    // MONGODB_HOST may already include port (e.g. "10.7.0.17:57017")
+    const mongoAddr = mongoHost.includes(':') ? mongoHost : `${mongoHost}:27017`;
     env['MongoDB__ConnectionString'] = mongoPass
-      ? `mongodb://root:${encodeURIComponent(mongoPass)}@${mongoHost}:27017`
-      : `mongodb://${mongoHost}:27017`;
+      ? `mongodb://${encodeURIComponent(mongoUser)}:${encodeURIComponent(mongoPass)}@${mongoAddr}`
+      : `mongodb://${mongoAddr}`;
   }
 
   const redisHost = process.env.REDIS_HOST;
   const redisPass = process.env.REDIS_PASSWORD;
   if (redisHost && !env['Redis__ConnectionString']) {
+    // REDIS_HOST may already include port (e.g. "10.7.0.17:65379")
+    const redisAddr = redisHost.includes(':') ? redisHost : `${redisHost}:6379`;
     env['Redis__ConnectionString'] = redisPass
-      ? `${redisHost}:6379,password=${redisPass}`
-      : `${redisHost}:6379`;
+      ? `${redisAddr},password=${redisPass}`
+      : redisAddr;
   }
 
   return env;
