@@ -810,6 +810,119 @@ public static class CapsuleTypeRegistry
         },
     };
 
+    // ──────────── 短视频工作流类 ────────────
+
+    public static readonly CapsuleTypeMeta DouyinParser = new()
+    {
+        TypeKey = CapsuleTypes.DouyinParser,
+        Name = "短视频解析",
+        Description = "解析抖音/TikTok 短视频分享链接，提取视频无水印地址、标题、封面、作者等元数据。支持自动识别各平台链接特征",
+        Icon = "video",
+        Category = CapsuleCategory.Processor,
+        AccentHue = 350,
+        ConfigSchema = new()
+        {
+            new() { Key = "apiBaseUrl", Label = "TikHub API 地址", FieldType = "text", Required = false, DefaultValue = "https://tikhub.io/api/douyin", HelpTip = "TikHub API 基础地址，默认 https://tikhub.io/api/douyin" },
+            new() { Key = "apiKey", Label = "API 密钥", FieldType = "password", Required = true, Placeholder = "Bearer xxx", HelpTip = "TikHub API 认证密钥，可使用 {{secrets.TIKHUB_API_KEY}} 引用工作流密钥" },
+            new() { Key = "videoUrl", Label = "视频链接", FieldType = "text", Required = false, Placeholder = "https://v.douyin.com/xxxxxx/", HelpTip = "抖音分享链接（如留空则从上游输入获取）。支持 v.douyin.com / douyin.com / vm.tiktok.com 等格式" },
+        },
+        DefaultInputSlots = new()
+        {
+            new() { SlotId = "dp-in", Name = "input", DataType = "json", Required = false, Description = "上游数据（可包含 videoUrl 字段）" },
+        },
+        DefaultOutputSlots = new()
+        {
+            new() { SlotId = "dp-out", Name = "videoInfo", DataType = "json", Required = true, Description = "视频元数据（含无水印视频地址、标题、封面、作者等）" },
+        },
+    };
+
+    public static readonly CapsuleTypeMeta VideoDownloader = new()
+    {
+        TypeKey = CapsuleTypes.VideoDownloader,
+        Name = "视频下载到 COS",
+        Description = "将视频 URL 下载并上传到 COS 对象存储，返回稳定可访问的 COS 地址",
+        Icon = "download",
+        Category = CapsuleCategory.Processor,
+        AccentHue = 190,
+        ConfigSchema = new()
+        {
+            new() { Key = "videoUrl", Label = "视频 URL", FieldType = "text", Required = false, Placeholder = "https://...", HelpTip = "直接视频文件地址（如留空则从上游 videoInfo.videoUrl 自动提取）" },
+            new() { Key = "timeoutSeconds", Label = "下载超时（秒）", FieldType = "number", Required = false, DefaultValue = "120", HelpTip = "大文件建议设长一些，默认 120 秒" },
+        },
+        DefaultInputSlots = new()
+        {
+            new() { SlotId = "vd-in", Name = "videoInfo", DataType = "json", Required = false, Description = "上游视频信息（含 videoUrl 字段）" },
+        },
+        DefaultOutputSlots = new()
+        {
+            new() { SlotId = "vd-out", Name = "result", DataType = "json", Required = true, Description = "下载结果（含 cosUrl、fileSize、mimeType）" },
+        },
+    };
+
+    public static readonly CapsuleTypeMeta VideoToText = new()
+    {
+        TypeKey = CapsuleTypes.VideoToText,
+        Name = "视频内容转文本",
+        Description = "使用 LLM 多模态能力或音频转写将视频内容解析为结构化文本（标题、旁白/字幕、画面描述）",
+        Icon = "file-text",
+        Category = CapsuleCategory.Processor,
+        AccentHue = 260,
+        ConfigSchema = new()
+        {
+            new() { Key = "extractMode", Label = "提取模式", FieldType = "select", Required = false, DefaultValue = "metadata", Options = new()
+            {
+                new() { Value = "metadata", Label = "从元数据提取（标题+描述+字幕，快速免费）" },
+                new() { Value = "llm", Label = "LLM 智能分析（结合封面+描述深度解读）" },
+            }, HelpTip = "metadata 模式直接使用上游解析的元数据；llm 模式调用大模型进行深度内容解读" },
+            new() { Key = "systemPrompt", Label = "LLM 系统提示词", FieldType = "textarea", Required = false, Placeholder = "你是一个短视频内容分析专家…", HelpTip = "仅 LLM 模式生效。自定义 LLM 的分析角色和输出要求" },
+        },
+        DefaultInputSlots = new()
+        {
+            new() { SlotId = "vt-in", Name = "videoInfo", DataType = "json", Required = true, Description = "视频信息（含 title、description、subtitles 等字段）" },
+        },
+        DefaultOutputSlots = new()
+        {
+            new() { SlotId = "vt-out", Name = "textContent", DataType = "json", Required = true, Description = "结构化文本内容（title、transcript、description、tags）" },
+        },
+    };
+
+    public static readonly CapsuleTypeMeta TextToCopywriting = new()
+    {
+        TypeKey = CapsuleTypes.TextToCopywriting,
+        Name = "文本转文案",
+        Description = "使用 LLM 将视频文本内容改写为指定风格的营销/分享文案",
+        Icon = "pen-tool",
+        Category = CapsuleCategory.Processor,
+        AccentHue = 320,
+        ConfigSchema = new()
+        {
+            new() { Key = "style", Label = "文案风格", FieldType = "select", Required = false, DefaultValue = "share", Options = new()
+            {
+                new() { Value = "share", Label = "分享推荐（轻松口语）" },
+                new() { Value = "marketing", Label = "营销推广（吸引点击）" },
+                new() { Value = "summary", Label = "内容摘要（简洁客观）" },
+                new() { Value = "xiaohongshu", Label = "小红书风格（emoji+种草）" },
+                new() { Value = "professional", Label = "专业分析（正式报告）" },
+                new() { Value = "custom", Label = "自定义（使用下方提示词）" },
+            }},
+            new() { Key = "customPrompt", Label = "自定义提示词", FieldType = "textarea", Required = false, Placeholder = "请将以下视频内容改写为…", HelpTip = "风格选择「自定义」时生效，支持 {{input}} 引用上游内容" },
+            new() { Key = "maxLength", Label = "文案最大字数", FieldType = "number", Required = false, DefaultValue = "500", HelpTip = "生成文案的最大字数限制" },
+            new() { Key = "includeHashtags", Label = "包含话题标签", FieldType = "select", Required = false, DefaultValue = "true", Options = new()
+            {
+                new() { Value = "true", Label = "是（自动生成相关话题标签）" },
+                new() { Value = "false", Label = "否" },
+            }},
+        },
+        DefaultInputSlots = new()
+        {
+            new() { SlotId = "tc-in", Name = "textContent", DataType = "json", Required = true, Description = "上游文本内容" },
+        },
+        DefaultOutputSlots = new()
+        {
+            new() { SlotId = "tc-out", Name = "copywriting", DataType = "json", Required = true, Description = "生成的文案（含 title、body、hashtags）" },
+        },
+    };
+
     /// <summary>
     /// 按分类排序的全部舱类型
     /// </summary>
@@ -823,6 +936,8 @@ public static class CapsuleTypeRegistry
         Delay, Condition,
         // 输出类
         ReportGenerator, WebpageGenerator, FileExporter, WebhookSender, NotificationSender, VideoGeneration, SitePublisher, EmailSender,
+        // 短视频工作流类
+        DouyinParser, VideoDownloader, VideoToText, TextToCopywriting,
     };
 
     /// <summary>按 TypeKey 查找</summary>

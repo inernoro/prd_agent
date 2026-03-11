@@ -82,6 +82,12 @@ public static class CapsuleExecutor
             CapsuleTypes.SitePublisher => await ExecuteSitePublisherAsync(sp, node, variables, inputArtifacts),
             CapsuleTypes.EmailSender => await ExecuteEmailSenderAsync(sp, node, variables, inputArtifacts),
 
+            // ── 短视频工作流类 ──
+            CapsuleTypes.DouyinParser => await ExecuteDouyinParserAsync(sp, node, variables, inputArtifacts),
+            CapsuleTypes.VideoDownloader => await ExecuteVideoDownloaderAsync(sp, node, variables, inputArtifacts),
+            CapsuleTypes.VideoToText => await ExecuteVideoToTextAsync(sp, node, variables, inputArtifacts, emitEvent),
+            CapsuleTypes.TextToCopywriting => await ExecuteTextToCopywritingAsync(sp, node, variables, inputArtifacts, emitEvent),
+
             // ── 异步任务类 ──
             CapsuleTypes.VideoGeneration => await ExecuteVideoGenerationAsync(sp, node, variables, inputArtifacts, emitEvent),
 
@@ -4474,6 +4480,416 @@ function safeChart(canvasId, config) {
         var outputJson = JsonSerializer.Serialize(result, JsonPretty);
         var artifact = MakeTextArtifact(node, "email-out", "邮件发送结果", outputJson, "application/json");
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
+    }
+
+    // ── 短视频工作流 ──────────────────────────────────────────
+
+    /// <summary>
+    /// 短视频解析：调用 TikHub API 解析抖音/TikTok 链接，提取无水印视频地址和元数据。
+    /// 自动识别链接特征：v.douyin.com, douyin.com, vm.tiktok.com, tiktok.com 等。
+    /// </summary>
+    public static async Task<CapsuleResult> ExecuteDouyinParserAsync(
+        IServiceProvider sp,
+        WorkflowNode node,
+        Dictionary<string, string> variables,
+        List<ExecutionArtifact> inputArtifacts)
+    {
+        var sb = new StringBuilder();
+        var apiBaseUrl = ReplaceVariables(GetConfigString(node, "apiBaseUrl") ?? "https://tikhub.io/api/douyin", variables).TrimEnd('/');
+        var apiKey = ReplaceVariables(GetConfigString(node, "apiKey") ?? "", variables).Trim();
+
+        // 从配置或上游获取视频链接
+        var videoUrl = ReplaceVariables(GetConfigString(node, "videoUrl") ?? "", variables).Trim();
+        if (string.IsNullOrWhiteSpace(videoUrl))
+        {
+            var inputContent = inputArtifacts.FirstOrDefault(a => a.SlotId == "dp-in")?.InlineContent
+                ?? inputArtifacts.FirstOrDefault()?.InlineContent;
+            if (!string.IsNullOrWhiteSpace(inputContent))
+            {
+                // 尝试从 JSON 中提取 videoUrl 字段
+                try
+                {
+                    using var doc = JsonDocument.Parse(inputContent);
+                    videoUrl = doc.RootElement.TryGetProperty("videoUrl", out var vu) ? vu.GetString() ?? "" :
+                               doc.RootElement.TryGetProperty("url", out var u) ? u.GetString() ?? "" :
+                               doc.RootElement.TryGetProperty("link", out var l) ? l.GetString() ?? "" : "";
+                    // 如果 JSON 解析出的还是空，尝试把整个输入当作 URL
+                    if (string.IsNullOrWhiteSpace(videoUrl) && doc.RootElement.ValueKind == JsonValueKind.String)
+                        videoUrl = doc.RootElement.GetString() ?? "";
+                }
+                catch
+                {
+                    // 非 JSON 格式，当作纯文本 URL
+                    videoUrl = inputContent.Trim();
+                }
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(videoUrl))
+            throw new InvalidOperationException("视频链接为空，请在配置或上游输入中提供 videoUrl");
+
+        // 识别链接平台特征
+        var platform = DetectVideoPlatform(videoUrl);
+        sb.AppendLine($"[DouyinParser] 链接: {videoUrl}");
+        sb.AppendLine($"[DouyinParser] 识别平台: {platform}");
+
+        if (string.IsNullOrWhiteSpace(apiKey))
+            throw new InvalidOperationException("TikHub API 密钥未配置（apiKey）");
+
+        var factory = sp.GetRequiredService<IHttpClientFactory>();
+        using var client = factory.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(30);
+
+        if (apiKey.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            client.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", apiKey);
+        else
+            client.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", $"Bearer {apiKey}");
+
+        // 调用 TikHub 解析接口
+        var requestUrl = $"{apiBaseUrl}/video_data?video_url={Uri.EscapeDataString(videoUrl)}";
+        sb.AppendLine($"[DouyinParser] 请求: GET {requestUrl}");
+
+        var response = await client.GetAsync(requestUrl, CancellationToken.None);
+        var responseBody = await response.Content.ReadAsStringAsync(CancellationToken.None);
+
+        sb.AppendLine($"[DouyinParser] 状态: {(int)response.StatusCode}");
+
+        if (!response.IsSuccessStatusCode)
+        {
+            sb.AppendLine($"[DouyinParser] 错误响应: {responseBody[..Math.Min(500, responseBody.Length)]}");
+            throw new InvalidOperationException($"TikHub API 请求失败 (HTTP {(int)response.StatusCode}): {responseBody[..Math.Min(200, responseBody.Length)]}");
+        }
+
+        // 解析响应，提取关键字段并标准化输出
+        using var respDoc = JsonDocument.Parse(responseBody);
+        var root = respDoc.RootElement;
+
+        // TikHub API 响应结构可能嵌套在 data 里
+        var dataElem = root.TryGetProperty("data", out var d) ? d : root;
+
+        var outputObj = new
+        {
+            platform,
+            originalUrl = videoUrl,
+            videoUrl = TryGetJsonString(dataElem, "video_url", "video", "play_addr", "nwm_video_url"),
+            coverUrl = TryGetJsonString(dataElem, "cover_url", "cover", "origin_cover"),
+            title = TryGetJsonString(dataElem, "title", "desc", "description"),
+            author = TryGetJsonString(dataElem, "author", "author_name", "nickname"),
+            authorId = TryGetJsonString(dataElem, "author_id", "author_uid", "uid"),
+            duration = TryGetJsonString(dataElem, "duration", "video_duration"),
+            musicTitle = TryGetJsonString(dataElem, "music_title", "music"),
+            statistics = TryGetJsonString(dataElem, "statistics", "stats"),
+            hashtags = TryGetJsonString(dataElem, "hashtags", "text_extra"),
+            rawResponse = responseBody,
+        };
+
+        sb.AppendLine($"[DouyinParser] 标题: {outputObj.title}");
+        sb.AppendLine($"[DouyinParser] 作者: {outputObj.author}");
+        sb.AppendLine($"[DouyinParser] 视频地址已提取: {(string.IsNullOrWhiteSpace(outputObj.videoUrl) ? "❌ 未找到" : "✅")}");
+
+        var outputJson = JsonSerializer.Serialize(outputObj, JsonPretty);
+        var artifact = MakeTextArtifact(node, "dp-out", "视频信息", outputJson, "application/json");
+        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
+    }
+
+    /// <summary>
+    /// 视频下载到 COS：将视频 URL 下载并上传到对象存储，返回 COS 地址。
+    /// </summary>
+    public static async Task<CapsuleResult> ExecuteVideoDownloaderAsync(
+        IServiceProvider sp,
+        WorkflowNode node,
+        Dictionary<string, string> variables,
+        List<ExecutionArtifact> inputArtifacts)
+    {
+        var sb = new StringBuilder();
+
+        // 获取视频 URL：优先配置，否则从上游 videoInfo 中提取
+        var videoUrl = ReplaceVariables(GetConfigString(node, "videoUrl") ?? "", variables).Trim();
+        if (string.IsNullOrWhiteSpace(videoUrl))
+        {
+            var inputContent = inputArtifacts.FirstOrDefault(a => a.SlotId == "vd-in")?.InlineContent
+                ?? inputArtifacts.FirstOrDefault()?.InlineContent;
+            if (!string.IsNullOrWhiteSpace(inputContent))
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(inputContent);
+                    videoUrl = TryGetJsonString(doc.RootElement, "videoUrl", "video_url", "play_addr", "nwm_video_url");
+                }
+                catch
+                {
+                    videoUrl = inputContent.Trim();
+                }
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(videoUrl))
+            throw new InvalidOperationException("视频 URL 为空，无法下载");
+
+        var timeoutSeconds = int.TryParse(GetConfigString(node, "timeoutSeconds"), out var ts) ? ts : 120;
+
+        sb.AppendLine($"[VideoDownloader] 下载: {videoUrl}");
+
+        var factory = sp.GetRequiredService<IHttpClientFactory>();
+        using var client = factory.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
+
+        // 下载视频
+        byte[] videoBytes;
+        string? contentType;
+        try
+        {
+            var response = await client.GetAsync(videoUrl, CancellationToken.None);
+            response.EnsureSuccessStatusCode();
+            videoBytes = await response.Content.ReadAsByteArrayAsync(CancellationToken.None);
+            contentType = response.Content.Headers.ContentType?.MediaType ?? "video/mp4";
+            sb.AppendLine($"[VideoDownloader] 下载完成: {videoBytes.Length} bytes, type={contentType}");
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"视频下载失败: {ex.Message}");
+        }
+
+        // 上传到 COS
+        var assetStorage = sp.GetRequiredService<PrdAgent.Infrastructure.Services.AssetStorage.IAssetStorage>();
+        var stored = await assetStorage.SaveAsync(videoBytes, contentType ?? "video/mp4", CancellationToken.None, domain: "workflow", type: "video-download");
+
+        sb.AppendLine($"[VideoDownloader] ✅ COS 上传成功: {stored.Url}");
+        sb.AppendLine($"[VideoDownloader] SHA256: {stored.Sha256}, 大小: {stored.SizeBytes} bytes");
+
+        var output = JsonSerializer.Serialize(new
+        {
+            cosUrl = stored.Url,
+            sha256 = stored.Sha256,
+            fileSize = stored.SizeBytes,
+            mimeType = stored.Mime,
+            originalUrl = videoUrl,
+        }, JsonPretty);
+
+        var artifact = MakeTextArtifact(node, "vd-out", "下载结果", output, "application/json");
+        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
+    }
+
+    /// <summary>
+    /// 视频内容转文本：从视频元数据提取或使用 LLM 分析视频内容。
+    /// </summary>
+    public static async Task<CapsuleResult> ExecuteVideoToTextAsync(
+        IServiceProvider sp,
+        WorkflowNode node,
+        Dictionary<string, string> variables,
+        List<ExecutionArtifact> inputArtifacts,
+        EmitEventDelegate? emitEvent)
+    {
+        var sb = new StringBuilder();
+        var extractMode = GetConfigString(node, "extractMode") ?? "metadata";
+
+        var inputContent = inputArtifacts.FirstOrDefault(a => a.SlotId == "vt-in")?.InlineContent
+            ?? inputArtifacts.FirstOrDefault()?.InlineContent;
+
+        if (string.IsNullOrWhiteSpace(inputContent))
+            throw new InvalidOperationException("上游视频信息为空");
+
+        // 解析上游数据
+        string title = "", description = "", author = "", duration = "", hashtags = "", rawTranscript = "";
+        try
+        {
+            using var doc = JsonDocument.Parse(inputContent);
+            var root = doc.RootElement;
+            title = TryGetJsonString(root, "title", "desc") ?? "";
+            description = TryGetJsonString(root, "description", "desc", "title") ?? "";
+            author = TryGetJsonString(root, "author", "author_name", "nickname") ?? "";
+            duration = TryGetJsonString(root, "duration", "video_duration") ?? "";
+            hashtags = TryGetJsonString(root, "hashtags", "text_extra") ?? "";
+            rawTranscript = TryGetJsonString(root, "transcript", "subtitles", "caption") ?? "";
+        }
+        catch
+        {
+            description = inputContent;
+        }
+
+        sb.AppendLine($"[VideoToText] 模式: {extractMode}");
+        sb.AppendLine($"[VideoToText] 标题: {title}");
+
+        if (extractMode == "llm")
+        {
+            // LLM 深度分析模式
+            var systemPrompt = ReplaceVariables(GetConfigString(node, "systemPrompt") ?? "", variables);
+            if (string.IsNullOrWhiteSpace(systemPrompt))
+                systemPrompt = "你是一个短视频内容分析专家。请根据视频的标题、描述和其他元数据，输出结构化的内容分析。输出 JSON 格式，包含 title、transcript（推断的视频旁白/内容文字稿）、keyPoints（关键要点数组）、tags（话题标签数组）。";
+
+            var userPrompt = $"请分析以下短视频内容：\n\n标题：{title}\n描述：{description}\n作者：{author}\n时长：{duration}\n话题标签：{hashtags}\n字幕/文字稿：{rawTranscript}";
+
+            if (emitEvent != null)
+                await emitEvent("capsule-progress", new { message = "使用 LLM 分析视频内容…" });
+
+            var gateway = sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>();
+            var request = new PrdAgent.Infrastructure.LlmGateway.GatewayRequest
+            {
+                AppCallerCode = "video-agent.video-to-text::chat",
+                ModelType = "chat",
+                RequestBody = new System.Text.Json.Nodes.JsonObject
+                {
+                    ["messages"] = new System.Text.Json.Nodes.JsonArray
+                    {
+                        new System.Text.Json.Nodes.JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                        new System.Text.Json.Nodes.JsonObject { ["role"] = "user", ["content"] = userPrompt },
+                    }
+                }
+            };
+
+            var llmResponse = await gateway.SendAsync(request, CancellationToken.None);
+            var llmContent = llmResponse.Content ?? "";
+            sb.AppendLine($"[VideoToText] LLM 分析完成，输出长度: {llmContent.Length}");
+
+            var artifact = MakeTextArtifact(node, "vt-out", "视频文本", llmContent, "application/json");
+            return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
+        }
+        else
+        {
+            // metadata 模式：直接结构化元数据
+            var textContent = new
+            {
+                title,
+                transcript = !string.IsNullOrWhiteSpace(rawTranscript) ? rawTranscript : description,
+                description,
+                author,
+                duration,
+                tags = hashtags,
+            };
+
+            sb.AppendLine($"[VideoToText] 元数据提取完成");
+
+            var outputJson = JsonSerializer.Serialize(textContent, JsonPretty);
+            var artifact = MakeTextArtifact(node, "vt-out", "视频文本", outputJson, "application/json");
+            return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
+        }
+    }
+
+    /// <summary>
+    /// 文本转文案：使用 LLM 将视频文本改写为指定风格的文案。
+    /// </summary>
+    public static async Task<CapsuleResult> ExecuteTextToCopywritingAsync(
+        IServiceProvider sp,
+        WorkflowNode node,
+        Dictionary<string, string> variables,
+        List<ExecutionArtifact> inputArtifacts,
+        EmitEventDelegate? emitEvent)
+    {
+        var sb = new StringBuilder();
+
+        var style = GetConfigString(node, "style") ?? "share";
+        var customPrompt = ReplaceVariables(GetConfigString(node, "customPrompt") ?? "", variables);
+        var maxLengthStr = GetConfigString(node, "maxLength") ?? "500";
+        var includeHashtags = GetConfigString(node, "includeHashtags") != "false";
+
+        var inputContent = inputArtifacts.FirstOrDefault(a => a.SlotId == "tc-in")?.InlineContent
+            ?? inputArtifacts.FirstOrDefault()?.InlineContent;
+
+        if (string.IsNullOrWhiteSpace(inputContent))
+            throw new InvalidOperationException("上游文本内容为空");
+
+        // 构建 LLM 提示词
+        var stylePrompts = new Dictionary<string, string>
+        {
+            ["share"] = "请将以下视频内容改写为轻松的分享推荐文案，口语化、有感染力，适合发朋友圈或微信群分享。",
+            ["marketing"] = "请将以下视频内容改写为吸引点击的营销文案，制造好奇心，引导用户观看。使用数字、对比、设问等技巧。",
+            ["summary"] = "请将以下视频内容改写为简洁客观的内容摘要，提取核心信息，结构清晰。",
+            ["xiaohongshu"] = "请将以下视频内容改写为小红书种草风格的文案，多用 emoji 表情、感叹句，语气活泼可爱，加入种草推荐。",
+            ["professional"] = "请将以下视频内容改写为专业分析文案，逻辑清晰，适合工作汇报或行业分析。",
+        };
+
+        var systemPrompt = style == "custom" && !string.IsNullOrWhiteSpace(customPrompt)
+            ? customPrompt
+            : stylePrompts.GetValueOrDefault(style, stylePrompts["share"]);
+
+        systemPrompt += $"\n\n要求：\n- 文案不超过 {maxLengthStr} 字";
+        if (includeHashtags)
+            systemPrompt += "\n- 在文案末尾附上 3-5 个相关话题标签（格式：#标签#）";
+        systemPrompt += "\n- 输出 JSON 格式：{\"title\": \"标题\", \"body\": \"正文内容\", \"hashtags\": [\"标签1\", \"标签2\"]}";
+
+        sb.AppendLine($"[TextToCopywriting] 风格: {style}");
+
+        if (emitEvent != null)
+            await emitEvent("capsule-progress", new { message = $"使用 LLM 生成 {style} 风格文案…" });
+
+        var gateway = sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>();
+        var request = new PrdAgent.Infrastructure.LlmGateway.GatewayRequest
+        {
+            AppCallerCode = "video-agent.text-to-copy::chat",
+            ModelType = "chat",
+            RequestBody = new System.Text.Json.Nodes.JsonObject
+            {
+                ["messages"] = new System.Text.Json.Nodes.JsonArray
+                {
+                    new System.Text.Json.Nodes.JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                    new System.Text.Json.Nodes.JsonObject { ["role"] = "user", ["content"] = inputContent },
+                }
+            }
+        };
+
+        var llmResponse = await gateway.SendAsync(request, CancellationToken.None);
+        var resultContent = llmResponse.Content ?? "";
+
+        sb.AppendLine($"[TextToCopywriting] ✅ 文案生成完成，长度: {resultContent.Length}");
+
+        var artifact = MakeTextArtifact(node, "tc-out", "文案", resultContent, "application/json");
+        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
+    }
+
+    // ── 短视频辅助方法 ──
+
+    /// <summary>
+    /// 识别视频链接所属平台。
+    /// </summary>
+    private static string DetectVideoPlatform(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return "unknown";
+        var lower = url.ToLowerInvariant();
+
+        // 抖音
+        if (lower.Contains("douyin.com") || lower.Contains("v.douyin.com") || lower.Contains("iesdouyin.com"))
+            return "douyin";
+        // TikTok
+        if (lower.Contains("tiktok.com") || lower.Contains("vm.tiktok.com"))
+            return "tiktok";
+        // 快手
+        if (lower.Contains("kuaishou.com") || lower.Contains("v.kuaishou.com") || lower.Contains("gifshow.com"))
+            return "kuaishou";
+        // B站
+        if (lower.Contains("bilibili.com") || lower.Contains("b23.tv"))
+            return "bilibili";
+        // 小红书
+        if (lower.Contains("xiaohongshu.com") || lower.Contains("xhslink.com"))
+            return "xiaohongshu";
+        // 微博
+        if (lower.Contains("weibo.com") || lower.Contains("weibo.cn"))
+            return "weibo";
+        // YouTube
+        if (lower.Contains("youtube.com") || lower.Contains("youtu.be"))
+            return "youtube";
+        // 西瓜视频
+        if (lower.Contains("ixigua.com"))
+            return "xigua";
+
+        return "unknown";
+    }
+
+    /// <summary>
+    /// 从 JsonElement 中尝试按多个候选 key 取字符串值。
+    /// </summary>
+    private static string TryGetJsonString(JsonElement element, params string[] candidateKeys)
+    {
+        foreach (var key in candidateKeys)
+        {
+            if (element.TryGetProperty(key, out var prop))
+            {
+                if (prop.ValueKind == JsonValueKind.String)
+                    return prop.GetString() ?? "";
+                if (prop.ValueKind != JsonValueKind.Null && prop.ValueKind != JsonValueKind.Undefined)
+                    return prop.GetRawText();
+            }
+        }
+        return "";
     }
 
     // ── 视频生成 ──────────────────────────────────────────────

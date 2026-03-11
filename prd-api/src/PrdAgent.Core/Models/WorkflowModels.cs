@@ -457,6 +457,12 @@ public static class CapsuleTypes
     public const string SitePublisher = "site-publisher";
     public const string EmailSender = "email-sender";
 
+    // 短视频工作流类
+    public const string DouyinParser = "douyin-parser";
+    public const string VideoDownloader = "video-downloader";
+    public const string VideoToText = "video-to-text";
+    public const string TextToCopywriting = "text-to-copywriting";
+
     // 兼容旧类型映射
     public const string DataCollectorLegacy = "data-collector";
     public const string LlmCodeExecutorLegacy = "llm-code-executor";
@@ -472,6 +478,8 @@ public static class CapsuleTypes
         Delay, Condition,
         // 输出类
         ReportGenerator, WebpageGenerator, FileExporter, WebhookSender, NotificationSender, VideoGeneration, SitePublisher, EmailSender,
+        // 短视频工作流类
+        DouyinParser, VideoDownloader, VideoToText, TextToCopywriting,
         // 旧类型兼容
         DataCollectorLegacy, LlmCodeExecutorLegacy, RendererLegacy,
     };
