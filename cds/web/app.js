@@ -98,7 +98,10 @@ async function refreshRemoteBranches() {
   try {
     const data = await api('GET', '/remote-branches');
     remoteBranches = data.branches || [];
-    filterBranches();
+    // 只有搜索框聚焦时才打开下拉框
+    if (document.activeElement === searchInput) {
+      filterBranches();
+    }
   } catch (e) { showToast(e.message, 'error'); }
   btn.disabled = false;
 }
