@@ -94,4 +94,32 @@ export class WorktreeService {
     );
     return result.exitCode === 0 && result.stdout.trim().length > 0;
   }
+
+  /**
+   * Find a remote branch whose name ends with the given suffix.
+   * Returns the full branch name or null.
+   */
+  async findBranchBySuffix(suffix: string): Promise<string | null> {
+    const result = await this.shell.exec(
+      `git ls-remote --heads origin`,
+      { cwd: this.repoRoot },
+    );
+    if (result.exitCode !== 0) return null;
+
+    const lowerSuffix = suffix.toLowerCase();
+    const branches = result.stdout.trim().split('\n')
+      .map(line => line.replace(/^.*refs\/heads\//, '').trim())
+      .filter(Boolean);
+
+    // Exact match first
+    const exact = branches.find(b => b.toLowerCase() === lowerSuffix);
+    if (exact) return exact;
+
+    // Suffix match: branch name ends with the suffix
+    const suffixMatch = branches.find(b => {
+      const lower = b.toLowerCase();
+      return lower.endsWith(`/${lowerSuffix}`) || lower.endsWith(`-${lowerSuffix}`);
+    });
+    return suffixMatch || null;
+  }
 }

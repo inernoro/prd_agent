@@ -22,6 +22,7 @@ stateService.load();
 const worktreeService = new WorktreeService(shell, config.repoRoot);
 const containerService = new ContainerService(shell, config);
 const proxyService = new ProxyService(stateService);
+proxyService.setWorktreeService(worktreeService);
 
 // Configure proxy: resolve branch slug → upstream URL
 proxyService.setResolveUpstream((branchId, profileId) => {
@@ -40,11 +41,44 @@ proxyService.setResolveUpstream((branchId, profileId) => {
   return null;
 });
 
+// ── Build lock for race conditions ──
+// Concurrent requests for the same branch wait for the first build to finish.
+const buildLocks = new Map<string, { promise: Promise<void>; listeners: http.ServerResponse[] }>();
+
 // Auto-build: when a request hits an unbuilt branch
 proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
   const branch = stateService.getBranch(branchSlug);
 
-  if (branch?.status === 'building') {
+  // Race condition: if a build is already in progress for this slug,
+  // add this response as a listener and wait for the first build to finish
+  const existingLock = buildLocks.get(branchSlug);
+  if (existingLock || branch?.status === 'building') {
+    if (existingLock) {
+      // Subscribe this response to receive SSE events from the ongoing build
+      existingLock.listeners.push(res);
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      });
+      try { res.write(`event: step\ndata: ${JSON.stringify({ step: 'wait', status: 'running', title: `分支 "${branchSlug}" 正在构建中，等待完成...` })}\n\n`); } catch { /* */ }
+      // The build promise will resolve/reject and the finally block will end this response
+      existingLock.promise.then(() => {
+        try {
+          res.write(`event: complete\ndata: ${JSON.stringify({ message: `Branch "${branchSlug}" is now running.` })}\n\n`);
+        } catch { /* */ }
+        res.end();
+      }).catch((err) => {
+        try {
+          res.write(`event: error\ndata: ${JSON.stringify({ message: (err as Error).message })}\n\n`);
+        } catch { /* */ }
+        res.end();
+      });
+      return;
+    }
+
+    // Building but no lock (stale state) — inform the client
     res.writeHead(202, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       status: 'building',
@@ -55,7 +89,7 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
 
   // Check if remote branch exists
   const exists = await worktreeService.branchExists(branchSlug);
-  // Also try the original branch name patterns
+  // Also try suffix matching and common patterns
   const candidates = [branchSlug, `feature/${branchSlug}`, `fix/${branchSlug}`];
   let resolvedBranch: string | null = null;
 
@@ -70,6 +104,11 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
     }
   }
 
+  // If still not found, try suffix matching against all remote branches
+  if (!resolvedBranch) {
+    resolvedBranch = await worktreeService.findBranchBySuffix(branchSlug);
+  }
+
   if (!resolvedBranch) {
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
@@ -77,6 +116,9 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
     }));
     return;
   }
+
+  // Recompute slug from the actual resolved branch name
+  const finalSlug = StateService.slugify(resolvedBranch);
 
   // SSE: stream build progress
   res.writeHead(200, {
@@ -86,20 +128,40 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
     'X-Accel-Buffering': 'no',
   });
 
+  const listeners: http.ServerResponse[] = [];
+
   const sendEvent = (event: string, data: unknown) => {
-    try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* */ }
+    const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    try { res.write(msg); } catch { /* */ }
+    // Also broadcast to waiting listeners
+    for (const listener of listeners) {
+      try { listener.write(msg); } catch { /* */ }
+    }
   };
+
+  // Register build lock
+  let resolveLock: () => void;
+  let rejectLock: (err: Error) => void;
+  const lockPromise = new Promise<void>((resolve, reject) => {
+    resolveLock = resolve;
+    rejectLock = reject;
+  });
+  buildLocks.set(finalSlug, { promise: lockPromise, listeners });
+  // Also register under the original slug if different
+  if (finalSlug !== branchSlug) {
+    buildLocks.set(branchSlug, { promise: lockPromise, listeners });
+  }
 
   try {
     // Create worktree if branch doesn't exist locally
-    let entry = stateService.getBranch(branchSlug);
+    let entry = stateService.getBranch(finalSlug);
     if (!entry) {
       sendEvent('step', { step: 'worktree', status: 'running', title: `Creating worktree for ${resolvedBranch}...` });
-      const worktreePath = `${config.worktreeBase}/${branchSlug}`;
+      const worktreePath = `${config.worktreeBase}/${finalSlug}`;
       await worktreeService.create(resolvedBranch, worktreePath);
 
       entry = {
-        id: branchSlug,
+        id: finalSlug,
         branch: resolvedBranch,
         worktreePath,
         services: {},
@@ -123,7 +185,7 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
         const hostPort = stateService.allocatePort(config.portStart);
         entry.services[profile.id] = {
           profileId: profile.id,
-          containerName: `cds-${branchSlug}-${profile.id}`,
+          containerName: `cds-${finalSlug}-${profile.id}`,
           hostPort,
           status: 'building',
         };
@@ -147,18 +209,22 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
     stateService.save();
 
     sendEvent('complete', {
-      message: `Branch "${branchSlug}" is now running.`,
+      message: `Branch "${finalSlug}" is now running.`,
       hint: 'Refresh to access the application.',
     });
+    resolveLock!();
   } catch (err) {
-    const entry = stateService.getBranch(branchSlug);
+    const entry = stateService.getBranch(finalSlug);
     if (entry) {
       entry.status = 'error';
       entry.errorMessage = (err as Error).message;
       stateService.save();
     }
     sendEvent('error', { message: (err as Error).message });
+    rejectLock!(err as Error);
   } finally {
+    buildLocks.delete(finalSlug);
+    if (finalSlug !== branchSlug) buildLocks.delete(branchSlug);
     res.end();
   }
 });
