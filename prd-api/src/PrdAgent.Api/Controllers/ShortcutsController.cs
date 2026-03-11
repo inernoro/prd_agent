@@ -58,6 +58,9 @@ public class ShortcutsController : ControllerBase
 
         _logger.LogInformation("Shortcut created: {Id} {Name} for user {UserId}", shortcut.Id, shortcut.Name, userId);
 
+        var serverUrl = _config["ServerUrl"] ?? $"{Request.Scheme}://{Request.Host}";
+        var installPageUrl = $"{serverUrl}/api/shortcuts/{shortcut.Id}/install-page?t={token}";
+
         // token 明文仅在创建时返回一次
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -66,6 +69,7 @@ public class ShortcutsController : ControllerBase
             shortcut.TokenPrefix,
             shortcut.DeviceType,
             Token = token, // 仅此一次
+            InstallPageUrl = installPageUrl, // 前端用此 URL 生成 QR 码
             shortcut.CreatedAt
         }));
     }
@@ -160,6 +164,9 @@ public class ShortcutsController : ControllerBase
             ICloudUrl = template?.ICloudUrl,
             TemplateName = template?.Name,
             TemplateVersion = template?.Version,
+            // 注意：QR 码应编码此 URL，但 token 需要前端在创建时拿到后拼接
+            // 格式：{serverUrl}/api/shortcuts/{id}/install-page?t={token}
+            InstallPageUrlPattern = $"{serverUrl}/api/shortcuts/{shortcut.Id}/install-page?t={{token}}",
             Instructions = new
             {
                 Ios = new[]
@@ -179,6 +186,227 @@ public class ShortcutsController : ControllerBase
                 }
             }
         }));
+    }
+
+    /// <summary>
+    /// 安装引导页面（公开，iPhone 扫码后打开此页面）
+    /// 页面自动复制 token 到剪贴板 + 提供 iCloud 安装链接
+    /// </summary>
+    [AllowAnonymous]
+    [HttpGet("{id}/install-page")]
+    public async Task<IActionResult> GetInstallPage(
+        [FromRoute] string id,
+        [FromQuery(Name = "t")] string? token,
+        CancellationToken ct)
+    {
+        // 校验 shortcut 存在
+        var shortcut = await _db.UserShortcuts
+            .Find(x => x.Id == id)
+            .FirstOrDefaultAsync(ct);
+
+        if (shortcut == null)
+            return NotFound("快捷指令不存在");
+
+        // 安全校验：token hash 必须匹配
+        if (string.IsNullOrEmpty(token) || !token.StartsWith("scs-"))
+            return BadRequest("无效的 token");
+
+        var hash = UserShortcut.HashToken(token);
+        if (hash != shortcut.TokenHash)
+            return Unauthorized("token 不匹配");
+
+        // 获取默认模板
+        var template = await _db.ShortcutTemplates
+            .Find(x => x.IsDefault && x.IsActive)
+            .FirstOrDefaultAsync(ct);
+
+        var serverUrl = _config["ServerUrl"] ?? $"{Request.Scheme}://{Request.Host}";
+
+        // 返回 HTML 安装引导页
+        var html = GenerateInstallPageHtml(
+            shortcutName: shortcut.Name,
+            token: token,
+            serverUrl: serverUrl,
+            iCloudUrl: template?.ICloudUrl);
+
+        return Content(html, "text/html; charset=utf-8");
+    }
+
+    /// <summary>
+    /// 生成安装引导页 HTML
+    /// </summary>
+    private static string GenerateInstallPageHtml(string shortcutName, string token, string serverUrl, string? iCloudUrl)
+    {
+        // 快捷指令需要的配置数据（JSON），剪贴板复制的就是这段
+        var configJson = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            server = serverUrl,
+            token = token,
+            endpoint = $"{serverUrl}/api/shortcuts/collect"
+        });
+
+        var escapedName = System.Net.WebUtility.HtmlEncode(shortcutName);
+        var escapedConfig = System.Net.WebUtility.HtmlEncode(configJson);
+        // For JS string literal, escape differently
+        var jsConfig = configJson.Replace("\\", "\\\\").Replace("'", "\\'").Replace("\"", "\\\"");
+
+        var iCloudButton = string.IsNullOrEmpty(iCloudUrl)
+            ? "<p style=\"color:#ff9500;margin-top:16px;\">⚠️ 管理员尚未配置快捷指令模板，请联系管理员</p>"
+            : $@"<a href=""{System.Net.WebUtility.HtmlEncode(iCloudUrl)}""
+                   style=""display:inline-block;margin-top:20px;padding:16px 32px;background:#007aff;color:white;
+                          text-decoration:none;border-radius:14px;font-size:18px;font-weight:600;"">
+                   📲 安装快捷指令
+                </a>";
+
+        return $@"<!DOCTYPE html>
+<html lang=""zh-CN"">
+<head>
+    <meta charset=""UTF-8"">
+    <meta name=""viewport"" content=""width=device-width, initial-scale=1.0, user-scalable=no"">
+    <title>安装快捷指令 - {escapedName}</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            color: white; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+            padding: 20px;
+        }}
+        .card {{
+            background: rgba(255,255,255,0.08); backdrop-filter: blur(20px);
+            border-radius: 24px; padding: 40px 32px; max-width: 420px; width: 100%;
+            text-align: center; border: 1px solid rgba(255,255,255,0.12);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        }}
+        .icon {{ font-size: 64px; margin-bottom: 16px; }}
+        h1 {{ font-size: 24px; font-weight: 700; margin-bottom: 8px; }}
+        .subtitle {{ color: rgba(255,255,255,0.6); font-size: 14px; margin-bottom: 32px; }}
+        .step {{
+            background: rgba(255,255,255,0.06); border-radius: 16px; padding: 16px;
+            margin-bottom: 12px; text-align: left; display: flex; align-items: flex-start; gap: 12px;
+        }}
+        .step-num {{
+            background: #007aff; color: white; width: 28px; height: 28px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center; font-weight: 700;
+            font-size: 14px; flex-shrink: 0;
+        }}
+        .step-text {{ font-size: 15px; line-height: 1.5; }}
+        .status {{
+            margin-top: 16px; padding: 12px; border-radius: 12px; font-size: 14px;
+            transition: all 0.3s ease;
+        }}
+        .status.success {{ background: rgba(52,199,89,0.15); color: #34c759; }}
+        .status.waiting {{ background: rgba(255,149,0,0.15); color: #ff9500; }}
+        .config-box {{
+            background: rgba(0,0,0,0.3); border-radius: 12px; padding: 12px;
+            margin-top: 16px; font-family: 'SF Mono', monospace; font-size: 11px;
+            color: rgba(255,255,255,0.5); word-break: break-all; text-align: left;
+            max-height: 60px; overflow: hidden;
+        }}
+        .android-section {{
+            margin-top: 24px; padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.1);
+        }}
+        .android-section h3 {{ font-size: 16px; margin-bottom: 12px; color: rgba(255,255,255,0.7); }}
+        .copy-btn {{
+            display: inline-block; margin-top: 8px; padding: 10px 24px;
+            background: rgba(255,255,255,0.12); color: white; border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 10px; font-size: 14px; cursor: pointer;
+            transition: all 0.2s ease;
+        }}
+        .copy-btn:active {{ background: rgba(255,255,255,0.2); transform: scale(0.97); }}
+    </style>
+</head>
+<body>
+    <div class=""card"">
+        <div class=""icon"">⚡</div>
+        <h1>{escapedName}</h1>
+        <div class=""subtitle"">PrdAgent 快捷指令安装向导</div>
+
+        <div class=""step"">
+            <div class=""step-num"">1</div>
+            <div class=""step-text"">配置已自动复制到剪贴板 ✅</div>
+        </div>
+        <div class=""step"">
+            <div class=""step-num"">2</div>
+            <div class=""step-text"">点击下方按钮安装快捷指令</div>
+        </div>
+        <div class=""step"">
+            <div class=""step-num"">3</div>
+            <div class=""step-text"">首次运行时，快捷指令会自动从剪贴板读取配置</div>
+        </div>
+        <div class=""step"">
+            <div class=""step-num"">4</div>
+            <div class=""step-text"">以后在任意 App 点击<strong>分享 → {escapedName}</strong>即可收藏</div>
+        </div>
+
+        {iCloudButton}
+
+        <div id=""copyStatus"" class=""status waiting"">⏳ 正在复制配置到剪贴板...</div>
+
+        <div class=""config-box"" id=""configBox"">{escapedConfig}</div>
+
+        <button class=""copy-btn"" onclick=""copyConfig()"">📋 重新复制配置</button>
+
+        <div class=""android-section"">
+            <h3>🤖 Android 用户？</h3>
+            <p style=""font-size:13px;color:rgba(255,255,255,0.5);line-height:1.6;"">
+                安装 <strong>HTTP Shortcuts</strong> 应用，新建快捷方式：<br>
+                URL: <code style=""color:#007aff;"">{serverUrl}/api/shortcuts/collect</code><br>
+                方法: POST<br>
+                Header: Authorization: Bearer {token[..Math.Min(12, token.Length)]}...
+            </p>
+            <button class=""copy-btn"" onclick=""copyToken()"">📋 复制完整 Token</button>
+        </div>
+    </div>
+
+    <script>
+        var config = '{jsConfig}';
+        var fullToken = '{token}';
+
+        function copyConfig() {{
+            navigator.clipboard.writeText(config).then(function() {{
+                var el = document.getElementById('copyStatus');
+                el.className = 'status success';
+                el.textContent = '✅ 配置已复制到剪贴板';
+            }}).catch(function() {{
+                // iOS Safari fallback
+                var ta = document.createElement('textarea');
+                ta.value = config;
+                ta.style.position = 'fixed';
+                ta.style.left = '-9999px';
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+                var el = document.getElementById('copyStatus');
+                el.className = 'status success';
+                el.textContent = '✅ 配置已复制到剪贴板';
+            }});
+        }}
+
+        function copyToken() {{
+            navigator.clipboard.writeText(fullToken).then(function() {{
+                alert('Token 已复制');
+            }}).catch(function() {{
+                var ta = document.createElement('textarea');
+                ta.value = fullToken;
+                ta.style.position = 'fixed';
+                ta.style.left = '-9999px';
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+                alert('Token 已复制');
+            }});
+        }}
+
+        // 页面加载自动复制
+        window.addEventListener('load', function() {{
+            setTimeout(copyConfig, 500);
+        }});
+    </script>
+</body>
+</html>";
     }
 
     #endregion
