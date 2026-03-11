@@ -277,6 +277,7 @@ function CreateShortcutDialog({
       onOpenChange={onClose}
       title="创建快捷指令"
       maxWidth={480}
+      contentStyle={{ height: 'auto', maxHeight: '85vh' }}
       content={
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           {/* Name */}
