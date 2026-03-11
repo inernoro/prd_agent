@@ -25,18 +25,18 @@ function showToast(msg, type = 'info', duration) {
 }
 
 function statusLabel(s) {
-  const map = { running: 'Running', building: 'Building', idle: 'Idle', stopped: 'Stopped', error: 'Error' };
+  const map = { running: '运行中', building: '构建中', idle: '空闲', stopped: '已停止', error: '错误' };
   return map[s] || s;
 }
 
 function relativeTime(iso) {
   if (!iso) return '';
   const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
-  if (m < 1) return 'just now';
-  if (m < 60) return `${m}m ago`;
+  if (m < 1) return '刚刚';
+  if (m < 60) return `${m}分钟前`;
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  return `${Math.floor(h / 24)}d ago`;
+  if (h < 24) return `${h}小时前`;
+  return `${Math.floor(h / 24)}天前`;
 }
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
@@ -122,7 +122,7 @@ function filterBranches() {
   ).slice(0, 20);
 
   if (filtered.length === 0) {
-    dropdown.innerHTML = '<div class="branch-dropdown-empty">No matching branches</div>';
+    dropdown.innerHTML = '<div class="branch-dropdown-empty">没有匹配的分支</div>';
   } else {
     dropdown.innerHTML = filtered.map(b => `
       <div class="branch-dropdown-item" onclick="addBranch('${esc(b.name)}')">
@@ -150,7 +150,7 @@ async function addBranch(name) {
   searchInput.value = '';
   try {
     await api('POST', '/branches', { branch: name });
-    showToast(`Branch "${name}" added`, 'success');
+    showToast(`分支 "${name}" 已添加`, 'success');
     await loadBranches();
   } catch (e) { showToast(e.message, 'error'); }
 }
@@ -160,12 +160,16 @@ async function deployBranch(id) {
   busyBranches.add(id);
   renderBranches();
 
-  openLogModal(`Deploy ${id}`);
+  openLogModal(`部署 ${id}`);
   const body = document.getElementById('logModalBody');
-  body.innerHTML = '<div class="live-log-header"><span class="live-dot"></span> Building...</div><div class="live-log-output" id="liveOutput"></div>';
+  body.innerHTML = '<div class="live-log-header"><span class="live-dot"></span> 构建中...</div><div class="live-log-output" id="liveOutput"></div>';
 
   try {
     const res = await fetch(`${API}/branches/${id}/deploy`, { method: 'POST' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `部署失败 (HTTP ${res.status})`);
+    }
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -207,7 +211,7 @@ async function stopBranch(id) {
   if (busyBranches.has(id)) return;
   try {
     await api('POST', `/branches/${id}/stop`);
-    showToast('Services stopped', 'success');
+    showToast('服务已停止', 'success');
     await loadBranches();
   } catch (e) { showToast(e.message, 'error'); }
 }
@@ -215,12 +219,12 @@ async function stopBranch(id) {
 async function pullBranch(id) {
   try {
     const result = await api('POST', `/branches/${id}/pull`);
-    showToast(result.updated ? `Updated: ${result.head}` : 'Already up to date', result.updated ? 'success' : 'info');
+    showToast(result.updated ? `已更新: ${result.head}` : '已是最新', result.updated ? 'success' : 'info');
   } catch (e) { showToast(e.message, 'error'); }
 }
 
 async function removeBranch(id) {
-  if (!confirm(`Remove branch "${id}"? This will stop all services and delete the worktree.`)) return;
+  if (!confirm(`确定删除分支 "${id}"？将停止所有服务并删除工作区。`)) return;
   busyBranches.add(id);
   renderBranches();
   try {
@@ -228,7 +232,7 @@ async function removeBranch(id) {
     // SSE stream — just consume it
     const reader = res.body.getReader();
     while (!(await reader.read()).done) {}
-    showToast(`Branch "${id}" removed`, 'success');
+    showToast(`分支 "${id}" 已删除`, 'success');
   } catch (e) { showToast(e.message, 'error'); }
   busyBranches.delete(id);
   await loadBranches();
@@ -237,7 +241,7 @@ async function removeBranch(id) {
 async function resetBranch(id) {
   try {
     await api('POST', `/branches/${id}/reset`);
-    showToast('Status reset', 'success');
+    showToast('状态已重置', 'success');
     await loadBranches();
   } catch (e) { showToast(e.message, 'error'); }
 }
@@ -246,20 +250,20 @@ async function setDefaultBranch(id) {
   if (!id) return;
   try {
     await api('POST', `/branches/${id}/set-default`);
-    showToast(`Default branch: ${id}`, 'success');
+    showToast(`默认分支已设为: ${id}`, 'success');
     await loadBranches();
   } catch (e) { showToast(e.message, 'error'); }
 }
 
 async function cleanupAll() {
-  if (!confirm('Remove all branches except the default?')) return;
+  if (!confirm('确定清理所有非默认分支？')) return;
   globalBusy = true;
   renderBranches();
   try {
     const res = await fetch(`${API}/cleanup`, { method: 'POST' });
     const reader = res.body.getReader();
     while (!(await reader.read()).done) {}
-    showToast('Cleanup complete', 'success');
+    showToast('清理完成', 'success');
   } catch (e) { showToast(e.message, 'error'); }
   globalBusy = false;
   await loadBranches();
@@ -268,8 +272,8 @@ async function cleanupAll() {
 async function viewContainerLogs(id, profileId) {
   try {
     const data = await api('POST', `/branches/${id}/container-logs`, { profileId });
-    openLogModal(`Logs: ${id}/${profileId || 'default'}`);
-    document.getElementById('logModalBody').innerHTML = `<pre class="live-log-output">${esc(data.logs || 'No logs')}</pre>`;
+    openLogModal(`日志: ${id}/${profileId || '默认'}`);
+    document.getElementById('logModalBody').innerHTML = `<pre class="live-log-output">${esc(data.logs || '暂无日志')}</pre>`;
   } catch (e) { showToast(e.message, 'error'); }
 }
 
@@ -278,21 +282,21 @@ async function viewContainerLogs(id, profileId) {
 function renderBranches() {
   const el = document.getElementById('branchList');
   const count = document.getElementById('branchCount');
-  count.textContent = `${localBranches.length} branches`;
+  count.textContent = `${localBranches.length} 个分支`;
 
   // Update default branch selector
   const sel = document.getElementById('defaultBranch');
-  sel.innerHTML = '<option value="">No default</option>' +
+  sel.innerHTML = '<option value="">无默认</option>' +
     localBranches.map(b => `<option value="${esc(b.id)}" ${b.id === defaultBranch ? 'selected' : ''}>${esc(b.id)}</option>`).join('');
 
   // Update cleanup button
   const cleanupBtn = document.getElementById('cleanupBtn');
   const nonDefault = localBranches.filter(b => b.id !== defaultBranch);
   cleanupBtn.disabled = nonDefault.length === 0 || globalBusy;
-  cleanupBtn.title = nonDefault.length > 0 ? `Clean up ${nonDefault.length} branches` : 'No branches to clean';
+  cleanupBtn.title = nonDefault.length > 0 ? `清理 ${nonDefault.length} 个分支` : '没有可清理的分支';
 
   if (localBranches.length === 0) {
-    el.innerHTML = '<div class="empty-state">No branches yet. Search and add one above.</div>';
+    el.innerHTML = '<div class="empty-state">暂无分支，请在上方搜索并添加。</div>';
     return;
   }
 
@@ -334,13 +338,13 @@ function renderBranches() {
         </div>
         <div class="branch-card-actions-row">
           <button class="primary sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>
-            ${b.status === 'running' ? 'Redeploy' : 'Deploy'}
+            ${b.status === 'running' ? '重新部署' : '部署'}
           </button>
-          ${b.status === 'running' ? `<button class="sm" onclick="stopBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>Stop</button>` : ''}
-          <button class="sm" onclick="pullBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>Pull</button>
-          ${hasError ? `<button class="sm" onclick="resetBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>Reset</button>` : ''}
-          ${!isDefault ? `<button class="sm" onclick="setDefaultBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>Set Default</button>` : ''}
-          <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>Remove</button>
+          ${b.status === 'running' ? `<button class="sm" onclick="stopBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>停止</button>` : ''}
+          <button class="sm" onclick="pullBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>拉取</button>
+          ${hasError ? `<button class="sm" onclick="resetBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>重置</button>` : ''}
+          ${!isDefault ? `<button class="sm" onclick="setDefaultBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>设为默认</button>` : ''}
+          <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>删除</button>
         </div>
       </div>
     `;
@@ -352,7 +356,7 @@ function renderBranches() {
 function renderRoutingRules() {
   const el = document.getElementById('routingRulesList');
   if (routingRules.length === 0) {
-    el.innerHTML = '<div class="config-empty">No routing rules. Requests use X-Branch header or default branch.</div>';
+    el.innerHTML = '<div class="config-empty">暂无路由规则。请求将使用 X-Branch 头或默认分支。</div>';
     return;
   }
   el.innerHTML = routingRules.map(r => `
@@ -364,10 +368,10 @@ function renderRoutingRules() {
         <span class="config-item-target">${esc(r.branch)}</span>
       </div>
       <div class="config-item-actions">
-        <button class="icon-btn xs" onclick="toggleRule('${esc(r.id)}')" title="${r.enabled ? 'Disable' : 'Enable'}">
+        <button class="icon-btn xs" onclick="toggleRule('${esc(r.id)}')" title="${r.enabled ? '禁用' : '启用'}">
           ${r.enabled ? '&#x2713;' : '&#x2717;'}
         </button>
-        <button class="icon-btn xs danger-icon" onclick="deleteRule('${esc(r.id)}')" title="Delete">&times;</button>
+        <button class="icon-btn xs danger-icon" onclick="deleteRule('${esc(r.id)}')" title="删除">&times;</button>
       </div>
     </div>
   `).join('');
@@ -389,7 +393,7 @@ async function saveRule() {
   try {
     await api('POST', '/routing-rules', rule);
     hideAddRuleForm();
-    showToast('Rule added', 'success');
+    showToast('规则已添加', 'success');
     await loadRoutingRules();
   } catch (e) { showToast(e.message, 'error'); }
 }
@@ -406,7 +410,7 @@ async function toggleRule(id) {
 async function deleteRule(id) {
   try {
     await api('DELETE', `/routing-rules/${id}`);
-    showToast('Rule deleted', 'success');
+    showToast('规则已删除', 'success');
     await loadRoutingRules();
   } catch (e) { showToast(e.message, 'error'); }
 }
@@ -417,7 +421,7 @@ function renderProfiles() {
   const el = document.getElementById('profilesList');
   const banner = document.getElementById('quickstartBanner');
   if (buildProfiles.length === 0) {
-    el.innerHTML = '<div class="config-empty">No build profiles. Add one to get started.</div>';
+    el.innerHTML = '<div class="config-empty">暂无构建配置，请添加一个。</div>';
     banner.classList.remove('hidden');
     return;
   }
@@ -431,7 +435,7 @@ function renderProfiles() {
         <code class="config-item-cmd" title="${esc(p.runCommand)}">${esc(p.runCommand)}</code>
       </div>
       <div class="config-item-actions">
-        <button class="icon-btn xs danger-icon" onclick="deleteProfile('${esc(p.id)}')" title="Delete">&times;</button>
+        <button class="icon-btn xs danger-icon" onclick="deleteProfile('${esc(p.id)}')" title="删除">&times;</button>
       </div>
     </div>
   `).join('');
@@ -467,7 +471,7 @@ async function loadDockerImages() {
         `<option value="${esc(img.repo + ':' + img.tag)}">${esc(img.repo)}:${esc(img.tag)} (${esc(img.size)})</option>`
       ).join('');
     } else {
-      group.innerHTML = '<option disabled>No local images found</option>';
+      group.innerHTML = '<option disabled>未找到本地镜像</option>';
     }
   } catch { /* ignore */ }
 }
@@ -490,7 +494,7 @@ async function saveProfile() {
   try {
     await api('POST', '/build-profiles', profile);
     hideAddProfileForm();
-    showToast('Profile added', 'success');
+    showToast('配置已添加', 'success');
     await loadProfiles();
   } catch (e) { showToast(e.message, 'error'); }
 }
@@ -506,7 +510,7 @@ async function runQuickstart() {
 async function deleteProfile(id) {
   try {
     await api('DELETE', `/build-profiles/${id}`);
-    showToast('Profile deleted', 'success');
+    showToast('配置已删除', 'success');
     await loadProfiles();
   } catch (e) { showToast(e.message, 'error'); }
 }
@@ -530,7 +534,7 @@ function renderEnvVars() {
   const el = document.getElementById('envVarsList');
   const entries = Object.entries(customEnvVars);
   if (entries.length === 0) {
-    el.innerHTML = '<div class="config-empty">No custom environment variables. Auto-detected host variables (MONGODB_HOST, etc.) are used by default.</div>';
+    el.innerHTML = '<div class="config-empty">暂无自定义环境变量。默认使用自动检测的主机变量 (MONGODB_HOST 等)。</div>';
     return;
   }
   el.innerHTML = entries.map(([k, v]) => `
@@ -541,8 +545,8 @@ function renderEnvVars() {
         <code class="env-val" title="${esc(v)}">${esc(maskValue(k, v))}</code>
       </div>
       <div class="config-item-actions">
-        <button class="icon-btn xs" onclick="editEnvVar('${esc(k)}')" title="Edit">&#x270E;</button>
-        <button class="icon-btn xs danger-icon" onclick="deleteEnvVar('${esc(k)}')" title="Delete">&times;</button>
+        <button class="icon-btn xs" onclick="editEnvVar('${esc(k)}')" title="编辑">&#x270E;</button>
+        <button class="icon-btn xs danger-icon" onclick="deleteEnvVar('${esc(k)}')" title="删除">&times;</button>
       </div>
     </div>
   `).join('');
@@ -554,13 +558,13 @@ function hideAddEnvForm() { document.getElementById('addEnvForm').classList.add(
 async function saveEnvVar() {
   const key = document.getElementById('envKey').value.trim();
   const value = document.getElementById('envValue').value;
-  if (!key) { showToast('Key is required', 'error'); return; }
+  if (!key) { showToast('键名不能为空', 'error'); return; }
   try {
     await api('PUT', `/env/${encodeURIComponent(key)}`, { value });
     hideAddEnvForm();
     document.getElementById('envKey').value = '';
     document.getElementById('envValue').value = '';
-    showToast(`Set ${key}`, 'success');
+    showToast(`已设置 ${key}`, 'success');
     await loadEnvVars();
   } catch (e) { showToast(e.message, 'error'); }
 }
@@ -574,7 +578,7 @@ async function editEnvVar(key) {
 async function deleteEnvVar(key) {
   try {
     await api('DELETE', `/env/${encodeURIComponent(key)}`);
-    showToast(`Deleted ${key}`, 'success');
+    showToast(`已删除 ${key}`, 'success');
     await loadEnvVars();
   } catch (e) { showToast(e.message, 'error'); }
 }

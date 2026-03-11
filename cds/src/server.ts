@@ -44,7 +44,7 @@ export function createServer(deps: ServerDeps): express.Express {
         res.setHeader('Set-Cookie', `cds_token=${validToken}; Path=/; Max-Age=${30 * 86400}; SameSite=Lax; HttpOnly`);
         res.json({ success: true });
       } else {
-        res.status(401).json({ error: 'Invalid credentials' });
+        res.status(401).json({ error: '用户名或密码错误' });
       }
     });
 
@@ -63,7 +63,7 @@ export function createServer(deps: ServerDeps): express.Express {
       if (token === validToken) return next();
 
       if (req.path.startsWith('/api/')) {
-        res.status(401).json({ error: 'Not authenticated' });
+        res.status(401).json({ error: '未登录' });
       } else {
         res.sendFile(path.join(webDir, 'login.html'));
       }

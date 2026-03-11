@@ -46,18 +46,18 @@
 <body>
   <div class="login-card">
     <h1>Cloud Dev Suite</h1>
-    <div class="subtitle">Enter credentials to access the dashboard</div>
+    <div class="subtitle">请输入凭据以访问控制面板</div>
     <div class="error-msg" id="errorMsg"></div>
     <form onsubmit="doLogin(event)">
       <div class="field">
-        <label for="username">Username</label>
+        <label for="username">用户名</label>
         <input id="username" type="text" autocomplete="username" autofocus required>
       </div>
       <div class="field">
-        <label for="password">Password</label>
+        <label for="password">密码</label>
         <input id="password" type="password" autocomplete="current-password" required>
       </div>
-      <button type="submit" id="loginBtn">Login</button>
+      <button type="submit" id="loginBtn">登录</button>
     </form>
   </div>
   <script>
@@ -77,7 +77,7 @@
           }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Login failed');
+        if (!res.ok) throw new Error(data.error || '登录失败');
         // cookie 已由服务端 Set-Cookie 头设置，直接跳转即可
         location.href = '/';
       } catch (ex) {

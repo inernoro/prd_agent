@@ -14,26 +14,26 @@
         <span class="header-subtitle" id="branchCount"></span>
       </div>
       <div class="header-actions">
-        <button class="icon-btn labeled" onclick="togglePanel('envPanel')" title="Environment Variables">
+        <button class="icon-btn labeled" onclick="togglePanel('envPanel')" title="环境变量">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2.5 2a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h11a.5.5 0 00.5-.5v-11a.5.5 0 00-.5-.5h-11zM1 2.5A1.5 1.5 0 012.5 1h11A1.5 1.5 0 0115 2.5v11a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 011 13.5v-11zM4 5h2v1H4V5zm3 0h5v1H7V5zM4 8h2v1H4V8zm3 0h5v1H7V8zM4 11h2v1H4v-1zm3 0h5v1H7v-1z"/></svg>
-          <span class="icon-btn-label">Env</span>
+          <span class="icon-btn-label">变量</span>
         </button>
-        <button class="icon-btn labeled" onclick="togglePanel('routingPanel')" title="Routing Rules">
+        <button class="icon-btn labeled" onclick="togglePanel('routingPanel')" title="路由规则">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 0113 0h-2.1a8.3 8.3 0 00-.4-2.2 9 9 0 00-1-1.9A4.5 4.5 0 017 7.5H4.5A8.3 8.3 0 001.5 8zm5.5 5.5a6.5 6.5 0 01-5.4-3h2.3c.3 1.2.8 2.2 1.5 3H7zm1-5.5a7.8 7.8 0 014-3.8c.5.6.9 1.2 1.2 1.8H8zm0 1h5.4a8.3 8.3 0 01-.3 2H8.9 8V9zm0 3h3.8c-.6 1.3-1.5 2.4-2.8 3A6.5 6.5 0 018 9z"/></svg>
-          <span class="icon-btn-label">Routes</span>
+          <span class="icon-btn-label">路由</span>
         </button>
-        <button class="icon-btn labeled" onclick="togglePanel('profilePanel')" title="Build Profiles">
+        <button class="icon-btn labeled" onclick="togglePanel('profilePanel')" title="构建配置">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M7.429 1.525a3.5 3.5 0 011.142 0 .75.75 0 01.57.63l.185 1.29a.25.25 0 00.35.193l1.178-.592a.75.75 0 01.808.098 3.5 3.5 0 01.571.571.75.75 0 01.098.808l-.592 1.178a.25.25 0 00.193.35l1.29.185a.75.75 0 01.63.57 3.5 3.5 0 010 1.142.75.75 0 01-.63.57l-1.29.185a.25.25 0 00-.193.35l.592 1.178a.75.75 0 01-.098.808 3.5 3.5 0 01-.571.571.75.75 0 01-.808.098l-1.178-.592a.25.25 0 00-.35.193l-.185 1.29a.75.75 0 01-.57.63 3.5 3.5 0 01-1.142 0 .75.75 0 01-.57-.63l-.185-1.29a.25.25 0 00-.35-.193l-1.178.592a.75.75 0 01-.808-.098 3.5 3.5 0 01-.571-.571.75.75 0 01-.098-.808l.592-1.178a.25.25 0 00-.193-.35l-1.29-.185a.75.75 0 01-.63-.57 3.5 3.5 0 010-1.142.75.75 0 01.63-.57l1.29-.185a.25.25 0 00.193-.35l-.592-1.178a.75.75 0 01.098-.808 3.5 3.5 0 01.571-.571.75.75 0 01.808-.098l1.178.592a.25.25 0 00.35-.193l.185-1.29a.75.75 0 01.57-.63zM8 6a2 2 0 100 4 2 2 0 000-4z"/></svg>
-          <span class="icon-btn-label">Profiles</span>
+          <span class="icon-btn-label">配置</span>
         </button>
-        <button id="cleanupBtn" class="icon-btn labeled danger-icon" onclick="cleanupAll()" disabled title="Clean up all non-default branches">
+        <button id="cleanupBtn" class="icon-btn labeled danger-icon" onclick="cleanupAll()" disabled title="清理所有非默认分支">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM11 3V1.75A1.75 1.75 0 009.25 0h-2.5A1.75 1.75 0 005 1.75V3H2.75a.75.75 0 000 1.5h.3l.8 8.2A1.75 1.75 0 005.6 14.5h4.8a1.75 1.75 0 001.75-1.8l.8-8.2h.3a.75.75 0 000-1.5H11z"/></svg>
-          <span class="icon-btn-label">Clean</span>
+          <span class="icon-btn-label">清理</span>
         </button>
         <span class="header-divider"></span>
-        <button class="icon-btn labeled logout-btn" onclick="doLogout()" title="Logout">
+        <button class="icon-btn labeled logout-btn" onclick="doLogout()" title="退出登录">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2.75C2 1.784 2.784 1 3.75 1h2.5a.75.75 0 010 1.5h-2.5a.25.25 0 00-.25.25v10.5c0 .138.112.25.25.25h2.5a.75.75 0 010 1.5h-2.5A1.75 1.75 0 012 13.25V2.75zm10.44 4.5H6.75a.75.75 0 000 1.5h5.69l-1.97 1.97a.749.749 0 101.06 1.06l3.25-3.25a.749.749 0 000-1.06l-3.25-3.25a.749.749 0 10-1.06 1.06l1.97 1.97z"/></svg>
-          <span class="icon-btn-label">Logout</span>
+          <span class="icon-btn-label">退出</span>
         </button>
       </div>
     </header>
@@ -46,7 +46,7 @@
       </div>
       <div class="gateway-right">
         <select id="defaultBranch" onchange="setDefaultBranch(this.value)">
-          <option value="">No default</option>
+          <option value="">无默认</option>
         </select>
         <span class="gateway-hint" id="routingHint">X-Branch / routing rules</span>
       </div>
@@ -55,34 +55,34 @@
     <!-- Routing rules panel -->
     <div id="routingPanel" class="config-panel hidden">
       <div class="config-panel-header">
-        <span>Routing Rules</span>
-        <button class="sm primary" onclick="showAddRuleForm()">+ Add</button>
+        <span>路由规则</span>
+        <button class="sm primary" onclick="showAddRuleForm()">+ 添加</button>
       </div>
       <p class="config-panel-desc">
-        Route requests to branches by <code>X-Branch</code> header, domain pattern, or URL pattern.
-        Use <code>{{"{{"}}wildcard_*{{"}}"}}</code> placeholders (e.g., <code>{{"{{"}}feature_*{{"}}"}}.dev.example.com</code>).
+        通过 <code>X-Branch</code> 请求头、域名模式或 URL 模式将请求路由到分支。
+        使用 <code>{{"{{"}}wildcard_*{{"}}"}}</code> 占位符（如 <code>{{"{{"}}feature_*{{"}}"}}.dev.example.com</code>）。
       </p>
       <div id="routingRulesList"></div>
       <div id="addRuleForm" class="hidden">
         <div class="form-row">
-          <input id="ruleId" placeholder="Rule ID" class="form-input sm">
-          <input id="ruleName" placeholder="Name" class="form-input sm">
+          <input id="ruleId" placeholder="规则 ID" class="form-input sm">
+          <input id="ruleName" placeholder="名称" class="form-input sm">
         </div>
         <div class="form-row">
           <select id="ruleType" class="form-input sm">
-            <option value="domain">Domain</option>
-            <option value="header">Header</option>
-            <option value="pattern">URL Pattern</option>
+            <option value="domain">域名</option>
+            <option value="header">请求头</option>
+            <option value="pattern">URL 模式</option>
           </select>
-          <input id="ruleMatch" placeholder="Match pattern" class="form-input">
+          <input id="ruleMatch" placeholder="匹配模式" class="form-input">
         </div>
         <div class="form-row">
-          <input id="ruleBranch" placeholder="Target branch (use $1 for capture groups)" class="form-input">
-          <input id="rulePriority" type="number" value="0" placeholder="Priority" class="form-input xs">
+          <input id="ruleBranch" placeholder="目标分支（用 $1 表示捕获组）" class="form-input">
+          <input id="rulePriority" type="number" value="0" placeholder="优先级" class="form-input xs">
         </div>
         <div class="form-row">
-          <button class="primary sm" onclick="saveRule()">Save</button>
-          <button class="sm" onclick="hideAddRuleForm()">Cancel</button>
+          <button class="primary sm" onclick="saveRule()">保存</button>
+          <button class="sm" onclick="hideAddRuleForm()">取消</button>
         </div>
       </div>
     </div>
@@ -90,22 +90,22 @@
     <!-- Build profiles panel -->
     <div id="profilePanel" class="config-panel hidden">
       <div class="config-panel-header">
-        <span>Build Profiles</span>
-        <button class="sm primary" onclick="showAddProfileForm()">+ Add</button>
+        <span>构建配置</span>
+        <button class="sm primary" onclick="showAddProfileForm()">+ 添加</button>
       </div>
       <p class="config-panel-desc">
-        Define how to build and run services. Each profile maps to a Docker container with custom commands.
+        定义如何构建和运行服务。每个配置对应一个 Docker 容器及自定义命令。
       </p>
       <div id="profilesList"></div>
       <div id="addProfileForm" class="hidden">
         <div class="form-row">
-          <input id="profileId" placeholder="Profile ID (e.g., api, web)" class="form-input sm">
-          <input id="profileName" placeholder="Display Name" class="form-input sm">
+          <input id="profileId" placeholder="配置 ID（如 api、web）" class="form-input sm">
+          <input id="profileName" placeholder="显示名称" class="form-input sm">
         </div>
         <div class="form-row">
           <select id="profileImage" class="form-input" onchange="onImageSelect(this.value)">
-            <option value="">-- Select Docker image --</option>
-            <optgroup label="Presets" id="presetImages">
+            <option value="">-- 选择 Docker 镜像 --</option>
+            <optgroup label="预设镜像" id="presetImages">
               <option value="mcr.microsoft.com/dotnet/sdk:8.0">.NET 8 SDK</option>
               <option value="node:20-slim">Node.js 20</option>
               <option value="node:22-slim">Node.js 22</option>
@@ -113,30 +113,30 @@
               <option value="golang:1.22-alpine">Go 1.22</option>
               <option value="rust:1.77-slim">Rust 1.77</option>
             </optgroup>
-            <optgroup label="Local Images" id="localImages"></optgroup>
-            <option value="__custom__">Custom...</option>
+            <optgroup label="本地镜像" id="localImages"></optgroup>
+            <option value="__custom__">自定义...</option>
           </select>
-          <input id="profileImageCustom" placeholder="Custom image" class="form-input hidden">
+          <input id="profileImageCustom" placeholder="自定义镜像" class="form-input hidden">
         </div>
         <div class="form-row">
-          <input id="profileWorkDir" placeholder="Work dir (default: .)" class="form-input sm" value=".">
-          <input id="profilePort" type="number" value="8080" placeholder="Port" class="form-input xs">
+          <input id="profileWorkDir" placeholder="工作目录（默认: .）" class="form-input sm" value=".">
+          <input id="profilePort" type="number" value="8080" placeholder="端口" class="form-input xs">
         </div>
         <div class="form-row">
-          <input id="profileRun" placeholder="Run command (required)" class="form-input">
+          <input id="profileRun" placeholder="运行命令（必填）" class="form-input">
         </div>
         <div id="advancedFields" class="hidden">
           <div class="form-row">
-            <input id="profileInstall" placeholder="Install command (optional)" class="form-input">
+            <input id="profileInstall" placeholder="安装命令（可选）" class="form-input">
           </div>
           <div class="form-row">
-            <input id="profileBuild" placeholder="Build command (optional)" class="form-input">
+            <input id="profileBuild" placeholder="构建命令（可选）" class="form-input">
           </div>
         </div>
         <div class="form-row">
-          <button class="primary sm" onclick="saveProfile()">Save</button>
-          <button class="sm" onclick="hideAddProfileForm()">Cancel</button>
-          <button class="sm text-btn" onclick="toggleAdvanced()">Advanced</button>
+          <button class="primary sm" onclick="saveProfile()">保存</button>
+          <button class="sm" onclick="hideAddProfileForm()">取消</button>
+          <button class="sm text-btn" onclick="toggleAdvanced()">高级选项</button>
         </div>
       </div>
     </div>
@@ -144,22 +144,22 @@
     <!-- Environment variables panel -->
     <div id="envPanel" class="config-panel hidden">
       <div class="config-panel-header">
-        <span>Environment Variables</span>
-        <button class="sm primary" onclick="showAddEnvForm()">+ Add</button>
+        <span>环境变量</span>
+        <button class="sm primary" onclick="showAddEnvForm()">+ 添加</button>
       </div>
       <p class="config-panel-desc">
-        Custom environment variables injected into all containers. Overrides auto-detected host variables.
-        Values with <code>PASSWORD</code> or <code>SECRET</code> in the key are masked in display.
+        自定义环境变量将注入到所有容器中，可覆盖自动检测的主机变量。
+        键名中包含 <code>PASSWORD</code> 或 <code>SECRET</code> 的值在显示时会被遮蔽。
       </p>
       <div id="envVarsList"></div>
       <div id="addEnvForm" class="hidden">
         <div class="form-row">
-          <input id="envKey" placeholder="KEY (e.g., MongoDB__ConnectionString)" class="form-input">
-          <input id="envValue" placeholder="Value" class="form-input">
+          <input id="envKey" placeholder="键名（如 MongoDB__ConnectionString）" class="form-input">
+          <input id="envValue" placeholder="值" class="form-input">
         </div>
         <div class="form-row">
-          <button class="primary sm" onclick="saveEnvVar()">Save</button>
-          <button class="sm" onclick="hideAddEnvForm()">Cancel</button>
+          <button class="primary sm" onclick="saveEnvVar()">保存</button>
+          <button class="sm" onclick="hideAddEnvForm()">取消</button>
         </div>
       </div>
     </div>
@@ -167,10 +167,10 @@
     <!-- Quickstart banner (shown when no profiles) -->
     <div id="quickstartBanner" class="quickstart-banner hidden">
       <div class="quickstart-content">
-        <strong>No build profiles configured.</strong>
-        <span>Load default profiles for this project?</span>
+        <strong>尚未配置构建配置。</strong>
+        <span>是否加载此项目的默认配置？</span>
       </div>
-      <button class="primary sm" onclick="runQuickstart()">Quickstart</button>
+      <button class="primary sm" onclick="runQuickstart()">快速开始</button>
     </div>
 
     <!-- Branch picker -->
@@ -178,7 +178,7 @@
       <div class="branch-picker">
         <div class="branch-picker-input-wrap">
           <svg class="search-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M11.5 7a4.499 4.499 0 11-8.998 0A4.499 4.499 0 0111.5 7zm-.82 4.74a6 6 0 111.06-1.06l3.04 3.04a.75.75 0 11-1.06 1.06l-3.04-3.04z"/></svg>
-          <input id="branchSearch" type="text" placeholder="Search remote branches..." autocomplete="off">
+          <input id="branchSearch" type="text" placeholder="搜索远程分支..." autocomplete="off">
           <button id="refreshRemoteBtn" class="icon-btn sm" onclick="refreshRemoteBranches()" title="Refresh">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
           </button>
@@ -189,7 +189,7 @@
 
     <!-- Branch list -->
     <section id="branchList" class="branch-list">
-      <div class="empty-state">No branches yet. Search and add one above.</div>
+      <div class="empty-state">暂无分支，请在上方搜索并添加。</div>
     </section>
 
     <div id="toast" class="toast hidden"></div>
@@ -200,7 +200,7 @@
     <div class="modal-backdrop" onclick="closeLogModal()"></div>
     <div class="modal-dialog">
       <div class="modal-header">
-        <h2 id="logModalTitle">Logs</h2>
+        <h2 id="logModalTitle">日志</h2>
         <button class="modal-close" onclick="closeLogModal()">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/></svg>
         </button>

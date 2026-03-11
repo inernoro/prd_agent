@@ -114,13 +114,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       const { branch } = req.body as { branch?: string };
       if (!branch) {
-        res.status(400).json({ error: 'branch is required' });
+        res.status(400).json({ error: '分支名称不能为空' });
         return;
       }
 
       const id = StateService.slugify(branch);
       if (stateService.getBranch(id)) {
-        res.status(409).json({ error: `Branch "${id}" already exists` });
+        res.status(409).json({ error: `分支 "${id}" 已存在` });
         return;
       }
 
@@ -148,7 +148,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const { id } = req.params;
     const entry = stateService.getBranch(id);
     if (!entry) {
-      res.status(404).json({ error: `Branch "${id}" not found` });
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
 
@@ -184,7 +184,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const { id } = req.params;
     const entry = stateService.getBranch(id);
     if (!entry) {
-      res.status(404).json({ error: `Branch "${id}" not found` });
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
     try {
@@ -201,13 +201,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const { id } = req.params;
     const entry = stateService.getBranch(id);
     if (!entry) {
-      res.status(404).json({ error: `Branch "${id}" not found` });
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
 
     const profiles = stateService.getBuildProfiles();
     if (profiles.length === 0) {
-      res.status(400).json({ error: 'No build profiles configured. Add at least one build profile first.' });
+      res.status(400).json({ error: '尚未配置构建配置，请先添加至少一个构建配置。' });
       return;
     }
 
@@ -301,7 +301,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const { id } = req.params;
     const entry = stateService.getBranch(id);
     if (!entry) {
-      res.status(404).json({ error: `Branch "${id}" not found` });
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
     try {
@@ -323,7 +323,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const { id } = req.params;
     const entry = stateService.getBranch(id);
     if (!entry) {
-      res.status(404).json({ error: `Branch "${id}" not found` });
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
     stateService.setDefaultBranch(id);
@@ -344,13 +344,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const { profileId } = req.body as { profileId?: string };
     const entry = stateService.getBranch(id);
     if (!entry) {
-      res.status(404).json({ error: `Branch "${id}" not found` });
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
 
     const svc = profileId ? entry.services[profileId] : Object.values(entry.services)[0];
     if (!svc) {
-      res.status(404).json({ error: 'No service found' });
+      res.status(404).json({ error: '未找到服务' });
       return;
     }
 
@@ -368,7 +368,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const { id } = req.params;
     const entry = stateService.getBranch(id);
     if (!entry) {
-      res.status(404).json({ error: `Branch "${id}" not found` });
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
     entry.status = 'idle';
@@ -393,7 +393,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       const rule = req.body as RoutingRule;
       if (!rule.id || !rule.type || !rule.match || !rule.branch) {
-        res.status(400).json({ error: 'id, type, match, and branch are required' });
+        res.status(400).json({ error: 'id、类型、匹配模式和目标分支为必填项' });
         return;
       }
       rule.priority = rule.priority ?? 0;
@@ -436,7 +436,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       const profile = req.body as BuildProfile;
       if (!profile.id || !profile.name || !profile.dockerImage || !profile.runCommand) {
-        res.status(400).json({ error: 'id, name, dockerImage, and runCommand are required' });
+        res.status(400).json({ error: 'id、名称、Docker 镜像和运行命令为必填项' });
         return;
       }
       profile.workDir = profile.workDir || '.';
@@ -495,7 +495,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   router.post('/quickstart', (_req, res) => {
     const existing = stateService.getBuildProfiles();
     if (existing.length > 0) {
-      res.status(409).json({ error: 'Build profiles already configured. Delete existing profiles first or add manually.' });
+      res.status(409).json({ error: '构建配置已存在。请先删除现有配置或手动添加。' });
       return;
     }
 
@@ -547,7 +547,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   router.put('/env', (req, res) => {
     const env = req.body as Record<string, string>;
     if (!env || typeof env !== 'object') {
-      res.status(400).json({ error: 'Body must be a key-value object' });
+      res.status(400).json({ error: '请求体必须是键值对对象' });
       return;
     }
     stateService.setCustomEnv(env);
@@ -559,7 +559,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const { key } = req.params;
     const { value } = req.body as { value?: string };
     if (value === undefined) {
-      res.status(400).json({ error: 'value is required' });
+      res.status(400).json({ error: '值不能为空' });
       return;
     }
     stateService.setCustomEnvVar(key, value);
