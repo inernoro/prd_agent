@@ -41,7 +41,7 @@ export function Dialog({
         <DialogPrimitive.Content
           {...(description ? {} : ({ 'aria-describedby': undefined } as const))}
           className={[
-            'fixed inset-0 z-110 m-auto w-[92vw] rounded-[22px] p-6 flex flex-col prd-dialog-content',
+            'fixed z-110 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[92vw] max-h-[90vh] rounded-[22px] p-6 flex flex-col prd-dialog-content',
             contentClassName ?? '',
           ].join(' ')}
           style={{
