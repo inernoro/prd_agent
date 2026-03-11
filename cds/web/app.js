@@ -317,7 +317,7 @@ function renderBranches() {
             <div class="branch-info">
               <div class="branch-name">
                 ${esc(b.branch)}
-                ${isDefault ? '<span class="active-badge">default</span>' : ''}
+                ${isDefault ? '<span class="active-badge">默认</span>' : ''}
               </div>
               <div class="branch-meta">
                 ${statusLabel(b.status)}
@@ -582,6 +582,65 @@ async function deleteEnvVar(key) {
   try {
     await api('DELETE', `/env/${encodeURIComponent(key)}`);
     showToast(`已删除 ${key}`, 'success');
+    await loadEnvVars();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+function toggleBulkEnvEdit() {
+  const form = document.getElementById('bulkEnvForm');
+  const isHidden = form.classList.contains('hidden');
+  if (isHidden) {
+    // 填充当前变量到 textarea
+    const textarea = document.getElementById('bulkEnvTextarea');
+    const entries = Object.entries(customEnvVars);
+    if (entries.length > 0) {
+      textarea.value = entries.map(([k, v]) => `${k}=${v}`).join('\n');
+    }
+    form.classList.remove('hidden');
+    hideAddEnvForm();
+    updateBulkHint();
+    textarea.addEventListener('input', updateBulkHint);
+  } else {
+    form.classList.add('hidden');
+  }
+}
+
+function updateBulkHint() {
+  const textarea = document.getElementById('bulkEnvTextarea');
+  const hint = document.getElementById('bulkEnvHint');
+  const lines = textarea.value.split('\n').filter(l => l.trim() && !l.trim().startsWith('#'));
+  const validCount = lines.filter(l => l.includes('=')).length;
+  hint.textContent = `${validCount} 个变量`;
+}
+
+async function saveBulkEnv() {
+  const textarea = document.getElementById('bulkEnvTextarea');
+  const lines = textarea.value.split('\n');
+  const newVars = {};
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eqIdx = trimmed.indexOf('=');
+    if (eqIdx <= 0) continue;
+    const key = trimmed.substring(0, eqIdx).trim();
+    const value = trimmed.substring(eqIdx + 1);
+    if (key) newVars[key] = value;
+  }
+
+  try {
+    // 删除不在新列表中的旧变量
+    const oldKeys = Object.keys(customEnvVars);
+    for (const key of oldKeys) {
+      if (!(key in newVars)) {
+        await api('DELETE', `/env/${encodeURIComponent(key)}`);
+      }
+    }
+    // 添加/更新新变量
+    for (const [key, value] of Object.entries(newVars)) {
+      await api('PUT', `/env/${encodeURIComponent(key)}`, { value });
+    }
+    document.getElementById('bulkEnvForm').classList.add('hidden');
+    showToast(`已保存 ${Object.keys(newVars).length} 个环境变量`, 'success');
     await loadEnvVars();
   } catch (e) { showToast(e.message, 'error'); }
 }

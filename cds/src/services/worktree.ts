@@ -13,7 +13,7 @@ export class WorktreeService {
       { cwd: this.repoRoot },
     );
     if (fetchResult.exitCode !== 0) {
-      throw new Error(`Failed to fetch branch "${branch}":\n${combinedOutput(fetchResult)}`);
+      throw new Error(`拉取分支 "${branch}" 失败:\n${combinedOutput(fetchResult)}`);
     }
 
     // Clean up stale worktree if the directory already exists
@@ -30,7 +30,7 @@ export class WorktreeService {
       { cwd: this.repoRoot },
     );
     if (addResult.exitCode !== 0) {
-      throw new Error(`Failed to create worktree for "${branch}":\n${combinedOutput(addResult)}`);
+      throw new Error(`创建工作树 "${branch}" 失败:\n${combinedOutput(addResult)}`);
     }
   }
 
@@ -50,7 +50,7 @@ export class WorktreeService {
       { cwd: targetDir },
     );
     if (fetchResult.exitCode !== 0) {
-      throw new Error(`Failed to fetch:\n${combinedOutput(fetchResult)}`);
+      throw new Error(`拉取失败:\n${combinedOutput(fetchResult)}`);
     }
 
     // Hard reset worktree to latest remote HEAD
@@ -59,7 +59,7 @@ export class WorktreeService {
       { cwd: targetDir },
     );
     if (resetResult.exitCode !== 0) {
-      throw new Error(`Failed to reset:\n${combinedOutput(resetResult)}`);
+      throw new Error(`重置失败:\n${combinedOutput(resetResult)}`);
     }
 
     // Get new SHA after pull
@@ -83,7 +83,7 @@ export class WorktreeService {
       { cwd: this.repoRoot },
     );
     if (result.exitCode !== 0) {
-      throw new Error(`Failed to remove worktree "${targetDir}":\n${combinedOutput(result)}`);
+      throw new Error(`删除工作树 "${targetDir}" 失败:\n${combinedOutput(result)}`);
     }
   }
 

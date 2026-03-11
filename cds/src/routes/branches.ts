@@ -156,21 +156,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       // Stop all running services
       for (const svc of Object.values(entry.services)) {
-        sendSSE(res, 'step', { step: 'stop', status: 'running', title: `Stopping ${svc.containerName}...` });
+        sendSSE(res, 'step', { step: 'stop', status: 'running', title: `正在停止 ${svc.containerName}...` });
         try { await containerService.stop(svc.containerName); } catch { /* ok */ }
-        sendSSE(res, 'step', { step: 'stop', status: 'done', title: `Stopped ${svc.containerName}` });
+        sendSSE(res, 'step', { step: 'stop', status: 'done', title: `已停止 ${svc.containerName}` });
       }
 
       // Remove worktree
-      sendSSE(res, 'step', { step: 'worktree', status: 'running', title: 'Removing worktree...' });
+      sendSSE(res, 'step', { step: 'worktree', status: 'running', title: '正在删除工作树...' });
       try { await worktreeService.remove(entry.worktreePath); } catch { /* ok */ }
-      sendSSE(res, 'step', { step: 'worktree', status: 'done', title: 'Worktree removed' });
+      sendSSE(res, 'step', { step: 'worktree', status: 'done', title: '工作树已删除' });
 
       stateService.removeLogs(id);
       stateService.removeBranch(id);
       stateService.save();
 
-      sendSSE(res, 'complete', { message: `Branch "${id}" removed` });
+      sendSSE(res, 'complete', { message: `分支 "${id}" 已删除` });
     } catch (err) {
       sendSSE(res, 'error', { message: (err as Error).message });
     } finally {
@@ -227,16 +227,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     try {
       // Pull latest code
-      logEvent({ step: 'pull', status: 'running', title: 'Pulling latest code...', timestamp: new Date().toISOString() });
+      logEvent({ step: 'pull', status: 'running', title: '正在拉取最新代码...', timestamp: new Date().toISOString() });
       const pullResult = await worktreeService.pull(entry.branch, entry.worktreePath);
-      logEvent({ step: 'pull', status: 'done', title: `Pulled: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
+      logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
 
       entry.status = 'building';
       stateService.save();
 
       // Build & run each profile
       for (const profile of profiles) {
-        logEvent({ step: `build-${profile.id}`, status: 'running', title: `Building ${profile.name}...`, timestamp: new Date().toISOString() });
+        logEvent({ step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}...`, timestamp: new Date().toISOString() });
 
         // Allocate port and container name if not already assigned
         if (!entry.services[profile.id]) {
@@ -260,11 +260,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
           }, customEnv);
 
           svc.status = 'running';
-          logEvent({ step: `build-${profile.id}`, status: 'done', title: `${profile.name} running on :${svc.hostPort}`, timestamp: new Date().toISOString() });
+          logEvent({ step: `build-${profile.id}`, status: 'done', title: `${profile.name} 运行于 :${svc.hostPort}`, timestamp: new Date().toISOString() });
         } catch (err) {
           svc.status = 'error';
           svc.errorMessage = (err as Error).message;
-          logEvent({ step: `build-${profile.id}`, status: 'error', title: `${profile.name} failed`, log: (err as Error).message, timestamp: new Date().toISOString() });
+          logEvent({ step: `build-${profile.id}`, status: 'error', title: `${profile.name} 失败`, log: (err as Error).message, timestamp: new Date().toISOString() });
         }
       }
 
@@ -279,7 +279,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.save();
 
       sendSSE(res, 'complete', {
-        message: entry.status === 'running' ? 'All services running' : 'Some services failed',
+        message: entry.status === 'running' ? '所有服务已启动' : '部分服务启动失败',
         services: entry.services,
       });
     } catch (err) {
@@ -311,7 +311,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       entry.status = 'idle';
       stateService.save();
-      res.json({ message: 'All services stopped' });
+      res.json({ message: '所有服务已停止' });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -380,7 +380,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
     }
     stateService.save();
-    res.json({ message: 'Branch status reset' });
+    res.json({ message: '分支状态已重置' });
   });
 
   // ── Routing rules CRUD ──
@@ -410,7 +410,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       stateService.updateRoutingRule(req.params.id, req.body);
       stateService.save();
-      res.json({ message: 'Updated' });
+      res.json({ message: '已更新' });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -420,7 +420,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       stateService.removeRoutingRule(req.params.id);
       stateService.save();
-      res.json({ message: 'Deleted' });
+      res.json({ message: '已删除' });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -453,7 +453,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       stateService.updateBuildProfile(req.params.id, req.body);
       stateService.save();
-      res.json({ message: 'Updated' });
+      res.json({ message: '已更新' });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -463,7 +463,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       stateService.removeBuildProfile(req.params.id);
       stateService.save();
-      res.json({ message: 'Deleted' });
+      res.json({ message: '已删除' });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -533,7 +533,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     stateService.save();
 
     res.status(201).json({
-      message: `Quickstart: ${defaults.length} profiles created`,
+      message: `快速启动: 已创建 ${defaults.length} 个构建配置`,
       profiles: defaults,
     });
   });
@@ -552,7 +552,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     stateService.setCustomEnv(env);
     stateService.save();
-    res.json({ message: 'Environment variables updated', env });
+    res.json({ message: '环境变量已更新', env });
   });
 
   router.put('/env/:key', (req, res) => {
@@ -594,17 +594,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const state = stateService.getState();
       const toRemove = Object.values(state.branches).filter(b => b.id !== state.defaultBranch);
       for (const entry of toRemove) {
-        sendSSE(res, 'step', { step: 'cleanup', status: 'running', title: `Removing ${entry.id}...` });
+        sendSSE(res, 'step', { step: 'cleanup', status: 'running', title: `正在删除 ${entry.id}...` });
         for (const svc of Object.values(entry.services)) {
           try { await containerService.stop(svc.containerName); } catch { /* ok */ }
         }
         try { await worktreeService.remove(entry.worktreePath); } catch { /* ok */ }
         stateService.removeLogs(entry.id);
         stateService.removeBranch(entry.id);
-        sendSSE(res, 'step', { step: 'cleanup', status: 'done', title: `Removed ${entry.id}` });
+        sendSSE(res, 'step', { step: 'cleanup', status: 'done', title: `已删除 ${entry.id}` });
       }
       stateService.save();
-      sendSSE(res, 'complete', { message: `Cleaned up ${toRemove.length} branches` });
+      sendSSE(res, 'complete', { message: `已清理 ${toRemove.length} 个分支` });
     } catch (err) {
       sendSSE(res, 'error', { message: (err as Error).message });
     } finally {

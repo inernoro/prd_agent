@@ -81,7 +81,7 @@ export class ContainerService {
     try {
       // Install step (if defined)
       if (profile.installCommand) {
-        onOutput?.(`── Install: ${profile.installCommand} ──\n`);
+        onOutput?.(`── 安装: ${profile.installCommand} ──\n`);
         const installCmd = [
           'docker run --rm',
           `--network ${this.config.dockerNetwork}`,
@@ -98,13 +98,13 @@ export class ContainerService {
           onData: onOutput,
         });
         if (installResult.exitCode !== 0) {
-          throw new Error(`Install failed:\n${combinedOutput(installResult)}`);
+          throw new Error(`安装失败:\n${combinedOutput(installResult)}`);
         }
       }
 
       // Build step (if defined)
       if (profile.buildCommand) {
-        onOutput?.(`\n── Build: ${profile.buildCommand} ──\n`);
+        onOutput?.(`\n── 构建: ${profile.buildCommand} ──\n`);
         const buildCmd = [
           'docker run --rm',
           `--network ${this.config.dockerNetwork}`,
@@ -121,12 +121,12 @@ export class ContainerService {
           onData: onOutput,
         });
         if (buildResult.exitCode !== 0) {
-          throw new Error(`Build failed:\n${combinedOutput(buildResult)}`);
+          throw new Error(`构建失败:\n${combinedOutput(buildResult)}`);
         }
       }
 
       // Run step — start the service in the background
-      onOutput?.(`\n── Run: ${profile.runCommand} ──\n`);
+      onOutput?.(`\n── 运行: ${profile.runCommand} ──\n`);
       const runCmd = [
         'docker run -d',
         `--name ${service.containerName}`,
@@ -142,7 +142,7 @@ export class ContainerService {
 
       const result = await this.shell.exec(runCmd);
       if (result.exitCode !== 0) {
-        throw new Error(`Failed to run service "${service.containerName}":\n${combinedOutput(result)}`);
+        throw new Error(`启动服务 "${service.containerName}" 失败:\n${combinedOutput(result)}`);
       }
     } finally {
       this.removeEnvFile(envFilePath);
@@ -171,7 +171,7 @@ export class ContainerService {
     if (inspect.exitCode !== 0) {
       const create = await this.shell.exec(`docker network create ${this.config.dockerNetwork}`);
       if (create.exitCode !== 0) {
-        throw new Error(`Failed to create Docker network "${this.config.dockerNetwork}":\n${combinedOutput(create)}`);
+        throw new Error(`创建 Docker 网络 "${this.config.dockerNetwork}" 失败:\n${combinedOutput(create)}`);
       }
     }
   }

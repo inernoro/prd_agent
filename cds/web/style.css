@@ -228,6 +228,7 @@ button.text-btn:hover { color: var(--blue); }
   display: flex; justify-content: space-between; align-items: center;
   font-size: 14px; font-weight: 600; margin-bottom: 10px;
 }
+.config-panel-actions { display: flex; gap: 6px; }
 .config-panel-desc {
   font-size: 12px; color: var(--text-secondary);
   margin-bottom: 12px; line-height: 1.6;
@@ -271,6 +272,26 @@ button.text-btn:hover { color: var(--blue); }
 .env-val {
   color: var(--text-secondary); font-size: 11px;
   max-width: 350px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ════════════════ Bulk Textarea ════════════════ */
+
+.bulk-textarea {
+  width: 100%; padding: 12px 14px;
+  background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); color: var(--text-primary);
+  font-family: 'SF Mono', Menlo, Consolas, 'Noto Sans Mono', monospace;
+  font-size: 12px; line-height: 1.6; outline: none; resize: vertical;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+.bulk-textarea:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px rgba(92, 158, 255, 0.1);
+}
+.bulk-textarea::placeholder { color: var(--text-muted); }
+.bulk-env-hint {
+  font-size: 11px; color: var(--text-muted); margin-left: 8px;
+  display: inline-flex; align-items: center;
 }
 
 /* ════════════════ Branch Picker ════════════════ */

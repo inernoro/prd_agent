@@ -128,7 +128,7 @@ describe('ContainerService', () => {
       mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker run/, () => ({ stdout: '', stderr: 'port in use', exitCode: 125 }));
 
-      await expect(service.runService(makeEntry(), makeProfile(), makeService())).rejects.toThrow('run');
+      await expect(service.runService(makeEntry(), makeProfile(), makeService())).rejects.toThrow('启动服务');
     });
 
     it('should throw if install step fails', async () => {
@@ -137,7 +137,7 @@ describe('ContainerService', () => {
       mock.addResponsePattern(/docker run/, () => ({ stdout: '', stderr: 'install error', exitCode: 1 }));
 
       const profile = makeProfile({ installCommand: 'npm install' });
-      await expect(service.runService(makeEntry(), profile, makeService())).rejects.toThrow('Install');
+      await expect(service.runService(makeEntry(), profile, makeService())).rejects.toThrow('安装失败');
     });
   });
 

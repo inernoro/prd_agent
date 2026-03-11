@@ -67,14 +67,14 @@ export class StateService {
 
   addBranch(entry: BranchEntry): void {
     if (this.state.branches[entry.id]) {
-      throw new Error(`Branch "${entry.id}" already exists`);
+      throw new Error(`分支 "${entry.id}" 已存在`);
     }
     this.state.branches[entry.id] = entry;
   }
 
   removeBranch(id: string): void {
     if (!this.state.branches[id]) {
-      throw new Error(`Branch "${id}" not found`);
+      throw new Error(`分支 "${id}" 不存在`);
     }
     delete this.state.branches[id];
     if (this.state.defaultBranch === id) {
@@ -114,7 +114,7 @@ export class StateService {
 
   updateRoutingRule(id: string, updates: Partial<RoutingRule>): void {
     const idx = this.state.routingRules.findIndex(r => r.id === id);
-    if (idx === -1) throw new Error(`Routing rule "${id}" not found`);
+    if (idx === -1) throw new Error(`路由规则 "${id}" 不存在`);
     Object.assign(this.state.routingRules[idx], updates);
     this.state.routingRules.sort((a, b) => a.priority - b.priority);
   }
@@ -135,14 +135,14 @@ export class StateService {
 
   addBuildProfile(profile: BuildProfile): void {
     if (this.state.buildProfiles.some(p => p.id === profile.id)) {
-      throw new Error(`Build profile "${profile.id}" already exists`);
+      throw new Error(`构建配置 "${profile.id}" 已存在`);
     }
     this.state.buildProfiles.push(profile);
   }
 
   updateBuildProfile(id: string, updates: Partial<BuildProfile>): void {
     const idx = this.state.buildProfiles.findIndex(p => p.id === id);
-    if (idx === -1) throw new Error(`Build profile "${id}" not found`);
+    if (idx === -1) throw new Error(`构建配置 "${id}" 不存在`);
     Object.assign(this.state.buildProfiles[idx], updates);
   }
 

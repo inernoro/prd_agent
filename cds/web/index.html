@@ -145,7 +145,10 @@
     <div id="envPanel" class="config-panel hidden">
       <div class="config-panel-header">
         <span>环境变量</span>
-        <button class="sm primary" onclick="showAddEnvForm()">+ 添加</button>
+        <div class="config-panel-actions">
+          <button class="sm" onclick="toggleBulkEnvEdit()">批量编辑</button>
+          <button class="sm primary" onclick="showAddEnvForm()">+ 添加</button>
+        </div>
       </div>
       <p class="config-panel-desc">
         自定义环境变量将注入到所有容器中，可覆盖自动检测的主机变量。
@@ -160,6 +163,18 @@
         <div class="form-row">
           <button class="primary sm" onclick="saveEnvVar()">保存</button>
           <button class="sm" onclick="hideAddEnvForm()">取消</button>
+        </div>
+      </div>
+      <div id="bulkEnvForm" class="hidden">
+        <p class="config-panel-desc" style="margin-top:8px">
+          每行一个变量，格式为 <code>KEY=VALUE</code>。空行和 <code>#</code> 开头的注释会被忽略。
+          保存时将<strong>替换</strong>所有现有变量。
+        </p>
+        <textarea id="bulkEnvTextarea" class="bulk-textarea" rows="10" placeholder="# 数据库连接&#10;MongoDB__ConnectionString=mongodb://localhost:27017&#10;REDIS_URL=redis://localhost:6379&#10;&#10;# 密钥&#10;JWT_SECRET=your-secret-here"></textarea>
+        <div class="form-row" style="margin-top:8px">
+          <button class="primary sm" onclick="saveBulkEnv()">保存全部</button>
+          <button class="sm" onclick="toggleBulkEnvEdit()">取消</button>
+          <span class="bulk-env-hint" id="bulkEnvHint"></span>
         </div>
       </div>
     </div>

@@ -73,7 +73,7 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
   if (!resolvedBranch) {
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
-      error: `Branch "${branchSlug}" not found on remote.`,
+      error: `远程仓库中未找到分支 "${branchSlug}"`,
     }));
     return;
   }
