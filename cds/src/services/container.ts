@@ -45,19 +45,14 @@ export class ContainerService {
     const srcMount = path.join(entry.worktreePath, profile.workDir);
 
     // Build environment variables (later entries override earlier ones)
-    // Priority: sharedEnv (auto) < customEnv (user dashboard) < profile.env (per-profile)
-    const mergedEnv: Record<string, string> = {
-      ...this.config.sharedEnv,
-    };
+    // Priority: customEnv (user dashboard) < profile.env (per-profile)
+    // Only user-configured env vars are sent — no auto-detected business vars.
+    const mergedEnv: Record<string, string> = {};
 
-    // User-defined env vars from dashboard (override auto-detected)
+    // User-defined env vars from dashboard
     if (customEnv) {
       Object.assign(mergedEnv, customEnv);
     }
-
-    // Re-synthesize .NET connection strings from merged env
-    // (customEnv may have updated MONGODB_HOST/PASSWORD etc.)
-    this.synthesizeConnectionStrings(mergedEnv);
 
     // JWT
     mergedEnv['Jwt__Secret'] = this.config.jwt.secret;
@@ -179,32 +174,6 @@ export class ContainerService {
       throw new Error(`获取环境变量失败:\n${combinedOutput(result)}`);
     }
     return result.stdout;
-  }
-
-  /**
-   * Re-synthesize .NET-style connection strings from individual host/password vars.
-   * This ensures that if customEnv overrides MONGODB_HOST or MONGODB_PASSWORD,
-   * the derived MongoDB__ConnectionString is also updated.
-   */
-  private synthesizeConnectionStrings(env: Record<string, string>): void {
-    const mongoHost = env['MONGODB_HOST'];
-    const mongoUser = env['MONGODB_USERNAME'] || 'root';
-    const mongoPass = env['MONGODB_PASSWORD'];
-    if (mongoHost) {
-      const mongoAddr = mongoHost.includes(':') ? mongoHost : `${mongoHost}:27017`;
-      env['MongoDB__ConnectionString'] = mongoPass
-        ? `mongodb://${encodeURIComponent(mongoUser)}:${encodeURIComponent(mongoPass)}@${mongoAddr}/?authSource=admin`
-        : `mongodb://${mongoAddr}`;
-    }
-
-    const redisHost = env['REDIS_HOST'];
-    const redisPass = env['REDIS_PASSWORD'];
-    if (redisHost) {
-      const redisAddr = redisHost.includes(':') ? redisHost : `${redisHost}:6379`;
-      env['Redis__ConnectionString'] = redisPass
-        ? `${redisAddr},password=${redisPass}`
-        : redisAddr;
-    }
   }
 
   private async ensureNetwork(): Promise<void> {

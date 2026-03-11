@@ -115,7 +115,7 @@ export interface CdsState {
   logs: Record<string, OperationLog[]>;
   /** Default branch (used when no routing rule matches) */
   defaultBranch: string | null;
-  /** User-defined environment variables (override auto-detected sharedEnv) */
+  /** User-defined environment variables (sent to containers on deploy) */
   customEnv: Record<string, string>;
 }
 
@@ -131,7 +131,7 @@ export interface CdsConfig {
   dockerNetwork: string;
   /** Port range start for branch services */
   portStart: number;
-  /** Shared environment variables (from host env) */
+  /** Shared environment variables (reserved, currently empty) */
   sharedEnv: Record<string, string>;
   /** JWT settings (passed through to branch services) */
   jwt: {
