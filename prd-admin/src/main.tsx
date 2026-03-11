@@ -43,6 +43,23 @@ try {
   // ignore
 }
 
+// DEBUG: 全局 popstate 监听 — 检测浏览器前进/后退是否触发
+window.addEventListener('popstate', (e) => {
+  console.log('[main] popstate fired! new URL:', window.location.href, 'state:', e.state);
+});
+
+// DEBUG: 拦截 history.pushState / replaceState — 检测 navigate() 是否调用了 history API
+const origPush = history.pushState.bind(history);
+const origReplace = history.replaceState.bind(history);
+history.pushState = (...args: Parameters<typeof history.pushState>) => {
+  console.log('[main] history.pushState called:', args[2]);
+  origPush(...args);
+};
+history.replaceState = (...args: Parameters<typeof history.replaceState>) => {
+  console.log('[main] history.replaceState called:', args[2]);
+  origReplace(...args);
+};
+
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
     <BrowserRouter basename={import.meta.env.BASE_URL}>

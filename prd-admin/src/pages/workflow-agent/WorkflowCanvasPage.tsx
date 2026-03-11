@@ -15,6 +15,21 @@ import { WorkflowCanvas } from './WorkflowCanvas';
 export function WorkflowCanvasPage() {
   const { workflowId } = useParams<{ workflowId: string }>();
   const navigate = useNavigate();
+
+  // DEBUG: 追踪 navigate 调用
+  const debugNavigate = (path: string) => {
+    console.log('[CanvasPage] navigate() called, target:', path);
+    console.log('[CanvasPage] current URL before navigate:', window.location.href);
+    navigate(path);
+    // 延迟检查 navigate 是否生效
+    setTimeout(() => {
+      console.log('[CanvasPage] URL after navigate (50ms):', window.location.href);
+    }, 50);
+    setTimeout(() => {
+      console.log('[CanvasPage] URL after navigate (500ms):', window.location.href);
+    }, 500);
+  };
+
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
   const [execution, setExecution] = useState<WorkflowExecution | null>(null);
   const [loading, setLoading] = useState(true);
@@ -53,7 +68,7 @@ export function WorkflowCanvasPage() {
       <div className="h-full flex flex-col items-center justify-center gap-4">
         <AlertCircle className="w-8 h-8" style={{ color: 'rgba(239,68,68,0.6)' }} />
         <span className="text-[13px]" style={{ color: 'var(--text-muted)' }}>工作流不存在</span>
-        <Button variant="secondary" size="sm" onClick={() => navigate('/workflow-agent')}>
+        <Button variant="secondary" size="sm" onClick={() => debugNavigate('/workflow-agent')}>
           <ArrowLeft className="w-4 h-4" /> 返回列表
         </Button>
       </div>
@@ -64,7 +79,7 @@ export function WorkflowCanvasPage() {
     <WorkflowCanvas
       workflow={workflow}
       execution={execution}
-      onBack={() => navigate(`/workflow-agent/${workflowId}`)}
+      onBack={() => debugNavigate(`/workflow-agent/${workflowId}`)}
       onSaved={(wf) => setWorkflow(wf)}
     />
   );
