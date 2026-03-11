@@ -359,8 +359,8 @@ button.text-btn:hover { color: var(--blue); }
 .branch-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px; }
 
 .branch-card {
-  display: flex; flex-direction: column; gap: 10px;
-  padding: 14px 16px; background: var(--bg-card);
+  display: flex; flex-direction: column; gap: 0;
+  padding: 12px 16px; background: var(--bg-card);
   border: 1px solid var(--border); border-radius: var(--radius);
   transition: all var(--transition);
   box-shadow: var(--shadow-sm);
@@ -379,12 +379,24 @@ button.text-btn:hover { color: var(--blue); }
   background: linear-gradient(135deg, rgba(239, 83, 80, 0.03) 0%, var(--bg-card) 100%);
 }
 
-.branch-card-header { display: flex; gap: 10px; align-items: flex-start; }
-.branch-card-left { display: flex; gap: 10px; flex: 1; min-width: 0; align-items: flex-start; }
+.branch-card-header {
+  display: flex; gap: 10px; align-items: center; cursor: pointer;
+  user-select: none; -webkit-user-select: none;
+}
+.branch-card-header:hover .branch-chevron { color: var(--text-primary); }
+.branch-card-left { display: flex; gap: 10px; flex: 1; min-width: 0; align-items: center; }
+.branch-card-right {
+  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+}
+.branch-chevron {
+  color: var(--text-muted); transition: transform 0.2s ease, color 0.2s ease;
+  flex-shrink: 0;
+}
+.branch-chevron.open { transform: rotate(180deg); }
 
 .status-dot {
   width: 10px; height: 10px; border-radius: 50%;
-  flex-shrink: 0; margin-top: 4px;
+  flex-shrink: 0;
   transition: all var(--transition);
 }
 .status-dot.running {
@@ -404,9 +416,13 @@ button.text-btn:hover { color: var(--blue); }
 }
 
 .branch-info { flex: 1; min-width: 0; }
+.branch-name-row {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
 .branch-name {
-  font-size: 14px; font-weight: 600; margin-bottom: 3px;
+  font-size: 14px; font-weight: 600;
   word-break: break-all; letter-spacing: -0.01em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .active-badge {
   display: inline-block;
@@ -416,9 +432,7 @@ button.text-btn:hover { color: var(--blue); }
   border: 1px solid var(--green-border);
   letter-spacing: 0.02em;
 }
-.branch-meta { font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
-
-.branch-ports { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.branch-meta { font-size: 12px; color: var(--text-secondary); line-height: 1.4; white-space: nowrap; }
 .port-badge {
   font-size: 11px; padding: 2px 8px; border-radius: 10px;
   font-family: var(--font-mono);
@@ -438,7 +452,7 @@ button.text-btn:hover { color: var(--blue); }
 }
 
 .branch-error {
-  font-size: 11px; color: var(--red); margin-top: 4px;
+  font-size: 11px; color: var(--red); margin-top: 6px;
   padding: 4px 8px; background: var(--red-bg); border-radius: var(--radius-xs);
   border: 1px solid var(--red-border);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: help;
@@ -446,8 +460,10 @@ button.text-btn:hover { color: var(--blue); }
 
 .branch-card-actions-row {
   display: flex; gap: 6px; flex-wrap: wrap;
-  padding-top: 8px; border-top: 1px solid var(--border-light);
+  padding-top: 10px; border-top: 1px solid var(--border-light);
+  margin-top: 2px;
 }
+.branch-card-actions-row.hidden { display: none; }
 .branch-card-actions-row button { padding: 5px 12px; font-size: 12px; }
 .branch-card-actions-row button:disabled { opacity: 0.3; }
 
@@ -637,8 +653,12 @@ button.text-btn:hover { color: var(--blue); }
   .gateway-right { justify-content: flex-end; }
   select { max-width: 140px; }
   .branch-card-actions-row button { font-size: 11px; padding: 5px 8px; }
+  .branch-card-actions-row { flex-wrap: wrap; }
   .modal-dialog { max-height: 95vh; }
-  .branch-card { padding: 12px; }
+  .branch-card { padding: 10px 12px; }
+  .branch-name { font-size: 13px; }
+  .branch-meta { font-size: 11px; }
+  .branch-name-row { gap: 4px; }
   .header-actions { gap: 4px; }
   .icon-btn.labeled { padding: 0 8px; }
 }

@@ -75,6 +75,18 @@ let buildProfiles = [];
 let routingRules = [];
 let defaultBranch = null;
 let customEnvVars = {};
+const expandedBranches = new Set();
+
+function toggleBranchCard(id, event) {
+  // Don't toggle when clicking buttons/links inside the header
+  if (event.target.closest('button, a, .port-badge')) return;
+  if (expandedBranches.has(id)) {
+    expandedBranches.delete(id);
+  } else {
+    expandedBranches.add(id);
+  }
+  renderBranches();
+}
 
 // ── Init ──
 
@@ -445,37 +457,35 @@ function renderBranches() {
       `<div class="deploy-menu-item" onclick="deploySingleService('${esc(b.id)}', '${esc(p.id)}')">${esc(p.name)}</div>`
     ).join('');
 
+    const expanded = expandedBranches.has(b.id);
+
     return `
-      <div class="branch-card ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''}">
-        <div class="branch-card-header">
+      <div class="branch-card ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} ${expanded ? 'expanded' : ''}">
+        <div class="branch-card-header" onclick="toggleBranchCard('${esc(b.id)}', event)">
           <div class="branch-card-left">
             <span class="status-dot ${b.status}"></span>
             <div class="branch-info">
-              <div class="branch-name">
-                ${esc(b.branch)}
+              <div class="branch-name-row">
+                <span class="branch-name">${esc(b.branch)}</span>
                 ${isDefault ? '<span class="active-badge">默认</span>' : ''}
+                ${services.length > 0 ? services.map(([pid, svc]) => `
+                  <span class="port-badge ${svc.status === 'running' ? 'run-port' : 'port-idle'}"
+                        onclick="event.stopPropagation(); viewContainerLogs('${esc(b.id)}', '${esc(pid)}')"
+                        title="${esc(pid)}: ${svc.status}"
+                        style="cursor:pointer">
+                    ${esc(pid)} :${svc.hostPort}
+                  </span>
+                `).join('') : ''}
               </div>
-              <div class="branch-meta">
-                ${statusLabel(b.status)}
-                ${b.lastAccessedAt ? ` · ${relativeTime(b.lastAccessedAt)}` : ''}
-              </div>
-              ${services.length > 0 ? `
-                <div class="branch-ports">
-                  ${services.map(([pid, svc]) => `
-                    <span class="port-badge ${svc.status === 'running' ? 'run-port' : 'port-idle'}"
-                          onclick="viewContainerLogs('${esc(b.id)}', '${esc(pid)}')"
-                          title="${esc(pid)}: ${svc.status}"
-                          style="cursor:pointer">
-                      ${esc(pid)} :${svc.hostPort}
-                    </span>
-                  `).join('')}
-                </div>
-              ` : ''}
-              ${b.errorMessage ? `<div class="branch-error" title="${esc(b.errorMessage)}">${esc(b.errorMessage)}</div>` : ''}
             </div>
           </div>
+          <div class="branch-card-right">
+            <span class="branch-meta">${statusLabel(b.status)}${b.lastAccessedAt ? ` · ${relativeTime(b.lastAccessedAt)}` : ''}</span>
+            <svg class="branch-chevron ${expanded ? 'open' : ''}" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M4.427 5.427a.75.75 0 011.146 0L8 7.854l2.427-2.427a.75.75 0 111.146 1.146l-3 3a.75.75 0 01-1.146 0l-3-3a.75.75 0 010-1.146z"/></svg>
+          </div>
         </div>
-        <div class="branch-card-actions-row">
+        ${b.errorMessage ? `<div class="branch-error" title="${esc(b.errorMessage)}">${esc(b.errorMessage)}</div>` : ''}
+        <div class="branch-card-actions-row ${expanded ? '' : 'hidden'}">
           ${isRunning && hasMultipleProfiles ? `
             <div class="split-btn">
               <button class="primary sm split-btn-main" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>重新部署</button>
