@@ -104,8 +104,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     stateService.save();
 
+    // Fetch latest commit subject for each branch (serves as "需求" info)
+    const branchesWithSubject = await Promise.all(
+      branches.map(async (b) => {
+        try {
+          const result = await shell.exec(
+            'git log -1 --format=%s',
+            { cwd: b.worktreePath, timeout: 5000 },
+          );
+          return { ...b, subject: result.stdout.trim() };
+        } catch {
+          return { ...b, subject: '' };
+        }
+      }),
+    );
+
     res.json({
-      branches,
+      branches: branchesWithSubject,
       defaultBranch: state.defaultBranch,
     });
   });
@@ -696,9 +711,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Config (read-only) ──
 
-  router.get('/config', (_req, res) => {
+  router.get('/config', async (_req, res) => {
+    // Try to extract GitHub repo URL from git remote
+    let githubRepoUrl = '';
+    try {
+      const result = await shell.exec('git remote get-url origin', { cwd: config.repoRoot, timeout: 5000 });
+      const remote = result.stdout.trim();
+      // Match patterns: git@github.com:owner/repo.git, https://github.com/owner/repo.git, or proxy /git/owner/repo
+      const sshMatch = remote.match(/github\.com[:/]([^/]+\/[^/.]+)/);
+      const httpMatch = remote.match(/github\.com\/([^/]+\/[^/.]+)/);
+      const proxyMatch = remote.match(/\/git\/([^/]+\/[^/.]+)/);
+      const match = sshMatch || httpMatch || proxyMatch;
+      if (match) {
+        githubRepoUrl = `https://github.com/${match[1].replace(/\.git$/, '')}`;
+      }
+    } catch { /* ignore */ }
+
     res.json({
       ...config,
+      githubRepoUrl,
       jwt: { ...config.jwt, secret: '***' },
       sharedEnv: Object.fromEntries(
         Object.entries(config.sharedEnv).map(([k, v]) => [k, k.includes('PASSWORD') || k.includes('SECRET') ? '***' : v]),

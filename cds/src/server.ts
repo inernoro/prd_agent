@@ -30,6 +30,21 @@ export function createServer(deps: ServerDeps): express.Express {
 
   const webDir = path.resolve(__dirname, '..', 'web');
 
+  // ── Switch domain middleware (before auth) ──
+  // When request comes from the switch domain, delegate to ProxyService
+  const switchDomain = deps.config.switchDomain?.toLowerCase();
+  if (switchDomain) {
+    app.use((req, res, next) => {
+      const host = (req.headers.host || '').split(':')[0].toLowerCase();
+      if (host === switchDomain) {
+        // Delegate to proxy service's switch handler
+        deps.proxyService.handleSwitchFromExpress(req, res);
+        return;
+      }
+      next();
+    });
+  }
+
   // ── Auth middleware ──
   const btUser = process.env.BT_USERNAME || process.env.CDS_USERNAME;
   const btPass = process.env.BT_PASSWORD || process.env.CDS_PASSWORD;

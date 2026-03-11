@@ -75,15 +75,15 @@ let buildProfiles = [];
 let routingRules = [];
 let defaultBranch = null;
 let customEnvVars = {};
-const expandedBranches = new Set();
+const collapsedBranches = new Set();
 
 function toggleBranchCard(id, event) {
   // Don't toggle when clicking buttons/links inside the header
   if (event.target.closest('button, a, .port-badge')) return;
-  if (expandedBranches.has(id)) {
-    expandedBranches.delete(id);
+  if (collapsedBranches.has(id)) {
+    collapsedBranches.delete(id);
   } else {
-    expandedBranches.add(id);
+    collapsedBranches.add(id);
   }
   renderBranches();
 }
@@ -96,10 +96,13 @@ async function init() {
   setInterval(loadBranches, 10000);
 }
 
+let githubRepoUrl = '';
+
 async function loadConfig() {
   try {
     const data = await api('GET', '/config');
     document.getElementById('workerLabel').textContent = `Worker :${data.workerPort || '?'}`;
+    githubRepoUrl = data.githubRepoUrl || '';
   } catch (e) { console.error('loadConfig:', e); }
 }
 
@@ -165,18 +168,32 @@ function filterBranches() {
   if (filtered.length === 0) {
     dropdown.innerHTML = '<div class="branch-dropdown-empty">没有匹配的分支</div>';
   } else {
-    dropdown.innerHTML = filtered.map(b => `
-      <div class="branch-dropdown-item" onclick="addBranch('${esc(b.name)}')">
+    dropdown.innerHTML = filtered.map(b => {
+      const branchUrl = githubRepoUrl ? `${githubRepoUrl}/tree/${encodeURIComponent(b.name)}` : '';
+      const prUrl = githubRepoUrl ? `${githubRepoUrl}/pulls?q=is%3Apr+head%3A${encodeURIComponent(b.name)}` : '';
+      return `
+      <div class="branch-dropdown-item">
         <svg class="branch-dropdown-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M11.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6a1 1 0 00-1 1v1.128a2.251 2.251 0 11-1.5 0V5.372a2.25 2.25 0 111.5 0v1.836A2.492 2.492 0 016 7h4a1 1 0 001-1v-.628A2.25 2.25 0 019.5 3.25zM4.25 12a.75.75 0 100 1.5.75.75 0 000-1.5zM3.5 3.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0z"/></svg>
-        <div class="branch-dropdown-item-info">
+        <div class="branch-dropdown-item-info" onclick="addBranch('${esc(b.name)}')">
           <div class="branch-dropdown-item-row1">
             <span class="branch-dropdown-item-name">${esc(b.name)}</span>
             <span class="branch-dropdown-item-time">${relativeTime(b.date)}</span>
           </div>
           <div class="branch-dropdown-item-row2">${esc(b.author || '')} — ${esc(b.subject || '')}</div>
         </div>
+        ${githubRepoUrl ? `
+          <div class="branch-dropdown-item-actions">
+            <a href="${branchUrl}" target="_blank" rel="noopener" class="branch-link-btn" onclick="event.stopPropagation()" title="访问 GitHub 分支">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+            </a>
+            <a href="${prUrl}" target="_blank" rel="noopener" class="branch-link-btn pr-link" onclick="event.stopPropagation()" title="访问 PR">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 3.25a2.25 2.25 0 113 2.122v5.256a2.251 2.251 0 11-1.5 0V5.372A2.25 2.25 0 011.5 3.25zm5.677-.177L9.573.677A.25.25 0 0110 .854V2.5h1A2.5 2.5 0 0113.5 5v5.628a2.251 2.251 0 11-1.5 0V5a1 1 0 00-1-1h-1v1.646a.25.25 0 01-.427.177L7.177 3.427a.25.25 0 010-.354zM3.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm0 9.5a.75.75 0 100 1.5.75.75 0 000-1.5zm8.25.75a.75.75 0 11-1.5 0 .75.75 0 011.5 0z"/></svg>
+            </a>
+          </div>
+        ` : ''}
       </div>
-    `).join('');
+    `;
+    }).join('');
   }
   dropdown.classList.remove('hidden');
 }
@@ -457,7 +474,7 @@ function renderBranches() {
       `<div class="deploy-menu-item" onclick="deploySingleService('${esc(b.id)}', '${esc(p.id)}')">${esc(p.name)}</div>`
     ).join('');
 
-    const expanded = expandedBranches.has(b.id);
+    const expanded = !collapsedBranches.has(b.id);
 
     return `
       <div class="branch-card ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} ${expanded ? 'expanded' : ''}">
@@ -486,28 +503,31 @@ function renderBranches() {
         </div>
         ${b.errorMessage ? `<div class="branch-error" title="${esc(b.errorMessage)}">${esc(b.errorMessage)}</div>` : ''}
         <div class="branch-card-actions-row ${expanded ? '' : 'hidden'}">
-          ${isRunning && hasMultipleProfiles ? `
-            <div class="split-btn">
-              <button class="primary sm split-btn-main" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>重新部署</button>
-              <button class="primary sm split-btn-toggle" onclick="toggleDeployMenu('${esc(b.id)}', event)" ${isBusy ? 'disabled' : ''}>
-                <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor"><path d="M1 1l4 4 4-4"/></svg>
-              </button>
-              <div class="deploy-menu hidden" id="deploy-menu-${esc(b.id)}">
-                <div class="deploy-menu-header">选择重部署的服务</div>
-                ${deployMenuItems}
+          <div class="branch-actions-left">
+            <button class="sm" onclick="pullBranch('${esc(b.id)}')" ${btnDisabled('pull')}>${btnLabel('pull', '拉取')}</button>
+            ${isRunning && hasMultipleProfiles ? `
+              <div class="split-btn">
+                <button class="primary sm split-btn-main" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>重新部署</button>
+                <button class="primary sm split-btn-toggle" onclick="toggleDeployMenu('${esc(b.id)}', event)" ${isBusy ? 'disabled' : ''}>
+                  <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor"><path d="M1 1l4 4 4-4"/></svg>
+                </button>
+                <div class="deploy-menu hidden" id="deploy-menu-${esc(b.id)}">
+                  <div class="deploy-menu-header">选择重部署的服务</div>
+                  ${deployMenuItems}
+                </div>
               </div>
-            </div>
-          ` : `
-            <button class="primary sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>
-              ${isRunning ? '重新部署' : '部署'}
-            </button>
-          `}
-          ${isRunning ? `<button class="sm" onclick="stopBranch('${esc(b.id)}')" ${btnDisabled('stop')}>${btnLabel('stop', '停止')}</button>` : ''}
-          <button class="sm" onclick="pullBranch('${esc(b.id)}')" ${btnDisabled('pull')}>${btnLabel('pull', '拉取')}</button>
-          ${services.length > 0 ? `<button class="sm" onclick="openContainerEnvPicker('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>容器变量</button>` : ''}
-          ${hasError ? `<button class="sm" onclick="resetBranch('${esc(b.id)}')" ${btnDisabled('reset')}>${btnLabel('reset', '重置')}</button>` : ''}
-          ${!isDefault ? `<button class="sm" onclick="setDefaultBranch('${esc(b.id)}')" ${btnDisabled('setDefault')}>${btnLabel('setDefault', '设为默认')}</button>` : ''}
-          <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>删除</button>
+            ` : `
+              <button class="primary sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>
+                ${isRunning ? '重新部署' : '部署'}
+              </button>
+            `}
+            ${isRunning ? `<button class="sm" onclick="stopBranch('${esc(b.id)}')" ${btnDisabled('stop')}>${btnLabel('stop', '停止')}</button>` : ''}
+            ${services.length > 0 ? `<button class="sm" onclick="openContainerEnvPicker('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>容器变量</button>` : ''}
+            ${hasError ? `<button class="sm" onclick="resetBranch('${esc(b.id)}')" ${btnDisabled('reset')}>${btnLabel('reset', '重置')}</button>` : ''}
+            ${!isDefault ? `<button class="sm" onclick="setDefaultBranch('${esc(b.id)}')" ${btnDisabled('setDefault')}>${btnLabel('setDefault', '设为默认')}</button>` : ''}
+            <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>删除</button>
+          </div>
+          ${b.subject ? `<div class="branch-requirement">${esc(b.subject)}</div>` : ''}
         </div>
       </div>
     `;
@@ -1027,6 +1047,36 @@ async function doLogout() {
   try { await fetch('/api/logout', { method: 'POST' }); } catch { /* ignore */ }
   location.href = '/login.html';
 }
+
+// ── Title animation ──
+
+function initTitleRotation() {
+  const el = document.getElementById('titleRotating');
+  if (!el) return;
+  const words = ['一键部署', '极速开发', '分支管理', '云端协作'];
+  let idx = 0;
+  el.innerHTML = `<span class="title-rotating-text">${words[0]}</span>`;
+
+  setInterval(() => {
+    idx = (idx + 1) % words.length;
+    const span = el.querySelector('.title-rotating-text');
+    if (!span) return;
+    span.style.transition = 'opacity 0.3s, transform 0.3s';
+    span.style.opacity = '0';
+    span.style.transform = 'translateY(-100%)';
+    setTimeout(() => {
+      span.textContent = words[idx];
+      span.style.transform = 'translateY(100%)';
+      span.style.opacity = '0';
+      requestAnimationFrame(() => {
+        span.style.opacity = '1';
+        span.style.transform = 'translateY(0)';
+      });
+    }, 300);
+  }, 3000);
+}
+
+initTitleRotation();
 
 // ── Start ──
 init();

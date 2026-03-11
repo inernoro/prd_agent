@@ -79,9 +79,37 @@ header {
 h1 {
   font-size: 18px; font-weight: 700; white-space: nowrap;
   letter-spacing: -0.02em;
-  background: linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%);
+  background: linear-gradient(120deg, #00f0ff 0%, #7c3aed 40%, #f43f5e 60%, #00f0ff 100%);
+  background-size: 200% 100%;
   -webkit-background-clip: text; -webkit-text-fill-color: transparent;
   background-clip: text;
+  animation: title-shimmer 3s ease-in-out infinite;
+}
+@keyframes title-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.title-rotating {
+  display: inline-block;
+  position: relative;
+  overflow: hidden;
+  vertical-align: bottom;
+  height: 1.3em;
+  min-width: 4em;
+}
+.title-rotating-text {
+  display: block;
+  animation: title-rotate 9s ease-in-out infinite;
+  background: linear-gradient(120deg, #7c3aed, #00f0ff);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+  font-weight: 700;
+}
+@keyframes title-rotate {
+  0%, 22% { transform: translateY(0); opacity: 1; }
+  28%, 50% { transform: translateY(-100%); opacity: 1; }
+  56%, 78% { transform: translateY(-200%); opacity: 1; }
+  84%, 100% { transform: translateY(0); opacity: 1; }
 }
 .header-subtitle {
   font-size: 12px; color: var(--text-muted); white-space: nowrap;
@@ -353,6 +381,20 @@ button.text-btn:hover { color: var(--blue); }
 }
 .branch-dropdown-item-time { font-size: 11px; color: var(--text-muted); margin-left: auto; flex-shrink: 0; }
 .branch-dropdown-item-row2 { font-size: 11px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.branch-dropdown-item-actions {
+  display: flex; gap: 4px; flex-shrink: 0; align-items: center;
+}
+.branch-link-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: var(--radius-xs);
+  color: var(--text-muted); background: transparent;
+  transition: all var(--transition); text-decoration: none;
+}
+.branch-link-btn:hover {
+  background: var(--bg-elevated); color: var(--text-primary);
+  transform: scale(1.1);
+}
+.branch-link-btn.pr-link:hover { color: var(--green); }
 
 /* ════════════════ Branch Cards ════════════════ */
 
@@ -459,13 +501,21 @@ button.text-btn:hover { color: var(--blue); }
 }
 
 .branch-card-actions-row {
-  display: flex; gap: 6px; flex-wrap: wrap;
+  display: flex; gap: 6px; align-items: flex-end; justify-content: space-between;
   padding-top: 10px; border-top: 1px solid var(--border-light);
   margin-top: 2px;
 }
 .branch-card-actions-row.hidden { display: none; }
 .branch-card-actions-row button { padding: 5px 12px; font-size: 12px; }
 .branch-card-actions-row button:disabled { opacity: 0.3; }
+.branch-actions-left { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.branch-requirement {
+  font-size: 11px; color: var(--text-muted); max-width: 240px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  text-align: right; flex-shrink: 0;
+  padding: 3px 8px; background: var(--blue-bg);
+  border-radius: var(--radius-xs); border: 1px solid var(--blue-border);
+}
 
 .empty-state {
   text-align: center; color: var(--text-muted); padding: 40px 0;

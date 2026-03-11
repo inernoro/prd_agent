@@ -34,6 +34,14 @@ export class ProxyService {
   }
 
   /**
+   * Handle switch-domain requests from Express (master server).
+   * Express req/res are compatible with http.IncomingMessage/ServerResponse.
+   */
+  handleSwitchFromExpress(req: http.IncomingMessage, res: http.ServerResponse): void {
+    this.handleSwitchRequest(req, res);
+  }
+
+  /**
    * Resolve which branch should handle a request.
    * Returns the branch slug or null if no match.
    */
