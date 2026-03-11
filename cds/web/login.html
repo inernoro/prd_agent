@@ -3,44 +3,71 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Cloud Dev Suite — Login</title>
+  <title>Cloud Dev Suite — 登录</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #0f1117;
-      color: #e1e4e8;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans SC', sans-serif;
+      background: #0a0c10;
+      color: #e4e8ef;
       min-height: 100vh;
       display: flex;
       align-items: center;
       justify-content: center;
+      -webkit-font-smoothing: antialiased;
     }
     .login-card {
-      width: 360px;
-      padding: 32px;
-      background: #161b22;
-      border: 1px solid #30363d;
-      border-radius: 12px;
-      box-shadow: 0 16px 48px rgba(0,0,0,0.4);
+      width: 380px;
+      padding: 36px;
+      background: #13161d;
+      border: 1px solid #252a35;
+      border-radius: 14px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
     }
-    .login-card h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
-    .login-card .subtitle { font-size: 13px; color: #8b949e; margin-bottom: 24px; }
-    .field { margin-bottom: 16px; }
-    .field label { display: block; font-size: 13px; color: #8b949e; margin-bottom: 6px; }
+    .login-card h1 {
+      font-size: 22px; font-weight: 700; margin-bottom: 6px;
+      letter-spacing: -0.02em;
+      background: linear-gradient(135deg, #e4e8ef 0%, #8f96a3 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .login-card .subtitle { font-size: 13px; color: #5c6370; margin-bottom: 28px; }
+    .field { margin-bottom: 18px; }
+    .field label {
+      display: block; font-size: 13px; color: #8f96a3; margin-bottom: 7px;
+      font-weight: 500;
+    }
     .field input {
-      width: 100%; padding: 10px 12px;
-      background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
-      color: #e1e4e8; font-size: 14px; outline: none;
+      width: 100%; padding: 11px 14px;
+      background: #0d0f14; border: 1px solid #252a35; border-radius: 8px;
+      color: #e4e8ef; font-size: 14px; outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
     }
-    .field input:focus { border-color: #58a6ff; }
-    .error-msg { font-size: 13px; color: #f85149; margin-bottom: 12px; display: none; }
+    .field input:focus {
+      border-color: #5c9eff;
+      box-shadow: 0 0 0 3px rgba(92, 158, 255, 0.1);
+    }
+    .field input::placeholder { color: #5c6370; }
+    .error-msg {
+      font-size: 13px; color: #ef5350; margin-bottom: 14px; display: none;
+      padding: 8px 12px; background: rgba(239, 83, 80, 0.08);
+      border: 1px solid rgba(239, 83, 80, 0.2); border-radius: 7px;
+    }
     button {
-      width: 100%; padding: 10px;
-      background: #238636; border: 1px solid #2ea043; border-radius: 6px;
-      color: #fff; font-size: 14px; font-weight: 500; cursor: pointer;
+      width: 100%; padding: 11px;
+      background: linear-gradient(135deg, #238636 0%, #2ea043 100%);
+      border: 1px solid rgba(46, 160, 67, 0.4); border-radius: 8px;
+      color: #fff; font-size: 14px; font-weight: 600; cursor: pointer;
+      transition: all 0.2s; letter-spacing: 0.02em;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.2);
     }
-    button:hover { background: #2ea043; }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button:hover {
+      background: linear-gradient(135deg, #2ea043 0%, #3bb553 100%);
+      box-shadow: 0 4px 16px rgba(46, 160, 67, 0.3);
+      transform: translateY(-1px);
+    }
+    button:active { transform: scale(0.98) translateY(0); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
   </style>
 </head>
 <body>
