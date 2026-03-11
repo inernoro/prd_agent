@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services;
 
 namespace PrdAgent.Api.Controllers;
 
@@ -222,12 +223,15 @@ public class ShortcutsController : ControllerBase
 
         var serverUrl = _config["ServerUrl"] ?? $"{Request.Scheme}://{Request.Host}";
 
+        var downloadUrl = $"{serverUrl}/api/shortcuts/{shortcut.Id}/download?t={Uri.EscapeDataString(token)}";
+
         // 返回 HTML 安装引导页
         var html = GenerateInstallPageHtml(
             shortcutName: shortcut.Name,
             token: token,
             serverUrl: serverUrl,
-            iCloudUrl: template?.ICloudUrl);
+            iCloudUrl: template?.ICloudUrl,
+            downloadUrl: downloadUrl);
 
         return Content(html, "text/html; charset=utf-8");
     }
@@ -235,28 +239,21 @@ public class ShortcutsController : ControllerBase
     /// <summary>
     /// 生成安装引导页 HTML
     /// </summary>
-    private static string GenerateInstallPageHtml(string shortcutName, string token, string serverUrl, string? iCloudUrl)
+    private static string GenerateInstallPageHtml(string shortcutName, string token, string serverUrl, string? iCloudUrl, string downloadUrl)
     {
-        // 快捷指令需要的配置数据（JSON），剪贴板复制的就是这段
-        var configJson = System.Text.Json.JsonSerializer.Serialize(new
-        {
-            server = serverUrl,
-            token = token,
-            endpoint = $"{serverUrl}/api/shortcuts/collect"
-        });
-
         var escapedName = System.Net.WebUtility.HtmlEncode(shortcutName);
-        var escapedConfig = System.Net.WebUtility.HtmlEncode(configJson);
-        // For JS string literal, escape differently
-        var jsConfig = configJson.Replace("\\", "\\\\").Replace("'", "\\'").Replace("\"", "\\\"");
+        var escapedDownloadUrl = System.Net.WebUtility.HtmlEncode(downloadUrl);
 
-        var iCloudButton = string.IsNullOrEmpty(iCloudUrl)
-            ? "<p style=\"color:#ff9500;margin-top:16px;\">⚠️ 管理员尚未配置快捷指令模板，请联系管理员</p>"
-            : $@"<a href=""{System.Net.WebUtility.HtmlEncode(iCloudUrl)}""
-                   style=""display:inline-block;margin-top:20px;padding:16px 32px;background:#007aff;color:white;
-                          text-decoration:none;border-radius:14px;font-size:18px;font-weight:600;"">
-                   📲 安装快捷指令
-                </a>";
+        var iCloudSection = string.IsNullOrEmpty(iCloudUrl)
+            ? ""
+            : $@"<div style=""margin-top:16px;"">
+                    <p style=""color:rgba(255,255,255,0.5);font-size:12px;margin-bottom:8px;"">或使用 iCloud 模板（需手动配置 token）</p>
+                    <a href=""{System.Net.WebUtility.HtmlEncode(iCloudUrl)}""
+                       style=""display:inline-block;padding:10px 20px;background:rgba(255,255,255,0.1);color:rgba(255,255,255,0.7);
+                              text-decoration:none;border-radius:10px;font-size:14px;border:1px solid rgba(255,255,255,0.15);"">
+                       iCloud 模板
+                    </a>
+                </div>";
 
         return $@"<!DOCTYPE html>
 <html lang=""zh-CN"">
@@ -291,18 +288,19 @@ public class ShortcutsController : ControllerBase
             font-size: 14px; flex-shrink: 0;
         }}
         .step-text {{ font-size: 15px; line-height: 1.5; }}
-        .status {{
-            margin-top: 16px; padding: 12px; border-radius: 12px; font-size: 14px;
-            transition: all 0.3s ease;
+        .primary-btn {{
+            display: inline-block; margin-top: 24px; padding: 16px 32px;
+            background: #007aff; color: white; text-decoration: none;
+            border-radius: 14px; font-size: 18px; font-weight: 600;
+            transition: all 0.2s ease; border: none; cursor: pointer;
         }}
-        .status.success {{ background: rgba(52,199,89,0.15); color: #34c759; }}
-        .status.waiting {{ background: rgba(255,149,0,0.15); color: #ff9500; }}
-        .config-box {{
-            background: rgba(0,0,0,0.3); border-radius: 12px; padding: 12px;
-            margin-top: 16px; font-family: 'SF Mono', monospace; font-size: 11px;
-            color: rgba(255,255,255,0.5); word-break: break-all; text-align: left;
-            max-height: 60px; overflow: hidden;
+        .primary-btn:active {{ background: #0056b3; transform: scale(0.97); }}
+        .feature-list {{
+            margin-top: 24px; padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.1);
+            text-align: left;
         }}
+        .feature-list h3 {{ font-size: 14px; color: rgba(255,255,255,0.5); margin-bottom: 12px; }}
+        .feature {{ font-size: 13px; color: rgba(255,255,255,0.6); margin-bottom: 6px; padding-left: 8px; }}
         .android-section {{
             margin-top: 24px; padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.1);
         }}
@@ -310,8 +308,7 @@ public class ShortcutsController : ControllerBase
         .copy-btn {{
             display: inline-block; margin-top: 8px; padding: 10px 24px;
             background: rgba(255,255,255,0.12); color: white; border: 1px solid rgba(255,255,255,0.2);
-            border-radius: 10px; font-size: 14px; cursor: pointer;
-            transition: all 0.2s ease;
+            border-radius: 10px; font-size: 14px; cursor: pointer; transition: all 0.2s ease;
         }}
         .copy-btn:active {{ background: rgba(255,255,255,0.2); transform: scale(0.97); }}
     </style>
@@ -320,76 +317,52 @@ public class ShortcutsController : ControllerBase
     <div class=""card"">
         <div class=""icon"">⚡</div>
         <h1>{escapedName}</h1>
-        <div class=""subtitle"">PrdAgent 快捷指令安装向导</div>
+        <div class=""subtitle"">PrdAgent 快捷指令 · 一键安装</div>
 
         <div class=""step"">
             <div class=""step-num"">1</div>
-            <div class=""step-text"">配置已自动复制到剪贴板 ✅</div>
+            <div class=""step-text"">点击下方按钮下载快捷指令（密钥已内置）</div>
         </div>
         <div class=""step"">
             <div class=""step-num"">2</div>
-            <div class=""step-text"">点击下方按钮安装快捷指令</div>
+            <div class=""step-text"">iOS 弹出提示，点击「添加快捷指令」</div>
         </div>
         <div class=""step"">
             <div class=""step-num"">3</div>
-            <div class=""step-text"">首次运行时，快捷指令会自动从剪贴板读取配置</div>
-        </div>
-        <div class=""step"">
-            <div class=""step-num"">4</div>
-            <div class=""step-text"">以后在任意 App 点击<strong>分享 → {escapedName}</strong>即可收藏</div>
+            <div class=""step-text"">在任意 App 点击<strong>分享 → {escapedName}</strong>即可收藏</div>
         </div>
 
-        {iCloudButton}
+        <a href=""{escapedDownloadUrl}"" class=""primary-btn"">📲 下载并安装快捷指令</a>
 
-        <div id=""copyStatus"" class=""status waiting"">⏳ 正在复制配置到剪贴板...</div>
+        {iCloudSection}
 
-        <div class=""config-box"" id=""configBox"">{escapedConfig}</div>
-
-        <button class=""copy-btn"" onclick=""copyConfig()"">📋 重新复制配置</button>
+        <div class=""feature-list"">
+            <h3>内置功能</h3>
+            <div class=""feature"">✅ 密钥已预置，无需手动配置</div>
+            <div class=""feature"">✅ 自动版本检查，有更新时提醒</div>
+            <div class=""feature"">✅ 分享菜单一键收藏 URL/文本</div>
+            <div class=""feature"">✅ 收藏成功后系统通知反馈</div>
+        </div>
 
         <div class=""android-section"">
-            <h3>🤖 Android 用户？</h3>
+            <h3>Android 用户</h3>
             <p style=""font-size:13px;color:rgba(255,255,255,0.5);line-height:1.6;"">
                 安装 <strong>HTTP Shortcuts</strong> 应用，新建快捷方式：<br>
                 URL: <code style=""color:#007aff;"">{serverUrl}/api/shortcuts/collect</code><br>
-                方法: POST<br>
-                Header: Authorization: Bearer {token[..Math.Min(12, token.Length)]}...
+                方法: POST · Header: Authorization: Bearer {token[..Math.Min(12, token.Length)]}...
             </p>
             <button class=""copy-btn"" onclick=""copyToken()"">📋 复制完整 Token</button>
         </div>
     </div>
 
     <script>
-        var config = '{jsConfig}';
-        var fullToken = '{token}';
-
-        function copyConfig() {{
-            navigator.clipboard.writeText(config).then(function() {{
-                var el = document.getElementById('copyStatus');
-                el.className = 'status success';
-                el.textContent = '✅ 配置已复制到剪贴板';
-            }}).catch(function() {{
-                // iOS Safari fallback
-                var ta = document.createElement('textarea');
-                ta.value = config;
-                ta.style.position = 'fixed';
-                ta.style.left = '-9999px';
-                document.body.appendChild(ta);
-                ta.select();
-                document.execCommand('copy');
-                document.body.removeChild(ta);
-                var el = document.getElementById('copyStatus');
-                el.className = 'status success';
-                el.textContent = '✅ 配置已复制到剪贴板';
-            }});
-        }}
-
         function copyToken() {{
-            navigator.clipboard.writeText(fullToken).then(function() {{
+            var t = '{token}';
+            navigator.clipboard.writeText(t).then(function() {{
                 alert('Token 已复制');
             }}).catch(function() {{
                 var ta = document.createElement('textarea');
-                ta.value = fullToken;
+                ta.value = t;
                 ta.style.position = 'fixed';
                 ta.style.left = '-9999px';
                 document.body.appendChild(ta);
@@ -399,14 +372,65 @@ public class ShortcutsController : ControllerBase
                 alert('Token 已复制');
             }});
         }}
-
-        // 页面加载自动复制
-        window.addEventListener('load', function() {{
-            setTimeout(copyConfig, 500);
-        }});
     </script>
 </body>
 </html>";
+    }
+
+    /// <summary>
+    /// 直接下载 .shortcut 文件（token 预嵌入，iOS 可直接安装）
+    /// 扫码 → 打开安装页 → 点"直接安装" → 下载 .shortcut → iOS 提示添加 → 完成
+    /// </summary>
+    [AllowAnonymous]
+    [HttpGet("{id}/download")]
+    public async Task<IActionResult> DownloadShortcutFile(
+        [FromRoute] string id,
+        [FromQuery(Name = "t")] string? token,
+        CancellationToken ct)
+    {
+        var shortcut = await _db.UserShortcuts
+            .Find(x => x.Id == id)
+            .FirstOrDefaultAsync(ct);
+
+        if (shortcut == null)
+            return NotFound("快捷指令不存在");
+
+        if (string.IsNullOrEmpty(token) || !token.StartsWith("scs-"))
+            return BadRequest("无效的 token");
+
+        var hash = UserShortcut.HashToken(token);
+        if (hash != shortcut.TokenHash)
+            return Unauthorized("token 不匹配");
+
+        var serverUrl = _config["ServerUrl"] ?? $"{Request.Scheme}://{Request.Host}";
+
+        var plistXml = ShortcutPlistGenerator.Generate(
+            shortcutName: shortcut.Name,
+            token: token,
+            serverUrl: serverUrl);
+
+        var fileName = $"{shortcut.Name}.shortcut";
+        var bytes = System.Text.Encoding.UTF8.GetBytes(plistXml);
+
+        return File(bytes, "application/x-shortcut", fileName);
+    }
+
+    /// <summary>
+    /// 版本检查端点（快捷指令运行时调用，支持自动更新提示）
+    /// 对标截图中的 Config.update 模式
+    /// </summary>
+    [AllowAnonymous]
+    [HttpGet("version-check")]
+    public IActionResult VersionCheck()
+    {
+        var serverUrl = _config["ServerUrl"] ?? $"{Request.Scheme}://{Request.Host}";
+
+        return Ok(new
+        {
+            version = ShortcutPlistGenerator.CurrentVersion,
+            download = $"{serverUrl}/api/shortcuts/templates",
+            changelog = $"v{ShortcutPlistGenerator.CurrentVersion}: 收藏快捷指令"
+        });
     }
 
     #endregion
