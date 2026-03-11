@@ -295,6 +295,101 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  // ── Redeploy a single service (SSE stream) ──
+
+  router.post('/branches/:id/deploy/:profileId', async (req, res) => {
+    const { id, profileId } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+
+    const profiles = stateService.getBuildProfiles();
+    const profile = profiles.find(p => p.id === profileId);
+    if (!profile) {
+      res.status(404).json({ error: `构建配置 "${profileId}" 不存在` });
+      return;
+    }
+
+    initSSE(res);
+
+    const opLog: OperationLog = {
+      type: 'build',
+      startedAt: new Date().toISOString(),
+      status: 'running',
+      events: [],
+    };
+
+    function logEvent(ev: OperationLogEvent) {
+      opLog.events.push(ev);
+      sendSSE(res, 'step', ev);
+    }
+
+    try {
+      // Pull latest code
+      logEvent({ step: 'pull', status: 'running', title: '正在拉取最新代码...', timestamp: new Date().toISOString() });
+      const pullResult = await worktreeService.pull(entry.branch, entry.worktreePath);
+      logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
+
+      // Build & run the single profile
+      logEvent({ step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}...`, timestamp: new Date().toISOString() });
+
+      if (!entry.services[profile.id]) {
+        const hostPort = stateService.allocatePort(config.portStart);
+        entry.services[profile.id] = {
+          profileId: profile.id,
+          containerName: `cds-${id}-${profile.id}`,
+          hostPort,
+          status: 'building',
+        };
+        stateService.save();
+      }
+
+      const svc = entry.services[profile.id];
+      svc.status = 'building';
+
+      try {
+        const customEnv = stateService.getCustomEnv();
+        await containerService.runService(entry, profile, svc, (chunk) => {
+          sendSSE(res, 'log', { profileId: profile.id, chunk });
+        }, customEnv);
+
+        svc.status = 'running';
+        logEvent({ step: `build-${profile.id}`, status: 'done', title: `${profile.name} 运行于 :${svc.hostPort}`, timestamp: new Date().toISOString() });
+      } catch (err) {
+        svc.status = 'error';
+        svc.errorMessage = (err as Error).message;
+        logEvent({ step: `build-${profile.id}`, status: 'error', title: `${profile.name} 失败`, log: (err as Error).message, timestamp: new Date().toISOString() });
+      }
+
+      // Update overall status
+      const statuses = Object.values(entry.services).map(s => s.status);
+      entry.status = statuses.some(s => s === 'running') ? 'running' : 'error';
+      entry.lastAccessedAt = new Date().toISOString();
+
+      opLog.status = svc.status === 'running' ? 'completed' : 'error';
+      opLog.finishedAt = new Date().toISOString();
+      stateService.appendLog(id, opLog);
+      stateService.save();
+
+      sendSSE(res, 'complete', {
+        message: svc.status === 'running' ? `${profile.name} 已启动` : `${profile.name} 启动失败`,
+        services: entry.services,
+      });
+    } catch (err) {
+      entry.status = 'error';
+      entry.errorMessage = (err as Error).message;
+      opLog.status = 'error';
+      opLog.finishedAt = new Date().toISOString();
+      stateService.appendLog(id, opLog);
+      stateService.save();
+      sendSSE(res, 'error', { message: (err as Error).message });
+    } finally {
+      res.end();
+    }
+  });
+
   // ── Stop all services for a branch ──
 
   router.post('/branches/:id/stop', async (req, res) => {

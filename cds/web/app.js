@@ -1,5 +1,7 @@
 const API = '/api';
 const busyBranches = new Set();
+// Per-button loading state: Map<string, Set<string>> e.g. { "main": Set(["stop", "pull"]) }
+const loadingActions = new Map();
 let globalBusy = false;
 
 // ── Utilities ──
@@ -40,6 +42,30 @@ function relativeTime(iso) {
 }
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+// ── Loading state helpers ──
+
+function setLoading(id, action) {
+  if (!loadingActions.has(id)) loadingActions.set(id, new Set());
+  loadingActions.get(id).add(action);
+  renderBranches();
+}
+
+function clearLoading(id, action) {
+  const set = loadingActions.get(id);
+  if (set) { set.delete(action); if (set.size === 0) loadingActions.delete(id); }
+  renderBranches();
+}
+
+function isLoading(id, action) {
+  const set = loadingActions.get(id);
+  return set ? set.has(action) : false;
+}
+
+function hasAnyLoading(id) {
+  const set = loadingActions.get(id);
+  return set ? set.size > 0 : false;
+}
 
 // ── State ──
 
@@ -211,19 +237,25 @@ async function deployBranch(id) {
 }
 
 async function stopBranch(id) {
-  if (busyBranches.has(id)) return;
+  if (busyBranches.has(id) || isLoading(id, 'stop')) return;
+  setLoading(id, 'stop');
   try {
     await api('POST', `/branches/${id}/stop`);
     showToast('服务已停止', 'success');
-    await loadBranches();
   } catch (e) { showToast(e.message, 'error'); }
+  clearLoading(id, 'stop');
+  await loadBranches();
 }
 
 async function pullBranch(id) {
+  if (isLoading(id, 'pull')) return;
+  setLoading(id, 'pull');
   try {
     const result = await api('POST', `/branches/${id}/pull`);
     showToast(result.updated ? `已更新: ${result.head}` : '已是最新', result.updated ? 'success' : 'info');
   } catch (e) { showToast(e.message, 'error'); }
+  clearLoading(id, 'pull');
+  await loadBranches();
 }
 
 async function removeBranch(id) {
@@ -242,20 +274,26 @@ async function removeBranch(id) {
 }
 
 async function resetBranch(id) {
+  if (isLoading(id, 'reset')) return;
+  setLoading(id, 'reset');
   try {
     await api('POST', `/branches/${id}/reset`);
     showToast('状态已重置', 'success');
-    await loadBranches();
   } catch (e) { showToast(e.message, 'error'); }
+  clearLoading(id, 'reset');
+  await loadBranches();
 }
 
 async function setDefaultBranch(id) {
   if (!id) return;
+  if (isLoading(id, 'setDefault')) return;
+  setLoading(id, 'setDefault');
   try {
     await api('POST', `/branches/${id}/set-default`);
     showToast(`默认分支已设为: ${id}`, 'success');
-    await loadBranches();
   } catch (e) { showToast(e.message, 'error'); }
+  clearLoading(id, 'setDefault');
+  await loadBranches();
 }
 
 async function cleanupAll() {
@@ -279,6 +317,91 @@ async function viewContainerLogs(id, profileId) {
     document.getElementById('logModalBody').innerHTML = `<pre class="live-log-output">${esc(data.logs || '暂无日志')}</pre>`;
   } catch (e) { showToast(e.message, 'error'); }
 }
+
+// ── Single-service deploy ──
+
+async function deploySingleService(id, profileId) {
+  if (busyBranches.has(id)) return;
+  busyBranches.add(id);
+  closeDeployMenu(id);
+  renderBranches();
+
+  const profile = buildProfiles.find(p => p.id === profileId);
+  const label = profile ? profile.name : profileId;
+  openLogModal(`部署 ${id} / ${label}`);
+  const body = document.getElementById('logModalBody');
+  body.innerHTML = '<div class="live-log-header"><span class="live-dot"></span> 构建中...</div><div class="live-log-output" id="liveOutput"></div>';
+
+  try {
+    const res = await fetch(`${API}/branches/${id}/deploy/${encodeURIComponent(profileId)}`, { method: 'POST' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `部署失败 (HTTP ${res.status})`);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = JSON.parse(line.slice(6));
+          const el = document.getElementById('liveOutput');
+          if (!el) continue;
+
+          if (data.chunk) {
+            el.textContent += data.chunk;
+          } else if (data.step) {
+            el.textContent += `\n[${data.status}] ${data.title || data.step}\n`;
+          } else if (data.message) {
+            el.textContent += `\n${data.message}\n`;
+          }
+          el.scrollTop = el.scrollHeight;
+        }
+      }
+    }
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+
+  busyBranches.delete(id);
+  await loadBranches();
+}
+
+// ── Deploy dropdown menu ──
+
+let openDeployMenuId = null;
+
+function toggleDeployMenu(id, event) {
+  event.stopPropagation();
+  if (openDeployMenuId === id) {
+    closeDeployMenu(id);
+    return;
+  }
+  // Close any other open menu
+  if (openDeployMenuId) closeDeployMenu(openDeployMenuId);
+  openDeployMenuId = id;
+  const menu = document.getElementById(`deploy-menu-${CSS.escape(id)}`);
+  if (menu) menu.classList.remove('hidden');
+}
+
+function closeDeployMenu(id) {
+  openDeployMenuId = null;
+  const menu = document.getElementById(`deploy-menu-${CSS.escape(id)}`);
+  if (menu) menu.classList.add('hidden');
+}
+
+// Close deploy menu on outside click
+document.addEventListener('click', () => {
+  if (openDeployMenuId) closeDeployMenu(openDeployMenuId);
+});
 
 // ── Rendering ──
 
@@ -305,9 +428,21 @@ function renderBranches() {
 
   el.innerHTML = localBranches.map(b => {
     const isBusy = busyBranches.has(b.id) || globalBusy;
+    const anyLoading = hasAnyLoading(b.id);
     const isDefault = b.id === defaultBranch;
     const services = Object.entries(b.services || {});
     const hasError = b.status === 'error';
+    const isRunning = b.status === 'running';
+    const hasMultipleProfiles = buildProfiles.length > 1;
+
+    // Loading state helpers for this branch
+    const btnDisabled = (action) => (isBusy || isLoading(b.id, action)) ? 'disabled' : '';
+    const btnLabel = (action, label) => isLoading(b.id, action) ? `<span class="btn-spinner"></span>${label}` : label;
+
+    // Build deploy dropdown items for single-service redeploy
+    const deployMenuItems = buildProfiles.map(p =>
+      `<div class="deploy-menu-item" onclick="deploySingleService('${esc(b.id)}', '${esc(p.id)}')">${esc(p.name)}</div>`
+    ).join('');
 
     return `
       <div class="branch-card ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''}">
@@ -340,13 +475,26 @@ function renderBranches() {
           </div>
         </div>
         <div class="branch-card-actions-row">
-          <button class="primary sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>
-            ${b.status === 'running' ? '重新部署' : '部署'}
-          </button>
-          ${b.status === 'running' ? `<button class="sm" onclick="stopBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>停止</button>` : ''}
-          <button class="sm" onclick="pullBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>拉取</button>
-          ${hasError ? `<button class="sm" onclick="resetBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>重置</button>` : ''}
-          ${!isDefault ? `<button class="sm" onclick="setDefaultBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>设为默认</button>` : ''}
+          ${isRunning && hasMultipleProfiles ? `
+            <div class="split-btn">
+              <button class="primary sm split-btn-main" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>重新部署</button>
+              <button class="primary sm split-btn-toggle" onclick="toggleDeployMenu('${esc(b.id)}', event)" ${isBusy ? 'disabled' : ''}>
+                <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor"><path d="M1 1l4 4 4-4"/></svg>
+              </button>
+              <div class="deploy-menu hidden" id="deploy-menu-${esc(b.id)}">
+                <div class="deploy-menu-header">选择重部署的服务</div>
+                ${deployMenuItems}
+              </div>
+            </div>
+          ` : `
+            <button class="primary sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>
+              ${isRunning ? '重新部署' : '部署'}
+            </button>
+          `}
+          ${isRunning ? `<button class="sm" onclick="stopBranch('${esc(b.id)}')" ${btnDisabled('stop')}>${btnLabel('stop', '停止')}</button>` : ''}
+          <button class="sm" onclick="pullBranch('${esc(b.id)}')" ${btnDisabled('pull')}>${btnLabel('pull', '拉取')}</button>
+          ${hasError ? `<button class="sm" onclick="resetBranch('${esc(b.id)}')" ${btnDisabled('reset')}>${btnLabel('reset', '重置')}</button>` : ''}
+          ${!isDefault ? `<button class="sm" onclick="setDefaultBranch('${esc(b.id)}')" ${btnDisabled('setDefault')}>${btnLabel('setDefault', '设为默认')}</button>` : ''}
           <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>删除</button>
         </div>
       </div>

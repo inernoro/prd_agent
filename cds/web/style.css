@@ -454,6 +454,57 @@ button.text-btn:hover { color: var(--blue); }
   font-size: 14px; font-style: italic;
 }
 
+/* ════════════════ Split Button & Deploy Menu ════════════════ */
+
+.split-btn {
+  display: inline-flex; position: relative;
+}
+.split-btn-main {
+  border-top-right-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+  border-right: 1px solid rgba(255,255,255,0.15) !important;
+}
+.split-btn-toggle {
+  border-top-left-radius: 0 !important;
+  border-bottom-left-radius: 0 !important;
+  padding: 5px 6px !important;
+  min-width: 24px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.split-btn-toggle svg { pointer-events: none; }
+
+.deploy-menu {
+  position: absolute; top: 100%; left: 0; right: 0;
+  min-width: 140px; margin-top: 4px;
+  background: var(--bg-elevated); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); overflow: hidden;
+  box-shadow: var(--shadow-lg); z-index: 60;
+}
+.deploy-menu.hidden { display: none; }
+.deploy-menu-header {
+  padding: 6px 10px; font-size: 10px; color: var(--text-muted);
+  font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--border-light);
+}
+.deploy-menu-item {
+  padding: 8px 10px; font-size: 12px; cursor: pointer;
+  color: var(--text-primary);
+  transition: background var(--transition);
+}
+.deploy-menu-item:hover { background: var(--bg-hover); }
+.deploy-menu-item + .deploy-menu-item { border-top: 1px solid var(--border-light); }
+
+/* ════════════════ Button Spinner ════════════════ */
+
+.btn-spinner {
+  display: inline-block; width: 10px; height: 10px;
+  border: 1.5px solid rgba(255,255,255,0.2);
+  border-top-color: currentColor;
+  border-radius: 50%; margin-right: 4px;
+  animation: spin 0.6s linear infinite;
+  vertical-align: middle;
+}
+
 /* ════════════════ Busy State ════════════════ */
 
 .branch-card.is-busy {
