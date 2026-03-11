@@ -285,16 +285,22 @@ export class ProxyService {
       return;
     }
 
-    // Extract the last path segment as the branch suffix
-    const suffix = pathParts[pathParts.length - 1].toLowerCase();
+    // Use full path as branch identifier (e.g. "claude/fix-login-password-issue-CQBMO")
+    const fullPath = pathParts.join('/').toLowerCase();
+    const lastSegment = pathParts[pathParts.length - 1].toLowerCase();
     const state = this.stateService.getState();
+    const branchSlugs = Object.keys(state.branches);
 
-    // Try suffix match against local branches
-    let matchedSlug = this.suffixMatchBranch(suffix, Object.keys(state.branches));
+    // Try full path first, then last segment as fallback
+    let matchedSlug = this.suffixMatchBranch(fullPath, branchSlugs);
+    if (!matchedSlug && fullPath !== lastSegment) {
+      matchedSlug = this.suffixMatchBranch(lastSegment, branchSlugs);
+    }
 
-    // If not found locally, try remote
+    // If not found locally, try remote (full path first, then last segment)
     if (!matchedSlug && this.worktreeService) {
-      const remoteBranch = await this.worktreeService.findBranchBySuffix(suffix);
+      const remoteBranch = await this.worktreeService.findBranchBySuffix(fullPath)
+        || (fullPath !== lastSegment ? await this.worktreeService.findBranchBySuffix(lastSegment) : null);
       if (remoteBranch) {
         matchedSlug = StateService.slugify(remoteBranch);
       }
@@ -302,7 +308,7 @@ export class ProxyService {
 
     // No match → friendly 404
     if (!matchedSlug) {
-      this.serveSwitchNotFound(res, suffix);
+      this.serveSwitchNotFound(res, fullPath);
       return;
     }
 
