@@ -1,5 +1,5 @@
 import http from 'node:http';
-import type { RoutingRule, BranchEntry } from '../types.js';
+import type { RoutingRule, BranchEntry, CdsConfig } from '../types.js';
 import { StateService } from './state.js';
 import type { WorktreeService } from './worktree.js';
 
@@ -16,7 +16,10 @@ export class ProxyService {
   /** Optional worktree service for remote branch lookups */
   private worktreeService: WorktreeService | null = null;
 
-  constructor(private readonly stateService: StateService) {}
+  constructor(
+    private readonly stateService: StateService,
+    private readonly config?: CdsConfig,
+  ) {}
 
   setResolveUpstream(fn: (branchId: string, profileId?: string) => string | null): void {
     this.resolveUpstream = fn;
@@ -147,12 +150,13 @@ export class ProxyService {
   }
 
   /**
-   * Check if the host is a "switch" domain (e.g., switch.miduo.org).
-   * Returns true if the host starts with "switch.".
+   * Check if the host matches the configured switch domain.
    */
   private isSwitchDomain(host: string): boolean {
+    const switchDomain = this.config?.switchDomain;
+    if (!switchDomain) return false;
     const h = host.split(':')[0].toLowerCase();
-    return h.startsWith('switch.');
+    return h === switchDomain.toLowerCase();
   }
 
   /**
@@ -244,19 +248,23 @@ export class ProxyService {
   }
 
   /**
-   * Handle requests from switch domain.
+   * Handle requests from the switch domain.
    *
-   * URL format: switch.miduo.org/<anything>/<suffix>
-   * The last path segment is used as a suffix to match against branch names.
-   * Once matched, the branch is auto-built if needed, then the request is proxied.
+   * This is purely a branch-switching operation:
+   * - No path → 301 redirect to main domain (default branch)
+   * - Has path → suffix-match to a branch, set cookie, 301 to main domain
+   * - No match → friendly 404 page
    */
   private async handleSwitchRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    const mainDomain = this.config?.mainDomain;
+    const mainUrl = mainDomain ? `http://${mainDomain}` : '/';
     const url = req.url || '/';
     const pathParts = url.replace(/\?.*$/, '').split('/').filter(Boolean);
 
-    // Root path — show info page
+    // No path → redirect to main domain with default branch
     if (pathParts.length === 0) {
-      this.serveSwitchLanding(res);
+      res.writeHead(301, { Location: mainUrl, 'Content-Type': 'text/plain' });
+      res.end('Redirecting to main domain...');
       return;
     }
 
@@ -264,19 +272,10 @@ export class ProxyService {
     const suffix = pathParts[pathParts.length - 1].toLowerCase();
     const state = this.stateService.getState();
 
-    // Try suffix match against local branches first
+    // Try suffix match against local branches
     let matchedSlug = this.suffixMatchBranch(suffix, Object.keys(state.branches));
 
-    if (matchedSlug) {
-      const branch = state.branches[matchedSlug];
-      if (branch && branch.status === 'running') {
-        // Already running — redirect to the worker with a cookie
-        this.redirectToWorkerWithCookie(res, matchedSlug);
-        return;
-      }
-    }
-
-    // If not found locally, try suffix match against remote branches
+    // If not found locally, try remote
     if (!matchedSlug && this.worktreeService) {
       const remoteBranch = await this.worktreeService.findBranchBySuffix(suffix);
       if (remoteBranch) {
@@ -284,23 +283,20 @@ export class ProxyService {
       }
     }
 
-    const slugToUse = matchedSlug || StateService.slugify(suffix);
-
-    if (!this.onAutoBuild) {
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: `未找到匹配 "${suffix}" 的分支` }));
+    // No match → friendly 404
+    if (!matchedSlug) {
+      this.serveSwitchNotFound(res, suffix);
       return;
     }
 
-    // Browser request (text/html) → serve build status page
-    const accept = req.headers.accept || '';
-    if (accept.includes('text/html')) {
-      this.serveSwitchBuildPage(res, slugToUse, suffix);
-      return;
-    }
-
-    // EventSource / API request → trigger auto-build (SSE stream)
-    this.onAutoBuild(slugToUse, req, res);
+    // Match found → set cookie + X-Branch hint, 301 to main domain
+    console.log(`[switch] "${suffix}" → matched branch "${matchedSlug}", redirecting to ${mainUrl}`);
+    res.writeHead(301, {
+      'Set-Cookie': `cds_branch=${encodeURIComponent(matchedSlug)}; Path=/; SameSite=Lax; Domain=${mainDomain || ''}`,
+      Location: mainUrl,
+      'Content-Type': 'text/plain',
+    });
+    res.end(`Switched to branch: ${matchedSlug}`);
   }
 
   /**
@@ -323,122 +319,47 @@ export class ProxyService {
   }
 
   /**
-   * Serve a lightweight HTML page that shows build status and auto-redirects.
+   * Friendly 404 page when no branch matches the suffix.
    */
-  private serveSwitchBuildPage(res: http.ServerResponse, branchSlug: string, suffix: string): void {
-    const html = `<!DOCTYPE html>
-<html><head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CDS — 正在准备 ${branchSlug}</title>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0d1117; color: #c9d1d9; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
-  .card { max-width: 480px; width: 90%; padding: 32px; background: #161b22; border: 1px solid #30363d; border-radius: 12px; text-align: center; }
-  h2 { font-size: 18px; margin-bottom: 12px; }
-  .branch { color: #58a6ff; font-family: monospace; font-size: 14px; word-break: break-all; margin-bottom: 16px; }
-  .status { font-size: 14px; color: #8b949e; margin-bottom: 20px; }
-  .spinner { width: 32px; height: 32px; border: 3px solid #30363d; border-top-color: #58a6ff; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 16px; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .log { font-family: monospace; font-size: 11px; color: #8b949e; text-align: left; background: #0d1117; border: 1px solid #21262d; border-radius: 6px; padding: 10px; max-height: 200px; overflow-y: auto; margin-top: 16px; white-space: pre-wrap; word-break: break-all; }
-</style>
-</head><body>
-<div class="card">
-  <div class="spinner" id="spinner"></div>
-  <h2>正在准备分支环境</h2>
-  <div class="branch">${branchSlug}</div>
-  <div class="status" id="status">正在查找并构建分支...</div>
-  <div class="log" id="log"></div>
-</div>
-<script>
-const es = new EventSource(location.href);
-const logEl = document.getElementById('log');
-const statusEl = document.getElementById('status');
-const spinnerEl = document.getElementById('spinner');
-es.addEventListener('step', e => {
-  const d = JSON.parse(e.data);
-  statusEl.textContent = d.title || d.step;
-});
-es.addEventListener('log', e => {
-  const d = JSON.parse(e.data);
-  if (d.chunk) { logEl.textContent += d.chunk; logEl.scrollTop = logEl.scrollHeight; }
-});
-es.addEventListener('complete', e => {
-  es.close();
-  spinnerEl.style.borderTopColor = '#3fb950';
-  spinnerEl.style.animation = 'none';
-  statusEl.textContent = '构建完成，正在跳转...';
-  // Redirect to worker with cookie set
-  setTimeout(() => { location.reload(); }, 800);
-});
-es.addEventListener('error', e => {
-  try {
-    const d = JSON.parse(e.data);
-    statusEl.textContent = '构建失败: ' + (d.message || '未知错误');
-  } catch { statusEl.textContent = '连接断开'; }
-  spinnerEl.style.borderTopColor = '#f85149';
-  spinnerEl.style.animation = 'none';
-  es.close();
-});
-</script>
-</body></html>`;
-
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(html);
-  }
-
-  /**
-   * Redirect to worker with cds_branch cookie so subsequent requests go to the right branch.
-   */
-  private redirectToWorkerWithCookie(res: http.ServerResponse, branchSlug: string): void {
-    res.writeHead(302, {
-      'Set-Cookie': `cds_branch=${encodeURIComponent(branchSlug)}; Path=/; SameSite=Lax`,
-      Location: '/',
-      'Content-Type': 'text/plain',
-    });
-    res.end(`Switching to branch: ${branchSlug}`);
-  }
-
-  /**
-   * Landing page for the switch domain root.
-   */
-  private serveSwitchLanding(res: http.ServerResponse): void {
+  private serveSwitchNotFound(res: http.ServerResponse, suffix: string): void {
+    const switchDomain = this.config?.switchDomain || 'switch domain';
     const state = this.stateService.getState();
-    const branches = Object.entries(state.branches);
+    const branches = Object.keys(state.branches);
     const listHtml = branches.length > 0
-      ? branches.map(([slug, b]) =>
-        `<a href="/${slug}" class="item"><span class="dot ${b.status}"></span><span>${slug}</span><span class="st">${b.status}</span></a>`
+      ? '<div class="hint-title">已注册的分支：</div>' + branches.map(slug =>
+        `<a href="/${slug}" class="item">${slug}</a>`
       ).join('')
-      : '<div class="empty">暂无分支</div>';
+      : '';
 
     const html = `<!DOCTYPE html>
 <html><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CDS Switch</title>
+<title>分支未找到 — ${suffix}</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0d1117; color: #c9d1d9; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
-  .card { max-width: 520px; width: 90%; padding: 28px; background: #161b22; border: 1px solid #30363d; border-radius: 12px; }
-  h2 { font-size: 18px; margin-bottom: 6px; }
-  .desc { font-size: 13px; color: #8b949e; margin-bottom: 16px; }
-  code { background: #21262d; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
-  .list { display: flex; flex-direction: column; gap: 4px; }
-  .item { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #0d1117; border: 1px solid #21262d; border-radius: 6px; text-decoration: none; color: #58a6ff; font-size: 13px; font-family: monospace; transition: border-color 0.15s; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0d1117; color: #c9d1d9; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
+  .card { max-width: 480px; width: 100%; padding: 32px; background: #161b22; border: 1px solid #30363d; border-radius: 12px; text-align: center; }
+  .icon { font-size: 48px; margin-bottom: 16px; }
+  h2 { font-size: 18px; margin-bottom: 8px; color: #f0f6fc; }
+  .suffix { color: #f85149; font-family: monospace; font-size: 15px; word-break: break-all; margin-bottom: 12px; }
+  .desc { font-size: 13px; color: #8b949e; margin-bottom: 20px; line-height: 1.5; }
+  code { background: #21262d; padding: 2px 6px; border-radius: 4px; font-size: 12px; color: #c9d1d9; }
+  .hint-title { font-size: 12px; color: #8b949e; margin-bottom: 8px; text-align: left; }
+  .item { display: block; padding: 6px 10px; background: #0d1117; border: 1px solid #21262d; border-radius: 4px; text-decoration: none; color: #58a6ff; font-size: 12px; font-family: monospace; margin-bottom: 4px; text-align: left; transition: border-color 0.15s; }
   .item:hover { border-color: #58a6ff; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-  .dot.running { background: #3fb950; } .dot.building { background: #d29922; } .dot.idle { background: #484f58; } .dot.error { background: #f85149; } .dot.stopped { background: #484f58; opacity: .5; }
-  .st { margin-left: auto; font-size: 11px; color: #8b949e; font-family: sans-serif; }
-  .empty { font-size: 13px; color: #484f58; padding: 12px 0; }
 </style>
 </head><body>
 <div class="card">
-  <h2>CDS Switch</h2>
-  <div class="desc">访问 <code>/分支名后缀</code> 自动匹配并启动分支。例如：<code>/fix-login-issue</code></div>
-  <div class="list">${listHtml}</div>
+  <div class="icon">404</div>
+  <h2>分支未找到</h2>
+  <div class="suffix">${suffix}</div>
+  <div class="desc">在本地和远程仓库中均未找到匹配此后缀的分支。<br>请确认分支名称是否正确。</div>
+  <div class="desc">用法：<code>${switchDomain}/分支名后缀</code></div>
+  ${listHtml}
 </div>
 </body></html>`;
 
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(html);
   }
 

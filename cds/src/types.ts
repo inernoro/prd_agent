@@ -133,6 +133,10 @@ export interface CdsConfig {
   portStart: number;
   /** Shared environment variables (reserved, currently empty) */
   sharedEnv: Record<string, string>;
+  /** Switch domain for branch switching (e.g., "switch.miduo.org") */
+  switchDomain?: string;
+  /** Main domain to redirect to after switching (e.g., "miduo.org") */
+  mainDomain?: string;
   /** JWT settings (passed through to branch services) */
   jwt: {
     secret: string;

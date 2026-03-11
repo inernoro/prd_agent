@@ -21,7 +21,7 @@ stateService.load();
 // ── Services ──
 const worktreeService = new WorktreeService(shell, config.repoRoot);
 const containerService = new ContainerService(shell, config);
-const proxyService = new ProxyService(stateService);
+const proxyService = new ProxyService(stateService, config);
 proxyService.setWorktreeService(worktreeService);
 
 // Configure proxy: resolve branch slug → upstream URL
@@ -244,6 +244,7 @@ app.listen(config.masterPort, () => {
   console.log(`  ──────────────────────`);
   console.log(`  Dashboard:  http://localhost:${config.masterPort}`);
   console.log(`  Worker:     http://localhost:${config.workerPort}`);
+  if (config.switchDomain) console.log(`  Switch:     ${config.switchDomain} → ${config.mainDomain || '(main domain not set)'}`);
   console.log(`  State file: ${stateFile}`);
   console.log(`  Repo root:  ${config.repoRoot}`);
   console.log('');
