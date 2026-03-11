@@ -265,11 +265,20 @@ export class ProxyService {
    */
   private async handleSwitchRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const mainDomain = this.config?.mainDomain;
-    const mainUrl = mainDomain ? `http://${mainDomain}` : '/';
+    // Detect protocol from reverse proxy headers, default to https
+    const proto = (req.headers['x-forwarded-proto'] as string)?.split(',')[0]?.trim() || 'https';
+    const mainUrl = mainDomain ? `${proto}://${mainDomain}` : null;
     const url = req.url || '/';
     const pathParts = url.replace(/\?.*$/, '').split('/').filter(Boolean);
 
-    // No path → redirect to main domain with default branch
+    // No mainDomain configured → show error
+    if (!mainUrl) {
+      res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('MAIN_DOMAIN 未配置，无法跳转。请在 CDS 中设置 MAIN_DOMAIN 环境变量。');
+      return;
+    }
+
+    // No path → redirect to main domain (default branch)
     if (pathParts.length === 0) {
       res.writeHead(301, { Location: mainUrl, 'Content-Type': 'text/plain' });
       res.end('Redirecting to main domain...');
@@ -297,10 +306,11 @@ export class ProxyService {
       return;
     }
 
-    // Match found → set cookie + X-Branch hint, 301 to main domain
+    // Match found → set cookie, 301 to main domain
+    // Cookie Domain: use mainDomain so the cookie is readable on the main site
     console.log(`[switch] "${suffix}" → matched branch "${matchedSlug}", redirecting to ${mainUrl}`);
     res.writeHead(301, {
-      'Set-Cookie': `cds_branch=${encodeURIComponent(matchedSlug)}; Path=/; SameSite=Lax; Domain=${mainDomain || ''}`,
+      'Set-Cookie': `cds_branch=${encodeURIComponent(matchedSlug)}; Path=/; SameSite=Lax; Domain=${mainDomain}`,
       Location: mainUrl,
       'Content-Type': 'text/plain',
     });
