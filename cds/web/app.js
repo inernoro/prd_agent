@@ -597,5 +597,12 @@ function closeLogModal() {
   document.getElementById('logModal').classList.add('hidden');
 }
 
+// ── Logout ──
+
+async function doLogout() {
+  try { await fetch('/api/logout', { method: 'POST' }); } catch { /* ignore */ }
+  location.href = '/login.html';
+}
+
 // ── Start ──
 init();

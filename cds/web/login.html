@@ -78,7 +78,7 @@
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Login failed');
-        document.cookie = `cds_token=${data.token}; path=/; max-age=${30 * 86400}; SameSite=Lax`;
+        // cookie 已由服务端 Set-Cookie 头设置，直接跳转即可
         location.href = '/';
       } catch (ex) {
         err.textContent = ex.message;

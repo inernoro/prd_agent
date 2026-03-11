@@ -40,14 +40,21 @@ export function createServer(deps: ServerDeps): express.Express {
     app.post('/api/login', (req, res) => {
       const { username, password } = req.body || {};
       if (username === btUser && password === btPass) {
-        res.json({ success: true, token: validToken });
+        // 服务端设置 cookie，比客户端 document.cookie 更可靠（尤其是 HTTPS / 隐私模式）
+        res.setHeader('Set-Cookie', `cds_token=${validToken}; Path=/; Max-Age=${30 * 86400}; SameSite=Lax; HttpOnly`);
+        res.json({ success: true });
       } else {
         res.status(401).json({ error: 'Invalid credentials' });
       }
     });
 
+    app.post('/api/logout', (_req, res) => {
+      res.setHeader('Set-Cookie', 'cds_token=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly');
+      res.json({ success: true });
+    });
+
     app.use((req, res, next) => {
-      if (req.path === '/login.html' || req.path === '/api/login') return next();
+      if (req.path === '/login.html' || req.path === '/api/login' || req.path === '/api/logout') return next();
       if (/\.(css|js|ico|png|svg|woff2?)$/i.test(req.path)) return next();
 
       const cookieToken = parseCookie(req.headers.cookie || '', 'cds_token');
