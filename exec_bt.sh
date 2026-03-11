@@ -4,13 +4,13 @@ set -eu
 # CDS 一键部署/开发脚本
 #
 # 用法：
-#   ./exec_bt.sh              # 生产部署：npm install + tsc 编译 + node 启动
+#   ./exec_bt.sh              # 生产部署：npm install + tsc 编译 + 后台启动（默认）
 #   ./exec_bt.sh dev          # 开发调试：npm install + tsx watch（热重载）
 #   ./exec_bt.sh stop         # 停止后台进程
-#   ./exec_bt.sh restart      # 重启（生产模式）
+#   ./exec_bt.sh restart      # 重启（后台模式）
 #   ./exec_bt.sh status       # 查看运行状态
 #   ./exec_bt.sh logs         # 查看日志（后台模式）
-#   ./exec_bt.sh daemon       # 后台运行（nohup）
+#   ./exec_bt.sh fg           # 前台运行（调试用）
 #
 # 可选环境变量：
 #   BT_PORT=9900        Dashboard 端口（默认 9900）
@@ -176,9 +176,9 @@ show_help() {
   echo "用法: ./exec_bt.sh [命令]"
   echo ""
   echo "命令:"
-  echo "  (默认)        安装依赖 + 编译 + 前台启动（生产）"
+  echo "  (默认)        安装依赖 + 编译 + 后台启动（生产）"
   echo "  dev           安装依赖 + tsx watch 热重载（开发）"
-  echo "  daemon        安装依赖 + 编译 + 后台启动（生产）"
+  echo "  fg            安装依赖 + 编译 + 前台启动（调试用）"
   echo "  stop          停止后台进程"
   echo "  restart       重启（后台模式）"
   echo "  status        查看运行状态"
@@ -192,12 +192,12 @@ show_help() {
   echo ""
 }
 
-CMD="${1:-start}"
+CMD="${1:-daemon}"
 
 case "$CMD" in
-  start)   start_foreground ;;
+  start|daemon) start_daemon ;;
   dev)     start_dev ;;
-  daemon)  start_daemon ;;
+  fg)      start_foreground ;;
   stop)    stop_bt ;;
   restart) stop_bt; start_daemon ;;
   status)  show_status ;;
