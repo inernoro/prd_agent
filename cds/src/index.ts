@@ -52,8 +52,152 @@ proxyService.setResolveUpstream((branchId, profileId) => {
 // Concurrent requests for the same branch wait for the first build to finish.
 const buildLocks = new Map<string, { promise: Promise<void>; listeners: http.ServerResponse[] }>();
 
+// ── Auto-build transit page HTML ──
+function buildTransitPageHtml(branchName: string): string {
+  return `<!DOCTYPE html>
+<html lang="zh"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>正在构建 — ${branchName}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
+.card{max-width:560px;width:100%;padding:32px;background:#161b22;border:1px solid #30363d;border-radius:12px}
+.header{display:flex;align-items:center;gap:12px;margin-bottom:24px}
+.spinner{width:20px;height:20px;border:2px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.done-icon{width:20px;height:20px;display:none;color:#3fb950}
+.error-icon{width:20px;height:20px;display:none;color:#f85149}
+h2{font-size:16px;font-weight:600;color:#f0f6fc}
+.branch{font-family:ui-monospace,SFMono-Regular,monospace;font-size:13px;color:#58a6ff;background:#21262d;padding:4px 8px;border-radius:4px;margin-bottom:20px;word-break:break-all}
+.steps{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
+.step{display:flex;align-items:center;gap:8px;padding:8px 12px;background:#0d1117;border:1px solid #21262d;border-radius:6px;font-size:13px;transition:border-color .2s}
+.step.running{border-color:#58a6ff}
+.step.done{border-color:#3fb950}
+.step.error{border-color:#f85149}
+.step-icon{width:14px;height:14px;flex-shrink:0}
+.step.running .step-icon{border:2px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:spin .8s linear infinite}
+.step.done .step-icon{color:#3fb950}
+.step.done .step-icon::after{content:"✓"}
+.step.error .step-icon{color:#f85149}
+.step.error .step-icon::after{content:"✗"}
+.log-box{max-height:200px;overflow-y:auto;background:#010409;border:1px solid #21262d;border-radius:6px;padding:8px 12px;font-family:ui-monospace,monospace;font-size:11px;line-height:1.5;color:#8b949e;white-space:pre-wrap;word-break:break-all;display:none}
+.log-box::-webkit-scrollbar{width:4px}
+.log-box::-webkit-scrollbar-thumb{background:#30363d;border-radius:2px}
+.status-msg{text-align:center;font-size:13px;color:#8b949e;margin-top:16px}
+.status-msg.success{color:#3fb950}
+.status-msg.error{color:#f85149}
+.countdown{font-size:12px;color:#8b949e;text-align:center;margin-top:8px;display:none}
+</style>
+</head><body>
+<div class="card">
+  <div class="header">
+    <div class="spinner" id="hdrSpinner"></div>
+    <svg class="done-icon" id="hdrDone" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 110 16A8 8 0 018 0zm3.78 4.97a.75.75 0 00-1.06 0L7 8.69 5.28 6.97a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.06 0l4.25-4.25a.75.75 0 000-1.06z"/></svg>
+    <svg class="error-icon" id="hdrErr" viewBox="0 0 16 16" fill="currentColor"><path d="M2.343 13.657A8 8 0 1113.657 2.343 8 8 0 012.343 13.657zM6.03 4.97a.75.75 0 00-1.06 1.06L6.94 8 4.97 9.97a.75.75 0 101.06 1.06L8 9.06l1.97 1.97a.75.75 0 101.06-1.06L9.06 8l1.97-1.97a.75.75 0 10-1.06-1.06L8 6.94 6.03 4.97z"/></svg>
+    <h2 id="hdrTitle">正在构建分支...</h2>
+  </div>
+  <div class="branch">${branchName}</div>
+  <div class="steps" id="steps"></div>
+  <div class="log-box" id="logBox"></div>
+  <div class="status-msg" id="statusMsg"></div>
+  <div class="countdown" id="countdown"></div>
+</div>
+<script>
+(function(){
+  var steps=document.getElementById('steps');
+  var logBox=document.getElementById('logBox');
+  var statusMsg=document.getElementById('statusMsg');
+  var countdown=document.getElementById('countdown');
+  var hdrSpinner=document.getElementById('hdrSpinner');
+  var hdrDone=document.getElementById('hdrDone');
+  var hdrErr=document.getElementById('hdrErr');
+  var hdrTitle=document.getElementById('hdrTitle');
+  var stepMap={};
+
+  function addOrUpdateStep(id,status,title){
+    var el=stepMap[id];
+    if(!el){
+      el=document.createElement('div');
+      el.className='step '+status;
+      el.innerHTML='<div class="step-icon"></div><span></span>';
+      steps.appendChild(el);
+      stepMap[id]=el;
+    }
+    el.className='step '+status;
+    el.querySelector('span').textContent=title;
+  }
+
+  function appendLog(text){
+    logBox.style.display='block';
+    logBox.textContent+=text;
+    logBox.scrollTop=logBox.scrollHeight;
+  }
+
+  function finish(ok,msg){
+    hdrSpinner.style.display='none';
+    if(ok){
+      hdrDone.style.display='block';
+      hdrTitle.textContent='构建完成';
+      statusMsg.className='status-msg success';
+      statusMsg.textContent=msg||'分支已就绪，即将跳转...';
+      countdown.style.display='block';
+      var sec=3;
+      countdown.textContent=sec+'秒后自动刷新...';
+      var t=setInterval(function(){
+        sec--;
+        if(sec<=0){clearInterval(t);location.reload();}
+        else countdown.textContent=sec+'秒后自动刷新...';
+      },1000);
+    }else{
+      hdrErr.style.display='block';
+      hdrTitle.textContent='构建失败';
+      statusMsg.className='status-msg error';
+      statusMsg.textContent=msg||'构建过程中发生错误';
+    }
+  }
+
+  var url=location.href+(location.href.indexOf('?')>=0?'&':'?')+'sse=1';
+  var es=new EventSource(url);
+  es.addEventListener('step',function(e){
+    var d=JSON.parse(e.data);
+    addOrUpdateStep(d.step,d.status,d.title);
+  });
+  es.addEventListener('log',function(e){
+    var d=JSON.parse(e.data);
+    appendLog(d.chunk);
+  });
+  es.addEventListener('complete',function(e){
+    es.close();
+    var d=JSON.parse(e.data);
+    finish(true,d.message);
+  });
+  es.addEventListener('error',function(e){
+    if(e.data){
+      try{var d=JSON.parse(e.data);finish(false,d.message);}catch(ex){finish(false,'连接中断');}
+    }else{
+      finish(false,'连接中断，请刷新重试');
+    }
+    es.close();
+  });
+})();
+</script>
+</body></html>`;
+}
+
 // Auto-build: when a request hits an unbuilt branch
 proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
+  const url = new URL(_req.url || '/', `http://${_req.headers.host || 'localhost'}`);
+  const isSSE = url.searchParams.get('sse') === '1';
+
+  // Browser request (no ?sse=1): serve the transit HTML page
+  if (!isSSE) {
+    const displayName = branchSlug;
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
+    res.end(buildTransitPageHtml(displayName));
+    return;
+  }
+
+  // ── SSE mode: stream build events ──
   const branch = stateService.getBranch(branchSlug);
 
   // Race condition: if a build is already in progress for this slug,
@@ -73,7 +217,7 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
       // The build promise will resolve/reject and the finally block will end this response
       existingLock.promise.then(() => {
         try {
-          res.write(`event: complete\ndata: ${JSON.stringify({ message: `Branch "${branchSlug}" is now running.` })}\n\n`);
+          res.write(`event: complete\ndata: ${JSON.stringify({ message: `分支 "${branchSlug}" 已就绪` })}\n\n`);
         } catch { /* */ }
         res.end();
       }).catch((err) => {
@@ -85,12 +229,27 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
       return;
     }
 
-    // Building but no lock (stale state) — inform the client
-    res.writeHead(202, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
-      status: 'building',
-      message: `Branch "${branchSlug}" is currently building. Please wait...`,
-    }));
+    // Building but no lock (stale state) — send SSE error so transit page shows status
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    res.write(`event: step\ndata: ${JSON.stringify({ step: 'wait', status: 'running', title: `分支 "${branchSlug}" 正在构建中...` })}\n\n`);
+    // Poll until building finishes
+    const poll = setInterval(() => {
+      const b = stateService.getBranch(branchSlug);
+      if (!b || b.status !== 'building') {
+        clearInterval(poll);
+        if (b?.status === 'running') {
+          try { res.write(`event: complete\ndata: ${JSON.stringify({ message: `分支 "${branchSlug}" 已就绪` })}\n\n`); } catch { /* */ }
+        } else {
+          try { res.write(`event: error\ndata: ${JSON.stringify({ message: b?.errorMessage || '构建状态异常' })}\n\n`); } catch { /* */ }
+        }
+        res.end();
+      }
+    }, 2000);
     return;
   }
 
@@ -117,10 +276,14 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
   }
 
   if (!resolvedBranch) {
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
-      error: `远程仓库中未找到分支 "${branchSlug}"`,
-    }));
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    res.write(`event: error\ndata: ${JSON.stringify({ message: `远程仓库中未找到分支 "${branchSlug}"` })}\n\n`);
+    res.end();
     return;
   }
 
@@ -163,7 +326,7 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
     // Create worktree if branch doesn't exist locally
     let entry = stateService.getBranch(finalSlug);
     if (!entry) {
-      sendEvent('step', { step: 'worktree', status: 'running', title: `Creating worktree for ${resolvedBranch}...` });
+      sendEvent('step', { step: 'worktree', status: 'running', title: `正在为 ${resolvedBranch} 创建工作树...` });
       const worktreePath = `${config.worktreeBase}/${finalSlug}`;
       await worktreeService.create(resolvedBranch, worktreePath);
 
@@ -177,7 +340,7 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
       };
       stateService.addBranch(entry);
       stateService.save();
-      sendEvent('step', { step: 'worktree', status: 'done', title: 'Worktree created' });
+      sendEvent('step', { step: 'worktree', status: 'done', title: '工作树已创建' });
     }
 
     entry.status = 'building';
@@ -186,7 +349,7 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
     // Build all profiles
     const profiles = stateService.getBuildProfiles();
     for (const profile of profiles) {
-      sendEvent('step', { step: `build-${profile.id}`, status: 'running', title: `Building ${profile.name}...` });
+      sendEvent('step', { step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}...` });
 
       if (!entry.services[profile.id]) {
         const hostPort = stateService.allocatePort(config.portStart);
@@ -208,7 +371,7 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
       }, customEnv);
 
       svc.status = 'running';
-      sendEvent('step', { step: `build-${profile.id}`, status: 'done', title: `${profile.name} ready on :${svc.hostPort}` });
+      sendEvent('step', { step: `build-${profile.id}`, status: 'done', title: `${profile.name} 就绪 :${svc.hostPort}` });
     }
 
     entry.status = 'running';
@@ -216,8 +379,8 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
     stateService.save();
 
     sendEvent('complete', {
-      message: `Branch "${finalSlug}" is now running.`,
-      hint: 'Refresh to access the application.',
+      message: `分支 "${finalSlug}" 已就绪`,
+      hint: '即将自动刷新...',
     });
     resolveLock!();
   } catch (err) {

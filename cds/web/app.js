@@ -550,7 +550,15 @@ function renderBranches() {
             ${!isDefault ? `<button class="sm" onclick="setDefaultBranch('${esc(b.id)}')" ${btnDisabled('setDefault')}>${btnLabel('setDefault', '设为默认')}</button>` : ''}
             <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>删除</button>
           </div>
-          ${b.subject ? `<div class="branch-requirement">${esc(b.subject)}</div>` : ''}
+          ${b.subject ? `
+            <div class="branch-commits-wrap">
+              <div class="branch-requirement" onclick="event.stopPropagation(); toggleCommitLog('${esc(b.id)}')" title="点击查看历史提交">
+                ${esc(b.subject)}
+                <svg class="commit-chevron" width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M4.427 5.427a.75.75 0 011.146 0L8 7.854l2.427-2.427a.75.75 0 111.146 1.146l-3 3a.75.75 0 01-1.146 0l-3-3a.75.75 0 010-1.146z"/></svg>
+              </div>
+              <div class="commit-log-dropdown hidden" id="commit-log-${CSS.escape(b.id)}"></div>
+            </div>
+          ` : ''}
         </div>
       </div>
     `;
@@ -1070,6 +1078,59 @@ async function doLogout() {
   try { await fetch('/api/logout', { method: 'POST' }); } catch { /* ignore */ }
   location.href = '/login.html';
 }
+
+// ── Commit log dropdown ──
+
+let openCommitLogId = null;
+
+async function toggleCommitLog(id) {
+  const el = document.getElementById(`commit-log-${CSS.escape(id)}`);
+  if (!el) return;
+
+  // Close if already open
+  if (openCommitLogId === id) {
+    el.classList.add('hidden');
+    openCommitLogId = null;
+    return;
+  }
+
+  // Close any other open dropdown
+  if (openCommitLogId) {
+    const prev = document.getElementById(`commit-log-${CSS.escape(openCommitLogId)}`);
+    if (prev) prev.classList.add('hidden');
+  }
+
+  openCommitLogId = id;
+  el.classList.remove('hidden');
+  el.innerHTML = '<div class="commit-log-loading"><span class="btn-spinner"></span> 加载中...</div>';
+
+  try {
+    const data = await api('GET', `/branches/${encodeURIComponent(id)}/git-log?count=15`);
+    const commits = data.commits || [];
+    if (commits.length === 0) {
+      el.innerHTML = '<div class="commit-log-empty">暂无提交记录</div>';
+      return;
+    }
+    el.innerHTML = commits.map((c, i) => `
+      <div class="commit-log-item ${i === 0 ? 'latest' : ''}">
+        <code class="commit-hash">${esc(c.hash)}</code>
+        <span class="commit-subject">${esc(c.subject)}</span>
+        <span class="commit-meta">${esc(c.author)} · ${esc(c.date)}</span>
+      </div>
+    `).join('');
+  } catch (e) {
+    el.innerHTML = `<div class="commit-log-empty" style="color:var(--red)">${esc(e.message)}</div>`;
+  }
+}
+
+// Close commit log on outside click
+document.addEventListener('click', (e) => {
+  if (openCommitLogId && !e.target.closest('.branch-commits-wrap')) {
+    const el = document.getElementById(`commit-log-${CSS.escape(openCommitLogId)}`);
+    if (el) el.classList.add('hidden');
+    openCommitLogId = null;
+  }
+});
 
 // ── Title animation ──
 

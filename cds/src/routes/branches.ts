@@ -497,6 +497,37 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  // ── Git log (historical commits) ──
+
+  router.get('/branches/:id/git-log', async (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const count = Math.min(parseInt(req.query.count as string) || 20, 50);
+    try {
+      const SEP = '<SEP>';
+      const format = ['%h', '%s', '%an', '%ar'].join(SEP);
+      const result = await shell.exec(
+        `git log -${count} --format="${format}"`,
+        { cwd: entry.worktreePath, timeout: 10_000 },
+      );
+      const commits = result.stdout
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map(line => {
+          const [hash, subject, author, date] = line.split(SEP);
+          return { hash, subject, author, date };
+        });
+      res.json({ commits });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // ── Reset branch status ──
 
   router.post('/branches/:id/reset', (req, res) => {

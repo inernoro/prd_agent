@@ -514,11 +514,62 @@ button.text-btn:hover { color: var(--blue); }
 .branch-card-actions-row button:disabled { opacity: 0.3; }
 .branch-actions-left { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .branch-requirement {
-  font-size: 11px; color: var(--text-muted); max-width: 240px;
+  font-size: 11px; color: var(--text-muted); max-width: 280px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   text-align: right; flex-shrink: 0;
   padding: 3px 8px; background: var(--blue-bg);
   border-radius: var(--radius-xs); border: 1px solid var(--blue-border);
+  transition: border-color var(--transition), color var(--transition);
+}
+
+/* ── Commit Log Dropdown ── */
+
+.branch-commits-wrap {
+  position: relative; flex-shrink: 0;
+}
+.branch-requirement {
+  cursor: pointer; display: flex; align-items: center; gap: 4px;
+}
+.branch-requirement:hover {
+  border-color: var(--blue); color: var(--text-secondary);
+}
+.commit-chevron {
+  opacity: 0.5; flex-shrink: 0; transition: opacity var(--transition);
+}
+.branch-requirement:hover .commit-chevron { opacity: 1; }
+
+.commit-log-dropdown {
+  position: absolute; top: 100%; right: 0;
+  min-width: 360px; max-width: 460px; max-height: 320px;
+  margin-top: 6px; overflow-y: auto;
+  background: var(--bg-elevated); border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg); z-index: 70;
+}
+.commit-log-dropdown.hidden { display: none; }
+.commit-log-loading, .commit-log-empty {
+  padding: 16px; text-align: center;
+  font-size: 12px; color: var(--text-muted);
+}
+.commit-log-item {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 7px 12px; font-size: 12px;
+  border-bottom: 1px solid var(--border-light);
+  transition: background var(--transition);
+}
+.commit-log-item:last-child { border-bottom: none; }
+.commit-log-item:hover { background: var(--bg-hover); }
+.commit-log-item.latest { background: rgba(92, 158, 255, 0.05); }
+.commit-hash {
+  color: var(--blue); font-family: var(--font-mono);
+  font-size: 11px; flex-shrink: 0; letter-spacing: 0.01em;
+}
+.commit-subject {
+  color: var(--text-primary); flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.commit-meta {
+  color: var(--text-muted); font-size: 11px; flex-shrink: 0; white-space: nowrap;
 }
 
 .empty-state {

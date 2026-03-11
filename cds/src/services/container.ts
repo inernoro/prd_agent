@@ -58,6 +58,13 @@ export class ContainerService {
     mergedEnv['Jwt__Secret'] = this.config.jwt.secret;
     mergedEnv['Jwt__Issuer'] = this.config.jwt.issuer;
 
+    // Inject git branch name so frontend build tools (e.g. Vite __GIT_BRANCH__) can pick it up.
+    // The Docker container mounts only the workDir subdirectory (no .git), so
+    // `git rev-parse --abbrev-ref HEAD` would fail inside the container.
+    if (entry.branch) {
+      mergedEnv['VITE_GIT_BRANCH'] = entry.branch;
+    }
+
     // Profile-specific env (highest priority)
     if (profile.env) {
       Object.assign(mergedEnv, profile.env);
