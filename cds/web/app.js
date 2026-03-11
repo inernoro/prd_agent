@@ -727,13 +727,7 @@ async function saveBulkEnvAndRefresh() {
     if (key) newVars[key] = value;
   }
   try {
-    const oldKeys = Object.keys(customEnvVars);
-    for (const key of oldKeys) {
-      if (!(key in newVars)) await api('DELETE', `/env/${encodeURIComponent(key)}`);
-    }
-    for (const [key, value] of Object.entries(newVars)) {
-      await api('PUT', `/env/${encodeURIComponent(key)}`, { value });
-    }
+    await api('PUT', '/env', newVars);
     showToast(`已保存 ${Object.keys(newVars).length} 个环境变量`, 'success');
     await loadEnvVars();
     openEnvModal();
