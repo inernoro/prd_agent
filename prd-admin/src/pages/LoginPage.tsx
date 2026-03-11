@@ -19,7 +19,6 @@ export default function LoginPage() {
   const setPermissions = useAuthStore((s) => s.setPermissions);
   const setPermissionsLoaded = useAuthStore((s) => s.setPermissionsLoaded);
   const setCdnBaseUrl = useAuthStore((s) => s.setCdnBaseUrl);
-  const logout = useAuthStore((s) => s.logout);
   const isAuthed = useAuthStore((s) => s.isAuthenticated);
   const [loading, setLoading] = useState(false);
   const { count: backdropCount, pendingStopId } = useBackdropMotionSnapshot();
@@ -86,15 +85,15 @@ export default function LoginPage() {
     refreshToken: string,
     sessionKey: string
   ) => {
-    setAuth(user, accessToken);
+    // 先存储 token（不设 isAuthenticated），使后续 API 调用可携带 Authorization 头
     setTokens(accessToken, refreshToken, sessionKey);
     setPermissionsLoaded(false);
 
     // 拉取后台权限（决定菜单/路由可见性与准入）
     const authz = await getAdminAuthzMe();
     if (!authz.success) {
-      // 若无 admin.access 权限，后端会 403，这里直接回到登录态
-      logout();
+      // 若无 admin.access 权限，后端会 403，清除 token 回到未登录态
+      setTokens('', '', '');
       setError(authz.error?.message || '无权限进入管理后台');
       return;
     }
@@ -107,6 +106,8 @@ export default function LoginPage() {
     } catch {
       // ignore
     }
+    // 最后才设 isAuthenticated = true，确保权限已加载完毕，避免 useEffect 提前导航
+    setAuth(user, accessToken);
     navigate('/', { replace: true });
   };
 
