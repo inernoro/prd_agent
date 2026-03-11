@@ -878,21 +878,6 @@ export default function AppShell() {
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
           
-          {/* 退出按钮（始终可见，不隐藏在下拉菜单中） */}
-          <button
-            type="button"
-            onClick={() => logout()}
-            className={cn(
-              'inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-red-500/10 shrink-0',
-              collapsed ? 'h-8 w-8' : 'h-6 w-6'
-            )}
-            style={{ color: 'var(--text-muted)' }}
-            title="退出登录"
-            aria-label="退出登录"
-          >
-            <LogOut size={collapsed ? 16 : 14} />
-          </button>
-
           {/* 提交缺陷按钮 + 折叠按钮（仅展开时显示，在 DropdownMenu 外部） */}
           {!collapsed && (
             <>
