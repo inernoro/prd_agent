@@ -107,7 +107,7 @@ h2 { font-size: 14px; font-weight: 600; margin-bottom: 8px; letter-spacing: -0.0
 }
 .icon-btn:active { transform: scale(0.95) translateY(0); box-shadow: none; }
 .icon-btn:disabled { opacity: 0.3; cursor: not-allowed; transform: none; box-shadow: none; }
-.icon-btn.sm { width: 30px; height: 30px; }
+.icon-btn.sm { width: 36px; height: 36px; }
 .icon-btn.xs { width: 24px; height: 24px; font-size: 14px; border-radius: var(--radius-xs); }
 .icon-btn.danger-icon:hover { color: var(--red); border-color: var(--red-border); background: var(--red-bg); }
 .icon-btn.labeled { width: auto; padding: 0 12px; gap: 6px; }
@@ -335,6 +335,8 @@ button.text-btn:hover { color: var(--blue); }
   text-align: center; color: var(--text-muted); padding: 24px 14px;
   font-size: 13px; font-style: italic;
 }
+.branch-dropdown-icon { flex-shrink: 0; color: var(--text-muted); margin-top: 2px; }
+.branch-dropdown-item:hover .branch-dropdown-icon { color: var(--text-primary); }
 .branch-dropdown-item {
   display: flex; align-items: center; gap: 10px;
   padding: 10px 14px; cursor: pointer;
