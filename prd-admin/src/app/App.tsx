@@ -133,11 +133,6 @@ export default function App() {
   // 订阅被调度器跳过。显式传递 location prop 让 <Routes> 不依赖内部订阅。
   const location = useLocation();
 
-  // DEBUG: 追踪 location 变化
-  useEffect(() => {
-    console.log('[App] location changed:', location.pathname, location.key);
-  }, [location]);
-
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const setPermissions = useAuthStore((s) => s.setPermissions);
   const permissionsLoaded = useAuthStore((s) => s.permissionsLoaded);
