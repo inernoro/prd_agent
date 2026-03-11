@@ -16,6 +16,7 @@ import { LiteraryAgentWorkspaceListPage, LiteraryAgentEditorPageWrapper } from '
 import { DefectAgentPage } from '@/pages/defect-agent';
 import { VideoAgentPage } from '@/pages/video-agent';
 import { ReportAgentPage } from '@/pages/report-agent';
+import { ShortcutsPage } from '@/pages/shortcuts-agent';
 import { WorkflowListPage, WorkflowEditorPage, WorkflowCanvasPage } from '@/pages/workflow-agent';
 import { MarketplacePage } from '@/pages/marketplace';
 import { AiToolboxPage } from '@/pages/ai-toolbox';
@@ -265,6 +266,7 @@ export default function App() {
         <Route path="defect-agent" element={<RequirePermission perm="defect-agent.use"><DefectAgentPage /></RequirePermission>} />
         <Route path="video-agent" element={<RequirePermission perm="video-agent.use"><VideoAgentPage /></RequirePermission>} />
         <Route path="report-agent" element={<RequirePermission perm="report-agent.use"><ReportAgentPage /></RequirePermission>} />
+        <Route path="shortcuts-agent" element={<RequirePermission perm="access"><ShortcutsPage /></RequirePermission>} />
         <Route path="workflow-agent" element={<RequirePermission perm="workflow-agent.use"><WorkflowListPage /></RequirePermission>} />
         <Route path="workflow-agent/:workflowId" element={<RequirePermission perm="workflow-agent.use"><WorkflowEditorPage /></RequirePermission>} />
         <Route path="workflow-agent/:workflowId/canvas" element={<RequirePermission perm="workflow-agent.use"><WorkflowCanvasPage /></RequirePermission>} />

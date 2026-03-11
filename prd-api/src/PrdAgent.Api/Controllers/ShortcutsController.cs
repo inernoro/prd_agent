@@ -46,13 +46,40 @@ public class ShortcutsController : ControllerBase
         // 生成 token
         var (token, hash, prefix) = UserShortcut.GenerateToken();
 
+        // 校验绑定类型
+        var bindingType = request.BindingType ?? ShortcutBindingType.Collect;
+        if (bindingType is not (ShortcutBindingType.Collect or ShortcutBindingType.Workflow or ShortcutBindingType.Agent))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "bindingType 必须是 collect/workflow/agent"));
+
+        // 如果绑定工作流/智能体，校验目标 ID
+        if (bindingType != ShortcutBindingType.Collect && string.IsNullOrWhiteSpace(request.BindingTargetId))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "绑定工作流或智能体时 bindingTargetId 不能为空"));
+
+        // 获取绑定目标名称（快照）
+        string? bindingTargetName = request.BindingTargetName;
+        if (bindingType == ShortcutBindingType.Workflow && !string.IsNullOrWhiteSpace(request.BindingTargetId))
+        {
+            var workflow = await _db.Workflows
+                .Find(x => x.Id == request.BindingTargetId)
+                .FirstOrDefaultAsync(ct);
+            if (workflow == null)
+                return BadRequest(ApiResponse<object>.Fail("NOT_FOUND", "工作流不存在"));
+            bindingTargetName ??= workflow.Name;
+        }
+
         var shortcut = new UserShortcut
         {
             UserId = userId,
             Name = name,
             TokenHash = hash,
             TokenPrefix = prefix,
-            DeviceType = request.DeviceType ?? "ios"
+            DeviceType = request.DeviceType ?? "ios",
+            Icon = request.Icon ?? "⚡",
+            Color = request.Color ?? "#007AFF",
+            BindingType = bindingType,
+            BindingTargetId = request.BindingTargetId?.Trim(),
+            BindingTargetName = bindingTargetName,
+            BindingVariables = request.BindingVariables
         };
 
         await _db.UserShortcuts.InsertOneAsync(shortcut, cancellationToken: ct);
@@ -98,6 +125,11 @@ public class ShortcutsController : ControllerBase
             s.Name,
             s.TokenPrefix,
             s.DeviceType,
+            s.Icon,
+            s.Color,
+            s.BindingType,
+            s.BindingTargetId,
+            s.BindingTargetName,
             s.IsActive,
             s.LastUsedAt,
             s.CollectCount,
@@ -511,8 +543,55 @@ public class ShortcutsController : ControllerBase
         await _db.ChannelTasks.InsertOneAsync(task, cancellationToken: ct);
 
         _logger.LogInformation(
-            "Shortcut collect: user {UserId} via {ShortcutName} saved {Url}",
-            shortcut.UserId, shortcut.Name, request.Url ?? "(text)");
+            "Shortcut collect: user {UserId} via {ShortcutName} ({BindingType}) saved {Url}",
+            shortcut.UserId, shortcut.Name, shortcut.BindingType, request.Url ?? "(text)");
+
+        // 根据绑定类型，异步触发后台任务（收藏已完成，额外动作后台运行）
+        string message = $"已收藏到「{shortcut.Name}」";
+        string? executionId = null;
+
+        if (shortcut.BindingType == ShortcutBindingType.Workflow && !string.IsNullOrWhiteSpace(shortcut.BindingTargetId))
+        {
+            // 创建工作流执行（后台运行，立即返回）
+            var variables = new Dictionary<string, string>
+            {
+                ["input_url"] = request.Url?.Trim() ?? "",
+                ["input_text"] = request.Text?.Trim() ?? "",
+                ["shortcut_name"] = shortcut.Name,
+                ["collection_id"] = collection.Id
+            };
+
+            // 合并绑定时预设的变量
+            if (shortcut.BindingVariables != null)
+            {
+                foreach (var kv in shortcut.BindingVariables)
+                    variables.TryAdd(kv.Key, kv.Value);
+            }
+
+            var execution = new WorkflowExecution
+            {
+                WorkflowId = shortcut.BindingTargetId,
+                WorkflowName = shortcut.BindingTargetName ?? "",
+                TriggerType = "shortcut",
+                TriggeredBy = shortcut.UserId,
+                TriggeredByName = shortcut.Name,
+                Variables = variables,
+                Status = WorkflowExecutionStatus.Queued
+            };
+
+            await _db.WorkflowExecutions.InsertOneAsync(execution, cancellationToken: CancellationToken.None);
+            executionId = execution.Id;
+            message = $"已收藏，工作流「{shortcut.BindingTargetName ?? "未命名"}」正在执行...";
+
+            _logger.LogInformation(
+                "Shortcut triggered workflow: {WorkflowId} execution {ExecutionId} via {ShortcutName}",
+                shortcut.BindingTargetId, execution.Id, shortcut.Name);
+        }
+        else if (shortcut.BindingType == ShortcutBindingType.Agent && !string.IsNullOrWhiteSpace(shortcut.BindingTargetId))
+        {
+            message = $"已收藏，智能体「{shortcut.BindingTargetName ?? shortcut.BindingTargetId}」正在处理...";
+            // TODO: Phase 2 - 路由到对应智能体
+        }
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -520,7 +599,9 @@ public class ShortcutsController : ControllerBase
             collection.Url,
             collection.Status,
             ShortcutName = shortcut.Name,
-            Message = $"已收藏到「{shortcut.Name}」"
+            shortcut.BindingType,
+            ExecutionId = executionId,
+            Message = message
         }));
     }
 
@@ -608,6 +689,54 @@ public class ShortcutsController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "收藏不存在或无权限"));
 
         return Ok(ApiResponse<object>.Ok(new { id, deleted = true }));
+    }
+
+    #endregion
+
+    #region 绑定目标查询
+
+    /// <summary>
+    /// 获取可绑定的目标列表（工作流 + 智能体），供创建表单下拉选择
+    /// </summary>
+    [Authorize]
+    [HttpGet("binding-targets")]
+    public async Task<IActionResult> GetBindingTargets(CancellationToken ct)
+    {
+        var userId = GetUserId();
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "未登录"));
+
+        // 查询用户的工作流
+        var workflows = await _db.Workflows
+            .Find(x => x.CreatedBy == userId && x.IsEnabled)
+            .SortByDescending(x => x.UpdatedAt)
+            .Limit(50)
+            .ToListAsync(ct);
+
+        var workflowItems = workflows.Select(w => new
+        {
+            Id = w.Id,
+            w.Name,
+            w.Description,
+            w.Icon,
+            Type = "workflow"
+        });
+
+        // 内置智能体列表
+        var agents = new[]
+        {
+            new { Id = "prd-agent", Name = "PRD 智能解读", Description = "PRD 文档解析与问答", Icon = "📋", Type = "agent" },
+            new { Id = "literary-agent", Name = "文学创作", Description = "文章配图、文学创作", Icon = "✍️", Type = "agent" },
+            new { Id = "visual-agent", Name = "视觉创作", Description = "高级视觉创作工作区", Icon = "🎨", Type = "agent" },
+            new { Id = "defect-agent", Name = "缺陷管理", Description = "缺陷提交与跟踪", Icon = "🐛", Type = "agent" },
+            new { Id = "video-agent", Name = "视频生成", Description = "文章转视频教程", Icon = "🎬", Type = "agent" },
+        };
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            workflows = workflowItems,
+            agents
+        }));
     }
 
     #endregion
@@ -725,11 +854,29 @@ public class ShortcutsController : ControllerBase
 
 public class CreateShortcutRequest
 {
-    /// <summary>快捷指令名称（不传则默认"天狼星"，用户可自定义任意名称）</summary>
+    /// <summary>快捷指令名称（不传则默认"天狼星"）</summary>
     public string? Name { get; set; }
 
     /// <summary>设备类型：ios / android / other</summary>
     public string? DeviceType { get; set; }
+
+    /// <summary>图标（emoji 或 icon name）</summary>
+    public string? Icon { get; set; }
+
+    /// <summary>主题色（hex）</summary>
+    public string? Color { get; set; }
+
+    /// <summary>绑定类型：collect（默认）| workflow | agent</summary>
+    public string? BindingType { get; set; }
+
+    /// <summary>绑定目标 ID（工作流 ID 或 agent appKey）</summary>
+    public string? BindingTargetId { get; set; }
+
+    /// <summary>绑定目标名称（可选，不传则自动获取）</summary>
+    public string? BindingTargetName { get; set; }
+
+    /// <summary>工作流变量默认值（绑定 workflow 时使用）</summary>
+    public Dictionary<string, string>? BindingVariables { get; set; }
 }
 
 public class CollectRequest

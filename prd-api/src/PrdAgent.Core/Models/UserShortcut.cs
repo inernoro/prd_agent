@@ -5,6 +5,7 @@ namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 用户快捷指令绑定（每个绑定拥有独立的 scs- token）
+/// 支持绑定到：收藏(collect)、工作流(workflow)、智能体(agent)
 /// </summary>
 public class UserShortcut
 {
@@ -13,7 +14,7 @@ public class UserShortcut
     /// <summary>所属用户ID</summary>
     public string UserId { get; set; } = string.Empty;
 
-    /// <summary>用户自定义名称（如"工作收藏"、"灵感收集"）</summary>
+    /// <summary>用户自定义名称（默认"天狼星"）</summary>
     public string Name { get; set; } = string.Empty;
 
     /// <summary>Token 的 SHA256 哈希（用于校验，不存储明文）</summary>
@@ -25,13 +26,35 @@ public class UserShortcut
     /// <summary>设备类型：ios / android / other</summary>
     public string DeviceType { get; set; } = "ios";
 
+    /// <summary>图标（emoji 或 lucide icon name）</summary>
+    public string Icon { get; set; } = "⚡";
+
+    /// <summary>主题色（hex）</summary>
+    public string Color { get; set; } = "#007AFF";
+
+    #region Binding 绑定配置
+
+    /// <summary>绑定类型：collect | workflow | agent</summary>
+    public string BindingType { get; set; } = ShortcutBindingType.Collect;
+
+    /// <summary>绑定目标 ID（工作流 ID 或 agent appKey）</summary>
+    public string? BindingTargetId { get; set; }
+
+    /// <summary>绑定目标名称（展示用，创建时快照）</summary>
+    public string? BindingTargetName { get; set; }
+
+    /// <summary>工作流变量默认值（绑定 workflow 时使用）</summary>
+    public Dictionary<string, string>? BindingVariables { get; set; }
+
+    #endregion
+
     /// <summary>是否启用</summary>
     public bool IsActive { get; set; } = true;
 
     /// <summary>最后使用时间</summary>
     public DateTime? LastUsedAt { get; set; }
 
-    /// <summary>累计收藏次数</summary>
+    /// <summary>累计使用次数</summary>
     public int CollectCount { get; set; } = 0;
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
@@ -57,4 +80,12 @@ public class UserShortcut
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(token));
         return Convert.ToHexString(bytes).ToLowerInvariant();
     }
+}
+
+/// <summary>快捷指令绑定类型常量</summary>
+public static class ShortcutBindingType
+{
+    public const string Collect = "collect";
+    public const string Workflow = "workflow";
+    public const string Agent = "agent";
 }

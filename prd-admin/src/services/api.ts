@@ -810,6 +810,17 @@ export const api = {
     saveShare: (token: string) => `/api/web-pages/shares/${token}/save`,
     viewLogs: '/api/web-pages/shares/view-logs',
   },
+  // ============ 快捷指令 ============
+  shortcuts: {
+    list: () => '/api/shortcuts',
+    create: () => '/api/shortcuts',
+    delete: (id: string) => `/api/shortcuts/${id}`,
+    setup: (id: string) => `/api/shortcuts/${id}/setup`,
+    bindingTargets: () => '/api/shortcuts/binding-targets',
+    collections: () => '/api/shortcuts/collections',
+    deleteCollection: (id: string) => `/api/shortcuts/collections/${id}`,
+    templates: () => '/api/shortcuts/templates',
+  },
 } as const;
 
 export default api;
