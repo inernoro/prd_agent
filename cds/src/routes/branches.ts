@@ -679,6 +679,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.json({ env: stateService.getCustomEnv() });
   });
 
+  // Helper: sync CDS-relevant env vars (SWITCH_DOMAIN, MAIN_DOMAIN) into runtime config
+  function syncDomainConfig() {
+    const env = stateService.getCustomEnv();
+    if (env.SWITCH_DOMAIN) config.switchDomain = env.SWITCH_DOMAIN;
+    if (env.MAIN_DOMAIN) config.mainDomain = env.MAIN_DOMAIN;
+  }
+
   router.put('/env', (req, res) => {
     const env = req.body as Record<string, string>;
     if (!env || typeof env !== 'object') {
@@ -687,6 +694,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     stateService.setCustomEnv(env);
     stateService.save();
+    syncDomainConfig();
     res.json({ message: '环境变量已更新', env });
   });
 
@@ -699,6 +707,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     stateService.setCustomEnvVar(key, value);
     stateService.save();
+    syncDomainConfig();
     res.json({ message: `Set ${key}` });
   });
 

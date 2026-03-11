@@ -18,6 +18,13 @@ const stateFile = path.join(config.repoRoot, '.cds', 'state.json');
 const stateService = new StateService(stateFile);
 stateService.load();
 
+// ── Apply custom env overrides to config ──
+// Users set SWITCH_DOMAIN / MAIN_DOMAIN in CDS custom env vars (UI),
+// but config.ts only reads process.env at startup. Merge them here.
+const customEnv = stateService.getCustomEnv();
+if (customEnv.SWITCH_DOMAIN && !config.switchDomain) config.switchDomain = customEnv.SWITCH_DOMAIN;
+if (customEnv.MAIN_DOMAIN && !config.mainDomain) config.mainDomain = customEnv.MAIN_DOMAIN;
+
 // ── Services ──
 const worktreeService = new WorktreeService(shell, config.repoRoot);
 const containerService = new ContainerService(shell, config);
