@@ -584,6 +584,7 @@ button.text-btn:hover { color: var(--blue); }
 }
 .modal-close:hover { background: var(--bg-hover); color: var(--text-primary); }
 .modal-body { padding: 14px 18px; overflow-y: auto; flex: 1; }
+.config-modal-dialog { max-width: 640px; }
 
 /* ════════════════ Live Log ════════════════ */
 

@@ -166,6 +166,17 @@ export class ContainerService {
     return combinedOutput(result);
   }
 
+  async getEnv(containerName: string): Promise<string> {
+    // Use docker inspect instead of docker exec to support stopped containers
+    const result = await this.shell.exec(
+      `docker inspect ${containerName} --format='{{range .Config.Env}}{{println .}}{{end}}'`,
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(`获取环境变量失败:\n${combinedOutput(result)}`);
+    }
+    return result.stdout;
+  }
+
   private async ensureNetwork(): Promise<void> {
     const inspect = await this.shell.exec(`docker network inspect ${this.config.dockerNetwork}`);
     if (inspect.exitCode !== 0) {

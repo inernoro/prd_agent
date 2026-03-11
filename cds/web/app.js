@@ -493,6 +493,7 @@ function renderBranches() {
           `}
           ${isRunning ? `<button class="sm" onclick="stopBranch('${esc(b.id)}')" ${btnDisabled('stop')}>${btnLabel('stop', '停止')}</button>` : ''}
           <button class="sm" onclick="pullBranch('${esc(b.id)}')" ${btnDisabled('pull')}>${btnLabel('pull', '拉取')}</button>
+          ${services.length > 0 ? `<button class="sm" onclick="openContainerEnvPicker('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>容器变量</button>` : ''}
           ${hasError ? `<button class="sm" onclick="resetBranch('${esc(b.id)}')" ${btnDisabled('reset')}>${btnLabel('reset', '重置')}</button>` : ''}
           ${!isDefault ? `<button class="sm" onclick="setDefaultBranch('${esc(b.id)}')" ${btnDisabled('setDefault')}>${btnLabel('setDefault', '设为默认')}</button>` : ''}
           <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>删除</button>
@@ -502,101 +503,17 @@ function renderBranches() {
   }).join('');
 }
 
-// ── Routing rules ──
-
-function renderRoutingRules() {
-  const el = document.getElementById('routingRulesList');
-  if (routingRules.length === 0) {
-    el.innerHTML = '<div class="config-empty">暂无路由规则。请求将使用 X-Branch 头或默认分支。</div>';
-    return;
-  }
-  el.innerHTML = routingRules.map(r => `
-    <div class="config-item ${r.enabled ? '' : 'disabled'}">
-      <div class="config-item-main">
-        <span class="config-item-type">${esc(r.type)}</span>
-        <code class="config-item-match">${esc(r.match)}</code>
-        <span class="config-item-arrow">&rarr;</span>
-        <span class="config-item-target">${esc(r.branch)}</span>
-      </div>
-      <div class="config-item-actions">
-        <button class="icon-btn xs" onclick="toggleRule('${esc(r.id)}')" title="${r.enabled ? '禁用' : '启用'}">
-          ${r.enabled ? '&#x2713;' : '&#x2717;'}
-        </button>
-        <button class="icon-btn xs danger-icon" onclick="deleteRule('${esc(r.id)}')" title="删除">&times;</button>
-      </div>
-    </div>
-  `).join('');
-}
-
-function showAddRuleForm() { document.getElementById('addRuleForm').classList.remove('hidden'); }
-function hideAddRuleForm() { document.getElementById('addRuleForm').classList.add('hidden'); }
-
-async function saveRule() {
-  const rule = {
-    id: document.getElementById('ruleId').value.trim(),
-    name: document.getElementById('ruleName').value.trim(),
-    type: document.getElementById('ruleType').value,
-    match: document.getElementById('ruleMatch').value.trim(),
-    branch: document.getElementById('ruleBranch').value.trim(),
-    priority: parseInt(document.getElementById('rulePriority').value) || 0,
-    enabled: true,
-  };
-  try {
-    await api('POST', '/routing-rules', rule);
-    hideAddRuleForm();
-    showToast('规则已添加', 'success');
-    await loadRoutingRules();
-  } catch (e) { showToast(e.message, 'error'); }
-}
-
-async function toggleRule(id) {
-  const rule = routingRules.find(r => r.id === id);
-  if (!rule) return;
-  try {
-    await api('PUT', `/routing-rules/${id}`, { enabled: !rule.enabled });
-    await loadRoutingRules();
-  } catch (e) { showToast(e.message, 'error'); }
-}
-
-async function deleteRule(id) {
-  try {
-    await api('DELETE', `/routing-rules/${id}`);
-    showToast('规则已删除', 'success');
-    await loadRoutingRules();
-  } catch (e) { showToast(e.message, 'error'); }
-}
-
-// ── Build profiles ──
+// ── Build profiles (data only) ──
 
 function renderProfiles() {
-  const el = document.getElementById('profilesList');
+  // Profiles are now rendered inside modal, this just controls the quickstart banner
   const banner = document.getElementById('quickstartBanner');
   if (buildProfiles.length === 0) {
-    el.innerHTML = '<div class="config-empty">暂无构建配置，请添加一个。</div>';
     banner.classList.remove('hidden');
-    return;
+  } else {
+    banner.classList.add('hidden');
   }
-  banner.classList.add('hidden');
-  el.innerHTML = buildProfiles.map(p => `
-    <div class="config-item">
-      <div class="config-item-main">
-        <strong>${esc(p.name)}</strong>
-        <code class="config-item-match">${esc(p.dockerImage)}</code>
-        <span class="config-item-detail">${esc(p.workDir || '.')} :${p.containerPort}</span>
-        <code class="config-item-cmd" title="${esc(p.runCommand)}">${esc(p.runCommand)}</code>
-      </div>
-      <div class="config-item-actions">
-        <button class="icon-btn xs danger-icon" onclick="deleteProfile('${esc(p.id)}')" title="删除">&times;</button>
-      </div>
-    </div>
-  `).join('');
 }
-
-function showAddProfileForm() {
-  document.getElementById('addProfileForm').classList.remove('hidden');
-  loadDockerImages();
-}
-function hideAddProfileForm() { document.getElementById('addProfileForm').classList.add('hidden'); }
 
 function onImageSelect(val) {
   const custom = document.getElementById('profileImageCustom');
@@ -627,29 +544,6 @@ async function loadDockerImages() {
   } catch { /* ignore */ }
 }
 
-async function saveProfile() {
-  const selectVal = document.getElementById('profileImage').value;
-  const customVal = document.getElementById('profileImageCustom').value.trim();
-  const dockerImage = selectVal === '__custom__' ? customVal : selectVal;
-
-  const profile = {
-    id: document.getElementById('profileId').value.trim(),
-    name: document.getElementById('profileName').value.trim(),
-    dockerImage,
-    workDir: document.getElementById('profileWorkDir').value.trim() || '.',
-    containerPort: parseInt(document.getElementById('profilePort').value) || 8080,
-    installCommand: document.getElementById('profileInstall').value.trim() || undefined,
-    buildCommand: document.getElementById('profileBuild').value.trim() || undefined,
-    runCommand: document.getElementById('profileRun').value.trim(),
-  };
-  try {
-    await api('POST', '/build-profiles', profile);
-    hideAddProfileForm();
-    showToast('配置已添加', 'success');
-    await loadProfiles();
-  } catch (e) { showToast(e.message, 'error'); }
-}
-
 async function runQuickstart() {
   try {
     const data = await api('POST', '/quickstart');
@@ -658,21 +552,12 @@ async function runQuickstart() {
   } catch (e) { showToast(e.message, 'error'); }
 }
 
-async function deleteProfile(id) {
-  try {
-    await api('DELETE', `/build-profiles/${id}`);
-    showToast('配置已删除', 'success');
-    await loadProfiles();
-  } catch (e) { showToast(e.message, 'error'); }
-}
-
-// ── Environment variables ──
+// ── Environment variables (data only) ──
 
 async function loadEnvVars() {
   try {
     const data = await api('GET', '/env');
     customEnvVars = data.env || {};
-    renderEnvVars();
   } catch (e) { console.error('loadEnvVars:', e); }
 }
 
@@ -681,87 +566,114 @@ function maskValue(key, val) {
   return val;
 }
 
-function renderEnvVars() {
-  const el = document.getElementById('envVarsList');
-  const entries = Object.entries(customEnvVars);
-  if (entries.length === 0) {
-    el.innerHTML = '<div class="config-empty">暂无自定义环境变量。默认使用自动检测的主机变量 (MONGODB_HOST 等)。</div>';
-    return;
-  }
-  el.innerHTML = entries.map(([k, v]) => `
-    <div class="config-item">
-      <div class="config-item-main">
-        <code class="env-key">${esc(k)}</code>
-        <span class="config-item-arrow">=</span>
-        <code class="env-val" title="${esc(v)}">${esc(maskValue(k, v))}</code>
-      </div>
-      <div class="config-item-actions">
-        <button class="icon-btn xs" onclick="editEnvVar('${esc(k)}')" title="编辑">&#x270E;</button>
-        <button class="icon-btn xs danger-icon" onclick="deleteEnvVar('${esc(k)}')" title="删除">&times;</button>
-      </div>
-    </div>
-  `).join('');
+// ── Routing rules (data only) ──
+
+function renderRoutingRules() {
+  // Routing rules are now rendered inside modal, no-op for data load callback
 }
 
-function showAddEnvForm() { document.getElementById('addEnvForm').classList.remove('hidden'); }
-function hideAddEnvForm() { document.getElementById('addEnvForm').classList.add('hidden'); }
+// ── Config modal (shared) ──
 
-async function saveEnvVar() {
+function openConfigModal(title, html) {
+  document.getElementById('configModalTitle').textContent = title;
+  document.getElementById('configModalBody').innerHTML = html;
+  document.getElementById('configModal').classList.remove('hidden');
+}
+
+function closeConfigModal() {
+  document.getElementById('configModal').classList.add('hidden');
+}
+
+// ── Env modal ──
+
+function openEnvModal() {
+  const entries = Object.entries(customEnvVars);
+  const listHtml = entries.length === 0
+    ? '<div class="config-empty">暂无自定义环境变量。默认使用自动检测的主机变量 (MONGODB_HOST 等)。</div>'
+    : entries.map(([k, v]) => `
+        <div class="config-item">
+          <div class="config-item-main">
+            <code class="env-key">${esc(k)}</code>
+            <span class="config-item-arrow">=</span>
+            <code class="env-val" title="${esc(v)}">${esc(maskValue(k, v))}</code>
+          </div>
+          <div class="config-item-actions">
+            <button class="icon-btn xs" onclick="editEnvVarInModal('${esc(k)}')" title="编辑">&#x270E;</button>
+            <button class="icon-btn xs danger-icon" onclick="deleteEnvVarAndRefresh('${esc(k)}')" title="删除">&times;</button>
+          </div>
+        </div>
+      `).join('');
+
+  const html = `
+    <p class="config-panel-desc">
+      自定义环境变量将注入到所有容器中，可覆盖自动检测的主机变量。
+      键名中包含 <code>PASSWORD</code> 或 <code>SECRET</code> 的值在显示时会被遮蔽。
+    </p>
+    <div class="config-panel-actions" style="margin-bottom:10px">
+      <button class="sm" onclick="openBulkEnvModal()">批量编辑</button>
+      <button class="sm primary" onclick="toggleModalForm('envAddForm')">+ 添加</button>
+    </div>
+    <div id="envAddForm" class="hidden">
+      <div class="form-row">
+        <input id="envKey" placeholder="键名（如 MongoDB__ConnectionString）" class="form-input">
+        <input id="envValue" placeholder="值" class="form-input">
+      </div>
+      <div class="form-row">
+        <button class="primary sm" onclick="saveEnvVarAndRefresh()">保存</button>
+        <button class="sm" onclick="toggleModalForm('envAddForm')">取消</button>
+      </div>
+    </div>
+    <div id="envListInModal">${listHtml}</div>
+  `;
+  openConfigModal('环境变量', html);
+}
+
+function editEnvVarInModal(key) {
+  const form = document.getElementById('envAddForm');
+  form.classList.remove('hidden');
+  document.getElementById('envKey').value = key;
+  document.getElementById('envValue').value = customEnvVars[key] || '';
+}
+
+async function saveEnvVarAndRefresh() {
   const key = document.getElementById('envKey').value.trim();
   const value = document.getElementById('envValue').value;
   if (!key) { showToast('键名不能为空', 'error'); return; }
   try {
     await api('PUT', `/env/${encodeURIComponent(key)}`, { value });
-    hideAddEnvForm();
-    document.getElementById('envKey').value = '';
-    document.getElementById('envValue').value = '';
     showToast(`已设置 ${key}`, 'success');
     await loadEnvVars();
+    openEnvModal();
   } catch (e) { showToast(e.message, 'error'); }
 }
 
-async function editEnvVar(key) {
-  document.getElementById('envKey').value = key;
-  document.getElementById('envValue').value = customEnvVars[key] || '';
-  showAddEnvForm();
-}
-
-async function deleteEnvVar(key) {
+async function deleteEnvVarAndRefresh(key) {
   try {
     await api('DELETE', `/env/${encodeURIComponent(key)}`);
     showToast(`已删除 ${key}`, 'success');
     await loadEnvVars();
+    openEnvModal();
   } catch (e) { showToast(e.message, 'error'); }
 }
 
-function toggleBulkEnvEdit() {
-  const form = document.getElementById('bulkEnvForm');
-  const isHidden = form.classList.contains('hidden');
-  if (isHidden) {
-    // 填充当前变量到 textarea
-    const textarea = document.getElementById('bulkEnvTextarea');
-    const entries = Object.entries(customEnvVars);
-    if (entries.length > 0) {
-      textarea.value = entries.map(([k, v]) => `${k}=${v}`).join('\n');
-    }
-    form.classList.remove('hidden');
-    hideAddEnvForm();
-    updateBulkHint();
-    textarea.addEventListener('input', updateBulkHint);
-  } else {
-    form.classList.add('hidden');
-  }
+function openBulkEnvModal() {
+  const entries = Object.entries(customEnvVars);
+  const prefill = entries.length > 0 ? entries.map(([k, v]) => `${k}=${v}`).join('\n') : '';
+  const html = `
+    <p class="config-panel-desc">
+      每行一个变量，格式为 <code>KEY=VALUE</code>。空行和 <code>#</code> 开头的注释会被忽略。
+      保存时将<strong>替换</strong>所有现有变量。
+    </p>
+    <textarea id="bulkEnvTextarea" class="bulk-textarea" rows="12" placeholder="# 数据库连接&#10;MongoDB__ConnectionString=mongodb://localhost:27017&#10;REDIS_URL=redis://localhost:6379&#10;&#10;# 密钥&#10;JWT_SECRET=your-secret-here">${esc(prefill)}</textarea>
+    <div class="form-row" style="margin-top:8px">
+      <button class="primary sm" onclick="saveBulkEnvAndRefresh()">保存全部</button>
+      <button class="sm" onclick="openEnvModal()">取消</button>
+    </div>
+  `;
+  openConfigModal('批量编辑环境变量', html);
 }
 
-function updateBulkHint() {
-  const textarea = document.getElementById('bulkEnvTextarea');
-  const hint = document.getElementById('bulkEnvHint');
-  const lines = textarea.value.split('\n').filter(l => l.trim() && !l.trim().startsWith('#'));
-  const validCount = lines.filter(l => l.includes('=')).length;
-  hint.textContent = `${validCount} 个变量`;
-}
-
-async function saveBulkEnv() {
+async function saveBulkEnvAndRefresh() {
   const textarea = document.getElementById('bulkEnvTextarea');
   const lines = textarea.value.split('\n');
   const newVars = {};
@@ -774,30 +686,283 @@ async function saveBulkEnv() {
     const value = trimmed.substring(eqIdx + 1);
     if (key) newVars[key] = value;
   }
-
   try {
-    // 删除不在新列表中的旧变量
     const oldKeys = Object.keys(customEnvVars);
     for (const key of oldKeys) {
-      if (!(key in newVars)) {
-        await api('DELETE', `/env/${encodeURIComponent(key)}`);
-      }
+      if (!(key in newVars)) await api('DELETE', `/env/${encodeURIComponent(key)}`);
     }
-    // 添加/更新新变量
     for (const [key, value] of Object.entries(newVars)) {
       await api('PUT', `/env/${encodeURIComponent(key)}`, { value });
     }
-    document.getElementById('bulkEnvForm').classList.add('hidden');
     showToast(`已保存 ${Object.keys(newVars).length} 个环境变量`, 'success');
     await loadEnvVars();
+    openEnvModal();
   } catch (e) { showToast(e.message, 'error'); }
 }
 
-// ── Panels ──
+// ── Routing modal ──
 
-function togglePanel(id) {
+function openRoutingModal() {
+  const listHtml = routingRules.length === 0
+    ? '<div class="config-empty">暂无路由规则。请求将使用 X-Branch 头或默认分支。</div>'
+    : routingRules.map(r => `
+        <div class="config-item ${r.enabled ? '' : 'disabled'}">
+          <div class="config-item-main">
+            <span class="config-item-type">${esc(r.type)}</span>
+            <code class="config-item-match">${esc(r.match)}</code>
+            <span class="config-item-arrow">&rarr;</span>
+            <span class="config-item-target">${esc(r.branch)}</span>
+          </div>
+          <div class="config-item-actions">
+            <button class="icon-btn xs" onclick="toggleRuleAndRefresh('${esc(r.id)}')" title="${r.enabled ? '禁用' : '启用'}">
+              ${r.enabled ? '&#x2713;' : '&#x2717;'}
+            </button>
+            <button class="icon-btn xs danger-icon" onclick="deleteRuleAndRefresh('${esc(r.id)}')" title="删除">&times;</button>
+          </div>
+        </div>
+      `).join('');
+
+  const html = `
+    <p class="config-panel-desc">
+      通过 <code>X-Branch</code> 请求头、域名模式或 URL 模式将请求路由到分支。
+    </p>
+    <div style="margin-bottom:10px">
+      <button class="sm primary" onclick="toggleModalForm('addRuleFormModal')">+ 添加</button>
+    </div>
+    <div id="addRuleFormModal" class="hidden">
+      <div class="form-row">
+        <input id="ruleId" placeholder="规则 ID" class="form-input sm">
+        <input id="ruleName" placeholder="名称" class="form-input sm">
+      </div>
+      <div class="form-row">
+        <select id="ruleType" class="form-input sm">
+          <option value="domain">域名</option>
+          <option value="header">请求头</option>
+          <option value="pattern">URL 模式</option>
+        </select>
+        <input id="ruleMatch" placeholder="匹配模式" class="form-input">
+      </div>
+      <div class="form-row">
+        <input id="ruleBranch" placeholder="目标分支（用 $1 表示捕获组）" class="form-input">
+        <input id="rulePriority" type="number" value="0" placeholder="优先级" class="form-input xs">
+      </div>
+      <div class="form-row">
+        <button class="primary sm" onclick="saveRuleAndRefresh()">保存</button>
+        <button class="sm" onclick="toggleModalForm('addRuleFormModal')">取消</button>
+      </div>
+    </div>
+    <div id="routingListInModal">${listHtml}</div>
+  `;
+  openConfigModal('路由规则', html);
+}
+
+async function saveRuleAndRefresh() {
+  const rule = {
+    id: document.getElementById('ruleId').value.trim(),
+    name: document.getElementById('ruleName').value.trim(),
+    type: document.getElementById('ruleType').value,
+    match: document.getElementById('ruleMatch').value.trim(),
+    branch: document.getElementById('ruleBranch').value.trim(),
+    priority: parseInt(document.getElementById('rulePriority').value) || 0,
+    enabled: true,
+  };
+  try {
+    await api('POST', '/routing-rules', rule);
+    showToast('规则已添加', 'success');
+    await loadRoutingRules();
+    openRoutingModal();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function toggleRuleAndRefresh(id) {
+  const rule = routingRules.find(r => r.id === id);
+  if (!rule) return;
+  try {
+    await api('PUT', `/routing-rules/${id}`, { enabled: !rule.enabled });
+    await loadRoutingRules();
+    openRoutingModal();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function deleteRuleAndRefresh(id) {
+  try {
+    await api('DELETE', `/routing-rules/${id}`);
+    showToast('规则已删除', 'success');
+    await loadRoutingRules();
+    openRoutingModal();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+// ── Profile modal ──
+
+function openProfileModal() {
+  const listHtml = buildProfiles.length === 0
+    ? '<div class="config-empty">暂无构建配置，请添加一个。</div>'
+    : buildProfiles.map(p => `
+        <div class="config-item">
+          <div class="config-item-main">
+            <strong>${esc(p.name)}</strong>
+            <code class="config-item-match">${esc(p.dockerImage)}</code>
+            <span class="config-item-detail">${esc(p.workDir || '.')} :${p.containerPort}</span>
+            <code class="config-item-cmd" title="${esc(p.runCommand)}">${esc(p.runCommand)}</code>
+          </div>
+          <div class="config-item-actions">
+            <button class="icon-btn xs danger-icon" onclick="deleteProfileAndRefresh('${esc(p.id)}')" title="删除">&times;</button>
+          </div>
+        </div>
+      `).join('');
+
+  const html = `
+    <p class="config-panel-desc">
+      定义如何构建和运行服务。每个配置对应一个 Docker 容器及自定义命令。
+    </p>
+    <div style="margin-bottom:10px">
+      <button class="sm primary" onclick="showAddProfileInModal()">+ 添加</button>
+    </div>
+    <div id="addProfileFormModal" class="hidden">
+      <div class="form-row">
+        <input id="profileId" placeholder="配置 ID（如 api、web）" class="form-input sm">
+        <input id="profileName" placeholder="显示名称" class="form-input sm">
+      </div>
+      <div class="form-row">
+        <select id="profileImage" class="form-input" onchange="onImageSelect(this.value)">
+          <option value="">-- 选择 Docker 镜像 --</option>
+          <optgroup label="预设镜像" id="presetImages">
+            <option value="mcr.microsoft.com/dotnet/sdk:8.0">.NET 8 SDK</option>
+            <option value="node:20-slim">Node.js 20</option>
+            <option value="node:22-slim">Node.js 22</option>
+            <option value="python:3.12-slim">Python 3.12</option>
+            <option value="golang:1.22-alpine">Go 1.22</option>
+            <option value="rust:1.77-slim">Rust 1.77</option>
+          </optgroup>
+          <optgroup label="本地镜像" id="localImages"></optgroup>
+          <option value="__custom__">自定义...</option>
+        </select>
+        <input id="profileImageCustom" placeholder="自定义镜像" class="form-input hidden">
+      </div>
+      <div class="form-row">
+        <input id="profileWorkDir" placeholder="工作目录（默认: .）" class="form-input sm" value=".">
+        <input id="profilePort" type="number" value="8080" placeholder="端口" class="form-input xs">
+      </div>
+      <div class="form-row">
+        <input id="profileRun" placeholder="运行命令（必填）" class="form-input">
+      </div>
+      <div id="advancedFields" class="hidden">
+        <div class="form-row">
+          <input id="profileInstall" placeholder="安装命令（可选）" class="form-input">
+        </div>
+        <div class="form-row">
+          <input id="profileBuild" placeholder="构建命令（可选）" class="form-input">
+        </div>
+      </div>
+      <div class="form-row">
+        <button class="primary sm" onclick="saveProfileAndRefresh()">保存</button>
+        <button class="sm" onclick="toggleModalForm('addProfileFormModal')">取消</button>
+        <button class="sm text-btn" onclick="toggleAdvanced()">高级选项</button>
+      </div>
+    </div>
+    <div id="profileListInModal">${listHtml}</div>
+  `;
+  openConfigModal('构建配置', html);
+}
+
+function showAddProfileInModal() {
+  toggleModalForm('addProfileFormModal');
+  loadDockerImages();
+}
+
+async function saveProfileAndRefresh() {
+  const selectVal = document.getElementById('profileImage').value;
+  const customVal = document.getElementById('profileImageCustom').value.trim();
+  const dockerImage = selectVal === '__custom__' ? customVal : selectVal;
+  const profile = {
+    id: document.getElementById('profileId').value.trim(),
+    name: document.getElementById('profileName').value.trim(),
+    dockerImage,
+    workDir: document.getElementById('profileWorkDir').value.trim() || '.',
+    containerPort: parseInt(document.getElementById('profilePort').value) || 8080,
+    installCommand: document.getElementById('profileInstall').value.trim() || undefined,
+    buildCommand: document.getElementById('profileBuild').value.trim() || undefined,
+    runCommand: document.getElementById('profileRun').value.trim(),
+  };
+  try {
+    await api('POST', '/build-profiles', profile);
+    showToast('配置已添加', 'success');
+    await loadProfiles();
+    openProfileModal();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function deleteProfileAndRefresh(id) {
+  try {
+    await api('DELETE', `/build-profiles/${id}`);
+    showToast('配置已删除', 'success');
+    await loadProfiles();
+    openProfileModal();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+// ── Container env viewer ──
+
+async function viewContainerEnv(id, profileId) {
+  openConfigModal('容器环境变量', '<div class="config-empty"><span class="btn-spinner"></span> 加载中...</div>');
+  try {
+    const data = await api('POST', `/branches/${id}/container-env`, { profileId });
+    const envText = data.env || '';
+    const lines = envText.trim().split('\n').filter(Boolean).sort();
+    const listHtml = lines.map(line => {
+      const eqIdx = line.indexOf('=');
+      if (eqIdx <= 0) return `<div class="config-item"><div class="config-item-main"><code class="env-val">${esc(line)}</code></div></div>`;
+      const k = line.substring(0, eqIdx);
+      const v = line.substring(eqIdx + 1);
+      return `
+        <div class="config-item">
+          <div class="config-item-main">
+            <code class="env-key">${esc(k)}</code>
+            <span class="config-item-arrow">=</span>
+            <code class="env-val" title="${esc(v)}">${esc(maskValue(k, v))}</code>
+          </div>
+        </div>
+      `;
+    }).join('');
+    const label = profileId || '默认';
+    openConfigModal(`容器变量: ${id} / ${label}`, `
+      <p class="config-panel-desc">容器内部实际运行的环境变量（只读）。共 ${lines.length} 个变量。</p>
+      ${listHtml}
+    `);
+  } catch (e) {
+    openConfigModal('容器环境变量', `<div class="config-empty" style="color:var(--red)">${esc(e.message)}</div>`);
+  }
+}
+
+function openContainerEnvPicker(branchId) {
+  const branch = localBranches.find(b => b.id === branchId);
+  if (!branch) return;
+  const services = Object.entries(branch.services || {});
+  if (services.length === 0) {
+    showToast('该分支没有运行中的服务', 'error');
+    return;
+  }
+  if (services.length === 1) {
+    viewContainerEnv(branchId, services[0][0]);
+    return;
+  }
+  // Multiple services — let user pick
+  const listHtml = services.map(([pid, svc]) => `
+    <div class="config-item" style="cursor:pointer" onclick="viewContainerEnv('${esc(branchId)}', '${esc(pid)}')">
+      <div class="config-item-main">
+        <strong>${esc(pid)}</strong>
+        <span class="port-badge ${svc.status === 'running' ? 'run-port' : 'port-idle'}" style="display:inline-block">:${svc.hostPort}</span>
+        <span class="config-item-detail">${svc.status}</span>
+      </div>
+    </div>
+  `).join('');
+  openConfigModal('选择服务查看容器变量', listHtml);
+}
+
+function toggleModalForm(id) {
   const el = document.getElementById(id);
-  el.classList.toggle('hidden');
+  if (el) el.classList.toggle('hidden');
 }
 
 // ── Log modal ──

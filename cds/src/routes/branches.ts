@@ -457,6 +457,31 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  // ── Container env ──
+
+  router.post('/branches/:id/container-env', async (req, res) => {
+    const { id } = req.params;
+    const { profileId } = req.body as { profileId?: string };
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+
+    const svc = profileId ? entry.services[profileId] : Object.values(entry.services)[0];
+    if (!svc) {
+      res.status(404).json({ error: '未找到服务' });
+      return;
+    }
+
+    try {
+      const env = await containerService.getEnv(svc.containerName);
+      res.json({ env });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // ── Reset branch status ──
 
   router.post('/branches/:id/reset', (req, res) => {
