@@ -586,6 +586,22 @@ button.text-btn:hover { color: var(--blue); }
 .modal-body { padding: 14px 18px; overflow-y: auto; flex: 1; }
 .config-modal-dialog { max-width: 640px; }
 
+/* Inline edit form inside env items */
+.env-item-wrap { margin-bottom: 6px; }
+.env-inline-edit {
+  padding: 8px 14px; margin-top: -1px;
+  background: var(--bg-elevated); border: 1px solid var(--border-focus);
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+}
+.env-inline-edit .form-row { margin-bottom: 6px; }
+.env-inline-edit .form-row:last-child { margin-bottom: 0; }
+.env-item-wrap .config-item { margin-bottom: 0; }
+.env-item-wrap:has(.env-inline-edit:not(.hidden)) .config-item {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  border-color: var(--border-focus);
+}
+
 /* ════════════════ Live Log ════════════════ */
 
 .live-log-header {

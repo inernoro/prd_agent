@@ -588,21 +588,40 @@ function closeConfigModal() {
 
 function openEnvModal() {
   const entries = Object.entries(customEnvVars);
-  const listHtml = entries.length === 0
-    ? '<div class="config-empty">暂无自定义环境变量。默认使用自动检测的主机变量 (MONGODB_HOST 等)。</div>'
-    : entries.map(([k, v]) => `
+
+  function envItemHtml(k, v) {
+    const safeK = esc(k);
+    const escapedK = encodeURIComponent(k);
+    return `
+      <div class="env-item-wrap" id="env-item-${escapedK}">
         <div class="config-item">
           <div class="config-item-main">
-            <code class="env-key">${esc(k)}</code>
+            <code class="env-key">${safeK}</code>
             <span class="config-item-arrow">=</span>
             <code class="env-val" title="${esc(v)}">${esc(maskValue(k, v))}</code>
           </div>
           <div class="config-item-actions">
-            <button class="icon-btn xs" onclick="editEnvVarInModal('${esc(k)}')" title="编辑">&#x270E;</button>
-            <button class="icon-btn xs danger-icon" onclick="deleteEnvVarAndRefresh('${esc(k)}')" title="删除">&times;</button>
+            <button class="icon-btn xs" onclick="editEnvVarInline('${safeK}')" title="编辑">&#x270E;</button>
+            <button class="icon-btn xs danger-icon" onclick="deleteEnvVarAndRefresh('${safeK}')" title="删除">&times;</button>
           </div>
         </div>
-      `).join('');
+        <div class="env-inline-edit hidden" id="env-edit-${escapedK}">
+          <div class="form-row">
+            <input class="form-input" value="${safeK}" readonly style="opacity:0.6;flex:0.4">
+            <input class="form-input" id="env-edit-val-${escapedK}" value="${esc(v)}">
+          </div>
+          <div class="form-row">
+            <button class="primary sm" onclick="saveInlineEnvVar('${safeK}')">保存</button>
+            <button class="sm" onclick="cancelInlineEnvEdit('${safeK}')">取消</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  const listHtml = entries.length === 0
+    ? '<div class="config-empty">暂无自定义环境变量。默认使用自动检测的主机变量 (MONGODB_HOST 等)。</div>'
+    : entries.map(([k, v]) => envItemHtml(k, v)).join('');
 
   const html = `
     <p class="config-panel-desc">
@@ -619,7 +638,7 @@ function openEnvModal() {
         <input id="envValue" placeholder="值" class="form-input">
       </div>
       <div class="form-row">
-        <button class="primary sm" onclick="saveEnvVarAndRefresh()">保存</button>
+        <button class="primary sm" onclick="saveNewEnvVar()">保存</button>
         <button class="sm" onclick="toggleModalForm('envAddForm')">取消</button>
       </div>
     </div>
@@ -628,14 +647,35 @@ function openEnvModal() {
   openConfigModal('环境变量', html);
 }
 
-function editEnvVarInModal(key) {
-  const form = document.getElementById('envAddForm');
-  form.classList.remove('hidden');
-  document.getElementById('envKey').value = key;
-  document.getElementById('envValue').value = customEnvVars[key] || '';
+function editEnvVarInline(key) {
+  // Close any other open inline edits
+  document.querySelectorAll('.env-inline-edit').forEach(el => el.classList.add('hidden'));
+  const editEl = document.getElementById(`env-edit-${encodeURIComponent(key)}`);
+  if (editEl) {
+    editEl.classList.remove('hidden');
+    const input = document.getElementById(`env-edit-val-${encodeURIComponent(key)}`);
+    if (input) { input.focus(); input.select(); }
+  }
 }
 
-async function saveEnvVarAndRefresh() {
+function cancelInlineEnvEdit(key) {
+  const editEl = document.getElementById(`env-edit-${encodeURIComponent(key)}`);
+  if (editEl) editEl.classList.add('hidden');
+}
+
+async function saveInlineEnvVar(key) {
+  const input = document.getElementById(`env-edit-val-${encodeURIComponent(key)}`);
+  if (!input) return;
+  const value = input.value;
+  try {
+    await api('PUT', `/env/${encodeURIComponent(key)}`, { value });
+    showToast(`已保存 ${key}`, 'success');
+    await loadEnvVars();
+    openEnvModal();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function saveNewEnvVar() {
   const key = document.getElementById('envKey').value.trim();
   const value = document.getElementById('envValue').value;
   if (!key) { showToast('键名不能为空', 'error'); return; }
