@@ -24,9 +24,9 @@ import {
   type BindingTarget,
 } from '@/services/real/shortcutsAgent';
 
-// ─── Binding type labels ───
+// ─── Binding type labels (收藏是必备功能，绑定是附加功能) ───
 const BINDING_LABELS: Record<string, { label: string; icon: typeof Bookmark; color: string }> = {
-  collect: { label: '收藏', icon: Bookmark, color: '#34c759' },
+  collect: { label: '仅收藏', icon: Bookmark, color: '#34c759' },
   workflow: { label: '工作流', icon: GitBranch, color: '#007aff' },
   agent: { label: '智能体', icon: Bot, color: '#af52de' },
 };
@@ -66,7 +66,7 @@ export default function ShortcutsPage() {
             快捷指令
           </h1>
           <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>
-            创建快捷指令，绑定收藏/工作流/智能体，扫码安装到 iPhone
+            创建快捷指令，自动收藏 + 绑定工作流/智能体，扫码安装到 iPhone
           </p>
         </div>
         <button
@@ -166,10 +166,19 @@ function ShortcutCard({ item, onDelete }: { item: ShortcutItem; onDelete: () => 
           <span style={{
             display: 'inline-flex', alignItems: 'center', gap: 3,
             fontSize: 11, padding: '2px 8px', borderRadius: 6,
-            background: `${binding.color}20`, color: binding.color,
+            background: 'rgba(52, 199, 89, 0.12)', color: '#34c759',
           }}>
-            <BindingIcon size={10} /> {binding.label}
+            <Bookmark size={10} /> 收藏
           </span>
+          {item.bindingType !== 'collect' && (
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 3,
+              fontSize: 11, padding: '2px 8px', borderRadius: 6,
+              background: `${binding.color}20`, color: binding.color,
+            }}>
+              <BindingIcon size={10} /> {binding.label}
+            </span>
+          )}
           {!item.isActive && (
             <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 6, background: '#ff3b3020', color: '#ff3b30' }}>
               已禁用
@@ -269,7 +278,7 @@ function CreateShortcutDialog({
       title="创建快捷指令"
       maxWidth={480}
       content={
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           {/* Name */}
           <div>
             <label style={labelStyle}>名称</label>
@@ -282,11 +291,27 @@ function CreateShortcutDialog({
             />
           </div>
 
-          {/* Binding Type */}
+          {/* 收藏说明 — 收藏是必备功能 */}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px',
+            borderRadius: 10, background: 'rgba(52, 199, 89, 0.08)',
+            border: '1px solid rgba(52, 199, 89, 0.2)',
+          }}>
+            <Bookmark size={14} style={{ color: '#34c759', flexShrink: 0 }} />
+            <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+              每次分享都会<strong style={{ color: '#34c759' }}>自动收藏</strong>，可额外绑定工作流或智能体
+            </span>
+          </div>
+
+          {/* Binding Type — 附加绑定（可选） */}
           <div>
-            <label style={labelStyle}>绑定到</label>
+            <label style={labelStyle}>附加绑定（可选）</label>
             <div style={{ display: 'flex', gap: 8 }}>
-              {Object.entries(BINDING_LABELS).map(([key, { label, icon: Icon, color: c }]) => (
+              {([
+                { key: 'collect', label: '无', icon: Bookmark, color: 'var(--text-muted)' },
+                { key: 'workflow', label: '工作流', icon: GitBranch, color: '#007aff' },
+                { key: 'agent', label: '智能体', icon: Bot, color: '#af52de' },
+              ] as const).map(({ key, label, icon: Icon, color: c }) => (
                 <button
                   key={key}
                   onClick={() => { setBindingType(key); setBindingTargetId(''); }}
@@ -294,9 +319,9 @@ function CreateShortcutDialog({
                     flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
                     padding: '10px 0', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 13,
                     fontWeight: bindingType === key ? 600 : 400,
-                    background: bindingType === key ? `${c}20` : 'var(--surface-card)',
-                    color: bindingType === key ? c : 'var(--text-secondary)',
-                    outline: bindingType === key ? `2px solid ${c}50` : '1px solid var(--border-subtle)',
+                    background: bindingType === key ? (key === 'collect' ? 'var(--surface-card)' : `${c}20`) : 'var(--surface-card)',
+                    color: bindingType === key ? (key === 'collect' ? 'var(--text-primary)' : c) : 'var(--text-secondary)',
+                    outline: bindingType === key ? `2px solid ${key === 'collect' ? 'var(--border-subtle)' : `${c}50`}` : '1px solid var(--border-subtle)',
                   }}
                 >
                   <Icon size={14} /> {label}
@@ -305,7 +330,7 @@ function CreateShortcutDialog({
             </div>
           </div>
 
-          {/* Target Selector (workflow / agent) */}
+          {/* Target Selector (workflow / agent) — 紧凑下拉 */}
           {bindingType !== 'collect' && (
             <div>
               <label style={labelStyle}>
@@ -316,28 +341,22 @@ function CreateShortcutDialog({
                   暂无可用的{bindingType === 'workflow' ? '工作流' : '智能体'}
                 </p>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 200, overflowY: 'auto' }}>
+                <select
+                  value={bindingTargetId}
+                  onChange={(e) => setBindingTargetId(e.target.value)}
+                  style={{
+                    ...inputStyle,
+                    cursor: 'pointer',
+                    appearance: 'auto',
+                  }}
+                >
+                  <option value="">请选择...</option>
                   {currentTargets.map((t) => (
-                    <button
-                      key={t.id}
-                      onClick={() => setBindingTargetId(t.id)}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px',
-                        borderRadius: 10, border: 'none', cursor: 'pointer', textAlign: 'left',
-                        background: bindingTargetId === t.id ? 'var(--accent-muted, rgba(0,122,255,0.12))' : 'var(--surface-card)',
-                        outline: bindingTargetId === t.id ? '2px solid var(--accent)' : '1px solid var(--border-subtle)',
-                      }}
-                    >
-                      <span style={{ fontSize: 18 }}>{t.icon || '📦'}</span>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{t.name}</div>
-                        {t.description && (
-                          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{t.description}</div>
-                        )}
-                      </div>
-                    </button>
+                    <option key={t.id} value={t.id}>
+                      {t.icon || '📦'} {t.name}
+                    </option>
                   ))}
-                </div>
+                </select>
               )}
             </div>
           )}
@@ -356,17 +375,17 @@ function CreateShortcutDialog({
           </button>
 
           {showAdvanced && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div style={{ display: 'flex', gap: 16 }}>
               {/* Icon picker */}
-              <div>
+              <div style={{ flex: 1 }}>
                 <label style={labelStyle}>图标</label>
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                   {ICONS.map((ic) => (
                     <button
                       key={ic}
                       onClick={() => setIcon(ic)}
                       style={{
-                        width: 36, height: 36, borderRadius: 8, fontSize: 18,
+                        width: 30, height: 30, borderRadius: 6, fontSize: 15,
                         border: 'none', cursor: 'pointer',
                         background: icon === ic ? 'var(--accent-muted)' : 'var(--surface-card)',
                         outline: icon === ic ? '2px solid var(--accent)' : '1px solid var(--border-subtle)',
@@ -381,13 +400,13 @@ function CreateShortcutDialog({
               {/* Color picker */}
               <div>
                 <label style={labelStyle}>主题色</label>
-                <div style={{ display: 'flex', gap: 6 }}>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', maxWidth: 140 }}>
                   {COLORS.map((c) => (
                     <button
                       key={c}
                       onClick={() => setColor(c)}
                       style={{
-                        width: 32, height: 32, borderRadius: 8, border: 'none', cursor: 'pointer',
+                        width: 28, height: 28, borderRadius: 6, border: 'none', cursor: 'pointer',
                         background: c,
                         outline: color === c ? '2px solid var(--text-primary)' : 'none',
                         outlineOffset: 2,

@@ -58,6 +58,9 @@ public static class AdminMenuCatalog
         // 网页托管
         new("web-pages", "/web-pages", "网页托管", null, "Globe", 127),
 
+        // 快捷指令
+        new("shortcuts-agent", "/shortcuts-agent", "快捷指令", null, "Smartphone", 128),
+
         // 实验室
         new("lab", "/lab", "实验室", null, "FlaskConical", 140),
     };
@@ -79,8 +82,8 @@ public static class AdminMenuCatalog
 
         foreach (var menu in All)
         {
-            // AI 百宝箱 / 我的资产 / 系统设置 / AI 竞技场：只需要基础访问权限
-            if (menu.AppKey is "ai-toolbox" or "my-assets" or "settings" or "arena")
+            // AI 百宝箱 / 我的资产 / 系统设置 / AI 竞技场 / 快捷指令：只需要基础访问权限
+            if (menu.AppKey is "ai-toolbox" or "my-assets" or "settings" or "arena" or "shortcuts-agent")
             {
                 if (permSet.Contains(AdminPermissionCatalog.Access))
                 {

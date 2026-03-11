@@ -141,6 +141,12 @@ export const menuList: MenuDef[] = [
     permissions: ['workflow-agent.use', 'workflow-agent.manage'],
   },
   {
+    appKey: 'shortcuts-agent',
+    label: '快捷指令',
+    icon: 'Smartphone',
+    permissions: ['access'],
+  },
+  {
     appKey: 'data-migration-agent',
     label: '数据迁移 Agent',
     icon: 'DatabaseZap',
