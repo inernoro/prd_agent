@@ -77,8 +77,11 @@ header {
 
 .header-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
 h1 {
+  display: inline-flex; align-items: center; gap: 6px;
   font-size: 18px; font-weight: 700; white-space: nowrap;
-  letter-spacing: -0.02em; line-height: 1.2;
+  letter-spacing: -0.02em; line-height: 1;
+}
+.title-static {
   background: linear-gradient(120deg, #00f0ff 0%, #7c3aed 40%, #f43f5e 60%, #00f0ff 100%);
   background-size: 200% 100%;
   -webkit-background-clip: text; -webkit-text-fill-color: transparent;
@@ -90,16 +93,16 @@ h1 {
   100% { background-position: -200% 0; }
 }
 .title-rotating {
-  display: inline-block;
+  display: block;
   position: relative;
   overflow: hidden;
-  vertical-align: baseline;
-  height: 1.2em;
+  height: 1em;
   min-width: 4em;
-  line-height: 1.2;
+  line-height: 1;
 }
 .title-rotating-text {
   display: block;
+  line-height: 1;
   animation: title-rotate 9s ease-in-out infinite;
   background: linear-gradient(120deg, #7c3aed, #00f0ff);
   -webkit-background-clip: text; -webkit-text-fill-color: transparent;
