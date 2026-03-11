@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { ToolboxItem } from '@/services';
 import { useToolboxStore } from '@/stores/toolboxStore';
 import { useNavigate } from 'react-router-dom';
@@ -119,6 +120,7 @@ export function ToolCard({ item }: ToolCardProps) {
   const isCustomized = !!item.routePath;
   const favorited = isFavorite(item.id);
   const coverUrl = getCoverImageUrl(item.agentKey);
+  const [coverFailed, setCoverFailed] = useState(false);
 
   const handleClick = () => {
     if (isCustomized && item.routePath) {
@@ -143,12 +145,13 @@ export function ToolCard({ item }: ToolCardProps) {
       }}
     >
       {/* Cover visual — CDN 图片 or 渐变 + 大图标 */}
-      {coverUrl ? (
+      {coverUrl && !coverFailed ? (
         <img
           src={coverUrl}
           alt={item.name}
           className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 ease-out group-hover:scale-[1.06]"
           draggable={false}
+          onError={() => setCoverFailed(true)}
         />
       ) : (
         <div

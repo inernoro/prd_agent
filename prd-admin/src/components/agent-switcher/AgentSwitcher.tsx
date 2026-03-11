@@ -77,6 +77,7 @@ function AgentCard({
   convergeOffset?: { x: number; y: number };
 }) {
   const iconUrl = getAgentIconUrl(agent.key);
+  const [iconFailed, setIconFailed] = useState(false);
   const description = AGENT_DESCRIPTIONS[agent.key];
   const direction = ENTRY_DIRECTIONS[index];
 
@@ -125,16 +126,52 @@ function AgentCard({
             : 'translateY(0) scale(1)',
         }}
       >
-        {/* 图片铺满整个卡片 */}
-        <img
-          src={iconUrl}
-          alt={agent.name}
-          className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 ease-out"
-          style={{
-            transform: isSelected ? 'scale(1.06)' : 'scale(1)',
-          }}
-          draggable={false}
-        />
+        {/* 图片铺满整个卡片，加载失败时降级为渐变背景 */}
+        {iconUrl && !iconFailed ? (
+          <img
+            src={iconUrl}
+            alt={agent.name}
+            className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 ease-out"
+            style={{
+              transform: isSelected ? 'scale(1.06)' : 'scale(1)',
+            }}
+            draggable={false}
+            onError={() => setIconFailed(true)}
+          />
+        ) : (
+          <div
+            className="absolute inset-0 transition-transform duration-500 ease-out"
+            style={{
+              transform: isSelected ? 'scale(1.06)' : 'scale(1)',
+              background: `
+                radial-gradient(ellipse at 30% 20%, ${agent.color.text}35 0%, transparent 60%),
+                radial-gradient(ellipse at 70% 80%, ${agent.color.text}20 0%, transparent 50%),
+                linear-gradient(145deg, rgba(20, 22, 35, 0.98) 0%, rgba(12, 14, 22, 0.99) 100%)
+              `,
+            }}
+          >
+            <div className="absolute inset-0 flex items-center justify-center" style={{ paddingBottom: '30%' }}>
+              <div
+                className="absolute rounded-full blur-3xl"
+                style={{
+                  width: 80,
+                  height: 80,
+                  background: `radial-gradient(circle, ${agent.color.text}50 0%, ${agent.color.text}15 60%, transparent 100%)`,
+                }}
+              />
+              <div
+                className="relative text-[42px] font-bold"
+                style={{
+                  color: agent.color.text,
+                  opacity: 0.85,
+                  textShadow: `0 0 30px ${agent.color.text}60`,
+                }}
+              >
+                {agent.name[0]}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* 底部渐变遮罩 — 保证文字可读 */}
         <div
