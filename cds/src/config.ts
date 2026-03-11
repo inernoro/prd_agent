@@ -12,6 +12,7 @@ const DEFAULT_CONFIG: CdsConfig = {
   sharedEnv: {},
   switchDomain: process.env.SWITCH_DOMAIN || undefined,
   mainDomain: process.env.MAIN_DOMAIN || undefined,
+  previewDomain: process.env.PREVIEW_DOMAIN || undefined,
   jwt: {
     secret: process.env.JWT_SECRET ?? 'dev-only-change-me-32bytes-minimum!!',
     issuer: 'prdagent',

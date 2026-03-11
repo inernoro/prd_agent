@@ -715,6 +715,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const env = stateService.getCustomEnv();
     if (env.SWITCH_DOMAIN) config.switchDomain = env.SWITCH_DOMAIN;
     if (env.MAIN_DOMAIN) config.mainDomain = env.MAIN_DOMAIN;
+    if (env.PREVIEW_DOMAIN) config.previewDomain = env.PREVIEW_DOMAIN;
   }
 
   router.put('/env', (req, res) => {

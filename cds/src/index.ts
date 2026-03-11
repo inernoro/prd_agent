@@ -24,6 +24,7 @@ stateService.load();
 const customEnv = stateService.getCustomEnv();
 if (customEnv.SWITCH_DOMAIN && !config.switchDomain) config.switchDomain = customEnv.SWITCH_DOMAIN;
 if (customEnv.MAIN_DOMAIN && !config.mainDomain) config.mainDomain = customEnv.MAIN_DOMAIN;
+if (customEnv.PREVIEW_DOMAIN && !config.previewDomain) config.previewDomain = customEnv.PREVIEW_DOMAIN;
 
 // ── Services ──
 const worktreeService = new WorktreeService(shell, config.repoRoot);
@@ -415,6 +416,7 @@ app.listen(config.masterPort, () => {
   console.log(`  Dashboard:  http://localhost:${config.masterPort}`);
   console.log(`  Worker:     http://localhost:${config.workerPort}`);
   if (config.switchDomain) console.log(`  Switch:     ${config.switchDomain} → ${config.mainDomain || '(main domain not set)'}`);
+  if (config.previewDomain) console.log(`  Preview:    *.<${config.previewDomain}>`);
   console.log(`  State file: ${stateFile}`);
   console.log(`  Repo root:  ${config.repoRoot}`);
   console.log('');

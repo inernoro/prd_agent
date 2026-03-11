@@ -137,6 +137,9 @@ export interface CdsConfig {
   switchDomain?: string;
   /** Main domain to redirect to after switching (e.g., "miduo.org") */
   mainDomain?: string;
+  /** Preview domain suffix for subdomain-based preview (e.g., "preview.miduo.org").
+   *  Each branch gets its own subdomain: <slug>.preview.miduo.org */
+  previewDomain?: string;
   /** JWT settings (passed through to branch services) */
   jwt: {
     secret: string;

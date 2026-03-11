@@ -167,6 +167,21 @@ export class ProxyService {
   }
 
   /**
+   * Check if the host is a preview subdomain (e.g., <slug>.preview.miduo.org).
+   * Returns the branch slug extracted from the subdomain, or null.
+   */
+  private extractPreviewBranch(host: string): string | null {
+    const previewDomain = this.config?.previewDomain;
+    if (!previewDomain) return null;
+    const h = host.split(':')[0].toLowerCase();
+    const suffix = `.${previewDomain.toLowerCase()}`;
+    if (h.endsWith(suffix) && h.length > suffix.length) {
+      return h.slice(0, -suffix.length);
+    }
+    return null;
+  }
+
+  /**
    * Handle an incoming request on the worker port.
    * Routes to the correct branch or triggers auto-build.
    */
@@ -175,9 +190,16 @@ export class ProxyService {
     const url = req.url || '/';
 
     // ── Switch domain: switch.miduo.org/<prefix>/<suffix> ──
-    // Extract last path segment, suffix-match to a branch, auto-build & proxy
     if (this.isSwitchDomain(host)) {
       this.handleSwitchRequest(req, res);
+      return;
+    }
+
+    // ── Preview subdomain: <slug>.preview.miduo.org ──
+    // Each branch gets its own subdomain — no cookies needed, fully independent
+    const previewSlug = this.extractPreviewBranch(host);
+    if (previewSlug) {
+      this.routeToBranch(previewSlug, previewSlug, req, res);
       return;
     }
 
@@ -217,11 +239,18 @@ export class ProxyService {
     // branchRef may be original name (e.g. "claude/fix-login-password-issue-CQBMO")
     // State keys are always slugified (e.g. "claude-fix-login-password-issue-cqbmo")
     const branchSlug = StateService.slugify(branchRef);
+    this.routeToBranch(branchSlug, branchRef, req, res);
+  }
+
+  /**
+   * Route a request to a specific branch (by slug).
+   * Used by both normal routing and preview subdomain routing.
+   */
+  private routeToBranch(branchSlug: string, branchRef: string, req: http.IncomingMessage, res: http.ServerResponse): void {
     const state = this.stateService.getState();
     const branch = state.branches[branchSlug];
 
     // Branch doesn't exist or isn't running — trigger auto-build
-    // Pass original branchRef so auto-build can find the git branch by its real name
     if (!branch || branch.status !== 'running') {
       if (this.onAutoBuild) {
         this.onAutoBuild(branchRef, req, res);
@@ -243,7 +272,6 @@ export class ProxyService {
       return;
     }
 
-    // Determine which profile to route to based on URL path
     const profileId = this.detectProfileFromRequest(req, branch);
     const upstream = this.resolveUpstream(branchSlug, profileId);
 
@@ -253,7 +281,6 @@ export class ProxyService {
       return;
     }
 
-    // Proxy the request
     console.log(`[proxy] ${req.method} ${req.url} → ${upstream} (branch=${branchSlug}, profile=${profileId || 'default'})`);
     this.proxyRequest(req, res, upstream);
   }
@@ -462,7 +489,14 @@ export class ProxyService {
    * Handle WebSocket upgrade for the worker proxy.
    */
   handleUpgrade(req: http.IncomingMessage, socket: import('node:stream').Duplex, head: Buffer): void {
-    const branchSlug = this.resolveBranch(req);
+    // Try preview subdomain first, then normal branch resolution
+    const host = req.headers.host || '';
+    const previewSlug = this.extractPreviewBranch(host);
+    const branchSlug = previewSlug || (() => {
+      const ref = this.resolveBranch(req);
+      return ref ? StateService.slugify(ref) : null;
+    })();
+
     if (!branchSlug || !this.resolveUpstream) {
       socket.destroy();
       return;

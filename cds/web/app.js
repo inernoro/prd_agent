@@ -99,6 +99,7 @@ async function init() {
 let githubRepoUrl = '';
 let mainDomain = '';
 let switchDomain = '';
+let previewDomain = '';
 let workerPort = '';
 
 async function loadConfig() {
@@ -108,6 +109,7 @@ async function loadConfig() {
     githubRepoUrl = data.githubRepoUrl || '';
     mainDomain = data.mainDomain || '';
     switchDomain = data.switchDomain || '';
+    previewDomain = data.previewDomain || '';
     workerPort = data.workerPort || '';
   } catch (e) { console.error('loadConfig:', e); }
 }
@@ -295,16 +297,21 @@ async function pullBranch(id) {
 }
 
 function previewBranch(id) {
-  // Build preview URL: prefer switchDomain, then mainDomain with /_switch/, fallback to workerPort
+  // Build preview URL: prefer previewDomain (subdomain-based, each branch independent),
+  // then switchDomain (cookie-based), then /_switch/ fallback
   let url;
-  if (switchDomain) {
+  const slug = StateService_slugify(id);
+  if (previewDomain) {
+    // e.g., claude-fix-login-password-issue-cqbmo.preview.miduo.org
+    url = `${location.protocol}//${slug}.${previewDomain}`;
+  } else if (switchDomain) {
     url = `${location.protocol}//${switchDomain}/${encodeURIComponent(id)}`;
   } else if (mainDomain) {
     url = `${location.protocol}//${mainDomain}/_switch/${encodeURIComponent(id)}`;
   } else if (workerPort) {
     url = `${location.protocol}//${location.hostname}:${workerPort}/_switch/${encodeURIComponent(id)}`;
   } else {
-    showToast('未配置预览域名，请设置 MAIN_DOMAIN 或 SWITCH_DOMAIN', 'error');
+    showToast('未配置预览域名，请设置 PREVIEW_DOMAIN', 'error');
     return;
   }
   window.open(url, '_blank');
@@ -527,7 +534,7 @@ function renderBranches() {
         <div class="branch-card-actions-row ${expanded ? '' : 'hidden'}">
           <div class="branch-actions-left">
             <button class="primary sm" onclick="pullBranch('${esc(b.id)}')" ${btnDisabled('pull')}>${btnLabel('pull', '拉取')}</button>
-            ${isRunning ? `<button class="primary sm" onclick="previewBranch('${esc(b.id)}')">预览</button>` : ''}
+            ${isRunning ? `<button class="preview sm" onclick="previewBranch('${esc(b.id)}')">预览</button>` : ''}
             ${isRunning && hasMultipleProfiles ? `
               <div class="split-btn">
                 <button class="sm split-btn-main" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>重新部署</button>
