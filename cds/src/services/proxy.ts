@@ -45,22 +45,21 @@ export class ProxyService {
    * Resolve which branch should handle a request.
    * Returns the branch slug or null if no match.
    */
+  /**
+   * Resolve which branch should handle a request.
+   * Returns the ORIGINAL branch name (not slugified) to preserve "/" and casing.
+   */
   resolveBranch(req: http.IncomingMessage): string | null {
     const state = this.stateService.getState();
     const rules = state.routingRules.filter(r => r.enabled);
 
     // Check X-Branch header first (highest implicit priority)
     const xBranch = req.headers['x-branch'] as string | undefined;
-    if (xBranch) {
-      const slug = StateService.slugify(xBranch);
-      return slug;
-    }
+    if (xBranch) return xBranch;
 
-    // Check cds_branch cookie (set via /_switch/<branch> URL)
+    // Check cds_branch cookie — return as-is (original branch name with "/" and casing)
     const cookieBranch = this.parseCookie(req.headers.cookie || '', 'cds_branch');
-    if (cookieBranch) {
-      return StateService.slugify(cookieBranch);
-    }
+    if (cookieBranch) return cookieBranch;
 
     const host = req.headers.host || '';
 
@@ -207,21 +206,25 @@ export class ProxyService {
       return;
     }
 
-    const branchSlug = this.resolveBranch(req);
+    const branchRef = this.resolveBranch(req);
 
-    if (!branchSlug) {
+    if (!branchRef) {
       res.writeHead(502, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'No branch matched. Set X-Branch header or configure routing rules.' }));
       return;
     }
 
+    // branchRef may be original name (e.g. "claude/fix-login-password-issue-CQBMO")
+    // State keys are always slugified (e.g. "claude-fix-login-password-issue-cqbmo")
+    const branchSlug = StateService.slugify(branchRef);
     const state = this.stateService.getState();
     const branch = state.branches[branchSlug];
 
     // Branch doesn't exist or isn't running — trigger auto-build
+    // Pass original branchRef so auto-build can find the git branch by its real name
     if (!branch || branch.status !== 'running') {
       if (this.onAutoBuild) {
-        this.onAutoBuild(branchSlug, req, res);
+        this.onAutoBuild(branchRef, req, res);
         return;
       }
       res.writeHead(503, { 'Content-Type': 'application/json' });
