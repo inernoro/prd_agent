@@ -97,12 +97,18 @@ async function init() {
 }
 
 let githubRepoUrl = '';
+let mainDomain = '';
+let switchDomain = '';
+let workerPort = '';
 
 async function loadConfig() {
   try {
     const data = await api('GET', '/config');
     document.getElementById('workerLabel').textContent = `Worker :${data.workerPort || '?'}`;
     githubRepoUrl = data.githubRepoUrl || '';
+    mainDomain = data.mainDomain || '';
+    switchDomain = data.switchDomain || '';
+    workerPort = data.workerPort || '';
   } catch (e) { console.error('loadConfig:', e); }
 }
 
@@ -286,6 +292,22 @@ async function pullBranch(id) {
   } catch (e) { showToast(e.message, 'error'); }
   clearLoading(id, 'pull');
   await loadBranches();
+}
+
+function previewBranch(id) {
+  // Build preview URL: prefer switchDomain, then mainDomain with /_switch/, fallback to workerPort
+  let url;
+  if (switchDomain) {
+    url = `${location.protocol}//${switchDomain}/${encodeURIComponent(id)}`;
+  } else if (mainDomain) {
+    url = `${location.protocol}//${mainDomain}/_switch/${encodeURIComponent(id)}`;
+  } else if (workerPort) {
+    url = `${location.protocol}//${location.hostname}:${workerPort}/_switch/${encodeURIComponent(id)}`;
+  } else {
+    showToast('未配置预览域名，请设置 MAIN_DOMAIN 或 SWITCH_DOMAIN', 'error');
+    return;
+  }
+  window.open(url, '_blank');
 }
 
 async function removeBranch(id) {
@@ -504,11 +526,12 @@ function renderBranches() {
         ${b.errorMessage ? `<div class="branch-error" title="${esc(b.errorMessage)}">${esc(b.errorMessage)}</div>` : ''}
         <div class="branch-card-actions-row ${expanded ? '' : 'hidden'}">
           <div class="branch-actions-left">
-            <button class="sm" onclick="pullBranch('${esc(b.id)}')" ${btnDisabled('pull')}>${btnLabel('pull', '拉取')}</button>
+            <button class="primary sm" onclick="pullBranch('${esc(b.id)}')" ${btnDisabled('pull')}>${btnLabel('pull', '拉取')}</button>
+            ${isRunning ? `<button class="primary sm" onclick="previewBranch('${esc(b.id)}')">预览</button>` : ''}
             ${isRunning && hasMultipleProfiles ? `
               <div class="split-btn">
-                <button class="primary sm split-btn-main" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>重新部署</button>
-                <button class="primary sm split-btn-toggle" onclick="toggleDeployMenu('${esc(b.id)}', event)" ${isBusy ? 'disabled' : ''}>
+                <button class="sm split-btn-main" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>重新部署</button>
+                <button class="sm split-btn-toggle" onclick="toggleDeployMenu('${esc(b.id)}', event)" ${isBusy ? 'disabled' : ''}>
                   <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor"><path d="M1 1l4 4 4-4"/></svg>
                 </button>
                 <div class="deploy-menu hidden" id="deploy-menu-${esc(b.id)}">
@@ -517,7 +540,7 @@ function renderBranches() {
                 </div>
               </div>
             ` : `
-              <button class="primary sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>
+              <button class="${isRunning ? '' : 'primary '}sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>
                 ${isRunning ? '重新部署' : '部署'}
               </button>
             `}
