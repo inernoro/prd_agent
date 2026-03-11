@@ -286,8 +286,8 @@ export class ProxyService {
     }
 
     // Use full path as branch identifier (e.g. "claude/fix-login-password-issue-CQBMO")
-    const fullPath = pathParts.join('/').toLowerCase();
-    const lastSegment = pathParts[pathParts.length - 1].toLowerCase();
+    const fullPath = pathParts.join('/');
+    const lastSegment = pathParts[pathParts.length - 1];
     const state = this.stateService.getState();
     const branchSlugs = Object.keys(state.branches);
 
@@ -297,12 +297,16 @@ export class ProxyService {
       matchedSlug = this.suffixMatchBranch(lastSegment, branchSlugs);
     }
 
+    // Resolve original branch name from state (preserve "/" and casing)
+    let originalBranch = matchedSlug ? state.branches[matchedSlug]?.branch : null;
+
     // If not found locally, try remote (full path first, then last segment)
     if (!matchedSlug && this.worktreeService) {
       const remoteBranch = await this.worktreeService.findBranchBySuffix(fullPath)
         || (fullPath !== lastSegment ? await this.worktreeService.findBranchBySuffix(lastSegment) : null);
       if (remoteBranch) {
         matchedSlug = StateService.slugify(remoteBranch);
+        originalBranch = remoteBranch;  // keep original name like "claude/fix-login-password-issue-CQBMO"
       }
     }
 
@@ -312,15 +316,16 @@ export class ProxyService {
       return;
     }
 
-    // Match found → set cookie, 301 to main domain
-    // Cookie Domain: use mainDomain so the cookie is readable on the main site
-    console.log(`[switch] "${fullPath}" → matched branch "${matchedSlug}", redirecting to ${mainUrl}`);
+    // Cookie stores the ORIGINAL branch name (with "/" and casing preserved)
+    // so the worker can find it in git when auto-building
+    const cookieValue = originalBranch || matchedSlug;
+    console.log(`[switch] "${fullPath}" → branch "${cookieValue}" (slug: ${matchedSlug}), redirecting to ${mainUrl}`);
     res.writeHead(301, {
-      'Set-Cookie': `cds_branch=${encodeURIComponent(matchedSlug)}; Path=/; SameSite=Lax; Domain=${mainDomain}`,
+      'Set-Cookie': `cds_branch=${encodeURIComponent(cookieValue)}; Path=/; SameSite=Lax; Domain=${mainDomain}`,
       Location: mainUrl,
       'Content-Type': 'text/plain',
     });
-    res.end(`Switched to branch: ${matchedSlug}`);
+    res.end(`Switched to branch: ${cookieValue}`);
   }
 
   /**
