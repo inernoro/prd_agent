@@ -59,7 +59,7 @@ export async function listShortcuts() {
 export async function createShortcut(input: CreateShortcutInput) {
   return apiRequest<CreateShortcutResult>(api.shortcuts.create(), {
     method: 'POST',
-    body: JSON.stringify(input),
+    body: input,
   });
 }
 
