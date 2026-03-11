@@ -52,7 +52,7 @@ function buildSharedEnv(): Record<string, string> {
     // MONGODB_HOST may already include port (e.g. "10.7.0.17:57017")
     const mongoAddr = mongoHost.includes(':') ? mongoHost : `${mongoHost}:27017`;
     env['MongoDB__ConnectionString'] = mongoPass
-      ? `mongodb://${encodeURIComponent(mongoUser)}:${encodeURIComponent(mongoPass)}@${mongoAddr}`
+      ? `mongodb://${encodeURIComponent(mongoUser)}:${encodeURIComponent(mongoPass)}@${mongoAddr}/?authSource=admin`
       : `mongodb://${mongoAddr}`;
   }
 
