@@ -35,6 +35,7 @@
   --shadow-lg: 0 12px 40px rgba(0,0,0,0.5);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  --font-mono: 'Cascadia Code', 'JetBrains Mono', 'Fira Code', 'Source Code Pro', 'SF Mono', Menlo, Consolas, 'Courier New', monospace;
 }
 
 body {
@@ -234,8 +235,9 @@ button.text-btn:hover { color: var(--blue); }
   margin-bottom: 12px; line-height: 1.6;
 }
 .config-panel-desc code {
-  color: var(--blue); font-size: 11px;
-  background: var(--blue-bg); padding: 1px 5px; border-radius: 3px;
+  color: var(--blue); font-size: 12px;
+  font-family: var(--font-mono);
+  background: var(--blue-bg); padding: 2px 6px; border-radius: 4px;
 }
 .config-empty {
   font-size: 12px; color: var(--text-muted); padding: 12px 0;
@@ -244,9 +246,9 @@ button.text-btn:hover { color: var(--blue); }
 
 .config-item {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 8px 10px; border: 1px solid var(--border-light);
+  padding: 10px 14px; border: 1px solid var(--border-light);
   border-radius: var(--radius-sm); margin-bottom: 6px;
-  font-size: 12px; background: var(--bg-input);
+  font-size: 13px; background: var(--bg-input);
   transition: border-color var(--transition), background var(--transition);
 }
 .config-item:hover { border-color: var(--border); background: var(--bg-elevated); }
@@ -258,20 +260,25 @@ button.text-btn:hover { color: var(--blue); }
   font-size: 10px; font-weight: 600; text-transform: uppercase;
   border: 1px solid var(--blue-border); letter-spacing: 0.03em;
 }
-.config-item-match { color: var(--text-primary); font-size: 11px; }
-.config-item-arrow { color: var(--text-muted); font-size: 12px; }
+.config-item-match { color: var(--text-primary); font-size: 13px; font-family: var(--font-mono); }
+.config-item-arrow { color: var(--text-muted); font-size: 13px; }
 .config-item-target { color: var(--green); font-weight: 600; }
 .config-item-detail { color: var(--text-muted); font-size: 11px; }
 .config-item-cmd {
-  display: block; font-size: 11px; color: var(--text-secondary);
+  display: block; font-size: 12px; color: var(--text-secondary);
+  font-family: var(--font-mono);
   margin-top: 2px; max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .config-item-actions { display: flex; gap: 4px; flex-shrink: 0; }
 
-.env-key { color: var(--orange); font-size: 12px; font-weight: 600; }
+.env-key {
+  color: var(--orange); font-size: 13px; font-weight: 600;
+  font-family: var(--font-mono); letter-spacing: 0.01em;
+}
 .env-val {
-  color: var(--text-secondary); font-size: 11px;
-  max-width: 350px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text-secondary); font-size: 13px;
+  font-family: var(--font-mono);
+  max-width: 450px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
 /* ════════════════ Bulk Textarea ════════════════ */
@@ -280,8 +287,8 @@ button.text-btn:hover { color: var(--blue); }
   width: 100%; padding: 12px 14px;
   background: var(--bg-input); border: 1px solid var(--border);
   border-radius: var(--radius-sm); color: var(--text-primary);
-  font-family: 'SF Mono', Menlo, Consolas, 'Noto Sans Mono', monospace;
-  font-size: 12px; line-height: 1.6; outline: none; resize: vertical;
+  font-family: var(--font-mono);
+  font-size: 13px; line-height: 1.6; outline: none; resize: vertical;
   transition: border-color var(--transition), box-shadow var(--transition);
 }
 .bulk-textarea:focus {
@@ -412,7 +419,7 @@ button.text-btn:hover { color: var(--blue); }
 .branch-ports { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
 .port-badge {
   font-size: 11px; padding: 2px 8px; border-radius: 10px;
-  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-weight: 500; transition: all var(--transition);
 }
 .port-badge.run-port {
@@ -541,8 +548,8 @@ button.text-btn:hover { color: var(--blue); }
 @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 
 .live-log-output {
-  font-family: 'SF Mono', Menlo, Consolas, 'Noto Sans Mono', monospace;
-  font-size: 11px; color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px; color: var(--text-secondary);
   background: #060810; border: 1px solid var(--border);
   border-radius: var(--radius-sm); padding: 12px 14px;
   max-height: 60vh; overflow-y: auto; white-space: pre-wrap;
