@@ -77,8 +77,39 @@
   box-shadow: 0 2px 8px rgba(0,0,0,0.3);
 }
 
-/* ──── 端口 (Handle) ──── */
+/* ──── 端口 (Handle) ────
+   视觉尺寸 14px，但点击热区 30px（3x 于原 10px），
+   通过 ::after 伪元素扩展交互区域。 */
 
+.capsule-handle {
+  transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+  z-index: 10;
+}
+
+/* 扩展点击热区到 30px —— 不影响视觉外观 */
+.capsule-handle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 30px;
+  height: 30px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  /* debug: background: rgba(255,0,0,0.1); */
+}
+
+.capsule-handle:hover {
+  filter: brightness(1.8);
+  box-shadow: 0 0 12px rgba(255,255,255,0.4);
+}
+
+/* 连线拖拽中的端口高亮 */
+.react-flow__handle.connecting {
+  box-shadow: 0 0 12px rgba(59,130,246,0.5);
+}
+
+/* 保持旧的通用 handle hover 兼容 */
 .react-flow__handle:hover {
   filter: brightness(1.5);
   box-shadow: 0 0 6px rgba(255,255,255,0.25);
@@ -111,6 +142,11 @@
 
 /* ──── 画布全局微调 ──── */
 
+/* 画布默认箭头光标（覆盖 ReactFlow 的 grab 光标） */
+.workflow-canvas .react-flow__pane {
+  cursor: default !important;
+}
+
 .workflow-canvas .react-flow__controls {
   border-radius: 12px !important;
   overflow: hidden;
@@ -131,4 +167,142 @@
 .workflow-canvas .react-flow__minimap {
   border-radius: 12px !important;
   overflow: hidden;
+}
+
+/* ──── 节点编辑面板 ──── */
+
+.node-edit-panel {
+  animation: panelSlideIn 0.2s ease-out;
+}
+
+@keyframes panelSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.node-edit-panel input:focus,
+.node-edit-panel textarea:focus,
+.node-edit-panel select:focus {
+  outline: none;
+}
+
+.node-edit-panel select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 24px;
+}
+
+.node-edit-panel select option {
+  background: #1a1a2e;
+  color: #e8e6e3;
+}
+
+/* ──── 连线中点 "+" 按钮 ──── */
+
+.edge-add-button {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(59,130,246,0.15);
+  border: 1.5px solid rgba(59,130,246,0.4);
+  color: rgba(59,130,246,0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  backdrop-filter: blur(8px);
+}
+
+.edge-add-button:hover {
+  background: rgba(59,130,246,0.25);
+  border-color: rgba(59,130,246,0.6);
+  transform: translate(-50%, -50%) scale(1.15);
+  box-shadow: 0 0 12px rgba(59,130,246,0.3);
+}
+
+/* ──── 连线拖放节点选择菜单 ──── */
+
+.connect-drop-menu {
+  background: rgba(15,15,30,0.95);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 12px;
+  min-width: 200px;
+  max-width: 260px;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  animation: menuFadeIn 0.15s ease-out;
+  overflow: hidden;
+}
+
+@keyframes menuFadeIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 8px) scale(1);
+  }
+}
+
+.connect-drop-menu-item {
+  color: var(--text-secondary, #aaa);
+}
+
+.connect-drop-menu-item:hover {
+  background: rgba(255,255,255,0.06);
+  color: var(--text-primary, #e8e6e3);
+}
+
+/* ──── 快捷键提示浮层 ──── */
+
+.shortcuts-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  background: rgba(0,0,0,0.3);
+  animation: overlayFadeIn 0.15s ease-out;
+}
+
+.shortcuts-panel {
+  background: rgba(15,15,30,0.95);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 14px;
+  min-width: 240px;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  animation: panelScaleIn 0.15s ease-out;
+}
+
+@keyframes overlayFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes panelScaleIn {
+  from { opacity: 0; transform: scale(0.95) translateY(8px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.shortcut-key {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.1);
+  color: var(--text-primary, #e8e6e3);
+  font-size: 10px;
+  font-family: monospace;
 }
