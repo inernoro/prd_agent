@@ -40,8 +40,8 @@ public class ShortcutsController : ControllerBase
         if (string.IsNullOrEmpty(userId))
             return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "未登录"));
 
-        if (string.IsNullOrWhiteSpace(request.Name))
-            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "名称不能为空"));
+        // 默认名 "天狼星"，用户可自定义任意名称
+        var name = string.IsNullOrWhiteSpace(request.Name) ? "天狼星" : request.Name.Trim();
 
         // 生成 token
         var (token, hash, prefix) = UserShortcut.GenerateToken();
@@ -49,7 +49,7 @@ public class ShortcutsController : ControllerBase
         var shortcut = new UserShortcut
         {
             UserId = userId,
-            Name = request.Name.Trim(),
+            Name = name,
             TokenHash = hash,
             TokenPrefix = prefix,
             DeviceType = request.DeviceType ?? "ios"
@@ -519,7 +519,8 @@ public class ShortcutsController : ControllerBase
             collection.Id,
             collection.Url,
             collection.Status,
-            Message = "已收藏"
+            ShortcutName = shortcut.Name,
+            Message = $"已收藏到「{shortcut.Name}」"
         }));
     }
 
@@ -724,8 +725,8 @@ public class ShortcutsController : ControllerBase
 
 public class CreateShortcutRequest
 {
-    /// <summary>快捷指令名称</summary>
-    public string Name { get; set; } = string.Empty;
+    /// <summary>快捷指令名称（不传则默认"天狼星"，用户可自定义任意名称）</summary>
+    public string? Name { get; set; }
 
     /// <summary>设备类型：ios / android / other</summary>
     public string? DeviceType { get; set; }
