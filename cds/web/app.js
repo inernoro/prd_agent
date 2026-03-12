@@ -436,30 +436,60 @@ async function deploySingleService(id, profileId) {
 
 // ── Deploy dropdown menu ──
 
+// ── Portal-based dropdown system ──
+// All dropdowns render into #dropdownPortal (body-level), so they are never
+// clipped by parent stacking contexts (backdrop-filter, transform, etc.).
+
+const portal = document.getElementById('dropdownPortal');
 let openDeployMenuId = null;
+
+function positionPortalDropdown(el, anchor, align = 'left') {
+  const r = anchor.getBoundingClientRect();
+  el.style.top = `${r.bottom + 4}px`;
+  // Measure after appending (display must not be 'none')
+  const w = el.offsetWidth || 140;
+  if (align === 'right') {
+    let left = r.right - w;
+    if (left < 8) left = 8;
+    el.style.left = `${left}px`;
+  } else {
+    let left = r.left;
+    if (left + w > window.innerWidth - 8) left = window.innerWidth - 8 - w;
+    el.style.left = `${left}px`;
+    el.style.minWidth = `${r.width}px`;
+  }
+}
 
 function toggleDeployMenu(id, event) {
   event.stopPropagation();
-  if (openDeployMenuId === id) {
-    closeDeployMenu(id);
-    return;
-  }
-  // Close any other open menu
-  if (openDeployMenuId) closeDeployMenu(openDeployMenuId);
+  if (openDeployMenuId === id) { closeDeployMenu(); return; }
+  closeDeployMenu();
+  closeCommitLog();
   openDeployMenuId = id;
-  const menu = document.getElementById(`deploy-menu-${CSS.escape(id)}`);
-  if (menu) menu.classList.remove('hidden');
+
+  // Read the menu HTML from the hidden template inside the card
+  const tpl = document.getElementById(`deploy-menu-tpl-${CSS.escape(id)}`);
+  if (!tpl) return;
+  const menu = document.createElement('div');
+  menu.className = 'deploy-menu';
+  menu.id = 'deploy-menu-portal';
+  menu.innerHTML = tpl.innerHTML;
+  portal.appendChild(menu);
+
+  const anchor = event.currentTarget.closest('.split-btn');
+  if (anchor) positionPortalDropdown(menu, anchor, 'left');
 }
 
-function closeDeployMenu(id) {
+function closeDeployMenu() {
   openDeployMenuId = null;
-  const menu = document.getElementById(`deploy-menu-${CSS.escape(id)}`);
-  if (menu) menu.classList.add('hidden');
+  const el = document.getElementById('deploy-menu-portal');
+  if (el) el.remove();
 }
 
-// Close deploy menu on outside click
+// Close on outside click
 document.addEventListener('click', () => {
-  if (openDeployMenuId) closeDeployMenu(openDeployMenuId);
+  closeDeployMenu();
+  closeCommitLog();
 });
 
 // ── Rendering ──
@@ -553,10 +583,10 @@ function renderBranches() {
                 <button class="sm split-btn-toggle" onclick="toggleDeployMenu('${esc(b.id)}', event)" ${isBusy ? 'disabled' : ''}>
                   <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor"><path d="M1 1l4 4 4-4"/></svg>
                 </button>
-                <div class="deploy-menu hidden" id="deploy-menu-${esc(b.id)}">
+                <template id="deploy-menu-tpl-${esc(b.id)}">
                   ${hasMultipleProfiles ? `<div class="deploy-menu-header">选择重部署的服务</div>${deployMenuItems}` : ''}
                   ${stopMenuItem}
-                </div>
+                </template>
               </div>
             ` : `
               <button class="primary sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>部署</button>
@@ -566,11 +596,10 @@ function renderBranches() {
           </div>
           ${b.subject ? `
             <div class="branch-commits-wrap">
-              <div class="branch-requirement" onclick="event.stopPropagation(); toggleCommitLog('${esc(b.id)}')" title="点击查看历史提交">
+              <div class="branch-requirement" onclick="event.stopPropagation(); toggleCommitLog('${esc(b.id)}', this)" title="点击查看历史提交">
                 ${esc(b.subject)}
                 <svg class="commit-chevron" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M4.427 5.427a.75.75 0 011.146 0L8 7.854l2.427-2.427a.75.75 0 111.146 1.146l-3 3a.75.75 0 01-1.146 0l-3-3a.75.75 0 010-1.146z"/></svg>
               </div>
-              <div class="commit-log-dropdown hidden" id="commit-log-${CSS.escape(b.id)}"></div>
             </div>
           ` : ''}
         </div>
@@ -1093,30 +1122,29 @@ async function doLogout() {
   location.href = '/login.html';
 }
 
-// ── Commit log dropdown ──
+// ── Commit log dropdown (portal) ──
 
 let openCommitLogId = null;
 
-async function toggleCommitLog(id) {
-  const el = document.getElementById(`commit-log-${CSS.escape(id)}`);
-  if (!el) return;
+function closeCommitLog() {
+  openCommitLogId = null;
+  const el = document.getElementById('commit-log-portal');
+  if (el) el.remove();
+}
 
-  // Close if already open
-  if (openCommitLogId === id) {
-    el.classList.add('hidden');
-    openCommitLogId = null;
-    return;
-  }
-
-  // Close any other open dropdown
-  if (openCommitLogId) {
-    const prev = document.getElementById(`commit-log-${CSS.escape(openCommitLogId)}`);
-    if (prev) prev.classList.add('hidden');
-  }
-
+async function toggleCommitLog(id, triggerEl) {
+  if (openCommitLogId === id) { closeCommitLog(); return; }
+  closeCommitLog();
+  closeDeployMenu();
   openCommitLogId = id;
-  el.classList.remove('hidden');
+
+  const el = document.createElement('div');
+  el.className = 'commit-log-dropdown';
+  el.id = 'commit-log-portal';
+  el.onclick = (e) => e.stopPropagation();
   el.innerHTML = '<div class="commit-log-loading"><span class="btn-spinner"></span> 加载中...</div>';
+  portal.appendChild(el);
+  positionPortalDropdown(el, triggerEl, 'right');
 
   try {
     const data = await api('GET', `/branches/${encodeURIComponent(id)}/git-log?count=15`);
@@ -1136,15 +1164,6 @@ async function toggleCommitLog(id) {
     el.innerHTML = `<div class="commit-log-empty" style="color:var(--red)">${esc(e.message)}</div>`;
   }
 }
-
-// Close commit log on outside click
-document.addEventListener('click', (e) => {
-  if (openCommitLogId && !e.target.closest('.branch-commits-wrap')) {
-    const el = document.getElementById(`commit-log-${CSS.escape(openCommitLogId)}`);
-    if (el) el.classList.add('hidden');
-    openCommitLogId = null;
-  }
-});
 
 // ── Title animation ──
 

@@ -490,21 +490,15 @@ button.text-btn:hover { color: var(--accent); }
 .branch-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px; }
 
 .branch-card {
-  position: relative;
   display: flex; flex-direction: column; gap: 0;
   padding: 14px 18px;
+  background: var(--bg-card);
+  backdrop-filter: blur(20px) saturate(1.2);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius);
   transition: border-color 0.3s, box-shadow 0.3s;
   box-shadow: var(--shadow-sm), inset 0 1px 0 var(--glass-highlight);
-  overflow: visible;
-}
-.branch-card::before {
-  content: ''; position: absolute; inset: 0; border-radius: inherit;
-  background: var(--bg-card);
-  backdrop-filter: blur(20px) saturate(1.2);
-  -webkit-backdrop-filter: blur(20px) saturate(1.2);
-  z-index: -1;
 }
 .branch-card:hover {
   border-color: rgba(255, 255, 255, 0.1);
@@ -512,15 +506,11 @@ button.text-btn:hover { color: var(--accent); }
 }
 .branch-card.active {
   border-color: var(--accent-border);
-  box-shadow: 0 0 0 1px var(--accent-border), var(--shadow-sm), inset 0 1px 0 var(--glass-highlight);
-}
-.branch-card.active::before {
   background: linear-gradient(135deg, rgba(200, 255, 0, 0.03) 0%, var(--bg-card) 100%);
+  box-shadow: 0 0 0 1px var(--accent-border), var(--shadow-sm), inset 0 1px 0 var(--glass-highlight);
 }
 .branch-card.has-error {
   border-color: var(--red-border);
-}
-.branch-card.has-error::before {
   background: linear-gradient(135deg, rgba(239, 83, 80, 0.03) 0%, var(--bg-card) 100%);
 }
 
@@ -631,7 +621,7 @@ button.text-btn:hover { color: var(--accent); }
 /* ── Commit Log Dropdown ── */
 
 .branch-commits-wrap {
-  position: relative; flex-shrink: 0;
+  flex-shrink: 0;
 }
 .branch-requirement {
   cursor: pointer; display: flex; align-items: center; gap: 4px;
@@ -646,16 +636,15 @@ button.text-btn:hover { color: var(--accent); }
 .branch-requirement:hover .commit-chevron { opacity: 1; }
 
 .commit-log-dropdown {
-  position: absolute; top: 100%; right: 0;
+  position: fixed;
   min-width: 360px; max-width: min(460px, 90vw); max-height: 320px;
-  margin-top: 6px; overflow-y: auto;
+  overflow-y: auto;
   background: var(--bg-card-solid);
   backdrop-filter: blur(24px);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-lg);
 }
-.commit-log-dropdown.hidden { display: none; }
 .commit-log-loading, .commit-log-empty {
   padding: 16px; text-align: center;
   font-size: 12px; color: var(--text-muted);
@@ -706,15 +695,13 @@ button.text-btn:hover { color: var(--accent); }
 .split-btn-toggle svg { pointer-events: none; }
 
 .deploy-menu {
-  position: absolute; top: 100%; left: 0; right: 0;
-  min-width: 140px; margin-top: 4px;
+  position: fixed; min-width: 140px;
   background: var(--bg-card-solid);
   backdrop-filter: blur(20px);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-sm); overflow: hidden;
   box-shadow: var(--shadow-lg);
 }
-.deploy-menu.hidden { display: none; }
 .deploy-menu-header {
   padding: 6px 10px; font-size: 10px; color: var(--text-muted);
   font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
@@ -746,8 +733,7 @@ button.text-btn:hover { color: var(--accent); }
 
 .branch-card.is-busy {
   border-color: rgba(224, 180, 58, 0.2);
-}
-.branch-card.is-busy::before {
+  position: relative;
   background: linear-gradient(135deg, rgba(224, 180, 58, 0.03) 0%, var(--bg-card) 100%);
 }
 .branch-card.is-busy::after {
