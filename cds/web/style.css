@@ -769,6 +769,33 @@ button.text-btn:hover { color: var(--accent); }
 .deploy-menu-item-danger { color: var(--red); }
 .deploy-menu-item-danger:hover { background: var(--red-bg); }
 
+/* ── Settings dropdown menu ── */
+.settings-menu {
+  position: fixed;
+  min-width: 160px;
+  padding: 4px 0;
+  background: var(--bg-card);
+  backdrop-filter: blur(24px) saturate(1.2);
+  -webkit-backdrop-filter: blur(24px) saturate(1.2);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  z-index: 1000;
+}
+.settings-menu-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px;
+  font-size: 13px; color: var(--text-primary);
+  cursor: pointer; transition: background var(--transition);
+  white-space: nowrap;
+}
+.settings-menu-item:hover { background: var(--bg-hover); }
+.settings-menu-item svg { width: 16px; height: 16px; flex-shrink: 0; opacity: 0.7; }
+.settings-menu-item:hover svg { opacity: 1; }
+.settings-menu-item.danger { color: var(--red); }
+.settings-menu-item.danger:hover { background: var(--red-bg); }
+.settings-menu-divider { height: 1px; background: var(--border); margin: 4px 0; }
+
 /* ════════════════ Button Spinner ════════════════ */
 
 .btn-spinner {

@@ -634,7 +634,62 @@ function closeDeployMenu() {
 document.addEventListener('click', () => {
   closeDeployMenu();
   closeCommitLog();
+  closeSettingsMenu();
 });
+
+// ── Settings dropdown menu ──
+
+let settingsMenuOpen = false;
+
+function toggleSettingsMenu(event) {
+  event.stopPropagation();
+  if (settingsMenuOpen) { closeSettingsMenu(); return; }
+  closeSettingsMenu();
+  closeDeployMenu();
+  closeCommitLog();
+  settingsMenuOpen = true;
+
+  const menu = document.createElement('div');
+  menu.className = 'settings-menu';
+  menu.id = 'settings-menu-portal';
+  menu.onclick = (e) => e.stopPropagation();
+  menu.innerHTML = `
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); openProfileModal()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M7.22 1.547a2.403 2.403 0 011.56 0l4.03 1.384a.48.48 0 01.33.457v1.224a.48.48 0 01-.33.457L8.78 6.453a2.403 2.403 0 01-1.56 0L3.19 5.069a.48.48 0 01-.33-.457V3.388a.48.48 0 01.33-.457l4.03-1.384zM3.19 6.903l4.03 1.384a2.403 2.403 0 001.56 0l4.03-1.384a.48.48 0 01.33.457v1.224a.48.48 0 01-.33.457L8.78 10.425a2.403 2.403 0 01-1.56 0L3.19 9.041a.48.48 0 01-.33-.457V7.36a.48.48 0 01.33-.457zm0 3.972l4.03 1.384a2.403 2.403 0 001.56 0l4.03-1.384a.48.48 0 01.33.457v1.224a.48.48 0 01-.33.457l-4.03 1.384a2.403 2.403 0 01-1.56 0l-4.03-1.384a.48.48 0 01-.33-.457v-1.224a.48.48 0 01.33-.457z"/></svg>
+      构建配置
+    </div>
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); openEnvModal()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2.5 2a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h11a.5.5 0 00.5-.5v-11a.5.5 0 00-.5-.5h-11zM1 2.5A1.5 1.5 0 012.5 1h11A1.5 1.5 0 0115 2.5v11a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 011 13.5v-11zM4 5h2v1H4V5zm3 0h5v1H7V5zM4 8h2v1H4V8zm3 0h5v1H7V8zM4 11h2v1H4v-1zm3 0h5v1H7v-1z"/></svg>
+      环境变量
+    </div>
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); openRoutingModal()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 0113 0h-2.1a8.3 8.3 0 00-.4-2.2 9 9 0 00-1-1.9A4.5 4.5 0 017 7.5H4.5A8.3 8.3 0 001.5 8zm5.5 5.5a6.5 6.5 0 01-5.4-3h2.3c.3 1.2.8 2.2 1.5 3H7zm1-5.5a7.8 7.8 0 014-3.8c.5.6.9 1.2 1.2 1.8H8zm0 1h5.4a8.3 8.3 0 01-.3 2H8.9 8V9zm0 3h3.8c-.6 1.3-1.5 2.4-2.8 3A6.5 6.5 0 018 9z"/></svg>
+      路由规则
+    </div>
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); togglePreviewMode()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 1.75a.75.75 0 00-.75.75v3c0 .414.336.75.75.75h3a.75.75 0 000-1.5H3.37l.78-.78A5.001 5.001 0 0112.62 3H11.5a.75.75 0 000 1.5h3a.75.75 0 00.75-.75v-3a.75.75 0 00-1.5 0v1.12A6.502 6.502 0 003.58 3.29L2.75 4.12V2.5a.75.75 0 00-.75-.75zM14.5 14.25a.75.75 0 00.75-.75v-3a.75.75 0 00-.75-.75h-3a.75.75 0 000 1.5h1.13l-.78.78A5.001 5.001 0 013.38 13H4.5a.75.75 0 010 1.5h-3a.75.75 0 01-.75-.75v-3a.75.75 0 011.5 0v1.12a6.502 6.502 0 0010.17-1.29l.83-.83v1.63a.75.75 0 00.75.75z"/></svg>
+      预览模式
+    </div>
+    <div class="settings-menu-divider"></div>
+    <div class="settings-menu-item danger" onclick="closeSettingsMenu(); cleanupAll()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM11 3V1.75A1.75 1.75 0 009.25 0h-2.5A1.75 1.75 0 005 1.75V3H2.75a.75.75 0 000 1.5h.3l.8 8.2A1.75 1.75 0 005.6 14.5h4.8a1.75 1.75 0 001.75-1.8l.8-8.2h.3a.75.75 0 000-1.5H11z"/></svg>
+      清理分支
+    </div>
+    <div class="settings-menu-divider"></div>
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); doLogout()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2.75C2 1.784 2.784 1 3.75 1h2.5a.75.75 0 010 1.5h-2.5a.25.25 0 00-.25.25v10.5c0 .138.112.25.25.25h2.5a.75.75 0 010 1.5h-2.5A1.75 1.75 0 012 13.25V2.75zm10.44 4.5H6.75a.75.75 0 000 1.5h5.69l-1.97 1.97a.749.749 0 101.06 1.06l3.25-3.25a.749.749 0 000-1.06l-3.25-3.25a.749.749 0 10-1.06 1.06l1.97 1.97z"/></svg>
+      退出登录
+    </div>
+  `;
+  portal.appendChild(menu);
+  positionPortalDropdown(menu, event.currentTarget, 'right');
+}
+
+function closeSettingsMenu() {
+  settingsMenuOpen = false;
+  const el = document.getElementById('settings-menu-portal');
+  if (el) el.remove();
+}
 
 // ── Rendering ──
 
@@ -648,11 +703,13 @@ function renderBranches() {
   sel.innerHTML = '<option value="">无默认</option>' +
     localBranches.map(b => `<option value="${esc(b.id)}" ${b.id === defaultBranch ? 'selected' : ''}>${esc(b.id)}</option>`).join('');
 
-  // Update cleanup button
+  // Update cleanup button (if visible in DOM)
   const cleanupBtn = document.getElementById('cleanupBtn');
-  const nonDefault = localBranches.filter(b => b.id !== defaultBranch);
-  cleanupBtn.disabled = nonDefault.length === 0 || globalBusy;
-  cleanupBtn.title = nonDefault.length > 0 ? `清理 ${nonDefault.length} 个分支` : '没有可清理的分支';
+  if (cleanupBtn) {
+    const nonDefault = localBranches.filter(b => b.id !== defaultBranch);
+    cleanupBtn.disabled = nonDefault.length === 0 || globalBusy;
+    cleanupBtn.title = nonDefault.length > 0 ? `清理 ${nonDefault.length} 个分支` : '没有可清理的分支';
+  }
 
   if (localBranches.length === 0) {
     el.innerHTML = '<div class="empty-state">暂无分支，请在上方搜索并添加。</div>';
