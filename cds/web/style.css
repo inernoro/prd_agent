@@ -558,12 +558,11 @@ button.text-btn:hover { color: var(--accent); }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .active-badge {
-  display: inline-block;
-  font-size: 10px; font-weight: 600; background: var(--accent-bg);
-  color: var(--accent); padding: 1px 8px; border-radius: 10px;
-  margin-left: 6px; vertical-align: middle;
-  border: 1px solid var(--accent-border);
-  letter-spacing: 0.02em;
+  display: inline-flex; align-items: center;
+  font-size: 10px; font-weight: 600;
+  color: var(--accent);
+  margin-left: 4px; vertical-align: middle;
+  letter-spacing: 0.02em; opacity: 0.8;
 }
 .set-default-btn {
   color: var(--text-muted); margin-left: 2px;
@@ -574,21 +573,28 @@ button.text-btn:hover { color: var(--accent); }
 }
 .branch-meta { font-size: 12px; color: var(--text-secondary); line-height: 1.4; white-space: nowrap; }
 .port-badge {
-  font-size: 11px; padding: 2px 8px; border-radius: 10px;
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; padding: 0;
   font-family: var(--font-mono);
-  font-weight: 500; transition: all var(--transition);
+  font-weight: 500; transition: color var(--transition);
+}
+.port-badge::before {
+  content: ''; width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0;
 }
 .port-badge.run-port {
-  background: var(--accent-bg); color: var(--accent);
-  border: 1px solid var(--accent-border);
+  color: var(--accent);
+}
+.port-badge.run-port::before {
+  background: var(--accent); box-shadow: 0 0 4px rgba(200, 255, 0, 0.5);
 }
 .port-badge.run-port:hover {
-  background: rgba(200, 255, 0, 0.15);
-  box-shadow: 0 1px 4px rgba(200, 255, 0, 0.1);
+  color: rgba(200, 255, 0, 1);
 }
 .port-badge.port-idle {
-  background: rgba(139, 148, 158, 0.06); color: var(--text-muted);
-  border: 1px solid rgba(139, 148, 158, 0.1);
+  color: var(--text-muted);
+}
+.port-badge.port-idle::before {
+  background: var(--text-muted); opacity: 0.5;
 }
 
 .branch-error {
