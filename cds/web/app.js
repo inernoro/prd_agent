@@ -915,6 +915,8 @@ function markTouched(id) {
 // ── Rendering ──
 
 function renderBranches() {
+  // Save scroll position before re-render
+  const scrollY = window.scrollY;
   const el = document.getElementById('branchList');
   const count = document.getElementById('branchCount');
   count.textContent = `${localBranches.length} 个分支`;
@@ -934,6 +936,7 @@ function renderBranches() {
 
   if (localBranches.length === 0) {
     el.innerHTML = '<div class="empty-state">暂无分支，请在上方搜索并添加。</div>';
+    window.scrollTo(0, scrollY);
     return;
   }
 
@@ -947,6 +950,7 @@ function renderBranches() {
 
   if (filteredBranches.length === 0 && localBranches.length > 0) {
     el.innerHTML = `<div class="empty-state">没有匹配标签「${esc(activeTagFilter)}」的分支</div>`;
+    window.scrollTo(0, scrollY);
     return;
   }
 
@@ -1116,6 +1120,9 @@ function renderBranches() {
       </div>
     `;
   }).join('');
+
+  // Restore scroll position after re-render
+  window.scrollTo(0, scrollY);
 }
 
 // ── Build profiles (data only) ──
