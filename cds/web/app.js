@@ -118,7 +118,7 @@ const collapsedBranches = new Set();
 
 function toggleBranchCard(id, event) {
   // Don't toggle when clicking buttons/links/inputs inside the header
-  if (event.target.closest('button, a, input, .port-badge, .branch-notes-editor')) return;
+  if (event.target.closest('button, a, input, .port-badge, .branch-notes-editor, .fav-toggle, .set-default-link, .notes-edit-btn')) return;
   if (collapsedBranches.has(id)) {
     collapsedBranches.delete(id);
   } else {
@@ -684,33 +684,30 @@ function renderBranches() {
     // Build stop menu item for deploy dropdown
     const stopMenuItem = isRunning ? `<div class="deploy-menu-divider"></div><div class="deploy-menu-item deploy-menu-item-danger" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); stopBranch('${esc(b.id)}')">停止所有服务</div>` : '';
 
-    // Port badges (moved to right side with beacon icons)
+    // Port badges — clean pills
     const portBadgesHtml = services.length > 0 ? services.map(([pid, svc]) => {
-      const profile = buildProfiles.find(p => p.id === pid);
-      const icon = getPortIcon(pid, profile);
       return `<span class="port-badge ${svc.status === 'running' ? 'run-port' : 'port-idle'}"
                     onclick="event.stopPropagation(); viewContainerLogs('${esc(b.id)}', '${esc(pid)}')"
-                    title="${esc(pid)}: ${svc.status}"
-                    style="cursor:pointer">
-                ${icon} ${esc(pid)} :${svc.hostPort}
+                    title="${esc(pid)}: ${svc.status}">
+                ${esc(pid)}:${svc.hostPort}
               </span>`;
     }).join('') : '';
 
-    // Notes display
+    // Notes — separate line below header
     const notesHtml = `
-      <span class="branch-notes-area" id="notes-display-${esc(b.id)}">
+      <div class="branch-notes-line" id="notes-display-${esc(b.id)}">
         ${b.notes ? `<span class="branch-notes-text" title="${esc(b.notes)}">${esc(b.notes)}</span>` : ''}
-        <button class="icon-btn xs notes-edit-btn" onclick="startEditNotes('${esc(b.id)}', event)" title="编辑备注">
+        <span class="notes-edit-btn" onclick="startEditNotes('${esc(b.id)}', event)" title="编辑备注">
           ${ICON.edit}
-        </button>
-      </span>
-      <span class="branch-notes-editor hidden" id="notes-editor-${esc(b.id)}">
+        </span>
+      </div>
+      <div class="branch-notes-editor hidden" id="notes-editor-${esc(b.id)}">
         <input class="form-input notes-input" id="notes-input-${esc(b.id)}" value="${esc(b.notes || '')}" placeholder="添加备注..."
                onkeydown="if(event.key==='Enter'){event.preventDefault();saveBranchNotes('${esc(b.id)}');}if(event.key==='Escape'){cancelEditNotes('${esc(b.id)}');}"
                onclick="event.stopPropagation()">
         <button class="icon-btn xs" onclick="event.stopPropagation(); saveBranchNotes('${esc(b.id)}')" title="保存">&#x2713;</button>
         <button class="icon-btn xs" onclick="event.stopPropagation(); cancelEditNotes('${esc(b.id)}')" title="取消">&times;</button>
-      </span>
+      </div>
     `;
 
     // Pull button: gray by default, blue highlight when updates available
@@ -765,52 +762,42 @@ function renderBranches() {
       <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} ${expanded ? 'expanded' : ''} ${b.isFavorite ? 'is-favorite' : ''}">
         <div class="branch-card-header" onclick="toggleBranchCard('${esc(b.id)}', event)">
           <div class="branch-card-left">
-            <button class="icon-btn xs fav-btn ${b.isFavorite ? 'fav-active' : ''}" onclick="event.stopPropagation(); toggleFavorite('${esc(b.id)}')" title="${b.isFavorite ? '取消收藏' : '收藏'}">
+            <span class="fav-toggle ${b.isFavorite ? 'active' : ''}" onclick="event.stopPropagation(); toggleFavorite('${esc(b.id)}')" title="${b.isFavorite ? '取消收藏' : '收藏'}">
               ${b.isFavorite ? ICON.star : ICON.starOutline}
-            </button>
-            <span class="status-dot ${b.status}"></span>
-            <div class="branch-info">
-              <div class="branch-name-row">
-                <span class="branch-name">${ICON.branch} ${esc(b.branch)}</span>
-                ${isDefault ? '<span class="active-badge">默认</span>' : `
-                  <button class="icon-btn xs set-default-btn" onclick="event.stopPropagation(); setDefaultBranch('${esc(b.id)}')" title="设为默认分支" ${btnDisabled('setDefault')}>
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg>
-                  </button>
-                `}
-                ${notesHtml}
-              </div>
-            </div>
+            </span>
+            <span class="branch-name">${ICON.branch} ${esc(b.branch)}</span>
+            ${isDefault ? '<span class="default-tag">默认</span>' : `
+              <span class="set-default-link" onclick="event.stopPropagation(); setDefaultBranch('${esc(b.id)}')" title="设为默认分支">设默认</span>
+            `}
           </div>
           <div class="branch-card-right">
-            ${services.length > 0 ? `
-              <button class="icon-btn xs" onclick="event.stopPropagation(); openContainerEnvPicker('${esc(b.id)}')" title="容器变量" ${isBusy ? 'disabled' : ''}>
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2.5 2a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h11a.5.5 0 00.5-.5v-11a.5.5 0 00-.5-.5h-11zM1 2.5A1.5 1.5 0 012.5 1h11A1.5 1.5 0 0115 2.5v11a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 011 13.5v-11zM4 5h2v1H4V5zm3 0h5v1H7V5zM4 8h2v1H4V8zm3 0h5v1H7V8zM4 11h2v1H4v-1zm3 0h5v1H7v-1z"/></svg>
-              </button>
-            ` : ''}
             <span class="branch-meta">${statusLabel(b.status)}${b.lastAccessedAt ? ` · ${relativeTime(b.lastAccessedAt)}` : ''}</span>
             ${portBadgesHtml}
             <svg class="branch-chevron ${expanded ? 'open' : ''}" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M4.427 5.427a.75.75 0 011.146 0L8 7.854l2.427-2.427a.75.75 0 111.146 1.146l-3 3a.75.75 0 01-1.146 0l-3-3a.75.75 0 010-1.146z"/></svg>
           </div>
         </div>
         ${b.errorMessage ? `<div class="branch-error" title="${esc(b.errorMessage)}">${esc(b.errorMessage)}</div>` : ''}
-        <div class="branch-card-actions-row ${expanded ? '' : 'hidden'}">
-          <div class="branch-actions-left">
-            ${actionsLeftHtml}
-          </div>
-          <div class="branch-actions-right">
-            ${actionsRightHtml}
-          </div>
-        </div>
-        ${expanded && b.subject ? `
-          <div class="branch-commits-row">
-            <div class="branch-commits-wrap">
-              <div class="branch-requirement" onclick="event.stopPropagation(); toggleCommitLog('${esc(b.id)}', this)" title="点击查看历史提交">
-                ${commitIcon(b.subject)} ${esc(b.subject)}
-                <svg class="commit-chevron" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M4.427 5.427a.75.75 0 011.146 0L8 7.854l2.427-2.427a.75.75 0 111.146 1.146l-3 3a.75.75 0 01-1.146 0l-3-3a.75.75 0 010-1.146z"/></svg>
-              </div>
+        <div class="branch-card-body ${expanded ? '' : 'hidden'}">
+          ${notesHtml}
+          <div class="branch-card-actions-row">
+            <div class="branch-actions-left">
+              ${actionsLeftHtml}
+            </div>
+            <div class="branch-actions-right">
+              ${actionsRightHtml}
             </div>
           </div>
-        ` : ''}
+          ${b.subject ? `
+            <div class="branch-commits-row">
+              <div class="branch-commits-wrap">
+                <div class="branch-requirement" onclick="event.stopPropagation(); toggleCommitLog('${esc(b.id)}', this)" title="点击查看历史提交">
+                  ${commitIcon(b.subject)} ${esc(b.subject)}
+                  <svg class="commit-chevron" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M4.427 5.427a.75.75 0 011.146 0L8 7.854l2.427-2.427a.75.75 0 111.146 1.146l-3 3a.75.75 0 01-1.146 0l-3-3a.75.75 0 010-1.146z"/></svg>
+                </div>
+              </div>
+            </div>
+          ` : ''}
+        </div>
       </div>
     `;
   }).join('');

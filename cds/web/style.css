@@ -517,11 +517,11 @@ button.text-btn:hover { color: var(--accent); }
 
 /* ════════════════ Branch Cards ════════════════ */
 
-.branch-list { display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px; }
+.branch-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px; }
 
 .branch-card {
   display: flex; flex-direction: column; gap: 0;
-  padding: 18px 22px;
+  padding: 14px 20px;
   background: var(--bg-card);
   backdrop-filter: blur(20px) saturate(1.2);
   -webkit-backdrop-filter: blur(20px) saturate(1.2);
@@ -555,9 +555,9 @@ button.text-btn:hover { color: var(--accent); }
   user-select: none; -webkit-user-select: none;
 }
 .branch-card-header:hover .branch-chevron { color: var(--text-primary); }
-.branch-card-left { display: flex; gap: 10px; flex: 1; min-width: 0; align-items: center; }
+.branch-card-left { display: flex; gap: 8px; flex: 1; min-width: 0; align-items: center; }
 .branch-card-right {
-  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+  display: flex; align-items: center; gap: 6px; flex-shrink: 0;
 }
 .branch-chevron {
   color: var(--text-muted); transition: transform 0.2s ease, color 0.2s ease;
@@ -565,69 +565,49 @@ button.text-btn:hover { color: var(--accent); }
 }
 .branch-chevron.open { transform: rotate(180deg); }
 
-/* Status dot — now minimal, serves as inline indicator only */
-.status-dot {
-  width: 7px; height: 7px; border-radius: 50%;
-  flex-shrink: 0;
-  transition: all var(--transition);
+/* Favorite toggle — inline, minimal */
+.fav-toggle {
+  display: inline-flex; align-items: center;
+  cursor: pointer; color: var(--text-muted);
+  transition: color var(--transition); flex-shrink: 0;
 }
-.status-dot.running {
-  background: var(--accent);
-  box-shadow: 0 0 6px rgba(200, 255, 0, 0.4);
-}
-.status-dot.building {
-  background: var(--yellow);
-  animation: pulse-dot 1.5s ease-in-out infinite;
-}
-.status-dot.idle { background: var(--text-muted); opacity: 0.5; }
-.status-dot.stopped { background: var(--text-muted); opacity: 0.3; }
-.status-dot.error {
-  background: var(--red);
-  box-shadow: 0 0 4px rgba(239, 83, 80, 0.4);
-}
+.fav-toggle svg.inline-icon { width: 13px; height: 13px; }
+.fav-toggle.active { color: var(--yellow); }
+.fav-toggle:not(.active):hover { color: var(--yellow); }
+.fav-toggle.active:hover { color: var(--text-muted); }
 
-.branch-info { flex: 1; min-width: 0; }
-.branch-name-row {
-  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-}
 .branch-name {
   font-size: 14px; font-weight: 600;
   word-break: break-all; letter-spacing: -0.01em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.active-badge {
+.default-tag {
   display: inline-flex; align-items: center;
   font-size: 10px; font-weight: 500;
-  background: none;
-  color: var(--text-muted);
-  padding: 0; margin-left: 4px; vertical-align: middle;
-  border: none;
-  letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--accent);
+  padding: 1px 6px; border-radius: 4px;
+  background: var(--accent-bg);
+  letter-spacing: 0.03em; flex-shrink: 0;
 }
-.set-default-btn {
-  color: var(--text-muted); margin-left: 2px;
+.set-default-link {
+  font-size: 10px; color: var(--text-muted); cursor: pointer;
+  opacity: 0; transition: opacity var(--transition), color var(--transition);
+  white-space: nowrap; flex-shrink: 0;
 }
-.set-default-btn:hover {
-  color: var(--accent); background: var(--accent-bg);
-  border-color: var(--accent-border);
-}
-.branch-meta { font-size: 12px; color: var(--text-secondary); line-height: 1.4; white-space: nowrap; }
+.branch-card-header:hover .set-default-link { opacity: 0.5; }
+.set-default-link:hover { opacity: 1 !important; color: var(--accent); }
+.branch-meta { font-size: 11px; color: var(--text-secondary); line-height: 1.4; white-space: nowrap; }
 .port-badge {
-  display: inline-flex; align-items: center; gap: 4px;
-  font-size: 11px; padding: 0;
+  display: inline-flex; align-items: center;
+  font-size: 11px; padding: 1px 7px;
   font-family: var(--font-mono);
-  font-weight: 500; transition: color var(--transition);
+  font-weight: 500; border-radius: 4px;
+  transition: all var(--transition); cursor: pointer;
 }
-.port-badge::before {
-  content: ''; width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0;
-}
-.port-badge.run-port { color: var(--accent); }
-.port-badge.run-port::before {
-  background: var(--accent); box-shadow: 0 0 4px rgba(200, 255, 0, 0.4);
-}
-.port-badge.run-port:hover { color: rgba(200, 255, 0, 1); }
-.port-badge.port-idle { color: var(--text-muted); }
-.port-badge.port-idle::before { background: var(--text-muted); opacity: 0.4; }
+.port-badge.run-port { color: var(--accent); background: rgba(200, 255, 0, 0.06); }
+.port-badge.run-port:hover { background: rgba(200, 255, 0, 0.12); }
+.port-badge.port-idle { color: var(--text-muted); background: rgba(255, 255, 255, 0.03); }
+.port-badge.port-idle:hover { background: rgba(255, 255, 255, 0.06); }
 
 .branch-error {
   font-size: 11px; color: var(--red); margin-top: 6px;
@@ -636,47 +616,54 @@ button.text-btn:hover { color: var(--accent); }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: help;
 }
 
+.branch-card-body { }
+.branch-card-body.hidden { display: none; }
+
 .branch-card-actions-row {
   display: flex; gap: 8px; align-items: center; justify-content: space-between;
-  padding: 10px 14px 2px; margin-top: 4px;
+  padding: 10px 0 2px; margin-top: 6px;
   border-top: 1px solid var(--border);
 }
-.branch-card-actions-row.hidden { display: none; }
 .branch-card-actions-row button { padding: 5px 12px; font-size: 12px; }
 .branch-card-actions-row button:disabled { opacity: 0.3; }
-.branch-actions-left { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-.branch-actions-right { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; flex-shrink: 0; }
+.branch-actions-left { display: flex; gap: 6px; align-items: center; }
+.branch-actions-right { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
 
-/* Commits row below actions */
-.branch-commits-row { padding-top: 8px; display: flex; justify-content: flex-end; }
+/* Commits row */
+.branch-commits-row { padding-top: 6px; display: flex; justify-content: flex-end; }
 
 /* Pull button states */
 .pull-no-update { opacity: 0.45; }
 .pull-no-update:hover { opacity: 1; }
 .pull-has-update { }
 
-/* Favorite button */
-.fav-btn { color: var(--text-muted); }
-.fav-btn.fav-active { color: var(--yellow); }
-.fav-btn.fav-active:hover { color: var(--text-muted); }
-.fav-btn:not(.fav-active):hover { color: var(--yellow); }
 .branch-card.is-favorite { border-left-color: var(--yellow); }
 
-/* Notes display */
-.branch-notes-area { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+/* Notes line — below header */
+.branch-notes-line {
+  display: flex; align-items: center; gap: 4px;
+  padding: 5px 0 0;
+}
 .branch-notes-text {
-  font-size: 11px; color: var(--text-muted); max-width: 200px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-style: italic;
+  font-size: 12px; color: var(--text-muted);
+  max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.notes-edit-btn { opacity: 0; transition: opacity var(--transition); }
-.branch-card-header:hover .notes-edit-btn { opacity: 0.6; }
-.notes-edit-btn:hover { opacity: 1 !important; }
+.notes-edit-btn {
+  display: inline-flex; align-items: center;
+  color: var(--text-muted); cursor: pointer;
+  opacity: 0; transition: opacity var(--transition);
+  background: none; border: none; padding: 2px;
+}
+.notes-edit-btn svg.inline-icon { width: 12px; height: 12px; }
+.branch-card:hover .notes-edit-btn { opacity: 0.4; }
+.notes-edit-btn:hover { opacity: 1 !important; color: var(--accent); }
 .branch-notes-editor {
-  display: inline-flex; align-items: center; gap: 4px;
+  display: flex; align-items: center; gap: 4px;
+  padding: 5px 0 0;
 }
+.branch-notes-editor.hidden { display: none; }
 .branch-notes-editor .notes-input {
-  padding: 2px 8px; font-size: 12px; width: 180px;
+  padding: 3px 8px; font-size: 12px; width: 200px;
   border-radius: var(--radius-xs);
 }
 
@@ -940,12 +927,11 @@ button.text-btn:hover { color: var(--accent); }
   .modal-dialog { max-height: 95vh; }
   .branch-card { padding: 12px 14px; }
   .branch-name { font-size: 13px; }
-  .branch-meta { font-size: 11px; }
-  .branch-name-row { gap: 4px; }
+  .branch-meta { font-size: 10px; }
   .header-actions { gap: 4px; }
   .icon-btn.labeled { padding: 0 8px; }
-  .branch-notes-text { max-width: 120px; }
-  .branch-notes-editor .notes-input { width: 120px; }
+  .branch-notes-text { max-width: 160px; }
+  .branch-notes-editor .notes-input { width: 140px; }
 }
 
 @media (min-width: 641px) {
