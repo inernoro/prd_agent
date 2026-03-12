@@ -114,6 +114,7 @@ function toggleBranchCard(id, event) {
 
 // ── Init ──
 
+let githubRepoUrl = '';
 let mainDomain = '';
 let switchDomain = '';
 let previewDomain = '';
@@ -125,12 +126,6 @@ async function init() {
   updatePreviewModeUI();
   setInterval(loadBranches, 10000);
 }
-
-let githubRepoUrl = '';
-let mainDomain = '';
-let switchDomain = '';
-let previewDomain = '';
-let workerPort = '';
 
 async function loadConfig() {
   try {
