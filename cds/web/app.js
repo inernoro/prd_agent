@@ -38,6 +38,7 @@ function commitIcon(subject) {
 
 // ── Update tracking ──
 let branchUpdates = {}; // { branchId: { behind: number, latestRemoteSubject?: string } }
+const recentlyTouched = new Map(); // { branchId: timestamp } — branches user just operated on
 let isCheckingUpdates = false;
 
 // ── Preview mode: 'simple' (set default + open main) or 'multi' (subdomain per branch) ──
@@ -306,6 +307,7 @@ async function addBranch(name) {
 
 async function deployBranch(id) {
   if (busyBranches.has(id)) return;
+  markTouched(id);
   busyBranches.add(id);
   renderBranches();
 
@@ -358,6 +360,7 @@ async function deployBranch(id) {
 
 async function stopBranch(id) {
   if (busyBranches.has(id) || isLoading(id, 'stop')) return;
+  markTouched(id);
   setLoading(id, 'stop');
   try {
     await api('POST', `/branches/${id}/stop`);
@@ -369,6 +372,7 @@ async function stopBranch(id) {
 
 async function pullBranch(id) {
   if (isLoading(id, 'pull')) return;
+  markTouched(id);
   setLoading(id, 'pull');
   try {
     const result = await api('POST', `/branches/${id}/pull`);
@@ -380,6 +384,7 @@ async function pullBranch(id) {
 }
 
 async function previewBranch(id) {
+  markTouched(id);
   const slug = StateService_slugify(id);
 
   if (previewMode === 'multi' && previewDomain) {
@@ -691,6 +696,25 @@ function closeSettingsMenu() {
   if (el) el.remove();
 }
 
+// ── Recently-touched visual feedback ──
+
+function markTouched(id) {
+  recentlyTouched.set(id, Date.now());
+  // Apply class immediately to the existing card element
+  const cards = document.querySelectorAll('.branch-card');
+  cards.forEach(card => {
+    if (card.dataset.branchId === id) {
+      card.classList.add('recently-touched');
+    }
+  });
+  // Auto-fade after 8 seconds
+  setTimeout(() => {
+    recentlyTouched.delete(id);
+    const c = document.querySelector(`.branch-card[data-branch-id="${CSS.escape(id)}"]`);
+    if (c) c.classList.remove('recently-touched');
+  }, 8000);
+}
+
 // ── Rendering ──
 
 function renderBranches() {
@@ -816,7 +840,7 @@ function renderBranches() {
     }
 
     return `
-      <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} ${expanded ? 'expanded' : ''} ${b.isFavorite ? 'is-favorite' : ''}">
+      <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} ${expanded ? 'expanded' : ''} ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''}" data-branch-id="${esc(b.id)}">
         <div class="branch-card-header" onclick="toggleBranchCard('${esc(b.id)}', event)">
           <div class="branch-card-left">
             <span class="fav-toggle ${b.isFavorite ? 'active' : ''}" onclick="event.stopPropagation(); toggleFavorite('${esc(b.id)}')" title="${b.isFavorite ? '取消收藏' : '收藏'}">
@@ -830,6 +854,7 @@ function renderBranches() {
           <div class="branch-card-right">
             <span class="branch-meta">${statusLabel(b.status)}${b.lastAccessedAt ? ` · ${relativeTime(b.lastAccessedAt)}` : ''}</span>
             ${portBadgesHtml}
+            ${hasUpdates ? `<span class="update-badge" title="${branchUpdates[b.id].behind} 个新提交可拉取">↓${branchUpdates[b.id].behind}</span>` : ''}
             <svg class="branch-chevron ${expanded ? 'open' : ''}" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M4.427 5.427a.75.75 0 011.146 0L8 7.854l2.427-2.427a.75.75 0 111.146 1.146l-3 3a.75.75 0 01-1.146 0l-3-3a.75.75 0 010-1.146z"/></svg>
           </div>
         </div>

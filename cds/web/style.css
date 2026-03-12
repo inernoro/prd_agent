@@ -651,6 +651,28 @@ button.text-btn:hover { color: var(--accent); }
 
 .branch-card.is-favorite { border-left-color: var(--yellow); }
 
+/* Card-level update indicator — blue glow so you instantly see which branches updated */
+.branch-card.has-updates {
+  border-color: var(--blue-border);
+  background: linear-gradient(90deg, rgba(92, 158, 255, 0.03) 0%, var(--bg-card) 40%);
+  box-shadow: var(--shadow-sm), 0 0 0 1px rgba(92, 158, 255, 0.08);
+}
+.branch-card.has-updates.active {
+  background: linear-gradient(90deg, rgba(92, 158, 255, 0.03) 0%, rgba(200, 255, 0, 0.02) 20%, var(--bg-card) 40%);
+}
+
+/* Recently-touched — soft blue border that fades out like a "visited" state */
+.branch-card.recently-touched {
+  border-color: rgba(92, 158, 255, 0.25);
+  box-shadow: var(--shadow-sm), 0 0 12px rgba(92, 158, 255, 0.06);
+  animation: touched-fade 8s ease-out forwards;
+}
+@keyframes touched-fade {
+  0% { border-color: rgba(92, 158, 255, 0.30); box-shadow: var(--shadow-sm), 0 0 16px rgba(92, 158, 255, 0.10); }
+  40% { border-color: rgba(92, 158, 255, 0.20); box-shadow: var(--shadow-sm), 0 0 10px rgba(92, 158, 255, 0.05); }
+  100% { border-color: var(--glass-border); box-shadow: var(--shadow-sm); }
+}
+
 /* Notes line — below header */
 .branch-notes-line {
   display: flex; align-items: center; gap: 4px;
