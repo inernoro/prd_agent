@@ -118,7 +118,7 @@ const collapsedBranches = new Set();
 
 function toggleBranchCard(id, event) {
   // Don't toggle when clicking buttons/links/inputs inside the header
-  if (event.target.closest('button, a, input, .port-badge, .branch-notes-editor, .fav-toggle, .set-default-link, .notes-edit-btn')) return;
+  if (event.target.closest('button, a, input, .port-badge, .branch-notes-editor, .fav-toggle, .set-default-link, .notes-edit-btn, .branch-actions-commit')) return;
   if (collapsedBranches.has(id)) {
     collapsedBranches.delete(id);
   } else {
@@ -783,20 +783,16 @@ function renderBranches() {
             <div class="branch-actions-left">
               ${actionsLeftHtml}
             </div>
+            ${b.subject ? `
+              <div class="branch-actions-commit" onclick="event.stopPropagation(); toggleCommitLog('${esc(b.id)}', this)" title="点击查看历史提交">
+                ${commitIcon(b.subject)} ${esc(b.subject)}
+                <svg class="commit-chevron" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M4.427 5.427a.75.75 0 011.146 0L8 7.854l2.427-2.427a.75.75 0 111.146 1.146l-3 3a.75.75 0 01-1.146 0l-3-3a.75.75 0 010-1.146z"/></svg>
+              </div>
+            ` : ''}
             <div class="branch-actions-right">
               ${actionsRightHtml}
             </div>
           </div>
-          ${b.subject ? `
-            <div class="branch-commits-row">
-              <div class="branch-commits-wrap">
-                <div class="branch-requirement" onclick="event.stopPropagation(); toggleCommitLog('${esc(b.id)}', this)" title="点击查看历史提交">
-                  ${commitIcon(b.subject)} ${esc(b.subject)}
-                  <svg class="commit-chevron" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M4.427 5.427a.75.75 0 011.146 0L8 7.854l2.427-2.427a.75.75 0 111.146 1.146l-3 3a.75.75 0 01-1.146 0l-3-3a.75.75 0 010-1.146z"/></svg>
-                </div>
-              </div>
-            </div>
-          ` : ''}
         </div>
       </div>
     `;
