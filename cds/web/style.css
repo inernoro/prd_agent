@@ -638,10 +638,8 @@ button.text-btn:hover { color: var(--accent); }
 
 .branch-card-actions-row {
   display: flex; gap: 8px; align-items: center; justify-content: space-between;
-  padding: 10px 14px; margin-top: 8px;
-  background: var(--blue-bg);
-  border: 1px solid var(--blue-border);
-  border-radius: var(--radius-sm);
+  padding: 10px 14px 2px; margin-top: 4px;
+  border-top: 1px solid var(--border);
 }
 .branch-card-actions-row.hidden { display: none; }
 .branch-card-actions-row button { padding: 5px 12px; font-size: 12px; }
