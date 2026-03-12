@@ -29,27 +29,21 @@
       border-radius: 14px;
       box-shadow: 0 20px 60px rgba(0,0,0,0.5);
     }
-    .rotating-subtitle {
-      height: 32px;
-      margin-bottom: 6px;
-      overflow: hidden;
-    }
-    .rotating-text {
-      display: inline-block;
-      font-size: 24px;
-      font-weight: 700;
-      letter-spacing: 0.04em;
-      background: linear-gradient(135deg, #00f0ff 0%, #7c3aed 50%, #f43f5e 100%);
+    .login-card h1 {
+      font-size: 22px; font-weight: 700; margin-bottom: 6px;
+      letter-spacing: -0.02em;
+      background: linear-gradient(120deg, #5c9eff 0%, #00f0ff 50%, #5c9eff 100%);
+      background-size: 200% 100%;
       -webkit-background-clip: text; -webkit-text-fill-color: transparent;
       background-clip: text;
-      transition: opacity 0.3s, transform 0.3s;
+      animation: shimmer 3s ease-in-out infinite;
     }
-    .rotating-text.out {
-      opacity: 0;
-      transform: translateY(8px);
+    @keyframes shimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
     }
     .subtitle {
-      font-size: 13px; color: #5c6370; margin-bottom: 24px;
+      font-size: 13px; color: #5c6370; margin-bottom: 28px;
     }
     .field { margin-bottom: 18px; }
     .field label {
@@ -91,9 +85,7 @@
 </head>
 <body>
   <div class="login-card">
-    <div class="rotating-subtitle">
-      <span class="rotating-text" id="rotatingText">重塑创作</span>
-    </div>
+    <h1>Cloud Dev Suite</h1>
     <div class="subtitle">请输入凭据以访问控制面板</div>
     <div class="error-msg" id="errorMsg"></div>
     <form onsubmit="doLogin(event)">
@@ -109,21 +101,6 @@
     </form>
   </div>
   <script>
-    // Rotating text animation
-    (function() {
-      const texts = ['重塑创作', '提升效率', '释放潜能', '驱动创新'];
-      let index = 0;
-      const el = document.getElementById('rotatingText');
-      setInterval(() => {
-        el.classList.add('out');
-        setTimeout(() => {
-          index = (index + 1) % texts.length;
-          el.textContent = texts[index];
-          el.classList.remove('out');
-        }, 300);
-      }, 3000);
-    })();
-
     async function doLogin(e) {
       e.preventDefault();
       const btn = document.getElementById('loginBtn');
