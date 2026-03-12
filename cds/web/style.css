@@ -499,6 +499,7 @@ button.text-btn:hover { color: var(--accent); }
   border-radius: var(--radius);
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   box-shadow: var(--shadow-sm), inset 0 1px 0 var(--glass-highlight);
+  overflow: visible;
 }
 .branch-card:hover {
   border-color: rgba(255, 255, 255, 0.1);
@@ -624,19 +625,19 @@ button.text-btn:hover { color: var(--accent); }
   border-color: var(--blue); color: var(--text-secondary);
 }
 .commit-chevron {
-  opacity: 0.5; flex-shrink: 0; transition: opacity var(--transition);
+  opacity: 0.7; flex-shrink: 0; transition: opacity var(--transition), transform var(--transition);
+  color: var(--blue);
 }
 .branch-requirement:hover .commit-chevron { opacity: 1; }
 
 .commit-log-dropdown {
-  position: absolute; top: 100%; right: 0;
-  min-width: 360px; max-width: 460px; max-height: 320px;
-  margin-top: 6px; overflow-y: auto;
+  position: fixed; max-width: min(460px, 90vw); min-width: 320px; max-height: 320px;
+  overflow-y: auto;
   background: var(--bg-card-solid);
   backdrop-filter: blur(24px);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-lg); z-index: 70;
+  box-shadow: var(--shadow-lg); z-index: 200;
 }
 .commit-log-dropdown.hidden { display: none; }
 .commit-log-loading, .commit-log-empty {

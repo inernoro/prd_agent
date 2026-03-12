@@ -561,7 +561,7 @@ function renderBranches() {
             <div class="branch-commits-wrap">
               <div class="branch-requirement" onclick="event.stopPropagation(); toggleCommitLog('${esc(b.id)}')" title="点击查看历史提交">
                 ${esc(b.subject)}
-                <svg class="commit-chevron" width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M4.427 5.427a.75.75 0 011.146 0L8 7.854l2.427-2.427a.75.75 0 111.146 1.146l-3 3a.75.75 0 01-1.146 0l-3-3a.75.75 0 010-1.146z"/></svg>
+                <svg class="commit-chevron" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M4.427 5.427a.75.75 0 011.146 0L8 7.854l2.427-2.427a.75.75 0 111.146 1.146l-3 3a.75.75 0 01-1.146 0l-3-3a.75.75 0 010-1.146z"/></svg>
               </div>
               <div class="commit-log-dropdown hidden" id="commit-log-${CSS.escape(b.id)}"></div>
             </div>
@@ -1090,6 +1090,20 @@ async function doLogout() {
 
 let openCommitLogId = null;
 
+function positionCommitDropdown(el) {
+  const trigger = el.closest('.branch-commits-wrap')?.querySelector('.branch-requirement');
+  if (!trigger) return;
+  const rect = trigger.getBoundingClientRect();
+  const dropW = Math.min(460, window.innerWidth * 0.9);
+  // Align right edge with trigger right edge, but clamp to viewport
+  let left = rect.right - dropW;
+  if (left < 8) left = 8;
+  if (left + dropW > window.innerWidth - 8) left = window.innerWidth - 8 - dropW;
+  el.style.top = `${rect.bottom + 6}px`;
+  el.style.left = `${left}px`;
+  el.style.width = `${dropW}px`;
+}
+
 async function toggleCommitLog(id) {
   const el = document.getElementById(`commit-log-${CSS.escape(id)}`);
   if (!el) return;
@@ -1110,6 +1124,9 @@ async function toggleCommitLog(id) {
   openCommitLogId = id;
   el.classList.remove('hidden');
   el.innerHTML = '<div class="commit-log-loading"><span class="btn-spinner"></span> 加载中...</div>';
+
+  // Position dropdown using fixed positioning to avoid clipping
+  positionCommitDropdown(el);
 
   try {
     const data = await api('GET', `/branches/${encodeURIComponent(id)}/git-log?count=15`);
