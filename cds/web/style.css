@@ -569,6 +569,13 @@ button.text-btn:hover { color: var(--accent); }
   border: 1px solid var(--accent-border);
   letter-spacing: 0.02em;
 }
+.set-default-btn {
+  color: var(--text-muted); margin-left: 2px;
+}
+.set-default-btn:hover {
+  color: var(--accent); background: var(--accent-bg);
+  border-color: var(--accent-border);
+}
 .branch-meta { font-size: 12px; color: var(--text-secondary); line-height: 1.4; white-space: nowrap; }
 .port-badge {
   font-size: 11px; padding: 2px 8px; border-radius: 10px;
@@ -631,13 +638,14 @@ button.text-btn:hover { color: var(--accent); }
 .branch-requirement:hover .commit-chevron { opacity: 1; }
 
 .commit-log-dropdown {
-  position: fixed; max-width: min(460px, 90vw); min-width: 320px; max-height: 320px;
-  overflow-y: auto;
+  position: absolute; top: 100%; right: 0;
+  min-width: 360px; max-width: min(460px, 90vw); max-height: 320px;
+  margin-top: 6px; overflow-y: auto;
   background: var(--bg-card-solid);
   backdrop-filter: blur(24px);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-lg); z-index: 200;
+  box-shadow: var(--shadow-lg);
 }
 .commit-log-dropdown.hidden { display: none; }
 .commit-log-loading, .commit-log-empty {
@@ -711,6 +719,9 @@ button.text-btn:hover { color: var(--accent); }
 }
 .deploy-menu-item:hover { background: var(--bg-hover); }
 .deploy-menu-item + .deploy-menu-item { border-top: 1px solid var(--border); }
+.deploy-menu-divider { height: 1px; background: var(--border); }
+.deploy-menu-item-danger { color: var(--red); }
+.deploy-menu-item-danger:hover { background: var(--red-bg); }
 
 /* ════════════════ Button Spinner ════════════════ */
 

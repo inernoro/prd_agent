@@ -505,6 +505,9 @@ function renderBranches() {
 
     const expanded = !collapsedBranches.has(b.id);
 
+    // Build stop menu item for deploy dropdown
+    const stopMenuItem = isRunning ? `<div class="deploy-menu-divider"></div><div class="deploy-menu-item deploy-menu-item-danger" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); stopBranch('${esc(b.id)}')">停止所有服务</div>` : '';
+
     return `
       <div class="branch-card ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} ${expanded ? 'expanded' : ''}">
         <div class="branch-card-header" onclick="toggleBranchCard('${esc(b.id)}', event)">
@@ -513,7 +516,11 @@ function renderBranches() {
             <div class="branch-info">
               <div class="branch-name-row">
                 <span class="branch-name">${esc(b.branch)}</span>
-                ${isDefault ? '<span class="active-badge">默认</span>' : ''}
+                ${isDefault ? '<span class="active-badge">默认</span>' : `
+                  <button class="icon-btn xs set-default-btn" onclick="event.stopPropagation(); setDefaultBranch('${esc(b.id)}')" title="设为默认分支" ${btnDisabled('setDefault')}>
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg>
+                  </button>
+                `}
                 ${services.length > 0 ? services.map(([pid, svc]) => `
                   <span class="port-badge ${svc.status === 'running' ? 'run-port' : 'port-idle'}"
                         onclick="event.stopPropagation(); viewContainerLogs('${esc(b.id)}', '${esc(pid)}')"
@@ -526,6 +533,11 @@ function renderBranches() {
             </div>
           </div>
           <div class="branch-card-right">
+            ${services.length > 0 ? `
+              <button class="icon-btn xs" onclick="event.stopPropagation(); openContainerEnvPicker('${esc(b.id)}')" title="容器变量" ${isBusy ? 'disabled' : ''}>
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M2.5 2a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h11a.5.5 0 00.5-.5v-11a.5.5 0 00-.5-.5h-11zM1 2.5A1.5 1.5 0 012.5 1h11A1.5 1.5 0 0115 2.5v11a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 011 13.5v-11zM4 5h2v1H4V5zm3 0h5v1H7V5zM4 8h2v1H4V8zm3 0h5v1H7V8zM4 11h2v1H4v-1zm3 0h5v1H7v-1z"/></svg>
+              </button>
+            ` : ''}
             <span class="branch-meta">${statusLabel(b.status)}${b.lastAccessedAt ? ` · ${relativeTime(b.lastAccessedAt)}` : ''}</span>
             <svg class="branch-chevron ${expanded ? 'open' : ''}" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M4.427 5.427a.75.75 0 011.146 0L8 7.854l2.427-2.427a.75.75 0 111.146 1.146l-3 3a.75.75 0 01-1.146 0l-3-3a.75.75 0 010-1.146z"/></svg>
           </div>
@@ -535,26 +547,21 @@ function renderBranches() {
           <div class="branch-actions-left">
             <button class="primary sm" onclick="pullBranch('${esc(b.id)}')" ${btnDisabled('pull')}>${btnLabel('pull', '拉取')}</button>
             ${isRunning ? `<button class="preview sm" onclick="previewBranch('${esc(b.id)}')">预览</button>` : ''}
-            ${isRunning && hasMultipleProfiles ? `
+            ${isRunning ? `
               <div class="split-btn">
                 <button class="sm split-btn-main" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>重新部署</button>
                 <button class="sm split-btn-toggle" onclick="toggleDeployMenu('${esc(b.id)}', event)" ${isBusy ? 'disabled' : ''}>
                   <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor"><path d="M1 1l4 4 4-4"/></svg>
                 </button>
                 <div class="deploy-menu hidden" id="deploy-menu-${esc(b.id)}">
-                  <div class="deploy-menu-header">选择重部署的服务</div>
-                  ${deployMenuItems}
+                  ${hasMultipleProfiles ? `<div class="deploy-menu-header">选择重部署的服务</div>${deployMenuItems}` : ''}
+                  ${stopMenuItem}
                 </div>
               </div>
             ` : `
-              <button class="${isRunning ? '' : 'primary '}sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>
-                ${isRunning ? '重新部署' : '部署'}
-              </button>
+              <button class="primary sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>部署</button>
             `}
-            ${isRunning ? `<button class="sm" onclick="stopBranch('${esc(b.id)}')" ${btnDisabled('stop')}>${btnLabel('stop', '停止')}</button>` : ''}
-            ${services.length > 0 ? `<button class="sm" onclick="openContainerEnvPicker('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>容器变量</button>` : ''}
             ${hasError ? `<button class="sm" onclick="resetBranch('${esc(b.id)}')" ${btnDisabled('reset')}>${btnLabel('reset', '重置')}</button>` : ''}
-            ${!isDefault ? `<button class="sm" onclick="setDefaultBranch('${esc(b.id)}')" ${btnDisabled('setDefault')}>${btnLabel('setDefault', '设为默认')}</button>` : ''}
             <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>删除</button>
           </div>
           ${b.subject ? `
@@ -1090,20 +1097,6 @@ async function doLogout() {
 
 let openCommitLogId = null;
 
-function positionCommitDropdown(el) {
-  const trigger = el.closest('.branch-commits-wrap')?.querySelector('.branch-requirement');
-  if (!trigger) return;
-  const rect = trigger.getBoundingClientRect();
-  const dropW = Math.min(460, window.innerWidth * 0.9);
-  // Align right edge with trigger right edge, but clamp to viewport
-  let left = rect.right - dropW;
-  if (left < 8) left = 8;
-  if (left + dropW > window.innerWidth - 8) left = window.innerWidth - 8 - dropW;
-  el.style.top = `${rect.bottom + 6}px`;
-  el.style.left = `${left}px`;
-  el.style.width = `${dropW}px`;
-}
-
 async function toggleCommitLog(id) {
   const el = document.getElementById(`commit-log-${CSS.escape(id)}`);
   if (!el) return;
@@ -1124,9 +1117,6 @@ async function toggleCommitLog(id) {
   openCommitLogId = id;
   el.classList.remove('hidden');
   el.innerHTML = '<div class="commit-log-loading"><span class="btn-spinner"></span> 加载中...</div>';
-
-  // Position dropdown using fixed positioning to avoid clipping
-  positionCommitDropdown(el);
 
   try {
     const data = await api('GET', `/branches/${encodeURIComponent(id)}/git-log?count=15`);
