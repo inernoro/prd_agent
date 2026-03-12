@@ -4,6 +4,23 @@ const busyBranches = new Set();
 const loadingActions = new Map();
 let globalBusy = false;
 
+// ── Icons (Octicons 12px) ──
+const ICON = {
+  branch: '<svg class="inline-icon" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 3.25a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6a1 1 0 00-1 1v1.128a2.251 2.251 0 11-1.5 0V5.372a2.25 2.25 0 111.5 0v1.836A2.493 2.493 0 016 7h4a1 1 0 001-1v-.628A2.25 2.25 0 019.5 3.25z"/></svg>',
+  commit: '<svg class="inline-icon" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M11.93 8.5a4.002 4.002 0 01-7.86 0H.75a.75.75 0 010-1.5h3.32a4.002 4.002 0 017.86 0h3.32a.75.75 0 010 1.5h-3.32zM8 10.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z"/></svg>',
+  pr: '<svg class="inline-icon" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M5.45 5.154A4.25 4.25 0 009.25 7.5h1.378a2.251 2.251 0 110 1.5H9.25A5.734 5.734 0 015 7.123v3.505a2.25 2.25 0 11-1.5 0V5.372a2.25 2.25 0 111.95-.218zM4.25 13.5a.75.75 0 100-1.5.75.75 0 000 1.5zm8.5-4.5a.75.75 0 100-1.5.75.75 0 000 1.5zM5 3.25a.75.75 0 10-1.5 0 .75.75 0 001.5 0z"/></svg>',
+  pull: '<svg class="inline-icon" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.004a.75.75 0 01.75.75v5.689l1.97-1.97a.749.749 0 111.06 1.06l-3.25 3.25a.749.749 0 01-1.06 0L4.22 7.533a.749.749 0 111.06-1.06l1.97 1.97V2.754a.75.75 0 01.75-.75zM2.75 12.5h10.5a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5z"/></svg>',
+  preview: '<svg class="inline-icon" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M0 8s3-5.5 8-5.5S16 8 16 8s-3 5.5-8 5.5S0 8 0 8zm8 3.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7zm0-1.5a2 2 0 110-4 2 2 0 010 4z"/></svg>',
+  deploy: '<svg class="inline-icon" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8.75.75a.75.75 0 00-1.5 0V2h-3A1.75 1.75 0 002.5 3.75v2.5A1.75 1.75 0 004.25 8h7.5A1.75 1.75 0 0013.5 6.25v-2.5A1.75 1.75 0 0011.75 2h-3V.75zM4.25 3.5h7.5a.25.25 0 01.25.25v2.5a.25.25 0 01-.25.25h-7.5a.25.25 0 01-.25-.25v-2.5a.25.25 0 01.25-.25zM2.5 10.25a.75.75 0 01.75-.75h9.5a.75.75 0 010 1.5h-9.5a.75.75 0 01-.75-.75zm.75 2.25a.75.75 0 000 1.5h9.5a.75.75 0 000-1.5h-9.5z"/></svg>',
+  trash: '<svg class="inline-icon" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM11 3V1.75A1.75 1.75 0 009.25 0h-2.5A1.75 1.75 0 005 1.75V3H2.75a.75.75 0 000 1.5h.3l.8 8.2A1.75 1.75 0 005.6 14.5h4.8a1.75 1.75 0 001.75-1.8l.8-8.2h.3a.75.75 0 000-1.5H11z"/></svg>',
+  reset: '<svg class="inline-icon" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5z"/></svg>',
+};
+
+/** Pick commit/PR icon based on subject text */
+function commitIcon(subject) {
+  return /^Merge pull request/.test(subject) ? ICON.pr : ICON.commit;
+}
+
 // ── Utilities ──
 
 async function api(method, path, body) {
@@ -545,7 +562,7 @@ function renderBranches() {
             <span class="status-dot ${b.status}"></span>
             <div class="branch-info">
               <div class="branch-name-row">
-                <span class="branch-name">${esc(b.branch)}</span>
+                <span class="branch-name">${ICON.branch} ${esc(b.branch)}</span>
                 ${isDefault ? '<span class="active-badge">默认</span>' : `
                   <button class="icon-btn xs set-default-btn" onclick="event.stopPropagation(); setDefaultBranch('${esc(b.id)}')" title="设为默认分支" ${btnDisabled('setDefault')}>
                     <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg>
@@ -575,11 +592,11 @@ function renderBranches() {
         ${b.errorMessage ? `<div class="branch-error" title="${esc(b.errorMessage)}">${esc(b.errorMessage)}</div>` : ''}
         <div class="branch-card-actions-row ${expanded ? '' : 'hidden'}">
           <div class="branch-actions-left">
-            <button class="primary sm" onclick="pullBranch('${esc(b.id)}')" ${btnDisabled('pull')}>${btnLabel('pull', '拉取')}</button>
-            ${isRunning ? `<button class="preview sm" onclick="previewBranch('${esc(b.id)}')">预览</button>` : ''}
+            <button class="primary sm" onclick="pullBranch('${esc(b.id)}')" ${btnDisabled('pull')}>${btnLabel('pull', ICON.pull + ' 拉取')}</button>
+            ${isRunning ? `<button class="preview sm" onclick="previewBranch('${esc(b.id)}')">${ICON.preview} 预览</button>` : ''}
             ${isRunning ? `
               <div class="split-btn">
-                <button class="sm split-btn-main" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>重新部署</button>
+                <button class="sm split-btn-main" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.deploy} 重新部署</button>
                 <button class="sm split-btn-toggle" onclick="toggleDeployMenu('${esc(b.id)}', event)" ${isBusy ? 'disabled' : ''}>
                   <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor"><path d="M1 1l4 4 4-4"/></svg>
                 </button>
@@ -589,15 +606,15 @@ function renderBranches() {
                 </template>
               </div>
             ` : `
-              <button class="primary sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>部署</button>
+              <button class="primary sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.deploy} 部署</button>
             `}
-            ${hasError ? `<button class="sm" onclick="resetBranch('${esc(b.id)}')" ${btnDisabled('reset')}>${btnLabel('reset', '重置')}</button>` : ''}
-            <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>删除</button>
+            ${hasError ? `<button class="sm" onclick="resetBranch('${esc(b.id)}')" ${btnDisabled('reset')}>${btnLabel('reset', ICON.reset + ' 重置')}</button>` : ''}
+            <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.trash} 删除</button>
           </div>
           ${b.subject ? `
             <div class="branch-commits-wrap">
               <div class="branch-requirement" onclick="event.stopPropagation(); toggleCommitLog('${esc(b.id)}', this)" title="点击查看历史提交">
-                ${esc(b.subject)}
+                ${commitIcon(b.subject)} ${esc(b.subject)}
                 <svg class="commit-chevron" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M4.427 5.427a.75.75 0 011.146 0L8 7.854l2.427-2.427a.75.75 0 111.146 1.146l-3 3a.75.75 0 01-1.146 0l-3-3a.75.75 0 010-1.146z"/></svg>
               </div>
             </div>
@@ -1155,7 +1172,7 @@ async function toggleCommitLog(id, triggerEl) {
     }
     el.innerHTML = commits.map((c, i) => `
       <div class="commit-log-item ${i === 0 ? 'latest' : ''}">
-        <code class="commit-hash">${esc(c.hash)}</code>
+        ${commitIcon(c.subject)}<code class="commit-hash">${esc(c.hash)}</code>
         <span class="commit-subject">${esc(c.subject)}</span>
         <span class="commit-meta">${esc(c.author)} · ${esc(c.date)}</span>
       </div>
