@@ -180,20 +180,12 @@ async function checkAllUpdates() {
   if (btn) btn.classList.remove('spinning');
 }
 
-async function checkSingleBranchUpdate(branchId) {
-  try {
-    const data = await api('GET', '/check-updates');
-    const allUpdates = data.updates || {};
-    if (allUpdates[branchId]) {
-      branchUpdates[branchId] = allUpdates[branchId];
-    } else {
-      delete branchUpdates[branchId];
-    }
-    localStorage.setItem('cds_branch_updates', JSON.stringify(branchUpdates));
-    renderBranches();
-  } catch (e) {
-    showToast('刷新失败: ' + e.message, 'error');
+function confirmOpenGithub(event) {
+  if (!confirm('即将跳转到 GitHub.dev 在线编辑器浏览代码，是否继续？')) {
+    event.preventDefault();
+    return false;
   }
+  return true;
 }
 
 function togglePreviewMode() {
@@ -880,9 +872,6 @@ function renderBranches() {
       </div>
     `;
 
-    // Pull button: gray by default, blue highlight when updates available
-    const pullBtnClass = hasUpdates ? 'primary sm pull-has-update' : 'sm pull-no-update';
-
     // Actions row: left = safe actions, right = dangerous actions
     // When container not running (stopped/idle): only show deploy button
     let actionsLeftHtml = '';
@@ -890,8 +879,6 @@ function renderBranches() {
 
     if (isRunning) {
       actionsLeftHtml = `
-        <button class="${pullBtnClass}" onclick="pullBranch('${esc(b.id)}')" ${btnDisabled('pull')}>${btnLabel('pull', ICON.pull + ' 拉取')}</button>
-        ${hasUpdates ? `<span class="update-badge" title="${branchUpdates[b.id].behind} 个新提交">↓${branchUpdates[b.id].behind}</span>` : ''}
         <button class="preview sm" onclick="previewBranch('${esc(b.id)}')">${ICON.preview} 预览</button>
       `;
       actionsRightHtml = `
@@ -918,8 +905,6 @@ function renderBranches() {
     } else {
       // Idle (never deployed) or building — neutral deploy button
       actionsLeftHtml = `
-        <button class="${pullBtnClass}" onclick="pullBranch('${esc(b.id)}')" ${btnDisabled('pull')}>${btnLabel('pull', ICON.pull + ' 拉取')}</button>
-        ${hasUpdates ? `<span class="update-badge" title="${branchUpdates[b.id].behind} 个新提交">↓${branchUpdates[b.id].behind}</span>` : ''}
         <button class="sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.deploy} 部署</button>
       `;
       actionsRightHtml = `
@@ -935,18 +920,18 @@ function renderBranches() {
             <span class="fav-toggle ${b.isFavorite ? 'active' : ''}" onclick="event.stopPropagation(); toggleFavorite('${esc(b.id)}')" title="${b.isFavorite ? '取消收藏' : '收藏'}">
               ${b.isFavorite ? ICON.star : ICON.starOutline}
             </span>
-            <a class="branch-name" href="${githubRepoUrl ? githubRepoUrl.replace('github.com', 'github.dev') + '/tree/' + encodeURIComponent(b.branch) : '#'}" target="_blank" onclick="event.stopPropagation()" title="在 GitHub.dev 中浏览代码">${ICON.branch} ${esc(b.branch)}</a>
+            <a class="branch-name" href="${githubRepoUrl ? githubRepoUrl.replace('github.com', 'github.dev') + '/tree/' + encodeURIComponent(b.branch) : '#'}" target="_blank" onclick="event.stopPropagation(); return confirmOpenGithub(event)" title="在 GitHub.dev 中浏览代码">${ICON.branch} ${esc(b.branch)}</a>
             ${isDefault ? '<span class="default-tag">默认</span>' : `
               <span class="set-default-link" onclick="event.stopPropagation(); setDefaultBranch('${esc(b.id)}')" title="设为默认分支">设默认</span>
             `}
           </div>
           <div class="branch-card-right">
             ${portBadgesHtml}
-            ${hasUpdates ? `<span class="update-badge" title="${branchUpdates[b.id].behind} 个新提交可拉取">↓${branchUpdates[b.id].behind}</span>` : ''}
             <span class="branch-meta">${statusLabel(b.status)}${b.lastAccessedAt ? ` · ${relativeTime(b.lastAccessedAt)}` : ''}</span>
-            <button class="icon-btn xs update-refresh-btn" onclick="event.stopPropagation(); checkSingleBranchUpdate('${esc(b.id)}')" title="刷新此分支更新状态">
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
-            </button>
+            <span class="update-pull-group" onclick="event.stopPropagation(); pullBranch('${esc(b.id)}')" title="${hasUpdates ? branchUpdates[b.id].behind + ' 个新提交，点击拉取' : '点击拉取最新代码'}">
+              ${hasUpdates ? `<span class="update-badge">↓${branchUpdates[b.id].behind}</span>` : ''}
+              <svg class="update-pull-icon ${isLoading(b.id, 'pull') ? 'spinning' : ''}" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
+            </span>
             <svg class="branch-chevron ${expanded ? 'open' : ''}" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M4.427 5.427a.75.75 0 011.146 0L8 7.854l2.427-2.427a.75.75 0 111.146 1.146l-3 3a.75.75 0 01-1.146 0l-3-3a.75.75 0 010-1.146z"/></svg>
           </div>
         </div>
