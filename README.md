@@ -68,6 +68,33 @@ OpenAI-compatible API for external integrations:
 - **Rate limiting** — Redis-based sliding window (Lua script)
 - **Attachments** — Image paste/drag-drop/upload as message context
 
+### Cloud Dev Suite (CDS)
+
+A built-in **branch preview and testing platform** that lets teams run and test multiple git branches in parallel without touching the production environment.
+
+- **On-demand branch builds** — Visit an unbuilt branch and CDS automatically creates a git worktree, builds Docker containers, and streams live progress via SSE
+- **Smart routing** — Requests are routed to the correct branch container via `X-Branch` header, `cds_branch` cookie, subdomain pattern (`<slug>.preview.example.com`), or configurable routing rules
+- **Build profiles** — Define how each service is built and run (Docker image, commands, ports, shared cache mounts). Multiple profiles can coexist for API, frontend, etc.
+- **Dashboard UI** (`:9900`) — Branch CRUD, build profile management, routing rules, per-branch environment variables, real-time deployment logs, and container status
+- **Container orchestration** — Auto port allocation, Docker network isolation, health tracking, and environment file injection without shell escaping issues
+- **Git worktree management** — Safe creation/removal, branch suffix matching, remote sync, and cleanup
+
+```
+CDS Architecture:
+
+  :9900 — Dashboard (Express.js)
+  :5500 — Worker (HTTP reverse proxy)
+
+  Docker Network (cds-network)
+  ├── mongodb (shared)
+  ├── redis (shared)
+  ├── prd-api-feature-a  :9001
+  ├── prd-api-feature-b  :9002
+  └── prd-api-hotfix-c   :9003
+```
+
+Launch with `./exec_bt.sh` (production) or `./exec_bt.sh --dev` (hot reload). See `doc/design.cds.md` for full design documentation.
+
 ## Architecture
 
 ```
