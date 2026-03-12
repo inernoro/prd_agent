@@ -952,7 +952,7 @@ a.branch-name:hover { color: var(--accent); }
 
 .modal {
   position: fixed; inset: 0; z-index: 100;
-  display: flex; align-items: flex-end; justify-content: center;
+  display: flex; align-items: center; justify-content: center;
 }
 .modal.hidden { display: none; }
 .modal-backdrop {
@@ -964,8 +964,8 @@ a.branch-name:hover { color: var(--accent); }
   position: relative;
   background: var(--bg-card-solid);
   border: 1px solid var(--card-border);
-  border-radius: 16px 16px 0 0;
-  width: 100%; max-width: 740px; max-height: 90vh;
+  border-radius: 16px;
+  width: 100%; max-width: 740px; max-height: 85vh;
   display: flex; flex-direction: column;
   box-shadow: 0 -8px 40px rgba(0,0,0,0.5);
 }
@@ -1212,8 +1212,8 @@ a.branch-name:hover { color: var(--accent); }
   /* Stopping indicator: compact */
   .stopping-indicator { font-size: 11px; }
 
-  /* Modal fullscreen on mobile */
-  .modal-dialog { max-height: 95vh; }
+  /* Modal: slight margin on mobile */
+  .modal-dialog { max-height: 90vh; margin: 0 12px; }
 
   /* Inline deploy log: responsive */
   .inline-deploy-log { font-size: 10px; padding: 8px 10px; max-height: 100px; }
@@ -1236,6 +1236,4 @@ a.branch-name:hover { color: var(--accent); }
 @media (min-width: 641px) {
   .container { padding: 28px 20px; }
   h1 { font-size: 20px; }
-  .modal { align-items: center; }
-  .modal-dialog { border-radius: 16px; max-height: 85vh; }
 }
