@@ -120,7 +120,7 @@ header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 16px;
+  margin-bottom: 24px;
   padding-bottom: 16px;
   border-bottom: 1px solid var(--border);
 }
@@ -181,16 +181,15 @@ h2 { font-size: 14px; font-weight: 600; margin-bottom: 8px; letter-spacing: -0.0
 .icon-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 36px; height: 36px; border-radius: var(--radius-sm);
-  border: 1px solid var(--glass-border);
-  background: var(--bg-card);
-  backdrop-filter: blur(12px);
-  color: var(--text-secondary); cursor: pointer;
+  border: 1px solid transparent;
+  background: none;
+  backdrop-filter: none;
+  color: var(--text-muted); cursor: pointer;
   transition: all var(--transition); flex-shrink: 0;
 }
 .icon-btn:hover {
   background: var(--bg-hover); color: var(--text-primary);
-  border-color: rgba(255,255,255,0.12);
-  transform: translateY(-1px);
+  border-color: rgba(255,255,255,0.06);
   box-shadow: var(--shadow-sm);
 }
 .icon-btn:active { transform: scale(0.95) translateY(0); box-shadow: none; }
@@ -247,44 +246,42 @@ select:disabled { opacity: 0.5; cursor: not-allowed; }
 
 button {
   padding: 7px 14px; border-radius: var(--radius-sm);
-  border: 1px solid var(--glass-border); background: var(--bg-elevated);
-  backdrop-filter: blur(8px);
-  color: var(--text-primary); font-size: 13px; cursor: pointer;
+  border: 1px solid var(--glass-border); background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: none;
+  color: var(--text-secondary); font-size: 13px; cursor: pointer;
   white-space: nowrap; transition: all var(--transition);
   font-weight: 500;
 }
-button:hover { background: var(--bg-hover); border-color: rgba(255,255,255,0.12); }
+button:hover { background: rgba(255, 255, 255, 0.08); color: var(--text-primary); border-color: rgba(255,255,255,0.10); }
 button:active { transform: scale(0.97); }
 button:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+/* Primary — the only "loud" button */
 button.primary {
-  background: linear-gradient(135deg, rgba(200, 255, 0, 0.15) 0%, rgba(200, 255, 0, 0.08) 100%);
-  border-color: var(--accent-border); color: var(--accent);
+  background: rgba(200, 255, 0, 0.10);
+  border-color: rgba(200, 255, 0, 0.20); color: var(--accent);
   font-weight: 600;
 }
 button.primary:hover {
-  background: linear-gradient(135deg, rgba(200, 255, 0, 0.22) 0%, rgba(200, 255, 0, 0.12) 100%);
-  box-shadow: 0 2px 12px rgba(200, 255, 0, 0.1);
-  border-color: rgba(200, 255, 0, 0.3);
+  background: rgba(200, 255, 0, 0.18);
+  border-color: rgba(200, 255, 0, 0.30);
 }
+/* Preview — ghost text style */
 button.preview {
-  background: linear-gradient(135deg, rgba(92, 158, 255, 0.15) 0%, rgba(92, 158, 255, 0.08) 100%);
-  border-color: var(--blue-border); color: var(--blue);
-  font-weight: 600;
+  background: none; border-color: transparent;
+  color: var(--blue); font-weight: 500;
 }
 button.preview:hover {
-  background: linear-gradient(135deg, rgba(92, 158, 255, 0.22) 0%, rgba(92, 158, 255, 0.12) 100%);
-  box-shadow: 0 2px 12px rgba(92, 158, 255, 0.1);
-  border-color: rgba(92, 158, 255, 0.3);
+  background: rgba(92, 158, 255, 0.08);
+  border-color: transparent;
 }
+/* Danger — ghost text, red on hover */
 button.danger {
-  background: linear-gradient(135deg, rgba(239, 83, 80, 0.15) 0%, rgba(239, 83, 80, 0.08) 100%);
-  border-color: var(--red-border); color: var(--red);
-  font-weight: 600;
+  background: none; border-color: transparent;
+  color: var(--text-muted); font-weight: 500;
 }
 button.danger:hover {
-  background: linear-gradient(135deg, rgba(239, 83, 80, 0.22) 0%, rgba(239, 83, 80, 0.12) 100%);
-  box-shadow: 0 2px 12px rgba(239, 83, 80, 0.1);
-  border-color: rgba(239, 83, 80, 0.3);
+  color: var(--red); background: rgba(239, 83, 80, 0.06);
+  border-color: transparent;
 }
 button.sm { padding: 5px 12px; font-size: 12px; }
 button.text-btn {
@@ -485,31 +482,37 @@ button.text-btn:hover { color: var(--accent); }
 
 /* ════════════════ Branch Cards ════════════════ */
 
-.branch-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px; }
+.branch-list { display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px; }
 
 .branch-card {
   display: flex; flex-direction: column; gap: 0;
-  padding: 14px 18px;
+  padding: 18px 22px;
   background: var(--bg-card);
   backdrop-filter: blur(20px) saturate(1.2);
   -webkit-backdrop-filter: blur(20px) saturate(1.2);
   border: 1px solid var(--glass-border);
+  border-left: 3px solid transparent;
   border-radius: var(--radius);
-  transition: border-color 0.3s, box-shadow 0.3s;
-  box-shadow: var(--shadow-sm), inset 0 1px 0 var(--glass-highlight);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: var(--shadow-sm);
+  overflow: visible;
 }
 .branch-card:hover {
-  border-color: rgba(255, 255, 255, 0.1);
-  box-shadow: var(--shadow-md), inset 0 1px 0 var(--glass-highlight);
+  box-shadow: var(--shadow-md);
 }
+/* Status-based left border — the card's "soul" */
+.branch-card.status-running { border-left-color: var(--accent); }
+.branch-card.status-building { border-left-color: var(--yellow); }
+.branch-card.status-idle { border-left-color: var(--text-muted); }
+.branch-card.status-stopped { border-left-color: transparent; }
+.branch-card.status-error { border-left-color: var(--red); }
 .branch-card.active {
-  border-color: var(--accent-border);
-  background: linear-gradient(135deg, rgba(200, 255, 0, 0.03) 0%, var(--bg-card) 100%);
-  box-shadow: 0 0 0 1px var(--accent-border), var(--shadow-sm), inset 0 1px 0 var(--glass-highlight);
+  border-left-color: var(--accent);
+  background: linear-gradient(90deg, rgba(200, 255, 0, 0.02) 0%, var(--bg-card) 30%);
 }
 .branch-card.has-error {
-  border-color: var(--red-border);
-  background: linear-gradient(135deg, rgba(239, 83, 80, 0.03) 0%, var(--bg-card) 100%);
+  border-left-color: var(--red);
+  background: linear-gradient(90deg, rgba(239, 83, 80, 0.02) 0%, var(--bg-card) 30%);
 }
 
 .branch-card-header {
@@ -527,25 +530,25 @@ button.text-btn:hover { color: var(--accent); }
 }
 .branch-chevron.open { transform: rotate(180deg); }
 
+/* Status dot — now minimal, serves as inline indicator only */
 .status-dot {
-  width: 10px; height: 10px; border-radius: 50%;
+  width: 7px; height: 7px; border-radius: 50%;
   flex-shrink: 0;
   transition: all var(--transition);
 }
 .status-dot.running {
   background: var(--accent);
-  box-shadow: 0 0 8px rgba(200, 255, 0, 0.5);
+  box-shadow: 0 0 6px rgba(200, 255, 0, 0.4);
 }
 .status-dot.building {
   background: var(--yellow);
-  box-shadow: 0 0 6px rgba(224, 180, 58, 0.5);
   animation: pulse-dot 1.5s ease-in-out infinite;
 }
-.status-dot.idle { background: var(--text-muted); }
-.status-dot.stopped { background: var(--text-muted); opacity: 0.5; }
+.status-dot.idle { background: var(--text-muted); opacity: 0.5; }
+.status-dot.stopped { background: var(--text-muted); opacity: 0.3; }
 .status-dot.error {
   background: var(--red);
-  box-shadow: 0 0 6px rgba(239, 83, 80, 0.5);
+  box-shadow: 0 0 4px rgba(239, 83, 80, 0.4);
 }
 
 .branch-info { flex: 1; min-width: 0; }
@@ -559,10 +562,12 @@ button.text-btn:hover { color: var(--accent); }
 }
 .active-badge {
   display: inline-flex; align-items: center;
-  font-size: 10px; font-weight: 600;
-  color: var(--accent);
-  margin-left: 4px; vertical-align: middle;
-  letter-spacing: 0.02em; opacity: 0.8;
+  font-size: 10px; font-weight: 500;
+  background: none;
+  color: var(--text-muted);
+  padding: 0; margin-left: 4px; vertical-align: middle;
+  border: none;
+  letter-spacing: 0.04em; text-transform: uppercase;
 }
 .set-default-btn {
   color: var(--text-muted); margin-left: 2px;
@@ -581,21 +586,13 @@ button.text-btn:hover { color: var(--accent); }
 .port-badge::before {
   content: ''; width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0;
 }
-.port-badge.run-port {
-  color: var(--accent);
-}
+.port-badge.run-port { color: var(--accent); }
 .port-badge.run-port::before {
-  background: var(--accent); box-shadow: 0 0 4px rgba(200, 255, 0, 0.5);
+  background: var(--accent); box-shadow: 0 0 4px rgba(200, 255, 0, 0.4);
 }
-.port-badge.run-port:hover {
-  color: rgba(200, 255, 0, 1);
-}
-.port-badge.port-idle {
-  color: var(--text-muted);
-}
-.port-badge.port-idle::before {
-  background: var(--text-muted); opacity: 0.5;
-}
+.port-badge.run-port:hover { color: rgba(200, 255, 0, 1); }
+.port-badge.port-idle { color: var(--text-muted); }
+.port-badge.port-idle::before { background: var(--text-muted); opacity: 0.4; }
 
 .branch-error {
   font-size: 11px; color: var(--red); margin-top: 6px;
@@ -605,9 +602,9 @@ button.text-btn:hover { color: var(--accent); }
 }
 
 .branch-card-actions-row {
-  display: flex; gap: 6px; align-items: flex-end; justify-content: space-between;
-  padding-top: 10px; border-top: 1px solid var(--border);
-  margin-top: 2px;
+  display: flex; gap: 8px; align-items: center; justify-content: space-between;
+  padding-top: 12px;
+  margin-top: 4px;
 }
 .branch-card-actions-row.hidden { display: none; }
 .branch-card-actions-row button { padding: 5px 12px; font-size: 12px; }
@@ -617,8 +614,8 @@ button.text-btn:hover { color: var(--accent); }
   font-size: 11px; color: var(--text-muted); max-width: 280px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   text-align: right; flex-shrink: 0;
-  padding: 3px 8px; background: var(--blue-bg);
-  border-radius: var(--radius-xs); border: 1px solid var(--blue-border);
+  padding: 3px 8px; background: none;
+  border-radius: var(--radius-xs); border: 1px solid var(--border);
   transition: border-color var(--transition), color var(--transition);
 }
 
