@@ -887,19 +887,19 @@ function renderBranches() {
         <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.trash} 删除</button>
       `;
     } else if (isStopped) {
-      // Container exists but stopped — show deploy only
+      // Container exists but stopped — neutral deploy, not primary
       actionsLeftHtml = `
-        <button class="primary sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.deploy} 部署</button>
+        <button class="sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.deploy} 部署</button>
       `;
       actionsRightHtml = `
         <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.trash} 删除</button>
       `;
     } else {
-      // Idle (never deployed) or building
+      // Idle (never deployed) or building — neutral deploy button
       actionsLeftHtml = `
         <button class="${pullBtnClass}" onclick="pullBranch('${esc(b.id)}')" ${btnDisabled('pull')}>${btnLabel('pull', ICON.pull + ' 拉取')}</button>
         ${hasUpdates ? `<span class="update-badge" title="${branchUpdates[b.id].behind} 个新提交">↓${branchUpdates[b.id].behind}</span>` : ''}
-        <button class="primary sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.deploy} 部署</button>
+        <button class="sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.deploy} 部署</button>
       `;
       actionsRightHtml = `
         ${hasError ? `<button class="sm" onclick="resetBranch('${esc(b.id)}')" ${btnDisabled('reset')}>${btnLabel('reset', ICON.reset + ' 重置')}</button>` : ''}
