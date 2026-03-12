@@ -3,15 +3,16 @@
 
 :root {
   --bg-primary: #050508;
-  --bg-card: rgba(18, 20, 28, 0.65);
+  --bg-card: #111318;
   --bg-card-solid: #12141c;
-  --bg-elevated: rgba(26, 29, 40, 0.75);
-  --bg-input: rgba(10, 12, 18, 0.8);
+  --bg-elevated: #181b24;
+  --bg-input: #0a0c12;
   --bg-hover: rgba(30, 34, 46, 0.7);
   --border: rgba(255, 255, 255, 0.08);
   --border-light: rgba(255, 255, 255, 0.05);
   --border-focus: rgba(200, 255, 0, 0.4);
-  --glass-border: rgba(255, 255, 255, 0.12);
+  --card-border: rgba(255, 255, 255, 0.13);
+  --glass-border: rgba(255, 255, 255, 0.10);
   --glass-highlight: rgba(255, 255, 255, 0.04);
   --text-primary: #e8ecf4;
   --text-secondary: #8f96a8;
@@ -106,12 +107,8 @@ body::after {
 
 .glass {
   background: var(--bg-card);
-  backdrop-filter: blur(20px) saturate(1.2);
-  -webkit-backdrop-filter: blur(20px) saturate(1.2);
-  border: 1px solid var(--glass-border);
-  box-shadow:
-    var(--shadow-sm),
-    inset 0 1px 0 var(--glass-highlight);
+  border: 1px solid var(--card-border);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
 /* ════════════════ Header ════════════════ */
@@ -168,9 +165,8 @@ h1 {
 .header-subtitle {
   font-size: 11px; color: var(--text-muted); white-space: nowrap;
   background: var(--bg-card);
-  backdrop-filter: blur(12px);
   padding: 3px 10px; border-radius: 20px;
-  border: 1px solid var(--glass-border);
+  border: 1px solid var(--card-border);
   letter-spacing: 0.02em;
 }
 .header-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
@@ -258,11 +254,9 @@ h2 { font-size: 14px; font-weight: 600; margin-bottom: 8px; letter-spacing: -0.0
   display: flex; justify-content: space-between; align-items: center;
   padding: 12px 16px;
   background: var(--bg-card);
-  backdrop-filter: blur(20px) saturate(1.2);
-  border: 1px solid var(--glass-border);
+  border: 1px solid var(--card-border);
   border-radius: var(--radius);
   margin-bottom: 16px; gap: 10px;
-  box-shadow: var(--shadow-sm), inset 0 1px 0 var(--glass-highlight);
 }
 .gateway-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .gateway-dot {
@@ -362,11 +356,9 @@ button.text-btn:hover { color: var(--accent); }
 .config-panel {
   padding: 16px;
   background: var(--bg-card);
-  backdrop-filter: blur(20px) saturate(1.2);
-  border: 1px solid var(--glass-border);
+  border: 1px solid var(--card-border);
   border-radius: var(--radius);
   margin-bottom: 14px;
-  box-shadow: var(--shadow-sm), inset 0 1px 0 var(--glass-highlight);
 }
 .config-panel.hidden { display: none; }
 
@@ -470,8 +462,7 @@ button.text-btn:hover { color: var(--accent); }
 .branch-picker-input-wrap input {
   flex: 1; padding: 10px 14px 10px 36px;
   background: var(--bg-card);
-  backdrop-filter: blur(16px);
-  border: 1px solid var(--glass-border);
+  border: 1px solid var(--card-border);
   border-radius: var(--radius); color: var(--text-primary);
   font-size: 14px; outline: none;
   transition: border-color var(--transition), box-shadow var(--transition);
@@ -486,10 +477,9 @@ button.text-btn:hover { color: var(--accent); }
   position: absolute; top: 100%; left: 0; right: 0;
   margin-top: 6px; max-height: 340px; overflow-y: auto;
   background: var(--bg-card-solid);
-  backdrop-filter: blur(24px) saturate(1.3);
-  border: 1px solid var(--glass-border);
+  border: 1px solid var(--card-border);
   border-radius: var(--radius);
-  box-shadow: var(--shadow-lg);
+  box-shadow: 0 8px 30px rgba(0,0,0,0.5);
   z-index: 50;
 }
 .branch-dropdown.hidden { display: none; }
@@ -556,19 +546,17 @@ button.text-btn:hover { color: var(--accent); }
   display: flex; flex-direction: column; gap: 0;
   padding: 14px 20px;
   background: var(--bg-card);
-  backdrop-filter: blur(20px) saturate(1.2);
-  -webkit-backdrop-filter: blur(20px) saturate(1.2);
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--card-border);
   border-left: 3px solid transparent;
   border-radius: var(--radius);
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: var(--shadow-sm), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
   overflow: hidden;
   position: relative;
 }
 .branch-card:hover {
-  border-color: rgba(255, 255, 255, 0.20);
-  box-shadow: var(--shadow-md), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.18);
+  background: #141720;
 }
 /* Status-based left border — subtle indicator, not attention-grabbing */
 .branch-card.status-running { border-left-color: transparent; }
@@ -582,7 +570,6 @@ button.text-btn:hover { color: var(--accent); }
 }
 .branch-card.has-error {
   border-left-color: var(--red);
-  background: linear-gradient(90deg, rgba(239, 83, 80, 0.02) 0%, var(--bg-card) 30%);
 }
 
 .branch-card-header {
@@ -693,8 +680,7 @@ a.branch-name:hover { color: var(--accent); }
 /* Card-level update indicator — blue glow so you instantly see which branches updated */
 .branch-card.has-updates {
   border-color: var(--blue-border);
-  background: linear-gradient(90deg, rgba(92, 158, 255, 0.03) 0%, var(--bg-card) 40%);
-  box-shadow: var(--shadow-sm), 0 0 0 1px rgba(92, 158, 255, 0.08);
+  background: linear-gradient(90deg, rgba(92, 158, 255, 0.04) 0%, var(--bg-card) 40%);
 }
 .branch-card.has-updates.active {
   background: linear-gradient(90deg, rgba(92, 158, 255, 0.03) 0%, rgba(200, 255, 0, 0.02) 20%, var(--bg-card) 40%);
@@ -703,13 +689,12 @@ a.branch-name:hover { color: var(--accent); }
 /* Recently-touched — soft blue border that fades out like a "visited" state */
 .branch-card.recently-touched {
   border-color: rgba(92, 158, 255, 0.25);
-  box-shadow: var(--shadow-sm), 0 0 12px rgba(92, 158, 255, 0.06);
   animation: touched-fade 8s ease-out forwards;
 }
 @keyframes touched-fade {
-  0% { border-color: rgba(92, 158, 255, 0.30); box-shadow: var(--shadow-sm), 0 0 16px rgba(92, 158, 255, 0.10); }
-  40% { border-color: rgba(92, 158, 255, 0.20); box-shadow: var(--shadow-sm), 0 0 10px rgba(92, 158, 255, 0.05); }
-  100% { border-color: var(--glass-border); box-shadow: var(--shadow-sm); }
+  0% { border-color: rgba(92, 158, 255, 0.30); }
+  40% { border-color: rgba(92, 158, 255, 0.20); }
+  100% { border-color: var(--card-border); }
 }
 
 /* Notes line — below header */
@@ -784,10 +769,9 @@ a.branch-name:hover { color: var(--accent); }
   min-width: 360px; max-width: min(460px, 90vw); max-height: 320px;
   overflow-y: auto;
   background: var(--bg-card-solid);
-  backdrop-filter: blur(24px);
-  border: 1px solid var(--glass-border);
+  border: 1px solid var(--card-border);
   border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-lg);
+  box-shadow: 0 8px 30px rgba(0,0,0,0.5);
 }
 .commit-log-loading, .commit-log-empty {
   padding: 16px; text-align: center;
@@ -841,10 +825,9 @@ a.branch-name:hover { color: var(--accent); }
 .deploy-menu {
   position: fixed; min-width: 140px;
   background: var(--bg-card-solid);
-  backdrop-filter: blur(20px);
-  border: 1px solid var(--glass-border);
+  border: 1px solid var(--card-border);
   border-radius: var(--radius-sm); overflow: hidden;
-  box-shadow: var(--shadow-lg);
+  box-shadow: 0 8px 30px rgba(0,0,0,0.5);
 }
 .deploy-menu-header {
   padding: 6px 10px; font-size: 10px; color: var(--text-muted);
@@ -867,12 +850,10 @@ a.branch-name:hover { color: var(--accent); }
   position: fixed;
   min-width: 160px;
   padding: 4px 0;
-  background: var(--bg-card);
-  backdrop-filter: blur(24px) saturate(1.2);
-  -webkit-backdrop-filter: blur(24px) saturate(1.2);
-  border: 1px solid var(--glass-border);
+  background: var(--bg-card-solid);
+  border: 1px solid var(--card-border);
   border-radius: var(--radius);
-  box-shadow: var(--shadow-lg);
+  box-shadow: 0 8px 30px rgba(0,0,0,0.5);
   z-index: 1000;
 }
 .settings-menu-item {
@@ -927,9 +908,8 @@ a.branch-name:hover { color: var(--accent); }
 /* ════════════════ Busy State ════════════════ */
 
 .branch-card.is-busy {
-  border-color: rgba(224, 180, 58, 0.2);
+  border-color: rgba(224, 180, 58, 0.25);
   position: relative;
-  background: linear-gradient(135deg, rgba(224, 180, 58, 0.03) 0%, var(--bg-card) 100%);
 }
 .branch-card.is-busy::after {
   content: ''; position: absolute; top: 12px; right: 14px;
@@ -947,8 +927,7 @@ a.branch-name:hover { color: var(--accent); }
   padding: 12px 18px; border-radius: var(--radius);
   font-size: 13px; font-weight: 500; z-index: 999;
   text-align: center; word-break: break-word;
-  box-shadow: var(--shadow-lg);
-  backdrop-filter: blur(20px);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
   animation: toast-in 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 @keyframes toast-in {
@@ -984,12 +963,11 @@ a.branch-name:hover { color: var(--accent); }
 .modal-dialog {
   position: relative;
   background: var(--bg-card-solid);
-  backdrop-filter: blur(24px) saturate(1.3);
-  border: 1px solid var(--glass-border);
+  border: 1px solid var(--card-border);
   border-radius: 16px 16px 0 0;
   width: 100%; max-width: 740px; max-height: 90vh;
   display: flex; flex-direction: column;
-  box-shadow: 0 -16px 60px rgba(0,0,0,0.5), inset 0 1px 0 var(--glass-highlight);
+  box-shadow: 0 -8px 40px rgba(0,0,0,0.5);
 }
 .modal-header {
   display: flex; justify-content: space-between; align-items: center;
@@ -1155,12 +1133,11 @@ a.branch-name:hover { color: var(--accent); }
   .icon-btn.labeled { padding: 0 8px; }
   .icon-btn-label { font-size: 12px; }
 
-  /* Cards — even stronger borders for mobile visibility */
+  /* Cards — slightly stronger borders for mobile */
   .branch-card {
     padding: 12px 12px;
-    border: 1px solid rgba(255, 255, 255, 0.18);
+    border: 1px solid rgba(255, 255, 255, 0.15);
     border-left: 3px solid transparent;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255, 255, 255, 0.08);
   }
   .branch-card + .branch-card { margin-top: 8px; }
 
