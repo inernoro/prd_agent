@@ -73,10 +73,10 @@ describe('ContainerService', () => {
       expect(runCmd).toContain('--env-file');
       expect(runCmd).toContain('dotnet watch run');
 
-      // Verify env file contents
+      // Verify env file contents (sharedEnv is passed via docker network, not env file)
       const envFileContent = writeSpy.mock.calls[0][1] as string;
-      expect(envFileContent).toContain('MONGODB_HOST=db:27017');
       expect(envFileContent).toContain('Jwt__Secret=test-secret');
+      expect(envFileContent).toContain('Jwt__Issuer=prdagent');
 
       writeSpy.mockRestore();
     });

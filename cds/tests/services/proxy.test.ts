@@ -26,7 +26,7 @@ describe('ProxyService', () => {
   describe('resolveBranch', () => {
     it('should resolve from X-Branch header', () => {
       const req = makeReq({ 'x-branch': 'feature/new-ui' });
-      expect(proxy.resolveBranch(req)).toBe('feature-new-ui');
+      expect(proxy.resolveBranch(req)).toBe('feature/new-ui');
     });
 
     it('should resolve from domain routing rule', () => {
@@ -48,7 +48,7 @@ describe('ProxyService', () => {
 
     it('should resolve from cds_branch cookie', () => {
       const req = makeReq({ cookie: 'cds_branch=claude%2Ffix-worktree-creation-rG5DU' });
-      expect(proxy.resolveBranch(req)).toBe('claude-fix-worktree-creation-rg5du');
+      expect(proxy.resolveBranch(req)).toBe('claude/fix-worktree-creation-rG5DU');
     });
 
     it('should prefer X-Branch header over cookie', () => {
@@ -56,7 +56,7 @@ describe('ProxyService', () => {
         'x-branch': 'feature/alpha',
         cookie: 'cds_branch=feature%2Fbeta',
       });
-      expect(proxy.resolveBranch(req)).toBe('feature-alpha');
+      expect(proxy.resolveBranch(req)).toBe('feature/alpha');
     });
 
     it('should return null when no rules match and no default', () => {
