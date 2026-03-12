@@ -37,7 +37,7 @@ function commitIcon(subject) {
 }
 
 // ── Update tracking ──
-let branchUpdates = {}; // { branchId: { behind: number, latestRemoteSubject?: string } }
+let branchUpdates = JSON.parse(localStorage.getItem('cds_branch_updates') || '{}'); // { branchId: { behind: number, latestRemoteSubject?: string } }
 const recentlyTouched = new Map(); // { branchId: timestamp } — branches user just operated on
 let isCheckingUpdates = false;
 
@@ -119,7 +119,7 @@ const collapsedBranches = new Set();
 
 function toggleBranchCard(id, event) {
   // Don't toggle when clicking buttons/links/inputs inside the header
-  if (event.target.closest('button, a, input, .port-badge, .branch-notes-editor, .fav-toggle, .set-default-link, .notes-edit-btn, .branch-actions-commit')) return;
+  if (event.target.closest('button, a, input, .port-badge, .branch-notes-editor, .fav-toggle, .set-default-link, .notes-edit-btn, .branch-actions-commit, .branch-name')) return;
   if (collapsedBranches.has(id)) {
     collapsedBranches.delete(id);
   } else {
@@ -165,6 +165,7 @@ async function checkAllUpdates() {
   try {
     const data = await api('GET', '/check-updates');
     branchUpdates = data.updates || {};
+    localStorage.setItem('cds_branch_updates', JSON.stringify(branchUpdates));
     renderBranches();
     const count = Object.keys(branchUpdates).length;
     if (count > 0) {
@@ -179,10 +180,27 @@ async function checkAllUpdates() {
   if (btn) btn.classList.remove('spinning');
 }
 
+async function checkSingleBranchUpdate(branchId) {
+  try {
+    const data = await api('GET', '/check-updates');
+    const allUpdates = data.updates || {};
+    if (allUpdates[branchId]) {
+      branchUpdates[branchId] = allUpdates[branchId];
+    } else {
+      delete branchUpdates[branchId];
+    }
+    localStorage.setItem('cds_branch_updates', JSON.stringify(branchUpdates));
+    renderBranches();
+  } catch (e) {
+    showToast('刷新失败: ' + e.message, 'error');
+  }
+}
+
 function togglePreviewMode() {
   previewMode = previewMode === 'simple' ? 'multi' : 'simple';
   localStorage.setItem('cds_preview_mode', previewMode);
   updatePreviewModeUI();
+  renderBranches();
   if (previewMode === 'multi' && !previewDomain) {
     showToast('已开启多分支预览模式，但 PREVIEW_DOMAIN 未配置，预览将回退到简洁模式。请在「变量」中设置 PREVIEW_DOMAIN。', 'error');
   } else {
@@ -445,6 +463,7 @@ async function pullBranch(id) {
   try {
     const result = await api('POST', `/branches/${id}/pull`);
     delete branchUpdates[id];
+    localStorage.setItem('cds_branch_updates', JSON.stringify(branchUpdates));
     showToast(result.updated ? `已更新: ${result.head}` : '已是最新', result.updated ? 'success' : 'info');
   } catch (e) { showToast(e.message, 'error'); }
   clearLoading(id, 'pull');
@@ -910,21 +929,24 @@ function renderBranches() {
     }
 
     return `
-      <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} ${expanded ? 'expanded' : ''} ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''}" data-branch-id="${esc(b.id)}">
+      <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} ${expanded ? 'expanded' : ''} ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''} ${previewMode === 'multi' && isRunning ? 'show-preview-border' : ''}" data-branch-id="${esc(b.id)}">
         <div class="branch-card-header" onclick="toggleBranchCard('${esc(b.id)}', event)">
           <div class="branch-card-left">
             <span class="fav-toggle ${b.isFavorite ? 'active' : ''}" onclick="event.stopPropagation(); toggleFavorite('${esc(b.id)}')" title="${b.isFavorite ? '取消收藏' : '收藏'}">
               ${b.isFavorite ? ICON.star : ICON.starOutline}
             </span>
-            <span class="branch-name">${ICON.branch} ${esc(b.branch)}</span>
+            <a class="branch-name" href="${githubRepoUrl ? githubRepoUrl.replace('github.com', 'github.dev') + '/tree/' + encodeURIComponent(b.branch) : '#'}" target="_blank" onclick="event.stopPropagation()" title="在 GitHub.dev 中浏览代码">${ICON.branch} ${esc(b.branch)}</a>
             ${isDefault ? '<span class="default-tag">默认</span>' : `
               <span class="set-default-link" onclick="event.stopPropagation(); setDefaultBranch('${esc(b.id)}')" title="设为默认分支">设默认</span>
             `}
           </div>
           <div class="branch-card-right">
-            <span class="branch-meta">${statusLabel(b.status)}${b.lastAccessedAt ? ` · ${relativeTime(b.lastAccessedAt)}` : ''}</span>
             ${portBadgesHtml}
             ${hasUpdates ? `<span class="update-badge" title="${branchUpdates[b.id].behind} 个新提交可拉取">↓${branchUpdates[b.id].behind}</span>` : ''}
+            <span class="branch-meta">${statusLabel(b.status)}${b.lastAccessedAt ? ` · ${relativeTime(b.lastAccessedAt)}` : ''}</span>
+            <button class="icon-btn xs update-refresh-btn" onclick="event.stopPropagation(); checkSingleBranchUpdate('${esc(b.id)}')" title="刷新此分支更新状态">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
+            </button>
             <svg class="branch-chevron ${expanded ? 'open' : ''}" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M4.427 5.427a.75.75 0 011.146 0L8 7.854l2.427-2.427a.75.75 0 111.146 1.146l-3 3a.75.75 0 01-1.146 0l-3-3a.75.75 0 010-1.146z"/></svg>
           </div>
         </div>
