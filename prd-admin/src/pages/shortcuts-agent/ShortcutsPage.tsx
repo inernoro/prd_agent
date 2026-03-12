@@ -261,10 +261,12 @@ function CreateShortcutDialog({
     setSubmitting(false);
 
     if (res.success && res.data) {
+      // 前端自己拼安装页 URL（指向前端公开路由，不走 /api/）
+      const installUrl = `${window.location.origin}/s/shortcut/${res.data.id}?t=${encodeURIComponent(res.data.token)}`;
       onCreated({
         name: res.data.name,
         token: res.data.token,
-        installPageUrl: res.data.installPageUrl,
+        installPageUrl: installUrl,
       });
     }
   };

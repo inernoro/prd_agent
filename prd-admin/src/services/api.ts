@@ -816,6 +816,7 @@ export const api = {
     create: () => '/api/shortcuts',
     delete: (id: string) => `/api/shortcuts/${id}`,
     setup: (id: string) => `/api/shortcuts/${id}/setup`,
+    installData: (id: string) => `/api/shortcuts/${id}/install-data`,
     bindingTargets: () => '/api/shortcuts/binding-targets',
     collections: () => '/api/shortcuts/collections',
     deleteCollection: (id: string) => `/api/shortcuts/collections/${id}`,

@@ -225,8 +225,50 @@ public class ShortcutsController : ControllerBase
     }
 
     /// <summary>
-    /// 安装引导页面（公开，iPhone 扫码后打开此页面）
-    /// 页面自动复制 token 到剪贴板 + 提供 iCloud 安装链接
+    /// 获取安装页数据（JSON，供前端公开页面渲染）
+    /// </summary>
+    [AllowAnonymous]
+    [HttpGet("{id}/install-data")]
+    public async Task<IActionResult> GetInstallData(
+        [FromRoute] string id,
+        [FromQuery(Name = "t")] string? token,
+        CancellationToken ct)
+    {
+        var shortcut = await _db.UserShortcuts
+            .Find(x => x.Id == id)
+            .FirstOrDefaultAsync(ct);
+
+        if (shortcut == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "快捷指令不存在"));
+
+        if (string.IsNullOrEmpty(token) || !token.StartsWith("scs-"))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_TOKEN", "无效的 token"));
+
+        var hash = UserShortcut.HashToken(token);
+        if (hash != shortcut.TokenHash)
+            return Unauthorized(ApiResponse<object>.Fail("TOKEN_MISMATCH", "token 不匹配"));
+
+        var serverUrl = ResolveServerUrl();
+        var downloadUrl = $"{serverUrl}/api/shortcuts/{shortcut.Id}/download?t={Uri.EscapeDataString(token)}";
+
+        var template = await _db.ShortcutTemplates
+            .Find(x => x.IsDefault && x.IsActive)
+            .FirstOrDefaultAsync(ct);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            shortcut.Name,
+            shortcut.Icon,
+            shortcut.Color,
+            Token = token,
+            DownloadUrl = downloadUrl,
+            ICloudUrl = template?.ICloudUrl,
+            ServerUrl = serverUrl,
+        }));
+    }
+
+    /// <summary>
+    /// 安装引导页面（旧版 HTML 直出，保留兼容）
     /// </summary>
     [AllowAnonymous]
     [HttpGet("{id}/install-page")]

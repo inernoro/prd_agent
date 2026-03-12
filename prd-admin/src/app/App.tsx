@@ -16,7 +16,7 @@ import { LiteraryAgentWorkspaceListPage, LiteraryAgentEditorPageWrapper } from '
 import { DefectAgentPage } from '@/pages/defect-agent';
 import { VideoAgentPage } from '@/pages/video-agent';
 import { ReportAgentPage } from '@/pages/report-agent';
-import { ShortcutsPage } from '@/pages/shortcuts-agent';
+import { ShortcutsPage, ShortcutInstallPage } from '@/pages/shortcuts-agent';
 import { WorkflowListPage, WorkflowEditorPage, WorkflowCanvasPage } from '@/pages/workflow-agent';
 import { MarketplacePage } from '@/pages/marketplace';
 import { AiToolboxPage } from '@/pages/ai-toolbox';
@@ -186,6 +186,7 @@ export default function App() {
 
         {/* 公开分享页面 - 无需登录 */}
         <Route path="/s/wp/:token" element={<ShareViewPage />} />
+        <Route path="/s/shortcut/:id" element={<ShortcutInstallPage />} />
 
         {/* 开发试验场 - 无需权限 */}
         <Route path="/_dev/rich-composer-lab" element={<RichComposerLab />} />
