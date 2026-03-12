@@ -515,6 +515,24 @@ button.text-btn:hover { color: var(--accent); }
 }
 .branch-link-btn.pr-link:hover { color: var(--accent); }
 
+/* Dropdown section labels */
+.branch-dropdown-section-label {
+  padding: 6px 14px 4px; font-size: 10px; font-weight: 600;
+  color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+}
+/* Local branch items in dropdown — accent icon, status pill */
+.branch-dropdown-local .branch-dropdown-item-name { color: var(--text-primary); }
+.branch-dropdown-item-status {
+  font-size: 10px; color: var(--text-muted); margin-left: auto; flex-shrink: 0;
+  padding: 1px 6px; border-radius: 4px;
+  font-family: var(--font-mono);
+}
+.branch-dropdown-item-status.running {
+  color: var(--accent); background: var(--accent-bg);
+}
+
 /* ════════════════ Branch Cards ════════════════ */
 
 .branch-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px; }

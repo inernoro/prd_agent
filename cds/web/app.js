@@ -251,42 +251,103 @@ document.addEventListener('click', (e) => {
 
 function filterBranches() {
   const q = searchInput.value.trim().toLowerCase();
-  const localIds = new Set(localBranches.map(b => StateService_slugify(b.branch)));
-  const filtered = remoteBranches.filter(b =>
-    b.name.toLowerCase().includes(q) && !localIds.has(StateService_slugify(b.name))
-  ).slice(0, 20);
 
-  if (filtered.length === 0) {
+  // Don't show dropdown when search is empty and triggered by focus
+  if (!q) {
+    dropdown.classList.add('hidden');
+    return;
+  }
+
+  // Section 1: Match already-added local branches
+  const matchedLocal = localBranches.filter(b =>
+    b.branch.toLowerCase().includes(q) || b.id.toLowerCase().includes(q)
+  ).slice(0, 10);
+
+  // Section 2: Match remote branches not yet added
+  const localIds = new Set(localBranches.map(b => StateService_slugify(b.branch)));
+  const matchedRemote = remoteBranches.filter(b =>
+    b.name.toLowerCase().includes(q) && !localIds.has(StateService_slugify(b.name))
+  ).slice(0, 15);
+
+  if (matchedLocal.length === 0 && matchedRemote.length === 0) {
     dropdown.innerHTML = '<div class="branch-dropdown-empty">没有匹配的分支</div>';
   } else {
-    dropdown.innerHTML = filtered.map(b => {
-      const branchUrl = githubRepoUrl ? `${githubRepoUrl}/tree/${encodeURIComponent(b.name)}` : '';
-      const prUrl = githubRepoUrl ? `${githubRepoUrl}/pulls?q=is%3Apr+head%3A${encodeURIComponent(b.name)}` : '';
-      return `
-      <div class="branch-dropdown-item">
-        <svg class="branch-dropdown-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M11.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6a1 1 0 00-1 1v1.128a2.251 2.251 0 11-1.5 0V5.372a2.25 2.25 0 111.5 0v1.836A2.492 2.492 0 016 7h4a1 1 0 001-1v-.628A2.25 2.25 0 019.5 3.25zM4.25 12a.75.75 0 100 1.5.75.75 0 000-1.5zM3.5 3.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0z"/></svg>
-        <div class="branch-dropdown-item-info" onclick="addBranch('${esc(b.name)}')">
-          <div class="branch-dropdown-item-row1">
-            <span class="branch-dropdown-item-name">${esc(b.name)}</span>
-            <span class="branch-dropdown-item-time">${relativeTime(b.date)}</span>
+    let html = '';
+
+    // ── Already added section ──
+    if (matchedLocal.length > 0) {
+      html += '<div class="branch-dropdown-section-label">已添加</div>';
+      html += matchedLocal.map(b => {
+        const isRunning = b.status === 'running';
+        const statusText = statusLabel(b.status);
+        const services = Object.entries(b.services || {});
+        const portText = services.length > 0 ? services.map(([pid, svc]) => `:${svc.hostPort}`).join(' ') : '';
+        return `
+        <div class="branch-dropdown-item branch-dropdown-local" onclick="scrollToAndHighlight('${esc(b.id)}')">
+          <svg class="branch-dropdown-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="color: var(--accent)"><path d="M2.5 1.75v11.5c0 .138.112.25.25.25h6.5a.75.75 0 010 1.5h-6.5A1.75 1.75 0 011 13.25V1.75C1 .784 1.784 0 2.75 0h8.5C12.216 0 13 .784 13 1.75v7.5a.75.75 0 01-1.5 0V1.75a.25.25 0 00-.25-.25h-8.5a.25.25 0 00-.25.25zm13.06 9.72a.75.75 0 010 1.06l-2.5 2.5a.75.75 0 01-1.06 0l-1.5-1.5a.75.75 0 111.06-1.06l.97.97 1.97-1.97a.75.75 0 011.06 0z"/></svg>
+          <div class="branch-dropdown-item-info">
+            <div class="branch-dropdown-item-row1">
+              <span class="branch-dropdown-item-name">${esc(b.branch)}</span>
+              <span class="branch-dropdown-item-status ${isRunning ? 'running' : ''}">${statusText}${portText ? ' ' + portText : ''}</span>
+            </div>
+            ${b.notes ? `<div class="branch-dropdown-item-row2">${esc(b.notes)}</div>` : ''}
           </div>
-          <div class="branch-dropdown-item-row2">${esc(b.author || '')} — ${esc(b.subject || '')}</div>
-        </div>
-        ${githubRepoUrl ? `
-          <div class="branch-dropdown-item-actions">
-            <a href="${branchUrl}" target="_blank" rel="noopener" class="branch-link-btn" onclick="event.stopPropagation()" title="访问 GitHub 分支">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-            </a>
-            <a href="${prUrl}" target="_blank" rel="noopener" class="branch-link-btn pr-link" onclick="event.stopPropagation()" title="访问 PR">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 3.25a2.25 2.25 0 113 2.122v5.256a2.251 2.251 0 11-1.5 0V5.372A2.25 2.25 0 011.5 3.25zm5.677-.177L9.573.677A.25.25 0 0110 .854V2.5h1A2.5 2.5 0 0113.5 5v5.628a2.251 2.251 0 11-1.5 0V5a1 1 0 00-1-1h-1v1.646a.25.25 0 01-.427.177L7.177 3.427a.25.25 0 010-.354zM3.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm0 9.5a.75.75 0 100 1.5.75.75 0 000-1.5zm8.25.75a.75.75 0 11-1.5 0 .75.75 0 011.5 0z"/></svg>
-            </a>
+        </div>`;
+      }).join('');
+    }
+
+    // ── Can be added section ──
+    if (matchedRemote.length > 0) {
+      if (matchedLocal.length > 0) {
+        html += '<div class="branch-dropdown-section-label">可添加</div>';
+      }
+      html += matchedRemote.map(b => {
+        const branchUrl = githubRepoUrl ? `${githubRepoUrl}/tree/${encodeURIComponent(b.name)}` : '';
+        const prUrl = githubRepoUrl ? `${githubRepoUrl}/pulls?q=is%3Apr+head%3A${encodeURIComponent(b.name)}` : '';
+        return `
+        <div class="branch-dropdown-item">
+          <svg class="branch-dropdown-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M11.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6a1 1 0 00-1 1v1.128a2.251 2.251 0 11-1.5 0V5.372a2.25 2.25 0 111.5 0v1.836A2.492 2.492 0 016 7h4a1 1 0 001-1v-.628A2.25 2.25 0 019.5 3.25zM4.25 12a.75.75 0 100 1.5.75.75 0 000-1.5zM3.5 3.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0z"/></svg>
+          <div class="branch-dropdown-item-info" onclick="addBranch('${esc(b.name)}')">
+            <div class="branch-dropdown-item-row1">
+              <span class="branch-dropdown-item-name">${esc(b.name)}</span>
+              <span class="branch-dropdown-item-time">${relativeTime(b.date)}</span>
+            </div>
+            <div class="branch-dropdown-item-row2">${esc(b.author || '')} — ${esc(b.subject || '')}</div>
           </div>
-        ` : ''}
-      </div>
-    `;
-    }).join('');
+          ${githubRepoUrl ? `
+            <div class="branch-dropdown-item-actions">
+              <a href="${branchUrl}" target="_blank" rel="noopener" class="branch-link-btn" onclick="event.stopPropagation()" title="访问 GitHub 分支">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+              </a>
+              <a href="${prUrl}" target="_blank" rel="noopener" class="branch-link-btn pr-link" onclick="event.stopPropagation()" title="访问 PR">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 3.25a2.25 2.25 0 113 2.122v5.256a2.251 2.251 0 11-1.5 0V5.372A2.25 2.25 0 011.5 3.25zm5.677-.177L9.573.677A.25.25 0 0110 .854V2.5h1A2.5 2.5 0 0113.5 5v5.628a2.251 2.251 0 11-1.5 0V5a1 1 0 00-1-1h-1v1.646a.25.25 0 01-.427.177L7.177 3.427a.25.25 0 010-.354zM3.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm0 9.5a.75.75 0 100 1.5.75.75 0 000-1.5zm8.25.75a.75.75 0 11-1.5 0 .75.75 0 011.5 0z"/></svg>
+              </a>
+            </div>
+          ` : ''}
+        </div>`;
+      }).join('');
+    }
+
+    dropdown.innerHTML = html;
   }
   dropdown.classList.remove('hidden');
+}
+
+// Scroll to an already-added branch card and highlight it
+function scrollToAndHighlight(id) {
+  dropdown.classList.add('hidden');
+  searchInput.value = '';
+  // Ensure the card is expanded
+  collapsedBranches.delete(id);
+  renderBranches();
+  // Find and scroll to the card
+  requestAnimationFrame(() => {
+    const card = document.querySelector(`.branch-card[data-branch-id="${CSS.escape(id)}"]`);
+    if (card) {
+      card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      markTouched(id);
+    }
+  });
 }
 
 function StateService_slugify(branch) {
@@ -300,8 +361,15 @@ async function addBranch(name) {
   searchInput.value = '';
   try {
     await api('POST', '/branches', { branch: name });
+    const slug = StateService_slugify(name);
+    markTouched(slug);
     showToast(`分支 "${name}" 已添加`, 'success');
     await loadBranches();
+    // Scroll to the newly added card
+    requestAnimationFrame(() => {
+      const card = document.querySelector(`.branch-card[data-branch-id="${CSS.escape(slug)}"]`);
+      if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
   } catch (e) { showToast(e.message, 'error'); }
 }
 
