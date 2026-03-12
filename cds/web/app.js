@@ -438,9 +438,22 @@ async function deploySingleService(id, profileId) {
 
 let openDeployMenuId = null;
 
-function setCardDropdownOpen(el, open) {
-  const card = el?.closest('.branch-card');
-  if (card) card.classList.toggle('dropdown-open', open);
+/** Position a fixed dropdown below its trigger, clamped to viewport */
+function positionFixedDropdown(dropdown, trigger, align = 'left') {
+  const r = trigger.getBoundingClientRect();
+  dropdown.style.top = `${r.bottom + 4}px`;
+  if (align === 'right') {
+    const w = dropdown.offsetWidth || 360;
+    let left = r.right - w;
+    if (left < 8) left = 8;
+    dropdown.style.left = `${left}px`;
+  } else {
+    let left = r.left;
+    if (left + (dropdown.offsetWidth || 140) > window.innerWidth - 8) {
+      left = window.innerWidth - 8 - (dropdown.offsetWidth || 140);
+    }
+    dropdown.style.left = `${left}px`;
+  }
 }
 
 function toggleDeployMenu(id, event) {
@@ -453,13 +466,17 @@ function toggleDeployMenu(id, event) {
   if (openDeployMenuId) closeDeployMenu(openDeployMenuId);
   openDeployMenuId = id;
   const menu = document.getElementById(`deploy-menu-${CSS.escape(id)}`);
-  if (menu) { menu.classList.remove('hidden'); setCardDropdownOpen(menu, true); }
+  if (menu) {
+    menu.classList.remove('hidden');
+    const trigger = menu.closest('.split-btn');
+    if (trigger) positionFixedDropdown(menu, trigger, 'left');
+  }
 }
 
 function closeDeployMenu(id) {
   openDeployMenuId = null;
   const menu = document.getElementById(`deploy-menu-${CSS.escape(id)}`);
-  if (menu) { menu.classList.add('hidden'); setCardDropdownOpen(menu, false); }
+  if (menu) menu.classList.add('hidden');
 }
 
 // Close deploy menu on outside click
@@ -1109,7 +1126,6 @@ async function toggleCommitLog(id) {
   // Close if already open
   if (openCommitLogId === id) {
     el.classList.add('hidden');
-    setCardDropdownOpen(el, false);
     openCommitLogId = null;
     return;
   }
@@ -1117,12 +1133,13 @@ async function toggleCommitLog(id) {
   // Close any other open dropdown
   if (openCommitLogId) {
     const prev = document.getElementById(`commit-log-${CSS.escape(openCommitLogId)}`);
-    if (prev) { prev.classList.add('hidden'); setCardDropdownOpen(prev, false); }
+    if (prev) prev.classList.add('hidden');
   }
 
   openCommitLogId = id;
   el.classList.remove('hidden');
-  setCardDropdownOpen(el, true);
+  const trigger = el.closest('.branch-commits-wrap')?.querySelector('.branch-requirement');
+  if (trigger) positionFixedDropdown(el, trigger, 'right');
   el.innerHTML = '<div class="commit-log-loading"><span class="btn-spinner"></span> 加载中...</div>';
 
   try {
@@ -1148,7 +1165,7 @@ async function toggleCommitLog(id) {
 document.addEventListener('click', (e) => {
   if (openCommitLogId && !e.target.closest('.branch-commits-wrap')) {
     const el = document.getElementById(`commit-log-${CSS.escape(openCommitLogId)}`);
-    if (el) { el.classList.add('hidden'); setCardDropdownOpen(el, false); }
+    if (el) el.classList.add('hidden');
     openCommitLogId = null;
   }
 });
