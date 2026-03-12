@@ -547,7 +547,7 @@ button.text-btn:hover { color: var(--accent); }
   padding: 14px 20px;
   background: var(--bg-card);
   border: 1px solid var(--card-border);
-  border-left: 3px solid transparent;
+  border-left: 3px solid rgba(255, 255, 255, 0.10);
   border-radius: var(--radius);
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
@@ -559,11 +559,11 @@ button.text-btn:hover { color: var(--accent); }
   background: #141720;
 }
 /* Status-based left border — subtle indicator, not attention-grabbing */
-.branch-card.status-running { border-left-color: transparent; }
+.branch-card.status-running { border-left-color: rgba(255, 255, 255, 0.10); }
 .branch-card.status-running.show-preview-border { border-left-color: var(--yellow); }
 .branch-card.status-building { border-left-color: var(--yellow); }
-.branch-card.status-idle { border-left-color: transparent; }
-.branch-card.status-stopped { border-left-color: transparent; }
+.branch-card.status-idle { border-left-color: rgba(255, 255, 255, 0.10); }
+.branch-card.status-stopped { border-left-color: rgba(255, 255, 255, 0.10); }
 .branch-card.status-error { border-left-color: var(--red); }
 .branch-card.active.show-preview-border {
   border-left-color: var(--yellow);
@@ -1137,7 +1137,7 @@ a.branch-name:hover { color: var(--accent); }
   .branch-card {
     padding: 12px 12px;
     border: 1px solid rgba(255, 255, 255, 0.15);
-    border-left: 3px solid transparent;
+    border-left: 3px solid rgba(255, 255, 255, 0.10);
   }
   .branch-card + .branch-card { margin-top: 8px; }
 
