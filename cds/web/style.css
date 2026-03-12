@@ -712,32 +712,64 @@ a.branch-name:hover { color: var(--accent); }
 }
 
 /* Notes line — below header */
-.branch-notes-line {
-  display: flex; align-items: center; gap: 4px;
-  padding: 5px 0 0;
+/* ── Tag filter bar (top-level) ── */
+.tag-filter-bar {
+  display: flex; gap: 6px; align-items: center;
+  padding: 8px 0; overflow-x: auto;
+  scrollbar-width: thin; scrollbar-color: var(--text-muted) transparent;
 }
-.branch-notes-text {
-  font-size: 12px; color: var(--text-muted);
-  max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+.tag-filter-bar.hidden { display: none; }
+.tag-filter-bar::-webkit-scrollbar { height: 3px; }
+.tag-filter-bar::-webkit-scrollbar-thumb { background: var(--text-muted); border-radius: 2px; }
+.tag-filter-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 12px; font-weight: 500; color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.04); border: 1px solid var(--border);
+  padding: 4px 10px; border-radius: 16px;
+  cursor: pointer; white-space: nowrap; flex-shrink: 0;
+  transition: all var(--transition);
 }
-.notes-edit-btn {
-  display: inline-flex; align-items: center;
+.tag-filter-chip:hover { background: rgba(255, 255, 255, 0.08); border-color: var(--glass-border); color: var(--text-primary); }
+.tag-filter-chip.active {
+  color: var(--accent); background: var(--accent-bg);
+  border-color: var(--accent-border);
+}
+.tag-filter-chip svg.inline-icon { width: 12px; height: 12px; }
+
+/* ── Branch tags (in card) ── */
+.branch-tags-line {
+  display: flex; align-items: center; gap: 5px;
+  padding: 6px 0 0; flex-wrap: wrap;
+}
+.branch-tag {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 11px; font-weight: 500;
+  color: var(--purple); background: rgba(179, 136, 255, 0.08);
+  border: 1px solid rgba(179, 136, 255, 0.18);
+  padding: 2px 8px; border-radius: 12px;
+  cursor: pointer; white-space: nowrap;
+  transition: all var(--transition);
+}
+.branch-tag:hover { background: rgba(179, 136, 255, 0.15); border-color: rgba(179, 136, 255, 0.3); }
+.branch-tag svg.inline-icon { width: 11px; height: 11px; }
+.branch-tag-remove {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; border-radius: 50%;
+  font-size: 12px; line-height: 1; margin-left: 2px;
   color: var(--text-muted); cursor: pointer;
-  opacity: 0; transition: opacity var(--transition);
-  background: none; border: none; padding: 2px;
+  transition: all var(--transition);
 }
-.notes-edit-btn svg.inline-icon { width: 12px; height: 12px; }
-.branch-card:hover .notes-edit-btn { opacity: 0.4; }
-.notes-edit-btn:hover { opacity: 1 !important; color: var(--accent); }
-.branch-notes-editor {
-  display: flex; align-items: center; gap: 4px;
-  padding: 5px 0 0;
+.branch-tag-remove:hover { color: var(--red); background: var(--red-bg); }
+.branch-tag-add {
+  display: inline-flex; align-items: center;
+  font-size: 11px; color: var(--text-muted);
+  cursor: pointer; padding: 2px 6px; border-radius: 12px;
+  border: 1px dashed var(--border);
+  transition: all var(--transition);
+  opacity: 0;
 }
-.branch-notes-editor.hidden { display: none; }
-.branch-notes-editor .notes-input {
-  padding: 3px 8px; font-size: 12px; width: 200px;
-  border-radius: var(--radius-xs);
-}
+.branch-card:hover .branch-tag-add { opacity: 0.6; }
+.branch-tag-add:hover { opacity: 1 !important; color: var(--accent); border-color: var(--accent-border); }
 
 /* ── Commit Log Dropdown ── */
 
@@ -1119,8 +1151,6 @@ a.branch-name:hover { color: var(--accent); }
   .branch-meta { font-size: 10px; }
   .header-actions { gap: 4px; }
   .icon-btn.labeled { padding: 0 8px; }
-  .branch-notes-text { max-width: 160px; }
-  .branch-notes-editor .notes-input { width: 140px; }
 }
 
 @media (min-width: 641px) {

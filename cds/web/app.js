@@ -4,6 +4,9 @@ const busyBranches = new Set();
 const loadingActions = new Map();
 let globalBusy = false;
 
+// ── Tag filter state ──
+let activeTagFilter = null; // null = show all, string = filter by tag
+
 // ── Inline deploy log state ──
 // { branchId: { lines: string[], status: 'building'|'done'|'error', expanded: bool, errorMsg?: string } }
 const inlineDeployLogs = new Map();
@@ -23,6 +26,7 @@ const ICON = {
   star: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg>',
   starOutline: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.751.751 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25zm0 2.445L6.615 5.5a.75.75 0 01-.564.41l-3.097.45 2.24 2.184a.75.75 0 01.216.664l-.528 3.084 2.769-1.456a.75.75 0 01.698 0l2.77 1.456-.53-3.084a.75.75 0 01.216-.664l2.24-2.183-3.096-.45a.75.75 0 01-.564-.41L8 2.694z"/></svg>',
   edit: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M11.013 1.427a1.75 1.75 0 012.474 0l1.086 1.086a1.75 1.75 0 010 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 01-.927-.928l.929-3.25c.081-.286.235-.547.445-.758l8.61-8.61zM11.189 3L3.75 10.44l-.528 1.849 1.85-.528L12.5 4.311 11.189 3z"/></svg>',
+  tag: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1 7.775V2.75C1 1.784 1.784 1 2.75 1h5.025c.464 0 .91.184 1.238.513l6.25 6.25a1.75 1.75 0 010 2.474l-5.026 5.026a1.75 1.75 0 01-2.474 0l-6.25-6.25A1.75 1.75 0 011 7.775zM5 5a1 1 0 100-2 1 1 0 000 2z"/></svg>',
   // Port beacon icons by profile type
   portApi: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 1.75a.75.75 0 00-1.5 0v12.5c0 .414.336.75.75.75h14.5a.75.75 0 000-1.5H1.5V1.75zm14.28 2.53a.75.75 0 00-1.06-1.06L10 7.94 7.53 5.47a.75.75 0 00-1.06 0L2.22 9.72a.75.75 0 001.06 1.06L7 7.06l2.47 2.47a.75.75 0 001.06 0l5.25-5.25z"/></svg>',
   portWeb: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M0 8a8 8 0 1116 0A8 8 0 010 8zm7.5-6.923c-.67.204-1.335.82-1.887 1.855A7.97 7.97 0 005.145 4H7.5V1.077zM4.09 4a9.27 9.27 0 01.64-1.539 6.7 6.7 0 01.597-.933A6.536 6.536 0 002.535 4H4.09zm-.582 3.5c.03-.877.138-1.718.312-2.5H1.674a6.958 6.958 0 00-.656 2.5H3.508zM7.5 11H5.145a7.97 7.97 0 00.468 1.068c.552 1.035 1.218 1.65 1.887 1.855V11zm1 2.923c.67-.204 1.335-.82 1.887-1.855A7.97 7.97 0 0010.855 11H8.5v2.923zM11.91 11a9.27 9.27 0 00.64 1.539 6.7 6.7 0 00.597.933A6.536 6.536 0 0015.465 11H11.91zm.582-1.5c.03-.877.138-1.718.312-2.5h2.49a6.958 6.958 0 01.656 2.5h-3.458z"/></svg>',
@@ -125,7 +129,7 @@ const collapsedBranches = new Set();
 
 function toggleBranchCard(id, event) {
   // Don't toggle when clicking buttons/links/inputs inside the header
-  if (event.target.closest('button, a, input, .port-badge, .branch-notes-editor, .fav-toggle, .set-default-link, .notes-edit-btn, .branch-actions-commit, .branch-name')) return;
+  if (event.target.closest('button, a, input, .port-badge, .fav-toggle, .set-default-link, .branch-actions-commit, .branch-name, .branch-tag, .branch-tag-add')) return;
   if (collapsedBranches.has(id)) {
     collapsedBranches.delete(id);
   } else {
@@ -590,33 +594,79 @@ async function toggleFavorite(id) {
   } catch (e) { showToast(e.message, 'error'); }
 }
 
-async function saveBranchNotes(id) {
-  const input = document.getElementById(`notes-input-${CSS.escape(id)}`);
-  if (!input) return;
-  try {
-    await api('PATCH', `/branches/${id}`, { notes: input.value });
-    showToast('备注已保存', 'success');
-    await loadBranches();
-  } catch (e) { showToast(e.message, 'error'); }
-}
+// ── Tag management ──
 
-function startEditNotes(id, event) {
+async function addTagToBranch(id, event) {
   event.stopPropagation();
-  const display = document.getElementById(`notes-display-${CSS.escape(id)}`);
-  const editor = document.getElementById(`notes-editor-${CSS.escape(id)}`);
-  if (display) display.classList.add('hidden');
-  if (editor) {
-    editor.classList.remove('hidden');
-    const input = editor.querySelector('input');
-    if (input) { input.focus(); input.select(); }
+  const tag = prompt('输入标签名称:');
+  if (!tag || !tag.trim()) return;
+  const trimmed = tag.trim();
+  const branch = localBranches.find(b => b.id === id);
+  if (!branch) return;
+  const tags = [...(branch.tags || [])];
+  if (tags.includes(trimmed)) { showToast('标签已存在', 'info'); return; }
+  tags.push(trimmed);
+  // Optimistic update
+  branch.tags = tags;
+  renderBranches();
+  renderTagFilterBar();
+  try {
+    await api('PATCH', `/branches/${id}`, { tags });
+  } catch (e) {
+    branch.tags = tags.filter(t => t !== trimmed);
+    renderBranches();
+    renderTagFilterBar();
+    showToast(e.message, 'error');
   }
 }
 
-function cancelEditNotes(id) {
-  const display = document.getElementById(`notes-display-${CSS.escape(id)}`);
-  const editor = document.getElementById(`notes-editor-${CSS.escape(id)}`);
-  if (display) display.classList.remove('hidden');
-  if (editor) editor.classList.add('hidden');
+async function removeTagFromBranch(id, tag, event) {
+  event.stopPropagation();
+  if (!confirm(`确定删除标签「${tag}」？`)) return;
+  const branch = localBranches.find(b => b.id === id);
+  if (!branch) return;
+  const oldTags = [...(branch.tags || [])];
+  const tags = oldTags.filter(t => t !== tag);
+  // Optimistic
+  branch.tags = tags;
+  renderBranches();
+  renderTagFilterBar();
+  try {
+    await api('PATCH', `/branches/${id}`, { tags });
+  } catch (e) {
+    branch.tags = oldTags;
+    renderBranches();
+    renderTagFilterBar();
+    showToast(e.message, 'error');
+  }
+}
+
+function filterByTag(tag) {
+  activeTagFilter = activeTagFilter === tag ? null : tag;
+  renderTagFilterBar();
+  renderBranches();
+}
+
+function getAllTags() {
+  const tagSet = new Set();
+  localBranches.forEach(b => (b.tags || []).forEach(t => tagSet.add(t)));
+  return [...tagSet].sort();
+}
+
+function renderTagFilterBar() {
+  const el = document.getElementById('tagFilterBar');
+  if (!el) return;
+  const allTags = getAllTags();
+  if (allTags.length === 0) {
+    el.classList.add('hidden');
+    return;
+  }
+  el.classList.remove('hidden');
+  el.innerHTML = allTags.map(t => `
+    <span class="tag-filter-chip ${activeTagFilter === t ? 'active' : ''}" onclick="filterByTag('${esc(t)}')">
+      ${ICON.tag} ${esc(t)}
+    </span>
+  `).join('');
 }
 
 function getPortIcon(profileId, profile) {
@@ -884,7 +934,20 @@ function renderBranches() {
     return;
   }
 
-  el.innerHTML = localBranches.map(b => {
+  // Tag filter bar
+  renderTagFilterBar();
+
+  // Filter by active tag
+  const filteredBranches = activeTagFilter
+    ? localBranches.filter(b => (b.tags || []).includes(activeTagFilter))
+    : localBranches;
+
+  if (filteredBranches.length === 0 && localBranches.length > 0) {
+    el.innerHTML = `<div class="empty-state">没有匹配标签「${esc(activeTagFilter)}」的分支</div>`;
+    return;
+  }
+
+  el.innerHTML = filteredBranches.map(b => {
     const isBusy = busyBranches.has(b.id) || globalBusy;
     const anyLoading = hasAnyLoading(b.id);
     const isDefault = b.id === defaultBranch;
@@ -920,20 +983,17 @@ function renderBranches() {
               </span>`;
     }).join('') : '';
 
-    // Notes — separate line below header
-    const notesHtml = `
-      <div class="branch-notes-line" id="notes-display-${esc(b.id)}">
-        ${b.notes ? `<span class="branch-notes-text" title="${esc(b.notes)}">${esc(b.notes)}</span>` : ''}
-        <span class="notes-edit-btn" onclick="startEditNotes('${esc(b.id)}', event)" title="编辑备注">
-          ${ICON.edit}
-        </span>
-      </div>
-      <div class="branch-notes-editor hidden" id="notes-editor-${esc(b.id)}">
-        <input class="form-input notes-input" id="notes-input-${esc(b.id)}" value="${esc(b.notes || '')}" placeholder="添加备注..."
-               onkeydown="if(event.key==='Enter'){event.preventDefault();saveBranchNotes('${esc(b.id)}');}if(event.key==='Escape'){cancelEditNotes('${esc(b.id)}');}"
-               onclick="event.stopPropagation()">
-        <button class="icon-btn xs" onclick="event.stopPropagation(); saveBranchNotes('${esc(b.id)}')" title="保存">&#x2713;</button>
-        <button class="icon-btn xs" onclick="event.stopPropagation(); cancelEditNotes('${esc(b.id)}')" title="取消">&times;</button>
+    // Tags — shown below header
+    const branchTags = b.tags || [];
+    const tagsHtml = `
+      <div class="branch-tags-line">
+        ${branchTags.map(t => `
+          <span class="branch-tag" onclick="event.stopPropagation(); filterByTag('${esc(t)}')" title="筛选标签: ${esc(t)}">
+            ${ICON.tag} ${esc(t)}
+            <span class="branch-tag-remove" onclick="event.stopPropagation(); removeTagFromBranch('${esc(b.id)}', '${esc(t)}', event)" title="删除标签">&times;</span>
+          </span>
+        `).join('')}
+        <span class="branch-tag-add" onclick="addTagToBranch('${esc(b.id)}', event)" title="添加标签">+ 标签</span>
       </div>
     `;
 
@@ -1038,7 +1098,7 @@ function renderBranches() {
         </div>
         ${b.errorMessage && !deployLog ? `<div class="branch-error" title="${esc(b.errorMessage)}">${esc(b.errorMessage)}</div>` : ''}
         <div class="branch-card-body ${expanded ? '' : 'hidden'}">
-          ${notesHtml}
+          ${tagsHtml}
           <div class="branch-card-actions-row">
             <div class="branch-actions-left">
               ${actionsLeftHtml}

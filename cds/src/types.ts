@@ -74,6 +74,8 @@ export interface BranchEntry {
   isFavorite?: boolean;
   /** User notes — free-text annotation shown beside branch name */
   notes?: string;
+  /** User tags — labels for filtering and categorization */
+  tags?: string[];
 }
 
 /** State of a single service (one build profile instance) within a branch */

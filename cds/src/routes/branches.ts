@@ -459,8 +459,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     try {
-      const { isFavorite, notes } = req.body as { isFavorite?: boolean; notes?: string };
-      stateService.updateBranchMeta(id, { isFavorite, notes });
+      const { isFavorite, notes, tags } = req.body as { isFavorite?: boolean; notes?: string; tags?: string[] };
+      stateService.updateBranchMeta(id, { isFavorite, notes, tags });
       stateService.save();
       res.json({ message: '已更新' });
     } catch (err) {
