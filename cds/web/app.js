@@ -438,6 +438,11 @@ async function deploySingleService(id, profileId) {
 
 let openDeployMenuId = null;
 
+function setCardDropdownOpen(el, open) {
+  const card = el?.closest('.branch-card');
+  if (card) card.classList.toggle('dropdown-open', open);
+}
+
 function toggleDeployMenu(id, event) {
   event.stopPropagation();
   if (openDeployMenuId === id) {
@@ -448,13 +453,13 @@ function toggleDeployMenu(id, event) {
   if (openDeployMenuId) closeDeployMenu(openDeployMenuId);
   openDeployMenuId = id;
   const menu = document.getElementById(`deploy-menu-${CSS.escape(id)}`);
-  if (menu) menu.classList.remove('hidden');
+  if (menu) { menu.classList.remove('hidden'); setCardDropdownOpen(menu, true); }
 }
 
 function closeDeployMenu(id) {
   openDeployMenuId = null;
   const menu = document.getElementById(`deploy-menu-${CSS.escape(id)}`);
-  if (menu) menu.classList.add('hidden');
+  if (menu) { menu.classList.add('hidden'); setCardDropdownOpen(menu, false); }
 }
 
 // Close deploy menu on outside click
@@ -1104,6 +1109,7 @@ async function toggleCommitLog(id) {
   // Close if already open
   if (openCommitLogId === id) {
     el.classList.add('hidden');
+    setCardDropdownOpen(el, false);
     openCommitLogId = null;
     return;
   }
@@ -1111,11 +1117,12 @@ async function toggleCommitLog(id) {
   // Close any other open dropdown
   if (openCommitLogId) {
     const prev = document.getElementById(`commit-log-${CSS.escape(openCommitLogId)}`);
-    if (prev) prev.classList.add('hidden');
+    if (prev) { prev.classList.add('hidden'); setCardDropdownOpen(prev, false); }
   }
 
   openCommitLogId = id;
   el.classList.remove('hidden');
+  setCardDropdownOpen(el, true);
   el.innerHTML = '<div class="commit-log-loading"><span class="btn-spinner"></span> 加载中...</div>';
 
   try {
@@ -1141,7 +1148,7 @@ async function toggleCommitLog(id) {
 document.addEventListener('click', (e) => {
   if (openCommitLogId && !e.target.closest('.branch-commits-wrap')) {
     const el = document.getElementById(`commit-log-${CSS.escape(openCommitLogId)}`);
-    if (el) el.classList.add('hidden');
+    if (el) { el.classList.add('hidden'); setCardDropdownOpen(el, false); }
     openCommitLogId = null;
   }
 });
