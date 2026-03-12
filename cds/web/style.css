@@ -547,7 +547,7 @@ button.text-btn:hover { color: var(--accent); }
   padding: 14px 20px;
   background: var(--bg-card);
   border: 1px solid var(--card-border);
-  border-left: 3px solid rgba(255, 255, 255, 0.10);
+  border-left: 2px solid rgba(255, 255, 255, 0.10);
   border-radius: var(--radius);
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
@@ -1137,7 +1137,7 @@ a.branch-name:hover { color: var(--accent); }
   .branch-card {
     padding: 12px 12px;
     border: 1px solid rgba(255, 255, 255, 0.15);
-    border-left: 3px solid rgba(255, 255, 255, 0.10);
+    border-left: 2px solid rgba(255, 255, 255, 0.10);
   }
   .branch-card + .branch-card { margin-top: 8px; }
 
