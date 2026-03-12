@@ -855,6 +855,30 @@ a.branch-name:hover { color: var(--accent); }
 .settings-menu-item.danger:hover { background: var(--red-bg); }
 .settings-menu-divider { height: 1px; background: var(--border); margin: 4px 0; }
 
+/* ── Settings switch toggle ── */
+.settings-menu-switch { justify-content: space-between; }
+.settings-menu-switch-label { flex: 1; }
+.settings-switch {
+  display: inline-flex; align-items: center; flex-shrink: 0;
+}
+.settings-switch-track {
+  width: 32px; height: 18px; border-radius: 9px;
+  background: rgba(255, 255, 255, 0.1);
+  position: relative; transition: background 0.2s ease;
+}
+.settings-switch.on .settings-switch-track {
+  background: var(--accent);
+}
+.settings-switch-thumb {
+  position: absolute; top: 2px; left: 2px;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: #fff; transition: transform 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+.settings-switch.on .settings-switch-thumb {
+  transform: translateX(14px);
+}
+
 /* ════════════════ Button Spinner ════════════════ */
 
 .btn-spinner {

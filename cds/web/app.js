@@ -201,10 +201,9 @@ function togglePreviewMode() {
 }
 
 function updatePreviewModeUI() {
-  const toggle = document.getElementById('previewModeToggle');
-  if (!toggle) return;
-  toggle.classList.toggle('active', previewMode === 'multi');
-  toggle.title = previewMode === 'multi' ? '多分支预览（子域名独立访问）' : '简洁预览（设为默认并打开）';
+  // Update switch in settings menu if open
+  const sw = document.querySelector('.settings-switch');
+  if (sw) sw.classList.toggle('on', previewMode === 'multi');
 }
 
 // ── Data loading ──
@@ -750,9 +749,13 @@ function toggleSettingsMenu(event) {
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 0113 0h-2.1a8.3 8.3 0 00-.4-2.2 9 9 0 00-1-1.9A4.5 4.5 0 017 7.5H4.5A8.3 8.3 0 001.5 8zm5.5 5.5a6.5 6.5 0 01-5.4-3h2.3c.3 1.2.8 2.2 1.5 3H7zm1-5.5a7.8 7.8 0 014-3.8c.5.6.9 1.2 1.2 1.8H8zm0 1h5.4a8.3 8.3 0 01-.3 2H8.9 8V9zm0 3h3.8c-.6 1.3-1.5 2.4-2.8 3A6.5 6.5 0 018 9z"/></svg>
       路由规则
     </div>
-    <div class="settings-menu-item" onclick="closeSettingsMenu(); togglePreviewMode()">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 1.75a.75.75 0 00-.75.75v3c0 .414.336.75.75.75h3a.75.75 0 000-1.5H3.37l.78-.78A5.001 5.001 0 0112.62 3H11.5a.75.75 0 000 1.5h3a.75.75 0 00.75-.75v-3a.75.75 0 00-1.5 0v1.12A6.502 6.502 0 003.58 3.29L2.75 4.12V2.5a.75.75 0 00-.75-.75zM14.5 14.25a.75.75 0 00.75-.75v-3a.75.75 0 00-.75-.75h-3a.75.75 0 000 1.5h1.13l-.78.78A5.001 5.001 0 013.38 13H4.5a.75.75 0 010 1.5h-3a.75.75 0 01-.75-.75v-3a.75.75 0 011.5 0v1.12a6.502 6.502 0 0010.17-1.29l.83-.83v1.63a.75.75 0 00.75.75z"/></svg>
-      预览模式
+    <div class="settings-menu-item settings-menu-switch" onclick="togglePreviewMode()">
+      <span class="settings-menu-switch-label">多分支预览</span>
+      <span class="settings-switch ${previewMode === 'multi' ? 'on' : ''}">
+        <span class="settings-switch-track">
+          <span class="settings-switch-thumb"></span>
+        </span>
+      </span>
     </div>
     <div class="settings-menu-divider"></div>
     <div class="settings-menu-item danger" onclick="closeSettingsMenu(); cleanupAll()">
