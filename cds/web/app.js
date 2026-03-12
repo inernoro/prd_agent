@@ -14,6 +14,21 @@ const ICON = {
   deploy: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8.75.75a.75.75 0 00-1.5 0V2h-3A1.75 1.75 0 002.5 3.75v2.5A1.75 1.75 0 004.25 8h7.5A1.75 1.75 0 0013.5 6.25v-2.5A1.75 1.75 0 0011.75 2h-3V.75zM4.25 3.5h7.5a.25.25 0 01.25.25v2.5a.25.25 0 01-.25.25h-7.5a.25.25 0 01-.25-.25v-2.5a.25.25 0 01.25-.25zM2.5 10.25a.75.75 0 01.75-.75h9.5a.75.75 0 010 1.5h-9.5a.75.75 0 01-.75-.75zm.75 2.25a.75.75 0 000 1.5h9.5a.75.75 0 000-1.5h-9.5z"/></svg>',
   trash: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM11 3V1.75A1.75 1.75 0 009.25 0h-2.5A1.75 1.75 0 005 1.75V3H2.75a.75.75 0 000 1.5h.3l.8 8.2A1.75 1.75 0 005.6 14.5h4.8a1.75 1.75 0 001.75-1.8l.8-8.2h.3a.75.75 0 000-1.5H11z"/></svg>',
   reset: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5z"/></svg>',
+  star: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg>',
+  starOutline: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.751.751 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25zm0 2.445L6.615 5.5a.75.75 0 01-.564.41l-3.097.45 2.24 2.184a.75.75 0 01.216.664l-.528 3.084 2.769-1.456a.75.75 0 01.698 0l2.77 1.456-.53-3.084a.75.75 0 01.216-.664l2.24-2.183-3.096-.45a.75.75 0 01-.564-.41L8 2.694z"/></svg>',
+  edit: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M11.013 1.427a1.75 1.75 0 012.474 0l1.086 1.086a1.75 1.75 0 010 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 01-.927-.928l.929-3.25c.081-.286.235-.547.445-.758l8.61-8.61zM11.189 3L3.75 10.44l-.528 1.849 1.85-.528L12.5 4.311 11.189 3z"/></svg>',
+  // Port beacon icons by profile type
+  portApi: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 1.75a.75.75 0 00-1.5 0v12.5c0 .414.336.75.75.75h14.5a.75.75 0 000-1.5H1.5V1.75zm14.28 2.53a.75.75 0 00-1.06-1.06L10 7.94 7.53 5.47a.75.75 0 00-1.06 0L2.22 9.72a.75.75 0 001.06 1.06L7 7.06l2.47 2.47a.75.75 0 001.06 0l5.25-5.25z"/></svg>',
+  portWeb: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M0 8a8 8 0 1116 0A8 8 0 010 8zm7.5-6.923c-.67.204-1.335.82-1.887 1.855A7.97 7.97 0 005.145 4H7.5V1.077zM4.09 4a9.27 9.27 0 01.64-1.539 6.7 6.7 0 01.597-.933A6.536 6.536 0 002.535 4H4.09zm-.582 3.5c.03-.877.138-1.718.312-2.5H1.674a6.958 6.958 0 00-.656 2.5H3.508zM7.5 11H5.145a7.97 7.97 0 00.468 1.068c.552 1.035 1.218 1.65 1.887 1.855V11zm1 2.923c.67-.204 1.335-.82 1.887-1.855A7.97 7.97 0 0010.855 11H8.5v2.923zM11.91 11a9.27 9.27 0 00.64 1.539 6.7 6.7 0 00.597.933A6.536 6.536 0 0015.465 11H11.91zm.582-1.5c.03-.877.138-1.718.312-2.5h2.49a6.958 6.958 0 01.656 2.5h-3.458z"/></svg>',
+  portDefault: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M4.75 7.25a.75.75 0 000 1.5h6.5a.75.75 0 000-1.5h-6.5z"/><path d="M0 8a8 8 0 1116 0A8 8 0 010 8zm8-6.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13z"/></svg>',
+};
+
+// Port beacon icon mapping: profileId → icon key
+const PORT_ICON_MAP = {
+  api: 'portApi',
+  web: 'portWeb',
+  admin: 'portWeb',
+  frontend: 'portWeb',
 };
 
 /** Pick commit/PR icon based on subject text */
@@ -102,8 +117,8 @@ let customEnvVars = {};
 const collapsedBranches = new Set();
 
 function toggleBranchCard(id, event) {
-  // Don't toggle when clicking buttons/links inside the header
-  if (event.target.closest('button, a, .port-badge')) return;
+  // Don't toggle when clicking buttons/links/inputs inside the header
+  if (event.target.closest('button, a, input, .port-badge, .branch-notes-editor')) return;
   if (collapsedBranches.has(id)) {
     collapsedBranches.delete(id);
   } else {
@@ -422,6 +437,56 @@ async function resetBranch(id) {
   await loadBranches();
 }
 
+async function toggleFavorite(id) {
+  const branch = localBranches.find(b => b.id === id);
+  if (!branch) return;
+  const newVal = !branch.isFavorite;
+  try {
+    await api('PATCH', `/branches/${id}`, { isFavorite: newVal });
+    branch.isFavorite = newVal;
+    await loadBranches();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function saveBranchNotes(id) {
+  const input = document.getElementById(`notes-input-${CSS.escape(id)}`);
+  if (!input) return;
+  try {
+    await api('PATCH', `/branches/${id}`, { notes: input.value });
+    showToast('备注已保存', 'success');
+    await loadBranches();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+function startEditNotes(id, event) {
+  event.stopPropagation();
+  const display = document.getElementById(`notes-display-${CSS.escape(id)}`);
+  const editor = document.getElementById(`notes-editor-${CSS.escape(id)}`);
+  if (display) display.classList.add('hidden');
+  if (editor) {
+    editor.classList.remove('hidden');
+    const input = editor.querySelector('input');
+    if (input) { input.focus(); input.select(); }
+  }
+}
+
+function cancelEditNotes(id) {
+  const display = document.getElementById(`notes-display-${CSS.escape(id)}`);
+  const editor = document.getElementById(`notes-editor-${CSS.escape(id)}`);
+  if (display) display.classList.remove('hidden');
+  if (editor) editor.classList.add('hidden');
+}
+
+function getPortIcon(profileId, profile) {
+  // Use profile's custom icon if set
+  if (profile && profile.icon && ICON['port' + profile.icon.charAt(0).toUpperCase() + profile.icon.slice(1)]) {
+    return ICON['port' + profile.icon.charAt(0).toUpperCase() + profile.icon.slice(1)];
+  }
+  // Fall back to map
+  const key = PORT_ICON_MAP[profileId.toLowerCase()];
+  return key ? ICON[key] : ICON.portDefault;
+}
+
 async function setDefaultBranch(id) {
   if (!id) return;
   if (isLoading(id, 'setDefault')) return;
@@ -601,7 +666,9 @@ function renderBranches() {
     const services = Object.entries(b.services || {});
     const hasError = b.status === 'error';
     const isRunning = b.status === 'running';
+    const isStopped = !isRunning && services.length > 0 && !hasError && b.status !== 'building';
     const hasMultipleProfiles = buildProfiles.length > 1;
+    const hasUpdates = !!branchUpdates[b.id];
 
     // Loading state helpers for this branch
     const btnDisabled = (action) => (isBusy || isLoading(b.id, action)) ? 'disabled' : '';
@@ -617,10 +684,90 @@ function renderBranches() {
     // Build stop menu item for deploy dropdown
     const stopMenuItem = isRunning ? `<div class="deploy-menu-divider"></div><div class="deploy-menu-item deploy-menu-item-danger" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); stopBranch('${esc(b.id)}')">停止所有服务</div>` : '';
 
+    // Port badges (moved to right side with beacon icons)
+    const portBadgesHtml = services.length > 0 ? services.map(([pid, svc]) => {
+      const profile = buildProfiles.find(p => p.id === pid);
+      const icon = getPortIcon(pid, profile);
+      return `<span class="port-badge ${svc.status === 'running' ? 'run-port' : 'port-idle'}"
+                    onclick="event.stopPropagation(); viewContainerLogs('${esc(b.id)}', '${esc(pid)}')"
+                    title="${esc(pid)}: ${svc.status}"
+                    style="cursor:pointer">
+                ${icon} ${esc(pid)} :${svc.hostPort}
+              </span>`;
+    }).join('') : '';
+
+    // Notes display
+    const notesHtml = `
+      <span class="branch-notes-area" id="notes-display-${esc(b.id)}">
+        ${b.notes ? `<span class="branch-notes-text" title="${esc(b.notes)}">${esc(b.notes)}</span>` : ''}
+        <button class="icon-btn xs notes-edit-btn" onclick="startEditNotes('${esc(b.id)}', event)" title="编辑备注">
+          ${ICON.edit}
+        </button>
+      </span>
+      <span class="branch-notes-editor hidden" id="notes-editor-${esc(b.id)}">
+        <input class="form-input notes-input" id="notes-input-${esc(b.id)}" value="${esc(b.notes || '')}" placeholder="添加备注..."
+               onkeydown="if(event.key==='Enter'){event.preventDefault();saveBranchNotes('${esc(b.id)}');}if(event.key==='Escape'){cancelEditNotes('${esc(b.id)}');}"
+               onclick="event.stopPropagation()">
+        <button class="icon-btn xs" onclick="event.stopPropagation(); saveBranchNotes('${esc(b.id)}')" title="保存">&#x2713;</button>
+        <button class="icon-btn xs" onclick="event.stopPropagation(); cancelEditNotes('${esc(b.id)}')" title="取消">&times;</button>
+      </span>
+    `;
+
+    // Pull button: gray by default, blue highlight when updates available
+    const pullBtnClass = hasUpdates ? 'primary sm pull-has-update' : 'sm pull-no-update';
+
+    // Actions row: left = safe actions, right = dangerous actions
+    // When container not running (stopped/idle): only show deploy button
+    let actionsLeftHtml = '';
+    let actionsRightHtml = '';
+
+    if (isRunning) {
+      actionsLeftHtml = `
+        <button class="${pullBtnClass}" onclick="pullBranch('${esc(b.id)}')" ${btnDisabled('pull')}>${btnLabel('pull', ICON.pull + ' 拉取')}</button>
+        ${hasUpdates ? `<span class="update-badge" title="${branchUpdates[b.id].behind} 个新提交">↓${branchUpdates[b.id].behind}</span>` : ''}
+        <button class="preview sm" onclick="previewBranch('${esc(b.id)}')">${ICON.preview} 预览</button>
+      `;
+      actionsRightHtml = `
+        <div class="split-btn">
+          <button class="sm split-btn-main" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.deploy} 重新部署</button>
+          <button class="sm split-btn-toggle" onclick="toggleDeployMenu('${esc(b.id)}', event)" ${isBusy ? 'disabled' : ''}>
+            <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor"><path d="M1 1l4 4 4-4"/></svg>
+          </button>
+          <template id="deploy-menu-tpl-${esc(b.id)}">
+            ${hasMultipleProfiles ? `<div class="deploy-menu-header">选择重部署的服务</div>${deployMenuItems}` : ''}
+            ${stopMenuItem}
+          </template>
+        </div>
+        <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.trash} 删除</button>
+      `;
+    } else if (isStopped) {
+      // Container exists but stopped — show deploy only
+      actionsLeftHtml = `
+        <button class="primary sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.deploy} 部署</button>
+      `;
+      actionsRightHtml = `
+        <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.trash} 删除</button>
+      `;
+    } else {
+      // Idle (never deployed) or building
+      actionsLeftHtml = `
+        <button class="${pullBtnClass}" onclick="pullBranch('${esc(b.id)}')" ${btnDisabled('pull')}>${btnLabel('pull', ICON.pull + ' 拉取')}</button>
+        ${hasUpdates ? `<span class="update-badge" title="${branchUpdates[b.id].behind} 个新提交">↓${branchUpdates[b.id].behind}</span>` : ''}
+        <button class="primary sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.deploy} 部署</button>
+      `;
+      actionsRightHtml = `
+        ${hasError ? `<button class="sm" onclick="resetBranch('${esc(b.id)}')" ${btnDisabled('reset')}>${btnLabel('reset', ICON.reset + ' 重置')}</button>` : ''}
+        <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.trash} 删除</button>
+      `;
+    }
+
     return `
-      <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} ${expanded ? 'expanded' : ''}">
+      <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} ${expanded ? 'expanded' : ''} ${b.isFavorite ? 'is-favorite' : ''}">
         <div class="branch-card-header" onclick="toggleBranchCard('${esc(b.id)}', event)">
           <div class="branch-card-left">
+            <button class="icon-btn xs fav-btn ${b.isFavorite ? 'fav-active' : ''}" onclick="event.stopPropagation(); toggleFavorite('${esc(b.id)}')" title="${b.isFavorite ? '取消收藏' : '收藏'}">
+              ${b.isFavorite ? ICON.star : ICON.starOutline}
+            </button>
             <span class="status-dot ${b.status}"></span>
             <div class="branch-info">
               <div class="branch-name-row">
@@ -630,15 +777,7 @@ function renderBranches() {
                     <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg>
                   </button>
                 `}
-                ${services.length > 0 ? services.map(([pid, svc]) => `
-                  <span class="port-badge ${svc.status === 'running' ? 'run-port' : 'port-idle'}"
-                        onclick="event.stopPropagation(); viewContainerLogs('${esc(b.id)}', '${esc(pid)}')"
-                        title="${esc(pid)}: ${svc.status}"
-                        style="cursor:pointer">
-                    ${esc(pid)} :${svc.hostPort}
-                  </span>
-                `).join('') : ''}
-                ${branchUpdates[b.id] ? `<span class="update-badge" title="${branchUpdates[b.id].behind} 个新提交: ${esc(branchUpdates[b.id].latestRemoteSubject || '')}">↓${branchUpdates[b.id].behind}</span>` : ''}
+                ${notesHtml}
               </div>
             </div>
           </div>
@@ -649,40 +788,29 @@ function renderBranches() {
               </button>
             ` : ''}
             <span class="branch-meta">${statusLabel(b.status)}${b.lastAccessedAt ? ` · ${relativeTime(b.lastAccessedAt)}` : ''}</span>
+            ${portBadgesHtml}
             <svg class="branch-chevron ${expanded ? 'open' : ''}" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M4.427 5.427a.75.75 0 011.146 0L8 7.854l2.427-2.427a.75.75 0 111.146 1.146l-3 3a.75.75 0 01-1.146 0l-3-3a.75.75 0 010-1.146z"/></svg>
           </div>
         </div>
         ${b.errorMessage ? `<div class="branch-error" title="${esc(b.errorMessage)}">${esc(b.errorMessage)}</div>` : ''}
         <div class="branch-card-actions-row ${expanded ? '' : 'hidden'}">
           <div class="branch-actions-left">
-            <button class="primary sm" onclick="pullBranch('${esc(b.id)}')" ${btnDisabled('pull')}>${btnLabel('pull', ICON.pull + ' 拉取')}</button>
-            ${isRunning ? `<button class="preview sm" onclick="previewBranch('${esc(b.id)}')">${ICON.preview} 预览</button>` : ''}
-            ${isRunning ? `
-              <div class="split-btn">
-                <button class="sm split-btn-main" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.deploy} 重新部署</button>
-                <button class="sm split-btn-toggle" onclick="toggleDeployMenu('${esc(b.id)}', event)" ${isBusy ? 'disabled' : ''}>
-                  <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor"><path d="M1 1l4 4 4-4"/></svg>
-                </button>
-                <template id="deploy-menu-tpl-${esc(b.id)}">
-                  ${hasMultipleProfiles ? `<div class="deploy-menu-header">选择重部署的服务</div>${deployMenuItems}` : ''}
-                  ${stopMenuItem}
-                </template>
-              </div>
-            ` : `
-              <button class="primary sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.deploy} 部署</button>
-            `}
-            ${hasError ? `<button class="sm" onclick="resetBranch('${esc(b.id)}')" ${btnDisabled('reset')}>${btnLabel('reset', ICON.reset + ' 重置')}</button>` : ''}
-            <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.trash} 删除</button>
+            ${actionsLeftHtml}
           </div>
-          ${b.subject ? `
+          <div class="branch-actions-right">
+            ${actionsRightHtml}
+          </div>
+        </div>
+        ${expanded && b.subject ? `
+          <div class="branch-commits-row">
             <div class="branch-commits-wrap">
               <div class="branch-requirement" onclick="event.stopPropagation(); toggleCommitLog('${esc(b.id)}', this)" title="点击查看历史提交">
                 ${commitIcon(b.subject)} ${esc(b.subject)}
                 <svg class="commit-chevron" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M4.427 5.427a.75.75 0 011.146 0L8 7.854l2.427-2.427a.75.75 0 111.146 1.146l-3 3a.75.75 0 01-1.146 0l-3-3a.75.75 0 010-1.146z"/></svg>
               </div>
             </div>
-          ` : ''}
-        </div>
+          </div>
+        ` : ''}
       </div>
     `;
   }).join('');

@@ -39,6 +39,8 @@ export interface BuildProfile {
   runCommand: string;
   /** Port the service listens on inside the container */
   containerPort: number;
+  /** Custom icon identifier for port badge display (e.g., 'api', 'web', 'db') */
+  icon?: string;
   /** Extra environment variables for this profile */
   env?: Record<string, string>;
   /** Volume mounts for shared caches (e.g., node_modules, nuget) */
@@ -68,6 +70,10 @@ export interface BranchEntry {
   errorMessage?: string;
   createdAt: string;
   lastAccessedAt?: string;
+  /** User favorite flag — favorites are sorted to the top */
+  isFavorite?: boolean;
+  /** User notes — free-text annotation shown beside branch name */
+  notes?: string;
 }
 
 /** State of a single service (one build profile instance) within a branch */

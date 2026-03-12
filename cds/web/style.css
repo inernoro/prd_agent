@@ -638,13 +638,50 @@ button.text-btn:hover { color: var(--accent); }
 
 .branch-card-actions-row {
   display: flex; gap: 8px; align-items: center; justify-content: space-between;
-  padding-top: 12px;
-  margin-top: 4px;
+  padding: 10px 14px; margin-top: 8px;
+  background: var(--blue-bg);
+  border: 1px solid var(--blue-border);
+  border-radius: var(--radius-sm);
 }
 .branch-card-actions-row.hidden { display: none; }
 .branch-card-actions-row button { padding: 5px 12px; font-size: 12px; }
 .branch-card-actions-row button:disabled { opacity: 0.3; }
 .branch-actions-left { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.branch-actions-right { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; flex-shrink: 0; }
+
+/* Commits row below actions */
+.branch-commits-row { padding-top: 8px; display: flex; justify-content: flex-end; }
+
+/* Pull button states */
+.pull-no-update { opacity: 0.45; }
+.pull-no-update:hover { opacity: 1; }
+.pull-has-update { }
+
+/* Favorite button */
+.fav-btn { color: var(--text-muted); }
+.fav-btn.fav-active { color: var(--yellow); }
+.fav-btn.fav-active:hover { color: var(--text-muted); }
+.fav-btn:not(.fav-active):hover { color: var(--yellow); }
+.branch-card.is-favorite { border-left-color: var(--yellow); }
+
+/* Notes display */
+.branch-notes-area { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+.branch-notes-text {
+  font-size: 11px; color: var(--text-muted); max-width: 200px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-style: italic;
+}
+.notes-edit-btn { opacity: 0; transition: opacity var(--transition); }
+.branch-card-header:hover .notes-edit-btn { opacity: 0.6; }
+.notes-edit-btn:hover { opacity: 1 !important; }
+.branch-notes-editor {
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.branch-notes-editor .notes-input {
+  padding: 2px 8px; font-size: 12px; width: 180px;
+  border-radius: var(--radius-xs);
+}
+
 .branch-requirement {
   font-size: 11px; color: var(--text-muted); max-width: 280px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -901,6 +938,7 @@ button.text-btn:hover { color: var(--accent); }
   select { max-width: 140px; }
   .branch-card-actions-row button { font-size: 11px; padding: 5px 8px; }
   .branch-card-actions-row { flex-wrap: wrap; }
+  .branch-card-right { flex-wrap: wrap; }
   .modal-dialog { max-height: 95vh; }
   .branch-card { padding: 12px 14px; }
   .branch-name { font-size: 13px; }
@@ -908,6 +946,8 @@ button.text-btn:hover { color: var(--accent); }
   .branch-name-row { gap: 4px; }
   .header-actions { gap: 4px; }
   .icon-btn.labeled { padding: 0 8px; }
+  .branch-notes-text { max-width: 120px; }
+  .branch-notes-editor .notes-input { width: 120px; }
 }
 
 @media (min-width: 641px) {

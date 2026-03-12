@@ -119,6 +119,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }),
     );
 
+    // Sort: favorites first, then by creation date
+    branchesWithSubject.sort((a, b) => {
+      const fa = a.isFavorite ? 1 : 0;
+      const fb = b.isFavorite ? 1 : 0;
+      if (fa !== fb) return fb - fa;
+      return 0; // preserve original order
+    });
+
     res.json({
       branches: branchesWithSubject,
       defaultBranch: state.defaultBranch,
@@ -439,6 +447,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
     stateService.setDefaultBranch(id);
     stateService.save();
     res.json({ message: `Default branch set to "${id}"` });
+  });
+
+  // ── Update branch metadata (favorite, notes) ──
+
+  router.patch('/branches/:id', (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    try {
+      const { isFavorite, notes } = req.body as { isFavorite?: boolean; notes?: string };
+      stateService.updateBranchMeta(id, { isFavorite, notes });
+      stateService.save();
+      res.json({ message: '已更新' });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
   });
 
   // ── Container logs ──
