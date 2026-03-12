@@ -6,11 +6,15 @@
   <title>Cloud Dev Suite — 登录</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      height: 100%;
+      overflow: hidden;
+    }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans SC', sans-serif;
       background: #0a0c10;
       color: #e4e8ef;
-      min-height: 100vh;
+      height: 100dvh;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -18,6 +22,7 @@
     }
     .login-card {
       width: 380px;
+      max-width: calc(100vw - 32px);
       padding: 36px;
       background: #13161d;
       border: 1px solid #252a35;
@@ -25,13 +30,31 @@
       box-shadow: 0 20px 60px rgba(0,0,0,0.5);
     }
     .login-card h1 {
-      font-size: 22px; font-weight: 700; margin-bottom: 6px;
+      font-size: 22px; font-weight: 700; margin-bottom: 4px;
       letter-spacing: -0.02em;
       background: linear-gradient(135deg, #e4e8ef 0%, #8f96a3 100%);
       -webkit-background-clip: text; -webkit-text-fill-color: transparent;
       background-clip: text;
     }
-    .login-card .subtitle { font-size: 13px; color: #5c6370; margin-bottom: 28px; }
+    .rotating-subtitle {
+      height: 22px;
+      margin-bottom: 24px;
+      overflow: hidden;
+    }
+    .rotating-text {
+      display: inline-block;
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      background: linear-gradient(135deg, #00f0ff 0%, #7c3aed 50%, #f43f5e 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+      transition: opacity 0.3s, transform 0.3s;
+    }
+    .rotating-text.out {
+      opacity: 0;
+      transform: translateY(8px);
+    }
     .field { margin-bottom: 18px; }
     .field label {
       display: block; font-size: 13px; color: #8f96a3; margin-bottom: 7px;
@@ -73,7 +96,9 @@
 <body>
   <div class="login-card">
     <h1>Cloud Dev Suite</h1>
-    <div class="subtitle">请输入凭据以访问控制面板</div>
+    <div class="rotating-subtitle">
+      <span class="rotating-text" id="rotatingText">重塑创作</span>
+    </div>
     <div class="error-msg" id="errorMsg"></div>
     <form onsubmit="doLogin(event)">
       <div class="field">
@@ -88,6 +113,21 @@
     </form>
   </div>
   <script>
+    // Rotating text animation
+    (function() {
+      const texts = ['重塑创作', '提升效率', '释放潜能', '驱动创新'];
+      let index = 0;
+      const el = document.getElementById('rotatingText');
+      setInterval(() => {
+        el.classList.add('out');
+        setTimeout(() => {
+          index = (index + 1) % texts.length;
+          el.textContent = texts[index];
+          el.classList.remove('out');
+        }, 300);
+      }, 3000);
+    })();
+
     async function doLogin(e) {
       e.preventDefault();
       const btn = document.getElementById('loginBtn');
@@ -105,7 +145,6 @@
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || '登录失败');
-        // cookie 已由服务端 Set-Cookie 头设置，直接跳转即可
         location.href = '/';
       } catch (ex) {
         err.textContent = ex.message;
