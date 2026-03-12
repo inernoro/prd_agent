@@ -187,6 +187,8 @@ h2 { font-size: 14px; font-weight: 600; margin-bottom: 8px; letter-spacing: -0.0
   color: var(--text-muted); cursor: pointer;
   transition: all var(--transition); flex-shrink: 0;
 }
+.icon-btn svg { width: 20px; height: 20px; flex-shrink: 0; }
+.icon-btn.xs svg { width: 16px; height: 16px; }
 .icon-btn:hover {
   background: var(--bg-hover); color: var(--text-primary);
   border-color: rgba(255,255,255,0.06);
