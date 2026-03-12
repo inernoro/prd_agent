@@ -267,21 +267,15 @@ document.addEventListener('click', (e) => {
 function filterBranches() {
   const q = searchInput.value.trim().toLowerCase();
 
-  // Don't show dropdown when search is empty and triggered by focus
-  if (!q) {
-    dropdown.classList.add('hidden');
-    return;
-  }
-
-  // Section 1: Match already-added local branches
+  // Section 1: Match already-added local branches (show all when empty)
   const matchedLocal = localBranches.filter(b =>
-    b.branch.toLowerCase().includes(q) || b.id.toLowerCase().includes(q)
+    !q || b.branch.toLowerCase().includes(q) || b.id.toLowerCase().includes(q)
   ).slice(0, 10);
 
-  // Section 2: Match remote branches not yet added
+  // Section 2: Match remote branches not yet added (show all when empty)
   const localIds = new Set(localBranches.map(b => StateService_slugify(b.branch)));
   const matchedRemote = remoteBranches.filter(b =>
-    b.name.toLowerCase().includes(q) && !localIds.has(StateService_slugify(b.name))
+    (!q || b.name.toLowerCase().includes(q)) && !localIds.has(StateService_slugify(b.name))
   ).slice(0, 15);
 
   if (matchedLocal.length === 0 && matchedRemote.length === 0) {
