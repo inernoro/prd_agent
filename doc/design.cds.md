@@ -1,6 +1,63 @@
 # Branch Tester (bt) 设计文档
 
-> **版本**：v1.0 | **日期**：2026-02-12 | **状态**：Implementation
+> **版本**：v2.0 | **日期**：2026-03-12 | **状态**：已落地
+
+## 0. Quickstart
+
+### 前置条件
+
+- Node.js >= 20
+- Docker（用于管理分支容器）
+- Git（用于 worktree 管理）
+
+### 一键启动
+
+```bash
+# 生产模式（后台运行）
+./exec_bt.sh
+
+# 开发模式（热重载）
+./exec_bt.sh dev
+
+# 前台运行（调试用）
+./exec_bt.sh fg
+
+# 查看状态 / 停止 / 重启
+./exec_bt.sh status
+./exec_bt.sh stop
+./exec_bt.sh restart
+
+# 查看日志
+./exec_bt.sh logs
+```
+
+### 环境变量
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `BT_PORT` | `9900` | Dashboard 端口 |
+| `BT_USERNAME` | — | 登录用户名（设置后启用认证） |
+| `BT_PASSWORD` | — | 登录密码 |
+| `JWT_SECRET` | dev 默认值 | JWT 签名密钥 |
+| `SWITCH_DOMAIN` | — | 分支切换域名（如 `switch.example.com`） |
+| `MAIN_DOMAIN` | — | 主域名（切换后跳转目标） |
+| `PREVIEW_DOMAIN` | — | 预览域名后缀（如 `preview.example.com`） |
+
+### 基本用法
+
+1. 访问 `http://localhost:9900` → 登录（如配置了用户名密码）
+2. 输入远程分支名 → 添加分支 → 系统自动创建 git worktree
+3. 点击"部署" → 构建 Docker 镜像并启动容器
+4. 通过 gateway 端口（默认 `:5500`）访问分支对应的应用
+5. 支持通过 `/_switch/<branch>` 或 cookie 切换活跃分支
+
+### 运行测试
+
+```bash
+cd cds && npx vitest run    # 88 tests, 6 files
+```
+
+---
 
 ## 1. 目标
 
@@ -345,3 +402,85 @@ target: `http://localhost:${process.env.VITE_API_PORT || 5000}`
 ```
 
 此改动仅影响本地开发模式，不影响生产构建（生产构建为静态文件由 nginx 代理）。
+
+---
+
+## 13. 功能迭代记录 (v2.0)
+
+> 80 次提交，覆盖 9 大业务领域。分支：`claude/fix-login-password-issue-CQBMO`，时间跨度 2026-02 ~ 2026-03。
+
+### 13.1 认证与登录
+
+| 功能 | 说明 |
+|------|------|
+| 登录竞态修复 | 修复正确密码登录后无响应的 token 设置与页面跳转竞态 |
+| Dashboard 鉴权 | 修复登录后 redirect 逻辑 |
+| 退出按钮 | 可见的退出按钮 + 图标文字标签 |
+| 全站中文化 | 所有提示、按钮、错误信息统一中文 |
+
+### 13.2 域名路由与分支预览
+
+| 功能 | 说明 |
+|------|------|
+| 子域名预览 | 通过 `<slug>.preview.example.com` 直接访问对应分支 |
+| Switch 域名切换 | `/_switch/<branch>` 设置 cookie，后续请求自动路由 |
+| Cookie 分支绑定 | `cds_branch` cookie 存原始分支名，支持 URL 解码 |
+| 域名配置化 | `SWITCH_DOMAIN` / `MAIN_DOMAIN` / `PREVIEW_DOMAIN` 从环境变量读取 |
+| 分支解析优先级 | X-Branch header > cookie > 域名路由规则 > 默认分支 |
+
+核心逻辑：`resolveBranch()` 返回原始分支名，`handleRequest()` 负责 slugify 后查找对应服务。
+
+### 13.3 部署与构建
+
+| 功能 | 说明 |
+|------|------|
+| 内联部署日志 | 部署日志展示在分支卡片下方，实时流式输出 |
+| 进度条动画 | 部署过程显示进度条 + 动画效果 |
+| 停止状态 | 支持部署中断，卡片显示停止指示器 |
+| 重新部署分体按钮 | 拆分为"仅 API"和"全量部署" |
+| Loading 反馈 | 所有异步操作添加 loading 状态 |
+| 构建竞态锁 | 防止同一分支并发构建 |
+
+### 13.4 环境变量管理
+
+| 功能 | 说明 |
+|------|------|
+| 批量编辑 | 一次性编辑所有环境变量 |
+| 内联展开 | 原地内联展开编辑 |
+| 自定义变量 | 移除硬编码业务变量，仅发送用户配置的变量 |
+| 连接字符串合成 | 部署时重新合成 MongoDB 连接字符串 |
+| 容器环境查看 | 查看容器内实际生效的环境变量 |
+
+### 13.5 UI 设计演进
+
+经历 4 轮迭代收敛为：实心卡片背景、2px 左边框状态色、齿轮下拉菜单、commit 内联 actions 行。
+设计原则：**去噪 > 层次 > 呼吸感**。
+
+### 13.6 分支卡片交互
+
+折叠/展开、多标签系统、收藏置顶、搜索导航器、更新指示器、操作反馈闪烁、乐观更新、提交历史下拉。
+
+### 13.7 移动端适配
+
+viewport 禁止自动缩放、响应式布局、模态窗屏幕居中、滚动位置保持。
+
+### 13.8 基础设施修复
+
+MongoDB `authSource=admin` 认证、连接字符串端口去重、静态资源 cache busting、轮询刷新 scrollY 保持。
+
+### 13.9 预览模式
+
+简单预览、多分支并排预览、toggle 切换、全局刷新。
+
+### 测试覆盖
+
+88 tests / 6 files，全部通过。覆盖 state、worktree、container、switcher、builder、proxy。
+
+### 技术债
+
+| 类别 | 优先级 |
+|------|--------|
+| WebSocket 替代 10s 轮询 | P2 |
+| 部署日志持久化 | P3 |
+| 分支卡片虚拟滚动 | P3 |
+| 前端 E2E 测试 | P2 |

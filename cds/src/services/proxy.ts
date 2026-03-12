@@ -1,6 +1,7 @@
 import http from 'node:http';
-import type { RoutingRule, BranchEntry } from '../types.js';
+import type { RoutingRule, BranchEntry, CdsConfig } from '../types.js';
 import { StateService } from './state.js';
+import type { WorktreeService } from './worktree.js';
 
 /**
  * ProxyService — the core of CDS worker port.
@@ -12,8 +13,13 @@ export class ProxyService {
   private resolveUpstream: ((branchId: string, profileId?: string) => string | null) | null = null;
   /** Callback: trigger auto-build for a branch that isn't running yet */
   private onAutoBuild: ((branchSlug: string, req: http.IncomingMessage, res: http.ServerResponse) => void) | null = null;
+  /** Optional worktree service for remote branch lookups */
+  private worktreeService: WorktreeService | null = null;
 
-  constructor(private readonly stateService: StateService) {}
+  constructor(
+    private readonly stateService: StateService,
+    private readonly config?: CdsConfig,
+  ) {}
 
   setResolveUpstream(fn: (branchId: string, profileId?: string) => string | null): void {
     this.resolveUpstream = fn;
@@ -23,9 +29,25 @@ export class ProxyService {
     this.onAutoBuild = fn;
   }
 
+  setWorktreeService(wt: WorktreeService): void {
+    this.worktreeService = wt;
+  }
+
+  /**
+   * Handle switch-domain requests from Express (master server).
+   * Express req/res are compatible with http.IncomingMessage/ServerResponse.
+   */
+  handleSwitchFromExpress(req: http.IncomingMessage, res: http.ServerResponse): void {
+    this.handleSwitchRequest(req, res);
+  }
+
   /**
    * Resolve which branch should handle a request.
    * Returns the branch slug or null if no match.
+   */
+  /**
+   * Resolve which branch should handle a request.
+   * Returns the ORIGINAL branch name (not slugified) to preserve "/" and casing.
    */
   resolveBranch(req: http.IncomingMessage): string | null {
     const state = this.stateService.getState();
@@ -33,16 +55,11 @@ export class ProxyService {
 
     // Check X-Branch header first (highest implicit priority)
     const xBranch = req.headers['x-branch'] as string | undefined;
-    if (xBranch) {
-      const slug = StateService.slugify(xBranch);
-      return slug;
-    }
+    if (xBranch) return xBranch;
 
-    // Check cds_branch cookie (set via /_switch/<branch> URL)
+    // Check cds_branch cookie — return as-is (original branch name with "/" and casing)
     const cookieBranch = this.parseCookie(req.headers.cookie || '', 'cds_branch');
-    if (cookieBranch) {
-      return StateService.slugify(cookieBranch);
-    }
+    if (cookieBranch) return cookieBranch;
 
     const host = req.headers.host || '';
 
@@ -140,12 +157,54 @@ export class ProxyService {
   }
 
   /**
+   * Check if the host matches the configured switch domain.
+   */
+  private isSwitchDomain(host: string): boolean {
+    const switchDomain = this.config?.switchDomain;
+    if (!switchDomain) return false;
+    const h = host.split(':')[0].toLowerCase();
+    return h === switchDomain.toLowerCase();
+  }
+
+  /**
+   * Check if the host is a preview subdomain (e.g., <slug>.preview.example.com).
+   * Returns the branch slug extracted from the subdomain, or null.
+   */
+  private extractPreviewBranch(host: string): string | null {
+    const previewDomain = this.config?.previewDomain;
+    if (!previewDomain) return null;
+    const h = host.split(':')[0].toLowerCase();
+    const suffix = `.${previewDomain.toLowerCase()}`;
+    if (h.endsWith(suffix) && h.length > suffix.length) {
+      return h.slice(0, -suffix.length);
+    }
+    return null;
+  }
+
+  /**
    * Handle an incoming request on the worker port.
    * Routes to the correct branch or triggers auto-build.
    */
   handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
+    const host = req.headers.host || '';
+    const url = req.url || '/';
+
+    // ── Switch domain: switch.example.com/<prefix>/<suffix> ──
+    if (this.isSwitchDomain(host)) {
+      this.handleSwitchRequest(req, res);
+      return;
+    }
+
+    // ── Preview subdomain: <slug>.preview.example.com ──
+    // Each branch gets its own subdomain — no cookies needed, fully independent
+    const previewSlug = this.extractPreviewBranch(host);
+    if (previewSlug) {
+      this.routeToBranch(previewSlug, previewSlug, req, res);
+      return;
+    }
+
     // /_switch/<branch> — set cds_branch cookie and redirect to /
-    const switchMatch = (req.url || '').match(/^\/_switch\/(.+?)(?:\?.*)?$/);
+    const switchMatch = url.match(/^\/_switch\/(.+?)(?:\?.*)?$/);
     if (switchMatch) {
       const branch = decodeURIComponent(switchMatch[1]);
       const slug = StateService.slugify(branch);
@@ -159,7 +218,7 @@ export class ProxyService {
     }
 
     // /_clear_branch — remove cds_branch cookie
-    if (req.url === '/_clear_branch') {
+    if (url === '/_clear_branch') {
       res.writeHead(302, {
         'Set-Cookie': 'cds_branch=; Path=/; Max-Age=0',
         Location: '/',
@@ -169,21 +228,32 @@ export class ProxyService {
       return;
     }
 
-    const branchSlug = this.resolveBranch(req);
+    const branchRef = this.resolveBranch(req);
 
-    if (!branchSlug) {
+    if (!branchRef) {
       res.writeHead(502, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'No branch matched. Set X-Branch header or configure routing rules.' }));
       return;
     }
 
+    // branchRef may be original name (e.g. "claude/fix-login-password-issue-CQBMO")
+    // State keys are always slugified (e.g. "claude-fix-login-password-issue-cqbmo")
+    const branchSlug = StateService.slugify(branchRef);
+    this.routeToBranch(branchSlug, branchRef, req, res);
+  }
+
+  /**
+   * Route a request to a specific branch (by slug).
+   * Used by both normal routing and preview subdomain routing.
+   */
+  private routeToBranch(branchSlug: string, branchRef: string, req: http.IncomingMessage, res: http.ServerResponse): void {
     const state = this.stateService.getState();
     const branch = state.branches[branchSlug];
 
     // Branch doesn't exist or isn't running — trigger auto-build
     if (!branch || branch.status !== 'running') {
       if (this.onAutoBuild) {
-        this.onAutoBuild(branchSlug, req, res);
+        this.onAutoBuild(branchRef, req, res);
         return;
       }
       res.writeHead(503, { 'Content-Type': 'application/json' });
@@ -202,7 +272,6 @@ export class ProxyService {
       return;
     }
 
-    // Determine which profile to route to based on URL path
     const profileId = this.detectProfileFromRequest(req, branch);
     const upstream = this.resolveUpstream(branchSlug, profileId);
 
@@ -212,9 +281,145 @@ export class ProxyService {
       return;
     }
 
-    // Proxy the request
     console.log(`[proxy] ${req.method} ${req.url} → ${upstream} (branch=${branchSlug}, profile=${profileId || 'default'})`);
     this.proxyRequest(req, res, upstream);
+  }
+
+  /**
+   * Handle requests from the switch domain.
+   *
+   * This is purely a branch-switching operation:
+   * - No path → 301 redirect to main domain (default branch)
+   * - Has path → suffix-match to a branch, set cookie, 301 to main domain
+   * - No match → friendly 404 page
+   */
+  private async handleSwitchRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    const mainDomain = this.config?.mainDomain;
+    // Detect protocol from reverse proxy headers, default to https
+    const proto = (req.headers['x-forwarded-proto'] as string)?.split(',')[0]?.trim() || 'https';
+    const mainUrl = mainDomain ? `${proto}://${mainDomain}` : null;
+    const url = req.url || '/';
+    const pathParts = url.replace(/\?.*$/, '').split('/').filter(Boolean);
+
+    // No mainDomain configured → show error
+    if (!mainUrl) {
+      res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('MAIN_DOMAIN 未配置，无法跳转。请在 CDS 中设置 MAIN_DOMAIN 环境变量。');
+      return;
+    }
+
+    // No path → redirect to main domain (default branch)
+    if (pathParts.length === 0) {
+      res.writeHead(301, { Location: mainUrl, 'Content-Type': 'text/plain' });
+      res.end('Redirecting to main domain...');
+      return;
+    }
+
+    // Use full path as branch identifier (e.g. "claude/fix-login-password-issue-CQBMO")
+    const fullPath = pathParts.join('/');
+    const lastSegment = pathParts[pathParts.length - 1];
+    const state = this.stateService.getState();
+    const branchSlugs = Object.keys(state.branches);
+
+    // Try full path first, then last segment as fallback
+    let matchedSlug = this.suffixMatchBranch(fullPath, branchSlugs);
+    if (!matchedSlug && fullPath !== lastSegment) {
+      matchedSlug = this.suffixMatchBranch(lastSegment, branchSlugs);
+    }
+
+    // Resolve original branch name from state (preserve "/" and casing)
+    let originalBranch = matchedSlug ? state.branches[matchedSlug]?.branch : null;
+
+    // If not found locally, try remote (full path first, then last segment)
+    if (!matchedSlug && this.worktreeService) {
+      const remoteBranch = await this.worktreeService.findBranchBySuffix(fullPath)
+        || (fullPath !== lastSegment ? await this.worktreeService.findBranchBySuffix(lastSegment) : null);
+      if (remoteBranch) {
+        matchedSlug = StateService.slugify(remoteBranch);
+        originalBranch = remoteBranch;  // keep original name like "claude/fix-login-password-issue-CQBMO"
+      }
+    }
+
+    // No match → friendly 404
+    if (!matchedSlug) {
+      this.serveSwitchNotFound(res, fullPath);
+      return;
+    }
+
+    // Cookie stores the ORIGINAL branch name (with "/" and casing preserved)
+    // so the worker can find it in git when auto-building
+    const cookieValue = originalBranch || matchedSlug;
+    console.log(`[switch] "${fullPath}" → branch "${cookieValue}" (slug: ${matchedSlug}), redirecting to ${mainUrl}`);
+    res.writeHead(301, {
+      'Set-Cookie': `cds_branch=${encodeURIComponent(cookieValue)}; Path=/; SameSite=Lax; Domain=${mainDomain}`,
+      Location: mainUrl,
+      'Content-Type': 'text/plain',
+    });
+    res.end(`Switched to branch: ${cookieValue}`);
+  }
+
+  /**
+   * Suffix match: find a branch whose slug ends with the given suffix.
+   * Returns the first matching branch slug, or null.
+   */
+  suffixMatchBranch(suffix: string, branchSlugs: string[]): string | null {
+    const normalizedSuffix = StateService.slugify(suffix);
+
+    // Exact match first
+    if (branchSlugs.includes(normalizedSuffix)) return normalizedSuffix;
+
+    // Suffix match (slug ends with the suffix)
+    for (const slug of branchSlugs) {
+      if (slug.endsWith(`-${normalizedSuffix}`) || slug.endsWith(`/${normalizedSuffix}`)) {
+        return slug;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Friendly 404 page when no branch matches the suffix.
+   */
+  private serveSwitchNotFound(res: http.ServerResponse, suffix: string): void {
+    const switchDomain = this.config?.switchDomain || 'switch domain';
+    const state = this.stateService.getState();
+    const branches = Object.keys(state.branches);
+    const listHtml = branches.length > 0
+      ? '<div class="hint-title">已注册的分支：</div>' + branches.map(slug =>
+        `<a href="/${slug}" class="item">${slug}</a>`
+      ).join('')
+      : '';
+
+    const html = `<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>分支未找到 — ${suffix}</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0d1117; color: #c9d1d9; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
+  .card { max-width: 480px; width: 100%; padding: 32px; background: #161b22; border: 1px solid #30363d; border-radius: 12px; text-align: center; }
+  .icon { font-size: 48px; margin-bottom: 16px; }
+  h2 { font-size: 18px; margin-bottom: 8px; color: #f0f6fc; }
+  .suffix { color: #f85149; font-family: monospace; font-size: 15px; word-break: break-all; margin-bottom: 12px; }
+  .desc { font-size: 13px; color: #8b949e; margin-bottom: 20px; line-height: 1.5; }
+  code { background: #21262d; padding: 2px 6px; border-radius: 4px; font-size: 12px; color: #c9d1d9; }
+  .hint-title { font-size: 12px; color: #8b949e; margin-bottom: 8px; text-align: left; }
+  .item { display: block; padding: 6px 10px; background: #0d1117; border: 1px solid #21262d; border-radius: 4px; text-decoration: none; color: #58a6ff; font-size: 12px; font-family: monospace; margin-bottom: 4px; text-align: left; transition: border-color 0.15s; }
+  .item:hover { border-color: #58a6ff; }
+</style>
+</head><body>
+<div class="card">
+  <div class="icon">404</div>
+  <h2>分支未找到</h2>
+  <div class="suffix">${suffix}</div>
+  <div class="desc">在本地和远程仓库中均未找到匹配此后缀的分支。<br>请确认分支名称是否正确。</div>
+  <div class="desc">用法：<code>${switchDomain}/分支名后缀</code></div>
+  ${listHtml}
+</div>
+</body></html>`;
+
+    res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(html);
   }
 
   /**
@@ -284,7 +489,14 @@ export class ProxyService {
    * Handle WebSocket upgrade for the worker proxy.
    */
   handleUpgrade(req: http.IncomingMessage, socket: import('node:stream').Duplex, head: Buffer): void {
-    const branchSlug = this.resolveBranch(req);
+    // Try preview subdomain first, then normal branch resolution
+    const host = req.headers.host || '';
+    const previewSlug = this.extractPreviewBranch(host);
+    const branchSlug = previewSlug || (() => {
+      const ref = this.resolveBranch(req);
+      return ref ? StateService.slugify(ref) : null;
+    })();
+
     if (!branchSlug || !this.resolveUpstream) {
       socket.destroy();
       return;

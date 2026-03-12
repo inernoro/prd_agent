@@ -104,8 +104,31 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     stateService.save();
 
+    // Fetch latest commit subject for each branch (serves as "需求" info)
+    const branchesWithSubject = await Promise.all(
+      branches.map(async (b) => {
+        try {
+          const result = await shell.exec(
+            'git log -1 --format=%s',
+            { cwd: b.worktreePath, timeout: 5000 },
+          );
+          return { ...b, subject: result.stdout.trim() };
+        } catch {
+          return { ...b, subject: '' };
+        }
+      }),
+    );
+
+    // Sort: favorites first, then by creation date
+    branchesWithSubject.sort((a, b) => {
+      const fa = a.isFavorite ? 1 : 0;
+      const fb = b.isFavorite ? 1 : 0;
+      if (fa !== fb) return fb - fa;
+      return 0; // preserve original order
+    });
+
     res.json({
-      branches,
+      branches: branchesWithSubject,
       defaultBranch: state.defaultBranch,
     });
   });
@@ -114,13 +137,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       const { branch } = req.body as { branch?: string };
       if (!branch) {
-        res.status(400).json({ error: 'branch is required' });
+        res.status(400).json({ error: '分支名称不能为空' });
         return;
       }
 
       const id = StateService.slugify(branch);
       if (stateService.getBranch(id)) {
-        res.status(409).json({ error: `Branch "${id}" already exists` });
+        res.status(409).json({ error: `分支 "${id}" 已存在` });
         return;
       }
 
@@ -148,7 +171,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const { id } = req.params;
     const entry = stateService.getBranch(id);
     if (!entry) {
-      res.status(404).json({ error: `Branch "${id}" not found` });
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
 
@@ -156,21 +179,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       // Stop all running services
       for (const svc of Object.values(entry.services)) {
-        sendSSE(res, 'step', { step: 'stop', status: 'running', title: `Stopping ${svc.containerName}...` });
+        sendSSE(res, 'step', { step: 'stop', status: 'running', title: `正在停止 ${svc.containerName}...` });
         try { await containerService.stop(svc.containerName); } catch { /* ok */ }
-        sendSSE(res, 'step', { step: 'stop', status: 'done', title: `Stopped ${svc.containerName}` });
+        sendSSE(res, 'step', { step: 'stop', status: 'done', title: `已停止 ${svc.containerName}` });
       }
 
       // Remove worktree
-      sendSSE(res, 'step', { step: 'worktree', status: 'running', title: 'Removing worktree...' });
+      sendSSE(res, 'step', { step: 'worktree', status: 'running', title: '正在删除工作树...' });
       try { await worktreeService.remove(entry.worktreePath); } catch { /* ok */ }
-      sendSSE(res, 'step', { step: 'worktree', status: 'done', title: 'Worktree removed' });
+      sendSSE(res, 'step', { step: 'worktree', status: 'done', title: '工作树已删除' });
 
       stateService.removeLogs(id);
       stateService.removeBranch(id);
       stateService.save();
 
-      sendSSE(res, 'complete', { message: `Branch "${id}" removed` });
+      sendSSE(res, 'complete', { message: `分支 "${id}" 已删除` });
     } catch (err) {
       sendSSE(res, 'error', { message: (err as Error).message });
     } finally {
@@ -184,7 +207,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const { id } = req.params;
     const entry = stateService.getBranch(id);
     if (!entry) {
-      res.status(404).json({ error: `Branch "${id}" not found` });
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
     try {
@@ -201,13 +224,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const { id } = req.params;
     const entry = stateService.getBranch(id);
     if (!entry) {
-      res.status(404).json({ error: `Branch "${id}" not found` });
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
 
     const profiles = stateService.getBuildProfiles();
     if (profiles.length === 0) {
-      res.status(400).json({ error: 'No build profiles configured. Add at least one build profile first.' });
+      res.status(400).json({ error: '尚未配置构建配置，请先添加至少一个构建配置。' });
       return;
     }
 
@@ -227,16 +250,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     try {
       // Pull latest code
-      logEvent({ step: 'pull', status: 'running', title: 'Pulling latest code...', timestamp: new Date().toISOString() });
+      logEvent({ step: 'pull', status: 'running', title: '正在拉取最新代码...', timestamp: new Date().toISOString() });
       const pullResult = await worktreeService.pull(entry.branch, entry.worktreePath);
-      logEvent({ step: 'pull', status: 'done', title: `Pulled: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
+      logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
 
       entry.status = 'building';
       stateService.save();
 
       // Build & run each profile
       for (const profile of profiles) {
-        logEvent({ step: `build-${profile.id}`, status: 'running', title: `Building ${profile.name}...`, timestamp: new Date().toISOString() });
+        logEvent({ step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}...`, timestamp: new Date().toISOString() });
 
         // Allocate port and container name if not already assigned
         if (!entry.services[profile.id]) {
@@ -260,11 +283,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
           }, customEnv);
 
           svc.status = 'running';
-          logEvent({ step: `build-${profile.id}`, status: 'done', title: `${profile.name} running on :${svc.hostPort}`, timestamp: new Date().toISOString() });
+          logEvent({ step: `build-${profile.id}`, status: 'done', title: `${profile.name} 运行于 :${svc.hostPort}`, timestamp: new Date().toISOString() });
         } catch (err) {
           svc.status = 'error';
           svc.errorMessage = (err as Error).message;
-          logEvent({ step: `build-${profile.id}`, status: 'error', title: `${profile.name} failed`, log: (err as Error).message, timestamp: new Date().toISOString() });
+          logEvent({ step: `build-${profile.id}`, status: 'error', title: `${profile.name} 失败`, log: (err as Error).message, timestamp: new Date().toISOString() });
         }
       }
 
@@ -279,7 +302,102 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.save();
 
       sendSSE(res, 'complete', {
-        message: entry.status === 'running' ? 'All services running' : 'Some services failed',
+        message: entry.status === 'running' ? '所有服务已启动' : '部分服务启动失败',
+        services: entry.services,
+      });
+    } catch (err) {
+      entry.status = 'error';
+      entry.errorMessage = (err as Error).message;
+      opLog.status = 'error';
+      opLog.finishedAt = new Date().toISOString();
+      stateService.appendLog(id, opLog);
+      stateService.save();
+      sendSSE(res, 'error', { message: (err as Error).message });
+    } finally {
+      res.end();
+    }
+  });
+
+  // ── Redeploy a single service (SSE stream) ──
+
+  router.post('/branches/:id/deploy/:profileId', async (req, res) => {
+    const { id, profileId } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+
+    const profiles = stateService.getBuildProfiles();
+    const profile = profiles.find(p => p.id === profileId);
+    if (!profile) {
+      res.status(404).json({ error: `构建配置 "${profileId}" 不存在` });
+      return;
+    }
+
+    initSSE(res);
+
+    const opLog: OperationLog = {
+      type: 'build',
+      startedAt: new Date().toISOString(),
+      status: 'running',
+      events: [],
+    };
+
+    function logEvent(ev: OperationLogEvent) {
+      opLog.events.push(ev);
+      sendSSE(res, 'step', ev);
+    }
+
+    try {
+      // Pull latest code
+      logEvent({ step: 'pull', status: 'running', title: '正在拉取最新代码...', timestamp: new Date().toISOString() });
+      const pullResult = await worktreeService.pull(entry.branch, entry.worktreePath);
+      logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
+
+      // Build & run the single profile
+      logEvent({ step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}...`, timestamp: new Date().toISOString() });
+
+      if (!entry.services[profile.id]) {
+        const hostPort = stateService.allocatePort(config.portStart);
+        entry.services[profile.id] = {
+          profileId: profile.id,
+          containerName: `cds-${id}-${profile.id}`,
+          hostPort,
+          status: 'building',
+        };
+        stateService.save();
+      }
+
+      const svc = entry.services[profile.id];
+      svc.status = 'building';
+
+      try {
+        const customEnv = stateService.getCustomEnv();
+        await containerService.runService(entry, profile, svc, (chunk) => {
+          sendSSE(res, 'log', { profileId: profile.id, chunk });
+        }, customEnv);
+
+        svc.status = 'running';
+        logEvent({ step: `build-${profile.id}`, status: 'done', title: `${profile.name} 运行于 :${svc.hostPort}`, timestamp: new Date().toISOString() });
+      } catch (err) {
+        svc.status = 'error';
+        svc.errorMessage = (err as Error).message;
+        logEvent({ step: `build-${profile.id}`, status: 'error', title: `${profile.name} 失败`, log: (err as Error).message, timestamp: new Date().toISOString() });
+      }
+
+      // Update overall status
+      const statuses = Object.values(entry.services).map(s => s.status);
+      entry.status = statuses.some(s => s === 'running') ? 'running' : 'error';
+      entry.lastAccessedAt = new Date().toISOString();
+
+      opLog.status = svc.status === 'running' ? 'completed' : 'error';
+      opLog.finishedAt = new Date().toISOString();
+      stateService.appendLog(id, opLog);
+      stateService.save();
+
+      sendSSE(res, 'complete', {
+        message: svc.status === 'running' ? `${profile.name} 已启动` : `${profile.name} 启动失败`,
         services: entry.services,
       });
     } catch (err) {
@@ -301,7 +419,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const { id } = req.params;
     const entry = stateService.getBranch(id);
     if (!entry) {
-      res.status(404).json({ error: `Branch "${id}" not found` });
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
     try {
@@ -311,7 +429,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       entry.status = 'idle';
       stateService.save();
-      res.json({ message: 'All services stopped' });
+      res.json({ message: '所有服务已停止' });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -323,12 +441,31 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const { id } = req.params;
     const entry = stateService.getBranch(id);
     if (!entry) {
-      res.status(404).json({ error: `Branch "${id}" not found` });
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
     stateService.setDefaultBranch(id);
     stateService.save();
     res.json({ message: `Default branch set to "${id}"` });
+  });
+
+  // ── Update branch metadata (favorite, notes) ──
+
+  router.patch('/branches/:id', (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    try {
+      const { isFavorite, notes, tags } = req.body as { isFavorite?: boolean; notes?: string; tags?: string[] };
+      stateService.updateBranchMeta(id, { isFavorite, notes, tags });
+      stateService.save();
+      res.json({ message: '已更新' });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
   });
 
   // ── Container logs ──
@@ -344,13 +481,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const { profileId } = req.body as { profileId?: string };
     const entry = stateService.getBranch(id);
     if (!entry) {
-      res.status(404).json({ error: `Branch "${id}" not found` });
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
 
     const svc = profileId ? entry.services[profileId] : Object.values(entry.services)[0];
     if (!svc) {
-      res.status(404).json({ error: 'No service found' });
+      res.status(404).json({ error: '未找到服务' });
       return;
     }
 
@@ -362,13 +499,69 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  // ── Container env ──
+
+  router.post('/branches/:id/container-env', async (req, res) => {
+    const { id } = req.params;
+    const { profileId } = req.body as { profileId?: string };
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+
+    const svc = profileId ? entry.services[profileId] : Object.values(entry.services)[0];
+    if (!svc) {
+      res.status(404).json({ error: '未找到服务' });
+      return;
+    }
+
+    try {
+      const env = await containerService.getEnv(svc.containerName);
+      res.json({ env });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ── Git log (historical commits) ──
+
+  router.get('/branches/:id/git-log', async (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const count = Math.min(parseInt(req.query.count as string) || 20, 50);
+    try {
+      const SEP = '<SEP>';
+      const format = ['%h', '%s', '%an', '%ar'].join(SEP);
+      const result = await shell.exec(
+        `git log -${count} --format="${format}"`,
+        { cwd: entry.worktreePath, timeout: 10_000 },
+      );
+      const commits = result.stdout
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map(line => {
+          const [hash, subject, author, date] = line.split(SEP);
+          return { hash, subject, author, date };
+        });
+      res.json({ commits });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // ── Reset branch status ──
 
   router.post('/branches/:id/reset', (req, res) => {
     const { id } = req.params;
     const entry = stateService.getBranch(id);
     if (!entry) {
-      res.status(404).json({ error: `Branch "${id}" not found` });
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
     entry.status = 'idle';
@@ -380,7 +573,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
     }
     stateService.save();
-    res.json({ message: 'Branch status reset' });
+    res.json({ message: '分支状态已重置' });
   });
 
   // ── Routing rules CRUD ──
@@ -393,7 +586,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       const rule = req.body as RoutingRule;
       if (!rule.id || !rule.type || !rule.match || !rule.branch) {
-        res.status(400).json({ error: 'id, type, match, and branch are required' });
+        res.status(400).json({ error: 'id、类型、匹配模式和目标分支为必填项' });
         return;
       }
       rule.priority = rule.priority ?? 0;
@@ -410,7 +603,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       stateService.updateRoutingRule(req.params.id, req.body);
       stateService.save();
-      res.json({ message: 'Updated' });
+      res.json({ message: '已更新' });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -420,7 +613,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       stateService.removeRoutingRule(req.params.id);
       stateService.save();
-      res.json({ message: 'Deleted' });
+      res.json({ message: '已删除' });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -436,7 +629,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       const profile = req.body as BuildProfile;
       if (!profile.id || !profile.name || !profile.dockerImage || !profile.runCommand) {
-        res.status(400).json({ error: 'id, name, dockerImage, and runCommand are required' });
+        res.status(400).json({ error: 'id、名称、Docker 镜像和运行命令为必填项' });
         return;
       }
       profile.workDir = profile.workDir || '.';
@@ -453,7 +646,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       stateService.updateBuildProfile(req.params.id, req.body);
       stateService.save();
-      res.json({ message: 'Updated' });
+      res.json({ message: '已更新' });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -463,7 +656,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       stateService.removeBuildProfile(req.params.id);
       stateService.save();
-      res.json({ message: 'Deleted' });
+      res.json({ message: '已删除' });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -495,7 +688,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   router.post('/quickstart', (_req, res) => {
     const existing = stateService.getBuildProfiles();
     if (existing.length > 0) {
-      res.status(409).json({ error: 'Build profiles already configured. Delete existing profiles first or add manually.' });
+      res.status(409).json({ error: '构建配置已存在。请先删除现有配置或手动添加。' });
       return;
     }
 
@@ -533,7 +726,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     stateService.save();
 
     res.status(201).json({
-      message: `Quickstart: ${defaults.length} profiles created`,
+      message: `快速启动: 已创建 ${defaults.length} 个构建配置`,
       profiles: defaults,
     });
   });
@@ -544,26 +737,36 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.json({ env: stateService.getCustomEnv() });
   });
 
+  // Helper: sync CDS-relevant env vars (SWITCH_DOMAIN, MAIN_DOMAIN) into runtime config
+  function syncDomainConfig() {
+    const env = stateService.getCustomEnv();
+    if (env.SWITCH_DOMAIN) config.switchDomain = env.SWITCH_DOMAIN;
+    if (env.MAIN_DOMAIN) config.mainDomain = env.MAIN_DOMAIN;
+    if (env.PREVIEW_DOMAIN) config.previewDomain = env.PREVIEW_DOMAIN;
+  }
+
   router.put('/env', (req, res) => {
     const env = req.body as Record<string, string>;
     if (!env || typeof env !== 'object') {
-      res.status(400).json({ error: 'Body must be a key-value object' });
+      res.status(400).json({ error: '请求体必须是键值对对象' });
       return;
     }
     stateService.setCustomEnv(env);
     stateService.save();
-    res.json({ message: 'Environment variables updated', env });
+    syncDomainConfig();
+    res.json({ message: '环境变量已更新', env });
   });
 
   router.put('/env/:key', (req, res) => {
     const { key } = req.params;
     const { value } = req.body as { value?: string };
     if (value === undefined) {
-      res.status(400).json({ error: 'value is required' });
+      res.status(400).json({ error: '值不能为空' });
       return;
     }
     stateService.setCustomEnvVar(key, value);
     stateService.save();
+    syncDomainConfig();
     res.json({ message: `Set ${key}` });
   });
 
@@ -576,14 +779,77 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Config (read-only) ──
 
-  router.get('/config', (_req, res) => {
+  router.get('/config', async (_req, res) => {
+    // Try to extract GitHub repo URL from git remote
+    let githubRepoUrl = '';
+    try {
+      const result = await shell.exec('git remote get-url origin', { cwd: config.repoRoot, timeout: 5000 });
+      const remote = result.stdout.trim();
+      // Match patterns: git@github.com:owner/repo.git, https://github.com/owner/repo.git, or proxy /git/owner/repo
+      const sshMatch = remote.match(/github\.com[:/]([^/]+\/[^/.]+)/);
+      const httpMatch = remote.match(/github\.com\/([^/]+\/[^/.]+)/);
+      const proxyMatch = remote.match(/\/git\/([^/]+\/[^/.]+)/);
+      const match = sshMatch || httpMatch || proxyMatch;
+      if (match) {
+        githubRepoUrl = `https://github.com/${match[1].replace(/\.git$/, '')}`;
+      }
+    } catch { /* ignore */ }
+
     res.json({
       ...config,
+      githubRepoUrl,
       jwt: { ...config.jwt, secret: '***' },
       sharedEnv: Object.fromEntries(
         Object.entries(config.sharedEnv).map(([k, v]) => [k, k.includes('PASSWORD') || k.includes('SECRET') ? '***' : v]),
       ),
     });
+  });
+
+  // ── Check updates (compare local vs remote for all branches) ──
+
+  router.get('/check-updates', async (_req, res) => {
+    const state = stateService.getState();
+    const branches = Object.values(state.branches);
+
+    // Fetch latest remote refs once
+    try {
+      await shell.exec(
+        'GIT_TERMINAL_PROMPT=0 git fetch origin --prune',
+        { cwd: config.repoRoot, timeout: 30_000 },
+      );
+    } catch {
+      // If fetch fails, we can still compare with last known remote state
+    }
+
+    const updates: Record<string, { behind: number; latestRemoteSubject?: string }> = {};
+
+    await Promise.all(branches.map(async (b) => {
+      try {
+        // Count commits local is behind remote
+        const behindResult = await shell.exec(
+          `git rev-list --count HEAD..origin/${b.branch} 2>/dev/null || echo 0`,
+          { cwd: b.worktreePath, timeout: 10_000 },
+        );
+        const behind = parseInt(behindResult.stdout.trim()) || 0;
+
+        let latestRemoteSubject: string | undefined;
+        if (behind > 0) {
+          const subjectResult = await shell.exec(
+            `git log -1 --format=%s origin/${b.branch}`,
+            { cwd: b.worktreePath, timeout: 5_000 },
+          );
+          latestRemoteSubject = subjectResult.stdout.trim();
+        }
+
+        if (behind > 0) {
+          updates[b.id] = { behind, latestRemoteSubject };
+        }
+      } catch {
+        // Branch may not have a remote tracking branch — skip
+      }
+    }));
+
+    res.json({ updates });
   });
 
   // ── Cleanup all non-default branches ──
@@ -594,17 +860,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const state = stateService.getState();
       const toRemove = Object.values(state.branches).filter(b => b.id !== state.defaultBranch);
       for (const entry of toRemove) {
-        sendSSE(res, 'step', { step: 'cleanup', status: 'running', title: `Removing ${entry.id}...` });
+        sendSSE(res, 'step', { step: 'cleanup', status: 'running', title: `正在删除 ${entry.id}...` });
         for (const svc of Object.values(entry.services)) {
           try { await containerService.stop(svc.containerName); } catch { /* ok */ }
         }
         try { await worktreeService.remove(entry.worktreePath); } catch { /* ok */ }
         stateService.removeLogs(entry.id);
         stateService.removeBranch(entry.id);
-        sendSSE(res, 'step', { step: 'cleanup', status: 'done', title: `Removed ${entry.id}` });
+        sendSSE(res, 'step', { step: 'cleanup', status: 'done', title: `已删除 ${entry.id}` });
       }
       stateService.save();
-      sendSSE(res, 'complete', { message: `Cleaned up ${toRemove.length} branches` });
+      sendSSE(res, 'complete', { message: `已清理 ${toRemove.length} 个分支` });
     } catch (err) {
       sendSSE(res, 'error', { message: (err as Error).message });
     } finally {

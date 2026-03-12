@@ -39,6 +39,8 @@ export interface BuildProfile {
   runCommand: string;
   /** Port the service listens on inside the container */
   containerPort: number;
+  /** Custom icon identifier for port badge display (e.g., 'api', 'web', 'db') */
+  icon?: string;
   /** Extra environment variables for this profile */
   env?: Record<string, string>;
   /** Volume mounts for shared caches (e.g., node_modules, nuget) */
@@ -68,6 +70,12 @@ export interface BranchEntry {
   errorMessage?: string;
   createdAt: string;
   lastAccessedAt?: string;
+  /** User favorite flag — favorites are sorted to the top */
+  isFavorite?: boolean;
+  /** User notes — free-text annotation shown beside branch name */
+  notes?: string;
+  /** User tags — labels for filtering and categorization */
+  tags?: string[];
 }
 
 /** State of a single service (one build profile instance) within a branch */
@@ -115,7 +123,7 @@ export interface CdsState {
   logs: Record<string, OperationLog[]>;
   /** Default branch (used when no routing rule matches) */
   defaultBranch: string | null;
-  /** User-defined environment variables (override auto-detected sharedEnv) */
+  /** User-defined environment variables (sent to containers on deploy) */
   customEnv: Record<string, string>;
 }
 
@@ -131,8 +139,15 @@ export interface CdsConfig {
   dockerNetwork: string;
   /** Port range start for branch services */
   portStart: number;
-  /** Shared environment variables (from host env) */
+  /** Shared environment variables (reserved, currently empty) */
   sharedEnv: Record<string, string>;
+  /** Switch domain for branch switching (e.g., "switch.example.com") */
+  switchDomain?: string;
+  /** Main domain to redirect to after switching (e.g., "example.com") */
+  mainDomain?: string;
+  /** Preview domain suffix for subdomain-based preview (e.g., "preview.example.com").
+   *  Each branch gets its own subdomain: <slug>.preview.example.com */
+  previewDomain?: string;
   /** JWT settings (passed through to branch services) */
   jwt: {
     secret: string;

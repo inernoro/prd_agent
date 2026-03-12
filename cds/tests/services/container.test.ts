@@ -73,10 +73,10 @@ describe('ContainerService', () => {
       expect(runCmd).toContain('--env-file');
       expect(runCmd).toContain('dotnet watch run');
 
-      // Verify env file contents
+      // Verify env file contents (sharedEnv is passed via docker network, not env file)
       const envFileContent = writeSpy.mock.calls[0][1] as string;
-      expect(envFileContent).toContain('MONGODB_HOST=db:27017');
       expect(envFileContent).toContain('Jwt__Secret=test-secret');
+      expect(envFileContent).toContain('Jwt__Issuer=prdagent');
 
       writeSpy.mockRestore();
     });
@@ -128,7 +128,7 @@ describe('ContainerService', () => {
       mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker run/, () => ({ stdout: '', stderr: 'port in use', exitCode: 125 }));
 
-      await expect(service.runService(makeEntry(), makeProfile(), makeService())).rejects.toThrow('run');
+      await expect(service.runService(makeEntry(), makeProfile(), makeService())).rejects.toThrow('启动服务');
     });
 
     it('should throw if install step fails', async () => {
@@ -137,7 +137,7 @@ describe('ContainerService', () => {
       mock.addResponsePattern(/docker run/, () => ({ stdout: '', stderr: 'install error', exitCode: 1 }));
 
       const profile = makeProfile({ installCommand: 'npm install' });
-      await expect(service.runService(makeEntry(), profile, makeService())).rejects.toThrow('Install');
+      await expect(service.runService(makeEntry(), profile, makeService())).rejects.toThrow('安装失败');
     });
   });
 
