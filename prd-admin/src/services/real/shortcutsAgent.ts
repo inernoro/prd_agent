@@ -28,6 +28,7 @@ export interface CreateShortcutInput {
   bindingTargetId?: string;
   bindingTargetName?: string;
   bindingVariables?: Record<string, string>;
+  clientBaseUrl?: string;
 }
 
 export interface CreateShortcutResult {

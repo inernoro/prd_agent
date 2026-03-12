@@ -254,6 +254,7 @@ function CreateShortcutDialog({
       bindingType,
       bindingTargetId: bindingType !== 'collect' ? bindingTargetId : undefined,
       bindingTargetName: selectedTarget?.name,
+      clientBaseUrl: window.location.origin,
     };
 
     const res = await createShortcut(input);

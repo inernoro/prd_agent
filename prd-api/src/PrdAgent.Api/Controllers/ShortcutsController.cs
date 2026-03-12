@@ -86,7 +86,10 @@ public class ShortcutsController : ControllerBase
 
         _logger.LogInformation("Shortcut created: {Id} {Name} for user {UserId}", shortcut.Id, shortcut.Name, userId);
 
-        var serverUrl = ResolveServerUrl();
+        // 优先使用前端传来的 clientBaseUrl（前端知道真实域名），再 fallback 到 ResolveServerUrl
+        var serverUrl = !string.IsNullOrWhiteSpace(request.ClientBaseUrl)
+            ? request.ClientBaseUrl.TrimEnd('/')
+            : ResolveServerUrl();
         var installPageUrl = $"{serverUrl}/api/shortcuts/{shortcut.Id}/install-page?t={token}";
 
         // token 明文仅在创建时返回一次
@@ -905,6 +908,9 @@ public class CreateShortcutRequest
 
     /// <summary>工作流变量默认值（绑定 workflow 时使用）</summary>
     public Dictionary<string, string>? BindingVariables { get; set; }
+
+    /// <summary>前端传入的基础 URL（如 https://miduo.org），用于生成正确的二维码地址</summary>
+    public string? ClientBaseUrl { get; set; }
 }
 
 public class CollectRequest
