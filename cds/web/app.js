@@ -438,24 +438,6 @@ async function deploySingleService(id, profileId) {
 
 let openDeployMenuId = null;
 
-/** Position a fixed dropdown below its trigger, clamped to viewport */
-function positionFixedDropdown(dropdown, trigger, align = 'left') {
-  const r = trigger.getBoundingClientRect();
-  dropdown.style.top = `${r.bottom + 4}px`;
-  if (align === 'right') {
-    const w = dropdown.offsetWidth || 360;
-    let left = r.right - w;
-    if (left < 8) left = 8;
-    dropdown.style.left = `${left}px`;
-  } else {
-    let left = r.left;
-    if (left + (dropdown.offsetWidth || 140) > window.innerWidth - 8) {
-      left = window.innerWidth - 8 - (dropdown.offsetWidth || 140);
-    }
-    dropdown.style.left = `${left}px`;
-  }
-}
-
 function toggleDeployMenu(id, event) {
   event.stopPropagation();
   if (openDeployMenuId === id) {
@@ -466,11 +448,7 @@ function toggleDeployMenu(id, event) {
   if (openDeployMenuId) closeDeployMenu(openDeployMenuId);
   openDeployMenuId = id;
   const menu = document.getElementById(`deploy-menu-${CSS.escape(id)}`);
-  if (menu) {
-    menu.classList.remove('hidden');
-    const trigger = menu.closest('.split-btn');
-    if (trigger) positionFixedDropdown(menu, trigger, 'left');
-  }
+  if (menu) menu.classList.remove('hidden');
 }
 
 function closeDeployMenu(id) {
@@ -1138,8 +1116,6 @@ async function toggleCommitLog(id) {
 
   openCommitLogId = id;
   el.classList.remove('hidden');
-  const trigger = el.closest('.branch-commits-wrap')?.querySelector('.branch-requirement');
-  if (trigger) positionFixedDropdown(el, trigger, 'right');
   el.innerHTML = '<div class="commit-log-loading"><span class="btn-spinner"></span> 加载中...</div>';
 
   try {

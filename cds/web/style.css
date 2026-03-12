@@ -490,29 +490,37 @@ button.text-btn:hover { color: var(--accent); }
 .branch-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px; }
 
 .branch-card {
+  position: relative;
   display: flex; flex-direction: column; gap: 0;
   padding: 14px 18px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  transition: border-color 0.3s, box-shadow 0.3s;
+  box-shadow: var(--shadow-sm), inset 0 1px 0 var(--glass-highlight);
+  overflow: visible;
+}
+.branch-card::before {
+  content: ''; position: absolute; inset: 0; border-radius: inherit;
   background: var(--bg-card);
   backdrop-filter: blur(20px) saturate(1.2);
   -webkit-backdrop-filter: blur(20px) saturate(1.2);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius);
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: var(--shadow-sm), inset 0 1px 0 var(--glass-highlight);
-  overflow: visible;
+  z-index: -1;
 }
 .branch-card:hover {
   border-color: rgba(255, 255, 255, 0.1);
   box-shadow: var(--shadow-md), inset 0 1px 0 var(--glass-highlight);
-  transform: translateY(-1px);
 }
 .branch-card.active {
   border-color: var(--accent-border);
-  background: linear-gradient(135deg, rgba(200, 255, 0, 0.03) 0%, var(--bg-card) 100%);
   box-shadow: 0 0 0 1px var(--accent-border), var(--shadow-sm), inset 0 1px 0 var(--glass-highlight);
+}
+.branch-card.active::before {
+  background: linear-gradient(135deg, rgba(200, 255, 0, 0.03) 0%, var(--bg-card) 100%);
 }
 .branch-card.has-error {
   border-color: var(--red-border);
+}
+.branch-card.has-error::before {
   background: linear-gradient(135deg, rgba(239, 83, 80, 0.03) 0%, var(--bg-card) 100%);
 }
 
@@ -638,8 +646,9 @@ button.text-btn:hover { color: var(--accent); }
 .branch-requirement:hover .commit-chevron { opacity: 1; }
 
 .commit-log-dropdown {
-  position: fixed; min-width: 360px; max-width: min(460px, 90vw); max-height: 320px;
-  overflow-y: auto;
+  position: absolute; top: 100%; right: 0;
+  min-width: 360px; max-width: min(460px, 90vw); max-height: 320px;
+  margin-top: 6px; overflow-y: auto;
   background: var(--bg-card-solid);
   backdrop-filter: blur(24px);
   border: 1px solid var(--glass-border);
@@ -697,7 +706,8 @@ button.text-btn:hover { color: var(--accent); }
 .split-btn-toggle svg { pointer-events: none; }
 
 .deploy-menu {
-  position: fixed; min-width: 140px;
+  position: absolute; top: 100%; left: 0; right: 0;
+  min-width: 140px; margin-top: 4px;
   background: var(--bg-card-solid);
   backdrop-filter: blur(20px);
   border: 1px solid var(--glass-border);
@@ -736,7 +746,8 @@ button.text-btn:hover { color: var(--accent); }
 
 .branch-card.is-busy {
   border-color: rgba(224, 180, 58, 0.2);
-  position: relative;
+}
+.branch-card.is-busy::before {
   background: linear-gradient(135deg, rgba(224, 180, 58, 0.03) 0%, var(--bg-card) 100%);
 }
 .branch-card.is-busy::after {
