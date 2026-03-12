@@ -11,6 +11,9 @@ import {
   ChevronUp,
   Copy,
   Check,
+  Cloud,
+  ExternalLink,
+  Download,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Dialog } from '@/components/ui/Dialog';
@@ -19,9 +22,13 @@ import {
   createShortcut,
   deleteShortcut,
   getBindingTargets,
+  listTemplates,
+  createTemplate,
+  deleteTemplate,
   type ShortcutItem,
   type CreateShortcutInput,
   type BindingTarget,
+  type ShortcutTemplateItem,
 } from '@/services/real/shortcutsAgent';
 
 // ─── Binding type labels (收藏是必备功能，绑定是附加功能) ───
@@ -82,6 +89,9 @@ export default function ShortcutsPage() {
         </button>
       </div>
 
+      {/* iCloud 模板配置 */}
+      <ICloudTemplatePanel />
+
       {/* List */}
       {loading ? (
         <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: 40 }}>加载中...</p>
@@ -132,6 +142,183 @@ export default function ShortcutsPage() {
           }
           maxWidth={420}
         />
+      )}
+    </div>
+  );
+}
+
+// ─── iCloud Template Panel ───
+function ICloudTemplatePanel() {
+  const [template, setTemplate] = useState<ShortcutTemplateItem | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(false);
+  const [iCloudUrl, setICloudUrl] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const res = await listTemplates();
+    if (res.success && res.data?.items?.length) {
+      setTemplate(res.data.items[0]);
+    } else {
+      setTemplate(null);
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleSave = async () => {
+    const url = iCloudUrl.trim();
+    if (!url) return;
+    setSaving(true);
+    // 先删旧的
+    if (template) {
+      await deleteTemplate(template.id);
+    }
+    const res = await createTemplate({
+      name: 'PrdAgent 收藏',
+      iCloudUrl: url,
+      isDefault: true,
+    });
+    setSaving(false);
+    if (res.success) {
+      setICloudUrl('');
+      setExpanded(false);
+      load();
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!template || !confirm('确定移除 iCloud 模板链接？')) return;
+    await deleteTemplate(template.id);
+    setTemplate(null);
+  };
+
+  if (loading) return null;
+
+  // 已配置 iCloud 模板 — 显示紧凑状态
+  if (template) {
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
+        marginBottom: 16, borderRadius: 12,
+        background: 'rgba(52, 199, 89, 0.06)',
+        border: '1px solid rgba(52, 199, 89, 0.15)',
+      }}>
+        <Cloud size={15} style={{ color: '#34c759', flexShrink: 0 }} />
+        <span style={{ flex: 1, fontSize: 13, color: 'var(--text-secondary)' }}>
+          iCloud 模板已配置
+        </span>
+        <a
+          href={template.iCloudUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 3 }}
+        >
+          <ExternalLink size={11} /> 查看
+        </a>
+        <button
+          onClick={handleDelete}
+          style={{
+            fontSize: 12, color: 'var(--text-muted)', background: 'none',
+            border: 'none', cursor: 'pointer', padding: '2px 6px',
+          }}
+        >
+          移除
+        </button>
+      </div>
+    );
+  }
+
+  // 未配置 — 显示配置引导
+  return (
+    <div style={{
+      marginBottom: 16, borderRadius: 14, overflow: 'hidden',
+      background: 'var(--surface-card)',
+      border: '1px solid rgba(255, 149, 0, 0.2)',
+    }}>
+      <button
+        onClick={() => setExpanded(!expanded)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 10, width: '100%',
+          padding: '12px 16px', background: 'rgba(255, 149, 0, 0.06)',
+          border: 'none', cursor: 'pointer', textAlign: 'left',
+        }}
+      >
+        <Cloud size={16} style={{ color: '#ff9500', flexShrink: 0 }} />
+        <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: '#ff9500' }}>
+          配置 iCloud 模板（iOS 用户扫码安装需要）
+        </span>
+        {expanded ? <ChevronUp size={14} style={{ color: 'var(--text-muted)' }} /> : <ChevronDown size={14} style={{ color: 'var(--text-muted)' }} />}
+      </button>
+
+      {expanded && (
+        <div style={{ padding: '12px 16px 16px' }}>
+          {/* 引导说明 */}
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: 14 }}>
+            iOS 15+ 要求通过 iCloud 链接安装快捷指令。只需一次性配置：
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
+            {[
+              { n: 1, icon: <Download size={12} />, text: '在 Mac 上下载模板文件', action: (
+                <a
+                  href="/api/shortcuts/template-download"
+                  style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none', marginLeft: 6 }}
+                >
+                  下载
+                </a>
+              )},
+              { n: 2, text: '双击安装到「快捷指令」App' },
+              { n: 3, text: '右键 → 分享 → 拷贝 iCloud 链接' },
+              { n: 4, text: '粘贴到下方输入框' },
+            ].map(({ n, text, action }) => (
+              <div key={n} style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                fontSize: 12, color: 'var(--text-secondary)',
+              }}>
+                <span style={{
+                  width: 18, height: 18, borderRadius: '50%', flexShrink: 0,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 10, fontWeight: 700,
+                  background: 'rgba(255,149,0,0.12)', color: '#ff9500',
+                }}>
+                  {n}
+                </span>
+                <span>{text}</span>
+                {action}
+              </div>
+            ))}
+          </div>
+
+          {/* iCloud URL 输入 */}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              value={iCloudUrl}
+              onChange={(e) => setICloudUrl(e.target.value)}
+              placeholder="https://www.icloud.com/shortcuts/..."
+              style={{
+                flex: 1, padding: '8px 12px', borderRadius: 10, fontSize: 13,
+                border: '1px solid var(--border-subtle)',
+                background: 'var(--surface-card)', color: 'var(--text-primary)',
+                outline: 'none',
+              }}
+            />
+            <button
+              onClick={handleSave}
+              disabled={saving || !iCloudUrl.trim()}
+              style={{
+                padding: '8px 16px', borderRadius: 10, border: 'none',
+                background: 'var(--accent)', color: '#fff', fontSize: 13,
+                fontWeight: 600, cursor: 'pointer',
+                opacity: saving || !iCloudUrl.trim() ? 0.5 : 1,
+              }}
+            >
+              {saving ? '...' : '保存'}
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

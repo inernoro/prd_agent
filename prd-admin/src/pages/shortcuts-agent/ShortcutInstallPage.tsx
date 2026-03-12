@@ -14,7 +14,9 @@ interface InstallData {
  * 公开安装引导页 — iPhone 扫码后打开此页面
  * 路由: /s/shortcut/:id?t=scs-xxx
  *
- * 流程: 复制 Token → 安装 iCloud 模板 → 首次运行自动读取剪贴板
+ * 两种模式:
+ * - 有 iCloud 模板: 复制配置 → 安装 iCloud 模板 → 首次运行自动绑定
+ * - 无 iCloud 模板: 复制配置 → 手动创建快捷指令（3 步引导）
  */
 export default function ShortcutInstallPage() {
   const { id } = useParams<{ id: string }>();
@@ -23,8 +25,7 @@ export default function ShortcutInstallPage() {
 
   const [data, setData] = useState<InstallData | null>(null);
   const [error, setError] = useState('');
-  const [tokenCopied, setTokenCopied] = useState(false);
-  const [configCopied, setConfigCopied] = useState(false);
+  const [step, setStep] = useState(0); // 0=初始, 1=已复制配置, 2=已打开App
 
   useEffect(() => {
     if (!id || !token) {
@@ -43,11 +44,8 @@ export default function ShortcutInstallPage() {
       .catch(() => setError('网络错误，请稍后重试'));
   }, [id, token]);
 
-  const doCopy = (text: string, setter: (v: boolean) => void) => {
-    navigator.clipboard.writeText(text).then(() => {
-      setter(true);
-      setTimeout(() => setter(false), 3000);
-    }).catch(() => {
+  const doCopy = (text: string) => {
+    return navigator.clipboard.writeText(text).catch(() => {
       const ta = document.createElement('textarea');
       ta.value = text;
       ta.style.position = 'fixed';
@@ -56,20 +54,19 @@ export default function ShortcutInstallPage() {
       ta.select();
       document.execCommand('copy');
       document.body.removeChild(ta);
-      setter(true);
-      setTimeout(() => setter(false), 3000);
     });
   };
 
-  // 一键复制配置 JSON（Token + ServerUrl），快捷指令首次运行时从剪贴板读取
-  const copyConfigAndInstall = () => {
+  // 复制配置 JSON 到剪贴板
+  const copyConfig = async () => {
     if (!data) return;
     const config = JSON.stringify({
-      token: token,
+      token,
       endpoint: `${data.serverUrl}/api/shortcuts/collect`,
       name: data.name,
     });
-    doCopy(config, setConfigCopied);
+    await doCopy(config);
+    setStep(1);
   };
 
   if (error) {
@@ -102,151 +99,181 @@ export default function ShortcutInstallPage() {
   return (
     <div style={containerStyle}>
       <div style={cardStyle}>
-        <div style={{ fontSize: 64, marginBottom: 16 }}>{data.icon || '⚡'}</div>
-        <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 8 }}>{data.name}</h1>
-        <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: 14, marginBottom: 28 }}>
+        {/* Header */}
+        <div style={{ fontSize: 56, marginBottom: 12 }}>{data.icon || '⚡'}</div>
+        <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 4 }}>{data.name}</h1>
+        <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, marginBottom: 24 }}>
           PrdAgent 快捷指令
         </div>
 
+        {/* ── Step 1: 复制配置 ── */}
+        <button
+          onClick={copyConfig}
+          style={{
+            ...btnStyle,
+            background: step >= 1 ? '#34c759' : '#007aff',
+            marginBottom: 10,
+          }}
+        >
+          {step >= 1 ? '✅ 配置已复制到剪贴板' : '📋 复制配置到剪贴板'}
+        </button>
+
+        {/* ── Step 2: 安装 ── */}
         {hasICloud ? (
-          <>
-            {/* iCloud 安装流程 */}
-            <div style={stepStyle}>
-              <div style={stepNumStyle}>1</div>
-              <div style={{ fontSize: 15, lineHeight: 1.5, flex: 1 }}>
-                点击下方按钮<strong>复制配置</strong>到剪贴板
-              </div>
-            </div>
-            <div style={stepStyle}>
-              <div style={stepNumStyle}>2</div>
-              <div style={{ fontSize: 15, lineHeight: 1.5, flex: 1 }}>
-                点击「安装快捷指令」，在 iOS 弹框中点「添加」
-              </div>
-            </div>
-            <div style={stepStyle}>
-              <div style={stepNumStyle}>3</div>
-              <div style={{ fontSize: 15, lineHeight: 1.5, flex: 1 }}>
-                首次运行时会自动从剪贴板读取配置，完成绑定
-              </div>
-            </div>
-
-            {/* 主按钮：复制配置 + 安装 */}
-            <button
-              onClick={copyConfigAndInstall}
-              style={{
-                ...primaryBtnStyle,
-                background: configCopied ? '#34c759' : '#007aff',
-                border: 'none',
-                cursor: 'pointer',
-                width: '100%',
-              }}
-            >
-              {configCopied ? '✅ 已复制配置' : '📋 第一步：复制配置'}
-            </button>
-
-            <a
-              href={data.iCloudUrl}
-              style={{
-                ...primaryBtnStyle,
-                marginTop: 12,
-                width: '100%',
-                background: configCopied ? '#007aff' : 'rgba(255,255,255,0.15)',
-                color: configCopied ? 'white' : 'rgba(255,255,255,0.5)',
-                boxSizing: 'border-box',
-              }}
-            >
-              📲 第二步：安装快捷指令
-            </a>
-
-            {!configCopied && (
-              <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', marginTop: 8 }}>
-                请先复制配置，再点安装
-              </p>
-            )}
-          </>
+          // 有 iCloud 模板 → 直接跳转安装
+          <a
+            href={data.iCloudUrl}
+            onClick={() => setStep(2)}
+            style={{
+              ...btnStyle,
+              textDecoration: 'none',
+              background: step >= 1 ? '#007aff' : 'rgba(255,255,255,0.12)',
+              color: step >= 1 ? '#fff' : 'rgba(255,255,255,0.4)',
+              pointerEvents: step >= 1 ? 'auto' : 'none',
+            }}
+          >
+            📲 安装快捷指令
+          </a>
         ) : (
-          <>
-            {/* 无 iCloud 模板：显示手动配置 */}
-            <div style={{
-              padding: 16, borderRadius: 14,
-              background: 'rgba(255, 149, 0, 0.12)',
-              border: '1px solid rgba(255, 149, 0, 0.25)',
-              marginBottom: 20, textAlign: 'left',
-            }}>
-              <div style={{ fontSize: 14, fontWeight: 600, color: '#ff9500', marginBottom: 6 }}>
-                管理员尚未配置 iCloud 模板
-              </div>
-              <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', lineHeight: 1.5 }}>
-                iOS 15+ 要求通过 iCloud 链接安装快捷指令。
-                请联系管理员在「快捷指令 → 模板管理」中添加 iCloud 模板链接。
-              </div>
-            </div>
-
-            <div style={{ fontSize: 14, color: 'rgba(255,255,255,0.6)', marginBottom: 12, textAlign: 'left' }}>
-              你也可以手动创建快捷指令，复制以下信息配置：
-            </div>
-          </>
+          // 无 iCloud 模板 → 打开快捷指令 App
+          <a
+            href="shortcuts://"
+            onClick={() => setStep(2)}
+            style={{
+              ...btnStyle,
+              textDecoration: 'none',
+              background: step >= 1 ? '#007aff' : 'rgba(255,255,255,0.12)',
+              color: step >= 1 ? '#fff' : 'rgba(255,255,255,0.4)',
+              pointerEvents: step >= 1 ? 'auto' : 'none',
+            }}
+          >
+            📲 打开「快捷指令」App
+          </a>
         )}
 
-        {/* Token 区域 */}
-        <div style={{
-          width: '100%', marginTop: 20, padding: 14, borderRadius: 12,
-          background: 'rgba(255,255,255,0.06)', textAlign: 'left',
-          border: '1px solid rgba(255,255,255,0.1)',
-        }}>
-          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginBottom: 6 }}>
-            Token
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <code style={{
-              flex: 1, fontSize: 11, color: 'rgba(255,255,255,0.8)',
-              wordBreak: 'break-all', fontFamily: 'monospace',
-            }}>
-              {token}
-            </code>
-            <button
-              onClick={() => doCopy(token, setTokenCopied)}
-              style={{
-                ...copyBtnStyle,
-                padding: '6px 12px', fontSize: 12, marginTop: 0,
-                background: tokenCopied ? 'rgba(52,199,89,0.2)' : 'rgba(255,255,255,0.12)',
-              }}
-            >
-              {tokenCopied ? '✅' : '复制'}
-            </button>
-          </div>
+        {step < 1 && (
+          <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', marginTop: 6 }}>
+            请先复制配置
+          </p>
+        )}
+
+        {/* ── 操作说明 ── */}
+        <div style={{ marginTop: 20, textAlign: 'left' }}>
+          {hasICloud ? (
+            // iCloud 模式说明
+            <>
+              <StepItem n={1} done={step >= 1}>
+                点击上方「复制配置」
+              </StepItem>
+              <StepItem n={2} done={step >= 2}>
+                点击「安装快捷指令」，在弹框中点「添加」
+              </StepItem>
+              <StepItem n={3}>
+                首次使用时会自动从剪贴板读取配置
+              </StepItem>
+            </>
+          ) : (
+            // 手动创建说明
+            <>
+              <StepItem n={1} done={step >= 1}>
+                点击上方「复制配置」
+              </StepItem>
+              <StepItem n={2} done={step >= 2}>
+                打开「快捷指令」App → 点右上角 <strong>+</strong> 新建
+              </StepItem>
+              <StepItem n={3}>
+                搜索并添加「获取URL内容」操作
+              </StepItem>
+              <StepItem n={4}>
+                <strong>URL</strong>: 粘贴收藏接口地址<br/>
+                <strong>方法</strong>: POST<br/>
+                <strong>头部</strong>: Authorization = Bearer {token.slice(0, 8)}...
+              </StepItem>
+            </>
+          )}
         </div>
 
-        {/* API 端点 */}
+        {/* ── Token / API 信息 ── */}
         <div style={{
-          width: '100%', marginTop: 10, padding: 14, borderRadius: 12,
-          background: 'rgba(255,255,255,0.06)', textAlign: 'left',
-          border: '1px solid rgba(255,255,255,0.1)',
+          marginTop: 20, paddingTop: 16,
+          borderTop: '1px solid rgba(255,255,255,0.08)',
         }}>
-          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginBottom: 6 }}>
-            收藏接口
-          </div>
-          <code style={{
-            fontSize: 11, color: '#007aff',
-            wordBreak: 'break-all', fontFamily: 'monospace',
-          }}>
-            {data.serverUrl}/api/shortcuts/collect
-          </code>
+          <InfoRow label="Token" value={token} onCopy={() => doCopy(token)} mono />
+          <InfoRow label="收藏接口" value={`${data.serverUrl}/api/shortcuts/collect`} onCopy={() => doCopy(`${data.serverUrl}/api/shortcuts/collect`)} />
         </div>
 
-        {/* Features */}
+        {/* ── 功能 ── */}
         <div style={{
-          marginTop: 24, paddingTop: 20,
-          borderTop: '1px solid rgba(255,255,255,0.08)', textAlign: 'left',
+          marginTop: 16, paddingTop: 14,
+          borderTop: '1px solid rgba(255,255,255,0.06)',
+          fontSize: 12, color: 'rgba(255,255,255,0.4)',
         }}>
-          <h3 style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)', marginBottom: 10 }}>功能</h3>
-          {['分享菜单一键收藏 URL/文本', '收藏成功后系统通知反馈', '自动版本检查'].map((f) => (
-            <div key={f} style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', marginBottom: 5, paddingLeft: 8 }}>
-              ✅ {f}
-            </div>
-          ))}
+          ✅ 分享菜单一键收藏 &nbsp;&nbsp; ✅ 系统通知反馈 &nbsp;&nbsp; ✅ 自动版本检查
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Sub-components ───
+
+function StepItem({ n, done, children }: { n: number; done?: boolean; children: React.ReactNode }) {
+  return (
+    <div style={{
+      display: 'flex', gap: 10, alignItems: 'flex-start',
+      padding: '8px 0', fontSize: 14, lineHeight: 1.5,
+      color: done ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.8)',
+      textDecoration: done ? 'line-through' : 'none',
+    }}>
+      <span style={{
+        width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 12, fontWeight: 700,
+        background: done ? '#34c759' : 'rgba(255,255,255,0.12)',
+        color: done ? '#fff' : 'rgba(255,255,255,0.6)',
+      }}>
+        {done ? '✓' : n}
+      </span>
+      <span>{children}</span>
+    </div>
+  );
+}
+
+function InfoRow({ label, value, onCopy, mono }: {
+  label: string; value: string; onCopy: () => void; mono?: boolean;
+}) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 8,
+      padding: '8px 10px', marginBottom: 6, borderRadius: 10,
+      background: 'rgba(255,255,255,0.05)',
+    }}>
+      <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', width: 50, flexShrink: 0 }}>
+        {label}
+      </span>
+      <span style={{
+        flex: 1, fontSize: 11, wordBreak: 'break-all',
+        color: mono ? 'rgba(255,255,255,0.7)' : '#007aff',
+        fontFamily: mono ? 'monospace' : 'inherit',
+      }}>
+        {value}
+      </span>
+      <button
+        onClick={() => {
+          onCopy();
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+        }}
+        style={{
+          padding: '4px 10px', borderRadius: 6, fontSize: 11, border: 'none',
+          cursor: 'pointer', flexShrink: 0,
+          background: copied ? 'rgba(52,199,89,0.2)' : 'rgba(255,255,255,0.1)',
+          color: copied ? '#34c759' : 'rgba(255,255,255,0.6)',
+        }}
+      >
+        {copied ? '已复制' : '复制'}
+      </button>
     </div>
   );
 }
@@ -268,60 +295,24 @@ const cardStyle: React.CSSProperties = {
   background: 'rgba(255,255,255,0.08)',
   backdropFilter: 'blur(20px)',
   borderRadius: 24,
-  padding: '40px 28px',
-  maxWidth: 420,
+  padding: '36px 24px',
+  maxWidth: 400,
   width: '100%',
   textAlign: 'center',
   border: '1px solid rgba(255,255,255,0.12)',
   boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
 };
 
-const stepStyle: React.CSSProperties = {
-  background: 'rgba(255,255,255,0.06)',
-  borderRadius: 14,
-  padding: 14,
-  marginBottom: 10,
-  textAlign: 'left',
-  display: 'flex',
-  alignItems: 'flex-start',
-  gap: 12,
-};
-
-const stepNumStyle: React.CSSProperties = {
-  background: '#007aff',
-  color: 'white',
-  width: 26,
-  height: 26,
-  borderRadius: '50%',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  fontWeight: 700,
-  fontSize: 13,
-  flexShrink: 0,
-};
-
-const primaryBtnStyle: React.CSSProperties = {
+const btnStyle: React.CSSProperties = {
   display: 'block',
-  marginTop: 20,
-  padding: '15px 24px',
-  background: '#007aff',
-  color: 'white',
-  textDecoration: 'none',
+  width: '100%',
+  padding: '14px 20px',
   borderRadius: 14,
   fontSize: 16,
   fontWeight: 600,
-  textAlign: 'center',
-};
-
-const copyBtnStyle: React.CSSProperties = {
-  display: 'inline-block',
-  marginTop: 8,
-  padding: '8px 16px',
-  background: 'rgba(255,255,255,0.12)',
-  color: 'white',
-  border: '1px solid rgba(255,255,255,0.2)',
-  borderRadius: 8,
-  fontSize: 13,
+  border: 'none',
   cursor: 'pointer',
+  color: '#fff',
+  textAlign: 'center',
+  boxSizing: 'border-box',
 };

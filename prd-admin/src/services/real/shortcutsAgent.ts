@@ -76,3 +76,35 @@ export async function getBindingTargets() {
     { method: 'GET' }
   );
 }
+
+// ========== Templates ==========
+
+export interface ShortcutTemplateItem {
+  id: string;
+  name: string;
+  description?: string;
+  iCloudUrl: string;
+  version: string;
+  isDefault: boolean;
+  isActive: boolean;
+  createdAt: string;
+}
+
+export async function listTemplates() {
+  return apiRequest<{ items: ShortcutTemplateItem[] }>(api.shortcuts.templates(), {
+    method: 'GET',
+  });
+}
+
+export async function createTemplate(input: { name: string; iCloudUrl: string; description?: string; isDefault?: boolean }) {
+  return apiRequest<ShortcutTemplateItem>('/api/shortcuts/admin/templates', {
+    method: 'POST',
+    body: input,
+  });
+}
+
+export async function deleteTemplate(id: string) {
+  return apiRequest<void>(`/api/shortcuts/admin/templates/${id}`, {
+    method: 'DELETE',
+  });
+}
