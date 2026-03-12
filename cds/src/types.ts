@@ -141,12 +141,12 @@ export interface CdsConfig {
   portStart: number;
   /** Shared environment variables (reserved, currently empty) */
   sharedEnv: Record<string, string>;
-  /** Switch domain for branch switching (e.g., "switch.miduo.org") */
+  /** Switch domain for branch switching (e.g., "switch.example.com") */
   switchDomain?: string;
-  /** Main domain to redirect to after switching (e.g., "miduo.org") */
+  /** Main domain to redirect to after switching (e.g., "example.com") */
   mainDomain?: string;
-  /** Preview domain suffix for subdomain-based preview (e.g., "preview.miduo.org").
-   *  Each branch gets its own subdomain: <slug>.preview.miduo.org */
+  /** Preview domain suffix for subdomain-based preview (e.g., "preview.example.com").
+   *  Each branch gets its own subdomain: <slug>.preview.example.com */
   previewDomain?: string;
   /** JWT settings (passed through to branch services) */
   jwt: {

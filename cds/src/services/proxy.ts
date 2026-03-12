@@ -167,7 +167,7 @@ export class ProxyService {
   }
 
   /**
-   * Check if the host is a preview subdomain (e.g., <slug>.preview.miduo.org).
+   * Check if the host is a preview subdomain (e.g., <slug>.preview.example.com).
    * Returns the branch slug extracted from the subdomain, or null.
    */
   private extractPreviewBranch(host: string): string | null {
@@ -189,13 +189,13 @@ export class ProxyService {
     const host = req.headers.host || '';
     const url = req.url || '/';
 
-    // ── Switch domain: switch.miduo.org/<prefix>/<suffix> ──
+    // ── Switch domain: switch.example.com/<prefix>/<suffix> ──
     if (this.isSwitchDomain(host)) {
       this.handleSwitchRequest(req, res);
       return;
     }
 
-    // ── Preview subdomain: <slug>.preview.miduo.org ──
+    // ── Preview subdomain: <slug>.preview.example.com ──
     // Each branch gets its own subdomain — no cookies needed, fully independent
     const previewSlug = this.extractPreviewBranch(host);
     if (previewSlug) {
