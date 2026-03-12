@@ -468,6 +468,15 @@ function QRCodePanel({
         <QRCodeSVG value={installPageUrl} size={220} level="H" />
       </div>
 
+      {/* URL display */}
+      <div style={{
+        width: '100%', fontSize: 11, color: 'var(--text-muted)',
+        wordBreak: 'break-all', textAlign: 'center', lineHeight: 1.4,
+        padding: '0 8px',
+      }}>
+        {installPageUrl}
+      </div>
+
       {/* Token (one-time display) */}
       <div style={{
         width: '100%', padding: 12, borderRadius: 10,
