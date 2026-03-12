@@ -156,7 +156,10 @@ async function init() {
 async function loadConfig() {
   try {
     const data = await api('GET', '/config');
-    document.getElementById('workerLabel').textContent = `Worker :${data.workerPort || '?'}`;
+    const dot = document.getElementById('workerDot');
+    const label = document.getElementById('workerLabel');
+    if (dot) dot.title = `Worker 端口: ${data.workerPort || '?'}`;
+    if (label) { label.textContent = '已连接'; label.title = `Worker :${data.workerPort || '?'}`; }
     githubRepoUrl = data.githubRepoUrl || '';
     mainDomain = data.mainDomain || '';
     switchDomain = data.switchDomain || '';

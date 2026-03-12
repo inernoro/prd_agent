@@ -8,11 +8,11 @@
   --bg-elevated: rgba(26, 29, 40, 0.75);
   --bg-input: rgba(10, 12, 18, 0.8);
   --bg-hover: rgba(30, 34, 46, 0.7);
-  --border: rgba(255, 255, 255, 0.06);
-  --border-light: rgba(255, 255, 255, 0.04);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-light: rgba(255, 255, 255, 0.05);
   --border-focus: rgba(200, 255, 0, 0.4);
-  --glass-border: rgba(255, 255, 255, 0.08);
-  --glass-highlight: rgba(255, 255, 255, 0.03);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --glass-highlight: rgba(255, 255, 255, 0.04);
   --text-primary: #e8ecf4;
   --text-secondary: #8f96a8;
   --text-muted: #4e5563;
@@ -274,7 +274,7 @@ h2 { font-size: 14px; font-weight: 600; margin-bottom: 8px; letter-spacing: -0.0
   background: var(--accent);
   box-shadow: 0 0 10px rgba(200, 255, 0, 0.5), 0 0 3px rgba(200, 255, 0, 0.8);
 }
-.gateway-label { font-size: 13px; font-weight: 600; color: var(--text-primary); white-space: nowrap; }
+.gateway-label { font-size: 12px; font-weight: 500; color: var(--text-secondary); white-space: nowrap; cursor: help; }
 .gateway-right { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .gateway-hint { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
 
@@ -558,16 +558,17 @@ button.text-btn:hover { color: var(--accent); }
   background: var(--bg-card);
   backdrop-filter: blur(20px) saturate(1.2);
   -webkit-backdrop-filter: blur(20px) saturate(1.2);
-  border: 1px solid var(--glass-border);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-left: 3px solid transparent;
   border-radius: var(--radius);
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-sm), inset 0 1px 0 rgba(255, 255, 255, 0.06);
   overflow: hidden;
   position: relative;
 }
 .branch-card:hover {
-  box-shadow: var(--shadow-md);
+  border-color: rgba(255, 255, 255, 0.20);
+  box-shadow: var(--shadow-md), inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 /* Status-based left border — subtle indicator, not attention-grabbing */
 .branch-card.status-running { border-left-color: transparent; }
@@ -1154,11 +1155,12 @@ a.branch-name:hover { color: var(--accent); }
   .icon-btn.labeled { padding: 0 8px; }
   .icon-btn-label { font-size: 12px; }
 
-  /* Cards — stronger borders for visibility */
+  /* Cards — even stronger borders for mobile visibility */
   .branch-card {
     padding: 12px 12px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.18);
     border-left: 3px solid transparent;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255, 255, 255, 0.08);
   }
   .branch-card + .branch-card { margin-top: 8px; }
 
