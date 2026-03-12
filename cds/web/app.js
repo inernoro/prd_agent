@@ -4,6 +4,12 @@ const busyBranches = new Set();
 const loadingActions = new Map();
 let globalBusy = false;
 
+// ── Inline deploy log state ──
+// { branchId: { lines: string[], status: 'building'|'done'|'error', expanded: bool, errorMsg?: string } }
+const inlineDeployLogs = new Map();
+// Track branches that just finished deploy (for slide-in animation)
+const justDeployed = new Set();
+
 // ── Icons (Octicons 16px) ──
 const ICON = {
   branch: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 3.25a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6a1 1 0 00-1 1v1.128a2.251 2.251 0 11-1.5 0V5.372a2.25 2.25 0 111.5 0v1.836A2.493 2.493 0 016 7h4a1 1 0 001-1v-.628A2.25 2.25 0 019.5 3.25z"/></svg>',
@@ -386,11 +392,10 @@ async function deployBranch(id) {
   if (busyBranches.has(id)) return;
   markTouched(id);
   busyBranches.add(id);
+  // Ensure card is expanded so user sees inline log
+  collapsedBranches.delete(id);
+  inlineDeployLogs.set(id, { lines: [], status: 'building', expanded: false });
   renderBranches();
-
-  openLogModal(`部署 ${id}`);
-  const body = document.getElementById('logModalBody');
-  body.innerHTML = '<div class="live-log-header"><span class="live-dot"></span> 构建中...</div><div class="live-log-output" id="liveOutput"></div>';
 
   try {
     const res = await fetch(`${API}/branches/${id}/deploy`, { method: 'POST' });
@@ -413,36 +418,79 @@ async function deployBranch(id) {
       for (const line of lines) {
         if (line.startsWith('data: ')) {
           const data = JSON.parse(line.slice(6));
-          const el = document.getElementById('liveOutput');
-          if (!el) continue;
+          const log = inlineDeployLogs.get(id);
+          if (!log) continue;
 
           if (data.chunk) {
-            el.textContent += data.chunk;
+            log.lines.push(data.chunk);
           } else if (data.step) {
-            el.textContent += `\n[${data.status}] ${data.title || data.step}\n`;
+            log.lines.push(`[${data.status}] ${data.title || data.step}`);
           } else if (data.message) {
-            el.textContent += `\n${data.message}\n`;
+            log.lines.push(data.message);
           }
-          el.scrollTop = el.scrollHeight;
+          updateInlineLog(id);
         }
       }
     }
+    // Deploy succeeded
+    const log = inlineDeployLogs.get(id);
+    if (log) log.status = 'done';
+    justDeployed.add(id);
+    setTimeout(() => { justDeployed.delete(id); }, 3000);
   } catch (e) {
+    const log = inlineDeployLogs.get(id);
+    if (log) { log.status = 'error'; log.errorMsg = e.message; }
     showToast(e.message, 'error');
   }
 
   busyBranches.delete(id);
   await loadBranches();
+  // Keep inline log visible for a moment, then clean up
+  setTimeout(() => { inlineDeployLogs.delete(id); renderBranches(); }, 5000);
+}
+
+function updateInlineLog(id) {
+  const el = document.getElementById(`inline-log-${CSS.escape(id)}`);
+  if (!el) return;
+  const log = inlineDeployLogs.get(id);
+  if (!log) return;
+  // Show last few lines in compact mode, all lines in expanded mode
+  const maxLines = log.expanded ? log.lines.length : 6;
+  const visibleLines = log.lines.slice(-maxLines);
+  el.textContent = visibleLines.join('\n');
+  el.scrollTop = el.scrollHeight;
+}
+
+function toggleInlineLog(id, event) {
+  event.stopPropagation();
+  const log = inlineDeployLogs.get(id);
+  if (!log) return;
+  log.expanded = !log.expanded;
+  const wrapper = document.getElementById(`inline-log-wrapper-${CSS.escape(id)}`);
+  if (wrapper) wrapper.classList.toggle('expanded', log.expanded);
+  updateInlineLog(id);
+}
+
+function openFullDeployLog(id, event) {
+  event.stopPropagation();
+  const log = inlineDeployLogs.get(id);
+  if (!log) return;
+  openLogModal(`部署日志 ${id}`);
+  document.getElementById('logModalBody').innerHTML =
+    `<pre class="live-log-output">${esc(log.lines.join('\n') || '暂无日志')}</pre>`;
 }
 
 async function stopBranch(id) {
   if (busyBranches.has(id) || isLoading(id, 'stop')) return;
   markTouched(id);
+  busyBranches.add(id);
   setLoading(id, 'stop');
+  renderBranches();
   try {
     await api('POST', `/branches/${id}/stop`);
     showToast('服务已停止', 'success');
   } catch (e) { showToast(e.message, 'error'); }
+  busyBranches.delete(id);
   clearLoading(id, 'stop');
   await loadBranches();
 }
@@ -610,13 +658,9 @@ async function deploySingleService(id, profileId) {
   if (busyBranches.has(id)) return;
   busyBranches.add(id);
   closeDeployMenu(id);
+  collapsedBranches.delete(id);
+  inlineDeployLogs.set(id, { lines: [], status: 'building', expanded: false });
   renderBranches();
-
-  const profile = buildProfiles.find(p => p.id === profileId);
-  const label = profile ? profile.name : profileId;
-  openLogModal(`部署 ${id} / ${label}`);
-  const body = document.getElementById('logModalBody');
-  body.innerHTML = '<div class="live-log-header"><span class="live-dot"></span> 构建中...</div><div class="live-log-output" id="liveOutput"></div>';
 
   try {
     const res = await fetch(`${API}/branches/${id}/deploy/${encodeURIComponent(profileId)}`, { method: 'POST' });
@@ -639,26 +683,33 @@ async function deploySingleService(id, profileId) {
       for (const line of lines) {
         if (line.startsWith('data: ')) {
           const data = JSON.parse(line.slice(6));
-          const el = document.getElementById('liveOutput');
-          if (!el) continue;
+          const log = inlineDeployLogs.get(id);
+          if (!log) continue;
 
           if (data.chunk) {
-            el.textContent += data.chunk;
+            log.lines.push(data.chunk);
           } else if (data.step) {
-            el.textContent += `\n[${data.status}] ${data.title || data.step}\n`;
+            log.lines.push(`[${data.status}] ${data.title || data.step}`);
           } else if (data.message) {
-            el.textContent += `\n${data.message}\n`;
+            log.lines.push(data.message);
           }
-          el.scrollTop = el.scrollHeight;
+          updateInlineLog(id);
         }
       }
     }
+    const log = inlineDeployLogs.get(id);
+    if (log) log.status = 'done';
+    justDeployed.add(id);
+    setTimeout(() => { justDeployed.delete(id); }, 3000);
   } catch (e) {
+    const log = inlineDeployLogs.get(id);
+    if (log) { log.status = 'error'; log.errorMsg = e.message; }
     showToast(e.message, 'error');
   }
 
   busyBranches.delete(id);
   await loadBranches();
+  setTimeout(() => { inlineDeployLogs.delete(id); renderBranches(); }, 5000);
 }
 
 // ── Deploy dropdown menu ──
@@ -916,8 +967,38 @@ function renderBranches() {
       `;
     }
 
+    const deployLog = inlineDeployLogs.get(b.id);
+    const isDeploying = !!deployLog && deployLog.status === 'building';
+    const deployFailed = !!deployLog && deployLog.status === 'error';
+    const isJustDeployed = justDeployed.has(b.id);
+
+    // Commit area: show inline log during deploy, otherwise show commit info
+    let commitAreaHtml = '';
+    if (deployLog) {
+      const logStatusClass = deployLog.status === 'error' ? 'deploy-log-error' : deployLog.status === 'done' ? 'deploy-log-done' : '';
+      commitAreaHtml = `
+        <div class="inline-deploy-log-wrapper ${deployLog.expanded ? 'expanded' : ''} ${logStatusClass}" id="inline-log-wrapper-${esc(b.id)}" onclick="toggleInlineLog('${esc(b.id)}', event)">
+          <div class="inline-deploy-log-header">
+            <span class="live-dot ${deployLog.status !== 'building' ? 'stopped' : ''}"></span>
+            <span>${deployLog.status === 'building' ? '部署中...' : deployLog.status === 'done' ? '部署完成' : '部署失败'}</span>
+            ${deployLog.status !== 'building' ? `<span class="inline-log-expand-hint" onclick="openFullDeployLog('${esc(b.id)}', event)">查看完整日志</span>` : ''}
+          </div>
+          <pre class="inline-deploy-log" id="inline-log-${esc(b.id)}">${esc(deployLog.expanded ? deployLog.lines.join('\n') : deployLog.lines.slice(-6).join('\n'))}</pre>
+          ${deployFailed && deployLog.errorMsg ? `<div class="inline-deploy-error">${esc(deployLog.errorMsg)}</div>` : ''}
+        </div>
+      `;
+    } else if (b.subject) {
+      commitAreaHtml = `
+        <div class="branch-actions-commit" onclick="event.stopPropagation(); toggleCommitLog('${esc(b.id)}', this)" title="点击查看历史提交">
+          ${commitIcon(b.subject)} ${esc(b.subject)}
+          <svg class="commit-chevron" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M4.427 5.427a.75.75 0 011.146 0L8 7.854l2.427-2.427a.75.75 0 111.146 1.146l-3 3a.75.75 0 01-1.146 0l-3-3a.75.75 0 010-1.146z"/></svg>
+        </div>
+      `;
+    }
+
     return `
-      <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} ${expanded ? 'expanded' : ''} ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''} ${previewMode === 'multi' && isRunning ? 'show-preview-border' : ''}" data-branch-id="${esc(b.id)}">
+      <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} ${expanded ? 'expanded' : ''} ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''} ${previewMode === 'multi' && isRunning ? 'show-preview-border' : ''} ${isDeploying ? 'is-deploying' : ''}" data-branch-id="${esc(b.id)}">
+        ${isDeploying ? '<div class="deploy-progress-bar"><div class="deploy-progress-bar-fill"></div></div>' : ''}
         <div class="branch-card-header" onclick="toggleBranchCard('${esc(b.id)}', event)">
           <div class="branch-card-left">
             <span class="fav-toggle ${b.isFavorite ? 'active' : ''}" onclick="event.stopPropagation(); toggleFavorite('${esc(b.id)}')" title="${b.isFavorite ? '取消收藏' : '收藏'}">
@@ -930,7 +1011,7 @@ function renderBranches() {
           </div>
           <div class="branch-card-right">
             ${portBadgesHtml}
-            <span class="branch-meta">${statusLabel(b.status)}${b.lastAccessedAt ? ` · ${relativeTime(b.lastAccessedAt)}` : ''}</span>
+            <span class="branch-meta">${isLoading(b.id, 'stop') ? '<span class="stopping-indicator"><span class="btn-spinner"></span> 停止中</span>' : statusLabel(b.status)}${b.lastAccessedAt && !isLoading(b.id, 'stop') ? ` · ${relativeTime(b.lastAccessedAt)}` : ''}</span>
             <span class="update-pull-group" onclick="event.stopPropagation(); pullBranch('${esc(b.id)}')" title="${hasUpdates ? branchUpdates[b.id].behind + ' 个新提交，点击拉取' : '点击拉取最新代码'}">
               ${hasUpdates ? `<span class="update-badge">↓${branchUpdates[b.id].behind}</span>` : ''}
               <svg class="update-pull-icon ${isLoading(b.id, 'pull') ? 'spinning' : ''}" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
@@ -938,20 +1019,15 @@ function renderBranches() {
             <svg class="branch-chevron ${expanded ? 'open' : ''}" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M4.427 5.427a.75.75 0 011.146 0L8 7.854l2.427-2.427a.75.75 0 111.146 1.146l-3 3a.75.75 0 01-1.146 0l-3-3a.75.75 0 010-1.146z"/></svg>
           </div>
         </div>
-        ${b.errorMessage ? `<div class="branch-error" title="${esc(b.errorMessage)}">${esc(b.errorMessage)}</div>` : ''}
+        ${b.errorMessage && !deployLog ? `<div class="branch-error" title="${esc(b.errorMessage)}">${esc(b.errorMessage)}</div>` : ''}
         <div class="branch-card-body ${expanded ? '' : 'hidden'}">
           ${notesHtml}
           <div class="branch-card-actions-row">
             <div class="branch-actions-left">
               ${actionsLeftHtml}
             </div>
-            ${b.subject ? `
-              <div class="branch-actions-commit" onclick="event.stopPropagation(); toggleCommitLog('${esc(b.id)}', this)" title="点击查看历史提交">
-                ${commitIcon(b.subject)} ${esc(b.subject)}
-                <svg class="commit-chevron" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M4.427 5.427a.75.75 0 011.146 0L8 7.854l2.427-2.427a.75.75 0 111.146 1.146l-3 3a.75.75 0 01-1.146 0l-3-3a.75.75 0 010-1.146z"/></svg>
-              </div>
-            ` : ''}
-            <div class="branch-actions-right">
+            ${commitAreaHtml}
+            <div class="branch-actions-right ${isJustDeployed ? 'slide-in-right' : ''}">
               ${actionsRightHtml}
             </div>
           </div>
