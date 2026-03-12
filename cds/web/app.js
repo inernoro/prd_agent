@@ -368,18 +368,35 @@ function StateService_slugify(branch) {
 async function addBranch(name) {
   dropdown.classList.add('hidden');
   searchInput.value = '';
-  try {
-    await api('POST', '/branches', { branch: name });
-    const slug = StateService_slugify(name);
+  const slug = StateService_slugify(name);
+
+  // Optimistic: immediately add placeholder card
+  if (!localBranches.find(b => b.id === slug)) {
+    localBranches.push({
+      id: slug, branch: name, worktreePath: '',
+      services: {}, status: 'idle', createdAt: new Date().toISOString(),
+      subject: '', _optimistic: true,
+    });
     markTouched(slug);
-    showToast(`分支 "${name}" 已添加`, 'success');
-    await loadBranches();
-    // Scroll to the newly added card
+    renderBranches();
     requestAnimationFrame(() => {
       const card = document.querySelector(`.branch-card[data-branch-id="${CSS.escape(slug)}"]`);
       if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
-  } catch (e) { showToast(e.message, 'error'); }
+  }
+
+  // Server request in background
+  try {
+    await api('POST', '/branches', { branch: name });
+    showToast(`分支 "${name}" 已添加`, 'success');
+  } catch (e) {
+    // Rollback optimistic add on failure
+    localBranches = localBranches.filter(b => b.id !== slug || !b._optimistic);
+    renderBranches();
+    showToast(e.message, 'error');
+    return;
+  }
+  await loadBranches();
 }
 
 async function deployBranch(id) {
