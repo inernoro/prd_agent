@@ -553,15 +553,14 @@ button.text-btn:hover { color: var(--accent); }
 .branch-card:hover {
   box-shadow: var(--shadow-md);
 }
-/* Status-based left border — the card's "soul" */
-.branch-card.status-running { border-left-color: var(--accent); }
+/* Status-based left border — subtle indicator, not attention-grabbing */
+.branch-card.status-running { border-left-color: var(--green-dim); }
 .branch-card.status-building { border-left-color: var(--yellow); }
-.branch-card.status-idle { border-left-color: var(--text-muted); }
+.branch-card.status-idle { border-left-color: transparent; }
 .branch-card.status-stopped { border-left-color: transparent; }
 .branch-card.status-error { border-left-color: var(--red); }
 .branch-card.active {
-  border-left-color: var(--accent);
-  background: linear-gradient(90deg, rgba(200, 255, 0, 0.02) 0%, var(--bg-card) 30%);
+  border-left-color: var(--green-dim);
 }
 .branch-card.has-error {
   border-left-color: var(--red);
@@ -616,15 +615,16 @@ button.text-btn:hover { color: var(--accent); }
 .set-default-link:hover { opacity: 1 !important; color: var(--accent); }
 .branch-meta { font-size: 11px; color: var(--text-secondary); line-height: 1.4; white-space: nowrap; }
 .port-badge {
-  display: inline-flex; align-items: center;
-  font-size: 11px; padding: 1px 7px;
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 11px; padding: 2px 8px;
   font-family: var(--font-mono);
   font-weight: 500; border-radius: 4px;
   transition: all var(--transition); cursor: pointer;
 }
-.port-badge.run-port { color: var(--accent); background: rgba(200, 255, 0, 0.06); }
-.port-badge.run-port:hover { background: rgba(200, 255, 0, 0.12); }
-.port-badge.port-idle { color: var(--text-muted); background: rgba(255, 255, 255, 0.03); }
+.port-badge svg.inline-icon { width: 12px; height: 12px; opacity: 0.8; }
+.port-badge.run-port { color: var(--accent); background: rgba(200, 255, 0, 0.08); border: 1px solid rgba(200, 255, 0, 0.12); }
+.port-badge.run-port:hover { background: rgba(200, 255, 0, 0.15); border-color: rgba(200, 255, 0, 0.25); }
+.port-badge.port-idle { color: var(--text-muted); background: rgba(255, 255, 255, 0.03); border: 1px solid transparent; }
 .port-badge.port-idle:hover { background: rgba(255, 255, 255, 0.06); }
 
 .branch-error {

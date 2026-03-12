@@ -833,12 +833,14 @@ function renderBranches() {
     // Build stop menu item for deploy dropdown
     const stopMenuItem = isRunning ? `<div class="deploy-menu-divider"></div><div class="deploy-menu-item deploy-menu-item-danger" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); stopBranch('${esc(b.id)}')">停止所有服务</div>` : '';
 
-    // Port badges — clean pills
+    // Port badges — icon + name:port, icon from profile config
     const portBadgesHtml = services.length > 0 ? services.map(([pid, svc]) => {
+      const profile = buildProfiles.find(p => p.id === pid);
+      const icon = getPortIcon(pid, profile);
       return `<span class="port-badge ${svc.status === 'running' ? 'run-port' : 'port-idle'}"
                     onclick="event.stopPropagation(); viewContainerLogs('${esc(b.id)}', '${esc(pid)}')"
                     title="${esc(pid)}: ${svc.status}">
-                ${esc(pid)}:${svc.hostPort}
+                ${icon} ${esc(pid)}:${svc.hostPort}
               </span>`;
     }).join('') : '';
 
@@ -1281,6 +1283,7 @@ function openProfileModal() {
     : buildProfiles.map(p => `
         <div class="config-item">
           <div class="config-item-main">
+            <span style="opacity:0.7">${getPortIcon(p.id, p)}</span>
             <strong>${esc(p.name)}</strong>
             <code class="config-item-match">${esc(p.dockerImage)}</code>
             <span class="config-item-detail">${esc(p.workDir || '.')} :${p.containerPort}</span>
@@ -1303,6 +1306,12 @@ function openProfileModal() {
       <div class="form-row">
         <input id="profileId" placeholder="配置 ID（如 api、web）" class="form-input sm">
         <input id="profileName" placeholder="显示名称" class="form-input sm">
+        <select id="profileIcon" class="form-input xs" title="端口图标">
+          <option value="">图标</option>
+          <option value="api">📊 API</option>
+          <option value="web">🌐 Web</option>
+          <option value="default">⊖ 默认</option>
+        </select>
       </div>
       <div class="form-row">
         <select id="profileImage" class="form-input" onchange="onImageSelect(this.value)">
@@ -1355,9 +1364,11 @@ async function saveProfileAndRefresh() {
   const selectVal = document.getElementById('profileImage').value;
   const customVal = document.getElementById('profileImageCustom').value.trim();
   const dockerImage = selectVal === '__custom__' ? customVal : selectVal;
+  const iconVal = document.getElementById('profileIcon').value;
   const profile = {
     id: document.getElementById('profileId').value.trim(),
     name: document.getElementById('profileName').value.trim(),
+    icon: iconVal || undefined,
     dockerImage,
     workDir: document.getElementById('profileWorkDir').value.trim() || '.',
     containerPort: parseInt(document.getElementById('profilePort').value) || 8080,
