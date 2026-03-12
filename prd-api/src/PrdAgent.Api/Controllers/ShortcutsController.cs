@@ -493,6 +493,19 @@ public class ShortcutsController : ControllerBase
     }
 
     /// <summary>
+    /// 下载通用模板 .shortcut 文件（管理员用，下载后在 Mac/iPhone 上安装并分享到 iCloud 获取链接）
+    /// </summary>
+    [AllowAnonymous]
+    [HttpGet("template-download")]
+    public IActionResult DownloadTemplateFile([FromQuery] string? name)
+    {
+        var templateName = string.IsNullOrWhiteSpace(name) ? "PrdAgent 收藏" : name.Trim();
+        var plistXml = ShortcutPlistGenerator.GenerateTemplate(templateName);
+        var bytes = System.Text.Encoding.UTF8.GetBytes(plistXml);
+        return File(bytes, "application/x-shortcut", $"{templateName}.shortcut");
+    }
+
+    /// <summary>
     /// 版本检查端点（快捷指令运行时调用，支持自动更新提示）
     /// 对标截图中的 Config.update 模式
     /// </summary>

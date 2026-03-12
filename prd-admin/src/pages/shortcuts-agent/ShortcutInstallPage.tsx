@@ -6,7 +6,6 @@ interface InstallData {
   icon: string;
   color: string;
   token: string;
-  downloadUrl: string;
   iCloudUrl?: string;
   serverUrl: string;
 }
@@ -14,6 +13,8 @@ interface InstallData {
 /**
  * 公开安装引导页 — iPhone 扫码后打开此页面
  * 路由: /s/shortcut/:id?t=scs-xxx
+ *
+ * 流程: 复制 Token → 安装 iCloud 模板 → 首次运行自动读取剪贴板
  */
 export default function ShortcutInstallPage() {
   const { id } = useParams<{ id: string }>();
@@ -22,7 +23,8 @@ export default function ShortcutInstallPage() {
 
   const [data, setData] = useState<InstallData | null>(null);
   const [error, setError] = useState('');
-  const [copied, setCopied] = useState(false);
+  const [tokenCopied, setTokenCopied] = useState(false);
+  const [configCopied, setConfigCopied] = useState(false);
 
   useEffect(() => {
     if (!id || !token) {
@@ -41,23 +43,33 @@ export default function ShortcutInstallPage() {
       .catch(() => setError('网络错误，请稍后重试'));
   }, [id, token]);
 
-  const copyToken = () => {
-    navigator.clipboard.writeText(token).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+  const doCopy = (text: string, setter: (v: boolean) => void) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setter(true);
+      setTimeout(() => setter(false), 3000);
     }).catch(() => {
-      // Fallback for older browsers
       const ta = document.createElement('textarea');
-      ta.value = token;
+      ta.value = text;
       ta.style.position = 'fixed';
       ta.style.left = '-9999px';
       document.body.appendChild(ta);
       ta.select();
       document.execCommand('copy');
       document.body.removeChild(ta);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      setter(true);
+      setTimeout(() => setter(false), 3000);
     });
+  };
+
+  // 一键复制配置 JSON（Token + ServerUrl），快捷指令首次运行时从剪贴板读取
+  const copyConfigAndInstall = () => {
+    if (!data) return;
+    const config = JSON.stringify({
+      token: token,
+      endpoint: `${data.serverUrl}/api/shortcuts/collect`,
+      name: data.name,
+    });
+    doCopy(config, setConfigCopied);
   };
 
   if (error) {
@@ -85,75 +97,154 @@ export default function ShortcutInstallPage() {
     );
   }
 
+  const hasICloud = !!data.iCloudUrl;
+
   return (
     <div style={containerStyle}>
       <div style={cardStyle}>
         <div style={{ fontSize: 64, marginBottom: 16 }}>{data.icon || '⚡'}</div>
         <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 8 }}>{data.name}</h1>
-        <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: 14, marginBottom: 32 }}>
-          PrdAgent 快捷指令 · 一键安装
+        <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: 14, marginBottom: 28 }}>
+          PrdAgent 快捷指令
         </div>
 
-        {/* Steps */}
-        <div style={stepStyle}>
-          <div style={stepNumStyle}>1</div>
-          <div style={{ fontSize: 15, lineHeight: 1.5 }}>点击下方按钮下载快捷指令（密钥已内置）</div>
-        </div>
-        <div style={stepStyle}>
-          <div style={stepNumStyle}>2</div>
-          <div style={{ fontSize: 15, lineHeight: 1.5 }}>iOS 弹出提示，点击「添加快捷指令」</div>
-        </div>
-        <div style={stepStyle}>
-          <div style={stepNumStyle}>3</div>
-          <div style={{ fontSize: 15, lineHeight: 1.5 }}>
-            在任意 App 点击<strong>分享 → {data.name}</strong>即可收藏
-          </div>
-        </div>
+        {hasICloud ? (
+          <>
+            {/* iCloud 安装流程 */}
+            <div style={stepStyle}>
+              <div style={stepNumStyle}>1</div>
+              <div style={{ fontSize: 15, lineHeight: 1.5, flex: 1 }}>
+                点击下方按钮<strong>复制配置</strong>到剪贴板
+              </div>
+            </div>
+            <div style={stepStyle}>
+              <div style={stepNumStyle}>2</div>
+              <div style={{ fontSize: 15, lineHeight: 1.5, flex: 1 }}>
+                点击「安装快捷指令」，在 iOS 弹框中点「添加」
+              </div>
+            </div>
+            <div style={stepStyle}>
+              <div style={stepNumStyle}>3</div>
+              <div style={{ fontSize: 15, lineHeight: 1.5, flex: 1 }}>
+                首次运行时会自动从剪贴板读取配置，完成绑定
+              </div>
+            </div>
 
-        {/* Download Button */}
-        <a href={data.downloadUrl} style={primaryBtnStyle}>
-          📲 下载并安装快捷指令
-        </a>
+            {/* 主按钮：复制配置 + 安装 */}
+            <button
+              onClick={copyConfigAndInstall}
+              style={{
+                ...primaryBtnStyle,
+                background: configCopied ? '#34c759' : '#007aff',
+                border: 'none',
+                cursor: 'pointer',
+                width: '100%',
+              }}
+            >
+              {configCopied ? '✅ 已复制配置' : '📋 第一步：复制配置'}
+            </button>
 
-        {/* iCloud fallback */}
-        {data.iCloudUrl && (
-          <div style={{ marginTop: 16 }}>
-            <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, marginBottom: 8 }}>
-              或使用 iCloud 模板（需手动配置 token）
-            </p>
-            <a href={data.iCloudUrl} style={secondaryBtnStyle}>
-              iCloud 模板
+            <a
+              href={data.iCloudUrl}
+              style={{
+                ...primaryBtnStyle,
+                marginTop: 12,
+                width: '100%',
+                background: configCopied ? '#007aff' : 'rgba(255,255,255,0.15)',
+                color: configCopied ? 'white' : 'rgba(255,255,255,0.5)',
+                boxSizing: 'border-box',
+              }}
+            >
+              📲 第二步：安装快捷指令
             </a>
-          </div>
+
+            {!configCopied && (
+              <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', marginTop: 8 }}>
+                请先复制配置，再点安装
+              </p>
+            )}
+          </>
+        ) : (
+          <>
+            {/* 无 iCloud 模板：显示手动配置 */}
+            <div style={{
+              padding: 16, borderRadius: 14,
+              background: 'rgba(255, 149, 0, 0.12)',
+              border: '1px solid rgba(255, 149, 0, 0.25)',
+              marginBottom: 20, textAlign: 'left',
+            }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: '#ff9500', marginBottom: 6 }}>
+                管理员尚未配置 iCloud 模板
+              </div>
+              <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', lineHeight: 1.5 }}>
+                iOS 15+ 要求通过 iCloud 链接安装快捷指令。
+                请联系管理员在「快捷指令 → 模板管理」中添加 iCloud 模板链接。
+              </div>
+            </div>
+
+            <div style={{ fontSize: 14, color: 'rgba(255,255,255,0.6)', marginBottom: 12, textAlign: 'left' }}>
+              你也可以手动创建快捷指令，复制以下信息配置：
+            </div>
+          </>
         )}
+
+        {/* Token 区域 */}
+        <div style={{
+          width: '100%', marginTop: 20, padding: 14, borderRadius: 12,
+          background: 'rgba(255,255,255,0.06)', textAlign: 'left',
+          border: '1px solid rgba(255,255,255,0.1)',
+        }}>
+          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginBottom: 6 }}>
+            Token
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <code style={{
+              flex: 1, fontSize: 11, color: 'rgba(255,255,255,0.8)',
+              wordBreak: 'break-all', fontFamily: 'monospace',
+            }}>
+              {token}
+            </code>
+            <button
+              onClick={() => doCopy(token, setTokenCopied)}
+              style={{
+                ...copyBtnStyle,
+                padding: '6px 12px', fontSize: 12, marginTop: 0,
+                background: tokenCopied ? 'rgba(52,199,89,0.2)' : 'rgba(255,255,255,0.12)',
+              }}
+            >
+              {tokenCopied ? '✅' : '复制'}
+            </button>
+          </div>
+        </div>
+
+        {/* API 端点 */}
+        <div style={{
+          width: '100%', marginTop: 10, padding: 14, borderRadius: 12,
+          background: 'rgba(255,255,255,0.06)', textAlign: 'left',
+          border: '1px solid rgba(255,255,255,0.1)',
+        }}>
+          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginBottom: 6 }}>
+            收藏接口
+          </div>
+          <code style={{
+            fontSize: 11, color: '#007aff',
+            wordBreak: 'break-all', fontFamily: 'monospace',
+          }}>
+            {data.serverUrl}/api/shortcuts/collect
+          </code>
+        </div>
 
         {/* Features */}
         <div style={{
-          marginTop: 24, paddingTop: 24,
-          borderTop: '1px solid rgba(255,255,255,0.1)', textAlign: 'left',
+          marginTop: 24, paddingTop: 20,
+          borderTop: '1px solid rgba(255,255,255,0.08)', textAlign: 'left',
         }}>
-          <h3 style={{ fontSize: 14, color: 'rgba(255,255,255,0.5)', marginBottom: 12 }}>内置功能</h3>
-          {['密钥已预置，无需手动配置', '自动版本检查，有更新时提醒', '分享菜单一键收藏 URL/文本', '收藏成功后系统通知反馈'].map((f) => (
-            <div key={f} style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', marginBottom: 6, paddingLeft: 8 }}>
+          <h3 style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)', marginBottom: 10 }}>功能</h3>
+          {['分享菜单一键收藏 URL/文本', '收藏成功后系统通知反馈', '自动版本检查'].map((f) => (
+            <div key={f} style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', marginBottom: 5, paddingLeft: 8 }}>
               ✅ {f}
             </div>
           ))}
-        </div>
-
-        {/* Android */}
-        <div style={{
-          marginTop: 24, paddingTop: 24,
-          borderTop: '1px solid rgba(255,255,255,0.1)',
-        }}>
-          <h3 style={{ fontSize: 16, marginBottom: 12, color: 'rgba(255,255,255,0.7)' }}>Android 用户</h3>
-          <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.5)', lineHeight: 1.6 }}>
-            安装 <strong>HTTP Shortcuts</strong> 应用，新建快捷方式：<br />
-            URL: <code style={{ color: '#007aff' }}>{data.serverUrl}/api/shortcuts/collect</code><br />
-            方法: POST · Header: Authorization: Bearer {token.slice(0, 12)}...
-          </p>
-          <button onClick={copyToken} style={copyBtnStyle}>
-            {copied ? '✅ 已复制' : '📋 复制完整 Token'}
-          </button>
         </div>
       </div>
     </div>
@@ -177,7 +268,7 @@ const cardStyle: React.CSSProperties = {
   background: 'rgba(255,255,255,0.08)',
   backdropFilter: 'blur(20px)',
   borderRadius: 24,
-  padding: '40px 32px',
+  padding: '40px 28px',
   maxWidth: 420,
   width: '100%',
   textAlign: 'center',
@@ -187,9 +278,9 @@ const cardStyle: React.CSSProperties = {
 
 const stepStyle: React.CSSProperties = {
   background: 'rgba(255,255,255,0.06)',
-  borderRadius: 16,
-  padding: 16,
-  marginBottom: 12,
+  borderRadius: 14,
+  padding: 14,
+  marginBottom: 10,
   textAlign: 'left',
   display: 'flex',
   alignItems: 'flex-start',
@@ -199,48 +290,38 @@ const stepStyle: React.CSSProperties = {
 const stepNumStyle: React.CSSProperties = {
   background: '#007aff',
   color: 'white',
-  width: 28,
-  height: 28,
+  width: 26,
+  height: 26,
   borderRadius: '50%',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
   fontWeight: 700,
-  fontSize: 14,
+  fontSize: 13,
   flexShrink: 0,
 };
 
 const primaryBtnStyle: React.CSSProperties = {
-  display: 'inline-block',
-  marginTop: 24,
-  padding: '16px 32px',
+  display: 'block',
+  marginTop: 20,
+  padding: '15px 24px',
   background: '#007aff',
   color: 'white',
   textDecoration: 'none',
   borderRadius: 14,
-  fontSize: 18,
+  fontSize: 16,
   fontWeight: 600,
-};
-
-const secondaryBtnStyle: React.CSSProperties = {
-  display: 'inline-block',
-  padding: '10px 20px',
-  background: 'rgba(255,255,255,0.1)',
-  color: 'rgba(255,255,255,0.7)',
-  textDecoration: 'none',
-  borderRadius: 10,
-  fontSize: 14,
-  border: '1px solid rgba(255,255,255,0.15)',
+  textAlign: 'center',
 };
 
 const copyBtnStyle: React.CSSProperties = {
   display: 'inline-block',
   marginTop: 8,
-  padding: '10px 24px',
+  padding: '8px 16px',
   background: 'rgba(255,255,255,0.12)',
   color: 'white',
   border: '1px solid rgba(255,255,255,0.2)',
-  borderRadius: 10,
-  fontSize: 14,
+  borderRadius: 8,
+  fontSize: 13,
   cursor: 'pointer',
 };
