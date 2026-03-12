@@ -778,6 +778,53 @@ export function createBranchRouter(deps: RouterDeps): Router {
     });
   });
 
+  // ── Check updates (compare local vs remote for all branches) ──
+
+  router.get('/check-updates', async (_req, res) => {
+    const state = stateService.getState();
+    const branches = Object.values(state.branches);
+
+    // Fetch latest remote refs once
+    try {
+      await shell.exec(
+        'GIT_TERMINAL_PROMPT=0 git fetch origin --prune',
+        { cwd: config.repoRoot, timeout: 30_000 },
+      );
+    } catch {
+      // If fetch fails, we can still compare with last known remote state
+    }
+
+    const updates: Record<string, { behind: number; latestRemoteSubject?: string }> = {};
+
+    await Promise.all(branches.map(async (b) => {
+      try {
+        // Count commits local is behind remote
+        const behindResult = await shell.exec(
+          `git rev-list --count HEAD..origin/${b.branch} 2>/dev/null || echo 0`,
+          { cwd: b.worktreePath, timeout: 10_000 },
+        );
+        const behind = parseInt(behindResult.stdout.trim()) || 0;
+
+        let latestRemoteSubject: string | undefined;
+        if (behind > 0) {
+          const subjectResult = await shell.exec(
+            `git log -1 --format=%s origin/${b.branch}`,
+            { cwd: b.worktreePath, timeout: 5_000 },
+          );
+          latestRemoteSubject = subjectResult.stdout.trim();
+        }
+
+        if (behind > 0) {
+          updates[b.id] = { behind, latestRemoteSubject };
+        }
+      } catch {
+        // Branch may not have a remote tracking branch — skip
+      }
+    }));
+
+    res.json({ updates });
+  });
+
   // ── Cleanup all non-default branches ──
 
   router.post('/cleanup', async (_req, res) => {

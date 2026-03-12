@@ -21,6 +21,13 @@ function commitIcon(subject) {
   return /^Merge pull request/.test(subject) ? ICON.pr : ICON.commit;
 }
 
+// ── Update tracking ──
+let branchUpdates = {}; // { branchId: { behind: number, latestRemoteSubject?: string } }
+let isCheckingUpdates = false;
+
+// ── Preview mode: 'simple' (set default + open main) or 'multi' (subdomain per branch) ──
+let previewMode = localStorage.getItem('cds_preview_mode') || 'simple';
+
 // ── Utilities ──
 
 async function api(method, path, body) {
@@ -107,9 +114,15 @@ function toggleBranchCard(id, event) {
 
 // ── Init ──
 
+let mainDomain = '';
+let switchDomain = '';
+let previewDomain = '';
+let workerPort = '';
+
 async function init() {
   await Promise.all([loadBranches(), loadProfiles(), loadRoutingRules(), loadConfig(), loadEnvVars()]);
   refreshRemoteBranches();
+  updatePreviewModeUI();
   setInterval(loadBranches, 10000);
 }
 
@@ -129,6 +142,44 @@ async function loadConfig() {
     previewDomain = data.previewDomain || '';
     workerPort = data.workerPort || '';
   } catch (e) { console.error('loadConfig:', e); }
+}
+
+// ── Check updates (global refresh) ──
+
+async function checkAllUpdates() {
+  if (isCheckingUpdates) return;
+  isCheckingUpdates = true;
+  const btn = document.getElementById('globalRefreshBtn');
+  if (btn) btn.classList.add('spinning');
+  try {
+    const data = await api('GET', '/check-updates');
+    branchUpdates = data.updates || {};
+    renderBranches();
+    const count = Object.keys(branchUpdates).length;
+    if (count > 0) {
+      showToast(`${count} 个分支有远程更新`, 'info');
+    } else {
+      showToast('所有分支已是最新', 'success');
+    }
+  } catch (e) {
+    showToast('检查更新失败: ' + e.message, 'error');
+  }
+  isCheckingUpdates = false;
+  if (btn) btn.classList.remove('spinning');
+}
+
+function togglePreviewMode() {
+  previewMode = previewMode === 'simple' ? 'multi' : 'simple';
+  localStorage.setItem('cds_preview_mode', previewMode);
+  updatePreviewModeUI();
+  showToast(previewMode === 'multi' ? '已开启多分支预览模式' : '已切换到简洁预览模式', 'info');
+}
+
+function updatePreviewModeUI() {
+  const toggle = document.getElementById('previewModeToggle');
+  if (!toggle) return;
+  toggle.classList.toggle('active', previewMode === 'multi');
+  toggle.title = previewMode === 'multi' ? '多分支预览（子域名独立访问）' : '简洁预览（设为默认并打开）';
 }
 
 // ── Data loading ──
@@ -313,22 +364,33 @@ async function pullBranch(id) {
   await loadBranches();
 }
 
-function previewBranch(id) {
-  // Build preview URL: prefer previewDomain (subdomain-based, each branch independent),
-  // then switchDomain (cookie-based), then /_switch/ fallback
-  let url;
+async function previewBranch(id) {
   const slug = StateService_slugify(id);
-  if (previewDomain) {
-    // e.g., claude-fix-login-password-issue-cqbmo.preview.miduo.org
-    url = `${location.protocol}//${slug}.${previewDomain}`;
-  } else if (switchDomain) {
-    url = `${location.protocol}//${switchDomain}/${encodeURIComponent(id)}`;
-  } else if (mainDomain) {
-    url = `${location.protocol}//${mainDomain}/_switch/${encodeURIComponent(id)}`;
+
+  if (previewMode === 'multi' && previewDomain) {
+    // Multi-branch mode: open subdomain URL directly
+    const url = `${location.protocol}//${slug}.${previewDomain}`;
+    window.open(url, '_blank');
+    return;
+  }
+
+  // Simple mode: set as default branch → open main domain
+  try {
+    await api('POST', `/branches/${slug}/set-default`);
+    defaultBranch = slug;
+    renderBranches();
+  } catch (e) {
+    showToast('Failed to set default: ' + e.message, 'error');
+    return;
+  }
+
+  let url;
+  if (mainDomain) {
+    url = `${location.protocol}//${mainDomain}`;
   } else if (workerPort) {
-    url = `${location.protocol}//${location.hostname}:${workerPort}/_switch/${encodeURIComponent(id)}`;
+    url = `${location.protocol}//${location.hostname}:${workerPort}`;
   } else {
-    showToast('未配置预览域名，请设置 PREVIEW_DOMAIN', 'error');
+    showToast('MAIN_DOMAIN not configured', 'error');
     return;
   }
   window.open(url, '_blank');
@@ -576,6 +638,7 @@ function renderBranches() {
                     ${esc(pid)} :${svc.hostPort}
                   </span>
                 `).join('') : ''}
+                ${branchUpdates[b.id] ? `<span class="update-badge" title="${branchUpdates[b.id].behind} 个新提交: ${esc(branchUpdates[b.id].latestRemoteSubject || '')}">↓${branchUpdates[b.id].behind}</span>` : ''}
               </div>
             </div>
           </div>

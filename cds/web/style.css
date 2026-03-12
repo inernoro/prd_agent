@@ -202,6 +202,39 @@ h2 { font-size: 14px; font-weight: 600; margin-bottom: 8px; letter-spacing: -0.0
 .icon-btn.logout-btn:hover { color: var(--red); border-color: var(--red-border); background: var(--red-bg); }
 .header-divider { width: 1px; height: 20px; background: var(--border); margin: 0 4px; flex-shrink: 0; }
 
+/* ── Global refresh spin ── */
+#globalRefreshBtn.spinning svg { animation: spin 0.8s linear infinite; }
+
+/* ── Preview mode toggle ── */
+.preview-mode-toggle.active {
+  color: var(--accent) !important;
+  background: var(--accent-bg) !important;
+  border-color: var(--accent-border) !important;
+}
+.preview-mode-toggle { position: relative; }
+.preview-mode-toggle.active::after {
+  content: '';
+  position: absolute; bottom: -2px; left: 50%; transform: translateX(-50%);
+  width: 4px; height: 4px; border-radius: 50%;
+  background: var(--accent);
+}
+
+/* ── Update badge ── */
+.update-badge {
+  display: inline-flex; align-items: center;
+  font-size: 10px; font-weight: 600;
+  color: var(--blue); background: var(--blue-bg);
+  border: 1px solid var(--blue-border);
+  padding: 1px 6px; border-radius: 8px;
+  font-family: var(--font-mono);
+  animation: update-pulse 2s ease-in-out infinite;
+  cursor: help; flex-shrink: 0; margin-left: 6px;
+}
+@keyframes update-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
 /* ════════════════ Worker Status Bar ════════════════ */
 
 .gateway-bar {

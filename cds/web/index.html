@@ -14,6 +14,12 @@
         <span class="header-subtitle" id="branchCount"></span>
       </div>
       <div class="header-actions">
+        <button id="globalRefreshBtn" class="icon-btn" onclick="checkAllUpdates()" title="检查远程更新">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
+        </button>
+        <button id="previewModeToggle" class="icon-btn preview-mode-toggle" onclick="togglePreviewMode()" title="切换预览模式">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 1.75a.75.75 0 00-.75.75v3c0 .414.336.75.75.75h3a.75.75 0 000-1.5H3.37l.78-.78A5.001 5.001 0 0112.62 3H11.5a.75.75 0 000 1.5h3a.75.75 0 00.75-.75v-3a.75.75 0 00-1.5 0v1.12A6.502 6.502 0 003.58 3.29L2.75 4.12V2.5a.75.75 0 00-.75-.75zM14.5 14.25a.75.75 0 00.75-.75v-3a.75.75 0 00-.75-.75h-3a.75.75 0 000 1.5h1.13l-.78.78A5.001 5.001 0 013.38 13H4.5a.75.75 0 010 1.5h-3a.75.75 0 01-.75-.75v-3a.75.75 0 011.5 0v1.12a6.502 6.502 0 0010.17-1.29l.83-.83v1.63a.75.75 0 00.75.75z"/></svg>
+        </button>
         <button class="icon-btn labeled" onclick="openEnvModal()" title="环境变量">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2.5 2a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h11a.5.5 0 00.5-.5v-11a.5.5 0 00-.5-.5h-11zM1 2.5A1.5 1.5 0 012.5 1h11A1.5 1.5 0 0115 2.5v11a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 011 13.5v-11zM4 5h2v1H4V5zm3 0h5v1H7V5zM4 8h2v1H4V8zm3 0h5v1H7V8zM4 11h2v1H4v-1zm3 0h5v1H7v-1z"/></svg>
           <span class="icon-btn-label">变量</span>
