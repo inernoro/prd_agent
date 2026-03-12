@@ -1137,20 +1137,121 @@ a.branch-name:hover { color: var(--accent); }
 /* ════════════════ Responsive ════════════════ */
 
 @media (max-width: 640px) {
-  .container { padding: 12px; }
-  h1 { font-size: 16px; }
+  .container { padding: 10px; }
+  h1 { font-size: 15px; }
+  /* Hide rotating subtitle on small screens to save space */
+  .title-rotating { display: none; }
+  .header-subtitle { font-size: 10px; padding: 2px 8px; }
+  header { margin-bottom: 16px; padding-bottom: 12px; }
+
+  /* Gateway bar stacked */
   .gateway-bar { flex-direction: column; align-items: stretch; gap: 8px; }
   .gateway-right { justify-content: flex-end; }
   select { max-width: 140px; }
-  .branch-card-actions-row button { font-size: 11px; padding: 5px 8px; }
-  .branch-card-actions-row { flex-wrap: wrap; }
-  .branch-card-right { flex-wrap: wrap; }
-  .modal-dialog { max-height: 95vh; }
-  .branch-card { padding: 12px 14px; }
-  .branch-name { font-size: 13px; }
-  .branch-meta { font-size: 10px; }
+
+  /* Header actions */
   .header-actions { gap: 4px; }
   .icon-btn.labeled { padding: 0 8px; }
+  .icon-btn-label { font-size: 12px; }
+
+  /* Cards — stronger borders for visibility */
+  .branch-card {
+    padding: 12px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-left: 3px solid transparent;
+  }
+  .branch-card + .branch-card { margin-top: 8px; }
+
+  /* Branch name: allow two-line wrapping instead of truncation */
+  .branch-name {
+    font-size: 13px;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+    line-height: 1.35;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* Header layout: stack left items vertically if needed */
+  .branch-card-header { gap: 8px; flex-wrap: wrap; }
+  .branch-card-left { gap: 6px; }
+  .branch-card-right {
+    flex-wrap: wrap; gap: 4px;
+    /* On mobile, right side goes to new line below name */
+    width: 100%; justify-content: flex-end;
+  }
+
+  /* Meta info */
+  .branch-meta { font-size: 10px; }
+
+  /* Port badges slightly smaller */
+  .port-badge { font-size: 10px; padding: 2px 6px; }
+
+  /* Touch-friendly buttons: minimum 44px tap target */
+  .branch-card-actions-row {
+    flex-wrap: wrap; gap: 6px;
+    padding: 8px 0 4px;
+  }
+  .branch-card-actions-row button {
+    font-size: 11px; padding: 8px 10px;
+    min-height: 36px;
+  }
+  .icon-btn { width: 40px; height: 40px; }
+  .icon-btn.sm { width: 40px; height: 40px; }
+  .icon-btn.xs { width: 32px; height: 32px; }
+
+  /* Always show tag-add button on mobile (no hover) */
+  .branch-tag-add { opacity: 0.5; }
+  .branch-card:hover .branch-tag-add { opacity: 0.5; }
+  .branch-tag-add:active { opacity: 1; color: var(--accent); border-color: var(--accent-border); }
+
+  /* Always show set-default link on mobile */
+  .set-default-link { opacity: 0.4; }
+  .branch-card-header:hover .set-default-link { opacity: 0.4; }
+  .set-default-link:active { opacity: 1; color: var(--accent); }
+
+  /* Update-pull group: touch target */
+  .update-pull-group { padding: 4px 8px; min-height: 36px; }
+
+  /* Tag filter bar: bigger touch targets */
+  .tag-filter-chip { padding: 6px 12px; font-size: 12px; }
+  .tag-filter-bar { padding: 8px 0; gap: 6px; }
+
+  /* Tags in card: slightly bigger for touch */
+  .branch-tag { padding: 3px 8px; }
+  .branch-tag-remove { width: 18px; height: 18px; font-size: 14px; }
+
+  /* Busy spinner: reposition to avoid overlap with right-side elements */
+  .branch-card.is-busy::after {
+    top: auto; bottom: 12px; right: 12px;
+    width: 14px; height: 14px;
+  }
+
+  /* Stopping indicator: compact */
+  .stopping-indicator { font-size: 11px; }
+
+  /* Modal fullscreen on mobile */
+  .modal-dialog { max-height: 95vh; }
+
+  /* Inline deploy log: responsive */
+  .inline-deploy-log { font-size: 10px; padding: 8px 10px; max-height: 100px; }
+
+  /* Commit info: hide on mobile to save space, show on expand */
+  .branch-actions-commit { display: none; }
+
+  /* Dropdown/menu items: bigger touch targets */
+  .branch-dropdown-item { padding: 10px 14px; min-height: 44px; }
+  .settings-menu-item { min-height: 44px; padding: 10px 14px; }
+  .settings-menu { min-width: 220px; }
+
+  /* Branch search input: bigger touch target */
+  .branch-picker-input-wrap input { height: 44px; font-size: 15px; }
+
+  /* Fav toggle: bigger */
+  .fav-toggle svg.inline-icon { width: 16px; height: 16px; }
 }
 
 @media (min-width: 641px) {
