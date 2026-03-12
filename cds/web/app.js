@@ -4,16 +4,16 @@ const busyBranches = new Set();
 const loadingActions = new Map();
 let globalBusy = false;
 
-// ── Icons (Octicons 12px) ──
+// ── Icons (Octicons 14px) ──
 const ICON = {
-  branch: '<svg class="inline-icon" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 3.25a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6a1 1 0 00-1 1v1.128a2.251 2.251 0 11-1.5 0V5.372a2.25 2.25 0 111.5 0v1.836A2.493 2.493 0 016 7h4a1 1 0 001-1v-.628A2.25 2.25 0 019.5 3.25z"/></svg>',
-  commit: '<svg class="inline-icon" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M11.93 8.5a4.002 4.002 0 01-7.86 0H.75a.75.75 0 010-1.5h3.32a4.002 4.002 0 017.86 0h3.32a.75.75 0 010 1.5h-3.32zM8 10.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z"/></svg>',
-  pr: '<svg class="inline-icon" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M5.45 5.154A4.25 4.25 0 009.25 7.5h1.378a2.251 2.251 0 110 1.5H9.25A5.734 5.734 0 015 7.123v3.505a2.25 2.25 0 11-1.5 0V5.372a2.25 2.25 0 111.95-.218zM4.25 13.5a.75.75 0 100-1.5.75.75 0 000 1.5zm8.5-4.5a.75.75 0 100-1.5.75.75 0 000 1.5zM5 3.25a.75.75 0 10-1.5 0 .75.75 0 001.5 0z"/></svg>',
-  pull: '<svg class="inline-icon" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.004a.75.75 0 01.75.75v5.689l1.97-1.97a.749.749 0 111.06 1.06l-3.25 3.25a.749.749 0 01-1.06 0L4.22 7.533a.749.749 0 111.06-1.06l1.97 1.97V2.754a.75.75 0 01.75-.75zM2.75 12.5h10.5a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5z"/></svg>',
-  preview: '<svg class="inline-icon" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M0 8s3-5.5 8-5.5S16 8 16 8s-3 5.5-8 5.5S0 8 0 8zm8 3.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7zm0-1.5a2 2 0 110-4 2 2 0 010 4z"/></svg>',
-  deploy: '<svg class="inline-icon" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8.75.75a.75.75 0 00-1.5 0V2h-3A1.75 1.75 0 002.5 3.75v2.5A1.75 1.75 0 004.25 8h7.5A1.75 1.75 0 0013.5 6.25v-2.5A1.75 1.75 0 0011.75 2h-3V.75zM4.25 3.5h7.5a.25.25 0 01.25.25v2.5a.25.25 0 01-.25.25h-7.5a.25.25 0 01-.25-.25v-2.5a.25.25 0 01.25-.25zM2.5 10.25a.75.75 0 01.75-.75h9.5a.75.75 0 010 1.5h-9.5a.75.75 0 01-.75-.75zm.75 2.25a.75.75 0 000 1.5h9.5a.75.75 0 000-1.5h-9.5z"/></svg>',
-  trash: '<svg class="inline-icon" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM11 3V1.75A1.75 1.75 0 009.25 0h-2.5A1.75 1.75 0 005 1.75V3H2.75a.75.75 0 000 1.5h.3l.8 8.2A1.75 1.75 0 005.6 14.5h4.8a1.75 1.75 0 001.75-1.8l.8-8.2h.3a.75.75 0 000-1.5H11z"/></svg>',
-  reset: '<svg class="inline-icon" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5z"/></svg>',
+  branch: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 3.25a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6a1 1 0 00-1 1v1.128a2.251 2.251 0 11-1.5 0V5.372a2.25 2.25 0 111.5 0v1.836A2.493 2.493 0 016 7h4a1 1 0 001-1v-.628A2.25 2.25 0 019.5 3.25z"/></svg>',
+  commit: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M11.93 8.5a4.002 4.002 0 01-7.86 0H.75a.75.75 0 010-1.5h3.32a4.002 4.002 0 017.86 0h3.32a.75.75 0 010 1.5h-3.32zM8 10.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z"/></svg>',
+  pr: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M5.45 5.154A4.25 4.25 0 009.25 7.5h1.378a2.251 2.251 0 110 1.5H9.25A5.734 5.734 0 015 7.123v3.505a2.25 2.25 0 11-1.5 0V5.372a2.25 2.25 0 111.95-.218zM4.25 13.5a.75.75 0 100-1.5.75.75 0 000 1.5zm8.5-4.5a.75.75 0 100-1.5.75.75 0 000 1.5zM5 3.25a.75.75 0 10-1.5 0 .75.75 0 001.5 0z"/></svg>',
+  pull: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.004a.75.75 0 01.75.75v5.689l1.97-1.97a.749.749 0 111.06 1.06l-3.25 3.25a.749.749 0 01-1.06 0L4.22 7.533a.749.749 0 111.06-1.06l1.97 1.97V2.754a.75.75 0 01.75-.75zM2.75 12.5h10.5a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5z"/></svg>',
+  preview: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M0 8s3-5.5 8-5.5S16 8 16 8s-3 5.5-8 5.5S0 8 0 8zm8 3.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7zm0-1.5a2 2 0 110-4 2 2 0 010 4z"/></svg>',
+  deploy: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8.75.75a.75.75 0 00-1.5 0V2h-3A1.75 1.75 0 002.5 3.75v2.5A1.75 1.75 0 004.25 8h7.5A1.75 1.75 0 0013.5 6.25v-2.5A1.75 1.75 0 0011.75 2h-3V.75zM4.25 3.5h7.5a.25.25 0 01.25.25v2.5a.25.25 0 01-.25.25h-7.5a.25.25 0 01-.25-.25v-2.5a.25.25 0 01.25-.25zM2.5 10.25a.75.75 0 01.75-.75h9.5a.75.75 0 010 1.5h-9.5a.75.75 0 01-.75-.75zm.75 2.25a.75.75 0 000 1.5h9.5a.75.75 0 000-1.5h-9.5z"/></svg>',
+  trash: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM11 3V1.75A1.75 1.75 0 009.25 0h-2.5A1.75 1.75 0 005 1.75V3H2.75a.75.75 0 000 1.5h.3l.8 8.2A1.75 1.75 0 005.6 14.5h4.8a1.75 1.75 0 001.75-1.8l.8-8.2h.3a.75.75 0 000-1.5H11z"/></svg>',
+  reset: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5z"/></svg>',
 };
 
 /** Pick commit/PR icon based on subject text */
@@ -167,7 +167,11 @@ function togglePreviewMode() {
   previewMode = previewMode === 'simple' ? 'multi' : 'simple';
   localStorage.setItem('cds_preview_mode', previewMode);
   updatePreviewModeUI();
-  showToast(previewMode === 'multi' ? '已开启多分支预览模式' : '已切换到简洁预览模式', 'info');
+  if (previewMode === 'multi' && !previewDomain) {
+    showToast('已开启多分支预览模式，但 PREVIEW_DOMAIN 未配置，预览将回退到简洁模式。请在「变量」中设置 PREVIEW_DOMAIN。', 'error');
+  } else {
+    showToast(previewMode === 'multi' ? '已开启多分支预览模式' : '已切换到简洁预览模式', 'info');
+  }
 }
 
 function updatePreviewModeUI() {
@@ -353,6 +357,7 @@ async function pullBranch(id) {
   setLoading(id, 'pull');
   try {
     const result = await api('POST', `/branches/${id}/pull`);
+    delete branchUpdates[id];
     showToast(result.updated ? `已更新: ${result.head}` : '已是最新', result.updated ? 'success' : 'info');
   } catch (e) { showToast(e.message, 'error'); }
   clearLoading(id, 'pull');
@@ -375,7 +380,7 @@ async function previewBranch(id) {
     defaultBranch = slug;
     renderBranches();
   } catch (e) {
-    showToast('Failed to set default: ' + e.message, 'error');
+    showToast('设为默认失败: ' + e.message, 'error');
     return;
   }
 
@@ -385,7 +390,7 @@ async function previewBranch(id) {
   } else if (workerPort) {
     url = `${location.protocol}//${location.hostname}:${workerPort}`;
   } else {
-    showToast('MAIN_DOMAIN not configured', 'error');
+    showToast('MAIN_DOMAIN 未配置，无法打开预览', 'error');
     return;
   }
   window.open(url, '_blank');
@@ -622,7 +627,7 @@ function renderBranches() {
                 <span class="branch-name">${ICON.branch} ${esc(b.branch)}</span>
                 ${isDefault ? '<span class="active-badge">默认</span>' : `
                   <button class="icon-btn xs set-default-btn" onclick="event.stopPropagation(); setDefaultBranch('${esc(b.id)}')" title="设为默认分支" ${btnDisabled('setDefault')}>
-                    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg>
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg>
                   </button>
                 `}
                 ${services.length > 0 ? services.map(([pid, svc]) => `
@@ -640,7 +645,7 @@ function renderBranches() {
           <div class="branch-card-right">
             ${services.length > 0 ? `
               <button class="icon-btn xs" onclick="event.stopPropagation(); openContainerEnvPicker('${esc(b.id)}')" title="容器变量" ${isBusy ? 'disabled' : ''}>
-                <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M2.5 2a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h11a.5.5 0 00.5-.5v-11a.5.5 0 00-.5-.5h-11zM1 2.5A1.5 1.5 0 012.5 1h11A1.5 1.5 0 0115 2.5v11a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 011 13.5v-11zM4 5h2v1H4V5zm3 0h5v1H7V5zM4 8h2v1H4V8zm3 0h5v1H7V8zM4 11h2v1H4v-1zm3 0h5v1H7v-1z"/></svg>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2.5 2a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h11a.5.5 0 00.5-.5v-11a.5.5 0 00-.5-.5h-11zM1 2.5A1.5 1.5 0 012.5 1h11A1.5 1.5 0 0115 2.5v11a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 011 13.5v-11zM4 5h2v1H4V5zm3 0h5v1H7V5zM4 8h2v1H4V8zm3 0h5v1H7V8zM4 11h2v1H4v-1zm3 0h5v1H7v-1z"/></svg>
               </button>
             ` : ''}
             <span class="branch-meta">${statusLabel(b.status)}${b.lastAccessedAt ? ` · ${relativeTime(b.lastAccessedAt)}` : ''}</span>
@@ -673,7 +678,7 @@ function renderBranches() {
             <div class="branch-commits-wrap">
               <div class="branch-requirement" onclick="event.stopPropagation(); toggleCommitLog('${esc(b.id)}', this)" title="点击查看历史提交">
                 ${commitIcon(b.subject)} ${esc(b.subject)}
-                <svg class="commit-chevron" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M4.427 5.427a.75.75 0 011.146 0L8 7.854l2.427-2.427a.75.75 0 111.146 1.146l-3 3a.75.75 0 01-1.146 0l-3-3a.75.75 0 010-1.146z"/></svg>
+                <svg class="commit-chevron" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M4.427 5.427a.75.75 0 011.146 0L8 7.854l2.427-2.427a.75.75 0 111.146 1.146l-3 3a.75.75 0 01-1.146 0l-3-3a.75.75 0 010-1.146z"/></svg>
               </div>
             </div>
           ` : ''}
