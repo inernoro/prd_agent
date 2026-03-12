@@ -454,9 +454,9 @@ function updateInlineLog(id) {
   if (!el) return;
   const log = inlineDeployLogs.get(id);
   if (!log) return;
-  // Show last few lines in compact mode, all lines in expanded mode
-  const maxLines = log.expanded ? log.lines.length : 6;
-  const visibleLines = log.lines.slice(-maxLines);
+  const filtered = log.lines.filter(l => l.trim());
+  const maxLines = log.expanded ? filtered.length : 8;
+  const visibleLines = filtered.slice(-maxLines);
   el.textContent = visibleLines.join('\n');
   el.scrollTop = el.scrollHeight;
 }
@@ -972,26 +972,32 @@ function renderBranches() {
     const deployFailed = !!deployLog && deployLog.status === 'error';
     const isJustDeployed = justDeployed.has(b.id);
 
-    // Commit area: show inline log during deploy, otherwise show commit info
+    // Commit area in actions row (always show commit info)
     let commitAreaHtml = '';
-    if (deployLog) {
-      const logStatusClass = deployLog.status === 'error' ? 'deploy-log-error' : deployLog.status === 'done' ? 'deploy-log-done' : '';
-      commitAreaHtml = `
-        <div class="inline-deploy-log-wrapper ${deployLog.expanded ? 'expanded' : ''} ${logStatusClass}" id="inline-log-wrapper-${esc(b.id)}" onclick="toggleInlineLog('${esc(b.id)}', event)">
-          <div class="inline-deploy-log-header">
-            <span class="live-dot ${deployLog.status !== 'building' ? 'stopped' : ''}"></span>
-            <span>${deployLog.status === 'building' ? '部署中...' : deployLog.status === 'done' ? '部署完成' : '部署失败'}</span>
-            ${deployLog.status !== 'building' ? `<span class="inline-log-expand-hint" onclick="openFullDeployLog('${esc(b.id)}', event)">查看完整日志</span>` : ''}
-          </div>
-          <pre class="inline-deploy-log" id="inline-log-${esc(b.id)}">${esc(deployLog.expanded ? deployLog.lines.join('\n') : deployLog.lines.slice(-6).join('\n'))}</pre>
-          ${deployFailed && deployLog.errorMsg ? `<div class="inline-deploy-error">${esc(deployLog.errorMsg)}</div>` : ''}
-        </div>
-      `;
-    } else if (b.subject) {
+    if (b.subject) {
       commitAreaHtml = `
         <div class="branch-actions-commit" onclick="event.stopPropagation(); toggleCommitLog('${esc(b.id)}', this)" title="点击查看历史提交">
           ${commitIcon(b.subject)} ${esc(b.subject)}
           <svg class="commit-chevron" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M4.427 5.427a.75.75 0 011.146 0L8 7.854l2.427-2.427a.75.75 0 111.146 1.146l-3 3a.75.75 0 01-1.146 0l-3-3a.75.75 0 010-1.146z"/></svg>
+        </div>
+      `;
+    }
+
+    // Inline deploy log (below actions row, at card bottom)
+    let inlineLogHtml = '';
+    if (deployLog) {
+      const logStatusClass = deployLog.status === 'error' ? 'deploy-log-error' : deployLog.status === 'done' ? 'deploy-log-done' : '';
+      const filteredLines = deployLog.lines.filter(l => l.trim());
+      const visibleLines = deployLog.expanded ? filteredLines : filteredLines.slice(-8);
+      inlineLogHtml = `
+        <div class="inline-deploy-log-wrapper ${deployLog.expanded ? 'expanded' : ''} ${logStatusClass}" id="inline-log-wrapper-${esc(b.id)}" onclick="toggleInlineLog('${esc(b.id)}', event)">
+          <div class="inline-deploy-log-header">
+            <span class="live-dot ${deployLog.status !== 'building' ? 'stopped' : ''}"></span>
+            <span>${deployLog.status === 'building' ? '部署中...' : deployLog.status === 'done' ? '部署完成' : '部署失败'}</span>
+            <span class="inline-log-expand-hint" onclick="openFullDeployLog('${esc(b.id)}', event)">查看完整日志</span>
+          </div>
+          <pre class="inline-deploy-log" id="inline-log-${esc(b.id)}">${esc(visibleLines.join('\n'))}</pre>
+          ${deployFailed && deployLog.errorMsg ? `<div class="inline-deploy-error">${esc(deployLog.errorMsg)}</div>` : ''}
         </div>
       `;
     }
@@ -1011,7 +1017,7 @@ function renderBranches() {
           </div>
           <div class="branch-card-right">
             ${portBadgesHtml}
-            <span class="branch-meta">${isLoading(b.id, 'stop') ? '<span class="stopping-indicator"><span class="btn-spinner"></span> 停止中</span>' : statusLabel(b.status)}${b.lastAccessedAt && !isLoading(b.id, 'stop') ? ` · ${relativeTime(b.lastAccessedAt)}` : ''}</span>
+            <span class="branch-meta">${isLoading(b.id, 'stop') ? '<span class="stopping-indicator">停止中...</span>' : statusLabel(b.status)}${b.lastAccessedAt && !isLoading(b.id, 'stop') ? ` · ${relativeTime(b.lastAccessedAt)}` : ''}</span>
             <span class="update-pull-group" onclick="event.stopPropagation(); pullBranch('${esc(b.id)}')" title="${hasUpdates ? branchUpdates[b.id].behind + ' 个新提交，点击拉取' : '点击拉取最新代码'}">
               ${hasUpdates ? `<span class="update-badge">↓${branchUpdates[b.id].behind}</span>` : ''}
               <svg class="update-pull-icon ${isLoading(b.id, 'pull') ? 'spinning' : ''}" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
@@ -1031,6 +1037,7 @@ function renderBranches() {
               ${actionsRightHtml}
             </div>
           </div>
+          ${inlineLogHtml}
         </div>
       </div>
     `;

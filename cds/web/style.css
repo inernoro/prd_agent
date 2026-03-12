@@ -1044,14 +1044,14 @@ a.branch-name:hover { color: var(--accent); }
 /* ════════════════ Inline Deploy Log ════════════════ */
 
 .inline-deploy-log-wrapper {
-  flex: 1; min-width: 0; cursor: pointer;
-  border-radius: var(--radius-xs); overflow: hidden;
-  transition: max-height 0.3s ease;
+  cursor: pointer; border-radius: var(--radius-xs);
+  margin-top: 8px; padding-top: 8px;
+  border-top: 1px solid var(--border);
 }
 .inline-deploy-log-header {
   display: flex; align-items: center; gap: 6px;
-  font-size: 11px; color: var(--text-secondary);
-  padding: 4px 8px; font-weight: 500;
+  font-size: 12px; color: var(--text-secondary);
+  padding: 0 0 6px; font-weight: 500;
 }
 .inline-deploy-log-header .live-dot { width: 6px; height: 6px; }
 .inline-deploy-log-header .live-dot.stopped { background: var(--text-muted); animation: none; }
@@ -1063,15 +1063,15 @@ a.branch-name:hover { color: var(--accent); }
 .inline-log-expand-hint:hover { color: var(--accent); }
 .inline-deploy-log {
   font-family: var(--font-mono); font-size: 11px;
-  color: var(--text-muted); background: rgba(3, 4, 8, 0.6);
-  border: 1px solid var(--border); border-radius: var(--radius-xs);
-  padding: 6px 10px; margin: 0 8px 4px;
-  max-height: 90px; overflow-y: auto; white-space: pre-wrap;
-  word-break: break-all; line-height: 1.5;
+  color: var(--text-secondary); background: rgba(3, 4, 8, 0.7);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 10px 12px; margin: 0;
+  max-height: 120px; overflow-y: auto; white-space: pre-wrap;
+  word-break: break-all; line-height: 1.6;
   transition: max-height 0.3s ease;
 }
 .inline-deploy-log-wrapper.expanded .inline-deploy-log {
-  max-height: 300px;
+  max-height: 400px;
 }
 
 /* Deploy log status colors */
@@ -1080,7 +1080,7 @@ a.branch-name:hover { color: var(--accent); }
 .inline-deploy-log-wrapper.deploy-log-error .inline-deploy-log-header { color: var(--red); }
 .inline-deploy-log-wrapper.deploy-log-error .inline-deploy-log { border-color: var(--red-border); }
 .inline-deploy-error {
-  font-size: 11px; color: var(--red); padding: 4px 10px; margin: 0 8px 4px;
+  font-size: 11px; color: var(--red); padding: 6px 10px; margin-top: 6px;
   background: var(--red-bg); border: 1px solid var(--red-border);
   border-radius: var(--radius-xs);
 }
@@ -1088,21 +1088,18 @@ a.branch-name:hover { color: var(--accent); }
 /* ════════════════ Slide-in Animation ════════════════ */
 
 .slide-in-right {
-  animation: slideInFromLeft 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation: slideInFromLeft 1s cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
 @keyframes slideInFromLeft {
-  0% { transform: translateX(-40px); opacity: 0; }
+  0% { transform: translateX(-60px); opacity: 0; }
   100% { transform: translateX(0); opacity: 1; }
 }
 
 /* ════════════════ Stopping Indicator ════════════════ */
 
 .stopping-indicator {
-  display: inline-flex; align-items: center; gap: 4px;
   color: var(--orange); font-weight: 500;
-}
-.stopping-indicator .btn-spinner {
-  border-top-color: var(--orange);
+  animation: update-pulse 1.5s ease-in-out infinite;
 }
 
 /* ════════════════ Responsive ════════════════ */
