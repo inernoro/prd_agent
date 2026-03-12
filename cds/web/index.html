@@ -5,6 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Cloud Development Suite</title>
   <link rel="stylesheet" href="style.css">
+  <script>
+    // Cache busting: append random query string to JS/CSS on load
+    (function() {
+      var v = '_v=' + Date.now();
+      document.querySelector('link[href="style.css"]').href = 'style.css?' + v;
+    })();
+  </script>
 </head>
 <body>
   <div class="container">
@@ -114,6 +121,13 @@
   <!-- Dropdown portal: all popover menus render here, outside card stacking contexts -->
   <div id="dropdownPortal"></div>
 
-  <script src="app.js"></script>
+  <script>
+    // Cache busting for app.js
+    (function() {
+      var s = document.createElement('script');
+      s.src = 'app.js?_v=' + Date.now();
+      document.body.appendChild(s);
+    })();
+  </script>
 </body>
 </html>

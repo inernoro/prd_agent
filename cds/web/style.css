@@ -67,7 +67,6 @@ body::before {
     linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
   background-size: 48px 48px;
   pointer-events: none;
-  z-index: 0;
   mask-image: radial-gradient(ellipse 60% 50% at 50% 0%, black 0%, transparent 80%);
   -webkit-mask-image: radial-gradient(ellipse 60% 50% at 50% 0%, black 0%, transparent 80%);
 }
@@ -83,7 +82,6 @@ body::after {
   height: 400px;
   background: radial-gradient(ellipse, rgba(200, 255, 0, 0.04) 0%, transparent 70%);
   pointer-events: none;
-  z-index: 0;
 }
 
 .container {
@@ -92,7 +90,6 @@ body::after {
   padding: 20px 16px;
   padding-bottom: calc(20px + var(--safe-bottom));
   position: relative;
-  z-index: 1;
 }
 
 /* ── Selection ── */
