@@ -422,11 +422,11 @@ async function deployBranch(id) {
           if (!log) continue;
 
           if (data.chunk) {
-            log.lines.push(data.chunk);
+            data.chunk.split('\n').filter(l => l.trim()).forEach(l => log.lines.push(l));
           } else if (data.step) {
             log.lines.push(`[${data.status}] ${data.title || data.step}`);
           } else if (data.message) {
-            log.lines.push(data.message);
+            data.message.split('\n').filter(l => l.trim()).forEach(l => log.lines.push(l));
           }
           updateInlineLog(id);
         }
@@ -687,11 +687,11 @@ async function deploySingleService(id, profileId) {
           if (!log) continue;
 
           if (data.chunk) {
-            log.lines.push(data.chunk);
+            data.chunk.split('\n').filter(l => l.trim()).forEach(l => log.lines.push(l));
           } else if (data.step) {
             log.lines.push(`[${data.status}] ${data.title || data.step}`);
           } else if (data.message) {
-            log.lines.push(data.message);
+            data.message.split('\n').filter(l => l.trim()).forEach(l => log.lines.push(l));
           }
           updateInlineLog(id);
         }
