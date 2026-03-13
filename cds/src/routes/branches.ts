@@ -3,7 +3,7 @@ import { StateService } from '../services/state.js';
 import type { WorktreeService } from '../services/worktree.js';
 import type { ContainerService } from '../services/container.js';
 import type { ProxyService } from '../services/proxy.js';
-import type { BranchEntry, CdsConfig, IShellExecutor, OperationLog, OperationLogEvent, BuildProfile, RoutingRule, ServiceState } from '../types.js';
+import type { BranchEntry, CdsConfig, IShellExecutor, OperationLog, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService, InfraPreset } from '../types.js';
 import { combinedOutput } from '../types.js';
 
 export interface RouterDeps {
@@ -25,6 +25,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
   } = deps;
 
   const router = Router();
+
+  // ── Helper: merged env (customEnv + infra inject env, customEnv wins) ──
+  function getMergedEnv(): Record<string, string> {
+    const infraEnv = stateService.getInfraInjectEnv();
+    const customEnv = stateService.getCustomEnv();
+    return { ...infraEnv, ...customEnv };
+  }
 
   // ── Helper: SSE setup ──
   function initSSE(res: import('express').Response) {
@@ -277,10 +284,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         svc.status = 'building';
 
         try {
-          const customEnv = stateService.getCustomEnv();
+          const mergedEnv = getMergedEnv();
           await containerService.runService(entry, profile, svc, (chunk) => {
             sendSSE(res, 'log', { profileId: profile.id, chunk });
-          }, customEnv);
+          }, mergedEnv);
 
           svc.status = 'running';
           logEvent({ step: `build-${profile.id}`, status: 'done', title: `${profile.name} 运行于 :${svc.hostPort}`, timestamp: new Date().toISOString() });
@@ -373,10 +380,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       svc.status = 'building';
 
       try {
-        const customEnv = stateService.getCustomEnv();
+        const mergedEnv = getMergedEnv();
         await containerService.runService(entry, profile, svc, (chunk) => {
           sendSSE(res, 'log', { profileId: profile.id, chunk });
-        }, customEnv);
+        }, mergedEnv);
 
         svc.status = 'running';
         logEvent({ step: `build-${profile.id}`, status: 'done', title: `${profile.name} 运行于 :${svc.hostPort}`, timestamp: new Date().toISOString() });
@@ -886,6 +893,289 @@ export function createBranchRouter(deps: RouterDeps): Router {
     } finally {
       res.end();
     }
+  });
+
+  // ── Infrastructure service presets ──
+
+  const INFRA_PRESETS: Record<string, InfraPreset> = {
+    mongodb: {
+      id: 'mongodb',
+      name: '数据库 (MongoDB 7)',
+      dockerImage: 'mongo:7',
+      containerPort: 27017,
+      volumes: [{ name: 'cds-mongodb-data', containerPath: '/data/db' }],
+      env: {},
+      injectEnv: {
+        'MONGODB_HOST': '{{host}}:{{port}}',
+        'MongoDB__ConnectionString': 'mongodb://{{host}}:{{port}}',
+      },
+      healthCheck: {
+        command: 'mongosh --eval "db.runCommand({ping:1})" --quiet',
+        interval: 10,
+        retries: 3,
+      },
+    },
+    redis: {
+      id: 'redis',
+      name: '缓存 (Redis 7)',
+      dockerImage: 'redis:7-alpine',
+      containerPort: 6379,
+      volumes: [{ name: 'cds-redis-data', containerPath: '/data' }],
+      env: {},
+      injectEnv: {
+        'REDIS_HOST': '{{host}}:{{port}}',
+        'Redis__ConnectionString': '{{host}}:{{port}}',
+      },
+      healthCheck: {
+        command: 'redis-cli ping',
+        interval: 10,
+        retries: 3,
+      },
+    },
+  };
+
+  // ── Infrastructure services CRUD ──
+
+  router.get('/infra', async (_req, res) => {
+    const services = stateService.getInfraServices();
+
+    // Reconcile status with Docker
+    for (const svc of services) {
+      if (svc.status === 'running') {
+        const running = await containerService.isRunning(svc.containerName);
+        if (!running) {
+          svc.status = 'stopped';
+        }
+      }
+    }
+    stateService.save();
+
+    res.json({ services });
+  });
+
+  router.get('/infra/presets', (_req, res) => {
+    res.json({ presets: INFRA_PRESETS });
+  });
+
+  router.post('/infra', async (req, res) => {
+    try {
+      const body = req.body as Partial<InfraService> & { presetId?: string };
+
+      let service: InfraService;
+
+      if (body.presetId && INFRA_PRESETS[body.presetId]) {
+        // Create from preset
+        const preset = INFRA_PRESETS[body.presetId];
+        const hostPort = stateService.allocatePort(config.portStart);
+        service = {
+          id: preset.id,
+          name: preset.name,
+          dockerImage: preset.dockerImage,
+          containerPort: preset.containerPort,
+          hostPort,
+          containerName: `cds-infra-${preset.id}`,
+          status: 'stopped',
+          volumes: preset.volumes,
+          env: { ...preset.env },
+          injectEnv: { ...preset.injectEnv },
+          healthCheck: preset.healthCheck ? { ...preset.healthCheck } : undefined,
+          createdAt: new Date().toISOString(),
+        };
+      } else {
+        // Custom service
+        if (!body.id || !body.name || !body.dockerImage || !body.containerPort) {
+          res.status(400).json({ error: 'id、名称、Docker 镜像和容器端口为必填项' });
+          return;
+        }
+        const hostPort = stateService.allocatePort(config.portStart);
+        service = {
+          id: body.id,
+          name: body.name,
+          dockerImage: body.dockerImage,
+          containerPort: body.containerPort,
+          hostPort,
+          containerName: `cds-infra-${body.id}`,
+          status: 'stopped',
+          volumes: body.volumes || [],
+          env: body.env || {},
+          injectEnv: body.injectEnv || {},
+          healthCheck: body.healthCheck,
+          createdAt: new Date().toISOString(),
+        };
+      }
+
+      stateService.addInfraService(service);
+      stateService.save();
+
+      res.status(201).json({ service });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.put('/infra/:id', (req, res) => {
+    try {
+      const updates = req.body as Partial<InfraService>;
+      stateService.updateInfraService(req.params.id, updates);
+      stateService.save();
+      res.json({ message: '已更新' });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.delete('/infra/:id', async (req, res) => {
+    const { id } = req.params;
+    const service = stateService.getInfraService(id);
+    if (!service) {
+      res.status(404).json({ error: `基础设施服务 "${id}" 不存在` });
+      return;
+    }
+    try {
+      // Stop container if running
+      try { await containerService.stopInfraService(service.containerName); } catch { /* ok */ }
+      stateService.removeInfraService(id);
+      stateService.save();
+      res.json({ message: `已删除基础设施服务 "${id}"` });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.post('/infra/:id/start', async (req, res) => {
+    const { id } = req.params;
+    const service = stateService.getInfraService(id);
+    if (!service) {
+      res.status(404).json({ error: `基础设施服务 "${id}" 不存在` });
+      return;
+    }
+    try {
+      await containerService.startInfraService(service);
+      stateService.updateInfraService(id, { status: 'running', errorMessage: undefined });
+      stateService.save();
+      res.json({ message: `基础设施服务 "${id}" 已启动`, service: stateService.getInfraService(id) });
+    } catch (err) {
+      stateService.updateInfraService(id, { status: 'error', errorMessage: (err as Error).message });
+      stateService.save();
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.post('/infra/:id/stop', async (req, res) => {
+    const { id } = req.params;
+    const service = stateService.getInfraService(id);
+    if (!service) {
+      res.status(404).json({ error: `基础设施服务 "${id}" 不存在` });
+      return;
+    }
+    try {
+      await containerService.stopInfraService(service.containerName);
+      stateService.updateInfraService(id, { status: 'stopped' });
+      stateService.save();
+      res.json({ message: `基础设施服务 "${id}" 已停止` });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.post('/infra/:id/restart', async (req, res) => {
+    const { id } = req.params;
+    const service = stateService.getInfraService(id);
+    if (!service) {
+      res.status(404).json({ error: `基础设施服务 "${id}" 不存在` });
+      return;
+    }
+    try {
+      try { await containerService.stopInfraService(service.containerName); } catch { /* ok */ }
+      await containerService.startInfraService(service);
+      stateService.updateInfraService(id, { status: 'running', errorMessage: undefined });
+      stateService.save();
+      res.json({ message: `基础设施服务 "${id}" 已重启`, service: stateService.getInfraService(id) });
+    } catch (err) {
+      stateService.updateInfraService(id, { status: 'error', errorMessage: (err as Error).message });
+      stateService.save();
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.get('/infra/:id/logs', async (req, res) => {
+    const { id } = req.params;
+    const service = stateService.getInfraService(id);
+    if (!service) {
+      res.status(404).json({ error: `基础设施服务 "${id}" 不存在` });
+      return;
+    }
+    try {
+      const logs = await containerService.getLogs(service.containerName);
+      res.json({ logs });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.get('/infra/:id/health', async (req, res) => {
+    const { id } = req.params;
+    const service = stateService.getInfraService(id);
+    if (!service) {
+      res.status(404).json({ error: `基础设施服务 "${id}" 不存在` });
+      return;
+    }
+    try {
+      const health = await containerService.getInfraHealth(service.containerName);
+      res.json({ health });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Quick setup: create and start preset infra services
+  router.post('/infra/quickstart', async (req, res) => {
+    const { presetIds } = req.body as { presetIds?: string[] };
+    const ids = presetIds || Object.keys(INFRA_PRESETS);
+    const results: { id: string; status: string; error?: string }[] = [];
+
+    for (const presetId of ids) {
+      const preset = INFRA_PRESETS[presetId];
+      if (!preset) {
+        results.push({ id: presetId, status: 'skipped', error: '未知预设' });
+        continue;
+      }
+
+      // Skip if already exists
+      if (stateService.getInfraService(preset.id)) {
+        results.push({ id: preset.id, status: 'exists' });
+        continue;
+      }
+
+      const hostPort = stateService.allocatePort(config.portStart);
+      const service: InfraService = {
+        id: preset.id,
+        name: preset.name,
+        dockerImage: preset.dockerImage,
+        containerPort: preset.containerPort,
+        hostPort,
+        containerName: `cds-infra-${preset.id}`,
+        status: 'stopped',
+        volumes: [...preset.volumes],
+        env: { ...preset.env },
+        injectEnv: { ...preset.injectEnv },
+        healthCheck: preset.healthCheck ? { ...preset.healthCheck } : undefined,
+        createdAt: new Date().toISOString(),
+      };
+
+      try {
+        stateService.addInfraService(service);
+        await containerService.startInfraService(service);
+        stateService.updateInfraService(service.id, { status: 'running' });
+        results.push({ id: service.id, status: 'started' });
+      } catch (err) {
+        stateService.updateInfraService(service.id, { status: 'error', errorMessage: (err as Error).message });
+        results.push({ id: service.id, status: 'error', error: (err as Error).message });
+      }
+    }
+
+    stateService.save();
+    res.json({ results });
   });
 
   return router;

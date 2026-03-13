@@ -125,6 +125,7 @@ let buildProfiles = [];
 let routingRules = [];
 let defaultBranch = null;
 let customEnvVars = {};
+let infraServices = [];
 const collapsedBranches = new Set();
 
 function toggleBranchCard(id, event) {
@@ -147,7 +148,7 @@ let previewDomain = '';
 let workerPort = '';
 
 async function init() {
-  await Promise.all([loadBranches(), loadProfiles(), loadRoutingRules(), loadConfig(), loadEnvVars()]);
+  await Promise.all([loadBranches(), loadProfiles(), loadRoutingRules(), loadConfig(), loadEnvVars(), loadInfraServices()]);
   refreshRemoteBranches();
   updatePreviewModeUI();
   setInterval(loadBranches, 10000);
@@ -860,6 +861,11 @@ function toggleSettingsMenu(event) {
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2.5 2a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h11a.5.5 0 00.5-.5v-11a.5.5 0 00-.5-.5h-11zM1 2.5A1.5 1.5 0 012.5 1h11A1.5 1.5 0 0115 2.5v11a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 011 13.5v-11zM4 5h2v1H4V5zm3 0h5v1H7V5zM4 8h2v1H4V8zm3 0h5v1H7V8zM4 11h2v1H4v-1zm3 0h5v1H7v-1z"/></svg>
       环境变量
     </div>
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); openInfraModal()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2a2 2 0 012-2h8a2 2 0 012 2v2a2 2 0 01-2 2H4a2 2 0 01-2-2V2zm2-.5a.5.5 0 00-.5.5v2a.5.5 0 00.5.5h8a.5.5 0 00.5-.5V2a.5.5 0 00-.5-.5H4zM2 9.5A1.5 1.5 0 013.5 8h9A1.5 1.5 0 0114 9.5v3a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 12.5v-3zm1.5 0v3h9v-3h-9zM4 10.5a.5.5 0 01.5-.5h1a.5.5 0 010 1h-1a.5.5 0 01-.5-.5z"/></svg>
+      基础设施
+      ${infraServices.some(s => s.status === 'running') ? '<span style="color:#3fb950;font-size:11px;margin-left:auto">● ' + infraServices.filter(s => s.status === 'running').length + ' 运行中</span>' : ''}
+    </div>
     <div class="settings-menu-item" onclick="closeSettingsMenu(); openRoutingModal()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 0113 0h-2.1a8.3 8.3 0 00-.4-2.2 9 9 0 00-1-1.9A4.5 4.5 0 017 7.5H4.5A8.3 8.3 0 001.5 8zm5.5 5.5a6.5 6.5 0 01-5.4-3h2.3c.3 1.2.8 2.2 1.5 3H7zm1-5.5a7.8 7.8 0 014-3.8c.5.6.9 1.2 1.2 1.8H8zm0 1h5.4a8.3 8.3 0 01-.3 2H8.9 8V9zm0 3h3.8c-.6 1.3-1.5 2.4-2.8 3A6.5 6.5 0 018 9z"/></svg>
       路由规则
@@ -1353,6 +1359,181 @@ async function saveBulkEnvAndRefresh() {
     showToast(`已保存 ${Object.keys(newVars).length} 个环境变量`, 'success');
     await loadEnvVars();
     openEnvModal();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+// ── Infrastructure services ──
+
+async function loadInfraServices() {
+  try {
+    const data = await api('GET', '/infra');
+    infraServices = data.services || [];
+  } catch (e) { console.error('loadInfraServices:', e); }
+}
+
+function infraStatusDot(status) {
+  const colors = { running: '#3fb950', stopped: '#8b949e', error: '#f85149' };
+  return `<span style="color:${colors[status] || '#8b949e'}">●</span>`;
+}
+
+function infraStatusLabel(status) {
+  const map = { running: '运行中', stopped: '已停止', error: '错误' };
+  return map[status] || status;
+}
+
+function openInfraModal() {
+  const listHtml = infraServices.length === 0
+    ? `<div class="config-empty">
+        暂无基础设施服务。点击"一键初始化"快速创建 MongoDB + Redis。
+      </div>`
+    : infraServices.map(svc => `
+        <div class="config-item" style="flex-direction:column;align-items:stretch;gap:6px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:14px">${infraStatusDot(svc.status)}</span>
+            <strong style="flex:1">${esc(svc.name)}</strong>
+            <code style="font-size:11px;opacity:0.6">${esc(svc.dockerImage)}</code>
+            <code style="font-size:12px;color:var(--blue)">:${svc.hostPort}</code>
+          </div>
+          <div style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--fg-muted)">
+            <span>${infraStatusLabel(svc.status)}</span>
+            ${svc.errorMessage ? `<span style="color:var(--red);margin-left:8px" title="${esc(svc.errorMessage)}">⚠ 错误</span>` : ''}
+            <span style="margin-left:auto;display:flex;gap:4px">
+              ${svc.status === 'running'
+                ? `<button class="icon-btn xs" onclick="infraAction('${esc(svc.id)}','stop')" title="停止">⏹</button>
+                   <button class="icon-btn xs" onclick="infraAction('${esc(svc.id)}','restart')" title="重启">⟳</button>`
+                : `<button class="icon-btn xs" onclick="infraAction('${esc(svc.id)}','start')" title="启动">▶</button>`}
+              <button class="icon-btn xs" onclick="infraShowLogs('${esc(svc.id)}')" title="日志">📋</button>
+              <button class="icon-btn xs danger-icon" onclick="infraDelete('${esc(svc.id)}')" title="删除">&times;</button>
+            </span>
+          </div>
+          ${svc.injectEnv && Object.keys(svc.injectEnv).length > 0 ? `
+          <div style="font-size:11px;color:var(--fg-muted);background:var(--bg-tertiary);padding:4px 8px;border-radius:4px;margin-top:2px">
+            自动注入: ${Object.keys(svc.injectEnv).map(k => `<code>${esc(k)}</code>`).join(', ')}
+          </div>` : ''}
+        </div>
+      `).join('');
+
+  const html = `
+    <p class="config-panel-desc">
+      CDS 托管的基础设施服务（数据库、缓存等）。容器使用 Docker Label 标记，CDS 重启后自动接管。
+      环境变量会自动注入到所有分支容器中（优先级低于自定义环境变量）。
+    </p>
+    <div class="config-panel-actions" style="margin-bottom:10px;display:flex;gap:6px">
+      <button class="sm primary" onclick="infraQuickstart()">🚀 一键初始化</button>
+      <button class="sm" onclick="openInfraAddModal()">+ 自定义</button>
+    </div>
+    <div id="infraListInModal">${listHtml}</div>
+  `;
+  openConfigModal('基础设施', html);
+}
+
+async function infraAction(id, action) {
+  try {
+    const data = await api('POST', `/infra/${encodeURIComponent(id)}/${action}`);
+    showToast(data.message, 'success');
+    await loadInfraServices();
+    openInfraModal();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function infraDelete(id) {
+  if (!confirm(`确定删除基础设施服务 "${id}"？容器将被停止，但数据卷会保留。`)) return;
+  try {
+    await api('DELETE', `/infra/${encodeURIComponent(id)}`);
+    showToast(`已删除 ${id}`, 'success');
+    await loadInfraServices();
+    openInfraModal();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function infraShowLogs(id) {
+  openConfigModal('基础设施日志', '<div class="config-empty"><span class="btn-spinner"></span> 加载中...</div>');
+  try {
+    const data = await api('GET', `/infra/${encodeURIComponent(id)}/logs`);
+    const html = `
+      <pre style="max-height:400px;overflow:auto;background:var(--bg-tertiary);padding:12px;border-radius:6px;font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-all">${esc(data.logs || '(空)')}</pre>
+      <div class="form-row" style="margin-top:8px">
+        <button class="sm" onclick="openInfraModal()">返回</button>
+      </div>
+    `;
+    openConfigModal(`${id} 日志`, html);
+  } catch (e) {
+    openConfigModal('基础设施日志', `<div class="config-empty" style="color:var(--red)">${esc(e.message)}</div>`);
+  }
+}
+
+async function infraQuickstart() {
+  try {
+    const data = await api('POST', '/infra/quickstart', {});
+    const results = data.results || [];
+    const msgs = results.map(r => `${r.id}: ${r.status === 'started' ? '已启动' : r.status === 'exists' ? '已存在' : r.error || r.status}`);
+    showToast(msgs.join(' | '), results.every(r => r.status === 'started' || r.status === 'exists') ? 'success' : 'error');
+    await loadInfraServices();
+    openInfraModal();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+function openInfraAddModal() {
+  const html = `
+    <p class="config-panel-desc">添加自定义基础设施服务。</p>
+    <div class="form-row">
+      <input id="infraId" placeholder="ID (如 postgres)" class="form-input" style="flex:0.5">
+      <input id="infraName" placeholder="显示名称 (如 PostgreSQL 16)" class="form-input">
+    </div>
+    <div class="form-row">
+      <input id="infraImage" placeholder="Docker 镜像 (如 postgres:16)" class="form-input">
+      <input id="infraPort" placeholder="容器端口 (如 5432)" class="form-input" type="number" style="flex:0.4">
+    </div>
+    <div class="form-row">
+      <input id="infraVolName" placeholder="卷名 (如 cds-postgres-data)" class="form-input" style="flex:0.5">
+      <input id="infraVolPath" placeholder="挂载路径 (如 /var/lib/postgresql/data)" class="form-input">
+    </div>
+    <p class="config-panel-desc" style="margin-top:8px">
+      注入环境变量（每行 <code>KEY=模板</code>，支持 <code>{{host}}</code> 和 <code>{{port}}</code>）：
+    </p>
+    <textarea id="infraInjectEnv" class="bulk-textarea" rows="3" placeholder="DATABASE_URL=postgres://{{host}}:{{port}}/mydb"></textarea>
+    <div class="form-row" style="margin-top:8px">
+      <button class="primary sm" onclick="saveCustomInfra()">创建并启动</button>
+      <button class="sm" onclick="openInfraModal()">取消</button>
+    </div>
+  `;
+  openConfigModal('添加基础设施服务', html);
+}
+
+async function saveCustomInfra() {
+  const id = document.getElementById('infraId').value.trim();
+  const name = document.getElementById('infraName').value.trim();
+  const dockerImage = document.getElementById('infraImage').value.trim();
+  const containerPort = parseInt(document.getElementById('infraPort').value);
+  const volName = document.getElementById('infraVolName').value.trim();
+  const volPath = document.getElementById('infraVolPath').value.trim();
+  const injectEnvText = document.getElementById('infraInjectEnv').value.trim();
+
+  if (!id || !name || !dockerImage || !containerPort) {
+    showToast('请填写所有必填项', 'error');
+    return;
+  }
+
+  const volumes = volName && volPath ? [{ name: volName, containerPath: volPath }] : [];
+  const injectEnv = {};
+  if (injectEnvText) {
+    for (const line of injectEnvText.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eqIdx = trimmed.indexOf('=');
+      if (eqIdx > 0) {
+        injectEnv[trimmed.substring(0, eqIdx).trim()] = trimmed.substring(eqIdx + 1);
+      }
+    }
+  }
+
+  try {
+    await api('POST', '/infra', { id, name, dockerImage, containerPort, volumes, injectEnv, env: {} });
+    showToast(`已创建 ${name}`, 'success');
+    // Auto-start
+    try { await api('POST', `/infra/${encodeURIComponent(id)}/start`); } catch { /* ok */ }
+    await loadInfraServices();
+    openInfraModal();
   } catch (e) { showToast(e.message, 'error'); }
 }
 

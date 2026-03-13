@@ -35,6 +35,48 @@ const containerService = new ContainerService(shell, config);
 const proxyService = new ProxyService(stateService, config);
 proxyService.setWorktreeService(worktreeService);
 
+// ── Discover and reconcile infrastructure containers ──
+(async () => {
+  try {
+    const discovered = await containerService.discoverInfraContainers();
+    const stateServices = stateService.getInfraServices();
+
+    for (const svc of stateServices) {
+      const found = discovered.get(svc.id);
+      if (found) {
+        // Container exists in Docker — sync status
+        svc.status = found.running ? 'running' : 'stopped';
+        discovered.delete(svc.id);
+      } else if (svc.status === 'running') {
+        // State says running but container is gone — try to recreate
+        console.log(`  [infra] Recreating missing container for ${svc.id}...`);
+        try {
+          await containerService.startInfraService(svc);
+          svc.status = 'running';
+          console.log(`  [infra] ${svc.id} recreated successfully`);
+        } catch (err) {
+          svc.status = 'error';
+          svc.errorMessage = (err as Error).message;
+          console.error(`  [infra] Failed to recreate ${svc.id}:`, (err as Error).message);
+        }
+      }
+    }
+
+    // Log orphan containers (in Docker but not in state)
+    for (const [id, info] of discovered) {
+      console.warn(`  [infra] Orphan container detected: ${info.containerName} (service.id=${id}). Not managed by current state.`);
+    }
+
+    stateService.save();
+    if (stateServices.length > 0) {
+      const running = stateServices.filter(s => s.status === 'running').length;
+      console.log(`  [infra] ${stateServices.length} service(s) configured, ${running} running`);
+    }
+  } catch (err) {
+    console.error('  [infra] Discovery failed:', (err as Error).message);
+  }
+})();
+
 // Configure proxy: resolve branch slug → upstream URL
 proxyService.setResolveUpstream((branchId, profileId) => {
   const branch = stateService.getBranch(branchId);
@@ -369,10 +411,13 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
       const svc = entry.services[profile.id];
       svc.status = 'building';
 
+      // Merge infra inject env + custom env (custom env wins)
+      const infraEnv = stateService.getInfraInjectEnv();
       const customEnv = stateService.getCustomEnv();
+      const mergedEnv = { ...infraEnv, ...customEnv };
       await containerService.runService(entry, profile, svc, (chunk) => {
         sendEvent('log', { profileId: profile.id, chunk });
-      }, customEnv);
+      }, mergedEnv);
 
       svc.status = 'running';
       sendEvent('step', { step: `build-${profile.id}`, status: 'done', title: `${profile.name} 就绪 :${svc.hostPort}` });

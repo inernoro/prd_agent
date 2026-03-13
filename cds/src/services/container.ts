@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState } from '../types.js';
+import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService } from '../types.js';
 import { combinedOutput } from '../types.js';
 
 export class ContainerService {
@@ -181,6 +181,113 @@ export class ContainerService {
       throw new Error(`获取环境变量失败:\n${combinedOutput(result)}`);
     }
     return result.stdout;
+  }
+
+  // ── Infrastructure service management ──
+
+  /** Docker labels applied to all CDS-managed infra containers */
+  private infraLabels(service: InfraService): string {
+    return [
+      '--label cds.managed=true',
+      '--label cds.type=infra',
+      `--label cds.service.id=${service.id}`,
+      `--label cds.network=${this.config.dockerNetwork}`,
+    ].join(' ');
+  }
+
+  /**
+   * Start an infrastructure service container.
+   * Uses Docker named volumes for persistence and labels for discovery.
+   */
+  async startInfraService(service: InfraService): Promise<void> {
+    await this.ensureNetwork();
+
+    // Remove any existing container with the same name
+    await this.shell.exec(`docker rm -f ${service.containerName}`);
+
+    // Build volume flags (Docker named volumes)
+    const volumeFlags = service.volumes.map(
+      v => `-v "${v.name}":"${v.containerPath}"`,
+    );
+
+    // Build env flags
+    const envFlags = Object.entries(service.env).map(
+      ([k, v]) => `-e "${k}=${v}"`,
+    );
+
+    // Health check flags
+    const healthFlags: string[] = [];
+    if (service.healthCheck) {
+      healthFlags.push(
+        `--health-cmd="${service.healthCheck.command.replace(/"/g, '\\"')}"`,
+        `--health-interval=${service.healthCheck.interval}s`,
+        `--health-retries=${service.healthCheck.retries}`,
+        `--health-start-period=10s`,
+      );
+    }
+
+    const cmd = [
+      'docker run -d',
+      `--name ${service.containerName}`,
+      `--network ${this.config.dockerNetwork}`,
+      `-p ${service.hostPort}:${service.containerPort}`,
+      ...volumeFlags,
+      ...envFlags,
+      ...healthFlags,
+      this.infraLabels(service),
+      '--restart unless-stopped',
+      service.dockerImage,
+    ].join(' ');
+
+    const result = await this.shell.exec(cmd);
+    if (result.exitCode !== 0) {
+      throw new Error(`启动基础设施服务 "${service.containerName}" 失败:\n${combinedOutput(result)}`);
+    }
+  }
+
+  /** Stop and remove an infrastructure service container */
+  async stopInfraService(containerName: string): Promise<void> {
+    await this.shell.exec(`docker stop ${containerName}`);
+    await this.shell.exec(`docker rm ${containerName}`);
+  }
+
+  /**
+   * Discover CDS-managed infra containers by Docker labels.
+   * Returns a map of service.id → container status.
+   */
+  async discoverInfraContainers(): Promise<Map<string, { running: boolean; containerName: string }>> {
+    const result = await this.shell.exec(
+      `docker ps -a --filter "label=cds.managed=true" --filter "label=cds.type=infra" --filter "label=cds.network=${this.config.dockerNetwork}" --format '{{.Names}}|{{.State}}|{{.Labels}}'`,
+    );
+
+    const discovered = new Map<string, { running: boolean; containerName: string }>();
+    if (result.exitCode !== 0 || !result.stdout.trim()) return discovered;
+
+    for (const line of result.stdout.trim().split('\n')) {
+      if (!line) continue;
+      const [name, state, labels] = line.split('|');
+      // Extract cds.service.id from labels
+      const idMatch = labels?.match(/cds\.service\.id=([^,]+)/);
+      if (idMatch) {
+        discovered.set(idMatch[1], {
+          running: state === 'running',
+          containerName: name,
+        });
+      }
+    }
+    return discovered;
+  }
+
+  /** Check health of an infrastructure container */
+  async getInfraHealth(containerName: string): Promise<'healthy' | 'unhealthy' | 'starting' | 'none'> {
+    const result = await this.shell.exec(
+      `docker inspect --format="{{.State.Health.Status}}" ${containerName} 2>/dev/null || echo none`,
+    );
+    const status = result.stdout.trim();
+    if (['healthy', 'unhealthy', 'starting'].includes(status)) {
+      return status as 'healthy' | 'unhealthy' | 'starting';
+    }
+    return 'none';
   }
 
   private async ensureNetwork(): Promise<void> {

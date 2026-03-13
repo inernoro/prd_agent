@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { CdsState, BranchEntry, BuildProfile, RoutingRule, OperationLog } from '../types.js';
+import type { CdsState, BranchEntry, BuildProfile, RoutingRule, OperationLog, InfraService } from '../types.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
 
@@ -13,6 +13,7 @@ function emptyState(): CdsState {
     logs: {},
     defaultBranch: null,
     customEnv: {},
+    infraServices: [],
   };
 }
 
@@ -42,6 +43,7 @@ export class StateService {
       if (!this.state.buildProfiles) this.state.buildProfiles = [];
       if (this.state.defaultBranch === undefined) this.state.defaultBranch = null;
       if (!this.state.customEnv) this.state.customEnv = {};
+      if (!this.state.infraServices) this.state.infraServices = [];
     } else {
       this.state = emptyState();
     }
@@ -194,5 +196,49 @@ export class StateService {
 
   removeCustomEnvVar(key: string): void {
     delete this.state.customEnv[key];
+  }
+
+  // ── Infrastructure services ──
+
+  getInfraServices(): InfraService[] {
+    return this.state.infraServices;
+  }
+
+  getInfraService(id: string): InfraService | undefined {
+    return this.state.infraServices.find(s => s.id === id);
+  }
+
+  addInfraService(service: InfraService): void {
+    if (this.state.infraServices.some(s => s.id === service.id)) {
+      throw new Error(`基础设施服务 "${service.id}" 已存在`);
+    }
+    this.state.infraServices.push(service);
+  }
+
+  updateInfraService(id: string, updates: Partial<InfraService>): void {
+    const idx = this.state.infraServices.findIndex(s => s.id === id);
+    if (idx === -1) throw new Error(`基础设施服务 "${id}" 不存在`);
+    Object.assign(this.state.infraServices[idx], updates);
+  }
+
+  removeInfraService(id: string): void {
+    this.state.infraServices = this.state.infraServices.filter(s => s.id !== id);
+  }
+
+  /**
+   * Build merged inject env vars from all running infra services.
+   * Replaces {{host}} and {{port}} template placeholders.
+   */
+  getInfraInjectEnv(): Record<string, string> {
+    const result: Record<string, string> = {};
+    for (const svc of this.state.infraServices) {
+      if (svc.status !== 'running') continue;
+      for (const [key, template] of Object.entries(svc.injectEnv)) {
+        result[key] = template
+          .replace(/\{\{host\}\}/g, '172.17.0.1')
+          .replace(/\{\{port\}\}/g, String(svc.hostPort));
+      }
+    }
+    return result;
   }
 }

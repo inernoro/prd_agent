@@ -125,6 +125,71 @@ export interface CdsState {
   defaultBranch: string | null;
   /** User-defined environment variables (sent to containers on deploy) */
   customEnv: Record<string, string>;
+  /** CDS-managed infrastructure services (databases, caches, etc.) */
+  infraServices: InfraService[];
+}
+
+/** Volume mount for an infrastructure service */
+export interface InfraVolume {
+  /** Docker named volume name (e.g., 'cds-mongodb-data') */
+  name: string;
+  /** Mount path inside the container */
+  containerPath: string;
+}
+
+/** Health check configuration for infrastructure service */
+export interface InfraHealthCheck {
+  /** Command to run inside the container */
+  command: string;
+  /** Interval in seconds (default: 10) */
+  interval: number;
+  /** Number of retries before marking unhealthy */
+  retries: number;
+}
+
+/** An infrastructure service managed by CDS (e.g., MongoDB, Redis) */
+export interface InfraService {
+  /** Unique identifier (e.g., 'mongodb', 'redis') */
+  id: string;
+  /** Display name */
+  name: string;
+  /** Docker image to use */
+  dockerImage: string;
+  /** Port the service listens on inside the container */
+  containerPort: number;
+  /** Host port mapped to the container */
+  hostPort: number;
+  /** Docker container name */
+  containerName: string;
+  /** Current status */
+  status: 'running' | 'stopped' | 'error';
+  /** Error message if status is 'error' */
+  errorMessage?: string;
+  /** Persistent volumes */
+  volumes: InfraVolume[];
+  /** Environment variables for the container itself */
+  env: Record<string, string>;
+  /**
+   * Environment variables to auto-inject into all branch containers.
+   * Supports {{host}} and {{port}} template placeholders.
+   */
+  injectEnv: Record<string, string>;
+  /** Health check configuration */
+  healthCheck?: InfraHealthCheck;
+  /** When this service was created */
+  createdAt: string;
+}
+
+/** Preset template for quickly creating infrastructure services */
+export interface InfraPreset {
+  id: string;
+  name: string;
+  dockerImage: string;
+  containerPort: number;
+  volumes: InfraVolume[];
+  env: Record<string, string>;
+  injectEnv: Record<string, string>;
+  healthCheck?: InfraHealthCheck;
 }
 
 /** Application configuration */
