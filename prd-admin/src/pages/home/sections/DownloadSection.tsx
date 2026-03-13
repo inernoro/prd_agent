@@ -1,11 +1,22 @@
 import { cn } from '@/lib/cn';
 import { HERO_GRADIENT_TEXT } from './HeroSection';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 
-const GITHUB_RELEASES_URL = 'https://github.com/inernoro/prd_agent/releases/latest';
-const DOWNLOAD_BASE = 'https://github.com/inernoro/prd_agent/releases/latest/download';
+const GITHUB_REPO = 'inernoro/prd_agent';
+const GITHUB_RELEASES_URL = `https://github.com/${GITHUB_REPO}/releases/latest`;
+const GITHUB_API_LATEST = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
 
 type Platform = 'windows' | 'macos' | 'linux' | 'unknown';
+
+interface ReleaseAsset {
+  name: string;
+  browser_download_url: string;
+}
+
+interface ReleaseInfo {
+  version: string;
+  assets: ReleaseAsset[];
+}
 
 function detectPlatform(): Platform {
   const ua = navigator.userAgent.toLowerCase();
@@ -15,13 +26,17 @@ function detectPlatform(): Platform {
   return 'unknown';
 }
 
-const platforms = [
+/** Match asset by file extension pattern per platform */
+function findAsset(assets: ReleaseAsset[], pattern: RegExp): ReleaseAsset | undefined {
+  return assets.find((a) => pattern.test(a.name));
+}
+
+const platformDefs = [
   {
     key: 'windows' as Platform,
     label: 'Windows',
     desc: 'Windows 10+',
-    downloadUrl: `${DOWNLOAD_BASE}/PRD.Agent_1.6.0_x64-setup.exe`,
-    filename: 'PRD.Agent_1.6.0_x64-setup.exe',
+    assetPattern: /x64-setup\.exe$/i,
     icon: (
       <svg className="w-8 h-8" viewBox="0 0 24 24" fill="currentColor">
         <path d="M3 12V6.75l6-1.32v6.48L3 12zm6.25.13l8.25-.02V5.1L9.25 6.27v5.86zM3 13l6 .09v6.81l-6-1.32V13zm6.25-.02l8.25.02v7.47l-8.25-1.17v-6.32z" />
@@ -32,8 +47,7 @@ const platforms = [
     key: 'macos' as Platform,
     label: 'macOS',
     desc: 'macOS 11+ (Apple Silicon)',
-    downloadUrl: `${DOWNLOAD_BASE}/PRD.Agent_1.6.0_aarch64.dmg`,
-    filename: 'PRD.Agent_1.6.0_aarch64.dmg',
+    assetPattern: /aarch64\.dmg$/i,
     icon: (
       <svg className="w-8 h-8" viewBox="0 0 24 24" fill="currentColor">
         <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z" />
@@ -44,8 +58,7 @@ const platforms = [
     key: 'linux' as Platform,
     label: 'Linux',
     desc: 'Ubuntu / Debian (.deb)',
-    downloadUrl: `${DOWNLOAD_BASE}/prd-agent_1.6.0_amd64.deb`,
-    filename: 'prd-agent_1.6.0_amd64.deb',
+    assetPattern: /amd64\.deb$/i,
     icon: (
       <svg className="w-8 h-8" viewBox="0 0 24 24" fill="currentColor">
         <path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.368 1.884 1.43.868.065 1.322-.28 1.335-.664.008-.135-.09-.27-.166-.39-.296-.469-.32-.614-.37-.737a.416.416 0 01-.015-.042c-.017-.04-.026-.072-.034-.118-.009-.053-.014-.116-.014-.192 0-.152.023-.357.068-.591.235-.92.37-1.424.177-1.83-.068-.144-.196-.252-.357-.321a2.33 2.33 0 00-.025-.334c-.104-.878-.794-1.467-1.356-1.8-.233-.133-.473-.237-.661-.333l-.018-.032c-.26-.476-.512-.984-.735-1.426-.192-.393-.368-.736-.496-.98-.348-.672-.605-1.136-.832-1.486-.24-.367-.404-.556-.542-.62a.24.24 0 00-.062-.023c.145-.428.396-1.37.36-2.563.021-.137.054-.27.075-.4.02-.131.033-.261.033-.389 0-.381-.075-.748-.21-1.074-.134-.325-.327-.602-.6-.833-.397-.34-.89-.523-1.407-.596a4.476 4.476 0 00-1.27 0z" />
@@ -60,10 +73,35 @@ interface DownloadSectionProps {
 
 export function DownloadSection({ className }: DownloadSectionProps) {
   const [detectedPlatform, setDetectedPlatform] = useState<Platform>('unknown');
+  const [release, setRelease] = useState<ReleaseInfo | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     setDetectedPlatform(detectPlatform());
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(GITHUB_API_LATEST)
+      .then((res) => (res.ok ? res.json() : Promise.reject(res.status)))
+      .then((data) => {
+        if (cancelled) return;
+        const version = (data.tag_name as string)?.replace(/^v/, '') ?? '';
+        const assets: ReleaseAsset[] = (data.assets ?? []).map((a: { name: string; browser_download_url: string }) => ({
+          name: a.name,
+          browser_download_url: a.browser_download_url,
+        }));
+        setRelease({ version, assets });
+      })
+      .catch(() => {/* silently fail — cards will link to releases page */})
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const macIntelAsset = useMemo(
+    () => release ? findAsset(release.assets, /x64\.dmg$/i) : undefined,
+    [release],
+  );
 
   return (
     <section id="download" className={cn('relative py-24 sm:py-32 overflow-hidden', className)}>
@@ -83,7 +121,9 @@ export function DownloadSection({ className }: DownloadSectionProps) {
           <svg className="w-4 h-4 text-violet-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
           </svg>
-          <span className="text-sm text-violet-300">桌面客户端 v1.6.0</span>
+          <span className="text-sm text-violet-300">
+            桌面客户端{release ? ` v${release.version}` : loading ? '' : ''}
+          </span>
         </div>
 
         {/* Headline */}
@@ -99,13 +139,17 @@ export function DownloadSection({ className }: DownloadSectionProps) {
 
         {/* Platform cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-10">
-          {platforms.map((p) => {
+          {platformDefs.map((p) => {
             const isDetected = p.key === detectedPlatform;
+            const asset = release ? findAsset(release.assets, p.assetPattern) : undefined;
+            const href = asset?.browser_download_url ?? GITHUB_RELEASES_URL;
+            const isDirectDownload = !!asset;
+
             return (
               <a
                 key={p.key}
-                href={p.downloadUrl}
-                download={p.filename}
+                href={href}
+                {...(isDirectDownload ? { download: asset!.name } : { target: '_blank', rel: 'noopener noreferrer' })}
                 className={cn(
                   'group relative flex flex-col items-center gap-3 p-6 rounded-2xl border transition-all duration-300 hover:scale-[1.03] active:scale-[0.98] no-underline',
                   isDetected
@@ -137,7 +181,7 @@ export function DownloadSection({ className }: DownloadSectionProps) {
                   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                   </svg>
-                  {p.filename}
+                  {asset ? asset.name : '下载安装包'}
                 </div>
               </a>
             );
@@ -145,16 +189,18 @@ export function DownloadSection({ className }: DownloadSectionProps) {
         </div>
 
         {/* macOS Intel alt link */}
-        <p className="text-xs text-white/40 mb-6">
-          macOS Intel 用户请下载{' '}
-          <a
-            href={`${DOWNLOAD_BASE}/PRD.Agent_1.6.0_x64.dmg`}
-            download="PRD.Agent_1.6.0_x64.dmg"
-            className="text-cyan-400/70 hover:text-cyan-300 underline underline-offset-2 transition-colors"
-          >
-            x64 版本
-          </a>
-        </p>
+        {macIntelAsset && (
+          <p className="text-xs text-white/40 mb-6">
+            macOS Intel 用户请下载{' '}
+            <a
+              href={macIntelAsset.browser_download_url}
+              download={macIntelAsset.name}
+              className="text-cyan-400/70 hover:text-cyan-300 underline underline-offset-2 transition-colors"
+            >
+              x64 版本
+            </a>
+          </p>
+        )}
 
         {/* All releases link */}
         <a
