@@ -226,17 +226,34 @@ export class StateService {
   }
 
   /**
+   * Resolve the Docker host IP for infra services.
+   * Priority: customEnv.CDS_DOCKER_HOST > process.env.CDS_DOCKER_HOST > default 172.17.0.1
+   */
+  private resolveDockerHost(): string {
+    return this.state.customEnv['CDS_DOCKER_HOST']
+      || process.env.CDS_DOCKER_HOST
+      || '172.17.0.1';
+  }
+
+  /**
    * Build merged inject env vars from all running infra services.
-   * Replaces {{host}} and {{port}} template placeholders.
+   * Supported placeholders:
+   *   {{host}}         — Docker host IP (configurable via CDS_DOCKER_HOST)
+   *   {{port}}         — Allocated host port for this service
+   *   {{ENV_VAR_NAME}} — Any other placeholder resolves from customEnv or process.env
    */
   getInfraInjectEnv(): Record<string, string> {
+    const dockerHost = this.resolveDockerHost();
     const result: Record<string, string> = {};
     for (const svc of this.state.infraServices) {
       if (svc.status !== 'running') continue;
       for (const [key, template] of Object.entries(svc.injectEnv)) {
         result[key] = template
-          .replace(/\{\{host\}\}/g, '172.17.0.1')
-          .replace(/\{\{port\}\}/g, String(svc.hostPort));
+          .replace(/\{\{host\}\}/g, dockerHost)
+          .replace(/\{\{port\}\}/g, String(svc.hostPort))
+          .replace(/\{\{(\w+)\}\}/g, (_match, name) => {
+            return this.state.customEnv[name] || process.env[name] || `{{${name}}}`;
+          });
       }
     }
     return result;
