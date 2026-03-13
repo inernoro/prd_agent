@@ -65,8 +65,8 @@ docs:
   design.left-right-layout: 左右布局重新设计总结
   design.toast: Toast 通知系统实现
   design.network-diagnostics: 网络诊断功能
-  design.cds: Branch Tester (bt) 设计文档
-  design.exec-bt-deployment: exec_bt.sh 部署架构与冲突分析
+  design.cds: CDS (Cloud Development Suite) 设计文档
+  design.exec-bt-deployment: CDS 部署架构与冲突分析
 
   # ── 三、指南 ──
   # 先看全貌索引，再看部署/开发，最后是专题指南

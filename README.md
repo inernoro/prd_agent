@@ -93,7 +93,7 @@ CDS Architecture:
   └── prd-api-hotfix-c   :9003
 ```
 
-Launch with `./exec_bt.sh` (production) or `./exec_bt.sh --dev` (hot reload). See `doc/design.cds.md` for full design documentation.
+Launch with `./exec_cds.sh` (production) or `./exec_cds.sh dev` (hot reload). See `doc/design.cds.md` for full design documentation.
 
 ## Architecture
 

@@ -33,7 +33,7 @@ CDS（Cloud Development Suite）的环境变量分为两层：
 | `CDS_SWITCH_DOMAIN` | 可选 | — | 分支切换域名（如 `switch.miduo.org`） |
 | `CDS_MAIN_DOMAIN` | 可选 | — | 主域名（如 `miduo.org`） |
 | `CDS_PREVIEW_DOMAIN` | 可选 | — | 预览域名后缀（如 `miduo.org`） |
-| `BT_NGINX_ENABLE` | 可选 | — | 设为 `1` 启用 Nginx 反向代理（端口 58000） |
+| `CDS_NGINX_ENABLE` | 可选 | — | 设为 `1` 启用 Nginx 反向代理（端口 58000） |
 
 > **向后兼容**：旧前缀 `BT_USERNAME` / `BT_PASSWORD` / `SWITCH_DOMAIN` / `MAIN_DOMAIN` / `PREVIEW_DOMAIN` / `JWT_SECRET` 仍可使用，但 `CDS_` 前缀优先级更高。新部署请统一使用 `CDS_` 前缀。
 
@@ -189,10 +189,10 @@ docker exec nginx_miduo nginx -t && docker exec nginx_miduo nginx -s reload
 cd prd_agent/cds
 
 # 前台运行（首次建议前台，便于观察日志）
-./exec_branch_tester.sh
+./exec_cds.sh
 
 # 或后台运行
-./exec_branch_tester.sh --background
+./exec_cds.sh --background
 ```
 
 启动成功后会看到：

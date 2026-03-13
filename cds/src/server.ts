@@ -46,16 +46,15 @@ export function createServer(deps: ServerDeps): express.Express {
   }
 
   // ── Auth middleware ──
-  // CDS_ prefix preferred; BT_ kept for backward compat
-  const btUser = process.env.CDS_USERNAME || process.env.BT_USERNAME;
-  const btPass = process.env.CDS_PASSWORD || process.env.BT_PASSWORD;
-  const authEnabled = !!(btUser && btPass);
-  const validToken = authEnabled ? makeToken(btUser!, btPass!) : '';
+  const cdsUser = process.env.CDS_USERNAME || process.env.BT_USERNAME;
+  const cdsPass = process.env.CDS_PASSWORD || process.env.BT_PASSWORD;
+  const authEnabled = !!(cdsUser && cdsPass);
+  const validToken = authEnabled ? makeToken(cdsUser!, cdsPass!) : '';
 
   if (authEnabled) {
     app.post('/api/login', (req, res) => {
       const { username, password } = req.body || {};
-      if (username === btUser && password === btPass) {
+      if (username === cdsUser && password === cdsPass) {
         // 服务端设置 cookie，比客户端 document.cookie 更可靠（尤其是 HTTPS / 隐私模式）
         res.setHeader('Set-Cookie', `cds_token=${validToken}; Path=/; Max-Age=${30 * 86400}; SameSite=Lax; HttpOnly`);
         res.json({ success: true });

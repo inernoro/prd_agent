@@ -362,7 +362,7 @@ main() {
     echo ""
     echo "  下一步："
     echo "    1. source ~/.bashrc"
-    echo "    2. cd $SCRIPT_DIR && ./exec_branch_tester.sh"
+    echo "    2. cd $SCRIPT_DIR && ./exec_cds.sh"
     echo "    3. 访问 https://cds.${new_main}"
     echo ""
 }
