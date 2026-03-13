@@ -54,10 +54,14 @@ git rev-parse --show-toplevel
 | `angular.json` | Angular | `node:20-slim` | `{pm} install` → `npx ng serve --host 0.0.0.0` |
 
 **包管理器检测**（`{pm}` 替换规则）：
-- `pnpm-lock.yaml` 存在 → `pnpm`
-- `yarn.lock` 存在 → `yarn`
+- `pnpm-lock.yaml` 存在 → `pnpm`（installCommand 需前缀 `corepack enable &&`，因为 `node:20-slim` 未预装 pnpm）
+- `yarn.lock` 存在 → `yarn`（installCommand 需前缀 `corepack enable &&`，因为 `node:20-slim` 未预装 yarn）
 - `package-lock.json` 存在 → `npm`
 - 都不存在 → `npm`（默认）
+
+**corepack 规则**：使用 pnpm 或 yarn 时，`installCommand` 和 `runCommand` 都必须以 `corepack enable &&` 开头，否则 Docker 容器内找不到命令。示例：
+- installCommand: `corepack enable && pnpm install --frozen-lockfile`
+- runCommand: `corepack enable && pnpm exec vite --host 0.0.0.0 --port 5173`
 
 #### 2.3 Monorepo 处理
 

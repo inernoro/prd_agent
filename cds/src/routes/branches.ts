@@ -743,11 +743,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
         name: 'Admin Panel (Vite)',
         dockerImage: 'node:20-slim',
         workDir: 'prd-admin',
-        installCommand: 'npm install',
-        runCommand: 'npx vite --host 0.0.0.0 --port 5173',
+        installCommand: 'corepack enable && pnpm install --frozen-lockfile',
+        runCommand: 'corepack enable && pnpm exec vite --host 0.0.0.0 --port 5173',
         containerPort: 5173,
         cacheMounts: [
-          { hostPath: '/tmp/cds-cache/npm', containerPath: '/root/.npm' },
+          { hostPath: '/tmp/cds-cache/pnpm', containerPath: '/root/.local/share/pnpm/store' },
         ],
       },
     ];
