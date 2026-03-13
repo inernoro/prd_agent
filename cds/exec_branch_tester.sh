@@ -6,9 +6,13 @@
 #   ./exec_branch_tester.sh                # 前台运行
 #   ./exec_branch_tester.sh --background   # 后台运行
 #
-# 环境变量（可选）：
-#   BT_USERNAME      — 登录用户名（不设置则不启用认证）
-#   BT_PASSWORD      — 登录密码
+# 环境变量（可选，CDS_ 前缀优先，兼容旧 BT_ 前缀）：
+#   CDS_USERNAME     — 登录用户名（不设置则不启用认证）
+#   CDS_PASSWORD     — 登录密码
+#   CDS_JWT_SECRET   — JWT 签名密钥（>= 32 字节）
+#   CDS_SWITCH_DOMAIN — 分支切换域名
+#   CDS_MAIN_DOMAIN  — 主域名
+#   CDS_PREVIEW_DOMAIN — 预览域名后缀
 #   BT_CONFIG        — 配置文件路径（默认 bt.config.json）
 #   BT_NGINX_ENABLE  — 设为 1 启用 nginx 转发（端口 58000）
 # ──────────────────────────────────────────────
@@ -35,7 +39,8 @@ echo "  CDS Startup"
 echo "  ─────────────────────"
 echo "  Directory:  $SCRIPT_DIR"
 echo "  Config:     $CONFIG_FILE"
-echo "  Auth:       ${BT_USERNAME:+enabled (user: $BT_USERNAME)}${BT_USERNAME:-disabled}"
+CDS_AUTH_USER="${CDS_USERNAME:-${BT_USERNAME:-}}"
+echo "  Auth:       ${CDS_AUTH_USER:+enabled (user: $CDS_AUTH_USER)}${CDS_AUTH_USER:-disabled}"
 echo "  Nginx:      ${BT_NGINX_ENABLE:+enabled (port 58000)}${BT_NGINX_ENABLE:-disabled}"
 echo ""
 

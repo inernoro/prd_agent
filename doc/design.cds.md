@@ -33,15 +33,27 @@
 
 ### 环境变量
 
+CDS 环境变量分为**系统层**（`.bashrc`，控制 CDS 自身）和**项目层**（Dashboard UI，注入业务容器）。
+
+详细配置指南见 **`doc/guide.cds-env.md`**。
+
+#### 系统层（.bashrc，`CDS_` 前缀）
+
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `BT_PORT` | `9900` | Dashboard 端口 |
-| `BT_USERNAME` | — | 登录用户名（设置后启用认证） |
-| `BT_PASSWORD` | — | 登录密码 |
-| `JWT_SECRET` | dev 默认值 | JWT 签名密钥 |
-| `SWITCH_DOMAIN` | — | 分支切换域名（如 `switch.example.com`） |
-| `MAIN_DOMAIN` | — | 主域名（切换后跳转目标） |
-| `PREVIEW_DOMAIN` | — | 预览域名后缀（如 `preview.example.com`） |
+| `CDS_USERNAME` | — | Dashboard 登录用户名（设置后启用认证） |
+| `CDS_PASSWORD` | — | Dashboard 登录密码 |
+| `CDS_JWT_SECRET` | dev 默认值 | JWT 签名密钥（>= 32 字节） |
+| `CDS_SWITCH_DOMAIN` | — | 分支切换域名（如 `switch.example.com`） |
+| `CDS_MAIN_DOMAIN` | — | 主域名（切换后跳转目标） |
+| `CDS_PREVIEW_DOMAIN` | — | 预览域名后缀（如 `preview.example.com`） |
+| `BT_NGINX_ENABLE` | — | 设为 `1` 启用 Nginx 反向代理（端口 58000） |
+
+> 向后兼容：旧前缀 `BT_USERNAME`/`BT_PASSWORD`/`SWITCH_DOMAIN`/`MAIN_DOMAIN`/`PREVIEW_DOMAIN`/`JWT_SECRET` 仍可使用，`CDS_` 前缀优先。
+
+#### 项目层（Dashboard UI）
+
+通过 Dashboard 环境变量面板配置，存储在 `.cds/state.json`，部署时注入容器。包括数据库连接、云存储密钥、应用认证等业务变量。
 
 ### 基本用法
 

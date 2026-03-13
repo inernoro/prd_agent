@@ -46,8 +46,9 @@ export function createServer(deps: ServerDeps): express.Express {
   }
 
   // ── Auth middleware ──
-  const btUser = process.env.BT_USERNAME || process.env.CDS_USERNAME;
-  const btPass = process.env.BT_PASSWORD || process.env.CDS_PASSWORD;
+  // CDS_ prefix preferred; BT_ kept for backward compat
+  const btUser = process.env.CDS_USERNAME || process.env.BT_USERNAME;
+  const btPass = process.env.CDS_PASSWORD || process.env.BT_PASSWORD;
   const authEnabled = !!(btUser && btPass);
   const validToken = authEnabled ? makeToken(btUser!, btPass!) : '';
 
