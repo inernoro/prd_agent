@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { Router } from 'express';
 import { StateService } from '../services/state.js';
 import type { WorktreeService } from '../services/worktree.js';
@@ -715,6 +717,72 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  // ── Package manager detection ──
+
+  type PackageManager = 'npm' | 'pnpm' | 'yarn';
+
+  /**
+   * Detect the package manager for a Node.js project by checking lock files.
+   * Priority: pnpm-lock.yaml > yarn.lock > package-lock.json > npm (default)
+   */
+  function detectPackageManager(projectDir: string): PackageManager {
+    if (fs.existsSync(path.join(projectDir, 'pnpm-lock.yaml'))) return 'pnpm';
+    if (fs.existsSync(path.join(projectDir, 'yarn.lock'))) return 'yarn';
+    if (fs.existsSync(path.join(projectDir, 'package-lock.json'))) return 'npm';
+    return 'npm';
+  }
+
+  /** Build install/run commands and cache mount for a detected package manager */
+  function nodeProfileCommands(pm: PackageManager) {
+    switch (pm) {
+      case 'pnpm':
+        return {
+          installCommand: 'corepack enable && pnpm install --frozen-lockfile',
+          runPrefix: 'corepack enable && pnpm exec ',
+          cacheMounts: [{ hostPath: '/tmp/cds-cache/pnpm', containerPath: '/root/.local/share/pnpm/store' }],
+        };
+      case 'yarn':
+        return {
+          installCommand: 'corepack enable && yarn install --frozen-lockfile',
+          runPrefix: 'corepack enable && yarn exec ',
+          cacheMounts: [{ hostPath: '/tmp/cds-cache/yarn', containerPath: '/usr/local/share/.cache/yarn' }],
+        };
+      default:
+        return {
+          installCommand: 'npm install',
+          runPrefix: 'npx ',
+          cacheMounts: [{ hostPath: '/tmp/cds-cache/npm', containerPath: '/root/.npm' }],
+        };
+    }
+  }
+
+  /**
+   * Check if a build command uses pnpm/yarn without corepack enable prefix.
+   * Returns a warning string or null if OK.
+   */
+  function checkCorepackPrefix(cmd: string | undefined, profileLabel: string): string | null {
+    if (!cmd) return null;
+    const needsCorepack = /\b(pnpm|yarn)\b/.test(cmd) && !/corepack\s+enable/.test(cmd);
+    if (needsCorepack) {
+      return `${profileLabel}: 命令使用了 pnpm/yarn 但缺少 "corepack enable &&" 前缀，在 node:*-slim 镜像中会失败`;
+    }
+    return null;
+  }
+
+  // ── Package manager detection API ──
+
+  router.get('/detect-pm/:workDir', (_req, res) => {
+    const workDir = _req.params.workDir;
+    const fullPath = path.join(config.repoRoot, workDir);
+    if (!fs.existsSync(fullPath)) {
+      res.status(404).json({ error: `目录 "${workDir}" 不存在` });
+      return;
+    }
+    const pm = detectPackageManager(fullPath);
+    const commands = nodeProfileCommands(pm);
+    res.json({ workDir, packageManager: pm, ...commands });
+  });
+
   // ── Quickstart: seed default build profiles for this project ──
 
   router.post('/quickstart', (_req, res) => {
@@ -723,6 +791,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(409).json({ error: '构建配置已存在。请先删除现有配置或手动添加。' });
       return;
     }
+
+    // Auto-detect package manager for admin panel
+    const adminDir = path.join(config.repoRoot, 'prd-admin');
+    const pm = fs.existsSync(adminDir) ? detectPackageManager(adminDir) : 'npm';
+    const nodeCmd = nodeProfileCommands(pm);
 
     const defaults: BuildProfile[] = [
       {
@@ -743,12 +816,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         name: 'Admin Panel (Vite)',
         dockerImage: 'node:20-slim',
         workDir: 'prd-admin',
-        installCommand: 'corepack enable && pnpm install --frozen-lockfile',
-        runCommand: 'corepack enable && pnpm exec vite --host 0.0.0.0 --port 5173',
+        installCommand: nodeCmd.installCommand,
+        runCommand: `${nodeCmd.runPrefix}vite --host 0.0.0.0 --port 5173`,
         containerPort: 5173,
-        cacheMounts: [
-          { hostPath: '/tmp/cds-cache/pnpm', containerPath: '/root/.local/share/pnpm/store' },
-        ],
+        cacheMounts: nodeCmd.cacheMounts,
       },
     ];
 
@@ -758,8 +829,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     stateService.save();
 
     res.status(201).json({
-      message: `快速启动: 已创建 ${defaults.length} 个构建配置`,
+      message: `快速启动: 已创建 ${defaults.length} 个构建配置 (检测到包管理器: ${pm})`,
       profiles: defaults,
+      detectedPackageManager: pm,
     });
   });
 
@@ -1206,10 +1278,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // ── Config Import / Export ──
 
   /** Validate a CDS Config JSON blob */
-  function validateConfigBlob(blob: unknown): { valid: boolean; errors: string[] } {
+  function validateConfigBlob(blob: unknown): { valid: boolean; errors: string[]; warnings: string[] } {
     const errors: string[] = [];
+    const warnings: string[] = [];
     if (!blob || typeof blob !== 'object') {
-      return { valid: false, errors: ['配置必须是一个 JSON 对象'] };
+      return { valid: false, errors: ['配置必须是一个 JSON 对象'], warnings };
     }
     const cfg = blob as Record<string, unknown>;
     if (cfg.$schema !== 'cds-config-v1') {
@@ -1230,6 +1303,30 @@ export function createBranchRouter(deps: RouterDeps): Router {
             const port = Number(p.containerPort);
             if (!Number.isInteger(port) || port < 1 || port > 65535) {
               errors.push(`buildProfiles[${i}]: containerPort 必须在 1-65535 之间`);
+            }
+          }
+          // Check corepack prefix for pnpm/yarn commands
+          const label = `buildProfiles[${i}]`;
+          const installWarn = checkCorepackPrefix(p.installCommand as string | undefined, `${label}.installCommand`);
+          const runWarn = checkCorepackPrefix(p.runCommand as string | undefined, `${label}.runCommand`);
+          const buildWarn = checkCorepackPrefix(p.buildCommand as string | undefined, `${label}.buildCommand`);
+          if (installWarn) warnings.push(installWarn);
+          if (runWarn) warnings.push(runWarn);
+          if (buildWarn) warnings.push(buildWarn);
+
+          // Cross-check: if workDir has a lock file that doesn't match the command's PM
+          if (p.workDir && typeof p.workDir === 'string') {
+            const fullDir = path.join(config.repoRoot, p.workDir);
+            if (fs.existsSync(fullDir)) {
+              const detectedPm = detectPackageManager(fullDir);
+              const installCmd = (p.installCommand as string) || '';
+              const usesWrongPm =
+                (detectedPm === 'pnpm' && /\bnpm install\b/.test(installCmd)) ||
+                (detectedPm === 'npm' && /\bpnpm install\b/.test(installCmd)) ||
+                (detectedPm === 'yarn' && !/\byarn install\b/.test(installCmd) && /\b(npm|pnpm) install\b/.test(installCmd));
+              if (usesWrongPm) {
+                warnings.push(`${label}: 检测到 ${p.workDir}/ 使用 ${detectedPm}，但 installCommand 使用了其他包管理器`);
+              }
             }
           }
         }
@@ -1258,7 +1355,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         errors.push('routingRules 必须是数组');
       }
     }
-    return { valid: errors.length === 0, errors };
+    return { valid: errors.length === 0, errors, warnings };
   }
 
   /** Preview what an import would do (without applying) */
@@ -1334,16 +1431,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Validate
       const validation = validateConfigBlob(configBlob);
       if (!validation.valid) {
-        res.status(400).json({ valid: false, errors: validation.errors });
+        res.status(400).json({ valid: false, errors: validation.errors, warnings: validation.warnings });
         return;
       }
 
       const cfg = configBlob as Record<string, unknown>;
       const preview = previewImport(cfg);
 
-      // If dry run, return preview only
+      // If dry run, return preview only (include warnings)
       if (dryRun) {
-        res.json({ valid: true, preview, applied: false });
+        res.json({ valid: true, preview, applied: false, warnings: validation.warnings });
         return;
       }
 
@@ -1443,6 +1540,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         preview,
         applied: true,
         infraResults,
+        warnings: validation.warnings,
         message: '配置已成功导入',
       });
     } catch (err) {
