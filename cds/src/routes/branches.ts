@@ -49,6 +49,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
     } catch { /* client disconnected */ }
   }
 
+  /** Write deploy event to stdout (captured by cds.log when running in background) */
+  function logDeploy(branchId: string, message: string) {
+    const ts = new Date().toISOString().slice(11, 19);
+    console.log(`  [deploy:${branchId}] ${ts} ${message}`);
+  }
+
   // ── Remote branches ──
 
   router.get('/remote-branches', async (_req, res) => {
@@ -253,9 +259,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
     function logEvent(ev: OperationLogEvent) {
       opLog.events.push(ev);
       sendSSE(res, 'step', ev);
+      logDeploy(id, `[${ev.status}] ${ev.title || ev.step}${ev.log ? ' — ' + ev.log : ''}`);
     }
 
     try {
+      logDeploy(id, '开始部署');
+
       // Pull latest code
       logEvent({ step: 'pull', status: 'running', title: '正在拉取最新代码...', timestamp: new Date().toISOString() });
       const pullResult = await worktreeService.pull(entry.branch, entry.worktreePath);
@@ -287,6 +296,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
           const mergedEnv = getMergedEnv();
           await containerService.runService(entry, profile, svc, (chunk) => {
             sendSSE(res, 'log', { profileId: profile.id, chunk });
+            // Write build output to cds.log (trim trailing newlines)
+            for (const line of chunk.split('\n')) {
+              if (line.trim()) logDeploy(id, line);
+            }
           }, mergedEnv);
 
           svc.status = 'running';
@@ -308,8 +321,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.appendLog(id, opLog);
       stateService.save();
 
+      const completeMsg = entry.status === 'running' ? '所有服务已启动' : '部分服务启动失败';
+      logDeploy(id, `部署完成: ${completeMsg}`);
       sendSSE(res, 'complete', {
-        message: entry.status === 'running' ? '所有服务已启动' : '部分服务启动失败',
+        message: completeMsg,
         services: entry.services,
       });
     } catch (err) {
@@ -319,6 +334,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       opLog.finishedAt = new Date().toISOString();
       stateService.appendLog(id, opLog);
       stateService.save();
+      logDeploy(id, `部署失败: ${(err as Error).message}`);
       sendSSE(res, 'error', { message: (err as Error).message });
     } finally {
       res.end();
@@ -354,9 +370,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
     function logEvent(ev: OperationLogEvent) {
       opLog.events.push(ev);
       sendSSE(res, 'step', ev);
+      logDeploy(id, `[${ev.status}] ${ev.title || ev.step}${ev.log ? ' — ' + ev.log : ''}`);
     }
 
     try {
+      logDeploy(id, `开始部署服务 ${profile.name}`);
+
       // Pull latest code
       logEvent({ step: 'pull', status: 'running', title: '正在拉取最新代码...', timestamp: new Date().toISOString() });
       const pullResult = await worktreeService.pull(entry.branch, entry.worktreePath);
@@ -383,6 +402,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const mergedEnv = getMergedEnv();
         await containerService.runService(entry, profile, svc, (chunk) => {
           sendSSE(res, 'log', { profileId: profile.id, chunk });
+          for (const line of chunk.split('\n')) {
+            if (line.trim()) logDeploy(id, line);
+          }
         }, mergedEnv);
 
         svc.status = 'running';
@@ -403,8 +425,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.appendLog(id, opLog);
       stateService.save();
 
+      const completeMsg = svc.status === 'running' ? `${profile.name} 已启动` : `${profile.name} 启动失败`;
+      logDeploy(id, `部署完成: ${completeMsg}`);
       sendSSE(res, 'complete', {
-        message: svc.status === 'running' ? `${profile.name} 已启动` : `${profile.name} 启动失败`,
+        message: completeMsg,
         services: entry.services,
       });
     } catch (err) {
@@ -414,6 +438,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       opLog.finishedAt = new Date().toISOString();
       stateService.appendLog(id, opLog);
       stateService.save();
+      logDeploy(id, `部署失败: ${(err as Error).message}`);
       sendSSE(res, 'error', { message: (err as Error).message });
     } finally {
       res.end();

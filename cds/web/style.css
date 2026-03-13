@@ -270,7 +270,6 @@ h2 { font-size: 14px; font-weight: 600; margin-bottom: 8px; letter-spacing: -0.0
 }
 .gateway-label { font-size: 12px; font-weight: 500; color: var(--text-secondary); white-space: nowrap; cursor: help; }
 .gateway-right { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.gateway-hint { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
 
 /* ════════════════ Form Elements ════════════════ */
 
@@ -573,19 +572,18 @@ button.text-btn:hover { color: var(--accent); }
 }
 
 .branch-card-header {
-  display: flex; gap: 10px; align-items: center; cursor: pointer;
+  display: flex; gap: 10px; align-items: center;
   user-select: none; -webkit-user-select: none;
 }
-.branch-card-header:hover .branch-chevron { color: var(--text-primary); }
 .branch-card-left { display: flex; gap: 8px; flex: 1; min-width: 0; align-items: center; }
 .branch-card-right {
   display: flex; align-items: center; gap: 6px; flex-shrink: 0;
 }
-.branch-chevron {
-  color: var(--text-muted); transition: transform 0.2s ease, color 0.2s ease;
+.branch-log-btn {
+  color: var(--text-muted); transition: color var(--transition);
   flex-shrink: 0;
 }
-.branch-chevron.open { transform: rotate(180deg); }
+.branch-log-btn:hover { color: var(--text-primary); }
 
 /* Favorite toggle — inline, minimal */
 .fav-toggle {
@@ -1125,7 +1123,6 @@ a.branch-name:hover { color: var(--accent); }
 
   /* Gateway bar — keep single row, just tighten */
   .gateway-bar { padding: 10px 12px; gap: 8px; }
-  .gateway-hint { display: none; }
   select { max-width: 140px; }
 
   /* Header actions */

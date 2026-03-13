@@ -126,18 +126,6 @@ let routingRules = [];
 let defaultBranch = null;
 let customEnvVars = {};
 let infraServices = [];
-const collapsedBranches = new Set();
-
-function toggleBranchCard(id, event) {
-  // Don't toggle when clicking buttons/links/inputs inside the header
-  if (event.target.closest('button, a, input, .port-badge, .fav-toggle, .set-default-link, .branch-actions-commit, .branch-name, .branch-tag, .branch-tag-add')) return;
-  if (collapsedBranches.has(id)) {
-    collapsedBranches.delete(id);
-  } else {
-    collapsedBranches.add(id);
-  }
-  renderBranches();
-}
 
 // ── Init ──
 
@@ -354,8 +342,6 @@ function filterBranches() {
 function scrollToAndHighlight(id) {
   dropdown.classList.add('hidden');
   searchInput.value = '';
-  // Ensure the card is expanded
-  collapsedBranches.delete(id);
   renderBranches();
   // Find and scroll to the card
   requestAnimationFrame(() => {
@@ -411,8 +397,6 @@ async function deployBranch(id) {
   if (busyBranches.has(id)) return;
   markTouched(id);
   busyBranches.add(id);
-  // Ensure card is expanded so user sees inline log
-  collapsedBranches.delete(id);
   inlineDeployLogs.set(id, { lines: [], status: 'building', expanded: false });
   renderBranches();
 
@@ -709,6 +693,38 @@ async function cleanupAll() {
   await loadBranches();
 }
 
+async function viewBranchLogs(id) {
+  // First check if there's an active inline deploy log
+  const inlineLog = inlineDeployLogs.get(id);
+  if (inlineLog) {
+    openLogModal(`部署日志 — ${id}`);
+    document.getElementById('logModalBody').innerHTML =
+      `<pre class="live-log-output">${esc(inlineLog.lines.join('\n') || '暂无日志')}</pre>`;
+    return;
+  }
+  // Otherwise fetch historical operation logs from API
+  try {
+    const data = await api('GET', `/branches/${encodeURIComponent(id)}/logs`);
+    const logs = data.logs || [];
+    if (logs.length === 0) {
+      openLogModal(`部署日志 — ${id}`);
+      document.getElementById('logModalBody').innerHTML = '<div style="padding:16px;color:var(--text-muted)">暂无部署日志</div>';
+      return;
+    }
+    // Show latest log
+    const latest = logs[logs.length - 1];
+    const logLines = (latest.events || []).map(ev => {
+      const prefix = ev.status === 'error' ? '✗' : ev.status === 'done' ? '✓' : '…';
+      let line = `[${prefix}] ${ev.title || ev.step}`;
+      if (ev.log) line += '\n    ' + ev.log;
+      return line;
+    });
+    openLogModal(`部署日志 — ${id} (${latest.status === 'completed' ? '成功' : latest.status === 'error' ? '失败' : '进行中'})`);
+    document.getElementById('logModalBody').innerHTML =
+      `<pre class="live-log-output">${esc(logLines.join('\n') || '暂无日志')}</pre>`;
+  } catch (e) { showToast('获取日志失败: ' + e.message, 'error'); }
+}
+
 async function viewContainerLogs(id, profileId) {
   try {
     const data = await api('POST', `/branches/${id}/container-logs`, { profileId });
@@ -723,7 +739,6 @@ async function deploySingleService(id, profileId) {
   if (busyBranches.has(id)) return;
   busyBranches.add(id);
   closeDeployMenu(id);
-  collapsedBranches.delete(id);
   inlineDeployLogs.set(id, { lines: [], status: 'building', expanded: false });
   renderBranches();
 
@@ -989,8 +1004,6 @@ function renderBranches() {
       `<div class="deploy-menu-item" onclick="deploySingleService('${esc(b.id)}', '${esc(p.id)}')">${esc(p.name)}</div>`
     ).join('');
 
-    const expanded = !collapsedBranches.has(b.id);
-
     // Build stop menu item for deploy dropdown
     const stopMenuItem = isRunning ? `<div class="deploy-menu-divider"></div><div class="deploy-menu-item deploy-menu-item-danger" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); stopBranch('${esc(b.id)}')">停止所有服务</div>` : '';
 
@@ -1096,9 +1109,9 @@ function renderBranches() {
     }
 
     return `
-      <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} ${expanded ? 'expanded' : ''} ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''} ${previewMode === 'multi' && isRunning ? 'show-preview-border' : ''} ${isDeploying ? 'is-deploying' : ''}" data-branch-id="${esc(b.id)}">
+      <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} expanded ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''} ${previewMode === 'multi' && isRunning ? 'show-preview-border' : ''} ${isDeploying ? 'is-deploying' : ''}" data-branch-id="${esc(b.id)}">
         ${isDeploying ? '<div class="deploy-progress-bar"><div class="deploy-progress-bar-fill"></div></div>' : ''}
-        <div class="branch-card-header" onclick="toggleBranchCard('${esc(b.id)}', event)">
+        <div class="branch-card-header">
           <div class="branch-card-left">
             <span class="fav-toggle ${b.isFavorite ? 'active' : ''}" onclick="event.stopPropagation(); toggleFavorite('${esc(b.id)}')" title="${b.isFavorite ? '取消收藏' : '收藏'}">
               ${b.isFavorite ? ICON.star : ICON.starOutline}
@@ -1115,11 +1128,13 @@ function renderBranches() {
               ${hasUpdates ? `<span class="update-badge">↓${branchUpdates[b.id].behind}</span>` : ''}
               <svg class="update-pull-icon ${isLoading(b.id, 'pull') ? 'spinning' : ''}" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
             </span>` : ''}
-            <svg class="branch-chevron ${expanded ? 'open' : ''}" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M4.427 5.427a.75.75 0 011.146 0L8 7.854l2.427-2.427a.75.75 0 111.146 1.146l-3 3a.75.75 0 01-1.146 0l-3-3a.75.75 0 010-1.146z"/></svg>
+            <button class="icon-btn sm branch-log-btn" onclick="event.stopPropagation(); viewBranchLogs('${esc(b.id)}')" title="查看部署日志">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.5 0a.25.25 0 01.25-.25h10.5a.25.25 0 01.25.25v7.5a.25.25 0 01-.25.25h-4.5a.75.75 0 00-.75.75v2.19l-2.72-2.72a.75.75 0 00-.53-.22H2.75a.25.25 0 01-.25-.25v-7.5z"/></svg>
+            </button>
           </div>
         </div>
         ${b.errorMessage && !deployLog ? `<div class="branch-error" title="${esc(b.errorMessage)}">${esc(b.errorMessage)}</div>` : ''}
-        <div class="branch-card-body ${expanded ? '' : 'hidden'}">
+        <div class="branch-card-body">
           ${tagsHtml}
           <div class="branch-card-actions-row">
             <div class="branch-actions-left">
