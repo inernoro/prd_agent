@@ -6,9 +6,10 @@
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { WatermarkDescriptionGrid } from '@/components/watermark/WatermarkDescriptionGrid';
-import { Hand, User, Droplet } from 'lucide-react';
+import { Hand, Droplet } from 'lucide-react';
 import type { MarketplaceWatermarkConfig } from '@/services/contracts/watermark';
 import type { MarketplaceCardContext } from './ConfigManagementDialogBase';
+import { UserAvatar } from '@/components/ui/UserAvatar';
 
 interface MarketplaceWatermarkCardProps {
   config: MarketplaceWatermarkConfig;
@@ -111,13 +112,7 @@ export function MarketplaceWatermarkCard({ config, ctx, onFork }: MarketplaceWat
                 {config.forkCount} 次下载
               </span>
               {/* 作者信息 */}
-              {config.ownerUserAvatar ? (
-                <img src={config.ownerUserAvatar} alt="" className="w-4 h-4 rounded-full object-cover" />
-              ) : (
-                <div className="w-4 h-4 rounded-full bg-gray-600 flex items-center justify-center">
-                  <User size={10} />
-                </div>
-              )}
+              <UserAvatar src={config.ownerUserAvatar || ''} className="w-4 h-4 rounded-full object-cover" />
               <span>{config.ownerUserName || '未知用户'}</span>
               {/* 日期 */}
               {config.createdAt && (

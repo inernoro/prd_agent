@@ -8,8 +8,9 @@
 import React, { useState } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
-import { GitFork, User, Hand } from 'lucide-react';
+import { GitFork, Hand } from 'lucide-react';
 import { resolveAvatarUrl } from '@/lib/avatar';
+import { UserAvatar } from '@/components/ui/UserAvatar';
 import { systemDialog } from '@/lib/systemDialog';
 import {
   CONFIG_TYPE_REGISTRY,
@@ -120,20 +121,10 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
               <GitFork size={11} className="flex-shrink-0" />
               <span className="flex-shrink-0">{item.data.forkCount} 次下载</span>
               <span className="opacity-60 flex-shrink-0">·</span>
-              <img
+              <UserAvatar
                 src={resolveAvatarUrl({ avatarFileName: item.data.ownerUserAvatar })}
-                alt=""
                 className="w-4 h-4 rounded-full object-cover flex-shrink-0"
-                onError={(e) => {
-                  // Fallback to default avatar on error
-                  const target = e.target as HTMLImageElement;
-                  target.style.display = 'none';
-                  target.nextElementSibling?.classList.remove('hidden');
-                }}
               />
-              <div className="w-4 h-4 rounded-full bg-gray-600 items-center justify-center hidden flex-shrink-0">
-                <User size={10} />
-              </div>
               <span className="truncate">{item.data.ownerUserName || '未知用户'}</span>
               <span className="opacity-60 flex-shrink-0">·</span>
               <span className="flex-shrink-0">{new Date(item.data.createdAt).toLocaleDateString()}</span>

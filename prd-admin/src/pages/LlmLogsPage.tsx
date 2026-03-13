@@ -12,6 +12,7 @@ import type { LlmRequestLog, LlmRequestLogListItem, UploadArtifact } from '@/typ
 import { CheckCircle, ChevronDown, Clock, Copy, Database, Eraser, Hash, HelpCircle, ImagePlus, Layers, Loader2, RefreshCw, Reply, ScanEye, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
 import { AppCallerKeyIcon } from '@/lib/appCallerUtils';
 import { resolveAvatarUrl } from '@/lib/avatar';
+import { UserAvatar } from '@/components/ui/UserAvatar';
 import { glassPanel } from '@/lib/glassStyles';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -1701,7 +1702,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                           <span className="text-[11px] truncate max-w-[100px]" style={{ color: 'var(--text-secondary)' }} title={it.username || it.userId}>
                             {it.username || it.userId}
                           </span>
-                          <img
+                          <UserAvatar
                             src={resolveAvatarUrl({ avatarFileName: it.avatarFileName, username: it.username })}
                             alt={it.username || it.userId}
                             className="w-5 h-5 rounded-full object-cover shrink-0"
