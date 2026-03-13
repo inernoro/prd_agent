@@ -3,14 +3,18 @@
 # CDS 一键启动脚本
 #
 # 用法：
-#   ./exec_branch_tester.sh                # 前台运行
-#   ./exec_branch_tester.sh --background   # 后台运行
+#   ./exec_cds.sh                # 前台运行
+#   ./exec_cds.sh --background   # 后台运行
 #
 # 环境变量（可选）：
-#   BT_USERNAME      — 登录用户名（不设置则不启用认证）
-#   BT_PASSWORD      — 登录密码
-#   BT_CONFIG        — 配置文件路径（默认 bt.config.json）
-#   BT_NGINX_ENABLE  — 设为 1 启用 nginx 转发（端口 58000）
+#   CDS_USERNAME       — 登录用户名（不设置则不启用认证）
+#   CDS_PASSWORD       — 登录密码
+#   CDS_JWT_SECRET     — JWT 签名密钥（>= 32 字节）
+#   CDS_SWITCH_DOMAIN  — 分支切换域名
+#   CDS_MAIN_DOMAIN    — 主域名
+#   CDS_PREVIEW_DOMAIN — 预览域名后缀
+#   CDS_CONFIG         — 配置文件路径（默认 cds.config.json）
+#   CDS_NGINX_ENABLE   — 设为 1 启用 nginx 转发（端口 58000）
 # ──────────────────────────────────────────────
 
 set -euo pipefail
@@ -18,10 +22,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-CONFIG_FILE="${BT_CONFIG:-bt.config.json}"
+CONFIG_FILE="${CDS_CONFIG:-${BT_CONFIG:-cds.config.json}}"
 BACKGROUND=false
-LOG_FILE="bt.log"
-PID_FILE=".bt/bt.pid"
+LOG_FILE="cds.log"
+PID_FILE=".cds/cds.pid"
 
 # Parse args
 for arg in "$@"; do
@@ -35,8 +39,10 @@ echo "  CDS Startup"
 echo "  ─────────────────────"
 echo "  Directory:  $SCRIPT_DIR"
 echo "  Config:     $CONFIG_FILE"
-echo "  Auth:       ${BT_USERNAME:+enabled (user: $BT_USERNAME)}${BT_USERNAME:-disabled}"
-echo "  Nginx:      ${BT_NGINX_ENABLE:+enabled (port 58000)}${BT_NGINX_ENABLE:-disabled}"
+CDS_AUTH_USER="${CDS_USERNAME:-${BT_USERNAME:-}}"
+echo "  Auth:       ${CDS_AUTH_USER:+enabled (user: $CDS_AUTH_USER)}${CDS_AUTH_USER:-disabled}"
+CDS_NGINX="${CDS_NGINX_ENABLE:-${BT_NGINX_ENABLE:-}}"
+echo "  Nginx:      ${CDS_NGINX:+enabled (port 58000)}${CDS_NGINX:-disabled}"
 echo ""
 
 # ── 1. Check dependencies ──
@@ -65,25 +71,32 @@ else
 fi
 
 # ── 3. Setup nginx (optional) ──
-if [ "${BT_NGINX_ENABLE:-}" = "1" ]; then
+if [ "${CDS_NGINX}" = "1" ]; then
   echo "[2/3] Setting up nginx reverse proxy on :58000..."
   NGINX_CONF_DIR="/etc/nginx/conf.d"
-  BT_NGINX_CONF="$SCRIPT_DIR/nginx/bt-nginx.conf"
+  CDS_NGINX_CONF="$SCRIPT_DIR/nginx/cds-nginx.conf"
 
-  if [ -f "$BT_NGINX_CONF" ]; then
+  if [ -f "$CDS_NGINX_CONF" ]; then
     if [ -d "$NGINX_CONF_DIR" ]; then
-      sudo cp "$BT_NGINX_CONF" "$NGINX_CONF_DIR/bt-cds.conf"
+      sudo cp "$CDS_NGINX_CONF" "$NGINX_CONF_DIR/cds.conf"
       sudo nginx -t 2>/dev/null && sudo nginx -s reload 2>/dev/null && echo "  Nginx: OK (port 58000)" || echo "  Nginx: config test failed (skipped)"
     else
       echo "  Nginx: $NGINX_CONF_DIR not found (skipped)"
     fi
   fi
 else
-  echo "[2/3] Nginx: skipped (set BT_NGINX_ENABLE=1 to enable)"
+  echo "[2/3] Nginx: skipped (set CDS_NGINX_ENABLE=1 to enable)"
 fi
 
-# ── 4. Start cds ──
-mkdir -p .bt
+# ── 4. Start CDS ──
+# Migrate old .bt/ to .cds/ if needed
+if [ -d ".bt" ] && [ ! -d ".cds" ]; then
+  mv .bt .cds
+elif [ -d ".bt" ] && [ -d ".cds" ]; then
+  # Both exist, prefer .cds, remove old
+  rm -rf .bt
+fi
+mkdir -p .cds
 
 echo "[3/3] Starting CDS..."
 
@@ -97,19 +110,30 @@ if [ "$BACKGROUND" = true ]; then
       sleep 1
     fi
   fi
+  # Also check legacy PID file
+  LEGACY_PID_FILE=".bt/bt.pid"
+  if [ -f "$LEGACY_PID_FILE" ]; then
+    OLD_PID=$(cat "$LEGACY_PID_FILE")
+    if kill -0 "$OLD_PID" 2>/dev/null; then
+      echo "  Stopping legacy instance (PID: $OLD_PID)..."
+      kill "$OLD_PID" 2>/dev/null || true
+      sleep 1
+    fi
+    rm -f "$LEGACY_PID_FILE"
+  fi
 
   # Start in background
   nohup pnpm dev -- "$CONFIG_FILE" > "$LOG_FILE" 2>&1 &
-  BT_PID=$!
-  echo "$BT_PID" > "$PID_FILE"
+  CDS_PID=$!
+  echo "$CDS_PID" > "$PID_FILE"
 
   echo ""
   echo "  CDS started in background"
-  echo "  PID:        $BT_PID"
+  echo "  PID:        $CDS_PID"
   echo "  Log:        $SCRIPT_DIR/$LOG_FILE"
   echo "  Dashboard:  http://localhost:9900"
   echo "  Gateway:    http://localhost:5500"
-  [ "${BT_NGINX_ENABLE:-}" = "1" ] && echo "  Nginx:      http://localhost:58000"
+  [ "${CDS_NGINX}" = "1" ] && echo "  Nginx:      http://localhost:58000"
   echo ""
   echo "  Stop: kill \$(cat $PID_FILE)"
   echo "  Logs: tail -f $LOG_FILE"

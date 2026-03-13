@@ -140,10 +140,10 @@
 - [网络诊断功能](design.network-diagnostics) `design.network-diagnostics`
   > 客户端网络连通性诊断功能的设计
 
-- [Branch Tester (bt) 设计文档](design.cds) `design.cds`
-  > 分支测试工具的架构设计
+- [CDS (Cloud Development Suite) 设计文档](design.cds) `design.cds`
+  > 云开发套件的架构设计
 
-- [exec_bt.sh 部署架构与冲突分析](design.exec-bt-deployment) `design.exec-bt-deployment`
+- [CDS 部署架构与冲突分析](design.exec-bt-deployment) `design.exec-bt-deployment`
   > 部署脚本的架构设计与冲突处理策略
 
 ### 三、指南

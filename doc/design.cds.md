@@ -1,6 +1,6 @@
-# Branch Tester (bt) 设计文档
+# CDS (Cloud Development Suite) 设计文档
 
-> **版本**：v2.0 | **日期**：2026-03-12 | **状态**：已落地
+> **版本**：v2.1 | **日期**：2026-03-13 | **状态**：已落地
 
 ## 0. Quickstart
 
@@ -13,35 +13,48 @@
 ### 一键启动
 
 ```bash
-# 生产模式（后台运行）
-./exec_bt.sh
+cd cds
 
-# 开发模式（热重载）
-./exec_bt.sh dev
+# 前台运行
+./exec_cds.sh
 
-# 前台运行（调试用）
-./exec_bt.sh fg
+# 后台运行
+./exec_cds.sh --background
+```
 
-# 查看状态 / 停止 / 重启
-./exec_bt.sh status
-./exec_bt.sh stop
-./exec_bt.sh restart
+或使用根目录的入口脚本（包含生产模式编译）：
 
-# 查看日志
-./exec_bt.sh logs
+```bash
+./exec_cds.sh              # 前台
+./exec_cds.sh dev          # 开发（热重载）
+./exec_cds.sh stop         # 停止
+./exec_cds.sh status       # 查看状态
+./exec_cds.sh logs         # 查看日志
 ```
 
 ### 环境变量
 
+CDS 环境变量分为**系统层**（`.bashrc`，控制 CDS 自身）和**项目层**（Dashboard UI，注入业务容器）。
+
+详细配置指南见 **`doc/guide.cds-env.md`**。
+
+#### 系统层（.bashrc，`CDS_` 前缀）
+
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `BT_PORT` | `9900` | Dashboard 端口 |
-| `BT_USERNAME` | — | 登录用户名（设置后启用认证） |
-| `BT_PASSWORD` | — | 登录密码 |
-| `JWT_SECRET` | dev 默认值 | JWT 签名密钥 |
-| `SWITCH_DOMAIN` | — | 分支切换域名（如 `switch.example.com`） |
-| `MAIN_DOMAIN` | — | 主域名（切换后跳转目标） |
-| `PREVIEW_DOMAIN` | — | 预览域名后缀（如 `preview.example.com`） |
+| `CDS_USERNAME` | — | Dashboard 登录用户名（设置后启用认证） |
+| `CDS_PASSWORD` | — | Dashboard 登录密码 |
+| `CDS_JWT_SECRET` | dev 默认值 | JWT 签名密钥（>= 32 字节） |
+| `CDS_SWITCH_DOMAIN` | — | 分支切换域名（如 `switch.example.com`） |
+| `CDS_MAIN_DOMAIN` | — | 主域名（切换后跳转目标） |
+| `CDS_PREVIEW_DOMAIN` | — | 预览域名后缀（如 `preview.example.com`） |
+| `CDS_NGINX_ENABLE` | — | 设为 `1` 启用 Nginx 反向代理（端口 58000） |
+
+> 向后兼容：旧前缀 `BT_USERNAME`/`BT_PASSWORD`/`SWITCH_DOMAIN`/`MAIN_DOMAIN`/`PREVIEW_DOMAIN`/`JWT_SECRET` 仍可使用，`CDS_` 前缀优先。
+
+#### 项目层（Dashboard UI）
+
+通过 Dashboard 环境变量面板配置，存储在 `.cds/state.json`，部署时注入容器。包括数据库连接、云存储密钥、应用认证等业务变量。
 
 ### 基本用法
 
@@ -88,9 +101,9 @@ cd cds && npx vitest run    # 88 tests, 6 files
 ┌────────────────────────────────────────────────────────────────┐
 │  Host Machine                                                  │
 │                                                                │
-│  branch-tester/ (Node.js + TypeScript)                         │
+│  cds/ (Node.js + TypeScript)                                   │
 │  ├── :9900 Dashboard API + Web UI                              │
-│  ├── git worktree 管理 (~/.bt-worktrees/)                      │
+│  ├── git worktree 管理 (~/.cds-worktrees/)                     │
 │  ├── docker build / docker run 编排                            │
 │  ├── nginx.conf 模板渲染 + reload 触发                         │
 │  └── state.json 状态持久化                                     │
@@ -132,7 +145,7 @@ interface BranchEntry {
 }
 ```
 
-### 4.2 配置 (bt.config.json)
+### 4.2 配置 (cds.config.json)
 
 ```json
 {
@@ -353,11 +366,11 @@ server {
 ## 11. 项目结构
 
 ```
-branch-tester/
+cds/
 ├── package.json
 ├── tsconfig.json
 ├── vitest.config.ts
-├── bt.config.example.json
+├── cds.config.example.json
 ├── src/
 │   ├── index.ts              # 入口
 │   ├── server.ts             # Express 服务器

@@ -10,11 +10,12 @@ const DEFAULT_CONFIG: CdsConfig = {
   dockerNetwork: 'cds-network',
   portStart: 10001,
   sharedEnv: {},
-  switchDomain: process.env.SWITCH_DOMAIN || undefined,
-  mainDomain: process.env.MAIN_DOMAIN || undefined,
-  previewDomain: process.env.PREVIEW_DOMAIN || undefined,
+  // CDS_ prefix preferred; legacy names (SWITCH_DOMAIN, etc.) kept for backward compat
+  switchDomain: process.env.CDS_SWITCH_DOMAIN || process.env.SWITCH_DOMAIN || undefined,
+  mainDomain: process.env.CDS_MAIN_DOMAIN || process.env.MAIN_DOMAIN || undefined,
+  previewDomain: process.env.CDS_PREVIEW_DOMAIN || process.env.PREVIEW_DOMAIN || undefined,
   jwt: {
-    secret: process.env.JWT_SECRET ?? 'dev-only-change-me-32bytes-minimum!!',
+    secret: process.env.CDS_JWT_SECRET ?? process.env.JWT_SECRET ?? 'dev-only-change-me-32bytes-minimum!!',
     issuer: 'prdagent',
   },
 };

@@ -41,7 +41,7 @@
 
 | 维度 | 模式 A: 独立部署 | 模式 B: CDS 分支测试 | 模式 C: 本地开发 |
 |------|-----------------|---------------------|-----------------|
-| 入口脚本 | `exec_dep.sh` | `exec_bt.sh` | `docker compose -f docker-compose.dev.yml up` |
+| 入口脚本 | `exec_dep.sh` | `exec_cds.sh` | `docker compose -f docker-compose.dev.yml up` |
 | 占用 :5500 的组件 | prdagent-gateway (Docker) | CDS Worker Proxy (Node.js) | web 容器 (Docker) |
 | 占用 :9900 | — | CDS Dashboard | — |
 | 占用 :80/:443 | Host Nginx (可选) | Host Nginx (可选) | — |
@@ -72,7 +72,7 @@ miduo.org:443 (Host Nginx, Let's Encrypt 证书)
 
 ```bash
 # 1. 确保 CDS 没在运行（互斥）
-./exec_bt.sh stop 2>/dev/null || true
+./exec_cds.sh stop 2>/dev/null || true
 
 # 2. 部署应用
 ./exec_dep.sh
@@ -149,7 +149,7 @@ export JWT_SECRET="your-jwt-secret"
 # ... 其他 COS 等环境变量
 
 # 3. 启动 CDS
-./exec_bt.sh daemon
+./exec_cds.sh daemon
 
 # 4. Host Nginx 配置同 4.1（:5500 被 CDS 接管，nginx 配置不用改）
 ```
@@ -159,11 +159,11 @@ export JWT_SECRET="your-jwt-secret"
 ```bash
 # 从独立部署 → CDS
 docker stop prdagent-gateway
-./exec_bt.sh daemon
+./exec_cds.sh daemon
 # Host Nginx 不用动（还是转发到 :5500）
 
 # 从 CDS → 独立部署
-./exec_bt.sh stop
+./exec_cds.sh stop
 docker start prdagent-gateway
 # 或直接 ./exec_dep.sh（会重建）
 ```
@@ -262,5 +262,5 @@ sudo nginx -t && sudo systemctl reload nginx
 | D2 | 5500 端口 | 模式 A/B 互斥使用 | 给 CDS 分配不同端口 (如 5501) |
 | D3 | SSL 证书 | 宿主机 certbot + Host Nginx | Docker 内管理 (不推荐) |
 | D4 | CDS Docker Network | 复用 prdagent-network | 独立 cds-network + host 端口转发 |
-| D5 | 模式切换 | 手动停/启 (exec_bt.sh stop → exec_dep.sh) | 自动检测并切换 |
+| D5 | 模式切换 | 手动停/启 (exec_cds.sh stop → exec_dep.sh) | 自动检测并切换 |
 | D6 | 9900 Dashboard 公网暴露 | 加 IP 白名单 或 子域名 + BasicAuth | 仅内网访问 |

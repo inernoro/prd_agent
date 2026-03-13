@@ -11,7 +11,7 @@
 #
 # 测试阶段:
 #   Phase 0  环境前置检查
-#   Phase 1  exec_bt.sh 首次启动
+#   Phase 1  exec_cds.sh 首次启动
 #   Phase 2  基础设施验证
 #   Phase 3  Dashboard & API 可达
 #   Phase 4  分支生命周期 (添加→部署→激活→切换→回滚→删除)
@@ -21,17 +21,17 @@
 #   Phase 8  端到端 (公网可达)
 #   Phase 9  清理
 #
-# 架构文档：doc/arch.exec-bt.md
+# 架构文档：doc/design.exec-bt-deployment.md
 # ══════════════════════════════════════════════════════════════════════════
 
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
-BT_DIR="${REPO_ROOT}/cds"
-BT_API="http://localhost:9900/api"
+CDS_DIR="${REPO_ROOT}/cds"
+CDS_API="http://localhost:9900/api"
 GATEWAY="http://localhost:5500"
-PID_FILE="${BT_DIR}/.bt/bt.pid"
-STATE_FILE="${REPO_ROOT}/.bt/state.json"
+PID_FILE="${CDS_DIR}/.cds/cds.pid"
+STATE_FILE="${CDS_DIR}/.cds/state.json"
 TEST_BRANCH="master"  # 用于测试的分支
 
 # ── 参数解析 ──
@@ -335,31 +335,31 @@ msg() {
   echo -e "  ${CYAN}│${NC} ${DIM}$1${NC}"
 }
 
-# Helper: get BT auth token (if auth is enabled)
-BT_TOKEN=""
-bt_auth_header() {
-  if [ -n "$BT_TOKEN" ]; then
-    echo "-H" "x-bt-token: $BT_TOKEN"
+# Helper: get CDS auth token (if auth is enabled)
+CDS_TOKEN=""
+cds_auth_header() {
+  if [ -n "$CDS_TOKEN" ]; then
+    echo "-H" "x-cds-token: $CDS_TOKEN"
   fi
 }
 
-# Helper: curl BT API with auth
-bt_curl() {
+# Helper: curl CDS API with auth
+cds_curl() {
   local method="$1"; local path="$2"; shift 2
-  if [ -n "$BT_TOKEN" ]; then
-    curl -s -X "$method" -H "x-bt-token: $BT_TOKEN" -H "Content-Type: application/json" "$@" "${BT_API}${path}"
+  if [ -n "$CDS_TOKEN" ]; then
+    curl -s -X "$method" -H "x-cds-token: $CDS_TOKEN" -H "Content-Type: application/json" "$@" "${CDS_API}${path}"
   else
-    curl -s -X "$method" -H "Content-Type: application/json" "$@" "${BT_API}${path}"
+    curl -s -X "$method" -H "Content-Type: application/json" "$@" "${CDS_API}${path}"
   fi
 }
 
-# Helper: curl BT API with SSE (returns full output)
-bt_curl_sse() {
+# Helper: curl CDS API with SSE (returns full output)
+cds_curl_sse() {
   local method="$1"; local path="$2"; shift 2
-  if [ -n "$BT_TOKEN" ]; then
-    curl -s -X "$method" -H "x-bt-token: $BT_TOKEN" -H "Content-Type: application/json" -H "Accept: text/event-stream" --max-time 300 "$@" "${BT_API}${path}"
+  if [ -n "$CDS_TOKEN" ]; then
+    curl -s -X "$method" -H "x-cds-token: $CDS_TOKEN" -H "Content-Type: application/json" -H "Accept: text/event-stream" --max-time 300 "$@" "${CDS_API}${path}"
   else
-    curl -s -X "$method" -H "Content-Type: application/json" -H "Accept: text/event-stream" --max-time 300 "$@" "${BT_API}${path}"
+    curl -s -X "$method" -H "Content-Type: application/json" -H "Accept: text/event-stream" --max-time 300 "$@" "${CDS_API}${path}"
   fi
 }
 
@@ -385,29 +385,29 @@ T "E05" "git 可用"                        git --version
 T "E06" "curl 可用"                       curl --version
 T "E07" "ss 可用"                         ss --version
 T "E08" "仓库根目录正确"                  test -f "$REPO_ROOT/docker-compose.yml"
-T "E09" "exec_bt.sh 存在且可执行"         test -x "$REPO_ROOT/exec_bt.sh"
-T "E10" "cds 目录存在"                    test -d "$BT_DIR"
+T "E09" "exec_cds.sh 存在且可执行"         test -x "$REPO_ROOT/exec_cds.sh"
+T "E10" "cds 目录存在"                    test -d "$CDS_DIR"
 T "E11" "_disconnected.conf 存在"         test -f "$REPO_ROOT/deploy/nginx/conf.d/branches/_disconnected.conf"
 T "E12" "docker-compose.yml 包含 gateway" grep -q "gateway" "$REPO_ROOT/docker-compose.yml"
 T "E13" "测试分支 ($TEST_BRANCH) 存在"    git rev-parse --verify "$TEST_BRANCH"
 
 # ══════════════════════════════════════════════════════════════════════════
-# Phase 1: exec_bt.sh 首次启动
+# Phase 1: exec_cds.sh 首次启动
 # ══════════════════════════════════════════════════════════════════════════
-phase 1 "exec_bt.sh 首次启动"
+phase 1 "exec_cds.sh 首次启动"
 
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
-  msg "启动 exec_bt.sh -d (后台模式)..."
+  msg "启动 exec_cds.sh -d (后台模式)..."
   cd "$REPO_ROOT"
   export ROOT_ACCESS_USERNAME="admin"
   export ROOT_ACCESS_PASSWORD="TestPass123!"
 
-  EXEC_OUTPUT=$(./exec_bt.sh -d 2>&1) || true
+  EXEC_OUTPUT=$(./exec_cds.sh -d 2>&1) || true
   EXEC_RC=$?
-  msg "exec_bt.sh 返回码: $EXEC_RC"
+  msg "exec_cds.sh 返回码: $EXEC_RC"
 fi
 
-T "S01" "exec_bt.sh 返回码 0"                     test "${EXEC_RC:-1}" -eq 0
+T "S01" "exec_cds.sh 返回码 0"                     test "${EXEC_RC:-1}" -eq 0
 T_MATCH "S02" "输出包含 Done"                      "Done" echo "${EXEC_OUTPUT:-}"
 T_MATCH "S03" "输出包含 Dashboard 地址"            "9900" echo "${EXEC_OUTPUT:-}"
 T_MATCH "S04" "输出包含 Login 凭据"                "admin" echo "${EXEC_OUTPUT:-}"
@@ -415,8 +415,8 @@ T "S05" "PID file 已创建"                          test -f "$PID_FILE"
 
 msg "等待 CDS 启动..."
 
-T_WAIT "S06" "BT :9900 可达"  30  curl -sf --max-time 3 http://localhost:9900
-T_WAIT "S07" "BT API 可达"    10  curl -sf --max-time 3 "${BT_API}/branches"
+T_WAIT "S06" "CDS :9900 可达"  30  curl -sf --max-time 3 http://localhost:9900
+T_WAIT "S07" "CDS API 可达"    10  curl -sf --max-time 3 "${CDS_API}/branches"
 
 # ══════════════════════════════════════════════════════════════════════════
 # Phase 2: 基础设施验证
@@ -430,7 +430,7 @@ T_MATCH "I03" "prdagent-redis running"             "true" docker inspect --forma
 T_MATCH "I04" "prdagent-gateway running"           "true" docker inspect --format='{{.State.Running}}' prdagent-gateway
 
 # 2.2 prdagent-api 不应在运行 (S1 场景)
-T_NOT "I05" "prdagent-api 未运行 (BT 接管)"       sh -c "docker inspect --format='{{.State.Running}}' prdagent-api 2>/dev/null | grep -q true"
+T_NOT "I05" "prdagent-api 未运行 (CDS 接管)"       sh -c "docker inspect --format='{{.State.Running}}' prdagent-api 2>/dev/null | grep -q true"
 
 # 2.3 端口占用
 T_MATCH "I06" ":5500 listening"                    ":5500" ss -tlnp
@@ -460,19 +460,19 @@ phase 3 "Dashboard & API 可达性"
 T_HTTP "D01" "Dashboard 首页 200"                  "200" "http://localhost:9900"
 
 # 3.2 API 端点
-T_HTTP "D02" "GET /api/branches 200"               "200" "${BT_API}/branches"
-T_HTTP "D03" "GET /api/config 200"                 "200" "${BT_API}/config"
-T_HTTP "D04" "GET /api/history 200"                "200" "${BT_API}/history"
-T_HTTP "D05" "GET /api/remote-branches 200"        "200" "${BT_API}/remote-branches"
-T_HTTP "D06" "GET /api/nginx-config 200"           "200" "${BT_API}/nginx-config"
+T_HTTP "D02" "GET /api/branches 200"               "200" "${CDS_API}/branches"
+T_HTTP "D03" "GET /api/config 200"                 "200" "${CDS_API}/config"
+T_HTTP "D04" "GET /api/history 200"                "200" "${CDS_API}/history"
+T_HTTP "D05" "GET /api/remote-branches 200"        "200" "${CDS_API}/remote-branches"
+T_HTTP "D06" "GET /api/nginx-config 200"           "200" "${CDS_API}/nginx-config"
 
 # 3.3 API 响应格式
-T_MATCH "D07" "/api/branches 返回 JSON"            '"branches"' bt_curl GET /branches
-T_MATCH "D08" "/api/config 返回 gateway 配置"      '"gateway"' bt_curl GET /config
-T_MATCH "D09" "/api/history 返回数组"              '"history"' bt_curl GET /history
+T_MATCH "D07" "/api/branches 返回 JSON"            '"branches"' cds_curl GET /branches
+T_MATCH "D08" "/api/config 返回 gateway 配置"      '"gateway"' cds_curl GET /config
+T_MATCH "D09" "/api/history 返回数组"              '"history"' cds_curl GET /history
 
 # 3.4 无效端点
-T_HTTP "D10" "GET /api/nonexistent 404"            "404" "${BT_API}/nonexistent"
+T_HTTP "D10" "GET /api/nonexistent 404"            "404" "${CDS_API}/nonexistent"
 
 # ══════════════════════════════════════════════════════════════════════════
 # Phase 4: 分支生命周期
@@ -483,7 +483,7 @@ phase 4 "分支生命周期"
 # ── 4.1 添加分支 ──
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
   msg "── 4.1 添加分支 ──"
-  ADD_RESULT=$(bt_curl POST /branches -d "{\"branch\":\"$TEST_BRANCH\"}" 2>&1)
+  ADD_RESULT=$(cds_curl POST /branches -d "{\"branch\":\"$TEST_BRANCH\"}" 2>&1)
   ADD_STATUS=$?
 fi
 
@@ -500,7 +500,7 @@ if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
 fi
 
 # 验证分支出现在列表
-T_MATCH "B02" "分支出现在 /api/branches"           "${BRANCH_ID:-$TEST_BRANCH}" bt_curl GET /branches
+T_MATCH "B02" "分支出现在 /api/branches"           "${BRANCH_ID:-$TEST_BRANCH}" cds_curl GET /branches
 
 # 验证 state.json 更新
 T "B03" "state.json 已更新"                        test -f "$STATE_FILE"
@@ -509,7 +509,7 @@ T_MATCH "B04" "state.json 包含分支"                "${BRANCH_ID:-$TEST_BRANC
 # ── 4.2 一键部署 (build + start + activate) ──
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
   msg "── 4.2 一键部署 (build→start→activate, 可能需要数分钟) ──"
-  DEPLOY_OUTPUT=$(bt_curl_sse POST "/branches/${BRANCH_ID:-$TEST_BRANCH}/deploy" 2>&1)
+  DEPLOY_OUTPUT=$(cds_curl_sse POST "/branches/${BRANCH_ID:-$TEST_BRANCH}/deploy" 2>&1)
   DEPLOY_RC=$?
   msg "部署返回码: $DEPLOY_RC"
 fi
@@ -520,28 +520,28 @@ T_MATCH "B05" "部署流包含 complete"                "complete" echo "${DEPLO
 T_WAIT "B06" "分支容器 running" 30 docker inspect --format='{{.State.Running}}' "prdagent-api-${BRANCH_ID:-$TEST_BRANCH}"
 
 # 验证激活状态
-T_MATCH "B07" "分支已激活"                         "\"activeBranchId\":\"${BRANCH_ID:-$TEST_BRANCH}\"" bt_curl GET /branches
+T_MATCH "B07" "分支已激活"                         "\"activeBranchId\":\"${BRANCH_ID:-$TEST_BRANCH}\"" cds_curl GET /branches
 
 # 验证 gateway 路由
 T_WAIT "B08" "gateway /api/health 可达" 15 curl -sf --max-time 5 "http://localhost:5500/api/health"
 
 # 验证 gateway nginx config 指向分支
-T_MATCH "B09" "nginx config 包含分支上游"          "prdagent-api-${BRANCH_ID:-$TEST_BRANCH}" bt_curl GET /nginx-config
+T_MATCH "B09" "nginx config 包含分支上游"          "prdagent-api-${BRANCH_ID:-$TEST_BRANCH}" cds_curl GET /nginx-config
 
 # ── 4.3 网关断开 ──
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
   msg "── 4.3 网关断开 ──"
-  bt_curl POST /gateway/disconnect >/dev/null 2>&1
+  cds_curl POST /gateway/disconnect >/dev/null 2>&1
   sleep 1
 fi
 
 T_HTTP "B10" "断开后 /api/ 返回 502"               "502" "http://localhost:5500/api/health"
-T_MATCH "B11" "断开后 activeBranchId 为 null"      '"activeBranchId":null' bt_curl GET /branches
+T_MATCH "B11" "断开后 activeBranchId 为 null"      '"activeBranchId":null' cds_curl GET /branches
 
 # ── 4.4 重新激活 ──
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
   msg "── 4.4 重新激活 ──"
-  bt_curl POST "/branches/${BRANCH_ID:-$TEST_BRANCH}/activate" >/dev/null 2>&1
+  cds_curl POST "/branches/${BRANCH_ID:-$TEST_BRANCH}/activate" >/dev/null 2>&1
   sleep 2
 fi
 
@@ -550,18 +550,18 @@ T_WAIT "B12" "重新激活后 gateway 可达" 10 curl -sf --max-time 5 "http://l
 # ── 4.5 拉取代码 ──
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
   msg "── 4.5 拉取代码 ──"
-  PULL_RESULT=$(bt_curl POST "/branches/${BRANCH_ID:-$TEST_BRANCH}/pull" 2>&1)
+  PULL_RESULT=$(cds_curl POST "/branches/${BRANCH_ID:-$TEST_BRANCH}/pull" 2>&1)
 fi
 
 T_MATCH "B13" "拉取代码成功"                       "success|updated|before" echo "${PULL_RESULT:-error}"
 
 # ── 4.6 操作日志 ──
-T_MATCH "B14" "操作日志可查"                       "logs" bt_curl GET "/branches/${BRANCH_ID:-$TEST_BRANCH}/logs"
+T_MATCH "B14" "操作日志可查"                       "logs" cds_curl GET "/branches/${BRANCH_ID:-$TEST_BRANCH}/logs"
 
 # ── 4.7 停止分支 ──
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
   msg "── 4.7 停止分支 ──"
-  bt_curl POST "/branches/${BRANCH_ID:-$TEST_BRANCH}/stop" >/dev/null 2>&1
+  cds_curl POST "/branches/${BRANCH_ID:-$TEST_BRANCH}/stop" >/dev/null 2>&1
   sleep 2
 fi
 
@@ -570,21 +570,21 @@ T_NOT "B15" "容器已停止"                           docker inspect --format=
 # ── 4.8 分支状态重置 ──
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
   msg "── 4.8 重置分支状态 ──"
-  bt_curl POST "/branches/${BRANCH_ID:-$TEST_BRANCH}/reset" >/dev/null 2>&1
+  cds_curl POST "/branches/${BRANCH_ID:-$TEST_BRANCH}/reset" >/dev/null 2>&1
 fi
 
-T_MATCH "B16" "分支状态已重置"                     "idle|success" bt_curl GET /branches
+T_MATCH "B16" "分支状态已重置"                     "idle|success" cds_curl GET /branches
 
 # ── 4.9 删除分支 ──
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
   msg "── 4.9 删除分支 ──"
-  DEL_OUTPUT=$(bt_curl_sse DELETE "/branches/${BRANCH_ID:-$TEST_BRANCH}" 2>&1)
+  DEL_OUTPUT=$(cds_curl_sse DELETE "/branches/${BRANCH_ID:-$TEST_BRANCH}" 2>&1)
   DEL_RC=$?
   sleep 2
 fi
 
 T_MATCH "B17" "删除流包含 complete"                "complete" echo "${DEL_OUTPUT:-}"
-T_NOT "B18" "分支不再出现在列表"                   echo "${BRANCH_ID:-$TEST_BRANCH}" | grep -q "$(bt_curl GET /branches 2>/dev/null | node -e "
+T_NOT "B18" "分支不再出现在列表"                   echo "${BRANCH_ID:-$TEST_BRANCH}" | grep -q "$(cds_curl GET /branches 2>/dev/null | node -e "
   const d=require('fs').readFileSync('/dev/stdin','utf8');
   try { const j=JSON.parse(d); console.log(Object.keys(j.branches||{}).join(',')); }
   catch(e) { console.log(''); }
@@ -626,7 +626,7 @@ T_MATCH "N08" "_disconnected.conf 返回 502 JSON"   '502.*No active branch' cat
 
 # 5.3 断开 gateway 后验证
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
-  bt_curl POST /gateway/disconnect >/dev/null 2>&1
+  cds_curl POST /gateway/disconnect >/dev/null 2>&1
   sleep 1
 fi
 
@@ -645,16 +645,16 @@ if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
   OLD_REDIS_ID=$(docker inspect --format='{{.Id}}' prdagent-redis 2>/dev/null | head -c 12)
   OLD_GATEWAY_ID=$(docker inspect --format='{{.Id}}' prdagent-gateway 2>/dev/null | head -c 12)
 
-  msg "重新运行 exec_bt.sh -d..."
+  msg "重新运行 exec_cds.sh -d..."
   cd "$REPO_ROOT"
-  IDEM_OUTPUT=$(./exec_bt.sh -d 2>&1) || true
+  IDEM_OUTPUT=$(./exec_cds.sh -d 2>&1) || true
   IDEM_RC=$?
 fi
 
-T "R01" "重复执行 exec_bt.sh 返回 0"              test "${IDEM_RC:-1}" -eq 0
+T "R01" "重复执行 exec_cds.sh 返回 0"              test "${IDEM_RC:-1}" -eq 0
 
-# 等待新 BT 启动
-T_WAIT "R02" "新 BT :9900 可达" 30 curl -sf --max-time 3 http://localhost:9900
+# 等待新 CDS 启动
+T_WAIT "R02" "新 CDS :9900 可达" 30 curl -sf --max-time 3 http://localhost:9900
 
 # PID 应该变了 (旧的被替换)
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
@@ -674,16 +674,16 @@ T "R05" "Redis 容器未重建 (幂等)"                  test "${NEW_REDIS_ID:-
 T "R06" "Gateway 容器未重建 (幂等)"                test "${NEW_GATEWAY_ID:-x}" = "${OLD_GATEWAY_ID:-y}"
 
 # API 仍然可用
-T_WAIT "R07" "BT API 仍然可用" 10 curl -sf --max-time 3 "${BT_API}/branches"
+T_WAIT "R07" "CDS API 仍然可用" 10 curl -sf --max-time 3 "${CDS_API}/branches"
 
 # ══════════════════════════════════════════════════════════════════════════
 # Phase 7: 混沌测试 (故障注入 + 恢复)
 # ══════════════════════════════════════════════════════════════════════════
 phase 7 "混沌测试 (故障注入)"
 
-# ── 7.1 Kill BT 进程 → 重启恢复 ──
+# ── 7.1 Kill CDS 进程 → 重启恢复 ──
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
-  msg "── 7.1 Kill -9 BT 进程 ──"
+  msg "── 7.1 Kill -9 CDS 进程 ──"
   CHAOS_PID=$(cat "$PID_FILE" 2>/dev/null || echo "")
   if [ -n "$CHAOS_PID" ]; then
     kill -9 "$CHAOS_PID" 2>/dev/null || true
@@ -691,22 +691,22 @@ if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
   fi
 fi
 
-T_NOT "C01" "BT 进程已死"                         curl -sf --max-time 2 http://localhost:9900
+T_NOT "C01" "CDS 进程已死"                         curl -sf --max-time 2 http://localhost:9900
 
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
-  msg "重新启动 exec_bt.sh -d..."
+  msg "重新启动 exec_cds.sh -d..."
   cd "$REPO_ROOT"
-  CHAOS_OUTPUT=$(./exec_bt.sh -d 2>&1) || true
+  CHAOS_OUTPUT=$(./exec_cds.sh -d 2>&1) || true
 fi
 
 T_WAIT "C02" "Kill 后重启成功"  30  curl -sf --max-time 3 http://localhost:9900
-T_WAIT "C03" "API 恢复"        10  curl -sf --max-time 3 "${BT_API}/branches"
+T_WAIT "C03" "API 恢复"        10  curl -sf --max-time 3 "${CDS_API}/branches"
 
 # ── 7.2 损坏 state.json → 自动恢复 ──
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
   msg "── 7.2 损坏 state.json ──"
-  # 先停 BT
-  ./exec_bt.sh --stop <<< "n" 2>/dev/null || true
+  # 先停 CDS
+  ./exec_cds.sh --stop <<< "n" 2>/dev/null || true
   sleep 2
 
   # 写入损坏的 JSON
@@ -719,7 +719,7 @@ if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
 
   # 重启
   cd "$REPO_ROOT"
-  CORRUPT_OUTPUT=$(./exec_bt.sh -d 2>&1) || true
+  CORRUPT_OUTPUT=$(./exec_cds.sh -d 2>&1) || true
 fi
 
 T_MATCH "C04" "检测到损坏并警告"                   "corrupt|backing" echo "${CORRUPT_OUTPUT:-}"
@@ -728,7 +728,7 @@ T_WAIT "C05" "损坏后仍能启动"   30  curl -sf --max-time 3 http://localhos
 # 恢复原始 state.json
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
   if [ -f "${STATE_FILE}.test-backup" ]; then
-    # BT 已经在跑了, state.json 已被 BT 重建, 不需要恢复
+    # CDS 已经在跑了, state.json 已被 CDS 重建, 不需要恢复
     rm -f "${STATE_FILE}.test-backup"
   fi
 fi
@@ -736,11 +736,11 @@ fi
 # ── 7.3 PID Reuse 模拟 ──
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
   msg "── 7.3 PID Reuse 模拟 ──"
-  # 停掉 BT
-  ./exec_bt.sh --stop <<< "n" 2>/dev/null || true
+  # 停掉 CDS
+  ./exec_cds.sh --stop <<< "n" 2>/dev/null || true
   sleep 2
 
-  # 把 PID file 写成 init 进程的 PID (PID 1, 绝对不是 BT)
+  # 把 PID file 写成 init 进程的 PID (PID 1, 绝对不是 CDS)
   mkdir -p "$(dirname "$PID_FILE")"
   echo "1" > "$PID_FILE"
 
@@ -748,7 +748,7 @@ if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
 
   # 重启 - 应该不会 kill PID 1
   cd "$REPO_ROOT"
-  PID_REUSE_OUTPUT=$(./exec_bt.sh -d 2>&1) || true
+  PID_REUSE_OUTPUT=$(./exec_cds.sh -d 2>&1) || true
 fi
 
 T_MATCH "C06" "检测到 PID reuse, 跳过 kill"       "NOT cds\|PID reuse\|Skipping" echo "${PID_REUSE_OUTPUT:-}"
@@ -762,8 +762,8 @@ if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
   msg "── 7.4 Gateway default.conf 静态文件模拟 ──"
   GW_CONF="$REPO_ROOT/deploy/nginx/conf.d/default.conf"
 
-  # 停 BT
-  ./exec_bt.sh --stop <<< "n" 2>/dev/null || true
+  # 停 CDS
+  ./exec_cds.sh --stop <<< "n" 2>/dev/null || true
   sleep 2
 
   # 备份当前 symlink, 替换为静态文件
@@ -786,18 +786,18 @@ STATIC_CONF
 
   # 重启
   cd "$REPO_ROOT"
-  STATIC_CONF_OUTPUT=$(./exec_bt.sh -d 2>&1) || true
+  STATIC_CONF_OUTPUT=$(./exec_cds.sh -d 2>&1) || true
 fi
 
 T_MATCH "C09" "检测到静态 default.conf"            "standalone.*disconnected\|prevents 502" echo "${STATIC_CONF_OUTPUT:-}"
 T "C10" "修复后 default.conf 是 symlink"           test -L "$REPO_ROOT/deploy/nginx/conf.d/default.conf"
-T_WAIT "C11" "修复后 BT 可用"     30  curl -sf --max-time 3 http://localhost:9900
+T_WAIT "C11" "修复后 CDS 可用"     30  curl -sf --max-time 3 http://localhost:9900
 
 # ── 7.5 端口 9900 被占用 ──
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
   msg "── 7.5 端口 9900 占用测试 ──"
-  # 停 BT
-  ./exec_bt.sh --stop <<< "n" 2>/dev/null || true
+  # 停 CDS
+  ./exec_cds.sh --stop <<< "n" 2>/dev/null || true
   sleep 2
 
   # 用 python 占住 9900
@@ -811,9 +811,9 @@ s.close()
   PORT_BLOCKER_PID=$!
   sleep 1
 
-  # 尝试启动 BT (应该检测到冲突)
+  # 尝试启动 CDS (应该检测到冲突)
   cd "$REPO_ROOT"
-  PORT_BLOCK_OUTPUT=$(./exec_bt.sh -d 2>&1) || true
+  PORT_BLOCK_OUTPUT=$(./exec_cds.sh -d 2>&1) || true
   PORT_BLOCK_RC=$?
 
   # 清理
@@ -827,16 +827,16 @@ T_MATCH "C12" ":9900 被占用时有警告"               "occupied\|9900" echo 
 # 清理后正常启动
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
   cd "$REPO_ROOT"
-  ./exec_bt.sh -d >/dev/null 2>&1 || true
+  ./exec_cds.sh -d >/dev/null 2>&1 || true
 fi
 
 T_WAIT "C13" "端口释放后恢复"    30  curl -sf --max-time 3 http://localhost:9900
 
 # ── 7.6 --test 自检命令 ──
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
-  msg "── 7.6 exec_bt.sh --test 自检 ──"
+  msg "── 7.6 exec_cds.sh --test 自检 ──"
   cd "$REPO_ROOT"
-  SELFTEST_OUTPUT=$(./exec_bt.sh --test 2>&1) || true
+  SELFTEST_OUTPUT=$(./exec_cds.sh --test 2>&1) || true
   SELFTEST_RC=$?
 fi
 
@@ -844,12 +844,12 @@ T_MATCH "C14" "--test 输出包含测试结果"            "PASSED\|passed" echo
 
 # ── 7.7 --status 状态命令 ──
 if should_run && [ "$LIST_ONLY" != true ] && [ "$DRY_RUN" != true ]; then
-  msg "── 7.7 exec_bt.sh --status ──"
+  msg "── 7.7 exec_cds.sh --status ──"
   cd "$REPO_ROOT"
-  STATUS_OUTPUT=$(./exec_bt.sh --status 2>&1) || true
+  STATUS_OUTPUT=$(./exec_cds.sh --status 2>&1) || true
 fi
 
-T_MATCH "C15" "--status 显示 BT running"           "running" echo "${STATUS_OUTPUT:-}"
+T_MATCH "C15" "--status 显示 CDS running"           "running" echo "${STATUS_OUTPUT:-}"
 T_MATCH "C16" "--status 显示端口状态"              "listening\|:5500\|:9900" echo "${STATUS_OUTPUT:-}"
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -884,10 +884,10 @@ T_HTTP "P04" "localhost:9900 → dashboard 可达"     "200" "http://localhost:9
 # ══════════════════════════════════════════════════════════════════════════
 phase 9 "清理"
 
-msg "保持 BT 运行 (不自动清理)"
-msg "如需停止: ./exec_bt.sh --stop"
+msg "保持 CDS 运行 (不自动清理)"
+msg "如需停止: ./exec_cds.sh --stop"
 
-T "X01" "BT 仍在运行"                             curl -sf --max-time 3 http://localhost:9900
+T "X01" "CDS 仍在运行"                             curl -sf --max-time 3 http://localhost:9900
 T "X02" "基础设施仍在运行"                         docker inspect --format='{{.State.Running}}' prdagent-mongodb
 
 # Final phase summary
