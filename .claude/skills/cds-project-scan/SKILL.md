@@ -80,6 +80,40 @@ git rev-parse --show-toplevel
 | `package.json` scripts 中的 `--port` | 提取端口 |
 | 都找不到 | 默认 8080（后端）/ 5173（前端） |
 
+#### 2.5 路由路径前缀推断 (`pathPrefixes`)
+
+CDS 代理通过 `pathPrefixes` 决定将请求转发到哪个 profile 的容器。**必须**为每个 buildProfile 推断路由路径前缀。
+
+**推断规则**（按优先级）：
+
+| 信号 | pathPrefixes 推断值 |
+|------|-------------------|
+| 后端 profile + 代码中发现 `/api/` 路由 | `["/api/"]` |
+| 后端 profile + 代码中发现 `/graphql` 端点 | `["/api/", "/graphql"]` |
+| 后端 profile + 代码中发现 WebSocket 路径 | 追加 `"/ws/"` 或实际路径 |
+| 前端 vite.config 有 `server.proxy` 配置 | 提取代理的路径前缀给后端 profile |
+| Next.js / Nuxt.js（前后端一体） | `["/"]`（处理所有路径） |
+| 纯前端（无 API 路由） | `["/"]` |
+
+**检测方法**：
+
+```bash
+# .NET 后端：检查 Controller 路由前缀
+grep -rn '\[Route("' --include="*.cs" . | head -20
+
+# Vite 项目：检查 proxy 配置
+grep -A5 'proxy' vite.config.* 2>/dev/null
+
+# Express/Koa：检查路由注册
+grep -rn "app.use.*'/api'" --include="*.ts" --include="*.js" . | head -10
+
+# Next.js API routes
+ls -d pages/api/ app/api/ 2>/dev/null
+```
+
+**重要**：如果项目的 API 不在 `/api/` 下（如 `/v1/`、`/graphql`、`/rpc/`），必须准确推断，否则 CDS 代理会路由错误。
+不填 `pathPrefixes` 时 CDS 回退到约定：profile id 包含 "api" 时自动处理 `/api/*`，其余路径走 web profile。
+
 ### Phase 3：扫描基础设施
 
 #### 3.1 Docker Compose 解析
@@ -92,15 +126,31 @@ find . -maxdepth 2 -name "docker-compose*.yml" -o -name "compose*.yml"
 ```
 
 对每个 service 提取：
-- `image` → `dockerImage`
-- `ports` → `containerPort` + `hostPort`
-- `volumes` → `volumes[]`
+- `image` → `dockerImage`（**跳过有 `build` 字段的应用服务**）
+- `ports` → `containerPort`
+- `volumes` → `volumes[]`（命名卷 + 绑定挂载均保留）
 - `environment` → `env`
 
 **Compose 服务提取规则**：
 
-直接从 docker-compose 文件提取带 `image` 字段的服务（跳过 `build` 类型的应用服务），
+直接从 docker-compose 文件提取**同时满足以下条件**的服务：
+1. 有 `image` 字段（纯镜像服务）
+2. **没有** `build` 字段（有 build 的是应用服务，即使同时写了 image 也要跳过）
+3. 有 `ports` 声明（无端口的不是 CDS 该管的网络服务）
+
 转换为 CDS 兼容的 compose YAML 格式，并添加 `x-cds-inject` 扩展字段声明注入到应用容器的环境变量。
+
+**Volume 处理规则**：
+
+| Volume 格式 | CDS 支持 | 说明 |
+|-------------|---------|------|
+| `named_vol:/container/path` | ✅ 命名卷 | 自动持久化 |
+| `./relative/path:/container/path` | ✅ 绑定挂载 | 相对于项目根目录解析 |
+| `/absolute/path:/container/path` | ✅ 绑定挂载 | 直接使用 |
+| `*:/path:ro` | ✅ 只读标记 | 保留 `:ro` 后缀 |
+
+**多文件去重规则**：如果项目有多个 compose 文件（如 `cds-compose.yml` + `docker-compose.dev.yml`），
+同 ID 的服务只取第一个发现的版本。优先级：`cds-compose.yml` > `docker-compose.yml` > `docker-compose.dev.yml`。
 
 | Docker Compose Service | `x-cds-inject` 推荐值 |
 |------------------------|----------------------|
@@ -114,7 +164,21 @@ find . -maxdepth 2 -name "docker-compose*.yml" -o -name "compose*.yml"
 
 注意：`x-cds-inject` 中的 `{{host}}` 和 `{{port}}` 会被 CDS 替换为实际的 Docker 宿主机地址和分配的宿主端口。
 
-#### 3.2 无 Docker Compose 时
+#### 3.2 Compose 兼容性检查
+
+扫描 compose 文件时，检测以下 CDS 不兼容的特性，在输出的「需要手动确认」区域告警：
+
+| compose 特性 | CDS 支持状态 | 告警信息 |
+|-------------|-------------|---------|
+| `depends_on` | ❌ 忽略 | "CDS 不保证启动顺序，应用需有重连逻辑" |
+| `networks` (自定义) | ❌ 硬编码 | "CDS 使用统一网络，忽略自定义网络配置" |
+| `read_only: true` | ❌ 忽略 | "CDS 容器不支持只读文件系统" |
+| `tmpfs` | ❌ 忽略 | "CDS 不挂载 tmpfs，.NET 等需要 /tmp 的应用可能受影响" |
+| `restart` (非 unless-stopped) | ⚠️ 硬编码 | "CDS 硬编码 restart=unless-stopped" |
+| 端口范围 `8000-8100` | ❌ 忽略 | "CDS 仅支持单端口映射" |
+| `${VAR:-default}` 变量替换 | ⚠️ 原样传递 | "环境变量替换由 Docker 处理，CDS 不展开" |
+
+#### 3.3 无 Docker Compose 时
 
 检查代码中的连接串引用：
 ```bash
@@ -182,12 +246,35 @@ grep -rn "ConnectionString" --include="*.json" --include="*.cs" .
     "name": "项目名称",
     "description": "自动检测的描述"
   },
-  "buildProfiles": [ ... ],
-  "envVars": { ... },
+  "buildProfiles": [
+    {
+      "id": "api",
+      "name": "后端 API",
+      "dockerImage": "mcr.microsoft.com/dotnet/sdk:8.0",
+      "workDir": "backend",
+      "runCommand": "dotnet run",
+      "containerPort": 8080,
+      "pathPrefixes": ["/api/", "/graphql"]
+    },
+    {
+      "id": "web",
+      "name": "前端",
+      "dockerImage": "node:20-slim",
+      "workDir": "frontend",
+      "runCommand": "npx vite --host 0.0.0.0",
+      "containerPort": 5173,
+      "pathPrefixes": ["/"]
+    }
+  ],
+  "envVars": { },
   "infraServices": "services:\n  mongodb:\n    image: mongo:7\n    ports:\n      - \"27017\"\n    volumes:\n      - mongodb-data:/data/db\n    healthcheck:\n      test: mongosh --eval \"db.runCommand({ping:1})\" --quiet\n      interval: 10s\n      retries: 3\n    x-cds-inject:\n      MongoDB__ConnectionString: \"mongodb://{{host}}:{{port}}\"\nvolumes:\n  mongodb-data:",
   "routingRules": []
 }
 ```
+
+**`pathPrefixes` 说明**：CDS 代理根据此字段将请求路由到对应 profile 的容器。
+最长前缀优先匹配。`["/"]` 表示兜底处理所有未匹配的路径。
+不填时回退到约定：profile id 含 "api" 自动处理 `/api/*`。
 
 注意：`infraServices` 字段的值是 **compose YAML 字符串**（docker-compose 兼容格式），不再是 JSON 数组。
 CDS 会解析该 YAML 并提取带 `image` 字段的服务。`x-cds-inject` 扩展字段定义注入到应用容器的环境变量。

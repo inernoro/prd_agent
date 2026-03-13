@@ -1840,7 +1840,7 @@ function openProfileModal() {
             <span style="opacity:0.7">${getPortIcon(p.id, p)}</span>
             <strong>${esc(p.name)}</strong>
             <code class="config-item-match">${esc(p.dockerImage)}</code>
-            <span class="config-item-detail">${esc(p.workDir || '.')} :${p.containerPort}</span>
+            <span class="config-item-detail">${esc(p.workDir || '.')} :${p.containerPort}${p.pathPrefixes?.length ? ' → ' + p.pathPrefixes.join(', ') : ''}</span>
             <code class="config-item-cmd" title="${esc(p.runCommand)}">${esc(p.runCommand)}</code>
           </div>
           <div class="config-item-actions">
@@ -1897,6 +1897,9 @@ function openProfileModal() {
         <div class="form-row">
           <input id="profileBuild" placeholder="构建命令（可选）" class="form-input">
         </div>
+        <div class="form-row">
+          <input id="profilePathPrefixes" placeholder="路由路径前缀（逗号分隔，如 /api/,/graphql）" class="form-input" title="指定此服务处理哪些 URL 路径前缀。不填则使用约定：id 含 api 时自动处理 /api/*">
+        </div>
       </div>
       <div class="form-row">
         <button class="primary sm" onclick="saveProfileAndRefresh()">保存</button>
@@ -1930,6 +1933,10 @@ async function saveProfileAndRefresh() {
     buildCommand: document.getElementById('profileBuild').value.trim() || undefined,
     runCommand: document.getElementById('profileRun').value.trim(),
   };
+  const pathPrefixesRaw = document.getElementById('profilePathPrefixes').value.trim();
+  if (pathPrefixesRaw) {
+    profile.pathPrefixes = pathPrefixesRaw.split(',').map(s => s.trim()).filter(Boolean);
+  }
   try {
     await api('POST', '/build-profiles', profile);
     showToast('配置已添加', 'success');

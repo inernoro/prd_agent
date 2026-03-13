@@ -47,6 +47,12 @@ export interface BuildProfile {
   cacheMounts?: CacheMount[];
   /** Timeout for build in ms (default: 600000) */
   buildTimeout?: number;
+  /**
+   * URL path prefixes this profile handles (e.g., ["/api/", "/graphql"]).
+   * Used by the proxy to route requests to the correct service within a branch.
+   * If not set, falls back to convention: profile id containing "api" handles /api/*.
+   */
+  pathPrefixes?: string[];
 }
 
 /** A shared cache mount to avoid duplicating packages across branches */
@@ -131,10 +137,14 @@ export interface CdsState {
 
 /** Volume mount for an infrastructure service */
 export interface InfraVolume {
-  /** Docker named volume name (e.g., 'cds-mongodb-data') */
+  /** Docker named volume name (e.g., 'cds-mongodb-data') or host path for bind mounts */
   name: string;
   /** Mount path inside the container */
   containerPath: string;
+  /** Mount type: 'volume' (Docker named volume) or 'bind' (host path) */
+  type?: 'volume' | 'bind';
+  /** Read-only mount flag */
+  readOnly?: boolean;
 }
 
 /** Health check configuration for infrastructure service */

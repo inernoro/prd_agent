@@ -165,8 +165,14 @@ export function toComposeYaml(services: InfraService[]): string {
 
     // Volumes
     if (svc.volumes.length > 0) {
-      entry.volumes = svc.volumes.map(v => `${v.name}:${v.containerPath}`);
-      for (const v of svc.volumes) volumeNames.add(v.name);
+      entry.volumes = svc.volumes.map(v => {
+        const suffix = v.readOnly ? ':ro' : '';
+        return `${v.name}:${v.containerPath}${suffix}`;
+      });
+      for (const v of svc.volumes) {
+        // Only named volumes go into the top-level volumes section
+        if (v.type !== 'bind') volumeNames.add(v.name);
+      }
     }
 
     // Container env
@@ -230,21 +236,19 @@ function extractContainerPort(ports?: Array<string | { target: number; published
 function extractVolumes(volumes?: string[]): InfraVolume[] {
   if (!volumes) return [];
 
-  return volumes
-    .map(v => {
-      // Format: "name:/container/path" or "/host/path:/container/path"
-      const parts = v.split(':');
-      if (parts.length >= 2) {
-        const source = parts[0];
-        const containerPath = parts[1];
-        // Only named volumes (no absolute paths)
-        if (!source.startsWith('/') && !source.startsWith('.')) {
-          return { name: source, containerPath };
-        }
-      }
-      return null;
-    })
-    .filter((v): v is InfraVolume => v !== null);
+  const result: InfraVolume[] = [];
+  for (const v of volumes) {
+    // Format: "name:/container/path[:ro]" or "/host/path:/container/path[:ro]" or "./rel:/container/path[:ro]"
+    const parts = v.split(':');
+    if (parts.length >= 2) {
+      const source = parts[0];
+      const containerPath = parts[1];
+      const readOnly = parts[2] === 'ro' ? true : undefined;
+      const type = (source.startsWith('/') || source.startsWith('.')) ? 'bind' : 'volume';
+      result.push({ name: source, containerPath, type, readOnly });
+    }
+  }
+  return result;
 }
 
 function extractEnv(environment?: Record<string, string> | string[]): Record<string, string> {

@@ -1564,6 +1564,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         env: p.env,
         cacheMounts: p.cacheMounts,
         buildTimeout: p.buildTimeout,
+        pathPrefixes: p.pathPrefixes,
       })),
       envVars,
       // Export infra as compose YAML string (docker-compose compatible)

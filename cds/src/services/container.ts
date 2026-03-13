@@ -205,10 +205,16 @@ export class ContainerService {
     // Remove any existing container with the same name
     await this.shell.exec(`docker rm -f ${service.containerName}`);
 
-    // Build volume flags (Docker named volumes)
-    const volumeFlags = service.volumes.map(
-      v => `-v "${v.name}":"${v.containerPath}"`,
-    );
+    // Build volume flags (named volumes + bind mounts)
+    const volumeFlags = service.volumes.map(v => {
+      const roSuffix = v.readOnly ? ':ro' : '';
+      if (v.type === 'bind') {
+        // Resolve relative paths against repo root
+        const hostPath = v.name.startsWith('/') ? v.name : `${this.config.repoRoot}/${v.name}`;
+        return `-v "${hostPath}":"${v.containerPath}${roSuffix}"`;
+      }
+      return `-v "${v.name}":"${v.containerPath}${roSuffix}"`;
+    });
 
     // Build env flags
     const envFlags = Object.entries(service.env).map(

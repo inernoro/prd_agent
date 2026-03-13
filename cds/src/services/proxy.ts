@@ -1,5 +1,5 @@
 import http from 'node:http';
-import type { RoutingRule, BranchEntry, CdsConfig } from '../types.js';
+import type { RoutingRule, BranchEntry, CdsConfig, BuildProfile } from '../types.js';
 import { StateService } from './state.js';
 import type { WorktreeService } from './worktree.js';
 
@@ -430,13 +430,29 @@ export class ProxyService {
     const url = req.url || '/';
     const profileIds = Object.keys(branch.services);
 
-    // If there's an "api" profile and request starts with /api/, route there
+    // Phase 1: Check explicit pathPrefixes on build profiles (config-driven routing)
+    const profiles = this.stateService.getBuildProfiles();
+    // Sort: longer prefixes first (most specific match wins)
+    const profilesWithRoutes = profiles
+      .filter(p => p.pathPrefixes && p.pathPrefixes.length > 0 && profileIds.includes(p.id))
+      .sort((a, b) => {
+        const maxA = Math.max(...(a.pathPrefixes || []).map(s => s.length));
+        const maxB = Math.max(...(b.pathPrefixes || []).map(s => s.length));
+        return maxB - maxA;
+      });
+
+    for (const profile of profilesWithRoutes) {
+      if (profile.pathPrefixes!.some(prefix => url.startsWith(prefix))) {
+        return profile.id;
+      }
+    }
+
+    // Phase 2: Convention-based fallback (backward compatible)
     if (url.startsWith('/api/')) {
       const apiProfile = profileIds.find(id => id.includes('api') || id.includes('backend'));
       if (apiProfile) return apiProfile;
     }
 
-    // Otherwise route to the first running web/frontend profile, or the first available
     const webProfile = profileIds.find(id => id.includes('web') || id.includes('frontend') || id.includes('admin'));
     if (webProfile) return webProfile;
 
