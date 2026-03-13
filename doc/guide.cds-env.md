@@ -103,26 +103,55 @@ export CDS_PREVIEW_DOMAIN="miduo.org"
 
 ## 4. 操作说明书
 
-### 4.1 首次部署（从零开始）
+### 4.1 一键部署（推荐）
+
+```bash
+cd prd_agent/cds
+./exec_setup.sh
+```
+
+脚本会交互式引导你完成以下 4 步：
+
+```
+步骤 1/4: Dashboard 认证 → 输入用户名、密码
+步骤 2/4: JWT 签名密钥   → 输入或自动生成
+步骤 3/4: 域名配置       → 主域名、切换域名、预览域名
+步骤 4/4: 确认并写入     → 写入 .bashrc + 生成 Nginx 配置
+```
+
+完成后脚本会：
+- 将 `CDS_*` 系统变量写入 `~/.bashrc`
+- 在 `cds/nginx/` 下生成收拢后的 Nginx 配置文件
+- 可选自动部署到宿主机 Nginx 容器
+
+其他用法：
+
+```bash
+./exec_setup.sh --show        # 查看当前配置
+./exec_setup.sh --nginx-only  # 仅重新生成 Nginx 配置
+```
+
+### 4.2 手动部署（逐步）
 
 ```
 步骤 1: 配置 .bashrc（系统层）
          ↓
-步骤 2: 启动 CDS
+步骤 2: 配置 Nginx（宿主机）
          ↓
-步骤 3: 登录 Dashboard
+步骤 3: 启动 CDS
          ↓
-步骤 4: 配置项目环境变量（Dashboard UI）
+步骤 4: 登录 Dashboard
          ↓
-步骤 5: 添加构建配置（Build Profile）
+步骤 5: 配置项目环境变量（Dashboard UI）
          ↓
-步骤 6: 添加分支 → 部署
+步骤 6: 添加构建配置（Build Profile）
+         ↓
+步骤 7: 添加分支 → 部署
 ```
 
 #### 步骤 1：配置 .bashrc
 
 ```bash
-# 编辑 ~/.bashrc，追加以下内容
 cat >> ~/.bashrc << 'EOF'
 
 # ── CDS 系统配置 ──
@@ -134,11 +163,27 @@ export CDS_MAIN_DOMAIN="miduo.org"
 export CDS_PREVIEW_DOMAIN="miduo.org"
 EOF
 
-# 使配置生效
 source ~/.bashrc
 ```
 
-#### 步骤 2：启动 CDS
+#### 步骤 2：配置 Nginx
+
+宿主机 Nginx 配置已收拢为两个文件（详见第 8 节）：
+
+```bash
+# 生成配置
+cd prd_agent/cds && ./exec_setup.sh --nginx-only
+
+# 部署到宿主机
+cp cds/nginx/nginx.conf /root/inernoro/nginx/nginx.conf
+mkdir -p /root/inernoro/nginx/conf.d
+cp cds/nginx/cds-nginx.conf /root/inernoro/nginx/conf.d/cds.conf
+
+# 测试 + 重载
+docker exec nginx_miduo nginx -t && docker exec nginx_miduo nginx -s reload
+```
+
+#### 步骤 3：启动 CDS
 
 ```bash
 cd prd_agent/cds
@@ -161,11 +206,11 @@ cd prd_agent/cds
   Preview:    *.miduo.org
 ```
 
-#### 步骤 3：登录 Dashboard
+#### 步骤 4：登录 Dashboard
 
-浏览器访问 `http://localhost:9900`（或你的服务器 IP:9900），输入步骤 1 设置的用户名密码。
+浏览器访问 `https://cds.miduo.org`（或 `http://localhost:9900`），输入步骤 1 设置的用户名密码。
 
-#### 步骤 4：配置项目环境变量
+#### 步骤 5：配置项目环境变量
 
 1. 点击 Dashboard 顶部的 **齿轮图标**（或"环境变量"按钮）
 2. 逐个添加项目层环境变量（参见第 3 节的分类表）
@@ -173,16 +218,16 @@ cd prd_agent/cds
 
 > **提示**：环境变量保存后立即生效于后续部署。已运行的分支容器需要重新部署才能获取新变量。
 
-#### 步骤 5：添加构建配置
+#### 步骤 6：添加构建配置
 
 在 Dashboard 的"构建配置"区域，确认已配置好 Build Profile（如 `prd-api`）。默认情况下首次添加分支时会提示创建。
 
-#### 步骤 6：添加分支并部署
+#### 步骤 7：添加分支并部署
 
 1. 在 Dashboard 输入远程分支名（如 `main` 或 `feature/xxx`）
 2. 点击"添加分支" → 系统自动创建 git worktree
 3. 点击"部署" → 构建 Docker 镜像并启动容器
-4. 部署完成后通过 `:5500` 端口访问
+4. 部署完成后通过 `:5500` 端口或 `https://miduo.org` 访问
 
 ### 4.2 日常操作
 
@@ -289,7 +334,71 @@ curl -X PUT http://localhost:9900/api/env \
 
 ---
 
-## 7. 安全注意事项
+## 7. Nginx 配置架构
+
+### 7.1 收拢前 vs 收拢后
+
+**收拢前**：宿主机 `nginx.conf` 里有 3 个几乎相同的 server 块（miduo.org / switch.miduo.org / cds.miduo.org），每个都重复完整的 SSL + proxy 配置。
+
+**收拢后**：拆为两个文件，职责清晰：
+
+| 文件 | 内容 | 变化频率 |
+|------|------|----------|
+| `nginx.conf` | 全局配置（worker、mime、log、websocket map） | 几乎不变 |
+| `conf.d/cds.conf` | CDS 的 4 个 server 块 + upstream 定义 | 域名/端口变更时更新 |
+
+### 7.2 文件结构
+
+```
+cds/nginx/
+├── nginx.conf.template      # 主 nginx.conf 模板（精简，只有全局配置）
+├── cds-nginx.conf.template   # CDS server 块模板（4 个域名）
+├── nginx.conf                # 生成的主配置（exec_setup.sh 生成）
+└── cds-nginx.conf            # 生成的 CDS 配置（exec_setup.sh 生成）
+```
+
+### 7.3 域名路由
+
+```
+                          ┌────────────────┐
+  miduo.org ──────────────┤                │
+  *.miduo.org ────────────┤  cds_worker    ├──► localhost:5500 (CDS Worker)
+  switch.miduo.org ───────┤  (upstream)    │
+                          └────────────────┘
+
+  cds.miduo.org ──────────┬────────────────┐
+                          │  cds_dashboard ├──► localhost:9900 (CDS Dashboard)
+                          └────────────────┘
+```
+
+### 7.4 宿主机挂载
+
+```bash
+# 容器 nginx_miduo 的挂载关系
+docker run -d \
+  --name nginx_miduo \
+  -v /root/inernoro/nginx/nginx.conf:/etc/nginx/nginx.conf:ro \
+  -v /root/inernoro/nginx/conf.d:/etc/nginx/conf.d:ro \     # 新增！
+  -v /root/inernoro/nginx/certs:/etc/nginx/certs:ro \
+  -v /root/inernoro/nginx/www:/var/www/html \
+  -p 80:80 -p 443:443 \
+  nginx:alpine
+```
+
+> **注意**：如果容器之前没有挂载 `conf.d/` 目录，需要重建容器添加此挂载。或者直接在旧 `nginx.conf` 的 `http {}` 块末尾加一行 `include /etc/nginx/conf.d/*.conf;`。
+
+### 7.5 模板占位符
+
+| 占位符 | 默认值 | 说明 |
+|--------|--------|------|
+| `{{MAIN_DOMAIN}}` | — | 主域名（如 miduo.org） |
+| `{{PREVIEW_DOMAIN}}` | 同 MAIN_DOMAIN | 预览子域名后缀 |
+| `{{WORKER_PORT}}` | 5500 | CDS Worker 端口 |
+| `{{MASTER_PORT}}` | 9900 | CDS Dashboard 端口 |
+
+---
+
+## 8. 安全注意事项
 
 1. **不要将密码类变量提交到 Git**：`.cds/state.json` 已在 `.gitignore` 中
 2. **生产环境必须设置 `CDS_JWT_SECRET`**：默认值仅供开发使用
