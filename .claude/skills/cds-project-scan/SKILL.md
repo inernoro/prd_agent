@@ -97,17 +97,22 @@ find . -maxdepth 2 -name "docker-compose*.yml" -o -name "compose*.yml"
 - `volumes` → `volumes[]`
 - `environment` → `env`
 
-**常见服务映射**：
+**Compose 服务提取规则**：
 
-| Docker Compose Service | CDS 预设 | 自动注入变量 |
-|------------------------|---------|-------------|
-| `mongo` / `mongodb` | `presetId: "mongodb"` | `MongoDB__ConnectionString` |
-| `redis` | `presetId: "redis"` | `Redis__ConnectionString` |
-| `postgres` / `postgresql` | 自定义 infra | `DATABASE_URL` |
-| `mysql` / `mariadb` | 自定义 infra | `DATABASE_URL` |
-| `rabbitmq` | 自定义 infra | `RABBITMQ_URL` |
-| `elasticsearch` | 自定义 infra | `ELASTICSEARCH_URL` |
-| `minio` | 自定义 infra | `S3_ENDPOINT` |
+直接从 docker-compose 文件提取带 `image` 字段的服务（跳过 `build` 类型的应用服务），
+转换为 CDS 兼容的 compose YAML 格式，并添加 `x-cds-inject` 扩展字段声明注入到应用容器的环境变量。
+
+| Docker Compose Service | `x-cds-inject` 推荐值 |
+|------------------------|----------------------|
+| `mongo` / `mongodb` | `MongoDB__ConnectionString: "mongodb://{{host}}:{{port}}"` |
+| `redis` | `Redis__ConnectionString: "{{host}}:{{port}}"` |
+| `postgres` / `postgresql` | `DATABASE_URL: "postgres://{{host}}:{{port}}/dbname"` |
+| `mysql` / `mariadb` | `DATABASE_URL: "mysql://{{host}}:{{port}}/dbname"` |
+| `rabbitmq` | `RABBITMQ_URL: "amqp://{{host}}:{{port}}"` |
+| `elasticsearch` | `ELASTICSEARCH_URL: "http://{{host}}:{{port}}"` |
+| `minio` | `S3_ENDPOINT: "http://{{host}}:{{port}}"` |
+
+注意：`x-cds-inject` 中的 `{{host}}` 和 `{{port}}` 会被 CDS 替换为实际的 Docker 宿主机地址和分配的宿主端口。
 
 #### 3.2 无 Docker Compose 时
 
@@ -179,10 +184,13 @@ grep -rn "ConnectionString" --include="*.json" --include="*.cs" .
   },
   "buildProfiles": [ ... ],
   "envVars": { ... },
-  "infraServices": [ ... ],
+  "infraServices": "services:\n  mongodb:\n    image: mongo:7\n    ports:\n      - \"27017\"\n    volumes:\n      - mongodb-data:/data/db\n    healthcheck:\n      test: mongosh --eval \"db.runCommand({ping:1})\" --quiet\n      interval: 10s\n      retries: 3\n    x-cds-inject:\n      MongoDB__ConnectionString: \"mongodb://{{host}}:{{port}}\"\nvolumes:\n  mongodb-data:",
   "routingRules": []
 }
 ```
+
+注意：`infraServices` 字段的值是 **compose YAML 字符串**（docker-compose 兼容格式），不再是 JSON 数组。
+CDS 会解析该 YAML 并提取带 `image` 字段的服务。`x-cds-inject` 扩展字段定义注入到应用容器的环境变量。
 
 ### Phase 6：导入后系统初始化（反问用户）
 

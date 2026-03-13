@@ -180,18 +180,6 @@ export interface InfraService {
   createdAt: string;
 }
 
-/** Preset template for quickly creating infrastructure services */
-export interface InfraPreset {
-  id: string;
-  name: string;
-  dockerImage: string;
-  containerPort: number;
-  volumes: InfraVolume[];
-  env: Record<string, string>;
-  injectEnv: Record<string, string>;
-  healthCheck?: InfraHealthCheck;
-}
-
 /** Application configuration */
 export interface CdsConfig {
   repoRoot: string;

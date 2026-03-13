@@ -1394,7 +1394,7 @@ function openImportModal() {
       粘贴由 <code>/cds-scan</code> 技能生成的配置 JSON，或从其他 CDS 实例导出的配置。
       粘贴后会先验证格式，再预览变更，确认后一键应用。
     </p>
-    <textarea id="importConfigTextarea" class="bulk-textarea" rows="14" placeholder='{\n  "$schema": "cds-config-v1",\n  "buildProfiles": [...],\n  "envVars": {...},\n  "infraServices": [...]\n}'></textarea>
+    <textarea id="importConfigTextarea" class="bulk-textarea" rows="14" placeholder='{\n  "$schema": "cds-config-v1",\n  "buildProfiles": [...],\n  "envVars": {...},\n  "infraServices": "services:\\n  mongodb:\\n    image: mongo:7\\n    ..."\n}'></textarea>
     <div id="importPreview" style="margin-top:8px"></div>
     <div class="form-row" style="margin-top:8px;gap:6px">
       <button class="primary sm" onclick="previewImportConfig()">验证 & 预览</button>
@@ -1530,7 +1530,7 @@ function infraStatusLabel(status) {
 function openInfraModal() {
   const listHtml = infraServices.length === 0
     ? `<div class="config-empty">
-        暂无基础设施服务。点击"一键初始化"快速创建 MongoDB + Redis。
+        暂无基础设施服务。点击"从 Compose 导入"自动发现项目中的 docker-compose.yml 服务。
       </div>`
     : infraServices.map(svc => `
         <div class="config-item" style="flex-direction:column;align-items:stretch;gap:6px">
@@ -1565,7 +1565,7 @@ function openInfraModal() {
       环境变量会自动注入到所有分支容器中（优先级低于自定义环境变量）。
     </p>
     <div class="config-panel-actions" style="margin-bottom:10px;display:flex;gap:6px">
-      <button class="sm primary" onclick="infraQuickstart()">🚀 一键初始化</button>
+      <button class="sm primary" onclick="infraDiscover()">📦 从 Compose 导入</button>
       <button class="sm" onclick="openInfraAddModal()">+ 自定义</button>
     </div>
     <div id="infraListInModal">${listHtml}</div>
@@ -1608,9 +1608,58 @@ async function infraShowLogs(id) {
   }
 }
 
-async function infraQuickstart() {
+async function infraDiscover() {
   try {
-    const data = await api('POST', '/infra/quickstart', {});
+    const data = await api('GET', '/infra/discover');
+    const discovered = data.discovered || [];
+    if (discovered.length === 0) {
+      showToast('未在项目中发现 docker-compose.yml 文件', 'error');
+      return;
+    }
+
+    // Show discovered services for user to pick
+    const allServices = [];
+    for (const entry of discovered) {
+      for (const svc of entry.services) {
+        allServices.push({ ...svc, fromFile: entry.file });
+      }
+    }
+
+    const listHtml = allServices.map((svc, i) => `
+      <label class="config-item" style="cursor:pointer;gap:8px;align-items:center">
+        <input type="checkbox" value="${esc(svc.id)}" checked data-idx="${i}">
+        <div style="flex:1">
+          <strong>${esc(svc.name)}</strong>
+          <code style="font-size:11px;opacity:0.6;margin-left:8px">${esc(svc.dockerImage)}</code>
+          <div style="font-size:11px;color:var(--fg-muted)">来自: ${esc(svc.fromFile)} | 端口: ${svc.containerPort}</div>
+          ${Object.keys(svc.injectEnv || {}).length > 0 ? `<div style="font-size:11px;color:var(--fg-muted)">注入: ${Object.keys(svc.injectEnv).map(k => '<code>' + esc(k) + '</code>').join(', ')}</div>` : ''}
+        </div>
+      </label>
+    `).join('');
+
+    const html = `
+      <p class="config-panel-desc">
+        从项目 compose 文件中发现了以下基础设施服务。勾选要导入的服务：
+      </p>
+      <div id="infraDiscoverList">${listHtml}</div>
+      <div class="form-row" style="margin-top:10px;gap:6px">
+        <button class="primary sm" onclick="infraQuickstartSelected()">创建并启动</button>
+        <button class="sm" onclick="openInfraModal()">取消</button>
+      </div>
+    `;
+    openConfigModal('发现基础设施服务', html);
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function infraQuickstartSelected() {
+  const checkboxes = document.querySelectorAll('#infraDiscoverList input[type=checkbox]:checked');
+  const serviceIds = Array.from(checkboxes).map(cb => cb.value);
+  if (serviceIds.length === 0) {
+    showToast('请至少选择一个服务', 'error');
+    return;
+  }
+  try {
+    const data = await api('POST', '/infra/quickstart', { serviceIds });
     const results = data.results || [];
     const msgs = results.map(r => `${r.id}: ${r.status === 'started' ? '已启动' : r.status === 'exists' ? '已存在' : r.error || r.status}`);
     showToast(msgs.join(' | '), results.every(r => r.status === 'started' || r.status === 'exists') ? 'success' : 'error');

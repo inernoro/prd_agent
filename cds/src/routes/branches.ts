@@ -5,7 +5,9 @@ import { StateService } from '../services/state.js';
 import type { WorktreeService } from '../services/worktree.js';
 import type { ContainerService } from '../services/container.js';
 import type { ProxyService } from '../services/proxy.js';
-import type { BranchEntry, CdsConfig, IShellExecutor, OperationLog, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService, InfraPreset } from '../types.js';
+import type { BranchEntry, CdsConfig, IShellExecutor, OperationLog, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService } from '../types.js';
+import { discoverComposeFiles, parseComposeFile, parseComposeString, toComposeYaml } from '../services/compose-parser.js';
+import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { combinedOutput } from '../types.js';
 
 export interface RouterDeps {
@@ -992,44 +994,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
-  // ── Infrastructure service presets ──
+  // ── Compose-based infrastructure service discovery ──
 
-  const INFRA_PRESETS: Record<string, InfraPreset> = {
-    mongodb: {
-      id: 'mongodb',
-      name: '数据库 (MongoDB 7)',
-      dockerImage: 'mongo:7',
-      containerPort: 27017,
-      volumes: [{ name: 'cds-mongodb-data', containerPath: '/data/db' }],
-      env: {},
-      injectEnv: {
-        'MONGODB_HOST': '{{host}}:{{port}}',
-        'MongoDB__ConnectionString': 'mongodb://{{host}}:{{port}}',
-      },
-      healthCheck: {
-        command: 'mongosh --eval "db.runCommand({ping:1})" --quiet',
-        interval: 10,
-        retries: 3,
-      },
-    },
-    redis: {
-      id: 'redis',
-      name: '缓存 (Redis 7)',
-      dockerImage: 'redis:7-alpine',
-      containerPort: 6379,
-      volumes: [{ name: 'cds-redis-data', containerPath: '/data' }],
-      env: {},
-      injectEnv: {
-        'REDIS_HOST': '{{host}}:{{port}}',
-        'Redis__ConnectionString': '{{host}}:{{port}}',
-      },
-      healthCheck: {
-        command: 'redis-cli ping',
-        interval: 10,
-        retries: 3,
-      },
-    },
-  };
+  /** Convert a ComposeServiceDef to an InfraService (allocating a host port) */
+  function composeDefToInfraService(def: ComposeServiceDef): InfraService {
+    const hostPort = stateService.allocatePort(config.portStart);
+    return {
+      id: def.id,
+      name: def.name,
+      dockerImage: def.dockerImage,
+      containerPort: def.containerPort,
+      hostPort,
+      containerName: `cds-infra-${def.id}`,
+      status: 'stopped',
+      volumes: [...def.volumes],
+      env: { ...def.env },
+      injectEnv: { ...def.injectEnv },
+      healthCheck: def.healthCheck ? { ...def.healthCheck } : undefined,
+      createdAt: new Date().toISOString(),
+    };
+  }
 
   // ── Infrastructure services CRUD ──
 
@@ -1050,56 +1034,50 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.json({ services });
   });
 
-  router.get('/infra/presets', (_req, res) => {
-    res.json({ presets: INFRA_PRESETS });
+  // Discover infrastructure services from compose files in the repo
+  router.get('/infra/discover', (_req, res) => {
+    try {
+      const composeFiles = discoverComposeFiles(config.repoRoot);
+      const discovered: { file: string; services: ComposeServiceDef[] }[] = [];
+
+      for (const file of composeFiles) {
+        try {
+          const services = parseComposeFile(file);
+          if (services.length > 0) {
+            discovered.push({ file: path.relative(config.repoRoot, file), services });
+          }
+        } catch { /* skip unparseable files */ }
+      }
+
+      res.json({ discovered });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
   });
 
   router.post('/infra', async (req, res) => {
     try {
-      const body = req.body as Partial<InfraService> & { presetId?: string };
+      const body = req.body as Partial<InfraService>;
 
-      let service: InfraService;
-
-      if (body.presetId && INFRA_PRESETS[body.presetId]) {
-        // Create from preset
-        const preset = INFRA_PRESETS[body.presetId];
-        const hostPort = stateService.allocatePort(config.portStart);
-        service = {
-          id: preset.id,
-          name: preset.name,
-          dockerImage: preset.dockerImage,
-          containerPort: preset.containerPort,
-          hostPort,
-          containerName: `cds-infra-${preset.id}`,
-          status: 'stopped',
-          volumes: preset.volumes,
-          env: { ...preset.env },
-          injectEnv: { ...preset.injectEnv },
-          healthCheck: preset.healthCheck ? { ...preset.healthCheck } : undefined,
-          createdAt: new Date().toISOString(),
-        };
-      } else {
-        // Custom service
-        if (!body.id || !body.name || !body.dockerImage || !body.containerPort) {
-          res.status(400).json({ error: 'id、名称、Docker 镜像和容器端口为必填项' });
-          return;
-        }
-        const hostPort = stateService.allocatePort(config.portStart);
-        service = {
-          id: body.id,
-          name: body.name,
-          dockerImage: body.dockerImage,
-          containerPort: body.containerPort,
-          hostPort,
-          containerName: `cds-infra-${body.id}`,
-          status: 'stopped',
-          volumes: body.volumes || [],
-          env: body.env || {},
-          injectEnv: body.injectEnv || {},
-          healthCheck: body.healthCheck,
-          createdAt: new Date().toISOString(),
-        };
+      if (!body.id || !body.dockerImage || !body.containerPort) {
+        res.status(400).json({ error: 'id、Docker 镜像和容器端口为必填项' });
+        return;
       }
+      const hostPort = stateService.allocatePort(config.portStart);
+      const service: InfraService = {
+        id: body.id,
+        name: body.name || body.id,
+        dockerImage: body.dockerImage,
+        containerPort: body.containerPort,
+        hostPort,
+        containerName: `cds-infra-${body.id}`,
+        status: 'stopped',
+        volumes: body.volumes || [],
+        env: body.env || {},
+        injectEnv: body.injectEnv || {},
+        healthCheck: body.healthCheck,
+        createdAt: new Date().toISOString(),
+      };
 
       stateService.addInfraService(service);
       stateService.save();
@@ -1225,40 +1203,42 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
-  // Quick setup: create and start preset infra services
+  // Quick setup: discover infra from compose files and start them
   router.post('/infra/quickstart', async (req, res) => {
-    const { presetIds } = req.body as { presetIds?: string[] };
-    const ids = presetIds || Object.keys(INFRA_PRESETS);
+    const { compose: composeYaml, serviceIds } = req.body as { compose?: string; serviceIds?: string[] };
     const results: { id: string; status: string; error?: string }[] = [];
 
-    for (const presetId of ids) {
-      const preset = INFRA_PRESETS[presetId];
-      if (!preset) {
-        results.push({ id: presetId, status: 'skipped', error: '未知预设' });
-        continue;
+    // Resolve service definitions: from inline compose YAML, or auto-discover from repo
+    let defs: ComposeServiceDef[] = [];
+    if (composeYaml) {
+      defs = parseComposeString(composeYaml);
+    } else {
+      const composeFiles = discoverComposeFiles(config.repoRoot);
+      for (const file of composeFiles) {
+        try {
+          defs.push(...parseComposeFile(file));
+        } catch { /* skip */ }
       }
+    }
 
+    // Filter by requested IDs if specified
+    if (serviceIds && serviceIds.length > 0) {
+      defs = defs.filter(d => serviceIds.includes(d.id));
+    }
+
+    if (defs.length === 0) {
+      res.json({ results: [], message: '未找到基础设施服务定义。请在项目中添加 docker-compose.yml 或 cds-compose.yml 文件。' });
+      return;
+    }
+
+    for (const def of defs) {
       // Skip if already exists
-      if (stateService.getInfraService(preset.id)) {
-        results.push({ id: preset.id, status: 'exists' });
+      if (stateService.getInfraService(def.id)) {
+        results.push({ id: def.id, status: 'exists' });
         continue;
       }
 
-      const hostPort = stateService.allocatePort(config.portStart);
-      const service: InfraService = {
-        id: preset.id,
-        name: preset.name,
-        dockerImage: preset.dockerImage,
-        containerPort: preset.containerPort,
-        hostPort,
-        containerName: `cds-infra-${preset.id}`,
-        status: 'stopped',
-        volumes: [...preset.volumes],
-        env: { ...preset.env },
-        injectEnv: { ...preset.injectEnv },
-        healthCheck: preset.healthCheck ? { ...preset.healthCheck } : undefined,
-        createdAt: new Date().toISOString(),
-      };
+      const service = composeDefToInfraService(def);
 
       try {
         stateService.addInfraService(service);
@@ -1336,17 +1316,33 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (cfg.envVars !== undefined && (typeof cfg.envVars !== 'object' || Array.isArray(cfg.envVars))) {
       errors.push('envVars 必须是键值对对象');
     }
-    // Validate infraServices
+    // Validate infraServices — accepts array of full definitions OR a compose YAML string
     if (cfg.infraServices !== undefined) {
-      if (!Array.isArray(cfg.infraServices)) {
-        errors.push('infraServices 必须是数组');
-      } else {
+      if (typeof cfg.infraServices === 'string') {
+        // Compose YAML string — validate it parses
+        try {
+          const defs = parseComposeString(cfg.infraServices as string);
+          if (defs.length === 0) {
+            warnings.push('infraServices (compose YAML): 未解析到任何服务');
+          }
+        } catch (e) {
+          errors.push(`infraServices (compose YAML): 解析失败 — ${(e as Error).message}`);
+        }
+      } else if (Array.isArray(cfg.infraServices)) {
         for (let i = 0; i < cfg.infraServices.length; i++) {
           const s = cfg.infraServices[i] as Record<string, unknown>;
-          if (!s.presetId && !s.id) {
-            errors.push(`infraServices[${i}]: 需要 presetId 或 id`);
+          if (!s.id) {
+            errors.push(`infraServices[${i}]: 缺少 id`);
+          }
+          if (!s.dockerImage && !s.image) {
+            errors.push(`infraServices[${i}]: 缺少 dockerImage`);
+          }
+          if (!s.containerPort) {
+            errors.push(`infraServices[${i}]: 缺少 containerPort`);
           }
         }
+      } else {
+        errors.push('infraServices 必须是数组或 compose YAML 字符串');
       }
     }
     // Validate routingRules
@@ -1356,6 +1352,30 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
     }
     return { valid: errors.length === 0, errors, warnings };
+  }
+
+  /** Resolve infraServices from config — supports array of full defs or compose YAML string */
+  function resolveInfraDefs(cfg: Record<string, unknown>): ComposeServiceDef[] {
+    if (!cfg.infraServices) return [];
+
+    if (typeof cfg.infraServices === 'string') {
+      return parseComposeString(cfg.infraServices as string);
+    }
+
+    if (Array.isArray(cfg.infraServices)) {
+      return (cfg.infraServices as Array<Record<string, unknown>>).map(s => ({
+        id: (s.id as string) || '',
+        name: (s.name as string) || (s.id as string) || '',
+        dockerImage: (s.dockerImage as string) || (s.image as string) || '',
+        containerPort: (s.containerPort as number) || 0,
+        volumes: (s.volumes as Array<{ name: string; containerPath: string }>) || [],
+        env: (s.env as Record<string, string>) || {},
+        injectEnv: (s.injectEnv as Record<string, string>) || {},
+        healthCheck: s.healthCheck as ComposeServiceDef['healthCheck'],
+      }));
+    }
+
+    return [];
   }
 
   /** Preview what an import would do (without applying) */
@@ -1393,17 +1413,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
     }
 
-    if (Array.isArray(cfg.infraServices)) {
-      for (const s of cfg.infraServices as Array<{ presetId?: string; id?: string; name?: string }>) {
-        const id = s.presetId || s.id || '';
-        const existing = stateService.getInfraService(id);
-        if (existing) {
-          summary.infraServices.skip++;
-          summary.infraServices.items.push(`跳过 (已存在): ${id}`);
-        } else {
-          summary.infraServices.add++;
-          summary.infraServices.items.push(`新增: ${s.name || id}`);
-        }
+    // Resolve infra services from array or compose YAML string
+    const infraDefs = resolveInfraDefs(cfg);
+    for (const def of infraDefs) {
+      const existing = stateService.getInfraService(def.id);
+      if (existing) {
+        summary.infraServices.skip++;
+        summary.infraServices.items.push(`跳过 (已存在): ${def.id}`);
+      } else {
+        summary.infraServices.add++;
+        summary.infraServices.items.push(`新增: ${def.name || def.id}`);
       }
     }
 
@@ -1468,52 +1487,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // Apply: infra services (add if not exists, skip existing)
       const infraResults: { id: string; status: string }[] = [];
-      if (Array.isArray(cfg.infraServices)) {
-        for (const s of cfg.infraServices as Array<{ presetId?: string } & Partial<InfraService>>) {
-          const id = s.presetId || s.id || '';
-          if (stateService.getInfraService(id)) {
-            infraResults.push({ id, status: 'exists' });
-            continue;
-          }
+      const infraDefs = resolveInfraDefs(cfg);
+      for (const def of infraDefs) {
+        if (stateService.getInfraService(def.id)) {
+          infraResults.push({ id: def.id, status: 'exists' });
+          continue;
+        }
 
-          if (s.presetId && INFRA_PRESETS[s.presetId]) {
-            const preset = INFRA_PRESETS[s.presetId];
-            const hostPort = stateService.allocatePort(config.portStart);
-            const service: InfraService = {
-              id: preset.id,
-              name: preset.name,
-              dockerImage: preset.dockerImage,
-              containerPort: preset.containerPort,
-              hostPort,
-              containerName: `cds-infra-${preset.id}`,
-              status: 'stopped',
-              volumes: [...preset.volumes],
-              env: { ...preset.env },
-              injectEnv: { ...preset.injectEnv },
-              healthCheck: preset.healthCheck ? { ...preset.healthCheck } : undefined,
-              createdAt: new Date().toISOString(),
-            };
-            stateService.addInfraService(service);
-            infraResults.push({ id: service.id, status: 'created' });
-          } else if (s.id && s.dockerImage && s.containerPort) {
-            const hostPort = stateService.allocatePort(config.portStart);
-            const service: InfraService = {
-              id: s.id,
-              name: s.name || s.id,
-              dockerImage: s.dockerImage,
-              containerPort: s.containerPort,
-              hostPort,
-              containerName: `cds-infra-${s.id}`,
-              status: 'stopped',
-              volumes: s.volumes || [],
-              env: s.env || {},
-              injectEnv: s.injectEnv || {},
-              healthCheck: s.healthCheck,
-              createdAt: new Date().toISOString(),
-            };
-            stateService.addInfraService(service);
-            infraResults.push({ id: service.id, status: 'created' });
-          }
+        if (def.id && def.dockerImage && def.containerPort) {
+          const service = composeDefToInfraService(def);
+          stateService.addInfraService(service);
+          infraResults.push({ id: service.id, status: 'created' });
         }
       }
 
@@ -1576,23 +1560,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         buildTimeout: p.buildTimeout,
       })),
       envVars,
-      infraServices: infra.map(s => {
-        // If it matches a preset, export as preset reference
-        const preset = Object.values(INFRA_PRESETS).find(p => p.id === s.id);
-        if (preset) {
-          return { presetId: s.id };
-        }
-        return {
-          id: s.id,
-          name: s.name,
-          dockerImage: s.dockerImage,
-          containerPort: s.containerPort,
-          volumes: s.volumes,
-          env: s.env,
-          injectEnv: s.injectEnv,
-          healthCheck: s.healthCheck,
-        };
-      }),
+      // Export infra as compose YAML string (docker-compose compatible)
+      infraServices: toComposeYaml(infra),
       routingRules: rules,
     };
 
