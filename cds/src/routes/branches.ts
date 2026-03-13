@@ -1178,5 +1178,302 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.json({ results });
   });
 
+  // ── Config Import / Export ──
+
+  /** Validate a CDS Config JSON blob */
+  function validateConfigBlob(blob: unknown): { valid: boolean; errors: string[] } {
+    const errors: string[] = [];
+    if (!blob || typeof blob !== 'object') {
+      return { valid: false, errors: ['配置必须是一个 JSON 对象'] };
+    }
+    const cfg = blob as Record<string, unknown>;
+    if (cfg.$schema !== 'cds-config-v1') {
+      errors.push('缺少 $schema 字段或值不是 "cds-config-v1"');
+    }
+    // Validate buildProfiles
+    if (cfg.buildProfiles !== undefined) {
+      if (!Array.isArray(cfg.buildProfiles)) {
+        errors.push('buildProfiles 必须是数组');
+      } else {
+        for (let i = 0; i < cfg.buildProfiles.length; i++) {
+          const p = cfg.buildProfiles[i] as Record<string, unknown>;
+          if (!p.id) errors.push(`buildProfiles[${i}]: 缺少 id`);
+          if (!p.dockerImage) errors.push(`buildProfiles[${i}]: 缺少 dockerImage`);
+          if (!p.runCommand) errors.push(`buildProfiles[${i}]: 缺少 runCommand`);
+          if (p.containerPort !== undefined) {
+            const port = Number(p.containerPort);
+            if (!Number.isInteger(port) || port < 1 || port > 65535) {
+              errors.push(`buildProfiles[${i}]: containerPort 必须在 1-65535 之间`);
+            }
+          }
+        }
+      }
+    }
+    // Validate envVars
+    if (cfg.envVars !== undefined && (typeof cfg.envVars !== 'object' || Array.isArray(cfg.envVars))) {
+      errors.push('envVars 必须是键值对对象');
+    }
+    // Validate infraServices
+    if (cfg.infraServices !== undefined) {
+      if (!Array.isArray(cfg.infraServices)) {
+        errors.push('infraServices 必须是数组');
+      } else {
+        for (let i = 0; i < cfg.infraServices.length; i++) {
+          const s = cfg.infraServices[i] as Record<string, unknown>;
+          if (!s.presetId && !s.id) {
+            errors.push(`infraServices[${i}]: 需要 presetId 或 id`);
+          }
+        }
+      }
+    }
+    // Validate routingRules
+    if (cfg.routingRules !== undefined) {
+      if (!Array.isArray(cfg.routingRules)) {
+        errors.push('routingRules 必须是数组');
+      }
+    }
+    return { valid: errors.length === 0, errors };
+  }
+
+  /** Preview what an import would do (without applying) */
+  function previewImport(cfg: Record<string, unknown>) {
+    const summary = {
+      buildProfiles: { add: 0, replace: 0, skip: 0, items: [] as string[] },
+      envVars: { add: 0, replace: 0, items: [] as string[] },
+      infraServices: { add: 0, skip: 0, items: [] as string[] },
+      routingRules: { add: 0, replace: 0, items: [] as string[] },
+    };
+
+    if (Array.isArray(cfg.buildProfiles)) {
+      for (const p of cfg.buildProfiles as Array<{ id: string; name?: string }>) {
+        const existing = stateService.getBuildProfile(p.id);
+        if (existing) {
+          summary.buildProfiles.replace++;
+          summary.buildProfiles.items.push(`替换: ${p.name || p.id}`);
+        } else {
+          summary.buildProfiles.add++;
+          summary.buildProfiles.items.push(`新增: ${p.name || p.id}`);
+        }
+      }
+    }
+
+    if (cfg.envVars && typeof cfg.envVars === 'object') {
+      const currentEnv = stateService.getCustomEnv();
+      for (const key of Object.keys(cfg.envVars as Record<string, string>)) {
+        if (key in currentEnv) {
+          summary.envVars.replace++;
+          summary.envVars.items.push(`覆盖: ${key}`);
+        } else {
+          summary.envVars.add++;
+          summary.envVars.items.push(`新增: ${key}`);
+        }
+      }
+    }
+
+    if (Array.isArray(cfg.infraServices)) {
+      for (const s of cfg.infraServices as Array<{ presetId?: string; id?: string; name?: string }>) {
+        const id = s.presetId || s.id || '';
+        const existing = stateService.getInfraService(id);
+        if (existing) {
+          summary.infraServices.skip++;
+          summary.infraServices.items.push(`跳过 (已存在): ${id}`);
+        } else {
+          summary.infraServices.add++;
+          summary.infraServices.items.push(`新增: ${s.name || id}`);
+        }
+      }
+    }
+
+    if (Array.isArray(cfg.routingRules)) {
+      for (const r of cfg.routingRules as Array<{ id: string; name?: string }>) {
+        const existing = stateService.getRoutingRules().find(x => x.id === r.id);
+        if (existing) {
+          summary.routingRules.replace++;
+          summary.routingRules.items.push(`替换: ${r.name || r.id}`);
+        } else {
+          summary.routingRules.add++;
+          summary.routingRules.items.push(`新增: ${r.name || r.id}`);
+        }
+      }
+    }
+
+    return summary;
+  }
+
+  // POST /api/import-config — validate, preview, and optionally apply
+  router.post('/import-config', async (req, res) => {
+    try {
+      const { config: configBlob, dryRun } = req.body as { config: unknown; dryRun?: boolean };
+
+      // Validate
+      const validation = validateConfigBlob(configBlob);
+      if (!validation.valid) {
+        res.status(400).json({ valid: false, errors: validation.errors });
+        return;
+      }
+
+      const cfg = configBlob as Record<string, unknown>;
+      const preview = previewImport(cfg);
+
+      // If dry run, return preview only
+      if (dryRun) {
+        res.json({ valid: true, preview, applied: false });
+        return;
+      }
+
+      // Apply: build profiles (add or replace)
+      if (Array.isArray(cfg.buildProfiles)) {
+        for (const p of cfg.buildProfiles as BuildProfile[]) {
+          const existing = stateService.getBuildProfile(p.id);
+          if (existing) {
+            stateService.updateBuildProfile(p.id, p);
+          } else {
+            p.workDir = p.workDir || '.';
+            p.containerPort = p.containerPort || 8080;
+            stateService.addBuildProfile(p);
+          }
+        }
+      }
+
+      // Apply: env vars (merge, new wins)
+      if (cfg.envVars && typeof cfg.envVars === 'object') {
+        const newVars = cfg.envVars as Record<string, string>;
+        for (const [key, value] of Object.entries(newVars)) {
+          stateService.setCustomEnvVar(key, value);
+        }
+      }
+
+      // Apply: infra services (add if not exists, skip existing)
+      const infraResults: { id: string; status: string }[] = [];
+      if (Array.isArray(cfg.infraServices)) {
+        for (const s of cfg.infraServices as Array<{ presetId?: string } & Partial<InfraService>>) {
+          const id = s.presetId || s.id || '';
+          if (stateService.getInfraService(id)) {
+            infraResults.push({ id, status: 'exists' });
+            continue;
+          }
+
+          if (s.presetId && INFRA_PRESETS[s.presetId]) {
+            const preset = INFRA_PRESETS[s.presetId];
+            const hostPort = stateService.allocatePort(config.portStart);
+            const service: InfraService = {
+              id: preset.id,
+              name: preset.name,
+              dockerImage: preset.dockerImage,
+              containerPort: preset.containerPort,
+              hostPort,
+              containerName: `cds-infra-${preset.id}`,
+              status: 'stopped',
+              volumes: [...preset.volumes],
+              env: { ...preset.env },
+              injectEnv: { ...preset.injectEnv },
+              healthCheck: preset.healthCheck ? { ...preset.healthCheck } : undefined,
+              createdAt: new Date().toISOString(),
+            };
+            stateService.addInfraService(service);
+            infraResults.push({ id: service.id, status: 'created' });
+          } else if (s.id && s.dockerImage && s.containerPort) {
+            const hostPort = stateService.allocatePort(config.portStart);
+            const service: InfraService = {
+              id: s.id,
+              name: s.name || s.id,
+              dockerImage: s.dockerImage,
+              containerPort: s.containerPort,
+              hostPort,
+              containerName: `cds-infra-${s.id}`,
+              status: 'stopped',
+              volumes: s.volumes || [],
+              env: s.env || {},
+              injectEnv: s.injectEnv || {},
+              healthCheck: s.healthCheck,
+              createdAt: new Date().toISOString(),
+            };
+            stateService.addInfraService(service);
+            infraResults.push({ id: service.id, status: 'created' });
+          }
+        }
+      }
+
+      // Apply: routing rules (add or replace)
+      if (Array.isArray(cfg.routingRules)) {
+        for (const r of cfg.routingRules as RoutingRule[]) {
+          const existing = stateService.getRoutingRules().find(x => x.id === r.id);
+          if (existing) {
+            stateService.updateRoutingRule(r.id, r);
+          } else {
+            r.priority = r.priority ?? 0;
+            r.enabled = r.enabled ?? true;
+            stateService.addRoutingRule(r);
+          }
+        }
+      }
+
+      // Sync CDS config (domains etc.)
+      syncCdsConfig();
+      stateService.save();
+
+      res.json({
+        valid: true,
+        preview,
+        applied: true,
+        infraResults,
+        message: '配置已成功导入',
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // GET /api/export-config — export current config as CDS Config JSON
+  router.get('/export-config', (_req, res) => {
+    const profiles = stateService.getBuildProfiles();
+    const envVars = stateService.getCustomEnv();
+    const infra = stateService.getInfraServices();
+    const rules = stateService.getRoutingRules();
+
+    const configExport = {
+      $schema: 'cds-config-v1',
+      project: {
+        name: '',
+        description: '',
+      },
+      buildProfiles: profiles.map(p => ({
+        id: p.id,
+        name: p.name,
+        dockerImage: p.dockerImage,
+        workDir: p.workDir,
+        installCommand: p.installCommand,
+        buildCommand: p.buildCommand,
+        runCommand: p.runCommand,
+        containerPort: p.containerPort,
+        icon: p.icon,
+        env: p.env,
+        cacheMounts: p.cacheMounts,
+        buildTimeout: p.buildTimeout,
+      })),
+      envVars,
+      infraServices: infra.map(s => {
+        // If it matches a preset, export as preset reference
+        const preset = Object.values(INFRA_PRESETS).find(p => p.id === s.id);
+        if (preset) {
+          return { presetId: s.id };
+        }
+        return {
+          id: s.id,
+          name: s.name,
+          dockerImage: s.dockerImage,
+          containerPort: s.containerPort,
+          volumes: s.volumes,
+          env: s.env,
+          injectEnv: s.injectEnv,
+          healthCheck: s.healthCheck,
+        };
+      }),
+      routingRules: rules,
+    };
+
+    res.json(configExport);
+  });
+
   return router;
 }

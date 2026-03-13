@@ -853,6 +853,11 @@ function toggleSettingsMenu(event) {
   menu.id = 'settings-menu-portal';
   menu.onclick = (e) => e.stopPropagation();
   menu.innerHTML = `
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); openImportModal()" style="color:#58a6ff">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.004a.75.75 0 01.75.75v5.689l1.97-1.97a.749.749 0 111.06 1.06l-3.25 3.25a.749.749 0 01-1.06 0L4.22 7.533a.749.749 0 111.06-1.06l1.97 1.97V2.754a.75.75 0 01.75-.75zM2.75 12.5h10.5a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5z"/></svg>
+      一键导入配置
+    </div>
+    <div class="settings-menu-divider"></div>
     <div class="settings-menu-item" onclick="closeSettingsMenu(); openProfileModal()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M7.22 1.547a2.403 2.403 0 011.56 0l4.03 1.384a.48.48 0 01.33.457v1.224a.48.48 0 01-.33.457L8.78 6.453a2.403 2.403 0 01-1.56 0L3.19 5.069a.48.48 0 01-.33-.457V3.388a.48.48 0 01.33-.457l4.03-1.384zM3.19 6.903l4.03 1.384a2.403 2.403 0 001.56 0l4.03-1.384a.48.48 0 01.33.457v1.224a.48.48 0 01-.33.457L8.78 10.425a2.403 2.403 0 01-1.56 0L3.19 9.041a.48.48 0 01-.33-.457V7.36a.48.48 0 01.33-.457zm0 3.972l4.03 1.384a2.403 2.403 0 001.56 0l4.03-1.384a.48.48 0 01.33.457v1.224a.48.48 0 01-.33.457l-4.03 1.384a2.403 2.403 0 01-1.56 0l-4.03-1.384a.48.48 0 01-.33-.457v-1.224a.48.48 0 01.33-.457z"/></svg>
       构建配置
@@ -877,6 +882,10 @@ function toggleSettingsMenu(event) {
           <span class="settings-switch-thumb"></span>
         </span>
       </span>
+    </div>
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); exportConfig()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 13a.5.5 0 01-.5-.5V3a.5.5 0 01.5-.5h5.586a.5.5 0 01.354.146l3.414 3.414a.5.5 0 01.146.354V12.5a.5.5 0 01-.5.5h-9zM3.5 1A1.5 1.5 0 002 2.5v11A1.5 1.5 0 003.5 15h9a1.5 1.5 0 001.5-1.5V6.414a1.5 1.5 0 00-.44-1.06L10.147 1.94A1.5 1.5 0 009.086 1.5H3.5z"/></svg>
+      导出配置
     </div>
     <div class="settings-menu-divider"></div>
     <div class="settings-menu-item danger" onclick="closeSettingsMenu(); cleanupAll()">
@@ -1360,6 +1369,128 @@ async function saveBulkEnvAndRefresh() {
     await loadEnvVars();
     openEnvModal();
   } catch (e) { showToast(e.message, 'error'); }
+}
+
+// ── Config Import / Export ──
+
+function openImportModal() {
+  const html = `
+    <p class="config-panel-desc">
+      粘贴由 <code>/cds-scan</code> 技能生成的配置 JSON，或从其他 CDS 实例导出的配置。
+      粘贴后会先验证格式，再预览变更，确认后一键应用。
+    </p>
+    <textarea id="importConfigTextarea" class="bulk-textarea" rows="14" placeholder='{\n  "$schema": "cds-config-v1",\n  "buildProfiles": [...],\n  "envVars": {...},\n  "infraServices": [...]\n}'></textarea>
+    <div id="importPreview" style="margin-top:8px"></div>
+    <div class="form-row" style="margin-top:8px;gap:6px">
+      <button class="primary sm" onclick="previewImportConfig()">验证 & 预览</button>
+      <button class="sm" id="importApplyBtn" disabled onclick="applyImportConfig()">确认导入</button>
+      <button class="sm" onclick="closeConfigModal()">取消</button>
+    </div>
+  `;
+  openConfigModal('一键导入配置', html);
+}
+
+async function previewImportConfig() {
+  const textarea = document.getElementById('importConfigTextarea');
+  const previewDiv = document.getElementById('importPreview');
+  const applyBtn = document.getElementById('importApplyBtn');
+
+  let parsed;
+  try {
+    parsed = JSON.parse(textarea.value);
+  } catch (e) {
+    previewDiv.innerHTML = '<div style="color:var(--red);font-size:13px">JSON 格式错误: ' + esc(e.message) + '</div>';
+    applyBtn.disabled = true;
+    return;
+  }
+
+  try {
+    const data = await api('POST', '/import-config', { config: parsed, dryRun: true });
+    if (!data.valid) {
+      previewDiv.innerHTML = '<div style="color:var(--red);font-size:13px">验证失败:<ul>' +
+        (data.errors || []).map(e => '<li>' + esc(e) + '</li>').join('') + '</ul></div>';
+      applyBtn.disabled = true;
+      return;
+    }
+
+    const p = data.preview;
+    let summaryHtml = '<div style="font-size:13px;background:var(--bg-tertiary);padding:10px 12px;border-radius:6px;margin-top:4px">';
+    summaryHtml += '<div style="color:#3fb950;margin-bottom:4px">✓ 验证通过，预览变更：</div>';
+
+    function sectionSummary(label, section) {
+      if (!section || (section.add === 0 && section.replace === 0 && section.skip === 0)) return '';
+      const parts = [];
+      if (section.add > 0) parts.push('<span style="color:#3fb950">+' + section.add + ' 新增</span>');
+      if (section.replace > 0) parts.push('<span style="color:#d29922">⟳' + section.replace + ' 替换</span>');
+      if (section.skip > 0) parts.push('<span style="color:#8b949e">⊘' + section.skip + ' 跳过</span>');
+      return '<div style="margin:4px 0"><strong>' + label + '</strong>: ' + parts.join(' ') + '</div>';
+    }
+
+    summaryHtml += sectionSummary('构建配置', p.buildProfiles);
+    summaryHtml += sectionSummary('环境变量', p.envVars);
+    summaryHtml += sectionSummary('基础设施', p.infraServices);
+    summaryHtml += sectionSummary('路由规则', p.routingRules);
+
+    // Show detail items
+    const allItems = [
+      ...(p.buildProfiles?.items || []),
+      ...(p.envVars?.items || []),
+      ...(p.infraServices?.items || []),
+      ...(p.routingRules?.items || []),
+    ];
+    if (allItems.length > 0 && allItems.length <= 20) {
+      summaryHtml += '<div style="margin-top:6px;font-size:11px;color:var(--fg-muted)">';
+      allItems.forEach(item => { summaryHtml += '<div>· ' + esc(item) + '</div>'; });
+      summaryHtml += '</div>';
+    }
+
+    summaryHtml += '</div>';
+    previewDiv.innerHTML = summaryHtml;
+    applyBtn.disabled = false;
+  } catch (e) {
+    previewDiv.innerHTML = '<div style="color:var(--red);font-size:13px">' + esc(e.message) + '</div>';
+    applyBtn.disabled = true;
+  }
+}
+
+async function applyImportConfig() {
+  const textarea = document.getElementById('importConfigTextarea');
+  let parsed;
+  try { parsed = JSON.parse(textarea.value); } catch { return; }
+
+  try {
+    const data = await api('POST', '/import-config', { config: parsed, dryRun: false });
+    showToast(data.message || '配置已导入', 'success');
+    // Refresh all data
+    await Promise.all([loadProfiles(), loadEnvVars(), loadInfraServices(), loadRoutingRules()]);
+    closeConfigModal();
+  } catch (e) {
+    showToast('导入失败: ' + e.message, 'error');
+  }
+}
+
+async function exportConfig() {
+  try {
+    const data = await api('GET', '/export-config');
+    const json = JSON.stringify(data, null, 2);
+
+    // Copy to clipboard
+    try {
+      await navigator.clipboard.writeText(json);
+      showToast('配置已复制到剪贴板', 'success');
+    } catch {
+      // Fallback: show in modal
+      openConfigModal('导出配置', `
+        <p class="config-panel-desc">当前 CDS 配置（可复制分享或备份）：</p>
+        <textarea class="bulk-textarea" rows="16" readonly onclick="this.select()">${esc(json)}</textarea>
+        <div class="form-row" style="margin-top:8px">
+          <button class="sm" onclick="closeConfigModal()">关闭</button>
+        </div>
+      `);
+    }
+  } catch (e) {
+    showToast('导出失败: ' + e.message, 'error');
+  }
 }
 
 // ── Infrastructure services ──
