@@ -1410,10 +1410,11 @@ async function saveBulkEnvAndRefresh() {
 function openImportModal() {
   const html = `
     <p class="config-panel-desc">
-      粘贴由 <code>/cds-scan</code> 技能生成的配置 JSON，或从其他 CDS 实例导出的配置。
-      粘贴后会先验证格式，再预览变更，确认后一键应用。
+      粘贴由 <code>/cds-scan</code> 生成的 CDS Compose YAML，或从其他 CDS 实例导出的配置。
+      支持 YAML（推荐）和 JSON 两种格式，粘贴后会自动识别。
     </p>
-    <textarea id="importConfigTextarea" class="bulk-textarea" rows="14" placeholder='{\n  "$schema": "cds-config-v1",\n  "buildProfiles": [...],\n  "envVars": {...},\n  "infraServices": "services:\\n  mongodb:\\n    image: mongo:7\\n    ..."\n}'></textarea>
+    <textarea id="importConfigTextarea" class="bulk-textarea" rows="14" placeholder="x-cds-profiles:\n  api:\n    name: 后端 API\n    dockerImage: node:20-slim\n    runCommand: npm start\n    containerPort: 3000\n    pathPrefixes: [/api/]\n\nservices:\n  mongodb:\n    image: mongo:7\n    ports: ['27017']\n    x-cds-inject:\n      MONGO_URL: 'mongodb://{{host}}:{{port}}'"
+    ></textarea>
     <div id="importPreview" style="margin-top:8px"></div>
     <div class="form-row" style="margin-top:8px;gap:6px">
       <button class="primary sm" onclick="previewImportConfig()">验证 & 预览</button>
@@ -1429,17 +1430,30 @@ async function previewImportConfig() {
   const previewDiv = document.getElementById('importPreview');
   const applyBtn = document.getElementById('importApplyBtn');
 
-  let parsed;
-  try {
-    parsed = JSON.parse(textarea.value);
-  } catch (e) {
-    previewDiv.innerHTML = '<div style="color:var(--red);font-size:13px">JSON 格式错误: ' + esc(e.message) + '</div>';
+  const raw = textarea.value.trim();
+  if (!raw) {
+    previewDiv.innerHTML = '<div style="color:var(--red);font-size:13px">请粘贴配置内容</div>';
     applyBtn.disabled = true;
     return;
   }
 
+  // Auto-detect format: if starts with '{' → JSON object, otherwise send as YAML string
+  let config;
+  if (raw.startsWith('{')) {
+    try {
+      config = JSON.parse(raw);
+    } catch (e) {
+      previewDiv.innerHTML = '<div style="color:var(--red);font-size:13px">JSON 格式错误: ' + esc(e.message) + '</div>';
+      applyBtn.disabled = true;
+      return;
+    }
+  } else {
+    // Send as raw string — backend will parse as CDS Compose YAML
+    config = raw;
+  }
+
   try {
-    const data = await api('POST', '/import-config', { config: parsed, dryRun: true });
+    const data = await api('POST', '/import-config', { config, dryRun: true });
     if (!data.valid) {
       previewDiv.innerHTML = '<div style="color:var(--red);font-size:13px">验证失败:<ul>' +
         (data.errors || []).map(e => '<li>' + esc(e) + '</li>').join('') + '</ul></div>';
@@ -1489,11 +1503,19 @@ async function previewImportConfig() {
 
 async function applyImportConfig() {
   const textarea = document.getElementById('importConfigTextarea');
-  let parsed;
-  try { parsed = JSON.parse(textarea.value); } catch { return; }
+  const raw = textarea.value.trim();
+  if (!raw) return;
+
+  // Same auto-detect as preview
+  let config;
+  if (raw.startsWith('{')) {
+    try { config = JSON.parse(raw); } catch { return; }
+  } else {
+    config = raw;
+  }
 
   try {
-    const data = await api('POST', '/import-config', { config: parsed, dryRun: false });
+    const data = await api('POST', '/import-config', { config, dryRun: false });
     showToast(data.message || '配置已导入', 'success');
     // Refresh all data
     await Promise.all([loadProfiles(), loadEnvVars(), loadInfraServices(), loadRoutingRules()]);
@@ -1505,18 +1527,20 @@ async function applyImportConfig() {
 
 async function exportConfig() {
   try {
-    const data = await api('GET', '/export-config');
-    const json = JSON.stringify(data, null, 2);
+    // Fetch as YAML (primary format)
+    const resp = await fetch(apiBase + '/export-config?format=yaml');
+    if (!resp.ok) throw new Error('导出失败');
+    const yamlText = await resp.text();
 
     // Copy to clipboard
     try {
-      await navigator.clipboard.writeText(json);
-      showToast('配置已复制到剪贴板', 'success');
+      await navigator.clipboard.writeText(yamlText);
+      showToast('配置已复制到剪贴板 (Compose YAML)', 'success');
     } catch {
       // Fallback: show in modal
       openConfigModal('导出配置', `
-        <p class="config-panel-desc">当前 CDS 配置（可复制分享或备份）：</p>
-        <textarea class="bulk-textarea" rows="16" readonly onclick="this.select()">${esc(json)}</textarea>
+        <p class="config-panel-desc">当前 CDS 配置（Compose YAML 格式，可复制分享或备份）：</p>
+        <textarea class="bulk-textarea" rows="16" readonly onclick="this.select()">${esc(yamlText)}</textarea>
         <div class="form-row" style="margin-top:8px">
           <button class="sm" onclick="closeConfigModal()">关闭</button>
         </div>

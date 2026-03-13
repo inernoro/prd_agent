@@ -14,7 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
-import type { InfraService, InfraVolume, InfraHealthCheck } from '../types.js';
+import type { InfraService, InfraVolume, InfraHealthCheck, BuildProfile, RoutingRule } from '../types.js';
 
 /** Parsed service from a compose file */
 export interface ComposeServiceDef {
@@ -32,6 +32,22 @@ export interface ComposeServiceDef {
 interface ComposeFile {
   services?: Record<string, ComposeServiceEntry>;
   volumes?: Record<string, unknown>;
+  /** CDS extension: project metadata */
+  'x-cds-project'?: { name?: string; description?: string };
+  /** CDS extension: build profiles */
+  'x-cds-profiles'?: Record<string, CdsProfileEntry>;
+  /** CDS extension: shared environment variables */
+  'x-cds-env'?: Record<string, string>;
+  /** CDS extension: routing rules */
+  'x-cds-routing'?: Array<{
+    id: string;
+    name?: string;
+    type?: 'header' | 'domain' | 'pattern';
+    match: string;
+    branch: string;
+    priority?: number;
+    enabled?: boolean;
+  }>;
 }
 
 interface ComposeServiceEntry {
@@ -50,6 +66,39 @@ interface ComposeServiceEntry {
   'x-cds-inject'?: Record<string, string>;
   /** CDS extension: display name for this service */
   'x-cds-name'?: string;
+}
+
+/** CDS profile entry in x-cds-profiles */
+interface CdsProfileEntry {
+  name?: string;
+  dockerImage: string;
+  workDir?: string;
+  installCommand?: string;
+  buildCommand?: string;
+  runCommand: string;
+  containerPort?: number;
+  icon?: string;
+  env?: Record<string, string>;
+  cacheMounts?: Array<{ hostPath: string; containerPath: string }>;
+  buildTimeout?: number;
+  pathPrefixes?: string[];
+}
+
+/** Result of parsing a full CDS compose file (infra + profiles + env + routing) */
+export interface CdsComposeConfig {
+  project?: { name?: string; description?: string };
+  buildProfiles: Array<CdsProfileEntry & { id: string }>;
+  envVars: Record<string, string>;
+  infraServices: ComposeServiceDef[];
+  routingRules: Array<{
+    id: string;
+    name: string;
+    type: 'header' | 'domain' | 'pattern';
+    match: string;
+    branch: string;
+    priority: number;
+    enabled: boolean;
+  }>;
 }
 
 /**
@@ -211,6 +260,213 @@ export function toComposeYaml(services: InfraService[]): string {
   }
 
   return yaml.dump(compose, { lineWidth: 120, noRefs: true, sortKeys: false });
+}
+
+/**
+ * Parse a full CDS compose YAML — extracts everything: profiles, env, infra, routing.
+ *
+ * This is the primary import format. A single compose YAML file contains:
+ * - `x-cds-project`: project metadata
+ * - `x-cds-profiles`: build profile definitions (how to build/run each service)
+ * - `x-cds-env`: shared environment variables
+ * - `x-cds-routing`: routing rules
+ * - `services`: infrastructure services (standard compose format with x-cds-inject)
+ *
+ * Returns null if the YAML doesn't contain any x-cds-* extensions (not a CDS compose file).
+ */
+export function parseCdsCompose(yamlString: string): CdsComposeConfig | null {
+  const doc = yaml.load(yamlString) as ComposeFile | null;
+  if (!doc) return null;
+
+  // Detect: must have at least one x-cds-* extension to be considered a CDS compose file
+  const hasCdsExtensions =
+    doc['x-cds-profiles'] || doc['x-cds-env'] || doc['x-cds-project'] || doc['x-cds-routing'];
+  if (!hasCdsExtensions) return null;
+
+  // Extract build profiles from x-cds-profiles
+  const buildProfiles: CdsComposeConfig['buildProfiles'] = [];
+  if (doc['x-cds-profiles']) {
+    for (const [id, entry] of Object.entries(doc['x-cds-profiles'])) {
+      buildProfiles.push({
+        id,
+        name: entry.name || id,
+        dockerImage: entry.dockerImage,
+        workDir: entry.workDir || '.',
+        installCommand: entry.installCommand,
+        buildCommand: entry.buildCommand,
+        runCommand: entry.runCommand,
+        containerPort: entry.containerPort || 8080,
+        icon: entry.icon,
+        env: entry.env,
+        cacheMounts: entry.cacheMounts,
+        buildTimeout: entry.buildTimeout,
+        pathPrefixes: entry.pathPrefixes,
+      });
+    }
+  }
+
+  // Extract env vars from x-cds-env
+  const envVars: Record<string, string> = doc['x-cds-env'] ? { ...doc['x-cds-env'] } : {};
+
+  // Extract routing rules from x-cds-routing
+  const routingRules: CdsComposeConfig['routingRules'] = [];
+  if (doc['x-cds-routing']) {
+    for (const r of doc['x-cds-routing']) {
+      routingRules.push({
+        id: r.id,
+        name: r.name || r.id,
+        type: r.type || 'header',
+        match: r.match,
+        branch: r.branch,
+        priority: r.priority ?? 0,
+        enabled: r.enabled ?? true,
+      });
+    }
+  }
+
+  // Extract infra services from standard services section (reuse existing logic)
+  const infraServices: ComposeServiceDef[] = [];
+  if (doc.services) {
+    for (const [serviceId, entry] of Object.entries(doc.services)) {
+      if (entry.build || !entry.image) continue;
+      const containerPort = extractContainerPort(entry.ports);
+      if (!containerPort) continue;
+      infraServices.push({
+        id: serviceId,
+        name: entry['x-cds-name'] || generateDisplayName(serviceId, entry.image),
+        dockerImage: entry.image,
+        containerPort,
+        volumes: extractVolumes(entry.volumes),
+        env: extractEnv(entry.environment),
+        injectEnv: entry['x-cds-inject'] || {},
+        healthCheck: extractHealthCheck(entry.healthcheck),
+      });
+    }
+  }
+
+  return {
+    project: doc['x-cds-project'],
+    buildProfiles,
+    envVars,
+    infraServices,
+    routingRules,
+  };
+}
+
+/**
+ * Export full CDS config as a single compose YAML with x-cds-* extensions.
+ *
+ * This produces a file that is both:
+ * - A valid docker-compose file (services section works with `docker compose up`)
+ * - A complete CDS config file (x-cds-* extensions contain all CDS settings)
+ */
+export function toCdsCompose(
+  profiles: BuildProfile[],
+  envVars: Record<string, string>,
+  infraServices: InfraService[],
+  routingRules: RoutingRule[],
+): string {
+  const doc: Record<string, unknown> = {};
+
+  // x-cds-project
+  doc['x-cds-project'] = { name: '', description: '' };
+
+  // x-cds-profiles
+  if (profiles.length > 0) {
+    const profilesMap: Record<string, Record<string, unknown>> = {};
+    for (const p of profiles) {
+      const entry: Record<string, unknown> = {
+        name: p.name,
+        dockerImage: p.dockerImage,
+        workDir: p.workDir,
+        runCommand: p.runCommand,
+        containerPort: p.containerPort,
+      };
+      if (p.installCommand) entry.installCommand = p.installCommand;
+      if (p.buildCommand) entry.buildCommand = p.buildCommand;
+      if (p.icon) entry.icon = p.icon;
+      if (p.env && Object.keys(p.env).length > 0) entry.env = p.env;
+      if (p.cacheMounts && p.cacheMounts.length > 0) entry.cacheMounts = p.cacheMounts;
+      if (p.buildTimeout) entry.buildTimeout = p.buildTimeout;
+      if (p.pathPrefixes && p.pathPrefixes.length > 0) entry.pathPrefixes = p.pathPrefixes;
+      profilesMap[p.id] = entry;
+    }
+    doc['x-cds-profiles'] = profilesMap;
+  }
+
+  // x-cds-env
+  if (Object.keys(envVars).length > 0) {
+    doc['x-cds-env'] = { ...envVars };
+  }
+
+  // x-cds-routing
+  if (routingRules.length > 0) {
+    doc['x-cds-routing'] = routingRules.map(r => ({
+      id: r.id,
+      name: r.name,
+      type: r.type,
+      match: r.match,
+      branch: r.branch,
+      priority: r.priority,
+      enabled: r.enabled,
+    }));
+  }
+
+  // Standard services section (infra)
+  const servicesMap: Record<string, unknown> = {};
+  const volumeNames = new Set<string>();
+
+  for (const svc of infraServices) {
+    const entry: Record<string, unknown> = {
+      image: svc.dockerImage,
+      ports: [`${svc.containerPort}`],
+    };
+
+    if (svc.volumes.length > 0) {
+      entry.volumes = svc.volumes.map(v => {
+        const suffix = v.readOnly ? ':ro' : '';
+        return `${v.name}:${v.containerPath}${suffix}`;
+      });
+      for (const v of svc.volumes) {
+        if (v.type !== 'bind') volumeNames.add(v.name);
+      }
+    }
+
+    if (Object.keys(svc.env).length > 0) {
+      entry.environment = { ...svc.env };
+    }
+
+    if (svc.healthCheck) {
+      entry.healthcheck = {
+        test: svc.healthCheck.command,
+        interval: `${svc.healthCheck.interval}s`,
+        retries: svc.healthCheck.retries,
+      };
+    }
+
+    if (Object.keys(svc.injectEnv).length > 0) {
+      entry['x-cds-inject'] = { ...svc.injectEnv };
+    }
+
+    const autoName = generateDisplayName(svc.id, svc.dockerImage);
+    if (svc.name !== autoName) {
+      entry['x-cds-name'] = svc.name;
+    }
+
+    servicesMap[svc.id] = entry;
+  }
+
+  if (Object.keys(servicesMap).length > 0) {
+    doc.services = servicesMap;
+  }
+
+  if (volumeNames.size > 0) {
+    const volumes: Record<string, null> = {};
+    for (const name of volumeNames) volumes[name] = null;
+    doc.volumes = volumes;
+  }
+
+  return yaml.dump(doc, { lineWidth: 120, noRefs: true, sortKeys: false });
 }
 
 // ── Internal helpers ──

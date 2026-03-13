@@ -6,7 +6,7 @@ import type { WorktreeService } from '../services/worktree.js';
 import type { ContainerService } from '../services/container.js';
 import type { ProxyService } from '../services/proxy.js';
 import type { BranchEntry, CdsConfig, IShellExecutor, OperationLog, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService } from '../types.js';
-import { discoverComposeFiles, parseComposeFile, parseComposeString, toComposeYaml } from '../services/compose-parser.js';
+import { discoverComposeFiles, parseComposeFile, parseComposeString, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { combinedOutput } from '../types.js';
 
@@ -1496,18 +1496,49 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   // POST /api/import-config — validate, preview, and optionally apply
+  // Accepts either:
+  //   1. { config: <JSON object>, dryRun? }  — legacy JSON format (cds-config-v1)
+  //   2. { config: <YAML string>, dryRun? }  — CDS compose YAML with x-cds-* extensions
   router.post('/import-config', async (req, res) => {
     try {
       const { config: configBlob, dryRun } = req.body as { config: unknown; dryRun?: boolean };
 
+      // Auto-detect format: if string → try CDS compose YAML, else → legacy JSON
+      let cfg: Record<string, unknown>;
+      if (typeof configBlob === 'string') {
+        const cdsConfig = parseCdsCompose(configBlob);
+        if (cdsConfig) {
+          // Convert CDS compose to internal format (reuse existing validate/apply pipeline)
+          cfg = {
+            $schema: 'cds-config-v1',
+            buildProfiles: cdsConfig.buildProfiles,
+            envVars: cdsConfig.envVars,
+            infraServices: cdsConfig.infraServices.length > 0 ? cdsConfig.infraServices : undefined,
+            routingRules: cdsConfig.routingRules.length > 0 ? cdsConfig.routingRules : undefined,
+          };
+        } else {
+          // Not a CDS compose — try parsing as JSON string
+          try {
+            cfg = JSON.parse(configBlob);
+          } catch {
+            res.status(400).json({
+              valid: false,
+              errors: ['无法解析输入：既不是有效的 CDS Compose YAML（需包含 x-cds-profiles 等扩展），也不是有效的 JSON'],
+              warnings: [],
+            });
+            return;
+          }
+        }
+      } else {
+        cfg = configBlob as Record<string, unknown>;
+      }
+
       // Validate
-      const validation = validateConfigBlob(configBlob);
+      const validation = validateConfigBlob(cfg);
       if (!validation.valid) {
         res.status(400).json({ valid: false, errors: validation.errors, warnings: validation.warnings });
         return;
       }
-
-      const cfg = configBlob as Record<string, unknown>;
       const preview = previewImport(cfg);
 
       // If dry run, return preview only (include warnings)
@@ -1585,41 +1616,38 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
-  // GET /api/export-config — export current config as CDS Config JSON
-  router.get('/export-config', (_req, res) => {
+  // GET /api/export-config — export current config as CDS Compose YAML (default) or JSON
+  // ?format=json → legacy JSON format
+  // ?format=yaml (default) → CDS Compose YAML with x-cds-* extensions
+  router.get('/export-config', (req, res) => {
+    const format = (req.query.format as string) || 'yaml';
     const profiles = stateService.getBuildProfiles();
     const envVars = stateService.getCustomEnv();
     const infra = stateService.getInfraServices();
     const rules = stateService.getRoutingRules();
 
-    const configExport = {
-      $schema: 'cds-config-v1',
-      project: {
-        name: '',
-        description: '',
-      },
-      buildProfiles: profiles.map(p => ({
-        id: p.id,
-        name: p.name,
-        dockerImage: p.dockerImage,
-        workDir: p.workDir,
-        installCommand: p.installCommand,
-        buildCommand: p.buildCommand,
-        runCommand: p.runCommand,
-        containerPort: p.containerPort,
-        icon: p.icon,
-        env: p.env,
-        cacheMounts: p.cacheMounts,
-        buildTimeout: p.buildTimeout,
-        pathPrefixes: p.pathPrefixes,
-      })),
-      envVars,
-      // Export infra as compose YAML string (docker-compose compatible)
-      infraServices: toComposeYaml(infra),
-      routingRules: rules,
-    };
-
-    res.json(configExport);
+    if (format === 'json') {
+      // Legacy JSON format
+      const configExport = {
+        $schema: 'cds-config-v1',
+        project: { name: '', description: '' },
+        buildProfiles: profiles.map(p => ({
+          id: p.id, name: p.name, dockerImage: p.dockerImage, workDir: p.workDir,
+          installCommand: p.installCommand, buildCommand: p.buildCommand,
+          runCommand: p.runCommand, containerPort: p.containerPort,
+          icon: p.icon, env: p.env, cacheMounts: p.cacheMounts,
+          buildTimeout: p.buildTimeout, pathPrefixes: p.pathPrefixes,
+        })),
+        envVars,
+        infraServices: toComposeYaml(infra),
+        routingRules: rules,
+      };
+      res.json(configExport);
+    } else {
+      // CDS Compose YAML (primary format)
+      const yamlContent = toCdsCompose(profiles, envVars, infra, rules);
+      res.type('text/yaml').send(yamlContent);
+    }
   });
 
   return router;
