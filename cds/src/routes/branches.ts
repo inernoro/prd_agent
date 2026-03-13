@@ -737,12 +737,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.json({ env: stateService.getCustomEnv() });
   });
 
-  // Helper: sync CDS-relevant env vars (SWITCH_DOMAIN, MAIN_DOMAIN) into runtime config
-  function syncDomainConfig() {
+  // Helper: sync CDS-relevant env vars into runtime config
+  function syncCdsConfig() {
     const env = stateService.getCustomEnv();
     if (env.SWITCH_DOMAIN) config.switchDomain = env.SWITCH_DOMAIN;
     if (env.MAIN_DOMAIN) config.mainDomain = env.MAIN_DOMAIN;
     if (env.PREVIEW_DOMAIN) config.previewDomain = env.PREVIEW_DOMAIN;
+    // Repo root & worktree base: allow UI override for directory isolation
+    if (env.CDS_REPO_ROOT) {
+      config.repoRoot = env.CDS_REPO_ROOT;
+      worktreeService.repoRoot = env.CDS_REPO_ROOT;
+    }
+    if (env.CDS_WORKTREE_BASE) config.worktreeBase = env.CDS_WORKTREE_BASE;
   }
 
   router.put('/env', (req, res) => {
@@ -753,7 +759,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     stateService.setCustomEnv(env);
     stateService.save();
-    syncDomainConfig();
+    syncCdsConfig();
     res.json({ message: '环境变量已更新', env });
   });
 
@@ -766,7 +772,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     stateService.setCustomEnvVar(key, value);
     stateService.save();
-    syncDomainConfig();
+    syncCdsConfig();
     res.json({ message: `Set ${key}` });
   });
 
@@ -780,20 +786,24 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // ── Config (read-only) ──
 
   router.get('/config', async (_req, res) => {
-    // Try to extract GitHub repo URL from git remote
-    let githubRepoUrl = '';
-    try {
-      const result = await shell.exec('git remote get-url origin', { cwd: config.repoRoot, timeout: 5000 });
-      const remote = result.stdout.trim();
-      // Match patterns: git@github.com:owner/repo.git, https://github.com/owner/repo.git, or proxy /git/owner/repo
-      const sshMatch = remote.match(/github\.com[:/]([^/]+\/[^/.]+)/);
-      const httpMatch = remote.match(/github\.com\/([^/]+\/[^/.]+)/);
-      const proxyMatch = remote.match(/\/git\/([^/]+\/[^/.]+)/);
-      const match = sshMatch || httpMatch || proxyMatch;
-      if (match) {
-        githubRepoUrl = `https://github.com/${match[1].replace(/\.git$/, '')}`;
-      }
-    } catch { /* ignore */ }
+    const customEnv = stateService.getCustomEnv();
+
+    // GitHub repo URL: prefer explicit config from UI env vars, fallback to git remote auto-detection
+    let githubRepoUrl = customEnv.GITHUB_REPO_URL || '';
+    if (!githubRepoUrl) {
+      try {
+        const result = await shell.exec('git remote get-url origin', { cwd: config.repoRoot, timeout: 5000 });
+        const remote = result.stdout.trim();
+        // Match patterns: git@github.com:owner/repo.git, https://github.com/owner/repo.git, or proxy /git/owner/repo
+        const sshMatch = remote.match(/github\.com[:/]([^/]+\/[^/.]+)/);
+        const httpMatch = remote.match(/github\.com\/([^/]+\/[^/.]+)/);
+        const proxyMatch = remote.match(/\/git\/([^/]+\/[^/.]+)/);
+        const match = sshMatch || httpMatch || proxyMatch;
+        if (match) {
+          githubRepoUrl = `https://github.com/${match[1].replace(/\.git$/, '')}`;
+        }
+      } catch { /* ignore */ }
+    }
 
     res.json({
       ...config,

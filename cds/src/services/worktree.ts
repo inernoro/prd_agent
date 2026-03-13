@@ -2,10 +2,22 @@ import type { IShellExecutor } from '../types.js';
 import { combinedOutput } from '../types.js';
 
 export class WorktreeService {
+  private _repoRoot: string;
+
   constructor(
     private readonly shell: IShellExecutor,
-    private readonly repoRoot: string,
-  ) {}
+    repoRoot: string,
+  ) {
+    this._repoRoot = repoRoot;
+  }
+
+  get repoRoot(): string {
+    return this._repoRoot;
+  }
+
+  set repoRoot(value: string) {
+    this._repoRoot = value;
+  }
 
   async create(branch: string, targetDir: string): Promise<void> {
     const fetchResult = await this.shell.exec(
