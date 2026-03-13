@@ -994,6 +994,53 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  // ── Factory reset: stop all containers, clear all config, keep Docker volumes ──
+
+  router.post('/factory-reset', async (_req, res) => {
+    initSSE(res);
+    try {
+      const state = stateService.getState();
+
+      // 1. Stop and remove all branch containers + worktrees
+      const branches = Object.values(state.branches);
+      for (const entry of branches) {
+        sendSSE(res, 'step', { step: 'reset', status: 'running', title: `停止分支 ${entry.id}...` });
+        for (const svc of Object.values(entry.services)) {
+          try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+        }
+        try { await worktreeService.remove(entry.worktreePath); } catch { /* ok */ }
+      }
+
+      // 2. Stop and remove all infra service containers (volumes preserved)
+      for (const svc of state.infraServices) {
+        sendSSE(res, 'step', { step: 'reset', status: 'running', title: `停止基础设施 ${svc.name}...` });
+        try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+      }
+
+      // 3. Clear all state (but keep the file — it will be overwritten with defaults)
+      const freshState: typeof state = {
+        routingRules: [],
+        buildProfiles: [],
+        branches: {},
+        nextPortIndex: 0,
+        logs: {},
+        defaultBranch: null,
+        customEnv: {},
+        infraServices: [],
+      };
+      Object.assign(state, freshState);
+      stateService.save();
+
+      sendSSE(res, 'complete', {
+        message: `已恢复出厂设置：清除 ${branches.length} 个分支、${state.infraServices.length} 个基础设施服务、所有配置。Docker 数据卷已保留。`,
+      });
+    } catch (err) {
+      sendSSE(res, 'error', { message: (err as Error).message });
+    } finally {
+      res.end();
+    }
+  });
+
   // ── Compose-based infrastructure service discovery ──
 
   /** Convert a ComposeServiceDef to an InfraService (allocating a host port) */

@@ -679,6 +679,21 @@ async function setDefaultBranch(id) {
   await loadBranches();
 }
 
+async function factoryReset() {
+  if (!confirm('⚠️ 恢复出厂设置\n\n将清除所有：分支、构建配置、环境变量、基础设施服务、路由规则。\nDocker 数据卷（数据库文件等）会保留。\n\n确定继续？')) return;
+  if (!confirm('二次确认：所有配置将被清空，此操作不可撤销。')) return;
+  globalBusy = true;
+  renderBranches();
+  try {
+    const res = await fetch(`${API}/factory-reset`, { method: 'POST' });
+    const reader = res.body.getReader();
+    while (!(await reader.read()).done) {}
+    showToast('已恢复出厂设置', 'success');
+  } catch (e) { showToast(e.message, 'error'); }
+  globalBusy = false;
+  await loadBranches();
+}
+
 async function cleanupAll() {
   if (!confirm('确定清理所有非默认分支？')) return;
   globalBusy = true;
@@ -906,6 +921,10 @@ function toggleSettingsMenu(event) {
     <div class="settings-menu-item danger" onclick="closeSettingsMenu(); cleanupAll()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM11 3V1.75A1.75 1.75 0 009.25 0h-2.5A1.75 1.75 0 005 1.75V3H2.75a.75.75 0 000 1.5h.3l.8 8.2A1.75 1.75 0 005.6 14.5h4.8a1.75 1.75 0 001.75-1.8l.8-8.2h.3a.75.75 0 000-1.5H11z"/></svg>
       清理分支
+    </div>
+    <div class="settings-menu-item danger" onclick="closeSettingsMenu(); factoryReset()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z"/></svg>
+      恢复出厂设置
     </div>
     <div class="settings-menu-divider"></div>
     <div class="settings-menu-item" onclick="closeSettingsMenu(); doLogout()">
