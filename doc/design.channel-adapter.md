@@ -1,1820 +1,268 @@
-# 多通道适配器设计（Channel Adapter）
+# 多通道适配器 设计方案
 
-## 文档版本
+> **版本**：v2.0 | **日期**：2026-03-13 | **状态**：开发中
 
-- **版本**：v1.2
-- **创建日期**：2026-02-03
-- **最后更新**：2026-02-03
-- **状态**：✅ 开发完成（待集成测试）
+## 一、问题背景
 
----
+当前开放平台仅支持 HTTP API（OpenAI 兼容格式）作为唯一入口。用户需要打开 Web 管理后台或桌面客户端才能使用系统能力。这导致：
 
-## 快速导航
+- **使用门槛高**：用户在移动端、无网络环境下无法触发任务
+- **覆盖场景窄**：邮件、短信等天然异步的场景无法接入
+- **集成困难**：第三方系统需要通过 API 对接，缺少轻量级触发方式
 
-| 内容 | 跳转 |
-|------|------|
-| 测试命令 | [14. 测试运行指南](#14-测试运行指南) |
-| 入口地址 | [15. 系统入口](#15-系统入口) |
-| 操作指南 | [16. 操作指南](#16-操作指南) |
-| 用户故事 | [17. 用户故事](#17-用户故事) |
-| TodoList | [18. TodoList 与待办事项](#18-todolist-与待办事项) |
+核心洞察：邮件/短信/Webhook 等通道本质都是"输入指令 → 执行任务 → 输出结果"，区别仅在于输入协议、输出协议和身份验证方式。
 
----
+## 二、设计目标
 
-## 1. 概述
+| 目标 | 说明 | 非目标 |
+|------|------|--------|
+| 统一通道抽象 | 定义通道适配器模式，新通道只需实现入站/出站逻辑 | 不做通用通道市场（不支持用户自定义通道类型） |
+| 身份映射 | 外部标识（邮箱、手机号）→ 系统用户，支持白名单 + 配额控制 | 不做自助注册（管理员配置白名单） |
+| 能力复用 | 所有通道共享现有 Agent 能力（visual-agent、defect-agent 等） | 不做通道专属 Agent |
+| 邮件通道首发 | 首期完整实现邮件通道（IMAP 轮询 + SendGrid Webhook 双通道接收） | SMS/Siri/Webhook 通道预留模型，暂不实现 |
 
-### 1.1 背景与动机
+## 三、核心设计决策
 
-当前开放平台仅支持 HTTP API（OpenAI 兼容格式）作为唯一入口。随着产品能力扩展，需要支持更多外部交互通道：
+### 决策 1：邮件接收方案 — IMAP 轮询 + Webhook 双通道
 
-| 通道 | 场景 | 特点 |
-|------|------|------|
-| **邮件** | 离线异步任务、移动端快捷触发 | 天然异步、支持附件、覆盖面广 |
-| **短信** | 紧急指令、无网络环境 | 字数限制、成本敏感 |
-| **Siri/语音** | 免提操作、快捷指令 | 自然语言、上下文有限 |
-| **App Push** | 移动端深度集成 | 结构化、可交互 |
-| **Webhook** | 第三方系统集成 | 事件驱动、可编程 |
+**结论**：同时支持 IMAP 轮询（主）和 SendGrid Webhook（辅），管理员可在后台配置 IMAP/SMTP 连接参数。
 
-**核心洞察**：这些通道本质上都是"输入指令 → 执行任务 → 输出结果"的模式，区别仅在于：
-- **Input 协议**：如何接收指令（邮件解析、短信网关、语音识别）
-- **Output 协议**：如何返回结果（回复邮件、短信、Push 通知）
-- **身份验证**：如何识别用户（邮箱白名单、手机号绑定、设备 Token）
+| 方案 | 优势 | 劣势 | 判定 |
+|------|------|------|------|
+| A. IMAP 轮询 + Webhook 并存 | 灵活：无 SendGrid 也能用企业邮箱；有 SendGrid 则实时 | 轮询有分钟级延迟 | 采纳 |
+| B. 纯 SendGrid Webhook | 实时 | 强依赖第三方服务、需 MX 记录配置 | 作为辅助保留 |
+| C. 纯 IMAP IDLE | 秒级实时、免费 | 连接不稳定、需要长连接维护 | 否决 |
 
-### 1.2 设计目标
+**理由**：IMAP 轮询对企业邮箱兼容性最好，管理员只需填入 IMAP/SMTP 凭据即可工作。SendGrid Webhook 作为可选增强。
 
-1. **统一抽象**：定义通道适配器接口，新通道只需实现适配器即可接入
-2. **身份映射**：不同通道的身份标识（邮箱、手机号）统一映射到系统用户
-3. **能力复用**：所有通道共享同一套任务执行引擎（现有 Agent 能力）
-4. **可观测性**：统一的日志、监控、审计
+### 决策 2：意图识别 — 前缀标签 + 关键词启发式
 
-### 1.3 核心价值
+**结论**：两阶段识别：优先匹配邮件主题中的 `[前缀标签]`（置信度 1.0），无前缀时退化为关键词启发式匹配（置信度 0.7-0.8）。
 
-> **"一次编写，多通道触发"**
->
-> 用户通过邮件发送 `生成一张夕阳下的猫咪图片`，与通过 API 调用 `visual-agent` 图像生成是同一个任务执行流程，仅入口和出口不同。
+| 方案 | 优势 | 劣势 | 判定 |
+|------|------|------|------|
+| A. 前缀标签 + 关键词 | 确定性高、零 LLM 开销、可解释 | 无前缀时准确率有限 | 采纳 |
+| B. 全部走 LLM 意图识别 | 准确率高 | 每封邮件都消耗 Token、延迟高 | 未来增强 |
 
----
+**理由**：邮件场景下用户可以通过 `[生图]`、`[缺陷]` 等前缀明确意图，覆盖主要场景。
 
-## 2. 架构设计
+### 决策 3：白名单优先级匹配 + 原子配额计数
 
-### 2.1 整体架构
+**结论**：白名单规则按 `Priority` 升序排列，首匹配即停止。每日配额通过 MongoDB 原子操作（TodayDate + TodayUsedCount）实现，避免并发竞态。
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           Multi-Channel Gateway                              │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐    │
-│  │ Email Inbound│  │ SMS Gateway  │  │ Siri Shortcut│  │ Webhook      │    │
-│  │   Adapter    │  │   Adapter    │  │   Adapter    │  │   Adapter    │    │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘    │
-│         │                 │                 │                 │             │
-│         └────────────┬────┴────────┬────────┴────────┬────────┘             │
-│                      │             │                 │                      │
-│                      ▼             ▼                 ▼                      │
-│              ┌─────────────────────────────────────────────┐                │
-│              │           Channel Router                     │                │
-│              │  • 身份解析 (Identity Resolution)            │                │
-│              │  • 意图识别 (Intent Detection)               │                │
-│              │  • 权限校验 (Permission Check)               │                │
-│              │  • 白名单验证 (Whitelist Validation)         │                │
-│              └─────────────────────────────────────────────┘                │
-│                                    │                                         │
-│                                    ▼                                         │
-│              ┌─────────────────────────────────────────────┐                │
-│              │           Task Dispatcher                    │                │
-│              │  • 路由到对应 Agent                          │                │
-│              │  • 创建异步任务 (Task Queue)                 │                │
-│              │  • 任务状态追踪                              │                │
-│              └─────────────────────────────────────────────┘                │
-│                                    │                                         │
-│         ┌──────────────────────────┼──────────────────────────┐             │
-│         ▼                          ▼                          ▼             │
-│  ┌─────────────┐          ┌─────────────┐          ┌─────────────┐         │
-│  │ PRD Agent   │          │Visual Agent │          │Defect Agent │         │
-│  │ (prd-agent) │          │(visual-agent)│          │(defect-agent)│         │
-│  └─────────────┘          └─────────────┘          └─────────────┘         │
-│         │                          │                          │             │
-│         └──────────────────────────┼──────────────────────────┘             │
-│                                    ▼                                         │
-│              ┌─────────────────────────────────────────────┐                │
-│              │           Response Dispatcher                │                │
-│              │  • 结果格式化                                │                │
-│              │  • 通道路由                                  │                │
-│              └─────────────────────────────────────────────┘                │
-│                                    │                                         │
-│         ┌──────────────┬───────────┼───────────┬──────────────┐             │
-│         ▼              ▼           ▼           ▼              ▼             │
-│  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐       │
-│  │Email Outbound│ │ SMS Outbound │ │ Push Notif   │ │ Webhook CB   │       │
-│  │   Adapter    │ │   Adapter    │ │   Adapter    │ │   Adapter    │       │
-│  └──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘       │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+**理由**：优先级匹配允许精确规则覆盖通配规则（如 `user@co.com` 优先于 `*@co.com`）；原子配额避免分布式锁。
 
-### 2.2 核心组件
+### 决策 4：邮件工作流（EmailWorkflow）支持地址前缀路由
 
-#### 2.2.1 Channel Adapter（通道适配器）
+**结论**：管理员可配置邮件工作流，将不同邮箱地址前缀（如 `todo@`、`bug@`、`classify@`）路由到不同的处理流程和 Agent。
 
-```csharp
-/// <summary>
-/// 通道适配器接口 - 所有通道必须实现
-/// </summary>
-public interface IChannelAdapter
-{
-    /// <summary>
-    /// 通道标识 (email, sms, siri, webhook)
-    /// </summary>
-    string ChannelType { get; }
+**理由**：比主题前缀更直观，用户只需选择不同的收件地址即可触发不同工作流。
 
-    /// <summary>
-    /// 是否支持入站（接收消息）
-    /// </summary>
-    bool SupportsInbound { get; }
-
-    /// <summary>
-    /// 是否支持出站（发送响应）
-    /// </summary>
-    bool SupportsOutbound { get; }
-}
-
-/// <summary>
-/// 入站适配器 - 接收外部消息
-/// </summary>
-public interface IInboundChannelAdapter : IChannelAdapter
-{
-    /// <summary>
-    /// 解析入站消息为统一格式
-    /// </summary>
-    Task<ChannelMessage> ParseInboundAsync(object rawMessage, CancellationToken ct);
-
-    /// <summary>
-    /// 解析发送者身份
-    /// </summary>
-    Task<ChannelIdentity> ResolveIdentityAsync(object rawMessage, CancellationToken ct);
-}
-
-/// <summary>
-/// 出站适配器 - 发送响应
-/// </summary>
-public interface IOutboundChannelAdapter : IChannelAdapter
-{
-    /// <summary>
-    /// 发送响应到指定目标
-    /// </summary>
-    Task SendResponseAsync(ChannelResponse response, CancellationToken ct);
-}
-```
-
-#### 2.2.2 Channel Message（统一消息格式）
-
-```csharp
-/// <summary>
-/// 统一通道消息
-/// </summary>
-public class ChannelMessage
-{
-    /// <summary>
-    /// 消息唯一标识
-    /// </summary>
-    public string MessageId { get; set; }
-
-    /// <summary>
-    /// 通道类型
-    /// </summary>
-    public string ChannelType { get; set; }
-
-    /// <summary>
-    /// 发送者身份
-    /// </summary>
-    public ChannelIdentity Sender { get; set; }
-
-    /// <summary>
-    /// 消息内容（纯文本）
-    /// </summary>
-    public string Content { get; set; }
-
-    /// <summary>
-    /// 附件列表
-    /// </summary>
-    public List<ChannelAttachment> Attachments { get; set; }
-
-    /// <summary>
-    /// 原始消息元数据
-    /// </summary>
-    public Dictionary<string, object> Metadata { get; set; }
-
-    /// <summary>
-    /// 接收时间
-    /// </summary>
-    public DateTime ReceivedAt { get; set; }
-}
-
-/// <summary>
-/// 通道身份标识
-/// </summary>
-public class ChannelIdentity
-{
-    /// <summary>
-    /// 通道类型
-    /// </summary>
-    public string ChannelType { get; set; }
-
-    /// <summary>
-    /// 通道内唯一标识（邮箱地址、手机号、设备ID等）
-    /// </summary>
-    public string ChannelIdentifier { get; set; }
-
-    /// <summary>
-    /// 映射到的系统用户ID（可为空，表示未绑定）
-    /// </summary>
-    public string? MappedUserId { get; set; }
-
-    /// <summary>
-    /// 显示名称
-    /// </summary>
-    public string? DisplayName { get; set; }
-}
-```
-
-#### 2.2.3 Channel Whitelist（白名单配置）
-
-```csharp
-/// <summary>
-/// 通道白名单配置
-/// </summary>
-public class ChannelWhitelistConfig
-{
-    public string Id { get; set; }
-
-    /// <summary>
-    /// 通道类型
-    /// </summary>
-    public string ChannelType { get; set; }
-
-    /// <summary>
-    /// 身份标识模式（支持通配符）
-    /// 示例：*@company.com, +8613800138000, specific@email.com
-    /// </summary>
-    public string IdentifierPattern { get; set; }
-
-    /// <summary>
-    /// 绑定的系统用户ID（可选）
-    /// </summary>
-    public string? BoundUserId { get; set; }
-
-    /// <summary>
-    /// 允许的 Agent 列表（空=全部允许）
-    /// </summary>
-    public List<string>? AllowedAgents { get; set; }
-
-    /// <summary>
-    /// 允许的操作类型
-    /// </summary>
-    public List<string>? AllowedOperations { get; set; }
-
-    /// <summary>
-    /// 每日调用限额
-    /// </summary>
-    public int? DailyQuota { get; set; }
-
-    /// <summary>
-    /// 是否启用
-    /// </summary>
-    public bool IsActive { get; set; }
-
-    /// <summary>
-    /// 备注
-    /// </summary>
-    public string? Note { get; set; }
-
-    public DateTime CreatedAt { get; set; }
-    public DateTime? UpdatedAt { get; set; }
-}
-```
-
-### 2.3 数据流
+## 四、整体架构
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              完整数据流                                      │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-1. 入站阶段
-   ┌─────────┐      ┌─────────────┐      ┌─────────────┐
-   │ 外部消息 │ ───▶ │ Inbound     │ ───▶ │ Channel     │
-   │ (邮件)   │      │ Adapter     │      │ Message     │
-   └─────────┘      └─────────────┘      └─────────────┘
-                          │                     │
-                          ▼                     │
-                    ┌─────────────┐             │
-                    │ Identity    │◀────────────┘
-                    │ Resolver    │
-                    └─────────────┘
-                          │
-                          ▼
-2. 路由阶段
-   ┌─────────────┐      ┌─────────────┐      ┌─────────────┐
-   │ Whitelist   │ ───▶ │ Intent      │ ───▶ │ Task        │
-   │ Validator   │      │ Detector    │      │ Creator     │
-   └─────────────┘      └─────────────┘      └─────────────┘
-         │                    │                     │
-         │ 拒绝未授权          │ 解析用户意图         │ 创建任务
-         ▼                    ▼                     ▼
-
-3. 执行阶段
-   ┌─────────────┐      ┌─────────────┐      ┌─────────────┐
-   │ Task Queue  │ ───▶ │ Agent       │ ───▶ │ Task Result │
-   │             │      │ Executor    │      │             │
-   └─────────────┘      └─────────────┘      └─────────────┘
-                              │
-                              │ 调用对应 Agent
-                              ▼
-
-4. 出站阶段
-   ┌─────────────┐      ┌─────────────┐      ┌─────────────┐
-   │ Response    │ ───▶ │ Outbound    │ ───▶ │ 发送响应    │
-   │ Formatter   │      │ Adapter     │      │ (回复邮件)   │
-   └─────────────┘      └─────────────┘      └─────────────┘
+                    ┌──────────────────┐
+                    │  IMAP Poll       │ ← EmailChannelWorker (定时轮询)
+                    │  (MailKit)       │
+                    └────────┬─────────┘
+                             │
+                             ▼
+┌──────────────────┐   ┌─────────────────────┐
+│  SendGrid        │──▶│  EmailChannel       │
+│  Webhook         │   │  Service            │
+│  (POST /inbound) │   │  (邮件解析 + 回复)   │
+└──────────────────┘   └────────┬────────────┘
+                                │
+                                ▼
+                    ┌───────────────────────┐
+                    │  IntentDetector       │
+                    │  (前缀标签 + 关键词)   │
+                    └────────┬──────────────┘
+                             │
+                             ▼
+                    ┌───────────────────────┐
+                    │  WhitelistMatcher     │
+                    │  (优先级匹配 + 配额)   │
+                    └────────┬──────────────┘
+                             │
+                             ▼
+                    ┌───────────────────────┐
+                    │  ChannelTaskService   │
+                    │  (任务创建 + 日志)     │
+                    └────────┬──────────────┘
+                             │
+              ┌──────────────┼──────────────┐
+              ▼              ▼              ▼
+        visual-agent   defect-agent   prd-agent
 ```
 
----
+### 关键交互流程
 
-## 3. 邮件通道详细设计（首期实现）
+1. **IMAP 路径**：EmailChannelWorker 定时轮询 → 拉取未读邮件 → 解析 → 意图识别 → 白名单校验 → 创建任务 → Handler 执行 → SMTP 回复
+2. **Webhook 路径**：SendGrid POST → EmailChannelController 解析 → ChannelTaskService 创建任务
+3. **管理路径**：ChannelAdminController 提供白名单/映射/任务/设置/工作流的完整 CRUD
 
-### 3.1 邮件通道概述
+### 意图识别映射
 
-邮件通道是第一个实现的非 HTTP 通道，具有以下特点：
+| 前缀标签 | Intent | 目标 Agent | 示例 |
+|----------|--------|-----------|------|
+| `[生图]` `[画图]` `[图片]` | image-gen | visual-agent | `[生图] 夕阳下的猫` |
+| `[缺陷]` `[BUG]` `[问题]` | defect-create | defect-agent | `[缺陷] 登录页面样式错乱` |
+| `[查缺陷]` `[缺陷列表]` | defect-query | defect-agent | `[查缺陷] 最近一周` |
+| `[PRD]` `[需求]` `[文档]` | prd-query | prd-agent | `[PRD] 用户注册流程` |
+| `[取消]` `[停止]` | cancel | - | `[取消] TASK-20260313-ABC` |
+| `[帮助]` `[help]` | help | - | `[帮助]` |
 
-| 特性 | 说明 |
-|------|------|
-| **异步处理** | 邮件天然异步，用户发送后不需要实时等待 |
-| **支持附件** | 可上传图片、文档作为任务输入 |
-| **覆盖广泛** | 几乎所有用户都有邮箱 |
-| **可追溯** | 邮件本身就是完整的任务记录 |
-| **离线触发** | 不需要打开 App/网页，随时发送 |
+无前缀时退化为关键词匹配（"生成一张" → image-gen 0.8, "报告bug" → defect-create 0.8）。
 
-### 3.2 邮件交互流程
+## 五、数据设计
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           邮件交互完整流程                                   │
-└─────────────────────────────────────────────────────────────────────────────┘
+### 新增/变更的集合
 
-用户                      邮件服务器                   PRD Agent
-  │                           │                           │
-  │  1. 发送邮件到            │                           │
-  │     agent@company.com     │                           │
-  │  ────────────────────────▶│                           │
-  │                           │                           │
-  │                           │  2. Webhook/IMAP 推送     │
-  │                           │  ──────────────────────▶  │
-  │                           │                           │
-  │                           │                           │  3. 解析邮件
-  │                           │                           │  • 提取发件人
-  │                           │                           │  • 提取主题/正文
-  │                           │                           │  • 下载附件
-  │                           │                           │
-  │                           │                           │  4. 身份验证
-  │                           │                           │  • 白名单匹配
-  │                           │                           │  • 用户绑定查找
-  │                           │                           │
-  │                           │                           │  5. 意图识别
-  │                           │                           │  • 解析指令
-  │                           │                           │  • 路由到 Agent
-  │                           │                           │
-  │                           │                           │  6. 创建任务
-  │                           │                           │  • 入队等待执行
-  │                           │                           │
-  │                           │  7. 确认收到（可选）      │
-  │  ◀────────────────────────│  ◀─────────────────────── │
-  │  "已收到您的请求，正在处理" │                           │
-  │                           │                           │
-  │                           │                           │  8. 执行任务
-  │                           │                           │  • 调用对应 Agent
-  │                           │                           │  • 生成结果
-  │                           │                           │
-  │                           │  9. 发送结果邮件          │
-  │  ◀────────────────────────│  ◀─────────────────────── │
-  │  "您的任务已完成，结果如下" │                           │
-  │                           │                           │
-```
-
-### 3.3 邮件格式规范
-
-#### 3.3.1 用户发送格式
-
-**方式一：主题指令**
-```
-收件人: agent@prdagent.com
-主题: [生图] 一只在夕阳下奔跑的金毛犬
-正文: (可选的详细描述或参数)
-```
-
-**方式二：正文指令**
-```
-收件人: agent@prdagent.com
-主题: 任务请求
-正文:
-请帮我生成一张图片：一只在夕阳下奔跑的金毛犬
-
-风格：写实摄影风格
-尺寸：16:9
-```
-
-**方式三：附件触发**
-```
-收件人: agent@prdagent.com
-主题: 分析这张截图
-正文: 请帮我分析这个原型设计的问题
-附件: screenshot.png
-```
-
-#### 3.3.2 系统回复格式
-
-**任务确认邮件**
-```
-发件人: agent@prdagent.com
-收件人: user@company.com
-主题: Re: [生图] 一只在夕阳下奔跑的金毛犬
-
-───────────────────────────────────
-📬 任务已接收
-
-任务类型：图像生成
-任务编号：TASK-20260203-001
-预计完成：5-10 分钟
-
-您可以回复本邮件追问或取消任务。
-───────────────────────────────────
-PRD Agent · 多通道智能助手
-```
-
-**任务完成邮件**
-```
-发件人: agent@prdagent.com
-收件人: user@company.com
-主题: Re: [生图] 一只在夕阳下奔跑的金毛犬
-
-───────────────────────────────────
-✅ 任务完成
-
-任务类型：图像生成
-任务编号：TASK-20260203-001
-耗时：42 秒
-
-生成结果：
-[图片附件或 CDN 链接]
-
-📝 图片描述：
-一只金毛犬在金色夕阳下的海滩上奔跑，
-动态模糊效果突出速度感，温暖的色调...
-
-───────────────────────────────────
-回复本邮件可继续对话或提交新任务
-PRD Agent · 多通道智能助手
-```
-
-**错误通知邮件**
-```
-发件人: agent@prdagent.com
-收件人: user@company.com
-主题: Re: [生图] 一只在夕阳下奔跑的金毛犬
-
-───────────────────────────────────
-❌ 任务失败
-
-任务类型：图像生成
-任务编号：TASK-20260203-001
-失败原因：内容安全策略拦截
-
-您的请求包含了不允许生成的内容类型。
-请修改描述后重新提交。
-
-如有疑问，请联系管理员。
-───────────────────────────────────
-PRD Agent · 多通道智能助手
-```
-
-### 3.4 邮件意图识别
-
-#### 3.4.1 指令前缀映射
-
-| 前缀标签 | Agent | 操作类型 | 示例 |
-|----------|-------|----------|------|
-| `[生图]` `[画图]` `[图片]` | visual-agent | image-gen | `[生图] 夕阳下的猫` |
-| `[缺陷]` `[BUG]` `[问题]` | defect-agent | create | `[缺陷] 登录页面样式错乱` |
-| `[PRD]` `[需求]` `[文档]` | prd-agent | query | `[PRD] 用户注册流程是什么` |
-| `[查询]` `[列表]` | - | query | `[查询] 最近的缺陷` |
-| `[取消]` `[停止]` | - | cancel | `[取消] TASK-xxx` |
-| `[帮助]` `[help]` | - | help | `[帮助]` |
-
-#### 3.4.2 自然语言意图识别
-
-当没有明确前缀时，使用 LLM 进行意图识别：
-
-```json
-{
-  "appCallerCode": "channel.email::intent",
-  "modelType": "intent",
-  "prompt": "分析以下邮件内容，识别用户意图...",
-  "expectedOutput": {
-    "intent": "image-gen | defect-create | prd-query | ...",
-    "agent": "visual-agent | defect-agent | prd-agent",
-    "parameters": { ... },
-    "confidence": 0.95
-  }
-}
-```
-
-### 3.5 邮件适配器实现
-
-```csharp
-/// <summary>
-/// 邮件入站适配器
-/// </summary>
-public class EmailInboundAdapter : IInboundChannelAdapter
-{
-    public string ChannelType => "email";
-    public bool SupportsInbound => true;
-    public bool SupportsOutbound => false;
-
-    private readonly IEmailParser _emailParser;
-    private readonly IAttachmentProcessor _attachmentProcessor;
-
-    public async Task<ChannelMessage> ParseInboundAsync(object rawMessage, CancellationToken ct)
-    {
-        var emailData = rawMessage as EmailWebhookPayload;
-
-        return new ChannelMessage
-        {
-            MessageId = emailData.MessageId,
-            ChannelType = "email",
-            Content = ExtractContent(emailData),
-            Attachments = await ProcessAttachments(emailData.Attachments, ct),
-            Metadata = new Dictionary<string, object>
-            {
-                ["subject"] = emailData.Subject,
-                ["inReplyTo"] = emailData.InReplyTo,
-                ["references"] = emailData.References,
-                ["receivedAt"] = emailData.Date
-            },
-            ReceivedAt = DateTime.UtcNow
-        };
-    }
-
-    public async Task<ChannelIdentity> ResolveIdentityAsync(object rawMessage, CancellationToken ct)
-    {
-        var emailData = rawMessage as EmailWebhookPayload;
-
-        return new ChannelIdentity
-        {
-            ChannelType = "email",
-            ChannelIdentifier = emailData.From.Email.ToLowerInvariant(),
-            DisplayName = emailData.From.Name
-        };
-    }
-}
-
-/// <summary>
-/// 邮件出站适配器
-/// </summary>
-public class EmailOutboundAdapter : IOutboundChannelAdapter
-{
-    public string ChannelType => "email";
-    public bool SupportsInbound => false;
-    public bool SupportsOutbound => true;
-
-    private readonly IEmailSender _emailSender;
-    private readonly IEmailTemplateRenderer _templateRenderer;
-
-    public async Task SendResponseAsync(ChannelResponse response, CancellationToken ct)
-    {
-        var template = response.ResponseType switch
-        {
-            "task-received" => "email-task-received",
-            "task-completed" => "email-task-completed",
-            "task-failed" => "email-task-failed",
-            _ => "email-generic"
-        };
-
-        var htmlBody = await _templateRenderer.RenderAsync(template, response.Data, ct);
-
-        await _emailSender.SendAsync(new EmailMessage
-        {
-            To = response.RecipientIdentifier,
-            Subject = $"Re: {response.OriginalSubject}",
-            HtmlBody = htmlBody,
-            Attachments = response.Attachments,
-            InReplyTo = response.OriginalMessageId,
-            References = response.ThreadReferences
-        }, ct);
-    }
-}
-```
-
-### 3.6 邮件接收方案
-
-#### 方案对比
-
-| 方案 | 实时性 | 复杂度 | 成本 | 推荐场景 |
-|------|--------|--------|------|----------|
-| **IMAP 轮询** | 分钟级 | 低 | 免费 | 小规模、低频 |
-| **IMAP IDLE** | 秒级 | 中 | 免费 | 中等规模 |
-| **Webhook（推荐）** | 实时 | 中 | 按量付费 | 生产环境 |
-
-#### 推荐方案：邮件服务 Webhook
-
-使用第三方邮件服务（如 SendGrid、Mailgun、Postmark）的 Inbound Parse 功能：
-
-```
-用户发送邮件
-     │
-     ▼
-邮件服务器 (MX 记录指向 SendGrid)
-     │
-     ▼
-SendGrid Inbound Parse
-     │
-     ▼
-Webhook POST 到 /api/channels/email/inbound
-     │
-     ▼
-PRD Agent 处理
-```
-
-**Webhook 端点设计**：
-
-```csharp
-[ApiController]
-[Route("api/channels/email")]
-public class EmailChannelController : ControllerBase
-{
-    private readonly IChannelRouter _router;
-    private readonly EmailInboundAdapter _adapter;
-
-    /// <summary>
-    /// 接收邮件服务商的 Webhook 推送
-    /// </summary>
-    [HttpPost("inbound")]
-    public async Task<IActionResult> ReceiveInbound(
-        [FromForm] SendGridInboundPayload payload,
-        CancellationToken ct)
-    {
-        // 1. 验证 Webhook 签名
-        if (!ValidateWebhookSignature(Request))
-            return Unauthorized();
-
-        // 2. 解析邮件
-        var message = await _adapter.ParseInboundAsync(payload, ct);
-        var identity = await _adapter.ResolveIdentityAsync(payload, ct);
-
-        // 3. 路由到通道处理器
-        var result = await _router.RouteAsync(message, identity, ct);
-
-        // 4. 返回 200 确认收到
-        return Ok();
-    }
-}
-```
-
----
-
-## 4. 数据模型
-
-### 4.1 MongoDB 集合
-
-#### channel_whitelist（通道白名单）
-
-```javascript
-{
-  "_id": "wl_email_001",
-  "channelType": "email",
-  "identifierPattern": "*@company.com",  // 支持通配符
-  "boundUserId": null,                    // 可绑定到特定用户
-  "allowedAgents": ["visual-agent", "prd-agent"],
-  "allowedOperations": ["image-gen", "query"],
-  "dailyQuota": 100,
-  "isActive": true,
-  "note": "公司员工邮箱",
-  "createdAt": "2026-02-03T00:00:00Z",
-  "createdBy": "admin_001"
-}
-```
-
-#### channel_identity_mappings（身份映射）
-
-```javascript
-{
-  "_id": "map_001",
-  "channelType": "email",
-  "channelIdentifier": "zhangsan@company.com",
-  "userId": "user_001",
-  "displayName": "张三",
-  "isVerified": true,
-  "verifiedAt": "2026-02-03T00:00:00Z",
-  "createdAt": "2026-02-03T00:00:00Z"
-}
-```
-
-#### channel_tasks（通道任务）
-
-```javascript
-{
-  "_id": "task_20260203_001",
-  "channelType": "email",
-  "channelMessageId": "msg_xxx@mail.gmail.com",
-  "senderIdentifier": "zhangsan@company.com",
-  "mappedUserId": "user_001",
-
-  "intent": "image-gen",
-  "targetAgent": "visual-agent",
-  "originalContent": "[生图] 夕阳下的金毛犬",
-  "parsedParameters": {
-    "prompt": "夕阳下的金毛犬",
-    "style": "photography"
-  },
-
-  "status": "completed",  // pending, processing, completed, failed, cancelled
-  "statusHistory": [
-    { "status": "pending", "at": "2026-02-03T10:00:00Z" },
-    { "status": "processing", "at": "2026-02-03T10:00:05Z" },
-    { "status": "completed", "at": "2026-02-03T10:00:47Z" }
-  ],
-
-  "result": {
-    "type": "image",
-    "imageUrl": "https://cdn.example.com/xxx.png",
-    "metadata": { ... }
-  },
-  "error": null,
-
-  "responsesSent": [
-    {
-      "type": "task-received",
-      "sentAt": "2026-02-03T10:00:05Z",
-      "messageId": "resp_001"
-    },
-    {
-      "type": "task-completed",
-      "sentAt": "2026-02-03T10:00:48Z",
-      "messageId": "resp_002"
-    }
-  ],
-
-  "createdAt": "2026-02-03T10:00:00Z",
-  "completedAt": "2026-02-03T10:00:47Z"
-}
-```
-
-#### channel_request_logs（通道请求日志）
-
-```javascript
-{
-  "_id": "log_001",
-  "channelType": "email",
-  "taskId": "task_20260203_001",
-  "senderIdentifier": "zhangsan@company.com",
-  "mappedUserId": "user_001",
-  "intent": "image-gen",
-  "targetAgent": "visual-agent",
-  "status": "completed",
-  "durationMs": 42000,
-  "tokensUsed": {
-    "input": 150,
-    "output": 50
-  },
-  "createdAt": "2026-02-03T10:00:00Z"
-}
-```
-
-### 4.2 索引设计
-
-```javascript
-// channel_whitelist
-db.channel_whitelist.createIndex({ "channelType": 1, "identifierPattern": 1 });
-db.channel_whitelist.createIndex({ "isActive": 1 });
-
-// channel_identity_mappings
-db.channel_identity_mappings.createIndex({ "channelType": 1, "channelIdentifier": 1 }, { unique: true });
-db.channel_identity_mappings.createIndex({ "userId": 1 });
-
-// channel_tasks
-db.channel_tasks.createIndex({ "channelType": 1, "senderIdentifier": 1 });
-db.channel_tasks.createIndex({ "status": 1, "createdAt": -1 });
-db.channel_tasks.createIndex({ "mappedUserId": 1, "createdAt": -1 });
-db.channel_tasks.createIndex({ "createdAt": 1 }, { expireAfterSeconds: 2592000 }); // 30天TTL
-
-// channel_request_logs
-db.channel_request_logs.createIndex({ "channelType": 1, "createdAt": -1 });
-db.channel_request_logs.createIndex({ "mappedUserId": 1, "createdAt": -1 });
-db.channel_request_logs.createIndex({ "createdAt": 1 }, { expireAfterSeconds: 2592000 }); // 30天TTL
-```
-
----
-
-## 5. 管理后台功能
-
-### 5.1 通道管理页面
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  通道管理                                                    [+ 添加白名单]  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  ┌─ 通道状态 ─────────────────────────────────────────────────────────────┐ │
-│  │                                                                        │ │
-│  │  📧 邮件通道        ✅ 已启用     今日: 156 请求                        │ │
-│  │  📱 短信通道        ⏸️ 未配置     -                                     │ │
-│  │  🎙️ Siri通道        ⏸️ 未配置     -                                     │ │
-│  │  🔗 Webhook通道     ⏸️ 未配置     -                                     │ │
-│  │                                                                        │ │
-│  └────────────────────────────────────────────────────────────────────────┘ │
-│                                                                              │
-│  ┌─ 邮件白名单 ───────────────────────────────────────────────────────────┐ │
-│  │                                                                        │ │
-│  │  模式                    绑定用户      允许Agent      每日限额   状态  │ │
-│  │  ──────────────────────────────────────────────────────────────────── │ │
-│  │  *@company.com          -            全部           100      ✅      │ │
-│  │  zhangsan@gmail.com     张三         visual-agent   50       ✅      │ │
-│  │  test@test.com          -            prd-agent      10       ⏸️      │ │
-│  │                                                                        │ │
-│  └────────────────────────────────────────────────────────────────────────┘ │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-### 5.2 白名单配置弹窗
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  添加邮件白名单                                      [×]    │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  通道类型        [📧 邮件 ▼]                                 │
-│                                                              │
-│  身份模式        [*@company.com                    ]         │
-│                  支持通配符 * ，如 *@company.com              │
-│                                                              │
-│  绑定用户        [选择用户（可选）          ▼]               │
-│                  绑定后所有请求以该用户身份执行               │
-│                                                              │
-│  允许的 Agent    [☑ visual-agent] [☑ prd-agent]             │
-│                  [☐ defect-agent] [☐ literary-agent]        │
-│                                                              │
-│  每日限额        [100                              ] 次      │
-│                  0 = 不限制                                  │
-│                                                              │
-│  备注            [公司员工邮箱                      ]         │
-│                                                              │
-│                              [取消]  [确定]                  │
-│                                                              │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### 5.3 任务监控页面
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  通道任务监控                      [通道: 全部 ▼] [状态: 全部 ▼] [🔍 搜索]  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  任务ID              发送者                Agent          状态    创建时间  │
-│  ────────────────────────────────────────────────────────────────────────── │
-│  TASK-...-001       📧 zhang@co.com      visual-agent   ✅完成   10:00:47  │
-│  TASK-...-002       📧 li@company.com    prd-agent      🔄处理中  10:01:23  │
-│  TASK-...-003       📧 test@test.com     defect-agent   ❌失败   10:02:05  │
-│                                                                              │
-│  [< 上一页]                    第 1 页 / 共 10 页               [下一页 >]  │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 6. API 接口设计
-
-### 6.1 管理接口
-
-**基础路径**：`/api/admin/channels`
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/whitelist` | 获取白名单列表（分页） |
-| POST | `/whitelist` | 创建白名单规则 |
-| PUT | `/whitelist/{id}` | 更新白名单规则 |
-| DELETE | `/whitelist/{id}` | 删除白名单规则 |
-| POST | `/whitelist/{id}/toggle` | 启用/禁用白名单规则 |
-| GET | `/identity-mappings` | 获取身份映射列表 |
-| POST | `/identity-mappings` | 创建身份映射 |
-| DELETE | `/identity-mappings/{id}` | 删除身份映射 |
-| GET | `/tasks` | 获取任务列表（分页） |
-| GET | `/tasks/{id}` | 获取任务详情 |
-| POST | `/tasks/{id}/retry` | 重试失败任务 |
-| POST | `/tasks/{id}/cancel` | 取消任务 |
-| GET | `/stats` | 获取通道统计 |
-
-### 6.2 Webhook 接口
-
-**基础路径**：`/api/channels`
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/email/inbound` | 接收邮件 Webhook |
-| POST | `/email/status` | 接收邮件发送状态回调 |
-| POST | `/sms/inbound` | 接收短信 Webhook（预留） |
-| POST | `/webhook/{appId}` | 通用 Webhook 入口（预留） |
-
----
-
-## 7. 安全设计
-
-### 7.1 白名单验证流程
-
-```
-收到入站消息
-      │
-      ▼
-提取发送者身份标识
-      │
-      ▼
-遍历白名单规则（按优先级）
-      │
-      ├─ 精确匹配（zhangsan@company.com）
-      ├─ 域名通配（*@company.com）
-      └─ 全局通配（*）
-      │
-      ▼
-匹配成功? ─── 否 ──▶ 记录日志，静默丢弃（不回复）
-      │
-      │ 是
-      ▼
-检查规则是否启用
-      │
-      ▼
-检查每日配额
-      │
-      ▼
-检查允许的 Agent
-      │
-      ▼
-通过 ──▶ 继续处理
-```
-
-### 7.2 防滥用措施
-
-| 措施 | 说明 |
-|------|------|
-| **白名单机制** | 只处理白名单内的发送者 |
-| **每日配额** | 限制单个发送者每日请求数 |
-| **静默丢弃** | 未授权请求不回复，避免暴露系统存在 |
-| **内容安全** | 调用 Agent 前进行内容安全检测 |
-| **附件大小限制** | 限制附件总大小（默认 10MB） |
-| **请求频率限制** | 同一发送者短时间内请求过多时限流 |
-
-### 7.3 Webhook 安全
-
-| 措施 | 说明 |
-|------|------|
-| **签名验证** | 验证邮件服务商的 Webhook 签名 |
-| **IP 白名单** | 仅允许邮件服务商 IP 访问 Webhook 端点 |
-| **HTTPS 强制** | Webhook 端点仅支持 HTTPS |
-| **幂等处理** | 相同 MessageId 的请求只处理一次 |
-
----
-
-## 8. 配置项
-
-### 8.1 appsettings.json
-
-```json
-{
-  "Channels": {
-    "Email": {
-      "Enabled": true,
-      "InboundAddress": "agent@prdagent.com",
-      "Provider": "SendGrid",
-      "SendGrid": {
-        "ApiKey": "SG.xxx",
-        "WebhookSigningKey": "xxx",
-        "AllowedIps": ["167.89.0.0/17"]
-      },
-      "DefaultDailyQuota": 100,
-      "MaxAttachmentSizeMb": 10,
-      "ResponseTemplates": {
-        "TaskReceived": "templates/email-task-received.html",
-        "TaskCompleted": "templates/email-task-completed.html",
-        "TaskFailed": "templates/email-task-failed.html"
-      }
-    },
-    "Sms": {
-      "Enabled": false
-    },
-    "Siri": {
-      "Enabled": false
-    }
-  }
-}
-```
-
----
-
-## 9. 实施计划
-
-### 9.1 阶段一：邮件通道 MVP（2-3 周）
-
-| 任务 | 优先级 | 说明 |
-|------|--------|------|
-| 通道适配器接口定义 | P0 | IChannelAdapter, IInboundChannelAdapter, IOutboundChannelAdapter |
-| 邮件入站适配器 | P0 | SendGrid Inbound Parse 集成 |
-| 邮件出站适配器 | P0 | SendGrid 发送集成 |
-| 白名单验证服务 | P0 | 白名单匹配、配额检查 |
-| 意图识别服务 | P0 | 前缀解析 + LLM 意图识别 |
-| 任务调度服务 | P0 | 任务创建、状态管理 |
-| 管理后台 - 白名单管理 | P1 | CRUD + 启用/禁用 |
-| 管理后台 - 任务监控 | P1 | 任务列表、详情、重试 |
-
-### 9.2 阶段二：增强功能（2 周）
-
-| 任务 | 优先级 | 说明 |
-|------|--------|------|
-| 邮件线程追踪 | P1 | 支持回复邮件继续对话 |
-| 附件处理增强 | P1 | 图片识别、文档解析 |
-| 身份映射管理 | P1 | 邮箱绑定到系统用户 |
-| 邮件模板编辑 | P2 | 可视化编辑响应模板 |
-| 统计报表 | P2 | 通道使用量统计 |
-
-### 9.3 阶段三：扩展通道（按需）
-
-| 任务 | 优先级 | 说明 |
-|------|--------|------|
-| 短信通道 | P2 | Twilio/阿里云短信集成 |
-| Siri 快捷指令 | P2 | iOS Shortcuts 集成 |
-| Webhook 通用入口 | P2 | 支持自定义 Webhook |
-
----
-
-## 10. 附录
-
-### 10.1 appKey 定义
-
-根据 CLAUDE.md 应用身份隔离原则，通道适配器模块使用以下 appKey：
-
-| appKey | 说明 |
-|--------|------|
-| `channel-gateway` | 多通道网关（统一入口） |
-
-### 10.2 AppCallerCode 定义
-
-| AppCallerCode | 说明 |
-|---------------|------|
-| `channel.email::intent` | 邮件意图识别 |
-| `channel.email::content-safety` | 邮件内容安全检测 |
-| `channel.sms::intent` | 短信意图识别（预留） |
-
-### 10.3 相关文档
-
-- [开放平台设计](./design.open-platform.md)
-- [LLM Gateway 使用指南](../CLAUDE.md#llm-gateway-统一调用规则)
-- [应用身份隔离原则](../CLAUDE.md#应用身份隔离原则)
-
----
-
-## 11. 前端页面字符画
-
-### 11.1 通道管理主页面 (ChannelsPage)
-
-```
-┌─────────────────────────────────────────────────────────────────────────────────────┐
-│  ← 系统设置 / 通道管理                                                               │
-├─────────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                      │
-│  ┌─ 通道状态概览 ────────────────────────────────────────────────────────────────┐  │
-│  │                                                                                │  │
-│  │  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐│  │
-│  │  │  📧 邮件通道    │  │  📱 短信通道   │  │  🎙️ Siri通道   │  │  🔗 Webhook   ││  │
-│  │  │                │  │                │  │                │  │                ││  │
-│  │  │   ✅ 已启用    │  │   ⏸️ 未配置    │  │   ⏸️ 未配置    │  │   ⏸️ 未配置    ││  │
-│  │  │   今日: 156    │  │   -            │  │   -            │  │   -            ││  │
-│  │  │                │  │                │  │                │  │                ││  │
-│  │  │  [配置]        │  │  [配置]        │  │  [配置]        │  │  [配置]        ││  │
-│  │  └────────────────┘  └────────────────┘  └────────────────┘  └────────────────┘│  │
-│  │                                                                                │  │
-│  └────────────────────────────────────────────────────────────────────────────────┘  │
-│                                                                                      │
-│  ┌─ 白名单管理 ─────────────────────────────────────────────────────────────────┐   │
-│  │                                                                               │   │
-│  │  [通道: 全部 ▼]  [状态: 全部 ▼]  [🔍 搜索...]            [+ 添加白名单]       │   │
-│  │                                                                               │   │
-│  │  ┌──────────────────────────────────────────────────────────────────────────┐│   │
-│  │  │ □  通道   身份模式              绑定用户   允许Agent        限额   状态   ││   │
-│  │  ├──────────────────────────────────────────────────────────────────────────┤│   │
-│  │  │ □  📧    *@company.com         -         全部             100   ✅ 启用 ││   │
-│  │  │ □  📧    zhangsan@gmail.com    张三       visual-agent     50   ✅ 启用 ││   │
-│  │  │ □  📧    test@test.com         -         prd-agent        10   ⏸️ 禁用 ││   │
-│  │  │ □  📧    *@partner.com         -         defect-agent     200  ✅ 启用 ││   │
-│  │  └──────────────────────────────────────────────────────────────────────────┘│   │
-│  │                                                                               │   │
-│  │  [< 上一页]              第 1 页 / 共 3 页                      [下一页 >]   │   │
-│  │                                                                               │   │
-│  └───────────────────────────────────────────────────────────────────────────────┘   │
-│                                                                                      │
-└─────────────────────────────────────────────────────────────────────────────────────┘
-```
-
-### 11.2 白名单编辑弹窗 (WhitelistEditDialog)
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  添加白名单规则                                          [×]    │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  通道类型 *                                                      │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │ 📧 邮件                                              ▼  │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│                                                                  │
-│  身份模式 *                                                      │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │ *@company.com                                           │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│  ℹ️ 支持通配符 * ，示例: *@company.com, user@*.com              │
-│                                                                  │
-│  绑定用户（可选）                                                │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │ 选择用户...                                          ▼  │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│  ℹ️ 绑定后，所有通过此规则的请求将以该用户身份执行              │
-│                                                                  │
-│  允许的 Agent                                                    │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │ ☑ visual-agent    ☑ prd-agent                          │    │
-│  │ ☐ defect-agent    ☐ literary-agent                     │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│  ℹ️ 不选择则允许所有 Agent                                      │
-│                                                                  │
-│  每日限额                                                        │
-│  ┌──────────────────────┐                                       │
-│  │ 100                  │ 次/天                                 │
-│  └──────────────────────┘                                       │
-│  ℹ️ 0 表示不限制                                                │
-│                                                                  │
-│  备注                                                            │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │ 公司员工邮箱                                            │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│                                                                  │
-│  启用规则  [====●]                                               │
-│                                                                  │
-│                                                                  │
-│                              [取消]    [保存]                    │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### 11.3 任务监控页面 (ChannelTasksPage)
-
-```
-┌─────────────────────────────────────────────────────────────────────────────────────┐
-│  ← 通道管理 / 任务监控                                                               │
-├─────────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                      │
-│  ┌─ 统计概览 ────────────────────────────────────────────────────────────────────┐  │
-│  │                                                                                │  │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │  │
-│  │  │   今日任务   │  │   处理中     │  │   成功率     │  │   平均耗时   │       │  │
-│  │  │     156     │  │      3      │  │    94.2%    │  │    32.5s    │       │  │
-│  │  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘       │  │
-│  │                                                                                │  │
-│  └────────────────────────────────────────────────────────────────────────────────┘  │
-│                                                                                      │
-│  ┌─ 任务列表 ────────────────────────────────────────────────────────────────────┐  │
-│  │                                                                                │  │
-│  │  [通道: 全部 ▼] [状态: 全部 ▼] [Agent: 全部 ▼] [日期范围 📅]  [🔍 搜索...]    │  │
-│  │                                                                                │  │
-│  │  ┌──────────────────────────────────────────────────────────────────────────┐ │  │
-│  │  │ 任务ID           发送者              Agent          状态     创建时间    │ │  │
-│  │  ├──────────────────────────────────────────────────────────────────────────┤ │  │
-│  │  │ TASK-...-001    📧 zhang@co.com    visual-agent   ✅ 完成   10:00:47   │ │  │
-│  │  │ TASK-...-002    📧 li@co.com       prd-agent      🔄 处理中  10:01:23   │ │  │
-│  │  │ TASK-...-003    📧 test@test.com   defect-agent   ❌ 失败   10:02:05   │ │  │
-│  │  │ TASK-...-004    📧 wang@co.com     visual-agent   ⏸️ 待处理  10:03:12   │ │  │
-│  │  │ TASK-...-005    📧 zhao@co.com     prd-agent      ✅ 完成   10:04:33   │ │  │
-│  │  └──────────────────────────────────────────────────────────────────────────┘ │  │
-│  │                                                                                │  │
-│  │  [< 上一页]              第 1 页 / 共 10 页                     [下一页 >]    │  │
-│  │                                                                                │  │
-│  └────────────────────────────────────────────────────────────────────────────────┘  │
-│                                                                                      │
-└─────────────────────────────────────────────────────────────────────────────────────┘
-```
-
-### 11.4 任务详情抽屉 (TaskDetailDrawer)
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  任务详情                                                [×]    │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  ┌─ 基本信息 ─────────────────────────────────────────────────┐ │
-│  │                                                             │ │
-│  │  任务ID        TASK-20260203-001                           │ │
-│  │  通道          📧 邮件                                      │ │
-│  │  发送者        zhangsan@company.com                        │ │
-│  │  绑定用户      张三 (user_001)                              │ │
-│  │  状态          ✅ 完成                                      │ │
-│  │  创建时间      2026-02-03 10:00:00                         │ │
-│  │  完成时间      2026-02-03 10:00:47                         │ │
-│  │  耗时          47 秒                                        │ │
-│  │                                                             │ │
-│  └─────────────────────────────────────────────────────────────┘ │
-│                                                                  │
-│  ┌─ 任务内容 ─────────────────────────────────────────────────┐ │
-│  │                                                             │ │
-│  │  目标Agent     visual-agent                                │ │
-│  │  识别意图      image-gen                                   │ │
-│  │                                                             │ │
-│  │  原始内容:                                                  │ │
-│  │  ┌───────────────────────────────────────────────────────┐ │ │
-│  │  │ [生图] 一只在夕阳下奔跑的金毛犬                        │ │ │
-│  │  │                                                       │ │ │
-│  │  │ 风格：写实摄影风格                                     │ │ │
-│  │  │ 尺寸：16:9                                            │ │ │
-│  │  └───────────────────────────────────────────────────────┘ │ │
-│  │                                                             │ │
-│  │  解析参数:                                                  │ │
-│  │  ┌───────────────────────────────────────────────────────┐ │ │
-│  │  │ {                                                     │ │ │
-│  │  │   "prompt": "一只在夕阳下奔跑的金毛犬",                │ │ │
-│  │  │   "style": "photography",                             │ │ │
-│  │  │   "aspectRatio": "16:9"                               │ │ │
-│  │  │ }                                                     │ │ │
-│  │  └───────────────────────────────────────────────────────┘ │ │
-│  │                                                             │ │
-│  └─────────────────────────────────────────────────────────────┘ │
-│                                                                  │
-│  ┌─ 执行结果 ─────────────────────────────────────────────────┐ │
-│  │                                                             │ │
-│  │  ┌───────────────────────────────────────────────────────┐ │ │
-│  │  │                                                       │ │ │
-│  │  │               [生成的图片预览]                         │ │ │
-│  │  │                                                       │ │ │
-│  │  └───────────────────────────────────────────────────────┘ │ │
-│  │                                                             │ │
-│  │  图片URL: https://cdn.example.com/xxx.png                  │ │
-│  │                                                             │ │
-│  └─────────────────────────────────────────────────────────────┘ │
-│                                                                  │
-│  ┌─ 状态历史 ─────────────────────────────────────────────────┐ │
-│  │                                                             │ │
-│  │  ● 10:00:00  创建任务                                       │ │
-│  │  │                                                          │ │
-│  │  ● 10:00:05  开始处理                                       │ │
-│  │  │                                                          │ │
-│  │  ● 10:00:05  发送确认邮件                                   │ │
-│  │  │                                                          │ │
-│  │  ● 10:00:47  任务完成                                       │ │
-│  │  │                                                          │ │
-│  │  ● 10:00:48  发送结果邮件                                   │ │
-│  │                                                             │ │
-│  └─────────────────────────────────────────────────────────────┘ │
-│                                                                  │
-│                              [重试]    [关闭]                    │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### 11.5 身份映射管理页面 (IdentityMappingsPage)
-
-```
-┌─────────────────────────────────────────────────────────────────────────────────────┐
-│  ← 通道管理 / 身份映射                                                               │
-├─────────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                      │
-│  ℹ️ 身份映射用于将外部通道标识（邮箱、手机号）绑定到系统用户                          │
-│                                                                                      │
-│  ┌─ 映射列表 ────────────────────────────────────────────────────────────────────┐  │
-│  │                                                                                │  │
-│  │  [通道: 全部 ▼]  [🔍 搜索...]                              [+ 添加映射]        │  │
-│  │                                                                                │  │
-│  │  ┌──────────────────────────────────────────────────────────────────────────┐ │  │
-│  │  │ 通道   外部标识                  系统用户      已验证   创建时间          │ │  │
-│  │  ├──────────────────────────────────────────────────────────────────────────┤ │  │
-│  │  │ 📧    zhangsan@company.com     张三          ✅      2026-02-01 09:00  │ │  │
-│  │  │ 📧    lisi@gmail.com           李四          ✅      2026-02-02 14:30  │ │  │
-│  │  │ 📧    wangwu@qq.com            王五          ⏳ 待验证 2026-02-03 10:00  │ │  │
-│  │  └──────────────────────────────────────────────────────────────────────────┘ │  │
-│  │                                                                                │  │
-│  └────────────────────────────────────────────────────────────────────────────────┘  │
-│                                                                                      │
-└─────────────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 12. 验收清单
-
-### 12.1 后端验收清单
-
-| # | 功能模块 | 验收项 | 验收标准 |
-|---|----------|--------|----------|
-| **B1** | 数据模型 | MongoDB 集合创建 | `channel_whitelist`, `channel_identity_mappings`, `channel_tasks`, `channel_request_logs` 集合存在且索引正确 |
-| **B2** | 白名单 API | GET /api/admin/channels/whitelist | 分页返回白名单列表，支持通道类型和状态筛选 |
-| **B3** | 白名单 API | POST /api/admin/channels/whitelist | 创建白名单规则，验证必填字段 |
-| **B4** | 白名单 API | PUT /api/admin/channels/whitelist/{id} | 更新白名单规则 |
-| **B5** | 白名单 API | DELETE /api/admin/channels/whitelist/{id} | 删除白名单规则 |
-| **B6** | 白名单 API | POST /api/admin/channels/whitelist/{id}/toggle | 切换启用/禁用状态 |
-| **B7** | 白名单验证 | 精确匹配 | `user@company.com` 精确匹配规则 |
-| **B8** | 白名单验证 | 通配符匹配 | `*@company.com` 匹配所有该域名邮箱 |
-| **B9** | 白名单验证 | 配额检查 | 超出每日限额时拒绝并记录日志 |
-| **B10** | 身份映射 API | CRUD | 身份映射的增删改查 |
-| **B11** | 任务 API | GET /api/admin/channels/tasks | 分页返回任务列表，支持多条件筛选 |
-| **B12** | 任务 API | GET /api/admin/channels/tasks/{id} | 返回任务详情 |
-| **B13** | 任务 API | POST /api/admin/channels/tasks/{id}/retry | 重试失败任务 |
-| **B14** | 统计 API | GET /api/admin/channels/stats | 返回通道统计数据 |
-| **B15** | 邮件入站 | POST /api/channels/email/inbound | 接收并解析 SendGrid Webhook |
-| **B16** | 意图识别 | 前缀解析 | 正确识别 `[生图]`, `[缺陷]` 等前缀 |
-| **B17** | 任务执行 | Agent 路由 | 任务正确路由到对应 Agent 执行 |
-| **B18** | 邮件出站 | 发送响应 | 任务完成后发送结果邮件 |
-
-### 12.2 前端验收清单
-
-| # | 页面/组件 | 验收项 | 验收标准 |
-|---|-----------|--------|----------|
-| **F1** | 通道管理页 | 路由配置 | `/open-platform/channels` 路由可访问 |
-| **F2** | 通道管理页 | 通道状态卡片 | 展示各通道状态和今日请求数 |
-| **F3** | 通道管理页 | 白名单列表 | 分页展示白名单，支持筛选 |
-| **F4** | 通道管理页 | 添加白名单 | 点击按钮弹出编辑弹窗 |
-| **F5** | 白名单弹窗 | 表单验证 | 通道类型、身份模式必填 |
-| **F6** | 白名单弹窗 | Agent 多选 | 支持多选 Agent |
-| **F7** | 白名单弹窗 | 用户选择 | 支持搜索选择绑定用户 |
-| **F8** | 白名单弹窗 | 创建成功 | 提交后列表刷新，Toast 提示 |
-| **F9** | 白名单弹窗 | 编辑功能 | 点击行可编辑已有规则 |
-| **F10** | 白名单列表 | 删除确认 | 删除前二次确认 |
-| **F11** | 白名单列表 | 启用/禁用 | 状态切换即时生效 |
-| **F12** | 任务监控页 | 路由配置 | `/open-platform/channels/tasks` 路由可访问 |
-| **F13** | 任务监控页 | 统计卡片 | 展示今日任务数、处理中、成功率、平均耗时 |
-| **F14** | 任务监控页 | 任务列表 | 分页展示，支持多条件筛选 |
-| **F15** | 任务监控页 | 状态标签 | 不同状态用不同颜色标签 |
-| **F16** | 任务详情 | 抽屉展示 | 点击任务行打开详情抽屉 |
-| **F17** | 任务详情 | 内容展示 | 展示原始内容、解析参数、执行结果 |
-| **F18** | 任务详情 | 状态历史 | 时间线展示状态变更 |
-| **F19** | 任务详情 | 重试按钮 | 失败任务可点击重试 |
-| **F20** | 身份映射页 | 路由配置 | `/open-platform/channels/identity-mappings` 路由可访问 |
-| **F21** | 身份映射页 | CRUD 功能 | 支持增删改查身份映射 |
-
-### 12.3 集成验收清单
-
-| # | 场景 | 验收项 | 验收标准 |
-|---|------|--------|----------|
-| **I1** | 端到端 | 邮件触发任务 | 发送邮件 → Webhook → 任务创建 → Agent 执行 → 回复邮件 |
-| **I2** | 权限 | 白名单拦截 | 非白名单邮箱发送的邮件被静默丢弃 |
-| **I3** | 权限 | 配额限制 | 超出配额的请求被拒绝 |
-| **I4** | 权限 | Agent 限制 | 请求非授权 Agent 被拒绝 |
-| **I5** | 前后端 | 白名单同步 | 前端添加/修改白名单，后端立即生效 |
-| **I6** | 前后端 | 任务状态 | 任务状态变更在前端实时展示 |
-
----
-
-## 13. 测试清单
-
-### 13.1 单元测试清单
-
-| # | 测试类 | 测试方法 | 测试场景 |
-|---|--------|----------|----------|
-| **U1** | WhitelistMatcherTests | Match_ExactEmail_ReturnsTrue | 精确邮箱匹配 |
-| **U2** | WhitelistMatcherTests | Match_WildcardDomain_ReturnsTrue | 域名通配符匹配 |
-| **U3** | WhitelistMatcherTests | Match_NoMatch_ReturnsFalse | 无匹配规则 |
-| **U4** | WhitelistMatcherTests | Match_DisabledRule_ReturnsFalse | 禁用规则不匹配 |
-| **U5** | QuotaCheckerTests | Check_WithinQuota_ReturnsTrue | 配额内通过 |
-| **U6** | QuotaCheckerTests | Check_ExceedsQuota_ReturnsFalse | 超配额拒绝 |
-| **U7** | QuotaCheckerTests | Check_NoQuotaLimit_ReturnsTrue | 无限额配置通过 |
-| **U8** | IntentDetectorTests | Detect_PrefixTag_ReturnsCorrectIntent | 前缀标签识别 |
-| **U9** | IntentDetectorTests | Detect_NaturalLanguage_ReturnsIntent | 自然语言意图识别 |
-| **U10** | EmailParserTests | Parse_PlainText_ExtractsContent | 纯文本邮件解析 |
-| **U11** | EmailParserTests | Parse_HtmlEmail_ExtractsContent | HTML 邮件解析 |
-| **U12** | EmailParserTests | Parse_WithAttachments_ExtractsAll | 带附件邮件解析 |
-| **U13** | ChannelTaskServiceTests | Create_ValidInput_CreatesTask | 创建任务 |
-| **U14** | ChannelTaskServiceTests | UpdateStatus_ValidTransition_Updates | 状态更新 |
-| **U15** | ChannelTaskServiceTests | UpdateStatus_InvalidTransition_Throws | 非法状态转换 |
-
-### 13.2 集成测试清单
-
-| # | 测试类 | 测试方法 | 测试场景 |
-|---|--------|----------|----------|
-| **IT1** | WhitelistApiTests | GetList_ReturnsPagedResult | 白名单分页查询 |
-| **IT2** | WhitelistApiTests | Create_ValidInput_ReturnsCreated | 创建白名单 |
-| **IT3** | WhitelistApiTests | Create_DuplicatePattern_ReturnsBadRequest | 重复模式拒绝 |
-| **IT4** | WhitelistApiTests | Update_ExistingId_ReturnsOk | 更新白名单 |
-| **IT5** | WhitelistApiTests | Delete_ExistingId_ReturnsNoContent | 删除白名单 |
-| **IT6** | WhitelistApiTests | Toggle_ExistingId_TogglesStatus | 切换状态 |
-| **IT7** | TaskApiTests | GetList_ReturnsPagedResult | 任务分页查询 |
-| **IT8** | TaskApiTests | GetDetail_ExistingId_ReturnsDetail | 任务详情 |
-| **IT9** | TaskApiTests | Retry_FailedTask_CreatesNewTask | 重试任务 |
-| **IT10** | EmailInboundTests | Receive_ValidWebhook_CreatesTask | Webhook 接收 |
-| **IT11** | EmailInboundTests | Receive_InvalidSignature_ReturnsUnauthorized | 签名验证失败 |
-| **IT12** | EmailInboundTests | Receive_NotWhitelisted_ReturnsOkButNoTask | 非白名单静默丢弃 |
-
-### 13.3 全链路测试（不参与 CI）
-
-> **文件位置**: `prd-api/tests/PrdAgent.E2E.Tests/ChannelAdapterE2ETests.cs`
-> **运行方式**: `dotnet test --filter "Category=E2E" --no-build`
-
-```csharp
-/// <summary>
-/// 通道适配器全链路测试
-/// 逐个请求后端 API 并打印结果
-///
-/// 运行方式: dotnet test --filter "Category=E2E"
-/// 注意: 需要后端服务运行中
-/// </summary>
-[TestClass]
-[TestCategory("E2E")]
-public class ChannelAdapterE2ETests
-{
-    private readonly HttpClient _client;
-    private readonly string _baseUrl = "http://localhost:5000";
-
-    [TestMethod]
-    public async Task E2E_01_CreateWhitelist_Success()
-    {
-        // 1. 创建白名单
-        Console.WriteLine("=== E2E_01: 创建白名单 ===");
-        var response = await _client.PostAsJsonAsync(
-            $"{_baseUrl}/api/admin/channels/whitelist",
-            new { channelType = "email", identifierPattern = "*@test.com", dailyQuota = 10 }
-        );
-        Console.WriteLine($"Status: {response.StatusCode}");
-        Console.WriteLine($"Response: {await response.Content.ReadAsStringAsync()}");
-        Assert.AreEqual(HttpStatusCode.Created, response.StatusCode);
-    }
-
-    [TestMethod]
-    public async Task E2E_02_GetWhitelistList_Success()
-    {
-        // 2. 获取白名单列表
-        Console.WriteLine("=== E2E_02: 获取白名单列表 ===");
-        var response = await _client.GetAsync(
-            $"{_baseUrl}/api/admin/channels/whitelist?page=1&pageSize=10"
-        );
-        Console.WriteLine($"Status: {response.StatusCode}");
-        Console.WriteLine($"Response: {await response.Content.ReadAsStringAsync()}");
-        Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
-    }
-
-    [TestMethod]
-    public async Task E2E_03_ToggleWhitelist_Success()
-    {
-        // 3. 切换白名单状态
-        Console.WriteLine("=== E2E_03: 切换白名单状态 ===");
-        // ... 实现
-    }
-
-    [TestMethod]
-    public async Task E2E_04_SimulateEmailInbound_Success()
-    {
-        // 4. 模拟邮件入站 Webhook
-        Console.WriteLine("=== E2E_04: 模拟邮件入站 ===");
-        var payload = new
-        {
-            from = "test@test.com",
-            to = "agent@prdagent.com",
-            subject = "[生图] 夕阳下的猫",
-            text = "请生成一张夕阳下的猫咪图片"
-        };
-        var response = await _client.PostAsJsonAsync(
-            $"{_baseUrl}/api/channels/email/inbound",
-            payload
-        );
-        Console.WriteLine($"Status: {response.StatusCode}");
-        Console.WriteLine($"Response: {await response.Content.ReadAsStringAsync()}");
-    }
-
-    [TestMethod]
-    public async Task E2E_05_GetTaskList_Success()
-    {
-        // 5. 获取任务列表
-        Console.WriteLine("=== E2E_05: 获取任务列表 ===");
-        var response = await _client.GetAsync(
-            $"{_baseUrl}/api/admin/channels/tasks?page=1&pageSize=10"
-        );
-        Console.WriteLine($"Status: {response.StatusCode}");
-        Console.WriteLine($"Response: {await response.Content.ReadAsStringAsync()}");
-    }
-
-    [TestMethod]
-    public async Task E2E_06_GetTaskDetail_Success()
-    {
-        // 6. 获取任务详情
-        Console.WriteLine("=== E2E_06: 获取任务详情 ===");
-        // ... 实现
-    }
-
-    [TestMethod]
-    public async Task E2E_07_GetStats_Success()
-    {
-        // 7. 获取统计数据
-        Console.WriteLine("=== E2E_07: 获取通道统计 ===");
-        var response = await _client.GetAsync(
-            $"{_baseUrl}/api/admin/channels/stats"
-        );
-        Console.WriteLine($"Status: {response.StatusCode}");
-        Console.WriteLine($"Response: {await response.Content.ReadAsStringAsync()}");
-    }
-
-    [TestMethod]
-    public async Task E2E_08_DeleteWhitelist_Success()
-    {
-        // 8. 删除白名单（清理）
-        Console.WriteLine("=== E2E_08: 删除白名单 ===");
-        // ... 实现
-    }
-}
-```
-
----
-
----
-
-## 14. 测试运行指南
-
-### 14.1 单元测试
-
-```bash
-# 运行白名单匹配测试
-cd prd-api
-dotnet test --filter "FullyQualifiedName~WhitelistMatcherTests" --logger "console;verbosity=detailed"
-
-# 运行所有通道适配器相关测试
-dotnet test --filter "FullyQualifiedName~Channel" --logger "console;verbosity=detailed"
-```
-
-### 14.2 集成测试
-
-```bash
-# 运行集成测试（需要数据库连接）
-cd prd-api
-dotnet test --filter "Category=Integration&FullyQualifiedName~Channel" --logger "console;verbosity=detailed"
-```
-
-### 14.3 E2E 测试脚本
-
-```bash
-# 运行全链路 E2E 测试脚本（不参与 CI）
-# 需要先启动后端服务
-
-# 1. 启动后端服务
-cd prd-api/src/PrdAgent.Api
-dotnet run
-
-# 2. 在另一个终端运行 E2E 测试
-cd /path/to/prd_agent
-./scripts/test-channel-adapter-e2e.sh http://localhost:5000 "your-jwt-token"
-```
-
-### 14.4 测试命令速查表
-
-| 测试类型 | 命令 |
-|----------|------|
-| 单元测试 | `dotnet test --filter "FullyQualifiedName~WhitelistMatcherTests"` |
-| 集成测试 | `dotnet test --filter "Category=Integration&FullyQualifiedName~Channel"` |
-| E2E 测试 | `./scripts/test-channel-adapter-e2e.sh [base_url] [token]` |
-| 全部测试 | `dotnet test --filter "FullyQualifiedName~Channel"` |
-
----
-
-## 15. 系统入口
-
-### 15.1 前端管理页面
-
-| 页面 | URL | 权限 | 说明 |
-|------|-----|------|------|
-| 通道管理 | `/open-platform/channels` | `open-platform.manage` | 通道状态概览 + 白名单管理 |
-| 任务监控 | `/open-platform/channels/tasks` | `open-platform.manage` | 任务列表、筛选、统计 |
-| 身份映射 | `/open-platform/channels/identity-mappings` | `open-platform.manage` | 外部标识 → 系统用户映射 |
-
-### 15.2 后端 API 入口
-
-**管理接口（需要登录 + 权限）**
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/admin/channels/whitelists` | 白名单列表（分页） |
-| POST | `/api/admin/channels/whitelists` | 创建白名单 |
-| PUT | `/api/admin/channels/whitelists/{id}` | 更新白名单 |
-| DELETE | `/api/admin/channels/whitelists/{id}` | 删除白名单 |
-| POST | `/api/admin/channels/whitelists/{id}/toggle` | 启用/禁用 |
-| GET | `/api/admin/channels/identity-mappings` | 身份映射列表 |
-| POST | `/api/admin/channels/identity-mappings` | 创建身份映射 |
-| PUT | `/api/admin/channels/identity-mappings/{id}` | 更新身份映射 |
-| DELETE | `/api/admin/channels/identity-mappings/{id}` | 删除身份映射 |
-| GET | `/api/admin/channels/tasks` | 任务列表（分页） |
-| GET | `/api/admin/channels/tasks/{id}` | 任务详情 |
-| POST | `/api/admin/channels/tasks/{id}/retry` | 重试任务 |
-| POST | `/api/admin/channels/tasks/{id}/cancel` | 取消任务 |
-| GET | `/api/admin/channels/tasks/stats` | 任务统计 |
-| GET | `/api/admin/channels/stats` | 通道统计 |
-
-**Webhook 接口（外部调用）**
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/api/channels/email/inbound` | SendGrid Inbound Parse Webhook |
-| POST | `/api/channels/email/inbound/test` | 测试入站（仅 Development 环境） |
-
-### 15.3 SendGrid 配置
-
-```
-MX 记录: mx.sendgrid.net
-Inbound Parse Webhook URL: https://your-domain.com/api/channels/email/inbound
-```
-
----
-
-## 16. 操作指南
-
-### 16.1 配置邮件通道（管理员）
-
-**步骤 1：添加白名单规则**
-
-1. 登录管理后台，进入 **开放平台 > 通道管理** (`/open-platform/channels`)
-2. 点击 **+ 新建白名单** 按钮
-3. 填写表单：
-   - **通道类型**：选择「邮件」
-   - **规则模式**：输入邮箱模式（如 `*@company.com` 或 `user@example.com`）
-   - **绑定用户**（可选）：选择系统用户
-   - **允许的 Agent**：勾选授权的 Agent
-   - **每日配额**：设置每日请求限额
-4. 点击 **创建** 保存
-
-**步骤 2：配置身份映射（可选）**
-
-1. 进入 **身份映射** (`/channels/identity-mappings`)
-2. 点击 **+ 新建映射**
-3. 填写：
-   - **通道类型**：邮件
-   - **通道标识**：用户邮箱地址
-   - **映射用户**：选择系统用户
-4. 点击 **创建**
-
-**步骤 3：验证配置**
-
-1. 发送测试邮件到配置的接收地址
-2. 在 **任务监控** (`/channels/tasks`) 查看任务是否创建成功
-
-### 16.2 通过邮件发送任务（用户）
-
-**方式一：使用前缀标签**
-
-```
-收件人: agent@prdagent.com
-主题: [生图] 一只在夕阳下奔跑的金毛犬
-正文: (可选的详细描述)
-```
-
-**支持的前缀标签**
-
-| 前缀 | Agent | 说明 |
-|------|-------|------|
-| `[生图]` `[画图]` `[图片]` | visual-agent | 图片生成 |
-| `[缺陷]` `[BUG]` `[问题]` | defect-agent | 创建缺陷 |
-| `[PRD]` `[需求]` `[文档]` | prd-agent | PRD 问答 |
-| `[查询]` | - | 查询信息 |
-| `[取消]` | - | 取消任务 |
-| `[帮助]` | - | 获取帮助 |
-
-**方式二：自然语言（无前缀）**
-
-```
-收件人: agent@prdagent.com
-主题: 帮我生成一张图片
-正文: 请帮我生成一只在夕阳下奔跑的金毛犬，风格是写实摄影
-```
-
-### 16.3 查看任务状态（管理员）
-
-1. 进入 **任务监控** (`/channels/tasks`)
-2. 使用筛选器：
-   - **通道**：筛选特定通道（邮件/短信/等）
-   - **状态**：筛选任务状态（待处理/处理中/完成/失败）
-   - **搜索**：按任务 ID 或发送者搜索
-3. 点击任务行查看详情
-4. 对于失败任务，可点击 **重试** 按钮
-
----
-
-## 17. 用户故事
-
-### 17.1 管理员故事
-
-| 编号 | 用户故事 | 验收标准 |
-|------|----------|----------|
-| **US-A1** | 作为管理员，我希望能配置邮件白名单，以便控制哪些邮箱可以发送任务 | - 支持精确邮箱地址<br>- 支持域名通配符 `*@company.com`<br>- 可启用/禁用规则 |
-| **US-A2** | 作为管理员，我希望能设置每日配额，以防止滥用 | - 可为每条白名单规则设置配额<br>- 超配额请求被拒绝<br>- 配额每日自动重置 |
-| **US-A3** | 作为管理员，我希望能限制白名单可访问的 Agent | - 可多选允许的 Agent<br>- 未授权 Agent 请求被拒绝 |
-| **US-A4** | 作为管理员，我希望能绑定外部邮箱到系统用户 | - 支持创建身份映射<br>- 任务以绑定用户身份执行 |
-| **US-A5** | 作为管理员，我希望能监控所有通道任务 | - 查看任务列表和详情<br>- 支持多条件筛选<br>- 查看任务统计 |
-| **US-A6** | 作为管理员，我希望能重试失败的任务 | - 失败任务可重试<br>- 重试后状态正确更新 |
-
-### 17.2 用户故事
-
-| 编号 | 用户故事 | 验收标准 |
-|------|----------|----------|
-| **US-U1** | 作为用户，我希望通过邮件发送图片生成任务 | - 发送 `[生图] xxx` 邮件<br>- 收到任务确认邮件<br>- 收到生成结果邮件 |
-| **US-U2** | 作为用户，我希望通过邮件创建缺陷 | - 发送 `[缺陷] xxx` 邮件<br>- 缺陷被正确创建<br>- 收到确认邮件 |
-| **US-U3** | 作为用户，我希望通过邮件查询 PRD | - 发送 `[PRD] xxx` 邮件<br>- 收到 PRD 相关回答 |
-| **US-U4** | 作为用户，我希望用自然语言发送任务（无需前缀） | - 系统自动识别意图<br>- 正确路由到对应 Agent |
-| **US-U5** | 作为用户，我希望能取消进行中的任务 | - 发送 `[取消] TASK-xxx`<br>- 任务被正确取消 |
-| **US-U6** | 作为用户，我希望能获取使用帮助 | - 发送 `[帮助]`<br>- 收到使用说明邮件 |
-
-### 17.3 故事地图
-
-```
-                    ┌─────────────────────────────────────────────────────────────────┐
-                    │                        用户故事地图                              │
-                    └─────────────────────────────────────────────────────────────────┘
-
-用户活动:           配置通道              发送任务              监控任务
-                       │                     │                     │
-                       ▼                     ▼                     ▼
-用户任务:     ┌───────────────┐    ┌───────────────┐    ┌───────────────┐
-              │ 添加白名单规则 │    │ 发送邮件任务  │    │ 查看任务列表  │
-              │ 配置身份映射   │    │ 附带参数/附件 │    │ 查看任务详情  │
-              │ 启用/禁用规则  │    │ 取消任务      │    │ 重试失败任务  │
-              └───────────────┘    └───────────────┘    └───────────────┘
-                       │                     │                     │
-                       ▼                     ▼                     ▼
-用户故事:          US-A1~A4              US-U1~U6              US-A5~A6
-
-优先级:         ████████████          ████████████          ████████████
-                   P0                    P0                    P1
-```
-
----
-
-## 18. TodoList 与待办事项
-
-### 18.1 已完成 ✅
-
-| 任务 | 描述 | 完成日期 |
+| 集合 | 用途 | 关键索引 |
 |------|------|----------|
-| **数据模型** | ChannelWhitelist, ChannelTask, ChannelIdentityMapping, ChannelRequestLog | 2026-02-03 |
-| **MongoDB 配置** | 集合定义 + 索引创建 | 2026-02-03 |
-| **白名单 API** | GET/POST/PUT/DELETE/Toggle 完整 CRUD | 2026-02-03 |
-| **白名单匹配服务** | 通配符匹配、配额检查、原子更新 | 2026-02-03 |
-| **身份映射 API** | 完整 CRUD | 2026-02-03 |
-| **任务 API** | 列表/详情/重试/取消/统计 | 2026-02-03 |
-| **邮件入站 Webhook** | SendGrid Inbound Parse 格式支持 | 2026-02-03 |
-| **意图识别服务** | 前缀标签解析 + 参数提取 | 2026-02-03 |
-| **前端: 通道管理页** | ChannelsPage.tsx | 2026-02-03 |
-| **前端: 白名单弹窗** | WhitelistEditDialog.tsx | 2026-02-03 |
-| **前端: 任务监控页** | ChannelTasksPage.tsx | 2026-02-03 |
-| **前端: 任务详情** | TaskDetailDrawer.tsx | 2026-02-03 |
-| **前端: 身份映射页** | IdentityMappingsPage.tsx | 2026-02-03 |
-| **前端: 路由配置** | App.tsx 路由 + 权限配置 | 2026-02-03 |
-| **单元测试** | WhitelistMatcherTests.cs | 2026-02-03 |
-| **集成测试** | ChannelApiTests.cs | 2026-02-03 |
-| **E2E 测试脚本** | test-channel-adapter-e2e.sh | 2026-02-03 |
+| `channel_whitelist` | 通道白名单规则 | `(channelType, identifierPattern)`, `(isActive, priority)` |
+| `channel_identity_mappings` | 外部标识 → 系统用户映射 | `(channelType, channelIdentifier)` unique |
+| `channel_tasks` | 通道任务全生命周期 | `(status, createdAt)`, `(senderIdentifier, createdAt)`, `createdAt` TTL 30天 |
+| `channel_request_logs` | 审计日志（含拒绝记录） | `(channelType, createdAt)`, `(mappedUserId, createdAt)`, `createdAt` TTL 30天 |
+| `channel_settings` | IMAP/SMTP 配置（单例） | Id = "default" |
+| `email_workflows` | 邮件工作流（地址前缀路由） | `(addressPrefix)` |
 
-### 18.2 待完成 📋
+### 核心字段
 
-| 优先级 | 任务 | 描述 | 预计工作量 |
-|--------|------|------|------------|
-| **P0** | 邮件出站适配器 | SendGrid 发送邮件集成 | 1-2 天 |
-| **P0** | 任务执行 Worker | 异步任务队列处理 | 2-3 天 |
-| **P0** | Agent 路由集成 | 调用现有 Agent 执行任务 | 1-2 天 |
-| **P1** | 权限配置 | 添加 `channels.manage` 到权限目录 | 0.5 天 |
-| **P1** | 邮件模板 | 任务确认/完成/失败邮件模板 | 1 天 |
-| **P1** | LLM 意图识别 | 无前缀时调用 LLM 识别意图 | 1 天 |
-| **P2** | 邮件线程追踪 | 支持回复邮件继续对话 | 2 天 |
-| **P2** | 附件处理增强 | 图片/文档解析 | 2-3 天 |
-| **P2** | 统计报表 | 通道使用量图表 | 1-2 天 |
-| **P3** | 短信通道 | Twilio/阿里云短信集成 | 3-5 天 |
-| **P3** | Siri 快捷指令 | iOS Shortcuts 集成 | 3-5 天 |
+**ChannelWhitelist**：
 
-### 18.3 阻塞项 🚫
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| ChannelType | string | email / sms / siri / webhook |
+| IdentifierPattern | string | 支持通配符，如 `*@company.com` |
+| BoundUserId | string? | 绑定的系统用户（优先于身份映射） |
+| AllowedAgents | List\<string\> | 空 = 全部允许 |
+| AllowedOperations | List\<string\> | 空 = 全部允许 |
+| DailyQuota | int | 0 = 不限；原子递增计数 |
+| TodayUsedCount / TodayDate | int / string | 配额追踪，日期变更自动重置 |
+| Priority | int | 越小越优先，首匹配即停 |
+| IsActive | bool | 启用/禁用 |
 
-| 阻塞项 | 依赖 | 影响范围 | 解决方案 |
-|--------|------|----------|----------|
-| SendGrid API Key | 运维配置 | 邮件发送功能 | 在 appsettings 中配置 |
-| 域名 MX 记录 | DNS 配置 | 邮件接收功能 | 配置 MX 指向 SendGrid |
+**ChannelTask**：
 
-### 18.4 技术债务 🔧
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| Id | string | 格式 `TASK-yyyyMMdd-{6HexChars}` |
+| ChannelType | string | 来源通道 |
+| SenderIdentifier | string | 发送者标识（邮箱/手机号） |
+| MappedUserId | string? | 解析到的系统用户 |
+| WhitelistId | string | 匹配的白名单规则 |
+| Intent | string | image-gen / defect-create / prd-query / cancel / help / unknown |
+| TargetAgent | string? | 路由目标 Agent |
+| OriginalContent | string | 原始内容（去除前缀标签） |
+| ParsedParameters | Dictionary | 提取的参数（prompt、style、aspectRatio 等） |
+| Attachments | List\<Attachment\> | 附件元数据 |
+| Status | string | pending → processing → completed / failed / cancelled |
+| StatusHistory | List\<StatusChange\> | 完整状态审计轨迹 |
+| Result | TaskResult? | 执行结果（text / image / list / error） |
+| RetryCount / MaxRetries | int | 重试追踪，默认最多 3 次 |
+| ParentTaskId | string? | 重试时关联原任务 |
 
-| 债务项 | 优先级 | 说明 |
-|--------|--------|------|
-| 测试覆盖率 | P2 | 增加更多边界条件测试 |
-| 错误处理 | P2 | 完善错误码和错误消息 |
-| 日志增强 | P2 | 添加结构化日志 |
-| 配置验证 | P3 | 启动时验证 SendGrid 配置 |
+**ChannelIdentityMapping**：
 
----
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| ChannelType | string | 通道类型 |
+| ChannelIdentifier | string | 外部标识（小写归一化） |
+| UserId | string | 系统用户 ID |
+| IsVerified | bool | 是否已验证（未验证不生效） |
+| VerificationCode / ExpiresAt | string / DateTime | 验证码及有效期 |
 
-## 变更历史
+**ChannelSettings**（单例）：
 
-| 版本 | 日期 | 变更内容 | 作者 |
-|------|------|----------|------|
-| v1.0 | 2026-02-03 | 初始版本，包含邮件通道详细设计 | - |
-| v1.1 | 2026-02-03 | 添加前端字符画、验收清单、测试清单 | - |
-| v1.2 | 2026-02-03 | 添加测试命令、入口地址、操作指南、用户故事、TodoList | - |
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| ImapHost / Port / Username / Password / UseSsl | - | IMAP 收件配置 |
+| SmtpHost / Port / Username / Password / UseSsl | - | SMTP 发件配置 |
+| SmtpFromName / SmtpFromAddress | string | 发件人显示 |
+| PollIntervalMinutes | int | 轮询间隔（默认 5 分钟） |
+| IsEnabled | bool | 是否启用邮件通道 |
+| AcceptedDomains | List\<string\> | 过滤收件域名（空 = 全部） |
+| AutoAcknowledge | bool | 是否自动发确认回复 |
+
+**EmailWorkflow**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| AddressPrefix | string | 邮箱前缀（如 todo、bug、classify） |
+| DisplayName | string | 显示名（如"待办事项"） |
+| IntentType | enum | CreateTodo / Classify / Summarize / FollowUp / FYI |
+| TargetAgent | string? | 路由到的 Agent（如 defect-agent） |
+| CustomPrompt | string? | 自定义 LLM 处理指令 |
+| ReplyTemplate | string? | 回复模板，支持 {senderName}、{subject}、{result} 变量 |
+| Priority | int | 匹配优先级 |
+
+### 身份解析优先级
+
+1. 白名单规则的 `BoundUserId`（如有直接使用）
+2. `ChannelIdentityMapping` 查询（需 IsVerified = true）
+3. 空（任务仍创建，标记无映射用户）
+
+## 六、接口设计
+
+**管理接口**（基础路径 `/api/admin/channels`）：
+
+| 方法 | 路径 | 用途 | 备注 |
+|------|------|------|------|
+| GET | `/whitelist` | 白名单列表（分页 + 筛选） | 支持通道类型、状态、关键词 |
+| POST | `/whitelist` | 创建白名单规则 | 校验模式唯一性 |
+| PUT | `/whitelist/{id}` | 更新白名单规则 | |
+| DELETE | `/whitelist/{id}` | 删除白名单规则 | |
+| POST | `/whitelist/{id}/toggle` | 启用/禁用 | |
+| GET | `/identity-mappings` | 身份映射列表 | |
+| POST | `/identity-mappings` | 创建映射 | 校验用户存在 + 标识唯一 |
+| DELETE | `/identity-mappings/{id}` | 删除映射 | |
+| GET | `/tasks` | 任务列表 | 复合筛选：通道/状态/Agent/发送者/日期范围 |
+| GET | `/tasks/stats` | 任务状态统计 | 按状态分组计数 |
+| GET | `/tasks/{id}` | 任务详情 | |
+| POST | `/tasks/{id}/retry` | 重试失败任务 | 创建新任务，关联 ParentTaskId |
+| POST | `/tasks/{id}/cancel` | 取消任务 | |
+| GET | `/stats` | 通道综合统计 | 今日成功率、平均耗时、通道状态 |
+| GET | `/settings` | 获取设置 | 密码脱敏返回 |
+| PUT | `/settings` | 更新设置 | 非空字段增量更新 |
+| POST | `/settings/test` | 测试 IMAP 连接 | |
+| POST | `/settings/poll` | 手动触发轮询 | |
+| GET | `/workflows` | 工作流列表 | |
+| POST | `/workflows` | 创建工作流 | 校验前缀格式 + 唯一性 |
+| PUT | `/workflows/{id}` | 更新工作流 | |
+| DELETE | `/workflows/{id}` | 删除工作流 | |
+| POST | `/workflows/{id}/toggle` | 启用/禁用 | |
+| POST | `/workflows/init-defaults` | 初始化默认工作流 | Todo/Classify/Summary/Bug |
+| GET | `/workflows/intent-types` | 获取可用意图类型 | |
+
+**Webhook 接口**（基础路径 `/api/channels/email`）：
+
+| 方法 | 路径 | 用途 | 备注 |
+|------|------|------|------|
+| POST | `/inbound` | SendGrid Inbound Parse Webhook | multipart/form-data |
+| POST | `/status` | 发送状态回调 | 预留 |
+| POST | `/inbound/test` | 测试入站 | 仅 Development 环境 |
+
+## 七、影响范围
+
+| 影响模块 | 变更内容 | 风险等级 |
+|----------|----------|----------|
+| 新增 ChannelAdminController | 白名单/映射/任务/设置/工作流 CRUD（~1100 行） | 低（独立模块） |
+| 新增 EmailChannelController | SendGrid Webhook 接收端点 | 低（独立端点） |
+| 新增 EmailChannelWorker | 后台 IMAP 轮询服务 | 低（独立 Worker） |
+| 新增 6 个 MongoDB 集合 | channel_whitelist 等 | 低（不影响现有集合） |
+| 现有 Agent 系统 | 通过 TargetAgent 路由调用 | 中（需确保 Agent 接口稳定） |
+| 通知系统 | 邮件回复（SMTP 发送） | 低（使用 MailKit 独立发送） |
+
+## 八、关键约束与风险
+
+| 风险 | 概率 | 影响 | 缓解措施 |
+|------|------|------|----------|
+| IMAP 轮询延迟（分钟级） | 确定 | 用户感知延迟 | 可配置轮询间隔；有实时性需求时启用 SendGrid Webhook |
+| 企业邮箱 IMAP 限制 | 中 | 轮询失败 | 后台记录 LastPollResult/Error，管理界面可手动测试连接 |
+| 白名单规则冲突 | 低 | 错误匹配 | Priority 排序 + 首匹配即停，管理界面可查看规则优先级 |
+| 配额竞态 | 低 | 超额放行 | MongoDB 原子更新（TodayDate + TodayUsedCount 条件更新） |
+| SendGrid Webhook 签名验证未实现 | 中 | 伪造请求 | TODO：实现签名验证；当前依赖网络隔离 |
+| Handler 执行异常 | 中 | 任务卡在 processing | StatusHistory 追踪 + 管理界面支持手动重试/取消 |
+| SMS/Siri/Webhook 通道模型预留但未实现 | - | 数据模型中有通道类型但无实际适配器 | 标记为未来扩展，不影响邮件通道功能 |
