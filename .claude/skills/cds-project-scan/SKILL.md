@@ -154,10 +154,15 @@ grep -rn "ConnectionString" --include="*.json" --include="*.cs" .
 - ⚠️ `COS_SECRET_KEY` 需要填写实际值
 
 **使用方法**：
-1. 复制下方 JSON
-2. 打开 CDS Dashboard → 设置 → 一键导入
-3. 粘贴 → 确认应用
+1. 启动 CDS（后台模式，默认端口 9900）：
+   ```bash
+   cd cds && ./exec_cds.sh --background
+   ```
+2. 打开 CDS Dashboard → http://<服务器IP>:9900
+3. 设置 → 一键导入 → 粘贴下方 JSON → 确认应用
 ```
+
+**注意**：CDS 默认端口为 **9900**（Dashboard）和 **5500**（Gateway），由 `cds.config.json` 的 `masterPort` / `workerPort` 控制。
 
 #### 5.3 JSON 输出格式
 
@@ -175,7 +180,76 @@ grep -rn "ConnectionString" --include="*.json" --include="*.cs" .
 }
 ```
 
-### Phase 6：异常处理
+### Phase 6：导入后系统初始化（反问用户）
+
+**强制规则**：生成配置 JSON 并输出后，**必须主动反问用户**是否需要帮忙初始化基础设施。
+
+#### 6.1 反问模板
+
+配置 JSON 输出完成后，使用 `AskUserQuestion` 工具向用户提问：
+
+```
+配置已生成完毕。导入后，系统依赖的基础设施（如 MongoDB、Redis）需要先启动才能正常使用。
+请问需要我帮你完成以下哪些操作？
+```
+
+**选项**：
+1. **帮我初始化全部基础设施** — 自动生成并执行 docker run 命令启动所有检测到的 infra 服务
+2. **只生成初始化命令，我自己执行** — 输出可复制的 shell 命令，用户自行在服务器上运行
+3. **不需要，我已经有现成的数据库** — 跳过，仅提醒用户在 CDS 环境变量中填写正确的连接地址
+
+#### 6.2 初始化命令生成规则
+
+根据 `infraServices` 中检测到的服务，生成对应的 docker 启动命令：
+
+```bash
+# 示例：MongoDB
+docker run -d \
+  --name cds-mongodb \
+  --restart unless-stopped \
+  --network cds-network \
+  -p 27017:27017 \
+  -v cds-mongodb-data:/data/db \
+  -e MONGO_INITDB_ROOT_USERNAME=root \
+  -e MONGO_INITDB_ROOT_PASSWORD=TODO_请替换密码 \
+  mongo:7
+
+# 示例：Redis
+docker run -d \
+  --name cds-redis \
+  --restart unless-stopped \
+  --network cds-network \
+  -p 6379:6379 \
+  -v cds-redis-data:/data \
+  redis:7 redis-server --appendonly yes
+```
+
+**前置命令**（始终包含）：
+```bash
+# 创建 Docker 网络（已存在则忽略）
+docker network create cds-network 2>/dev/null || true
+```
+
+#### 6.3 初始化失败处理
+
+如果用户选择"帮我初始化"但执行失败：
+1. 输出错误信息，诊断失败原因（端口占用、Docker 未安装、权限不足等）
+2. 提供修复建议
+3. 提示用户可以**重试**：重新执行失败的命令即可，已成功的服务不受影响
+
+#### 6.4 健康检查
+
+初始化完成后，逐个验证服务是否正常运行：
+
+```bash
+# MongoDB 健康检查
+docker exec cds-mongodb mongosh --eval "db.adminCommand('ping')" 2>/dev/null && echo "✅ MongoDB OK" || echo "❌ MongoDB 未就绪"
+
+# Redis 健康检查
+docker exec cds-redis redis-cli ping 2>/dev/null && echo "✅ Redis OK" || echo "❌ Redis 未就绪"
+```
+
+### Phase 7：异常处理
 
 | 场景 | 处理 |
 |------|------|
@@ -184,6 +258,7 @@ grep -rn "ConnectionString" --include="*.json" --include="*.cs" .
 | 端口无法推断 | 使用默认值 + `// TODO` 注释 |
 | 多个 Dockerfile 冲突 | 每个都生成 profile + 提示用户选择 |
 | 检测到生产数据库连接串 | 警告用户不要在 CDS 中使用生产地址 |
+| 基础设施初始化失败 | 诊断原因 + 修复建议 + 提示可重试 |
 
 ## 质量规则
 
