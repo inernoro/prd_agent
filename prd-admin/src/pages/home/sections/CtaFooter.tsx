@@ -1,6 +1,7 @@
 import { cn } from '@/lib/cn';
 import BlurText from '@/components/reactbits/BlurText';
-import { HERO_GRADIENT, HERO_GRADIENT_TEXT } from './HeroSection';
+import ShinyText from '@/components/reactbits/ShinyText';
+import { HERO_GRADIENT } from './HeroSection';
 
 interface CtaFooterProps {
   className?: string;
@@ -69,11 +70,14 @@ export function CtaFooter({ className, onGetStarted, onContact }: CtaFooterProps
         <h2 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold mb-6">
           <span className="text-white">开启你的</span>
           <br />
-          <span
-            className="relative inline-block"
-            style={HERO_GRADIENT_TEXT}
-          >
-            Agent 之旅
+          <span className="relative inline-block">
+            <ShinyText
+              text="Agent 之旅"
+              color="#7c3aed"
+              shineColor="#00f0ff"
+              speed={3}
+              className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold"
+            />
             {/* Underline decoration — vivid */}
             <svg className="absolute -bottom-2 left-0 w-full" viewBox="0 0 200 8" fill="none">
               <path
