@@ -1,5 +1,6 @@
 import { cn } from '@/lib/cn';
-import { DecryptedText, BlurText, ShinyText } from '@/components/reactbits';
+import { BlurText, ShinyText } from '@/components/reactbits';
+import { TypewriterText } from '../components/TypewriterText';
 import { useEffect, useState } from 'react';
 
 /**
@@ -55,33 +56,6 @@ function RotatingText() {
   );
 }
 
-// Cycles through text array with DecryptedText animation
-function DecryptedTextCycler({ texts }: { texts: string[] }) {
-  const [index, setIndex] = useState(0);
-  const [key, setKey] = useState(0);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setIndex((prev) => (prev + 1) % texts.length);
-      setKey((prev) => prev + 1);
-    }, 3500);
-    return () => clearInterval(interval);
-  }, [texts.length]);
-
-  return (
-    <DecryptedText
-      key={key}
-      text={texts[index]}
-      speed={40}
-      maxIterations={12}
-      sequential
-      revealDirection="center"
-      animateOn="view"
-      className="text-white/60"
-      encryptedClassName="text-white/30"
-    />
-  );
-}
 
 export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectionProps) {
   const typewriterTexts = [
@@ -155,9 +129,9 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
             </span>
           </h1>
 
-          {/* Decrypted subtitle */}
+          {/* Typewriter subtitle */}
           <div className="text-xl sm:text-2xl md:text-3xl text-white/60 mb-6 h-[1.5em]">
-            <DecryptedTextCycler texts={typewriterTexts} />
+            <TypewriterText texts={typewriterTexts} typingSpeed={80} deletingSpeed={40} pauseDuration={2000} />
           </div>
 
           {/* Description with higher contrast */}

@@ -5,6 +5,8 @@ import { useState, useEffect, useMemo } from 'react';
 const GITHUB_REPO = 'inernoro/prd_agent';
 const GITHUB_RELEASES_URL = `https://github.com/${GITHUB_REPO}/releases/latest`;
 const GITHUB_API_LATEST = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
+const CACHE_KEY = 'prd_agent_latest_release';
+const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 
 type Platform = 'windows' | 'macos' | 'linux' | 'unknown';
 
@@ -18,12 +20,39 @@ interface ReleaseInfo {
   assets: ReleaseAsset[];
 }
 
+interface CachedRelease {
+  data: ReleaseInfo;
+  timestamp: number;
+}
+
 function detectPlatform(): Platform {
   const ua = navigator.userAgent.toLowerCase();
   if (ua.includes('win')) return 'windows';
   if (ua.includes('mac')) return 'macos';
   if (ua.includes('linux')) return 'linux';
   return 'unknown';
+}
+
+function getCachedRelease(): ReleaseInfo | null {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const cached: CachedRelease = JSON.parse(raw);
+    if (Date.now() - cached.timestamp > CACHE_TTL) {
+      localStorage.removeItem(CACHE_KEY);
+      return null;
+    }
+    return cached.data;
+  } catch {
+    return null;
+  }
+}
+
+function setCachedRelease(data: ReleaseInfo): void {
+  try {
+    const cached: CachedRelease = { data, timestamp: Date.now() };
+    localStorage.setItem(CACHE_KEY, JSON.stringify(cached));
+  } catch { /* quota exceeded — ignore */ }
 }
 
 /** Match asset by file extension pattern per platform */
@@ -81,6 +110,14 @@ export function DownloadSection({ className }: DownloadSectionProps) {
   }, []);
 
   useEffect(() => {
+    // Try cache first — avoids network request & perceived lag
+    const cached = getCachedRelease();
+    if (cached) {
+      setRelease(cached);
+      setLoading(false);
+      return;
+    }
+
     let cancelled = false;
     fetch(GITHUB_API_LATEST)
       .then((res) => (res.ok ? res.json() : Promise.reject(res.status)))
@@ -91,7 +128,9 @@ export function DownloadSection({ className }: DownloadSectionProps) {
           name: a.name,
           browser_download_url: a.browser_download_url,
         }));
-        setRelease({ version, assets });
+        const info: ReleaseInfo = { version, assets };
+        setRelease(info);
+        setCachedRelease(info);
       })
       .catch(() => {/* silently fail — cards will link to releases page */})
       .finally(() => { if (!cancelled) setLoading(false); });
