@@ -503,22 +503,22 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                 <th className="text-left py-2.5 pr-2 font-medium w-8" style={{ color: D.text3, verticalAlign: 'middle' }}>#</th>
                 <th className="text-left py-2.5 pr-4 font-medium" style={{ color: D.text3, verticalAlign: 'middle' }}>成员</th>
                 <th
-                  className="text-right py-2.5 px-2 font-medium cursor-pointer select-none whitespace-nowrap"
+                  className="text-center py-2.5 px-2 font-medium cursor-pointer select-none whitespace-nowrap"
                   style={{ color: sortKey === 'total' ? D.primary : D.text3, verticalAlign: 'middle' }}
                   onClick={() => toggleSort('total')}
                 >
-                  <span className="inline-flex items-center gap-1">综合分 <SortIcon col="total" /></span>
+                  <span className="inline-flex items-center justify-center gap-1 w-full">综合分 <SortIcon col="total" /></span>
                 </th>
                 {allDims.map(dim => {
                   const meta = DIMENSION_META[dim.key];
                   return (
                     <th
                       key={dim.key}
-                      className="text-right py-2.5 px-2 font-medium cursor-pointer select-none whitespace-nowrap"
+                      className="text-center py-2.5 px-2 font-medium cursor-pointer select-none whitespace-nowrap"
                       style={{ color: sortKey === dim.key ? D.primary : D.text3, verticalAlign: 'middle' }}
                       onClick={() => toggleSort(dim.key)}
                     >
-                      <span className="inline-flex items-center gap-1">{meta?.short ?? dim.name} <SortIcon col={dim.key} /></span>
+                      <span className="inline-flex items-center justify-center gap-1 w-full">{meta?.short ?? dim.name} <SortIcon col={dim.key} /></span>
                       <div className="text-[9px] font-normal" style={{ color: D.text3, opacity: 0.7 }}>权重 {weightPct}%</div>
                     </th>
                   );
