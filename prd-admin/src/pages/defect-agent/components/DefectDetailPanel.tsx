@@ -438,7 +438,7 @@ export function DefectDetailPanel() {
           className={
             isMobile
               ? 'fixed inset-0 z-110 overflow-hidden flex flex-col'
-              : 'fixed top-1/2 left-1/2 z-110 overflow-hidden rounded-2xl flex prd-dialog-content'
+              : 'fixed inset-0 z-110 m-auto overflow-hidden rounded-2xl flex prd-dialog-content'
           }
           style={{
             ...(isMobile
