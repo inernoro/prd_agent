@@ -115,6 +115,7 @@
 |------|------|------|
 | `$schema` | 是 | 必须为 `"cds-config-v1"` |
 | `buildProfiles[].id` | 是 | 非空，唯一 |
+| `buildProfiles[].name` | 是 | 非空，显示名称 |
 | `buildProfiles[].dockerImage` | 是 | 非空 |
 | `buildProfiles[].runCommand` | 是 | 非空 |
 | `buildProfiles[].containerPort` | 是 | 1-65535 |

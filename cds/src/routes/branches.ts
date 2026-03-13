@@ -1198,6 +1198,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         for (let i = 0; i < cfg.buildProfiles.length; i++) {
           const p = cfg.buildProfiles[i] as Record<string, unknown>;
           if (!p.id) errors.push(`buildProfiles[${i}]: 缺少 id`);
+          if (!p.name) errors.push(`buildProfiles[${i}]: 缺少 name`);
           if (!p.dockerImage) errors.push(`buildProfiles[${i}]: 缺少 dockerImage`);
           if (!p.runCommand) errors.push(`buildProfiles[${i}]: 缺少 runCommand`);
           if (p.containerPort !== undefined) {
