@@ -15,12 +15,37 @@ description: 扫描项目结构，自动生成 CDS 一键导入配置 JSON。触
 
 ## 核心理念
 
-1. **零门槛**：非程序员拿到 JSON 就能用，不需要理解 Docker 命令
-2. **全覆盖**：构建配置 + 环境变量 + 基础设施 + 路由，一个 JSON 搞定
+1. **零门槛**：非程序员拿到配置就能用，不需要理解 Docker 命令
+2. **全覆盖**：构建配置 + 环境变量 + 基础设施 + 路由，一个配置搞定
 3. **容错友好**：无法确定的字段用 `"TODO: ..."` 标注，不猜测
-4. **可验证**：生成的 JSON 会被 CDS 的 `/api/import-config` 端点严格验证
+4. **用户主导**：每个阶段的产出必须经过用户确认后才进入下一阶段
+5. **安全执行**：任何 docker 操作必须先检查环境，且只在用户授权后执行
 
-## 执行流程
+## 强制规则（禁止违反）
+
+1. **禁止**：在用户确认前输出最终配置 JSON
+2. **禁止**：在未检查 Docker 可用性前执行 docker 命令
+3. **禁止**：未经用户同意直接执行基础设施初始化命令
+4. **禁止**：猜测用户的数据库密码或密钥
+5. **禁止**：输出超过项目实际需要的 buildProfile（不创建无用配置）
+6. **必须**：先展示扫描结果摘要 → 等用户确认 → 再生成配置
+7. **必须**：基础设施操作前先展示命令 → 等用户选择 → 再执行
+
+## 执行流程总览
+
+```
+Phase 1-4: 静默扫描（不输出任何最终结果）
+    ↓
+Phase 5: 展示扫描摘要 → AskUserQuestion 确认
+    ↓ 用户确认
+Phase 6: 生成最终配置（compose YAML + 导入 JSON）
+    ↓
+Phase 7: AskUserQuestion 询问基础设施初始化
+    ↓ 用户选择
+Phase 8: 按用户选择执行（检查环境 → 执行/输出命令）
+```
+
+---
 
 ### Phase 1：识别项目根目录
 
@@ -32,7 +57,7 @@ git rev-parse --show-toplevel
 
 ### Phase 2：扫描技术栈
 
-按优先级依次扫描以下信号，**每发现一个可部署单元就生成一个 buildProfile**。
+按优先级依次扫描以下信号，**每发现一个可部署单元就记录一个 buildProfile 候选**。
 
 #### 2.1 后端检测
 
@@ -138,8 +163,6 @@ find . -maxdepth 2 -name "docker-compose*.yml" -o -name "compose*.yml"
 2. **没有** `build` 字段（有 build 的是应用服务，即使同时写了 image 也要跳过）
 3. 有 `ports` 声明（无端口的不是 CDS 该管的网络服务）
 
-转换为 CDS 兼容的 compose YAML 格式，并添加 `x-cds-inject` 扩展字段声明注入到应用容器的环境变量。
-
 **Volume 处理规则**：
 
 | Volume 格式 | CDS 支持 | 说明 |
@@ -151,6 +174,8 @@ find . -maxdepth 2 -name "docker-compose*.yml" -o -name "compose*.yml"
 
 **多文件去重规则**：如果项目有多个 compose 文件（如 `cds-compose.yml` + `docker-compose.dev.yml`），
 同 ID 的服务只取第一个发现的版本。优先级：`cds-compose.yml` > `docker-compose.yml` > `docker-compose.dev.yml`。
+
+**`x-cds-inject` 推荐值**（注入到应用容器的环境变量）：
 
 | Docker Compose Service | `x-cds-inject` 推荐值 |
 |------------------------|----------------------|
@@ -166,7 +191,7 @@ find . -maxdepth 2 -name "docker-compose*.yml" -o -name "compose*.yml"
 
 #### 3.2 Compose 兼容性检查
 
-扫描 compose 文件时，检测以下 CDS 不兼容的特性，在输出的「需要手动确认」区域告警：
+扫描 compose 文件时，检测以下 CDS 不兼容的特性，记录到内部告警列表（Phase 5 展示给用户）：
 
 | compose 特性 | CDS 支持状态 | 告警信息 |
 |-------------|-------------|---------|
@@ -201,43 +226,106 @@ grep -rn "ConnectionString" --include="*.json" --include="*.cs" .
 - 密码/密钥类变量值设为 `"TODO: 请填写实际值"`
 - 连接串类变量如果能从 infraServices 推导，使用模板 `"mongodb://172.17.0.1:{{port}}"`
 
-### Phase 5：生成输出
+---
 
-#### 5.1 输出 JSON
+### Phase 5：展示扫描摘要 → 用户确认（关键检查点）
 
-输出完整的 CDS Config JSON（格式见 `doc/design.cds-onboarding.md` 第 3 节）。
+> **这是最重要的阶段**。Phase 1-4 的扫描结果在此处首次展示给用户。
+> **禁止跳过此阶段直接输出配置。**
 
-#### 5.2 附带说明
+#### 5.1 展示格式
 
-在 JSON 之前输出一段简要说明：
+以人类可读的 Markdown 格式输出扫描摘要（**不是 JSON，不是最终配置**）：
 
 ```markdown
-## CDS 配置扫描结果
+## CDS 扫描摘要
 
-**检测到的技术栈**：
-- 后端：.NET 8 (prd-api/)
-- 前端：Vite + React 18 (prd-admin/)
+### 检测到的构建配置 (Build Profiles)
 
-**检测到的基础设施**：
-- MongoDB 7 (来自 docker-compose.dev.yml)
-- Redis 7 (来自 docker-compose.dev.yml)
+| # | ID | 名称 | 技术栈 | 工作目录 | 端口 | 路由前缀 |
+|---|-----|------|--------|---------|------|---------|
+| 1 | api | 后端 API | .NET 8 | prd-api/ | 5000 | /api/ |
+| 2 | web | 前端 | Vite + React 18 | prd-admin/ | 8000 | / |
 
-**需要手动确认**：
-- ⚠️ `Jwt__Secret` 需要填写实际值
-- ⚠️ `COS_SECRET_KEY` 需要填写实际值
+### 检测到的基础设施服务
 
-**使用方法**：
-1. 启动 CDS（后台模式，默认端口 9900）：
-   ```bash
-   cd cds && ./exec_cds.sh --background
-   ```
-2. 打开 CDS Dashboard → http://<服务器IP>:9900
-3. 设置 → 一键导入 → 粘贴下方 JSON → 确认应用
+| # | 服务 | 镜像 | 端口 | 来源文件 |
+|---|------|------|------|---------|
+| 1 | MongoDB | mongo:7 | 27017 | docker-compose.dev.yml |
+| 2 | Redis | redis:7-alpine | 6379 | docker-compose.dev.yml |
+
+### 检测到的环境变量
+
+| 变量名 | 值 | 来源 |
+|--------|-----|------|
+| MongoDB__ConnectionString | mongodb://... | appsettings.json |
+| Jwt__Secret | TODO: 请填写实际值 | appsettings.json |
+
+### ⚠️ 兼容性告警
+
+- `depends_on`: CDS 不保证启动顺序，应用需有重连逻辑
+- ...（Phase 3.2 中记录的告警）
 ```
 
-**注意**：CDS 默认端口为 **9900**（Dashboard）和 **5500**（Gateway），由 `cds.config.json` 的 `masterPort` / `workerPort` 控制。
+#### 5.2 使用 AskUserQuestion 确认
 
-#### 5.3 JSON 输出格式
+展示摘要后，**必须**使用 `AskUserQuestion` 工具询问用户：
+
+**问题**：`扫描完成，以上是检测到的项目配置。请确认是否正确，或需要调整？`
+
+**选项**：
+1. **确认无误，生成配置** — 基于当前扫描结果生成最终的 CDS 配置
+2. **需要调整** — 用户说明要修改的部分（增删 profile、调整端口、修改路由等）
+3. **重新扫描** — 丢弃当前结果，从头开始
+
+**如果用户选择"需要调整"**：根据用户反馈修改对应内容，然后重新展示摘要并再次确认。循环直到用户满意。
+
+---
+
+### Phase 6：生成最终配置
+
+> 只有在 Phase 5 用户明确确认后才执行此阶段。
+
+#### 6.1 生成 compose YAML（基础设施部分）
+
+将确认后的基础设施服务转换为标准 docker-compose 兼容格式的 YAML，添加 `x-cds-inject` 扩展字段。
+
+**先单独展示 compose YAML**，让用户看到基础设施的完整定义：
+
+```yaml
+# CDS 基础设施定义（docker-compose 兼容格式）
+services:
+  mongodb:
+    image: mongo:7
+    ports:
+      - "27017"
+    volumes:
+      - mongodb-data:/data/db
+    healthcheck:
+      test: mongosh --eval "db.runCommand({ping:1})" --quiet
+      interval: 10s
+      retries: 3
+    x-cds-inject:
+      MongoDB__ConnectionString: "mongodb://{{host}}:{{port}}"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379"
+    healthcheck:
+      test: redis-cli ping
+      interval: 10s
+      retries: 3
+    x-cds-inject:
+      Redis__ConnectionString: "{{host}}:{{port}}"
+
+volumes:
+  mongodb-data:
+```
+
+#### 6.2 生成 CDS 导入 JSON
+
+将上面的 compose YAML 和构建配置组合为 CDS 导入 JSON：
 
 ```json
 {
@@ -267,41 +355,61 @@ grep -rn "ConnectionString" --include="*.json" --include="*.cs" .
     }
   ],
   "envVars": { },
-  "infraServices": "services:\n  mongodb:\n    image: mongo:7\n    ports:\n      - \"27017\"\n    volumes:\n      - mongodb-data:/data/db\n    healthcheck:\n      test: mongosh --eval \"db.runCommand({ping:1})\" --quiet\n      interval: 10s\n      retries: 3\n    x-cds-inject:\n      MongoDB__ConnectionString: \"mongodb://{{host}}:{{port}}\"\nvolumes:\n  mongodb-data:",
+  "infraServices": "<上面的 compose YAML 字符串>",
   "routingRules": []
 }
 ```
+
+**`infraServices` 字段说明**：值是 Phase 6.1 的 compose YAML 原文作为字符串嵌入。
+CDS 解析该 YAML 提取带 `image` 字段的服务。`x-cds-inject` 定义注入到应用容器的环境变量。
 
 **`pathPrefixes` 说明**：CDS 代理根据此字段将请求路由到对应 profile 的容器。
 最长前缀优先匹配。`["/"]` 表示兜底处理所有未匹配的路径。
 不填时回退到约定：profile id 含 "api" 自动处理 `/api/*`。
 
-注意：`infraServices` 字段的值是 **compose YAML 字符串**（docker-compose 兼容格式），不再是 JSON 数组。
-CDS 会解析该 YAML 并提取带 `image` 字段的服务。`x-cds-inject` 扩展字段定义注入到应用容器的环境变量。
+#### 6.3 使用说明
 
-### Phase 6：导入后系统初始化（反问用户）
+在配置输出后附带使用说明：
 
-**强制规则**：生成配置 JSON 并输出后，**必须主动反问用户**是否需要帮忙初始化基础设施。
+```markdown
+**使用方法**：
+1. 启动 CDS（后台模式，默认端口 9900）：
+   ```bash
+   cd cds && ./exec_cds.sh --background
+   ```
+2. 打开 CDS Dashboard → http://<服务器IP>:9900
+3. 设置 → 一键导入 → 粘贴上方 JSON → 确认应用
+```
 
-#### 6.1 反问模板
+**注意**：CDS 默认端口为 **9900**（Dashboard）和 **5500**（Gateway），由 `cds.config.json` 的 `masterPort` / `workerPort` 控制。
 
-配置 JSON 输出完成后，使用 `AskUserQuestion` 工具向用户提问：
+---
+
+### Phase 7：询问基础设施初始化
+
+> 配置输出后，**必须**询问用户是否需要初始化基础设施。
+> **禁止**未经询问直接执行任何 docker 命令。
+
+#### 7.1 使用 AskUserQuestion 询问
 
 ```
-配置已生成完毕。导入后，系统依赖的基础设施（如 MongoDB、Redis）需要先启动才能正常使用。
-请问需要我帮你完成以下哪些操作？
+配置已生成完毕。如果你还没有运行中的基础设施（如 MongoDB、Redis），需要先启动它们。
+请问需要我帮你处理吗？
 ```
 
 **选项**：
-1. **帮我初始化全部基础设施** — 自动生成并执行 docker run 命令启动所有检测到的 infra 服务
-2. **只生成初始化命令，我自己执行** — 输出可复制的 shell 命令，用户自行在服务器上运行
-3. **不需要，我已经有现成的数据库** — 跳过，仅提醒用户在 CDS 环境变量中填写正确的连接地址
+1. **只生成初始化命令，我自己执行** — 输出可复制的 shell 命令（**安全默认选项**）
+2. **帮我初始化全部基础设施** — 检查 Docker 环境后自动执行
+3. **不需要，我已有现成的数据库** — 跳过，仅提醒填写正确的连接地址
 
-#### 6.2 初始化命令生成规则
+#### 7.2 初始化命令生成规则
 
 根据 `infraServices` 中检测到的服务，生成对应的 docker 启动命令：
 
 ```bash
+# 前置：创建 Docker 网络（已存在则忽略）
+docker network create cds-network 2>/dev/null || true
+
 # 示例：MongoDB
 docker run -d \
   --name cds-mongodb \
@@ -323,20 +431,29 @@ docker run -d \
   redis:7 redis-server --appendonly yes
 ```
 
-**前置命令**（始终包含）：
+---
+
+### Phase 8：执行初始化（仅当用户选择"帮我初始化"）
+
+> **关键前提**：此阶段只在用户明确选择"帮我初始化"时才进入。
+
+#### 8.1 环境检查（必须先于任何 docker 命令）
+
 ```bash
-# 创建 Docker 网络（已存在则忽略）
-docker network create cds-network 2>/dev/null || true
+# 检查 Docker 是否可用
+docker info > /dev/null 2>&1
 ```
 
-#### 6.3 初始化失败处理
+**如果 Docker 不可用**：
+- 输出错误信息，停止执行
+- 提示用户安装 Docker 或检查权限
+- 回退到"只生成命令"模式，输出命令让用户在有 Docker 的环境执行
 
-如果用户选择"帮我初始化"但执行失败：
-1. 输出错误信息，诊断失败原因（端口占用、Docker 未安装、权限不足等）
-2. 提供修复建议
-3. 提示用户可以**重试**：重新执行失败的命令即可，已成功的服务不受影响
+#### 8.2 执行初始化
 
-#### 6.4 健康检查
+逐个执行 Phase 7.2 中生成的命令，每个命令执行后检查结果。
+
+#### 8.3 健康检查
 
 初始化完成后，逐个验证服务是否正常运行：
 
@@ -348,7 +465,16 @@ docker exec cds-mongodb mongosh --eval "db.adminCommand('ping')" 2>/dev/null && 
 docker exec cds-redis redis-cli ping 2>/dev/null && echo "✅ Redis OK" || echo "❌ Redis 未就绪"
 ```
 
-### Phase 7：异常处理
+#### 8.4 初始化失败处理
+
+如果执行失败：
+1. 输出错误信息，诊断失败原因（端口占用、Docker 未安装、权限不足等）
+2. 提供修复建议
+3. 提示用户可以**重试**：重新执行失败的命令即可，已成功的服务不受影响
+
+---
+
+### Phase 9：异常处理
 
 | 场景 | 处理 |
 |------|------|
@@ -364,8 +490,7 @@ docker exec cds-redis redis-cli ping 2>/dev/null && echo "✅ Redis OK" || echo 
 1. **必须**：每个 `buildProfile` 都要有 `runCommand`，不能为空
 2. **必须**：`$schema` 固定为 `"cds-config-v1"`
 3. **必须**：敏感值不输出明文，用 `"TODO: ..."` 替代
-4. **禁止**：猜测用户的数据库密码或密钥
-5. **禁止**：输出超过项目实际需要的 buildProfile（不创建无用配置）
+4. **必须**：Phase 6 同时展示 compose YAML 原文和导入 JSON，让用户清楚看到基础设施定义
 
 ## 关联文档
 
