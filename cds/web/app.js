@@ -1617,11 +1617,15 @@ async function infraDiscover() {
       return;
     }
 
-    // Show discovered services for user to pick
+    // Show discovered services for user to pick (deduplicate by ID, first file wins)
     const allServices = [];
+    const seenIds = new Set();
     for (const entry of discovered) {
       for (const svc of entry.services) {
-        allServices.push({ ...svc, fromFile: entry.file });
+        if (!seenIds.has(svc.id)) {
+          seenIds.add(svc.id);
+          allServices.push({ ...svc, fromFile: entry.file });
+        }
       }
     }
 

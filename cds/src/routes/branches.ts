@@ -1214,9 +1214,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
       defs = parseComposeString(composeYaml);
     } else {
       const composeFiles = discoverComposeFiles(config.repoRoot);
+      const seenIds = new Set<string>();
       for (const file of composeFiles) {
         try {
-          defs.push(...parseComposeFile(file));
+          for (const def of parseComposeFile(file)) {
+            if (!seenIds.has(def.id)) {
+              seenIds.add(def.id);
+              defs.push(def);
+            }
+          }
         } catch { /* skip */ }
       }
     }

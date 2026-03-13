@@ -91,8 +91,9 @@ export function parseComposeFile(filePath: string): ComposeServiceDef[] {
   const results: ComposeServiceDef[] = [];
 
   for (const [serviceId, entry] of Object.entries(doc.services)) {
-    // Skip services without an image (they use build — these are app services)
-    if (!entry.image) continue;
+    // Skip services that use build (they are app services, not infrastructure)
+    // Also skip services without an image
+    if (entry.build || !entry.image) continue;
 
     const containerPort = extractContainerPort(entry.ports);
     if (!containerPort) continue; // No port = not a network service CDS should manage
