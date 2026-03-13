@@ -19,6 +19,7 @@ import { getAdminNotifications, getMobileFeed, getMobileStats } from '@/services
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
 import type { FeedItem, MobileStats } from '@/services/contracts/mobile';
 import { resolveAvatarUrl } from '@/lib/avatar';
+import { UserAvatar } from '@/components/ui/UserAvatar';
 
 /* ── 快捷 Agent 入口 ── */
 interface QuickAgent {
@@ -103,7 +104,7 @@ export default function MobileHomePage() {
         {/* ── 问候区 ── */}
         <div className="flex items-center gap-3 mb-6">
           {avatarUrl ? (
-            <img src={avatarUrl} className="w-11 h-11 rounded-full object-cover" alt="" />
+            <UserAvatar src={avatarUrl} className="w-11 h-11 rounded-full object-cover" />
           ) : (
             <div
               className="w-11 h-11 rounded-full flex items-center justify-center text-sm font-semibold"

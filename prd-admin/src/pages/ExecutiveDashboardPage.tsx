@@ -28,6 +28,7 @@ import type {
 } from '@/services/contracts/executive';
 import type { EChartsOption } from 'echarts';
 import { resolveAvatarUrl } from '@/lib/avatar';
+import { UserAvatar } from '@/components/ui/UserAvatar';
 import { Tooltip } from '@/components/ui/Tooltip';
 
 // ─── Enterprise Dashboard Design Tokens ──────────────────────────────
@@ -477,7 +478,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
               >
                 <span className="text-[15px] flex-shrink-0">{mc.medal}</span>
                 {u.avatarFileName ? (
-                  <img src={resolveAvatarUrl({ avatarFileName: u.avatarFileName })} className="w-7 h-7 rounded-full object-cover flex-shrink-0 ring-1 ring-white/5" alt="" />
+                  <UserAvatar src={resolveAvatarUrl({ avatarFileName: u.avatarFileName })} className="w-7 h-7 rounded-full object-cover flex-shrink-0 ring-1 ring-white/5" />
                 ) : (
                   <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0"
                     style={{ background: `${roleColor}22`, color: roleColor }}>{u.displayName[0]}</div>
@@ -549,7 +550,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                     <td className="py-2.5 pr-4" style={{ verticalAlign: 'middle' }}>
                       <div className="flex items-center gap-2">
                         {user.avatarFileName ? (
-                          <img src={resolveAvatarUrl({ avatarFileName: user.avatarFileName })} className="w-6 h-6 rounded-full object-cover ring-1 ring-white/5" alt="" />
+                          <UserAvatar src={resolveAvatarUrl({ avatarFileName: user.avatarFileName })} className="w-6 h-6 rounded-full object-cover ring-1 ring-white/5" />
                         ) : (
                           <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold"
                             style={{ background: `${roleColor}22`, color: roleColor }}>
@@ -643,7 +644,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                           {mc ? <span className="text-[12px]">{mc.medal}</span> : <span className="text-[10px] tabular-nums" style={{ color: D.text3 }}>{idx + 1}</span>}
                         </span>
                         {u.avatarFileName ? (
-                          <img src={resolveAvatarUrl({ avatarFileName: u.avatarFileName })} className="w-5 h-5 rounded-full object-cover flex-shrink-0" alt="" />
+                          <UserAvatar src={resolveAvatarUrl({ avatarFileName: u.avatarFileName })} className="w-5 h-5 rounded-full object-cover flex-shrink-0" />
                         ) : (
                           <div className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold flex-shrink-0"
                             style={{ background: `${roleColor}22`, color: roleColor }}>{u.displayName[0]}</div>

@@ -4,7 +4,8 @@ import { glassPanel } from '@/lib/glassStyles';
 import { getUserProfile, getUserAuthz, getSystemRoles } from '@/services';
 import type { UserProfileResponse } from '@/services/contracts/adminUsers';
 import type { AdminUserAuthzSnapshot, SystemRoleDto } from '@/services/contracts/authz';
-import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
+import { resolveAvatarUrl } from '@/lib/avatar';
+import { UserAvatar } from '@/components/ui/UserAvatar';
 import { Users2, Zap, Clock, Image, Eye, ChevronDown, ChevronUp, Shield, Pencil, Bug, Palette, BookOpen, FileText, LayoutDashboard, Settings, Database, ScrollText, Store, Droplets, Type, ImageIcon } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
@@ -260,7 +261,6 @@ export function UserProfilePopover({
     avatarFileName: avatarFileName ?? null,
     avatarUrl,
   });
-  const fallbackSrc = resolveNoHeadAvatarUrl();
   
   const currentRole = profile?.role || role || 'DEV';
   const roleCfg = roleIconConfig[currentRole] || roleIconConfig.DEV;
@@ -320,17 +320,10 @@ export function UserProfilePopover({
                   }}
                   title="点击修改头像"
                 >
-                  <img
+                  <UserAvatar
                     src={avatarSrc}
                     alt="avatar"
                     className="h-full w-full object-cover transition-opacity group-hover:opacity-80"
-                    onError={(e) => {
-                      const el = e.currentTarget;
-                      if (el.getAttribute('data-fallback-applied') === '1') return;
-                      if (!fallbackSrc) return;
-                      el.setAttribute('data-fallback-applied', '1');
-                      el.src = fallbackSrc;
-                    }}
                   />
                   {/* 编辑悬浮层 */}
                   <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity">

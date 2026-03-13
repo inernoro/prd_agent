@@ -1,5 +1,13 @@
 import { useAuthStore } from '@/stores/authStore';
 
+/**
+ * 内联 SVG 默认头像（data URI）
+ * 当 CDN 头像加载失败时的终极兜底，无需网络请求，永不失败。
+ * 设计：深色圆形底 + 靛紫描边 + 半透明用户剪影，匹配项目液态玻璃视觉风格。
+ */
+const _DEFAULT_AVATAR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="32" fill="#18182a"/><circle cx="32" cy="32" r="30.5" fill="none" stroke="#6366f1" stroke-opacity=".25" stroke-width="1.2"/><circle cx="32" cy="25" r="8" fill="#6366f1" fill-opacity=".5"/><path d="M18 53c0-10 6-15 14-15s14 5 14 15" fill="#6366f1" fill-opacity=".5"/></svg>`;
+export const DEFAULT_AVATAR_FALLBACK = `data:image/svg+xml,${encodeURIComponent(_DEFAULT_AVATAR_SVG)}`;
+
 export const AVATAR_PATH_PREFIX = 'icon/backups/head';
 export const DEFAULT_BOT_AVATAR_FILES: Record<string, string> = {
   pm: 'bot_pm.gif',

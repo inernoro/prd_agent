@@ -41,6 +41,7 @@ import {
   Bot,
 } from 'lucide-react';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
+import { UserAvatar } from '@/components/ui/UserAvatar';
 
 const statusLabels: Record<string, string> = {
   [DefectStatus.Draft]: '草稿',
@@ -1001,7 +1002,7 @@ export function DefectDetailPanel() {
                           }}
                         >
                           {avatarSrc ? (
-                            <img src={avatarSrc} alt={displayName} className="w-full h-full object-cover" />
+                            <UserAvatar src={avatarSrc} alt={displayName} className="w-full h-full object-cover" />
                           ) : isAssistant ? (
                             <Bot size={12} style={{ color: 'rgba(100,180,255,0.9)' }} />
                           ) : (
