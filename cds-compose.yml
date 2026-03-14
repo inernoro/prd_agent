@@ -30,6 +30,13 @@ services:
       Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT}"
       Jwt__Secret: "TODO: 请填写实际值"
       Jwt__Issuer: prdagent
+      ASSETS_PROVIDER: tencentCos
+      TENCENT_COS_BUCKET: "TODO: 请填写实际值"
+      TENCENT_COS_REGION: "TODO: 请填写实际值"
+      TENCENT_COS_SECRET_ID: "TODO: 请填写实际值"
+      TENCENT_COS_SECRET_KEY: "TODO: 请填写实际值"
+      TENCENT_COS_PUBLIC_BASE_URL: "TODO: 请填写实际值"
+      TENCENT_COS_PREFIX: data
     labels:
       cds.path-prefix: "/api/"
 
@@ -50,7 +57,7 @@ services:
   # ── Infrastructure Services ──
 
   mongodb:
-    image: mongo:7
+    image: mongo:8.0
     ports:
       - "27017"
     volumes:
