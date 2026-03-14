@@ -73,6 +73,10 @@ export class ContainerService {
     // which is fine for dev environments.
     if (profile.dockerImage.startsWith('node:')) {
       mergedEnv['PNPM_HOME'] = mergedEnv['PNPM_HOME'] || '/pnpm';
+      // Move pnpm content-addressable store outside /app (bind mount).
+      // Without this, pnpm creates /app/.pnpm-store and Vite watches all those files,
+      // exhausting the kernel inotify limit (ENOSPC).
+      mergedEnv['PNPM_STORE_DIR'] = mergedEnv['PNPM_STORE_DIR'] || '/pnpm/store';
       // Ensure pnpm binary is on PATH after corepack enable
       const currentPath = mergedEnv['PATH'] || '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
       if (!currentPath.includes('/pnpm')) {
