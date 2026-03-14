@@ -1537,6 +1537,7 @@ async function applyImportConfig() {
 
 async function importAndInit() {
   const textarea = document.getElementById('importConfigTextarea');
+  if (!textarea) return;
   const raw = textarea.value.trim();
   if (!raw) return;
 
@@ -1640,12 +1641,17 @@ async function importAndInit() {
     // Refresh data in background
     await Promise.all([loadProfiles(), loadEnvVars(), loadInfraServices(), loadRoutingRules(), loadBranches()]);
   } catch (e) {
-    resultEl.style.display = 'block';
-    resultEl.innerHTML = `
-      <div style="color:#f85149;font-weight:600;margin-bottom:4px">初始化失败</div>
-      <div style="color:#f85149;font-size:12px;margin-bottom:8px">${esc(e.message)}</div>
-      <button class="sm" onclick="closeConfigModal()">关闭</button>
-    `;
+    if (resultEl) {
+      resultEl.style.display = 'block';
+      resultEl.innerHTML = `
+        <div style="color:#f85149;font-weight:600;margin-bottom:4px">初始化失败</div>
+        <div style="color:#f85149;font-size:12px;margin-bottom:8px">${esc(e.message)}</div>
+        <button class="sm" onclick="closeConfigModal()">关闭</button>
+      `;
+    } else {
+      showToast('初始化失败: ' + e.message, 'error');
+      closeConfigModal();
+    }
   }
 }
 
