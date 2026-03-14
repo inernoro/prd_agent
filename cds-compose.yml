@@ -1,6 +1,11 @@
 # CDS Compose 配置 — 由 /cds-scan 自动生成
 # 导入方式：CDS Dashboard → 设置 → 一键导入 → 粘贴此内容
 
+x-cds-project:
+  name: prd_agent
+  description: "PRD Agent 全栈项目 (.NET 8 + React 18 + Tauri 2.0)"
+  repo: https://github.com/inernoro/prd_agent.git
+
 services:
   # ── App Services ──
 
