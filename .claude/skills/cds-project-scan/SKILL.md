@@ -24,7 +24,9 @@ description: Scans project structure and generates CDS (Cloud Dev Space) compose
 4. **禁止**猜测密码/密钥，用 `"TODO: 请填写实际值"` 替代
 5. **禁止**创建项目实际不需要的 buildProfile
 6. **必须**先展示扫描摘要 → 用户确认 → 再生成配置
-7. **必须**输出纯标准 docker-compose YAML，零自定义扩展
+7. **必须**输出标准 docker-compose YAML + CDS 扩展（`x-cds-project`、`x-cds-env`）
+8. **必须**区分全局环境变量（放 `x-cds-env`）和服务特有变量（放 `services.*.environment`），禁止重复声明
+9. **必须**在 `x-cds-project` 中包含 `name`、`description`、`repo`（git remote URL）
 
 ## 执行流程
 
@@ -70,6 +72,16 @@ grep -rn "mongodb://\|redis://\|ConnectionString" --include="*.json" --include="
 
 敏感值 → `"TODO: 请填写实际值"`；连接串可从 infraServices 推导 → 使用 `${CDS_HOST}:${CDS_<SERVICE>_PORT}` 模板
 
+**分类规则（禁止重复声明）**：
+
+| 归属 | 放置位置 | 示例 |
+|------|----------|------|
+| 全局共享（所有容器都需要） | `x-cds-env` | COS 凭证、PAT、密码、AI_ACCESS_KEY |
+| 服务特有（仅该服务使用） | `services.*.environment` | ASPNETCORE_ENVIRONMENT、连接串模板 |
+| 两处都有引用的 | 仅放 `x-cds-env`，服务用 `${VAR}` 引用 | `Jwt__Secret: "${JWT_SECRET}"` |
+
+CDS 运行时会自动将 `x-cds-env` 注入所有容器（优先级低于 `services.*.environment`），因此全局变量**禁止**在 `environment` 中重复声明。
+
 ### Phase 5: 展示摘要 → 用户确认
 
 > **关键检查点。禁止跳过。**
@@ -109,10 +121,12 @@ grep -rn "mongodb://\|redis://\|ConnectionString" --include="*.json" --include="
 
 ### Phase 6: 生成 CDS Compose YAML
 
-纯标准 docker-compose 格式，通过约定自动推断：
+标准 docker-compose 格式 + CDS 扩展，通过约定自动推断：
 
 | 约定 | 含义 |
 |------|------|
+| `x-cds-project` | 项目元数据（name, description, repo） |
+| `x-cds-env` | 全局共享环境变量（注入所有容器） |
 | 有相对路径 volume mount（`./xxx:/app`） | **App 服务** |
 | 无相对路径 mount + 有 ports | **基础设施** |
 | `depends_on` | 启动顺序 |
@@ -120,6 +134,11 @@ grep -rn "mongodb://\|redis://\|ConnectionString" --include="*.json" --include="
 | `${CDS_HOST}` / `${CDS_<SERVICE>_PORT}` | 运行时替换 |
 
 命名规则：`CDS_` + 服务名大写（连字符转下划线）+ `_PORT`
+
+**环境变量分层原则**：
+- `x-cds-env`：全局共享变量（凭证、密钥、第三方服务配置），CDS 自动注入所有容器
+- `services.*.environment`：仅该服务特有的变量（框架配置、连接串模板）
+- 禁止同一变量在两处重复声明；如需引用全局变量，用 `${VAR_NAME}` 模板语法
 
 配置后附带使用说明：
 ```
@@ -142,7 +161,26 @@ grep -rn "mongodb://\|redis://\|ConnectionString" --include="*.json" --include="
 # CDS Compose 配置 — 由 /cds-scan 自动生成
 # 导入方式：CDS Dashboard → 设置 → 一键导入 → 粘贴此内容
 
+x-cds-project:
+  name: prd_agent
+  description: "PRD Agent 全栈项目 (.NET 8 + React 18 + Tauri 2.0)"
+  repo: https://github.com/inernoro/prd_agent.git
+
+# 全局共享环境变量 — CDS 自动注入所有容器，禁止在 services.*.environment 中重复
+x-cds-env:
+  ASSETS_PROVIDER: tencentCos
+  TENCENT_COS_BUCKET: "TODO: 请填写实际值"
+  TENCENT_COS_REGION: "TODO: 请填写实际值"
+  TENCENT_COS_SECRET_ID: "TODO: 请填写实际值"
+  TENCENT_COS_SECRET_KEY: "TODO: 请填写实际值"
+  TENCENT_COS_PUBLIC_BASE_URL: "TODO: 请填写实际值"
+  TENCENT_COS_PREFIX: data
+  JWT_SECRET: "TODO: 请填写实际值"
+  AI_ACCESS_KEY: "TODO: 请填写实际值"
+
 services:
+  # ── App Services (有相对路径 volume mount) ──
+
   api:
     image: mcr.microsoft.com/dotnet/sdk:8.0
     working_dir: /app
@@ -158,10 +196,13 @@ services:
       mongodb: { condition: service_healthy }
       redis: { condition: service_healthy }
     environment:
+      # 仅服务特有变量，全局变量已由 x-cds-env 注入
       ASPNETCORE_ENVIRONMENT: Development
       MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
       MongoDB__DatabaseName: prdagent
       Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT}"
+      Jwt__Secret: "${JWT_SECRET}"
+      Jwt__Issuer: prdagent
     labels:
       cds.path-prefix: "/api/"
 
@@ -179,8 +220,10 @@ services:
     labels:
       cds.path-prefix: "/"
 
+  # ── Infrastructure Services (无相对路径 mount) ──
+
   mongodb:
-    image: mongo:7
+    image: mongo:8.0
     ports:
       - "27017"
     volumes:
@@ -194,6 +237,8 @@ services:
     image: redis:7-alpine
     ports:
       - "6379"
+    volumes:
+      - redis-data:/data
     healthcheck:
       test: redis-cli ping
       interval: 10s
@@ -201,6 +246,7 @@ services:
 
 volumes:
   mongodb-data:
+  redis-data:
 ```
 
 ## 端到端示例
@@ -216,11 +262,13 @@ volumes:
 
 **Phase 3**: 从 `docker-compose.dev.yml` 提取 MongoDB (27017) + Redis (6379)
 
-**Phase 4**: 从 `appsettings.json` 提取连接串，`Jwt__Secret` 标记 TODO
+**Phase 4**: 从 `appsettings.json` 提取连接串 + COS 凭证 + JWT 密钥，分类为：
+- 全局（→ `x-cds-env`）：COS 凭证、JWT_SECRET、AI_ACCESS_KEY
+- 服务特有（→ `api.environment`）：ASPNETCORE_ENVIRONMENT、连接串模板
 
-**Phase 5**: 展示摘要表 → 用户确认 "确认无误"
+**Phase 5**: 展示摘要表（含环境变量分类列）→ 用户确认 "确认无误"
 
-**Phase 6**: 生成上方 YAML → 附带使用说明
+**Phase 6**: 生成含 `x-cds-project` + `x-cds-env` + services 的完整 YAML → 附带使用说明
 
 **Phase 7**: 输出 CDS 导入说明（CDS Dashboard 自动管理基础设施）
 
@@ -237,10 +285,13 @@ volumes:
 ## 质量规则
 
 1. 每个 App 服务必须有 `command` 字段
-2. 输出格式为标准 docker-compose YAML
+2. 输出格式为标准 docker-compose YAML + CDS 扩展（`x-cds-project`、`x-cds-env`）
 3. 敏感值用 `"TODO: ..."` 替代
 4. 基础设施端口引用使用 `${CDS_<SERVICE>_PORT}` 格式
 5. App 服务必须有相对路径 volume mount
+6. 必须包含 `x-cds-project`（name + description + repo）
+7. 全局环境变量放 `x-cds-env`，服务特有变量放 `services.*.environment`，禁止重复
+8. 服务引用全局变量时使用 `${VAR_NAME}` 模板语法（如 `Jwt__Secret: "${JWT_SECRET}"`）
 
 ## 关联文档
 
