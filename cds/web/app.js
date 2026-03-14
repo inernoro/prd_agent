@@ -1581,7 +1581,7 @@ async function importAndInit() {
   }
 
   try {
-    const res = await fetch(apiBase + '/import-and-init', {
+    const res = await fetch(API + '/import-and-init', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ config }),
@@ -1652,7 +1652,7 @@ async function importAndInit() {
 async function exportConfig() {
   try {
     // Fetch as YAML (primary format)
-    const resp = await fetch(apiBase + '/export-config?format=yaml');
+    const resp = await fetch(API + '/export-config?format=yaml');
     if (!resp.ok) throw new Error('导出失败');
     const yamlText = await resp.text();
 
