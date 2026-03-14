@@ -2931,7 +2931,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     value={it.draftText}
                     onChange={(e) => {
                       const v = e.target.value;
-                      setMarkerRunItems((prev) => prev.map((x) => (x.markerIndex === it.markerIndex ? { ...x, draftText: v } : x)));
+                      setMarkerRunItems((prev) => prev.map((x) => (x.markerIndex === it.markerIndex ? { ...x, draftText: v, planItem: null } : x)));
                     }}
                     className="mt-1.5 w-full rounded-[10px] px-2.5 py-1.5 text-[12px] outline-none resize-none prd-field"
                     style={{ minHeight: 56 }}

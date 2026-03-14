@@ -41,12 +41,13 @@ export function Dialog({
         <DialogPrimitive.Content
           {...(description ? {} : ({ 'aria-describedby': undefined } as const))}
           className={[
-            'fixed z-110 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[92vw] max-h-[90vh] rounded-[22px] p-6 flex flex-col prd-dialog-content',
+            'fixed inset-0 z-110 m-auto h-fit w-[92vw] rounded-[22px] p-6 flex flex-col prd-dialog-content',
             contentClassName ?? '',
           ].join(' ')}
           style={{
             ...glassPanel,
             maxWidth: typeof maxWidth === 'number' ? `${maxWidth}px` : (maxWidth ?? '520px'),
+            maxHeight: 'calc(100vh - 48px)',
             ...contentStyle,
           }}
         >
@@ -78,7 +79,7 @@ export function Dialog({
             </div>
           </div>
 
-          <div className="mt-5 flex-1 min-h-0">{content}</div>
+          <div className="mt-5 flex-1 min-h-0 overflow-y-auto">{content}</div>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

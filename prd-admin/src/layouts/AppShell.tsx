@@ -49,7 +49,8 @@ import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { Dialog } from '@/components/ui/Dialog';
 import { MobileDrawer } from '@/components/ui/MobileDrawer';
 import { MobileTabBar } from '@/components/ui/MobileTabBar';
-import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
+import { resolveAvatarUrl } from '@/lib/avatar';
+import { UserAvatar } from '@/components/ui/UserAvatar';
 import { getAdminNotifications, handleAdminNotification, handleAllAdminNotifications, updateMyAvatar, uploadMyAvatar } from '@/services';
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
 import { GlobalDefectSubmitDialog, DefectSubmitButton } from '@/components/ui/GlobalDefectSubmitDialog';
@@ -529,16 +530,17 @@ export default function AppShell() {
           {/* 用户信息 */}
           <div className="px-4 py-3 flex items-center gap-3">
             <div className="h-10 w-10 rounded-full overflow-hidden shrink-0 ring-1 ring-white/10">
-              {(() => {
-                const url = resolveAvatarUrl({
+              <UserAvatar
+                src={resolveAvatarUrl({
                   username: user?.username,
                   userType: user?.userType,
                   botKind: user?.botKind,
                   avatarFileName: user?.avatarFileName ?? null,
                   avatarUrl: user?.avatarUrl,
-                });
-                return <img src={url} alt="avatar" className="h-full w-full object-cover" />;
-              })()}
+                })}
+                alt="avatar"
+                className="h-full w-full object-cover"
+              />
             </div>
             <div className="min-w-0 flex-1">
               <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
@@ -687,30 +689,17 @@ export default function AppShell() {
                       className="h-9 w-9 rounded-full overflow-hidden shrink-0 ring-1 ring-white/10 hover:ring-indigo-400/30 transition-colors duration-200"
                       style={{ boxShadow: '0 0 0 1px rgba(99, 102, 241, 0.1), 0 2px 12px rgba(0, 0, 0, 0.2)' }}
                     >
-                      {(() => {
-                        const url = resolveAvatarUrl({
+                      <UserAvatar
+                        src={resolveAvatarUrl({
                           username: user?.username,
                           userType: user?.userType,
                           botKind: user?.botKind,
                           avatarFileName: user?.avatarFileName ?? null,
                           avatarUrl: user?.avatarUrl,
-                        });
-                        const fallback = resolveNoHeadAvatarUrl();
-                        return (
-                          <img
-                            src={url}
-                            alt="avatar"
-                            className="h-full w-full object-cover"
-                            onError={(e) => {
-                              const el = e.currentTarget;
-                              if (el.getAttribute('data-fallback-applied') === '1') return;
-                              if (!fallback) return;
-                              el.setAttribute('data-fallback-applied', '1');
-                              el.src = fallback;
-                            }}
-                          />
-                        );
-                      })()}
+                        })}
+                        alt="avatar"
+                        className="h-full w-full object-cover"
+                      />
                     </div>
                     
                     {/* 用户信息（仅展开时显示） */}
@@ -742,30 +731,17 @@ export default function AppShell() {
                       className="h-10 w-10 rounded-full overflow-hidden shrink-0"
                       style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255, 255, 255, 0.08)' }}
                     >
-                      {(() => {
-                        const url = resolveAvatarUrl({
+                      <UserAvatar
+                        src={resolveAvatarUrl({
                           username: user?.username,
                           userType: user?.userType,
                           botKind: user?.botKind,
                           avatarFileName: user?.avatarFileName ?? null,
                           avatarUrl: user?.avatarUrl,
-                        });
-                        const fallback = resolveNoHeadAvatarUrl();
-                        return (
-                          <img
-                            src={url}
-                            alt="avatar"
-                            className="h-full w-full object-cover"
-                            onError={(e) => {
-                              const el = e.currentTarget;
-                              if (el.getAttribute('data-fallback-applied') === '1') return;
-                              if (!fallback) return;
-                              el.setAttribute('data-fallback-applied', '1');
-                              el.src = fallback;
-                            }}
-                          />
-                        );
-                      })()}
+                        })}
+                        alt="avatar"
+                        className="h-full w-full object-cover"
+                      />
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="text-[14px] font-bold truncate" style={{ color: 'var(--text-primary)' }}>

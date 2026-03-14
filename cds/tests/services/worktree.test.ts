@@ -43,7 +43,7 @@ describe('WorktreeService', () => {
         exitCode: 128,
       }));
 
-      await expect(service.create('bad-branch', '/tmp/wt/bad')).rejects.toThrow('fetch');
+      await expect(service.create('bad-branch', '/tmp/wt/bad')).rejects.toThrow('拉取分支');
     });
 
     it('should throw if worktree add fails', async () => {
@@ -55,7 +55,7 @@ describe('WorktreeService', () => {
         exitCode: 128,
       }));
 
-      await expect(service.create('dup', '/tmp/wt/dup')).rejects.toThrow('worktree');
+      await expect(service.create('dup', '/tmp/wt/dup')).rejects.toThrow('创建工作树');
     });
   });
 
@@ -121,7 +121,7 @@ describe('WorktreeService', () => {
         stdout: '', stderr: 'fatal: network error', exitCode: 128,
       }));
 
-      await expect(service.pull('bad', '/tmp/wt/bad')).rejects.toThrow('fetch');
+      await expect(service.pull('bad', '/tmp/wt/bad')).rejects.toThrow('拉取失败');
     });
 
     it('should throw if reset fails', async () => {
@@ -131,7 +131,7 @@ describe('WorktreeService', () => {
         stdout: '', stderr: 'fatal: ambiguous argument', exitCode: 1,
       }));
 
-      await expect(service.pull('bad', '/tmp/wt/bad')).rejects.toThrow('reset');
+      await expect(service.pull('bad', '/tmp/wt/bad')).rejects.toThrow('重置失败');
     });
   });
 

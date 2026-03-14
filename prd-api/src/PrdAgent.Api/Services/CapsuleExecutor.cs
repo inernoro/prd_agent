@@ -2083,22 +2083,94 @@ public static class CapsuleExecutor
         var strategy = GetConfigString(node, "merge_strategy") ?? GetConfigString(node, "mergeStrategy") ?? "concat";
 
         string merged;
-        if (strategy == "json-array")
+        var validArtifacts = inputArtifacts.Where(a => !string.IsNullOrWhiteSpace(a.InlineContent)).ToList();
+
+        switch (strategy)
         {
-            var items = inputArtifacts
-                .Where(a => !string.IsNullOrWhiteSpace(a.InlineContent))
-                .Select(a => a.InlineContent!)
-                .ToList();
-            merged = JsonSerializer.Serialize(items, JsonCompact);
-        }
-        else
-        {
-            merged = string.Join("\n---\n", inputArtifacts
-                .Where(a => !string.IsNullOrWhiteSpace(a.InlineContent))
-                .Select(a => a.InlineContent));
+            case "object":
+            {
+                // 合并为对象 { input1: ..., input2: ..., input3: ... }
+                // 按输入产物名称或序号作为 key，解析 JSON 值
+                var obj = new System.Text.Json.Nodes.JsonObject();
+                for (var i = 0; i < validArtifacts.Count; i++)
+                {
+                    var key = !string.IsNullOrWhiteSpace(validArtifacts[i].Name)
+                        ? validArtifacts[i].Name
+                        : $"input{i + 1}";
+                    try
+                    {
+                        var parsed = System.Text.Json.Nodes.JsonNode.Parse(validArtifacts[i].InlineContent!);
+                        obj[key] = parsed;
+                    }
+                    catch
+                    {
+                        obj[key] = validArtifacts[i].InlineContent;
+                    }
+                }
+                merged = obj.ToJsonString(JsonPretty);
+                break;
+            }
+            case "array":
+            {
+                // 合并为数组 [ a, b, c ]
+                var arr = new System.Text.Json.Nodes.JsonArray();
+                foreach (var a in validArtifacts)
+                {
+                    try
+                    {
+                        var parsed = System.Text.Json.Nodes.JsonNode.Parse(a.InlineContent!);
+                        arr.Add(parsed);
+                    }
+                    catch
+                    {
+                        arr.Add(a.InlineContent);
+                    }
+                }
+                merged = arr.ToJsonString(JsonPretty);
+                break;
+            }
+            case "concat":
+            {
+                // 拼接数组元素 [ ...a, ...b ]
+                var arr = new System.Text.Json.Nodes.JsonArray();
+                foreach (var a in validArtifacts)
+                {
+                    try
+                    {
+                        var parsed = System.Text.Json.Nodes.JsonNode.Parse(a.InlineContent!);
+                        if (parsed is System.Text.Json.Nodes.JsonArray jsonArr)
+                        {
+                            foreach (var item in jsonArr)
+                                arr.Add(item?.DeepClone());
+                        }
+                        else
+                        {
+                            arr.Add(parsed);
+                        }
+                    }
+                    catch
+                    {
+                        arr.Add(a.InlineContent);
+                    }
+                }
+                merged = arr.ToJsonString(JsonPretty);
+                break;
+            }
+            case "json-array":
+            {
+                var items = validArtifacts.Select(a => a.InlineContent!).ToList();
+                merged = JsonSerializer.Serialize(items, JsonCompact);
+                break;
+            }
+            default:
+            {
+                // 旧兼容：纯文本拼接
+                merged = string.Join("\n---\n", validArtifacts.Select(a => a.InlineContent));
+                break;
+            }
         }
 
-        var logs = $"Data merger: strategy={strategy}, sources={inputArtifacts.Count}\n";
+        var logs = $"Data merger: strategy={strategy}, sources={validArtifacts.Count}\n";
         var artifact = MakeTextArtifact(node, "merged-data", "合并结果", merged);
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs);
     }

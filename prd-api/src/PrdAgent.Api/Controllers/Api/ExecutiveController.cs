@@ -27,13 +27,13 @@ public class ExecutiveController : ControllerBase
     /// 全局概览 KPI
     /// </summary>
     [HttpGet("overview")]
-    public async Task<IActionResult> GetOverview([FromQuery] int days = 7)
+    public async Task<IActionResult> GetOverview([FromQuery] int days = 0)
     {
-        days = Math.Clamp(days, 1, 30);
+        if (days < 0) days = 0;
         var now = DateTime.UtcNow;
         var today = now.Date;
-        var periodStart = today.AddDays(-days + 1);
-        var prevPeriodStart = periodStart.AddDays(-days);
+        var periodStart = days > 0 ? today.AddDays(-days + 1) : DateTime.MinValue;
+        var prevPeriodStart = days > 0 ? periodStart.AddDays(-days) : DateTime.MinValue;
 
         // 用户统计
         var totalUsers = await _db.Users.CountDocumentsAsync(_ => true);
@@ -104,9 +104,10 @@ public class ExecutiveController : ControllerBase
     /// 每日使用趋势
     /// </summary>
     [HttpGet("trends")]
-    public async Task<IActionResult> GetTrends([FromQuery] int days = 30)
+    public async Task<IActionResult> GetTrends([FromQuery] int days = 90)
     {
-        days = Math.Clamp(days, 7, 90);
+        if (days <= 0) days = 90; // 趋势图不支持全部时间，默认 90 天
+        days = Math.Clamp(days, 7, 365);
         var startDate = DateTime.UtcNow.Date.AddDays(-days + 1);
 
         // 消息按天 (合并三个消息集合)
@@ -146,10 +147,10 @@ public class ExecutiveController : ControllerBase
     /// 团队成员洞察
     /// </summary>
     [HttpGet("team")]
-    public async Task<IActionResult> GetTeam([FromQuery] int days = 7)
+    public async Task<IActionResult> GetTeam([FromQuery] int days = 0)
     {
-        days = Math.Clamp(days, 1, 30);
-        var periodStart = DateTime.UtcNow.Date.AddDays(-days + 1);
+        if (days < 0) days = 0;
+        var periodStart = days > 0 ? DateTime.UtcNow.Date.AddDays(-days + 1) : DateTime.MinValue;
 
         var users = await _db.Users.Find(_ => true).ToListAsync();
         var result = new List<object>();
@@ -208,10 +209,10 @@ public class ExecutiveController : ControllerBase
     /// Agent 使用统计
     /// </summary>
     [HttpGet("agents")]
-    public async Task<IActionResult> GetAgents([FromQuery] int days = 7)
+    public async Task<IActionResult> GetAgents([FromQuery] int days = 0)
     {
-        days = Math.Clamp(days, 1, 30);
-        var periodStart = DateTime.UtcNow.Date.AddDays(-days + 1);
+        if (days < 0) days = 0;
+        var periodStart = days > 0 ? DateTime.UtcNow.Date.AddDays(-days + 1) : DateTime.MinValue;
 
         // 已知 Agent 路由前缀 → appKey 映射
         var agentRoutePrefixes = new Dictionary<string, string>
@@ -336,10 +337,10 @@ public class ExecutiveController : ControllerBase
     /// 模型使用统计
     /// </summary>
     [HttpGet("models")]
-    public async Task<IActionResult> GetModels([FromQuery] int days = 7)
+    public async Task<IActionResult> GetModels([FromQuery] int days = 0)
     {
-        days = Math.Clamp(days, 1, 30);
-        var periodStart = DateTime.UtcNow.Date.AddDays(-days + 1);
+        if (days < 0) days = 0;
+        var periodStart = days > 0 ? DateTime.UtcNow.Date.AddDays(-days + 1) : DateTime.MinValue;
 
         var logs = await _db.LlmRequestLogs
             .Find(l => l.StartedAt >= periodStart && l.Model != null)
@@ -371,10 +372,14 @@ public class ExecutiveController : ControllerBase
     /// 排行榜矩阵 — 每个用户在每个维度的使用量
     /// </summary>
     [HttpGet("leaderboard")]
-    public async Task<IActionResult> GetLeaderboard([FromQuery] int days = 7)
+    public async Task<IActionResult> GetLeaderboard([FromQuery] int days = 0)
     {
-        days = Math.Clamp(days, 1, 30);
-        var periodStart = DateTime.UtcNow.Date.AddDays(-days + 1);
+        // days=0 表示全部时间, >0 表示最近 N 天
+        if (days < 0) days = 0;
+        var now = DateTime.UtcNow;
+        var today = now.Date;
+        // periodStart: days=0 → 不限时间(用 MinValue), >0 → 最近 N 天
+        var periodStart = days > 0 ? today.AddDays(-days + 1) : DateTime.MinValue;
 
         // 所有非 Bot 用户
         var allUsers = await _db.Users.Find(_ => true).ToListAsync();
@@ -558,7 +563,24 @@ public class ExecutiveController : ControllerBase
         dimensions.Add(new { key = "images", name = "图片生成", category = "activity", values = imageByUser });
         dimensions.Add(new { key = "groups", name = "加入群组", category = "activity", values = groupsByUser });
 
-        return Ok(ApiResponse<object>.Ok(new { users = userList, dimensions }));
+        // 计算实际天数: days>0 时等于 days; days=0 时从最早的 LLM 日志到今天
+        int totalDays;
+        if (days > 0)
+        {
+            totalDays = days;
+        }
+        else
+        {
+            var earliest = await _db.LlmRequestLogs
+                .Find(_ => true)
+                .SortBy(l => l.StartedAt)
+                .Limit(1)
+                .Project(l => l.StartedAt)
+                .FirstOrDefaultAsync();
+            totalDays = earliest != default ? Math.Max(1, (int)(today - earliest.Date).TotalDays + 1) : 1;
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { users = userList, dimensions, totalDays }));
     }
 
     private static string ResolveAgentName(string appKey) => appKey switch

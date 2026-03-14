@@ -13,7 +13,7 @@ import {
   type MarketplaceCardContext,
 } from '@/components/config-management';
 import {
-  Plus, Trash2, Edit2, Check, Image as ImageIcon, CheckCircle2, Sparkles, Hand, User
+  Plus, Trash2, Edit2, Check, Image as ImageIcon, CheckCircle2, Sparkles, Hand
 } from 'lucide-react';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
@@ -41,6 +41,7 @@ import {
 import type { LiteraryPrompt, MarketplaceLiteraryPrompt } from '@/services/contracts/literaryPrompts';
 import type { ReferenceImageConfig, MarketplaceReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
 import type { MarketplaceWatermarkConfig } from '@/services/contracts/watermark';
+import { UserAvatar } from '@/components/ui/UserAvatar';
 
 export interface ConfigManagementDialogHandle {
   open: () => void;
@@ -313,13 +314,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
     // ========== 渲染辅助函数 ==========
     const renderAuthorInfo = (avatarUrl?: string | null, userName?: string) => (
       <div className="flex items-center gap-1.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>
-        {avatarUrl ? (
-          <img src={avatarUrl} alt="" className="w-4 h-4 rounded-full object-cover" />
-        ) : (
-          <div className="w-4 h-4 rounded-full bg-gray-600 flex items-center justify-center">
-            <User size={10} />
-          </div>
-        )}
+        <UserAvatar src={avatarUrl || ''} className="w-4 h-4 rounded-full object-cover" />
         <span>{userName || '未知用户'} 发布</span>
       </div>
     );

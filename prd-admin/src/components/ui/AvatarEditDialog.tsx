@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
 import { Dialog } from '@/components/ui/Dialog';
-import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
+import { resolveAvatarUrl } from '@/lib/avatar';
+import { UserAvatar } from '@/components/ui/UserAvatar';
 import { Button } from '@/components/design/Button';
 import { uploadUserAvatar } from '@/services';
 import type { ApiResponse } from '@/types/api';
@@ -38,7 +39,6 @@ export function AvatarEditDialog(props: {
       avatarFileName: v || null,
     });
   }, [avatarFileName, props.username, props.userType]);
-  const fallbackUrl = useMemo(() => resolveNoHeadAvatarUrl(), []);
 
   const acceptHint = 'image/png,image/jpeg,image/gif,image/webp';
 
@@ -83,17 +83,10 @@ export function AvatarEditDialog(props: {
               style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-subtle)' }}
               title={previewUrl || ''}
             >
-              <img
+              <UserAvatar
                 src={previewUrl}
                 alt="avatar"
                 className="h-full w-full object-cover"
-                onError={(e) => {
-                  const el = e.currentTarget;
-                  if (el.getAttribute('data-fallback-applied') === '1') return;
-                  if (!fallbackUrl) return;
-                  el.setAttribute('data-fallback-applied', '1');
-                  el.src = fallbackUrl;
-                }}
               />
             </div>
 

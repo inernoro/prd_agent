@@ -1,5 +1,6 @@
-import { memo } from 'react';
-import { getBezierPath, type EdgeProps } from '@xyflow/react';
+import { memo, useState } from 'react';
+import { getBezierPath, EdgeLabelRenderer, type EdgeProps } from '@xyflow/react';
+import { Plus } from 'lucide-react';
 
 // ═══════════════════════════════════════════════════════════════
 // FlowEdge — 有灵魂的连线
@@ -24,6 +25,10 @@ export interface FlowEdgeData {
   status?: string;
   /** 可选：源节点的 accentHue，让连线继承舱的色彩 */
   sourceHue?: number;
+  /** 点击 "+" 按钮时的回调 */
+  onAddNode?: (edgeId: string, position: { x: number; y: number }) => void;
+  /** edge id */
+  edgeId?: string;
 }
 
 type FlowEdgeType = EdgeProps & { data?: FlowEdgeData };
@@ -66,11 +71,12 @@ function edgeColors(status: string, hue?: number) {
 }
 
 function FlowEdgeInner(props: FlowEdgeType) {
-  const { sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data } = props;
+  const { id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data } = props;
   const status = data?.status || 'idle';
   const sourceHue = data?.sourceHue;
+  const [hovered, setHovered] = useState(false);
 
-  const [edgePath] = getBezierPath({
+  const [edgePath, labelX, labelY] = getBezierPath({
     sourceX, sourceY, targetX, targetY,
     sourcePosition, targetPosition,
   });
@@ -82,105 +88,139 @@ function FlowEdgeInner(props: FlowEdgeType) {
   const isError = status === 'error';
 
   return (
-    <g>
-      {/* ── 第 1 层：辉光底层 ── */}
-      <path
-        d={edgePath}
-        fill="none"
-        stroke={colors.glow}
-        strokeWidth={colors.glowWidth}
-        strokeLinecap="round"
-        style={{ filter: isTransferring ? 'blur(4px)' : 'blur(3px)' }}
-      />
-
-      {/* ── 第 2 层：主线 ── */}
-      <path
-        d={edgePath}
-        fill="none"
-        stroke={colors.main}
-        strokeWidth={colors.width}
-        strokeLinecap="round"
-        strokeDasharray={isIdle ? '8 6' : isError ? '4 4' : '0'}
+    <>
+      <g
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
       >
-        {/* 静态时：虚线沿路径缓缓流动，暗示数据流向 */}
-        {isIdle && (
-          <animate
-            attributeName="stroke-dashoffset"
-            from="0"
-            to="-28"
-            dur="3s"
-            repeatCount="indefinite"
-          />
+        {/* 透明宽路径用于扩大 hover 热区 */}
+        <path
+          d={edgePath}
+          fill="none"
+          stroke="transparent"
+          strokeWidth={20}
+        />
+
+        {/* ── 第 1 层：辉光底层 ── */}
+        <path
+          d={edgePath}
+          fill="none"
+          stroke={colors.glow}
+          strokeWidth={colors.glowWidth}
+          strokeLinecap="round"
+          style={{ filter: isTransferring ? 'blur(4px)' : 'blur(3px)' }}
+        />
+
+        {/* ── 第 2 层：主线 ── */}
+        <path
+          d={edgePath}
+          fill="none"
+          stroke={colors.main}
+          strokeWidth={colors.width}
+          strokeLinecap="round"
+          strokeDasharray={isIdle ? '8 6' : isError ? '4 4' : '0'}
+        >
+          {/* 静态时：虚线沿路径缓缓流动，暗示数据流向 */}
+          {isIdle && (
+            <animate
+              attributeName="stroke-dashoffset"
+              from="0"
+              to="-28"
+              dur="3s"
+              repeatCount="indefinite"
+            />
+          )}
+          {/* 错误态：微弱抖动 */}
+          {isError && (
+            <animate
+              attributeName="stroke-dashoffset"
+              from="0"
+              to="-8"
+              dur="0.8s"
+              repeatCount="indefinite"
+            />
+          )}
+        </path>
+
+        {/* ── 第 3 层：传输态粒子 ── */}
+        {isTransferring && (
+          <g>
+            {/* 主粒子 — 明亮，领头 */}
+            <circle r="3.5" fill="rgba(59,130,246,0.95)" filter="url(#particleGlow)">
+              <animateMotion dur="1.8s" repeatCount="indefinite" path={edgePath} />
+            </circle>
+            {/* 次粒子 — 中等亮度，跟随 */}
+            <circle r="2.5" fill="rgba(59,130,246,0.6)">
+              <animateMotion dur="1.8s" repeatCount="indefinite" path={edgePath} begin="0.6s" />
+            </circle>
+            {/* 尾粒子 — 暗淡，拖尾 */}
+            <circle r="2" fill="rgba(59,130,246,0.3)">
+              <animateMotion dur="1.8s" repeatCount="indefinite" path={edgePath} begin="1.2s" />
+            </circle>
+            {/* 微粒子 — 星尘感 */}
+            <circle r="1.5" fill="rgba(147,197,253,0.4)">
+              <animateMotion dur="1.8s" repeatCount="indefinite" path={edgePath} begin="0.3s" />
+            </circle>
+            <circle r="1" fill="rgba(147,197,253,0.25)">
+              <animateMotion dur="1.8s" repeatCount="indefinite" path={edgePath} begin="0.9s" />
+            </circle>
+
+            {/* 粒子发光滤镜 */}
+            <defs>
+              <filter id="particleGlow" x="-50%" y="-50%" width="200%" height="200%">
+                <feGaussianBlur stdDeviation="2" result="blur" />
+                <feComposite in="SourceGraphic" in2="blur" operator="over" />
+              </filter>
+            </defs>
+          </g>
         )}
-        {/* 错误态：微弱抖动 */}
-        {isError && (
-          <animate
-            attributeName="stroke-dashoffset"
-            from="0"
-            to="-8"
-            dur="0.8s"
-            repeatCount="indefinite"
-          />
+
+        {/* ── 完成态：一次性脉冲波 ── */}
+        {isDone && (
+          <g>
+            {/* 绿色光球沿线走完 */}
+            <circle r="4" fill="rgba(34,197,94,0.7)" opacity="0">
+              <animateMotion dur="1s" repeatCount="1" fill="freeze" path={edgePath} />
+              <animate attributeName="opacity" values="0;0.9;0.9;0" dur="1s" repeatCount="1" fill="freeze" />
+              <animate attributeName="r" values="2;6;3" dur="1s" repeatCount="1" fill="freeze" />
+            </circle>
+            {/* 完成后沿线残留的微光 */}
+            <path
+              d={edgePath}
+              fill="none"
+              stroke="rgba(34,197,94,0.08)"
+              strokeWidth="12"
+              strokeLinecap="round"
+              style={{ filter: 'blur(6px)' }}
+              opacity="0"
+            >
+              <animate attributeName="opacity" values="0;0.6;0.3" dur="1.5s" repeatCount="1" fill="freeze" />
+            </path>
+          </g>
         )}
-      </path>
+      </g>
 
-      {/* ── 第 3 层：传输态粒子 ── */}
-      {isTransferring && (
-        <g>
-          {/* 主粒子 — 明亮，领头 */}
-          <circle r="3.5" fill="rgba(59,130,246,0.95)" filter="url(#particleGlow)">
-            <animateMotion dur="1.8s" repeatCount="indefinite" path={edgePath} />
-          </circle>
-          {/* 次粒子 — 中等亮度，跟随 */}
-          <circle r="2.5" fill="rgba(59,130,246,0.6)">
-            <animateMotion dur="1.8s" repeatCount="indefinite" path={edgePath} begin="0.6s" />
-          </circle>
-          {/* 尾粒子 — 暗淡，拖尾 */}
-          <circle r="2" fill="rgba(59,130,246,0.3)">
-            <animateMotion dur="1.8s" repeatCount="indefinite" path={edgePath} begin="1.2s" />
-          </circle>
-          {/* 微粒子 — 星尘感 */}
-          <circle r="1.5" fill="rgba(147,197,253,0.4)">
-            <animateMotion dur="1.8s" repeatCount="indefinite" path={edgePath} begin="0.3s" />
-          </circle>
-          <circle r="1" fill="rgba(147,197,253,0.25)">
-            <animateMotion dur="1.8s" repeatCount="indefinite" path={edgePath} begin="0.9s" />
-          </circle>
-
-          {/* 粒子发光滤镜 */}
-          <defs>
-            <filter id="particleGlow" x="-50%" y="-50%" width="200%" height="200%">
-              <feGaussianBlur stdDeviation="2" result="blur" />
-              <feComposite in="SourceGraphic" in2="blur" operator="over" />
-            </filter>
-          </defs>
-        </g>
-      )}
-
-      {/* ── 完成态：一次性脉冲波 ── */}
-      {isDone && (
-        <g>
-          {/* 绿色光球沿线走完 */}
-          <circle r="4" fill="rgba(34,197,94,0.7)" opacity="0">
-            <animateMotion dur="1s" repeatCount="1" fill="freeze" path={edgePath} />
-            <animate attributeName="opacity" values="0;0.9;0.9;0" dur="1s" repeatCount="1" fill="freeze" />
-            <animate attributeName="r" values="2;6;3" dur="1s" repeatCount="1" fill="freeze" />
-          </circle>
-          {/* 完成后沿线残留的微光 */}
-          <path
-            d={edgePath}
-            fill="none"
-            stroke="rgba(34,197,94,0.08)"
-            strokeWidth="12"
-            strokeLinecap="round"
-            style={{ filter: 'blur(6px)' }}
-            opacity="0"
+      {/* ── "+" 按钮：hover 连线中点时浮现 ── */}
+      {hovered && data?.onAddNode && (
+        <EdgeLabelRenderer>
+          <button
+            className="edge-add-button nodrag nopan"
+            style={{
+              position: 'absolute',
+              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+              pointerEvents: 'all',
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              data.onAddNode!(id, { x: labelX, y: labelY });
+            }}
+            title="在此处插入节点"
           >
-            <animate attributeName="opacity" values="0;0.6;0.3" dur="1.5s" repeatCount="1" fill="freeze" />
-          </path>
-        </g>
+            <Plus className="w-3 h-3" />
+          </button>
+        </EdgeLabelRenderer>
       )}
-    </g>
+    </>
   );
 }
 

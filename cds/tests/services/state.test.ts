@@ -70,7 +70,7 @@ describe('StateService', () => {
         services: {}, status: 'idle' as const, createdAt: '2026-02-12T00:00:00Z',
       };
       service.addBranch(entry);
-      expect(() => service.addBranch(entry)).toThrow('already exists');
+      expect(() => service.addBranch(entry)).toThrow('已存在');
     });
   });
 
@@ -87,7 +87,7 @@ describe('StateService', () => {
 
     it('should throw if branch does not exist', () => {
       service.load();
-      expect(() => service.removeBranch('nonexistent')).toThrow('not found');
+      expect(() => service.removeBranch('nonexistent')).toThrow('不存在');
     });
 
     it('should clear defaultBranch if removing the default', () => {
@@ -170,7 +170,7 @@ describe('StateService', () => {
     it('should throw on duplicate profile id', () => {
       const p = { id: 'api', name: 'API', dockerImage: 'x', workDir: '.', runCommand: 'x', containerPort: 8080 };
       service.addBuildProfile(p);
-      expect(() => service.addBuildProfile(p)).toThrow('already exists');
+      expect(() => service.addBuildProfile(p)).toThrow('已存在');
     });
 
     it('should update and remove profiles', () => {

@@ -5,6 +5,7 @@ import { AgentShowcase, agents, parseGlowColor } from './sections/AgentShowcase'
 import { FeatureBento } from './sections/FeatureBento';
 import { SocialProof } from './sections/SocialProof';
 import { CtaFooter } from './sections/CtaFooter';
+import { DownloadSection } from './sections/DownloadSection';
 import { StarfieldBackground } from './components/StarfieldBackground';
 
 // MAP Logo component using official favicon
@@ -120,7 +121,10 @@ export default function LandingPage() {
               <a href="#testimonials" className="text-sm text-white/65 hover:text-white transition-colors">
                 案例
               </a>
-              <a href="#" className="text-sm text-white/65 hover:text-white transition-colors">
+              <a href="#download" className="text-sm text-white/65 hover:text-white transition-colors">
+                下载
+              </a>
+              <a href="https://github.com/inernoro/prd_agent" target="_blank" rel="noopener noreferrer" className="text-sm text-white/65 hover:text-white transition-colors">
                 文档
               </a>
             </div>
@@ -189,7 +193,8 @@ export default function LandingPage() {
                 { label: '产品', href: '#agent-showcase' },
                 { label: '功能', href: '#features' },
                 { label: '案例', href: '#testimonials' },
-                { label: '文档', href: '#' },
+                { label: '下载', href: '#download' },
+                { label: '文档', href: 'https://github.com/inernoro/prd_agent' },
               ].map((item) => (
                 <a
                   key={item.label}
@@ -242,6 +247,9 @@ export default function LandingPage() {
       <div id="testimonials">
         <SocialProof />
       </div>
+
+      {/* Download section */}
+      <DownloadSection />
 
       {/* CTA footer */}
       <CtaFooter onGetStarted={handleGetStarted} onContact={handleContact} />

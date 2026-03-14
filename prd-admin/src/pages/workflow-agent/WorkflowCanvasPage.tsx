@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Loader2, AlertCircle, ArrowLeft } from 'lucide-react';
 import { getWorkflow, listExecutions } from '@/services';
@@ -11,6 +11,10 @@ import { WorkflowCanvas } from './WorkflowCanvas';
  * 路径: /workflow-agent/:workflowId/canvas
  *
  * 负责加载 workflow 数据后传给 WorkflowCanvas 渲染。
+ *
+ * 导航策略：ReactFlow 内部有 53+ 个 zustand useSyncExternalStore 订阅，
+ * 在 React 18 并发模式下会阻塞 React Router 的 location 状态传播。
+ * 因此导航前先卸载 ReactFlow（设 unmounting=true），等一帧后再 navigate()。
  */
 export function WorkflowCanvasPage() {
   const { workflowId } = useParams<{ workflowId: string }>();
@@ -18,6 +22,24 @@ export function WorkflowCanvasPage() {
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
   const [execution, setExecution] = useState<WorkflowExecution | null>(null);
   const [loading, setLoading] = useState(true);
+  // 先卸载 ReactFlow 再导航，避免 zustand store 阻塞 React Router
+  const [unmounting, setUnmounting] = useState(false);
+  const pendingNav = useRef<string | null>(null);
+
+  const safeNavigate = useCallback((path: string) => {
+    pendingNav.current = path;
+    setUnmounting(true);
+  }, []);
+
+  // unmounting 变为 true → ReactFlow 已卸载 → 下一帧执行 navigate
+  useEffect(() => {
+    if (!unmounting || !pendingNav.current) return;
+    const target = pendingNav.current;
+    const raf = requestAnimationFrame(() => {
+      navigate(target);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [unmounting, navigate]);
 
   useEffect(() => {
     if (!workflowId) return;
@@ -39,11 +61,13 @@ export function WorkflowCanvasPage() {
     })();
   }, [workflowId]);
 
-  if (loading) {
+  if (loading || unmounting) {
     return (
       <div className="h-full flex items-center justify-center">
         <Loader2 className="w-5 h-5 animate-spin" style={{ color: 'var(--text-muted)' }} />
-        <span className="ml-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>加载画布...</span>
+        <span className="ml-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+          {unmounting ? '返回中...' : '加载画布...'}
+        </span>
       </div>
     );
   }
@@ -53,7 +77,7 @@ export function WorkflowCanvasPage() {
       <div className="h-full flex flex-col items-center justify-center gap-4">
         <AlertCircle className="w-8 h-8" style={{ color: 'rgba(239,68,68,0.6)' }} />
         <span className="text-[13px]" style={{ color: 'var(--text-muted)' }}>工作流不存在</span>
-        <Button variant="secondary" size="sm" onClick={() => navigate('/workflow-agent')}>
+        <Button variant="secondary" size="sm" onClick={() => safeNavigate('/workflow-agent')}>
           <ArrowLeft className="w-4 h-4" /> 返回列表
         </Button>
       </div>
@@ -64,7 +88,7 @@ export function WorkflowCanvasPage() {
     <WorkflowCanvas
       workflow={workflow}
       execution={execution}
-      onBack={() => navigate(`/workflow-agent/${workflowId}`)}
+      onBack={() => safeNavigate(`/workflow-agent/${workflowId}`)}
       onSaved={(wf) => setWorkflow(wf)}
     />
   );
