@@ -3,6 +3,7 @@ import {
   Database, Globe, Brain, Code2, Filter, Merge, Repeat, BarChart3,
   Clock, GitBranch,
   FileText, Download, Send, Bell, Box, AppWindow, GlobeLock, Mail,
+  Video, PenTool,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -196,6 +197,48 @@ export const CAPSULE_TYPE_REGISTRY: Record<string, CapsuleTypeDef> = {
     testable: true,
   },
 
+  // ──────── 短视频工作流类 ────────
+  'douyin-parser': {
+    typeKey: 'douyin-parser',
+    name: '短视频解析',
+    description: '解析抖音/TikTok 分享链接，提取无水印视频地址和元数据',
+    Icon: Video,
+    emoji: '🎬',
+    category: 'processor',
+    accentHue: 350,
+    testable: true,
+  },
+  'video-downloader': {
+    typeKey: 'video-downloader',
+    name: '视频下载到 COS',
+    description: '将视频 URL 下载到 COS 对象存储，返回稳定地址',
+    Icon: Download,
+    emoji: '📥',
+    category: 'processor',
+    accentHue: 190,
+    testable: true,
+  },
+  'video-to-text': {
+    typeKey: 'video-to-text',
+    name: '视频内容转文本',
+    description: '将视频标题/描述/字幕提取为结构化文本',
+    Icon: FileText,
+    emoji: '📝',
+    category: 'processor',
+    accentHue: 260,
+    testable: true,
+  },
+  'text-to-copywriting': {
+    typeKey: 'text-to-copywriting',
+    name: '文本转文案',
+    description: 'LLM 将视频内容改写为指定风格的营销/分享文案',
+    Icon: PenTool,
+    emoji: '✍️',
+    category: 'processor',
+    accentHue: 320,
+    testable: true,
+  },
+
   // ──────── 流程控制类 ────────
   'delay': {
     typeKey: 'delay',
@@ -354,6 +397,8 @@ const ICON_MAP: Record<string, LucideIcon> = {
   'globe-lock': GlobeLock,
   'zap': Zap,
   'mail': Mail,
+  'video': Video,
+  'pen-tool': PenTool,
 };
 
 const EMOJI_MAP: Record<string, string> = {
@@ -380,6 +425,10 @@ const EMOJI_MAP: Record<string, string> = {
   'event-trigger': '⚡',
   'site-publisher': '🌐',
   'email-sender': '📧',
+  'douyin-parser': '🎬',
+  'video-downloader': '📥',
+  'video-to-text': '📝',
+  'text-to-copywriting': '✍️',
 };
 
 const CATEGORY_EMOJI: Record<string, string> = {

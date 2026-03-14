@@ -1083,6 +1083,309 @@ result = { status: pass ? "pass" : "fail", pass: pass, report: report.join("\\n"
 };
 
 // ═══════════════════════════════════════════════════════════════
+// 模板 5: 短视频一键解析工作流
+// ═══════════════════════════════════════════════════════════════
+//
+// 拓扑图：
+//   👆 手动触发（输入视频链接）
+//     ↓
+//   🔀 链接特征检测（条件判断：是否为抖音/TikTok 链接）
+//     ↓ true                         ↓ false
+//   🎬 抖音解析                    🌐 HTTP 请求（通用）
+//     ↓                               ↓
+//   📥 视频下载到 COS ←───────────────┘
+//     ↓
+//   📝 视频内容转文本
+//     ↓
+//   ✍️ 文本转文案
+//     ↓
+//   📧 邮件发送
+//
+
+const videoWorkflowTemplate: WorkflowTemplate = {
+  id: 'video-link-pipeline',
+  name: '短视频一键解析工作流',
+  description: '输入短视频链接 → 自动识别平台 → 解析视频信息 → 下载到 COS → 提取文本 → 生成文案 → 邮件发送。支持抖音/TikTok/快手/B站等链接自动检测',
+  icon: '🎬',
+  tags: ['video', 'douyin', 'tiktok', 'pipeline', 'email'],
+  requiredInputs: [
+    {
+      key: 'tikHubApiKey',
+      label: 'TikHub API 密钥',
+      type: 'password',
+      placeholder: 'Bearer xxx 或直接粘贴 API Key',
+      helpTip: '从 tikhub.io 获取的 API 密钥，用于解析短视频链接',
+      required: true,
+    },
+    {
+      key: 'toEmail',
+      label: '接收邮箱',
+      type: 'text',
+      placeholder: 'your@email.com',
+      helpTip: '文案生成后自动发送到该邮箱',
+      required: true,
+    },
+    {
+      key: 'copyStyle',
+      label: '文案风格',
+      type: 'select',
+      required: false,
+      defaultValue: 'share',
+      options: [
+        { value: 'share', label: '分享推荐（轻松口语）' },
+        { value: 'marketing', label: '营销推广（吸引点击）' },
+        { value: 'summary', label: '内容摘要（简洁客观）' },
+        { value: 'xiaohongshu', label: '小红书风格（emoji+种草）' },
+        { value: 'professional', label: '专业分析（正式报告）' },
+      ],
+    },
+    {
+      key: 'videoUrl',
+      label: '视频链接（可选，也可执行时输入）',
+      type: 'text',
+      placeholder: 'https://v.douyin.com/xxxxxx/',
+      helpTip: '抖音/TikTok/快手/B站分享链接。留空则在执行时手动输入',
+      required: false,
+    },
+  ],
+  build: (inputs) => {
+    _edgeIdx = 0;
+
+    const tikHubApiKey = inputs.tikHubApiKey || '';
+    const toEmail = inputs.toEmail || '';
+    const copyStyle = inputs.copyStyle || 'share';
+    const videoUrl = inputs.videoUrl || '';
+
+    const nodes: WorkflowNode[] = [
+      // ─── 触发 ───
+      {
+        nodeId: 'n-trigger',
+        name: '输入视频链接',
+        nodeType: 'manual-trigger',
+        config: { inputPrompt: '请粘贴短视频分享链接（抖音/TikTok/快手/B站等）' },
+        inputSlots: [],
+        outputSlots: [{ slotId: 'manual-out', name: 'input', dataType: 'json', required: true }],
+        position: { x: 80, y: 300 },
+      },
+      // ─── 链接特征检测 ───
+      {
+        nodeId: 'n-detect',
+        name: '链接特征检测',
+        nodeType: 'script-executor',
+        config: {
+          language: 'javascript',
+          code: `// 自动识别链接平台并路由
+var url = "";
+if (typeof data === "string") url = data.trim();
+else if (data && data.videoUrl) url = data.videoUrl;
+else if (data && data.url) url = data.url;
+else if (data && data.link) url = data.link;
+else if (data && data.variables) {
+  // 手动触发时从 variables 中查找
+  var vars = data.variables || {};
+  url = vars.videoUrl || vars.url || vars.link || vars.input || "";
+}
+// 如果还没找到，尝试从整个 data 中搜索 URL
+if (!url && typeof data === "object") {
+  var str = JSON.stringify(data);
+  var match = str.match(/https?:\\/\\/[^\\s"']+/);
+  if (match) url = match[0];
+}
+
+var lower = url.toLowerCase();
+var platform = "unknown";
+var isDouyin = false;
+
+// 抖音
+if (lower.indexOf("douyin.com") >= 0 || lower.indexOf("iesdouyin.com") >= 0) {
+  platform = "douyin"; isDouyin = true;
+}
+// TikTok
+else if (lower.indexOf("tiktok.com") >= 0) {
+  platform = "tiktok"; isDouyin = true;
+}
+// 快手
+else if (lower.indexOf("kuaishou.com") >= 0 || lower.indexOf("gifshow.com") >= 0) {
+  platform = "kuaishou";
+}
+// B站
+else if (lower.indexOf("bilibili.com") >= 0 || lower.indexOf("b23.tv") >= 0) {
+  platform = "bilibili";
+}
+// 小红书
+else if (lower.indexOf("xiaohongshu.com") >= 0 || lower.indexOf("xhslink.com") >= 0) {
+  platform = "xiaohongshu";
+}
+// YouTube
+else if (lower.indexOf("youtube.com") >= 0 || lower.indexOf("youtu.be") >= 0) {
+  platform = "youtube";
+}
+// 西瓜视频
+else if (lower.indexOf("ixigua.com") >= 0) {
+  platform = "xigua"; isDouyin = true;
+}
+
+result = {
+  videoUrl: url,
+  platform: platform,
+  isDouyinLike: isDouyin,
+  detected: platform !== "unknown",
+  message: platform !== "unknown"
+    ? "识别为 " + platform + " 平台链接"
+    : "未识别平台，将尝试通用解析"
+};`,
+          timeoutSeconds: '5',
+        },
+        inputSlots: [{ slotId: 'script-in', name: 'input', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'script-out', name: 'output', dataType: 'json', required: true }],
+        position: { x: 350, y: 300 },
+      },
+      // ─── 条件判断：是否为抖音/TikTok 系列 ───
+      {
+        nodeId: 'n-cond',
+        name: '是否支持 TikHub 解析',
+        nodeType: 'condition',
+        config: {
+          field: 'isDouyinLike',
+          operator: '==',
+          value: 'true',
+        },
+        inputSlots: [{ slotId: 'cond-in', name: 'input', dataType: 'json', required: true }],
+        outputSlots: [
+          { slotId: 'cond-true', name: 'true', dataType: 'json', required: true },
+          { slotId: 'cond-false', name: 'false', dataType: 'json', required: true },
+        ],
+        position: { x: 620, y: 300 },
+      },
+      // ─── 抖音解析（true 分支）───
+      {
+        nodeId: 'n-douyin',
+        name: '抖音/TikTok 解析',
+        nodeType: 'douyin-parser',
+        config: {
+          apiBaseUrl: 'https://tikhub.io/api/douyin',
+          apiKey: tikHubApiKey,
+          videoUrl: videoUrl,
+        },
+        inputSlots: [{ slotId: 'dp-in', name: 'input', dataType: 'json', required: false }],
+        outputSlots: [{ slotId: 'dp-out', name: 'videoInfo', dataType: 'json', required: true }],
+        position: { x: 920, y: 180 },
+      },
+      // ─── 通用 HTTP 解析（false 分支：其他平台暂用直连下载）───
+      {
+        nodeId: 'n-generic',
+        name: '通用链接预处理',
+        nodeType: 'script-executor',
+        config: {
+          language: 'javascript',
+          code: `// 其他平台：直接包装为标准 videoInfo 格式
+var url = (data && data.videoUrl) || "";
+var platform = (data && data.platform) || "unknown";
+result = {
+  platform: platform,
+  originalUrl: url,
+  videoUrl: url,
+  title: "来自 " + platform + " 的视频",
+  description: "通过通用链接导入",
+  author: "",
+};`,
+          timeoutSeconds: '5',
+        },
+        inputSlots: [{ slotId: 'script-in', name: 'input', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'script-out', name: 'output', dataType: 'json', required: true }],
+        position: { x: 920, y: 420 },
+      },
+      // ─── 数据合并（两条分支汇合）───
+      {
+        nodeId: 'n-merge',
+        name: '合并视频信息',
+        nodeType: 'data-merger',
+        config: { mergeStrategy: 'object' },
+        inputSlots: [
+          { slotId: 'merge-in-1', name: 'input1', dataType: 'json', required: true },
+          { slotId: 'merge-in-2', name: 'input2', dataType: 'json', required: true },
+        ],
+        outputSlots: [{ slotId: 'merge-out', name: 'merged', dataType: 'json', required: true }],
+        position: { x: 1200, y: 300 },
+      },
+      // ─── 视频下载到 COS ───
+      {
+        nodeId: 'n-download',
+        name: '视频下载到 COS',
+        nodeType: 'video-downloader',
+        config: { timeoutSeconds: '120' },
+        inputSlots: [{ slotId: 'vd-in', name: 'videoInfo', dataType: 'json', required: false }],
+        outputSlots: [{ slotId: 'vd-out', name: 'result', dataType: 'json', required: true }],
+        position: { x: 1480, y: 300 },
+      },
+      // ─── 视频内容转文本 ───
+      {
+        nodeId: 'n-to-text',
+        name: '视频内容转文本',
+        nodeType: 'video-to-text',
+        config: { extractMode: 'metadata' },
+        inputSlots: [{ slotId: 'vt-in', name: 'videoInfo', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'vt-out', name: 'textContent', dataType: 'json', required: true }],
+        position: { x: 1760, y: 300 },
+      },
+      // ─── 文本转文案 ───
+      {
+        nodeId: 'n-copy',
+        name: '生成文案',
+        nodeType: 'text-to-copywriting',
+        config: {
+          style: copyStyle,
+          maxLength: '500',
+          includeHashtags: 'true',
+        },
+        inputSlots: [{ slotId: 'tc-in', name: 'textContent', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'tc-out', name: 'copywriting', dataType: 'json', required: true }],
+        position: { x: 2040, y: 300 },
+      },
+      // ─── 邮件发送 ───
+      {
+        nodeId: 'n-email',
+        name: '发送文案邮件',
+        nodeType: 'email-sender',
+        config: {
+          toEmail: toEmail,
+          subject: '短视频文案已生成',
+          bodyTemplate: '',
+          useHtml: 'true',
+        },
+        inputSlots: [{ slotId: 'email-in', name: 'content', dataType: 'text', required: false }],
+        outputSlots: [{ slotId: 'email-out', name: 'result', dataType: 'json', required: true }],
+        position: { x: 2320, y: 300 },
+      },
+    ];
+
+    const edges: WorkflowEdge[] = [
+      // 触发 → 链接检测
+      edge('n-trigger', 'manual-out', 'n-detect', 'script-in'),
+      // 链接检测 → 条件判断
+      edge('n-detect', 'script-out', 'n-cond', 'cond-in'),
+      // 条件 true → 抖音解析
+      edge('n-cond', 'cond-true', 'n-douyin', 'dp-in'),
+      // 条件 false → 通用预处理
+      edge('n-cond', 'cond-false', 'n-generic', 'script-in'),
+      // 两条分支 → 合并
+      edge('n-douyin', 'dp-out', 'n-merge', 'merge-in-1'),
+      edge('n-generic', 'script-out', 'n-merge', 'merge-in-2'),
+      // 合并 → 下载
+      edge('n-merge', 'merge-out', 'n-download', 'vd-in'),
+      // 合并 → 转文本（文本提取不需要等下载完）
+      edge('n-merge', 'merge-out', 'n-to-text', 'vt-in'),
+      // 转文本 → 生成文案
+      edge('n-to-text', 'vt-out', 'n-copy', 'tc-in'),
+      // 生成文案 → 邮件发送
+      edge('n-copy', 'tc-out', 'n-email', 'email-in'),
+    ];
+
+    return { nodes, edges, variables: [] };
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════
 // 注册表
 // ═══════════════════════════════════════════════════════════════
 
@@ -1092,4 +1395,5 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   smartHttpTemplate,
   smartHttpAcceptanceTemplate,
   apiReviewWorkflowTemplate,
+  videoWorkflowTemplate,
 ];

@@ -16,16 +16,41 @@ function getApiBaseUrl() {
   return raw.trim().replace(/\/+$/, '');
 }
 
+/**
+ * 根据当前页面 URL 路径前缀，自动识别所属应用身份。
+ * 用于在每次 API 请求中设置 X-App-Name 头，便于后端按应用维度做日志/统计/权限区分。
+ *
+ * 匹配规则：长前缀优先（先匹配 /visual-agent-fullscreen 再匹配 /visual-agent）。
+ * 未命中任何规则时回退到 'prd-agent-web'。
+ */
+const APP_NAME_ROUTES: readonly [prefix: string, appName: string][] = [
+  // Agent 应用（与后端 Controller appKey 对应）
+  ['/visual-agent-fullscreen', 'visual-agent'],
+  ['/visual-agent', 'visual-agent'],
+  ['/literary-agent', 'literary-agent'],
+  ['/defect-agent', 'defect-agent'],
+  ['/video-agent', 'video-agent'],
+  ['/report-agent', 'report-agent'],
+  ['/workflow-agent', 'workflow-agent'],
+  ['/prd-agent', 'prd-agent'],
+  ['/ai-toolbox', 'ai-toolbox'],
+  ['/arena', 'arena-agent'],
+  ['/marketplace', 'marketplace'],
+  // 平台/实验室
+  ['/open-platform', 'open-platform-agent'],
+  ['/laboratory', 'lab-agent'],
+  ['/lab', 'lab-agent'],
+  // 桌面端嵌入
+  ['/ai-chat', 'prd-agent-desktop'],
+];
+
 function resolveAdminAppName(): string | null {
   if (typeof window === 'undefined') return null;
   const raw = window.location.hash ? window.location.hash.replace(/^#/, '') : window.location.pathname;
   const path = (raw || '').split('?')[0] || '';
-  if (path.startsWith('/ai-chat')) return 'prd-agent-desktop';
-  if (path.startsWith('/visual-agent-fullscreen') || path.startsWith('/visual-agent')) return 'visual-agent';
-  if (path.startsWith('/literary-agent')) return 'literary-agent';
-  if (path.startsWith('/open-platform')) return 'open-platform-agent';
-  if (path.startsWith('/laboratory') || path.startsWith('/lab')) return 'lab-agent';
-  if (path.startsWith('/system-logs')) return 'prd-agent-web';
+  for (const [prefix, appName] of APP_NAME_ROUTES) {
+    if (path.startsWith(prefix)) return appName;
+  }
   return 'prd-agent-web';
 }
 
