@@ -100,6 +100,17 @@ export class ContainerService {
 
     // Shared cache mounts (avoid duplicating node_modules, nuget, etc.)
     const volumeFlags: string[] = [`-v "${srcMount}":"${containerWorkDir}"`];
+
+    // For Node.js containers: isolate node_modules and .pnpm-store from the bind mount.
+    // Without this, pnpm creates thousands of files inside /app on the bind mount,
+    // and Vite's chokidar watches them all, exhausting the kernel inotify limit (ENOSPC).
+    // Using Docker named volumes puts them on the container overlay FS, invisible to watchers.
+    if (profile.dockerImage.startsWith('node:')) {
+      const nmVolume = `cds-nm-${entry.id}-${profile.id}`;
+      volumeFlags.push(`-v "${nmVolume}":"${containerWorkDir}/node_modules"`);
+      volumeFlags.push(`-v "${nmVolume}-store":"${containerWorkDir}/.pnpm-store"`);
+    }
+
     if (profile.cacheMounts) {
       for (const cm of profile.cacheMounts) {
         // Ensure host path exists
