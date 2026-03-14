@@ -14,7 +14,8 @@
   --glass-bg: rgba(255, 255, 255, 0.72);
   --glass-bg-strong: rgba(255, 255, 255, 0.86);
   --glass-ring: rgba(15, 23, 42, 0.08);
-  --glass-shadow: 0 14px 40px rgba(2, 6, 23, 0.10);
+  --glass-shadow: 0 14px 40px rgba(2, 6, 23, 0.08); /* 配合双层内边稍许减弱 */
+  --glass-noise: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.5'/%3E%3C/svg%3E");
 
   /* Control tokens (light) */
   --control-bg: rgba(255, 255, 255, 0.78);
@@ -47,6 +48,7 @@
   --glass-bg-strong: rgba(15, 23, 42, 0.72);
   --glass-ring: rgba(255, 255, 255, 0.10);
   --glass-shadow: 0 18px 54px rgba(0, 0, 0, 0.55);
+  --glass-noise: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.5'/%3E%3C/svg%3E");
 
   /* Control tokens (dark) */
   --control-bg: rgba(255, 255, 255, 0.06);
@@ -115,20 +117,52 @@ html, body {
   .ui-glass-panel {
     background: var(--glass-bg);
     border: 1px solid var(--glass-ring);
-    box-shadow: var(--glass-shadow);
+    box-shadow: 
+      inset 0 1px 1px rgba(255, 255, 255, 0.15),
+      inset 0 -1px 1px rgba(0, 0, 0, 0.1),
+      var(--glass-shadow);
     border-radius: 1rem; /* 16px */
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
+    position: relative;
+    isolation: isolate;
+  }
+  .ui-glass-panel::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    z-index: -1;
+    background-image: var(--glass-noise);
+    opacity: 0.03;
+    mix-blend-mode: overlay;
+    pointer-events: none;
   }
 
   /* 弹窗容器：更稳的底色（更不透），避免“发白” */
   .ui-glass-modal {
     background: var(--glass-bg-strong);
     border: 1px solid var(--glass-ring);
-    box-shadow: var(--glass-shadow);
+    box-shadow: 
+      inset 0 1px 1px rgba(255, 255, 255, 0.15),
+      inset 0 -1px 1px rgba(0, 0, 0, 0.1),
+      var(--glass-shadow);
     border-radius: 1.25rem; /* 20px */
     backdrop-filter: blur(14px);
     -webkit-backdrop-filter: blur(14px);
+    position: relative;
+    isolation: isolate;
+  }
+  .ui-glass-modal::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    z-index: -1;
+    background-image: var(--glass-noise);
+    opacity: 0.03;
+    mix-blend-mode: overlay;
+    pointer-events: none;
   }
 
   /* 登录页专用玻璃卡片：更“透”以便看到毛玻璃效果（需要背后有纹理/光晕） */

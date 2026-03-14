@@ -22,7 +22,7 @@ export const glassPanel: React.CSSProperties = {
     'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.10)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.05)) 100%)',
   border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.18))',
   boxShadow:
-    '0 18px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+    'inset 0 1px 1px rgba(255, 255, 255, 0.15), inset 0 -1px 1px rgba(0, 0, 0, 0.15), 0 24px 60px -12px rgba(10, 10, 14, 0.55)',
   backdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
   WebkitBackdropFilter: 'blur(40px) saturate(180%) brightness(1.1)',
 };
@@ -37,7 +37,7 @@ export const glassBar: React.CSSProperties = {
   backdropFilter: 'blur(40px) saturate(200%) brightness(1.1)',
   WebkitBackdropFilter: 'blur(40px) saturate(200%) brightness(1.1)',
   boxShadow:
-    '0 8px 32px -4px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.08) inset, 0 1px 0 0 rgba(255, 255, 255, 0.1) inset, 0 -1px 0 0 rgba(0, 0, 0, 0.08) inset',
+    'inset 0 1px 1px rgba(255, 255, 255, 0.15), inset 0 -1px 1px rgba(0, 0, 0, 0.15), 0 12px 32px -8px rgba(10, 10, 14, 0.3)',
 };
 
 /**
@@ -48,7 +48,7 @@ export const glassBarGold: React.CSSProperties = {
   background:
     'linear-gradient(180deg, var(--glass-bg-start, rgba(255, 255, 255, 0.08)) 0%, var(--glass-bg-end, rgba(255, 255, 255, 0.04)) 100%)',
   boxShadow:
-    '0 8px 32px -4px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1) inset, 0 1px 0 0 rgba(255, 255, 255, 0.15) inset, 0 -1px 0 0 rgba(0, 0, 0, 0.1) inset',
+    'inset 0 1px 1px rgba(255, 255, 255, 0.20), inset 0 -1px 1px rgba(0, 0, 0, 0.15), 0 12px 32px -8px rgba(10, 10, 14, 0.4)',
 };
 
 /**
@@ -61,7 +61,7 @@ export const glassSidebar: React.CSSProperties = {
   backdropFilter: 'blur(40px) saturate(200%) brightness(1.1)',
   WebkitBackdropFilter: 'blur(40px) saturate(200%) brightness(1.1)',
   boxShadow:
-    '0 12px 48px -8px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.15) inset, 0 2px 0 0 rgba(255, 255, 255, 0.2) inset, 0 -1px 0 0 rgba(0, 0, 0, 0.15) inset',
+    'inset 0 1px 1px rgba(255, 255, 255, 0.15), inset 0 -1px 1px rgba(0, 0, 0, 0.15), 0 16px 48px -12px rgba(10, 10, 14, 0.5)',
 };
 
 /**
@@ -71,7 +71,7 @@ export const glassTooltip: React.CSSProperties = {
   background: 'var(--glass-bg-end, rgba(20, 20, 24, 0.95))',
   border: '1px solid rgba(255,255,255,0.12)',
   boxShadow:
-    '0 8px 32px rgba(0,0,0,0.6), 0 0 0 1px rgba(255, 255, 255, 0.08) inset',
+    'inset 0 1px 1px rgba(255, 255, 255, 0.15), inset 0 -1px 1px rgba(0, 0, 0, 0.15), 0 8px 32px -8px rgba(10, 10, 14, 0.6)',
   backdropFilter: 'blur(12px)',
   WebkitBackdropFilter: 'blur(12px)',
 };
@@ -83,7 +83,7 @@ export const glassToolbar: React.CSSProperties = {
   background: 'var(--glass-bg-end, rgba(32, 32, 38, 0.95))',
   border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
   boxShadow:
-    '0 8px 32px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.06) inset',
+    'inset 0 1px 1px rgba(255, 255, 255, 0.15), inset 0 -1px 1px rgba(0, 0, 0, 0.15), 0 12px 32px -8px rgba(10, 10, 14, 0.45)',
   backdropFilter: 'blur(16px)',
   WebkitBackdropFilter: 'blur(16px)',
 };

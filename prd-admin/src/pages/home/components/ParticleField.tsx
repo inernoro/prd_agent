@@ -42,6 +42,15 @@ export function ParticleField({
     let animationId: number;
     let width = 0;
     let height = 0;
+    let isVisible = true;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        isVisible = entry.isIntersecting;
+      },
+      { threshold: 0 }
+    );
+    observer.observe(canvas);
 
     const resize = () => {
       const rect = canvas.getBoundingClientRect();
@@ -109,14 +118,22 @@ export function ParticleField({
         ctx.fill();
       }
 
+      // Sort particles by X coordinate to optimize O(n^2) connection checks
+      particles.sort((a, b) => a.x - b.x);
+
       // Draw connections
       ctx.globalAlpha = 1;
       for (let i = 0; i < particles.length; i++) {
         for (let j = i + 1; j < particles.length; j++) {
           const p1 = particles[i];
           const p2 = particles[j];
-          const dx = p1.x - p2.x;
+          const dx = p2.x - p1.x;
+          // Since particles are sorted by X, we can stop the inner loop early
+          if (dx > connectionDistance) break;
+
           const dy = p1.y - p2.y;
+          if (Math.abs(dy) > connectionDistance) continue;
+
           const dist = Math.sqrt(dx * dx + dy * dy);
 
           if (dist < connectionDistance) {
@@ -134,6 +151,14 @@ export function ParticleField({
       animationId = requestAnimationFrame(draw);
     };
 
+    const drawLoop = () => {
+      if (isVisible) {
+        draw();
+      } else {
+        animationId = requestAnimationFrame(drawLoop);
+      }
+    };
+
     const handleMouseMove = (e: MouseEvent) => {
       const rect = canvas.getBoundingClientRect();
       mouseRef.current = {
@@ -148,7 +173,7 @@ export function ParticleField({
 
     resize();
     initParticles();
-    draw();
+    drawLoop();
 
     window.addEventListener('resize', () => {
       resize();
@@ -158,6 +183,7 @@ export function ParticleField({
     canvas.addEventListener('mouseleave', handleMouseLeave);
 
     return () => {
+      observer.disconnect();
       cancelAnimationFrame(animationId);
       window.removeEventListener('resize', resize);
       canvas.removeEventListener('mousemove', handleMouseMove);
