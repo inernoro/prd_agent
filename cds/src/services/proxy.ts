@@ -474,7 +474,16 @@ export class ProxyService {
     };
 
     const proxyReq = http.request(options, (proxyRes) => {
-      clientRes.writeHead(proxyRes.statusCode || 502, proxyRes.headers);
+      const headers = { ...proxyRes.headers };
+      // When routing via cookie (same URL serves different branches), prevent
+      // browser disk-cache from mixing assets across branch switches.
+      // "no-store" is stronger than "no-cache" — it tells the browser to never
+      // reuse this response without a fresh fetch.
+      if (clientReq.headers.cookie?.includes('cds_branch')) {
+        headers['cache-control'] = 'no-store, must-revalidate';
+        headers['vary'] = 'Cookie';
+      }
+      clientRes.writeHead(proxyRes.statusCode || 502, headers);
       proxyRes.pipe(clientRes, { end: true });
     });
 

@@ -193,22 +193,30 @@ function confirmOpenGithub(event) {
   return true;
 }
 
-function togglePreviewMode() {
-  previewMode = previewMode === 'simple' ? 'multi' : 'simple';
+function cyclePreviewMode() {
+  // Cycle: simple → port → multi → simple
+  const modes = ['simple', 'port', 'multi'];
+  const idx = modes.indexOf(previewMode);
+  previewMode = modes[(idx + 1) % modes.length];
   localStorage.setItem('cds_preview_mode', previewMode);
   updatePreviewModeUI();
   renderBranches();
+  const labels = { simple: '简洁模式（cookie 切换）', port: '端口直连模式（无缓存问题）', multi: '子域名模式（需 PREVIEW_DOMAIN）' };
   if (previewMode === 'multi' && !previewDomain) {
-    showToast('已开启多分支预览模式，但 PREVIEW_DOMAIN 未配置，预览将回退到简洁模式。请在「变量」中设置 PREVIEW_DOMAIN。', 'error');
+    showToast('已开启子域名预览模式，但 PREVIEW_DOMAIN 未配置，预览将回退到简洁模式。请在「变量」中设置 PREVIEW_DOMAIN。', 'error');
   } else {
-    showToast(previewMode === 'multi' ? '已开启多分支预览模式' : '已切换到简洁预览模式', 'info');
+    showToast(`预览：${labels[previewMode]}`, 'info');
   }
 }
 
+// Keep backward compat alias
+function togglePreviewMode() { cyclePreviewMode(); }
+
 function updatePreviewModeUI() {
-  // Update switch in settings menu if open
-  const sw = document.querySelector('.settings-switch-preview');
-  if (sw) sw.classList.toggle('on', previewMode === 'multi');
+  // Update the label in settings menu if open
+  const label = document.querySelector('.preview-mode-label');
+  const labels = { simple: '简洁', port: '端口直连', multi: '子域名' };
+  if (label) label.textContent = labels[previewMode] || previewMode;
 }
 
 // ── Mirror acceleration ──
@@ -545,14 +553,36 @@ async function previewBranch(id) {
   markTouched(id);
   const slug = StateService_slugify(id);
 
+  // ── Mode: multi (subdomain) ──
   if (previewMode === 'multi' && previewDomain) {
-    // Multi-branch mode: open subdomain URL directly
     const url = `${location.protocol}//${slug}.${previewDomain}`;
     window.open(url, '_blank');
     return;
   }
 
-  // Simple mode: set as default branch → open main domain
+  // ── Mode: port (direct port access — no proxy, no cache issues) ──
+  if (previewMode === 'port') {
+    const branch = branches.find(b => b.id === slug);
+    if (!branch || branch.status !== 'running') {
+      showToast('分支未运行，无法通过端口预览', 'error');
+      return;
+    }
+    const services = Object.entries(branch.services || {});
+    // Find the web/frontend service (first non-API service, or first service)
+    const webService = services.find(([pid]) => !pid.includes('api') && !pid.includes('backend'))
+      || services.find(([pid]) => pid.includes('web') || pid.includes('frontend') || pid.includes('admin'))
+      || services[0];
+    if (!webService) {
+      showToast('未找到可预览的服务端口', 'error');
+      return;
+    }
+    const [, svc] = webService;
+    const url = `${location.protocol}//${location.hostname}:${svc.hostPort}`;
+    window.open(url, '_blank');
+    return;
+  }
+
+  // ── Mode: simple (cookie switch — set default + open main domain) ──
   try {
     await api('POST', `/branches/${slug}/set-default`);
     defaultBranch = slug;
@@ -934,13 +964,9 @@ function toggleSettingsMenu(event) {
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 0113 0h-2.1a8.3 8.3 0 00-.4-2.2 9 9 0 00-1-1.9A4.5 4.5 0 017 7.5H4.5A8.3 8.3 0 001.5 8zm5.5 5.5a6.5 6.5 0 01-5.4-3h2.3c.3 1.2.8 2.2 1.5 3H7zm1-5.5a7.8 7.8 0 014-3.8c.5.6.9 1.2 1.2 1.8H8zm0 1h5.4a8.3 8.3 0 01-.3 2H8.9 8V9zm0 3h3.8c-.6 1.3-1.5 2.4-2.8 3A6.5 6.5 0 018 9z"/></svg>
       路由规则
     </div>
-    <div class="settings-menu-item settings-menu-switch" onclick="togglePreviewMode()">
-      <span class="settings-menu-switch-label">多分支预览</span>
-      <span class="settings-switch settings-switch-preview ${previewMode === 'multi' ? 'on' : ''}">
-        <span class="settings-switch-track">
-          <span class="settings-switch-thumb"></span>
-        </span>
-      </span>
+    <div class="settings-menu-item settings-menu-switch" onclick="cyclePreviewMode()">
+      <span class="settings-menu-switch-label">预览模式</span>
+      <span class="preview-mode-label" style="margin-left:auto;font-size:11px;color:#58a6ff;font-weight:500">${{ simple: '简洁', port: '端口直连', multi: '子域名' }[previewMode]}</span>
     </div>
     <div class="settings-menu-item settings-menu-switch" onclick="toggleMirror()">
       <span class="settings-menu-switch-label">镜像加速</span>
