@@ -9,6 +9,7 @@ import type { BranchEntry, CdsConfig, IShellExecutor, OperationLog, OperationLog
 import { discoverComposeFiles, parseComposeFile, parseComposeString, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { combinedOutput } from '../types.js';
+import { topoSortLayers } from '../services/topo-sort.js';
 
 export interface RouterDeps {
   stateService: StateService;
@@ -36,6 +37,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const infraEnv = stateService.getInfraInjectEnv();  // v1 {{host}}:{{port}} templates
     const customEnv = stateService.getCustomEnv();
     return { ...cdsEnv, ...infraEnv, ...customEnv };
+  }
+
+  /** Mask sensitive env var values for trace logging */
+  function maskSecrets(env: Record<string, string>): Record<string, string> {
+    const SENSITIVE = /secret|password|token|key|credential/i;
+    const masked: Record<string, string> = {};
+    for (const [k, v] of Object.entries(env)) {
+      masked[k] = SENSITIVE.test(k) ? '***' : v;
+    }
+    return masked;
   }
 
   // ── Helper: SSE setup ──
@@ -278,42 +289,134 @@ export function createBranchRouter(deps: RouterDeps): Router {
       entry.status = 'building';
       stateService.save();
 
-      // Build & run each profile
-      for (const profile of profiles) {
-        logEvent({ step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}...`, timestamp: new Date().toISOString() });
+      // ── Compute startup layers (topological sort by dependsOn) ──
+      const infraIds = new Set(
+        stateService.getInfraServices()
+          .filter(s => s.status === 'running')
+          .map(s => s.id),
+      );
 
-        // Allocate port and container name if not already assigned
+      const { layers, warnings: topoWarnings } = topoSortLayers(
+        profiles,
+        p => p.id,
+        p => p.dependsOn ?? [],
+        infraIds,
+      );
+
+      // ── Trace: dependency graph + layer plan ──
+      const depGraph: Record<string, string[]> = {};
+      for (const p of profiles) {
+        if (p.dependsOn && p.dependsOn.length > 0) depGraph[p.id] = p.dependsOn;
+      }
+      logEvent({
+        step: 'startup-plan',
+        status: 'info',
+        title: `启动计划: ${layers.length} 层, ${profiles.length} 服务`,
+        detail: {
+          dependencyGraph: depGraph,
+          layers: layers.map(l => ({ layer: l.layer, services: l.items.map(p => p.id) })),
+          resolvedInfra: Array.from(infraIds),
+          ...(topoWarnings.length > 0 ? { warnings: topoWarnings } : {}),
+        },
+        timestamp: new Date().toISOString(),
+      });
+
+      // ── Pre-allocate ports synchronously (before parallel execution) ──
+      for (const profile of profiles) {
         if (!entry.services[profile.id]) {
           const hostPort = stateService.allocatePort(config.portStart);
           entry.services[profile.id] = {
             profileId: profile.id,
             containerName: `cds-${id}-${profile.id}`,
             hostPort,
-            status: 'building',
+            status: 'idle',
           };
-          stateService.save();
         }
+      }
+      stateService.save();
 
-        const svc = entry.services[profile.id];
-        svc.status = 'building';
+      // ── Execute layer by layer (parallel within each layer) ──
+      for (const layer of layers) {
+        const layerServiceNames = layer.items.map(p => p.name).join(', ');
+        logEvent({
+          step: `layer-${layer.layer}`,
+          status: 'running',
+          title: `启动第 ${layer.layer} 层: ${layerServiceNames}`,
+          timestamp: new Date().toISOString(),
+        });
 
-        try {
-          const mergedEnv = getMergedEnv();
-          await containerService.runService(entry, profile, svc, (chunk) => {
-            sendSSE(res, 'log', { profileId: profile.id, chunk });
-            // Write build output to cds.log (trim trailing newlines)
-            for (const line of chunk.split('\n')) {
-              if (line.trim()) logDeploy(id, line);
+        const layerStartTime = Date.now();
+
+        await Promise.all(layer.items.map(async (profile) => {
+          const serviceStartTime = Date.now();
+          logEvent({
+            step: `build-${profile.id}`,
+            status: 'running',
+            title: `正在构建 ${profile.name}...`,
+            timestamp: new Date().toISOString(),
+          });
+
+          const svc = entry.services[profile.id];
+          svc.status = 'building';
+
+          try {
+            const mergedEnv = getMergedEnv();
+
+            // ── Trace: resolved CDS_* env vars for this service ──
+            const cdsVars: Record<string, string> = {};
+            for (const [k, v] of Object.entries(mergedEnv)) {
+              if (k.startsWith('CDS_')) cdsVars[k] = v;
             }
-          }, mergedEnv);
+            logEvent({
+              step: `env-${profile.id}`,
+              status: 'info',
+              title: `${profile.name} 环境变量`,
+              detail: {
+                cdsVars: maskSecrets(cdsVars),
+                profileEnvKeys: Object.keys(profile.env ?? {}),
+              },
+              timestamp: new Date().toISOString(),
+            });
 
-          svc.status = 'running';
-          logEvent({ step: `build-${profile.id}`, status: 'done', title: `${profile.name} 运行于 :${svc.hostPort}`, timestamp: new Date().toISOString() });
-        } catch (err) {
-          svc.status = 'error';
-          svc.errorMessage = (err as Error).message;
-          logEvent({ step: `build-${profile.id}`, status: 'error', title: `${profile.name} 失败`, log: (err as Error).message, timestamp: new Date().toISOString() });
-        }
+            await containerService.runService(entry, profile, svc, (chunk) => {
+              sendSSE(res, 'log', { profileId: profile.id, chunk });
+              for (const line of chunk.split('\n')) {
+                if (line.trim()) logDeploy(id, line);
+              }
+            }, mergedEnv);
+
+            svc.status = 'running';
+            const elapsed = Date.now() - serviceStartTime;
+            logEvent({
+              step: `build-${profile.id}`,
+              status: 'done',
+              title: `${profile.name} 运行于 :${svc.hostPort}`,
+              detail: { elapsedMs: elapsed },
+              timestamp: new Date().toISOString(),
+            });
+          } catch (err) {
+            svc.status = 'error';
+            svc.errorMessage = (err as Error).message;
+            const elapsed = Date.now() - serviceStartTime;
+            logEvent({
+              step: `build-${profile.id}`,
+              status: 'error',
+              title: `${profile.name} 失败`,
+              log: (err as Error).message,
+              detail: { elapsedMs: elapsed },
+              timestamp: new Date().toISOString(),
+            });
+          }
+        }));
+
+        const layerElapsed = Date.now() - layerStartTime;
+        logEvent({
+          step: `layer-${layer.layer}`,
+          status: 'done',
+          title: `第 ${layer.layer} 层完成`,
+          detail: { elapsedMs: layerElapsed },
+          timestamp: new Date().toISOString(),
+        });
       }
 
       // Update overall status
