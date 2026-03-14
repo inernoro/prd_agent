@@ -308,6 +308,16 @@ button.primary:hover {
   background: rgba(200, 255, 0, 0.18);
   border-color: rgba(200, 255, 0, 0.30);
 }
+/* Accent — green emphasis for "go" actions */
+button.accent {
+  background: rgba(63, 185, 80, 0.12);
+  border-color: rgba(63, 185, 80, 0.25); color: #3fb950;
+  font-weight: 600;
+}
+button.accent:hover {
+  background: rgba(63, 185, 80, 0.22);
+  border-color: rgba(63, 185, 80, 0.35);
+}
 /* Preview — ghost text style */
 button.preview {
   background: none; border-color: transparent;

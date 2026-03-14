@@ -32,7 +32,7 @@ interface ComposeFile {
   services?: Record<string, ComposeServiceEntry>;
   volumes?: Record<string, unknown>;
   /** CDS extension: project metadata */
-  'x-cds-project'?: { name?: string; description?: string };
+  'x-cds-project'?: { name?: string; description?: string; repo?: string };
   /** CDS extension: shared environment variables */
   'x-cds-env'?: Record<string, string>;
   /** CDS extension: routing rules */
@@ -68,7 +68,7 @@ interface ComposeServiceEntry {
 
 /** Result of parsing a full CDS compose file (infra + profiles + env + routing) */
 export interface CdsComposeConfig {
-  project?: { name?: string; description?: string };
+  project?: { name?: string; description?: string; repo?: string };
   buildProfiles: Array<{
     id: string;
     name: string;

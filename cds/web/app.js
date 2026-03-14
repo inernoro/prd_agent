@@ -1418,8 +1418,12 @@ function openImportModal() {
     <div id="importPreview" style="margin-top:8px"></div>
     <div class="form-row" style="margin-top:8px;gap:6px">
       <button class="primary sm" onclick="previewImportConfig()">验证 & 预览</button>
-      <button class="sm" id="importApplyBtn" disabled onclick="applyImportConfig()">确认导入</button>
+      <button class="sm" id="importApplyBtn" disabled onclick="applyImportConfig()">仅导入配置</button>
+      <button class="sm accent" id="importInitBtn" disabled onclick="importAndInit()">导入并初始化</button>
       <button class="sm" onclick="closeConfigModal()">取消</button>
+    </div>
+    <div style="margin-top:4px;font-size:11px;color:var(--fg-muted)">
+      「仅导入配置」只写入配置不启动服务；「导入并初始化」会自动启动基础设施、创建主分支并部署。
     </div>
   `;
   openConfigModal('一键导入配置', html);
@@ -1429,11 +1433,13 @@ async function previewImportConfig() {
   const textarea = document.getElementById('importConfigTextarea');
   const previewDiv = document.getElementById('importPreview');
   const applyBtn = document.getElementById('importApplyBtn');
+  const initBtn = document.getElementById('importInitBtn');
 
   const raw = textarea.value.trim();
   if (!raw) {
     previewDiv.innerHTML = '<div style="color:var(--red);font-size:13px">请粘贴配置内容</div>';
     applyBtn.disabled = true;
+    if (initBtn) initBtn.disabled = true;
     return;
   }
 
@@ -1445,6 +1451,7 @@ async function previewImportConfig() {
     } catch (e) {
       previewDiv.innerHTML = '<div style="color:var(--red);font-size:13px">JSON 格式错误: ' + esc(e.message) + '</div>';
       applyBtn.disabled = true;
+      if (initBtn) initBtn.disabled = true;
       return;
     }
   } else {
@@ -1458,6 +1465,7 @@ async function previewImportConfig() {
       previewDiv.innerHTML = '<div style="color:var(--red);font-size:13px">验证失败:<ul>' +
         (data.errors || []).map(e => '<li>' + esc(e) + '</li>').join('') + '</ul></div>';
       applyBtn.disabled = true;
+      if (initBtn) initBtn.disabled = true;
       return;
     }
 
@@ -1495,9 +1503,11 @@ async function previewImportConfig() {
     summaryHtml += '</div>';
     previewDiv.innerHTML = summaryHtml;
     applyBtn.disabled = false;
+    if (initBtn) initBtn.disabled = false;
   } catch (e) {
     previewDiv.innerHTML = '<div style="color:var(--red);font-size:13px">' + esc(e.message) + '</div>';
     applyBtn.disabled = true;
+    if (initBtn) initBtn.disabled = true;
   }
 }
 
@@ -1522,6 +1532,120 @@ async function applyImportConfig() {
     closeConfigModal();
   } catch (e) {
     showToast('导入失败: ' + e.message, 'error');
+  }
+}
+
+async function importAndInit() {
+  const textarea = document.getElementById('importConfigTextarea');
+  const raw = textarea.value.trim();
+  if (!raw) return;
+
+  let config;
+  if (raw.startsWith('{')) {
+    try { config = JSON.parse(raw); } catch { return; }
+  } else {
+    config = raw;
+  }
+
+  // Switch modal to progress view
+  const modalBody = document.querySelector('.config-modal-body');
+  if (!modalBody) return;
+
+  modalBody.innerHTML = `
+    <div id="initProgressContainer" style="min-height:300px">
+      <div style="margin-bottom:12px;font-size:14px;font-weight:600">正在初始化项目...</div>
+      <div id="initSteps" style="font-size:13px"></div>
+      <pre id="initLog" class="inline-deploy-log" style="margin-top:8px;max-height:200px;overflow-y:auto;font-size:11px;display:none"></pre>
+      <div id="initResult" style="margin-top:12px;display:none"></div>
+    </div>
+  `;
+
+  const stepsEl = document.getElementById('initSteps');
+  const logEl = document.getElementById('initLog');
+  const resultEl = document.getElementById('initResult');
+  const stepStates = {};
+
+  function updateStep(step, status, title) {
+    const icon = status === 'running' ? '<span class="live-dot"></span>' :
+                 status === 'done' ? '<span style="color:#3fb950">✓</span>' :
+                 status === 'error' ? '<span style="color:#f85149">✗</span>' :
+                 '<span style="color:#8b949e">○</span>';
+
+    if (!stepStates[step]) {
+      stepStates[step] = { el: document.createElement('div'), status };
+      stepStates[step].el.style.cssText = 'padding:3px 0;display:flex;align-items:center;gap:6px';
+      stepsEl.appendChild(stepStates[step].el);
+    }
+    stepStates[step].status = status;
+    stepStates[step].el.innerHTML = icon + ' ' + esc(title);
+  }
+
+  try {
+    const res = await fetch(apiBase + '/import-and-init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || data.errors?.join(', ') || `HTTP ${res.status}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finalStatus = 'done';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (line.startsWith('event: ')) continue;
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.step) {
+              updateStep(data.step, data.status, data.title);
+            }
+            if (data.chunk) {
+              logEl.style.display = 'block';
+              logEl.textContent += data.chunk;
+              logEl.scrollTop = logEl.scrollHeight;
+            }
+            if (data.status === 'error') finalStatus = 'error';
+          } catch { /* skip parse errors */ }
+        }
+      }
+    }
+
+    resultEl.style.display = 'block';
+    if (finalStatus === 'done') {
+      resultEl.innerHTML = `
+        <div style="color:#3fb950;font-weight:600;margin-bottom:8px">初始化完成</div>
+        <button class="primary sm" onclick="closeConfigModal(); loadBranches(); loadInfraServices();">完成</button>
+      `;
+    } else {
+      resultEl.innerHTML = `
+        <div style="color:#f85149;font-weight:600;margin-bottom:8px">初始化过程中出现错误</div>
+        <button class="sm" onclick="closeConfigModal(); loadBranches(); loadInfraServices();">关闭</button>
+      `;
+    }
+
+    // Refresh data in background
+    await Promise.all([loadProfiles(), loadEnvVars(), loadInfraServices(), loadRoutingRules(), loadBranches()]);
+  } catch (e) {
+    resultEl.style.display = 'block';
+    resultEl.innerHTML = `
+      <div style="color:#f85149;font-weight:600;margin-bottom:4px">初始化失败</div>
+      <div style="color:#f85149;font-size:12px;margin-bottom:8px">${esc(e.message)}</div>
+      <button class="sm" onclick="closeConfigModal()">关闭</button>
+    `;
   }
 }
 

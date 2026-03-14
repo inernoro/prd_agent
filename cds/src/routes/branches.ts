@@ -1719,5 +1719,231 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.type('text/yaml').send(yamlContent);
   });
 
+  // POST /api/import-and-init — import config + start infra + create main branch + deploy (SSE progress)
+  // Same config parsing as /import-config, but after applying config it also:
+  //   1. Starts all new infra services
+  //   2. Creates a main branch worktree (if not exists)
+  //   3. Deploys the main branch (build + run all profiles)
+  router.post('/import-and-init', async (req, res) => {
+    const { config: configBlob } = req.body as { config: unknown };
+
+    // ── Parse config (same logic as import-config) ──
+    let cfg: Record<string, unknown>;
+    if (typeof configBlob === 'string') {
+      const cdsConfig = parseCdsCompose(configBlob);
+      if (cdsConfig) {
+        cfg = {
+          $schema: 'cds-config',
+          buildProfiles: cdsConfig.buildProfiles,
+          envVars: cdsConfig.envVars,
+          infraServices: cdsConfig.infraServices.length > 0 ? cdsConfig.infraServices : undefined,
+          routingRules: cdsConfig.routingRules.length > 0 ? cdsConfig.routingRules : undefined,
+        };
+      } else {
+        try {
+          cfg = JSON.parse(configBlob);
+        } catch {
+          res.status(400).json({ error: '无法解析配置：既不是有效的 CDS Compose YAML，也不是有效的 JSON' });
+          return;
+        }
+      }
+    } else {
+      cfg = configBlob as Record<string, unknown>;
+    }
+
+    // Validate
+    const validation = validateConfigBlob(cfg);
+    if (!validation.valid) {
+      res.status(400).json({ valid: false, errors: validation.errors });
+      return;
+    }
+
+    // ── Start SSE stream ──
+    initSSE(res);
+    const send = (step: string, status: string, title: string) => {
+      sendSSE(res, 'step', { step, status, title, timestamp: new Date().toISOString() });
+    };
+
+    try {
+      // ── Phase 1: Apply config ──
+      send('config', 'running', '正在写入配置...');
+
+      // Apply build profiles
+      if (Array.isArray(cfg.buildProfiles)) {
+        for (const p of cfg.buildProfiles as BuildProfile[]) {
+          const existing = stateService.getBuildProfile(p.id);
+          if (existing) {
+            stateService.updateBuildProfile(p.id, p);
+          } else {
+            p.workDir = p.workDir || '.';
+            p.containerPort = p.containerPort || 8080;
+            stateService.addBuildProfile(p);
+          }
+        }
+      }
+
+      // Apply env vars
+      if (cfg.envVars && typeof cfg.envVars === 'object') {
+        for (const [key, value] of Object.entries(cfg.envVars as Record<string, string>)) {
+          stateService.setCustomEnvVar(key, value);
+        }
+      }
+
+      // Apply routing rules
+      if (Array.isArray(cfg.routingRules)) {
+        for (const r of cfg.routingRules as RoutingRule[]) {
+          const existing = stateService.getRoutingRules().find(x => x.id === r.id);
+          if (existing) {
+            stateService.updateRoutingRule(r.id, r);
+          } else {
+            r.priority = r.priority ?? 0;
+            r.enabled = r.enabled ?? true;
+            stateService.addRoutingRule(r);
+          }
+        }
+      }
+
+      // Apply infra service definitions (don't start yet)
+      const infraDefs = resolveInfraDefs(cfg);
+      const newInfraServices: InfraService[] = [];
+      for (const def of infraDefs) {
+        if (stateService.getInfraService(def.id)) continue;
+        if (def.id && def.dockerImage && def.containerPort) {
+          const service = composeDefToInfraService(def);
+          stateService.addInfraService(service);
+          newInfraServices.push(service);
+        }
+      }
+
+      syncCdsConfig();
+      stateService.save();
+      send('config', 'done', `配置已写入 (${stateService.getBuildProfiles().length} 个构建配置, ${newInfraServices.length} 个基础设施)`);
+
+      // ── Phase 2: Start infra services ──
+      const allInfra = stateService.getInfraServices();
+      const infraToStart = allInfra.filter(s => s.status !== 'running');
+      if (infraToStart.length > 0) {
+        send('infra', 'running', `正在启动 ${infraToStart.length} 个基础设施服务...`);
+        for (const svc of infraToStart) {
+          send(`infra-${svc.id}`, 'running', `正在启动 ${svc.name} (${svc.dockerImage})...`);
+          try {
+            await containerService.startInfraService(svc);
+            stateService.updateInfraService(svc.id, { status: 'running', errorMessage: undefined });
+            send(`infra-${svc.id}`, 'done', `${svc.name} 已启动 → :${svc.hostPort}`);
+          } catch (err) {
+            stateService.updateInfraService(svc.id, { status: 'error', errorMessage: (err as Error).message });
+            send(`infra-${svc.id}`, 'error', `${svc.name} 启动失败: ${(err as Error).message}`);
+          }
+        }
+        stateService.save();
+        send('infra', 'done', '基础设施服务就绪');
+      } else {
+        send('infra', 'done', '基础设施服务已在运行中');
+      }
+
+      // ── Phase 3: Create main branch worktree ──
+      // Detect default branch name
+      let mainBranch = 'main';
+      try {
+        const result = await shell.exec('git symbolic-ref refs/remotes/origin/HEAD', { cwd: config.repoRoot, timeout: 5000 });
+        const ref = result.stdout.trim(); // e.g., refs/remotes/origin/main
+        if (ref) mainBranch = ref.replace('refs/remotes/origin/', '');
+      } catch {
+        // Fallback: try 'main', then 'master'
+        try {
+          await shell.exec('git rev-parse --verify origin/main', { cwd: config.repoRoot, timeout: 5000 });
+          mainBranch = 'main';
+        } catch {
+          mainBranch = 'master';
+        }
+      }
+
+      const mainSlug = StateService.slugify(mainBranch);
+      let entry = stateService.getBranch(mainSlug);
+
+      if (!entry) {
+        send('worktree', 'running', `正在为 ${mainBranch} 创建工作树...`);
+        const worktreePath = `${config.worktreeBase}/${mainSlug}`;
+        await worktreeService.create(mainBranch, worktreePath);
+
+        entry = {
+          id: mainSlug,
+          branch: mainBranch,
+          worktreePath,
+          services: {},
+          status: 'idle',
+          createdAt: new Date().toISOString(),
+        };
+        stateService.addBranch(entry);
+        if (!stateService.getState().defaultBranch) {
+          stateService.setDefaultBranch(mainSlug);
+        }
+        stateService.save();
+        send('worktree', 'done', `工作树已创建: ${mainBranch}`);
+      } else {
+        send('worktree', 'done', `工作树已存在: ${mainBranch}`);
+      }
+
+      // ── Phase 4: Deploy main branch (build + run all profiles) ──
+      const profiles = stateService.getBuildProfiles();
+      if (profiles.length > 0) {
+        send('deploy', 'running', `正在部署 ${mainBranch} (${profiles.length} 个服务)...`);
+
+        entry.status = 'building';
+        stateService.save();
+
+        // Pre-allocate ports
+        for (const profile of profiles) {
+          if (!entry.services[profile.id]) {
+            const hostPort = stateService.allocatePort(config.portStart);
+            entry.services[profile.id] = {
+              profileId: profile.id,
+              containerName: `cds-${mainSlug}-${profile.id}`,
+              hostPort,
+              status: 'idle',
+            };
+          }
+        }
+        stateService.save();
+
+        const customEnv = stateService.getCustomEnv();
+
+        for (const profile of profiles) {
+          const svc = entry.services[profile.id];
+          send(`deploy-${profile.id}`, 'running', `正在构建 ${profile.name}...`);
+          svc.status = 'building';
+
+          try {
+            await containerService.runService(entry, profile, svc, (chunk) => {
+              sendSSE(res, 'log', { profileId: profile.id, chunk });
+            }, customEnv);
+
+            svc.status = 'running';
+            send(`deploy-${profile.id}`, 'done', `${profile.name} 就绪 → :${svc.hostPort}`);
+          } catch (err) {
+            svc.status = 'error';
+            entry.errorMessage = (err as Error).message;
+            send(`deploy-${profile.id}`, 'error', `${profile.name} 构建失败: ${(err as Error).message}`);
+          }
+        }
+
+        const hasError = Object.values(entry.services).some(s => s.status === 'error');
+        entry.status = hasError ? 'error' : 'running';
+        stateService.save();
+
+        send('deploy', hasError ? 'error' : 'done',
+          hasError ? '部分服务构建失败' : `部署完成，所有服务已就绪`);
+      }
+
+      send('complete', 'done', '初始化完成');
+      sendSSE(res, 'done', { message: '初始化完成' });
+    } catch (err) {
+      send('error', 'error', `初始化失败: ${(err as Error).message}`);
+      sendSSE(res, 'error', { message: (err as Error).message });
+    }
+
+    res.end();
+  });
+
   return router;
 }
