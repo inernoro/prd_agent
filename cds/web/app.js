@@ -54,6 +54,9 @@ let isCheckingUpdates = false;
 // ── Preview mode: 'simple' (set default + open main) or 'multi' (subdomain per branch) ──
 let previewMode = localStorage.getItem('cds_preview_mode') || 'simple';
 
+// ── Mirror acceleration (npm/docker registry mirrors) ──
+let mirrorEnabled = false;
+
 // ── Utilities ──
 
 async function api(method, path, body) {
@@ -136,7 +139,7 @@ let previewDomain = '';
 let workerPort = '';
 
 async function init() {
-  await Promise.all([loadBranches(), loadProfiles(), loadRoutingRules(), loadConfig(), loadEnvVars(), loadInfraServices()]);
+  await Promise.all([loadBranches(), loadProfiles(), loadRoutingRules(), loadConfig(), loadEnvVars(), loadInfraServices(), loadMirrorState()]);
   refreshRemoteBranches();
   updatePreviewModeUI();
   setInterval(loadBranches, 10000);
@@ -204,8 +207,34 @@ function togglePreviewMode() {
 
 function updatePreviewModeUI() {
   // Update switch in settings menu if open
-  const sw = document.querySelector('.settings-switch');
+  const sw = document.querySelector('.settings-switch-preview');
   if (sw) sw.classList.toggle('on', previewMode === 'multi');
+}
+
+// ── Mirror acceleration ──
+
+async function loadMirrorState() {
+  try {
+    const data = await api('GET', '/mirror');
+    mirrorEnabled = data.enabled;
+  } catch { /* ignore */ }
+}
+
+async function toggleMirror() {
+  const newVal = !mirrorEnabled;
+  try {
+    await api('PUT', '/mirror', { enabled: newVal });
+    mirrorEnabled = newVal;
+    updateMirrorUI();
+    showToast(newVal ? '镜像加速已开启，下次部署生效' : '镜像加速已关闭', 'info');
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+function updateMirrorUI() {
+  const sw = document.querySelector('.settings-switch-mirror');
+  if (sw) sw.classList.toggle('on', mirrorEnabled);
 }
 
 // ── Data loading ──
@@ -907,7 +936,15 @@ function toggleSettingsMenu(event) {
     </div>
     <div class="settings-menu-item settings-menu-switch" onclick="togglePreviewMode()">
       <span class="settings-menu-switch-label">多分支预览</span>
-      <span class="settings-switch ${previewMode === 'multi' ? 'on' : ''}">
+      <span class="settings-switch settings-switch-preview ${previewMode === 'multi' ? 'on' : ''}">
+        <span class="settings-switch-track">
+          <span class="settings-switch-thumb"></span>
+        </span>
+      </span>
+    </div>
+    <div class="settings-menu-item settings-menu-switch" onclick="toggleMirror()">
+      <span class="settings-menu-switch-label">镜像加速</span>
+      <span class="settings-switch settings-switch-mirror ${mirrorEnabled ? 'on' : ''}">
         <span class="settings-switch-track">
           <span class="settings-switch-thumb"></span>
         </span>

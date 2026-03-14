@@ -32,8 +32,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // ── Helper: merged env (CDS_* auto vars + customEnv, later wins) ──
   function getMergedEnv(): Record<string, string> {
     const cdsEnv = stateService.getCdsEnvVars();   // CDS_HOST, CDS_MONGODB_PORT, etc.
+    const mirrorEnv = stateService.getMirrorEnvVars(); // npm/corepack mirror (if enabled)
     const customEnv = stateService.getCustomEnv();
-    return { ...cdsEnv, ...customEnv };
+    return { ...cdsEnv, ...mirrorEnv, ...customEnv };
   }
 
   /** Mask sensitive env var values for trace logging */
@@ -986,6 +987,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
     stateService.removeCustomEnvVar(key);
     stateService.save();
     res.json({ message: `Deleted ${key}` });
+  });
+
+  // ── Mirror acceleration ──
+
+  router.get('/mirror', (_req, res) => {
+    res.json({ enabled: stateService.isMirrorEnabled() });
+  });
+
+  router.put('/mirror', (req, res) => {
+    const { enabled } = req.body as { enabled?: boolean };
+    if (typeof enabled !== 'boolean') {
+      res.status(400).json({ error: 'enabled 必须是布尔值' });
+      return;
+    }
+    stateService.setMirrorEnabled(enabled);
+    stateService.save();
+    res.json({ message: enabled ? '镜像加速已开启' : '镜像加速已关闭', enabled });
   });
 
   // ── Config (read-only) ──

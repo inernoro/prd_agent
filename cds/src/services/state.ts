@@ -44,6 +44,7 @@ export class StateService {
       if (this.state.defaultBranch === undefined) this.state.defaultBranch = null;
       if (!this.state.customEnv) this.state.customEnv = {};
       if (!this.state.infraServices) this.state.infraServices = [];
+      if (this.state.mirrorEnabled === undefined) this.state.mirrorEnabled = false;
     } else {
       this.state = emptyState();
     }
@@ -227,6 +228,32 @@ export class StateService {
 
   removeInfraService(id: string): void {
     this.state.infraServices = this.state.infraServices.filter(s => s.id !== id);
+  }
+
+  // ── Mirror acceleration ──
+
+  isMirrorEnabled(): boolean {
+    return this.state.mirrorEnabled === true;
+  }
+
+  setMirrorEnabled(enabled: boolean): void {
+    this.state.mirrorEnabled = enabled;
+  }
+
+  /**
+   * Get mirror env vars to inject into Node.js containers.
+   * Accelerates: corepack download, pnpm/npm/yarn install.
+   */
+  getMirrorEnvVars(): Record<string, string> {
+    if (!this.state.mirrorEnabled) return {};
+    return {
+      // npm/pnpm/yarn registry mirror
+      NPM_CONFIG_REGISTRY: 'https://registry.npmmirror.com',
+      // Corepack uses this to download package manager tarballs
+      COREPACK_NPM_REGISTRY: 'https://registry.npmmirror.com',
+      // Yarn specific
+      YARN_NPM_REGISTRY_SERVER: 'https://registry.npmmirror.com',
+    };
   }
 
   /**

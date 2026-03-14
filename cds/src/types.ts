@@ -138,6 +138,8 @@ export interface CdsState {
   customEnv: Record<string, string>;
   /** CDS-managed infrastructure services (databases, caches, etc.) */
   infraServices: InfraService[];
+  /** Mirror acceleration enabled (npm/docker registry mirrors for faster builds in China) */
+  mirrorEnabled?: boolean;
 }
 
 /** Volume mount for an infrastructure service */
