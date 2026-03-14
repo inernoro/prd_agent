@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService } from '../types.js';
 import { combinedOutput } from '../types.js';
+import { resolveEnvTemplates } from './compose-parser.js';
 
 export class ContainerService {
   constructor(
@@ -29,6 +30,10 @@ export class ContainerService {
   /**
    * Run a branch service from source using a build profile.
    * Mounts the worktree + shared cache volumes into a Docker container.
+   *
+   * Supports two modes:
+   * - v2 (single command): profile.command → runs everything in one persistent container
+   * - v1 (3-step): installCommand → buildCommand → runCommand (legacy)
    */
   async runService(
     entry: BranchEntry,
@@ -43,13 +48,13 @@ export class ContainerService {
     await this.shell.exec(`docker rm -f ${service.containerName}`);
 
     const srcMount = path.join(entry.worktreePath, profile.workDir);
+    const containerWorkDir = profile.containerWorkDir || '/src';
 
     // Build environment variables (later entries override earlier ones)
     // Priority: customEnv (user dashboard) < profile.env (per-profile)
-    // Only user-configured env vars are sent — no auto-detected business vars.
     const mergedEnv: Record<string, string> = {};
 
-    // User-defined env vars from dashboard
+    // User-defined env vars from dashboard (includes CDS_* vars from infra services)
     if (customEnv) {
       Object.assign(mergedEnv, customEnv);
     }
@@ -59,8 +64,6 @@ export class ContainerService {
     mergedEnv['Jwt__Issuer'] = this.config.jwt.issuer;
 
     // Inject git branch name so frontend build tools (e.g. Vite __GIT_BRANCH__) can pick it up.
-    // The Docker container mounts only the workDir subdirectory (no .git), so
-    // `git rev-parse --abbrev-ref HEAD` would fail inside the container.
     if (entry.branch) {
       mergedEnv['VITE_GIT_BRANCH'] = entry.branch;
     }
@@ -70,12 +73,17 @@ export class ContainerService {
       Object.assign(mergedEnv, profile.env);
     }
 
+    // Resolve ${CDS_*} env var templates in all values
+    // e.g., MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
+    // → "mongodb://172.17.0.1:37821"
+    const resolvedEnv = resolveEnvTemplates(mergedEnv, mergedEnv);
+
     // Write to temp file — avoids shell escaping issues with special chars
-    const envFilePath = this.writeEnvFile(mergedEnv);
+    const envFilePath = this.writeEnvFile(resolvedEnv);
     const envFlag = `--env-file "${envFilePath}"`;
 
     // Shared cache mounts (avoid duplicating node_modules, nuget, etc.)
-    const volumeFlags: string[] = [`-v "${srcMount}":/src`];
+    const volumeFlags: string[] = [`-v "${srcMount}":"${containerWorkDir}"`];
     if (profile.cacheMounts) {
       for (const cm of profile.cacheMounts) {
         // Ensure host path exists
@@ -85,6 +93,31 @@ export class ContainerService {
     }
 
     try {
+      // v2 mode: single command — everything in one persistent container
+      if (profile.command) {
+        onOutput?.(`── 运行: ${profile.command} ──\n`);
+        const runCmd = [
+          'docker run -d',
+          `--name ${service.containerName}`,
+          `--network ${this.config.dockerNetwork}`,
+          `-p ${service.hostPort}:${profile.containerPort}`,
+          ...volumeFlags,
+          `-w ${containerWorkDir}`,
+          envFlag,
+          '--tmpfs /tmp',
+          profile.dockerImage,
+          `sh -c "${profile.command.replace(/"/g, '\\"')}"`,
+        ].join(' ');
+
+        const result = await this.shell.exec(runCmd);
+        if (result.exitCode !== 0) {
+          throw new Error(`启动服务 "${service.containerName}" 失败:\n${combinedOutput(result)}`);
+        }
+        return;
+      }
+
+      // v1 mode: 3-step execution (install → build → run)
+
       // Install step (if defined)
       if (profile.installCommand) {
         onOutput?.(`── 安装: ${profile.installCommand} ──\n`);
@@ -92,7 +125,7 @@ export class ContainerService {
           'docker run --rm',
           `--network ${this.config.dockerNetwork}`,
           ...volumeFlags,
-          '-w /src',
+          `-w ${containerWorkDir}`,
           envFlag,
           '--tmpfs /tmp',
           profile.dockerImage,
@@ -115,7 +148,7 @@ export class ContainerService {
           'docker run --rm',
           `--network ${this.config.dockerNetwork}`,
           ...volumeFlags,
-          '-w /src',
+          `-w ${containerWorkDir}`,
           envFlag,
           '--tmpfs /tmp',
           profile.dockerImage,
@@ -132,18 +165,19 @@ export class ContainerService {
       }
 
       // Run step — start the service in the background
-      onOutput?.(`\n── 运行: ${profile.runCommand} ──\n`);
+      const runCommand = profile.runCommand || '';
+      onOutput?.(`\n── 运行: ${runCommand} ──\n`);
       const runCmd = [
         'docker run -d',
         `--name ${service.containerName}`,
         `--network ${this.config.dockerNetwork}`,
         `-p ${service.hostPort}:${profile.containerPort}`,
         ...volumeFlags,
-        '-w /src',
+        `-w ${containerWorkDir}`,
         envFlag,
         '--tmpfs /tmp',
         profile.dockerImage,
-        `sh -c "${profile.runCommand.replace(/"/g, '\\"')}"`,
+        `sh -c "${runCommand.replace(/"/g, '\\"')}"`,
       ].join(' ');
 
       const result = await this.shell.exec(runCmd);

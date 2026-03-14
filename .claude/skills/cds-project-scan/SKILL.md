@@ -175,19 +175,20 @@ find . -maxdepth 2 -name "docker-compose*.yml" -o -name "compose*.yml"
 **多文件去重规则**：如果项目有多个 compose 文件（如 `cds-compose.yml` + `docker-compose.dev.yml`），
 同 ID 的服务只取第一个发现的版本。优先级：`cds-compose.yml` > `docker-compose.yml` > `docker-compose.dev.yml`。
 
-**`x-cds-inject` 推荐值**（注入到应用容器的环境变量）：
+**环境变量推荐写法**（v2 格式，写在 app 服务的 `environment` 中）：
 
-| Docker Compose Service | `x-cds-inject` 推荐值 |
-|------------------------|----------------------|
-| `mongo` / `mongodb` | `MongoDB__ConnectionString: "mongodb://{{host}}:{{port}}"` |
-| `redis` | `Redis__ConnectionString: "{{host}}:{{port}}"` |
-| `postgres` / `postgresql` | `DATABASE_URL: "postgres://{{host}}:{{port}}/dbname"` |
-| `mysql` / `mariadb` | `DATABASE_URL: "mysql://{{host}}:{{port}}/dbname"` |
-| `rabbitmq` | `RABBITMQ_URL: "amqp://{{host}}:{{port}}"` |
-| `elasticsearch` | `ELASTICSEARCH_URL: "http://{{host}}:{{port}}"` |
-| `minio` | `S3_ENDPOINT: "http://{{host}}:{{port}}"` |
+| 基础设施服务 | App 服务 environment 推荐写法 |
+|-------------|------------------------------|
+| `mongodb` | `MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"` |
+| `redis` | `Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT}"` |
+| `postgres` | `DATABASE_URL: "postgres://${CDS_HOST}:${CDS_POSTGRES_PORT}/dbname"` |
+| `mysql` | `DATABASE_URL: "mysql://${CDS_HOST}:${CDS_MYSQL_PORT}/dbname"` |
+| `rabbitmq` | `RABBITMQ_URL: "amqp://${CDS_HOST}:${CDS_RABBITMQ_PORT}"` |
+| `elasticsearch` | `ELASTICSEARCH_URL: "http://${CDS_HOST}:${CDS_ELASTICSEARCH_PORT}"` |
+| `minio` | `S3_ENDPOINT: "http://${CDS_HOST}:${CDS_MINIO_PORT}"` |
 
-注意：`x-cds-inject` 中的 `{{host}}` 和 `{{port}}` 会被 CDS 替换为实际的 Docker 宿主机地址和分配的宿主端口。
+注意：`${CDS_HOST}` 和 `${CDS_<SERVICE>_PORT}` 在 CDS 启动容器时自动替换为实际值。
+命名规则：`CDS_` + compose 服务名大写 + `_PORT`（连字符转下划线）。
 
 #### 3.2 Compose 兼容性检查
 
@@ -195,13 +196,15 @@ find . -maxdepth 2 -name "docker-compose*.yml" -o -name "compose*.yml"
 
 | compose 特性 | CDS 支持状态 | 告警信息 |
 |-------------|-------------|---------|
-| `depends_on` | ❌ 忽略 | "CDS 不保证启动顺序，应用需有重连逻辑" |
-| `networks` (自定义) | ❌ 硬编码 | "CDS 使用统一网络，忽略自定义网络配置" |
+| `depends_on` | ✅ 支持 | CDS 按拓扑排序启动服务（先基础设施后应用） |
+| `working_dir` | ✅ 支持 | 容器内工作目录 |
+| `command` | ✅ 支持 | 合并 install+build+run 为单一命令 |
+| `labels` | ✅ 支持 | `cds.path-prefix` 用于路由 |
+| `${CDS_*}` 变量替换 | ✅ 支持 | CDS 自动替换 `${CDS_HOST}`、`${CDS_<SERVICE>_PORT}` |
+| `networks` (自定义) | ❌ 忽略 | "CDS 使用统一网络，忽略自定义网络配置" |
 | `read_only: true` | ❌ 忽略 | "CDS 容器不支持只读文件系统" |
-| `tmpfs` | ❌ 忽略 | "CDS 不挂载 tmpfs，.NET 等需要 /tmp 的应用可能受影响" |
 | `restart` (非 unless-stopped) | ⚠️ 硬编码 | "CDS 硬编码 restart=unless-stopped" |
 | 端口范围 `8000-8100` | ❌ 忽略 | "CDS 仅支持单端口映射" |
-| `${VAR:-default}` 变量替换 | ⚠️ 原样传递 | "环境变量替换由 Docker 处理，CDS 不展开" |
 
 #### 3.3 无 Docker Compose 时
 
@@ -286,46 +289,58 @@ grep -rn "ConnectionString" --include="*.json" --include="*.cs" .
 
 > 只有在 Phase 5 用户明确确认后才执行此阶段。
 
-#### 6.1 输出格式：CDS Compose YAML
+#### 6.1 输出格式：CDS Compose YAML (v2 标准格式)
 
-输出一个**单一的 compose YAML 文件**，包含所有 CDS 配置。这个文件：
-- 是**标准 docker-compose 文件**（`services` 部分可直接 `docker compose up`）
-- 同时包含 **CDS 扩展**（`x-cds-*` 前缀，Docker 会忽略）
-- 可直接粘贴到 CDS Dashboard → 一键导入
+输出一个**纯标准 docker-compose 文件**，零自定义扩展。CDS 通过以下规则自动推断：
+- **App 服务**：有相对路径 volume mount（`./xxx:/app`）的服务
+- **基础设施**：没有相对路径 mount 的服务
+- **启动顺序**：`depends_on` 声明（先启动基础设施，再启动 app）
+- **路由前缀**：`labels.cds.path-prefix`（标准 compose labels）
+- **端口注入**：App 服务 environment 使用 `${CDS_<SERVICE>_PORT}` 引用基础设施端口
 
 ```yaml
 # CDS Compose 配置 — 由 /cds-scan 自动生成
 # 导入方式：CDS Dashboard → 设置 → 一键导入 → 粘贴此内容
-
-x-cds-project:
-  name: "项目名称"
-  description: "自动检测的描述"
-
-x-cds-profiles:
-  api:
-    name: 后端 API
-    dockerImage: mcr.microsoft.com/dotnet/sdk:8.0
-    workDir: prd-api
-    installCommand: dotnet restore
-    runCommand: dotnet run --urls http://0.0.0.0:5000
-    containerPort: 5000
-    pathPrefixes:
-      - /api/
-  web:
-    name: 前端管理
-    dockerImage: node:20-slim
-    workDir: prd-admin
-    installCommand: corepack enable && pnpm install
-    runCommand: corepack enable && pnpm exec vite --host 0.0.0.0 --port 8000
-    containerPort: 8000
-    pathPrefixes:
-      - /
-
-x-cds-env:
-  MongoDB__ConnectionString: "mongodb://172.17.0.1:27017"
-  Jwt__Secret: "TODO: 请填写实际值"
+# 这是一个纯标准 docker-compose.yml，无任何自定义扩展
 
 services:
+  api:
+    image: mcr.microsoft.com/dotnet/sdk:8.0
+    working_dir: /app
+    volumes:
+      - ./prd-api:/app
+    ports:
+      - "5000"
+    command: >-
+      dotnet restore &&
+      dotnet build --no-restore &&
+      dotnet run --project src/PrdAgent.Api --urls http://0.0.0.0:5000
+    depends_on:
+      mongodb: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
+      MongoDB__DatabaseName: prdagent
+      Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT}"
+      Jwt__Secret: "TODO: 请填写实际值"
+    labels:
+      cds.path-prefix: "/api/"
+
+  admin:
+    image: node:20-slim
+    working_dir: /app
+    volumes:
+      - ./prd-admin:/app
+    ports:
+      - "8000"
+    command: >-
+      corepack enable &&
+      pnpm install --frozen-lockfile &&
+      pnpm exec vite --host 0.0.0.0 --port 8000
+    labels:
+      cds.path-prefix: "/"
+
   mongodb:
     image: mongo:7
     ports:
@@ -336,8 +351,6 @@ services:
       test: mongosh --eval "db.runCommand({ping:1})" --quiet
       interval: 10s
       retries: 3
-    x-cds-inject:
-      MongoDB__ConnectionString: "mongodb://{{host}}:{{port}}"
 
   redis:
     image: redis:7-alpine
@@ -347,28 +360,27 @@ services:
       test: redis-cli ping
       interval: 10s
       retries: 3
-    x-cds-inject:
-      Redis__ConnectionString: "{{host}}:{{port}}"
 
 volumes:
   mongodb-data:
 ```
 
-#### 6.2 CDS Compose YAML 格式说明
+#### 6.2 CDS v2 Compose 自动推断规则
 
-| 扩展字段 | 用途 | 说明 |
-|----------|------|------|
-| `x-cds-project` | 项目元数据 | name + description |
-| `x-cds-profiles` | 构建配置 | 每个 key 是 profile id，定义 dockerImage、runCommand、containerPort 等 |
-| `x-cds-env` | 共享环境变量 | 注入到所有分支容器 |
-| `x-cds-routing` | 路由规则 | 可选，定义域名/Header 路由到指定分支 |
-| `services` | 基础设施 | 标准 compose 格式，`x-cds-inject` 定义注入给应用的环境变量 |
+| 信号 | CDS 推断 |
+|------|---------|
+| `volumes: ["./xxx:/app"]`（相对路径挂载） | **App 服务** — 有源码需要构建运行 |
+| 无相对路径挂载 + 有 ports | **基础设施** — 数据库/缓存等 |
+| `depends_on` | 启动顺序（先启动被依赖的基础设施） |
+| `labels.cds.path-prefix: "/api/"` | 代理路由前缀 |
+| `${CDS_HOST}` | CDS 运行时替换为 Docker 宿主机 IP |
+| `${CDS_MONGODB_PORT}` | CDS 运行时替换为 mongodb 服务分配的宿主端口 |
 
-**`pathPrefixes` 说明**：CDS 代理根据此字段将请求路由到对应 profile 的容器。
-最长前缀优先匹配。`["/"]` 表示兜底处理所有未匹配的路径。
-不填时回退到约定：profile id 含 "api" 自动处理 `/api/*`。
+**命名规则**：`CDS_` + 服务名大写（连字符转下划线）+ `_PORT`。
+例如：服务 `mongodb` → `CDS_MONGODB_PORT`，服务 `my-redis` → `CDS_MY_REDIS_PORT`。
 
-**`x-cds-inject` 说明**：`{{host}}` 和 `{{port}}` 是 CDS 占位符，运行时替换为实际地址和端口。
+**路由前缀**：CDS 代理根据 `labels.cds.path-prefix` 将请求转发到对应容器。
+最长前缀优先匹配。`"/"` 表示兜底处理所有未匹配的路径。
 
 #### 6.3 使用说明
 
@@ -490,10 +502,12 @@ docker exec cds-redis redis-cli ping 2>/dev/null && echo "✅ Redis OK" || echo 
 
 ## 质量规则
 
-1. **必须**：每个 `x-cds-profiles` 条目都要有 `runCommand`，不能为空
-2. **必须**：输出格式为 CDS Compose YAML（包含 `x-cds-*` 扩展的标准 compose 文件）
+1. **必须**：每个 App 服务都要有 `command` 字段，不能为空
+2. **必须**：输出格式为 v2 标准 docker-compose YAML（零自定义扩展）
 3. **必须**：敏感值不输出明文，用 `"TODO: ..."` 替代
 4. **必须**：输出单一 YAML 文件，不要拆分或用 JSON 包装
+5. **必须**：基础设施端口引用使用 `${CDS_<SERVICE>_PORT}` 格式，不使用旧的 `{{host}}`/`{{port}}`
+6. **必须**：App 服务必须有相对路径 volume mount（如 `./prd-api:/app`）
 
 ## 关联文档
 

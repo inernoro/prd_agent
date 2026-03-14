@@ -29,19 +29,30 @@ export interface BuildProfile {
   name: string;
   /** Docker image to use for building/running */
   dockerImage: string;
-  /** Working directory relative to worktree root */
+  /** Working directory relative to worktree root (derived from volume mount host path in v2) */
   workDir: string;
-  /** Install command (runs once on first build or after pull) */
+  /**
+   * Working directory inside the container (from compose `working_dir`, default: '/app').
+   * v2 compose format uses this instead of hardcoded '/src'.
+   */
+  containerWorkDir?: string;
+  /**
+   * Full command to start the service (v2 compose format).
+   * Replaces installCommand + buildCommand + runCommand with a single `command` field.
+   * Example: "dotnet restore && dotnet build && dotnet run --urls http://0.0.0.0:5000"
+   */
+  command?: string;
+  /** @deprecated Use `command` instead. Install command (runs once on first build or after pull) */
   installCommand?: string;
-  /** Build command (produces runnable artifacts or just prepares) */
+  /** @deprecated Use `command` instead. Build command (produces runnable artifacts or just prepares) */
   buildCommand?: string;
-  /** Run command (starts the service) */
-  runCommand: string;
+  /** @deprecated Use `command` instead. Run command (starts the service) */
+  runCommand?: string;
   /** Port the service listens on inside the container */
   containerPort: number;
-  /** Custom icon identifier for port badge display (e.g., 'api', 'web', 'db') */
+  /** @deprecated No longer used in v2 format. Icon inferred from image name. */
   icon?: string;
-  /** Extra environment variables for this profile */
+  /** Extra environment variables for this profile (may contain ${CDS_*} template references) */
   env?: Record<string, string>;
   /** Volume mounts for shared caches (e.g., node_modules, nuget) */
   cacheMounts?: CacheMount[];
@@ -51,8 +62,14 @@ export interface BuildProfile {
    * URL path prefixes this profile handles (e.g., ["/api/", "/graphql"]).
    * Used by the proxy to route requests to the correct service within a branch.
    * If not set, falls back to convention: profile id containing "api" handles /api/*.
+   * In v2 format, derived from compose labels: `cds.path-prefix`.
    */
   pathPrefixes?: string[];
+  /**
+   * Service dependencies — IDs of infra services this app depends on (v2 compose format).
+   * Derived from compose `depends_on`. Used for startup ordering.
+   */
+  dependsOn?: string[];
 }
 
 /** A shared cache mount to avoid duplicating packages across branches */
@@ -180,10 +197,16 @@ export interface InfraService {
   /** Environment variables for the container itself */
   env: Record<string, string>;
   /**
-   * Environment variables to auto-inject into all branch containers.
+   * Environment variables to auto-inject into all branch containers (v1 format).
    * Supports {{host}} and {{port}} template placeholders.
+   * In v2 format, this is empty — app services use ${CDS_<SERVICE>_PORT} env var references instead.
    */
   injectEnv: Record<string, string>;
+  /**
+   * Whether this service was defined in v2 compose format (standard compose, no x-cds-inject).
+   * When true, CDS auto-generates CDS_<SERVICE>_PORT env vars instead of using injectEnv templates.
+   */
+  isV2Format?: boolean;
   /** Health check configuration */
   healthCheck?: InfraHealthCheck;
   /** When this service was created */

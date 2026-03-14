@@ -236,7 +236,7 @@ export class StateService {
   }
 
   /**
-   * Build merged inject env vars from all running infra services.
+   * Build merged inject env vars from all running infra services (v1 format).
    * Supported placeholders:
    *   {{host}}         — Docker host IP (configurable via CDS_DOCKER_HOST)
    *   {{port}}         — Allocated host port for this service
@@ -255,6 +255,31 @@ export class StateService {
             return this.state.customEnv[name] || process.env[name] || `{{${name}}}`;
           });
       }
+    }
+    return result;
+  }
+
+  /**
+   * Build CDS_* env vars from all running infra services (v2 format).
+   * Auto-generates predictable env var names based on service ID:
+   *   CDS_HOST               — Docker host IP
+   *   CDS_<SERVICE>_PORT     — Allocated host port (e.g., CDS_MONGODB_PORT=37821)
+   *   CDS_<SERVICE>_HOST     — Per-service host (currently same as CDS_HOST)
+   *
+   * These can be referenced in app service environments as ${CDS_MONGODB_PORT} etc.
+   */
+  getCdsEnvVars(): Record<string, string> {
+    const dockerHost = this.resolveDockerHost();
+    const result: Record<string, string> = {
+      CDS_HOST: dockerHost,
+    };
+    for (const svc of this.state.infraServices) {
+      if (svc.status !== 'running') continue;
+      const envKey = `CDS_${svc.id.toUpperCase().replace(/-/g, '_')}_PORT`;
+      result[envKey] = String(svc.hostPort);
+      // Per-service host (allows future per-service host override)
+      const hostKey = `CDS_${svc.id.toUpperCase().replace(/-/g, '_')}_HOST`;
+      result[hostKey] = dockerHost;
     }
     return result;
   }

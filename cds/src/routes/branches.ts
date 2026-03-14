@@ -30,11 +30,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   const router = Router();
 
-  // ── Helper: merged env (customEnv + infra inject env, customEnv wins) ──
+  // ── Helper: merged env (CDS_* auto vars + infra inject env + customEnv, later wins) ──
   function getMergedEnv(): Record<string, string> {
-    const infraEnv = stateService.getInfraInjectEnv();
+    const cdsEnv = stateService.getCdsEnvVars();   // CDS_HOST, CDS_MONGODB_PORT, etc.
+    const infraEnv = stateService.getInfraInjectEnv();  // v1 {{host}}:{{port}} templates
     const customEnv = stateService.getCustomEnv();
-    return { ...infraEnv, ...customEnv };
+    return { ...cdsEnv, ...infraEnv, ...customEnv };
   }
 
   // ── Helper: SSE setup ──
@@ -1059,6 +1060,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       injectEnv: { ...def.injectEnv },
       healthCheck: def.healthCheck ? { ...def.healthCheck } : undefined,
       createdAt: new Date().toISOString(),
+      isV2Format: def.isV2Format,
     };
   }
 
@@ -1318,8 +1320,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return { valid: false, errors: ['配置必须是一个 JSON 对象'], warnings };
     }
     const cfg = blob as Record<string, unknown>;
-    if (cfg.$schema !== 'cds-config-v1') {
-      errors.push('缺少 $schema 字段或值不是 "cds-config-v1"');
+    // Accept both v1 ($schema=cds-config-v1) and v2 ($schema=cds-config-v2 or auto-detected)
+    const schema = cfg.$schema as string | undefined;
+    const isV2 = schema === 'cds-config-v2' || cfg._isV2Format === true;
+    if (!isV2 && schema !== 'cds-config-v1') {
+      errors.push('缺少 $schema 字段或值不是 "cds-config-v1" / "cds-config-v2"');
     }
     // Validate buildProfiles
     if (cfg.buildProfiles !== undefined) {
@@ -1331,7 +1336,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
           if (!p.id) errors.push(`buildProfiles[${i}]: 缺少 id`);
           if (!p.name) errors.push(`buildProfiles[${i}]: 缺少 name`);
           if (!p.dockerImage) errors.push(`buildProfiles[${i}]: 缺少 dockerImage`);
-          if (!p.runCommand) errors.push(`buildProfiles[${i}]: 缺少 runCommand`);
+          // v2 uses `command`, v1 uses `runCommand` — require at least one
+          if (!p.runCommand && !p.command) errors.push(`buildProfiles[${i}]: 缺少 runCommand 或 command`);
           if (p.containerPort !== undefined) {
             const port = Number(p.containerPort);
             if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -1343,22 +1349,24 @@ export function createBranchRouter(deps: RouterDeps): Router {
           const installWarn = checkCorepackPrefix(p.installCommand as string | undefined, `${label}.installCommand`);
           const runWarn = checkCorepackPrefix(p.runCommand as string | undefined, `${label}.runCommand`);
           const buildWarn = checkCorepackPrefix(p.buildCommand as string | undefined, `${label}.buildCommand`);
+          const cmdWarn = checkCorepackPrefix(p.command as string | undefined, `${label}.command`);
           if (installWarn) warnings.push(installWarn);
           if (runWarn) warnings.push(runWarn);
           if (buildWarn) warnings.push(buildWarn);
+          if (cmdWarn) warnings.push(cmdWarn);
 
           // Cross-check: if workDir has a lock file that doesn't match the command's PM
           if (p.workDir && typeof p.workDir === 'string') {
             const fullDir = path.join(config.repoRoot, p.workDir);
             if (fs.existsSync(fullDir)) {
               const detectedPm = detectPackageManager(fullDir);
-              const installCmd = (p.installCommand as string) || '';
+              const cmdToCheck = (p.installCommand as string) || (p.command as string) || '';
               const usesWrongPm =
-                (detectedPm === 'pnpm' && /\bnpm install\b/.test(installCmd)) ||
-                (detectedPm === 'npm' && /\bpnpm install\b/.test(installCmd)) ||
-                (detectedPm === 'yarn' && !/\byarn install\b/.test(installCmd) && /\b(npm|pnpm) install\b/.test(installCmd));
+                (detectedPm === 'pnpm' && /\bnpm install\b/.test(cmdToCheck)) ||
+                (detectedPm === 'npm' && /\bpnpm install\b/.test(cmdToCheck)) ||
+                (detectedPm === 'yarn' && !/\byarn install\b/.test(cmdToCheck) && /\b(npm|pnpm) install\b/.test(cmdToCheck));
               if (usesWrongPm) {
-                warnings.push(`${label}: 检测到 ${p.workDir}/ 使用 ${detectedPm}，但 installCommand 使用了其他包管理器`);
+                warnings.push(`${label}: 检测到 ${p.workDir}/ 使用 ${detectedPm}，但命令使用了其他包管理器`);
               }
             }
           }
@@ -1509,8 +1517,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const cdsConfig = parseCdsCompose(configBlob);
         if (cdsConfig) {
           // Convert CDS compose to internal format (reuse existing validate/apply pipeline)
+          const schemaVersion = cdsConfig.isV2Format ? 'cds-config-v2' : 'cds-config-v1';
           cfg = {
-            $schema: 'cds-config-v1',
+            $schema: schemaVersion,
+            _isV2Format: cdsConfig.isV2Format || false,
             buildProfiles: cdsConfig.buildProfiles,
             envVars: cdsConfig.envVars,
             infraServices: cdsConfig.infraServices.length > 0 ? cdsConfig.infraServices : undefined,

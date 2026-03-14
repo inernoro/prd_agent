@@ -1413,7 +1413,7 @@ function openImportModal() {
       粘贴由 <code>/cds-scan</code> 生成的 CDS Compose YAML，或从其他 CDS 实例导出的配置。
       支持 YAML（推荐）和 JSON 两种格式，粘贴后会自动识别。
     </p>
-    <textarea id="importConfigTextarea" class="bulk-textarea" rows="14" placeholder="x-cds-profiles:\n  api:\n    name: 后端 API\n    dockerImage: node:20-slim\n    runCommand: npm start\n    containerPort: 3000\n    pathPrefixes: [/api/]\n\nservices:\n  mongodb:\n    image: mongo:7\n    ports: ['27017']\n    x-cds-inject:\n      MONGO_URL: 'mongodb://{{host}}:{{port}}'"
+    <textarea id="importConfigTextarea" class="bulk-textarea" rows="14" placeholder="services:\n  api:\n    image: node:20-slim\n    working_dir: /app\n    volumes: ['./src:/app']\n    ports: ['3000']\n    command: npm install && npm start\n    depends_on:\n      mongodb: { condition: service_healthy }\n    environment:\n      MONGO_URL: 'mongodb://$${CDS_HOST}:$${CDS_MONGODB_PORT}'\n    labels:\n      cds.path-prefix: '/api/'\n  mongodb:\n    image: mongo:7\n    ports: ['27017']\n    healthcheck:\n      test: mongosh --eval 'db.runCommand({ping:1})'\n      interval: 10s\n      retries: 3"
     ></textarea>
     <div id="importPreview" style="margin-top:8px"></div>
     <div class="form-row" style="margin-top:8px;gap:6px">
@@ -1598,14 +1598,17 @@ function openInfraModal() {
           ${svc.injectEnv && Object.keys(svc.injectEnv).length > 0 ? `
           <div style="font-size:11px;color:var(--fg-muted);background:var(--bg-tertiary);padding:4px 8px;border-radius:4px;margin-top:2px">
             自动注入: ${Object.keys(svc.injectEnv).map(k => `<code>${esc(k)}</code>`).join(', ')}
-          </div>` : ''}
+          </div>` : `
+          <div style="font-size:11px;color:var(--fg-muted);background:var(--bg-tertiary);padding:4px 8px;border-radius:4px;margin-top:2px">
+            v2 环境变量: <code>\${CDS_${svc.id.toUpperCase().replace(/-/g, '_')}_PORT}</code>
+          </div>`}
         </div>
       `).join('');
 
   const html = `
     <p class="config-panel-desc">
       CDS 托管的基础设施服务（数据库、缓存等）。容器使用 Docker Label 标记，CDS 重启后自动接管。
-      环境变量会自动注入到所有分支容器中（优先级低于自定义环境变量）。
+      v2 格式：App 服务通过 <code>\${CDS_&lt;SERVICE&gt;_PORT}</code> 引用端口。v1 兼容：使用 <code>{{host}}:{{port}}</code> 自动注入。
     </p>
     <div class="config-panel-actions" style="margin-bottom:10px;display:flex;gap:6px">
       <button class="sm primary" onclick="infraDiscover()">📦 从 Compose 导入</button>
