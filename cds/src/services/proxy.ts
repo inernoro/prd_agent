@@ -43,10 +43,6 @@ export class ProxyService {
 
   /**
    * Resolve which branch should handle a request.
-   * Returns the branch slug or null if no match.
-   */
-  /**
-   * Resolve which branch should handle a request.
    * Returns the ORIGINAL branch name (not slugified) to preserve "/" and casing.
    */
   resolveBranch(req: http.IncomingMessage): string | null {
@@ -82,8 +78,8 @@ export class ProxyService {
 
     switch (rule.type) {
       case 'header':
-        // Header-based rules are handled by X-Branch above;
-        // this is for custom header patterns in the rule itself
+        // X-Branch header routing is handled globally in resolveBranch() before rules are evaluated.
+        // Rules with type 'header' are no-ops in matchRule — they exist only as data markers.
         return null;
 
       case 'domain': {

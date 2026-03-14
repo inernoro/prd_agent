@@ -8,7 +8,7 @@ import { createBranchRouter } from '../../src/routes/branches.js';
 import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService } from '../../src/services/container.js';
-import { ProxyService } from '../../src/services/proxy.js';
+
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { CdsConfig } from '../../src/types.js';
 
@@ -85,12 +85,11 @@ describe('Branch Routes', () => {
 
     const worktreeService = new WorktreeService(mock, config.repoRoot);
     const containerService = new ContainerService(mock, config);
-    const proxyService = new ProxyService(stateService);
 
     const app = express();
     app.use(express.json());
     app.use('/api', createBranchRouter({
-      stateService, worktreeService, containerService, proxyService, shell: mock, config,
+      stateService, worktreeService, containerService, shell: mock, config,
     }));
 
     await new Promise<void>((resolve) => {

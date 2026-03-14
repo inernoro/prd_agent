@@ -24,8 +24,6 @@ export function loadConfig(configPath?: string): CdsConfig {
   const candidates = [
     configPath,
     path.resolve(process.cwd(), 'cds.config.json'),
-    // Backward compat
-    path.resolve(process.cwd(), 'bt.config.json'),
   ];
 
   for (const candidate of candidates) {

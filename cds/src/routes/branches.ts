@@ -4,7 +4,6 @@ import { Router } from 'express';
 import { StateService } from '../services/state.js';
 import type { WorktreeService } from '../services/worktree.js';
 import type { ContainerService } from '../services/container.js';
-import type { ProxyService } from '../services/proxy.js';
 import type { BranchEntry, CdsConfig, IShellExecutor, OperationLog, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService } from '../types.js';
 import { discoverComposeFiles, parseComposeFile, parseComposeString, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
@@ -15,7 +14,6 @@ export interface RouterDeps {
   stateService: StateService;
   worktreeService: WorktreeService;
   containerService: ContainerService;
-  proxyService: ProxyService;
   shell: IShellExecutor;
   config: CdsConfig;
 }
