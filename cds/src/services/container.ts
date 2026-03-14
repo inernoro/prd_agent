@@ -65,13 +65,16 @@ export class ContainerService {
       mergedEnv['VITE_GIT_BRANCH'] = entry.branch;
     }
 
+    // Detect Node.js containers by image name (node:*, *node:*, etc.)
+    const isNodeContainer = /\bnode:/.test(profile.dockerImage);
+
     // For Node.js containers: move pnpm store outside the bind-mounted source directory.
     // Without this, pnpm creates .pnpm-store inside /app (the bind mount), and Vite's
     // chokidar watches all those files, quickly exhausting the kernel inotify limit (ENOSPC).
     // Setting PNPM_HOME=/pnpm puts the store at /pnpm/store (container overlay FS),
     // invisible to Vite's file watcher. pnpm falls back to copying instead of hard-linking,
     // which is fine for dev environments.
-    if (profile.dockerImage.startsWith('node:')) {
+    if (isNodeContainer) {
       mergedEnv['PNPM_HOME'] = mergedEnv['PNPM_HOME'] || '/pnpm';
       // Move pnpm content-addressable store outside /app (bind mount).
       // Without this, pnpm creates /app/.pnpm-store and Vite watches all those files,
@@ -105,7 +108,7 @@ export class ContainerService {
     // Without this, pnpm creates thousands of files inside /app on the bind mount,
     // and Vite's chokidar watches them all, exhausting the kernel inotify limit (ENOSPC).
     // Using Docker named volumes puts them on the container overlay FS, invisible to watchers.
-    if (profile.dockerImage.startsWith('node:')) {
+    if (isNodeContainer) {
       const nmVolume = `cds-nm-${entry.id}-${profile.id}`;
       volumeFlags.push(`-v "${nmVolume}":"${containerWorkDir}/node_modules"`);
       volumeFlags.push(`-v "${nmVolume}-store":"${containerWorkDir}/.pnpm-store"`);
@@ -126,6 +129,9 @@ export class ContainerService {
       }
 
       onOutput?.(`── 运行: ${command} ──\n`);
+      if (isNodeContainer) {
+        onOutput?.(`── Node.js 容器: node_modules 已隔离到 Docker volume ──\n`);
+      }
       const runCmd = [
         'docker run -d',
         `--name ${service.containerName}`,
@@ -144,8 +150,56 @@ export class ContainerService {
       if (result.exitCode !== 0) {
         throw new Error(`启动服务 "${service.containerName}" 失败:\n${combinedOutput(result)}`);
       }
+
+      // Verify the container is actually running after startup.
+      // docker run -d returns immediately; the process inside may crash shortly after.
+      // Poll a few times to catch early exits (e.g., ENOSPC, missing deps, syntax errors).
+      await this.waitForContainerAlive(service.containerName, onOutput);
     } finally {
       this.removeEnvFile(envFilePath);
+    }
+  }
+
+  /**
+   * Poll container status after startup to catch early crashes.
+   * Checks 5 times over ~15 seconds. If the container exits during this window,
+   * it grabs the last 30 lines of logs and throws an error so deploy is marked failed.
+   */
+  private async waitForContainerAlive(
+    containerName: string,
+    onOutput?: (chunk: string) => void,
+  ): Promise<void> {
+    const CHECKS = 5;
+    const INTERVAL_MS = 3000;
+
+    for (let i = 0; i < CHECKS; i++) {
+      await new Promise(r => setTimeout(r, INTERVAL_MS));
+
+      const inspect = await this.shell.exec(
+        `docker inspect --format="{{.State.Status}}|{{.State.ExitCode}}" ${containerName}`,
+      );
+      if (inspect.exitCode !== 0) {
+        // Container doesn't exist at all
+        throw new Error(`容器 "${containerName}" 已消失`);
+      }
+
+      const [status, exitCode] = inspect.stdout.trim().split('|');
+
+      if (status === 'running') {
+        onOutput?.(`── 容器健康检查 ${i + 1}/${CHECKS}: 运行中 ──\n`);
+        continue;
+      }
+
+      if (status === 'exited' || status === 'dead') {
+        // Container crashed — grab logs for diagnostics
+        const logs = await this.getLogs(containerName, 30);
+        throw new Error(
+          `容器 "${containerName}" 启动后退出 (exit code: ${exitCode}):\n${logs}`,
+        );
+      }
+
+      // 'created', 'restarting', 'paused' etc. — keep waiting
+      onOutput?.(`── 容器状态: ${status}, 等待中... ──\n`);
     }
   }
 
