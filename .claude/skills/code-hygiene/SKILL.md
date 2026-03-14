@@ -1,6 +1,6 @@
 ---
 name: code-hygiene
-description: Audits code for post-migration residue and technical debt across 9 dimensions (dead fields, dead branches, compat shims, naming artifacts, redundant params/types, stale comments, migration guards, over-abstraction, near-duplicates). Outputs a structured report with auto-fix plan. Trigger words: "代码卫生", "清理残留", "hygiene", "代码体检", "/hygiene".
+description: Audits code for post-migration residue and technical debt across 10 dimensions (dead fields, dead branches, compat shims, naming artifacts, redundant params/types, stale comments, migration guards, over-abstraction, near-duplicates, config-code drift). Outputs a structured report with auto-fix plan. Trigger words: "代码卫生", "清理残留", "hygiene", "代码体检", "/hygiene".
 ---
 
 # Code Hygiene — 代码卫生审计
@@ -10,7 +10,7 @@ description: Audits code for post-migration residue and technical debt across 9 
 ## 目录
 
 - [适用场景](#适用场景)
-- [九类检测维度](#九类检测维度mece)
+- [十类检测维度](#十类检测维度mece)
 - [执行流程](#执行流程)
 - [输出模板](#输出模板)
 - [端到端示例](#端到端示例)
@@ -27,9 +27,9 @@ description: Audits code for post-migration residue and technical debt across 9 
 | **PR 审查辅助** | 大 PR 合入后，扫描是否引入了不必要的兼容层 |
 | **新人接手** | 接手陌生模块前，先做一次卫生审计了解技术债 |
 
-## 九类检测维度（MECE）
+## 十类检测维度（MECE）
 
-所有代码卫生问题归入以下 9 类，不重叠、不遗漏。
+所有代码卫生问题归入以下 10 类，不重叠、不遗漏。
 
 | # | 维度 | 一句话定义 | 典型信号 |
 |---|------|-----------|---------|
@@ -42,6 +42,7 @@ description: Audits code for post-migration residue and technical debt across 9 
 | ⑦ | **防御性迁移代码** | 旧数据格式的运行时填充 | `// v1 compat`、批量 `if (!field)` |
 | ⑧ | **过度抽象** | 只有一个调用者的 helper/wrapper | 单次调用的 `xxxUtils` |
 | ⑨ | **近似重复** | 两段 80%+ 相同的代码 | 复制粘贴仅改部分 |
+| ⑩ | **配置-代码漂移** | 配置文件使用了代码中不存在的语法/字段 | `x-cds-inject`、`{{host}}`、未解析的自定义扩展 |
 
 **每个维度的详细信号和修复策略** → 见 [reference/dimensions.md](reference/dimensions.md)
 
@@ -53,7 +54,7 @@ description: Audits code for post-migration residue and technical debt across 9 
 审计进度：
 - [ ] Phase 1: 确定扫描范围
 - [ ] Phase 2: 建立检测上下文
-- [ ] Phase 3: 逐维度扫描（9/9）
+- [ ] Phase 3: 逐维度扫描（10/10）
 - [ ] Phase 4: 分类评估
 - [ ] Phase 5: 输出报告
 - [ ] Phase 6: 用户确认后自动修复
@@ -189,6 +190,6 @@ description: Audits code for post-migration residue and technical debt across 9 
   ├─ 命名残留 → Grep 全局替换
   ├─ 过度抽象 → /trace 追踪调用链确认
   ├─ 迁移代码 → /verify 验证数据完整性
-  ├─ 修复完成 → /simplify 复审质量
+  ├─ 配置漂移 → /cds-scan 等生成工具重新生成
   └─ 修复 3+ 文件 → /handoff 生成交接清单
 ```

@@ -1,41 +1,71 @@
-# CDS Infrastructure Services
-# This file defines infrastructure services managed by CDS.
-# Compatible with docker-compose — can also be used with `docker compose up`.
-#
-# CDS extension fields (ignored by docker-compose):
-#   x-cds-inject: Environment variables to inject into all branch containers.
-#                 Supports {{host}} (Docker host IP) and {{port}} (allocated host port).
-#   x-cds-name:   Display name shown in CDS Dashboard.
+# CDS Compose 配置 — 由 /cds-scan 自动生成
+# 导入方式：CDS Dashboard → 设置 → 一键导入 → 粘贴此内容
 
 services:
+  # ── App Services ──
+
+  api:
+    image: mcr.microsoft.com/dotnet/sdk:8.0
+    working_dir: /app
+    volumes:
+      - ./prd-api:/app
+    ports:
+      - "5000"
+    command: >-
+      dotnet restore &&
+      dotnet build --no-restore &&
+      dotnet run --project src/PrdAgent.Api --urls http://0.0.0.0:5000
+    depends_on:
+      mongodb: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
+      MongoDB__DatabaseName: prdagent
+      Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT}"
+      Jwt__Secret: "TODO: 请填写实际值"
+      Jwt__Issuer: prdagent
+    labels:
+      cds.path-prefix: "/api/"
+
+  admin:
+    image: node:20-slim
+    working_dir: /app
+    volumes:
+      - ./prd-admin:/app
+    ports:
+      - "8000"
+    command: >-
+      corepack enable &&
+      pnpm install --frozen-lockfile &&
+      pnpm exec vite --host 0.0.0.0 --port 8000
+    labels:
+      cds.path-prefix: "/"
+
+  # ── Infrastructure Services ──
+
   mongodb:
     image: mongo:7
     ports:
       - "27017"
     volumes:
-      - cds-mongodb-data:/data/db
+      - mongodb-data:/data/db
     healthcheck:
       test: mongosh --eval "db.runCommand({ping:1})" --quiet
       interval: 10s
       retries: 3
-    x-cds-inject:
-      MONGODB_HOST: "{{host}}:{{port}}"
-      MongoDB__ConnectionString: "mongodb://{{host}}:{{port}}"
 
   redis:
     image: redis:7-alpine
     ports:
       - "6379"
     volumes:
-      - cds-redis-data:/data
+      - redis-data:/data
     healthcheck:
       test: redis-cli ping
       interval: 10s
       retries: 3
-    x-cds-inject:
-      REDIS_HOST: "{{host}}:{{port}}"
-      Redis__ConnectionString: "{{host}}:{{port}}"
 
 volumes:
-  cds-mongodb-data:
-  cds-redis-data:
+  mongodb-data:
+  redis-data:
