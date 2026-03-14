@@ -38,7 +38,7 @@ CDS 扫描进度：
 - [ ] Phase 4: 扫描环境变量
 - [ ] Phase 5: 展示摘要 → 用户确认
 - [ ] Phase 6: 生成 CDS Compose YAML
-- [ ] Phase 7: 询问基础设施初始化（可选）
+- [ ] Phase 7: 使用说明（CDS 自动管理基础设施）
 ```
 
 ### Phase 1: 识别项目根目录
@@ -109,7 +109,7 @@ grep -rn "mongodb://\|redis://\|ConnectionString" --include="*.json" --include="
 
 ### Phase 6: 生成 CDS Compose YAML
 
-CDS v2 格式——纯标准 docker-compose，通过约定自动推断：
+纯标准 docker-compose 格式，通过约定自动推断：
 
 | 约定 | 含义 |
 |------|------|
@@ -128,9 +128,11 @@ CDS v2 格式——纯标准 docker-compose，通过约定自动推断：
 3. 设置 → 一键导入 → 粘贴 YAML → 确认应用
 ```
 
-### Phase 7: 基础设施初始化（可选）
+### Phase 7: 使用说明 & 回退初始化
 
-**详细的 Docker 初始化命令和健康检查** → 见 [reference/infra-init.md](reference/infra-init.md)
+配置输出后附带 CDS 导入说明。CDS Dashboard 导入 YAML 后**自动创建基础设施容器**，无需手动 `docker run`。
+
+仅当用户明确表示不通过 CDS 管理时，才提供手动初始化选项 → 见 [reference/infra-init.md](reference/infra-init.md)
 
 ## 输出格式
 
@@ -220,7 +222,7 @@ volumes:
 
 **Phase 6**: 生成上方 YAML → 附带使用说明
 
-**Phase 7**: 询问是否初始化 → 用户选择 "不需要"
+**Phase 7**: 输出 CDS 导入说明（CDS Dashboard 自动管理基础设施）
 
 ## 异常处理
 
