@@ -596,7 +596,7 @@ function parseRoutingRules(doc: ComposeFile): CdsComposeConfig['routingRules'] {
       routingRules.push({
         id: r.id,
         name: r.name || r.id,
-        type: r.type || 'header',
+        type: r.type || 'domain',
         match: r.match,
         branch: r.branch,
         priority: r.priority ?? 0,
