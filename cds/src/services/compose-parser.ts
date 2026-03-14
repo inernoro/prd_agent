@@ -24,7 +24,6 @@ export interface ComposeServiceDef {
   containerPort: number;
   volumes: InfraVolume[];
   env: Record<string, string>;
-  injectEnv: Record<string, string>;
   healthCheck?: InfraHealthCheck;
 }
 
@@ -150,7 +149,7 @@ export function parseComposeFile(filePath: string): ComposeServiceDef[] {
       containerPort,
       volumes: extractVolumes(entry.volumes),
       env: extractEnv(entry.environment),
-      injectEnv: {},
+
       healthCheck: extractHealthCheck(entry.healthcheck),
     };
 
@@ -186,7 +185,7 @@ export function parseComposeString(yamlString: string): ComposeServiceDef[] {
       containerPort,
       volumes: extractVolumes(entry.volumes),
       env: extractEnv(entry.environment),
-      injectEnv: {},
+
       healthCheck: extractHealthCheck(entry.healthcheck),
     });
   }
@@ -330,7 +329,7 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           containerPort,
           volumes: extractVolumes(entry.volumes),
           env: extractEnv(entry.environment),
-          injectEnv: {},
+    
           healthCheck: extractHealthCheck(entry.healthcheck),
         });
       }

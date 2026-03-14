@@ -184,12 +184,6 @@ export interface InfraService {
   volumes: InfraVolume[];
   /** Environment variables for the container itself */
   env: Record<string, string>;
-  /**
-   * Environment variables to auto-inject into all branch containers.
-   * Supports {{host}} and {{port}} template placeholders.
-   * Standard compose services leave this empty — apps use ${CDS_<SERVICE>_PORT} env var references instead.
-   */
-  injectEnv: Record<string, string>;
   /** Health check configuration */
   healthCheck?: InfraHealthCheck;
   /** When this service was created */

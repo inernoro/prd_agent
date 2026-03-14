@@ -240,30 +240,6 @@ export class StateService {
   }
 
   /**
-   * Build merged inject env vars from all running infra services.
-   * Supported placeholders:
-   *   {{host}}         — Docker host IP (configurable via CDS_DOCKER_HOST)
-   *   {{port}}         — Allocated host port for this service
-   *   {{ENV_VAR_NAME}} — Any other placeholder resolves from customEnv or process.env
-   */
-  getInfraInjectEnv(): Record<string, string> {
-    const dockerHost = this.resolveDockerHost();
-    const result: Record<string, string> = {};
-    for (const svc of this.state.infraServices) {
-      if (svc.status !== 'running') continue;
-      for (const [key, template] of Object.entries(svc.injectEnv)) {
-        result[key] = template
-          .replace(/\{\{host\}\}/g, dockerHost)
-          .replace(/\{\{port\}\}/g, String(svc.hostPort))
-          .replace(/\{\{(\w+)\}\}/g, (_match, name) => {
-            return this.state.customEnv[name] || process.env[name] || `{{${name}}}`;
-          });
-      }
-    }
-    return result;
-  }
-
-  /**
    * Build CDS_* env vars from all running infra services.
    * Auto-generates predictable env var names based on service ID:
    *   CDS_HOST               — Docker host IP

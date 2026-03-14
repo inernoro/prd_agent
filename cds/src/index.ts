@@ -445,10 +445,9 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
       const svc = entry.services[profile.id];
       svc.status = 'building';
 
-      // Merge infra inject env + custom env (custom env wins)
-      const infraEnv = stateService.getInfraInjectEnv();
+      // Custom env overrides
       const customEnv = stateService.getCustomEnv();
-      const mergedEnv = { ...infraEnv, ...customEnv };
+      const mergedEnv = { ...customEnv };
       await containerService.runService(entry, profile, svc, (chunk) => {
         sendEvent('log', { profileId: profile.id, chunk });
       }, mergedEnv);

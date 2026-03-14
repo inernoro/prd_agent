@@ -31,12 +31,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   const router = Router();
 
-  // ── Helper: merged env (CDS_* auto vars + infra inject env + customEnv, later wins) ──
+  // ── Helper: merged env (CDS_* auto vars + customEnv, later wins) ──
   function getMergedEnv(): Record<string, string> {
     const cdsEnv = stateService.getCdsEnvVars();   // CDS_HOST, CDS_MONGODB_PORT, etc.
-    const infraEnv = stateService.getInfraInjectEnv();  // {{host}}:{{port}} templates
     const customEnv = stateService.getCustomEnv();
-    return { ...cdsEnv, ...infraEnv, ...customEnv };
+    return { ...cdsEnv, ...customEnv };
   }
 
   /** Mask sensitive env var values for trace logging */
@@ -1157,7 +1156,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
       status: 'stopped',
       volumes: [...def.volumes],
       env: { ...def.env },
-      injectEnv: { ...def.injectEnv },
       healthCheck: def.healthCheck ? { ...def.healthCheck } : undefined,
       createdAt: new Date().toISOString(),
     };
@@ -1222,7 +1220,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
         status: 'stopped',
         volumes: body.volumes || [],
         env: body.env || {},
-        injectEnv: body.injectEnv || {},
         healthCheck: body.healthCheck,
         createdAt: new Date().toISOString(),
       };
@@ -1521,7 +1518,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
         containerPort: (s.containerPort as number) || 0,
         volumes: (s.volumes as Array<{ name: string; containerPath: string }>) || [],
         env: (s.env as Record<string, string>) || {},
-        injectEnv: (s.injectEnv as Record<string, string>) || {},
         healthCheck: s.healthCheck as ComposeServiceDef['healthCheck'],
       }));
     }
@@ -1594,14 +1590,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   // POST /api/import-config — validate, preview, and optionally apply
-  // Accepts either:
-  //   1. { config: <JSON object>, dryRun? }  — legacy JSON format (cds-config-v1)
-  //   2. { config: <YAML string>, dryRun? }  — CDS compose YAML with x-cds-* extensions
+  // Accepts { config: <JSON object | YAML string>, dryRun? }
+  // Auto-detects format: YAML string → CDS compose, JSON object → direct config
   router.post('/import-config', async (req, res) => {
     try {
       const { config: configBlob, dryRun } = req.body as { config: unknown; dryRun?: boolean };
 
-      // Auto-detect format: if string → try CDS compose YAML, else → legacy JSON
+      // Auto-detect format: string → try CDS compose YAML, object → JSON config
       let cfg: Record<string, unknown>;
       if (typeof configBlob === 'string') {
         const cdsConfig = parseCdsCompose(configBlob);
