@@ -72,6 +72,40 @@ proxyService.setWorktreeService(worktreeService);
       const running = stateServices.filter(s => s.status === 'running').length;
       console.log(`  [infra] ${stateServices.length} service(s) configured, ${running} running`);
     }
+
+    // ── Discover and reconcile app containers ──
+    const appContainers = await containerService.discoverAppContainers();
+    const branches = stateService.getAllBranches();
+    let appReconciled = 0;
+
+    for (const branch of branches) {
+      for (const [profileId, svc] of Object.entries(branch.services)) {
+        const key = `${branch.id}/${profileId}`;
+        const found = appContainers.get(key);
+        if (found) {
+          // Container exists in Docker — sync status
+          const wasStatus = svc.status;
+          svc.status = found.running ? 'running' : 'error';
+          if (wasStatus !== svc.status) appReconciled++;
+          appContainers.delete(key);
+        } else if (svc.status === 'running') {
+          // State says running but container is gone
+          svc.status = 'error';
+          svc.errorMessage = '容器已丢失，需重新部署';
+          appReconciled++;
+        }
+      }
+    }
+
+    // Log orphan app containers
+    for (const [key, info] of appContainers) {
+      console.warn(`  [app] Orphan container detected: ${info.containerName} (${key}). Not managed by current state.`);
+    }
+
+    if (appReconciled > 0) {
+      console.log(`  [app] Reconciled ${appReconciled} app container(s)`);
+      stateService.save();
+    }
   } catch (err) {
     console.error('  [infra] Discovery failed:', (err as Error).message);
   }

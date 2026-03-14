@@ -1,18 +1,14 @@
 /**
  * Compose Parser — reads docker-compose.yml and extracts service definitions.
  *
- * Supports two formats:
- *
- * **v1 (legacy)**: Uses `x-cds-profiles` and `x-cds-inject` custom extensions.
- *
- * **v2 (standard compose)**: Zero custom extensions. Auto-detects app vs infra:
+ * Standard compose format: Zero custom extensions. Auto-detects app vs infra:
  *   - Services with relative volume mounts (`./xxx:/path`) → app services (BuildProfile)
  *   - Services without relative mounts → infra services
  *   - `depends_on` → startup ordering
  *   - `labels.cds.path-prefix` → proxy routing
  *   - App environment uses `${CDS_<SERVICE>_PORT}` for dynamic port injection
  *
- * Both formats produce the same internal types (CdsComposeConfig).
+ * Produces CdsComposeConfig for internal use.
  */
 
 import fs from 'node:fs';
@@ -30,21 +26,17 @@ export interface ComposeServiceDef {
   env: Record<string, string>;
   injectEnv: Record<string, string>;
   healthCheck?: InfraHealthCheck;
-  /** v2 format flag — when true, CDS auto-generates CDS_<SERVICE>_PORT env vars */
-  isV2Format?: boolean;
 }
 
 /** Raw compose YAML structure */
 interface ComposeFile {
   services?: Record<string, ComposeServiceEntry>;
   volumes?: Record<string, unknown>;
-  /** CDS extension (v1): project metadata */
+  /** CDS extension: project metadata */
   'x-cds-project'?: { name?: string; description?: string };
-  /** CDS extension (v1): build profiles */
-  'x-cds-profiles'?: Record<string, CdsProfileEntry>;
-  /** CDS extension: shared environment variables (used in both v1 and v2) */
+  /** CDS extension: shared environment variables */
   'x-cds-env'?: Record<string, string>;
-  /** CDS extension: routing rules (used in both v1 and v2) */
+  /** CDS extension: routing rules */
   'x-cds-routing'?: Array<{
     id: string;
     name?: string;
@@ -68,42 +60,30 @@ interface ComposeServiceEntry {
     retries?: number;
   };
   container_name?: string;
-  /** Standard compose: full command to run */
   command?: string | string[];
-  /** Standard compose: working directory inside the container */
   working_dir?: string;
-  /** Standard compose: service dependencies for startup ordering */
   depends_on?: Record<string, { condition?: string }> | string[];
-  /** Standard compose: labels (used for cds.path-prefix in v2) */
   labels?: Record<string, string> | string[];
-  /** Standard compose: entrypoint override */
   entrypoint?: string | string[];
-  /** CDS extension (v1): env vars to inject into branch containers */
-  'x-cds-inject'?: Record<string, string>;
-  /** CDS extension (v1): display name for this service */
-  'x-cds-name'?: string;
-}
-
-/** CDS profile entry in x-cds-profiles (v1 format) */
-interface CdsProfileEntry {
-  name?: string;
-  dockerImage: string;
-  workDir?: string;
-  installCommand?: string;
-  buildCommand?: string;
-  runCommand: string;
-  containerPort?: number;
-  icon?: string;
-  env?: Record<string, string>;
-  cacheMounts?: Array<{ hostPath: string; containerPath: string }>;
-  buildTimeout?: number;
-  pathPrefixes?: string[];
 }
 
 /** Result of parsing a full CDS compose file (infra + profiles + env + routing) */
 export interface CdsComposeConfig {
   project?: { name?: string; description?: string };
-  buildProfiles: Array<CdsProfileEntry & { id: string; command?: string; containerWorkDir?: string; dependsOn?: string[] }>;
+  buildProfiles: Array<{
+    id: string;
+    name: string;
+    dockerImage: string;
+    workDir: string;
+    containerWorkDir?: string;
+    command?: string;
+    containerPort: number;
+    env?: Record<string, string>;
+    cacheMounts?: Array<{ hostPath: string; containerPath: string }>;
+    buildTimeout?: number;
+    pathPrefixes?: string[];
+    dependsOn?: string[];
+  }>;
   envVars: Record<string, string>;
   infraServices: ComposeServiceDef[];
   routingRules: Array<{
@@ -115,8 +95,6 @@ export interface CdsComposeConfig {
     priority: number;
     enabled: boolean;
   }>;
-  /** Whether this config was parsed from v2 standard compose format */
-  isV2Format?: boolean;
 }
 
 /**
@@ -159,7 +137,7 @@ export function parseComposeFile(filePath: string): ComposeServiceDef[] {
     // Also skip services without an image
     if (entry.build || !entry.image) continue;
 
-    // v2 detection: skip services with relative volume mounts (app services)
+    // Skip services with relative volume mounts (app services)
     if (hasRelativeVolumeMount(entry.volumes)) continue;
 
     const containerPort = extractContainerPort(entry.ports);
@@ -167,12 +145,12 @@ export function parseComposeFile(filePath: string): ComposeServiceDef[] {
 
     const parsed: ComposeServiceDef = {
       id: serviceId,
-      name: entry['x-cds-name'] || generateDisplayName(serviceId, entry.image),
+      name: generateDisplayName(serviceId, entry.image),
       dockerImage: entry.image,
       containerPort,
       volumes: extractVolumes(entry.volumes),
       env: extractEnv(entry.environment),
-      injectEnv: entry['x-cds-inject'] || {},
+      injectEnv: {},
       healthCheck: extractHealthCheck(entry.healthcheck),
     };
 
@@ -203,12 +181,12 @@ export function parseComposeString(yamlString: string): ComposeServiceDef[] {
 
     results.push({
       id: serviceId,
-      name: entry['x-cds-name'] || generateDisplayName(serviceId, entry.image),
+      name: generateDisplayName(serviceId, entry.image),
       dockerImage: entry.image,
       containerPort,
       volumes: extractVolumes(entry.volumes),
       env: extractEnv(entry.environment),
-      injectEnv: entry['x-cds-inject'] || {},
+      injectEnv: {},
       healthCheck: extractHealthCheck(entry.healthcheck),
     });
   }
@@ -259,17 +237,6 @@ export function toComposeYaml(services: InfraService[]): string {
       };
     }
 
-    // v1 compat: CDS inject extension (only for non-v2 services)
-    if (!svc.isV2Format && Object.keys(svc.injectEnv).length > 0) {
-      entry['x-cds-inject'] = { ...svc.injectEnv };
-    }
-
-    // CDS name extension (only if different from auto-generated)
-    const autoName = generateDisplayName(svc.id, svc.dockerImage);
-    if (svc.name !== autoName) {
-      entry['x-cds-name'] = svc.name;
-    }
-
     servicesMap[svc.id] = entry;
   }
 
@@ -284,104 +251,34 @@ export function toComposeYaml(services: InfraService[]): string {
 }
 
 /**
- * Parse a full CDS compose YAML — supports both v1 (x-cds-profiles) and v2 (standard compose).
+ * Parse a full CDS compose YAML.
  *
- * Detection order:
- * 1. If `x-cds-profiles` exists → v1 format
- * 2. If services have relative volume mounts (./xxx:/path) → v2 format (auto-detect)
- * 3. If only `x-cds-env` or `x-cds-routing` → v1 format (infra-only)
+ * Detection:
+ * - Services with relative volume mounts (./xxx:/path) → app services (BuildProfile)
+ * - Services without relative mounts → infra services
+ * - `x-cds-env` / `x-cds-routing` extensions are supported for global config
  *
- * Returns null if the YAML can't be parsed as either format.
+ * Returns null if the YAML can't be parsed as a CDS compose file.
  */
 export function parseCdsCompose(yamlString: string): CdsComposeConfig | null {
   const doc = yaml.load(yamlString) as ComposeFile | null;
   if (!doc) return null;
 
-  // Check for v1 extensions
-  const hasCdsProfiles = !!doc['x-cds-profiles'];
-  const hasCdsExtensions =
-    hasCdsProfiles || doc['x-cds-env'] || doc['x-cds-project'] || doc['x-cds-routing'];
+  const hasCdsExtensions = doc['x-cds-env'] || doc['x-cds-project'] || doc['x-cds-routing'];
 
-  // Check for v2 signals: any service with a relative volume mount
-  const hasV2AppServices = doc.services
+  // Check for app services: any service with a relative volume mount
+  const hasAppServices = doc.services
     ? Object.values(doc.services).some(entry => hasRelativeVolumeMount(entry.volumes))
     : false;
 
-  // If no CDS extensions AND no v2 app services, not a CDS compose file
-  if (!hasCdsExtensions && !hasV2AppServices) return null;
+  // Need at least CDS extensions or app services to be a CDS compose file
+  if (!hasCdsExtensions && !hasAppServices) return null;
 
-  // Use v2 parsing if we have app services with relative mounts and no x-cds-profiles
-  if (hasV2AppServices && !hasCdsProfiles) {
-    return parseV2Compose(doc);
-  }
-
-  // v1 parsing (original behavior)
-  return parseV1Compose(doc);
+  return parseStandardCompose(doc);
 }
 
 /**
- * v1 format parser — uses x-cds-profiles and x-cds-inject extensions.
- */
-function parseV1Compose(doc: ComposeFile): CdsComposeConfig {
-  // Extract build profiles from x-cds-profiles
-  const buildProfiles: CdsComposeConfig['buildProfiles'] = [];
-  if (doc['x-cds-profiles']) {
-    for (const [id, entry] of Object.entries(doc['x-cds-profiles'])) {
-      buildProfiles.push({
-        id,
-        name: entry.name || id,
-        dockerImage: entry.dockerImage,
-        workDir: entry.workDir || '.',
-        installCommand: entry.installCommand,
-        buildCommand: entry.buildCommand,
-        runCommand: entry.runCommand,
-        containerPort: entry.containerPort || 8080,
-        icon: entry.icon,
-        env: entry.env,
-        cacheMounts: entry.cacheMounts,
-        buildTimeout: entry.buildTimeout,
-        pathPrefixes: entry.pathPrefixes,
-      });
-    }
-  }
-
-  // Extract env vars from x-cds-env
-  const envVars: Record<string, string> = doc['x-cds-env'] ? { ...doc['x-cds-env'] } : {};
-
-  // Extract routing rules from x-cds-routing
-  const routingRules = parseRoutingRules(doc);
-
-  // Extract infra services from standard services section
-  const infraServices: ComposeServiceDef[] = [];
-  if (doc.services) {
-    for (const [serviceId, entry] of Object.entries(doc.services)) {
-      if (entry.build || !entry.image) continue;
-      const containerPort = extractContainerPort(entry.ports);
-      if (!containerPort) continue;
-      infraServices.push({
-        id: serviceId,
-        name: entry['x-cds-name'] || generateDisplayName(serviceId, entry.image),
-        dockerImage: entry.image,
-        containerPort,
-        volumes: extractVolumes(entry.volumes),
-        env: extractEnv(entry.environment),
-        injectEnv: entry['x-cds-inject'] || {},
-        healthCheck: extractHealthCheck(entry.healthcheck),
-      });
-    }
-  }
-
-  return {
-    project: doc['x-cds-project'],
-    buildProfiles,
-    envVars,
-    infraServices,
-    routingRules,
-  };
-}
-
-/**
- * v2 format parser — zero custom extensions, standard compose auto-detection.
+ * Standard compose parser — auto-detects app vs infra services.
  *
  * Classification rules:
  * - Service with relative volume mount (./xxx:/path) → app service (BuildProfile)
@@ -390,7 +287,7 @@ function parseV1Compose(doc: ComposeFile): CdsComposeConfig {
  * - `labels.cds.path-prefix` → proxy routing
  * - App `environment` may use `${CDS_<SERVICE>_PORT}` for dynamic port injection
  */
-function parseV2Compose(doc: ComposeFile): CdsComposeConfig {
+function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
   const buildProfiles: CdsComposeConfig['buildProfiles'] = [];
   const infraServices: ComposeServiceDef[] = [];
 
@@ -414,7 +311,6 @@ function parseV2Compose(doc: ComposeFile): CdsComposeConfig {
           workDir: relMount?.hostPath || '.',
           containerWorkDir: entry.working_dir || '/app',
           command: command || undefined,
-          runCommand: command || '',  // v1 compat fallback
           containerPort,
           env: extractEnv(entry.environment),
           pathPrefixes: pathPrefix ? pathPrefix.split(',').map(s => s.trim()) : undefined,
@@ -434,15 +330,14 @@ function parseV2Compose(doc: ComposeFile): CdsComposeConfig {
           containerPort,
           volumes: extractVolumes(entry.volumes),
           env: extractEnv(entry.environment),
-          injectEnv: {},  // v2: no injectEnv, uses CDS_<SERVICE>_PORT pattern
+          injectEnv: {},
           healthCheck: extractHealthCheck(entry.healthcheck),
-          isV2Format: true,
         });
       }
     }
   }
 
-  // Extract optional CDS extensions (still supported in v2 for routing/env)
+  // Extract optional CDS extensions (routing/env)
   const envVars: Record<string, string> = doc['x-cds-env'] ? { ...doc['x-cds-env'] } : {};
   const routingRules = parseRoutingRules(doc);
 
@@ -452,38 +347,15 @@ function parseV2Compose(doc: ComposeFile): CdsComposeConfig {
     envVars,
     infraServices,
     routingRules,
-    isV2Format: true,
   };
 }
 
 /**
- * Export full CDS config as a single compose YAML.
- *
- * If any profile has `command` set (v2 format), exports as standard compose.
- * Otherwise, falls back to v1 format with x-cds-* extensions.
- */
-export function toCdsCompose(
-  profiles: BuildProfile[],
-  envVars: Record<string, string>,
-  infraServices: InfraService[],
-  routingRules: RoutingRule[],
-): string {
-  // Detect if any profiles use v2 format
-  const hasV2Profiles = profiles.some(p => p.command);
-
-  if (hasV2Profiles) {
-    return toCdsComposeV2(profiles, envVars, infraServices, routingRules);
-  }
-
-  return toCdsComposeV1(profiles, envVars, infraServices, routingRules);
-}
-
-/**
- * Export as v2 standard compose format — zero custom extensions on services.
- * App services are standard compose entries with relative volume mounts.
+ * Export full CDS config as a standard compose YAML.
+ * App services are compose entries with relative volume mounts.
  * Infra services are standard compose entries.
  */
-function toCdsComposeV2(
+export function toCdsCompose(
   profiles: BuildProfile[],
   envVars: Record<string, string>,
   infraServices: InfraService[],
@@ -587,7 +459,7 @@ function toCdsComposeV2(
     doc.services = servicesMap;
   }
 
-  // Optional x-cds-env (still useful for global shared env vars)
+  // Optional x-cds-env (useful for global shared env vars)
   if (Object.keys(envVars).length > 0) {
     doc['x-cds-env'] = { ...envVars };
   }
@@ -606,118 +478,6 @@ function toCdsComposeV2(
   }
 
   // Named volumes
-  if (volumeNames.size > 0) {
-    const volumes: Record<string, null> = {};
-    for (const name of volumeNames) volumes[name] = null;
-    doc.volumes = volumes;
-  }
-
-  return yaml.dump(doc, { lineWidth: 120, noRefs: true, sortKeys: false });
-}
-
-/**
- * Export as v1 format with x-cds-* extensions (legacy).
- */
-function toCdsComposeV1(
-  profiles: BuildProfile[],
-  envVars: Record<string, string>,
-  infraServices: InfraService[],
-  routingRules: RoutingRule[],
-): string {
-  const doc: Record<string, unknown> = {};
-
-  // x-cds-project
-  doc['x-cds-project'] = { name: '', description: '' };
-
-  // x-cds-profiles
-  if (profiles.length > 0) {
-    const profilesMap: Record<string, Record<string, unknown>> = {};
-    for (const p of profiles) {
-      const entry: Record<string, unknown> = {
-        name: p.name,
-        dockerImage: p.dockerImage,
-        workDir: p.workDir,
-        runCommand: p.runCommand || p.command || '',
-        containerPort: p.containerPort,
-      };
-      if (p.installCommand) entry.installCommand = p.installCommand;
-      if (p.buildCommand) entry.buildCommand = p.buildCommand;
-      if (p.icon) entry.icon = p.icon;
-      if (p.env && Object.keys(p.env).length > 0) entry.env = p.env;
-      if (p.cacheMounts && p.cacheMounts.length > 0) entry.cacheMounts = p.cacheMounts;
-      if (p.buildTimeout) entry.buildTimeout = p.buildTimeout;
-      if (p.pathPrefixes && p.pathPrefixes.length > 0) entry.pathPrefixes = p.pathPrefixes;
-      profilesMap[p.id] = entry;
-    }
-    doc['x-cds-profiles'] = profilesMap;
-  }
-
-  // x-cds-env
-  if (Object.keys(envVars).length > 0) {
-    doc['x-cds-env'] = { ...envVars };
-  }
-
-  // x-cds-routing
-  if (routingRules.length > 0) {
-    doc['x-cds-routing'] = routingRules.map(r => ({
-      id: r.id,
-      name: r.name,
-      type: r.type,
-      match: r.match,
-      branch: r.branch,
-      priority: r.priority,
-      enabled: r.enabled,
-    }));
-  }
-
-  // Standard services section (infra)
-  const servicesMap: Record<string, unknown> = {};
-  const volumeNames = new Set<string>();
-
-  for (const svc of infraServices) {
-    const entry: Record<string, unknown> = {
-      image: svc.dockerImage,
-      ports: [`${svc.containerPort}`],
-    };
-
-    if (svc.volumes.length > 0) {
-      entry.volumes = svc.volumes.map(v => {
-        const suffix = v.readOnly ? ':ro' : '';
-        return `${v.name}:${v.containerPath}${suffix}`;
-      });
-      for (const v of svc.volumes) {
-        if (v.type !== 'bind') volumeNames.add(v.name);
-      }
-    }
-
-    if (Object.keys(svc.env).length > 0) {
-      entry.environment = { ...svc.env };
-    }
-
-    if (svc.healthCheck) {
-      entry.healthcheck = {
-        test: svc.healthCheck.command,
-        interval: `${svc.healthCheck.interval}s`,
-        retries: svc.healthCheck.retries,
-      };
-    }
-
-    if (Object.keys(svc.injectEnv).length > 0) {
-      entry['x-cds-inject'] = { ...svc.injectEnv };
-    }
-
-    const autoName = generateDisplayName(svc.id, svc.dockerImage);
-    if (svc.name !== autoName) {
-      entry['x-cds-name'] = svc.name;
-    }
-
-    servicesMap[svc.id] = entry;
-  }
-
-  if (Object.keys(servicesMap).length > 0) {
-    doc.services = servicesMap;
-  }
-
   if (volumeNames.size > 0) {
     const volumes: Record<string, null> = {};
     for (const name of volumeNames) volumes[name] = null;
@@ -772,7 +532,7 @@ function findRelativeMount(volumes?: string[]): { hostPath: string; containerPat
   return null;
 }
 
-/** Extract non-relative named volume mounts as cache mounts (for v2 profiles) */
+/** Extract non-relative named volume mounts as cache mounts */
 function extractCacheMounts(volumes?: string[]): Array<{ hostPath: string; containerPath: string }> | undefined {
   if (!volumes) return undefined;
   const mounts: Array<{ hostPath: string; containerPath: string }> = [];
@@ -829,7 +589,7 @@ function extractCommand(command?: string | string[]): string {
   return command;
 }
 
-/** Parse routing rules from x-cds-routing (shared between v1 and v2) */
+/** Parse routing rules from x-cds-routing */
 function parseRoutingRules(doc: ComposeFile): CdsComposeConfig['routingRules'] {
   const routingRules: CdsComposeConfig['routingRules'] = [];
   if (doc['x-cds-routing']) {

@@ -32,7 +32,7 @@ const makeProfile = (overrides?: Partial<BuildProfile>): BuildProfile => ({
   name: 'API',
   dockerImage: 'mcr.microsoft.com/dotnet/sdk:8.0',
   workDir: 'prd-api',
-  runCommand: 'dotnet watch run',
+  command: 'dotnet restore && dotnet watch run',
   containerPort: 8080,
   ...overrides,
 });
@@ -69,11 +69,17 @@ describe('ContainerService', () => {
       expect(runCmd).toContain('--name cds-feature-a-api');
       expect(runCmd).toContain('--network cds-network');
       expect(runCmd).toContain('-p 10001:8080');
-      expect(runCmd).toContain('-v "/wt/feature-a/prd-api":/src');
+      expect(runCmd).toContain('-v "/wt/feature-a/prd-api":"/app"');
       expect(runCmd).toContain('--env-file');
-      expect(runCmd).toContain('dotnet watch run');
+      expect(runCmd).toContain('dotnet restore && dotnet watch run');
 
-      // Verify env file contents (sharedEnv is passed via docker network, not env file)
+      // Should have CDS labels
+      expect(runCmd).toContain('--label cds.managed=true');
+      expect(runCmd).toContain('--label cds.type=app');
+      expect(runCmd).toContain('--label cds.branch.id=feature-a');
+      expect(runCmd).toContain('--label cds.profile.id=api');
+
+      // Verify env file contents
       const envFileContent = writeSpy.mock.calls[0][1] as string;
       expect(envFileContent).toContain('Jwt__Secret=test-secret');
       expect(envFileContent).toContain('Jwt__Issuer=prdagent');
@@ -81,28 +87,24 @@ describe('ContainerService', () => {
       writeSpy.mockRestore();
     });
 
-    it('should run install and build steps when defined', async () => {
+    it('should run a single docker command (no 3-step)', async () => {
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker run/, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/mkdir/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
 
       const profile = makeProfile({
-        installCommand: 'pnpm install',
-        buildCommand: 'pnpm build',
-        cacheMounts: [{ hostPath: '/cache/node_modules', containerPath: '/src/node_modules' }],
+        command: 'pnpm install && pnpm build && pnpm start',
+        cacheMounts: [{ hostPath: '/cache/node_modules', containerPath: '/app/node_modules' }],
       });
 
       await service.runService(makeEntry(), profile, makeService());
 
-      // Should have 3 docker run calls: install (--rm), build (--rm), run (-d)
+      // Should have exactly 1 docker run call (persistent container)
       const dockerRuns = mock.commands.filter(c => c.includes('docker run'));
-      expect(dockerRuns).toHaveLength(3);
-      expect(dockerRuns[0]).toContain('docker run --rm'); // install
-      expect(dockerRuns[0]).toContain('pnpm install');
-      expect(dockerRuns[1]).toContain('docker run --rm'); // build
-      expect(dockerRuns[1]).toContain('pnpm build');
-      expect(dockerRuns[2]).toContain('docker run -d');   // run
+      expect(dockerRuns).toHaveLength(1);
+      expect(dockerRuns[0]).toContain('docker run -d');
+      expect(dockerRuns[0]).toContain('pnpm install && pnpm build && pnpm start');
     });
 
     it('should mount shared caches', async () => {
@@ -131,13 +133,12 @@ describe('ContainerService', () => {
       await expect(service.runService(makeEntry(), makeProfile(), makeService())).rejects.toThrow('启动服务');
     });
 
-    it('should throw if install step fails', async () => {
+    it('should throw if command is missing', async () => {
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
-      mock.addResponsePattern(/docker run/, () => ({ stdout: '', stderr: 'install error', exitCode: 1 }));
 
-      const profile = makeProfile({ installCommand: 'npm install' });
-      await expect(service.runService(makeEntry(), profile, makeService())).rejects.toThrow('安装失败');
+      const profile = makeProfile({ command: undefined });
+      await expect(service.runService(makeEntry(), profile, makeService())).rejects.toThrow('缺少 command 字段');
     });
   });
 

@@ -34,7 +34,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // ── Helper: merged env (CDS_* auto vars + infra inject env + customEnv, later wins) ──
   function getMergedEnv(): Record<string, string> {
     const cdsEnv = stateService.getCdsEnvVars();   // CDS_HOST, CDS_MONGODB_PORT, etc.
-    const infraEnv = stateService.getInfraInjectEnv();  // v1 {{host}}:{{port}} templates
+    const infraEnv = stateService.getInfraInjectEnv();  // {{host}}:{{port}} templates
     const customEnv = stateService.getCustomEnv();
     return { ...cdsEnv, ...infraEnv, ...customEnv };
   }
@@ -768,8 +768,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
   router.post('/build-profiles', (req, res) => {
     try {
       const profile = req.body as BuildProfile;
-      if (!profile.id || !profile.name || !profile.dockerImage || !profile.runCommand) {
-        res.status(400).json({ error: 'id、名称、Docker 镜像和运行命令为必填项' });
+      if (!profile.id || !profile.name || !profile.dockerImage || !profile.command) {
+        res.status(400).json({ error: 'id、名称、Docker 镜像和 command 为必填项' });
         return;
       }
       profile.workDir = profile.workDir || '.';
@@ -838,24 +838,24 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return 'npm';
   }
 
-  /** Build install/run commands and cache mount for a detected package manager */
+  /** Build command prefix and cache mount for a detected package manager */
   function nodeProfileCommands(pm: PackageManager) {
     switch (pm) {
       case 'pnpm':
         return {
-          installCommand: 'corepack enable && pnpm install --frozen-lockfile',
+          installPrefix: 'corepack enable && pnpm install --frozen-lockfile && ',
           runPrefix: 'corepack enable && pnpm exec ',
           cacheMounts: [{ hostPath: '/tmp/cds-cache/pnpm', containerPath: '/root/.local/share/pnpm/store' }],
         };
       case 'yarn':
         return {
-          installCommand: 'corepack enable && yarn install --frozen-lockfile',
+          installPrefix: 'corepack enable && yarn install --frozen-lockfile && ',
           runPrefix: 'corepack enable && yarn exec ',
           cacheMounts: [{ hostPath: '/tmp/cds-cache/yarn', containerPath: '/usr/local/share/.cache/yarn' }],
         };
       default:
         return {
-          installCommand: 'npm install',
+          installPrefix: 'npm install && ',
           runPrefix: 'npx ',
           cacheMounts: [{ hostPath: '/tmp/cds-cache/npm', containerPath: '/root/.npm' }],
         };
@@ -909,9 +909,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         name: 'Backend API (.NET 8)',
         dockerImage: 'mcr.microsoft.com/dotnet/sdk:8.0',
         workDir: 'prd-api',
-        installCommand: 'dotnet restore',
-        buildCommand: 'dotnet build --no-restore',
-        runCommand: 'dotnet run --no-build --project src/PrdAgent.Api/PrdAgent.Api.csproj --urls http://0.0.0.0:8080',
+        command: 'dotnet restore && dotnet build --no-restore && dotnet run --no-build --project src/PrdAgent.Api/PrdAgent.Api.csproj --urls http://0.0.0.0:8080',
         containerPort: 8080,
         cacheMounts: [
           { hostPath: '/tmp/cds-cache/nuget', containerPath: '/root/.nuget/packages' },
@@ -922,8 +920,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         name: 'Admin Panel (Vite)',
         dockerImage: 'node:20-slim',
         workDir: 'prd-admin',
-        installCommand: nodeCmd.installCommand,
-        runCommand: `${nodeCmd.runPrefix}vite --host 0.0.0.0 --port 5173`,
+        command: `${nodeCmd.installPrefix}${nodeCmd.runPrefix}vite --host 0.0.0.0 --port 5173`,
         containerPort: 5173,
         cacheMounts: nodeCmd.cacheMounts,
       },
@@ -1163,7 +1160,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
       injectEnv: { ...def.injectEnv },
       healthCheck: def.healthCheck ? { ...def.healthCheck } : undefined,
       createdAt: new Date().toISOString(),
-      isV2Format: def.isV2Format,
     };
   }
 
@@ -1423,11 +1419,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return { valid: false, errors: ['配置必须是一个 JSON 对象'], warnings };
     }
     const cfg = blob as Record<string, unknown>;
-    // Accept both v1 ($schema=cds-config-v1) and v2 ($schema=cds-config-v2 or auto-detected)
     const schema = cfg.$schema as string | undefined;
-    const isV2 = schema === 'cds-config-v2' || cfg._isV2Format === true;
-    if (!isV2 && schema !== 'cds-config-v1') {
-      errors.push('缺少 $schema 字段或值不是 "cds-config-v1" / "cds-config-v2"');
+    if (schema && schema !== 'cds-config') {
+      errors.push('$schema 字段值应为 "cds-config"');
     }
     // Validate buildProfiles
     if (cfg.buildProfiles !== undefined) {
@@ -1439,8 +1433,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           if (!p.id) errors.push(`buildProfiles[${i}]: 缺少 id`);
           if (!p.name) errors.push(`buildProfiles[${i}]: 缺少 name`);
           if (!p.dockerImage) errors.push(`buildProfiles[${i}]: 缺少 dockerImage`);
-          // v2 uses `command`, v1 uses `runCommand` — require at least one
-          if (!p.runCommand && !p.command) errors.push(`buildProfiles[${i}]: 缺少 runCommand 或 command`);
+          if (!p.command) errors.push(`buildProfiles[${i}]: 缺少 command`);
           if (p.containerPort !== undefined) {
             const port = Number(p.containerPort);
             if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -1449,13 +1442,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           }
           // Check corepack prefix for pnpm/yarn commands
           const label = `buildProfiles[${i}]`;
-          const installWarn = checkCorepackPrefix(p.installCommand as string | undefined, `${label}.installCommand`);
-          const runWarn = checkCorepackPrefix(p.runCommand as string | undefined, `${label}.runCommand`);
-          const buildWarn = checkCorepackPrefix(p.buildCommand as string | undefined, `${label}.buildCommand`);
           const cmdWarn = checkCorepackPrefix(p.command as string | undefined, `${label}.command`);
-          if (installWarn) warnings.push(installWarn);
-          if (runWarn) warnings.push(runWarn);
-          if (buildWarn) warnings.push(buildWarn);
           if (cmdWarn) warnings.push(cmdWarn);
 
           // Cross-check: if workDir has a lock file that doesn't match the command's PM
@@ -1463,7 +1450,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             const fullDir = path.join(config.repoRoot, p.workDir);
             if (fs.existsSync(fullDir)) {
               const detectedPm = detectPackageManager(fullDir);
-              const cmdToCheck = (p.installCommand as string) || (p.command as string) || '';
+              const cmdToCheck = (p.command as string) || '';
               const usesWrongPm =
                 (detectedPm === 'pnpm' && /\bnpm install\b/.test(cmdToCheck)) ||
                 (detectedPm === 'npm' && /\bpnpm install\b/.test(cmdToCheck)) ||
@@ -1620,10 +1607,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const cdsConfig = parseCdsCompose(configBlob);
         if (cdsConfig) {
           // Convert CDS compose to internal format (reuse existing validate/apply pipeline)
-          const schemaVersion = cdsConfig.isV2Format ? 'cds-config-v2' : 'cds-config-v1';
           cfg = {
-            $schema: schemaVersion,
-            _isV2Format: cdsConfig.isV2Format || false,
+            $schema: 'cds-config',
             buildProfiles: cdsConfig.buildProfiles,
             envVars: cdsConfig.envVars,
             infraServices: cdsConfig.infraServices.length > 0 ? cdsConfig.infraServices : undefined,
@@ -1636,7 +1621,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           } catch {
             res.status(400).json({
               valid: false,
-              errors: ['无法解析输入：既不是有效的 CDS Compose YAML（需包含 x-cds-profiles 等扩展），也不是有效的 JSON'],
+              errors: ['无法解析输入：既不是有效的 CDS Compose YAML（需包含 services 定义），也不是有效的 JSON'],
               warnings: [],
             });
             return;
@@ -1730,37 +1715,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
   });
 
   // GET /api/export-config — export current config as CDS Compose YAML (default) or JSON
-  // ?format=json → legacy JSON format
-  // ?format=yaml (default) → CDS Compose YAML with x-cds-* extensions
-  router.get('/export-config', (req, res) => {
-    const format = (req.query.format as string) || 'yaml';
+  // Export current CDS config as Compose YAML
+  router.get('/export-config', (_req, res) => {
     const profiles = stateService.getBuildProfiles();
     const envVars = stateService.getCustomEnv();
     const infra = stateService.getInfraServices();
     const rules = stateService.getRoutingRules();
 
-    if (format === 'json') {
-      // Legacy JSON format
-      const configExport = {
-        $schema: 'cds-config-v1',
-        project: { name: '', description: '' },
-        buildProfiles: profiles.map(p => ({
-          id: p.id, name: p.name, dockerImage: p.dockerImage, workDir: p.workDir,
-          installCommand: p.installCommand, buildCommand: p.buildCommand,
-          runCommand: p.runCommand, containerPort: p.containerPort,
-          icon: p.icon, env: p.env, cacheMounts: p.cacheMounts,
-          buildTimeout: p.buildTimeout, pathPrefixes: p.pathPrefixes,
-        })),
-        envVars,
-        infraServices: toComposeYaml(infra),
-        routingRules: rules,
-      };
-      res.json(configExport);
-    } else {
-      // CDS Compose YAML (primary format)
-      const yamlContent = toCdsCompose(profiles, envVars, infra, rules);
-      res.type('text/yaml').send(yamlContent);
-    }
+    const yamlContent = toCdsCompose(profiles, envVars, infra, rules);
+    res.type('text/yaml').send(yamlContent);
   });
 
   return router;

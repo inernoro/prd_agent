@@ -67,6 +67,10 @@ export class StateService {
     return this.state.branches[id];
   }
 
+  getAllBranches(): BranchEntry[] {
+    return Object.values(this.state.branches);
+  }
+
   addBranch(entry: BranchEntry): void {
     if (this.state.branches[entry.id]) {
       throw new Error(`分支 "${entry.id}" 已存在`);
@@ -236,7 +240,7 @@ export class StateService {
   }
 
   /**
-   * Build merged inject env vars from all running infra services (v1 format).
+   * Build merged inject env vars from all running infra services.
    * Supported placeholders:
    *   {{host}}         — Docker host IP (configurable via CDS_DOCKER_HOST)
    *   {{port}}         — Allocated host port for this service
@@ -260,7 +264,7 @@ export class StateService {
   }
 
   /**
-   * Build CDS_* env vars from all running infra services (v2 format).
+   * Build CDS_* env vars from all running infra services.
    * Auto-generates predictable env var names based on service ID:
    *   CDS_HOST               — Docker host IP
    *   CDS_<SERVICE>_PORT     — Allocated host port (e.g., CDS_MONGODB_PORT=37821)

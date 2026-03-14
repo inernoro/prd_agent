@@ -235,7 +235,7 @@ describe('Branch Routes', () => {
 
   describe('build profiles CRUD', () => {
     it('should create and list profiles', async () => {
-      const profile = { id: 'api', name: 'API', dockerImage: 'dotnet:8', runCommand: 'dotnet run', workDir: '.', containerPort: 8080 };
+      const profile = { id: 'api', name: 'API', dockerImage: 'dotnet:8', command: 'dotnet run', workDir: '.', containerPort: 8080 };
       const createRes = await request(server, 'POST', '/api/build-profiles', profile);
       expect(createRes.status).toBe(201);
 
@@ -244,7 +244,7 @@ describe('Branch Routes', () => {
     });
 
     it('should delete profiles', async () => {
-      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'x', runCommand: 'x' });
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'x', command: 'x' });
       await request(server, 'DELETE', '/api/build-profiles/api');
 
       const list = await request(server, 'GET', '/api/build-profiles');

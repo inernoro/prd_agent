@@ -161,20 +161,20 @@ describe('StateService', () => {
     it('should add and retrieve profiles', () => {
       service.addBuildProfile({
         id: 'api', name: 'API', dockerImage: 'dotnet/sdk:8.0',
-        workDir: 'prd-api', runCommand: 'dotnet run', containerPort: 8080,
+        workDir: 'prd-api', command: 'dotnet run', containerPort: 8080,
       });
       expect(service.getBuildProfiles()).toHaveLength(1);
       expect(service.getBuildProfile('api')?.name).toBe('API');
     });
 
     it('should throw on duplicate profile id', () => {
-      const p = { id: 'api', name: 'API', dockerImage: 'x', workDir: '.', runCommand: 'x', containerPort: 8080 };
+      const p = { id: 'api', name: 'API', dockerImage: 'x', workDir: '.', command: 'x', containerPort: 8080 };
       service.addBuildProfile(p);
       expect(() => service.addBuildProfile(p)).toThrow('已存在');
     });
 
     it('should update and remove profiles', () => {
-      service.addBuildProfile({ id: 'api', name: 'API', dockerImage: 'x', workDir: '.', runCommand: 'x', containerPort: 8080 });
+      service.addBuildProfile({ id: 'api', name: 'API', dockerImage: 'x', workDir: '.', command: 'x', containerPort: 8080 });
       service.updateBuildProfile('api', { name: 'Updated API' });
       expect(service.getBuildProfile('api')?.name).toBe('Updated API');
       service.removeBuildProfile('api');

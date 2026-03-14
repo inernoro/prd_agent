@@ -30,10 +30,7 @@ export class ContainerService {
   /**
    * Run a branch service from source using a build profile.
    * Mounts the worktree + shared cache volumes into a Docker container.
-   *
-   * Supports two modes:
-   * - v2 (single command): profile.command → runs everything in one persistent container
-   * - v1 (3-step): installCommand → buildCommand → runCommand (legacy)
+   * Uses profile.command to run everything in one persistent container.
    */
   async runService(
     entry: BranchEntry,
@@ -48,7 +45,7 @@ export class ContainerService {
     await this.shell.exec(`docker rm -f ${service.containerName}`);
 
     const srcMount = path.join(entry.worktreePath, profile.workDir);
-    const containerWorkDir = profile.containerWorkDir || '/src';
+    const containerWorkDir = profile.containerWorkDir || '/app';
 
     // Build environment variables (later entries override earlier ones)
     // Priority: customEnv (user dashboard) < profile.env (per-profile)
@@ -93,80 +90,12 @@ export class ContainerService {
     }
 
     try {
-      // v2 mode: single command — everything in one persistent container
-      if (profile.command) {
-        onOutput?.(`── 运行: ${profile.command} ──\n`);
-        const runCmd = [
-          'docker run -d',
-          `--name ${service.containerName}`,
-          `--network ${this.config.dockerNetwork}`,
-          `-p ${service.hostPort}:${profile.containerPort}`,
-          ...volumeFlags,
-          `-w ${containerWorkDir}`,
-          envFlag,
-          '--tmpfs /tmp',
-          profile.dockerImage,
-          `sh -c "${profile.command.replace(/"/g, '\\"')}"`,
-        ].join(' ');
-
-        const result = await this.shell.exec(runCmd);
-        if (result.exitCode !== 0) {
-          throw new Error(`启动服务 "${service.containerName}" 失败:\n${combinedOutput(result)}`);
-        }
-        return;
+      const command = profile.command || '';
+      if (!command) {
+        throw new Error(`构建配置 "${profile.id}" 缺少 command 字段`);
       }
 
-      // v1 mode: 3-step execution (install → build → run)
-
-      // Install step (if defined)
-      if (profile.installCommand) {
-        onOutput?.(`── 安装: ${profile.installCommand} ──\n`);
-        const installCmd = [
-          'docker run --rm',
-          `--network ${this.config.dockerNetwork}`,
-          ...volumeFlags,
-          `-w ${containerWorkDir}`,
-          envFlag,
-          '--tmpfs /tmp',
-          profile.dockerImage,
-          `sh -c "${profile.installCommand.replace(/"/g, '\\"')}"`,
-        ].join(' ');
-
-        const installResult = await this.shell.exec(installCmd, {
-          timeout: profile.buildTimeout ?? 600_000,
-          onData: onOutput,
-        });
-        if (installResult.exitCode !== 0) {
-          throw new Error(`安装失败:\n${combinedOutput(installResult)}`);
-        }
-      }
-
-      // Build step (if defined)
-      if (profile.buildCommand) {
-        onOutput?.(`\n── 构建: ${profile.buildCommand} ──\n`);
-        const buildCmd = [
-          'docker run --rm',
-          `--network ${this.config.dockerNetwork}`,
-          ...volumeFlags,
-          `-w ${containerWorkDir}`,
-          envFlag,
-          '--tmpfs /tmp',
-          profile.dockerImage,
-          `sh -c "${profile.buildCommand.replace(/"/g, '\\"')}"`,
-        ].join(' ');
-
-        const buildResult = await this.shell.exec(buildCmd, {
-          timeout: profile.buildTimeout ?? 600_000,
-          onData: onOutput,
-        });
-        if (buildResult.exitCode !== 0) {
-          throw new Error(`构建失败:\n${combinedOutput(buildResult)}`);
-        }
-      }
-
-      // Run step — start the service in the background
-      const runCommand = profile.runCommand || '';
-      onOutput?.(`\n── 运行: ${runCommand} ──\n`);
+      onOutput?.(`── 运行: ${command} ──\n`);
       const runCmd = [
         'docker run -d',
         `--name ${service.containerName}`,
@@ -176,8 +105,9 @@ export class ContainerService {
         `-w ${containerWorkDir}`,
         envFlag,
         '--tmpfs /tmp',
+        this.appLabels(entry.id, profile.id),
         profile.dockerImage,
-        `sh -c "${runCommand.replace(/"/g, '\\"')}"`,
+        `sh -c "${command.replace(/"/g, '\\"')}"`,
       ].join(' ');
 
       const result = await this.shell.exec(runCmd);
@@ -217,7 +147,18 @@ export class ContainerService {
     return result.stdout;
   }
 
-  // ── Infrastructure service management ──
+  // ── Container labels & discovery ──
+
+  /** Docker labels applied to all CDS-managed app containers */
+  private appLabels(branchId: string, profileId: string): string {
+    return [
+      '--label cds.managed=true',
+      '--label cds.type=app',
+      `--label cds.branch.id=${branchId}`,
+      `--label cds.profile.id=${profileId}`,
+      `--label cds.network=${this.config.dockerNetwork}`,
+    ].join(' ');
+  }
 
   /** Docker labels applied to all CDS-managed infra containers */
   private infraLabels(service: InfraService): string {
@@ -312,6 +253,36 @@ export class ContainerService {
         discovered.set(idMatch[1], {
           running: state === 'running',
           containerName: name,
+        });
+      }
+    }
+    return discovered;
+  }
+
+  /**
+   * Discover CDS-managed app containers by Docker labels.
+   * Returns a map of "branchId/profileId" → { running, containerName }.
+   */
+  async discoverAppContainers(): Promise<Map<string, { running: boolean; containerName: string; branchId: string; profileId: string }>> {
+    const result = await this.shell.exec(
+      `docker ps -a --filter "label=cds.managed=true" --filter "label=cds.type=app" --filter "label=cds.network=${this.config.dockerNetwork}" --format '{{.Names}}|{{.State}}|{{.Labels}}'`,
+    );
+
+    const discovered = new Map<string, { running: boolean; containerName: string; branchId: string; profileId: string }>();
+    if (result.exitCode !== 0 || !result.stdout.trim()) return discovered;
+
+    for (const line of result.stdout.trim().split('\n')) {
+      if (!line) continue;
+      const [name, state, labels] = line.split('|');
+      const branchMatch = labels?.match(/cds\.branch\.id=([^,]+)/);
+      const profileMatch = labels?.match(/cds\.profile\.id=([^,]+)/);
+      if (branchMatch && profileMatch) {
+        const key = `${branchMatch[1]}/${profileMatch[1]}`;
+        discovered.set(key, {
+          running: state === 'running',
+          containerName: name,
+          branchId: branchMatch[1],
+          profileId: profileMatch[1],
         });
       }
     }
