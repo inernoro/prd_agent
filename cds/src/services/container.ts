@@ -76,10 +76,12 @@ export class ContainerService {
     // which is fine for dev environments.
     if (isNodeContainer) {
       mergedEnv['PNPM_HOME'] = mergedEnv['PNPM_HOME'] || '/pnpm';
-      // Move pnpm content-addressable store outside /app (bind mount).
-      // Without this, pnpm creates /app/.pnpm-store and Vite watches all those files,
-      // exhausting the kernel inotify limit (ENOSPC).
-      mergedEnv['PNPM_STORE_DIR'] = mergedEnv['PNPM_STORE_DIR'] || '/pnpm/store';
+      // Move pnpm content-addressable store outside the project directory.
+      // Without this, pnpm creates <project>/.pnpm-store and Vite's chokidar
+      // watches all those files, exhausting the kernel inotify limit (ENOSPC).
+      // pnpm reads store-dir from npm_config_store_dir (NOT "PNPM_STORE_DIR").
+      // See: https://github.com/orgs/pnpm/discussions/6566
+      mergedEnv['npm_config_store_dir'] = mergedEnv['npm_config_store_dir'] || '/pnpm/store';
       // Ensure pnpm binary is on PATH after corepack enable
       const currentPath = mergedEnv['PATH'] || '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
       if (!currentPath.includes('/pnpm')) {
@@ -103,16 +105,6 @@ export class ContainerService {
 
     // Shared cache mounts (avoid duplicating node_modules, nuget, etc.)
     const volumeFlags: string[] = [`-v "${srcMount}":"${containerWorkDir}"`];
-
-    // For Node.js containers: isolate node_modules and .pnpm-store from the bind mount.
-    // Without this, pnpm creates thousands of files inside /app on the bind mount,
-    // and Vite's chokidar watches them all, exhausting the kernel inotify limit (ENOSPC).
-    // Using Docker named volumes puts them on the container overlay FS, invisible to watchers.
-    if (isNodeContainer) {
-      const nmVolume = `cds-nm-${entry.id}-${profile.id}`;
-      volumeFlags.push(`-v "${nmVolume}":"${containerWorkDir}/node_modules"`);
-      volumeFlags.push(`-v "${nmVolume}-store":"${containerWorkDir}/.pnpm-store"`);
-    }
 
     if (profile.cacheMounts) {
       for (const cm of profile.cacheMounts) {
