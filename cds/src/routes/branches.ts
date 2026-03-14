@@ -173,6 +173,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
 
+      await shell.exec(`mkdir -p "${config.worktreeBase}"`);
       const worktreePath = `${config.worktreeBase}/${id}`;
       await worktreeService.create(branch, worktreePath);
 
@@ -1863,6 +1864,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       if (!entry) {
         send('worktree', 'running', `正在为 ${mainBranch} 创建工作树...`);
+        // Ensure worktreeBase directory exists (first-time setup)
+        await shell.exec(`mkdir -p "${config.worktreeBase}"`);
         const worktreePath = `${config.worktreeBase}/${mainSlug}`;
         await worktreeService.create(mainBranch, worktreePath);
 
@@ -1906,7 +1909,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
         stateService.save();
 
-        const customEnv = stateService.getCustomEnv();
+        const mergedEnv = getMergedEnv();
 
         for (const profile of profiles) {
           const svc = entry.services[profile.id];
@@ -1916,7 +1919,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           try {
             await containerService.runService(entry, profile, svc, (chunk) => {
               sendSSE(res, 'log', { profileId: profile.id, chunk });
-            }, customEnv);
+            }, mergedEnv);
 
             svc.status = 'running';
             send(`deploy-${profile.id}`, 'done', `${profile.name} 就绪 → :${svc.hostPort}`);

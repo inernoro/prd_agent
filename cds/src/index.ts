@@ -407,6 +407,7 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
     let entry = stateService.getBranch(finalSlug);
     if (!entry) {
       sendEvent('step', { step: 'worktree', status: 'running', title: `正在为 ${resolvedBranch} 创建工作树...` });
+      await shell.exec(`mkdir -p "${config.worktreeBase}"`);
       const worktreePath = `${config.worktreeBase}/${finalSlug}`;
       await worktreeService.create(resolvedBranch, worktreePath);
 
@@ -445,9 +446,10 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
       const svc = entry.services[profile.id];
       svc.status = 'building';
 
-      // Custom env overrides
+      // Merge CDS_* auto-generated vars (CDS_HOST, CDS_*_PORT) with user custom env
+      const cdsEnv = stateService.getCdsEnvVars();
       const customEnv = stateService.getCustomEnv();
-      const mergedEnv = { ...customEnv };
+      const mergedEnv = { ...cdsEnv, ...customEnv };
       await containerService.runService(entry, profile, svc, (chunk) => {
         sendEvent('log', { profileId: profile.id, chunk });
       }, mergedEnv);
