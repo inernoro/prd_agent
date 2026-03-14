@@ -62,6 +62,25 @@ if [ "$NODE_VERSION" -lt 20 ]; then
   exit 1
 fi
 
+# ── 1.5 Ensure inotify watcher limit is high enough for Node.js dev containers ──
+# Vite/chokidar watches many files; the default 65536/128000 is too low and
+# causes ENOSPC errors inside containers. 1048576 is the recommended value.
+CURRENT_WATCHES=$(cat /proc/sys/fs/inotify/max_user_watches 2>/dev/null || echo 0)
+REQUIRED_WATCHES=524288
+if [ "$CURRENT_WATCHES" -lt "$REQUIRED_WATCHES" ]; then
+  echo "  inotify: max_user_watches=$CURRENT_WATCHES (too low, need >= $REQUIRED_WATCHES)"
+  if command -v sysctl >/dev/null 2>&1; then
+    sysctl -w fs.inotify.max_user_watches=$REQUIRED_WATCHES >/dev/null 2>&1 && \
+      echo "  inotify: ✓ increased to $REQUIRED_WATCHES" || \
+      echo "  inotify: ✗ failed (try: sudo sysctl -w fs.inotify.max_user_watches=$REQUIRED_WATCHES)"
+  else
+    echo "  inotify: ✗ sysctl not found. Run manually: echo $REQUIRED_WATCHES > /proc/sys/fs/inotify/max_user_watches"
+  fi
+else
+  echo "  inotify: OK ($CURRENT_WATCHES)"
+fi
+echo ""
+
 # ── 2. Install dependencies if needed ──
 if [ ! -d "node_modules" ]; then
   echo "[1/3] Installing dependencies..."

@@ -420,15 +420,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // Update overall status
       const statuses = Object.values(entry.services).map(s => s.status);
-      entry.status = statuses.some(s => s === 'running') ? 'running' : 'error';
+      const hasRunning = statuses.some(s => s === 'running');
+      const hasError = statuses.some(s => s === 'error');
+      entry.status = hasRunning ? 'running' : 'error';
       entry.lastAccessedAt = new Date().toISOString();
 
-      opLog.status = entry.status === 'running' ? 'completed' : 'error';
+      opLog.status = hasError ? 'error' : 'completed';
       opLog.finishedAt = new Date().toISOString();
       stateService.appendLog(id, opLog);
       stateService.save();
 
-      const completeMsg = entry.status === 'running' ? '所有服务已启动' : '部分服务启动失败';
+      const failedNames = Object.values(entry.services)
+        .filter(s => s.status === 'error')
+        .map(s => s.profileId);
+      const completeMsg = hasError
+        ? `部分服务启动失败: ${failedNames.join(', ')}`
+        : '所有服务已启动';
       logDeploy(id, `部署完成: ${completeMsg}`);
       sendSSE(res, 'complete', {
         message: completeMsg,
