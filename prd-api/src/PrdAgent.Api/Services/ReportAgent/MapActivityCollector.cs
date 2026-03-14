@@ -6,6 +6,7 @@ namespace PrdAgent.Api.Services.ReportAgent;
 
 /// <summary>
 /// MAP 系统内活动采集器 — 按需查询现有集合获取用户一周活动
+/// Phase 0 (v3.0): 从 6 个数据流扩展到 14 个，确保零配置也有内容
 /// </summary>
 public class MapActivityCollector
 {
@@ -45,15 +46,29 @@ public class MapActivityCollector
             catch { /* 集合可能不存在 */ }
         }, ct));
 
-        // 2. 缺陷 Agent：本周提交的缺陷数
+        // 2. 缺陷 Agent：本周提交的缺陷数 + 详情统计
         tasks.Add(Task.Run(async () =>
         {
             try
             {
-                var count = await _db.DefectReports.Find(
+                var defects = await _db.DefectReports.Find(
                     d => d.ReporterId == userId && d.CreatedAt >= periodStart && d.CreatedAt <= periodEnd
-                ).CountDocumentsAsync(ct);
-                result.DefectsSubmitted = (int)count;
+                ).ToListAsync(ct);
+                result.DefectsSubmitted = defects.Count;
+
+                // 增强：缺陷详情统计
+                var resolved = defects.Where(d => d.ResolvedAt.HasValue).ToList();
+                var reopened = defects.Count(d => d.Status == "rejected");
+                var avgHours = resolved.Count > 0
+                    ? resolved.Average(d => (d.ResolvedAt!.Value - d.CreatedAt).TotalHours)
+                    : 0;
+                result.DefectDetails = new DefectStats
+                {
+                    Submitted = defects.Count,
+                    Resolved = resolved.Count,
+                    Reopened = reopened,
+                    AvgResolutionHours = Math.Round(avgHours, 1)
+                };
             }
             catch { /* 集合可能不存在 */ }
         }, ct));
@@ -112,19 +127,131 @@ public class MapActivityCollector
             catch { /* 集合可能不存在 */ }
         }, ct));
 
+        // ====== Phase 0 新增数据流 ======
+
+        // 7. PRD 消息量（对话深度）
+        tasks.Add(Task.Run(async () =>
+        {
+            try
+            {
+                var count = await _db.Messages.Find(
+                    m => m.SenderId == userId && m.Timestamp >= periodStart && m.Timestamp <= periodEnd
+                        && !m.IsDeleted
+                ).CountDocumentsAsync(ct);
+                result.PrdMessageCount = (int)count;
+            }
+            catch { /* 集合可能不存在 */ }
+        }, ct));
+
+        // 8. 图片生成完成数
+        tasks.Add(Task.Run(async () =>
+        {
+            try
+            {
+                var count = await _db.ImageGenRuns.Find(
+                    r => r.OwnerAdminId == userId && r.CreatedAt >= periodStart && r.CreatedAt <= periodEnd
+                        && r.Status == ImageGenRunStatus.Completed
+                ).CountDocumentsAsync(ct);
+                result.ImageGenCompletedCount = (int)count;
+            }
+            catch { /* 集合可能不存在 */ }
+        }, ct));
+
+        // 9. 视频生成完成数
+        tasks.Add(Task.Run(async () =>
+        {
+            try
+            {
+                var count = await _db.VideoGenRuns.Find(
+                    r => r.OwnerAdminId == userId && r.CreatedAt >= periodStart && r.CreatedAt <= periodEnd
+                        && r.Status == "Completed"
+                ).CountDocumentsAsync(ct);
+                result.VideoGenCompletedCount = (int)count;
+            }
+            catch { /* 集合可能不存在 */ }
+        }, ct));
+
+        // 10. 文档编辑活动（本周修改过的 PRD 文档）
+        tasks.Add(Task.Run(async () =>
+        {
+            try
+            {
+                var count = await _db.Documents.Find(
+                    d => d.CreatedAt >= periodStart && d.CreatedAt <= periodEnd
+                ).CountDocumentsAsync(ct);
+                result.DocumentEditCount = (int)count;
+            }
+            catch { /* 集合可能不存在 */ }
+        }, ct));
+
+        // 11. 工作流执行完成数
+        tasks.Add(Task.Run(async () =>
+        {
+            try
+            {
+                var count = await _db.WorkflowExecutions.Find(
+                    w => w.TriggeredBy == userId && w.CreatedAt >= periodStart && w.CreatedAt <= periodEnd
+                        && w.Status == "completed"
+                ).CountDocumentsAsync(ct);
+                result.WorkflowExecutionCount = (int)count;
+            }
+            catch { /* 集合可能不存在 */ }
+        }, ct));
+
+        // 12. 工具箱使用次数
+        tasks.Add(Task.Run(async () =>
+        {
+            try
+            {
+                var count = await _db.ToolboxRuns.Find(
+                    t => t.UserId == userId && t.CreatedAt >= periodStart && t.CreatedAt <= periodEnd
+                ).CountDocumentsAsync(ct);
+                result.ToolboxRunCount = (int)count;
+            }
+            catch { /* 集合可能不存在 */ }
+        }, ct));
+
+        // 13. 网页发布/更新
+        tasks.Add(Task.Run(async () =>
+        {
+            try
+            {
+                var count = await _db.HostedSites.Find(
+                    h => h.OwnerUserId == userId && h.UpdatedAt >= periodStart && h.UpdatedAt <= periodEnd
+                ).CountDocumentsAsync(ct);
+                result.WebPagePublishCount = (int)count;
+            }
+            catch { /* 集合可能不存在 */ }
+        }, ct));
+
+        // 14. 附件上传数
+        tasks.Add(Task.Run(async () =>
+        {
+            try
+            {
+                var count = await _db.Attachments.Find(
+                    a => a.UploaderId == userId && a.UploadedAt >= periodStart && a.UploadedAt <= periodEnd
+                ).CountDocumentsAsync(ct);
+                result.AttachmentUploadCount = (int)count;
+            }
+            catch { /* 集合可能不存在 */ }
+        }, ct));
+
         await Task.WhenAll(tasks);
         return result;
     }
 }
 
 /// <summary>
-/// 采集到的活动数据
+/// 采集到的活动数据（v3.0 增强版：14 个数据流）
 /// </summary>
 public class CollectedActivity
 {
     public string UserId { get; set; } = string.Empty;
     public DateTime PeriodStart { get; set; }
     public DateTime PeriodEnd { get; set; }
+
+    // ====== 原有数据流 ======
 
     /// <summary>PRD 对话会话数</summary>
     public int PrdSessions { get; set; }
@@ -143,4 +270,51 @@ public class CollectedActivity
 
     /// <summary>Git 提交记录</summary>
     public List<ReportCommit> Commits { get; set; } = new();
+
+    // ====== Phase 0 新增数据流 ======
+
+    /// <summary>PRD 对话消息数（对话深度）</summary>
+    public int PrdMessageCount { get; set; }
+
+    /// <summary>图片生成完成数</summary>
+    public int ImageGenCompletedCount { get; set; }
+
+    /// <summary>视频生成完成数</summary>
+    public int VideoGenCompletedCount { get; set; }
+
+    /// <summary>文档编辑/创建数</summary>
+    public int DocumentEditCount { get; set; }
+
+    /// <summary>工作流执行完成数</summary>
+    public int WorkflowExecutionCount { get; set; }
+
+    /// <summary>工具箱使用次数</summary>
+    public int ToolboxRunCount { get; set; }
+
+    /// <summary>网页发布/更新数</summary>
+    public int WebPagePublishCount { get; set; }
+
+    /// <summary>附件上传数</summary>
+    public int AttachmentUploadCount { get; set; }
+
+    /// <summary>缺陷详情统计（提交/解决/重开/平均解决时间）</summary>
+    public DefectStats? DefectDetails { get; set; }
+}
+
+/// <summary>
+/// 缺陷处理详情统计
+/// </summary>
+public class DefectStats
+{
+    /// <summary>提交数</summary>
+    public int Submitted { get; set; }
+
+    /// <summary>已解决数</summary>
+    public int Resolved { get; set; }
+
+    /// <summary>被退回/重开数</summary>
+    public int Reopened { get; set; }
+
+    /// <summary>平均解决时间（小时）</summary>
+    public double AvgResolutionHours { get; set; }
 }

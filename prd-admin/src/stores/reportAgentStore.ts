@@ -16,7 +16,8 @@ import type {
   TeamDashboardData,
 } from '@/services/contracts/reportAgent';
 
-type TabKey = 'my-reports' | 'daily-log' | 'my-sources' | 'team-dashboard' | 'templates' | 'teams' | 'data-sources' | 'trends';
+type TabKey = 'my-reports' | 'daily-log' | 'my-sources' | 'team-dashboard' | 'templates' | 'teams' | 'data-sources' | 'trends'
+  | 'report' | 'team' | 'settings'; // v3.0 simplified tabs
 
 interface ReportAgentState {
   // Data
@@ -36,6 +37,7 @@ interface ReportAgentState {
   showReportEditor: boolean;
   showTemplateDialog: boolean;
   showTeamDialog: boolean;
+  mockPreviewMode: boolean; // v3.0: 一键预览 mock 数据
 
   // Actions
   loadTeams: () => Promise<void>;
@@ -52,6 +54,7 @@ interface ReportAgentState {
   setShowReportEditor: (show: boolean) => void;
   setShowTemplateDialog: (show: boolean) => void;
   setShowTeamDialog: (show: boolean) => void;
+  setMockPreviewMode: (on: boolean) => void;
 
   // List helpers
   updateReportInList: (report: WeeklyReport) => void;
@@ -76,6 +79,7 @@ const initialState = {
   showReportEditor: false,
   showTemplateDialog: false,
   showTeamDialog: false,
+  mockPreviewMode: false,
 };
 
 export const useReportAgentStore = create<ReportAgentState>((set, get) => ({
@@ -176,6 +180,7 @@ export const useReportAgentStore = create<ReportAgentState>((set, get) => ({
   setShowReportEditor: (show) => set({ showReportEditor: show }),
   setShowTemplateDialog: (show) => set({ showTemplateDialog: show }),
   setShowTeamDialog: (show) => set({ showTeamDialog: show }),
+  setMockPreviewMode: (on) => set({ mockPreviewMode: on }),
 
   updateReportInList: (report) => {
     set((state) => ({
