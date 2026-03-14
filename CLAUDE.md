@@ -141,6 +141,8 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | **doc-writer** | "写文档"、"/doc"、自动触发 | doc/ 下文档类型守护（6 种类型模板 + 格式校验） | 所有人 |
 | **doc-sync** | "同步文档索引"、"/doc-sync"、周报后自动触发 | 扫描 doc/ 对齐 index.yml + guide.list.directory.md | 所有人 |
 | **code-hygiene** | "代码卫生"、"/hygiene" | 9 维度代码卫生审计（死字段/死分支/兼容垫片/命名残留/冗余参数/过时注释/迁移代码/过度抽象/近似重复） | 开发者 |
+| **create-skill-file** | "创建技能"、"/create-skill" | 技能创建 & 质量评分（7 维度加权评分 + 结构规范 + 反模式检查） | 所有人 |
+| **cds-project-scan** | "扫描项目"、"/cds-scan" | 扫描项目结构，自动生成 CDS compose YAML 一键导入配置 | 开发者、运维 |
 
 ### 使用指引
 
