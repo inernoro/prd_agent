@@ -10,6 +10,7 @@ import { MoreVertical, Pencil, Search, UserCog, Users, Gauge, Trash2 } from 'luc
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { UserProfilePopover } from '@/components/ui/UserProfilePopover';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
+import { UserAvatar } from '@/components/ui/UserAvatar';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useNavigate } from 'react-router-dom';
 import { systemDialog } from '@/lib/systemDialog';
@@ -1103,30 +1104,17 @@ export default function UsersPage() {
                         <div
                           className="relative h-9 w-9 rounded-[8px] overflow-hidden shrink-0 cursor-pointer ring-1 ring-white/8 hover:ring-[var(--accent-gold)]/40 transition-all"
                         >
-                          {(() => {
-                            const url = resolveAvatarUrl({
+                          <UserAvatar
+                            src={resolveAvatarUrl({
                               username: u.username,
                               userType: u.userType,
                               botKind: u.botKind,
                               avatarFileName: u.avatarFileName ?? null,
                               avatarUrl: u.avatarUrl,
-                            });
-                            const fallback = resolveNoHeadAvatarUrl();
-                            return (
-                              <img
-                                src={url}
-                                alt="avatar"
-                                className="h-full w-full object-cover"
-                                onError={(e) => {
-                                  const el = e.currentTarget;
-                                  if (el.getAttribute('data-fallback-applied') === '1') return;
-                                  if (!fallback) return;
-                                  el.setAttribute('data-fallback-applied', '1');
-                                  el.src = fallback;
-                                }}
-                              />
-                            );
-                          })()}
+                            })}
+                            alt="avatar"
+                            className="h-full w-full object-cover"
+                          />
                           {/* 角色/机器人图标（右下角） */}
                           {(() => {
                             // 机器人使用特殊图标
@@ -1268,7 +1256,7 @@ export default function UsersPage() {
                   title="创建成功后可设置头像"
                   onClick={() => toast.info('提示', '请先完成用户创建，创建成功后将自动弹出头像设置')}
                 >
-                  <img
+                  <UserAvatar
                     src={resolveNoHeadAvatarUrl()}
                     alt="default avatar"
                     className="h-full w-full object-cover transition-opacity group-hover:opacity-70"

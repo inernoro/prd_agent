@@ -41,6 +41,7 @@ import {
   Bot,
 } from 'lucide-react';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
+import { UserAvatar } from '@/components/ui/UserAvatar';
 
 const statusLabels: Record<string, string> = {
   [DefectStatus.Draft]: '草稿',
@@ -438,7 +439,7 @@ export function DefectDetailPanel() {
           className={
             isMobile
               ? 'fixed inset-0 z-110 overflow-hidden flex flex-col'
-              : 'fixed top-1/2 left-1/2 z-110 overflow-hidden rounded-2xl flex prd-dialog-content'
+              : 'fixed inset-0 z-110 m-auto overflow-hidden rounded-2xl flex prd-dialog-content'
           }
           style={{
             ...(isMobile
@@ -1001,7 +1002,7 @@ export function DefectDetailPanel() {
                           }}
                         >
                           {avatarSrc ? (
-                            <img src={avatarSrc} alt={displayName} className="w-full h-full object-cover" />
+                            <UserAvatar src={avatarSrc} alt={displayName} className="w-full h-full object-cover" />
                           ) : isAssistant ? (
                             <Bot size={12} style={{ color: 'rgba(100,180,255,0.9)' }} />
                           ) : (

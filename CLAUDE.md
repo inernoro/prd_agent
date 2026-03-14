@@ -102,9 +102,10 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 ### 使用指引
 
-1. **方案评审** → `/risk` + `/trace`
-2. **开发完成** → `/verify` + `/smoke`
-3. **提 PR 前** → `/resolve`
-4. **准备上线** → `/handoff`（3+ 文件时自动触发）
-5. **周五收尾** → `/weekly`（自动触发 `/doc-sync`）
-6. **迁移/重构后** → `/hygiene`
+1. **方案评审时** → 先 `/risk` 评估风险，再 `/trace` 追踪关键链路
+2. **开发完成后** → 先 `/verify` 交叉验证，再 `/smoke-test` 跑端到端
+3. **提 PR 前** → `/resolve` 预合并主分支，AI 代替人类解决冲突
+4. **准备上线时** → `/handoff` 生成交接清单（涉及 3+ 文件时自动触发）
+5. **周五收尾时** → `/weekly` 生成本周总结（完成后自动触发 `/doc-sync`）
+6. **写文档时** → `/doc` 查看类型速查，或直接创建文档时自动套用模板
+7. **迁移/重构后** → `/hygiene`

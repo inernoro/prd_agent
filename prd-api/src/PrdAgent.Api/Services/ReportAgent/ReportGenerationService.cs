@@ -31,8 +31,10 @@ public class ReportGenerationService
         4. 每条不超过 50 字
         5. 对于代码统计数据，只展示关键数字，不做评判
         6. 严格按照模板板块结构输出
-        7. 无数据的板块输出空数组
-        8. 输出必须是合法的 JSON 格式，不要包含 markdown 代码块标记
+        7. 永远不要说"本周无数据"或"暂无记录"。如果某个维度数据量少（<3 条），将其合并到其他相关段落中
+        8. 如果只有系统活动数据（对话、AI 调用），从使用模式中提炼工作重心，写出有价值的总结
+        9. 使用具体数字而非模糊描述（"进行了 12 次 PRD 对话"而非"频繁使用 PRD 系统"）
+        10. 输出必须是合法的 JSON 格式，不要包含 markdown 代码块标记
         """;
 
     public ReportGenerationService(
@@ -230,12 +232,33 @@ public class ReportGenerationService
 
         sb.AppendLine("### 系统活动统计");
         sb.AppendLine($"- PRD 对话会话: {activity.PrdSessions} 次");
+        if (activity.PrdMessageCount > 0)
+            sb.AppendLine($"- PRD 对话消息: {activity.PrdMessageCount} 条");
         sb.AppendLine($"- 缺陷提交: {activity.DefectsSubmitted} 个");
-        sb.AppendLine($"- 视觉创作: {activity.VisualSessions} 次");
+        if (activity.DefectDetails is { Resolved: > 0 })
+            sb.AppendLine($"  · 已解决 {activity.DefectDetails.Resolved} 个，平均 {activity.DefectDetails.AvgResolutionHours} 小时");
+        if (activity.DefectDetails is { Reopened: > 0 })
+            sb.AppendLine($"  · 退回/重开 {activity.DefectDetails.Reopened} 个");
+        sb.AppendLine($"- 视觉创作会话: {activity.VisualSessions} 次");
+        if (activity.ImageGenCompletedCount > 0)
+            sb.AppendLine($"- 图片生成完成: {activity.ImageGenCompletedCount} 次");
+        if (activity.VideoGenCompletedCount > 0)
+            sb.AppendLine($"- 视频生成完成: {activity.VideoGenCompletedCount} 次");
+        if (activity.DocumentEditCount > 0)
+            sb.AppendLine($"- 文档编辑/创建: {activity.DocumentEditCount} 篇");
+        if (activity.WorkflowExecutionCount > 0)
+            sb.AppendLine($"- 自动化工作流执行: {activity.WorkflowExecutionCount} 次");
+        if (activity.ToolboxRunCount > 0)
+            sb.AppendLine($"- AI 工具箱使用: {activity.ToolboxRunCount} 次");
+        if (activity.WebPagePublishCount > 0)
+            sb.AppendLine($"- 网页发布/更新: {activity.WebPagePublishCount} 次");
+        if (activity.AttachmentUploadCount > 0)
+            sb.AppendLine($"- 附件上传: {activity.AttachmentUploadCount} 个");
         sb.AppendLine($"- AI 调用: {activity.LlmCalls} 次");
         sb.AppendLine();
 
         sb.AppendLine("请基于以上数据生成周报，每个条目的 source 字段标记来源：git / daily_log / system_activity / ai");
+        sb.AppendLine("重要：即使数据较少，也要基于已有数据写出有价值的总结，不要输出「无数据」。");
 
         return sb.ToString();
     }
@@ -685,9 +708,31 @@ public class ReportGenerationService
         }
 
         sb.AppendLine("### 系统活动统计");
-        sb.AppendLine($"- PRD 对话: {activity.PrdSessions} 次, 缺陷: {activity.DefectsSubmitted} 个, 视觉创作: {activity.VisualSessions} 次, AI 调用: {activity.LlmCalls} 次");
+        sb.AppendLine($"- PRD 对话会话: {activity.PrdSessions} 次");
+        if (activity.PrdMessageCount > 0)
+            sb.AppendLine($"- PRD 对话消息: {activity.PrdMessageCount} 条");
+        sb.AppendLine($"- 缺陷提交: {activity.DefectsSubmitted} 个");
+        if (activity.DefectDetails is { Resolved: > 0 })
+            sb.AppendLine($"  · 已解决 {activity.DefectDetails.Resolved} 个，平均 {activity.DefectDetails.AvgResolutionHours} 小时");
+        sb.AppendLine($"- 视觉创作会话: {activity.VisualSessions} 次");
+        if (activity.ImageGenCompletedCount > 0)
+            sb.AppendLine($"- 图片生成完成: {activity.ImageGenCompletedCount} 次");
+        if (activity.VideoGenCompletedCount > 0)
+            sb.AppendLine($"- 视频生成完成: {activity.VideoGenCompletedCount} 次");
+        if (activity.DocumentEditCount > 0)
+            sb.AppendLine($"- 文档编辑/创建: {activity.DocumentEditCount} 篇");
+        if (activity.WorkflowExecutionCount > 0)
+            sb.AppendLine($"- 自动化工作流执行: {activity.WorkflowExecutionCount} 次");
+        if (activity.ToolboxRunCount > 0)
+            sb.AppendLine($"- AI 工具箱使用: {activity.ToolboxRunCount} 次");
+        if (activity.WebPagePublishCount > 0)
+            sb.AppendLine($"- 网页发布/更新: {activity.WebPagePublishCount} 次");
+        if (activity.AttachmentUploadCount > 0)
+            sb.AppendLine($"- 附件上传: {activity.AttachmentUploadCount} 个");
+        sb.AppendLine($"- AI 调用: {activity.LlmCalls} 次");
         sb.AppendLine();
         sb.AppendLine("请基于以上数据生成周报，source 可选值: git / tapd / yuque / daily_log / system_activity / ai");
+        sb.AppendLine("重要：即使数据较少，也要基于已有数据写出有价值的总结，不要输出「无数据」。");
 
         return sb.ToString();
     }

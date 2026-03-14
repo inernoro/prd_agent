@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { cn } from '@/lib/cn';
+import DecryptedText from '@/components/reactbits/DecryptedText';
 
 interface TypewriterTextProps {
   texts: string[];
@@ -13,55 +14,31 @@ export function TypewriterText({
   texts,
   className,
   typingSpeed = 100,
-  deletingSpeed = 50,
   pauseDuration = 2000,
 }: TypewriterTextProps) {
-  const [displayText, setDisplayText] = useState('');
   const [textIndex, setTextIndex] = useState(0);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
 
   useEffect(() => {
-    if (texts.length === 0) return;
+    if (!texts || texts.length <= 1) return;
+    const interval = setInterval(() => {
+      setTextIndex((prev) => (prev + 1) % texts.length);
+    }, pauseDuration + 1500); // 预留额外的解密动画时间
+    return () => clearInterval(interval);
+  }, [texts, pauseDuration]);
 
-    const currentText = texts[textIndex];
-
-    if (isPaused) {
-      const pauseTimer = setTimeout(() => {
-        setIsPaused(false);
-        setIsDeleting(true);
-      }, pauseDuration);
-      return () => clearTimeout(pauseTimer);
-    }
-
-    if (isDeleting) {
-      if (displayText === '') {
-        setIsDeleting(false);
-        setTextIndex((prev) => (prev + 1) % texts.length);
-        return;
-      }
-
-      const deleteTimer = setTimeout(() => {
-        setDisplayText((prev) => prev.slice(0, -1));
-      }, deletingSpeed);
-      return () => clearTimeout(deleteTimer);
-    }
-
-    if (displayText === currentText) {
-      setIsPaused(true);
-      return;
-    }
-
-    const typeTimer = setTimeout(() => {
-      setDisplayText(currentText.slice(0, displayText.length + 1));
-    }, typingSpeed);
-    return () => clearTimeout(typeTimer);
-  }, [displayText, textIndex, isDeleting, isPaused, texts, typingSpeed, deletingSpeed, pauseDuration]);
+  if (!texts || texts.length === 0) return null;
 
   return (
     <span className={cn('inline-block', className)}>
-      {displayText}
-      <span className="animate-blink ml-0.5 inline-block w-[3px] h-[1em] bg-current align-middle" />
+      <DecryptedText
+        key={textIndex}
+        text={texts[textIndex]}
+        speed={typingSpeed < 50 ? 50 : typingSpeed}
+        maxIterations={15}
+        sequential={true}
+        revealDirection="start"
+        animateOn="view"
+      />
     </span>
   );
 }
