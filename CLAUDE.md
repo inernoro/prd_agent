@@ -140,6 +140,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | **weekly-update-summary** | "生成周报"、"/weekly" | 从 git 历史自动生成结构化周报 | 项目负责人 |
 | **doc-writer** | "写文档"、"/doc"、自动触发 | doc/ 下文档类型守护（6 种类型模板 + 格式校验） | 所有人 |
 | **doc-sync** | "同步文档索引"、"/doc-sync"、周报后自动触发 | 扫描 doc/ 对齐 index.yml + guide.list.directory.md | 所有人 |
+| **code-hygiene** | "代码卫生"、"/hygiene" | 9 维度代码卫生审计（死字段/死分支/兼容垫片/命名残留/冗余参数/过时注释/迁移代码/过度抽象/近似重复） | 开发者 |
 
 ### 使用指引
 
@@ -150,6 +151,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 5. **周五收尾时** → `/weekly` 生成本周总结（完成后自动触发 `/doc-sync`）
 6. **写文档时** → `/doc` 查看类型速查，或直接创建文档时自动套用模板
 7. **文档变更后** → `/doc-sync` 手动同步索引，或等周报时自动同步
+8. **迁移/重构后** → `/hygiene` 扫描残留痕迹（死代码/兼容垫片/命名残留等）
 
 ---
 
