@@ -1548,7 +1548,7 @@ async function importAndInit() {
   }
 
   // Switch modal to progress view
-  const modalBody = document.querySelector('.config-modal-body');
+  const modalBody = document.getElementById('configModalBody');
   if (!modalBody) return;
 
   modalBody.innerHTML = `
