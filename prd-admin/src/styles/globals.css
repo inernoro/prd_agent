@@ -1172,8 +1172,9 @@ select optgroup {
   position: relative;
   border: 1px solid var(--glass-border);
   box-shadow:
-    0 2px 16px -4px rgba(0, 0, 0, 0.35),
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.06);
+    inset 0 1px 1px rgba(255, 255, 255, 0.15),
+    inset 0 -1px 1px rgba(0, 0, 0, 0.15),
+    0 16px 32px -8px rgba(10, 10, 14, 0.5);
   isolation: isolate;
 }
 .surface::before {
@@ -1187,16 +1188,26 @@ select optgroup {
   -webkit-backdrop-filter: blur(40px) saturate(180%) brightness(1.1);
   pointer-events: none;
 }
+.surface::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  z-index: -1;
+  background-image: var(--glass-noise);
+  opacity: 0.04;
+  mix-blend-mode: overlay;
+  pointer-events: none;
+}
 
 /* ── .surface-raised — 突出卡片（更深阴影 + 更亮内光） ── */
 .surface-raised {
   position: relative;
   border: 1px solid var(--glass-border);
   box-shadow:
-    0 8px 32px -4px rgba(0, 0, 0, 0.4),
-    0 4px 16px -2px rgba(0, 0, 0, 0.25),
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.08),
-    inset 0 -1px 0 0 rgba(0, 0, 0, 0.12);
+    inset 0 1px 1px rgba(255, 255, 255, 0.20),
+    inset 0 -1px 1px rgba(0, 0, 0, 0.20),
+    0 24px 48px -12px rgba(10, 10, 14, 0.6);
   isolation: isolate;
 }
 .surface-raised::before {
@@ -1208,6 +1219,17 @@ select optgroup {
   background: linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%);
   backdrop-filter: blur(40px) saturate(180%) brightness(1.1);
   -webkit-backdrop-filter: blur(40px) saturate(180%) brightness(1.1);
+  pointer-events: none;
+}
+.surface-raised::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  z-index: -1;
+  background-image: var(--glass-noise);
+  opacity: 0.04;
+  mix-blend-mode: overlay;
   pointer-events: none;
 }
 
@@ -1231,6 +1253,17 @@ select optgroup {
   backdrop-filter: var(--_gbl);
   -webkit-backdrop-filter: var(--_gbl);
   background: var(--_gbg);
+  pointer-events: none;
+}
+.glass-blur-pseudo::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  z-index: -1;
+  background-image: var(--glass-noise);
+  opacity: 0.04;
+  mix-blend-mode: overlay;
   pointer-events: none;
 }
 
