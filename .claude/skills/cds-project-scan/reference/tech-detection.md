@@ -32,6 +32,10 @@
 
 **corepack 规则**：pnpm/yarn 在 `node:20-slim` 未预装，所有命令必须以 `corepack enable &&` 开头。
 
+## Node.js 容器运行时注意事项
+
+CDS 运行时会自动为 `node:*` 镜像注入 `CHOKIDAR_USEPOLLING=true`，避免多分支并行时耗尽内核 inotify watches（ENOSPC 错误）。cds-scan 生成的 YAML **无需**手动添加此变量。
+
 ## Monorepo 处理
 
 多个可部署子目录时：

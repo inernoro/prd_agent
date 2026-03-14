@@ -272,6 +272,16 @@ volumes:
 
 **Phase 7**: 输出 CDS 导入说明（CDS Dashboard 自动管理基础设施）
 
+## CDS 运行时自动处理
+
+以下问题由 CDS 运行时自动处理，cds-scan **无需**在生成的 YAML 中额外配置：
+
+| 问题 | CDS 运行时行为 |
+|------|---------------|
+| Node.js 多分支 inotify ENOSPC | 自动注入 `CHOKIDAR_USEPOLLING=true` |
+| Vite HMR WebSocket | CDS 代理自动转发 WebSocket upgrade（含 Sec-WebSocket-Accept） |
+| `${CDS_*}` 环境变量模板 | 运行时自动解析为实际地址和端口 |
+
 ## 异常处理
 
 | 场景 | 处理 |

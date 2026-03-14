@@ -65,6 +65,13 @@ export class ContainerService {
       mergedEnv['VITE_GIT_BRANCH'] = entry.branch;
     }
 
+    // For Node.js containers: use polling to avoid exhausting kernel inotify watches.
+    // Multiple branches each run their own Vite dev server + pnpm store watchers,
+    // quickly hitting the fs.inotify.max_user_watches limit (ENOSPC error).
+    if (profile.dockerImage.startsWith('node:')) {
+      mergedEnv['CHOKIDAR_USEPOLLING'] = mergedEnv['CHOKIDAR_USEPOLLING'] || 'true';
+    }
+
     // Profile-specific env (highest priority)
     if (profile.env) {
       Object.assign(mergedEnv, profile.env);

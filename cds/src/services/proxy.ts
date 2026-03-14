@@ -542,19 +542,23 @@ export class ProxyService {
     };
 
     const proxyReq = http.request(options);
-    proxyReq.on('upgrade', (_proxyRes, proxySocket, proxyHead) => {
-      socket.write(
-        `HTTP/1.1 101 Switching Protocols\r\n` +
-        `Upgrade: websocket\r\n` +
-        `Connection: Upgrade\r\n` +
-        `\r\n`,
-      );
+    proxyReq.on('upgrade', (proxyRes, proxySocket, proxyHead) => {
+      // Forward the actual 101 response from upstream (includes Sec-WebSocket-Accept, etc.)
+      // Without these headers, the client's WebSocket handshake validation will fail.
+      let rawResponse = `HTTP/${proxyRes.httpVersion} ${proxyRes.statusCode} ${proxyRes.statusMessage}\r\n`;
+      for (let i = 0; i < proxyRes.rawHeaders.length; i += 2) {
+        rawResponse += `${proxyRes.rawHeaders[i]}: ${proxyRes.rawHeaders[i + 1]}\r\n`;
+      }
+      rawResponse += '\r\n';
+      socket.write(rawResponse);
       if (proxyHead.length > 0) socket.write(proxyHead);
+      if (head.length > 0) proxySocket.write(head);
       proxySocket.pipe(socket);
       socket.pipe(proxySocket);
     });
 
     proxyReq.on('error', () => socket.destroy());
+    socket.on('error', () => proxyReq.destroy());
     proxyReq.end();
   }
 }
