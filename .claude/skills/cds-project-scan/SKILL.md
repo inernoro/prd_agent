@@ -278,7 +278,7 @@ volumes:
 
 | 问题 | CDS 运行时行为 |
 |------|---------------|
-| Node.js 多分支 inotify ENOSPC | 自动注入 `CHOKIDAR_USEPOLLING=true` |
+| Node.js 多分支 inotify ENOSPC | 自动注入 `PNPM_HOME=/pnpm`，将 store 移出 bind mount |
 | Vite HMR WebSocket | CDS 代理自动转发 WebSocket upgrade（含 Sec-WebSocket-Accept） |
 | `${CDS_*}` 环境变量模板 | 运行时自动解析为实际地址和端口 |
 

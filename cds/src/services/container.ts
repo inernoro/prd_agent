@@ -65,11 +65,19 @@ export class ContainerService {
       mergedEnv['VITE_GIT_BRANCH'] = entry.branch;
     }
 
-    // For Node.js containers: use polling to avoid exhausting kernel inotify watches.
-    // Multiple branches each run their own Vite dev server + pnpm store watchers,
-    // quickly hitting the fs.inotify.max_user_watches limit (ENOSPC error).
+    // For Node.js containers: move pnpm store outside the bind-mounted source directory.
+    // Without this, pnpm creates .pnpm-store inside /app (the bind mount), and Vite's
+    // chokidar watches all those files, quickly exhausting the kernel inotify limit (ENOSPC).
+    // Setting PNPM_HOME=/pnpm puts the store at /pnpm/store (container overlay FS),
+    // invisible to Vite's file watcher. pnpm falls back to copying instead of hard-linking,
+    // which is fine for dev environments.
     if (profile.dockerImage.startsWith('node:')) {
-      mergedEnv['CHOKIDAR_USEPOLLING'] = mergedEnv['CHOKIDAR_USEPOLLING'] || 'true';
+      mergedEnv['PNPM_HOME'] = mergedEnv['PNPM_HOME'] || '/pnpm';
+      // Ensure pnpm binary is on PATH after corepack enable
+      const currentPath = mergedEnv['PATH'] || '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+      if (!currentPath.includes('/pnpm')) {
+        mergedEnv['PATH'] = `/pnpm:${currentPath}`;
+      }
     }
 
     // Profile-specific env (highest priority)

@@ -34,7 +34,13 @@
 
 ## Node.js 容器运行时注意事项
 
-CDS 运行时会自动为 `node:*` 镜像注入 `CHOKIDAR_USEPOLLING=true`，避免多分支并行时耗尽内核 inotify watches（ENOSPC 错误）。cds-scan 生成的 YAML **无需**手动添加此变量。
+### pnpm store 位置（ENOSPC 防护）
+
+CDS 运行时会自动为 `node:*` 镜像注入 `PNPM_HOME=/pnpm`，将 pnpm 的 content-addressable store 移到 bind mount 之外。
+
+**原因**：Docker bind mount 场景下，pnpm 会在项目目录内创建 `.pnpm-store`（因为跨文件系统无法硬链接）。Vite 的 chokidar 会监听这些文件，多分支并行时迅速耗尽内核 `fs.inotify.max_user_watches` 限额（ENOSPC 错误）。将 store 放在容器 overlay FS 内（`/pnpm/store`），Vite 的 watcher 完全看不到它。
+
+cds-scan 生成的 YAML **无需**手动添加 `PNPM_HOME` 或 `CHOKIDAR_USEPOLLING`。
 
 ## Monorepo 处理
 
