@@ -88,8 +88,9 @@ public static class ChannelTypes
     public const string Sms = "sms";
     public const string Siri = "siri";
     public const string Webhook = "webhook";
+    public const string Shortcuts = "shortcuts";
 
-    public static readonly string[] All = { Email, Sms, Siri, Webhook };
+    public static readonly string[] All = { Email, Sms, Siri, Webhook, Shortcuts };
 
     /// <summary>
     /// 获取通道显示名称
@@ -100,6 +101,7 @@ public static class ChannelTypes
         Sms => "短信",
         Siri => "Siri",
         Webhook => "Webhook",
+        Shortcuts => "快捷指令",
         _ => channelType
     };
 }

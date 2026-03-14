@@ -257,9 +257,11 @@ public static class ChannelTaskIntent
     public const string PrdQuery = "prd-query";
     public const string Help = "help";
     public const string Cancel = "cancel";
+    public const string SaveLink = "save-link";
+    public const string ParseUrl = "parse-url";
     public const string Unknown = "unknown";
 
-    public static readonly string[] All = { ImageGen, DefectCreate, DefectQuery, PrdQuery, Help, Cancel, Unknown };
+    public static readonly string[] All = { ImageGen, DefectCreate, DefectQuery, PrdQuery, Help, Cancel, SaveLink, ParseUrl, Unknown };
 }
 
 /// <summary>
