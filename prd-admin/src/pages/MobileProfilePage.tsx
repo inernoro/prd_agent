@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 import { resolveAvatarUrl } from '@/lib/avatar';
+import { UserAvatar } from '@/components/ui/UserAvatar';
 
 /* ── 菜单项 ── */
 interface MenuItem {
@@ -67,7 +68,7 @@ export default function MobileProfilePage() {
           className="surface-inset flex items-center gap-4 p-5 rounded-2xl mb-6"
         >
           {avatarUrl ? (
-            <img src={avatarUrl} className="w-14 h-14 rounded-full object-cover" alt="" />
+            <UserAvatar src={avatarUrl} className="w-14 h-14 rounded-full object-cover" />
           ) : (
             <div
               className="w-14 h-14 rounded-full flex items-center justify-center text-lg font-semibold"

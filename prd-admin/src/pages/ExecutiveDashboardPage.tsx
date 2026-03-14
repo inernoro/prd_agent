@@ -28,6 +28,7 @@ import type {
 } from '@/services/contracts/executive';
 import type { EChartsOption } from 'echarts';
 import { resolveAvatarUrl } from '@/lib/avatar';
+import { UserAvatar } from '@/components/ui/UserAvatar';
 import { Tooltip } from '@/components/ui/Tooltip';
 
 // ─── Enterprise Dashboard Design Tokens ──────────────────────────────
@@ -393,12 +394,13 @@ type ScoredUser = {
   totalScore: number; dimScores: Record<string, number>; normalizedScores: Record<string, number>;
 };
 
+/**
+ * 计算分数：每个维度以 "每天至少1次" 为满分（100%），超过也算100%
+ * totalDays: 统计区间天数，用于计算比例
+ */
 function computeScores(data: ExecutiveLeaderboard): ScoredUser[] {
-  const { users, dimensions } = data;
-  const dimMax: Record<string, number> = {};
-  for (const dim of dimensions) {
-    dimMax[dim.key] = Math.max(1, ...Object.values(dim.values));
-  }
+  const { users, dimensions, totalDays } = data;
+  const capPerDim = Math.max(1, totalDays); // 每天1次 = 满分
   return users.map(u => {
     const dimScores: Record<string, number> = {};
     const normalizedScores: Record<string, number> = {};
@@ -406,7 +408,8 @@ function computeScores(data: ExecutiveLeaderboard): ScoredUser[] {
     for (const dim of dimensions) {
       const raw = dim.values[u.userId] ?? 0;
       dimScores[dim.key] = raw;
-      const normalized = (raw / dimMax[dim.key]) * 100;
+      // 以 totalDays 为分母，封顶100
+      const normalized = Math.min((raw / capPerDim) * 100, 100);
       normalizedScores[dim.key] = normalized;
       totalScore += normalized;
     }
@@ -475,7 +478,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
               >
                 <span className="text-[15px] flex-shrink-0">{mc.medal}</span>
                 {u.avatarFileName ? (
-                  <img src={resolveAvatarUrl({ avatarFileName: u.avatarFileName })} className="w-7 h-7 rounded-full object-cover flex-shrink-0 ring-1 ring-white/5" alt="" />
+                  <UserAvatar src={resolveAvatarUrl({ avatarFileName: u.avatarFileName })} className="w-7 h-7 rounded-full object-cover flex-shrink-0 ring-1 ring-white/5" />
                 ) : (
                   <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0"
                     style={{ background: `${roleColor}22`, color: roleColor }}>{u.displayName[0]}</div>
@@ -501,22 +504,22 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                 <th className="text-left py-2.5 pr-2 font-medium w-8" style={{ color: D.text3, verticalAlign: 'middle' }}>#</th>
                 <th className="text-left py-2.5 pr-4 font-medium" style={{ color: D.text3, verticalAlign: 'middle' }}>成员</th>
                 <th
-                  className="text-right py-2.5 px-2 font-medium cursor-pointer select-none whitespace-nowrap"
+                  className="text-center py-2.5 px-2 font-medium cursor-pointer select-none whitespace-nowrap"
                   style={{ color: sortKey === 'total' ? D.primary : D.text3, verticalAlign: 'middle' }}
                   onClick={() => toggleSort('total')}
                 >
-                  <span className="inline-flex items-center gap-1">综合分 <SortIcon col="total" /></span>
+                  <span className="inline-flex items-center justify-center gap-1 w-full">综合分 <SortIcon col="total" /></span>
                 </th>
                 {allDims.map(dim => {
                   const meta = DIMENSION_META[dim.key];
                   return (
                     <th
                       key={dim.key}
-                      className="text-right py-2.5 px-2 font-medium cursor-pointer select-none whitespace-nowrap"
+                      className="text-center py-2.5 px-2 font-medium cursor-pointer select-none whitespace-nowrap"
                       style={{ color: sortKey === dim.key ? D.primary : D.text3, verticalAlign: 'middle' }}
                       onClick={() => toggleSort(dim.key)}
                     >
-                      <span className="inline-flex items-center gap-1">{meta?.short ?? dim.name} <SortIcon col={dim.key} /></span>
+                      <span className="inline-flex items-center justify-center gap-1 w-full">{meta?.short ?? dim.name} <SortIcon col={dim.key} /></span>
                       <div className="text-[9px] font-normal" style={{ color: D.text3, opacity: 0.7 }}>权重 {weightPct}%</div>
                     </th>
                   );
@@ -547,7 +550,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                     <td className="py-2.5 pr-4" style={{ verticalAlign: 'middle' }}>
                       <div className="flex items-center gap-2">
                         {user.avatarFileName ? (
-                          <img src={resolveAvatarUrl({ avatarFileName: user.avatarFileName })} className="w-6 h-6 rounded-full object-cover ring-1 ring-white/5" alt="" />
+                          <UserAvatar src={resolveAvatarUrl({ avatarFileName: user.avatarFileName })} className="w-6 h-6 rounded-full object-cover ring-1 ring-white/5" />
                         ) : (
                           <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold"
                             style={{ background: `${roleColor}22`, color: roleColor }}>
@@ -560,36 +563,36 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                         </div>
                       </div>
                     </td>
-                    <td className="py-2.5 px-2 text-right" style={{ verticalAlign: 'middle' }}>
-                      <div className="flex items-center justify-end gap-2">
-                        <div className="w-16 h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                    <td className="py-2.5 px-2" style={{ verticalAlign: 'middle' }}>
+                      <div className="flex flex-col items-center gap-0.5" style={{ minWidth: 48 }}>
+                        <span className="tabular-nums font-bold text-[12px]" style={{ color: isTop3 ? D.primary : D.text1 }}>
+                          {Math.round(user.totalScore)}
+                        </span>
+                        <div className="w-full h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.04)' }}>
                           <div className="h-full rounded-full" style={{
-                            width: `${(user.totalScore / maxScore) * 100}%`,
+                            width: `${Math.min((user.totalScore / maxScore) * 100, 100)}%`,
                             background: D.primary,
                             opacity: 0.6,
                           }} />
                         </div>
-                        <span className="tabular-nums font-bold text-[12px] w-10 text-right" style={{ color: isTop3 ? D.primary : D.text1 }}>
-                          {Math.round(user.totalScore)}
-                        </span>
                       </div>
                     </td>
                     {allDims.map((dim, dimIdx) => {
                       const raw = user.dimScores[dim.key] ?? 0;
                       const meta = DIMENSION_META[dim.key];
-                      const dimMax = Math.max(1, ...Object.values(dim.values));
-                      const pct = (raw / dimMax) * 100;
+                      const totalDays = data?.totalDays ?? 1;
+                      const pct = Math.min((raw / Math.max(1, totalDays)) * 100, 100);
                       const isLastCol = dimIdx === allDims.length - 1;
 
                       return (
-                        <td key={dim.key} className="py-2.5 px-2 text-right" style={{ verticalAlign: 'middle', borderRadius: isTop3 && isLastCol ? '0 8px 8px 0' : undefined }}>
-                          <div className="flex items-center justify-end gap-1.5">
-                            <div className="w-10 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.04)' }}>
-                              <div className="h-full rounded-full" style={{ width: `${pct}%`, background: meta?.barColor ?? 'rgba(255,255,255,0.12)' }} />
-                            </div>
-                            <span className="tabular-nums text-[11px] w-8 text-right" style={{ color: raw > 0 ? D.text2 : D.text3 }}>
+                        <td key={dim.key} className="py-2.5 px-2" style={{ verticalAlign: 'middle', borderRadius: isTop3 && isLastCol ? '0 8px 8px 0' : undefined }}>
+                          <div className="flex flex-col items-center gap-0.5" style={{ minWidth: 40 }}>
+                            <span className="tabular-nums font-bold text-[11px]" style={{ color: raw > 0 ? D.text2 : D.text3 }}>
                               {raw.toLocaleString()}
                             </span>
+                            <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                              <div className="h-full rounded-full" style={{ width: `${pct}%`, background: meta?.barColor ?? 'rgba(255,255,255,0.12)' }} />
+                            </div>
                           </div>
                         </td>
                       );
@@ -612,7 +615,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
             .filter(u => u.val > 0)
             .sort((a, b) => b.val - a.val);
           const total = sortedEntries.reduce((s, e) => s + e.val, 0);
-          const maxVal = sortedEntries[0]?.val ?? 1;
+          const totalDays = data?.totalDays ?? 1;
 
           return (
             <DashCard key={dim.key} className="!p-3">
@@ -634,14 +637,14 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                   {sortedEntries.map((u, idx) => {
                     const mc = idx < 3 ? MEDAL_STYLES[idx] : null;
                     const roleColor = ROLE_COLORS[u.role] ?? D.text3;
-                    const pct = (u.val / maxVal) * 100;
+                    const pct = Math.min((u.val / Math.max(1, totalDays)) * 100, 100);
                     return (
                       <div key={u.userId} className="flex items-center gap-2 py-0.5">
                         <span className="w-5 text-center flex-shrink-0">
                           {mc ? <span className="text-[12px]">{mc.medal}</span> : <span className="text-[10px] tabular-nums" style={{ color: D.text3 }}>{idx + 1}</span>}
                         </span>
                         {u.avatarFileName ? (
-                          <img src={resolveAvatarUrl({ avatarFileName: u.avatarFileName })} className="w-5 h-5 rounded-full object-cover flex-shrink-0" alt="" />
+                          <UserAvatar src={resolveAvatarUrl({ avatarFileName: u.avatarFileName })} className="w-5 h-5 rounded-full object-cover flex-shrink-0" />
                         ) : (
                           <div className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold flex-shrink-0"
                             style={{ background: `${roleColor}22`, color: roleColor }}>{u.displayName[0]}</div>
@@ -650,15 +653,17 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                           <div className="text-[11px] font-medium truncate" style={{ color: D.text1 }}>{u.displayName}</div>
                           <div className="text-[8px] font-medium" style={{ color: roleColor }}>{u.role}</div>
                         </div>
-                        <div className="flex-1 h-3 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.04)' }}>
-                          <div className="h-full rounded-full transition-all" style={{
-                            width: `${pct}%`,
-                            background: meta.barColor,
-                          }} />
+                        <div className="flex-1 flex flex-col items-center gap-0.5">
+                          <span className="text-[11px] font-bold tabular-nums" style={{ color: D.text1 }}>
+                            {u.val.toLocaleString()}
+                          </span>
+                          <div className="w-full h-3 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                            <div className="h-full rounded-full transition-all" style={{
+                              width: `${pct}%`,
+                              background: meta.barColor,
+                            }} />
+                          </div>
                         </div>
-                        <span className="text-[11px] font-bold tabular-nums w-10 text-right flex-shrink-0" style={{ color: D.text1 }}>
-                          {u.val.toLocaleString()}
-                        </span>
                       </div>
                     );
                   })}
@@ -924,6 +929,7 @@ const TABS = [
 ];
 
 const DAYS_OPTIONS = [
+  { value: 0, label: '全部时间' },
   { value: 7, label: '最近 7 天' },
   { value: 14, label: '最近 14 天' },
   { value: 30, label: '最近 30 天' },
@@ -932,7 +938,7 @@ const DAYS_OPTIONS = [
 export default function ExecutiveDashboardPage() {
   const { isMobile } = useBreakpoint();
   const [activeTab, setActiveTab] = useState('team');
-  const [days, setDays] = useState(7);
+  const [days, setDays] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 

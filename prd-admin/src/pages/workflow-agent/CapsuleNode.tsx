@@ -68,15 +68,15 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
           type="target"
           position={Position.Top}
           id={slot.slotId}
-          className="nodrag"
+          className="nodrag capsule-handle capsule-handle--input"
           style={{
             left: data.inputSlots.length === 1
               ? '50%'
               : `${((i + 1) / (data.inputSlots.length + 1)) * 100}%`,
-            width: 10,
-            height: 10,
+            width: 14,
+            height: 14,
             background: 'rgba(255,255,255,0.15)',
-            border: '2px solid rgba(255,255,255,0.3)',
+            border: '2.5px solid rgba(255,255,255,0.35)',
             borderRadius: '50%',
           }}
           title={`${slot.name} (${slot.dataType})`}
@@ -87,11 +87,11 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
           type="target"
           position={Position.Top}
           id="default-in"
-          className="nodrag"
+          className="nodrag capsule-handle capsule-handle--input"
           style={{
-            width: 10, height: 10,
+            width: 14, height: 14,
             background: 'rgba(255,255,255,0.08)',
-            border: '2px solid rgba(255,255,255,0.15)',
+            border: '2.5px solid rgba(255,255,255,0.2)',
             borderRadius: '50%',
           }}
         />
@@ -229,15 +229,15 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
           type="source"
           position={Position.Bottom}
           id={slot.slotId}
-          className="nodrag"
+          className="nodrag capsule-handle capsule-handle--output"
           style={{
             left: data.outputSlots.length === 1
               ? '50%'
               : `${((i + 1) / (data.outputSlots.length + 1)) * 100}%`,
-            width: 10,
-            height: 10,
+            width: 14,
+            height: 14,
             background: `hsla(${data.accentHue}, 60%, 55%, 0.3)`,
-            border: `2px solid hsla(${data.accentHue}, 60%, 55%, 0.5)`,
+            border: `2.5px solid hsla(${data.accentHue}, 60%, 55%, 0.55)`,
             borderRadius: '50%',
           }}
           title={`${slot.name} (${slot.dataType})`}
@@ -248,11 +248,11 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
           type="source"
           position={Position.Bottom}
           id="default-out"
-          className="nodrag"
+          className="nodrag capsule-handle capsule-handle--output"
           style={{
-            width: 10, height: 10,
+            width: 14, height: 14,
             background: 'rgba(255,255,255,0.08)',
-            border: '2px solid rgba(255,255,255,0.15)',
+            border: '2.5px solid rgba(255,255,255,0.2)',
             borderRadius: '50%',
           }}
         />

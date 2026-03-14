@@ -213,16 +213,34 @@ export interface ReportCommit {
 
 // ========== Phase 2: Collected Activity ==========
 
+export interface DefectStats {
+  submitted: number;
+  resolved: number;
+  reopened: number;
+  avgResolutionHours: number;
+}
+
 export interface CollectedActivity {
   userId: string;
   periodStart: string;
   periodEnd: string;
+  // 原有数据流
   prdSessions: number;
   defectsSubmitted: number;
   visualSessions: number;
   llmCalls: number;
   dailyLogs: DailyLog[];
   commits: ReportCommit[];
+  // Phase 0 新增数据流
+  prdMessageCount: number;
+  imageGenCompletedCount: number;
+  videoGenCompletedCount: number;
+  documentEditCount: number;
+  workflowExecutionCount: number;
+  toolboxRunCount: number;
+  webPagePublishCount: number;
+  attachmentUploadCount: number;
+  defectDetails?: DefectStats;
 }
 
 // ========== Constants ==========

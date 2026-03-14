@@ -374,9 +374,10 @@ describe('主题系统单元测试', () => {
       const vars = computeThemeVars(DEFAULT_THEME_CONFIG);
 
       // GlassCard 使用的关键变量（默认配置：opacity=default, colorDepth=default, glassBrightness=1.0）
-      expect(vars['--glass-bg-start']).toMatch(/rgba\(255, 255, 255, 0\.08/);
-      expect(vars['--glass-bg-end']).toMatch(/rgba\(255, 255, 255, 0\.03/);
-      expect(vars['--glass-border']).toMatch(/rgba\(255, 255, 255, 0\.14/);
+      // OPACITY_MAP.default: glassStart=0.10, glassEnd=0.05, border=0.18
+      expect(vars['--glass-bg-start']).toMatch(/rgba\(255, 255, 255, 0\.10/);
+      expect(vars['--glass-bg-end']).toMatch(/rgba\(255, 255, 255, 0\.05/);
+      expect(vars['--glass-border']).toMatch(/rgba\(255, 255, 255, 0\.18/);
     });
 
     it('修改透明度后玻璃变量应正确更新', () => {

@@ -77,6 +77,7 @@ export type LeaderboardDimension = {
 export type ExecutiveLeaderboard = {
   users: LeaderboardUser[];
   dimensions: LeaderboardDimension[];
+  totalDays: number;
 };
 
 export type GetExecutiveOverviewContract = (days?: number) => Promise<ApiResponse<ExecutiveOverview>>;

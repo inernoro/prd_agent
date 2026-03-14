@@ -1,6 +1,76 @@
-# Branch Tester (bt) 设计文档
+# CDS (Cloud Development Suite) 设计文档
 
-> **版本**：v1.0 | **日期**：2026-02-12 | **状态**：Implementation
+> **版本**：v2.1 | **日期**：2026-03-13 | **状态**：已落地
+
+## 0. Quickstart
+
+### 前置条件
+
+- Node.js >= 20
+- Docker（用于管理分支容器）
+- Git（用于 worktree 管理）
+
+### 一键启动
+
+```bash
+cd cds
+
+# 前台运行
+./exec_cds.sh
+
+# 后台运行
+./exec_cds.sh --background
+```
+
+或使用根目录的入口脚本（包含生产模式编译）：
+
+```bash
+./exec_cds.sh              # 前台
+./exec_cds.sh dev          # 开发（热重载）
+./exec_cds.sh stop         # 停止
+./exec_cds.sh status       # 查看状态
+./exec_cds.sh logs         # 查看日志
+```
+
+### 环境变量
+
+CDS 环境变量分为**系统层**（`.bashrc`，控制 CDS 自身）和**项目层**（Dashboard UI，注入业务容器）。
+
+详细配置指南见 **`doc/guide.cds-env.md`**。
+
+#### 系统层（.bashrc，`CDS_` 前缀）
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `CDS_USERNAME` | — | Dashboard 登录用户名（设置后启用认证） |
+| `CDS_PASSWORD` | — | Dashboard 登录密码 |
+| `CDS_JWT_SECRET` | dev 默认值 | JWT 签名密钥（>= 32 字节） |
+| `CDS_SWITCH_DOMAIN` | — | 分支切换域名（如 `switch.example.com`） |
+| `CDS_MAIN_DOMAIN` | — | 主域名（切换后跳转目标） |
+| `CDS_PREVIEW_DOMAIN` | — | 预览域名后缀（如 `preview.example.com`） |
+| `CDS_NGINX_ENABLE` | — | 设为 `1` 启用 Nginx 反向代理（端口 58000） |
+
+> 向后兼容：旧前缀 `BT_USERNAME`/`BT_PASSWORD`/`SWITCH_DOMAIN`/`MAIN_DOMAIN`/`PREVIEW_DOMAIN`/`JWT_SECRET` 仍可使用，`CDS_` 前缀优先。
+
+#### 项目层（Dashboard UI）
+
+通过 Dashboard 环境变量面板配置，存储在 `.cds/state.json`，部署时注入容器。包括数据库连接、云存储密钥、应用认证等业务变量。
+
+### 基本用法
+
+1. 访问 `http://localhost:9900` → 登录（如配置了用户名密码）
+2. 输入远程分支名 → 添加分支 → 系统自动创建 git worktree
+3. 点击"部署" → 构建 Docker 镜像并启动容器
+4. 通过 gateway 端口（默认 `:5500`）访问分支对应的应用
+5. 支持通过 `/_switch/<branch>` 或 cookie 切换活跃分支
+
+### 运行测试
+
+```bash
+cd cds && npx vitest run    # 88 tests, 6 files
+```
+
+---
 
 ## 1. 目标
 
@@ -31,9 +101,9 @@
 ┌────────────────────────────────────────────────────────────────┐
 │  Host Machine                                                  │
 │                                                                │
-│  branch-tester/ (Node.js + TypeScript)                         │
+│  cds/ (Node.js + TypeScript)                                   │
 │  ├── :9900 Dashboard API + Web UI                              │
-│  ├── git worktree 管理 (~/.bt-worktrees/)                      │
+│  ├── git worktree 管理 (~/.cds-worktrees/)                     │
 │  ├── docker build / docker run 编排                            │
 │  ├── nginx.conf 模板渲染 + reload 触发                         │
 │  └── state.json 状态持久化                                     │
@@ -75,7 +145,7 @@ interface BranchEntry {
 }
 ```
 
-### 4.2 配置 (bt.config.json)
+### 4.2 配置 (cds.config.json)
 
 ```json
 {
@@ -296,11 +366,11 @@ server {
 ## 11. 项目结构
 
 ```
-branch-tester/
+cds/
 ├── package.json
 ├── tsconfig.json
 ├── vitest.config.ts
-├── bt.config.example.json
+├── cds.config.example.json
 ├── src/
 │   ├── index.ts              # 入口
 │   ├── server.ts             # Express 服务器
@@ -345,3 +415,85 @@ target: `http://localhost:${process.env.VITE_API_PORT || 5000}`
 ```
 
 此改动仅影响本地开发模式，不影响生产构建（生产构建为静态文件由 nginx 代理）。
+
+---
+
+## 13. 功能迭代记录 (v2.0)
+
+> 80 次提交，覆盖 9 大业务领域。分支：`claude/fix-login-password-issue-CQBMO`，时间跨度 2026-02 ~ 2026-03。
+
+### 13.1 认证与登录
+
+| 功能 | 说明 |
+|------|------|
+| 登录竞态修复 | 修复正确密码登录后无响应的 token 设置与页面跳转竞态 |
+| Dashboard 鉴权 | 修复登录后 redirect 逻辑 |
+| 退出按钮 | 可见的退出按钮 + 图标文字标签 |
+| 全站中文化 | 所有提示、按钮、错误信息统一中文 |
+
+### 13.2 域名路由与分支预览
+
+| 功能 | 说明 |
+|------|------|
+| 子域名预览 | 通过 `<slug>.preview.example.com` 直接访问对应分支 |
+| Switch 域名切换 | `/_switch/<branch>` 设置 cookie，后续请求自动路由 |
+| Cookie 分支绑定 | `cds_branch` cookie 存原始分支名，支持 URL 解码 |
+| 域名配置化 | `SWITCH_DOMAIN` / `MAIN_DOMAIN` / `PREVIEW_DOMAIN` 从环境变量读取 |
+| 分支解析优先级 | X-Branch header > cookie > 域名路由规则 > 默认分支 |
+
+核心逻辑：`resolveBranch()` 返回原始分支名，`handleRequest()` 负责 slugify 后查找对应服务。
+
+### 13.3 部署与构建
+
+| 功能 | 说明 |
+|------|------|
+| 内联部署日志 | 部署日志展示在分支卡片下方，实时流式输出 |
+| 进度条动画 | 部署过程显示进度条 + 动画效果 |
+| 停止状态 | 支持部署中断，卡片显示停止指示器 |
+| 重新部署分体按钮 | 拆分为"仅 API"和"全量部署" |
+| Loading 反馈 | 所有异步操作添加 loading 状态 |
+| 构建竞态锁 | 防止同一分支并发构建 |
+
+### 13.4 环境变量管理
+
+| 功能 | 说明 |
+|------|------|
+| 批量编辑 | 一次性编辑所有环境变量 |
+| 内联展开 | 原地内联展开编辑 |
+| 自定义变量 | 移除硬编码业务变量，仅发送用户配置的变量 |
+| 连接字符串合成 | 部署时重新合成 MongoDB 连接字符串 |
+| 容器环境查看 | 查看容器内实际生效的环境变量 |
+
+### 13.5 UI 设计演进
+
+经历 4 轮迭代收敛为：实心卡片背景、2px 左边框状态色、齿轮下拉菜单、commit 内联 actions 行。
+设计原则：**去噪 > 层次 > 呼吸感**。
+
+### 13.6 分支卡片交互
+
+折叠/展开、多标签系统、收藏置顶、搜索导航器、更新指示器、操作反馈闪烁、乐观更新、提交历史下拉。
+
+### 13.7 移动端适配
+
+viewport 禁止自动缩放、响应式布局、模态窗屏幕居中、滚动位置保持。
+
+### 13.8 基础设施修复
+
+MongoDB `authSource=admin` 认证、连接字符串端口去重、静态资源 cache busting、轮询刷新 scrollY 保持。
+
+### 13.9 预览模式
+
+简单预览、多分支并排预览、toggle 切换、全局刷新。
+
+### 测试覆盖
+
+88 tests / 6 files，全部通过。覆盖 state、worktree、container、switcher、builder、proxy。
+
+### 技术债
+
+| 类别 | 优先级 |
+|------|--------|
+| WebSocket 替代 10s 轮询 | P2 |
+| 部署日志持久化 | P3 |
+| 分支卡片虚拟滚动 | P3 |
+| 前端 E2E 测试 | P2 |

@@ -197,6 +197,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
    | 缺陷管理 Agent | `defect-agent` | 缺陷提交与跟踪 |
    | 视频 Agent | `video-agent` | 文章转视频教程生成 |
    | 周报管理 Agent | `report-agent` | 周报创建、提交、审阅管理 |
+   | 快捷指令 Agent | `shortcuts-agent` | 苹果快捷指令收藏、工作流触发 |
 
 4. **为什么这样设计**
    - 权限控制：未来可以基于 Controller 做细粒度权限管理
@@ -595,6 +596,7 @@ prd_agent/
 | 视频生成工作流胶囊 | ✅ DONE | CapsuleTypes.VideoGeneration ("video-generation"), CapsuleExecutor.ExecuteVideoGenerationAsync, 支持从工作流中创建视频任务并等待完成 |
 | 配置市场 (海鲜市场) | ✅ DONE | CONFIG_TYPE_REGISTRY, MarketplaceCard, IForkable, ForkService |
 | 周报管理 Agent | ✅ Phase 1-4 DONE | ReportAgentController, ReportAgentPage (7 tabs)，详见 `doc/plan.report-agent-impl.md` |
+| **快捷指令集成** | ✅ Phase 1 DONE | ShortcutsController (scs- token 认证 + 收藏 + 安装引导)、UserShortcut / UserCollection / ShortcutTemplate 模型，详见 `doc/design.apple-shortcuts.md` |
 | **附件上传** | ✅ DONE | AttachmentsController + Rust upload_attachment + Desktop UI (图片选择/预览/上传) |
 | **技能系统** | ✅ DONE | SkillSettings 模型 + SkillsController + Desktop SkillPanel/SkillManagerModal (服务端公共技能 + 客户端本地自定义技能) |
 | **网页托管** | ✅ DONE | WebPagesController + IHostedSiteService + HostedSiteService, WebPagesPage + ShareViewPage, COS 站点托管 + 分享链接，详见 `doc/design.web-hosting.md` |
@@ -603,7 +605,7 @@ prd_agent/
 | **K8s 部署** | ❌ NOT_IMPL | 仅 docker-compose，无 K8s manifests |
 | **告警通知 (邮件/Webhook)** | ❌ NOT_IMPL | 仅 AdminNotification 面板内通知 |
 
-### MongoDB 集合清单 (98 个)
+### MongoDB 集合清单 (101 个)
 
 核心业务：`users`, `groups`, `groupmembers`, `documents`, `sessions`, `messages`, `group_message_counters`, `contentgaps`, `attachments`, `prdcomments`, `share_links`
 
@@ -646,6 +648,8 @@ VisualAgent (DB 名保留 image_master)：`image_master_workspaces`, `image_asse
 教程邮件：`tutorial_email_sequences`, `tutorial_email_templates`, `tutorial_email_assets`, `tutorial_email_enrollments`
 
 应用路由：`registered_apps`, `routing_rules`
+
+快捷指令：`user_shortcuts`, `user_collections`, `shortcut_templates`
 
 其他：`apirequestlogs`, `user_preferences`, `appsettings`, `automation_rules`, `admin_idempotency`, `todo_items`, `webhook_delivery_logs`
 

@@ -164,12 +164,12 @@ function buildObsidianStyle(
       ? `hsla(${accentHue}, 50%, 60%, 0.15)`
       : 'var(--glass-border, rgba(255, 255, 255, 0.09))';
 
-  // 阴影：多层投影 + 顶部内高光
-  let boxShadow = '0 2px 16px -2px rgba(0, 0, 0, 0.5), 0 1px 0 0 rgba(255, 255, 255, 0.06) inset';
+  // 阴影：精调内高光与底部暗边，塑造伪 3D 棱感
+  let boxShadow = '0 8px 16px -4px rgba(0, 0, 0, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.08), inset 0 -1px 1px rgba(0, 0, 0, 0.15)';
   if (variant === 'gold') {
-    boxShadow = '0 4px 20px -4px rgba(99, 102, 241, 0.18), 0 2px 12px -2px rgba(0, 0, 0, 0.5), 0 1px 0 0 rgba(99, 102, 241, 0.10) inset';
+    boxShadow = '0 8px 24px -4px rgba(99, 102, 241, 0.18), 0 8px 16px -4px rgba(0, 0, 0, 0.5), inset 0 1px 1px rgba(99, 102, 241, 0.15), inset 0 -1px 1px rgba(0, 0, 0, 0.15)';
   } else if (accentHue !== undefined) {
-    boxShadow = `0 4px 20px -4px hsla(${accentHue}, 60%, 50%, 0.14), 0 2px 12px -2px rgba(0, 0, 0, 0.5), 0 1px 0 0 rgba(255, 255, 255, 0.06) inset`;
+    boxShadow = `0 8px 24px -4px hsla(${accentHue}, 60%, 50%, 0.14), 0 8px 16px -4px rgba(0, 0, 0, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.08), inset 0 -1px 1px rgba(0, 0, 0, 0.15)`;
   }
 
   return {
@@ -222,16 +222,14 @@ function buildGlassStyle(
   }
 
   const shadowLayers = [
-    '0 8px 32px -4px rgba(0, 0, 0, 0.35)',
-    '0 4px 16px -2px rgba(0, 0, 0, 0.25)',
-    `0 0 0 1px rgba(255, 255, 255, ${0.14 * borderMult * 0.6}) inset`,
-    '0 1px 0 0 rgba(255, 255, 255, 0.15) inset',
-    '0 -1px 0 0 rgba(0, 0, 0, 0.12) inset',
+    '0 16px 32px -8px rgba(10, 10, 14, 0.5)',
+    `inset 0 1px 1px rgba(255, 255, 255, ${0.15 * borderMult})`,
+    'inset 0 -1px 1px rgba(0, 0, 0, 0.15)',
   ];
   if (variant === 'gold') {
-    shadowLayers.push('0 6px 32px -8px rgba(99, 102, 241, 0.3)');
+    shadowLayers.push('0 8px 32px -8px rgba(99, 102, 241, 0.35)');
   } else if (accentHue !== undefined) {
-    shadowLayers.push(`0 6px 32px -8px hsla(${accentHue}, 75%, 55%, 0.25)`);
+    shadowLayers.push(`0 8px 32px -8px hsla(${accentHue}, 75%, 55%, 0.3)`);
   }
 
   // backdrop-filter + background 通过 CSS 自定义属性传递给 ::before 伪元素

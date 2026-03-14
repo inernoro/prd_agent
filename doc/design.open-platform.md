@@ -329,8 +329,8 @@ fi
 
 详细测试用例请参考：
 - [完整测试指南](./open-platform-complete-test.md)
-- [测试脚本](../test-open-platform.sh)（Bash）
-- [测试脚本](../test-open-platform.ps1)（PowerShell）
+- [测试脚本](../e2e-tests/test-open-platform.sh)（Bash）
+- [测试脚本](../e2e-tests/test-open-platform.ps1)（PowerShell）
 
 ### 快速测试
 

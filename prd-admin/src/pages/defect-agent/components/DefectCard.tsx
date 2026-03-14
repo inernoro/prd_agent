@@ -9,7 +9,8 @@ import { toast } from '@/lib/toast';
 import type { DefectReport, DefectAttachment } from '@/services/contracts/defectAgent';
 import { DefectStatus, DefectSeverity } from '@/services/contracts/defectAgent';
 import { ArrowRight, Clock, Trash2, Check, CheckCircle, MessageCircle, Image as ImageIcon, X, AlertTriangle, AlertCircle, Info, MinusCircle, Paperclip, Bug } from 'lucide-react';
-import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
+import { resolveAvatarUrl } from '@/lib/avatar';
+import { UserAvatar } from '@/components/ui/UserAvatar';
 
 interface DefectCardProps {
   defect: DefectReport;
@@ -300,15 +301,11 @@ export function DefectCard({ defect }: DefectCardProps) {
                     className="flex items-center gap-1 mt-1 max-w-[100px]"
                     style={{ color: 'rgba(120, 220, 180, 0.75)' }}
                   >
-                    <img
+                    <UserAvatar
                       src={resolvedByAvatarUrl}
                       alt={resolvedByName}
                       className="w-3.5 h-3.5 rounded-full object-cover flex-shrink-0"
                       style={{ border: '1px solid rgba(120, 220, 180, 0.4)' }}
-                      onError={(e) => {
-                        e.currentTarget.onerror = null;
-                        e.currentTarget.src = resolveNoHeadAvatarUrl();
-                      }}
                     />
                     <span className="text-[9px] truncate">
                       {resolvedByName}{defect.resolution ? `: ${defect.resolution}` : ''}
@@ -343,15 +340,11 @@ export function DefectCard({ defect }: DefectCardProps) {
                     className="flex items-center gap-1 mt-1 max-w-[100px]"
                     style={{ color: 'rgba(255, 120, 120, 0.75)' }}
                   >
-                    <img
+                    <UserAvatar
                       src={rejectedByAvatarUrl}
                       alt={rejectedByName}
                       className="w-3.5 h-3.5 rounded-full object-cover flex-shrink-0"
                       style={{ border: '1px solid rgba(255, 120, 120, 0.4)' }}
-                      onError={(e) => {
-                        e.currentTarget.onerror = null;
-                        e.currentTarget.src = resolveNoHeadAvatarUrl();
-                      }}
                     />
                     <span className="text-[9px] truncate">
                       {rejectedByName}{defect.rejectReason ? `: ${defect.rejectReason}` : ''}
@@ -626,14 +619,10 @@ export function DefectCard({ defect }: DefectCardProps) {
                 }}
                 title={reporterDisplayName}
               >
-                <img
+                <UserAvatar
                   src={reporterAvatarUrl}
                   alt={reporterDisplayName}
                   className="h-3 w-3 rounded-full object-cover"
-                  onError={(e) => {
-                    e.currentTarget.onerror = null; // 防止 nohead.png 也 404 时死循环
-                    e.currentTarget.src = resolveNoHeadAvatarUrl();
-                  }}
                 />
                 <span className="truncate max-w-[60px]">{reporterDisplayName}</span>
               </div>
@@ -652,14 +641,10 @@ export function DefectCard({ defect }: DefectCardProps) {
                 }}
                 title={assigneeDisplayName}
               >
-                <img
+                <UserAvatar
                   src={assigneeAvatarUrl}
                   alt={assigneeDisplayName}
                   className="h-3 w-3 rounded-full object-cover"
-                  onError={(e) => {
-                    e.currentTarget.onerror = null; // 防止 nohead.png 也 404 时死循环
-                    e.currentTarget.src = resolveNoHeadAvatarUrl();
-                  }}
                 />
                 <span className="truncate max-w-[60px]">{assigneeDisplayName}</span>
               </div>

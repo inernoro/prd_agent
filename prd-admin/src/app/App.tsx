@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
 import { initializeTheme } from '@/stores/themeStore';
 import AppShell from '@/layouts/AppShell';
@@ -16,6 +16,7 @@ import { LiteraryAgentWorkspaceListPage, LiteraryAgentEditorPageWrapper } from '
 import { DefectAgentPage } from '@/pages/defect-agent';
 import { VideoAgentPage } from '@/pages/video-agent';
 import { ReportAgentPage } from '@/pages/report-agent';
+import { ShortcutsPage, ShortcutInstallPage } from '@/pages/shortcuts-agent';
 import { WorkflowListPage, WorkflowEditorPage, WorkflowCanvasPage } from '@/pages/workflow-agent';
 import { MarketplacePage } from '@/pages/marketplace';
 import { AiToolboxPage } from '@/pages/ai-toolbox';
@@ -127,6 +128,12 @@ function ExecutivePage() {
 }
 
 export default function App() {
+  // 显式订阅 location 变化，确保 <Routes> 在路由切换时一定重新匹配。
+  // 根因：ReactFlow (@xyflow/react) 内部有 53+ 个 zustand useSyncExternalStore 订阅，
+  // 在 React 18 并发模式下，大量同步 store 更新可能导致 <Routes> 内部的 location
+  // 订阅被调度器跳过。显式传递 location prop 让 <Routes> 不依赖内部订阅。
+  const location = useLocation();
+
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const setPermissions = useAuthStore((s) => s.setPermissions);
   const permissionsLoaded = useAuthStore((s) => s.permissionsLoaded);
@@ -177,7 +184,7 @@ export default function App() {
     <AgentSwitcherProvider>
       <ToastContainer />
       <BranchBadge />
-      <Routes>
+      <Routes location={location}>
         {/* Landing page - public */}
         <Route path="/home" element={<LandingPage />} />
 
@@ -185,6 +192,7 @@ export default function App() {
 
         {/* 公开分享页面 - 无需登录 */}
         <Route path="/s/wp/:token" element={<ShareViewPage />} />
+        <Route path="/s/shortcut/:id" element={<ShortcutInstallPage />} />
 
         {/* 开发试验场 - 无需权限 */}
         <Route path="/_dev/rich-composer-lab" element={<RichComposerLab />} />
@@ -245,6 +253,18 @@ export default function App() {
           }
         />
 
+        {/* 工作流画布 - 独立全屏页面（ReactFlow 的 zustand 会干扰 AppShell 的 Outlet 路由更新） */}
+        <Route
+          path="/workflow-agent/:workflowId/canvas"
+          element={
+            <RequireAuth>
+              <RequirePermission perm="workflow-agent.use">
+                <WorkflowCanvasPage />
+              </RequirePermission>
+            </RequireAuth>
+          }
+        />
+
       <Route
         path="/"
         element={
@@ -265,9 +285,9 @@ export default function App() {
         <Route path="defect-agent" element={<RequirePermission perm="defect-agent.use"><DefectAgentPage /></RequirePermission>} />
         <Route path="video-agent" element={<RequirePermission perm="video-agent.use"><VideoAgentPage /></RequirePermission>} />
         <Route path="report-agent" element={<RequirePermission perm="report-agent.use"><ReportAgentPage /></RequirePermission>} />
+        <Route path="shortcuts-agent" element={<RequirePermission perm="access"><ShortcutsPage /></RequirePermission>} />
         <Route path="workflow-agent" element={<RequirePermission perm="workflow-agent.use"><WorkflowListPage /></RequirePermission>} />
         <Route path="workflow-agent/:workflowId" element={<RequirePermission perm="workflow-agent.use"><WorkflowEditorPage /></RequirePermission>} />
-        <Route path="workflow-agent/:workflowId/canvas" element={<RequirePermission perm="workflow-agent.use"><WorkflowCanvasPage /></RequirePermission>} />
         <Route path="ai-toolbox" element={<RequirePermission perm="ai-toolbox.use"><AiToolboxPage /></RequirePermission>} />
         <Route path="logs" element={<RequirePermission perm="logs.read"><LlmLogsPage /></RequirePermission>} />
         <Route path="open-platform" element={<RequirePermission perm="open-platform.manage"><OpenPlatformTabsPage /></RequirePermission>} />
