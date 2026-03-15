@@ -1,6 +1,6 @@
 ---
 name: risk-matrix
-description: 风险比对矩阵技能。基于 MECE 分析法，对功能变更进行全维度风险评估。将风险切分为不重叠、无遗漏的维度，逐维度评估概率×影响，输出可决策的风险报告。触发词："风险评估"、"风险矩阵"、"risk matrix"、"评估风险"、"/risk"。
+description: Performs MECE-based risk assessment on feature changes, evaluating probability and impact across non-overlapping dimensions to produce actionable risk reports.
 ---
 
 # Risk Matrix - 风险比对矩阵

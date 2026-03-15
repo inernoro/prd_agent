@@ -1,48 +1,56 @@
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
 import { initializeTheme } from '@/stores/themeStore';
 import AppShell from '@/layouts/AppShell';
-import LoginPage from '@/pages/LoginPage';
-import UsersPage from '@/pages/UsersPage';
-import { ModelManageTabsPage } from '@/pages/ModelManageTabsPage';
-import LlmLogsPage from '@/pages/LlmLogsPage';
-import LabPage from '@/pages/LabPage';
-import PromptStagesPage from '@/pages/PromptStagesPage';
-import SkillsPage from '@/pages/SkillsPage';
-import AssetsManagePage from '@/pages/AssetsManagePage';
-import VisualAgentFullscreenPage from '@/pages/visual-agent/VisualAgentFullscreenPage';
-import { LiteraryAgentWorkspaceListPage, LiteraryAgentEditorPageWrapper } from '@/pages/literary-agent';
-import { DefectAgentPage } from '@/pages/defect-agent';
-import { VideoAgentPage } from '@/pages/video-agent';
-import { ReportAgentPage } from '@/pages/report-agent';
-import { ShortcutsPage, ShortcutInstallPage } from '@/pages/shortcuts-agent';
-import { WorkflowListPage, WorkflowEditorPage, WorkflowCanvasPage } from '@/pages/workflow-agent';
-import { MarketplacePage } from '@/pages/marketplace';
-import { AiToolboxPage } from '@/pages/ai-toolbox';
-import { ArenaPage } from '@/pages/arena/ArenaPage';
-import { LandingPage } from '@/pages/home';
-import OpenPlatformTabsPage from '@/pages/OpenPlatformTabsPage';
-import AutomationRulesPage from '@/pages/AutomationRulesPage';
-import SettingsPage from '@/pages/SettingsPage';
-import DataTransferPage from '@/pages/DataTransferPage';
-import WebPagesPage from '@/pages/WebPagesPage';
-import ShareViewPage from '@/pages/ShareViewPage';
-import ExecutiveDashboardPage from '@/pages/ExecutiveDashboardPage';
-import { PrdAgentTabsPage } from '@/pages/PrdAgentTabsPage';
-import AgentLauncherPage from '@/pages/AgentLauncherPage';
-import MobileHomePage from '@/pages/MobileHomePage';
-import MobileAssetsPage from '@/pages/MobileAssetsPage';
-import DesktopAssetsPage from '@/pages/DesktopAssetsPage';
-import MobileProfilePage from '@/pages/MobileProfilePage';
-import MobileNotificationsPage from '@/pages/MobileNotificationsPage';
-import RichComposerLab from '@/pages/_dev/RichComposerLab';
-import MobileAuditPage from '@/pages/_dev/MobileAuditPage';
 import { getAdminAuthzMe, getAdminMenuCatalog } from '@/services';
 import { ToastContainer } from '@/components/ui/Toast';
 import { AgentSwitcherProvider } from '@/components/agent-switcher';
 import { BranchBadge } from '@/components/BranchBadge';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
+
+// ── Route-level lazy loading ──
+// Each page is loaded on-demand, drastically reducing initial bundle in dev mode.
+// Default exports use lazy() directly; named exports use .then() to re-export as default.
+const LoginPage = lazy(() => import('@/pages/LoginPage'));
+const UsersPage = lazy(() => import('@/pages/UsersPage'));
+const ModelManageTabsPage = lazy(() => import('@/pages/ModelManageTabsPage').then(m => ({ default: m.ModelManageTabsPage })));
+const LlmLogsPage = lazy(() => import('@/pages/LlmLogsPage'));
+const LabPage = lazy(() => import('@/pages/LabPage'));
+const PromptStagesPage = lazy(() => import('@/pages/PromptStagesPage'));
+const SkillsPage = lazy(() => import('@/pages/SkillsPage'));
+const AssetsManagePage = lazy(() => import('@/pages/AssetsManagePage'));
+const VisualAgentFullscreenPage = lazy(() => import('@/pages/visual-agent/VisualAgentFullscreenPage'));
+const LiteraryAgentWorkspaceListPage = lazy(() => import('@/pages/literary-agent').then(m => ({ default: m.LiteraryAgentWorkspaceListPage })));
+const LiteraryAgentEditorPageWrapper = lazy(() => import('@/pages/literary-agent').then(m => ({ default: m.LiteraryAgentEditorPageWrapper })));
+const DefectAgentPage = lazy(() => import('@/pages/defect-agent').then(m => ({ default: m.DefectAgentPage })));
+const VideoAgentPage = lazy(() => import('@/pages/video-agent').then(m => ({ default: m.VideoAgentPage })));
+const ReportAgentPage = lazy(() => import('@/pages/report-agent').then(m => ({ default: m.ReportAgentPage })));
+const ShortcutsPage = lazy(() => import('@/pages/shortcuts-agent').then(m => ({ default: m.ShortcutsPage })));
+const ShortcutInstallPage = lazy(() => import('@/pages/shortcuts-agent').then(m => ({ default: m.ShortcutInstallPage })));
+const WorkflowListPage = lazy(() => import('@/pages/workflow-agent').then(m => ({ default: m.WorkflowListPage })));
+const WorkflowEditorPage = lazy(() => import('@/pages/workflow-agent').then(m => ({ default: m.WorkflowEditorPage })));
+const WorkflowCanvasPage = lazy(() => import('@/pages/workflow-agent').then(m => ({ default: m.WorkflowCanvasPage })));
+const MarketplacePage = lazy(() => import('@/pages/marketplace').then(m => ({ default: m.MarketplacePage })));
+const AiToolboxPage = lazy(() => import('@/pages/ai-toolbox').then(m => ({ default: m.AiToolboxPage })));
+const ArenaPage = lazy(() => import('@/pages/arena/ArenaPage').then(m => ({ default: m.ArenaPage })));
+const LandingPage = lazy(() => import('@/pages/home').then(m => ({ default: m.LandingPage })));
+const OpenPlatformTabsPage = lazy(() => import('@/pages/OpenPlatformTabsPage'));
+const AutomationRulesPage = lazy(() => import('@/pages/AutomationRulesPage'));
+const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
+const DataTransferPage = lazy(() => import('@/pages/DataTransferPage'));
+const WebPagesPage = lazy(() => import('@/pages/WebPagesPage'));
+const ShareViewPage = lazy(() => import('@/pages/ShareViewPage'));
+const ExecutiveDashboardPage = lazy(() => import('@/pages/ExecutiveDashboardPage'));
+const PrdAgentTabsPage = lazy(() => import('@/pages/PrdAgentTabsPage').then(m => ({ default: m.PrdAgentTabsPage })));
+const AgentLauncherPage = lazy(() => import('@/pages/AgentLauncherPage'));
+const MobileHomePage = lazy(() => import('@/pages/MobileHomePage'));
+const MobileAssetsPage = lazy(() => import('@/pages/MobileAssetsPage'));
+const DesktopAssetsPage = lazy(() => import('@/pages/DesktopAssetsPage'));
+const MobileProfilePage = lazy(() => import('@/pages/MobileProfilePage'));
+const MobileNotificationsPage = lazy(() => import('@/pages/MobileNotificationsPage'));
+const RichComposerLab = lazy(() => import('@/pages/_dev/RichComposerLab'));
+const MobileAuditPage = lazy(() => import('@/pages/_dev/MobileAuditPage'));
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -184,6 +192,7 @@ export default function App() {
     <AgentSwitcherProvider>
       <ToastContainer />
       <BranchBadge />
+      <Suspense>
       <Routes location={location}>
         {/* Landing page - public */}
         <Route path="/home" element={<LandingPage />} />
@@ -313,6 +322,7 @@ export default function App() {
 
         <Route path="*" element={<Navigate to="/home" replace />} />
       </Routes>
+      </Suspense>
     </AgentSwitcherProvider>
   );
 }

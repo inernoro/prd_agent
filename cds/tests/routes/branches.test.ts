@@ -8,7 +8,7 @@ import { createBranchRouter } from '../../src/routes/branches.js';
 import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService } from '../../src/services/container.js';
-import { ProxyService } from '../../src/services/proxy.js';
+
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { CdsConfig } from '../../src/types.js';
 
@@ -85,12 +85,11 @@ describe('Branch Routes', () => {
 
     const worktreeService = new WorktreeService(mock, config.repoRoot);
     const containerService = new ContainerService(mock, config);
-    const proxyService = new ProxyService(stateService);
 
     const app = express();
     app.use(express.json());
     app.use('/api', createBranchRouter({
-      stateService, worktreeService, containerService, proxyService, shell: mock, config,
+      stateService, worktreeService, containerService, shell: mock, config,
     }));
 
     await new Promise<void>((resolve) => {
@@ -235,7 +234,7 @@ describe('Branch Routes', () => {
 
   describe('build profiles CRUD', () => {
     it('should create and list profiles', async () => {
-      const profile = { id: 'api', name: 'API', dockerImage: 'dotnet:8', runCommand: 'dotnet run', workDir: '.', containerPort: 8080 };
+      const profile = { id: 'api', name: 'API', dockerImage: 'dotnet:8', command: 'dotnet run', workDir: '.', containerPort: 8080 };
       const createRes = await request(server, 'POST', '/api/build-profiles', profile);
       expect(createRes.status).toBe(201);
 
@@ -244,7 +243,7 @@ describe('Branch Routes', () => {
     });
 
     it('should delete profiles', async () => {
-      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'x', runCommand: 'x' });
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'x', command: 'x' });
       await request(server, 'DELETE', '/api/build-profiles/api');
 
       const list = await request(server, 'GET', '/api/build-profiles');
@@ -259,6 +258,56 @@ describe('Branch Routes', () => {
       const res = await request(server, 'GET', '/api/config');
       expect(res.status).toBe(200);
       expect((res.body as any).jwt.secret).toBe('***');
+    });
+
+    it('should use GITHUB_REPO_URL from customEnv when set', async () => {
+      // Set GITHUB_REPO_URL in custom env
+      await request(server, 'PUT', '/api/env/GITHUB_REPO_URL', { value: 'https://github.com/my-org/my-repo' });
+
+      const res = await request(server, 'GET', '/api/config');
+      expect(res.status).toBe(200);
+      expect((res.body as any).githubRepoUrl).toBe('https://github.com/my-org/my-repo');
+    });
+
+    it('should fallback to git remote when GITHUB_REPO_URL not set', async () => {
+      mock.addResponsePattern(/git remote get-url origin/, () => ({
+        stdout: 'git@github.com:test-org/test-repo.git\n', stderr: '', exitCode: 0,
+      }));
+
+      const res = await request(server, 'GET', '/api/config');
+      expect(res.status).toBe(200);
+      expect((res.body as any).githubRepoUrl).toBe('https://github.com/test-org/test-repo');
+    });
+  });
+
+  // ── Config sync via env vars ──
+
+  describe('CDS config sync via env vars', () => {
+    it('should sync CDS_REPO_ROOT into config when setting env var', async () => {
+      await request(server, 'PUT', '/api/env/CDS_REPO_ROOT', { value: '/custom/repo' });
+
+      const configRes = await request(server, 'GET', '/api/config');
+      expect((configRes.body as any).repoRoot).toBe('/custom/repo');
+    });
+
+    it('should sync CDS_WORKTREE_BASE into config when setting env var', async () => {
+      await request(server, 'PUT', '/api/env/CDS_WORKTREE_BASE', { value: '/custom/worktrees' });
+
+      const configRes = await request(server, 'GET', '/api/config');
+      expect((configRes.body as any).worktreeBase).toBe('/custom/worktrees');
+    });
+
+    it('should sync CDS_REPO_ROOT via bulk env update', async () => {
+      await request(server, 'PUT', '/api/env', {
+        CDS_REPO_ROOT: '/bulk/repo',
+        CDS_WORKTREE_BASE: '/bulk/worktrees',
+        GITHUB_REPO_URL: 'https://github.com/bulk-org/bulk-repo',
+      });
+
+      const configRes = await request(server, 'GET', '/api/config');
+      expect((configRes.body as any).repoRoot).toBe('/bulk/repo');
+      expect((configRes.body as any).worktreeBase).toBe('/bulk/worktrees');
+      expect((configRes.body as any).githubRepoUrl).toBe('https://github.com/bulk-org/bulk-repo');
     });
   });
 

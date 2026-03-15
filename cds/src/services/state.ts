@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { CdsState, BranchEntry, BuildProfile, RoutingRule, OperationLog } from '../types.js';
+import type { CdsState, BranchEntry, BuildProfile, RoutingRule, OperationLog, InfraService } from '../types.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
 
@@ -13,6 +13,7 @@ function emptyState(): CdsState {
     logs: {},
     defaultBranch: null,
     customEnv: {},
+    infraServices: [],
   };
 }
 
@@ -42,6 +43,8 @@ export class StateService {
       if (!this.state.buildProfiles) this.state.buildProfiles = [];
       if (this.state.defaultBranch === undefined) this.state.defaultBranch = null;
       if (!this.state.customEnv) this.state.customEnv = {};
+      if (!this.state.infraServices) this.state.infraServices = [];
+      if (this.state.mirrorEnabled === undefined) this.state.mirrorEnabled = false;
     } else {
       this.state = emptyState();
     }
@@ -63,6 +66,10 @@ export class StateService {
 
   getBranch(id: string): BranchEntry | undefined {
     return this.state.branches[id];
+  }
+
+  getAllBranches(): BranchEntry[] {
+    return Object.values(this.state.branches);
   }
 
   addBranch(entry: BranchEntry): void {
@@ -194,5 +201,93 @@ export class StateService {
 
   removeCustomEnvVar(key: string): void {
     delete this.state.customEnv[key];
+  }
+
+  // ── Infrastructure services ──
+
+  getInfraServices(): InfraService[] {
+    return this.state.infraServices;
+  }
+
+  getInfraService(id: string): InfraService | undefined {
+    return this.state.infraServices.find(s => s.id === id);
+  }
+
+  addInfraService(service: InfraService): void {
+    if (this.state.infraServices.some(s => s.id === service.id)) {
+      throw new Error(`基础设施服务 "${service.id}" 已存在`);
+    }
+    this.state.infraServices.push(service);
+  }
+
+  updateInfraService(id: string, updates: Partial<InfraService>): void {
+    const idx = this.state.infraServices.findIndex(s => s.id === id);
+    if (idx === -1) throw new Error(`基础设施服务 "${id}" 不存在`);
+    Object.assign(this.state.infraServices[idx], updates);
+  }
+
+  removeInfraService(id: string): void {
+    this.state.infraServices = this.state.infraServices.filter(s => s.id !== id);
+  }
+
+  // ── Mirror acceleration ──
+
+  isMirrorEnabled(): boolean {
+    return this.state.mirrorEnabled === true;
+  }
+
+  setMirrorEnabled(enabled: boolean): void {
+    this.state.mirrorEnabled = enabled;
+  }
+
+  /**
+   * Get mirror env vars to inject into Node.js containers.
+   * Accelerates: corepack download, pnpm/npm/yarn install.
+   */
+  getMirrorEnvVars(): Record<string, string> {
+    if (!this.state.mirrorEnabled) return {};
+    return {
+      // npm/pnpm/yarn registry mirror
+      NPM_CONFIG_REGISTRY: 'https://registry.npmmirror.com',
+      // Corepack uses this to download package manager tarballs
+      COREPACK_NPM_REGISTRY: 'https://registry.npmmirror.com',
+      // Yarn specific
+      YARN_NPM_REGISTRY_SERVER: 'https://registry.npmmirror.com',
+    };
+  }
+
+  /**
+   * Resolve the Docker host IP for infra services.
+   * Priority: customEnv.CDS_DOCKER_HOST > process.env.CDS_DOCKER_HOST > default 172.17.0.1
+   */
+  private resolveDockerHost(): string {
+    return this.state.customEnv['CDS_DOCKER_HOST']
+      || process.env.CDS_DOCKER_HOST
+      || '172.17.0.1';
+  }
+
+  /**
+   * Build CDS_* env vars from all running infra services.
+   * Auto-generates predictable env var names based on service ID:
+   *   CDS_HOST               — Docker host IP
+   *   CDS_<SERVICE>_PORT     — Allocated host port (e.g., CDS_MONGODB_PORT=37821)
+   *   CDS_<SERVICE>_HOST     — Per-service host (currently same as CDS_HOST)
+   *
+   * These can be referenced in app service environments as ${CDS_MONGODB_PORT} etc.
+   */
+  getCdsEnvVars(): Record<string, string> {
+    const dockerHost = this.resolveDockerHost();
+    const result: Record<string, string> = {
+      CDS_HOST: dockerHost,
+    };
+    for (const svc of this.state.infraServices) {
+      if (svc.status !== 'running') continue;
+      const envKey = `CDS_${svc.id.toUpperCase().replace(/-/g, '_')}_PORT`;
+      result[envKey] = String(svc.hostPort);
+      // Per-service host (allows future per-service host override)
+      const hostKey = `CDS_${svc.id.toUpperCase().replace(/-/g, '_')}_HOST`;
+      result[hostKey] = dockerHost;
+    }
+    return result;
   }
 }

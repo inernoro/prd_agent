@@ -135,6 +135,21 @@ describe('WorktreeService', () => {
     });
   });
 
+  describe('repoRoot setter', () => {
+    it('should allow updating repoRoot at runtime', () => {
+      expect(service.repoRoot).toBe('/repo');
+      service.repoRoot = '/new-repo';
+      expect(service.repoRoot).toBe('/new-repo');
+    });
+
+    it('should accept different repoRoot in constructor', () => {
+      const svc2 = new WorktreeService(mock, '/other-repo');
+      expect(svc2.repoRoot).toBe('/other-repo');
+      svc2.repoRoot = '/changed';
+      expect(svc2.repoRoot).toBe('/changed');
+    });
+  });
+
   describe('branchExists', () => {
     it('should return true if remote branch exists', async () => {
       mock.addResponsePattern(/git ls-remote/, () => ({

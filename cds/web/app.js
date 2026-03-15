@@ -54,6 +54,9 @@ let isCheckingUpdates = false;
 // ── Preview mode: 'simple' (set default + open main) or 'multi' (subdomain per branch) ──
 let previewMode = localStorage.getItem('cds_preview_mode') || 'simple';
 
+// ── Mirror acceleration (npm/docker registry mirrors) ──
+let mirrorEnabled = false;
+
 // ── Utilities ──
 
 async function api(method, path, body) {
@@ -77,7 +80,7 @@ function showToast(msg, type = 'info', duration) {
 }
 
 function statusLabel(s) {
-  const map = { running: '运行中', building: '构建中', idle: '空闲', stopped: '已停止', error: '错误' };
+  const map = { running: '运行中', starting: '启动中', building: '构建中', idle: '空闲', stopped: '已停止', error: '错误' };
   return map[s] || s;
 }
 
@@ -119,24 +122,13 @@ function hasAnyLoading(id) {
 
 // ── State ──
 
-let remoteBranches = [];
-let localBranches = [];
+let remoteCandidates = [];  // remote refs for branch picker (from GET /remote-branches)
+let branches = [];          // tracked branches (from GET /branches)
 let buildProfiles = [];
 let routingRules = [];
 let defaultBranch = null;
 let customEnvVars = {};
-const collapsedBranches = new Set();
-
-function toggleBranchCard(id, event) {
-  // Don't toggle when clicking buttons/links/inputs inside the header
-  if (event.target.closest('button, a, input, .port-badge, .fav-toggle, .set-default-link, .branch-actions-commit, .branch-name, .branch-tag, .branch-tag-add')) return;
-  if (collapsedBranches.has(id)) {
-    collapsedBranches.delete(id);
-  } else {
-    collapsedBranches.add(id);
-  }
-  renderBranches();
-}
+let infraServices = [];
 
 // ── Init ──
 
@@ -147,8 +139,8 @@ let previewDomain = '';
 let workerPort = '';
 
 async function init() {
-  await Promise.all([loadBranches(), loadProfiles(), loadRoutingRules(), loadConfig(), loadEnvVars()]);
-  refreshRemoteBranches();
+  await Promise.all([loadBranches(), loadProfiles(), loadRoutingRules(), loadConfig(), loadEnvVars(), loadInfraServices(), loadMirrorState()]);
+  refreshRemoteCandidates();
   updatePreviewModeUI();
   setInterval(loadBranches, 10000);
 }
@@ -156,16 +148,94 @@ async function init() {
 async function loadConfig() {
   try {
     const data = await api('GET', '/config');
-    const dot = document.getElementById('workerDot');
-    const label = document.getElementById('workerLabel');
-    if (dot) dot.title = `Worker 端口: ${data.workerPort || '?'}`;
-    if (label) { label.textContent = '已连接'; label.title = `Worker :${data.workerPort || '?'}`; }
     githubRepoUrl = data.githubRepoUrl || '';
     mainDomain = data.mainDomain || '';
     switchDomain = data.switchDomain || '';
     previewDomain = data.previewDomain || '';
     workerPort = data.workerPort || '';
+    renderServiceStatusBar();
   } catch (e) { console.error('loadConfig:', e); }
+}
+
+// ── Service Status Bar ──
+
+function renderServiceStatusBar() {
+  const dot = document.getElementById('workerDot');
+  const label = document.getElementById('workerLabel');
+  if (!dot || !label) return;
+
+  // Collect all services across all branches
+  const allServices = [];
+  for (const b of branches) {
+    for (const [pid, svc] of Object.entries(b.services || {})) {
+      allServices.push({ branchId: b.id, branchName: b.branch, profileId: pid, ...svc });
+    }
+  }
+
+  const running = allServices.filter(s => s.status === 'running').length;
+  const starting = allServices.filter(s => s.status === 'starting').length;
+  const building = allServices.filter(s => s.status === 'building').length;
+  const errors = allServices.filter(s => s.status === 'error').length;
+
+  // Update dot status
+  dot.className = 'gateway-dot';
+  if (running > 0) dot.classList.add('active');
+  else if (starting > 0 || building > 0) dot.classList.add('starting');
+
+  // Build summary text
+  const parts = [];
+  if (running > 0) parts.push(`<span class="status-summary-badge running">${running} 运行中</span>`);
+  if (starting > 0) parts.push(`<span class="status-summary-badge starting">${starting} 启动中</span>`);
+  if (building > 0) parts.push(`<span class="status-summary-badge starting">${building} 构建中</span>`);
+  if (errors > 0) parts.push(`<span class="status-summary-badge error">${errors} 错误</span>`);
+
+  if (parts.length === 0) {
+    label.innerHTML = '无服务运行';
+    label.title = `Worker :${workerPort || '?'}`;
+  } else {
+    label.innerHTML = parts.join(' ');
+    label.title = `Worker :${workerPort || '?'} · ${allServices.length} 个服务`;
+  }
+
+  // Render expanded panel
+  const panel = document.getElementById('serviceStatusPanel');
+  if (!panel) return;
+
+  const activeServices = allServices.filter(s => s.status !== 'idle' && s.status !== 'stopped');
+  if (activeServices.length === 0) {
+    panel.innerHTML = '<span style="font-size:12px;color:var(--text-muted)">暂无活跃服务</span>';
+    return;
+  }
+
+  panel.innerHTML = activeServices.map(s => `
+    <div class="svc-status-item" onclick="scrollToBranch('${esc(s.branchId)}')" title="${esc(s.branchName)} / ${esc(s.profileId)}">
+      <span class="svc-status-dot ${s.status}"></span>
+      <span>${esc(s.profileId)}</span>
+      <span class="svc-status-port">:${s.hostPort}</span>
+    </div>
+  `).join('');
+}
+
+function toggleServiceStatusExpand() {
+  const panel = document.getElementById('serviceStatusPanel');
+  const bar = document.getElementById('serviceStatusBar');
+  if (!panel) return;
+  panel.classList.toggle('hidden');
+  bar.classList.toggle('service-status-bar-expanded');
+}
+
+function scrollToBranch(branchId) {
+  const card = document.querySelector(`[data-branch-id="${branchId}"]`);
+  if (card) {
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    card.style.boxShadow = '0 0 0 2px var(--accent)';
+    setTimeout(() => { card.style.boxShadow = ''; }, 2000);
+  }
+  // Collapse panel after navigation
+  const panel = document.getElementById('serviceStatusPanel');
+  const bar = document.getElementById('serviceStatusBar');
+  if (panel) panel.classList.add('hidden');
+  if (bar) bar.classList.remove('service-status-bar-expanded');
 }
 
 // ── Check updates (global refresh) ──
@@ -201,22 +271,56 @@ function confirmOpenGithub(event) {
   return true;
 }
 
-function togglePreviewMode() {
-  previewMode = previewMode === 'simple' ? 'multi' : 'simple';
+function cyclePreviewMode() {
+  // Cycle: simple → port → multi → simple
+  const modes = ['simple', 'port', 'multi'];
+  const idx = modes.indexOf(previewMode);
+  previewMode = modes[(idx + 1) % modes.length];
   localStorage.setItem('cds_preview_mode', previewMode);
   updatePreviewModeUI();
   renderBranches();
+  const labels = { simple: '简洁模式（cookie 切换）', port: '端口直连模式（无缓存问题）', multi: '子域名模式（需 PREVIEW_DOMAIN）' };
   if (previewMode === 'multi' && !previewDomain) {
-    showToast('已开启多分支预览模式，但 PREVIEW_DOMAIN 未配置，预览将回退到简洁模式。请在「变量」中设置 PREVIEW_DOMAIN。', 'error');
+    showToast('已开启子域名预览模式，但 PREVIEW_DOMAIN 未配置，预览将回退到简洁模式。请在「变量」中设置 PREVIEW_DOMAIN。', 'error');
   } else {
-    showToast(previewMode === 'multi' ? '已开启多分支预览模式' : '已切换到简洁预览模式', 'info');
+    showToast(`预览：${labels[previewMode]}`, 'info');
   }
 }
 
+// Keep backward compat alias
+function togglePreviewMode() { cyclePreviewMode(); }
+
 function updatePreviewModeUI() {
-  // Update switch in settings menu if open
-  const sw = document.querySelector('.settings-switch');
-  if (sw) sw.classList.toggle('on', previewMode === 'multi');
+  // Update the label in settings menu if open
+  const label = document.querySelector('.preview-mode-label');
+  const labels = { simple: '简洁', port: '端口直连', multi: '子域名' };
+  if (label) label.textContent = labels[previewMode] || previewMode;
+}
+
+// ── Mirror acceleration ──
+
+async function loadMirrorState() {
+  try {
+    const data = await api('GET', '/mirror');
+    mirrorEnabled = data.enabled;
+  } catch { /* ignore */ }
+}
+
+async function toggleMirror() {
+  const newVal = !mirrorEnabled;
+  try {
+    await api('PUT', '/mirror', { enabled: newVal });
+    mirrorEnabled = newVal;
+    updateMirrorUI();
+    showToast(newVal ? '镜像加速已开启，下次部署生效' : '镜像加速已关闭', 'info');
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+function updateMirrorUI() {
+  const sw = document.querySelector('.settings-switch-mirror');
+  if (sw) sw.classList.toggle('on', mirrorEnabled);
 }
 
 // ── Data loading ──
@@ -224,9 +328,10 @@ function updatePreviewModeUI() {
 async function loadBranches() {
   try {
     const data = await api('GET', '/branches');
-    localBranches = data.branches || [];
+    branches = data.branches || [];
     defaultBranch = data.defaultBranch;
     renderBranches();
+    renderServiceStatusBar();
   } catch (e) { console.error('loadBranches:', e); }
 }
 
@@ -246,12 +351,12 @@ async function loadRoutingRules() {
   } catch (e) { console.error('loadRoutingRules:', e); }
 }
 
-async function refreshRemoteBranches() {
+async function refreshRemoteCandidates() {
   const btn = document.getElementById('refreshRemoteBtn');
   btn.disabled = true;
   try {
     const data = await api('GET', '/remote-branches');
-    remoteBranches = data.branches || [];
+    remoteCandidates = data.branches || [];
     // 只有搜索框聚焦时才打开下拉框
     if (document.activeElement === searchInput) {
       filterBranches();
@@ -274,15 +379,15 @@ document.addEventListener('click', (e) => {
 function filterBranches() {
   const q = searchInput.value.trim().toLowerCase();
 
-  // Section 1: Match already-added local branches (show all when empty)
-  const matchedLocal = localBranches.filter(b =>
+  // Section 1: Match tracked branches (show all when empty)
+  const matchedLocal = branches.filter(b =>
     !q || b.branch.toLowerCase().includes(q) || b.id.toLowerCase().includes(q)
   ).slice(0, 10);
 
-  // Section 2: Match remote branches not yet added (show all when empty)
-  const localIds = new Set(localBranches.map(b => StateService_slugify(b.branch)));
-  const matchedRemote = remoteBranches.filter(b =>
-    (!q || b.name.toLowerCase().includes(q)) && !localIds.has(StateService_slugify(b.name))
+  // Section 2: Match remote candidates not yet tracked (show all when empty)
+  const trackedIds = new Set(branches.map(b => StateService_slugify(b.branch)));
+  const matchedRemote = remoteCandidates.filter(b =>
+    (!q || b.name.toLowerCase().includes(q)) && !trackedIds.has(StateService_slugify(b.name))
   ).slice(0, 15);
 
   if (matchedLocal.length === 0 && matchedRemote.length === 0) {
@@ -353,8 +458,6 @@ function filterBranches() {
 function scrollToAndHighlight(id) {
   dropdown.classList.add('hidden');
   searchInput.value = '';
-  // Ensure the card is expanded
-  collapsedBranches.delete(id);
   renderBranches();
   // Find and scroll to the card
   requestAnimationFrame(() => {
@@ -378,8 +481,8 @@ async function addBranch(name) {
   const slug = StateService_slugify(name);
 
   // Optimistic: immediately add placeholder card
-  if (!localBranches.find(b => b.id === slug)) {
-    localBranches.push({
+  if (!branches.find(b => b.id === slug)) {
+    branches.push({
       id: slug, branch: name, worktreePath: '',
       services: {}, status: 'idle', createdAt: new Date().toISOString(),
       subject: '', _optimistic: true,
@@ -398,7 +501,7 @@ async function addBranch(name) {
     showToast(`分支 "${name}" 已添加`, 'success');
   } catch (e) {
     // Rollback optimistic add on failure
-    localBranches = localBranches.filter(b => b.id !== slug || !b._optimistic);
+    branches = branches.filter(b => b.id !== slug || !b._optimistic);
     renderBranches();
     showToast(e.message, 'error');
     return;
@@ -410,8 +513,6 @@ async function deployBranch(id) {
   if (busyBranches.has(id)) return;
   markTouched(id);
   busyBranches.add(id);
-  // Ensure card is expanded so user sees inline log
-  collapsedBranches.delete(id);
   inlineDeployLogs.set(id, { lines: [], status: 'building', expanded: false });
   renderBranches();
 
@@ -531,14 +632,36 @@ async function previewBranch(id) {
   markTouched(id);
   const slug = StateService_slugify(id);
 
+  // ── Mode: multi (subdomain) ──
   if (previewMode === 'multi' && previewDomain) {
-    // Multi-branch mode: open subdomain URL directly
     const url = `${location.protocol}//${slug}.${previewDomain}`;
     window.open(url, '_blank');
     return;
   }
 
-  // Simple mode: set as default branch → open main domain
+  // ── Mode: port (direct port access — no proxy, no cache issues) ──
+  if (previewMode === 'port') {
+    const branch = branches.find(b => b.id === slug);
+    if (!branch || branch.status !== 'running') {
+      showToast('分支未运行，无法通过端口预览', 'error');
+      return;
+    }
+    const services = Object.entries(branch.services || {});
+    // Find the web/frontend service (first non-API service, or first service)
+    const webService = services.find(([pid]) => !pid.includes('api') && !pid.includes('backend'))
+      || services.find(([pid]) => pid.includes('web') || pid.includes('frontend') || pid.includes('admin'))
+      || services[0];
+    if (!webService) {
+      showToast('未找到可预览的服务端口', 'error');
+      return;
+    }
+    const [, svc] = webService;
+    const url = `${location.protocol}//${location.hostname}:${svc.hostPort}`;
+    window.open(url, '_blank');
+    return;
+  }
+
+  // ── Mode: simple (cookie switch — set default + open main domain) ──
   try {
     await api('POST', `/branches/${slug}/set-default`);
     defaultBranch = slug;
@@ -587,7 +710,7 @@ async function resetBranch(id) {
 }
 
 async function toggleFavorite(id) {
-  const branch = localBranches.find(b => b.id === id);
+  const branch = branches.find(b => b.id === id);
   if (!branch) return;
   const newVal = !branch.isFavorite;
   try {
@@ -604,7 +727,7 @@ async function addTagToBranch(id, event) {
   const tag = prompt('输入标签名称:');
   if (!tag || !tag.trim()) return;
   const trimmed = tag.trim();
-  const branch = localBranches.find(b => b.id === id);
+  const branch = branches.find(b => b.id === id);
   if (!branch) return;
   const tags = [...(branch.tags || [])];
   if (tags.includes(trimmed)) { showToast('标签已存在', 'info'); return; }
@@ -626,7 +749,7 @@ async function addTagToBranch(id, event) {
 async function removeTagFromBranch(id, tag, event) {
   event.stopPropagation();
   if (!confirm(`确定删除标签「${tag}」？`)) return;
-  const branch = localBranches.find(b => b.id === id);
+  const branch = branches.find(b => b.id === id);
   if (!branch) return;
   const oldTags = [...(branch.tags || [])];
   const tags = oldTags.filter(t => t !== tag);
@@ -652,7 +775,7 @@ function filterByTag(tag) {
 
 function getAllTags() {
   const tagSet = new Set();
-  localBranches.forEach(b => (b.tags || []).forEach(t => tagSet.add(t)));
+  branches.forEach(b => (b.tags || []).forEach(t => tagSet.add(t)));
   return [...tagSet].sort();
 }
 
@@ -694,6 +817,21 @@ async function setDefaultBranch(id) {
   await loadBranches();
 }
 
+async function factoryReset() {
+  if (!confirm('⚠️ 恢复出厂设置\n\n将清除所有：分支、构建配置、环境变量、基础设施服务、路由规则。\nDocker 数据卷（数据库文件等）会保留。\n\n确定继续？')) return;
+  if (!confirm('二次确认：所有配置将被清空，此操作不可撤销。')) return;
+  globalBusy = true;
+  renderBranches();
+  try {
+    const res = await fetch(`${API}/factory-reset`, { method: 'POST' });
+    const reader = res.body.getReader();
+    while (!(await reader.read()).done) {}
+    showToast('已恢复出厂设置', 'success');
+  } catch (e) { showToast(e.message, 'error'); }
+  globalBusy = false;
+  await loadBranches();
+}
+
 async function cleanupAll() {
   if (!confirm('确定清理所有非默认分支？')) return;
   globalBusy = true;
@@ -706,6 +844,38 @@ async function cleanupAll() {
   } catch (e) { showToast(e.message, 'error'); }
   globalBusy = false;
   await loadBranches();
+}
+
+async function viewBranchLogs(id) {
+  // First check if there's an active inline deploy log
+  const inlineLog = inlineDeployLogs.get(id);
+  if (inlineLog) {
+    openLogModal(`部署日志 — ${id}`);
+    document.getElementById('logModalBody').innerHTML =
+      `<pre class="live-log-output">${esc(inlineLog.lines.join('\n') || '暂无日志')}</pre>`;
+    return;
+  }
+  // Otherwise fetch historical operation logs from API
+  try {
+    const data = await api('GET', `/branches/${encodeURIComponent(id)}/logs`);
+    const logs = data.logs || [];
+    if (logs.length === 0) {
+      openLogModal(`部署日志 — ${id}`);
+      document.getElementById('logModalBody').innerHTML = '<div style="padding:16px;color:var(--text-muted)">暂无部署日志</div>';
+      return;
+    }
+    // Show latest log
+    const latest = logs[logs.length - 1];
+    const logLines = (latest.events || []).map(ev => {
+      const prefix = ev.status === 'error' ? '✗' : ev.status === 'done' ? '✓' : '…';
+      let line = `[${prefix}] ${ev.title || ev.step}`;
+      if (ev.log) line += '\n    ' + ev.log;
+      return line;
+    });
+    openLogModal(`部署日志 — ${id} (${latest.status === 'completed' ? '成功' : latest.status === 'error' ? '失败' : '进行中'})`);
+    document.getElementById('logModalBody').innerHTML =
+      `<pre class="live-log-output">${esc(logLines.join('\n') || '暂无日志')}</pre>`;
+  } catch (e) { showToast('获取日志失败: ' + e.message, 'error'); }
 }
 
 async function viewContainerLogs(id, profileId) {
@@ -722,7 +892,6 @@ async function deploySingleService(id, profileId) {
   if (busyBranches.has(id)) return;
   busyBranches.add(id);
   closeDeployMenu(id);
-  collapsedBranches.delete(id);
   inlineDeployLogs.set(id, { lines: [], status: 'building', expanded: false });
   renderBranches();
 
@@ -852,6 +1021,11 @@ function toggleSettingsMenu(event) {
   menu.id = 'settings-menu-portal';
   menu.onclick = (e) => e.stopPropagation();
   menu.innerHTML = `
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); openImportModal()" style="color:#58a6ff">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.004a.75.75 0 01.75.75v5.689l1.97-1.97a.749.749 0 111.06 1.06l-3.25 3.25a.749.749 0 01-1.06 0L4.22 7.533a.749.749 0 111.06-1.06l1.97 1.97V2.754a.75.75 0 01.75-.75zM2.75 12.5h10.5a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5z"/></svg>
+      一键导入配置
+    </div>
+    <div class="settings-menu-divider"></div>
     <div class="settings-menu-item" onclick="closeSettingsMenu(); openProfileModal()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M7.22 1.547a2.403 2.403 0 011.56 0l4.03 1.384a.48.48 0 01.33.457v1.224a.48.48 0 01-.33.457L8.78 6.453a2.403 2.403 0 01-1.56 0L3.19 5.069a.48.48 0 01-.33-.457V3.388a.48.48 0 01.33-.457l4.03-1.384zM3.19 6.903l4.03 1.384a2.403 2.403 0 001.56 0l4.03-1.384a.48.48 0 01.33.457v1.224a.48.48 0 01-.33.457L8.78 10.425a2.403 2.403 0 01-1.56 0L3.19 9.041a.48.48 0 01-.33-.457V7.36a.48.48 0 01.33-.457zm0 3.972l4.03 1.384a2.403 2.403 0 001.56 0l4.03-1.384a.48.48 0 01.33.457v1.224a.48.48 0 01-.33.457l-4.03 1.384a2.403 2.403 0 01-1.56 0l-4.03-1.384a.48.48 0 01-.33-.457v-1.224a.48.48 0 01.33-.457z"/></svg>
       构建配置
@@ -860,22 +1034,39 @@ function toggleSettingsMenu(event) {
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2.5 2a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h11a.5.5 0 00.5-.5v-11a.5.5 0 00-.5-.5h-11zM1 2.5A1.5 1.5 0 012.5 1h11A1.5 1.5 0 0115 2.5v11a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 011 13.5v-11zM4 5h2v1H4V5zm3 0h5v1H7V5zM4 8h2v1H4V8zm3 0h5v1H7V8zM4 11h2v1H4v-1zm3 0h5v1H7v-1z"/></svg>
       环境变量
     </div>
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); openInfraModal()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2a2 2 0 012-2h8a2 2 0 012 2v2a2 2 0 01-2 2H4a2 2 0 01-2-2V2zm2-.5a.5.5 0 00-.5.5v2a.5.5 0 00.5.5h8a.5.5 0 00.5-.5V2a.5.5 0 00-.5-.5H4zM2 9.5A1.5 1.5 0 013.5 8h9A1.5 1.5 0 0114 9.5v3a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 12.5v-3zm1.5 0v3h9v-3h-9zM4 10.5a.5.5 0 01.5-.5h1a.5.5 0 010 1h-1a.5.5 0 01-.5-.5z"/></svg>
+      基础设施
+      ${infraServices.some(s => s.status === 'running') ? '<span style="color:#3fb950;font-size:11px;margin-left:auto">● ' + infraServices.filter(s => s.status === 'running').length + ' 运行中</span>' : ''}
+    </div>
     <div class="settings-menu-item" onclick="closeSettingsMenu(); openRoutingModal()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 0113 0h-2.1a8.3 8.3 0 00-.4-2.2 9 9 0 00-1-1.9A4.5 4.5 0 017 7.5H4.5A8.3 8.3 0 001.5 8zm5.5 5.5a6.5 6.5 0 01-5.4-3h2.3c.3 1.2.8 2.2 1.5 3H7zm1-5.5a7.8 7.8 0 014-3.8c.5.6.9 1.2 1.2 1.8H8zm0 1h5.4a8.3 8.3 0 01-.3 2H8.9 8V9zm0 3h3.8c-.6 1.3-1.5 2.4-2.8 3A6.5 6.5 0 018 9z"/></svg>
       路由规则
     </div>
-    <div class="settings-menu-item settings-menu-switch" onclick="togglePreviewMode()">
-      <span class="settings-menu-switch-label">多分支预览</span>
-      <span class="settings-switch ${previewMode === 'multi' ? 'on' : ''}">
+    <div class="settings-menu-item settings-menu-switch" onclick="cyclePreviewMode()">
+      <span class="settings-menu-switch-label">预览模式</span>
+      <span class="preview-mode-label" style="margin-left:auto;font-size:11px;color:#58a6ff;font-weight:500">${{ simple: '简洁', port: '端口直连', multi: '子域名' }[previewMode]}</span>
+    </div>
+    <div class="settings-menu-item settings-menu-switch" onclick="toggleMirror()">
+      <span class="settings-menu-switch-label">镜像加速</span>
+      <span class="settings-switch settings-switch-mirror ${mirrorEnabled ? 'on' : ''}">
         <span class="settings-switch-track">
           <span class="settings-switch-thumb"></span>
         </span>
       </span>
     </div>
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); exportConfig()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 13a.5.5 0 01-.5-.5V3a.5.5 0 01.5-.5h5.586a.5.5 0 01.354.146l3.414 3.414a.5.5 0 01.146.354V12.5a.5.5 0 01-.5.5h-9zM3.5 1A1.5 1.5 0 002 2.5v11A1.5 1.5 0 003.5 15h9a1.5 1.5 0 001.5-1.5V6.414a1.5 1.5 0 00-.44-1.06L10.147 1.94A1.5 1.5 0 009.086 1.5H3.5z"/></svg>
+      导出配置
+    </div>
     <div class="settings-menu-divider"></div>
     <div class="settings-menu-item danger" onclick="closeSettingsMenu(); cleanupAll()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM11 3V1.75A1.75 1.75 0 009.25 0h-2.5A1.75 1.75 0 005 1.75V3H2.75a.75.75 0 000 1.5h.3l.8 8.2A1.75 1.75 0 005.6 14.5h4.8a1.75 1.75 0 001.75-1.8l.8-8.2h.3a.75.75 0 000-1.5H11z"/></svg>
       清理分支
+    </div>
+    <div class="settings-menu-item danger" onclick="closeSettingsMenu(); factoryReset()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z"/></svg>
+      恢复出厂设置
     </div>
     <div class="settings-menu-divider"></div>
     <div class="settings-menu-item" onclick="closeSettingsMenu(); doLogout()">
@@ -919,22 +1110,22 @@ function renderBranches() {
   const scrollY = window.scrollY;
   const el = document.getElementById('branchList');
   const count = document.getElementById('branchCount');
-  count.textContent = `${localBranches.length} 个分支`;
+  count.textContent = `${branches.length} 个分支`;
 
   // Update default branch selector
   const sel = document.getElementById('defaultBranch');
   sel.innerHTML = '<option value="">无默认</option>' +
-    localBranches.map(b => `<option value="${esc(b.id)}" ${b.id === defaultBranch ? 'selected' : ''}>${esc(b.id)}</option>`).join('');
+    branches.map(b => `<option value="${esc(b.id)}" ${b.id === defaultBranch ? 'selected' : ''}>${esc(b.id)}</option>`).join('');
 
   // Update cleanup button (if visible in DOM)
   const cleanupBtn = document.getElementById('cleanupBtn');
   if (cleanupBtn) {
-    const nonDefault = localBranches.filter(b => b.id !== defaultBranch);
+    const nonDefault = branches.filter(b => b.id !== defaultBranch);
     cleanupBtn.disabled = nonDefault.length === 0 || globalBusy;
     cleanupBtn.title = nonDefault.length > 0 ? `清理 ${nonDefault.length} 个分支` : '没有可清理的分支';
   }
 
-  if (localBranches.length === 0) {
+  if (branches.length === 0) {
     el.innerHTML = '<div class="empty-state">暂无分支，请在上方搜索并添加。</div>';
     window.scrollTo(0, scrollY);
     return;
@@ -945,10 +1136,10 @@ function renderBranches() {
 
   // Filter by active tag
   const filteredBranches = activeTagFilter
-    ? localBranches.filter(b => (b.tags || []).includes(activeTagFilter))
-    : localBranches;
+    ? branches.filter(b => (b.tags || []).includes(activeTagFilter))
+    : branches;
 
-  if (filteredBranches.length === 0 && localBranches.length > 0) {
+  if (filteredBranches.length === 0 && branches.length > 0) {
     el.innerHTML = `<div class="empty-state">没有匹配标签「${esc(activeTagFilter)}」的分支</div>`;
     window.scrollTo(0, scrollY);
     return;
@@ -974,8 +1165,6 @@ function renderBranches() {
       `<div class="deploy-menu-item" onclick="deploySingleService('${esc(b.id)}', '${esc(p.id)}')">${esc(p.name)}</div>`
     ).join('');
 
-    const expanded = !collapsedBranches.has(b.id);
-
     // Build stop menu item for deploy dropdown
     const stopMenuItem = isRunning ? `<div class="deploy-menu-divider"></div><div class="deploy-menu-item deploy-menu-item-danger" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); stopBranch('${esc(b.id)}')">停止所有服务</div>` : '';
 
@@ -983,9 +1172,10 @@ function renderBranches() {
     const portBadgesHtml = services.length > 0 ? services.map(([pid, svc]) => {
       const profile = buildProfiles.find(p => p.id === pid);
       const icon = getPortIcon(pid, profile);
-      return `<span class="port-badge ${svc.status === 'running' ? 'run-port' : 'port-idle'}"
+      const badgeClass = svc.status === 'running' ? 'run-port' : svc.status === 'starting' ? 'port-starting' : 'port-idle';
+      return `<span class="port-badge ${badgeClass}"
                     onclick="event.stopPropagation(); viewContainerLogs('${esc(b.id)}', '${esc(pid)}')"
-                    title="${esc(pid)}: ${svc.status}">
+                    title="${esc(pid)}: ${statusLabel(svc.status)}">
                 ${icon} ${esc(pid)}:${svc.hostPort}
               </span>`;
     }).join('') : '';
@@ -1081,9 +1271,9 @@ function renderBranches() {
     }
 
     return `
-      <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} ${expanded ? 'expanded' : ''} ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''} ${previewMode === 'multi' && isRunning ? 'show-preview-border' : ''} ${isDeploying ? 'is-deploying' : ''}" data-branch-id="${esc(b.id)}">
+      <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} expanded ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''} ${previewMode === 'multi' && isRunning ? 'show-preview-border' : ''} ${isDeploying ? 'is-deploying' : ''}" data-branch-id="${esc(b.id)}">
         ${isDeploying ? '<div class="deploy-progress-bar"><div class="deploy-progress-bar-fill"></div></div>' : ''}
-        <div class="branch-card-header" onclick="toggleBranchCard('${esc(b.id)}', event)">
+        <div class="branch-card-header">
           <div class="branch-card-left">
             <span class="fav-toggle ${b.isFavorite ? 'active' : ''}" onclick="event.stopPropagation(); toggleFavorite('${esc(b.id)}')" title="${b.isFavorite ? '取消收藏' : '收藏'}">
               ${b.isFavorite ? ICON.star : ICON.starOutline}
@@ -1100,11 +1290,13 @@ function renderBranches() {
               ${hasUpdates ? `<span class="update-badge">↓${branchUpdates[b.id].behind}</span>` : ''}
               <svg class="update-pull-icon ${isLoading(b.id, 'pull') ? 'spinning' : ''}" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
             </span>` : ''}
-            <svg class="branch-chevron ${expanded ? 'open' : ''}" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M4.427 5.427a.75.75 0 011.146 0L8 7.854l2.427-2.427a.75.75 0 111.146 1.146l-3 3a.75.75 0 01-1.146 0l-3-3a.75.75 0 010-1.146z"/></svg>
+            <button class="icon-btn sm branch-log-btn" onclick="event.stopPropagation(); viewBranchLogs('${esc(b.id)}')" title="查看部署日志">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.5 0a.25.25 0 01.25-.25h10.5a.25.25 0 01.25.25v7.5a.25.25 0 01-.25.25h-4.5a.75.75 0 00-.75.75v2.19l-2.72-2.72a.75.75 0 00-.53-.22H2.75a.25.25 0 01-.25-.25v-7.5z"/></svg>
+            </button>
           </div>
         </div>
         ${b.errorMessage && !deployLog ? `<div class="branch-error" title="${esc(b.errorMessage)}">${esc(b.errorMessage)}</div>` : ''}
-        <div class="branch-card-body ${expanded ? '' : 'hidden'}">
+        <div class="branch-card-body">
           ${tagsHtml}
           <div class="branch-card-actions-row">
             <div class="branch-actions-left">
@@ -1356,6 +1548,513 @@ async function saveBulkEnvAndRefresh() {
   } catch (e) { showToast(e.message, 'error'); }
 }
 
+// ── Config Import / Export ──
+
+function openImportModal() {
+  const html = `
+    <p class="config-panel-desc">
+      粘贴由 <code>/cds-scan</code> 生成的 CDS Compose YAML，或从其他 CDS 实例导出的配置。
+      支持 YAML（推荐）和 JSON 两种格式，粘贴后会自动识别。
+    </p>
+    <textarea id="importConfigTextarea" class="bulk-textarea" rows="14" placeholder="services:\n  api:\n    image: node:20-slim\n    working_dir: /app\n    volumes: ['./src:/app']\n    ports: ['3000']\n    command: npm install && npm start\n    depends_on:\n      mongodb: { condition: service_healthy }\n    environment:\n      MONGO_URL: 'mongodb://\${CDS_HOST}:\${CDS_MONGODB_PORT}'\n    labels:\n      cds.path-prefix: '/api/'\n  mongodb:\n    image: mongo:7\n    ports: ['27017']\n    healthcheck:\n      test: mongosh --eval 'db.runCommand({ping:1})'\n      interval: 10s\n      retries: 3"
+    ></textarea>
+    <div id="importPreview" style="margin-top:8px"></div>
+    <div class="form-row" style="margin-top:8px;gap:6px">
+      <button class="primary sm" onclick="previewImportConfig()">验证 & 预览</button>
+      <button class="sm" id="importApplyBtn" disabled onclick="applyImportConfig()">仅导入配置</button>
+      <button class="sm accent" id="importInitBtn" disabled onclick="importAndInit()">导入并初始化</button>
+      <button class="sm" onclick="closeConfigModal()">取消</button>
+    </div>
+    <div style="margin-top:4px;font-size:11px;color:var(--fg-muted)">
+      「仅导入配置」只写入配置不启动服务；「导入并初始化」会自动启动基础设施、创建主分支并部署。
+    </div>
+  `;
+  openConfigModal('一键导入配置', html);
+}
+
+async function previewImportConfig() {
+  const textarea = document.getElementById('importConfigTextarea');
+  const previewDiv = document.getElementById('importPreview');
+  const applyBtn = document.getElementById('importApplyBtn');
+  const initBtn = document.getElementById('importInitBtn');
+
+  const raw = textarea.value.trim();
+  if (!raw) {
+    previewDiv.innerHTML = '<div style="color:var(--red);font-size:13px">请粘贴配置内容</div>';
+    applyBtn.disabled = true;
+    if (initBtn) initBtn.disabled = true;
+    return;
+  }
+
+  // Auto-detect format: if starts with '{' → JSON object, otherwise send as YAML string
+  let config;
+  if (raw.startsWith('{')) {
+    try {
+      config = JSON.parse(raw);
+    } catch (e) {
+      previewDiv.innerHTML = '<div style="color:var(--red);font-size:13px">JSON 格式错误: ' + esc(e.message) + '</div>';
+      applyBtn.disabled = true;
+      if (initBtn) initBtn.disabled = true;
+      return;
+    }
+  } else {
+    // Send as raw string — backend will parse as CDS Compose YAML
+    config = raw;
+  }
+
+  try {
+    const data = await api('POST', '/import-config', { config, dryRun: true });
+    if (!data.valid) {
+      previewDiv.innerHTML = '<div style="color:var(--red);font-size:13px">验证失败:<ul>' +
+        (data.errors || []).map(e => '<li>' + esc(e) + '</li>').join('') + '</ul></div>';
+      applyBtn.disabled = true;
+      if (initBtn) initBtn.disabled = true;
+      return;
+    }
+
+    const p = data.preview;
+    let summaryHtml = '<div style="font-size:13px;background:var(--bg-tertiary);padding:10px 12px;border-radius:6px;margin-top:4px">';
+    summaryHtml += '<div style="color:#3fb950;margin-bottom:4px">✓ 验证通过，预览变更：</div>';
+
+    function sectionSummary(label, section) {
+      if (!section || (section.add === 0 && section.replace === 0 && section.skip === 0)) return '';
+      const parts = [];
+      if (section.add > 0) parts.push('<span style="color:#3fb950">+' + section.add + ' 新增</span>');
+      if (section.replace > 0) parts.push('<span style="color:#d29922">⟳' + section.replace + ' 替换</span>');
+      if (section.skip > 0) parts.push('<span style="color:#8b949e">⊘' + section.skip + ' 跳过</span>');
+      return '<div style="margin:4px 0"><strong>' + label + '</strong>: ' + parts.join(' ') + '</div>';
+    }
+
+    summaryHtml += sectionSummary('构建配置', p.buildProfiles);
+    summaryHtml += sectionSummary('环境变量', p.envVars);
+    summaryHtml += sectionSummary('基础设施', p.infraServices);
+    summaryHtml += sectionSummary('路由规则', p.routingRules);
+
+    // Show detail items
+    const allItems = [
+      ...(p.buildProfiles?.items || []),
+      ...(p.envVars?.items || []),
+      ...(p.infraServices?.items || []),
+      ...(p.routingRules?.items || []),
+    ];
+    if (allItems.length > 0 && allItems.length <= 20) {
+      summaryHtml += '<div style="margin-top:6px;font-size:11px;color:var(--fg-muted)">';
+      allItems.forEach(item => { summaryHtml += '<div>· ' + esc(item) + '</div>'; });
+      summaryHtml += '</div>';
+    }
+
+    summaryHtml += '</div>';
+    previewDiv.innerHTML = summaryHtml;
+    applyBtn.disabled = false;
+    if (initBtn) initBtn.disabled = false;
+  } catch (e) {
+    previewDiv.innerHTML = '<div style="color:var(--red);font-size:13px">' + esc(e.message) + '</div>';
+    applyBtn.disabled = true;
+    if (initBtn) initBtn.disabled = true;
+  }
+}
+
+async function applyImportConfig() {
+  const textarea = document.getElementById('importConfigTextarea');
+  const raw = textarea.value.trim();
+  if (!raw) return;
+
+  // Same auto-detect as preview
+  let config;
+  if (raw.startsWith('{')) {
+    try { config = JSON.parse(raw); } catch { return; }
+  } else {
+    config = raw;
+  }
+
+  try {
+    const data = await api('POST', '/import-config', { config, dryRun: false });
+    showToast(data.message || '配置已导入', 'success');
+    // Refresh all data
+    await Promise.all([loadProfiles(), loadEnvVars(), loadInfraServices(), loadRoutingRules()]);
+    closeConfigModal();
+  } catch (e) {
+    showToast('导入失败: ' + e.message, 'error');
+  }
+}
+
+async function importAndInit() {
+  const textarea = document.getElementById('importConfigTextarea');
+  if (!textarea) return;
+  const raw = textarea.value.trim();
+  if (!raw) return;
+
+  let config;
+  if (raw.startsWith('{')) {
+    try { config = JSON.parse(raw); } catch { return; }
+  } else {
+    config = raw;
+  }
+
+  // Switch modal to progress view
+  const modalBody = document.getElementById('configModalBody');
+  if (!modalBody) return;
+
+  modalBody.innerHTML = `
+    <div id="initProgressContainer" style="min-height:300px">
+      <div style="margin-bottom:12px;font-size:14px;font-weight:600">正在初始化项目...</div>
+      <div id="initSteps" style="font-size:13px"></div>
+      <pre id="initLog" class="inline-deploy-log" style="margin-top:8px;max-height:200px;overflow-y:auto;font-size:11px;display:none"></pre>
+      <div id="initResult" style="margin-top:12px;display:none"></div>
+    </div>
+  `;
+
+  const stepsEl = document.getElementById('initSteps');
+  const logEl = document.getElementById('initLog');
+  const resultEl = document.getElementById('initResult');
+  const stepStates = {};
+
+  function updateStep(step, status, title) {
+    const icon = status === 'running' ? '<span class="live-dot"></span>' :
+                 status === 'done' ? '<span style="color:#3fb950">✓</span>' :
+                 status === 'error' ? '<span style="color:#f85149">✗</span>' :
+                 '<span style="color:#8b949e">○</span>';
+
+    if (!stepStates[step]) {
+      stepStates[step] = { el: document.createElement('div'), status };
+      stepStates[step].el.style.cssText = 'padding:3px 0;display:flex;align-items:center;gap:6px';
+      stepsEl.appendChild(stepStates[step].el);
+    }
+    stepStates[step].status = status;
+    stepStates[step].el.innerHTML = icon + ' ' + esc(title);
+  }
+
+  try {
+    const res = await fetch(API + '/import-and-init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || data.errors?.join(', ') || `HTTP ${res.status}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finalStatus = 'done';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (line.startsWith('event: ')) continue;
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.step) {
+              updateStep(data.step, data.status, data.title);
+            }
+            if (data.chunk) {
+              logEl.style.display = 'block';
+              logEl.textContent += data.chunk;
+              logEl.scrollTop = logEl.scrollHeight;
+            }
+            if (data.status === 'error') finalStatus = 'error';
+          } catch { /* skip parse errors */ }
+        }
+      }
+    }
+
+    resultEl.style.display = 'block';
+    if (finalStatus === 'done') {
+      resultEl.innerHTML = `
+        <div style="color:#3fb950;font-weight:600;margin-bottom:8px">初始化完成</div>
+        <button class="primary sm" onclick="closeConfigModal(); loadBranches(); loadInfraServices();">完成</button>
+      `;
+    } else {
+      resultEl.innerHTML = `
+        <div style="color:#f85149;font-weight:600;margin-bottom:8px">初始化过程中出现错误</div>
+        <button class="sm" onclick="closeConfigModal(); loadBranches(); loadInfraServices();">关闭</button>
+      `;
+    }
+
+    // Refresh data in background
+    await Promise.all([loadProfiles(), loadEnvVars(), loadInfraServices(), loadRoutingRules(), loadBranches()]);
+  } catch (e) {
+    if (resultEl) {
+      resultEl.style.display = 'block';
+      resultEl.innerHTML = `
+        <div style="color:#f85149;font-weight:600;margin-bottom:4px">初始化失败</div>
+        <div style="color:#f85149;font-size:12px;margin-bottom:8px">${esc(e.message)}</div>
+        <button class="sm" onclick="closeConfigModal()">关闭</button>
+      `;
+    } else {
+      showToast('初始化失败: ' + e.message, 'error');
+      closeConfigModal();
+    }
+  }
+}
+
+async function exportConfig() {
+  try {
+    // Fetch as YAML (primary format)
+    const resp = await fetch(API + '/export-config?format=yaml');
+    if (!resp.ok) throw new Error('导出失败');
+    const yamlText = await resp.text();
+
+    // Copy to clipboard
+    try {
+      await navigator.clipboard.writeText(yamlText);
+      showToast('配置已复制到剪贴板 (Compose YAML)', 'success');
+    } catch {
+      // Fallback: show in modal
+      openConfigModal('导出配置', `
+        <p class="config-panel-desc">当前 CDS 配置（Compose YAML 格式，可复制分享或备份）：</p>
+        <textarea class="bulk-textarea" rows="16" readonly onclick="this.select()">${esc(yamlText)}</textarea>
+        <div class="form-row" style="margin-top:8px">
+          <button class="sm" onclick="closeConfigModal()">关闭</button>
+        </div>
+      `);
+    }
+  } catch (e) {
+    showToast('导出失败: ' + e.message, 'error');
+  }
+}
+
+// ── Infrastructure services ──
+
+async function loadInfraServices() {
+  try {
+    const data = await api('GET', '/infra');
+    infraServices = data.services || [];
+  } catch (e) { console.error('loadInfraServices:', e); }
+}
+
+function infraStatusDot(status) {
+  const colors = { running: '#3fb950', stopped: '#8b949e', error: '#f85149' };
+  return `<span style="color:${colors[status] || '#8b949e'}">●</span>`;
+}
+
+function infraStatusLabel(status) {
+  const map = { running: '运行中', stopped: '已停止', error: '错误' };
+  return map[status] || status;
+}
+
+function openInfraModal() {
+  const listHtml = infraServices.length === 0
+    ? `<div class="config-empty">
+        暂无基础设施服务。点击"从 Compose 导入"自动发现项目中的 docker-compose.yml 服务。
+      </div>`
+    : infraServices.map(svc => `
+        <div class="config-item" style="flex-direction:column;align-items:stretch;gap:6px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:14px">${infraStatusDot(svc.status)}</span>
+            <strong style="flex:1">${esc(svc.name)}</strong>
+            <code style="font-size:11px;opacity:0.6">${esc(svc.dockerImage)}</code>
+            <code style="font-size:12px;color:var(--blue)">:${svc.hostPort}</code>
+          </div>
+          <div style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--fg-muted)">
+            <span>${infraStatusLabel(svc.status)}</span>
+            ${svc.errorMessage ? `<span style="color:var(--red);margin-left:8px" title="${esc(svc.errorMessage)}">⚠ 错误</span>` : ''}
+            <span style="margin-left:auto;display:flex;gap:4px">
+              ${svc.status === 'running'
+                ? `<button class="icon-btn xs" onclick="infraAction('${esc(svc.id)}','stop')" title="停止">⏹</button>
+                   <button class="icon-btn xs" onclick="infraAction('${esc(svc.id)}','restart')" title="重启">⟳</button>`
+                : `<button class="icon-btn xs" onclick="infraAction('${esc(svc.id)}','start')" title="启动">▶</button>`}
+              <button class="icon-btn xs" onclick="infraShowLogs('${esc(svc.id)}')" title="日志">📋</button>
+              <button class="icon-btn xs danger-icon" onclick="infraDelete('${esc(svc.id)}')" title="删除">&times;</button>
+            </span>
+          </div>
+          ${svc.injectEnv && Object.keys(svc.injectEnv).length > 0 ? `
+          <div style="font-size:11px;color:var(--fg-muted);background:var(--bg-tertiary);padding:4px 8px;border-radius:4px;margin-top:2px">
+            自动注入: ${Object.keys(svc.injectEnv).map(k => `<code>${esc(k)}</code>`).join(', ')}
+          </div>` : `
+          <div style="font-size:11px;color:var(--fg-muted);background:var(--bg-tertiary);padding:4px 8px;border-radius:4px;margin-top:2px">
+            v2 环境变量: <code>\${CDS_${svc.id.toUpperCase().replace(/-/g, '_')}_PORT}</code>
+          </div>`}
+        </div>
+      `).join('');
+
+  const html = `
+    <p class="config-panel-desc">
+      CDS 托管的基础设施服务（数据库、缓存等）。容器使用 Docker Label 标记，CDS 重启后自动接管。
+      v2 格式：App 服务通过 <code>\${CDS_&lt;SERVICE&gt;_PORT}</code> 引用端口。v1 兼容：使用 <code>{{host}}:{{port}}</code> 自动注入。
+    </p>
+    <div class="config-panel-actions" style="margin-bottom:10px;display:flex;gap:6px">
+      <button class="sm primary" onclick="infraDiscover()">📦 从 Compose 导入</button>
+      <button class="sm" onclick="openInfraAddModal()">+ 自定义</button>
+    </div>
+    <div id="infraListInModal">${listHtml}</div>
+  `;
+  openConfigModal('基础设施', html);
+}
+
+async function infraAction(id, action) {
+  try {
+    const data = await api('POST', `/infra/${encodeURIComponent(id)}/${action}`);
+    showToast(data.message, 'success');
+    await loadInfraServices();
+    openInfraModal();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function infraDelete(id) {
+  if (!confirm(`确定删除基础设施服务 "${id}"？容器将被停止，但数据卷会保留。`)) return;
+  try {
+    await api('DELETE', `/infra/${encodeURIComponent(id)}`);
+    showToast(`已删除 ${id}`, 'success');
+    await loadInfraServices();
+    openInfraModal();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function infraShowLogs(id) {
+  openConfigModal('基础设施日志', '<div class="config-empty"><span class="btn-spinner"></span> 加载中...</div>');
+  try {
+    const data = await api('GET', `/infra/${encodeURIComponent(id)}/logs`);
+    const html = `
+      <pre style="max-height:400px;overflow:auto;background:var(--bg-tertiary);padding:12px;border-radius:6px;font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-all">${esc(data.logs || '(空)')}</pre>
+      <div class="form-row" style="margin-top:8px">
+        <button class="sm" onclick="openInfraModal()">返回</button>
+      </div>
+    `;
+    openConfigModal(`${id} 日志`, html);
+  } catch (e) {
+    openConfigModal('基础设施日志', `<div class="config-empty" style="color:var(--red)">${esc(e.message)}</div>`);
+  }
+}
+
+async function infraDiscover() {
+  try {
+    const data = await api('GET', '/infra/discover');
+    const discovered = data.discovered || [];
+    if (discovered.length === 0) {
+      showToast('未在项目中发现 docker-compose.yml 文件', 'error');
+      return;
+    }
+
+    // Show discovered services for user to pick (deduplicate by ID, first file wins)
+    const allServices = [];
+    const seenIds = new Set();
+    for (const entry of discovered) {
+      for (const svc of entry.services) {
+        if (!seenIds.has(svc.id)) {
+          seenIds.add(svc.id);
+          allServices.push({ ...svc, fromFile: entry.file });
+        }
+      }
+    }
+
+    const listHtml = allServices.map((svc, i) => `
+      <label class="config-item" style="cursor:pointer;gap:8px;align-items:center">
+        <input type="checkbox" value="${esc(svc.id)}" checked data-idx="${i}">
+        <div style="flex:1">
+          <strong>${esc(svc.name)}</strong>
+          <code style="font-size:11px;opacity:0.6;margin-left:8px">${esc(svc.dockerImage)}</code>
+          <div style="font-size:11px;color:var(--fg-muted)">来自: ${esc(svc.fromFile)} | 端口: ${svc.containerPort}</div>
+          ${Object.keys(svc.injectEnv || {}).length > 0 ? `<div style="font-size:11px;color:var(--fg-muted)">注入: ${Object.keys(svc.injectEnv).map(k => '<code>' + esc(k) + '</code>').join(', ')}</div>` : ''}
+        </div>
+      </label>
+    `).join('');
+
+    const html = `
+      <p class="config-panel-desc">
+        从项目 compose 文件中发现了以下基础设施服务。勾选要导入的服务：
+      </p>
+      <div id="infraDiscoverList">${listHtml}</div>
+      <div class="form-row" style="margin-top:10px;gap:6px">
+        <button class="primary sm" onclick="infraQuickstartSelected()">创建并启动</button>
+        <button class="sm" onclick="openInfraModal()">取消</button>
+      </div>
+    `;
+    openConfigModal('发现基础设施服务', html);
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function infraQuickstartSelected() {
+  const checkboxes = document.querySelectorAll('#infraDiscoverList input[type=checkbox]:checked');
+  const serviceIds = Array.from(checkboxes).map(cb => cb.value);
+  if (serviceIds.length === 0) {
+    showToast('请至少选择一个服务', 'error');
+    return;
+  }
+  try {
+    const data = await api('POST', '/infra/quickstart', { serviceIds });
+    const results = data.results || [];
+    const msgs = results.map(r => `${r.id}: ${r.status === 'started' ? '已启动' : r.status === 'exists' ? '已存在' : r.error || r.status}`);
+    showToast(msgs.join(' | '), results.every(r => r.status === 'started' || r.status === 'exists') ? 'success' : 'error');
+    await loadInfraServices();
+    openInfraModal();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+function openInfraAddModal() {
+  const html = `
+    <p class="config-panel-desc">添加自定义基础设施服务。</p>
+    <div class="form-row">
+      <input id="infraId" placeholder="ID (如 postgres)" class="form-input" style="flex:0.5">
+      <input id="infraName" placeholder="显示名称 (如 PostgreSQL 16)" class="form-input">
+    </div>
+    <div class="form-row">
+      <input id="infraImage" placeholder="Docker 镜像 (如 postgres:16)" class="form-input">
+      <input id="infraPort" placeholder="容器端口 (如 5432)" class="form-input" type="number" style="flex:0.4">
+    </div>
+    <div class="form-row">
+      <input id="infraVolName" placeholder="卷名 (如 cds-postgres-data)" class="form-input" style="flex:0.5">
+      <input id="infraVolPath" placeholder="挂载路径 (如 /var/lib/postgresql/data)" class="form-input">
+    </div>
+    <p class="config-panel-desc" style="margin-top:8px">
+      注入环境变量（每行 <code>KEY=模板</code>，支持 <code>{{host}}</code> 和 <code>{{port}}</code>）：
+    </p>
+    <textarea id="infraInjectEnv" class="bulk-textarea" rows="3" placeholder="DATABASE_URL=postgres://{{host}}:{{port}}/mydb"></textarea>
+    <div class="form-row" style="margin-top:8px">
+      <button class="primary sm" onclick="saveCustomInfra()">创建并启动</button>
+      <button class="sm" onclick="openInfraModal()">取消</button>
+    </div>
+  `;
+  openConfigModal('添加基础设施服务', html);
+}
+
+async function saveCustomInfra() {
+  const id = document.getElementById('infraId').value.trim();
+  const name = document.getElementById('infraName').value.trim();
+  const dockerImage = document.getElementById('infraImage').value.trim();
+  const containerPort = parseInt(document.getElementById('infraPort').value);
+  const volName = document.getElementById('infraVolName').value.trim();
+  const volPath = document.getElementById('infraVolPath').value.trim();
+  const injectEnvText = document.getElementById('infraInjectEnv').value.trim();
+
+  if (!id || !name || !dockerImage || !containerPort) {
+    showToast('请填写所有必填项', 'error');
+    return;
+  }
+
+  const volumes = volName && volPath ? [{ name: volName, containerPath: volPath }] : [];
+  const injectEnv = {};
+  if (injectEnvText) {
+    for (const line of injectEnvText.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eqIdx = trimmed.indexOf('=');
+      if (eqIdx > 0) {
+        injectEnv[trimmed.substring(0, eqIdx).trim()] = trimmed.substring(eqIdx + 1);
+      }
+    }
+  }
+
+  try {
+    await api('POST', '/infra', { id, name, dockerImage, containerPort, volumes, injectEnv, env: {} });
+    showToast(`已创建 ${name}`, 'success');
+    // Auto-start
+    try { await api('POST', `/infra/${encodeURIComponent(id)}/start`); } catch { /* ok */ }
+    await loadInfraServices();
+    openInfraModal();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
 // ── Routing modal ──
 
 function openRoutingModal() {
@@ -1460,7 +2159,7 @@ function openProfileModal() {
             <span style="opacity:0.7">${getPortIcon(p.id, p)}</span>
             <strong>${esc(p.name)}</strong>
             <code class="config-item-match">${esc(p.dockerImage)}</code>
-            <span class="config-item-detail">${esc(p.workDir || '.')} :${p.containerPort}</span>
+            <span class="config-item-detail">${esc(p.workDir || '.')} :${p.containerPort}${p.pathPrefixes?.length ? ' → ' + p.pathPrefixes.join(', ') : ''}</span>
             <code class="config-item-cmd" title="${esc(p.runCommand)}">${esc(p.runCommand)}</code>
           </div>
           <div class="config-item-actions">
@@ -1517,6 +2216,9 @@ function openProfileModal() {
         <div class="form-row">
           <input id="profileBuild" placeholder="构建命令（可选）" class="form-input">
         </div>
+        <div class="form-row">
+          <input id="profilePathPrefixes" placeholder="路由路径前缀（逗号分隔，如 /api/,/graphql）" class="form-input" title="指定此服务处理哪些 URL 路径前缀。不填则使用约定：id 含 api 时自动处理 /api/*">
+        </div>
       </div>
       <div class="form-row">
         <button class="primary sm" onclick="saveProfileAndRefresh()">保存</button>
@@ -1550,6 +2252,10 @@ async function saveProfileAndRefresh() {
     buildCommand: document.getElementById('profileBuild').value.trim() || undefined,
     runCommand: document.getElementById('profileRun').value.trim(),
   };
+  const pathPrefixesRaw = document.getElementById('profilePathPrefixes').value.trim();
+  if (pathPrefixesRaw) {
+    profile.pathPrefixes = pathPrefixesRaw.split(',').map(s => s.trim()).filter(Boolean);
+  }
   try {
     await api('POST', '/build-profiles', profile);
     showToast('配置已添加', 'success');
@@ -1601,7 +2307,7 @@ async function viewContainerEnv(id, profileId) {
 }
 
 function openContainerEnvPicker(branchId) {
-  const branch = localBranches.find(b => b.id === branchId);
+  const branch = branches.find(b => b.id === branchId);
   if (!branch) return;
   const services = Object.entries(branch.services || {});
   if (services.length === 0) {

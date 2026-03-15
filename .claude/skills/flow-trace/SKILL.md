@@ -1,6 +1,6 @@
 ---
 name: flow-trace
-description: 路径追踪技能。对指定功能/模块进行全链路数据流与控制流追踪，用大白话输出"先做什么→后做什么→数据怎么变"的完整路径图。适用于理解黑盒、评审方案、排查问题、新人上手。触发词："路径追踪"、"追踪一下"、"flow trace"、"帮我追踪"、"/trace"。
+description: Traces the full data flow and control flow of a specified feature or module, producing a readable end-to-end path diagram.
 ---
 
 # Flow Trace - 路径追踪

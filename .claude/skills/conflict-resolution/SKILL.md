@@ -1,6 +1,6 @@
 ---
 name: conflict-resolution
-description: "【仅限用户手动触发】PR 前预合并主分支。将 main 合并到特性分支，AI 代替人类处理冲突。禁止 AI 自动/主动调用此技能。触发词：\"合并主分支\"、\"merge main\"、\"预合并\"、\"/resolve\"。"
+description: Merges the main branch into the current feature branch before a PR, resolving conflicts on behalf of the developer.
 ---
 
 # Conflict Resolution - PR 前预合并主分支

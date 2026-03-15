@@ -1,5 +1,5 @@
 import http from 'node:http';
-import type { RoutingRule, BranchEntry, CdsConfig } from '../types.js';
+import type { RoutingRule, BranchEntry, CdsConfig, BuildProfile } from '../types.js';
 import { StateService } from './state.js';
 import type { WorktreeService } from './worktree.js';
 
@@ -43,10 +43,6 @@ export class ProxyService {
 
   /**
    * Resolve which branch should handle a request.
-   * Returns the branch slug or null if no match.
-   */
-  /**
-   * Resolve which branch should handle a request.
    * Returns the ORIGINAL branch name (not slugified) to preserve "/" and casing.
    */
   resolveBranch(req: http.IncomingMessage): string | null {
@@ -82,8 +78,8 @@ export class ProxyService {
 
     switch (rule.type) {
       case 'header':
-        // Header-based rules are handled by X-Branch above;
-        // this is for custom header patterns in the rule itself
+        // X-Branch header routing is handled globally in resolveBranch() before rules are evaluated.
+        // Rules with type 'header' are no-ops in matchRule — they exist only as data markers.
         return null;
 
       case 'domain': {
@@ -430,13 +426,29 @@ export class ProxyService {
     const url = req.url || '/';
     const profileIds = Object.keys(branch.services);
 
-    // If there's an "api" profile and request starts with /api/, route there
+    // Phase 1: Check explicit pathPrefixes on build profiles (config-driven routing)
+    const profiles = this.stateService.getBuildProfiles();
+    // Sort: longer prefixes first (most specific match wins)
+    const profilesWithRoutes = profiles
+      .filter(p => p.pathPrefixes && p.pathPrefixes.length > 0 && profileIds.includes(p.id))
+      .sort((a, b) => {
+        const maxA = Math.max(...(a.pathPrefixes || []).map(s => s.length));
+        const maxB = Math.max(...(b.pathPrefixes || []).map(s => s.length));
+        return maxB - maxA;
+      });
+
+    for (const profile of profilesWithRoutes) {
+      if (profile.pathPrefixes!.some(prefix => url.startsWith(prefix))) {
+        return profile.id;
+      }
+    }
+
+    // Phase 2: Convention-based fallback (backward compatible)
     if (url.startsWith('/api/')) {
       const apiProfile = profileIds.find(id => id.includes('api') || id.includes('backend'));
       if (apiProfile) return apiProfile;
     }
 
-    // Otherwise route to the first running web/frontend profile, or the first available
     const webProfile = profileIds.find(id => id.includes('web') || id.includes('frontend') || id.includes('admin'));
     if (webProfile) return webProfile;
 
@@ -462,7 +474,16 @@ export class ProxyService {
     };
 
     const proxyReq = http.request(options, (proxyRes) => {
-      clientRes.writeHead(proxyRes.statusCode || 502, proxyRes.headers);
+      const headers = { ...proxyRes.headers };
+      // When routing via cookie (same URL serves different branches), prevent
+      // browser disk-cache from mixing assets across branch switches.
+      // "no-store" is stronger than "no-cache" — it tells the browser to never
+      // reuse this response without a fresh fetch.
+      if (clientReq.headers.cookie?.includes('cds_branch')) {
+        headers['cache-control'] = 'no-store, must-revalidate';
+        headers['vary'] = 'Cookie';
+      }
+      clientRes.writeHead(proxyRes.statusCode || 502, headers);
       proxyRes.pipe(clientRes, { end: true });
     });
 
@@ -530,19 +551,23 @@ export class ProxyService {
     };
 
     const proxyReq = http.request(options);
-    proxyReq.on('upgrade', (_proxyRes, proxySocket, proxyHead) => {
-      socket.write(
-        `HTTP/1.1 101 Switching Protocols\r\n` +
-        `Upgrade: websocket\r\n` +
-        `Connection: Upgrade\r\n` +
-        `\r\n`,
-      );
+    proxyReq.on('upgrade', (proxyRes, proxySocket, proxyHead) => {
+      // Forward the actual 101 response from upstream (includes Sec-WebSocket-Accept, etc.)
+      // Without these headers, the client's WebSocket handshake validation will fail.
+      let rawResponse = `HTTP/${proxyRes.httpVersion} ${proxyRes.statusCode} ${proxyRes.statusMessage}\r\n`;
+      for (let i = 0; i < proxyRes.rawHeaders.length; i += 2) {
+        rawResponse += `${proxyRes.rawHeaders[i]}: ${proxyRes.rawHeaders[i + 1]}\r\n`;
+      }
+      rawResponse += '\r\n';
+      socket.write(rawResponse);
       if (proxyHead.length > 0) socket.write(proxyHead);
+      if (head.length > 0) proxySocket.write(head);
       proxySocket.pipe(socket);
       socket.pipe(proxySocket);
     });
 
     proxyReq.on('error', () => socket.destroy());
+    socket.on('error', () => proxyReq.destroy());
     proxyReq.end();
   }
 }

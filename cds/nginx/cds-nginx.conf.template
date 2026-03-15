@@ -70,7 +70,9 @@ server {
         proxy_cache     off;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
-        add_header Cache-Control    "no-cache" always;
+        # no-store prevents browser disk cache from mixing assets across branch switches
+        add_header Cache-Control    "no-store, must-revalidate" always;
+        add_header Vary             "Cookie" always;
         add_header X-Accel-Buffering "no"      always;
     }
 }

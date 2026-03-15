@@ -1,7 +1,9 @@
 use serde::Serialize;
 use tauri::command;
 
-use crate::models::{ApiResponse, DocumentContentInfo, DocumentInfo, SessionInfo, UploadDocumentResponse};
+use crate::models::{
+    ApiResponse, DocumentContentInfo, DocumentInfo, SessionInfo, UploadDocumentResponse,
+};
 use crate::services::ApiClient;
 
 #[derive(Serialize)]
@@ -60,12 +62,12 @@ pub async fn add_document_to_session(
     document_type: Option<String>,
 ) -> Result<ApiResponse<SessionInfo>, String> {
     let client = ApiClient::new();
-    let request = AddDocumentToSessionRequest { content, document_type };
+    let request = AddDocumentToSessionRequest {
+        content,
+        document_type,
+    };
     client
-        .post(
-            &format!("/sessions/{}/documents", session_id),
-            &request,
-        )
+        .post(&format!("/sessions/{}/documents", session_id), &request)
         .await
 }
 

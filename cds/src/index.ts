@@ -19,18 +19,97 @@ const stateService = new StateService(stateFile);
 stateService.load();
 
 // ── Apply custom env overrides to config ──
-// Users set SWITCH_DOMAIN / MAIN_DOMAIN in CDS custom env vars (UI),
+// Users set these in CDS custom env vars (UI),
 // but config.ts only reads process.env at startup. Merge them here.
 const customEnv = stateService.getCustomEnv();
 if (customEnv.SWITCH_DOMAIN && !config.switchDomain) config.switchDomain = customEnv.SWITCH_DOMAIN;
 if (customEnv.MAIN_DOMAIN && !config.mainDomain) config.mainDomain = customEnv.MAIN_DOMAIN;
 if (customEnv.PREVIEW_DOMAIN && !config.previewDomain) config.previewDomain = customEnv.PREVIEW_DOMAIN;
+// Directory isolation: allow UI to override repo root and worktree base
+if (customEnv.CDS_REPO_ROOT) config.repoRoot = customEnv.CDS_REPO_ROOT;
+if (customEnv.CDS_WORKTREE_BASE) config.worktreeBase = customEnv.CDS_WORKTREE_BASE;
 
 // ── Services ──
 const worktreeService = new WorktreeService(shell, config.repoRoot);
 const containerService = new ContainerService(shell, config);
 const proxyService = new ProxyService(stateService, config);
 proxyService.setWorktreeService(worktreeService);
+
+// ── Discover and reconcile infrastructure containers ──
+(async () => {
+  try {
+    const discovered = await containerService.discoverInfraContainers();
+    const stateServices = stateService.getInfraServices();
+
+    for (const svc of stateServices) {
+      const found = discovered.get(svc.id);
+      if (found) {
+        // Container exists in Docker — sync status
+        svc.status = found.running ? 'running' : 'stopped';
+        discovered.delete(svc.id);
+      } else if (svc.status === 'running') {
+        // State says running but container is gone — try to recreate
+        console.log(`  [infra] Recreating missing container for ${svc.id}...`);
+        try {
+          await containerService.startInfraService(svc);
+          svc.status = 'running';
+          console.log(`  [infra] ${svc.id} recreated successfully`);
+        } catch (err) {
+          svc.status = 'error';
+          svc.errorMessage = (err as Error).message;
+          console.error(`  [infra] Failed to recreate ${svc.id}:`, (err as Error).message);
+        }
+      }
+    }
+
+    // Log orphan containers (in Docker but not in state)
+    for (const [id, info] of discovered) {
+      console.warn(`  [infra] Orphan container detected: ${info.containerName} (service.id=${id}). Not managed by current state.`);
+    }
+
+    stateService.save();
+    if (stateServices.length > 0) {
+      const running = stateServices.filter(s => s.status === 'running').length;
+      console.log(`  [infra] ${stateServices.length} service(s) configured, ${running} running`);
+    }
+
+    // ── Discover and reconcile app containers ──
+    const appContainers = await containerService.discoverAppContainers();
+    const branches = stateService.getAllBranches();
+    let appReconciled = 0;
+
+    for (const branch of branches) {
+      for (const [profileId, svc] of Object.entries(branch.services)) {
+        const key = `${branch.id}/${profileId}`;
+        const found = appContainers.get(key);
+        if (found) {
+          // Container exists in Docker — sync status
+          const wasStatus = svc.status;
+          svc.status = found.running ? 'running' : 'error';
+          if (wasStatus !== svc.status) appReconciled++;
+          appContainers.delete(key);
+        } else if (svc.status === 'running') {
+          // State says running but container is gone
+          svc.status = 'error';
+          svc.errorMessage = '容器已丢失，需重新部署';
+          appReconciled++;
+        }
+      }
+    }
+
+    // Log orphan app containers
+    for (const [key, info] of appContainers) {
+      console.warn(`  [app] Orphan container detected: ${info.containerName} (${key}). Not managed by current state.`);
+    }
+
+    if (appReconciled > 0) {
+      console.log(`  [app] Reconciled ${appReconciled} app container(s)`);
+      stateService.save();
+    }
+  } catch (err) {
+    console.error('  [infra] Discovery failed:', (err as Error).message);
+  }
+})();
 
 // Configure proxy: resolve branch slug → upstream URL
 proxyService.setResolveUpstream((branchId, profileId) => {
@@ -328,6 +407,7 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
     let entry = stateService.getBranch(finalSlug);
     if (!entry) {
       sendEvent('step', { step: 'worktree', status: 'running', title: `正在为 ${resolvedBranch} 创建工作树...` });
+      await shell.exec(`mkdir -p "${config.worktreeBase}"`);
       const worktreePath = `${config.worktreeBase}/${finalSlug}`;
       await worktreeService.create(resolvedBranch, worktreePath);
 
@@ -366,10 +446,13 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
       const svc = entry.services[profile.id];
       svc.status = 'building';
 
+      // Merge CDS_* auto-generated vars (CDS_HOST, CDS_*_PORT) with user custom env
+      const cdsEnv = stateService.getCdsEnvVars();
       const customEnv = stateService.getCustomEnv();
+      const mergedEnv = { ...cdsEnv, ...customEnv };
       await containerService.runService(entry, profile, svc, (chunk) => {
         sendEvent('log', { profileId: profile.id, chunk });
-      }, customEnv);
+      }, mergedEnv);
 
       svc.status = 'running';
       sendEvent('step', { step: `build-${profile.id}`, status: 'done', title: `${profile.name} 就绪 :${svc.hostPort}` });

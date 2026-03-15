@@ -29,24 +29,51 @@ export interface BuildProfile {
   name: string;
   /** Docker image to use for building/running */
   dockerImage: string;
-  /** Working directory relative to worktree root */
+  /** Working directory relative to worktree root (derived from volume mount host path) */
   workDir: string;
-  /** Install command (runs once on first build or after pull) */
-  installCommand?: string;
-  /** Build command (produces runnable artifacts or just prepares) */
-  buildCommand?: string;
-  /** Run command (starts the service) */
-  runCommand: string;
+  /** Working directory inside the container (from compose `working_dir`, default: '/app'). */
+  containerWorkDir?: string;
+  /**
+   * Full command to start the service.
+   * Example: "dotnet restore && dotnet build && dotnet run --urls http://0.0.0.0:5000"
+   */
+  command?: string;
   /** Port the service listens on inside the container */
   containerPort: number;
-  /** Custom icon identifier for port badge display (e.g., 'api', 'web', 'db') */
-  icon?: string;
-  /** Extra environment variables for this profile */
+  /** Extra environment variables for this profile (may contain ${CDS_*} template references) */
   env?: Record<string, string>;
   /** Volume mounts for shared caches (e.g., node_modules, nuget) */
   cacheMounts?: CacheMount[];
   /** Timeout for build in ms (default: 600000) */
   buildTimeout?: number;
+  /**
+   * URL path prefixes this profile handles (e.g., ["/api/", "/graphql"]).
+   * Used by the proxy to route requests to the correct service within a branch.
+   * If not set, falls back to convention: profile id containing "api" handles /api/*.
+   * Derived from compose labels: `cds.path-prefix`.
+   */
+  pathPrefixes?: string[];
+  /**
+   * Service dependencies — IDs of infra services or other profiles this app depends on.
+   * Derived from compose `depends_on`. Used for startup ordering.
+   */
+  dependsOn?: string[];
+  /**
+   * Readiness probe — HTTP check to determine when the service is truly ready to serve.
+   * Without this, CDS only checks that the container process is alive (liveness).
+   * Derived from compose label `cds.readiness-path`.
+   */
+  readinessProbe?: ReadinessProbe;
+}
+
+/** Readiness probe configuration for app services */
+export interface ReadinessProbe {
+  /** HTTP path to check (e.g., "/health", "/api/health"). Default: "/" */
+  path?: string;
+  /** Seconds between checks (default: 5) */
+  intervalSeconds?: number;
+  /** Max seconds to wait for readiness (default: 300 = 5min) */
+  timeoutSeconds?: number;
 }
 
 /** A shared cache mount to avoid duplicating packages across branches */
@@ -66,7 +93,7 @@ export interface BranchEntry {
   /** Per-profile container state */
   services: Record<string, ServiceState>;
   /** Overall branch status */
-  status: 'idle' | 'building' | 'running' | 'error';
+  status: 'idle' | 'building' | 'starting' | 'running' | 'error';
   errorMessage?: string;
   createdAt: string;
   lastAccessedAt?: string;
@@ -84,7 +111,7 @@ export interface ServiceState {
   containerName: string;
   /** Host port allocated for this service */
   hostPort: number;
-  status: 'idle' | 'building' | 'running' | 'stopped' | 'error';
+  status: 'idle' | 'building' | 'starting' | 'running' | 'stopped' | 'error';
   buildLog?: string;
   errorMessage?: string;
 }
@@ -125,6 +152,60 @@ export interface CdsState {
   defaultBranch: string | null;
   /** User-defined environment variables (sent to containers on deploy) */
   customEnv: Record<string, string>;
+  /** CDS-managed infrastructure services (databases, caches, etc.) */
+  infraServices: InfraService[];
+  /** Mirror acceleration enabled (npm/docker registry mirrors for faster builds in China) */
+  mirrorEnabled?: boolean;
+}
+
+/** Volume mount for an infrastructure service */
+export interface InfraVolume {
+  /** Docker named volume name (e.g., 'cds-mongodb-data') or host path for bind mounts */
+  name: string;
+  /** Mount path inside the container */
+  containerPath: string;
+  /** Mount type: 'volume' (Docker named volume) or 'bind' (host path) */
+  type?: 'volume' | 'bind';
+  /** Read-only mount flag */
+  readOnly?: boolean;
+}
+
+/** Health check configuration for infrastructure service */
+export interface InfraHealthCheck {
+  /** Command to run inside the container */
+  command: string;
+  /** Interval in seconds (default: 10) */
+  interval: number;
+  /** Number of retries before marking unhealthy */
+  retries: number;
+}
+
+/** An infrastructure service managed by CDS (e.g., MongoDB, Redis) */
+export interface InfraService {
+  /** Unique identifier (e.g., 'mongodb', 'redis') */
+  id: string;
+  /** Display name */
+  name: string;
+  /** Docker image to use */
+  dockerImage: string;
+  /** Port the service listens on inside the container */
+  containerPort: number;
+  /** Host port mapped to the container */
+  hostPort: number;
+  /** Docker container name */
+  containerName: string;
+  /** Current status */
+  status: 'running' | 'stopped' | 'error';
+  /** Error message if status is 'error' */
+  errorMessage?: string;
+  /** Persistent volumes */
+  volumes: InfraVolume[];
+  /** Environment variables for the container itself */
+  env: Record<string, string>;
+  /** Health check configuration */
+  healthCheck?: InfraHealthCheck;
+  /** When this service was created */
+  createdAt: string;
 }
 
 /** Application configuration */
