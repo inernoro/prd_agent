@@ -24,13 +24,16 @@ import {
   Plus, Trash2, X, Settings2,
   Undo2, Redo2, LayoutGrid, Keyboard,
   ZoomIn, ZoomOut, Maximize2,
+  Play, XCircle, Terminal,
 } from 'lucide-react';
 import { CapsuleNode, type CapsuleNodeData } from './CapsuleNode';
 import { FlowEdge } from './FlowEdge';
 import { getIconForCapsule, getEmojiForCapsule, getCategoryEmoji } from './capsuleRegistry';
 import { Button } from '@/components/design/Button';
 import { TabBar } from '@/components/design/TabBar';
-import { listCapsuleTypes, updateWorkflow } from '@/services';
+import { listCapsuleTypes, updateWorkflow, executeWorkflow, getExecution, cancelExecution } from '@/services';
+import { useAuthStore } from '@/stores/authStore';
+import { Badge } from '@/components/design/Badge';
 import { autoLayoutNodes } from './autoLayout';
 import { useCanvasHistory } from './useCanvasHistory';
 import type {
@@ -215,6 +218,16 @@ function CanvasInner({
     return configs;
   });
 
+  // ── 执行状态 ──
+  const [latestExec, setLatestExec] = useState<WorkflowExecution | null>(execution ?? null);
+  const [isExecuting, setIsExecuting] = useState(false);
+  const [showLogPanel, setShowLogPanel] = useState(false);
+  const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const sseAbortRef = useRef<AbortController | null>(null);
+  const prevNodeStatusRef = useRef<Record<string, string>>({});
+  const logIdCounter = useRef(0);
+
   // 连线拖放到空白时弹出的节点选择器
   const [connectDropMenu, setConnectDropMenu] = useState<{
     x: number;
@@ -234,6 +247,19 @@ function CanvasInner({
       historyInited.current = true;
     }
   }, [initial, history]);
+
+  // 节点测量完成后重新自动布局（首次渲染 dagre 用默认尺寸，测量后用真实尺寸重排）
+  const measuredOnce = useRef(false);
+  useEffect(() => {
+    if (measuredOnce.current) return;
+    const allMeasured = nodes.length > 1 && nodes.every(n => n.measured?.width && n.measured?.height);
+    if (allMeasured) {
+      measuredOnce.current = true;
+      const laid = autoLayoutNodes(nodes, edges, 'TB');
+      setNodes(laid);
+      setTimeout(() => reactFlowInstance.fitView({ padding: 0.3 }), 50);
+    }
+  }, [nodes, edges, setNodes, reactFlowInstance]);
 
   useEffect(() => {
     listCapsuleTypes().then((res) => {
@@ -509,6 +535,171 @@ function CanvasInner({
     }
   }, [history, setNodes, setEdges]);
 
+  // ─── 执行相关 ───
+
+  function addLog(level: LogEntry['level'], message: string, ctx?: { nodeId?: string; nodeName?: string }) {
+    logIdCounter.current++;
+    setLogEntries(prev => [...prev, {
+      id: `log-${logIdCounter.current}`,
+      ts: new Date().toISOString(),
+      level,
+      message,
+      nodeId: ctx?.nodeId,
+      nodeName: ctx?.nodeName,
+    }]);
+  }
+
+  function stopPolling() {
+    if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
+    if (sseAbortRef.current) { sseAbortRef.current.abort(); sseAbortRef.current = null; }
+  }
+
+  function startPolling(execId: string) {
+    stopPolling();
+    pollingRef.current = setInterval(async () => {
+      try {
+        const res = await getExecution(execId);
+        if (res.success && res.data) {
+          const exec = res.data.execution;
+          setLatestExec(exec);
+
+          // 增量日志 + 更新画布节点状态
+          for (const ne of exec.nodeExecutions) {
+            const prev = prevNodeStatusRef.current[ne.nodeId];
+            if (ne.status !== prev) {
+              prevNodeStatusRef.current[ne.nodeId] = ne.status;
+              if (ne.status === 'running' && prev !== 'running')
+                addLog('info', '开始执行', { nodeId: ne.nodeId, nodeName: ne.nodeName });
+              else if (ne.status === 'completed' && prev !== 'completed')
+                addLog('success', `完成${ne.durationMs ? ` (${(ne.durationMs / 1000).toFixed(1)}s)` : ''}`, { nodeId: ne.nodeId, nodeName: ne.nodeName });
+              else if (ne.status === 'failed')
+                addLog('error', `失败: ${ne.errorMessage || '未知错误'}`, { nodeId: ne.nodeId, nodeName: ne.nodeName });
+              else if (ne.status === 'skipped')
+                addLog('warn', '已跳过', { nodeId: ne.nodeId, nodeName: ne.nodeName });
+            }
+          }
+
+          // 更新画布节点高亮
+          setNodes(prev => prev.map(n => {
+            const ne = exec.nodeExecutions.find(ne => ne.nodeId === n.id);
+            if (ne) return { ...n, data: { ...n.data, execStatus: ne.status, durationMs: ne.durationMs } };
+            return n;
+          }));
+          // 更新边状态
+          setEdges(prev => prev.map(e => {
+            const srcExec = exec.nodeExecutions.find(ne => ne.nodeId === e.source);
+            const tgtExec = exec.nodeExecutions.find(ne => ne.nodeId === e.target);
+            let edgeStatus = 'idle';
+            if (srcExec?.status === 'completed' && tgtExec?.status === 'running') edgeStatus = 'transferring';
+            else if (srcExec?.status === 'completed' && tgtExec?.status === 'completed') edgeStatus = 'done';
+            else if (srcExec?.status === 'failed' || tgtExec?.status === 'failed') edgeStatus = 'error';
+            return { ...e, data: { ...e.data, status: edgeStatus } };
+          }));
+
+          if (['completed', 'failed', 'cancelled'].includes(exec.status)) {
+            if (exec.status === 'completed')
+              addLog('success', `工作流执行完成${exec.completedAt && exec.startedAt ? ` · 总耗时 ${((new Date(exec.completedAt).getTime() - new Date(exec.startedAt).getTime()) / 1000).toFixed(1)}s` : ''}`);
+            else if (exec.status === 'failed')
+              addLog('error', `工作流执行失败: ${exec.errorMessage || '未知错误'}`);
+            else
+              addLog('warn', '工作流已取消');
+            stopPolling();
+          }
+        }
+      } catch { /* ignore */ }
+    }, 2500);
+  }
+
+  function startSseStream(execId: string) {
+    if (sseAbortRef.current) sseAbortRef.current.abort();
+    const abort = new AbortController();
+    sseAbortRef.current = abort;
+
+    const token = useAuthStore.getState().token;
+    const baseUrl = (import.meta.env.VITE_API_BASE_URL as string || '').replace(/\/+$/, '');
+    const url = `${baseUrl}/api/workflow-agent/executions/${execId}/stream`;
+
+    (async () => {
+      try {
+        const headers: Record<string, string> = { Accept: 'text/event-stream' };
+        if (token) headers.Authorization = `Bearer ${token}`;
+        const resp = await fetch(url, { headers, signal: abort.signal });
+        if (!resp.ok || !resp.body) return;
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const parts = buf.split('\n\n');
+          buf = parts.pop() || '';
+          // SSE events parsed but LLM streaming not needed in canvas view
+        }
+      } catch { /* ignore abort */ }
+    })();
+  }
+
+  async function handleExecute() {
+    // 先保存
+    if (dirty) await handleSave();
+
+    setIsExecuting(true);
+    setLogEntries([]);
+    prevNodeStatusRef.current = {};
+    addLog('info', '提交执行请求...');
+    setShowLogPanel(true);
+
+    // 清除之前的执行状态
+    setNodes(prev => prev.map(n => ({ ...n, data: { ...n.data, execStatus: undefined, durationMs: undefined } })));
+    setEdges(prev => prev.map(e => ({ ...e, data: { ...e.data, status: 'idle' } })));
+
+    try {
+      const res = await executeWorkflow({ id: workflow.id, variables: {} });
+      if (res.success && res.data) {
+        const exec = res.data.execution;
+        setLatestExec(exec);
+        addLog('info', `工作流已入队，共 ${exec.nodeExecutions.length} 个节点`);
+        startSseStream(exec.id);
+        startPolling(exec.id);
+      } else {
+        addLog('error', '执行失败: ' + (res.error?.message || '未知错误'));
+      }
+    } catch (e: unknown) {
+      addLog('error', '执行出错: ' + (e instanceof Error ? e.message : '未知错误'));
+    }
+    setIsExecuting(false);
+  }
+
+  async function handleCancel() {
+    if (!latestExec) return;
+    await cancelExecution(latestExec.id);
+    stopPolling();
+    try {
+      const res = await getExecution(latestExec.id);
+      if (res.success && res.data) setLatestExec(res.data.execution);
+    } catch { /* ignore */ }
+  }
+
+  // 清理轮询
+  useEffect(() => {
+    return () => stopPolling();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 如果加载时有正在运行的执行，自动开始轮询
+  useEffect(() => {
+    if (latestExec && ['queued', 'running'].includes(latestExec.status)) {
+      startSseStream(latestExec.id);
+      startPolling(latestExec.id);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const isRunning = latestExec && ['queued', 'running'].includes(latestExec.status);
+  const completedCount = latestExec?.nodeExecutions.filter(ne => ne.status === 'completed').length || 0;
+  const totalNodes = workflow.nodes.length;
+
   // ─── 拖拽添加舱 ───
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
 
@@ -659,6 +850,37 @@ function CanvasInner({
                 删除选中
               </Button>
             )}
+            {isRunning ? (
+              <>
+                <Badge variant="featured" size="sm" icon={<Loader2 className="w-3 h-3 animate-spin" />}>
+                  执行中 {completedCount}/{totalNodes}
+                </Badge>
+                <Button variant="danger" size="xs" onClick={handleCancel}>
+                  <XCircle className="w-3.5 h-3.5" />
+                  取消
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="primary"
+                size="xs"
+                onClick={handleExecute}
+                disabled={isExecuting || nodes.length === 0}
+              >
+                {isExecuting
+                  ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />提交中...</>
+                  : <><Play className="w-3.5 h-3.5" />{latestExec ? '重新执行' : '执行'}</>
+                }
+              </Button>
+            )}
+            <Button
+              variant={showLogPanel ? 'primary' : 'secondary'}
+              size="xs"
+              onClick={() => setShowLogPanel(v => !v)}
+            >
+              <Terminal className="w-3.5 h-3.5" />
+              日志{logEntries.length > 0 ? ` (${logEntries.length})` : ''}
+            </Button>
             <Button
               variant={dirty ? 'primary' : 'secondary'}
               size="xs"
@@ -825,6 +1047,128 @@ function CanvasInner({
             onClose={() => setEditingNodeId(null)}
           />
         )}
+
+        {/* 右侧执行日志面板 */}
+        {showLogPanel && (
+          <CanvasLogPanel entries={logEntries} onClear={() => setLogEntries([])} onClose={() => setShowLogPanel(false)} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 执行日志类型 + 面板
+// ═══════════════════════════════════════════════════════════════
+
+interface LogEntry {
+  id: string;
+  ts: string;
+  level: 'info' | 'success' | 'error' | 'warn';
+  nodeId?: string;
+  nodeName?: string;
+  message: string;
+}
+
+const LOG_LEVEL_COLORS: Record<string, string> = {
+  info: 'rgba(99,102,241,0.9)',
+  success: 'rgba(34,197,94,0.9)',
+  error: 'rgba(239,68,68,0.9)',
+  warn: 'rgba(234,179,8,0.9)',
+};
+
+function CanvasLogPanel({ entries, onClear, onClose }: { entries: LogEntry[]; onClear: () => void; onClose: () => void }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [autoScroll, setAutoScroll] = useState(true);
+
+  useEffect(() => {
+    if (autoScroll && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [entries, autoScroll]);
+
+  return (
+    <div
+      className="flex flex-col h-full"
+      style={{
+        width: 320,
+        flexShrink: 0,
+        borderLeft: '1px solid rgba(255,255,255,0.08)',
+        background: 'rgba(0,0,0,0.2)',
+      }}
+    >
+      <div
+        className="flex items-center gap-2 px-3 py-2.5 flex-shrink-0"
+        style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+      >
+        <Terminal className="w-3.5 h-3.5" style={{ color: 'rgba(99,102,241,0.8)' }} />
+        <span className="text-[12px] font-semibold flex-1" style={{ color: 'var(--text-primary)' }}>
+          执行日志
+        </span>
+        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+          {entries.length} 条
+        </span>
+        {entries.length > 0 && (
+          <button
+            onClick={onClear}
+            className="p-1 rounded-[6px] transition-colors"
+            style={{ color: 'var(--text-muted)' }}
+            title="清空日志"
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
+        )}
+        <button
+          onClick={onClose}
+          className="p-1 rounded-[6px] transition-colors"
+          style={{ color: 'var(--text-muted)' }}
+          title="关闭"
+        >
+          <X className="w-3 h-3" />
+        </button>
+      </div>
+
+      <div
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto px-2 py-2 space-y-0.5"
+        onScroll={() => {
+          if (!scrollRef.current) return;
+          const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+          setAutoScroll(scrollHeight - scrollTop - clientHeight < 40);
+        }}
+        style={{ fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace' }}
+      >
+        {entries.length === 0 && (
+          <div className="flex flex-col items-center justify-center h-full gap-2 opacity-40">
+            <Terminal className="w-6 h-6" />
+            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              执行工作流后日志将在此显示
+            </span>
+          </div>
+        )}
+        {entries.map((entry) => (
+          <div
+            key={entry.id}
+            className="flex items-start gap-1.5 px-2 py-1 rounded-[6px] transition-colors"
+            style={{ background: entry.level === 'error' ? 'rgba(239,68,68,0.04)' : 'transparent' }}
+          >
+            <span
+              className="w-1.5 h-1.5 rounded-full flex-shrink-0 mt-[5px]"
+              style={{ background: LOG_LEVEL_COLORS[entry.level] }}
+            />
+            <div className="flex-1 min-w-0">
+              {entry.nodeName && (
+                <span className="text-[10px] font-medium mr-1" style={{ color: 'rgba(99,102,241,0.7)' }}>
+                  [{entry.nodeName}]
+                </span>
+              )}
+              <span className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>{entry.message}</span>
+            </div>
+            <span className="text-[9px] flex-shrink-0 mt-0.5" style={{ color: 'var(--text-muted)' }}>
+              {new Date(entry.ts).toLocaleTimeString('zh-CN', { hour12: false })}
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );
