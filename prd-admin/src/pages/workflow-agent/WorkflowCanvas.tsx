@@ -228,6 +228,16 @@ function CanvasInner({
   const prevNodeStatusRef = useRef<Record<string, string>>({});
   const logIdCounter = useRef(0);
 
+  // ── 变量管理 ──
+  const [showVarsDialog, setShowVarsDialog] = useState(false);
+  const [vars, setVars] = useState<Record<string, string>>(() => {
+    const defaults: Record<string, string> = {};
+    for (const v of workflow.variables ?? []) {
+      defaults[v.key] = v.defaultValue || '';
+    }
+    return defaults;
+  });
+
   // 连线拖放到空白时弹出的节点选择器
   const [connectDropMenu, setConnectDropMenu] = useState<{
     x: number;
@@ -640,7 +650,24 @@ function CanvasInner({
     })();
   }
 
-  async function handleExecute() {
+  function handleExecuteClick() {
+    // 如果有变量需要填写，先弹出变量对话框
+    if (workflow.variables?.length) {
+      setShowVarsDialog(true);
+    } else {
+      doExecute({});
+    }
+  }
+
+  async function doExecute(variables: Record<string, string>) {
+    // 验证必填变量
+    for (const v of workflow.variables ?? []) {
+      if (v.required && !variables[v.key]) {
+        addLog('error', `请填写「${v.label}」`);
+        return;
+      }
+    }
+
     // 先保存
     if (dirty) await handleSave();
 
@@ -655,7 +682,7 @@ function CanvasInner({
     setEdges(prev => prev.map(e => ({ ...e, data: { ...e.data, status: 'idle' } })));
 
     try {
-      const res = await executeWorkflow({ id: workflow.id, variables: {} });
+      const res = await executeWorkflow({ id: workflow.id, variables });
       if (res.success && res.data) {
         const exec = res.data.execution;
         setLatestExec(exec);
@@ -864,7 +891,7 @@ function CanvasInner({
               <Button
                 variant="primary"
                 size="xs"
-                onClick={handleExecute}
+                onClick={handleExecuteClick}
                 disabled={isExecuting || nodes.length === 0}
               >
                 {isExecuting
@@ -1053,6 +1080,17 @@ function CanvasInner({
           <CanvasLogPanel entries={logEntries} onClear={() => setLogEntries([])} onClose={() => setShowLogPanel(false)} />
         )}
       </div>
+
+      {/* 变量输入对话框 */}
+      {showVarsDialog && (
+        <ExecuteVarsDialog
+          variables={workflow.variables ?? []}
+          values={vars}
+          onChange={(key, val) => setVars(prev => ({ ...prev, [key]: val }))}
+          onExecute={() => { setShowVarsDialog(false); doExecute(vars); }}
+          onClose={() => setShowVarsDialog(false)}
+        />
+      )}
     </div>
   );
 }
@@ -1169,6 +1207,77 @@ function CanvasLogPanel({ entries, onClear, onClose }: { entries: LogEntry[]; on
             </span>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 执行变量对话框
+// ═══════════════════════════════════════════════════════════════
+
+function ExecuteVarsDialog({
+  variables, values, onChange, onExecute, onClose,
+}: {
+  variables: { key: string; label: string; type: string; required: boolean; isSecret: boolean; defaultValue?: string }[];
+  values: Record<string, string>;
+  onChange: (key: string, value: string) => void;
+  onExecute: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)' }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div
+        className="w-[420px] rounded-2xl p-5 space-y-4"
+        style={{
+          background: 'rgba(30,30,32,0.95)',
+          border: '1px solid rgba(255,255,255,0.1)',
+          boxShadow: '0 24px 64px rgba(0,0,0,0.5)',
+        }}
+      >
+        <div className="flex items-center justify-between">
+          <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary, #e8e6e3)' }}>
+            执行参数
+          </span>
+          <button onClick={onClose} className="p-1 rounded-lg transition-colors" style={{ color: 'var(--text-muted)' }}>
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="space-y-3">
+          {variables.map((v) => (
+            <div key={v.key} className="space-y-1">
+              <label className="text-[11px] font-medium flex items-center gap-1" style={{ color: 'var(--text-secondary, #aaa)' }}>
+                {v.label || v.key}
+                {v.required && <span style={{ color: 'rgba(239,68,68,0.8)' }}>*</span>}
+              </label>
+              <input
+                type={v.isSecret ? 'password' : v.type === 'month' ? 'month' : 'text'}
+                value={values[v.key] ?? v.defaultValue ?? ''}
+                onChange={(e) => onChange(v.key, e.target.value)}
+                placeholder={v.defaultValue || `输入 ${v.label || v.key}`}
+                className="w-full h-8 px-3 text-[12px] rounded-lg outline-none transition-colors"
+                style={{
+                  background: 'rgba(255,255,255,0.06)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  color: 'var(--text-primary, #e8e6e3)',
+                }}
+              />
+            </div>
+          ))}
+        </div>
+
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="secondary" size="sm" onClick={onClose}>取消</Button>
+          <Button variant="primary" size="sm" onClick={onExecute}>
+            <Play className="w-3.5 h-3.5" />
+            执行
+          </Button>
+        </div>
       </div>
     </div>
   );
