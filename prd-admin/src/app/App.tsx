@@ -26,6 +26,7 @@ const LiteraryAgentEditorPageWrapper = lazy(() => import('@/pages/literary-agent
 const DefectAgentPage = lazy(() => import('@/pages/defect-agent').then(m => ({ default: m.DefectAgentPage })));
 const VideoAgentPage = lazy(() => import('@/pages/video-agent').then(m => ({ default: m.VideoAgentPage })));
 const ReportAgentPage = lazy(() => import('@/pages/report-agent').then(m => ({ default: m.ReportAgentPage })));
+const ReportDetailPage = lazy(() => import('@/pages/report-agent').then(m => ({ default: m.ReportDetailPage })));
 const ShortcutsPage = lazy(() => import('@/pages/shortcuts-agent').then(m => ({ default: m.ShortcutsPage })));
 const ShortcutInstallPage = lazy(() => import('@/pages/shortcuts-agent').then(m => ({ default: m.ShortcutInstallPage })));
 const WorkflowListPage = lazy(() => import('@/pages/workflow-agent').then(m => ({ default: m.WorkflowListPage })));
@@ -294,6 +295,7 @@ export default function App() {
         <Route path="defect-agent" element={<RequirePermission perm="defect-agent.use"><DefectAgentPage /></RequirePermission>} />
         <Route path="video-agent" element={<RequirePermission perm="video-agent.use"><VideoAgentPage /></RequirePermission>} />
         <Route path="report-agent" element={<RequirePermission perm="report-agent.use"><ReportAgentPage /></RequirePermission>} />
+        <Route path="report-agent/report/:reportId" element={<RequirePermission perm="report-agent.use"><ReportDetailPage /></RequirePermission>} />
         <Route path="shortcuts-agent" element={<RequirePermission perm="access"><ShortcutsPage /></RequirePermission>} />
         <Route path="workflow-agent" element={<RequirePermission perm="workflow-agent.use"><WorkflowListPage /></RequirePermission>} />
         <Route path="workflow-agent/:workflowId" element={<RequirePermission perm="workflow-agent.use"><WorkflowEditorPage /></RequirePermission>} />

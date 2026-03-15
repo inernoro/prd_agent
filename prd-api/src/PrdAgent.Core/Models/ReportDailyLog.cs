@@ -36,8 +36,11 @@ public class DailyLogItem
     /// <summary>工作内容描述</summary>
     public string Content { get; set; } = string.Empty;
 
-    /// <summary>分类标签</summary>
+    /// <summary>分类标签（系统内置分类或自定义标签）</summary>
     public string Category { get; set; } = DailyLogCategory.Other;
+
+    /// <summary>自定义标签列表（用户或团队级别自定义，如 ["需求评审", "代码复查"]）</summary>
+    public List<string> Tags { get; set; } = new();
 
     /// <summary>耗时（分钟，选填）</summary>
     public int? DurationMinutes { get; set; }

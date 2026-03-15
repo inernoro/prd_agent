@@ -29,6 +29,9 @@ public class ReportAutoGenerateWorker : BackgroundService
     private int _lastDeadlineReminderWeek = -1;
     private int _lastDeadlineReminderYear = -1;
 
+    // 自动提交去重：key = "teamId:weekYear-weekNumber"
+    private readonly HashSet<string> _autoSubmittedKeys = new();
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("ReportAutoGenerateWorker started");
@@ -40,6 +43,7 @@ public class ReportAutoGenerateWorker : BackgroundService
                 await Task.Delay(CheckInterval, stoppingToken);
                 await CheckAndGenerateAsync(stoppingToken);
                 await CheckDeadlineAndOverdueAsync();
+                await CheckAutoSubmitAsync();
             }
             catch (OperationCanceledException)
             {
@@ -234,6 +238,77 @@ public class ReportAutoGenerateWorker : BackgroundService
             if (overdueReports.Count > 0)
                 _logger.LogInformation("Marked {Count} reports as overdue for {Year}-W{Week}",
                     overdueReports.Count, prevWeekYear, prevWeekNumber);
+        }
+    }
+
+    /// <summary>
+    /// 检查配置了自动提交时间的团队，到时间后自动提交草稿周报
+    /// </summary>
+    private async Task CheckAutoSubmitAsync()
+    {
+        var chinaTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, ChinaTimeZone);
+        var weekYear = ISOWeek.GetYear(chinaTime);
+        var weekNumber = ISOWeek.GetWeekOfYear(chinaTime);
+        var dayName = chinaTime.DayOfWeek.ToString().ToLowerInvariant();
+        var hourMinute = chinaTime.ToString("HH:mm");
+
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+
+        // 查找配置了自动提交的团队
+        var teams = await db.ReportTeams.Find(t => t.AutoSubmitSchedule != null && t.AutoSubmitSchedule != "")
+            .ToListAsync(CancellationToken.None);
+
+        foreach (var team in teams)
+        {
+            if (string.IsNullOrEmpty(team.AutoSubmitSchedule)) continue;
+
+            // 格式: "friday-18:00"
+            var parts = team.AutoSubmitSchedule.Split('-', 2);
+            if (parts.Length != 2) continue;
+
+            var scheduledDay = parts[0].Trim().ToLowerInvariant();
+            var scheduledTime = parts[1].Trim();
+
+            if (dayName != scheduledDay) continue;
+
+            // 检查时间窗口 (±15 分钟)
+            if (!TimeSpan.TryParse(scheduledTime, out var scheduled)) continue;
+            var current = chinaTime.TimeOfDay;
+            if (current < scheduled || current > scheduled.Add(CheckInterval)) continue;
+
+            var dedupeKey = $"{team.Id}:{weekYear}-W{weekNumber}";
+            if (_autoSubmittedKeys.Contains(dedupeKey)) continue;
+
+            _logger.LogInformation("Auto-submitting drafts for team={Team}, schedule={Schedule}",
+                team.Name, team.AutoSubmitSchedule);
+
+            var draftReports = await db.WeeklyReports.Find(
+                r => r.TeamId == team.Id && r.WeekYear == weekYear && r.WeekNumber == weekNumber
+                     && r.Status == WeeklyReportStatus.Draft
+            ).ToListAsync(CancellationToken.None);
+
+            var submitted = 0;
+            foreach (var report in draftReports)
+            {
+                // 只自动提交有内容的草稿
+                var hasContent = report.Sections.Any(s => s.Items.Count > 0);
+                if (!hasContent) continue;
+
+                await db.WeeklyReports.UpdateOneAsync(
+                    r => r.Id == report.Id,
+                    Builders<WeeklyReport>.Update
+                        .Set(r => r.Status, WeeklyReportStatus.Submitted)
+                        .Set(r => r.SubmittedAt, DateTime.UtcNow)
+                        .Set(r => r.UpdatedAt, DateTime.UtcNow),
+                    cancellationToken: CancellationToken.None);
+                submitted++;
+            }
+
+            _autoSubmittedKeys.Add(dedupeKey);
+
+            if (submitted > 0)
+                _logger.LogInformation("Auto-submitted {Count} reports for team={Team}", submitted, team.Name);
         }
     }
 

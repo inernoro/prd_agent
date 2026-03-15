@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   Send, Trash2, ChevronLeft, ChevronRight, Clock, Calendar,
   Pencil, Check, X, Flame, Code2, Users, MessageCircle, FileText, TestTube, MoreHorizontal,
-  GitCommit, Sparkles, Plus,
+  GitCommit, Sparkles, Plus, Tag,
 } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
@@ -19,6 +19,7 @@ import {
   DailyLogCategory,
 } from '@/services/contracts/reportAgent';
 import type { DailyLog, DailyLogItem, ReportCommit, PersonalSource } from '@/services/contracts/reportAgent';
+import { useReportAgentStore } from '@/stores/reportAgentStore';
 
 // ── Helpers ────────────────────────────────────────────
 
@@ -75,6 +76,7 @@ const CATEGORY_CONFIG: Record<string, { label: string; color: string; bg: string
 interface LogItemInput {
   content: string;
   category: string;
+  tags?: string[];
   durationMinutes: number | undefined;
   createdAt?: string;
 }
@@ -92,7 +94,20 @@ export function DailyLogPanel() {
   // Quick input state
   const [quickInput, setQuickInput] = useState('');
   const [quickCategory, setQuickCategory] = useState<string>(DailyLogCategory.Development);
+  const [quickTags, setQuickTags] = useState<string[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Team custom tags
+  const teams = useReportAgentStore((s) => s.teams);
+  const teamCustomTags = useMemo(() => {
+    const allTags = new Set<string>();
+    for (const t of teams) {
+      if (t.customDailyLogTags) {
+        for (const tag of t.customDailyLogTags) allTags.add(tag);
+      }
+    }
+    return Array.from(allTags);
+  }, [teams]);
 
   // Editing state
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
@@ -135,6 +150,7 @@ export function DailyLogPanel() {
         res.data.items.map((i: DailyLogItem) => ({
           content: i.content,
           category: i.category,
+          tags: i.tags,
           durationMinutes: i.durationMinutes,
           createdAt: i.createdAt,
         }))
@@ -211,6 +227,7 @@ export function DailyLogPanel() {
       items: validItems.map((i) => ({
         content: i.content.trim(),
         category: i.category,
+        tags: i.tags && i.tags.length > 0 ? i.tags : undefined,
         durationMinutes: i.durationMinutes,
         createdAt: i.createdAt,
       })),
@@ -228,10 +245,14 @@ export function DailyLogPanel() {
   const handleQuickAdd = async () => {
     const text = quickInput.trim();
     if (!text) return;
-    const newItem: LogItemInput = { content: text, category: quickCategory, durationMinutes: undefined };
+    const newItem: LogItemInput = {
+      content: text, category: quickCategory, durationMinutes: undefined,
+      tags: quickTags.length > 0 ? [...quickTags] : undefined,
+    };
     const newItems = [...items, newItem];
     setItems(newItems);
     setQuickInput('');
+    setQuickTags([]);
     inputRef.current?.focus();
     await doSave(newItems);
   };
@@ -518,6 +539,29 @@ export function DailyLogPanel() {
                     </button>
                   );
                 })}
+                {/* Custom tags from team settings */}
+                {teamCustomTags.map((tag) => {
+                  const isActive = quickTags.includes(tag);
+                  return (
+                    <button
+                      key={`tag-${tag}`}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all duration-150"
+                      style={{
+                        background: isActive ? 'rgba(20, 184, 166, 0.12)' : 'transparent',
+                        color: isActive ? 'rgba(20, 184, 166, 0.95)' : 'var(--text-muted)',
+                        border: `1px solid ${isActive ? 'rgba(20, 184, 166, 0.3)' : 'transparent'}`,
+                      }}
+                      onClick={() => {
+                        setQuickTags(isActive
+                          ? quickTags.filter((t) => t !== tag)
+                          : [...quickTags, tag]);
+                      }}
+                    >
+                      <Tag size={10} />
+                      {tag}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </GlassCard>
@@ -681,13 +725,22 @@ export function DailyLogPanel() {
                               <div className="text-[13px] leading-relaxed" style={{ color: 'var(--text-primary)' }}>
                                 {item.content}
                               </div>
-                              <div className="flex items-center gap-2 mt-1">
+                              <div className="flex items-center gap-2 mt-1 flex-wrap">
                                 <span
                                   className="text-[10px] px-1.5 py-0.5 rounded"
                                   style={{ background: cfg.bg, color: cfg.color }}
                                 >
                                   {cfg.label}
                                 </span>
+                                {item.tags && item.tags.map((tag, ti) => (
+                                  <span
+                                    key={ti}
+                                    className="text-[10px] px-1.5 py-0.5 rounded flex items-center gap-0.5"
+                                    style={{ background: 'rgba(20, 184, 166, 0.1)', color: 'rgba(20, 184, 166, 0.85)' }}
+                                  >
+                                    <Tag size={8} /> {tag}
+                                  </span>
+                                ))}
                                 {item.durationMinutes != null && item.durationMinutes > 0 && (
                                   <span className="text-[10px] flex items-center gap-0.5" style={{ color: 'var(--text-muted)' }}>
                                     <Clock size={9} />

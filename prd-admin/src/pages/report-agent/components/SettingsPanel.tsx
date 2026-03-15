@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link2, FileBarChart, Building2, GitBranch, ChevronRight } from 'lucide-react';
+import { GlassCard } from '@/components/design/GlassCard';
 import { useAuthStore } from '@/stores/authStore';
 import { PersonalSourcesPanel } from './PersonalSourcesPanel';
 import { TemplateManager } from './TemplateManager';
@@ -146,17 +147,8 @@ export function SettingsPanel() {
 function SettingSectionCard({ section, onClick }: { section: SectionDef; onClick: () => void }) {
   const Icon = section.icon;
   return (
-    <div
-      onClick={onClick}
-      className="group cursor-pointer rounded-xl p-4 transition-all duration-200 hover:translate-y-[-1px]"
-      style={{
-        background: 'var(--surface-glass)',
-        backdropFilter: 'blur(12px)',
-        border: '1px solid var(--border-primary)',
-        boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
-      }}
-    >
-      <div className="flex items-start gap-3">
+    <GlassCard interactive padding="none" onClick={onClick} className="group cursor-pointer">
+      <div className="flex items-start gap-3 p-4">
         <div
           className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
           style={{ background: `${section.color}15` }}
@@ -173,6 +165,6 @@ function SettingSectionCard({ section, onClick }: { section: SectionDef; onClick
         </div>
         <ChevronRight size={14} style={{ color: 'var(--text-muted)', opacity: 0.4 }} className="mt-1 flex-shrink-0 group-hover:opacity-100 transition-opacity" />
       </div>
-    </div>
+    </GlassCard>
   );
 }
