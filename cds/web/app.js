@@ -122,8 +122,8 @@ function hasAnyLoading(id) {
 
 // ── State ──
 
-let remoteBranches = [];
-let localBranches = [];
+let remoteCandidates = [];  // remote refs for branch picker (from GET /remote-branches)
+let branches = [];          // tracked branches (from GET /branches)
 let buildProfiles = [];
 let routingRules = [];
 let defaultBranch = null;
@@ -140,7 +140,7 @@ let workerPort = '';
 
 async function init() {
   await Promise.all([loadBranches(), loadProfiles(), loadRoutingRules(), loadConfig(), loadEnvVars(), loadInfraServices(), loadMirrorState()]);
-  refreshRemoteBranches();
+  refreshRemoteCandidates();
   updatePreviewModeUI();
   setInterval(loadBranches, 10000);
 }
@@ -166,7 +166,7 @@ function renderServiceStatusBar() {
 
   // Collect all services across all branches
   const allServices = [];
-  for (const b of localBranches) {
+  for (const b of branches) {
     for (const [pid, svc] of Object.entries(b.services || {})) {
       allServices.push({ branchId: b.id, branchName: b.branch, profileId: pid, ...svc });
     }
@@ -328,7 +328,7 @@ function updateMirrorUI() {
 async function loadBranches() {
   try {
     const data = await api('GET', '/branches');
-    localBranches = data.branches || [];
+    branches = data.branches || [];
     defaultBranch = data.defaultBranch;
     renderBranches();
     renderServiceStatusBar();
@@ -351,12 +351,12 @@ async function loadRoutingRules() {
   } catch (e) { console.error('loadRoutingRules:', e); }
 }
 
-async function refreshRemoteBranches() {
+async function refreshRemoteCandidates() {
   const btn = document.getElementById('refreshRemoteBtn');
   btn.disabled = true;
   try {
     const data = await api('GET', '/remote-branches');
-    remoteBranches = data.branches || [];
+    remoteCandidates = data.branches || [];
     // 只有搜索框聚焦时才打开下拉框
     if (document.activeElement === searchInput) {
       filterBranches();
@@ -379,15 +379,15 @@ document.addEventListener('click', (e) => {
 function filterBranches() {
   const q = searchInput.value.trim().toLowerCase();
 
-  // Section 1: Match already-added local branches (show all when empty)
-  const matchedLocal = localBranches.filter(b =>
+  // Section 1: Match tracked branches (show all when empty)
+  const matchedLocal = branches.filter(b =>
     !q || b.branch.toLowerCase().includes(q) || b.id.toLowerCase().includes(q)
   ).slice(0, 10);
 
-  // Section 2: Match remote branches not yet added (show all when empty)
-  const localIds = new Set(localBranches.map(b => StateService_slugify(b.branch)));
-  const matchedRemote = remoteBranches.filter(b =>
-    (!q || b.name.toLowerCase().includes(q)) && !localIds.has(StateService_slugify(b.name))
+  // Section 2: Match remote candidates not yet tracked (show all when empty)
+  const trackedIds = new Set(branches.map(b => StateService_slugify(b.branch)));
+  const matchedRemote = remoteCandidates.filter(b =>
+    (!q || b.name.toLowerCase().includes(q)) && !trackedIds.has(StateService_slugify(b.name))
   ).slice(0, 15);
 
   if (matchedLocal.length === 0 && matchedRemote.length === 0) {
@@ -481,8 +481,8 @@ async function addBranch(name) {
   const slug = StateService_slugify(name);
 
   // Optimistic: immediately add placeholder card
-  if (!localBranches.find(b => b.id === slug)) {
-    localBranches.push({
+  if (!branches.find(b => b.id === slug)) {
+    branches.push({
       id: slug, branch: name, worktreePath: '',
       services: {}, status: 'idle', createdAt: new Date().toISOString(),
       subject: '', _optimistic: true,
@@ -501,7 +501,7 @@ async function addBranch(name) {
     showToast(`分支 "${name}" 已添加`, 'success');
   } catch (e) {
     // Rollback optimistic add on failure
-    localBranches = localBranches.filter(b => b.id !== slug || !b._optimistic);
+    branches = branches.filter(b => b.id !== slug || !b._optimistic);
     renderBranches();
     showToast(e.message, 'error');
     return;
@@ -641,7 +641,7 @@ async function previewBranch(id) {
 
   // ── Mode: port (direct port access — no proxy, no cache issues) ──
   if (previewMode === 'port') {
-    const branch = localBranches.find(b => b.id === slug);
+    const branch = branches.find(b => b.id === slug);
     if (!branch || branch.status !== 'running') {
       showToast('分支未运行，无法通过端口预览', 'error');
       return;
@@ -710,7 +710,7 @@ async function resetBranch(id) {
 }
 
 async function toggleFavorite(id) {
-  const branch = localBranches.find(b => b.id === id);
+  const branch = branches.find(b => b.id === id);
   if (!branch) return;
   const newVal = !branch.isFavorite;
   try {
@@ -727,7 +727,7 @@ async function addTagToBranch(id, event) {
   const tag = prompt('输入标签名称:');
   if (!tag || !tag.trim()) return;
   const trimmed = tag.trim();
-  const branch = localBranches.find(b => b.id === id);
+  const branch = branches.find(b => b.id === id);
   if (!branch) return;
   const tags = [...(branch.tags || [])];
   if (tags.includes(trimmed)) { showToast('标签已存在', 'info'); return; }
@@ -749,7 +749,7 @@ async function addTagToBranch(id, event) {
 async function removeTagFromBranch(id, tag, event) {
   event.stopPropagation();
   if (!confirm(`确定删除标签「${tag}」？`)) return;
-  const branch = localBranches.find(b => b.id === id);
+  const branch = branches.find(b => b.id === id);
   if (!branch) return;
   const oldTags = [...(branch.tags || [])];
   const tags = oldTags.filter(t => t !== tag);
@@ -775,7 +775,7 @@ function filterByTag(tag) {
 
 function getAllTags() {
   const tagSet = new Set();
-  localBranches.forEach(b => (b.tags || []).forEach(t => tagSet.add(t)));
+  branches.forEach(b => (b.tags || []).forEach(t => tagSet.add(t)));
   return [...tagSet].sort();
 }
 
@@ -1110,22 +1110,22 @@ function renderBranches() {
   const scrollY = window.scrollY;
   const el = document.getElementById('branchList');
   const count = document.getElementById('branchCount');
-  count.textContent = `${localBranches.length} 个分支`;
+  count.textContent = `${branches.length} 个分支`;
 
   // Update default branch selector
   const sel = document.getElementById('defaultBranch');
   sel.innerHTML = '<option value="">无默认</option>' +
-    localBranches.map(b => `<option value="${esc(b.id)}" ${b.id === defaultBranch ? 'selected' : ''}>${esc(b.id)}</option>`).join('');
+    branches.map(b => `<option value="${esc(b.id)}" ${b.id === defaultBranch ? 'selected' : ''}>${esc(b.id)}</option>`).join('');
 
   // Update cleanup button (if visible in DOM)
   const cleanupBtn = document.getElementById('cleanupBtn');
   if (cleanupBtn) {
-    const nonDefault = localBranches.filter(b => b.id !== defaultBranch);
+    const nonDefault = branches.filter(b => b.id !== defaultBranch);
     cleanupBtn.disabled = nonDefault.length === 0 || globalBusy;
     cleanupBtn.title = nonDefault.length > 0 ? `清理 ${nonDefault.length} 个分支` : '没有可清理的分支';
   }
 
-  if (localBranches.length === 0) {
+  if (branches.length === 0) {
     el.innerHTML = '<div class="empty-state">暂无分支，请在上方搜索并添加。</div>';
     window.scrollTo(0, scrollY);
     return;
@@ -1136,10 +1136,10 @@ function renderBranches() {
 
   // Filter by active tag
   const filteredBranches = activeTagFilter
-    ? localBranches.filter(b => (b.tags || []).includes(activeTagFilter))
-    : localBranches;
+    ? branches.filter(b => (b.tags || []).includes(activeTagFilter))
+    : branches;
 
-  if (filteredBranches.length === 0 && localBranches.length > 0) {
+  if (filteredBranches.length === 0 && branches.length > 0) {
     el.innerHTML = `<div class="empty-state">没有匹配标签「${esc(activeTagFilter)}」的分支</div>`;
     window.scrollTo(0, scrollY);
     return;
@@ -2307,7 +2307,7 @@ async function viewContainerEnv(id, profileId) {
 }
 
 function openContainerEnvPicker(branchId) {
-  const branch = localBranches.find(b => b.id === branchId);
+  const branch = branches.find(b => b.id === branchId);
   if (!branch) return;
   const services = Object.entries(branch.services || {});
   if (services.length === 0) {
