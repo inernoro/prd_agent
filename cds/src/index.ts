@@ -1,5 +1,6 @@
 import http from 'node:http';
 import path from 'node:path';
+import { execSync } from 'node:child_process';
 import { loadConfig } from './config.js';
 import { createServer } from './server.js';
 import { ShellExecutor } from './services/shell-executor.js';
@@ -493,7 +494,35 @@ const app = createServer({
   config,
 });
 
-app.listen(config.masterPort, () => {
+// ── Helper: kill process on port and retry listen ──
+function listenWithRetry(
+  server: http.Server | ReturnType<typeof createServer>,
+  port: number,
+  label: string,
+  onSuccess: () => void,
+) {
+  const doListen = (attempt: number) => {
+    const s = server.listen(port, onSuccess);
+    s.on('error', (err: Error & { code?: string }) => {
+      if (err.code === 'EADDRINUSE' && attempt < 2) {
+        console.log(`  [WARN] Port ${port} in use, killing holder and retrying (${label})...`);
+        try {
+          const pids = execSync(`lsof -ti :${port} 2>/dev/null || true`, { encoding: 'utf-8' }).trim();
+          if (pids) {
+            execSync(`kill ${pids.split('\n').join(' ')} 2>/dev/null || true`);
+          }
+        } catch { /* best effort */ }
+        setTimeout(() => doListen(attempt + 1), 1500);
+      } else {
+        console.error(`  [ERROR] Cannot bind ${label} to port ${port}: ${err.message}`);
+        process.exit(1);
+      }
+    });
+  };
+  doListen(0);
+}
+
+listenWithRetry(app, config.masterPort, 'Dashboard', () => {
   console.log(`\n  Cloud Development Suite`);
   console.log(`  ──────────────────────`);
   console.log(`  Dashboard:  http://localhost:${config.masterPort}`);
@@ -514,7 +543,7 @@ workerServer.on('upgrade', (req, socket, head) => {
   proxyService.handleUpgrade(req, socket, head);
 });
 
-workerServer.listen(config.workerPort, () => {
+listenWithRetry(workerServer, config.workerPort, 'Worker', () => {
   console.log(`  Worker proxy listening on :${config.workerPort}`);
   console.log(`  Route via X-Branch header or configure routing rules in dashboard.`);
   console.log('');

@@ -98,29 +98,69 @@ elif [ -d ".bt" ] && [ -d ".cds" ]; then
 fi
 mkdir -p .cds
 
+# ── Helper: kill process occupying a port ──
+kill_port_holder() {
+  local port="$1"
+  local pids
+  pids=$(lsof -ti :"$port" 2>/dev/null || true)
+  if [ -n "$pids" ]; then
+    echo "  Killing process(es) on port $port: $pids"
+    echo "$pids" | xargs kill 2>/dev/null || true
+    # Wait up to 3 seconds for process to exit
+    for i in 1 2 3; do
+      if ! lsof -ti :"$port" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 1
+    done
+    # Force kill if still alive
+    pids=$(lsof -ti :"$port" 2>/dev/null || true)
+    if [ -n "$pids" ]; then
+      echo "  Force killing port $port holders: $pids"
+      echo "$pids" | xargs kill -9 2>/dev/null || true
+      sleep 1
+    fi
+  fi
+}
+
+# Read masterPort and workerPort from config
+MASTER_PORT=9900
+WORKER_PORT=5500
+if [ -f "$CONFIG_FILE" ]; then
+  _mp=$(grep -o '"masterPort"\s*:\s*[0-9]*' "$CONFIG_FILE" 2>/dev/null | grep -o '[0-9]*' || true)
+  _wp=$(grep -o '"workerPort"\s*:\s*[0-9]*' "$CONFIG_FILE" 2>/dev/null | grep -o '[0-9]*' || true)
+  [ -n "$_mp" ] && MASTER_PORT="$_mp"
+  [ -n "$_wp" ] && WORKER_PORT="$_wp"
+fi
+
 echo "[3/3] Starting CDS..."
 
+# ── Stop any existing instance (both foreground and background) ──
+if [ -f "$PID_FILE" ]; then
+  OLD_PID=$(cat "$PID_FILE")
+  if kill -0 "$OLD_PID" 2>/dev/null; then
+    echo "  Stopping old instance (PID: $OLD_PID)..."
+    kill "$OLD_PID" 2>/dev/null || true
+    sleep 1
+  fi
+fi
+# Also check legacy PID file
+LEGACY_PID_FILE=".bt/bt.pid"
+if [ -f "$LEGACY_PID_FILE" ]; then
+  OLD_PID=$(cat "$LEGACY_PID_FILE")
+  if kill -0 "$OLD_PID" 2>/dev/null; then
+    echo "  Stopping legacy instance (PID: $OLD_PID)..."
+    kill "$OLD_PID" 2>/dev/null || true
+    sleep 1
+  fi
+  rm -f "$LEGACY_PID_FILE"
+fi
+
+# Kill any remaining processes on the ports (handles orphaned processes)
+kill_port_holder "$MASTER_PORT"
+kill_port_holder "$WORKER_PORT"
+
 if [ "$BACKGROUND" = true ]; then
-  # Stop any existing instance
-  if [ -f "$PID_FILE" ]; then
-    OLD_PID=$(cat "$PID_FILE")
-    if kill -0 "$OLD_PID" 2>/dev/null; then
-      echo "  Stopping old instance (PID: $OLD_PID)..."
-      kill "$OLD_PID" 2>/dev/null || true
-      sleep 1
-    fi
-  fi
-  # Also check legacy PID file
-  LEGACY_PID_FILE=".bt/bt.pid"
-  if [ -f "$LEGACY_PID_FILE" ]; then
-    OLD_PID=$(cat "$LEGACY_PID_FILE")
-    if kill -0 "$OLD_PID" 2>/dev/null; then
-      echo "  Stopping legacy instance (PID: $OLD_PID)..."
-      kill "$OLD_PID" 2>/dev/null || true
-      sleep 1
-    fi
-    rm -f "$LEGACY_PID_FILE"
-  fi
 
   # Start in background
   nohup pnpm dev -- "$CONFIG_FILE" > "$LOG_FILE" 2>&1 &
