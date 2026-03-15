@@ -68,6 +68,7 @@ docs:
   design.network-diagnostics: 网络诊断功能
   design.cds: CDS (Cloud Development Suite) 设计文档
   design.cds-onboarding: CDS 极简上手设计：一键配置 + 项目扫描技能
+  design.ai-report-systems: AI 周报系统市场调研报告
   design.exec-bt-deployment: CDS 部署架构与冲突分析
 
   # ── 三、指南 ──

@@ -149,6 +149,9 @@
 - [CDS 极简上手设计](design.cds-onboarding) `design.cds-onboarding`
   > CDS 一键配置与项目扫描技能的上手设计
 
+- [AI 周报系统市场调研报告](design.ai-report-systems) `design.ai-report-systems`
+  > AI 周报领域 20+ 竞品分析与战略方向研究
+
 - [CDS 部署架构与冲突分析](design.exec-bt-deployment) `design.exec-bt-deployment`
   > 部署脚本的架构设计与冲突处理策略
 
