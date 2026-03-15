@@ -98,28 +98,57 @@ elif [ -d ".bt" ] && [ -d ".cds" ]; then
 fi
 mkdir -p .cds
 
-# ── Helper: kill process occupying a port ──
-kill_port_holder() {
+# ── Helper: stop CDS process occupying a port (safe — only kills node/tsx) ──
+kill_cds_on_port() {
   local port="$1"
   local pids
   pids=$(lsof -ti :"$port" 2>/dev/null || true)
-  if [ -n "$pids" ]; then
-    echo "  Killing process(es) on port $port: $pids"
-    echo "$pids" | xargs kill 2>/dev/null || true
+  [ -z "$pids" ] && return 0
+
+  local killed=false
+  for pid in $pids; do
+    # Read the command name of the process
+    local cmd
+    cmd=$(ps -p "$pid" -o comm= 2>/dev/null || true)
+    case "$cmd" in
+      node|tsx|ts-node|npx)
+        echo "  Stopping CDS process on port $port (PID: $pid, cmd: $cmd)"
+        kill "$pid" 2>/dev/null || true
+        killed=true
+        ;;
+      *)
+        echo "  [WARN] Port $port held by non-CDS process (PID: $pid, cmd: $cmd) — skipped"
+        ;;
+    esac
+  done
+
+  if [ "$killed" = true ]; then
     # Wait up to 3 seconds for process to exit
     for i in 1 2 3; do
       if ! lsof -ti :"$port" >/dev/null 2>&1; then
-        break
+        return 0
       fi
       sleep 1
     done
-    # Force kill if still alive
+    # Force kill only node/tsx processes still alive
     pids=$(lsof -ti :"$port" 2>/dev/null || true)
-    if [ -n "$pids" ]; then
-      echo "  Force killing port $port holders: $pids"
-      echo "$pids" | xargs kill -9 2>/dev/null || true
-      sleep 1
-    fi
+    for pid in $pids; do
+      local cmd
+      cmd=$(ps -p "$pid" -o comm= 2>/dev/null || true)
+      case "$cmd" in
+        node|tsx|ts-node|npx)
+          echo "  Force killing CDS process (PID: $pid)"
+          kill -9 "$pid" 2>/dev/null || true
+          ;;
+      esac
+    done
+    sleep 1
+  fi
+
+  # Final check: if port still occupied (by non-CDS process), warn and abort
+  if lsof -ti :"$port" >/dev/null 2>&1; then
+    echo "  [ERROR] Port $port is still in use by another program. Please free it manually."
+    exit 1
   fi
 }
 
@@ -156,9 +185,9 @@ if [ -f "$LEGACY_PID_FILE" ]; then
   rm -f "$LEGACY_PID_FILE"
 fi
 
-# Kill any remaining processes on the ports (handles orphaned processes)
-kill_port_holder "$MASTER_PORT"
-kill_port_holder "$WORKER_PORT"
+# Stop any orphaned CDS processes on the ports (only kills node/tsx, not other programs)
+kill_cds_on_port "$MASTER_PORT"
+kill_cds_on_port "$WORKER_PORT"
 
 if [ "$BACKGROUND" = true ]; then
 

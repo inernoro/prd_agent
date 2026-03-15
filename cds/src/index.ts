@@ -494,7 +494,28 @@ const app = createServer({
   config,
 });
 
-// ── Helper: kill process on port and retry listen ──
+// ── Helper: kill only CDS (node) process on port, then retry listen ──
+function tryKillCdsOnPort(port: number): boolean {
+  try {
+    const pids = execSync(`lsof -ti :${port} 2>/dev/null || true`, { encoding: 'utf-8' }).trim();
+    if (!pids) return false;
+    let killed = false;
+    for (const pid of pids.split('\n').filter(Boolean)) {
+      const cmd = execSync(`ps -p ${pid} -o comm= 2>/dev/null || true`, { encoding: 'utf-8' }).trim();
+      if (['node', 'tsx', 'ts-node', 'npx'].includes(cmd)) {
+        console.log(`  Stopping old CDS process (PID: ${pid}, cmd: ${cmd})`);
+        execSync(`kill ${pid} 2>/dev/null || true`);
+        killed = true;
+      } else {
+        console.log(`  [WARN] Port ${port} held by non-CDS process (PID: ${pid}, cmd: ${cmd}) — not killing`);
+      }
+    }
+    return killed;
+  } catch {
+    return false;
+  }
+}
+
 function listenWithRetry(
   server: http.Server | ReturnType<typeof createServer>,
   port: number,
@@ -505,14 +526,14 @@ function listenWithRetry(
     const s = server.listen(port, onSuccess);
     s.on('error', (err: Error & { code?: string }) => {
       if (err.code === 'EADDRINUSE' && attempt < 2) {
-        console.log(`  [WARN] Port ${port} in use, killing holder and retrying (${label})...`);
-        try {
-          const pids = execSync(`lsof -ti :${port} 2>/dev/null || true`, { encoding: 'utf-8' }).trim();
-          if (pids) {
-            execSync(`kill ${pids.split('\n').join(' ')} 2>/dev/null || true`);
-          }
-        } catch { /* best effort */ }
-        setTimeout(() => doListen(attempt + 1), 1500);
+        console.log(`  [WARN] Port ${port} in use, attempting to reclaim (${label})...`);
+        const killed = tryKillCdsOnPort(port);
+        if (killed) {
+          setTimeout(() => doListen(attempt + 1), 1500);
+        } else {
+          console.error(`  [ERROR] Port ${port} is occupied by a non-CDS process. Please free it manually.`);
+          process.exit(1);
+        }
       } else {
         console.error(`  [ERROR] Cannot bind ${label} to port ${port}: ${err.message}`);
         process.exit(1);
