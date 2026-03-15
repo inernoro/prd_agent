@@ -166,7 +166,7 @@ function renderServiceStatusBar() {
 
   // Collect all services across all branches
   const allServices = [];
-  for (const b of branches) {
+  for (const b of localBranches) {
     for (const [pid, svc] of Object.entries(b.services || {})) {
       allServices.push({ branchId: b.id, branchName: b.branch, profileId: pid, ...svc });
     }
