@@ -13,9 +13,20 @@ export interface ReportTeam {
   dataCollectionWorkflowId?: string;
   /** v2.0 使用的预置工作流模板 key */
   workflowTemplateKey?: string;
+  /** 周报可见性: all_members / leaders_only */
+  reportVisibility?: string;
+  /** 每周自动提交时间 (如 "friday-18:00")，null 不自动提交 */
+  autoSubmitSchedule?: string;
+  /** 团队自定义每日打点标签 */
+  customDailyLogTags?: string[];
   createdAt: string;
   updatedAt: string;
 }
+
+export const ReportVisibilityMode = {
+  AllMembers: 'all_members',
+  LeadersOnly: 'leaders_only',
+} as const;
 
 export interface ReportTeamMember {
   id: string;
@@ -154,6 +165,8 @@ export interface DailyLog {
 export interface DailyLogItem {
   content: string;
   category: string;
+  /** 自定义标签列表 */
+  tags?: string[];
   durationMinutes?: number;
   createdAt?: string;
 }
@@ -298,6 +311,9 @@ export type CreateReportTeamContract = (input: {
   leaderUserId: string;
   parentTeamId?: string;
   description?: string;
+  reportVisibility?: string;
+  autoSubmitSchedule?: string;
+  customDailyLogTags?: string[];
 }) => Promise<ApiResponse<{ team: ReportTeam }>>;
 
 export type UpdateReportTeamContract = (input: {
@@ -305,6 +321,9 @@ export type UpdateReportTeamContract = (input: {
   name?: string;
   leaderUserId?: string;
   description?: string;
+  reportVisibility?: string;
+  autoSubmitSchedule?: string;
+  customDailyLogTags?: string[];
 }) => Promise<ApiResponse<{ team: ReportTeam }>>;
 
 export type DeleteReportTeamContract = (input: { id: string }) => Promise<ApiResponse<object>>;
@@ -409,7 +428,7 @@ export type GetTeamDashboardContract = (input: {
 // --- Daily Logs ---
 export type SaveDailyLogContract = (input: {
   date: string;
-  items: { content: string; category: string; durationMinutes?: number; createdAt?: string }[];
+  items: { content: string; category: string; tags?: string[]; durationMinutes?: number; createdAt?: string }[];
 }) => Promise<ApiResponse<DailyLog>>;
 
 export type ListDailyLogsContract = (input?: {

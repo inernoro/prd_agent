@@ -32,9 +32,39 @@ public class ReportTeam
     /// <summary>使用的预置工作流模板 key（如 "dev-team", "product-team", "minimal"）</summary>
     public string? WorkflowTemplateKey { get; set; }
 
+    /// <summary>
+    /// 周报可见性设置：
+    /// - all_members: 团队成员可互相查看周报（默认）
+    /// - leaders_only: 仅负责人和副负责人可查看成员周报
+    /// </summary>
+    public string ReportVisibility { get; set; } = ReportVisibilityMode.AllMembers;
+
+    /// <summary>
+    /// 每周自动提交时间（如 "friday-18:00"），null 表示不自动提交。
+    /// 格式: "{dayOfWeek}-{HH:mm}" (UTC+8)
+    /// </summary>
+    public string? AutoSubmitSchedule { get; set; }
+
+    /// <summary>团队自定义每日打点标签（如 ["需求评审", "代码复查"]）</summary>
+    public List<string> CustomDailyLogTags { get; set; } = new();
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// 周报可见性模式常量
+/// </summary>
+public static class ReportVisibilityMode
+{
+    /// <summary>团队成员可互相查看周报</summary>
+    public const string AllMembers = "all_members";
+
+    /// <summary>仅负责人和副负责人可查看成员周报</summary>
+    public const string LeadersOnly = "leaders_only";
+
+    public static readonly string[] All = { AllMembers, LeadersOnly };
 }
 
 /// <summary>

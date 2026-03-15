@@ -174,7 +174,11 @@ public class ReportAgentController : ControllerBase
             LeaderUserId = req.LeaderUserId,
             LeaderName = leaderUser.DisplayName ?? leaderUser.Username,
             ParentTeamId = req.ParentTeamId,
-            Description = req.Description
+            Description = req.Description,
+            ReportVisibility = ReportVisibilityMode.All.Contains(req.ReportVisibility ?? "")
+                ? req.ReportVisibility! : ReportVisibilityMode.AllMembers,
+            AutoSubmitSchedule = req.AutoSubmitSchedule,
+            CustomDailyLogTags = req.CustomDailyLogTags ?? new List<string>()
         };
         await _db.ReportTeams.InsertOneAsync(team);
 
@@ -220,6 +224,12 @@ public class ReportAgentController : ControllerBase
             update = update.Set(t => t.LeaderUserId, req.LeaderUserId)
                            .Set(t => t.LeaderName, leaderUser.DisplayName ?? leaderUser.Username);
         }
+        if (req.ReportVisibility != null && ReportVisibilityMode.All.Contains(req.ReportVisibility))
+            update = update.Set(t => t.ReportVisibility, req.ReportVisibility);
+        if (req.AutoSubmitSchedule != null)
+            update = update.Set(t => t.AutoSubmitSchedule, req.AutoSubmitSchedule == "" ? null : req.AutoSubmitSchedule);
+        if (req.CustomDailyLogTags != null)
+            update = update.Set(t => t.CustomDailyLogTags, req.CustomDailyLogTags);
 
         await _db.ReportTeams.UpdateOneAsync(t => t.Id == id, update);
 
@@ -660,9 +670,22 @@ public class ReportAgentController : ControllerBase
     [HttpGet("reports/{id}")]
     public async Task<IActionResult> GetReport(string id)
     {
+        var userId = GetUserId();
         var report = await _db.WeeklyReports.Find(r => r.Id == id).FirstOrDefaultAsync();
         if (report == null)
             return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "周报不存在"));
+
+        // 可见性检查：如果不是自己的周报，检查团队可见性设置
+        if (report.UserId != userId)
+        {
+            var team = await _db.ReportTeams.Find(t => t.Id == report.TeamId).FirstOrDefaultAsync();
+            if (team?.ReportVisibility == ReportVisibilityMode.LeadersOnly)
+            {
+                var isLeader = await IsTeamLeaderOrDeputy(report.TeamId, userId);
+                if (!isLeader && !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
+                    return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "团队设置仅负责人可查看成员周报"));
+            }
+        }
 
         return Ok(ApiResponse<object>.Ok(new { report }));
     }
@@ -1043,6 +1066,12 @@ public class ReportAgentController : ControllerBase
         public string LeaderUserId { get; set; } = string.Empty;
         public string? ParentTeamId { get; set; }
         public string? Description { get; set; }
+        /// <summary>周报可见性: all_members / leaders_only</summary>
+        public string? ReportVisibility { get; set; }
+        /// <summary>自动提交时间 (如 "friday-18:00")</summary>
+        public string? AutoSubmitSchedule { get; set; }
+        /// <summary>团队自定义每日打点标签</summary>
+        public List<string>? CustomDailyLogTags { get; set; }
     }
 
     public class UpdateTeamRequest
@@ -1050,6 +1079,12 @@ public class ReportAgentController : ControllerBase
         public string? Name { get; set; }
         public string? LeaderUserId { get; set; }
         public string? Description { get; set; }
+        /// <summary>周报可见性: all_members / leaders_only</summary>
+        public string? ReportVisibility { get; set; }
+        /// <summary>自动提交时间 (如 "friday-18:00")</summary>
+        public string? AutoSubmitSchedule { get; set; }
+        /// <summary>团队自定义每日打点标签</summary>
+        public List<string>? CustomDailyLogTags { get; set; }
     }
 
     public class AddTeamMemberRequest
@@ -1142,6 +1177,8 @@ public class ReportAgentController : ControllerBase
     {
         public string? Content { get; set; }
         public string? Category { get; set; }
+        /// <summary>自定义标签列表</summary>
+        public List<string>? Tags { get; set; }
         public int? DurationMinutes { get; set; }
         public DateTime? CreatedAt { get; set; }
     }
@@ -1196,6 +1233,7 @@ public class ReportAgentController : ControllerBase
         {
             Content = i.Content ?? string.Empty,
             Category = DailyLogCategory.All.Contains(i.Category ?? "") ? i.Category! : DailyLogCategory.Other,
+            Tags = i.Tags ?? new List<string>(),
             DurationMinutes = i.DurationMinutes,
             CreatedAt = i.CreatedAt ?? now
         }).Where(i => !string.IsNullOrWhiteSpace(i.Content)).ToList();

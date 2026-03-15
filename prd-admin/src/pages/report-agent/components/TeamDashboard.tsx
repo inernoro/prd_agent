@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
-import { ChevronLeft, ChevronRight, Calendar, CheckCircle2, Clock, AlertCircle, Eye, Sparkles, Loader2, Palmtree, Download, Users, FileCheck, FileClock } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Calendar, CheckCircle2, Clock, AlertCircle, Sparkles, Loader2, Palmtree, Download, Users, FileCheck, FileClock, ChevronDown, ChevronUp, Settings2, ExternalLink } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
@@ -8,7 +9,6 @@ import { useAuthStore } from '@/stores/authStore';
 import { reviewWeeklyReport, returnWeeklyReport, generateTeamSummary, getTeamSummary, markVacation, cancelVacation, exportTeamSummaryMarkdown } from '@/services';
 import { WeeklyReportStatus } from '@/services/contracts/reportAgent';
 import type { TeamSummary } from '@/services/contracts/reportAgent';
-import { ReportDetailPanel } from './ReportDetailPanel';
 import { TeamWorkflowPanel } from './TeamWorkflowPanel';
 
 function getISOWeek(date: Date): { weekYear: number; weekNumber: number } {
@@ -41,8 +41,9 @@ const summaryColors = [
 ];
 
 export function TeamDashboard() {
-  const { teams, dashboard, loadDashboard } = useReportAgentStore();
+  const { teams, dashboard, loadDashboard, setActiveTab } = useReportAgentStore();
   const userId = useAuthStore((s) => s.user?.userId);
+  const navigate = useNavigate();
 
   const leaderTeams = useMemo(() => teams.filter((t) => t.leaderUserId === userId), [teams, userId]);
   const [selectedTeamId, setSelectedTeamId] = useState(leaderTeams[0]?.id || '');
@@ -50,7 +51,6 @@ export function TeamDashboard() {
   const now = useMemo(() => getISOWeek(new Date()), []);
   const [weekYear, setWeekYear] = useState(now.weekYear);
   const [weekNumber, setWeekNumber] = useState(now.weekNumber);
-  const [viewingReportId, setViewingReportId] = useState<string | null>(null);
 
   const [returnDialogId, setReturnDialogId] = useState<string | null>(null);
   const [returnReason, setReturnReason] = useState('');
@@ -58,6 +58,9 @@ export function TeamDashboard() {
   const [summary, setSummary] = useState<TeamSummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [generatingSummary, setGeneratingSummary] = useState(false);
+
+  // Collapsible member list
+  const [membersExpanded, setMembersExpanded] = useState(true);
 
   useEffect(() => {
     if (selectedTeamId) {
@@ -185,17 +188,13 @@ export function TeamDashboard() {
     );
   }
 
+  // Open report in new page
+  const openReportDetail = (reportId: string) => {
+    navigate(`/report-agent/report/${reportId}`);
+  };
+
   return (
     <div className="flex flex-col gap-5">
-      {viewingReportId && (
-        <ReportDetailPanel
-          reportId={viewingReportId}
-          onClose={() => setViewingReportId(null)}
-          onReview={() => handleReview(viewingReportId)}
-          onReturn={() => { setReturnDialogId(viewingReportId); setViewingReportId(null); }}
-        />
-      )}
-
       {/* Return Dialog */}
       {returnDialogId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)' }}>
@@ -242,7 +241,7 @@ export function TeamDashboard() {
         </div>
       )}
 
-      {/* Controls bar — card-wrapped */}
+      {/* Controls bar — card-wrapped with team management quick entry */}
       <GlassCard variant="subtle" className="px-5 py-3">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-3">
@@ -258,6 +257,15 @@ export function TeamDashboard() {
                 ))}
               </select>
             )}
+            {/* Quick entry to team management */}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setActiveTab('settings')}
+              title="团队管理"
+            >
+              <Settings2 size={14} /> 管理团队
+            </Button>
           </div>
           <div className="flex items-center gap-2.5">
             <Calendar size={16} style={{ color: 'var(--text-muted)' }} />
@@ -306,97 +314,7 @@ export function TeamDashboard() {
         </GlassCard>
       )}
 
-      {/* Member list */}
-      {dashboard && (
-        <GlassCard variant="subtle" className="p-0 overflow-hidden">
-          <div className="px-5 py-3" style={{ borderBottom: '1px solid var(--border-primary)' }}>
-            <span className="text-[13px] font-medium" style={{ color: 'var(--text-secondary)' }}>
-              团队成员
-            </span>
-            <span className="text-[11px] ml-2" style={{ color: 'var(--text-muted)' }}>
-              {dashboard.members.length} 人
-            </span>
-          </div>
-          {dashboard.members.map((member, idx) => {
-            const cfg = statusConfig[member.reportStatus] || statusConfig[WeeklyReportStatus.NotStarted];
-            const StatusIcon = cfg.icon;
-            return (
-              <div
-                key={member.userId}
-                className="flex items-center justify-between px-5 py-3.5 transition-colors duration-150 hover:bg-[var(--bg-tertiary)]"
-                style={{
-                  borderTop: idx > 0 ? '1px solid var(--border-primary)' : undefined,
-                }}
-              >
-                <div className="flex items-center gap-3">
-                  {/* Avatar with status ring */}
-                  <div
-                    className="w-10 h-10 rounded-full flex items-center justify-center text-[14px] font-medium"
-                    style={{
-                      background: 'var(--bg-tertiary)',
-                      color: 'var(--text-secondary)',
-                      border: `2px solid ${cfg.color}`,
-                    }}
-                  >
-                    {(member.userName || '?')[0]}
-                  </div>
-                  <div>
-                    <div className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
-                      {member.userName || member.userId}
-                    </div>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      {member.jobTitle && (
-                        <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{member.jobTitle}</span>
-                      )}
-                      <span
-                        className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-medium"
-                        style={{ color: cfg.color, background: cfg.bg }}
-                      >
-                        <StatusIcon size={10} />
-                        {cfg.label}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Actions */}
-                <div className="flex items-center gap-1.5">
-                  {member.reportId && member.reportStatus === WeeklyReportStatus.Submitted && (
-                    <>
-                      <Button variant="ghost" size="sm" onClick={() => setViewingReportId(member.reportId!)}>
-                        <Eye size={13} />
-                      </Button>
-                      <Button variant="primary" size="sm" onClick={() => handleReview(member.reportId!)}>
-                        审阅
-                      </Button>
-                      <Button variant="secondary" size="sm" onClick={() => setReturnDialogId(member.reportId!)}>
-                        退回
-                      </Button>
-                    </>
-                  )}
-                  {member.reportId && member.reportStatus === 'vacation' && (
-                    <Button variant="ghost" size="sm" onClick={() => handleCancelVacation(member.userId)}>
-                      取消请假
-                    </Button>
-                  )}
-                  {member.reportId && member.reportStatus !== WeeklyReportStatus.Submitted && member.reportStatus !== WeeklyReportStatus.NotStarted && member.reportStatus !== 'vacation' && (
-                    <Button variant="ghost" size="sm" onClick={() => setViewingReportId(member.reportId!)}>
-                      <Eye size={13} /> 查看
-                    </Button>
-                  )}
-                  {(!member.reportId || member.reportStatus === WeeklyReportStatus.NotStarted || member.reportStatus === WeeklyReportStatus.Draft) && member.reportStatus !== 'vacation' && (
-                    <Button variant="ghost" size="sm" onClick={() => setVacationDialogUserId(member.userId)} title="标记请假">
-                      <Palmtree size={13} />
-                    </Button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </GlassCard>
-      )}
-
-      {/* Team Summary — with colored section indicators */}
+      {/* Team Summary — moved here, below submission progress */}
       <GlassCard variant="subtle" className="p-0 overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid var(--border-primary)' }}>
           <div className="flex items-center gap-2.5">
@@ -476,6 +394,103 @@ export function TeamDashboard() {
           )}
         </div>
       </GlassCard>
+
+      {/* Member list — collapsible */}
+      {dashboard && (
+        <GlassCard variant="subtle" className="p-0 overflow-hidden">
+          <div
+            className="px-5 py-3 flex items-center justify-between cursor-pointer select-none hover:bg-[var(--bg-tertiary)] transition-colors"
+            style={{ borderBottom: membersExpanded ? '1px solid var(--border-primary)' : undefined }}
+            onClick={() => setMembersExpanded(!membersExpanded)}
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-[13px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+                团队成员
+              </span>
+              <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                {dashboard.members.length} 人
+              </span>
+            </div>
+            {membersExpanded ? <ChevronUp size={14} style={{ color: 'var(--text-muted)' }} /> : <ChevronDown size={14} style={{ color: 'var(--text-muted)' }} />}
+          </div>
+          {membersExpanded && dashboard.members.map((member, idx) => {
+            const cfg = statusConfig[member.reportStatus] || statusConfig[WeeklyReportStatus.NotStarted];
+            const StatusIcon = cfg.icon;
+            return (
+              <div
+                key={member.userId}
+                className="flex items-center justify-between px-5 py-3.5 transition-colors duration-150 hover:bg-[var(--bg-tertiary)]"
+                style={{
+                  borderTop: idx > 0 ? '1px solid var(--border-primary)' : undefined,
+                }}
+              >
+                <div className="flex items-center gap-3">
+                  {/* Avatar with status ring */}
+                  <div
+                    className="w-10 h-10 rounded-full flex items-center justify-center text-[14px] font-medium"
+                    style={{
+                      background: 'var(--bg-tertiary)',
+                      color: 'var(--text-secondary)',
+                      border: `2px solid ${cfg.color}`,
+                    }}
+                  >
+                    {(member.userName || '?')[0]}
+                  </div>
+                  <div>
+                    <div className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
+                      {member.userName || member.userId}
+                    </div>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      {member.jobTitle && (
+                        <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{member.jobTitle}</span>
+                      )}
+                      <span
+                        className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-medium"
+                        style={{ color: cfg.color, background: cfg.bg }}
+                      >
+                        <StatusIcon size={10} />
+                        {cfg.label}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Actions */}
+                <div className="flex items-center gap-1.5">
+                  {member.reportId && member.reportStatus === WeeklyReportStatus.Submitted && (
+                    <>
+                      <Button variant="ghost" size="sm" onClick={() => openReportDetail(member.reportId!)}>
+                        <ExternalLink size={13} /> 查看
+                      </Button>
+                      <Button variant="primary" size="sm" onClick={() => handleReview(member.reportId!)}>
+                        审阅
+                      </Button>
+                      <Button variant="secondary" size="sm" onClick={() => setReturnDialogId(member.reportId!)}>
+                        退回
+                      </Button>
+                    </>
+                  )}
+                  {member.reportId && member.reportStatus === 'vacation' && (
+                    <Button variant="ghost" size="sm" onClick={() => handleCancelVacation(member.userId)}>
+                      取消请假
+                    </Button>
+                  )}
+                  {member.reportId && member.reportStatus !== WeeklyReportStatus.Submitted && member.reportStatus !== WeeklyReportStatus.NotStarted && member.reportStatus !== 'vacation' && (
+                    <Button variant="ghost" size="sm" onClick={() => openReportDetail(member.reportId!)}>
+                      <ExternalLink size={13} /> 查看
+                    </Button>
+                  )}
+                  {(!member.reportId || member.reportStatus === WeeklyReportStatus.NotStarted || member.reportStatus === WeeklyReportStatus.Draft) && member.reportStatus !== 'vacation' && (
+                    <Button variant="ghost" size="sm" onClick={() => setVacationDialogUserId(member.userId)} title="标记请假">
+                      <Palmtree size={13} />
+                    </Button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </GlassCard>
+      )}
     </div>
   );
 }
