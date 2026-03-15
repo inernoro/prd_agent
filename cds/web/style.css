@@ -107,9 +107,9 @@ body::after {
 }
 
 .container {
-  max-width: 920px;
+  max-width: 1280px;
   margin: 0 auto;
-  padding: 20px 16px;
+  padding: 20px 24px;
   padding-bottom: calc(20px + var(--safe-bottom));
   position: relative;
 }
@@ -657,7 +657,7 @@ button.text-btn:hover { color: var(--accent); }
 @media (min-width: 768px) {
   .branch-list {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
     align-items: start;
     gap: 16px;
   }
