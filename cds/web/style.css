@@ -698,9 +698,9 @@ button.text-btn:hover { color: var(--accent); }
   display: flex; gap: 10px; align-items: center;
   user-select: none; -webkit-user-select: none;
 }
-.branch-card-left { display: flex; gap: 8px; flex: 1; min-width: 0; align-items: center; }
+.branch-card-left { display: flex; gap: 8px; flex: 1; min-width: 120px; align-items: center; overflow: hidden; }
 .branch-card-right {
-  display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+  display: flex; align-items: center; gap: 6px; flex-shrink: 1; flex-wrap: wrap; justify-content: flex-end;
 }
 .branch-log-btn {
   color: var(--text-muted); transition: color var(--transition);
