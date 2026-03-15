@@ -80,7 +80,7 @@ function showToast(msg, type = 'info', duration) {
 }
 
 function statusLabel(s) {
-  const map = { running: '运行中', building: '构建中', idle: '空闲', stopped: '已停止', error: '错误' };
+  const map = { running: '运行中', starting: '启动中', building: '构建中', idle: '空闲', stopped: '已停止', error: '错误' };
   return map[s] || s;
 }
 
@@ -148,16 +148,94 @@ async function init() {
 async function loadConfig() {
   try {
     const data = await api('GET', '/config');
-    const dot = document.getElementById('workerDot');
-    const label = document.getElementById('workerLabel');
-    if (dot) dot.title = `Worker 端口: ${data.workerPort || '?'}`;
-    if (label) { label.textContent = '已连接'; label.title = `Worker :${data.workerPort || '?'}`; }
     githubRepoUrl = data.githubRepoUrl || '';
     mainDomain = data.mainDomain || '';
     switchDomain = data.switchDomain || '';
     previewDomain = data.previewDomain || '';
     workerPort = data.workerPort || '';
+    renderServiceStatusBar();
   } catch (e) { console.error('loadConfig:', e); }
+}
+
+// ── Service Status Bar ──
+
+function renderServiceStatusBar() {
+  const dot = document.getElementById('workerDot');
+  const label = document.getElementById('workerLabel');
+  if (!dot || !label) return;
+
+  // Collect all services across all branches
+  const allServices = [];
+  for (const b of branches) {
+    for (const [pid, svc] of Object.entries(b.services || {})) {
+      allServices.push({ branchId: b.id, branchName: b.branch, profileId: pid, ...svc });
+    }
+  }
+
+  const running = allServices.filter(s => s.status === 'running').length;
+  const starting = allServices.filter(s => s.status === 'starting').length;
+  const building = allServices.filter(s => s.status === 'building').length;
+  const errors = allServices.filter(s => s.status === 'error').length;
+
+  // Update dot status
+  dot.className = 'gateway-dot';
+  if (running > 0) dot.classList.add('active');
+  else if (starting > 0 || building > 0) dot.classList.add('starting');
+
+  // Build summary text
+  const parts = [];
+  if (running > 0) parts.push(`<span class="status-summary-badge running">${running} 运行中</span>`);
+  if (starting > 0) parts.push(`<span class="status-summary-badge starting">${starting} 启动中</span>`);
+  if (building > 0) parts.push(`<span class="status-summary-badge starting">${building} 构建中</span>`);
+  if (errors > 0) parts.push(`<span class="status-summary-badge error">${errors} 错误</span>`);
+
+  if (parts.length === 0) {
+    label.innerHTML = '无服务运行';
+    label.title = `Worker :${workerPort || '?'}`;
+  } else {
+    label.innerHTML = parts.join(' ');
+    label.title = `Worker :${workerPort || '?'} · ${allServices.length} 个服务`;
+  }
+
+  // Render expanded panel
+  const panel = document.getElementById('serviceStatusPanel');
+  if (!panel) return;
+
+  const activeServices = allServices.filter(s => s.status !== 'idle' && s.status !== 'stopped');
+  if (activeServices.length === 0) {
+    panel.innerHTML = '<span style="font-size:12px;color:var(--text-muted)">暂无活跃服务</span>';
+    return;
+  }
+
+  panel.innerHTML = activeServices.map(s => `
+    <div class="svc-status-item" onclick="scrollToBranch('${esc(s.branchId)}')" title="${esc(s.branchName)} / ${esc(s.profileId)}">
+      <span class="svc-status-dot ${s.status}"></span>
+      <span>${esc(s.profileId)}</span>
+      <span class="svc-status-port">:${s.hostPort}</span>
+    </div>
+  `).join('');
+}
+
+function toggleServiceStatusExpand() {
+  const panel = document.getElementById('serviceStatusPanel');
+  const bar = document.getElementById('serviceStatusBar');
+  if (!panel) return;
+  panel.classList.toggle('hidden');
+  bar.classList.toggle('service-status-bar-expanded');
+}
+
+function scrollToBranch(branchId) {
+  const card = document.querySelector(`[data-branch-id="${branchId}"]`);
+  if (card) {
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    card.style.boxShadow = '0 0 0 2px var(--accent)';
+    setTimeout(() => { card.style.boxShadow = ''; }, 2000);
+  }
+  // Collapse panel after navigation
+  const panel = document.getElementById('serviceStatusPanel');
+  const bar = document.getElementById('serviceStatusBar');
+  if (panel) panel.classList.add('hidden');
+  if (bar) bar.classList.remove('service-status-bar-expanded');
 }
 
 // ── Check updates (global refresh) ──
@@ -253,6 +331,7 @@ async function loadBranches() {
     localBranches = data.branches || [];
     defaultBranch = data.defaultBranch;
     renderBranches();
+    renderServiceStatusBar();
   } catch (e) { console.error('loadBranches:', e); }
 }
 
@@ -1093,9 +1172,10 @@ function renderBranches() {
     const portBadgesHtml = services.length > 0 ? services.map(([pid, svc]) => {
       const profile = buildProfiles.find(p => p.id === pid);
       const icon = getPortIcon(pid, profile);
-      return `<span class="port-badge ${svc.status === 'running' ? 'run-port' : 'port-idle'}"
+      const badgeClass = svc.status === 'running' ? 'run-port' : svc.status === 'starting' ? 'port-starting' : 'port-idle';
+      return `<span class="port-badge ${badgeClass}"
                     onclick="event.stopPropagation(); viewContainerLogs('${esc(b.id)}', '${esc(pid)}')"
-                    title="${esc(pid)}: ${svc.status}">
+                    title="${esc(pid)}: ${statusLabel(svc.status)}">
                 ${icon} ${esc(pid)}:${svc.hostPort}
               </span>`;
     }).join('') : '';

@@ -82,6 +82,7 @@ export interface CdsComposeConfig {
     buildTimeout?: number;
     pathPrefixes?: string[];
     dependsOn?: string[];
+    readinessProbe?: { path?: string; intervalSeconds?: number; timeoutSeconds?: number };
   }>;
   envVars: Record<string, string>;
   infraServices: ComposeServiceDef[];
@@ -303,6 +304,16 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
         const dependsOn = extractDependsOn(entry.depends_on);
         const command = extractCommand(entry.command);
 
+        // Readiness probe from compose label
+        const readinessPath = labels['cds.readiness-path'];
+        const readinessTimeout = labels['cds.readiness-timeout'];
+        const readinessInterval = labels['cds.readiness-interval'];
+        const readinessProbe = readinessPath ? {
+          path: readinessPath,
+          ...(readinessTimeout ? { timeoutSeconds: parseInt(readinessTimeout, 10) } : {}),
+          ...(readinessInterval ? { intervalSeconds: parseInt(readinessInterval, 10) } : {}),
+        } : undefined;
+
         buildProfiles.push({
           id: serviceId,
           name: serviceId,
@@ -314,8 +325,8 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           env: extractEnv(entry.environment),
           pathPrefixes: pathPrefix ? pathPrefix.split(',').map(s => s.trim()) : undefined,
           dependsOn: dependsOn.length > 0 ? dependsOn : undefined,
-          // Extract non-relative volume mounts as cache mounts
           cacheMounts: extractCacheMounts(entry.volumes),
+          readinessProbe,
         });
       } else {
         // Infra service — no relative mount
@@ -414,9 +425,18 @@ export function toCdsCompose(
       entry.environment = { ...p.env };
     }
 
-    // labels (path prefix)
+    // labels (path prefix + readiness probe)
+    const entryLabels: Record<string, string> = {};
     if (p.pathPrefixes && p.pathPrefixes.length > 0) {
-      entry.labels = { 'cds.path-prefix': p.pathPrefixes.join(',') };
+      entryLabels['cds.path-prefix'] = p.pathPrefixes.join(',');
+    }
+    if (p.readinessProbe?.path) {
+      entryLabels['cds.readiness-path'] = p.readinessProbe.path;
+      if (p.readinessProbe.timeoutSeconds) entryLabels['cds.readiness-timeout'] = String(p.readinessProbe.timeoutSeconds);
+      if (p.readinessProbe.intervalSeconds) entryLabels['cds.readiness-interval'] = String(p.readinessProbe.intervalSeconds);
+    }
+    if (Object.keys(entryLabels).length > 0) {
+      entry.labels = entryLabels;
     }
 
     servicesMap[p.id] = entry;

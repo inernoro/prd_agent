@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService } from '../types.js';
+import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService, ReadinessProbe } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { resolveEnvTemplates } from './compose-parser.js';
 
@@ -143,7 +143,7 @@ export class ContainerService {
         throw new Error(`启动服务 "${service.containerName}" 失败:\n${combinedOutput(result)}`);
       }
 
-      // Verify the container is actually running after startup.
+      // Phase 1: Liveness — verify the container process hasn't crashed immediately.
       // docker run -d returns immediately; the process inside may crash shortly after.
       // Poll a few times to catch early exits (e.g., ENOSPC, missing deps, syntax errors).
       await this.waitForContainerAlive(service.containerName, onOutput);
@@ -153,16 +153,16 @@ export class ContainerService {
   }
 
   /**
-   * Poll container status after startup to catch early crashes.
-   * Checks 5 times over ~15 seconds. If the container exits during this window,
+   * Phase 1: Liveness check — poll container status to catch early crashes.
+   * Checks 3 times over ~6 seconds. If the container exits during this window,
    * it grabs the last 30 lines of logs and throws an error so deploy is marked failed.
    */
   private async waitForContainerAlive(
     containerName: string,
     onOutput?: (chunk: string) => void,
   ): Promise<void> {
-    const CHECKS = 5;
-    const INTERVAL_MS = 3000;
+    const CHECKS = 3;
+    const INTERVAL_MS = 2000;
 
     for (let i = 0; i < CHECKS; i++) {
       await new Promise(r => setTimeout(r, INTERVAL_MS));
@@ -171,28 +171,71 @@ export class ContainerService {
         `docker inspect --format="{{.State.Status}}|{{.State.ExitCode}}" ${containerName}`,
       );
       if (inspect.exitCode !== 0) {
-        // Container doesn't exist at all
         throw new Error(`容器 "${containerName}" 已消失`);
       }
 
       const [status, exitCode] = inspect.stdout.trim().split('|');
 
       if (status === 'running') {
-        onOutput?.(`── 容器健康检查 ${i + 1}/${CHECKS}: 运行中 ──\n`);
+        onOutput?.(`── 存活检查 ${i + 1}/${CHECKS}: 容器运行中 ──\n`);
         continue;
       }
 
       if (status === 'exited' || status === 'dead') {
-        // Container crashed — grab logs for diagnostics
         const logs = await this.getLogs(containerName, 30);
         throw new Error(
           `容器 "${containerName}" 启动后退出 (exit code: ${exitCode}):\n${logs}`,
         );
       }
 
-      // 'created', 'restarting', 'paused' etc. — keep waiting
       onOutput?.(`── 容器状态: ${status}, 等待中... ──\n`);
     }
+  }
+
+  /**
+   * Phase 2: Readiness probe — poll an HTTP endpoint to determine when the
+   * service is truly ready to serve traffic (not just "container alive").
+   *
+   * This runs in the background after deploy returns. The caller should set
+   * service status to 'starting' before calling, and update to 'running' on success.
+   *
+   * Returns true if service became ready, false if timed out (not an error).
+   */
+  async waitForServiceReady(
+    hostPort: number,
+    probe: ReadinessProbe,
+    onOutput?: (chunk: string) => void,
+  ): Promise<boolean> {
+    const probePath = probe.path || '/';
+    const interval = (probe.intervalSeconds || 5) * 1000;
+    const timeout = (probe.timeoutSeconds || 300) * 1000;
+    const url = `http://127.0.0.1:${hostPort}${probePath}`;
+    const deadline = Date.now() + timeout;
+    let attempt = 0;
+
+    while (Date.now() < deadline) {
+      attempt++;
+      await new Promise(r => setTimeout(r, interval));
+
+      try {
+        const res = await fetch(url, {
+          method: 'GET',
+          signal: AbortSignal.timeout(5000),
+          redirect: 'follow',
+        });
+        // Any HTTP response (even 404) means the server is up and serving
+        onOutput?.(`── 就绪检查 #${attempt}: HTTP ${res.status} ✓ ──\n`);
+        return true;
+      } catch {
+        // Connection refused, timeout, etc. — service not ready yet
+        if (attempt <= 3 || attempt % 6 === 0) {
+          onOutput?.(`── 就绪检查 #${attempt}: 等待服务响应... ──\n`);
+        }
+      }
+    }
+
+    onOutput?.(`── 就绪检查超时 (${probe.timeoutSeconds || 300}s)，服务可能仍在启动中 ──\n`);
+    return false;
   }
 
   async stop(containerName: string): Promise<void> {

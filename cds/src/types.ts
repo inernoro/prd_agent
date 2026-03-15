@@ -58,6 +58,22 @@ export interface BuildProfile {
    * Derived from compose `depends_on`. Used for startup ordering.
    */
   dependsOn?: string[];
+  /**
+   * Readiness probe — HTTP check to determine when the service is truly ready to serve.
+   * Without this, CDS only checks that the container process is alive (liveness).
+   * Derived from compose label `cds.readiness-path`.
+   */
+  readinessProbe?: ReadinessProbe;
+}
+
+/** Readiness probe configuration for app services */
+export interface ReadinessProbe {
+  /** HTTP path to check (e.g., "/health", "/api/health"). Default: "/" */
+  path?: string;
+  /** Seconds between checks (default: 5) */
+  intervalSeconds?: number;
+  /** Max seconds to wait for readiness (default: 300 = 5min) */
+  timeoutSeconds?: number;
 }
 
 /** A shared cache mount to avoid duplicating packages across branches */
@@ -77,7 +93,7 @@ export interface BranchEntry {
   /** Per-profile container state */
   services: Record<string, ServiceState>;
   /** Overall branch status */
-  status: 'idle' | 'building' | 'running' | 'error';
+  status: 'idle' | 'building' | 'starting' | 'running' | 'error';
   errorMessage?: string;
   createdAt: string;
   lastAccessedAt?: string;
@@ -95,7 +111,7 @@ export interface ServiceState {
   containerName: string;
   /** Host port allocated for this service */
   hostPort: number;
-  status: 'idle' | 'building' | 'running' | 'stopped' | 'error';
+  status: 'idle' | 'building' | 'starting' | 'running' | 'stopped' | 'error';
   buildLog?: string;
   errorMessage?: string;
 }

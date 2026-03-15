@@ -384,15 +384,49 @@ export function createBranchRouter(deps: RouterDeps): Router {
               }
             }, mergedEnv);
 
-            svc.status = 'running';
-            const elapsed = Date.now() - serviceStartTime;
-            logEvent({
-              step: `build-${profile.id}`,
-              status: 'done',
-              title: `${profile.name} 运行于 :${svc.hostPort}`,
-              detail: { elapsedMs: elapsed },
-              timestamp: new Date().toISOString(),
-            });
+            // Phase 1 passed (container alive). Set status based on readiness probe config.
+            if (profile.readinessProbe) {
+              svc.status = 'starting';
+              stateService.save();
+              const elapsed = Date.now() - serviceStartTime;
+              logEvent({
+                step: `build-${profile.id}`,
+                status: 'done',
+                title: `${profile.name} 容器已启动，等待服务就绪 :${svc.hostPort}`,
+                detail: { elapsedMs: elapsed },
+                timestamp: new Date().toISOString(),
+              });
+
+              // Launch Phase 2 readiness probe in background (non-blocking)
+              containerService.waitForServiceReady(svc.hostPort, profile.readinessProbe, (chunk) => {
+                for (const line of chunk.split('\n')) {
+                  if (line.trim()) logDeploy(id, line);
+                }
+              }).then(ready => {
+                if (ready) {
+                  svc.status = 'running';
+                  logDeploy(id, `${profile.name} 就绪 ✓`);
+                } else {
+                  // Timeout — stay 'starting', not an error
+                  logDeploy(id, `${profile.name} 就绪检查超时，服务可能仍在初始化`);
+                }
+                // Update branch-level status
+                const statuses = Object.values(entry.services).map(s => s.status);
+                if (statuses.some(s => s === 'running')) entry.status = 'running';
+                else if (statuses.some(s => s === 'starting')) entry.status = 'starting';
+                stateService.save();
+              }).catch(() => { /* readiness check internal error — ignore */ });
+            } else {
+              svc.status = 'running';
+              const elapsed = Date.now() - serviceStartTime;
+              logEvent({
+                step: `build-${profile.id}`,
+                status: 'done',
+                title: `${profile.name} 运行于 :${svc.hostPort}`,
+                detail: { elapsedMs: elapsed },
+                timestamp: new Date().toISOString(),
+              });
+            }
           } catch (err) {
             svc.status = 'error';
             svc.errorMessage = (err as Error).message;
@@ -421,8 +455,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Update overall status
       const statuses = Object.values(entry.services).map(s => s.status);
       const hasRunning = statuses.some(s => s === 'running');
+      const hasStarting = statuses.some(s => s === 'starting');
       const hasError = statuses.some(s => s === 'error');
-      entry.status = hasRunning ? 'running' : 'error';
+      entry.status = hasRunning ? 'running' : hasStarting ? 'starting' : 'error';
       entry.lastAccessedAt = new Date().toISOString();
 
       opLog.status = hasError ? 'error' : 'completed';
@@ -521,8 +556,32 @@ export function createBranchRouter(deps: RouterDeps): Router {
           }
         }, mergedEnv);
 
-        svc.status = 'running';
-        logEvent({ step: `build-${profile.id}`, status: 'done', title: `${profile.name} 运行于 :${svc.hostPort}`, timestamp: new Date().toISOString() });
+        if (profile.readinessProbe) {
+          svc.status = 'starting';
+          stateService.save();
+          logEvent({ step: `build-${profile.id}`, status: 'done', title: `${profile.name} 容器已启动，等待服务就绪 :${svc.hostPort}`, timestamp: new Date().toISOString() });
+
+          // Background readiness probe
+          containerService.waitForServiceReady(svc.hostPort, profile.readinessProbe, (chunk) => {
+            for (const line of chunk.split('\n')) {
+              if (line.trim()) logDeploy(id, line);
+            }
+          }).then(ready => {
+            if (ready) {
+              svc.status = 'running';
+              logDeploy(id, `${profile.name} 就绪 ✓`);
+            } else {
+              logDeploy(id, `${profile.name} 就绪检查超时`);
+            }
+            const sts = Object.values(entry.services).map(s => s.status);
+            if (sts.some(s => s === 'running')) entry.status = 'running';
+            else if (sts.some(s => s === 'starting')) entry.status = 'starting';
+            stateService.save();
+          }).catch(() => { /* ignore */ });
+        } else {
+          svc.status = 'running';
+          logEvent({ step: `build-${profile.id}`, status: 'done', title: `${profile.name} 运行于 :${svc.hostPort}`, timestamp: new Date().toISOString() });
+        }
       } catch (err) {
         svc.status = 'error';
         svc.errorMessage = (err as Error).message;
@@ -531,7 +590,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // Update overall status
       const statuses = Object.values(entry.services).map(s => s.status);
-      entry.status = statuses.some(s => s === 'running') ? 'running' : 'error';
+      const hasRunning = statuses.some(s => s === 'running');
+      const hasStarting = statuses.some(s => s === 'starting');
+      entry.status = hasRunning ? 'running' : hasStarting ? 'starting' : 'error';
       entry.lastAccessedAt = new Date().toISOString();
 
       opLog.status = svc.status === 'running' ? 'completed' : 'error';
