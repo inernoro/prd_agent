@@ -1,6 +1,6 @@
 # MAP 平台文档索引
 
-> 最后更新：2026-03-11
+> 最后更新：2026-03-15
 >
 > 本文件是 `doc/` 目录的结构化索引，供外部同步工具（语雀、Confluence 等）消费。
 > 元数据定义见 `doc/index.yml`，命名规范见 `doc/rule.doc-naming.md`。
@@ -48,6 +48,9 @@
 - [周报 Agent Phase 5 用户故事](spec.report-agent-phase5) `spec.report-agent-phase5`
   > 周报 Agent 第五阶段的用户故事
 
+- [CDS (Cloud Development Suite) 功能需求说明书](spec.cds) `spec.cds`
+  > CDS 云开发套件的功能需求与用户故事
+
 ### 二、设计文档
 
 - [服务器权威性设计](design.server-authority) `design.server-authority`
@@ -80,8 +83,8 @@
 - [多通道适配器设计](design.channel-adapter) `design.channel-adapter`
   > 多消息通道接入的适配器架构设计
 
-- [Agent Dashboard 设计文档](design.agent-dashboard) `design.agent-dashboard`
-  > Agent 运行状态监控面板的设计方案
+- [苹果快捷指令集成设计方案](design.apple-shortcuts) `design.apple-shortcuts`
+  > Apple Shortcuts 与 MAP 系统集成的架构设计
 
 - [总裁面板与周报 Agent 设计文档](design.executive-dashboard) `design.executive-dashboard`
   > 高管视角的数据面板与周报 Agent 的设计
@@ -143,6 +146,9 @@
 - [CDS (Cloud Development Suite) 设计文档](design.cds) `design.cds`
   > 云开发套件的架构设计
 
+- [CDS 极简上手设计](design.cds-onboarding) `design.cds-onboarding`
+  > CDS 一键配置与项目扫描技能的上手设计
+
 - [CDS 部署架构与冲突分析](design.exec-bt-deployment) `design.exec-bt-deployment`
   > 部署脚本的架构设计与冲突处理策略
 
@@ -162,6 +168,12 @@
 
 - [初始化策略实现总结](guide.init-strategy) `guide.init-strategy`
   > 系统初始化与启动策略的实现说明
+
+- [CDS 环境变量配置指南](guide.cds-env) `guide.cds-env`
+  > CDS 环境变量的配置与使用说明
+
+- [疑难杂症排查手册](guide.troubleshooting) `guide.troubleshooting`
+  > 常见问题的诊断与解决方案（ReactFlow 路由冲突等）
 
 - [AI 百宝箱运维指南](guide.ai-toolbox-ops) `guide.ai-toolbox-ops`
   > AI 百宝箱功能的运维操作手册
@@ -257,10 +269,22 @@
 - [Claude Code Skill 安装计划](plan.skill-installation) `plan.skill-installation`
   > Claude Code Skill 的安装与配置计划
 
+- [CDS 部署规划](plan.cds-deployment) `plan.cds-deployment`
+  > CDS 云开发套件的部署规划
+
+- [CDS 产品路线图](plan.cds-roadmap) `plan.cds-roadmap`
+  > CDS 产品迭代路线图
+
+- [Report Agent v3.0 升级方案](plan.report-agent-v3) `plan.report-agent-v3`
+  > 周报 Agent v3.0 采集优先架构升级方案
+
 - [视觉创作视频生成每日限额实施方案](plan.visual-agent-video-gen-daily-limit) `plan.visual-agent-video-gen-daily-limit`
   > 视觉创作视频生成功能的每日限额实施
 
 ### 六、周报
+
+- [周报 2026-W11 (03-09 ~ 03-15)](report.2026-W11) `report.2026-W11`
+  > 2026 年第 11 周工作总结
 
 - [周报 2026-W10 (03-02 ~ 03-08)](report.2026-W10) `report.2026-W10`
   > 2026 年第 10 周工作总结
@@ -280,6 +304,16 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-03-15 | 🟢 新增 | `report.2026-W11` | 周报 2026-W11 (03-09 ~ 03-15) |
+| 2026-03-15 | 🟢 新增 | `spec.cds` | CDS 功能需求说明书 |
+| 2026-03-15 | 🟢 新增 | `design.apple-shortcuts` | 苹果快捷指令集成设计方案 |
+| 2026-03-15 | 🟢 新增 | `design.cds-onboarding` | CDS 极简上手设计 |
+| 2026-03-15 | 🟢 新增 | `guide.cds-env` | CDS 环境变量配置指南 |
+| 2026-03-15 | 🟢 新增 | `guide.troubleshooting` | 疑难杂症排查手册 |
+| 2026-03-15 | 🟢 新增 | `plan.cds-deployment` | CDS 部署规划 |
+| 2026-03-15 | 🟢 新增 | `plan.cds-roadmap` | CDS 产品路线图 |
+| 2026-03-15 | 🟢 新增 | `plan.report-agent-v3` | Report Agent v3.0 升级方案 |
+| 2026-03-15 | 🔴 移除 | `design.agent-dashboard` | Agent Dashboard 设计文档（文件已删除） |
 | 2026-03-11 | 🔄 重排 | `index.yml` + `guide.list.directory.md` | 按阅读优先级重新排序文档索引 |
 | 2026-03-10 | 🟢 新增 | `index.yml` | 文档元数据索引 |
 | 2026-03-10 | 🟢 新增 | `guide.list.directory.md` | 文档索引目录页 |
