@@ -32,6 +32,7 @@ docs:
   spec.report-agent: 周报 Agent 产品需求文档
   spec.report-agent.v2: 周报 Agent v2.0 产品需求文档
   spec.report-agent-phase5: 周报 Agent Phase 5 用户故事
+  spec.cds: CDS (Cloud Development Suite) 功能需求说明书
 
   # ── 二、设计文档 ──
   # 先看核心架构，再看各模块设计
@@ -45,7 +46,7 @@ docs:
   design.account-data-sharing: 账户数据共享设计文档
   design.ops-auth: 桌面端更新与分布式登录/会话审计说明
   design.channel-adapter: 多通道适配器设计
-  design.agent-dashboard: Agent Dashboard 设计文档
+  design.apple-shortcuts: 苹果快捷指令集成设计方案
   design.executive-dashboard: 总裁面板与周报 Agent 设计文档
   design.defect-agent: 缺陷管理 Agent 功能设计
   design.defect-image-analysis: 缺陷截图 VLM 预解析设计文档
@@ -66,6 +67,8 @@ docs:
   design.toast: Toast 通知系统实现
   design.network-diagnostics: 网络诊断功能
   design.cds: CDS (Cloud Development Suite) 设计文档
+  design.cds-onboarding: CDS 极简上手设计：一键配置 + 项目扫描技能
+  design.ai-report-systems: AI 周报系统市场调研报告
   design.exec-bt-deployment: CDS 部署架构与冲突分析
 
   # ── 三、指南 ──
@@ -76,6 +79,8 @@ docs:
   guide.cloud-dev-tutorial: Claude Code 云开发教程
   guide.init-strategy: 初始化策略实现总结
   guide.ai-toolbox-ops: AI 百宝箱运维指南
+  guide.cds-env: CDS 环境变量配置指南
+  guide.troubleshooting: 疑难杂症排查手册
   guide.multi-image-compose-test: 多图组合功能测试备忘录
 
   # ── 四、规范与规则 ──
@@ -110,9 +115,13 @@ docs:
   plan.doc-update: 文档长周期更新计划
   plan.merge-image-ref-resolver: 合并计划书：三入口守门员统一
   plan.skill-installation: Claude Code Skill 安装计划
+  plan.cds-deployment: CDS 部署规划
+  plan.cds-roadmap: CDS 产品路线图
+  plan.report-agent-v3: Report Agent v3.0 升级方案 — 采集优先架构
   plan.visual-agent-video-gen-daily-limit: 视觉创作视频生成每日限额实施方案
 
   # ── 六、周报（降序：最新在前）──
+  report.2026-W11: 周报 2026-W11 (03-09 ~ 03-15)
   report.2026-W10: 周报 2026-W10 (03-02 ~ 03-08)
   report.2026-W09: 周报 2026-W09 (02-23 ~ 03-01)
   report.2026-W07: 周报 2026-W07 (02-09 ~ 02-15)
