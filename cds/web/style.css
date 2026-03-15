@@ -107,9 +107,9 @@ body::after {
 }
 
 .container {
-  max-width: 920px;
+  max-width: 1280px;
   margin: 0 auto;
-  padding: 20px 16px;
+  padding: 20px 24px;
   padding-bottom: calc(20px + var(--safe-bottom));
   position: relative;
 }
@@ -277,6 +277,7 @@ h2 { font-size: 14px; font-weight: 600; margin-bottom: 8px; letter-spacing: -0.0
   border: 1px solid var(--card-border);
   border-radius: var(--radius);
   margin-bottom: 16px; gap: 10px;
+  overflow: hidden;
 }
 .gateway-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .gateway-dot {
@@ -305,6 +306,10 @@ h2 { font-size: 14px; font-weight: 600; margin-bottom: 8px; letter-spacing: -0.0
 }
 .gateway-left:hover .status-chevron { opacity: 0.8; }
 .service-status-bar-expanded .status-chevron { transform: rotate(180deg); opacity: 0.7; }
+.gateway-bar.service-status-bar-expanded {
+  border-radius: var(--radius) var(--radius) 0 0;
+  border-bottom-color: transparent;
+}
 .gateway-right { display: flex; align-items: center; gap: 8px; min-width: 0; }
 
 /* ── Service Status Panel (expandable) ── */
@@ -352,6 +357,7 @@ h2 { font-size: 14px; font-weight: 600; margin-bottom: 8px; letter-spacing: -0.0
 .svc-status-dot.building { background: var(--blue); animation: pulse-dot 1s ease-in-out infinite; }
 .svc-status-dot.error { background: var(--red); }
 .svc-status-dot.idle { background: var(--text-muted); }
+.svc-status-infra { border-style: dashed; }
 .svc-status-dot.stopped { background: var(--text-muted); }
 
 .svc-status-port {
@@ -657,7 +663,7 @@ button.text-btn:hover { color: var(--accent); }
 @media (min-width: 768px) {
   .branch-list {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
     align-items: start;
     gap: 16px;
   }
@@ -694,13 +700,29 @@ button.text-btn:hover { color: var(--accent); }
   border-left-color: var(--red);
 }
 
-.branch-card-header {
-  display: flex; gap: 10px; align-items: center;
-  user-select: none; -webkit-user-select: none;
+/* Card toolbar — fixed top-right corner */
+.branch-card-toolbar {
+  position: absolute; top: 10px; right: 12px;
+  display: flex; align-items: center; gap: 4px;
+  z-index: 1;
 }
-.branch-card-left { display: flex; gap: 8px; flex: 1; min-width: 0; align-items: center; }
-.branch-card-right {
-  display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+.branch-card-header {
+  display: flex; flex-direction: column; gap: 4px;
+  user-select: none; -webkit-user-select: none;
+  padding-right: 60px; /* reserve space for toolbar */
+}
+/* Row 1: Branch identity — full width, most prominent */
+.branch-card-row1 {
+  display: flex; gap: 8px; align-items: center; min-width: 0;
+}
+/* Row 2: Status meta */
+.branch-card-row2 {
+  display: flex; align-items: center; gap: 8px;
+}
+/* Row 3: Port badges — independent row */
+.branch-card-ports {
+  display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+  padding-top: 2px;
 }
 .branch-log-btn {
   color: var(--text-muted); transition: color var(--transition);
@@ -740,7 +762,7 @@ a.branch-name:hover { color: var(--accent); }
   opacity: 0; transition: opacity var(--transition), color var(--transition);
   white-space: nowrap; flex-shrink: 0;
 }
-.branch-card-header:hover .set-default-link { opacity: 0.5; }
+.branch-card:hover .set-default-link { opacity: 0.5; }
 .set-default-link:hover { opacity: 1 !important; color: var(--accent); }
 .branch-meta { font-size: 11px; color: var(--text-secondary); line-height: 1.4; white-space: nowrap; }
 .port-badge {
@@ -1268,14 +1290,12 @@ a.branch-name:hover { color: var(--accent); }
     overflow: hidden;
   }
 
-  /* Header layout: stack left items vertically if needed */
-  .branch-card-header { gap: 8px; flex-wrap: wrap; }
-  .branch-card-left { gap: 6px; }
-  .branch-card-right {
-    flex-wrap: wrap; gap: 4px;
-    /* On mobile, right side goes to new line below name */
-    width: 100%; justify-content: flex-end;
-  }
+  /* Header layout: tighter spacing on mobile */
+  .branch-card-header { gap: 4px; padding-right: 50px; }
+  .branch-card-toolbar { top: 8px; right: 10px; }
+  .branch-card-row1 { gap: 6px; }
+  .branch-card-row2 { flex-wrap: wrap; gap: 4px; }
+  .branch-card-ports { gap: 4px; }
 
   /* Meta info */
   .branch-meta { font-size: 10px; }
@@ -1303,7 +1323,7 @@ a.branch-name:hover { color: var(--accent); }
 
   /* Always show set-default link on mobile */
   .set-default-link { opacity: 0.4; }
-  .branch-card-header:hover .set-default-link { opacity: 0.4; }
+  .branch-card:hover .set-default-link { opacity: 0.4; }
   .set-default-link:active { opacity: 1; color: var(--accent); }
 
   /* Update-pull group: touch target */
