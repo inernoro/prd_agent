@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import { ContainerService } from '../../src/services/container.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
@@ -54,6 +54,14 @@ describe('ContainerService', () => {
   });
 
   describe('runService', () => {
+    // waitForContainerAlive polls with real setTimeout delays (5×3s).
+    // Stub it out for tests that don't specifically test health-check behavior.
+    let aliveStub: ReturnType<typeof vi.spyOn>;
+    beforeEach(() => {
+      aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
+    });
+    afterEach(() => { aliveStub?.mockRestore(); });
+
     it('should run docker container with correct mounts and env', async () => {
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
