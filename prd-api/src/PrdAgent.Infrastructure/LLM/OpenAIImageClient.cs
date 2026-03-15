@@ -2228,13 +2228,28 @@ public class OpenAIImageClient
 
         var tr = target.Value.Ratio;
         var ta = target.Value.Area;
+        var targetTier = DetectResolutionTier(ta);
+
+        // 优先在同一分辨率档位内匹配，避免跨档位降级（如 2K → 1K）
+        var sameTier = allowed.Where(a => DetectResolutionTier(a.Area) == targetTier).ToList();
+        var candidates = sameTier.Count > 0 ? sameTier : allowed;
 
         // 先按比例最接近，其次按面积最接近，其次按 |w-w0|+|h-h0|
-        return allowed
+        return candidates
             .OrderBy(a => Math.Abs(a.Ratio - tr))
             .ThenBy(a => Math.Abs(a.Area - ta))
             .ThenBy(a => Math.Abs(a.W - target.Value.W) + Math.Abs(a.H - target.Value.H))
             .First();
+    }
+
+    /// <summary>
+    /// 根据像素总面积判断分辨率档位（与 ImageGenModelAdapterRegistry.DetectResolution 对齐）
+    /// </summary>
+    private static string DetectResolutionTier(long area)
+    {
+        if (area >= 8_000_000) return "4k";
+        if (area >= 2_500_000) return "2k";
+        return "1k";
     }
 
     private static bool IsRatioAdjusted(string? requestedSizeNorm, string? effectiveSizeNorm, double threshold)

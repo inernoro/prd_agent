@@ -74,18 +74,43 @@ public static class ImageGenModelAdapterRegistry
 
     /// <summary>
     /// 白名单模式：选择最接近的尺寸
+    /// 优先在同一分辨率档位内匹配，避免跨档位降级（如用户选 2K 却匹配到 1K）
     /// </summary>
     private static SizeAdaptationResult NormalizeSizeWhitelist(ImageGenModelAdapterConfig config, int reqW, int reqH, List<string> allSizes, List<string> allRatios)
     {
-        var result = new SizeAdaptationResult();
+        var reqTier = DetectResolution(reqW, reqH);
+
+        // 第一轮：仅在同档位内匹配
+        var sameTierSizes = allSizes.Where(s => TryParseSize(s, out var sw, out var sh) && DetectResolution(sw, sh) == reqTier).ToList();
+        if (sameTierSizes.Count > 0)
+        {
+            var result = ScoreBestSize(sameTierSizes, reqW, reqH, allRatios);
+            if (result != null) return result;
+        }
+
+        // 第二轮：同档位无匹配，回退到全量尺寸
+        var fallback = ScoreBestSize(allSizes, reqW, reqH, allRatios);
+        return fallback ?? new SizeAdaptationResult
+        {
+            Size = "1024x1024", Width = 1024, Height = 1024,
+            AspectRatio = DetectAspectRatio(1024, 1024, allRatios),
+            Resolution = "1k", SizeAdjusted = true,
+        };
+    }
+
+    /// <summary>
+    /// 从候选尺寸列表中评分选出最佳匹配
+    /// </summary>
+    private static SizeAdaptationResult? ScoreBestSize(List<string> candidates, int reqW, int reqH, List<string> allRatios)
+    {
         var reqRatio = (double)reqW / reqH;
         var reqArea = (long)reqW * reqH;
 
         string? bestSize = null;
         double bestScore = double.MaxValue;
-        int bestW = 1024, bestH = 1024;
+        int bestW = 0, bestH = 0;
 
-        foreach (var sizeStr in allSizes)
+        foreach (var sizeStr in candidates)
         {
             if (!TryParseSize(sizeStr, out var w, out var h)) continue;
 
@@ -106,15 +131,18 @@ public static class ImageGenModelAdapterRegistry
             }
         }
 
-        result.Size = bestSize ?? "1024x1024";
-        result.Width = bestW;
-        result.Height = bestH;
-        result.AspectRatio = DetectAspectRatio(bestW, bestH, allRatios);
-        result.Resolution = DetectResolution(bestW, bestH);
-        result.SizeAdjusted = bestW != reqW || bestH != reqH;
-        result.RatioAdjusted = IsRatioSignificantlyDifferent(reqW, reqH, bestW, bestH, 0.05);
+        if (bestSize == null) return null;
 
-        return result;
+        return new SizeAdaptationResult
+        {
+            Size = bestSize,
+            Width = bestW,
+            Height = bestH,
+            AspectRatio = DetectAspectRatio(bestW, bestH, allRatios),
+            Resolution = DetectResolution(bestW, bestH),
+            SizeAdjusted = bestW != reqW || bestH != reqH,
+            RatioAdjusted = IsRatioSignificantlyDifferent(reqW, reqH, bestW, bestH, 0.05),
+        };
     }
 
     /// <summary>
