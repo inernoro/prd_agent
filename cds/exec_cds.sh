@@ -98,29 +98,98 @@ elif [ -d ".bt" ] && [ -d ".cds" ]; then
 fi
 mkdir -p .cds
 
+# ── Helper: stop CDS process occupying a port (safe — only kills node/tsx) ──
+kill_cds_on_port() {
+  local port="$1"
+  local pids
+  pids=$(lsof -ti :"$port" 2>/dev/null || true)
+  [ -z "$pids" ] && return 0
+
+  local killed=false
+  for pid in $pids; do
+    # Read the command name of the process
+    local cmd
+    cmd=$(ps -p "$pid" -o comm= 2>/dev/null || true)
+    case "$cmd" in
+      node|tsx|ts-node|npx)
+        echo "  Stopping CDS process on port $port (PID: $pid, cmd: $cmd)"
+        kill "$pid" 2>/dev/null || true
+        killed=true
+        ;;
+      *)
+        echo "  [WARN] Port $port held by non-CDS process (PID: $pid, cmd: $cmd) — skipped"
+        ;;
+    esac
+  done
+
+  if [ "$killed" = true ]; then
+    # Wait up to 3 seconds for process to exit
+    for i in 1 2 3; do
+      if ! lsof -ti :"$port" >/dev/null 2>&1; then
+        return 0
+      fi
+      sleep 1
+    done
+    # Force kill only node/tsx processes still alive
+    pids=$(lsof -ti :"$port" 2>/dev/null || true)
+    for pid in $pids; do
+      local cmd
+      cmd=$(ps -p "$pid" -o comm= 2>/dev/null || true)
+      case "$cmd" in
+        node|tsx|ts-node|npx)
+          echo "  Force killing CDS process (PID: $pid)"
+          kill -9 "$pid" 2>/dev/null || true
+          ;;
+      esac
+    done
+    sleep 1
+  fi
+
+  # Final check: if port still occupied (by non-CDS process), warn and abort
+  if lsof -ti :"$port" >/dev/null 2>&1; then
+    echo "  [ERROR] Port $port is still in use by another program. Please free it manually."
+    exit 1
+  fi
+}
+
+# Read masterPort and workerPort from config
+MASTER_PORT=9900
+WORKER_PORT=5500
+if [ -f "$CONFIG_FILE" ]; then
+  _mp=$(grep -o '"masterPort"\s*:\s*[0-9]*' "$CONFIG_FILE" 2>/dev/null | grep -o '[0-9]*' || true)
+  _wp=$(grep -o '"workerPort"\s*:\s*[0-9]*' "$CONFIG_FILE" 2>/dev/null | grep -o '[0-9]*' || true)
+  [ -n "$_mp" ] && MASTER_PORT="$_mp"
+  [ -n "$_wp" ] && WORKER_PORT="$_wp"
+fi
+
 echo "[3/3] Starting CDS..."
 
+# ── Stop any existing instance (both foreground and background) ──
+if [ -f "$PID_FILE" ]; then
+  OLD_PID=$(cat "$PID_FILE")
+  if kill -0 "$OLD_PID" 2>/dev/null; then
+    echo "  Stopping old instance (PID: $OLD_PID)..."
+    kill "$OLD_PID" 2>/dev/null || true
+    sleep 1
+  fi
+fi
+# Also check legacy PID file
+LEGACY_PID_FILE=".bt/bt.pid"
+if [ -f "$LEGACY_PID_FILE" ]; then
+  OLD_PID=$(cat "$LEGACY_PID_FILE")
+  if kill -0 "$OLD_PID" 2>/dev/null; then
+    echo "  Stopping legacy instance (PID: $OLD_PID)..."
+    kill "$OLD_PID" 2>/dev/null || true
+    sleep 1
+  fi
+  rm -f "$LEGACY_PID_FILE"
+fi
+
+# Stop any orphaned CDS processes on the ports (only kills node/tsx, not other programs)
+kill_cds_on_port "$MASTER_PORT"
+kill_cds_on_port "$WORKER_PORT"
+
 if [ "$BACKGROUND" = true ]; then
-  # Stop any existing instance
-  if [ -f "$PID_FILE" ]; then
-    OLD_PID=$(cat "$PID_FILE")
-    if kill -0 "$OLD_PID" 2>/dev/null; then
-      echo "  Stopping old instance (PID: $OLD_PID)..."
-      kill "$OLD_PID" 2>/dev/null || true
-      sleep 1
-    fi
-  fi
-  # Also check legacy PID file
-  LEGACY_PID_FILE=".bt/bt.pid"
-  if [ -f "$LEGACY_PID_FILE" ]; then
-    OLD_PID=$(cat "$LEGACY_PID_FILE")
-    if kill -0 "$OLD_PID" 2>/dev/null; then
-      echo "  Stopping legacy instance (PID: $OLD_PID)..."
-      kill "$OLD_PID" 2>/dev/null || true
-      sleep 1
-    fi
-    rm -f "$LEGACY_PID_FILE"
-  fi
 
   # Start in background
   nohup pnpm dev -- "$CONFIG_FILE" > "$LOG_FILE" 2>&1 &

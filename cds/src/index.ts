@@ -1,5 +1,6 @@
 import http from 'node:http';
 import path from 'node:path';
+import { execSync } from 'node:child_process';
 import { loadConfig } from './config.js';
 import { createServer } from './server.js';
 import { ShellExecutor } from './services/shell-executor.js';
@@ -493,7 +494,56 @@ const app = createServer({
   config,
 });
 
-app.listen(config.masterPort, () => {
+// ── Helper: kill only CDS (node) process on port, then retry listen ──
+function tryKillCdsOnPort(port: number): boolean {
+  try {
+    const pids = execSync(`lsof -ti :${port} 2>/dev/null || true`, { encoding: 'utf-8' }).trim();
+    if (!pids) return false;
+    let killed = false;
+    for (const pid of pids.split('\n').filter(Boolean)) {
+      const cmd = execSync(`ps -p ${pid} -o comm= 2>/dev/null || true`, { encoding: 'utf-8' }).trim();
+      if (['node', 'tsx', 'ts-node', 'npx'].includes(cmd)) {
+        console.log(`  Stopping old CDS process (PID: ${pid}, cmd: ${cmd})`);
+        execSync(`kill ${pid} 2>/dev/null || true`);
+        killed = true;
+      } else {
+        console.log(`  [WARN] Port ${port} held by non-CDS process (PID: ${pid}, cmd: ${cmd}) — not killing`);
+      }
+    }
+    return killed;
+  } catch {
+    return false;
+  }
+}
+
+function listenWithRetry(
+  server: http.Server | ReturnType<typeof createServer>,
+  port: number,
+  label: string,
+  onSuccess: () => void,
+) {
+  const doListen = (attempt: number) => {
+    const s = server.listen(port, onSuccess);
+    s.on('error', (err: Error & { code?: string }) => {
+      if (err.code === 'EADDRINUSE' && attempt < 2) {
+        console.log(`  [WARN] Port ${port} in use, attempting to reclaim (${label})...`);
+        const killed = tryKillCdsOnPort(port);
+        if (killed) {
+          setTimeout(() => doListen(attempt + 1), 1500);
+        } else {
+          console.error(`  [ERROR] Port ${port} is occupied by a non-CDS process. Please free it manually.`);
+          process.exit(1);
+        }
+      } else {
+        console.error(`  [ERROR] Cannot bind ${label} to port ${port}: ${err.message}`);
+        process.exit(1);
+      }
+    });
+  };
+  doListen(0);
+}
+
+listenWithRetry(app, config.masterPort, 'Dashboard', () => {
   console.log(`\n  Cloud Development Suite`);
   console.log(`  ──────────────────────`);
   console.log(`  Dashboard:  http://localhost:${config.masterPort}`);
@@ -514,7 +564,7 @@ workerServer.on('upgrade', (req, socket, head) => {
   proxyService.handleUpgrade(req, socket, head);
 });
 
-workerServer.listen(config.workerPort, () => {
+listenWithRetry(workerServer, config.workerPort, 'Worker', () => {
   console.log(`  Worker proxy listening on :${config.workerPort}`);
   console.log(`  Route via X-Branch header or configure routing rules in dashboard.`);
   console.log('');
