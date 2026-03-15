@@ -1300,12 +1300,7 @@ function renderBranches() {
             </span>
             <a class="branch-name" href="${githubRepoUrl ? githubRepoUrl.replace('github.com', 'github.dev') + '/tree/' + encodeURIComponent(b.branch) : '#'}" target="_blank" onclick="event.stopPropagation(); return confirmOpenGithub(event)" title="在 GitHub.dev 中浏览代码">${ICON.branch} ${esc(b.branch)}</a>
           </div>
-          <div class="branch-card-row2">
-            ${isDefault ? '<span class="default-tag">默认</span>' : `
-              <span class="set-default-link" onclick="event.stopPropagation(); setDefaultBranch('${esc(b.id)}')" title="设为默认分支">设默认</span>
-            `}
-            <span class="branch-meta">${isLoading(b.id, 'stop') ? '<span class="stopping-indicator">停止中...</span>' : statusLabel(b.status)}${b.date ? ` · ${relativeTime(b.date)}更新` : ''}</span>
-          </div>
+          ${b.date ? `<div class="branch-card-row2"><span class="branch-meta">${relativeTime(b.date)}更新</span></div>` : ''}
           ${portBadgesHtml ? `<div class="branch-card-ports">${portBadgesHtml}</div>` : ''}
         </div>
         ${b.errorMessage && !deployLog ? `<div class="branch-error" title="${esc(b.errorMessage)}">${esc(b.errorMessage)}</div>` : ''}
