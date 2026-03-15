@@ -562,7 +562,7 @@ async function previewBranch(id) {
 
   // ── Mode: port (direct port access — no proxy, no cache issues) ──
   if (previewMode === 'port') {
-    const branch = branches.find(b => b.id === slug);
+    const branch = localBranches.find(b => b.id === slug);
     if (!branch || branch.status !== 'running') {
       showToast('分支未运行，无法通过端口预览', 'error');
       return;
