@@ -695,12 +695,26 @@ button.text-btn:hover { color: var(--accent); }
 }
 
 .branch-card-header {
-  display: flex; gap: 10px; align-items: center;
+  display: flex; flex-direction: column; gap: 6px;
   user-select: none; -webkit-user-select: none;
 }
-.branch-card-left { display: flex; gap: 8px; flex: 1; min-width: 120px; align-items: center; overflow: hidden; }
-.branch-card-right {
-  display: flex; align-items: center; gap: 6px; flex-shrink: 1; flex-wrap: wrap; justify-content: flex-end;
+/* Row 1: Branch identity — full width, most prominent */
+.branch-card-row1 {
+  display: flex; gap: 8px; align-items: center; min-width: 0;
+}
+/* Row 2: Status + tools */
+.branch-card-row2 {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.branch-card-row2-left {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+}
+.branch-card-row2-right {
+  display: flex; align-items: center; gap: 4px; flex-shrink: 0;
+}
+/* Row 3: Port badges — independent row */
+.branch-card-ports {
+  display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
 }
 .branch-log-btn {
   color: var(--text-muted); transition: color var(--transition);
@@ -740,7 +754,7 @@ a.branch-name:hover { color: var(--accent); }
   opacity: 0; transition: opacity var(--transition), color var(--transition);
   white-space: nowrap; flex-shrink: 0;
 }
-.branch-card-header:hover .set-default-link { opacity: 0.5; }
+.branch-card:hover .set-default-link { opacity: 0.5; }
 .set-default-link:hover { opacity: 1 !important; color: var(--accent); }
 .branch-meta { font-size: 11px; color: var(--text-secondary); line-height: 1.4; white-space: nowrap; }
 .port-badge {
@@ -1268,14 +1282,11 @@ a.branch-name:hover { color: var(--accent); }
     overflow: hidden;
   }
 
-  /* Header layout: stack left items vertically if needed */
-  .branch-card-header { gap: 8px; flex-wrap: wrap; }
-  .branch-card-left { gap: 6px; }
-  .branch-card-right {
-    flex-wrap: wrap; gap: 4px;
-    /* On mobile, right side goes to new line below name */
-    width: 100%; justify-content: flex-end;
-  }
+  /* Header layout: tighter spacing on mobile */
+  .branch-card-header { gap: 4px; }
+  .branch-card-row1 { gap: 6px; }
+  .branch-card-row2 { flex-wrap: wrap; gap: 4px; }
+  .branch-card-ports { gap: 4px; }
 
   /* Meta info */
   .branch-meta { font-size: 10px; }
@@ -1303,7 +1314,7 @@ a.branch-name:hover { color: var(--accent); }
 
   /* Always show set-default link on mobile */
   .set-default-link { opacity: 0.4; }
-  .branch-card-header:hover .set-default-link { opacity: 0.4; }
+  .branch-card:hover .set-default-link { opacity: 0.4; }
   .set-default-link:active { opacity: 1; color: var(--accent); }
 
   /* Update-pull group: touch target */
