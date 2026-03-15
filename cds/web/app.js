@@ -207,13 +207,22 @@ function renderServiceStatusBar() {
     return;
   }
 
+  // Add infra services to the panel
+  const infraBadges = infraServices.filter(s => s.status === 'running').map(s => `
+    <div class="svc-status-item svc-status-infra" onclick="openInfraModal()" title="基础设施: ${esc(s.id)}">
+      <span class="svc-status-dot running"></span>
+      <span>${esc(s.id)}</span>
+      <span class="svc-status-port">:${s.port || ''}</span>
+    </div>
+  `).join('');
+
   panel.innerHTML = activeServices.map(s => `
     <div class="svc-status-item" onclick="scrollToBranch('${esc(s.branchId)}')" title="${esc(s.branchName)} / ${esc(s.profileId)}">
       <span class="svc-status-dot ${s.status}"></span>
       <span>${esc(s.profileId)}</span>
       <span class="svc-status-port">:${s.hostPort}</span>
     </div>
-  `).join('');
+  `).join('') + (infraBadges ? infraBadges : '');
 }
 
 function toggleServiceStatusExpand() {
@@ -1173,9 +1182,10 @@ function renderBranches() {
       const profile = buildProfiles.find(p => p.id === pid);
       const icon = getPortIcon(pid, profile);
       const badgeClass = svc.status === 'running' ? 'run-port' : svc.status === 'starting' ? 'port-starting' : 'port-idle';
+      const portTitle = `${esc(pid)}: ${statusLabel(svc.status)}${b.lastAccessedAt ? '\n运行时间: ' + relativeTime(b.lastAccessedAt) : ''}`;
       return `<span class="port-badge ${badgeClass}"
                     onclick="event.stopPropagation(); viewContainerLogs('${esc(b.id)}', '${esc(pid)}')"
-                    title="${esc(pid)}: ${statusLabel(svc.status)}">
+                    title="${portTitle}">
                 ${icon} ${esc(pid)}:${svc.hostPort}
               </span>`;
     }).join('') : '';
@@ -1212,9 +1222,10 @@ function renderBranches() {
           <template id="deploy-menu-tpl-${esc(b.id)}">
             ${hasMultipleProfiles ? `<div class="deploy-menu-header">选择重部署的服务</div>${deployMenuItems}` : ''}
             ${stopMenuItem}
+            <div class="deploy-menu-divider"></div>
+            <div class="deploy-menu-item deploy-menu-item-danger" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); removeBranch('${esc(b.id)}')">${ICON.trash} 删除分支</div>
           </template>
         </div>
-        <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.trash} 删除</button>
       `;
     } else if (isStopped) {
       // Container exists but stopped — neutral deploy, not primary
@@ -1273,6 +1284,15 @@ function renderBranches() {
     return `
       <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} expanded ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''} ${previewMode === 'multi' && isRunning ? 'show-preview-border' : ''} ${isDeploying ? 'is-deploying' : ''}" data-branch-id="${esc(b.id)}">
         ${isDeploying ? '<div class="deploy-progress-bar"><div class="deploy-progress-bar-fill"></div></div>' : ''}
+        <div class="branch-card-toolbar">
+          ${!isBusy ? `<span class="update-pull-group" onclick="event.stopPropagation(); pullBranch('${esc(b.id)}')" title="${hasUpdates ? branchUpdates[b.id].behind + ' 个新提交，点击拉取' : '点击拉取最新代码'}">
+            ${hasUpdates ? `<span class="update-badge">↓${branchUpdates[b.id].behind}</span>` : ''}
+            <svg class="update-pull-icon ${isLoading(b.id, 'pull') ? 'spinning' : ''}" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
+          </span>` : ''}
+          <button class="icon-btn sm branch-log-btn" onclick="event.stopPropagation(); viewBranchLogs('${esc(b.id)}')" title="查看部署日志">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.5 0a.25.25 0 01.25-.25h10.5a.25.25 0 01.25.25v7.5a.25.25 0 01-.25.25h-4.5a.75.75 0 00-.75.75v2.19l-2.72-2.72a.75.75 0 00-.53-.22H2.75a.25.25 0 01-.25-.25v-7.5z"/></svg>
+          </button>
+        </div>
         <div class="branch-card-header">
           <div class="branch-card-row1">
             <span class="fav-toggle ${b.isFavorite ? 'active' : ''}" onclick="event.stopPropagation(); toggleFavorite('${esc(b.id)}')" title="${b.isFavorite ? '取消收藏' : '收藏'}">
@@ -1281,21 +1301,10 @@ function renderBranches() {
             <a class="branch-name" href="${githubRepoUrl ? githubRepoUrl.replace('github.com', 'github.dev') + '/tree/' + encodeURIComponent(b.branch) : '#'}" target="_blank" onclick="event.stopPropagation(); return confirmOpenGithub(event)" title="在 GitHub.dev 中浏览代码">${ICON.branch} ${esc(b.branch)}</a>
           </div>
           <div class="branch-card-row2">
-            <div class="branch-card-row2-left">
-              ${isDefault ? '<span class="default-tag">默认</span>' : `
-                <span class="set-default-link" onclick="event.stopPropagation(); setDefaultBranch('${esc(b.id)}')" title="设为默认分支">设默认</span>
-              `}
-              <span class="branch-meta">${isLoading(b.id, 'stop') ? '<span class="stopping-indicator">停止中...</span>' : statusLabel(b.status)}${b.lastAccessedAt && !isLoading(b.id, 'stop') ? ` · ${relativeTime(b.lastAccessedAt)}` : ''}</span>
-            </div>
-            <div class="branch-card-row2-right">
-              ${!isBusy ? `<span class="update-pull-group" onclick="event.stopPropagation(); pullBranch('${esc(b.id)}')" title="${hasUpdates ? branchUpdates[b.id].behind + ' 个新提交，点击拉取' : '点击拉取最新代码'}">
-                ${hasUpdates ? `<span class="update-badge">↓${branchUpdates[b.id].behind}</span>` : ''}
-                <svg class="update-pull-icon ${isLoading(b.id, 'pull') ? 'spinning' : ''}" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
-              </span>` : ''}
-              <button class="icon-btn sm branch-log-btn" onclick="event.stopPropagation(); viewBranchLogs('${esc(b.id)}')" title="查看部署日志">
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.5 0a.25.25 0 01.25-.25h10.5a.25.25 0 01.25.25v7.5a.25.25 0 01-.25.25h-4.5a.75.75 0 00-.75.75v2.19l-2.72-2.72a.75.75 0 00-.53-.22H2.75a.25.25 0 01-.25-.25v-7.5z"/></svg>
-              </button>
-            </div>
+            ${isDefault ? '<span class="default-tag">默认</span>' : `
+              <span class="set-default-link" onclick="event.stopPropagation(); setDefaultBranch('${esc(b.id)}')" title="设为默认分支">设默认</span>
+            `}
+            <span class="branch-meta">${isLoading(b.id, 'stop') ? '<span class="stopping-indicator">停止中...</span>' : statusLabel(b.status)}${b.date ? ` · ${relativeTime(b.date)}更新` : ''}</span>
           </div>
           ${portBadgesHtml ? `<div class="branch-card-ports">${portBadgesHtml}</div>` : ''}
         </div>
