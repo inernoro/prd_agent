@@ -21,6 +21,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<LlmGateway> _logger;
     private readonly ILlmRequestLogWriter? _logWriter;
+    private readonly ILLMRequestContextAccessor? _contextAccessor;
     private readonly Dictionary<string, IGatewayAdapter> _adapters = new(StringComparer.OrdinalIgnoreCase);
     private readonly ExchangeTransformerRegistry _transformerRegistry = new();
     private const string InvalidAppCallerErrorCode = "APP_CALLER_INVALID";
@@ -29,12 +30,14 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         IModelResolver modelResolver,
         IHttpClientFactory httpClientFactory,
         ILogger<LlmGateway> logger,
-        ILlmRequestLogWriter? logWriter = null)
+        ILlmRequestLogWriter? logWriter = null,
+        ILLMRequestContextAccessor? contextAccessor = null)
     {
         _modelResolver = modelResolver;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
         _logWriter = logWriter;
+        _contextAccessor = contextAccessor;
 
         // 注册适配器
         RegisterAdapter(new OpenAIGatewayAdapter());
@@ -1208,7 +1211,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             enablePromptCache: true,
             maxTokens: maxTokens,
             temperature: temperature,
-            includeThinking: includeThinking);
+            includeThinking: includeThinking,
+            contextAccessor: _contextAccessor);
     }
 
     private static bool TryValidateAppCaller(string appCallerCode, string modelType, out string error)
