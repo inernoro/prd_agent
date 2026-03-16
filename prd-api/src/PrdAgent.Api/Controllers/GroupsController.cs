@@ -1056,12 +1056,21 @@ public class GroupsController : ControllerBase
                 lastKeepAliveAt = DateTime.UtcNow;
             }
 
-            // 等待一会儿（短轮询），让 keepalive 有机会写出；同时避免 WaitToReadAsync 一直阻塞导致 keepalive 缺失
-            var waitTask = reader.WaitToReadAsync(cancellationToken).AsTask();
-            var tick = Task.Delay(650, cancellationToken);
-            var done = await Task.WhenAny(waitTask, tick);
-            if (done != waitTask) continue;
-            if (!await waitTask) break;
+            // 短超时等待：既不阻塞 keepalive，又能在数据到达时尽快响应
+            // 原 650ms 会导致 delta 事件最坏延迟 650ms（tick 先就绪时 continue 跳过已到达的数据）
+            using var keepaliveCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            keepaliveCts.CancelAfter(TimeSpan.FromMilliseconds(100));
+            bool hasData;
+            try
+            {
+                hasData = await reader.WaitToReadAsync(keepaliveCts.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // 100ms 超时：无新数据，回到循环顶部检查 keepalive
+                continue;
+            }
+            if (!hasData) break;
 
             while (reader.TryRead(out var ev))
             {
