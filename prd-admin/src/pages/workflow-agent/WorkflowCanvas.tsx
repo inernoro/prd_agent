@@ -21,25 +21,32 @@ import './workflow-canvas.css';
 
 import {
   ArrowLeft, Save, Loader2, GripVertical,
-  Plus, Trash2, X, Settings2,
+  Plus, Trash2, X,
   Undo2, Redo2, LayoutGrid, Keyboard,
   ZoomIn, ZoomOut, Maximize2,
   Play, XCircle, Terminal,
+  FlaskConical, Eye, Sparkles, RotateCcw,
+  CheckCircle2, AlertCircle, Download,
 } from 'lucide-react';
 import { CapsuleNode, type CapsuleNodeData } from './CapsuleNode';
 import { FlowEdge } from './FlowEdge';
 import { getIconForCapsule, getEmojiForCapsule, getCategoryEmoji } from './capsuleRegistry';
 import { Button } from '@/components/design/Button';
 import { TabBar } from '@/components/design/TabBar';
-import { listCapsuleTypes, updateWorkflow, executeWorkflow, getExecution, cancelExecution } from '@/services';
+import { listCapsuleTypes, updateWorkflow, executeWorkflow, getExecution, cancelExecution, testRunCapsule } from '@/services';
+import { replayNode } from '@/services/real/workflowAgent';
 import { useAuthStore } from '@/stores/authStore';
 import { Badge } from '@/components/design/Badge';
 import { autoLayoutNodes } from './autoLayout';
 import { useCanvasHistory } from './useCanvasHistory';
+import { HttpConfigPanel } from './HttpConfigPanel';
+import { WorkflowChatPanel } from './WorkflowChatPanel';
+import { ArtifactPreviewModal } from './ArtifactPreviewModal';
 import type {
   Workflow, WorkflowNode, WorkflowEdge as WfEdge,
   CapsuleTypeMeta, CapsuleCategoryInfo, WorkflowExecution,
-  CapsuleConfigField,
+  CapsuleConfigField, ExecutionArtifact, CapsuleTestRunResult,
+  WorkflowChatGenerated,
 } from '@/services/contracts/workflowAgent';
 
 // ═══════════════════════════════════════════════════════════════
@@ -249,6 +256,20 @@ function CanvasInner({
 
   // 快捷键提示
   const [showShortcuts, setShowShortcuts] = useState(false);
+
+  // ── P1: 产物预览 + 节点回放 ──
+  const [previewArtifact, setPreviewArtifact] = useState<ExecutionArtifact | null>(null);
+
+  // ── P3: 单舱测试 / 回放 ──
+  const [testRunning, setTestRunning] = useState<string | null>(null); // nodeId
+  const [testRunResult, setTestRunResult] = useState<{ nodeId: string; result: CapsuleTestRunResult } | null>(null);
+
+  // ── P4: AI 助手 ──
+  const [showChatPanel, setShowChatPanel] = useState(false);
+  const [chatInitialInput, setChatInitialInput] = useState<string | undefined>();
+
+  // ── 右键菜单 ──
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
 
   // 初始化历史
   const historyInited = useRef(false);
@@ -727,6 +748,82 @@ function CanvasInner({
     } catch { /* ignore */ }
   }
 
+  // ── P1: 节点回放 ──
+  async function handleReplayNode(nodeId: string) {
+    if (!latestExec) return;
+    setTestRunning(nodeId);
+    setTestRunResult(null);
+    try {
+      const res = await replayNode(latestExec.id, nodeId);
+      if (res.success && res.data?.result) {
+        setTestRunResult({ nodeId, result: res.data.result });
+      } else {
+        addLog('error', '回放失败: ' + (res.error?.message || '未知错误'));
+      }
+    } catch (e: unknown) {
+      addLog('error', '回放出错: ' + (e instanceof Error ? e.message : '未知错误'));
+    } finally {
+      setTestRunning(null);
+    }
+  }
+
+  // ── P3: 单舱测试 ──
+  async function handleTestRun(nodeId: string) {
+    const node = nodes.find(n => n.id === nodeId);
+    if (!node) return;
+    setTestRunning(nodeId);
+    setTestRunResult(null);
+    try {
+      const res = await testRunCapsule({
+        typeKey: node.data.capsuleType,
+        config: nodeConfigs[nodeId] ?? {},
+      });
+      if (res.success && res.data?.result) {
+        setTestRunResult({ nodeId, result: res.data.result });
+      } else {
+        addLog('error', '测试失败: ' + (res.error?.message || '未知错误'));
+      }
+    } catch (e: unknown) {
+      addLog('error', '测试出错: ' + (e instanceof Error ? e.message : '未知错误'));
+    } finally {
+      setTestRunning(null);
+    }
+  }
+
+  // ── P4: AI 应用工作流 ──
+  function handleApplyWorkflow(generated: WorkflowChatGenerated, newWorkflowId?: string) {
+    if (newWorkflowId && newWorkflowId !== workflow.id) {
+      // 新建工作流 — 不在画布处理，仅提示
+      addLog('info', `AI 创建了新工作流，请返回列表查看`);
+      return;
+    }
+    // 更新画布节点和边
+    if (generated.nodes || generated.edges) {
+      const updatedWf: Workflow = {
+        ...workflow,
+        name: generated.name ?? workflow.name,
+        description: generated.description ?? workflow.description,
+        nodes: generated.nodes ?? workflow.nodes,
+        edges: generated.edges ?? workflow.edges,
+        variables: generated.variables ?? workflow.variables ?? [],
+      };
+      const { nodes: newNodes, edges: newEdges } = workflowToFlow(updatedWf);
+      const laid = newNodes.length > 1 ? autoLayoutNodes(newNodes, newEdges, 'TB') : newNodes;
+      setNodes(laid);
+      setEdges(newEdges);
+      // 更新 nodeConfigs
+      const configs: Record<string, Record<string, unknown>> = {};
+      for (const n of updatedWf.nodes) {
+        configs[n.nodeId] = n.config ?? {};
+      }
+      setNodeConfigs(configs);
+      setDirty(true);
+      pushHistory();
+      addLog('success', 'AI 方案已应用到画布');
+      setTimeout(() => reactFlowInstance.fitView({ padding: 0.3 }), 100);
+    }
+  }
+
   // 清理轮询
   useEffect(() => {
     return () => stopPolling();
@@ -872,6 +969,7 @@ function CanvasInner({
   const onPaneClick = useCallback(() => {
     setConnectDropMenu(null);
     setShowShortcuts(false);
+    setContextMenu(null);
   }, []);
 
   // 按 category 分组
@@ -919,6 +1017,14 @@ function CanvasInner({
                 }
               </Button>
             )}
+            <Button
+              variant={showChatPanel ? 'primary' : 'secondary'}
+              size="xs"
+              onClick={() => setShowChatPanel(v => !v)}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              AI
+            </Button>
             <Button
               variant={showLogPanel ? 'primary' : 'secondary'}
               size="xs"
@@ -1004,7 +1110,7 @@ function CanvasInner({
             onPaneClick={onPaneClick}
             onNodeContextMenu={(e, node) => {
               e.preventDefault();
-              handleToggleBreakpoint(node.id);
+              setContextMenu({ x: e.clientX, y: e.clientY, nodeId: node.id });
             }}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
@@ -1080,6 +1186,21 @@ function CanvasInner({
           {showShortcuts && (
             <ShortcutsOverlay onClose={() => setShowShortcuts(false)} />
           )}
+
+          {/* ── 节点右键菜单 ── */}
+          {contextMenu && (
+            <NodeContextMenu
+              x={contextMenu.x}
+              y={contextMenu.y}
+              canTestRun={!!capsuleTypes.find(t => t.typeKey === nodes.find(n => n.id === contextMenu.nodeId)?.data.capsuleType)?.testable}
+              canReplay={!!(latestExec?.nodeExecutions.find(ne => ne.nodeId === contextMenu.nodeId)?.inputArtifacts?.length)}
+              isTestRunning={testRunning === contextMenu.nodeId}
+              onTestRun={() => { setContextMenu(null); handleTestRun(contextMenu.nodeId); }}
+              onReplay={() => { setContextMenu(null); handleReplayNode(contextMenu.nodeId); }}
+              onBreakpoint={() => { setContextMenu(null); handleToggleBreakpoint(contextMenu.nodeId); }}
+              onClose={() => setContextMenu(null)}
+            />
+          )}
         </div>
 
         {/* 右侧节点编辑面板 */}
@@ -1090,13 +1211,49 @@ function CanvasInner({
             config={nodeConfigs[editingNode.id] ?? {}}
             onNameChange={(name) => handleNodeNameChange(editingNode.id, name)}
             onConfigChange={(key, value) => handleConfigChange(editingNode.id, key, value)}
+            onBatchConfigChange={(changes) => {
+              setNodeConfigs(prev => ({
+                ...prev,
+                [editingNode.id]: { ...(prev[editingNode.id] ?? {}), ...changes },
+              }));
+              setDirty(true);
+            }}
             onClose={() => setEditingNodeId(null)}
+            testRunning={testRunning === editingNode.id}
+            testRunResult={testRunResult?.nodeId === editingNode.id ? testRunResult.result : null}
+            canTestRun={editingMeta.testable}
+            canReplay={!!(latestExec?.nodeExecutions.find(ne => ne.nodeId === editingNode.id)?.inputArtifacts?.length)}
+            onTestRun={() => handleTestRun(editingNode.id)}
+            onReplay={() => handleReplayNode(editingNode.id)}
+            nodeExecution={latestExec?.nodeExecutions.find(ne => ne.nodeId === editingNode.id) ?? null}
+            onPreviewArtifact={setPreviewArtifact}
           />
         )}
 
         {/* 右侧执行日志面板 */}
-        {showLogPanel && (
+        {showLogPanel && !editingNode && (
           <CanvasLogPanel entries={logEntries} onClear={() => setLogEntries([])} onClose={() => setShowLogPanel(false)} />
+        )}
+
+        {/* 右侧 AI 助手面板 */}
+        {showChatPanel && !editingNode && (
+          <div
+            className="flex flex-col h-full"
+            style={{
+              width: 360,
+              flexShrink: 0,
+              borderLeft: '1px solid rgba(255,255,255,0.08)',
+              background: 'rgba(0,0,0,0.2)',
+            }}
+          >
+            <WorkflowChatPanel
+              workflowId={workflow.id}
+              onApplyWorkflow={handleApplyWorkflow}
+              onClose={() => setShowChatPanel(false)}
+              initialInput={chatInitialInput}
+              onInitialInputConsumed={() => setChatInitialInput(undefined)}
+            />
+          </div>
         )}
       </div>
 
@@ -1109,6 +1266,11 @@ function CanvasInner({
           onExecute={() => { setShowVarsDialog(false); doExecute(vars); }}
           onClose={() => setShowVarsDialog(false)}
         />
+      )}
+
+      {/* 产物预览弹窗 */}
+      {previewArtifact && (
+        <ArtifactPreviewModal artifact={previewArtifact} onClose={() => setPreviewArtifact(null)} />
       )}
     </div>
   );
@@ -1568,21 +1730,57 @@ function NodeEditPanel({
   config,
   onNameChange,
   onConfigChange,
+  onBatchConfigChange,
   onClose,
+  testRunning,
+  testRunResult,
+  canTestRun,
+  canReplay,
+  onTestRun,
+  onReplay,
+  nodeExecution,
+  onPreviewArtifact,
 }: {
   node: Node<CapsuleNodeData>;
   meta: CapsuleTypeMeta;
   config: Record<string, unknown>;
   onNameChange: (name: string) => void;
   onConfigChange: (key: string, value: unknown) => void;
+  onBatchConfigChange: (changes: Record<string, string>) => void;
   onClose: () => void;
+  testRunning: boolean;
+  testRunResult: CapsuleTestRunResult | null;
+  canTestRun: boolean;
+  canReplay: boolean;
+  onTestRun: () => void;
+  onReplay: () => void;
+  nodeExecution: import('@/services/contracts/workflowAgent').NodeExecution | null;
+  onPreviewArtifact: (artifact: ExecutionArtifact) => void;
 }) {
   const Icon = getIconForCapsule(node.data.icon);
   const emoji = getEmojiForCapsule(node.data.capsuleType);
+  const isHttpNode = ['http-request', 'smart-http'].includes(node.data.capsuleType);
+  const [activeTab, setActiveTab] = useState<'config' | 'result' | 'artifacts'>('config');
+
+  // 收集所有产物
+  const artifacts = useMemo(() => {
+    const list: ExecutionArtifact[] = [];
+    if (nodeExecution?.outputArtifacts) list.push(...nodeExecution.outputArtifacts);
+    if (testRunResult?.artifacts) {
+      list.push(...testRunResult.artifacts.map((a, i) => ({
+        artifactId: `test-${i}`,
+        name: a.name,
+        mimeType: a.mimeType,
+        sizeBytes: a.sizeBytes,
+        inlineContent: a.inlineContent,
+      })));
+    }
+    return list;
+  }, [nodeExecution, testRunResult]);
 
   return (
     <div
-      className="w-72 flex-shrink-0 overflow-y-auto border-l node-edit-panel"
+      className="w-80 flex-shrink-0 flex flex-col border-l node-edit-panel"
       style={{
         background: 'rgba(0,0,0,0.25)',
         borderColor: 'rgba(255,255,255,0.08)',
@@ -1590,13 +1788,21 @@ function NodeEditPanel({
     >
       {/* 面板头部 */}
       <div
-        className="flex items-center justify-between px-3 py-2.5 border-b"
+        className="flex items-center justify-between px-3 py-2.5 flex-shrink-0 border-b"
         style={{ borderColor: 'rgba(255,255,255,0.08)' }}
       >
         <div className="flex items-center gap-2 min-w-0">
-          <Settings2 className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--text-muted, #888)' }} />
+          <div
+            className="w-5 h-5 rounded-[6px] flex items-center justify-center flex-shrink-0"
+            style={{
+              background: `hsla(${node.data.accentHue}, 60%, 55%, 0.15)`,
+              color: `hsla(${node.data.accentHue}, 60%, 65%, 0.95)`,
+            }}
+          >
+            <Icon className="w-3 h-3" />
+          </div>
           <span className="text-[11px] font-semibold truncate" style={{ color: 'var(--text-primary, #e8e6e3)' }}>
-            节点配置
+            {emoji} {node.data.label || meta.name}
           </span>
         </div>
         <button
@@ -1610,103 +1816,343 @@ function NodeEditPanel({
         </button>
       </div>
 
-      <div className="p-3 space-y-4">
-        {/* 节点标识 */}
-        <div className="flex items-center gap-2.5">
-          <div
-            className="w-8 h-8 rounded-[10px] flex items-center justify-center flex-shrink-0"
-            style={{
-              background: `hsla(${node.data.accentHue}, 60%, 55%, 0.15)`,
-              color: `hsla(${node.data.accentHue}, 60%, 65%, 0.95)`,
-            }}
-          >
-            <Icon className="w-4 h-4" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="text-[10px]" style={{ color: 'var(--text-muted, #888)' }}>
-              {emoji} {meta.name}
-            </div>
-          </div>
-        </div>
+      {/* Tab 切换 */}
+      <div
+        className="flex items-center gap-1 px-2 py-1.5 flex-shrink-0 border-b"
+        style={{ borderColor: 'rgba(255,255,255,0.06)' }}
+      >
+        {(['config', 'result', 'artifacts'] as const).map(tab => {
+          const labels = { config: '配置', result: '结果', artifacts: `产物${artifacts.length > 0 ? ` (${artifacts.length})` : ''}` };
+          const isActive = activeTab === tab;
+          return (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className="px-2 py-1 rounded-md text-[10px] font-medium transition-colors"
+              style={{
+                background: isActive ? 'rgba(255,255,255,0.08)' : 'transparent',
+                color: isActive ? 'var(--text-primary, #e8e6e3)' : 'var(--text-muted, #888)',
+              }}
+            >
+              {labels[tab]}
+            </button>
+          );
+        })}
+      </div>
 
-        {/* 节点名称 */}
-        <div>
-          <label className="block text-[10px] font-medium mb-1" style={{ color: 'var(--text-muted, #888)' }}>
-            节点名称
-          </label>
-          <input
-            type="text"
-            value={node.data.label}
-            onChange={(e) => onNameChange(e.target.value)}
-            className="w-full px-2.5 py-1.5 rounded-lg text-[12px] outline-none transition-colors"
-            style={{
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid rgba(255,255,255,0.1)',
-              color: 'var(--text-primary, #e8e6e3)',
-            }}
-            onFocus={(e) => { e.currentTarget.style.borderColor = `hsla(${node.data.accentHue}, 60%, 55%, 0.4)`; }}
-            onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; }}
-          />
-        </div>
-
-        {/* 配置字段（来自 configSchema） */}
-        {meta.configSchema.length > 0 ? (
-          <div className="space-y-3">
-            <div className="text-[10px] font-medium" style={{ color: 'var(--text-muted, #888)' }}>
-              参数配置
-            </div>
-            {meta.configSchema.map((field) => (
-              <ConfigFieldInput
-                key={field.key}
-                field={field}
-                value={config[field.key]}
-                accentHue={node.data.accentHue}
-                onChange={(val) => onConfigChange(field.key, val)}
+      {/* Tab 内容 */}
+      <div className="flex-1 overflow-y-auto">
+        {activeTab === 'config' && (
+          <div className="p-3 space-y-4">
+            {/* 节点名称 */}
+            <div>
+              <label className="block text-[10px] font-medium mb-1" style={{ color: 'var(--text-muted, #888)' }}>
+                节点名称
+              </label>
+              <input
+                type="text"
+                value={node.data.label}
+                onChange={(e) => onNameChange(e.target.value)}
+                className="w-full px-2.5 py-1.5 rounded-lg text-[12px] outline-none transition-colors"
+                style={{
+                  background: 'rgba(255,255,255,0.04)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  color: 'var(--text-primary, #e8e6e3)',
+                }}
+                onFocus={(e) => { e.currentTarget.style.borderColor = `hsla(${node.data.accentHue}, 60%, 55%, 0.4)`; }}
+                onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; }}
               />
-            ))}
-          </div>
-        ) : (
-          <div
-            className="text-[11px] text-center py-4 rounded-lg"
-            style={{
-              color: 'var(--text-muted, #888)',
-              background: 'rgba(255,255,255,0.02)',
-              border: '1px dashed rgba(255,255,255,0.06)',
-            }}
-          >
-            该舱类型暂无可配参数
+            </div>
+
+            {/* P2: HTTP 配置面板 */}
+            {isHttpNode ? (
+              <HttpConfigPanel
+                values={{
+                  method: (config.method as string) ?? 'GET',
+                  url: (config.url as string) ?? '',
+                  headers: (config.headers as string) ?? '{}',
+                  body: (config.body as string) ?? '',
+                  responseExtract: (config.responseExtract as string) ?? '',
+                }}
+                onBatchChange={onBatchConfigChange}
+              />
+            ) : meta.configSchema.length > 0 ? (
+              <div className="space-y-3">
+                <div className="text-[10px] font-medium" style={{ color: 'var(--text-muted, #888)' }}>
+                  参数配置
+                </div>
+                {meta.configSchema.map((field) => (
+                  <ConfigFieldInput
+                    key={field.key}
+                    field={field}
+                    value={config[field.key]}
+                    accentHue={node.data.accentHue}
+                    onChange={(val) => onConfigChange(field.key, val)}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div
+                className="text-[11px] text-center py-4 rounded-lg"
+                style={{
+                  color: 'var(--text-muted, #888)',
+                  background: 'rgba(255,255,255,0.02)',
+                  border: '1px dashed rgba(255,255,255,0.06)',
+                }}
+              >
+                该舱类型暂无可配参数
+              </div>
+            )}
+
+            {/* 数据端口 */}
+            {(node.data.inputSlots.length > 0 || node.data.outputSlots.length > 0) && (
+              <div className="space-y-2">
+                <div className="text-[10px] font-medium" style={{ color: 'var(--text-muted, #888)' }}>
+                  数据端口
+                </div>
+                {node.data.inputSlots.map((slot) => (
+                  <div key={slot.slotId} className="flex items-center gap-1.5 text-[10px]">
+                    <span className="px-1 py-0.5 rounded" style={{
+                      background: 'rgba(255,255,255,0.05)',
+                      color: 'var(--text-muted, #888)',
+                    }}>入</span>
+                    <span style={{ color: 'var(--text-secondary, #aaa)' }}>{slot.name}</span>
+                    <span style={{ color: 'var(--text-muted, #666)' }}>({slot.dataType})</span>
+                  </div>
+                ))}
+                {node.data.outputSlots.map((slot) => (
+                  <div key={slot.slotId} className="flex items-center gap-1.5 text-[10px]">
+                    <span className="px-1 py-0.5 rounded" style={{
+                      background: 'rgba(34,197,94,0.08)',
+                      color: 'rgba(34,197,94,0.7)',
+                    }}>出</span>
+                    <span style={{ color: 'var(--text-secondary, #aaa)' }}>{slot.name}</span>
+                    <span style={{ color: 'var(--text-muted, #666)' }}>({slot.dataType})</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* 测试按钮组 */}
+            <div className="flex items-center gap-2 pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+              {canTestRun && (
+                <Button
+                  variant="secondary"
+                  size="xs"
+                  onClick={onTestRun}
+                  disabled={testRunning}
+                >
+                  {testRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <FlaskConical className="w-3 h-3" />}
+                  单舱测试
+                </Button>
+              )}
+              {canReplay && (
+                <Button
+                  variant="secondary"
+                  size="xs"
+                  onClick={onReplay}
+                  disabled={testRunning}
+                >
+                  {testRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
+                  回放
+                </Button>
+              )}
+            </div>
           </div>
         )}
 
-        {/* 输入/输出插槽信息 */}
-        {(node.data.inputSlots.length > 0 || node.data.outputSlots.length > 0) && (
-          <div className="space-y-2">
-            <div className="text-[10px] font-medium" style={{ color: 'var(--text-muted, #888)' }}>
-              数据端口
-            </div>
-            {node.data.inputSlots.map((slot) => (
-              <div key={slot.slotId} className="flex items-center gap-1.5 text-[10px]">
-                <span className="px-1 py-0.5 rounded" style={{
-                  background: 'rgba(255,255,255,0.05)',
-                  color: 'var(--text-muted, #888)',
-                }}>入</span>
-                <span style={{ color: 'var(--text-secondary, #aaa)' }}>{slot.name}</span>
-                <span style={{ color: 'var(--text-muted, #666)' }}>({slot.dataType})</span>
+        {activeTab === 'result' && (
+          <div className="p-3 space-y-3">
+            {/* 测试/回放结果 */}
+            {testRunResult ? (
+              <TestRunResultPanel result={testRunResult} />
+            ) : nodeExecution ? (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  {nodeExecution.status === 'completed' && <CheckCircle2 className="w-3.5 h-3.5" style={{ color: 'rgba(34,197,94,0.8)' }} />}
+                  {nodeExecution.status === 'failed' && <AlertCircle className="w-3.5 h-3.5" style={{ color: 'rgba(239,68,68,0.8)' }} />}
+                  {nodeExecution.status === 'running' && <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: 'rgba(99,102,241,0.8)' }} />}
+                  <span className="text-[11px] font-medium" style={{ color: 'var(--text-primary, #e8e6e3)' }}>
+                    {nodeExecution.status === 'completed' ? '执行完成' : nodeExecution.status === 'failed' ? '执行失败' : nodeExecution.status === 'running' ? '执行中...' : nodeExecution.status}
+                  </span>
+                  {nodeExecution.durationMs != null && (
+                    <span className="text-[10px]" style={{ color: 'var(--text-muted, #888)' }}>
+                      {(nodeExecution.durationMs / 1000).toFixed(1)}s
+                    </span>
+                  )}
+                </div>
+                {nodeExecution.errorMessage && (
+                  <div className="text-[11px] p-2 rounded-lg" style={{
+                    background: 'rgba(239,68,68,0.06)',
+                    color: 'rgba(239,68,68,0.9)',
+                    border: '1px solid rgba(239,68,68,0.1)',
+                  }}>
+                    {nodeExecution.errorMessage}
+                  </div>
+                )}
+                {nodeExecution.logs && (
+                  <div className="space-y-1">
+                    <div className="text-[10px] font-medium" style={{ color: 'var(--text-muted, #888)' }}>日志</div>
+                    <pre className="text-[10px] p-2 rounded-lg overflow-x-auto max-h-48 overflow-y-auto" style={{
+                      background: 'rgba(255,255,255,0.03)',
+                      color: 'var(--text-secondary, #aaa)',
+                      fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace',
+                    }}>
+                      {nodeExecution.logs.length > 800 ? nodeExecution.logs.slice(0, 800) + '\n... (已截断)' : nodeExecution.logs}
+                    </pre>
+                  </div>
+                )}
               </div>
-            ))}
-            {node.data.outputSlots.map((slot) => (
-              <div key={slot.slotId} className="flex items-center gap-1.5 text-[10px]">
-                <span className="px-1 py-0.5 rounded" style={{
-                  background: 'rgba(34,197,94,0.08)',
-                  color: 'rgba(34,197,94,0.7)',
-                }}>出</span>
-                <span style={{ color: 'var(--text-secondary, #aaa)' }}>{slot.name}</span>
-                <span style={{ color: 'var(--text-muted, #666)' }}>({slot.dataType})</span>
+            ) : (
+              <div className="text-[11px] text-center py-8" style={{ color: 'var(--text-muted, #888)' }}>
+                执行工作流或运行单舱测试后结果将在此显示
               </div>
-            ))}
+            )}
+          </div>
+        )}
+
+        {activeTab === 'artifacts' && (
+          <div className="p-3 space-y-2">
+            {artifacts.length > 0 ? artifacts.map((a) => (
+              <button
+                key={a.artifactId}
+                onClick={() => onPreviewArtifact(a)}
+                className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg transition-colors text-left"
+                style={{
+                  background: 'rgba(255,255,255,0.03)',
+                  border: '1px solid rgba(255,255,255,0.06)',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
+              >
+                <Eye className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'rgba(99,102,241,0.7)' }} />
+                <div className="flex-1 min-w-0">
+                  <div className="text-[11px] truncate" style={{ color: 'var(--text-primary, #e8e6e3)' }}>
+                    {a.name}
+                  </div>
+                  <div className="text-[9px]" style={{ color: 'var(--text-muted, #888)' }}>
+                    {a.mimeType} · {a.sizeBytes > 0 ? formatArtifactSize(a.sizeBytes) : ''}
+                  </div>
+                </div>
+                <Download className="w-3 h-3 flex-shrink-0" style={{ color: 'var(--text-muted, #666)' }} />
+              </button>
+            )) : (
+              <div className="text-[11px] text-center py-8" style={{ color: 'var(--text-muted, #888)' }}>
+                节点执行完成后产物将在此显示
+              </div>
+            )}
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function formatArtifactSize(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
+}
+
+// ── 测试结果面板 ──
+
+function TestRunResultPanel({ result }: { result: CapsuleTestRunResult }) {
+  const isOk = result.status === 'completed';
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        {isOk ? <CheckCircle2 className="w-3.5 h-3.5" style={{ color: 'rgba(34,197,94,0.8)' }} /> : <AlertCircle className="w-3.5 h-3.5" style={{ color: 'rgba(239,68,68,0.8)' }} />}
+        <span className="text-[11px] font-medium" style={{ color: 'var(--text-primary, #e8e6e3)' }}>
+          {isOk ? '测试通过' : '测试失败'}
+        </span>
+        <span className="text-[10px]" style={{ color: 'var(--text-muted, #888)' }}>
+          {(result.durationMs / 1000).toFixed(1)}s
+        </span>
+      </div>
+      {result.errorMessage && (
+        <div className="text-[11px] p-2 rounded-lg" style={{
+          background: 'rgba(239,68,68,0.06)',
+          color: 'rgba(239,68,68,0.9)',
+          border: '1px solid rgba(239,68,68,0.1)',
+        }}>
+          {result.errorMessage}
+        </div>
+      )}
+      {result.logs && (
+        <div className="space-y-1">
+          <div className="text-[10px] font-medium" style={{ color: 'var(--text-muted, #888)' }}>日志</div>
+          <pre className="text-[10px] p-2 rounded-lg overflow-x-auto max-h-48 overflow-y-auto" style={{
+            background: 'rgba(255,255,255,0.03)',
+            color: 'var(--text-secondary, #aaa)',
+            fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace',
+          }}>
+            {result.logs.length > 800 ? result.logs.slice(0, 800) + '\n... (已截断)' : result.logs}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── 节点右键菜单 ──
+
+function NodeContextMenu({
+  x, y, canTestRun, canReplay, isTestRunning,
+  onTestRun, onReplay, onBreakpoint, onClose,
+}: {
+  x: number; y: number;
+  canTestRun: boolean; canReplay: boolean; isTestRunning: boolean;
+  onTestRun: () => void; onReplay: () => void; onBreakpoint: () => void;
+  onClose: () => void;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function onClick(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as HTMLElement)) onClose();
+    }
+    const id = setTimeout(() => document.addEventListener('mousedown', onClick), 50);
+    return () => { clearTimeout(id); document.removeEventListener('mousedown', onClick); };
+  }, [onClose]);
+
+  const itemClass = "w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-left transition-colors rounded-md";
+  const itemStyle = { color: 'var(--text-secondary, #aaa)' };
+
+  return (
+    <div
+      ref={menuRef}
+      className="rounded-xl p-1 min-w-[160px]"
+      style={{
+        position: 'fixed', left: x, top: y, zIndex: 1000,
+        background: 'rgba(30,30,32,0.95)',
+        border: '1px solid rgba(255,255,255,0.1)',
+        boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
+      }}
+    >
+      {canTestRun && (
+        <button className={itemClass} style={itemStyle} onClick={onTestRun} disabled={isTestRunning}
+          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+        >
+          <FlaskConical className="w-3.5 h-3.5" /> 单舱测试
+        </button>
+      )}
+      {canReplay && (
+        <button className={itemClass} style={itemStyle} onClick={onReplay} disabled={isTestRunning}
+          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+        >
+          <RotateCcw className="w-3.5 h-3.5" /> 回放（真实数据）
+        </button>
+      )}
+      <button className={itemClass} style={itemStyle} onClick={onBreakpoint}
+        onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+      >
+        <XCircle className="w-3.5 h-3.5" /> 切换断点
+      </button>
     </div>
   );
 }
