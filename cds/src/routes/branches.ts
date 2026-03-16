@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { execSync } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
+import { createGzip } from 'node:zlib';
 import { Router } from 'express';
 import { StateService } from '../services/state.js';
 import type { WorktreeService } from '../services/worktree.js';
@@ -1807,7 +1808,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.type('text/yaml').send(yamlContent);
   });
 
-  // GET /api/export-skill — export cds-project-scan skill + current config as zip
+  // GET /api/export-skill — export cds-project-scan skill + current config as tar.gz
+  // Uses Node.js built-in tar (via child_process) + zlib — no external zip dependency
   router.get('/export-skill', (_req, res) => {
     try {
       const skillDir = path.join(config.repoRoot, '.claude', 'skills', 'cds-project-scan');
@@ -1823,7 +1825,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const rules = stateService.getRoutingRules();
       const yamlContent = toCdsCompose(profiles, envVars, infra, rules);
 
-      // Build zip in a temp directory
+      // Build pack in a temp directory
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
       const packName = `cds-deployment-skill-${timestamp}`;
       const tmpDir = path.join(config.repoRoot, '.cds', 'tmp');
@@ -1879,23 +1881,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
 - 敏感信息（API Key、密码等）不包含在此压缩包中
 `, 'utf-8');
 
-      // Create zip
-      const zipPath = path.join(tmpDir, `${packName}.zip`);
-      execSync(`cd "${tmpDir}" && zip -r "${packName}.zip" "${packName}/"`, { stdio: 'pipe' });
+      // Create tar.gz using tar command (available on all Linux)
+      const tarName = `${packName}.tar.gz`;
+      execSync(`cd "${tmpDir}" && tar -czf "${tarName}" "${packName}/"`, { stdio: 'pipe' });
 
       // Clean up pack dir
       fs.rmSync(packDir, { recursive: true, force: true });
 
-      // Send zip
-      const stat = fs.statSync(zipPath);
-      res.setHeader('Content-Type', 'application/zip');
-      res.setHeader('Content-Disposition', `attachment; filename="${packName}.zip"`);
+      // Send tar.gz
+      const tarPath = path.join(tmpDir, tarName);
+      const stat = fs.statSync(tarPath);
+      res.setHeader('Content-Type', 'application/gzip');
+      res.setHeader('Content-Disposition', `attachment; filename="${tarName}"`);
       res.setHeader('Content-Length', stat.size);
-      const stream = fs.createReadStream(zipPath);
+      const stream = fs.createReadStream(tarPath);
       stream.pipe(res);
       stream.on('end', () => {
-        // Clean up zip file after sending
-        fs.unlink(zipPath, () => {});
+        fs.unlink(tarPath, () => {});
       });
     } catch (e) {
       console.error('export-skill error:', e);
@@ -2131,6 +2133,96 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
 
     res.end();
+  });
+
+  // ── Self-update: switch CDS's own branch, pull, and restart ──
+
+  // GET /api/self-branches — list git branches of the CDS repo itself
+  router.get('/self-branches', async (_req, res) => {
+    try {
+      const cdsDir = path.join(config.repoRoot, 'cds');
+      // Get current branch
+      const currentResult = await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: config.repoRoot });
+      const currentBranch = currentResult.stdout.trim();
+
+      // Fetch latest (ignore errors if offline)
+      await shell.exec('git fetch --all --prune', { cwd: config.repoRoot }).catch(() => {});
+
+      // List all branches (local + remote)
+      const localResult = await shell.exec('git branch --format="%(refname:short)"', { cwd: config.repoRoot });
+      const localBranches = localResult.stdout.trim().split('\n').filter(Boolean);
+
+      const remoteResult = await shell.exec('git branch -r --format="%(refname:short)"', { cwd: config.repoRoot });
+      const remoteBranches = remoteResult.stdout.trim().split('\n')
+        .filter(Boolean)
+        .filter(b => !b.includes('HEAD'))
+        .map(b => b.replace(/^origin\//, ''));
+
+      // Merge and deduplicate
+      const allBranches = [...new Set([...localBranches, ...remoteBranches])].sort();
+
+      res.json({ current: currentBranch, branches: allBranches });
+    } catch (e) {
+      res.status(500).json({ error: '获取分支列表失败: ' + (e as Error).message });
+    }
+  });
+
+  // POST /api/self-update — switch branch + pull + restart CDS (SSE progress)
+  router.post('/self-update', async (req, res) => {
+    const { branch } = req.body as { branch?: string };
+
+    initSSE(res);
+    const send = (step: string, status: string, title: string) => {
+      sendSSE(res, 'step', { step, status, title, timestamp: new Date().toISOString() });
+    };
+
+    try {
+      const repoRoot = config.repoRoot;
+
+      // Step 1: fetch latest
+      send('fetch', 'running', '正在拉取远程更新...');
+      await shell.exec('git fetch --all --prune', { cwd: repoRoot });
+      send('fetch', 'done', '远程更新已拉取');
+
+      // Step 2: switch branch if specified
+      if (branch) {
+        send('checkout', 'running', `正在切换到分支 ${branch}...`);
+        const checkoutResult = await shell.exec(`git checkout ${branch}`, { cwd: repoRoot });
+        if (checkoutResult.exitCode !== 0) {
+          // Try creating tracking branch from remote
+          await shell.exec(`git checkout -b ${branch} origin/${branch}`, { cwd: repoRoot });
+        }
+        send('checkout', 'done', `已切换到 ${branch}`);
+      }
+
+      // Step 3: pull latest
+      send('pull', 'running', '正在拉取最新代码...');
+      const pullResult = await shell.exec('git pull', { cwd: repoRoot });
+      const pullOutput = pullResult.stdout.trim();
+      send('pull', 'done', pullOutput.includes('Already up to date') ? '代码已是最新' : '代码已更新');
+
+      // Step 4: restart CDS via detached process
+      send('restart', 'running', '正在重启 CDS...');
+      sendSSE(res, 'done', { message: 'CDS 即将重启，页面将在几秒后自动刷新...' });
+      res.end();
+
+      // Give time for response to flush, then spawn detached restart
+      setTimeout(() => {
+        const cdsDir = path.join(repoRoot, 'cds');
+        const child = spawn('bash', ['./exec_cds.sh', '--background'], {
+          cwd: cdsDir,
+          detached: true,
+          stdio: 'ignore',
+          env: { ...process.env },
+        });
+        child.unref();
+        // exec_cds.sh will kill the old process (us) via PID file + port detection
+      }, 500);
+    } catch (err) {
+      send('error', 'error', `更新失败: ${(err as Error).message}`);
+      sendSSE(res, 'error', { message: (err as Error).message });
+      res.end();
+    }
   });
 
   return router;

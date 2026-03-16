@@ -1072,6 +1072,10 @@ function toggleSettingsMenu(event) {
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 1.75a.25.25 0 01.25-.25h3.5a.75.75 0 000-1.5h-3.5A1.75 1.75 0 002 1.75v11.5c0 .966.784 1.75 1.75 1.75h8.5A1.75 1.75 0 0014 13.25v-6a.75.75 0 00-1.5 0v6a.25.25 0 01-.25.25h-8.5a.25.25 0 01-.25-.25V1.75z"/><path d="M11.78.22a.75.75 0 00-1.06 0L6.22 4.72a.75.75 0 000 1.06l.53.53-2.97 2.97a.75.75 0 101.06 1.06l2.97-2.97.53.53a.75.75 0 001.06 0l4.5-4.5a.75.75 0 000-1.06L11.78.22z"/></svg>
       导出部署技能
     </div>
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); openSelfUpdate()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0114.95 7.16a.75.75 0 01-1.49.178A5.5 5.5 0 008 2.5zm6.294 5.505a.75.75 0 01.834.656 5.5 5.5 0 01-9.592 2.97l1.204-1.204a.25.25 0 00-.177-.427H3.354a.25.25 0 01-.354-.354l1.38-1.38A7.002 7.002 0 0014.95 7.16z"/><circle cx="8" cy="8" r="2"/></svg>
+      自动更新
+    </div>
     <div class="settings-menu-divider"></div>
     <div class="settings-menu-item danger" onclick="closeSettingsMenu(); cleanupAll()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM11 3V1.75A1.75 1.75 0 009.25 0h-2.5A1.75 1.75 0 005 1.75V3H2.75a.75.75 0 000 1.5h.3l.8 8.2A1.75 1.75 0 005.6 14.5h4.8a1.75 1.75 0 001.75-1.8l.8-8.2h.3a.75.75 0 000-1.5H11z"/></svg>
@@ -1847,7 +1851,7 @@ async function exportSkill() {
     const blob = await resp.blob();
     const disposition = resp.headers.get('Content-Disposition') || '';
     const match = disposition.match(/filename="?([^"]+)"?/);
-    const filename = match ? match[1] : 'cds-deployment-skill.zip';
+    const filename = match ? match[1] : 'cds-deployment-skill.tar.gz';
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -1860,6 +1864,134 @@ async function exportSkill() {
   } catch (e) {
     showToast('导出失败: ' + e.message, 'error');
   }
+}
+
+// ── Self-update: switch branch + pull + restart ──
+
+async function openSelfUpdate() {
+  // Fetch branch list
+  let data;
+  try {
+    data = await api('GET', '/self-branches');
+  } catch (e) {
+    showToast('获取分支列表失败: ' + e.message, 'error');
+    return;
+  }
+
+  const { current, branches } = data;
+  const options = branches.map(b =>
+    `<option value="${esc(b)}" ${b === current ? 'selected' : ''}>${esc(b)}${b === current ? ' (当前)' : ''}</option>`
+  ).join('');
+
+  openConfigModal('自动更新', `
+    <p class="config-panel-desc">
+      切换 CDS 代码分支并重启。操作流程：<code>git fetch → git checkout → git pull → restart</code>
+    </p>
+    <div class="form-row">
+      <label class="form-label">目标分支</label>
+      <select id="selfUpdateBranch" class="form-input" style="width:100%">
+        ${options}
+      </select>
+    </div>
+    <div class="form-row" style="margin-top:4px;font-size:12px;color:var(--fg-muted)">
+      当前分支：<code>${esc(current)}</code>
+    </div>
+    <div id="selfUpdateProgress" style="display:none;margin-top:12px">
+      <div id="selfUpdateSteps" style="display:flex;flex-direction:column;gap:6px"></div>
+      <div id="selfUpdateStatus" style="margin-top:8px;font-size:13px"></div>
+    </div>
+    <div class="form-row" style="margin-top:12px;display:flex;gap:8px">
+      <button class="sm" id="selfUpdateBtn" onclick="executeSelfUpdate()">更新并重启</button>
+      <button class="sm ghost" onclick="closeConfigModal()">取消</button>
+    </div>
+  `);
+}
+
+function executeSelfUpdate() {
+  const select = document.getElementById('selfUpdateBranch');
+  const branch = select ? select.value : '';
+  const btn = document.getElementById('selfUpdateBtn');
+  const progress = document.getElementById('selfUpdateProgress');
+  const stepsEl = document.getElementById('selfUpdateSteps');
+  const statusEl = document.getElementById('selfUpdateStatus');
+
+  if (btn) btn.disabled = true;
+  if (progress) progress.style.display = 'block';
+
+  const stepMap = {};
+  function updateStep(id, status, title) {
+    let el = stepMap[id];
+    if (!el) {
+      el = document.createElement('div');
+      el.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;font-size:13px';
+      el.innerHTML = '<span class="step-dot"></span><span></span>';
+      stepsEl.appendChild(el);
+      stepMap[id] = el;
+    }
+    const dot = el.querySelector('.step-dot');
+    const label = el.querySelector('span:last-child');
+    label.textContent = title;
+    const colors = { running: 'var(--blue)', done: 'var(--green)', error: 'var(--red)' };
+    dot.style.cssText = `width:8px;height:8px;border-radius:50%;background:${colors[status] || 'var(--fg-muted)'}`;
+    if (status === 'running') {
+      dot.style.animation = 'pulse 1s infinite';
+    }
+  }
+
+  // SSE request via fetch
+  fetch(API + '/self-update', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ branch: branch || undefined }),
+  }).then(resp => {
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    function processChunk() {
+      return reader.read().then(({ done, value }) => {
+        if (done) return;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        let eventType = '';
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            eventType = line.slice(7).trim();
+          } else if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (eventType === 'step') {
+                updateStep(data.step, data.status, data.title);
+              } else if (eventType === 'done') {
+                statusEl.innerHTML = '<span style="color:var(--green)">' + esc(data.message) + '</span>';
+                // Auto-reload after delay
+                setTimeout(() => { location.reload(); }, 5000);
+                statusEl.innerHTML += '<br><span style="font-size:12px;color:var(--fg-muted)">5 秒后自动刷新...</span>';
+                let sec = 4;
+                const t = setInterval(() => {
+                  if (sec <= 0) { clearInterval(t); location.reload(); }
+                  else { statusEl.querySelector('span:last-child').textContent = sec + ' 秒后自动刷新...'; sec--; }
+                }, 1000);
+              } else if (eventType === 'error') {
+                statusEl.innerHTML = '<span style="color:var(--red)">❌ ' + esc(data.message) + '</span>';
+                if (btn) btn.disabled = false;
+              }
+            } catch {}
+          }
+        }
+        return processChunk();
+      });
+    }
+    return processChunk();
+  }).catch(err => {
+    // Connection lost is expected during restart
+    if (statusEl && !statusEl.textContent) {
+      statusEl.innerHTML = '<span style="color:var(--fg-muted)">连接已断开（CDS 正在重启），即将刷新...</span>';
+      setTimeout(() => { location.reload(); }, 5000);
+    }
+  });
 }
 
 // ── Infrastructure services ──
