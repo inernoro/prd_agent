@@ -84,7 +84,9 @@ export function createServer(deps: ServerDeps): express.Express {
       }
     });
 
-    console.log('  Auth: enabled');
+    console.log(`  Auth: enabled (user: ${cdsUser})`);
+  } else {
+    console.warn('  ⚠ Auth: disabled — CDS_USERNAME / CDS_PASSWORD not set, dashboard is open to anyone!');
   }
 
   // API routes
