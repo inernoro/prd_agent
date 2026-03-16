@@ -245,8 +245,8 @@ export default function AppShell() {
 
   const asideWidth = collapsed ? 72 : 220;
   const asideGap = 18;
-  // 专注模式（fullBleedMain）、首页沉浸模式、移动端下隐藏侧栏，主区最大化
-  const focusHideAside = fullBleedMain || isHomePage || isMobile;
+  // 专注模式（fullBleedMain）、移动端下隐藏侧栏，主区最大化
+  const focusHideAside = fullBleedMain || isMobile;
   const mainPadLeft = focusHideAside ? (isMobile ? 0 : asideGap) : asideWidth + asideGap * 2;
 
   // 移动端底部 Tab 栏: 5 固定 Tab（首页/浏览/+/资产/我的），不再依赖后端菜单
@@ -1119,7 +1119,7 @@ export default function AppShell() {
           <div
             className={cn(
               'relative w-full flex-1 min-h-0 flex flex-col',
-              isMobile ? 'px-[var(--mobile-padding,16px)] py-3' : (fullBleedMain || isHomePage) ? 'p-0' : 'px-5 py-5'
+              isMobile ? 'px-[var(--mobile-padding,16px)] py-3' : fullBleedMain ? 'p-0' : isHomePage ? 'px-3 py-3' : 'px-5 py-5'
             )}
           >
             <div className="flex-1 min-h-0">

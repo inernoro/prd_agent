@@ -17,6 +17,9 @@ import {
   FileSearch,
   BarChart3,
   Bot,
+  Store,
+  GraduationCap,
+  ClipboardList,
   type LucideIcon,
 } from 'lucide-react';
 import { useToolboxStore } from '@/stores/toolboxStore';
@@ -346,6 +349,51 @@ export default function AgentLauncherPage() {
               }}
             />
           </div>
+
+          {/* ── Quick Links ── */}
+          {!searchQuery.trim() && (
+            <div className={`grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-3'} ${isMobile ? 'mb-6' : 'mb-10'}`}>
+              {[
+                { icon: Store, label: '海鲜市场', desc: '发现和 Fork 优质提示词与配置', path: '/marketplace', accent: '#F59E0B' },
+                { icon: GraduationCap, label: '使用教程', desc: '从入门到进阶的操作指南', path: '/tutorials', accent: '#3B82F6' },
+                { icon: ClipboardList, label: '缺陷管理', desc: '快速提交和跟踪缺陷报告', path: '/defect', accent: '#F43F5E' },
+              ].map((link) => (
+                <button
+                  key={link.path}
+                  type="button"
+                  onClick={() => navigate(link.path)}
+                  className="group flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-left transition-all duration-200 hover:-translate-y-0.5"
+                  style={{
+                    background: 'var(--bg-elevated, rgba(255,255,255,0.03))',
+                    border: '1px solid rgba(255,255,255,0.06)',
+                  }}
+                >
+                  <div
+                    className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center transition-colors duration-200"
+                    style={{
+                      background: `${link.accent}15`,
+                      border: `1px solid ${link.accent}25`,
+                    }}
+                  >
+                    <link.icon size={18} style={{ color: link.accent }} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[13px] font-medium" style={{ color: 'var(--text-primary, #fff)' }}>
+                      {link.label}
+                    </div>
+                    <div className="text-[11px] mt-0.5 truncate" style={{ color: 'var(--text-muted, rgba(255,255,255,0.4))' }}>
+                      {link.desc}
+                    </div>
+                  </div>
+                  <ArrowRight
+                    size={14}
+                    className="shrink-0 opacity-0 group-hover:opacity-50 transition-all duration-200 group-hover:translate-x-0.5"
+                    style={{ color: 'var(--text-muted)' }}
+                  />
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* ── Loading ── */}
           {itemsLoading ? (
