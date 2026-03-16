@@ -1102,9 +1102,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       ...config,
       githubRepoUrl,
       jwt: { ...config.jwt, secret: '***' },
+      executorToken: config.executorToken ? '***' : undefined,
       sharedEnv: Object.fromEntries(
         Object.entries(config.sharedEnv).map(([k, v]) => [k, k.includes('PASSWORD') || k.includes('SECRET') ? '***' : v]),
       ),
+      executors: Object.values(stateService.getExecutors()),
     });
   });
 

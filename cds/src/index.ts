@@ -1,4 +1,5 @@
 import http from 'node:http';
+import express from 'express';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { loadConfig } from './config.js';
@@ -8,6 +9,10 @@ import { StateService } from './services/state.js';
 import { WorktreeService } from './services/worktree.js';
 import { ContainerService } from './services/container.js';
 import { ProxyService } from './services/proxy.js';
+import { ExecutorAgent } from './executor/agent.js';
+import { createExecutorRouter } from './executor/routes.js';
+import { ExecutorRegistry } from './scheduler/executor-registry.js';
+import { createSchedulerRouter } from './scheduler/routes.js';
 
 const configPath = process.argv[2] || undefined;
 const config = loadConfig(configPath);
@@ -552,29 +557,71 @@ function listenWithRetry(
   doListen(0);
 }
 
-listenWithRetry(app, config.masterPort, 'Dashboard', () => {
-  console.log(`\n  Cloud Development Suite`);
-  console.log(`  ──────────────────────`);
-  console.log(`  Dashboard:  http://localhost:${config.masterPort}`);
-  console.log(`  Worker:     http://localhost:${config.workerPort}`);
-  if (config.switchDomain) console.log(`  Switch:     ${config.switchDomain} → ${config.mainDomain || '(main domain not set)'}`);
-  if (config.previewDomain) console.log(`  Preview:    *.<${config.previewDomain}>`);
-  console.log(`  State file: ${stateFile}`);
-  console.log(`  Repo root:  ${config.repoRoot}`);
-  console.log('');
-}, { force: true });
+// ── Mode-based startup ──
+const mode = config.mode;
+console.log(`\n  Cloud Development Suite (mode: ${mode})`);
+console.log(`  ──────────────────────`);
 
-// ── Worker server (reverse proxy on workerPort) ──
-const workerServer = http.createServer((req, res) => {
-  proxyService.handleRequest(req, res);
-});
+if (mode === 'executor') {
+  // ── Executor mode: only start executor API, no dashboard/proxy ──
+  const executorApp = express();
+  executorApp.use(express.json());
+  executorApp.use('/exec', createExecutorRouter({
+    stateService, worktreeService, containerService, shell, config,
+  }));
 
-workerServer.on('upgrade', (req, socket, head) => {
-  proxyService.handleUpgrade(req, socket, head);
-});
+  const agent = new ExecutorAgent(config, stateService);
 
-listenWithRetry(workerServer, config.workerPort, 'Worker', () => {
-  console.log(`  Worker proxy listening on :${config.workerPort}`);
-  console.log(`  Route via X-Branch header or configure routing rules in dashboard.`);
-  console.log('');
-}, { optional: true });
+  listenWithRetry(executorApp, config.executorPort, 'Executor', async () => {
+    console.log(`  Executor API:  http://localhost:${config.executorPort}`);
+    console.log(`  Scheduler:     ${config.schedulerUrl || '(not set)'}`);
+    console.log(`  State file:    ${stateFile}`);
+    console.log(`  Repo root:     ${config.repoRoot}`);
+    console.log('');
+
+    // Register with scheduler and start heartbeat
+    await agent.register();
+    agent.startHeartbeat();
+  }, { force: true });
+} else {
+  // ── Standalone or Scheduler mode: start dashboard + proxy ──
+  listenWithRetry(app, config.masterPort, 'Dashboard', () => {
+    console.log(`  Dashboard:  http://localhost:${config.masterPort}`);
+    console.log(`  Worker:     http://localhost:${config.workerPort}`);
+    if (config.switchDomain) console.log(`  Switch:     ${config.switchDomain} → ${config.mainDomain || '(main domain not set)'}`);
+    if (config.previewDomain) console.log(`  Preview:    *.<${config.previewDomain}>`);
+    console.log(`  State file: ${stateFile}`);
+    console.log(`  Repo root:  ${config.repoRoot}`);
+    console.log('');
+  }, { force: true });
+
+  // ── Worker server (reverse proxy on workerPort) ──
+  const workerServer = http.createServer((req, res) => {
+    proxyService.handleRequest(req, res);
+  });
+
+  workerServer.on('upgrade', (req, socket, head) => {
+    proxyService.handleUpgrade(req, socket, head);
+  });
+
+  listenWithRetry(workerServer, config.workerPort, 'Worker', () => {
+    console.log(`  Worker proxy listening on :${config.workerPort}`);
+    console.log(`  Route via X-Branch header or configure routing rules in dashboard.`);
+    console.log('');
+  }, { optional: true });
+
+  // ── Scheduler mode: also start executor registry ──
+  if (mode === 'scheduler') {
+    const registry = new ExecutorRegistry(stateService);
+    registry.startHealthChecks();
+
+    // Mount scheduler API routes on the dashboard server
+    app.use('/api/executors', createSchedulerRouter({ registry, config }));
+    console.log(`  Scheduler: executor management API mounted at /api/executors`);
+  }
+
+  // ── Standalone mode: register a local executor implicitly ──
+  if (mode === 'standalone') {
+    // No extra setup needed — current behavior is preserved
+  }
+}

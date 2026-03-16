@@ -57,6 +57,10 @@ let previewMode = localStorage.getItem('cds_preview_mode') || 'simple';
 // ── Mirror acceleration (npm/docker registry mirrors) ──
 let mirrorEnabled = false;
 
+// ── Executor/Scheduler state ──
+let cdsMode = 'standalone';
+let executors = [];
+
 // ── Utilities ──
 
 async function api(method, path, body) {
@@ -151,7 +155,10 @@ async function loadConfig() {
     mainDomain = data.mainDomain || '';
     previewDomain = data.previewDomain || '';
     workerPort = data.workerPort || '';
+    cdsMode = data.mode || 'standalone';
+    executors = data.executors || [];
     renderServiceStatusBar();
+    renderExecutorPanel();
   } catch (e) { console.error('loadConfig:', e); }
 }
 
@@ -243,6 +250,101 @@ function scrollToBranch(branchId) {
   const bar = document.getElementById('serviceStatusBar');
   if (panel) panel.classList.add('hidden');
   if (bar) bar.classList.remove('service-status-bar-expanded');
+}
+
+// ── Executor Panel (scheduler mode) ──
+
+function renderExecutorPanel() {
+  const panel = document.getElementById('executorPanel');
+  if (!panel) return;
+
+  // Only show in scheduler mode or when executors exist
+  if (cdsMode !== 'scheduler' && executors.length === 0) {
+    panel.classList.add('hidden');
+    return;
+  }
+
+  panel.classList.remove('hidden');
+
+  if (executors.length === 0) {
+    panel.innerHTML = `
+      <div class="executor-header">
+        <span class="executor-title">执行器集群</span>
+        <span class="executor-badge empty">无执行器</span>
+      </div>
+      <div class="executor-hint">
+        在远程服务器上运行 <code>CDS_MODE=executor CDS_SCHEDULER_URL=http://本机:9900 node dist/index.js</code> 来注册执行器
+      </div>`;
+    return;
+  }
+
+  const online = executors.filter(e => e.status === 'online').length;
+  const total = executors.length;
+
+  panel.innerHTML = `
+    <div class="executor-header" onclick="toggleExecutorPanel()">
+      <span class="executor-title">执行器集群</span>
+      <span class="executor-badge ${online === total ? 'all-ok' : 'partial'}">${online}/${total} 在线</span>
+      <span class="executor-toggle">▾</span>
+    </div>
+    <div id="executorList" class="executor-list hidden">
+      ${executors.map(ex => {
+        const memPct = ex.capacity.memoryMB > 0 ? Math.round(ex.load.memoryUsedMB / ex.capacity.memoryMB * 100) : 0;
+        const memGB = (ex.load.memoryUsedMB / 1024).toFixed(1);
+        const totalGB = (ex.capacity.memoryMB / 1024).toFixed(1);
+        return `
+          <div class="executor-card executor-${ex.status}">
+            <div class="executor-card-header">
+              <span class="executor-dot ${ex.status}"></span>
+              <span class="executor-id">${esc(ex.id)}</span>
+              <span class="executor-host">${esc(ex.host)}:${ex.port}</span>
+            </div>
+            <div class="executor-metrics">
+              <div class="executor-metric">
+                <span class="metric-label">内存</span>
+                <div class="metric-bar"><div class="metric-fill ${memPct > 85 ? 'danger' : memPct > 65 ? 'warn' : ''}" style="width:${memPct}%"></div></div>
+                <span class="metric-value">${memGB}/${totalGB} GB</span>
+              </div>
+              <div class="executor-metric">
+                <span class="metric-label">CPU</span>
+                <div class="metric-bar"><div class="metric-fill ${ex.load.cpuPercent > 85 ? 'danger' : ex.load.cpuPercent > 65 ? 'warn' : ''}" style="width:${Math.min(ex.load.cpuPercent, 100)}%"></div></div>
+                <span class="metric-value">${ex.load.cpuPercent}%</span>
+              </div>
+            </div>
+            <div class="executor-branches">
+              ${ex.branches.length > 0 ? ex.branches.map(bid => `<span class="executor-branch-tag">${esc(bid)}</span>`).join('') : '<span class="executor-no-branches">无部署分支</span>'}
+            </div>
+            ${ex.status === 'online' ? `<button class="executor-action-btn" onclick="drainExecutor('${esc(ex.id)}')">排空</button>` : ''}
+            <button class="executor-action-btn danger" onclick="removeExecutor('${esc(ex.id)}')">移除</button>
+          </div>`;
+      }).join('')}
+    </div>`;
+}
+
+function toggleExecutorPanel() {
+  const list = document.getElementById('executorList');
+  const toggle = document.querySelector('.executor-toggle');
+  if (list) {
+    list.classList.toggle('hidden');
+    if (toggle) toggle.textContent = list.classList.contains('hidden') ? '▾' : '▴';
+  }
+}
+
+async function drainExecutor(id) {
+  try {
+    await api('POST', `/executors/${id}/drain`);
+    showToast(`执行器 ${id} 已标记为排空`, 'info');
+    loadConfig();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function removeExecutor(id) {
+  if (!confirm(`确定移除执行器 ${id}？该节点上的分支不会自动迁移。`)) return;
+  try {
+    await api('DELETE', `/executors/${id}`);
+    showToast(`执行器 ${id} 已移除`, 'success');
+    loadConfig();
+  } catch (e) { showToast(e.message, 'error'); }
 }
 
 // ── Check updates (global refresh) ──
@@ -1166,7 +1268,8 @@ function renderBranches() {
   const scrollY = window.scrollY;
   const el = document.getElementById('branchList');
   const count = document.getElementById('branchCount');
-  count.textContent = `${branches.length} 个分支`;
+  const modeLabel = cdsMode === 'scheduler' ? ' · 调度端' : cdsMode === 'executor' ? ' · 执行端' : '';
+  count.textContent = `${branches.length} 个分支${modeLabel}`;
 
   // Update default branch selector
   const sel = document.getElementById('defaultBranch');
@@ -1340,6 +1443,7 @@ function renderBranches() {
           </div>
           ${b.date ? `<div class="branch-card-row2"><span class="branch-meta">${relativeTime(b.date)}更新</span></div>` : ''}
           ${portBadgesHtml ? `<div class="branch-card-ports">${portBadgesHtml}</div>` : ''}
+          ${b.executorId ? `<span class="executor-tag" title="部署在执行器 ${esc(b.executorId)}">⚡ ${esc(b.executorId.replace(/^executor-/, '').slice(0, 20))}</span>` : ''}
         </div>
         ${b.errorMessage && !deployLog ? `<div class="branch-error" title="${esc(b.errorMessage)}">${esc(b.errorMessage)}</div>` : ''}
         <div class="branch-card-body">
