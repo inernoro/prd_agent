@@ -12,6 +12,7 @@ namespace PrdAgent.Infrastructure.LlmGateway;
 public class GatewayLLMClient : ILLMClient
 {
     private readonly ILlmGateway _gateway;
+    private readonly ILLMRequestContextAccessor? _contextAccessor;
     private readonly string _appCallerCode;
     private readonly string _modelType;
     private readonly string? _platformId;
@@ -33,7 +34,8 @@ public class GatewayLLMClient : ILLMClient
         bool enablePromptCache = true,
         int maxTokens = 4096,
         double temperature = 0.2,
-        bool includeThinking = false)
+        bool includeThinking = false,
+        ILLMRequestContextAccessor? contextAccessor = null)
     {
         _gateway = gateway;
         _appCallerCode = appCallerCode;
@@ -44,6 +46,7 @@ public class GatewayLLMClient : ILLMClient
         _maxTokens = maxTokens;
         _temperature = temperature;
         _includeThinking = includeThinking;
+        _contextAccessor = contextAccessor;
     }
 
     /// <summary>AppCallerCode（用于测试断言）</summary>
@@ -85,6 +88,8 @@ public class GatewayLLMClient : ILLMClient
     {
         var requestBody = BuildRequestBody(systemPrompt, messages);
 
+        var scopeCtx = _contextAccessor?.Current;
+
         var request = new GatewayRequest
         {
             AppCallerCode = _appCallerCode,
@@ -95,6 +100,13 @@ public class GatewayLLMClient : ILLMClient
             TimeoutSeconds = 120,
             Context = new GatewayRequestContext
             {
+                RequestId = scopeCtx?.RequestId,
+                SessionId = scopeCtx?.SessionId,
+                GroupId = scopeCtx?.GroupId,
+                UserId = scopeCtx?.UserId,
+                ViewRole = scopeCtx?.ViewRole,
+                DocumentChars = scopeCtx?.DocumentChars,
+                DocumentHash = scopeCtx?.DocumentHash,
                 QuestionText = messages.LastOrDefault(m => m.Role == "user")?.Content,
                 SystemPromptChars = systemPrompt?.Length,
                 SystemPromptText = systemPrompt
