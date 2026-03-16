@@ -603,9 +603,17 @@ function openFullDeployLog(id, event) {
   event.stopPropagation();
   const log = inlineDeployLogs.get(id);
   if (!log) return;
+  const renderInline = () => {
+    const body = document.getElementById('logModalBody');
+    const wasAtBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 30;
+    const current = inlineDeployLogs.get(id);
+    body.innerHTML = `<pre class="live-log-output">${esc(current ? current.lines.join('\n') : '暂无日志')}</pre>`;
+    if (wasAtBottom) _scrollLogToBottom();
+  };
   openLogModal(`部署日志 ${id}`);
-  document.getElementById('logModalBody').innerHTML =
-    `<pre class="live-log-output">${esc(log.lines.join('\n') || '暂无日志')}</pre>`;
+  renderInline();
+  _scrollLogToBottom();
+  _startLogPoll(() => { renderInline(); return Promise.resolve(); }, 1000);
 }
 
 async function stopBranch(id) {
@@ -856,24 +864,30 @@ async function cleanupAll() {
 }
 
 async function viewBranchLogs(id) {
-  // First check if there's an active inline deploy log
+  // Active inline deploy log — poll from inlineDeployLogs
   const inlineLog = inlineDeployLogs.get(id);
   if (inlineLog) {
+    const renderInline = () => {
+      const body = document.getElementById('logModalBody');
+      const wasAtBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 30;
+      const current = inlineDeployLogs.get(id);
+      body.innerHTML = `<pre class="live-log-output">${esc(current ? current.lines.join('\n') : '暂无日志')}</pre>`;
+      if (wasAtBottom) _scrollLogToBottom();
+    };
     openLogModal(`部署日志 — ${id}`);
-    document.getElementById('logModalBody').innerHTML =
-      `<pre class="live-log-output">${esc(inlineLog.lines.join('\n') || '暂无日志')}</pre>`;
+    renderInline();
+    _scrollLogToBottom();
+    _startLogPoll(() => { renderInline(); return Promise.resolve(); }, 1000);
     return;
   }
   // Otherwise fetch historical operation logs from API
-  try {
+  const fetchAndRender = async () => {
     const data = await api('GET', `/branches/${encodeURIComponent(id)}/logs`);
     const logs = data.logs || [];
     if (logs.length === 0) {
-      openLogModal(`部署日志 — ${id}`);
       document.getElementById('logModalBody').innerHTML = '<div style="padding:16px;color:var(--text-muted)">暂无部署日志</div>';
       return;
     }
-    // Show latest log
     const latest = logs[logs.length - 1];
     const logLines = (latest.events || []).map(ev => {
       const prefix = ev.status === 'error' ? '✗' : ev.status === 'done' ? '✓' : '…';
@@ -881,17 +895,34 @@ async function viewBranchLogs(id) {
       if (ev.log) line += '\n    ' + ev.log;
       return line;
     });
-    openLogModal(`部署日志 — ${id} (${latest.status === 'completed' ? '成功' : latest.status === 'error' ? '失败' : '进行中'})`);
-    document.getElementById('logModalBody').innerHTML =
-      `<pre class="live-log-output">${esc(logLines.join('\n') || '暂无日志')}</pre>`;
+    const statusLabel = latest.status === 'completed' ? '成功' : latest.status === 'error' ? '失败' : '进行中';
+    document.getElementById('logModalTitle').textContent = `部署日志 — ${id} (${statusLabel})`;
+    const body = document.getElementById('logModalBody');
+    const wasAtBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 30;
+    body.innerHTML = `<pre class="live-log-output">${esc(logLines.join('\n') || '暂无日志')}</pre>`;
+    if (wasAtBottom) _scrollLogToBottom();
+  };
+  try {
+    openLogModal(`部署日志 — ${id}`);
+    await fetchAndRender();
+    _scrollLogToBottom();
+    _startLogPoll(fetchAndRender, 3000);
   } catch (e) { showToast('获取日志失败: ' + e.message, 'error'); }
 }
 
 async function viewContainerLogs(id, profileId) {
-  try {
+  const fetchAndRender = async () => {
     const data = await api('POST', `/branches/${id}/container-logs`, { profileId });
+    const body = document.getElementById('logModalBody');
+    const wasAtBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 30;
+    body.innerHTML = `<pre class="live-log-output">${esc(data.logs || '暂无日志')}</pre>`;
+    if (wasAtBottom) _scrollLogToBottom();
+  };
+  try {
     openLogModal(`日志: ${id}/${profileId || '默认'}`);
-    document.getElementById('logModalBody').innerHTML = `<pre class="live-log-output">${esc(data.logs || '暂无日志')}</pre>`;
+    await fetchAndRender();
+    _scrollLogToBottom();
+    _startLogPoll(fetchAndRender, 3000);
   } catch (e) { showToast(e.message, 'error'); }
 }
 
@@ -2508,13 +2539,39 @@ function toggleModalForm(id) {
 
 // ── Log modal ──
 
+let _logPollTimer = null;
+let _logPollFn = null;
+
 function openLogModal(title) {
   document.getElementById('logModalTitle').textContent = title;
   document.getElementById('logModal').classList.remove('hidden');
+  // Auto-scroll to bottom after content renders
+  requestAnimationFrame(() => {
+    const body = document.getElementById('logModalBody');
+    if (body) body.scrollTop = body.scrollHeight;
+  });
 }
 
 function closeLogModal() {
   document.getElementById('logModal').classList.add('hidden');
+  // Stop any active log polling
+  if (_logPollTimer) { clearInterval(_logPollTimer); _logPollTimer = null; _logPollFn = null; }
+}
+
+function _startLogPoll(fn, intervalMs) {
+  if (_logPollTimer) clearInterval(_logPollTimer);
+  _logPollFn = fn;
+  _logPollTimer = setInterval(async () => {
+    if (document.getElementById('logModal').classList.contains('hidden')) {
+      clearInterval(_logPollTimer); _logPollTimer = null; _logPollFn = null; return;
+    }
+    await _logPollFn();
+  }, intervalMs);
+}
+
+function _scrollLogToBottom() {
+  const body = document.getElementById('logModalBody');
+  if (body) body.scrollTop = body.scrollHeight;
 }
 
 // ── Logout ──
