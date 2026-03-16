@@ -494,17 +494,19 @@ const app = createServer({
   config,
 });
 
-// ── Helper: kill only CDS (node) process on port, then retry listen ──
-function tryKillCdsOnPort(port: number): boolean {
+// ── Helper: kill process on port so CDS can bind ──
+// force=true → kill any process (used for masterPort which belongs exclusively to CDS)
+// force=false → kill only CDS node processes (safe default)
+function tryKillOnPort(port: number, force: boolean): boolean {
   try {
     const pids = execSync(`lsof -ti :${port} 2>/dev/null || true`, { encoding: 'utf-8' }).trim();
     if (!pids) return false;
     let killed = false;
     for (const pid of pids.split('\n').filter(Boolean)) {
       const cmd = execSync(`ps -p ${pid} -o comm= 2>/dev/null || true`, { encoding: 'utf-8' }).trim();
-      if (['node', 'tsx', 'ts-node', 'npx'].includes(cmd)) {
-        console.log(`  Stopping old CDS process (PID: ${pid}, cmd: ${cmd})`);
-        execSync(`kill ${pid} 2>/dev/null || true`);
+      if (force || ['node', 'tsx', 'ts-node', 'npx'].includes(cmd)) {
+        console.log(`  Stopping process on port ${port} (PID: ${pid}, cmd: ${cmd})`);
+        execSync(`kill -9 ${pid} 2>/dev/null || true`);
         killed = true;
       } else {
         console.log(`  [WARN] Port ${port} held by non-CDS process (PID: ${pid}, cmd: ${cmd}) — not killing`);
@@ -516,24 +518,31 @@ function tryKillCdsOnPort(port: number): boolean {
   }
 }
 
+// force: force-kill any process on the port (for masterPort)
+// optional: if true, port conflict is non-fatal (for workerPort shared with other services)
 function listenWithRetry(
   server: http.Server | ReturnType<typeof createServer>,
   port: number,
   label: string,
   onSuccess: () => void,
+  opts: { force?: boolean; optional?: boolean } = {},
 ) {
   const doListen = (attempt: number) => {
     const s = server.listen(port, onSuccess);
     s.on('error', (err: Error & { code?: string }) => {
       if (err.code === 'EADDRINUSE' && attempt < 2) {
         console.log(`  [WARN] Port ${port} in use, attempting to reclaim (${label})...`);
-        const killed = tryKillCdsOnPort(port);
+        const killed = tryKillOnPort(port, !!opts.force);
         if (killed) {
           setTimeout(() => doListen(attempt + 1), 1500);
+        } else if (opts.optional) {
+          console.log(`  [INFO] Port ${port} occupied by another service — ${label} skipped (non-essential)`);
         } else {
           console.error(`  [ERROR] Port ${port} is occupied by a non-CDS process. Please free it manually.`);
           process.exit(1);
         }
+      } else if (opts.optional) {
+        console.log(`  [INFO] ${label} on port ${port} unavailable — skipped`);
       } else {
         console.error(`  [ERROR] Cannot bind ${label} to port ${port}: ${err.message}`);
         process.exit(1);
@@ -553,7 +562,7 @@ listenWithRetry(app, config.masterPort, 'Dashboard', () => {
   console.log(`  State file: ${stateFile}`);
   console.log(`  Repo root:  ${config.repoRoot}`);
   console.log('');
-});
+}, { force: true });
 
 // ── Worker server (reverse proxy on workerPort) ──
 const workerServer = http.createServer((req, res) => {
@@ -568,4 +577,4 @@ listenWithRetry(workerServer, config.workerPort, 'Worker', () => {
   console.log(`  Worker proxy listening on :${config.workerPort}`);
   console.log(`  Route via X-Branch header or configure routing rules in dashboard.`);
   console.log('');
-});
+}, { optional: true });
