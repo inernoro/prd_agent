@@ -1808,8 +1808,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.type('text/yaml').send(yamlContent);
   });
 
-  // GET /api/export-skill — export cds-project-scan skill + current config as tar.gz
-  // Uses Node.js built-in tar (via child_process) + zlib — no external zip dependency
+  // GET /api/export-skill — export cds-project-scan skill as tar.gz
+  // Contains only skill files and README — no config/cds-compose.yml
   router.get('/export-skill', (_req, res) => {
     try {
       const skillDir = path.join(config.repoRoot, '.claude', 'skills', 'cds-project-scan');
@@ -1817,13 +1817,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
         res.status(404).json({ error: '未找到 cds-project-scan 技能目录' });
         return;
       }
-
-      // Generate current config YAML
-      const profiles = stateService.getBuildProfiles();
-      const envVars = stateService.getCustomEnv();
-      const infra = stateService.getInfraServices();
-      const rules = stateService.getRoutingRules();
-      const yamlContent = toCdsCompose(profiles, envVars, infra, rules);
 
       // Build pack in a temp directory
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -1833,7 +1826,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // Clean & create temp dirs
       fs.mkdirSync(path.join(packDir, 'skills', 'reference'), { recursive: true });
-      fs.mkdirSync(path.join(packDir, 'config'), { recursive: true });
 
       // Copy skill files
       const skillMain = path.join(skillDir, 'SKILL.md');
@@ -1847,38 +1839,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
 
-      // Write current config
-      fs.writeFileSync(path.join(packDir, 'config', 'cds-compose.yml'), yamlContent, 'utf-8');
-
       // Write README
       fs.writeFileSync(path.join(packDir, 'README.md'), `# CDS 部署技能包
 
-本压缩包包含 CDS (Cloud Dev Space) 项目部署所需的技能文档和配置。
+本压缩包包含 CDS (Cloud Dev Space) 项目扫描技能文档。
 
 ## 包含内容
 
 | 目录 | 内容 | 用途 |
 |------|------|------|
 | \`skills/\` | CDS 扫描技能文档 | 了解扫描规则和配置生成逻辑 |
-| \`config/\` | CDS Compose YAML | 直接导入 CDS Dashboard |
 
 ## 使用方式
 
-### 方式 1: CDS Dashboard 导入（推荐）
-
-1. 启动 CDS: \`cd cds && ./exec_cds.sh --background\`
-2. 打开 CDS Dashboard → \`http://<服务器IP>:9900\`
-3. 设置 → **一键导入** → 粘贴 \`config/cds-compose.yml\` 内容 → 确认应用
-
-### 方式 2: 配合 Claude Code 使用
-
 1. 将 \`skills/\` 目录复制到目标项目的 \`.claude/skills/cds-project-scan/\`
 2. 在 Claude Code 中使用 \`/cds-scan\` 触发扫描
-
-## 注意事项
-
-- \`config/cds-compose.yml\` 中标记为 \`TODO: 请填写实际值\` 的字段需要手动补全
-- 敏感信息（API Key、密码等）不包含在此压缩包中
+3. 扫描生成的 CDS Compose YAML 可在 CDS Dashboard 中一键导入
 `, 'utf-8');
 
       // Create tar.gz using tar command (available on all Linux)
