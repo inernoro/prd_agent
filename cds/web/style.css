@@ -227,6 +227,12 @@ h2 { font-size: 14px; font-weight: 600; margin-bottom: 8px; letter-spacing: -0.0
 .update-pull-group:hover .update-pull-icon { color: var(--text-secondary); }
 .update-pull-group .update-badge { margin-left: 0; cursor: pointer; }
 .update-pull-icon.spinning { animation: spin 0.8s linear infinite; }
+.update-pull-icon.check-done { animation: check-flash 0.6s ease-out; }
+@keyframes check-flash {
+  0% { color: var(--green); transform: scale(1.4); }
+  50% { color: var(--green); transform: scale(1.1); }
+  100% { color: var(--text-muted); transform: scale(1); }
+}
 
 /* ── Update badge ── */
 .update-badge {
