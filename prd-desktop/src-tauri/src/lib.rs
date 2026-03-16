@@ -204,6 +204,8 @@ pub fn run() {
             commands::group::open_group_session,
             commands::group::bind_group_prd,
             commands::group::dissolve_group,
+            commands::group::leave_group,
+            commands::group::add_group_member,
             commands::group::get_group_members,
             commands::group::clear_group_context,
             commands::prd_comments::get_prd_comments,

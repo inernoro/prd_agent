@@ -56,4 +56,10 @@ public interface IGroupService
 
     /// <summary>更新群组名称</summary>
     Task UpdateGroupNameAsync(string groupId, string groupName);
+
+    /// <summary>用户主动退出群组（群主不可退出，需解散）</summary>
+    Task LeaveAsync(string groupId, string userId);
+
+    /// <summary>通过用户ID直接添加成员到群组</summary>
+    Task<GroupMember> AddMemberAsync(string groupId, string userId, UserRole memberRole);
 }

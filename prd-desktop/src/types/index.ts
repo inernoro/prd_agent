@@ -1,6 +1,6 @@
 export type UserRole = 'PM' | 'DEV' | 'QA' | 'ADMIN';
 export type InteractionMode = 'QA' | 'Knowledge' | 'PrdPreview' | 'AssetsDiag' | 'Defect';
-export type MessageRole = 'User' | 'Assistant';
+export type MessageRole = 'User' | 'Assistant' | 'System';
 
 export interface DocCitation {
   headingTitle: string;
