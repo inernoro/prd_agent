@@ -17,3 +17,4 @@ pnpm test         # vitest
 |------|------|--------|
 | `ModelTypePicker` | `components/model/ModelTypePicker.tsx` | `lib/appCallerUtils.ts → MODEL_TYPE_DEFINITIONS` |
 | `ModelTypeFilterBar` | `components/model/ModelTypePicker.tsx` | 同上 |
+| `UserSearchSelect` | `components/UserSearchSelect.tsx` | `getUsers()` API（自动获取）或外部传入 `users` |

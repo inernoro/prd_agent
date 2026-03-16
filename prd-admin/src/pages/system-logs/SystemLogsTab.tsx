@@ -1,12 +1,29 @@
 import { Badge } from '@/components/design/Badge';
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
+import { SearchableSelect } from '@/components/design/SearchableSelect';
 import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
+import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { getApiLogDetail, getApiLogs, getApiLogsMeta, getLlmLogs } from '@/services';
-import type { ApiLogsListItem, ApiLogsMetaApp, ApiLogsMetaUser, ApiRequestLog } from '@/services/contracts/apiLogs';
+import type { ApiLogsListItem, ApiLogsMetaApp, ApiRequestLog } from '@/services/contracts/apiLogs';
 import type { LlmRequestLogListItem } from '@/types/admin';
-import { CheckCircle, ChevronRight, Clock, Copy, Filter, Hash, Loader2, Server, XCircle, Zap } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowDownLeft,
+  CheckCircle,
+  ChevronRight,
+  Clock,
+  Copy,
+  Filter,
+  Hash,
+  Loader2,
+  Monitor,
+  Server,
+  Sparkles,
+  XCircle,
+  Zap,
+} from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
@@ -63,12 +80,12 @@ function buildMetaLabel(args: {
 
 function statusBadge(statusCode: number, status?: string | null) {
   // 请求状态优先（running/timeout）
-  if (status === 'running') return <Badge variant="new" size="sm" icon={<Clock size={10} />}>进行中</Badge>;
-  if (status === 'timeout') return <Badge variant="subtle" size="sm" icon={<XCircle size={10} />}>超时</Badge>;
+  if (status === 'running') return <Badge variant="featured" size="sm" icon={<Loader2 size={10} className="animate-spin" />}>进行中</Badge>;
+  if (status === 'timeout') return <Badge variant="warning" size="sm" icon={<AlertTriangle size={10} />}>超时</Badge>;
   // HTTP 状态码
-  if (statusCode >= 200 && statusCode < 300) return <Badge variant="success" size="sm" icon={<CheckCircle size={10} />}>成功</Badge>;
-  if (statusCode >= 400 && statusCode < 500) return <Badge variant="subtle" size="sm" icon={<XCircle size={10} />}>失败</Badge>;
-  if (statusCode >= 500) return <Badge variant="subtle" size="sm" icon={<XCircle size={10} />}>异常</Badge>;
+  if (statusCode >= 200 && statusCode < 300) return <Badge variant="success" size="sm" icon={<CheckCircle size={10} />}>{statusCode} 成功</Badge>;
+  if (statusCode >= 400 && statusCode < 500) return <Badge variant="danger" size="sm" icon={<XCircle size={10} />}>{statusCode} 失败</Badge>;
+  if (statusCode >= 500) return <Badge variant="danger" size="sm" icon={<AlertTriangle size={10} />}>{statusCode} 异常</Badge>;
   return <Badge variant="subtle" size="sm">{statusCode || '?'}</Badge>;
 }
 
@@ -103,15 +120,7 @@ export default function SystemLogsTab() {
 
   const [metaClientTypes, setMetaClientTypes] = useState<string[]>([]);
   const [metaMethods, setMetaMethods] = useState<string[]>(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
-  const [metaUsers, setMetaUsers] = useState<ApiLogsMetaUser[]>([]);
   const [metaAppNames, setMetaAppNames] = useState<ApiLogsMetaApp[]>([]);
-  // 请求状态使用固定选项，不依赖数据库
-  const fixedStatuses = [
-    { value: 'running', label: '进行中' },
-    { value: 'completed', label: '完成' },
-    { value: 'failed', label: '失败' },
-    { value: 'timeout', label: '超时' },
-  ];
   const [qClientType, setQClientType] = useState('');
   const [qMethod, setQMethod] = useState('');
   const [qAppName, setQAppName] = useState('');
@@ -135,7 +144,6 @@ export default function SystemLogsTab() {
     if (res.success) {
       setMetaClientTypes(res.data.clientTypes ?? []);
       setMetaMethods(res.data.methods ?? metaMethods);
-      setMetaUsers(res.data.users ?? []);
       setMetaAppNames(res.data.appNames ?? []);
     }
   };
@@ -287,37 +295,35 @@ export default function SystemLogsTab() {
     <div className="h-full min-h-0 flex flex-col">
       <GlassCard glow animated className="p-4 flex-1 min-h-0 flex flex-col">
         <div className="grid gap-3 grid-cols-2 md:grid-cols-7">
-          <Select
+          <UserSearchSelect
             value={qUserId}
-            onChange={(e) => setQUserId(e.target.value)}
+            onChange={setQUserId}
+            showAllOption
+            allOptionLabel="用户"
             uiSize="sm"
-            style={inputStyle}
-          >
-            <option value="">用户</option>
-            {metaUsers.map((u) => (
-              <option key={u.userId} value={u.userId}>
-                {u.username ? `${u.username}` : u.userId}
-              </option>
-            ))}
-          </Select>
-          <Select
+          />
+          <SearchableSelect
             value={qAppName}
-            onChange={(e) => setQAppName(e.target.value)}
+            onValueChange={setQAppName}
+            options={[
+              { value: '', label: '应用' },
+              ...metaAppNames.map((app) => ({
+                value: app.value,
+                label: app.displayName !== app.value ? `${app.displayName}` : app.value,
+                displayLabel: app.displayName !== app.value ? app.displayName : app.value,
+              })),
+            ]}
+            placeholder="应用"
+            leftIcon={<Sparkles size={16} />}
             uiSize="sm"
             style={inputStyle}
-          >
-            <option value="">应用</option>
-            {metaAppNames.map((app) => (
-              <option key={app.value} value={app.value}>
-                {app.displayName !== app.value ? `${app.displayName} (${app.value})` : app.value}
-              </option>
-            ))}
-          </Select>
+          />
           <Select
             value={qMethod}
             onChange={(e) => setQMethod(e.target.value)}
             uiSize="sm"
             style={inputStyle}
+            leftIcon={<Server size={16} />}
           >
             <option value="">方法</option>
             {metaMethods.map((m) => (
@@ -329,8 +335,9 @@ export default function SystemLogsTab() {
             onChange={(e) => setQStatusCode(e.target.value)}
             uiSize="sm"
             style={inputStyle}
+            leftIcon={<Hash size={16} />}
           >
-            <option value="">状态</option>
+            <option value="">状态码</option>
             {commonStatusCodes.map((code) => (
               <option key={code} value={code}>{code}</option>
             ))}
@@ -340,6 +347,7 @@ export default function SystemLogsTab() {
             onChange={(e) => setQClientType(e.target.value)}
             uiSize="sm"
             style={inputStyle}
+            leftIcon={<Monitor size={16} />}
           >
             <option value="">客户端</option>
             {metaClientTypes.map((t) => (
@@ -351,21 +359,24 @@ export default function SystemLogsTab() {
             onChange={(e) => setQDirection(e.target.value)}
             uiSize="sm"
             style={inputStyle}
+            leftIcon={<ArrowDownLeft size={16} />}
           >
             <option value="">方向</option>
-            <option value="inbound">入站</option>
-            <option value="outbound">出站</option>
+            <option value="inbound">⬇ 入站</option>
+            <option value="outbound">⬆ 出站</option>
           </Select>
           <Select
             value={qStatus}
             onChange={(e) => setQStatus(e.target.value)}
             uiSize="sm"
             style={inputStyle}
+            leftIcon={<CheckCircle size={16} />}
           >
             <option value="">请求状态</option>
-            {fixedStatuses.map((s) => (
-              <option key={s.value} value={s.value}>{s.label}</option>
-            ))}
+            <option value="running">🔵 进行中</option>
+            <option value="completed">🟢 完成</option>
+            <option value="failed">🔴 失败</option>
+            <option value="timeout">🟡 超时</option>
           </Select>
         </div>
         <div className="mt-3 grid gap-3 grid-cols-2 md:grid-cols-4">

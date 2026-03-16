@@ -6,8 +6,9 @@ import { SearchableSelect, Select } from '@/components/design';
 import { TabBar } from '@/components/design/TabBar';
 import { Dialog } from '@/components/ui/Dialog';
 import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
+import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { getAdminDocumentContent, getLlmLogDetail, getLlmLogs, getLlmLogsMeta, listUploadArtifacts, getReplayCurl } from '@/services';
-import type { LlmLogsMetaUser, LlmLogsMetaAppCallerCode } from '@/services/contracts/llmLogs';
+import type { LlmLogsMetaAppCallerCode } from '@/services/contracts/llmLogs';
 import type { LlmRequestLog, LlmRequestLogListItem, UploadArtifact } from '@/types/admin';
 import { CheckCircle, ChevronDown, Clock, Copy, Database, Eraser, Hash, HelpCircle, ImagePlus, Layers, Loader2, RefreshCw, Reply, ScanEye, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
 import { AppCallerKeyIcon } from '@/lib/appCallerUtils';
@@ -913,7 +914,6 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
   const [metaModels, setMetaModels] = useState<string[]>([]);
   const [metaAppCallerCodes, setMetaAppCallerCodes] = useState<LlmLogsMetaAppCallerCode[]>([]);
   const [metaStatuses, setMetaStatuses] = useState<string[]>(['running', 'succeeded', 'failed', 'cancelled']);
-  const [metaUsers, setMetaUsers] = useState<LlmLogsMetaUser[]>([]);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -1184,7 +1184,6 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
         setMetaModels(res.data.models ?? []);
         setMetaAppCallerCodes(res.data.appCallerCodes ?? []);
         setMetaStatuses(res.data.statuses ?? ['running', 'succeeded', 'failed', 'cancelled']);
-        setMetaUsers(res.data.users ?? []);
       }
     })();
   }, []);
@@ -1367,21 +1366,12 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
             uiSize="sm"
             style={inputStyle}
           />
-          <SearchableSelect
+          <UserSearchSelect
             value={qUserId}
-            onValueChange={setQUserId}
-            options={[
-              { value: '', label: '用户' },
-              ...metaUsers.map((u) => ({
-                value: u.userId,
-                label: u.username ? `${u.username} / ${u.userId}` : u.userId,
-                displayLabel: u.username || u.userId,
-              })),
-            ]}
-            placeholder="用户"
-            leftIcon={<Users size={16} />}
+            onChange={setQUserId}
+            showAllOption
+            allOptionLabel="用户"
             uiSize="sm"
-            style={inputStyle}
           />
           <div className="relative">
             <Users size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
