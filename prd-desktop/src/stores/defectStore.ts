@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import { invoke } from '../lib/tauri';
 import type { ApiResponse, DefectReport, DefectMessage, DefectStats } from '../types';
 
+export type DefectTab = 'received' | 'submitted';
+
 interface DefectState {
   defects: DefectReport[];
   stats: DefectStats | null;
@@ -10,6 +12,8 @@ interface DefectState {
   selectedDefect: DefectReport | null;
   defectMessages: DefectMessage[];
   showSubmitPanel: boolean;
+  tab: DefectTab;
+  statusFilter: string | null;
 
   loadDefects: () => Promise<void>;
   loadStats: () => Promise<void>;
@@ -17,6 +21,8 @@ interface DefectState {
   loadDefectMessages: (id: string, afterSeq?: number) => Promise<void>;
   setSelectedDefectId: (id: string | null) => void;
   setShowSubmitPanel: (show: boolean) => void;
+  setTab: (tab: DefectTab) => void;
+  setStatusFilter: (status: string | null) => void;
   addDefectToList: (defect: DefectReport) => void;
   updateDefectInList: (defect: DefectReport) => void;
   clear: () => void;
@@ -30,6 +36,8 @@ export const useDefectStore = create<DefectState>((set) => ({
   selectedDefect: null,
   defectMessages: [],
   showSubmitPanel: false,
+  tab: 'received',
+  statusFilter: null,
 
   loadDefects: async () => {
     set({ loading: true });
@@ -93,6 +101,8 @@ export const useDefectStore = create<DefectState>((set) => ({
 
   setSelectedDefectId: (id) => set({ selectedDefectId: id }),
   setShowSubmitPanel: (show) => set({ showSubmitPanel: show }),
+  setTab: (tab) => set({ tab, statusFilter: null }),
+  setStatusFilter: (status) => set({ statusFilter: status }),
 
   addDefectToList: (defect) => set((state) => ({
     defects: [defect, ...state.defects],
@@ -111,5 +121,7 @@ export const useDefectStore = create<DefectState>((set) => ({
     selectedDefect: null,
     defectMessages: [],
     showSubmitPanel: false,
+    tab: 'received',
+    statusFilter: null,
   }),
 }));
