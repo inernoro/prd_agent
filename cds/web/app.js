@@ -463,17 +463,23 @@ function filterBranches() {
   dropdown.classList.remove('hidden');
 }
 
-// Scroll to an already-added branch card and highlight it
+// Scroll to an already-added branch card — gold flash 3x then stay blue
 function scrollToAndHighlight(id) {
   dropdown.classList.add('hidden');
   searchInput.value = '';
   renderBranches();
-  // Find and scroll to the card
   requestAnimationFrame(() => {
     const card = document.querySelector(`.branch-card[data-branch-id="${CSS.escape(id)}"]`);
     if (card) {
       card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      markTouched(id);
+      // Gold flash 3 times (0.4s × 3 = 1.2s), then settle to blue
+      card.classList.remove('duplicate-flash', 'recently-touched');
+      void card.offsetWidth; // force reflow to restart animation
+      card.classList.add('duplicate-flash');
+      card.addEventListener('animationend', () => {
+        card.classList.remove('duplicate-flash');
+        markTouched(id);
+      }, { once: true });
     }
   });
 }

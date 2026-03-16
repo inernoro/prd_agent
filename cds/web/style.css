@@ -836,6 +836,15 @@ a.branch-name:hover { color: var(--accent); }
   box-shadow: 0 0 12px rgba(56, 189, 248, 0.35), 0 0 4px rgba(56, 189, 248, 0.2);
 }
 
+/* Duplicate-add: gold flash 3 times then settle to blue */
+.branch-card.duplicate-flash {
+  animation: duplicate-gold-flash 0.4s ease-in-out 3;
+}
+@keyframes duplicate-gold-flash {
+  0%, 100% { border-color: transparent; box-shadow: none; }
+  50% { border: 3px solid var(--yellow); box-shadow: 0 0 16px rgba(251, 191, 36, 0.5), 0 0 6px rgba(251, 191, 36, 0.3); }
+}
+
 /* ── Tag filter bar (top-level) ── */
 .tag-filter-bar {
   display: flex; gap: 6px; align-items: center;
