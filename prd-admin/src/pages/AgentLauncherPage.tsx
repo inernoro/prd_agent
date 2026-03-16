@@ -1,127 +1,418 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Search, Sparkles, Loader2 } from 'lucide-react';
-import { ToolCard } from '@/pages/ai-toolbox/components/ToolCard';
+import { useNavigate } from 'react-router-dom';
+import {
+  Search,
+  Sparkles,
+  Loader2,
+  ArrowRight,
+  FileText,
+  Palette,
+  PenTool,
+  Bug,
+  Video,
+  Swords,
+  FileBarChart,
+  Code2,
+  Languages,
+  FileSearch,
+  BarChart3,
+  Bot,
+  type LucideIcon,
+} from 'lucide-react';
 import { useToolboxStore } from '@/stores/toolboxStore';
+import { useAuthStore } from '@/stores/authStore';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
+import type { ToolboxItem } from '@/services';
+
+// ── Icon & Color mapping (self-contained, doesn't touch ToolCard) ──
+
+const ICON_MAP: Record<string, LucideIcon> = {
+  FileText, Palette, PenTool, Bug, Video, Swords, FileBarChart, Code2, Languages, FileSearch, BarChart3, Bot,
+};
+
+/** Agent 封面图 CDN 路径 */
+const AGENT_COVERS: Record<string, string> = {
+  'prd-agent': 'icon/backups/agent/prd-agent.png',
+  'visual-agent': 'icon/backups/agent/visual-agent.png',
+  'literary-agent': 'icon/backups/agent/literary-agent.png',
+  'defect-agent': 'icon/backups/agent/defect-agent.png',
+};
+
+/** 每个图标对应的主题色 */
+const ACCENT: Record<string, { from: string; to: string }> = {
+  FileText:  { from: '#3B82F6', to: '#60A5FA' },
+  Palette:   { from: '#A855F7', to: '#C084FC' },
+  PenTool:   { from: '#10B981', to: '#34D399' },
+  Bug:       { from: '#F97316', to: '#FB923C' },
+  Video:     { from: '#F43F5E', to: '#FB7185' },
+  Swords:    { from: '#F59E0B', to: '#FBBF24' },
+  Code2:     { from: '#10B981', to: '#6EE7B7' },
+  Languages: { from: '#06B6D4', to: '#67E8F9' },
+  FileSearch:{ from: '#EAB308', to: '#FDE68A' },
+  BarChart3: { from: '#8B5CF6', to: '#C4B5FD' },
+  Bot:       { from: '#6366F1', to: '#A5B4FC' },
+  FileBarChart: { from: '#6366F1', to: '#818CF8' },
+};
+
+function getAccent(icon: string) {
+  return ACCENT[icon] ?? { from: '#6366F1', to: '#A5B4FC' };
+}
+
+function getCoverUrl(agentKey?: string): string | null {
+  if (!agentKey) return null;
+  const path = AGENT_COVERS[agentKey];
+  if (!path) return null;
+  const base = (useAuthStore.getState().cdnBaseUrl ?? '').replace(/\/+$/, '');
+  return base ? `${base}/${path}` : `/${path}`;
+}
+
+function getIcon(name: string): LucideIcon {
+  return ICON_MAP[name] || Bot;
+}
+
+function getGreeting(): string {
+  const h = new Date().getHours();
+  if (h < 6) return '夜深了';
+  if (h < 12) return '早上好';
+  if (h < 14) return '中午好';
+  if (h < 18) return '下午好';
+  return '晚上好';
+}
+
+// ── Featured Agent Card (large, with cover image) ──
+
+function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => void }) {
+  const accent = getAccent(item.icon);
+  const coverUrl = getCoverUrl(item.agentKey);
+  const [coverFailed, setCoverFailed] = useState(false);
+  const Icon = getIcon(item.icon);
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group relative w-full text-left rounded-2xl overflow-hidden transition-all duration-300 hover:-translate-y-1"
+      style={{
+        background: 'var(--bg-elevated, rgba(255,255,255,0.03))',
+        border: '1px solid rgba(255,255,255,0.06)',
+        height: 200,
+      }}
+    >
+      {/* Cover image or gradient background */}
+      {coverUrl && !coverFailed ? (
+        <img
+          src={coverUrl}
+          alt=""
+          className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+          draggable={false}
+          onError={() => setCoverFailed(true)}
+        />
+      ) : (
+        <div
+          className="absolute inset-0"
+          style={{
+            background: `
+              radial-gradient(ellipse at 70% 20%, ${accent.from}18 0%, transparent 60%),
+              radial-gradient(ellipse at 20% 80%, ${accent.from}10 0%, transparent 50%)
+            `,
+          }}
+        />
+      )}
+
+      {/* Bottom gradient overlay */}
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          background: 'linear-gradient(180deg, rgba(0,0,0,0) 30%, rgba(0,0,0,0.7) 70%, rgba(0,0,0,0.9) 100%)',
+        }}
+      />
+
+      {/* Hover border glow */}
+      <div
+        className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
+        style={{ boxShadow: `inset 0 0 0 1px ${accent.from}40, 0 0 20px ${accent.from}10` }}
+      />
+
+      {/* Content */}
+      <div className="absolute bottom-0 left-0 right-0 p-5 z-10">
+        <div className="flex items-start gap-3">
+          <div
+            className="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center"
+            style={{
+              background: `linear-gradient(135deg, ${accent.from}30, ${accent.from}10)`,
+              border: `1px solid ${accent.from}30`,
+            }}
+          >
+            <Icon size={20} style={{ color: accent.to }} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <h3
+                className="text-[15px] font-semibold truncate"
+                style={{ color: '#fff', textShadow: '0 1px 4px rgba(0,0,0,0.5)' }}
+              >
+                {item.name}
+              </h3>
+              <ArrowRight
+                size={14}
+                className="shrink-0 opacity-0 group-hover:opacity-80 transition-all duration-200 group-hover:translate-x-0.5"
+                style={{ color: accent.to }}
+              />
+            </div>
+            <p
+              className="text-[12px] leading-relaxed mt-1 line-clamp-2"
+              style={{ color: 'rgba(255,255,255,0.55)' }}
+            >
+              {item.description}
+            </p>
+            {item.tags.length > 0 && (
+              <div className="flex gap-1.5 mt-2.5">
+                {item.tags.slice(0, 3).map((t) => (
+                  <span
+                    key={t}
+                    className="text-[10px] px-2 py-0.5 rounded-md"
+                    style={{
+                      background: 'rgba(255,255,255,0.06)',
+                      color: 'rgba(255,255,255,0.5)',
+                      border: '1px solid rgba(255,255,255,0.04)',
+                    }}
+                  >
+                    {t}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+// ── Compact Agent Card (smaller, for utility agents) ──
+
+function CompactCard({ item, onClick }: { item: ToolboxItem; onClick: () => void }) {
+  const accent = getAccent(item.icon);
+  const Icon = getIcon(item.icon);
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group relative w-full text-left rounded-xl overflow-hidden transition-all duration-200 hover:-translate-y-0.5 flex items-center gap-3.5 px-4 py-3.5"
+      style={{
+        background: 'var(--bg-elevated, rgba(255,255,255,0.03))',
+        border: '1px solid rgba(255,255,255,0.06)',
+      }}
+    >
+      {/* Hover glow */}
+      <div
+        className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
+        style={{ boxShadow: `inset 0 0 0 1px ${accent.from}30` }}
+      />
+
+      <div
+        className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center"
+        style={{
+          background: `linear-gradient(135deg, ${accent.from}20, ${accent.from}08)`,
+          border: `1px solid ${accent.from}20`,
+        }}
+      >
+        <Icon size={18} style={{ color: accent.to }} />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary, #fff)' }}>
+          {item.name}
+        </div>
+        <div
+          className="text-[11px] truncate mt-0.5"
+          style={{ color: 'var(--text-muted, rgba(255,255,255,0.4))' }}
+        >
+          {item.description}
+        </div>
+      </div>
+      <ArrowRight
+        size={14}
+        className="shrink-0 opacity-0 group-hover:opacity-60 transition-all duration-200 group-hover:translate-x-0.5"
+        style={{ color: 'var(--text-muted)' }}
+      />
+    </button>
+  );
+}
+
+// ── Main Page ──
 
 export default function AgentLauncherPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const { items, itemsLoading, loadItems } = useToolboxStore();
   const { isMobile } = useBreakpoint();
+  const navigate = useNavigate();
+  const user = useAuthStore((s) => s.user);
 
   useEffect(() => {
     loadItems();
   }, [loadItems]);
 
-  const filteredItems = useMemo(() => {
-    if (!searchQuery.trim()) return items;
-    const query = searchQuery.toLowerCase();
-    return items.filter(
-      (item) =>
-        item.name.toLowerCase().includes(query) ||
-        item.description.toLowerCase().includes(query) ||
-        item.tags.some((tag) => tag.toLowerCase().includes(query))
-    );
+  // Split into featured (customized agents with routePath) and compact (utility agents)
+  const { featured, utilities, filtered } = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (query) {
+      const matched = items.filter(
+        (item) =>
+          item.name.toLowerCase().includes(query) ||
+          item.description.toLowerCase().includes(query) ||
+          item.tags.some((tag) => tag.toLowerCase().includes(query))
+      );
+      return { featured: [], utilities: [], filtered: matched };
+    }
+    const feat: ToolboxItem[] = [];
+    const util: ToolboxItem[] = [];
+    for (const item of items) {
+      if (item.routePath) feat.push(item);
+      else util.push(item);
+    }
+    return { featured: feat, utilities: util, filtered: [] };
   }, [items, searchQuery]);
 
+  const handleClick = (item: ToolboxItem) => {
+    if (item.routePath) {
+      navigate(item.routePath);
+    } else {
+      // Navigate to toolbox and select this item
+      useToolboxStore.getState().selectItem(item);
+      navigate('/ai-toolbox');
+    }
+  };
+
+  const greeting = getGreeting();
+  const displayName = user?.displayName || '';
+
   return (
-    <div
-      className="h-full min-h-0 flex flex-col"
-      style={{ background: 'var(--bg-base)' }}
-    >
+    <div className="h-full min-h-0 flex flex-col" style={{ background: 'var(--bg-base)' }}>
       <div className="flex-1 min-h-0 overflow-auto">
-        <div className={`mx-auto w-full ${isMobile ? 'px-4 py-6' : 'px-6 py-12'}`} style={{ maxWidth: '900px' }}>
-          {/* Greeting */}
-          <div className="text-center mb-8">
-            <div className="inline-flex items-center gap-2 mb-4">
-              <Sparkles size={20} style={{ color: 'var(--accent-primary, #818CF8)' }} />
+        <div
+          className={`mx-auto w-full ${isMobile ? 'px-4 pt-6 pb-8' : 'px-8 pt-16 pb-12'}`}
+          style={{ maxWidth: 960 }}
+        >
+          {/* ── Hero greeting ── */}
+          <div className={isMobile ? 'mb-6' : 'mb-10'}>
+            <div className="flex items-center gap-2 mb-3">
+              <Sparkles size={16} style={{ color: 'var(--accent-primary, #818CF8)' }} />
               <span
-                className="text-sm font-medium"
-                style={{ color: 'var(--text-muted, rgba(255, 255, 255, 0.5))' }}
+                className="text-xs font-medium tracking-wide uppercase"
+                style={{ color: 'var(--text-muted, rgba(255,255,255,0.4))' }}
               >
-                AI 智能助手
+                AI Agent Platform
               </span>
             </div>
             <h1
-              className="text-2xl font-semibold tracking-tight"
-              style={{ color: 'var(--text-primary, rgba(255, 255, 255, 0.95))' }}
+              className={`font-semibold tracking-tight ${isMobile ? 'text-xl' : 'text-[28px]'}`}
+              style={{ color: 'var(--text-primary, #fff)' }}
             >
-              你好，选择一个智能助手开始吧
+              {greeting}
+              {displayName ? `，${displayName}` : ''}
             </h1>
+            <p
+              className="mt-2 text-sm"
+              style={{ color: 'var(--text-muted, rgba(255,255,255,0.45))' }}
+            >
+              选择一个智能助手，开始你的创作
+            </p>
           </div>
 
-          {/* Search Input */}
-          <div className={`relative ${isMobile ? 'mb-6' : 'mb-10'} mx-auto`} style={{ maxWidth: '600px' }}>
+          {/* ── Search ── */}
+          <div className={`relative ${isMobile ? 'mb-6' : 'mb-10'}`} style={{ maxWidth: 480 }}>
             <Search
-              size={18}
-              className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none"
-              style={{ color: 'var(--text-muted, rgba(255, 255, 255, 0.4))' }}
+              size={16}
+              className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+              style={{ color: 'var(--text-muted, rgba(255,255,255,0.3))' }}
             />
             <input
               type="text"
-              placeholder="搜索工具或输入问题..."
+              placeholder="搜索 Agent..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full h-12 pl-11 pr-4 rounded-xl text-sm outline-none transition-all duration-200"
+              className="w-full h-10 pl-10 pr-4 rounded-xl text-[13px] outline-none transition-colors duration-150"
               style={{
-                background: 'rgba(255, 255, 255, 0.04)',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
-                color: 'var(--text-primary, rgba(255, 255, 255, 0.95))',
-                boxShadow: '0 2px 12px -4px rgba(0, 0, 0, 0.3)',
+                background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(255,255,255,0.08)',
+                color: 'var(--text-primary, #fff)',
               }}
               onFocus={(e) => {
                 e.currentTarget.style.borderColor = 'var(--accent-primary, #818CF8)';
-                e.currentTarget.style.boxShadow =
-                  '0 2px 12px -4px rgba(0, 0, 0, 0.3), 0 0 0 3px rgba(129, 140, 248, 0.1)';
               }}
               onBlur={(e) => {
-                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
-                e.currentTarget.style.boxShadow = '0 2px 12px -4px rgba(0, 0, 0, 0.3)';
+                e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
               }}
             />
           </div>
 
-          {/* Tool Grid */}
+          {/* ── Loading ── */}
           {itemsLoading ? (
             <div className="flex items-center justify-center h-48">
-              <div className="text-center">
-                <Loader2
-                  size={28}
-                  className="animate-spin mx-auto mb-2"
-                  style={{ color: 'var(--accent-primary)' }}
-                />
-                <div
-                  className="text-xs"
-                  style={{ color: 'var(--text-muted, rgba(255, 255, 255, 0.5))' }}
-                >
-                  加载中...
-                </div>
-              </div>
+              <Loader2
+                size={24}
+                className="animate-spin"
+                style={{ color: 'var(--accent-primary)' }}
+              />
             </div>
-          ) : filteredItems.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-48 gap-3">
-              <Search size={28} style={{ color: 'var(--text-muted, rgba(255, 255, 255, 0.3))' }} />
-              <div className="text-center">
-                <div
-                  className="text-sm font-medium mb-0.5"
-                  style={{ color: 'var(--text-primary, rgba(255, 255, 255, 0.8))' }}
-                >
-                  没有找到匹配的工具
-                </div>
-                <div
-                  className="text-xs"
-                  style={{ color: 'var(--text-muted, rgba(255, 255, 255, 0.45))' }}
-                >
-                  尝试其他关键词
-                </div>
+          ) : searchQuery.trim() ? (
+            /* ── Search results ── */
+            filtered.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-40 gap-2">
+                <Search size={24} style={{ color: 'var(--text-muted, rgba(255,255,255,0.2))' }} />
+                <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                  没有找到匹配的 Agent
+                </span>
               </div>
-            </div>
+            ) : (
+              <div className={`grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-2'}`}>
+                {filtered.map((item) =>
+                  item.routePath ? (
+                    <FeaturedCard key={item.id} item={item} onClick={() => handleClick(item)} />
+                  ) : (
+                    <CompactCard key={item.id} item={item} onClick={() => handleClick(item)} />
+                  )
+                )}
+              </div>
+            )
           ) : (
-            <div className={`grid ${isMobile ? 'grid-cols-1 gap-2' : 'grid-cols-2 md:grid-cols-3 gap-3'}`}>
-              {filteredItems.map((item) => (
-                <ToolCard key={item.id} item={item} />
-              ))}
-            </div>
+            /* ── Default layout: featured + utilities ── */
+            <>
+              {/* Featured Agents */}
+              {featured.length > 0 && (
+                <section className={isMobile ? 'mb-8' : 'mb-10'}>
+                  <div
+                    className="text-[11px] font-medium tracking-widest uppercase mb-4"
+                    style={{ color: 'var(--text-muted, rgba(255,255,255,0.35))' }}
+                  >
+                    智能助手
+                  </div>
+                  <div className={`grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-2 lg:grid-cols-3'}`}>
+                    {featured.map((item) => (
+                      <FeaturedCard key={item.id} item={item} onClick={() => handleClick(item)} />
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {/* Utility Agents */}
+              {utilities.length > 0 && (
+                <section>
+                  <div
+                    className="text-[11px] font-medium tracking-widest uppercase mb-4"
+                    style={{ color: 'var(--text-muted, rgba(255,255,255,0.35))' }}
+                  >
+                    实用工具
+                  </div>
+                  <div className={`grid gap-2 ${isMobile ? 'grid-cols-1' : 'grid-cols-2 lg:grid-cols-3'}`}>
+                    {utilities.map((item) => (
+                      <CompactCard key={item.id} item={item} onClick={() => handleClick(item)} />
+                    ))}
+                  </div>
+                </section>
+              )}
+            </>
           )}
         </div>
       </div>

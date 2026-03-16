@@ -232,16 +232,8 @@ export default function AppShell() {
     return items;
   }, [menuCatalog, menuCatalogLoaded, navOrder]);
   
-  // 若用户在首页（仪表盘）但菜单中不含仪表盘，自动跳转到第一个可用页面
-  // 仅桌面端执行：移动端首页由 MobileHomePage 独立渲染，不依赖导航菜单
-  useEffect(() => {
-    if (isMobile) return;
-    if (location.pathname !== '/' || !menuCatalogLoaded || visibleItems.length === 0) return;
-    const hasDashboard = visibleItems.some((item) => item.key === '/');
-    if (!hasDashboard) {
-      navigate(visibleItems[0].key, { replace: true });
-    }
-  }, [isMobile, location.pathname, menuCatalogLoaded, visibleItems, navigate]);
+  // 首页为 Agent Launcher 沉浸页，不自动跳转，让用户自主选择 Agent
+  const isHomePage = location.pathname === '/';
 
   const activeKey = location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`;
   const isLabPage = location.pathname.startsWith('/lab');
@@ -253,8 +245,8 @@ export default function AppShell() {
 
   const asideWidth = collapsed ? 72 : 220;
   const asideGap = 18;
-  // 专注模式（fullBleedMain）或移动端下隐藏侧栏，主区最大化
-  const focusHideAside = fullBleedMain || isMobile;
+  // 专注模式（fullBleedMain）、首页沉浸模式、移动端下隐藏侧栏，主区最大化
+  const focusHideAside = fullBleedMain || isHomePage || isMobile;
   const mainPadLeft = focusHideAside ? (isMobile ? 0 : asideGap) : asideWidth + asideGap * 2;
 
   // 移动端底部 Tab 栏: 5 固定 Tab（首页/浏览/+/资产/我的），不再依赖后端菜单
@@ -1127,7 +1119,7 @@ export default function AppShell() {
           <div
             className={cn(
               'relative w-full flex-1 min-h-0 flex flex-col',
-              isMobile ? 'px-[var(--mobile-padding,16px)] py-3' : fullBleedMain ? 'px-3 py-3' : 'px-5 py-5'
+              isMobile ? 'px-[var(--mobile-padding,16px)] py-3' : (fullBleedMain || isHomePage) ? 'p-0' : 'px-5 py-5'
             )}
           >
             <div className="flex-1 min-h-0">
