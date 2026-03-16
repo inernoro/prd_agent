@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { execSync } from 'node:child_process';
 import { Router } from 'express';
 import { StateService } from '../services/state.js';
 import type { WorktreeService } from '../services/worktree.js';
@@ -1804,6 +1805,104 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     const yamlContent = toCdsCompose(profiles, envVars, infra, rules);
     res.type('text/yaml').send(yamlContent);
+  });
+
+  // GET /api/export-skill — export cds-project-scan skill + current config as zip
+  router.get('/export-skill', (_req, res) => {
+    try {
+      const skillDir = path.join(config.repoRoot, '.claude', 'skills', 'cds-project-scan');
+      if (!fs.existsSync(skillDir)) {
+        res.status(404).json({ error: '未找到 cds-project-scan 技能目录' });
+        return;
+      }
+
+      // Generate current config YAML
+      const profiles = stateService.getBuildProfiles();
+      const envVars = stateService.getCustomEnv();
+      const infra = stateService.getInfraServices();
+      const rules = stateService.getRoutingRules();
+      const yamlContent = toCdsCompose(profiles, envVars, infra, rules);
+
+      // Build zip in a temp directory
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const packName = `cds-deployment-skill-${timestamp}`;
+      const tmpDir = path.join(config.repoRoot, '.cds', 'tmp');
+      const packDir = path.join(tmpDir, packName);
+
+      // Clean & create temp dirs
+      fs.mkdirSync(path.join(packDir, 'skills', 'reference'), { recursive: true });
+      fs.mkdirSync(path.join(packDir, 'config'), { recursive: true });
+
+      // Copy skill files
+      const skillMain = path.join(skillDir, 'SKILL.md');
+      if (fs.existsSync(skillMain)) {
+        fs.copyFileSync(skillMain, path.join(packDir, 'skills', 'SKILL.md'));
+      }
+      const refDir = path.join(skillDir, 'reference');
+      if (fs.existsSync(refDir)) {
+        for (const f of fs.readdirSync(refDir)) {
+          fs.copyFileSync(path.join(refDir, f), path.join(packDir, 'skills', 'reference', f));
+        }
+      }
+
+      // Write current config
+      fs.writeFileSync(path.join(packDir, 'config', 'cds-compose.yml'), yamlContent, 'utf-8');
+
+      // Write README
+      fs.writeFileSync(path.join(packDir, 'README.md'), `# CDS 部署技能包
+
+本压缩包包含 CDS (Cloud Dev Space) 项目部署所需的技能文档和配置。
+
+## 包含内容
+
+| 目录 | 内容 | 用途 |
+|------|------|------|
+| \`skills/\` | CDS 扫描技能文档 | 了解扫描规则和配置生成逻辑 |
+| \`config/\` | CDS Compose YAML | 直接导入 CDS Dashboard |
+
+## 使用方式
+
+### 方式 1: CDS Dashboard 导入（推荐）
+
+1. 启动 CDS: \`cd cds && ./exec_cds.sh --background\`
+2. 打开 CDS Dashboard → \`http://<服务器IP>:9900\`
+3. 设置 → **一键导入** → 粘贴 \`config/cds-compose.yml\` 内容 → 确认应用
+
+### 方式 2: 配合 Claude Code 使用
+
+1. 将 \`skills/\` 目录复制到目标项目的 \`.claude/skills/cds-project-scan/\`
+2. 在 Claude Code 中使用 \`/cds-scan\` 触发扫描
+
+## 注意事项
+
+- \`config/cds-compose.yml\` 中标记为 \`TODO: 请填写实际值\` 的字段需要手动补全
+- 敏感信息（API Key、密码等）不包含在此压缩包中
+`, 'utf-8');
+
+      // Create zip
+      const zipPath = path.join(tmpDir, `${packName}.zip`);
+      execSync(`cd "${tmpDir}" && zip -r "${packName}.zip" "${packName}/"`, { stdio: 'pipe' });
+
+      // Clean up pack dir
+      fs.rmSync(packDir, { recursive: true, force: true });
+
+      // Send zip
+      const stat = fs.statSync(zipPath);
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', `attachment; filename="${packName}.zip"`);
+      res.setHeader('Content-Length', stat.size);
+      const stream = fs.createReadStream(zipPath);
+      stream.pipe(res);
+      stream.on('end', () => {
+        // Clean up zip file after sending
+        fs.unlink(zipPath, () => {});
+      });
+    } catch (e) {
+      console.error('export-skill error:', e);
+      if (!res.headersSent) {
+        res.status(500).json({ error: '导出失败: ' + (e as Error).message });
+      }
+    }
   });
 
   // POST /api/import-and-init — import config + start infra + create main branch + deploy (SSE progress)

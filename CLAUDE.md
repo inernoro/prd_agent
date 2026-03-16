@@ -99,7 +99,6 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | **code-hygiene** | `/hygiene` | 9 维度代码卫生审计 |
 | **create-skill-file** | `/create-skill` | 技能创建 & 质量评分 |
 | **cds-project-scan** | `/cds-scan` | CDS compose YAML 生成 |
-| **export-deployment-skill** | `/export-skill` | 导出 CDS 部署技能压缩包 |
 
 ### 使用指引
 
@@ -110,4 +109,3 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 5. **周五收尾时** → `/weekly` 生成本周总结（完成后自动触发 `/doc-sync`）
 6. **写文档时** → `/doc` 查看类型速查，或直接创建文档时自动套用模板
 7. **迁移/重构后** → `/hygiene`
-8. **部署交付时** → `/export-skill` 导出 CDS 技能包供离线部署

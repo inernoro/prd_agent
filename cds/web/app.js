@@ -1068,6 +1068,10 @@ function toggleSettingsMenu(event) {
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 13a.5.5 0 01-.5-.5V3a.5.5 0 01.5-.5h5.586a.5.5 0 01.354.146l3.414 3.414a.5.5 0 01.146.354V12.5a.5.5 0 01-.5.5h-9zM3.5 1A1.5 1.5 0 002 2.5v11A1.5 1.5 0 003.5 15h9a1.5 1.5 0 001.5-1.5V6.414a1.5 1.5 0 00-.44-1.06L10.147 1.94A1.5 1.5 0 009.086 1.5H3.5z"/></svg>
       导出配置
     </div>
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); exportSkill()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 1.75a.25.25 0 01.25-.25h3.5a.75.75 0 000-1.5h-3.5A1.75 1.75 0 002 1.75v11.5c0 .966.784 1.75 1.75 1.75h8.5A1.75 1.75 0 0014 13.25v-6a.75.75 0 00-1.5 0v6a.25.25 0 01-.25.25h-8.5a.25.25 0 01-.25-.25V1.75z"/><path d="M11.78.22a.75.75 0 00-1.06 0L6.22 4.72a.75.75 0 000 1.06l.53.53-2.97 2.97a.75.75 0 101.06 1.06l2.97-2.97.53.53a.75.75 0 001.06 0l4.5-4.5a.75.75 0 000-1.06L11.78.22z"/></svg>
+      导出部署技能
+    </div>
     <div class="settings-menu-divider"></div>
     <div class="settings-menu-item danger" onclick="closeSettingsMenu(); cleanupAll()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM11 3V1.75A1.75 1.75 0 009.25 0h-2.5A1.75 1.75 0 005 1.75V3H2.75a.75.75 0 000 1.5h.3l.8 8.2A1.75 1.75 0 005.6 14.5h4.8a1.75 1.75 0 001.75-1.8l.8-8.2h.3a.75.75 0 000-1.5H11z"/></svg>
@@ -1827,6 +1831,32 @@ async function exportConfig() {
         </div>
       `);
     }
+  } catch (e) {
+    showToast('导出失败: ' + e.message, 'error');
+  }
+}
+
+async function exportSkill() {
+  try {
+    showToast('正在打包部署技能...', 'info');
+    const resp = await fetch(API + '/export-skill');
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ error: '导出失败' }));
+      throw new Error(err.error || '导出失败');
+    }
+    const blob = await resp.blob();
+    const disposition = resp.headers.get('Content-Disposition') || '';
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    const filename = match ? match[1] : 'cds-deployment-skill.zip';
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast('部署技能包已下载', 'success');
   } catch (e) {
     showToast('导出失败: ' + e.message, 'error');
   }
