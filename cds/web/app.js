@@ -134,7 +134,6 @@ let infraServices = [];
 
 let githubRepoUrl = '';
 let mainDomain = '';
-let switchDomain = '';
 let previewDomain = '';
 let workerPort = '';
 
@@ -150,7 +149,6 @@ async function loadConfig() {
     const data = await api('GET', '/config');
     githubRepoUrl = data.githubRepoUrl || '';
     mainDomain = data.mainDomain || '';
-    switchDomain = data.switchDomain || '';
     previewDomain = data.previewDomain || '';
     workerPort = data.workerPort || '';
     renderServiceStatusBar();
@@ -296,8 +294,6 @@ function cyclePreviewMode() {
   }
 }
 
-// Keep backward compat alias
-function togglePreviewMode() { cyclePreviewMode(); }
 
 function updatePreviewModeUI() {
   // Update the label in settings menu if open
@@ -356,7 +352,6 @@ async function loadRoutingRules() {
   try {
     const data = await api('GET', '/routing-rules');
     routingRules = data.rules || [];
-    renderRoutingRules();
   } catch (e) { console.error('loadRoutingRules:', e); }
 }
 
@@ -1171,14 +1166,6 @@ function renderBranches() {
   sel.innerHTML = '<option value="">无默认</option>' +
     branches.map(b => `<option value="${esc(b.id)}" ${b.id === defaultBranch ? 'selected' : ''}>${esc(b.id)}</option>`).join('');
 
-  // Update cleanup button (if visible in DOM)
-  const cleanupBtn = document.getElementById('cleanupBtn');
-  if (cleanupBtn) {
-    const nonDefault = branches.filter(b => b.id !== defaultBranch);
-    cleanupBtn.disabled = nonDefault.length === 0 || globalBusy;
-    cleanupBtn.title = nonDefault.length > 0 ? `清理 ${nonDefault.length} 个分支` : '没有可清理的分支';
-  }
-
   if (branches.length === 0) {
     el.innerHTML = '<div class="empty-state">暂无分支，请在上方搜索并添加。</div>';
     window.scrollTo(0, scrollY);
@@ -1201,7 +1188,6 @@ function renderBranches() {
 
   el.innerHTML = filteredBranches.map(b => {
     const isBusy = busyBranches.has(b.id) || globalBusy;
-    const anyLoading = hasAnyLoading(b.id);
     const isDefault = b.id === defaultBranch;
     const services = Object.entries(b.services || {});
     const hasError = b.status === 'error';
@@ -1434,10 +1420,6 @@ function maskValue(key, val) {
 }
 
 // ── Routing rules (data only) ──
-
-function renderRoutingRules() {
-  // Routing rules are now rendered inside modal, no-op for data load callback
-}
 
 // ── Config modal (shared) ──
 
@@ -2478,64 +2460,6 @@ async function deleteProfileAndRefresh(id) {
     await loadProfiles();
     openProfileModal();
   } catch (e) { showToast(e.message, 'error'); }
-}
-
-// ── Container env viewer ──
-
-async function viewContainerEnv(id, profileId) {
-  openConfigModal('容器环境变量', '<div class="config-empty"><span class="btn-spinner"></span> 加载中...</div>');
-  try {
-    const data = await api('POST', `/branches/${id}/container-env`, { profileId });
-    const envText = data.env || '';
-    const lines = envText.trim().split('\n').filter(Boolean).sort();
-    const listHtml = lines.map(line => {
-      const eqIdx = line.indexOf('=');
-      if (eqIdx <= 0) return `<div class="config-item"><div class="config-item-main"><code class="env-val">${esc(line)}</code></div></div>`;
-      const k = line.substring(0, eqIdx);
-      const v = line.substring(eqIdx + 1);
-      return `
-        <div class="config-item">
-          <div class="config-item-main">
-            <code class="env-key">${esc(k)}</code>
-            <span class="config-item-arrow">=</span>
-            <code class="env-val" title="${esc(v)}">${esc(maskValue(k, v))}</code>
-          </div>
-        </div>
-      `;
-    }).join('');
-    const label = profileId || '默认';
-    openConfigModal(`容器变量: ${id} / ${label}`, `
-      <p class="config-panel-desc">容器内部实际运行的环境变量（只读）。共 ${lines.length} 个变量。</p>
-      ${listHtml}
-    `);
-  } catch (e) {
-    openConfigModal('容器环境变量', `<div class="config-empty" style="color:var(--red)">${esc(e.message)}</div>`);
-  }
-}
-
-function openContainerEnvPicker(branchId) {
-  const branch = branches.find(b => b.id === branchId);
-  if (!branch) return;
-  const services = Object.entries(branch.services || {});
-  if (services.length === 0) {
-    showToast('该分支没有运行中的服务', 'error');
-    return;
-  }
-  if (services.length === 1) {
-    viewContainerEnv(branchId, services[0][0]);
-    return;
-  }
-  // Multiple services — let user pick
-  const listHtml = services.map(([pid, svc]) => `
-    <div class="config-item" style="cursor:pointer" onclick="viewContainerEnv('${esc(branchId)}', '${esc(pid)}')">
-      <div class="config-item-main">
-        <strong>${esc(pid)}</strong>
-        <span class="port-badge ${svc.status === 'running' ? 'run-port' : 'port-idle'}" style="display:inline-block">:${svc.hostPort}</span>
-        <span class="config-item-detail">${svc.status}</span>
-      </div>
-    </div>
-  `).join('');
-  openConfigModal('选择服务查看容器变量', listHtml);
 }
 
 function toggleModalForm(id) {

@@ -123,14 +123,6 @@ body::after {
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
 
-/* ════════════════ Glass Mixin ════════════════ */
-
-.glass {
-  background: var(--bg-card);
-  border: 1px solid var(--card-border);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-}
-
 /* ════════════════ Header ════════════════ */
 
 header {
@@ -217,25 +209,9 @@ h2 { font-size: 14px; font-weight: 600; margin-bottom: 8px; letter-spacing: -0.0
 .icon-btn.danger-icon:hover { color: var(--red); border-color: var(--red-border); background: var(--red-bg); }
 .icon-btn.labeled { width: auto; padding: 0 12px; gap: 6px; }
 .icon-btn-label { font-size: 13px; font-weight: 500; letter-spacing: 0.02em; }
-.icon-btn.logout-btn:hover { color: var(--red); border-color: var(--red-border); background: var(--red-bg); }
-.header-divider { width: 1px; height: 20px; background: var(--border); margin: 0 4px; flex-shrink: 0; }
 
 /* ── Global refresh spin ── */
 #globalRefreshBtn.spinning svg { animation: spin 0.8s linear infinite; }
-
-/* ── Preview mode toggle ── */
-.preview-mode-toggle.active {
-  color: var(--accent) !important;
-  background: var(--accent-bg) !important;
-  border-color: var(--accent-border) !important;
-}
-.preview-mode-toggle { position: relative; }
-.preview-mode-toggle.active::after {
-  content: '';
-  position: absolute; bottom: -2px; left: 50%; transform: translateX(-50%);
-  width: 4px; height: 4px; border-radius: 50%;
-  background: var(--accent);
-}
 
 /* ── Update pull group (badge + refresh icon) ── */
 .update-pull-group {
@@ -492,11 +468,6 @@ button.text-btn:hover { color: var(--accent); }
 .quickstart-content strong { color: var(--accent); margin-right: 6px; }
 .quickstart-content span { color: var(--text-secondary); }
 
-.config-panel-header {
-  display: flex; justify-content: space-between; align-items: center;
-  font-size: 14px; font-weight: 600; margin-bottom: 10px;
-}
-.config-panel-actions { display: flex; gap: 6px; }
 .config-panel-desc {
   font-size: 12px; color: var(--text-secondary);
   margin-bottom: 12px; line-height: 1.6;
@@ -563,11 +534,6 @@ button.text-btn:hover { color: var(--accent); }
   box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.08);
 }
 .bulk-textarea::placeholder { color: var(--text-muted); }
-.bulk-env-hint {
-  font-size: 11px; color: var(--text-muted); margin-left: 8px;
-  display: inline-flex; align-items: center;
-}
-
 /* ════════════════ Branch Picker ════════════════ */
 
 .branch-picker-section { margin-bottom: 14px; }
@@ -749,21 +715,6 @@ button.text-btn:hover { color: var(--accent); }
   transition: color var(--transition);
 }
 a.branch-name:hover { color: var(--accent); }
-.default-tag {
-  display: inline-flex; align-items: center;
-  font-size: 10px; font-weight: 500;
-  color: var(--accent);
-  padding: 1px 6px; border-radius: 4px;
-  background: var(--accent-bg);
-  letter-spacing: 0.03em; flex-shrink: 0;
-}
-.set-default-link {
-  font-size: 10px; color: var(--text-muted); cursor: pointer;
-  opacity: 0; transition: opacity var(--transition), color var(--transition);
-  white-space: nowrap; flex-shrink: 0;
-}
-.branch-card:hover .set-default-link { opacity: 0.5; }
-.set-default-link:hover { opacity: 1 !important; color: var(--accent); }
 .branch-meta { font-size: 11px; color: var(--text-secondary); line-height: 1.4; white-space: nowrap; }
 .port-badge {
   display: inline-flex; align-items: center; gap: 3px;
@@ -814,10 +765,6 @@ a.branch-name:hover { color: var(--accent); }
 .branch-actions-commit:hover { color: var(--text-primary); }
 .branch-actions-commit svg.inline-icon { flex-shrink: 0; width: 14px; height: 14px; }
 .branch-actions-commit .commit-chevron { flex-shrink: 0; opacity: 0.5; }
-
-/* Pull button states */
-.pull-no-update { opacity: 0.45; }
-.pull-no-update:hover { opacity: 1; }
 
 .branch-card.is-favorite { border-left-color: var(--yellow); }
 
@@ -1153,11 +1100,6 @@ a.branch-name:hover { color: var(--accent); }
 
 /* ════════════════ Live Log ════════════════ */
 
-.live-log-header {
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 0; font-size: 12px; color: var(--text-secondary); margin-bottom: 8px;
-  font-weight: 500;
-}
 .live-dot {
   display: inline-block; width: 8px; height: 8px; border-radius: 50%;
   background: var(--accent); animation: pulse-dot 1.5s ease-in-out infinite;
@@ -1253,13 +1195,6 @@ a.branch-name:hover { color: var(--accent); }
   100% { transform: translateX(0); opacity: 1; }
 }
 
-/* ════════════════ Stopping Indicator ════════════════ */
-
-.stopping-indicator {
-  color: var(--orange); font-weight: 500;
-  animation: update-pulse 1.5s ease-in-out infinite;
-}
-
 /* ════════════════ Responsive ════════════════ */
 
 @media (max-width: 640px) {
@@ -1336,11 +1271,6 @@ a.branch-name:hover { color: var(--accent); }
   .branch-card:hover .branch-tag-add { opacity: 0.5; }
   .branch-tag-add:active { opacity: 1; color: var(--accent); border-color: var(--accent-border); }
 
-  /* Always show set-default link on mobile */
-  .set-default-link { opacity: 0.4; }
-  .branch-card:hover .set-default-link { opacity: 0.4; }
-  .set-default-link:active { opacity: 1; color: var(--accent); }
-
   /* Update-pull group: touch target */
   .update-pull-group { padding: 4px 8px; min-height: 36px; }
 
@@ -1357,9 +1287,6 @@ a.branch-name:hover { color: var(--accent); }
     top: auto; bottom: 12px; right: 12px;
     width: 14px; height: 14px;
   }
-
-  /* Stopping indicator: compact */
-  .stopping-indicator { font-size: 11px; }
 
   /* Modal: slight margin on mobile */
   .modal-dialog { max-height: 90vh; margin: 0 12px; }
