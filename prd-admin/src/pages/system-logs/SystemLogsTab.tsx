@@ -4,7 +4,7 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
 import { getApiLogDetail, getApiLogs, getApiLogsMeta, getLlmLogs } from '@/services';
-import type { ApiLogsListItem, ApiRequestLog } from '@/services/contracts/apiLogs';
+import type { ApiLogsListItem, ApiLogsMetaApp, ApiLogsMetaUser, ApiRequestLog } from '@/services/contracts/apiLogs';
 import type { LlmRequestLogListItem } from '@/types/admin';
 import { CheckCircle, ChevronRight, Clock, Copy, Filter, Hash, Loader2, Server, XCircle, Zap } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -103,8 +103,8 @@ export default function SystemLogsTab() {
 
   const [metaClientTypes, setMetaClientTypes] = useState<string[]>([]);
   const [metaMethods, setMetaMethods] = useState<string[]>(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
-  const [metaUserIds, setMetaUserIds] = useState<string[]>([]);
-  const [metaAppNames, setMetaAppNames] = useState<string[]>([]);
+  const [metaUsers, setMetaUsers] = useState<ApiLogsMetaUser[]>([]);
+  const [metaAppNames, setMetaAppNames] = useState<ApiLogsMetaApp[]>([]);
   // 请求状态使用固定选项，不依赖数据库
   const fixedStatuses = [
     { value: 'running', label: '进行中' },
@@ -135,7 +135,7 @@ export default function SystemLogsTab() {
     if (res.success) {
       setMetaClientTypes(res.data.clientTypes ?? []);
       setMetaMethods(res.data.methods ?? metaMethods);
-      setMetaUserIds(res.data.userIds ?? []);
+      setMetaUsers(res.data.users ?? []);
       setMetaAppNames(res.data.appNames ?? []);
     }
   };
@@ -294,8 +294,10 @@ export default function SystemLogsTab() {
             style={inputStyle}
           >
             <option value="">用户</option>
-            {metaUserIds.map((uid) => (
-              <option key={uid} value={uid}>{uid}</option>
+            {metaUsers.map((u) => (
+              <option key={u.userId} value={u.userId}>
+                {u.username ? `${u.username}` : u.userId}
+              </option>
             ))}
           </Select>
           <Select
@@ -305,8 +307,10 @@ export default function SystemLogsTab() {
             style={inputStyle}
           >
             <option value="">应用</option>
-            {metaAppNames.map((name) => (
-              <option key={name} value={name}>{name}</option>
+            {metaAppNames.map((app) => (
+              <option key={app.value} value={app.value}>
+                {app.displayName !== app.value ? `${app.displayName} (${app.value})` : app.value}
+              </option>
             ))}
           </Select>
           <Select
@@ -501,7 +505,7 @@ export default function SystemLogsTab() {
                     </div>
                   </div>
                   <div className="mt-1 text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
-                    userId={it.userId}{it.clientIp ? ` · IP=${it.clientIp}` : ''}{it.groupId ? ` · groupId=${it.groupId}` : ''}{it.sessionId ? ` · sessionId=${it.sessionId}` : ''}
+                    {it.username ?? it.userId}{it.clientIp ? ` · IP=${it.clientIp}` : ''}{it.groupId ? ` · groupId=${it.groupId}` : ''}{it.sessionId ? ` · sessionId=${it.sessionId}` : ''}
                   </div>
                 </button>
               ))}
@@ -545,7 +549,7 @@ export default function SystemLogsTab() {
                   </div>
                 </div>
                 <div className="mt-1 text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
-                  userId={it.userId}{it.clientIp ? ` · IP=${it.clientIp}` : ''}{it.groupId ? ` · groupId=${it.groupId}` : ''}{it.sessionId ? ` · sessionId=${it.sessionId}` : ''}{it.apiSummary ? ` · ${it.apiSummary}` : ''}
+                  {it.username ?? it.userId}{it.clientIp ? ` · IP=${it.clientIp}` : ''}{it.groupId ? ` · groupId=${it.groupId}` : ''}{it.sessionId ? ` · sessionId=${it.sessionId}` : ''}{it.apiSummary ? ` · ${it.apiSummary}` : ''}
                 </div>
                 {(it.requestBodyPreview || it.curlPreview) && (
                   <div className="mt-2 text-[11px] grid gap-1">
@@ -588,7 +592,7 @@ export default function SystemLogsTab() {
                 {detail?.method || '-'} {detail?.path || '-'}
               </div>
               <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                id={selectedId || '-'} · requestId={detail?.requestId || '-'} · userId={detail?.userId || '-'}{detail?.clientIp ? ` · IP=${detail.clientIp}` : ''}
+                id={selectedId || '-'} · requestId={detail?.requestId || '-'} · {detail?.username ? `${detail.username} (${detail.userId})` : `userId=${detail?.userId || '-'}`}{detail?.clientIp ? ` · IP=${detail.clientIp}` : ''}
               </div>
             </div>
             {detail?.curl && (
