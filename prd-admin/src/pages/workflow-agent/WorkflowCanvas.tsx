@@ -227,6 +227,7 @@ function CanvasInner({
   const sseAbortRef = useRef<AbortController | null>(null);
   const prevNodeStatusRef = useRef<Record<string, string>>({});
   const logIdCounter = useRef(0);
+  const pollFailCount = useRef(0);
 
   // ── 变量管理 ──
   const [showVarsDialog, setShowVarsDialog] = useState(false);
@@ -566,9 +567,11 @@ function CanvasInner({
 
   function startPolling(execId: string) {
     stopPolling();
+    pollFailCount.current = 0;
     pollingRef.current = setInterval(async () => {
       try {
         const res = await getExecution(execId);
+        pollFailCount.current = 0;
         if (res.success && res.data) {
           const exec = res.data.execution;
           setLatestExec(exec);
@@ -616,7 +619,14 @@ function CanvasInner({
             stopPolling();
           }
         }
-      } catch { /* ignore */ }
+      } catch {
+        // 网络闪断时保持轮询，不中断
+        pollFailCount.current++;
+        if (pollFailCount.current >= 5) {
+          addLog('warn', '轮询超时，请检查网络后刷新页面');
+          stopPolling();
+        }
+      }
     }, 2500);
   }
 
@@ -664,12 +674,20 @@ function CanvasInner({
     for (const v of workflow.variables ?? []) {
       if (v.required && !variables[v.key]) {
         addLog('error', `请填写「${v.label}」`);
+        setShowLogPanel(true);
         return;
       }
     }
 
-    // 先保存
-    if (dirty) await handleSave();
+    // 先保存，失败则中止执行
+    if (dirty) {
+      await handleSave();
+      if (dirty) {
+        addLog('error', '保存失败，无法执行');
+        setShowLogPanel(true);
+        return;
+      }
+    }
 
     setIsExecuting(true);
     setLogEntries([]);
@@ -694,8 +712,9 @@ function CanvasInner({
       }
     } catch (e: unknown) {
       addLog('error', '执行出错: ' + (e instanceof Error ? e.message : '未知错误'));
+    } finally {
+      setIsExecuting(false);
     }
-    setIsExecuting(false);
   }
 
   async function handleCancel() {
