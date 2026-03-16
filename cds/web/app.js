@@ -259,19 +259,17 @@ async function checkAllUpdates() {
     renderBranches();
     const count = Object.keys(branchUpdates).length;
     if (count > 0) {
-      showToast(`${count} 个分支有远程更新`, 'info');
+      showToast(`${count} 个分支有远程更新，非前端改动可能需要重新部署`, 'info', 8000);
+      // Flash only the updated cards' pull icons to draw attention
+      setTimeout(() => {
+        document.querySelectorAll('.branch-card.has-updates .update-pull-icon').forEach(icon => {
+          icon.classList.add('needs-pull');
+          icon.addEventListener('animationend', () => icon.classList.remove('needs-pull'), { once: true });
+        });
+      }, 100);
     } else {
       showToast('所有分支已是最新', 'success');
     }
-    // Flash all per-card pull icons to indicate check completed
-    document.querySelectorAll('.update-pull-icon').forEach(icon => {
-      icon.classList.remove('check-done');
-      void icon.offsetWidth; // force reflow to restart animation
-      icon.classList.add('check-done');
-    });
-    setTimeout(() => {
-      document.querySelectorAll('.update-pull-icon.check-done').forEach(icon => icon.classList.remove('check-done'));
-    }, 700);
   } catch (e) {
     showToast('检查更新失败: ' + e.message, 'error');
   }
