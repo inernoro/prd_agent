@@ -55,7 +55,11 @@ const MobileAuditPage = lazy(() => import('@/pages/_dev/MobileAuditPage'));
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  if (!isAuthenticated) return <Navigate to="/home" replace />;
+  const location = useLocation();
+  if (!isAuthenticated) {
+    const returnUrl = location.pathname + location.search;
+    return <Navigate to={`/login?returnUrl=${encodeURIComponent(returnUrl)}`} replace />;
+  }
   return <>{children}</>;
 }
 
