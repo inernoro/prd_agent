@@ -75,9 +75,6 @@ public class UserService : IUserService
         if (!BCrypt.Net.BCrypt.Verify(password, user.PasswordHash))
             return null;
 
-        if (user.Status == UserStatus.Disabled)
-            return null;
-
         return user;
     }
 
