@@ -116,22 +116,27 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
     if (!report) return;
     if (!window.confirm('AI 将基于采集数据自动填充周报内容，当前编辑内容会被覆盖，确定继续？')) return;
     setGenerating(true);
-    const res = await generateReport({ id: report.id });
-    setGenerating(false);
-    if (res.success && res.data) {
-      const updated = res.data;
-      setReport(updated);
-      setSections(
-        updated.sections.map((s) => ({
-          items: s.items.length > 0
-            ? s.items.map((i) => ({ content: i.content, source: i.source, sourceRef: i.sourceRef }))
-            : [{ content: '', source: 'manual' }],
-        }))
-      );
-      updateReportInList(updated);
-      toast.success('AI 已生成周报内容');
-    } else {
-      toast.error(res.error?.message || 'AI 生成失败');
+    try {
+      const res = await generateReport({ id: report.id });
+      if (res.success && res.data) {
+        const updated = res.data;
+        setReport(updated);
+        setSections(
+          updated.sections.map((s) => ({
+            items: s.items.length > 0
+              ? s.items.map((i) => ({ content: i.content, source: i.source, sourceRef: i.sourceRef }))
+              : [{ content: '', source: 'manual' }],
+          }))
+        );
+        updateReportInList(updated);
+        toast.success('AI 已生成周报内容');
+      } else {
+        toast.error(res.error?.message || 'AI 生成失败');
+      }
+    } catch {
+      toast.error('AI 生成失败，请稍后重试');
+    } finally {
+      setGenerating(false);
     }
   }, [report, updateReportInList]);
 
@@ -170,7 +175,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
     });
   };
 
-  const canEdit = !report || report.status === WeeklyReportStatus.Draft || report.status === WeeklyReportStatus.Returned;
+  const canEdit = !report || report.status === WeeklyReportStatus.Draft || report.status === WeeklyReportStatus.Returned || report.status === WeeklyReportStatus.Overdue;
 
   // Section colors — gradient pairs for headers
   const sectionThemes = [
