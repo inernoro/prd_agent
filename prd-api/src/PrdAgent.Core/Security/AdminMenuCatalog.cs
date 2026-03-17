@@ -16,9 +16,13 @@ public static class AdminMenuCatalog
     /// </summary>
     public static readonly IReadOnlyList<AdminMenuDef> All = new List<AdminMenuDef>
     {
+        // ── 首页 (home) ──
+        new("home", "/", "首页", "回到欢迎页", "Home", 1, "home"),
+
         // ── 效率工具 (tools) ──
         new("ai-toolbox", "/ai-toolbox", "AI 百宝箱", "智能工具集合", "Sparkles", 10, "tools"),
         new("workflow-agent", "/workflow-agent", "工作流", "自动化流程编排", "Workflow", 20, "tools"),
+        new("executive", "/executive", "团队洞察", "团队数据概览与分析", "BarChart3", 25, "tools"),
 
         // ── 个人空间 (personal) ──
         new("marketplace", "/marketplace", "探索市场", "发现优质配置与技能", "Store", 30, "personal"),
@@ -31,7 +35,6 @@ public static class AdminMenuCatalog
         new("settings", "/settings", "数据运维", "数据管理与系统配置", "Server", 70, "admin"),
 
         // ── 头像面板 (无 Group，不在侧边栏显示) ──
-        new("executive", "/executive", "总裁面板", null, "Crown", 100),
         new("logs", "/logs", "请求日志", null, "ScrollText", 130),
 
         // ── 隐藏项（已合并到其他菜单，保留权限注册） ──
@@ -61,7 +64,7 @@ public static class AdminMenuCatalog
         foreach (var menu in All)
         {
             // 基础功能：只需要基础访问权限
-            if (menu.AppKey is "ai-toolbox" or "my-assets" or "settings" or "arena" or "shortcuts-agent" or "marketplace" or "web-pages")
+            if (menu.AppKey is "home" or "ai-toolbox" or "my-assets" or "settings" or "arena" or "shortcuts-agent" or "marketplace" or "web-pages")
             {
                 if (permSet.Contains(AdminPermissionCatalog.Access))
                 {

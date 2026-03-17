@@ -38,6 +38,8 @@ import {
   Wrench,
   UserCircle,
   HardDrive,
+  Home,
+  BarChart3,
   type LucideIcon,
 } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -135,6 +137,8 @@ const iconMap: Record<string, LucideIcon> = {
   Wrench,
   UserCircle,
   HardDrive,
+  Home,
+  BarChart3,
 };
 
 const notificationTone = {
@@ -267,7 +271,10 @@ export default function AppShell() {
       });
   }, [menuCatalog, menuCatalogLoaded]);
 
-  // 按 group 分组的导航项
+  // 首页独立项（不归属任何分组）
+  const homeItem = useMemo(() => visibleItems.find((it) => it.group === 'home'), [visibleItems]);
+
+  // 按 group 分组的导航项（排除 home）
   const groupedNav = useMemo(() => {
     return NAV_GROUPS
       .map((g) => ({
@@ -872,36 +879,45 @@ export default function AppShell() {
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
           
-          {/* 提交缺陷按钮 + 折叠按钮（仅展开时显示，在 DropdownMenu 外部） */}
+          {/* 提交缺陷按钮（仅展开时显示，在 DropdownMenu 外部） */}
           {!collapsed && (
-            <>
-              <DefectSubmitButton collapsed={collapsed} />
-              <button
-                type="button"
-                onClick={toggleNavCollapsed}
-                className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 opacity-40 hover:opacity-100 shrink-0"
-                style={{ color: 'var(--text-muted)' }}
-                aria-label="折叠侧边栏"
-              >
-                <PanelLeftClose size={14} />
-              </button>
-            </>
+            <DefectSubmitButton collapsed={collapsed} />
           )}
             </div>
           </div>
-          
-          {/* 展开按钮（仅收缩时显示） */}
-          {collapsed && (
-            <button
-              type="button"
-              onClick={toggleNavCollapsed}
-              className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 opacity-60 hover:opacity-100"
-              style={{ color: 'var(--text-muted)' }}
-              aria-label="展开侧边栏"
-              title="展开侧边栏"
-            >
-              <PanelLeftOpen size={14} />
-            </button>
+
+          {/* ── 首页按钮（独立，不在分组内） ── */}
+          {homeItem && (
+            <div className={cn(collapsed ? 'flex justify-center' : 'px-1')}>
+              <button
+                type="button"
+                onClick={() => navigate(homeItem.key)}
+                className={cn(
+                  'group/nav relative flex items-center gap-3 rounded-[12px] w-full',
+                  'transition-all duration-200 ease-out',
+                  collapsed ? 'justify-center w-[50px] h-[50px] shrink-0' : 'px-3 py-2',
+                  activeKey === '/' ? '' : 'nav-item-hover'
+                )}
+                style={{
+                  background: activeKey === '/' ? 'rgba(255, 255, 255, 0.06)' : 'transparent',
+                  border: activeKey === '/' ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid transparent',
+                  color: activeKey === '/' ? 'var(--text-primary)' : 'var(--text-secondary)',
+                }}
+                title={collapsed ? homeItem.label : undefined}
+              >
+                <span
+                  className="inline-flex items-center justify-center shrink-0 transition-all duration-200 group-hover/nav:scale-110"
+                  style={{ color: activeKey === '/' ? '#818cf8' : undefined }}
+                >
+                  {homeItem.icon}
+                </span>
+                {!collapsed && (
+                  <div className="text-sm font-medium truncate transition-colors duration-200 group-hover/nav:text-[var(--text-primary)]">
+                    {homeItem.label}
+                  </div>
+                )}
+              </button>
+            </div>
           )}
 
           {/* 导航区域容器：包含滚动指示器 */}
@@ -1006,6 +1022,26 @@ export default function AppShell() {
                 opacity: navScrollState.canScroll && !navScrollState.atBottom ? 0.95 : 0,
               }}
             />
+          </div>
+
+          {/* ── 折叠/展开按钮（底部固定） ── */}
+          <div className={cn('shrink-0 pt-1 pb-0.5', collapsed ? 'flex justify-center' : 'px-2')}>
+            <button
+              type="button"
+              onClick={toggleNavCollapsed}
+              className={cn(
+                'inline-flex items-center gap-2 rounded-[10px] transition-colors duration-200 hover:bg-white/[0.06]',
+                collapsed ? 'h-9 w-9 justify-center' : 'h-8 px-3 w-full'
+              )}
+              style={{ color: 'var(--text-muted)' }}
+              aria-label={collapsed ? '展开侧边栏' : '折叠侧边栏'}
+              title={collapsed ? '展开侧边栏' : '折叠侧边栏'}
+            >
+              {collapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
+              {!collapsed && (
+                <span className="text-[12px] opacity-60">收起</span>
+              )}
+            </button>
           </div>
 
           <AvatarEditDialog
