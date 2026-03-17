@@ -43,6 +43,8 @@ const AGENT_COVERS: Record<string, string> = {
   'visual-agent': 'icon/backups/agent/visual-agent.png',
   'literary-agent': 'icon/backups/agent/literary-agent.png',
   'defect-agent': 'icon/backups/agent/defect-agent.png',
+  'video-agent': 'icon/backups/agent/video-agent.png',
+  'report-agent': 'icon/backups/agent/report-agent.png',
 };
 
 /** 每个图标对应的主题色 */
