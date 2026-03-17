@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Search,
@@ -22,6 +22,7 @@ import {
   ClipboardList,
   type LucideIcon,
 } from 'lucide-react';
+import { motion, useMotionValue, useSpring, useTransform } from 'motion/react';
 import { useToolboxStore } from '@/stores/toolboxStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -80,6 +81,123 @@ function getGreeting(): string {
   if (h < 14) return '中午好';
   if (h < 18) return '下午好';
   return '晚上好';
+}
+
+// ── Animated Quick Link Card (with glow + tilt) ──
+
+const QUICK_LINKS = [
+  { icon: Store, label: '海鲜市场', desc: '发现和 Fork 优质提示词与配置', path: '/marketplace', accent: '#F59E0B', gradient: 'linear-gradient(135deg, #F59E0B, #F97316)' },
+  { icon: GraduationCap, label: '使用教程', desc: '从入门到进阶的操作指南', path: '/tutorials', accent: '#3B82F6', gradient: 'linear-gradient(135deg, #3B82F6, #6366F1)' },
+  { icon: ClipboardList, label: '缺陷管理', desc: '快速提交和跟踪缺陷报告', path: '/defect', accent: '#F43F5E', gradient: 'linear-gradient(135deg, #F43F5E, #A855F7)' },
+] as const;
+
+function QuickLinkCard({ link, onClick }: { link: typeof QUICK_LINKS[number]; onClick: () => void }) {
+  const mouseX = useMotionValue(0.5);
+  const mouseY = useMotionValue(0.5);
+
+  const rotateX = useSpring(useTransform(mouseY, [0, 1], [6, -6]), { stiffness: 300, damping: 30 });
+  const rotateY = useSpring(useTransform(mouseX, [0, 1], [-6, 6]), { stiffness: 300, damping: 30 });
+  const glowX = useTransform(mouseX, (v) => `${v * 100}%`);
+  const glowY = useTransform(mouseY, (v) => `${v * 100}%`);
+
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    mouseX.set((e.clientX - rect.left) / rect.width);
+    mouseY.set((e.clientY - rect.top) / rect.height);
+  }, [mouseX, mouseY]);
+
+  const handleMouseLeave = useCallback(() => {
+    mouseX.set(0.5);
+    mouseY.set(0.5);
+  }, [mouseX, mouseY]);
+
+  const Icon = link.icon;
+
+  return (
+    <motion.button
+      type="button"
+      onClick={onClick}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+      className="group relative text-left rounded-2xl overflow-hidden cursor-pointer"
+      style={{
+        rotateX,
+        rotateY,
+        transformPerspective: 800,
+        height: 140,
+      }}
+      whileHover={{ scale: 1.02 }}
+      whileTap={{ scale: 0.98 }}
+      transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+    >
+      {/* Animated glow that follows cursor */}
+      <motion.div
+        className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
+        style={{
+          background: useTransform(
+            [glowX, glowY],
+            ([x, y]) => `radial-gradient(circle 120px at ${x} ${y}, ${link.accent}40 0%, transparent 70%)`
+          ),
+        }}
+      />
+
+      {/* Background with subtle gradient */}
+      <div
+        className="absolute inset-0"
+        style={{
+          background: `
+            radial-gradient(ellipse at 80% 20%, ${link.accent}12 0%, transparent 50%),
+            var(--bg-elevated, rgba(255,255,255,0.03))
+          `,
+          border: `1px solid ${link.accent}20`,
+          borderRadius: 16,
+        }}
+      />
+
+      {/* Animated border glow on hover */}
+      <div
+        className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
+        style={{
+          boxShadow: `inset 0 0 0 1px ${link.accent}40, 0 4px 24px ${link.accent}15`,
+        }}
+      />
+
+      {/* Content */}
+      <div className="relative z-10 h-full flex flex-col justify-between p-5">
+        <div className="flex items-start justify-between">
+          <div
+            className="w-11 h-11 rounded-xl flex items-center justify-center transition-transform duration-300 group-hover:scale-110"
+            style={{
+              background: `linear-gradient(135deg, ${link.accent}25, ${link.accent}10)`,
+              border: `1px solid ${link.accent}30`,
+              boxShadow: `0 0 0 0 ${link.accent}00`,
+            }}
+          >
+            <Icon size={22} style={{ color: link.accent }} />
+          </div>
+          <ArrowRight
+            size={16}
+            className="mt-1 opacity-0 group-hover:opacity-70 transition-all duration-300 group-hover:translate-x-1"
+            style={{ color: link.accent }}
+          />
+        </div>
+        <div>
+          <div className="text-[14px] font-semibold mb-1" style={{ color: 'var(--text-primary, #fff)' }}>
+            {link.label}
+          </div>
+          <div className="text-[12px] leading-relaxed" style={{ color: 'var(--text-muted, rgba(255,255,255,0.45))' }}>
+            {link.desc}
+          </div>
+        </div>
+      </div>
+
+      {/* Bottom accent line */}
+      <div
+        className="absolute bottom-0 left-0 right-0 h-[2px] opacity-0 group-hover:opacity-100 transition-opacity duration-500"
+        style={{ background: link.gradient }}
+      />
+    </motion.button>
+  );
 }
 
 // ── Featured Agent Card (large, with cover image) ──
@@ -243,6 +361,26 @@ function CompactCard({ item, onClick }: { item: ToolboxItem; onClick: () => void
   );
 }
 
+// ── Auto-fill grid style helper ──
+
+const AUTO_GRID_FEATURED: React.CSSProperties = {
+  display: 'grid',
+  gap: 12,
+  gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+};
+
+const AUTO_GRID_COMPACT: React.CSSProperties = {
+  display: 'grid',
+  gap: 8,
+  gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+};
+
+const AUTO_GRID_QUICK: React.CSSProperties = {
+  display: 'grid',
+  gap: 12,
+  gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+};
+
 // ── Main Page ──
 
 export default function AgentLauncherPage() {
@@ -293,13 +431,10 @@ export default function AgentLauncherPage() {
   return (
     <div className="h-full min-h-0 flex flex-col" style={{ background: 'var(--bg-base)' }}>
       <div className="flex-1 min-h-0 overflow-auto">
-        <div
-          className={`mx-auto w-full ${isMobile ? 'px-4 pt-6 pb-8' : 'px-8 pt-10 pb-12'}`}
-          style={{ maxWidth: 960 }}
-        >
+        <div className={isMobile ? 'px-4 pt-6 pb-8' : 'px-8 pt-8 pb-12'}>
           {/* ── Hero greeting ── */}
-          <div className={isMobile ? 'mb-6' : 'mb-10'}>
-            <div className="flex items-center gap-2 mb-3">
+          <div className={isMobile ? 'mb-5' : 'mb-8'}>
+            <div className="flex items-center gap-2 mb-2">
               <Sparkles size={16} style={{ color: 'var(--accent-primary, #818CF8)' }} />
               <span
                 className="text-xs font-medium tracking-wide uppercase"
@@ -316,7 +451,7 @@ export default function AgentLauncherPage() {
               {displayName ? `，${displayName}` : ''}
             </h1>
             <p
-              className="mt-2 text-sm"
+              className="mt-1.5 text-sm"
               style={{ color: 'var(--text-muted, rgba(255,255,255,0.45))' }}
             >
               选择一个智能助手，开始你的创作
@@ -324,7 +459,7 @@ export default function AgentLauncherPage() {
           </div>
 
           {/* ── Search ── */}
-          <div className={`relative ${isMobile ? 'mb-6' : 'mb-10'}`} style={{ maxWidth: 560 }}>
+          <div className={`relative ${isMobile ? 'mb-5' : 'mb-8'}`} style={{ maxWidth: 480 }}>
             <Search
               size={16}
               className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
@@ -350,47 +485,11 @@ export default function AgentLauncherPage() {
             />
           </div>
 
-          {/* ── Quick Links ── */}
+          {/* ── Quick Links (animated cards) ── */}
           {!searchQuery.trim() && (
-            <div className={`grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-3'} ${isMobile ? 'mb-6' : 'mb-10'}`}>
-              {[
-                { icon: Store, label: '海鲜市场', desc: '发现和 Fork 优质提示词与配置', path: '/marketplace', accent: '#F59E0B' },
-                { icon: GraduationCap, label: '使用教程', desc: '从入门到进阶的操作指南', path: '/tutorials', accent: '#3B82F6' },
-                { icon: ClipboardList, label: '缺陷管理', desc: '快速提交和跟踪缺陷报告', path: '/defect', accent: '#F43F5E' },
-              ].map((link) => (
-                <button
-                  key={link.path}
-                  type="button"
-                  onClick={() => navigate(link.path)}
-                  className="group flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-left transition-all duration-200 hover:-translate-y-0.5"
-                  style={{
-                    background: `linear-gradient(135deg, ${link.accent}08, var(--bg-elevated, rgba(255,255,255,0.03)))`,
-                    border: `1px solid ${link.accent}15`,
-                  }}
-                >
-                  <div
-                    className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center transition-colors duration-200"
-                    style={{
-                      background: `${link.accent}15`,
-                      border: `1px solid ${link.accent}25`,
-                    }}
-                  >
-                    <link.icon size={18} style={{ color: link.accent }} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-[13px] font-medium" style={{ color: 'var(--text-primary, #fff)' }}>
-                      {link.label}
-                    </div>
-                    <div className="text-[11px] mt-0.5 truncate" style={{ color: 'var(--text-muted, rgba(255,255,255,0.4))' }}>
-                      {link.desc}
-                    </div>
-                  </div>
-                  <ArrowRight
-                    size={14}
-                    className="shrink-0 opacity-0 group-hover:opacity-50 transition-all duration-200 group-hover:translate-x-0.5"
-                    style={{ color: 'var(--text-muted)' }}
-                  />
-                </button>
+            <div className={isMobile ? 'mb-5' : 'mb-8'} style={AUTO_GRID_QUICK}>
+              {QUICK_LINKS.map((link) => (
+                <QuickLinkCard key={link.path} link={link} onClick={() => navigate(link.path)} />
               ))}
             </div>
           )}
@@ -414,7 +513,7 @@ export default function AgentLauncherPage() {
                 </span>
               </div>
             ) : (
-              <div className={`grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-2'}`}>
+              <div style={AUTO_GRID_FEATURED}>
                 {filtered.map((item) =>
                   item.routePath ? (
                     <FeaturedCard key={item.id} item={item} onClick={() => handleClick(item)} />
@@ -429,14 +528,14 @@ export default function AgentLauncherPage() {
             <>
               {/* Featured Agents */}
               {featured.length > 0 && (
-                <section className={isMobile ? 'mb-8' : 'mb-10'}>
+                <section className={isMobile ? 'mb-6' : 'mb-8'}>
                   <div
-                    className="text-[11px] font-medium tracking-widest uppercase mb-4"
+                    className="text-[11px] font-medium tracking-widest uppercase mb-3"
                     style={{ color: 'var(--text-muted, rgba(255,255,255,0.35))' }}
                   >
                     智能助手
                   </div>
-                  <div className={`grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-2 lg:grid-cols-3'}`}>
+                  <div style={AUTO_GRID_FEATURED}>
                     {featured.map((item) => (
                       <FeaturedCard key={item.id} item={item} onClick={() => handleClick(item)} />
                     ))}
@@ -448,12 +547,12 @@ export default function AgentLauncherPage() {
               {utilities.length > 0 && (
                 <section>
                   <div
-                    className="text-[11px] font-medium tracking-widest uppercase mb-4"
+                    className="text-[11px] font-medium tracking-widest uppercase mb-3"
                     style={{ color: 'var(--text-muted, rgba(255,255,255,0.35))' }}
                   >
                     实用工具
                   </div>
-                  <div className={`grid gap-2 ${isMobile ? 'grid-cols-1' : 'grid-cols-2 lg:grid-cols-3'}`}>
+                  <div style={AUTO_GRID_COMPACT}>
                     {utilities.map((item) => (
                       <CompactCard key={item.id} item={item} onClick={() => handleClick(item)} />
                     ))}
