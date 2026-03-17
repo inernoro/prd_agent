@@ -1166,10 +1166,13 @@ public class MongoDbContext
                 {
                     Name = "uniq_personal_sources_user_yuque_repo",
                     Unique = true,
-                    PartialFilterExpression = Builders<PersonalSource>.Filter.And(
-                        Builders<PersonalSource>.Filter.Eq(x => x.SourceType, PersonalSourceType.Yuque),
-                        Builders<PersonalSource>.Filter.Ne(x => x.Config.YuqueRepoId, null),
-                        Builders<PersonalSource>.Filter.Ne(x => x.Config.YuqueRepoId, ""))
+                    // 部分 Mongo 兼容层不支持 partial index 中的 $ne（会下推为 $not）
+                    // 这里改用 $exists + $gt，避免出现 "$not ... $eq null"
+                    PartialFilterExpression = new BsonDocument
+                    {
+                        { "SourceType", PersonalSourceType.Yuque },
+                        { "Config.YuqueRepoId", new BsonDocument { { "$exists", true }, { "$gt", "" } } }
+                    }
                 }));
         }
         catch (MongoCommandException ex) when (IsIndexConflict(ex))
