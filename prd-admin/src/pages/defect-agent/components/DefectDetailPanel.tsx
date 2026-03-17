@@ -430,7 +430,7 @@ export function DefectDetailPanel() {
   };
 
   return (
-    <DialogPrimitive.Root open={!!defect} onOpenChange={(open) => { if (!open) handleClose(); }}>
+    <DialogPrimitive.Root open={!!defect} onOpenChange={(open) => { if (!open) { if (lightboxImage) { setLightboxImage(null); return; } handleClose(); } }}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay
           className="fixed inset-0 z-100"
@@ -440,6 +440,8 @@ export function DefectDetailPanel() {
         {/* 弹窗内容 - 液态玻璃样式 */}
         <DialogPrimitive.Content
           aria-describedby={undefined}
+          onPointerDownOutside={(e) => { if (lightboxImage) e.preventDefault(); }}
+          onEscapeKeyDown={(e) => { if (lightboxImage) { e.preventDefault(); setLightboxImage(null); } }}
           className={
             isMobile
               ? 'fixed inset-0 z-110 overflow-hidden flex flex-col'
