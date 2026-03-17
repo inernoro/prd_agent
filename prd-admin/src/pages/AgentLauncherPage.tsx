@@ -294,7 +294,7 @@ export default function AgentLauncherPage() {
     <div className="h-full min-h-0 flex flex-col" style={{ background: 'var(--bg-base)' }}>
       <div className="flex-1 min-h-0 overflow-auto">
         <div
-          className={`mx-auto w-full ${isMobile ? 'px-4 pt-6 pb-8' : 'px-8 pt-16 pb-12'}`}
+          className={`mx-auto w-full ${isMobile ? 'px-4 pt-6 pb-8' : 'px-8 pt-10 pb-12'}`}
           style={{ maxWidth: 960 }}
         >
           {/* ── Hero greeting ── */}
@@ -324,7 +324,7 @@ export default function AgentLauncherPage() {
           </div>
 
           {/* ── Search ── */}
-          <div className={`relative ${isMobile ? 'mb-6' : 'mb-10'}`} style={{ maxWidth: 480 }}>
+          <div className={`relative ${isMobile ? 'mb-6' : 'mb-10'}`} style={{ maxWidth: 560 }}>
             <Search
               size={16}
               className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
@@ -364,8 +364,8 @@ export default function AgentLauncherPage() {
                   onClick={() => navigate(link.path)}
                   className="group flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-left transition-all duration-200 hover:-translate-y-0.5"
                   style={{
-                    background: 'var(--bg-elevated, rgba(255,255,255,0.03))',
-                    border: '1px solid rgba(255,255,255,0.06)',
+                    background: `linear-gradient(135deg, ${link.accent}08, var(--bg-elevated, rgba(255,255,255,0.03)))`,
+                    border: `1px solid ${link.accent}15`,
                   }}
                 >
                   <div
