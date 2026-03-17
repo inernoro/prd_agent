@@ -1166,6 +1166,68 @@ a.branch-name:hover { color: var(--accent); }
   border-color: var(--border-focus);
 }
 
+/* ════════════════ Log Modal Tabs ════════════════ */
+
+.log-modal-tabs {
+  display: flex; gap: 2px; margin-left: 12px;
+  background: var(--bg-primary); border-radius: 8px; padding: 2px;
+  flex-shrink: 0;
+}
+.log-modal-tabs.hidden { display: none; }
+.log-tab {
+  display: flex; align-items: center; gap: 5px;
+  background: none; border: none; color: var(--text-muted);
+  font-size: 12px; font-weight: 500; padding: 5px 12px;
+  border-radius: 6px; cursor: pointer;
+  transition: all 0.15s ease;
+}
+.log-tab:hover { color: var(--text-secondary); background: var(--bg-hover); }
+.log-tab.active { color: var(--text-primary); background: var(--bg-elevated); }
+.log-tab svg { opacity: 0.7; }
+.log-tab.active svg { opacity: 1; }
+
+/* ════════════════ Terminal ════════════════ */
+
+.terminal-output {
+  font-family: var(--font-mono); font-size: 12px;
+  background: rgba(3, 4, 8, 0.8);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 12px 14px; min-height: 200px; max-height: 55vh;
+  overflow-y: auto; line-height: 1.6;
+}
+.term-line { margin: 0; padding: 0; white-space: pre-wrap; word-break: break-all; }
+.term-cmd { color: var(--text-primary); padding: 2px 0; }
+.term-prompt { color: var(--accent); margin-right: 6px; user-select: none; }
+.term-result { color: var(--text-secondary); margin: 0; padding: 0; border: none; background: none; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; }
+.term-error { color: var(--red); }
+.term-exit { color: var(--text-muted); font-size: 11px; padding: 2px 0; }
+
+.terminal-input-row {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 8px;
+  background: rgba(3, 4, 8, 0.8);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 8px 12px;
+}
+.terminal-input-row .terminal-prompt {
+  color: var(--accent); font-family: var(--font-mono); font-size: 13px;
+  font-weight: 600; user-select: none; flex-shrink: 0;
+}
+.terminal-input {
+  flex: 1; background: none; border: none; outline: none;
+  color: var(--text-primary); font-family: var(--font-mono); font-size: 13px;
+  caret-color: var(--accent);
+}
+.terminal-input::placeholder { color: var(--text-muted); }
+.terminal-input:disabled { opacity: 0.5; }
+.terminal-send-btn {
+  background: none; border: none; color: var(--text-muted);
+  cursor: pointer; padding: 4px; border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s ease; flex-shrink: 0;
+}
+.terminal-send-btn:hover { color: var(--accent); background: var(--accent-bg); }
+
 /* ════════════════ Live Log ════════════════ */
 
 .live-dot {
