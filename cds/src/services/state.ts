@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { CdsState, BranchEntry, BuildProfile, RoutingRule, OperationLog, InfraService } from '../types.js';
+import type { CdsState, BranchEntry, BuildProfile, RoutingRule, OperationLog, InfraService, ExecutorNode } from '../types.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
 
@@ -45,6 +45,7 @@ export class StateService {
       if (!this.state.customEnv) this.state.customEnv = {};
       if (!this.state.infraServices) this.state.infraServices = [];
       if (this.state.mirrorEnabled === undefined) this.state.mirrorEnabled = false;
+      if (!this.state.executors) this.state.executors = {};
     } else {
       this.state = emptyState();
     }
@@ -254,6 +255,27 @@ export class StateService {
       // Yarn specific
       YARN_NPM_REGISTRY_SERVER: 'https://registry.npmmirror.com',
     };
+  }
+
+  // ── Executor management ──
+
+  getExecutors(): Record<string, ExecutorNode> {
+    return this.state.executors || {};
+  }
+
+  getExecutor(id: string): ExecutorNode | undefined {
+    return this.state.executors?.[id];
+  }
+
+  setExecutor(node: ExecutorNode): void {
+    if (!this.state.executors) this.state.executors = {};
+    this.state.executors[node.id] = node;
+  }
+
+  removeExecutor(id: string): void {
+    if (this.state.executors) {
+      delete this.state.executors[id];
+    }
   }
 
   /**
