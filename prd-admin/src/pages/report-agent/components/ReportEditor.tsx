@@ -10,6 +10,7 @@ import {
   submitWeeklyReport,
   getWeeklyReport,
   generateReport,
+  deleteWeeklyReport,
 } from '@/services';
 import type { WeeklyReport } from '@/services/contracts/reportAgent';
 import { WeeklyReportStatus, ReportInputType } from '@/services/contracts/reportAgent';
@@ -22,11 +23,12 @@ interface Props {
 }
 
 export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props) {
-  const { teams, templates, updateReportInList, addReportToList } = useReportAgentStore();
+  const { teams, templates, updateReportInList, addReportToList, removeReportFromList } = useReportAgentStore();
   const [report, setReport] = useState<WeeklyReport | null>(null);
   const [sections, setSections] = useState<{ items: { content: string; source: string; sourceRef?: string }[] }[]>([]);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [selectedTeamId, setSelectedTeamId] = useState(teams[0]?.id || '');
   const [selectedTemplateId, setSelectedTemplateId] = useState(templates[0]?.id || '');
   const [isNew, setIsNew] = useState(!reportId);
@@ -139,6 +141,22 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
     }
   }, [report, updateReportInList]);
 
+  const handleDelete = useCallback(async () => {
+    if (!report) return;
+    if (!window.confirm('删除后不可恢复，确定删除这份周报吗？')) return;
+
+    setDeleting(true);
+    const res = await deleteWeeklyReport({ id: report.id });
+    setDeleting(false);
+    if (res.success) {
+      removeReportFromList(report.id);
+      toast.success('周报已删除');
+      onClose();
+    } else {
+      toast.error(res.error?.message || '删除失败');
+    }
+  }, [report, removeReportFromList, onClose]);
+
   const updateItem = (sectionIdx: number, itemIdx: number, content: string) => {
     setSections((prev) => {
       const next = [...prev];
@@ -174,7 +192,24 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
     });
   };
 
-  const canEdit = !report || report.status === WeeklyReportStatus.Draft || report.status === WeeklyReportStatus.Returned || report.status === WeeklyReportStatus.Overdue;
+  const canEdit = !report
+    || report.status === WeeklyReportStatus.Draft
+    || report.status === WeeklyReportStatus.Submitted
+    || report.status === WeeklyReportStatus.Returned
+    || report.status === WeeklyReportStatus.Overdue;
+  const canSubmit = !!report
+    && (report.status === WeeklyReportStatus.Draft
+      || report.status === WeeklyReportStatus.Returned
+      || report.status === WeeklyReportStatus.Overdue);
+  const canGenerate = !!report
+    && (report.status === WeeklyReportStatus.Draft
+      || report.status === WeeklyReportStatus.Returned
+      || report.status === WeeklyReportStatus.Overdue);
+  const canDelete = !!report
+    && (report.status === WeeklyReportStatus.Draft
+      || report.status === WeeklyReportStatus.Submitted
+      || report.status === WeeklyReportStatus.Returned
+      || report.status === WeeklyReportStatus.Overdue);
 
   // Section colors — gradient pairs for headers
   const sectionThemes = [
@@ -315,21 +350,32 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
               )}
             </div>
           </div>
-          {canEdit && (
+          {(canEdit || canSubmit || canGenerate || canDelete) && (
             <div className="flex items-center gap-2">
-              <Button variant="secondary" size="sm" onClick={handleGenerate} disabled={generating || saving}>
-                {generating ? (
-                  <><RefreshCw size={13} className="animate-spin" /> 生成中...</>
-                ) : (
-                  <><Sparkles size={13} /> AI 填充</>
-                )}
-              </Button>
-              <Button variant="secondary" size="sm" onClick={handleSave} disabled={saving}>
-                <Save size={13} /> 保存
-              </Button>
-              <Button variant="primary" size="sm" onClick={handleSubmit} disabled={saving}>
-                <Send size={13} /> 提交
-              </Button>
+              {canGenerate && (
+                <Button variant="secondary" size="sm" onClick={handleGenerate} disabled={generating || saving || deleting}>
+                  {generating ? (
+                    <><RefreshCw size={13} className="animate-spin" /> 生成中...</>
+                  ) : (
+                    <><Sparkles size={13} /> AI 填充</>
+                  )}
+                </Button>
+              )}
+              {canEdit && (
+                <Button variant="secondary" size="sm" onClick={handleSave} disabled={saving || generating || deleting}>
+                  <Save size={13} /> 保存
+                </Button>
+              )}
+              {canSubmit && (
+                <Button variant="primary" size="sm" onClick={handleSubmit} disabled={saving || generating || deleting}>
+                  <Send size={13} /> 提交
+                </Button>
+              )}
+              {canDelete && (
+                <Button variant="ghost" size="sm" onClick={handleDelete} disabled={saving || generating || deleting}>
+                  <Trash2 size={13} /> {deleting ? '删除中...' : '删除'}
+                </Button>
+              )}
             </div>
           )}
         </div>
@@ -353,6 +399,15 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
           style={{ color: 'rgba(239, 68, 68, 0.9)', background: 'rgba(239, 68, 68, 0.06)', border: '1px solid rgba(239, 68, 68, 0.12)' }}
         >
           退回原因: {report.returnReason}
+        </div>
+      )}
+
+      {report.status === WeeklyReportStatus.Submitted && (
+        <div
+          className="flex items-center gap-2.5 text-[12px] px-5 py-3 rounded-xl"
+          style={{ color: 'rgba(59, 130, 246, 0.9)', background: 'rgba(59, 130, 246, 0.06)', border: '1px solid rgba(59, 130, 246, 0.12)' }}
+        >
+          已提交周报在“已审阅”前仍可编辑或删除，变更会即时生效。
         </div>
       )}
 

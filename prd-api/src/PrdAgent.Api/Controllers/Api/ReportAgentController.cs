@@ -790,8 +790,15 @@ public class ReportAgentController : ControllerBase
         if (report.UserId != userId)
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能编辑自己的周报"));
 
-        if (report.Status != WeeklyReportStatus.Draft && report.Status != WeeklyReportStatus.Returned && report.Status != WeeklyReportStatus.Overdue)
-            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "只有草稿、已退回或逾期状态的周报可以编辑"));
+        var editableStatuses = new[]
+        {
+            WeeklyReportStatus.Draft,
+            WeeklyReportStatus.Submitted,
+            WeeklyReportStatus.Returned,
+            WeeklyReportStatus.Overdue
+        };
+        if (!editableStatuses.Contains(report.Status))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "只有草稿、已提交、已退回或逾期状态的周报可以编辑"));
 
         if (req.Sections == null)
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "周报内容不能为空"));
@@ -816,14 +823,19 @@ public class ReportAgentController : ControllerBase
             .Set(r => r.Sections, updatedSections)
             .Set(r => r.UpdatedAt, DateTime.UtcNow);
 
-        await _db.WeeklyReports.UpdateOneAsync(r => r.Id == id, update);
+        var updateFilter = Builders<WeeklyReport>.Filter.Eq(r => r.Id, id)
+                         & Builders<WeeklyReport>.Filter.Eq(r => r.UserId, userId)
+                         & Builders<WeeklyReport>.Filter.In(r => r.Status, editableStatuses);
+        var updateResult = await _db.WeeklyReports.UpdateOneAsync(updateFilter, update);
+        if (updateResult.MatchedCount == 0)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "周报状态已变化，当前不可编辑，请刷新后重试"));
 
         var updated = await _db.WeeklyReports.Find(r => r.Id == id).FirstOrDefaultAsync();
         return Ok(ApiResponse<object>.Ok(new { report = updated }));
     }
 
     /// <summary>
-    /// 删除周报（仅草稿）
+    /// 删除周报（已审阅前，仅作者）
     /// </summary>
     [HttpDelete("reports/{id}")]
     public async Task<IActionResult> DeleteReport(string id)
@@ -836,10 +848,23 @@ public class ReportAgentController : ControllerBase
         if (report.UserId != userId)
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能删除自己的周报"));
 
-        if (report.Status != WeeklyReportStatus.Draft)
-            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "只有草稿状态的周报可以删除"));
+        var deletableStatuses = new[]
+        {
+            WeeklyReportStatus.Draft,
+            WeeklyReportStatus.Submitted,
+            WeeklyReportStatus.Returned,
+            WeeklyReportStatus.Overdue
+        };
+        if (!deletableStatuses.Contains(report.Status))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "只有草稿、已提交、已退回或逾期状态的周报可以删除"));
 
-        await _db.WeeklyReports.DeleteOneAsync(r => r.Id == id);
+        var deleteFilter = Builders<WeeklyReport>.Filter.Eq(r => r.Id, id)
+                         & Builders<WeeklyReport>.Filter.Eq(r => r.UserId, userId)
+                         & Builders<WeeklyReport>.Filter.In(r => r.Status, deletableStatuses);
+        var deleteResult = await _db.WeeklyReports.DeleteOneAsync(deleteFilter);
+        if (deleteResult.DeletedCount == 0)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "周报状态已变化，当前不可删除，请刷新后重试"));
+
         return Ok(ApiResponse<object>.Ok(new { }));
     }
 
