@@ -100,7 +100,12 @@ export function TeamDashboard() {
 
   const handleReturn = async () => {
     if (!returnDialogId) return;
-    const res = await returnWeeklyReport({ id: returnDialogId, reason: returnReason });
+    const reason = returnReason.trim();
+    if (!reason) {
+      toast.error('请填写退回原因');
+      return;
+    }
+    const res = await returnWeeklyReport({ id: returnDialogId, reason });
     if (res.success) {
       toast.success('已退回');
       setReturnDialogId(null);
@@ -203,14 +208,14 @@ export function TeamDashboard() {
             <textarea
               className="w-full text-[13px] px-4 py-3 rounded-xl resize-none"
               style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)', minHeight: 100 }}
-              placeholder="请输入退回原因..."
+              placeholder="请输入退回原因（必填）..."
               value={returnReason}
               onChange={(e) => setReturnReason(e.target.value)}
               autoFocus
             />
             <div className="flex justify-end gap-2 mt-4">
               <Button variant="ghost" size="sm" onClick={() => { setReturnDialogId(null); setReturnReason(''); }}>取消</Button>
-              <Button variant="primary" size="sm" onClick={handleReturn}>确认退回</Button>
+              <Button variant="primary" size="sm" onClick={handleReturn} disabled={!returnReason.trim()}>确认退回</Button>
             </div>
           </GlassCard>
         </div>
@@ -470,16 +475,31 @@ export function TeamDashboard() {
                       </Button>
                     </>
                   )}
+                  {member.reportId && member.reportStatus === WeeklyReportStatus.Reviewed && (
+                    <>
+                      <Button variant="ghost" size="sm" onClick={() => openReportDetail(member.reportId!)}>
+                        <ExternalLink size={13} /> 查看
+                      </Button>
+                      <Button variant="secondary" size="sm" onClick={() => setReturnDialogId(member.reportId!)}>
+                        退回
+                      </Button>
+                    </>
+                  )}
                   {member.reportId && member.reportStatus === 'vacation' && (
                     <Button variant="ghost" size="sm" onClick={() => handleCancelVacation(member.userId)}>
                       取消请假
                     </Button>
                   )}
-                  {member.reportId && member.reportStatus !== WeeklyReportStatus.Submitted && member.reportStatus !== WeeklyReportStatus.NotStarted && member.reportStatus !== 'vacation' && (
+                  {member.reportId
+                    && member.reportStatus !== WeeklyReportStatus.Submitted
+                    && member.reportStatus !== WeeklyReportStatus.Reviewed
+                    && member.reportStatus !== WeeklyReportStatus.NotStarted
+                    && member.reportStatus !== 'vacation'
+                    && (
                     <Button variant="ghost" size="sm" onClick={() => openReportDetail(member.reportId!)}>
                       <ExternalLink size={13} /> 查看
                     </Button>
-                  )}
+                    )}
                   {(!member.reportId || member.reportStatus === WeeklyReportStatus.NotStarted || member.reportStatus === WeeklyReportStatus.Draft) && member.reportStatus !== 'vacation' && (
                     <Button variant="ghost" size="sm" onClick={() => setVacationDialogUserId(member.userId)} title="标记请假">
                       <Palmtree size={13} />

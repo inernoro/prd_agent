@@ -2113,8 +2113,8 @@ sequenceDiagram
 
 **功能详述**：
 1. 周报基于 ISO 8601 周数（WeekYear + WeekNumber），唯一约束 (UserId, TeamId, WeekYear, WeekNumber)
-2. 状态机：Draft/Returned/Overdue → Submitted（员工操作）→ Reviewed/Returned（领导操作）
-3. 仅草稿/已退回/逾期状态可提交；仅作者可在已审阅前（草稿/已提交/已退回/逾期）编辑和删除
+2. 状态机：Draft/Returned/Overdue → Submitted（员工操作）→ Reviewed（领导操作）；团队管理员可对 Submitted/Reviewed 执行 Returned
+3. 仅草稿/已退回/逾期状态可提交；仅作者可在已审阅前（草稿/已提交/已退回/逾期）编辑和删除；打回必须填写原因
 4. 团队面板：领导查看成员周报提交状态概览、提交进度统计
 
 **数据模型**：`WeeklyReport`、`WeeklyReportSection`、`WeeklyReportItem`（集合：`report_weekly_reports`）

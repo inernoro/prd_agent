@@ -93,7 +93,12 @@ export default function ReportDetailPage() {
 
   const handleReturn = async () => {
     if (!reportId) return;
-    const res = await returnWeeklyReport({ id: reportId, reason: returnReason });
+    const reason = returnReason.trim();
+    if (!reason) {
+      toast.error('请填写退回原因');
+      return;
+    }
+    const res = await returnWeeklyReport({ id: reportId, reason });
     if (res.success) {
       toast.success('已退回');
       setShowReturnDialog(false);
@@ -152,14 +157,14 @@ export default function ReportDetailPage() {
             <textarea
               className="w-full text-[13px] px-4 py-3 rounded-xl resize-none"
               style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)', minHeight: 100 }}
-              placeholder="请输入退回原因..."
+              placeholder="请输入退回原因（必填）..."
               value={returnReason}
               onChange={(e) => setReturnReason(e.target.value)}
               autoFocus
             />
             <div className="flex justify-end gap-2 mt-4">
               <Button variant="ghost" size="sm" onClick={() => { setShowReturnDialog(false); setReturnReason(''); }}>取消</Button>
-              <Button variant="primary" size="sm" onClick={handleReturn}>确认退回</Button>
+              <Button variant="primary" size="sm" onClick={handleReturn} disabled={!returnReason.trim()}>确认退回</Button>
             </div>
           </GlassCard>
         </div>
@@ -185,12 +190,14 @@ export default function ReportDetailPage() {
             <Button variant="ghost" size="sm" onClick={handleExport} title="导出 Markdown">
               <Download size={14} />
             </Button>
-            {report.status === WeeklyReportStatus.Submitted && (
+            {(report.status === WeeklyReportStatus.Submitted || report.status === WeeklyReportStatus.Reviewed) && (
               <>
                 <Button variant="secondary" size="sm" onClick={() => setShowReturnDialog(true)}>退回</Button>
-                <Button variant="primary" size="sm" onClick={handleReview}>
-                  <CheckCircle2 size={13} className="mr-1" /> 审阅通过
-                </Button>
+                {report.status === WeeklyReportStatus.Submitted && (
+                  <Button variant="primary" size="sm" onClick={handleReview}>
+                    <CheckCircle2 size={13} className="mr-1" /> 审阅通过
+                  </Button>
+                )}
               </>
             )}
           </div>

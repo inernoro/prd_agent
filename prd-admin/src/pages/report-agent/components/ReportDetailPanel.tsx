@@ -285,12 +285,12 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
         </div>
 
         {/* Footer */}
-        {report.status === WeeklyReportStatus.Submitted && (onReview || onReturn) && (
+        {(report.status === WeeklyReportStatus.Submitted || report.status === WeeklyReportStatus.Reviewed) && (onReview || onReturn) && (
           <div className="flex items-center justify-end gap-2 px-6 py-4" style={{ borderTop: '1px solid var(--border-primary)' }}>
             {onReturn && (
               <Button variant="secondary" size="sm" onClick={onReturn}>退回</Button>
             )}
-            {onReview && (
+            {report.status === WeeklyReportStatus.Submitted && onReview && (
               <Button variant="primary" size="sm" onClick={onReview}>审阅通过</Button>
             )}
           </div>

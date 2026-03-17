@@ -971,7 +971,7 @@ public class ReportAgentController : ControllerBase
     }
 
     /// <summary>
-    /// 退回周报 (Submitted → Returned)
+    /// 退回周报 (Submitted/Reviewed → Returned)
     /// </summary>
     [HttpPost("reports/{id}/return")]
     public async Task<IActionResult> ReturnReport(string id, [FromBody] ReturnReportRequest req)
@@ -981,8 +981,12 @@ public class ReportAgentController : ControllerBase
         if (report == null)
             return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "周报不存在"));
 
-        if (report.Status != WeeklyReportStatus.Submitted)
-            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "只有已提交状态的周报可以退回"));
+        var returnableStatuses = new[] { WeeklyReportStatus.Submitted, WeeklyReportStatus.Reviewed };
+        if (!returnableStatuses.Contains(report.Status))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "只有待审阅或已审阅状态的周报可以退回"));
+
+        if (string.IsNullOrWhiteSpace(req.Reason))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "退回原因不能为空"));
 
         // 验证操作者是团队 leader/deputy
         if (!await IsTeamLeaderOrDeputy(report.TeamId, userId) &&
@@ -992,13 +996,20 @@ public class ReportAgentController : ControllerBase
         var username = GetUsername();
         var update = Builders<WeeklyReport>.Update
             .Set(r => r.Status, WeeklyReportStatus.Returned)
-            .Set(r => r.ReturnReason, req.Reason)
+            .Set(r => r.ReturnReason, req.Reason.Trim())
             .Set(r => r.ReturnedBy, userId)
             .Set(r => r.ReturnedByName, username)
             .Set(r => r.ReturnedAt, DateTime.UtcNow)
+            .Set(r => r.ReviewedAt, null as DateTime?)
+            .Set(r => r.ReviewedBy, null as string)
+            .Set(r => r.ReviewedByName, null as string)
             .Set(r => r.UpdatedAt, DateTime.UtcNow);
 
-        await _db.WeeklyReports.UpdateOneAsync(r => r.Id == id, update);
+        var updateFilter = Builders<WeeklyReport>.Filter.Eq(r => r.Id, id)
+                         & Builders<WeeklyReport>.Filter.In(r => r.Status, returnableStatuses);
+        var updateResult = await _db.WeeklyReports.UpdateOneAsync(updateFilter, update);
+        if (updateResult.MatchedCount == 0)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "周报状态已变化，当前不可退回，请刷新后重试"));
 
         var updated = await _db.WeeklyReports.Find(r => r.Id == id).FirstOrDefaultAsync();
 
@@ -1189,7 +1200,7 @@ public class ReportAgentController : ControllerBase
 
     public class ReturnReportRequest
     {
-        public string? Reason { get; set; }
+        public string Reason { get; set; } = string.Empty;
     }
 
     public class SaveDailyLogRequest

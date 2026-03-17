@@ -415,7 +415,7 @@ export type ReviewWeeklyReportContract = (input: { id: string }) => Promise<
 
 export type ReturnWeeklyReportContract = (input: {
   id: string;
-  reason?: string;
+  reason: string;
 }) => Promise<ApiResponse<{ report: WeeklyReport }>>;
 
 // --- Dashboard ---
