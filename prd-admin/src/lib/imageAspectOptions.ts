@@ -90,6 +90,14 @@ export function detectTierFromSize(size: string): '1k' | '2k' | '4k' | null {
     if (opt.size2k.toLowerCase() === s) return '2k';
     if (opt.size4k.toLowerCase() === s) return '4k';
   }
+  // 回退：对不在 ASPECT_OPTIONS 中的白名单尺寸（如 Gemini 的 1344x768），按像素面积推断档位
+  const [w, h] = s.split(/[x×]/).map(Number);
+  if (w && h && w > 0 && h > 0) {
+    const pixels = w * h;
+    if (pixels >= 8_000_000) return '4k';
+    if (pixels >= 2_500_000) return '2k';
+    return '1k';
+  }
   return null;
 }
 
