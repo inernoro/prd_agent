@@ -295,7 +295,7 @@ export default function AppShell() {
   // 根据配置决定是否使用玻璃效果：always 始终启用，auto 仅实验室页面，never 禁用
   const useSidebarGlass = sidebarGlass === 'always' || (sidebarGlass === 'auto' && isLabPage);
 
-  const asideWidth = collapsed ? 72 : 220;
+  const asideWidth = collapsed ? 56 : 192;
   const asideGap = 18;
   // 专注模式（fullBleedMain）、移动端下隐藏侧栏，主区最大化
   const focusHideAside = fullBleedMain || isMobile;
@@ -666,8 +666,8 @@ export default function AppShell() {
         {/* 悬浮侧边栏：不贴左边，像"挂着" (移动端隐藏) */}
         <aside
           className={cn(
-            'absolute flex flex-col p-2.5 transition-[width] duration-220 ease-out',
-            collapsed ? 'gap-2 items-center' : 'gap-2.5'
+            'absolute flex flex-col p-2 transition-[width] duration-220 ease-out',
+            collapsed ? 'gap-1.5 items-center' : 'gap-1.5'
           )}
           style={{
             left: asideGap,
@@ -694,7 +694,7 @@ export default function AppShell() {
           <div
             className={cn(
               'group relative shrink-0 rounded-[14px]',
-              collapsed ? 'w-[50px] py-2 flex justify-center' : 'px-3 py-2.5'
+              collapsed ? 'w-[42px] py-1.5 flex justify-center' : 'px-2.5 py-2'
             )}
             style={{ background: 'transparent' }}
           >
@@ -714,7 +714,7 @@ export default function AppShell() {
                   >
                     {/* 头像 */}
                     <div
-                      className="h-9 w-9 rounded-full overflow-hidden shrink-0 ring-1 ring-white/10 hover:ring-indigo-400/30 transition-colors duration-200"
+                      className="h-8 w-8 rounded-full overflow-hidden shrink-0 ring-1 ring-white/10 hover:ring-indigo-400/30 transition-colors duration-200"
                       style={{ boxShadow: '0 0 0 1px rgba(99, 102, 241, 0.1), 0 2px 12px rgba(0, 0, 0, 0.2)' }}
                     >
                       <UserAvatar
@@ -733,10 +733,10 @@ export default function AppShell() {
                     {/* 用户信息（仅展开时显示） */}
                     {!collapsed && (
                       <div className="min-w-0 flex-1">
-                        <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
+                        <div className="text-[12px] font-semibold truncate" style={{ color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
                           {user?.displayName || 'Admin'}
                         </div>
-                        <div className="text-[10px] truncate mt-0.5" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
+                        <div className="text-[10px] truncate" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
                           {user?.role === 'ADMIN' ? '系统管理员' : user?.role || ''}
                         </div>
                       </div>
@@ -893,9 +893,9 @@ export default function AppShell() {
                 type="button"
                 onClick={() => navigate(homeItem.key)}
                 className={cn(
-                  'group/nav relative flex items-center gap-3 rounded-[12px] w-full',
+                  'group/nav relative flex items-center gap-2.5 rounded-[10px] w-full',
                   'transition-all duration-200 ease-out',
-                  collapsed ? 'justify-center w-[50px] h-[50px] shrink-0' : 'px-3 py-2',
+                  collapsed ? 'justify-center w-[42px] h-[42px] shrink-0' : 'px-2.5 py-1.5',
                   activeKey === '/' ? '' : 'nav-item-hover'
                 )}
                 style={{
@@ -912,7 +912,7 @@ export default function AppShell() {
                   {homeItem.icon}
                 </span>
                 {!collapsed && (
-                  <div className="text-sm font-medium truncate transition-colors duration-200 group-hover/nav:text-[var(--text-primary)]">
+                  <div className="text-[13px] font-medium truncate transition-colors duration-200 group-hover/nav:text-[var(--text-primary)]">
                     {homeItem.label}
                   </div>
                 )}
@@ -945,13 +945,13 @@ export default function AppShell() {
                   {/* 分组分隔线（非首组） */}
                   {gi > 0 && (
                     <div
-                      className={cn('mx-auto', collapsed ? 'my-4' : 'my-5 mx-3')}
+                      className={cn('mx-auto', collapsed ? 'my-2' : 'my-2.5 mx-3')}
                       style={{
                         height: 1,
                         background: collapsed
                           ? 'rgba(255, 255, 255, 0.06)'
                           : 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.08) 20%, rgba(255,255,255,0.08) 80%, transparent 100%)',
-                        width: collapsed ? 28 : undefined,
+                        width: collapsed ? 24 : undefined,
                       }}
                     />
                   )}
@@ -959,7 +959,7 @@ export default function AppShell() {
                   {/* 分组标题（仅展开时显示） */}
                   {!collapsed && (
                     <div
-                      className="px-3 pt-1.5 pb-1 text-[10px] font-semibold tracking-[0.08em] uppercase select-none"
+                      className="px-2.5 pt-0.5 pb-0.5 text-[10px] font-semibold tracking-[0.08em] uppercase select-none"
                       style={{ color: 'var(--text-muted, rgba(255,255,255,0.32))' }}
                     >
                       {group.label}
@@ -967,7 +967,7 @@ export default function AppShell() {
                   )}
 
                   {/* 分组内的导航项 */}
-                  <div className={cn('flex flex-col', collapsed ? 'gap-0.5 items-center' : 'gap-0.5')}>
+                  <div className={cn('flex flex-col', collapsed ? 'gap-px items-center' : 'gap-px')}>
                     {group.items.map((it) => {
                       const active = it.key === activeKey;
                       return (
@@ -976,9 +976,9 @@ export default function AppShell() {
                           type="button"
                           onClick={() => navigate(it.key)}
                           className={cn(
-                            'group/nav relative flex items-center gap-3 rounded-[12px]',
+                            'group/nav relative flex items-center gap-2.5 rounded-[10px]',
                             'transition-all duration-200 ease-out',
-                            collapsed ? 'justify-center w-[50px] h-[50px] shrink-0' : 'px-3 py-2',
+                            collapsed ? 'justify-center w-[42px] h-[42px] shrink-0' : 'px-2.5 py-1.5',
                             !active && 'nav-item-hover'
                           )}
                           style={{
@@ -996,13 +996,13 @@ export default function AppShell() {
                           </span>
                           {!collapsed && (
                             <div className="min-w-0 flex-1 text-left">
-                              <div className="text-sm font-medium truncate transition-colors duration-200 group-hover/nav:text-[var(--text-primary)]">{it.label}</div>
+                              <div className="text-[13px] font-medium truncate transition-colors duration-200 group-hover/nav:text-[var(--text-primary)]">{it.label}</div>
                             </div>
                           )}
                           {active && !collapsed && (
                             <span
                               className="absolute left-0 top-1/2 -translate-y-1/2"
-                              style={{ width: 2, height: 16, background: '#818cf8', borderRadius: '0 999px 999px 0' }}
+                              style={{ width: 2, height: 14, background: '#818cf8', borderRadius: '0 999px 999px 0' }}
                             />
                           )}
                         </button>
