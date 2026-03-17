@@ -17,6 +17,7 @@ import {
   addDefectAttachment,
   verifyPass,
   verifyFail,
+  createDefectShareLink,
 } from '@/services';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
@@ -132,6 +133,7 @@ export function DefectDetailPanel() {
   const [messages, setMessages] = useState<DefectMessage[]>([]);
   const [pendingAttachments, setPendingAttachments] = useState<DefectAttachment[]>([]);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
+  const [creatingShareLink, setCreatingShareLink] = useState(false);
   const [attachmentCache, setAttachmentCache] = useState<Record<string, DefectAttachment>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -187,6 +189,24 @@ export function DefectDetailPanel() {
   if (!defect) return null;
 
   const handleClose = () => setSelectedDefectId(null);
+
+  const handleCreateShareLink = async () => {
+    if (creatingShareLink) return;
+    setCreatingShareLink(true);
+    try {
+      const res = await createDefectShareLink({ id: defect.id, expiresInDays: 3 });
+      if (res.success && res.data?.url) {
+        await navigator.clipboard.writeText(res.data.url);
+        toast.success('外部链接已复制（3天有效）');
+      } else {
+        toast.error(res.error?.message || '创建外部链接失败');
+      }
+    } catch {
+      toast.error('创建外部链接失败');
+    } finally {
+      setCreatingShareLink(false);
+    }
+  };
 
   const handleDeleteClick = () => {
     setConfirmingDelete(true);
@@ -487,7 +507,7 @@ export function DefectDetailPanel() {
                 {defect.defectNo}
               </span>
             </div>
-            {/* 右侧：时间 + 关闭按钮 */}
+            {/* 右侧：时间 + 外链 + 关闭按钮 */}
             <div className="flex items-center gap-3">
               <div
                 className="flex items-center gap-1.5 text-[11px]"
@@ -496,6 +516,16 @@ export function DefectDetailPanel() {
                 <Clock size={12} />
                 <span>{formatDateTime(defect.createdAt)}</span>
               </div>
+              <button
+                onClick={handleCreateShareLink}
+                disabled={creatingShareLink}
+                className="px-2 py-1 rounded-md hover:bg-white/5 transition-colors flex items-center gap-1 text-[11px] disabled:opacity-60"
+                style={{ color: 'var(--text-secondary)' }}
+                title="创建外部访问链接（3天有效）"
+              >
+                <ExternalLink size={12} />
+                <span>{creatingShareLink ? '生成中...' : '外部链接'}</span>
+              </button>
               <button
                 onClick={handleClose}
                 className="p-1.5 rounded-lg hover:bg-white/5 transition-colors flex-shrink-0"

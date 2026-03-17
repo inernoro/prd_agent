@@ -516,6 +516,44 @@ export type UpdateDefectFolderContract = (input: {
 
 export type DeleteDefectFolderContract = (input: { id: string }) => Promise<ApiResponse<{ deleted: boolean }>>;
 
+export type CreateDefectShareLinkContract = (input: {
+  id: string;
+  expiresInDays?: number;
+}) => Promise<ApiResponse<{
+  token: string;
+  expiresAt: string;
+  url: string;
+  path: string;
+}>>;
+
+export type GetDefectPublicByTokenContract = (input: {
+  token: string;
+}) => Promise<ApiResponse<{
+  defect: DefectReport;
+  messages: DefectMessage[];
+  related: {
+    reporterId: string;
+    unresolvedByReporter: DefectReport[];
+  };
+  report: {
+    isDone: boolean;
+    status: string;
+    resolution?: string;
+    resolvedAt?: string;
+    verifiedAt?: string;
+    resolvedById?: string;
+    resolvedByName?: string;
+    verifiedById?: string;
+    verifiedByName?: string;
+  };
+  share: {
+    token: string;
+    expiresAt: string;
+    viewCount: number;
+    lastViewedAt?: string;
+  };
+}>>;
+
 export type MoveDefectToFolderContract = (input: {
   id: string;
   folderId?: string;

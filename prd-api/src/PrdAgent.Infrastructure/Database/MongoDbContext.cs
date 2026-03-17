@@ -108,6 +108,7 @@ public class MongoDbContext
     public IMongoCollection<DefectFolder> DefectFolders => _database.GetCollection<DefectFolder>("defect_folders");
     public IMongoCollection<DefectProject> DefectProjects => _database.GetCollection<DefectProject>("defect_projects");
     public IMongoCollection<DefectWebhookConfig> DefectWebhookConfigs => _database.GetCollection<DefectWebhookConfig>("defect_webhook_configs");
+    public IMongoCollection<DefectShareToken> DefectShareTokens => _database.GetCollection<DefectShareToken>("defect_share_tokens");
 
     // Report Agent 周报管理
     public IMongoCollection<ReportTeam> ReportTeams => _database.GetCollection<ReportTeam>("report_teams");
@@ -795,6 +796,32 @@ public class MongoDbContext
         DefectWebhookConfigs.Indexes.CreateOne(new CreateIndexModel<DefectWebhookConfig>(
             Builders<DefectWebhookConfig>.IndexKeys.Ascending(x => x.TeamId).Ascending(x => x.ProjectId),
             new CreateIndexOptions { Name = "idx_defect_webhooks_team_project" }));
+
+        // DefectShareTokens：token 唯一 + 过期清理 + 按 defect 查询
+        try
+        {
+            DefectShareTokens.Indexes.CreateOne(new CreateIndexModel<DefectShareToken>(
+                Builders<DefectShareToken>.IndexKeys.Ascending(x => x.Token),
+                new CreateIndexOptions
+                {
+                    Name = "uniq_defect_share_tokens_token",
+                    Unique = true
+                }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        DefectShareTokens.Indexes.CreateOne(new CreateIndexModel<DefectShareToken>(
+            Builders<DefectShareToken>.IndexKeys.Ascending(x => x.DefectId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_defect_share_tokens_defect" }));
+        DefectShareTokens.Indexes.CreateOne(new CreateIndexModel<DefectShareToken>(
+            Builders<DefectShareToken>.IndexKeys.Ascending(x => x.ExpiresAt),
+            new CreateIndexOptions
+            {
+                Name = "ttl_defect_share_tokens_expires",
+                ExpireAfter = TimeSpan.Zero
+            }));
 
         // ========== Channel Adapter 多通道适配器索引 ==========
 

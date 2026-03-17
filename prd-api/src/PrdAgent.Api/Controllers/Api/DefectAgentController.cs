@@ -375,6 +375,122 @@ public class DefectAgentController : ControllerBase
     }
 
     /// <summary>
+    /// 创建缺陷外部传输链接（默认 3 天有效）
+    /// </summary>
+    [HttpPost("defects/{id}/share-link")]
+    public async Task<IActionResult> CreateDefectShareLink(string id, [FromBody] CreateDefectShareLinkRequest? request, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var isAdmin = HasManagePermission();
+
+        var defect = await _db.DefectReports.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (defect == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "缺陷不存在"));
+
+        if (!isAdmin && defect.ReporterId != userId && defect.AssigneeId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限分享此缺陷"));
+
+        var now = DateTime.UtcNow;
+        var expiresInDays = request?.ExpiresInDays is > 0 and <= 7 ? request.ExpiresInDays.Value : 3;
+
+        var token = new DefectShareToken
+        {
+            DefectId = defect.Id,
+            DefectNo = defect.DefectNo,
+            CreatedBy = userId,
+            CreatedAt = now,
+            ExpiresAt = now.AddDays(expiresInDays)
+        };
+
+        await _db.DefectShareTokens.InsertOneAsync(token, cancellationToken: ct);
+
+        var baseUrl = $"{Request.Scheme}://{Request.Host}";
+        var sharePath = $"/api/defect-agent/public/defects/{Uri.EscapeDataString(token.Token)}";
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            token = token.Token,
+            expiresAt = token.ExpiresAt,
+            url = $"{baseUrl}{sharePath}",
+            path = sharePath
+        }));
+    }
+
+    /// <summary>
+    /// 公开获取缺陷信息（携带 token）
+    /// </summary>
+    [AllowAnonymous]
+    [HttpGet("public/defects/{token}")]
+    public async Task<IActionResult> GetDefectByShareToken(string token, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "token 不能为空"));
+
+        var now = DateTime.UtcNow;
+        var shareToken = await _db.DefectShareTokens
+            .Find(x => x.Token == token)
+            .SortByDescending(x => x.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+
+        if (shareToken == null || shareToken.IsRevoked)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "分享链接不存在或已失效"));
+
+        if (shareToken.ExpiresAt <= now)
+            return StatusCode(410, ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "分享链接已过期"));
+
+        var defect = await _db.DefectReports.Find(x => x.Id == shareToken.DefectId).FirstOrDefaultAsync(ct);
+        if (defect == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "缺陷不存在或已删除"));
+
+        var messages = await _db.DefectMessages
+            .Find(x => x.DefectId == defect.Id)
+            .SortBy(x => x.Seq)
+            .Limit(100)
+            .ToListAsync(ct);
+
+        var reporterRelatedDefects = await _db.DefectReports
+            .Find(x => x.ReporterId == defect.ReporterId && x.Id != defect.Id && !x.IsDeleted && x.Status != DefectStatus.Closed)
+            .SortByDescending(x => x.CreatedAt)
+            .Limit(20)
+            .ToListAsync(ct);
+
+        var update = Builders<DefectShareToken>.Update
+            .Inc(x => x.ViewCount, 1)
+            .Set(x => x.LastViewedAt, now);
+        await _db.DefectShareTokens.UpdateOneAsync(x => x.Id == shareToken.Id, update, cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            defect,
+            messages,
+            related = new
+            {
+                reporterId = defect.ReporterId,
+                unresolvedByReporter = reporterRelatedDefects
+            },
+            report = new
+            {
+                isDone = defect.Status == DefectStatus.Closed || defect.Status == DefectStatus.Resolved,
+                defect.Status,
+                defect.Resolution,
+                defect.ResolvedAt,
+                defect.VerifiedAt,
+                defect.ResolvedById,
+                defect.ResolvedByName,
+                defect.VerifiedById,
+                defect.VerifiedByName
+            },
+            share = new
+            {
+                token = shareToken.Token,
+                shareToken.ExpiresAt,
+                shareToken.ViewCount,
+                shareToken.LastViewedAt
+            }
+        }));
+    }
+
+    /// <summary>
     /// 创建缺陷（草稿）
     /// </summary>
     [HttpPost("defects")]
@@ -2525,6 +2641,12 @@ public class BatchMoveDefectsRequest
     public List<string> DefectIds { get; set; } = new();
     /// <summary>目标文件夹 ID（null 或空字符串表示移到根目录）</summary>
     public string? FolderId { get; set; }
+}
+
+public class CreateDefectShareLinkRequest
+{
+    /// <summary>链接有效期天数（默认 3，最大 7）</summary>
+    public int? ExpiresInDays { get; set; }
 }
 
 public class VerifyFailRequest

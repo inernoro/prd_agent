@@ -36,6 +36,8 @@ import type {
   DeleteDefectFolderContract,
   MoveDefectToFolderContract,
   BatchMoveDefectsContract,
+  CreateDefectShareLinkContract,
+  GetDefectPublicByTokenContract,
   PreviewApiLogsContract,
   VerifyPassContract,
   VerifyFailContract,
@@ -360,6 +362,39 @@ export const deleteDefectFolderReal: DeleteDefectFolderContract = async (input) 
     api.defectAgent.folders.byId(encodeURIComponent(input.id)),
     { method: 'DELETE' }
   );
+};
+
+export const createDefectShareLinkReal: CreateDefectShareLinkContract = async (input) => {
+  const { id, expiresInDays } = input;
+  return await apiRequest<{ token: string; expiresAt: string; url: string; path: string }>(
+    api.defectAgent.defects.shareLink(encodeURIComponent(id)),
+    {
+      method: 'POST',
+      body: { expiresInDays },
+    }
+  );
+};
+
+export const getDefectPublicByTokenReal: GetDefectPublicByTokenContract = async (input) => {
+  return await apiRequest<{
+    defect: DefectReport;
+    messages: DefectMessage[];
+    related: { reporterId: string; unresolvedByReporter: DefectReport[] };
+    report: {
+      isDone: boolean;
+      status: string;
+      resolution?: string;
+      resolvedAt?: string;
+      verifiedAt?: string;
+      resolvedById?: string;
+      resolvedByName?: string;
+      verifiedById?: string;
+      verifiedByName?: string;
+    };
+    share: { token: string; expiresAt: string; viewCount: number; lastViewedAt?: string };
+  }>(api.defectAgent.defects.publicByToken(encodeURIComponent(input.token)), {
+    method: 'GET',
+  });
 };
 
 export const moveDefectToFolderReal: MoveDefectToFolderContract = async (input) => {
