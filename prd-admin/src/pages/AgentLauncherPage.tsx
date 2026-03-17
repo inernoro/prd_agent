@@ -5,6 +5,7 @@ import {
   Sparkles,
   Loader2,
   ArrowRight,
+  ChevronDown,
   FileText,
   Palette,
   PenTool,
@@ -20,9 +21,11 @@ import {
   Store,
   GraduationCap,
   ClipboardList,
+  Workflow,
+  Zap,
   type LucideIcon,
 } from 'lucide-react';
-import { motion, useMotionValue, useSpring, useTransform } from 'motion/react';
+import { motion, useMotionValue, useSpring, useTransform, AnimatePresence } from 'motion/react';
 import { useToolboxStore } from '@/stores/toolboxStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -31,7 +34,7 @@ import type { ToolboxItem } from '@/services';
 // ── Icon & Color mapping (self-contained, doesn't touch ToolCard) ──
 
 const ICON_MAP: Record<string, LucideIcon> = {
-  FileText, Palette, PenTool, Bug, Video, Swords, FileBarChart, Code2, Languages, FileSearch, BarChart3, Bot,
+  FileText, Palette, PenTool, Bug, Video, Swords, FileBarChart, Code2, Languages, FileSearch, BarChart3, Bot, Workflow, Zap,
 };
 
 /** Agent 封面图 CDN 路径 */
@@ -56,6 +59,8 @@ const ACCENT: Record<string, { from: string; to: string }> = {
   BarChart3: { from: '#8B5CF6', to: '#C4B5FD' },
   Bot:       { from: '#6366F1', to: '#A5B4FC' },
   FileBarChart: { from: '#6366F1', to: '#818CF8' },
+  Workflow:  { from: '#14B8A6', to: '#5EEAD4' },
+  Zap:       { from: '#F59E0B', to: '#FCD34D' },
 };
 
 function getAccent(icon: string) {
@@ -381,10 +386,41 @@ const AUTO_GRID_QUICK: React.CSSProperties = {
   gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
 };
 
+// ── Compact Quick Link Pill (collapsed state) ──
+
+function QuickLinkPill({ link, onClick }: { link: typeof QUICK_LINKS[number]; onClick: () => void }) {
+  const Icon = link.icon;
+  return (
+    <motion.button
+      type="button"
+      onClick={onClick}
+      className="group flex items-center gap-2 px-3.5 py-2 rounded-lg transition-colors duration-150 cursor-pointer"
+      style={{
+        background: `${link.accent}10`,
+        border: `1px solid ${link.accent}18`,
+      }}
+      whileHover={{ scale: 1.04, backgroundColor: `${link.accent}20` }}
+      whileTap={{ scale: 0.97 }}
+      transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+    >
+      <Icon size={15} style={{ color: link.accent }} />
+      <span className="text-[12px] font-medium whitespace-nowrap" style={{ color: 'var(--text-primary, #fff)' }}>
+        {link.label}
+      </span>
+      <ArrowRight
+        size={12}
+        className="opacity-0 group-hover:opacity-60 transition-opacity duration-150 -ml-0.5"
+        style={{ color: link.accent }}
+      />
+    </motion.button>
+  );
+}
+
 // ── Main Page ──
 
 export default function AgentLauncherPage() {
   const [searchQuery, setSearchQuery] = useState('');
+  const [quickLinksExpanded, setQuickLinksExpanded] = useState(false);
   const { items, itemsLoading, loadItems } = useToolboxStore();
   const { isMobile } = useBreakpoint();
   const navigate = useNavigate();
@@ -432,31 +468,108 @@ export default function AgentLauncherPage() {
     <div className="h-full min-h-0 flex flex-col" style={{ background: 'var(--bg-base)' }}>
       <div className="flex-1 min-h-0 overflow-auto">
         <div className={isMobile ? 'px-4 pt-6 pb-8' : 'px-8 pt-8 pb-12'}>
-          {/* ── Hero greeting ── */}
-          <div className={isMobile ? 'mb-5' : 'mb-8'}>
-            <div className="flex items-center gap-2 mb-2">
-              <Sparkles size={16} style={{ color: 'var(--accent-primary, #818CF8)' }} />
-              <span
-                className="text-xs font-medium tracking-wide uppercase"
-                style={{ color: 'var(--text-muted, rgba(255,255,255,0.4))' }}
+          {/* ── Hero: greeting left + quick links right ── */}
+          <div className={`flex ${isMobile ? 'flex-col gap-4 mb-5' : 'items-end justify-between gap-8 mb-8'}`}>
+            {/* Left: greeting */}
+            <div className="shrink-0">
+              <div className="flex items-center gap-2 mb-2">
+                <Sparkles size={16} style={{ color: 'var(--accent-primary, #818CF8)' }} />
+                <span
+                  className="text-xs font-medium tracking-wide uppercase"
+                  style={{ color: 'var(--text-muted, rgba(255,255,255,0.4))' }}
+                >
+                  AI Agent Platform
+                </span>
+              </div>
+              <h1
+                className={`font-semibold tracking-tight ${isMobile ? 'text-xl' : 'text-[28px]'}`}
+                style={{ color: 'var(--text-primary, #fff)' }}
               >
-                AI Agent Platform
-              </span>
+                {greeting}
+                {displayName ? `，${displayName}` : ''}
+              </h1>
+              <p
+                className="mt-1.5 text-sm"
+                style={{ color: 'var(--text-muted, rgba(255,255,255,0.45))' }}
+              >
+                选择一个智能助手，开始你的创作
+              </p>
             </div>
-            <h1
-              className={`font-semibold tracking-tight ${isMobile ? 'text-xl' : 'text-[28px]'}`}
-              style={{ color: 'var(--text-primary, #fff)' }}
-            >
-              {greeting}
-              {displayName ? `，${displayName}` : ''}
-            </h1>
-            <p
-              className="mt-1.5 text-sm"
-              style={{ color: 'var(--text-muted, rgba(255,255,255,0.45))' }}
-            >
-              选择一个智能助手，开始你的创作
-            </p>
+
+            {/* Right: quick link pills (collapsed) */}
+            {!searchQuery.trim() && !isMobile && (
+              <div className="flex items-center gap-2 shrink-0 pb-1">
+                {QUICK_LINKS.map((link) => (
+                  <QuickLinkPill key={link.path} link={link} onClick={() => navigate(link.path)} />
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setQuickLinksExpanded((v) => !v)}
+                  className="ml-1 w-7 h-7 rounded-lg flex items-center justify-center transition-colors duration-150"
+                  style={{
+                    background: 'rgba(255,255,255,0.04)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                  }}
+                  title={quickLinksExpanded ? '收起' : '展开'}
+                >
+                  <ChevronDown
+                    size={14}
+                    className="transition-transform duration-200"
+                    style={{
+                      color: 'var(--text-muted, rgba(255,255,255,0.4))',
+                      transform: quickLinksExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                    }}
+                  />
+                </button>
+              </div>
+            )}
           </div>
+
+          {/* Mobile: quick link pills inline */}
+          {!searchQuery.trim() && isMobile && (
+            <div className="flex items-center gap-2 flex-wrap mb-4">
+              {QUICK_LINKS.map((link) => (
+                <QuickLinkPill key={link.path} link={link} onClick={() => navigate(link.path)} />
+              ))}
+              <button
+                type="button"
+                onClick={() => setQuickLinksExpanded((v) => !v)}
+                className="w-7 h-7 rounded-lg flex items-center justify-center"
+                style={{
+                  background: 'rgba(255,255,255,0.04)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                }}
+              >
+                <ChevronDown
+                  size={14}
+                  style={{
+                    color: 'var(--text-muted)',
+                    transform: quickLinksExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                    transition: 'transform 0.2s',
+                  }}
+                />
+              </button>
+            </div>
+          )}
+
+          {/* ── Quick Links expanded (animated cards) ── */}
+          <AnimatePresence>
+            {!searchQuery.trim() && quickLinksExpanded && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
+                className="overflow-hidden"
+              >
+                <div className={isMobile ? 'mb-5' : 'mb-8'} style={AUTO_GRID_QUICK}>
+                  {QUICK_LINKS.map((link) => (
+                    <QuickLinkCard key={link.path} link={link} onClick={() => navigate(link.path)} />
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {/* ── Search ── */}
           <div className={`relative ${isMobile ? 'mb-5' : 'mb-8'}`} style={{ maxWidth: 480 }}>
@@ -484,15 +597,6 @@ export default function AgentLauncherPage() {
               }}
             />
           </div>
-
-          {/* ── Quick Links (animated cards) ── */}
-          {!searchQuery.trim() && (
-            <div className={isMobile ? 'mb-5' : 'mb-8'} style={AUTO_GRID_QUICK}>
-              {QUICK_LINKS.map((link) => (
-                <QuickLinkCard key={link.path} link={link} onClick={() => navigate(link.path)} />
-              ))}
-            </div>
-          )}
 
           {/* ── Loading ── */}
           {itemsLoading ? (
