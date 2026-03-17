@@ -956,6 +956,14 @@ public class GroupsController : ControllerBase
             return;
         }
 
+        // 关键：先订阅 Channel 再回放 Mongo，避免回放期间的实时事件丢失（subscribe-before-replay 模式）
+        // 回放期间 Channel 中积累的事件会在回放后被读取，有 seq 的 message 通过 afterSeq 去重
+        using var sub = _groupMessageStreamHub.Subscribe(groupId);
+        var reader = sub.Reader;
+        var lastKeepAliveAt = DateTime.UtcNow;
+        var senderInfoCache = new Dictionary<string, (string Name, UserRole Role, string? AvatarUrl, List<GroupMemberTag>? Tags)>(StringComparer.Ordinal);
+        var groupMembersCache = await _groupService.GetMembersAsync(groupId);
+
         // 1) 回放 Mongo：按 groupSeq 递增（仅回放用户态可见消息，过滤已删除）
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -979,10 +987,10 @@ public class GroupsController : ControllerBase
                 var users = await _db.Users
                     .Find(u => batchSenderIds.Contains(u.UserId))
                     .ToListAsync(cancellationToken);
-                
+
                 // 获取群成员信息（用于 tags）
                 var batchMembers = await _groupService.GetMembersAsync(groupId);
-                
+
                 foreach (var u in users)
                 {
                     var uid = u.UserId;
@@ -1003,7 +1011,7 @@ public class GroupsController : ControllerBase
                 UserRole? senderRole = null;
                 string? senderAvatarUrl = null;
                 List<GroupMemberTag>? senderTags = null;
-                
+
                 if (m.SenderId != null && batchSenderInfoMap.TryGetValue(m.SenderId, out var info))
                 {
                     senderName = info.Name;
@@ -1011,7 +1019,7 @@ public class GroupsController : ControllerBase
                     senderAvatarUrl = info.AvatarUrl;
                     senderTags = info.Tags;
                 }
-                
+
                 var payload = ToStreamEvent(m, "message", senderName, senderRole, senderAvatarUrl, senderTags);
                 var json = JsonSerializer.Serialize(payload, AppJsonContext.Default.GroupMessageStreamEventDto);
                 await WriteSseAsync(id: seq.ToString(), eventName: "message", dataJson: json, ct: cancellationToken);
@@ -1019,12 +1027,7 @@ public class GroupsController : ControllerBase
             }
         }
 
-        // 2) 实时订阅：进程内广播（断线续传靠上面的 Mongo 回放）
-        using var sub = _groupMessageStreamHub.Subscribe(groupId);
-        var reader = sub.Reader;
-        var lastKeepAliveAt = DateTime.UtcNow;
-        var senderInfoCache = new Dictionary<string, (string Name, UserRole Role, string? AvatarUrl, List<GroupMemberTag>? Tags)>(StringComparer.Ordinal);
-        var groupMembersCache = await _groupService.GetMembersAsync(groupId);
+        // 2) 实时事件循环（Channel 在回放前已订阅，回放期间积累的事件会在此处被消费）
 
         async Task<(string? Name, UserRole? Role, string? AvatarUrl, List<GroupMemberTag>? Tags)> ResolveSenderInfoAsync(string? senderId)
         {
