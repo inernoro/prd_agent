@@ -716,15 +716,19 @@ function openFullDeployLog(id, event) {
   let isFirst = true;
   const renderInline = () => {
     const body = document.getElementById('logModalBody');
-    const prevScrollTop = body.scrollTop;
-    const wasAtBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 30;
+    const oldPre = body.querySelector('.live-log-output');
+    const prevScrollTop = oldPre ? oldPre.scrollTop : 0;
+    const wasAtBottom = oldPre
+      ? (oldPre.scrollTop + oldPre.clientHeight >= oldPre.scrollHeight - 30)
+      : true;
     const current = inlineDeployLogs.get(id);
     body.innerHTML = `<pre class="live-log-output">${esc(current ? current.lines.join('\n') : '暂无日志')}</pre>`;
     if (isFirst || wasAtBottom) {
       _scrollLogToBottom();
       isFirst = false;
     } else {
-      body.scrollTop = prevScrollTop;
+      const newPre = body.querySelector('.live-log-output');
+      if (newPre) newPre.scrollTop = prevScrollTop;
     }
   };
   openLogModal(`部署日志 ${id}`);
@@ -987,15 +991,19 @@ async function viewBranchLogs(id) {
     let isFirst = true;
     const renderInline = () => {
       const body = document.getElementById('logModalBody');
-      const prevScrollTop = body.scrollTop;
-      const wasAtBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 30;
+      const oldPre = body.querySelector('.live-log-output');
+      const prevScrollTop = oldPre ? oldPre.scrollTop : 0;
+      const wasAtBottom = oldPre
+        ? (oldPre.scrollTop + oldPre.clientHeight >= oldPre.scrollHeight - 30)
+        : true;
       const current = inlineDeployLogs.get(id);
       body.innerHTML = `<pre class="live-log-output">${esc(current ? current.lines.join('\n') : '暂无日志')}</pre>`;
       if (isFirst || wasAtBottom) {
         _scrollLogToBottom();
         isFirst = false;
       } else {
-        body.scrollTop = prevScrollTop;
+        const newPre = body.querySelector('.live-log-output');
+        if (newPre) newPre.scrollTop = prevScrollTop;
       }
     };
     openLogModal(`部署日志 — ${id}`);
@@ -1023,14 +1031,18 @@ async function viewBranchLogs(id) {
     const statusLabel = latest.status === 'completed' ? '成功' : latest.status === 'error' ? '失败' : '进行中';
     document.getElementById('logModalTitle').textContent = `部署日志 — ${id} (${statusLabel})`;
     const body = document.getElementById('logModalBody');
-    const prevScrollTop = body.scrollTop;
-    const wasAtBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 30;
+    const oldPre = body.querySelector('.live-log-output');
+    const prevScrollTop = oldPre ? oldPre.scrollTop : 0;
+    const wasAtBottom = oldPre
+      ? (oldPre.scrollTop + oldPre.clientHeight >= oldPre.scrollHeight - 30)
+      : true;
     body.innerHTML = `<pre class="live-log-output">${esc(logLines.join('\n') || '暂无日志')}</pre>`;
     if (isFirst || wasAtBottom) {
       _scrollLogToBottom();
       isFirst = false;
     } else {
-      body.scrollTop = prevScrollTop;
+      const newPre = body.querySelector('.live-log-output');
+      if (newPre) newPre.scrollTop = prevScrollTop;
     }
   };
   try {
@@ -1046,15 +1058,20 @@ async function viewContainerLogs(id, profileId) {
   const fetchAndRender = async () => {
     const data = await api('POST', `/branches/${id}/container-logs`, { profileId });
     const body = document.getElementById('logModalBody');
-    const prevScrollTop = body.scrollTop;
-    const wasAtBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 30;
+    // Read scroll state from the OLD <pre> before replacing
+    const oldPre = body.querySelector('.live-log-output');
+    const prevScrollTop = oldPre ? oldPre.scrollTop : 0;
+    const wasAtBottom = oldPre
+      ? (oldPre.scrollTop + oldPre.clientHeight >= oldPre.scrollHeight - 30)
+      : true;
     body.innerHTML = `<pre class="live-log-output">${esc(data.logs || '暂无日志')}</pre>`;
     if (isFirstLoad || wasAtBottom) {
       _scrollLogToBottom();
       isFirstLoad = false;
     } else {
-      // Restore scroll position after innerHTML replacement
-      body.scrollTop = prevScrollTop;
+      // Restore scroll position on the NEW <pre>
+      const newPre = body.querySelector('.live-log-output');
+      if (newPre) newPre.scrollTop = prevScrollTop;
     }
   };
   try {
@@ -2616,10 +2633,7 @@ function openLogModal(title) {
   document.getElementById('logModalTitle').textContent = title;
   document.getElementById('logModal').classList.remove('hidden');
   // Auto-scroll to bottom after content renders
-  requestAnimationFrame(() => {
-    const body = document.getElementById('logModalBody');
-    if (body) body.scrollTop = body.scrollHeight;
-  });
+  _scrollLogToBottom();
 }
 
 function closeLogModal() {
@@ -2640,10 +2654,15 @@ function _startLogPoll(fn, intervalMs) {
 }
 
 function _scrollLogToBottom() {
-  const body = document.getElementById('logModalBody');
-  if (!body) return;
-  // Use rAF to ensure layout is complete after innerHTML replacement
-  requestAnimationFrame(() => { body.scrollTop = body.scrollHeight; });
+  requestAnimationFrame(() => {
+    // The actual scrollable element is the <pre> inside logModalBody,
+    // which has max-height + overflow-y: auto via .live-log-output
+    const body = document.getElementById('logModalBody');
+    if (!body) return;
+    const pre = body.querySelector('.live-log-output');
+    const target = pre || body;
+    target.scrollTop = target.scrollHeight;
+  });
 }
 
 // ── Logout ──
