@@ -790,8 +790,11 @@ public class ReportAgentController : ControllerBase
         if (report.UserId != userId)
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能编辑自己的周报"));
 
-        if (report.Status != WeeklyReportStatus.Draft && report.Status != WeeklyReportStatus.Returned && report.Status != WeeklyReportStatus.Overdue)
-            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "只有草稿、已退回或逾期状态的周报可以编辑"));
+        if (report.Status != WeeklyReportStatus.Draft
+            && report.Status != WeeklyReportStatus.Returned
+            && report.Status != WeeklyReportStatus.Overdue
+            && report.Status != WeeklyReportStatus.Submitted)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "只有草稿、已提交、已退回或逾期状态的周报可以编辑"));
 
         if (req.Sections == null)
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "周报内容不能为空"));
@@ -823,7 +826,7 @@ public class ReportAgentController : ControllerBase
     }
 
     /// <summary>
-    /// 删除周报（仅草稿）
+    /// 删除周报（草稿或已提交）
     /// </summary>
     [HttpDelete("reports/{id}")]
     public async Task<IActionResult> DeleteReport(string id)
@@ -836,8 +839,8 @@ public class ReportAgentController : ControllerBase
         if (report.UserId != userId)
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能删除自己的周报"));
 
-        if (report.Status != WeeklyReportStatus.Draft)
-            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "只有草稿状态的周报可以删除"));
+        if (report.Status != WeeklyReportStatus.Draft && report.Status != WeeklyReportStatus.Submitted)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "只有草稿或已提交状态的周报可以删除"));
 
         await _db.WeeklyReports.DeleteOneAsync(r => r.Id == id);
         return Ok(ApiResponse<object>.Ok(new { }));

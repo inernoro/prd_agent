@@ -8,6 +8,7 @@ import {
   createWeeklyReport,
   updateWeeklyReport,
   submitWeeklyReport,
+  deleteWeeklyReport,
   getWeeklyReport,
   generateReport,
 } from '@/services';
@@ -23,7 +24,7 @@ interface Props {
 }
 
 export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props) {
-  const { teams, templates, updateReportInList, addReportToList } = useReportAgentStore();
+  const { teams, templates, updateReportInList, addReportToList, removeReportFromList } = useReportAgentStore();
   const [report, setReport] = useState<WeeklyReport | null>(null);
   const [sections, setSections] = useState<{ items: { content: string; source: string; sourceRef?: string }[] }[]>([]);
   const [saving, setSaving] = useState(false);
@@ -112,6 +113,28 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
     }
   }, [report, sections, updateReportInList, onClose]);
 
+  const handleDelete = useCallback(async () => {
+    if (!report) return;
+    const confirmed = window.confirm(
+      report.status === WeeklyReportStatus.Submitted
+        ? '确定要删除这份已提交周报吗？删除后无法恢复。'
+        : '确定要删除这份周报吗？删除后无法恢复。'
+    );
+    if (!confirmed) return;
+
+    setSaving(true);
+    const res = await deleteWeeklyReport({ id: report.id });
+    setSaving(false);
+
+    if (res.success) {
+      removeReportFromList(report.id);
+      toast.success('周报已删除');
+      onClose();
+    } else {
+      toast.error(res.error?.message || '删除失败');
+    }
+  }, [report, removeReportFromList, onClose]);
+
   const handleGenerate = useCallback(async () => {
     if (!report) return;
     if (!window.confirm('AI 将基于采集数据自动填充周报内容，当前编辑内容会被覆盖，确定继续？')) return;
@@ -175,7 +198,22 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
     });
   };
 
-  const canEdit = !report || report.status === WeeklyReportStatus.Draft || report.status === WeeklyReportStatus.Returned || report.status === WeeklyReportStatus.Overdue;
+  const canEdit = !report
+    || report.status === WeeklyReportStatus.Draft
+    || report.status === WeeklyReportStatus.Submitted
+    || report.status === WeeklyReportStatus.Returned
+    || report.status === WeeklyReportStatus.Overdue;
+  const canGenerate = !!report
+    && (report.status === WeeklyReportStatus.Draft
+      || report.status === WeeklyReportStatus.Returned
+      || report.status === WeeklyReportStatus.Overdue);
+  const canSubmit = !!report
+    && (report.status === WeeklyReportStatus.Draft
+      || report.status === WeeklyReportStatus.Returned
+      || report.status === WeeklyReportStatus.Overdue);
+  const canDelete = !!report
+    && (report.status === WeeklyReportStatus.Draft
+      || report.status === WeeklyReportStatus.Submitted);
 
   // Section colors — gradient pairs for headers
   const sectionThemes = [
@@ -316,21 +354,32 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
               )}
             </div>
           </div>
-          {canEdit && (
+          {(canEdit || canDelete) && (
             <div className="flex items-center gap-2">
-              <Button variant="secondary" size="sm" onClick={handleGenerate} disabled={generating || saving}>
-                {generating ? (
-                  <><RefreshCw size={13} className="animate-spin" /> 生成中...</>
-                ) : (
-                  <><Sparkles size={13} /> AI 填充</>
-                )}
-              </Button>
-              <Button variant="secondary" size="sm" onClick={handleSave} disabled={saving}>
-                <Save size={13} /> 保存
-              </Button>
-              <Button variant="primary" size="sm" onClick={handleSubmit} disabled={saving}>
-                <Send size={13} /> 提交
-              </Button>
+              {canGenerate && (
+                <Button variant="secondary" size="sm" onClick={handleGenerate} disabled={generating || saving}>
+                  {generating ? (
+                    <><RefreshCw size={13} className="animate-spin" /> 生成中...</>
+                  ) : (
+                    <><Sparkles size={13} /> AI 填充</>
+                  )}
+                </Button>
+              )}
+              {canEdit && (
+                <Button variant="secondary" size="sm" onClick={handleSave} disabled={saving}>
+                  <Save size={13} /> 保存
+                </Button>
+              )}
+              {canSubmit && (
+                <Button variant="primary" size="sm" onClick={handleSubmit} disabled={saving}>
+                  <Send size={13} /> 提交
+                </Button>
+              )}
+              {canDelete && (
+                <Button variant="danger" size="sm" onClick={handleDelete} disabled={saving}>
+                  <Trash2 size={13} /> 删除
+                </Button>
+              )}
             </div>
           )}
         </div>
