@@ -17,6 +17,8 @@ export interface SearchableSelectOption {
   label: string;
   /** 可选，用于 Trigger 显示（不提供则使用 label） */
   displayLabel?: string;
+  /** 可选，选项前置图标（如彩色圆点） */
+  icon?: React.ReactNode;
 }
 
 export interface SearchableSelectProps {
@@ -94,7 +96,10 @@ export function SearchableSelect({
           </div>
         )}
         <SelectPrimitive.Value placeholder={placeholder}>
-          {selectedOption?.displayLabel || selectedOption?.label || placeholder}
+          <span className="inline-flex items-center gap-1.5">
+            {selectedOption?.icon}
+            {selectedOption?.displayLabel || selectedOption?.label || placeholder}
+          </span>
         </SelectPrimitive.Value>
         <ChevronDown
           aria-hidden
@@ -168,7 +173,12 @@ export function SearchableSelect({
                     color: 'var(--text-primary)',
                   }}
                 >
-                  <SelectPrimitive.ItemText>{option.label}</SelectPrimitive.ItemText>
+                  <SelectPrimitive.ItemText>
+                    <span className="inline-flex items-center gap-1.5">
+                      {option.icon}
+                      {option.label}
+                    </span>
+                  </SelectPrimitive.ItemText>
                 </SelectPrimitive.Item>
               ))
             )}

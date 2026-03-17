@@ -365,19 +365,21 @@ export default function SystemLogsTab() {
             <option value="inbound">⬇ 入站</option>
             <option value="outbound">⬆ 出站</option>
           </Select>
-          <Select
+          <SearchableSelect
             value={qStatus}
-            onChange={(e) => setQStatus(e.target.value)}
+            onValueChange={setQStatus}
+            options={[
+              { value: '', label: '请求状态' },
+              { value: 'running', label: '进行中', icon: <span className="inline-block w-2 h-2 rounded-full" style={{ background: '#3b82f6' }} /> },
+              { value: 'completed', label: '完成', icon: <span className="inline-block w-2 h-2 rounded-full" style={{ background: '#22c55e' }} /> },
+              { value: 'failed', label: '失败', icon: <span className="inline-block w-2 h-2 rounded-full" style={{ background: '#ef4444' }} /> },
+              { value: 'timeout', label: '超时', icon: <span className="inline-block w-2 h-2 rounded-full" style={{ background: '#eab308' }} /> },
+            ]}
+            placeholder="请求状态"
+            leftIcon={<CheckCircle size={16} />}
             uiSize="sm"
             style={inputStyle}
-            leftIcon={<CheckCircle size={16} />}
-          >
-            <option value="">请求状态</option>
-            <option value="running">🔵 进行中</option>
-            <option value="completed">🟢 完成</option>
-            <option value="failed">🔴 失败</option>
-            <option value="timeout">🟡 超时</option>
-          </Select>
+          />
         </div>
         <div className="mt-3 grid gap-3 grid-cols-2 md:grid-cols-4">
           <div className="relative">

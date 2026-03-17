@@ -1,7 +1,7 @@
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { getUsers } from '@/services';
 import type { AdminUser } from '@/types/admin';
-import { Check, ChevronDown, Search, User } from 'lucide-react';
+import { Check, ChevronDown, Search, User, Users } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -203,21 +203,28 @@ export function UserSearchSelect({
 
       {/* User list */}
       <div className="overflow-auto flex-1 py-1">
-        {/* 全部用户选项 */}
+        {/* 全部用户（清除选择）选项 */}
         {showAllOption && !q && (
-          <div
-            className="flex items-center gap-3 px-3 py-2 cursor-pointer transition-colors hover:bg-white/8"
-            style={!value ? { background: 'rgba(var(--accent-gold-rgb, 212,175,55), 0.08)' } : undefined}
-            onClick={() => {
-              onChange('');
-              setOpen(false);
-              setFilter('');
-            }}
-          >
-            <User size={16} style={{ color: 'var(--text-muted)' }} />
-            <span className="text-[13px]" style={{ color: 'var(--text-primary)' }}>{allOptionLabel}</span>
-            {!value && <Check size={14} className="ml-auto shrink-0" style={{ color: 'var(--accent-gold)' }} />}
-          </div>
+          <>
+            <div
+              className="flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors hover:bg-white/8"
+              style={!value ? { background: 'rgba(var(--accent-gold-rgb, 212,175,55), 0.08)' } : undefined}
+              onClick={() => {
+                onChange('');
+                setOpen(false);
+                setFilter('');
+              }}
+            >
+              <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: 'rgba(255,255,255,0.08)' }}>
+                <Users size={14} style={{ color: 'var(--text-muted)' }} />
+              </div>
+              <span className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
+                {allOptionLabel}
+              </span>
+              {!value && <Check size={14} className="ml-auto shrink-0" style={{ color: 'var(--accent-gold)' }} />}
+            </div>
+            <div className="mx-3 my-0.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }} />
+          </>
         )}
 
         {filtered.length === 0 ? (

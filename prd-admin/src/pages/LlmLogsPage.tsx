@@ -2,7 +2,7 @@ import { Badge } from '@/components/design/Badge';
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
 import { PlatformLabel } from '@/components/design/PlatformLabel';
-import { SearchableSelect, Select } from '@/components/design';
+import { SearchableSelect } from '@/components/design';
 import { TabBar } from '@/components/design/TabBar';
 import { Dialog } from '@/components/ui/Dialog';
 import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
@@ -1341,19 +1341,21 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
             uiSize="sm"
             style={inputStyle}
           />
-          <Select
+          <SearchableSelect
             value={qStatus}
-            onChange={(e) => setQStatus(e.target.value)}
+            onValueChange={setQStatus}
+            options={[
+              { value: '', label: '状态' },
+              { value: 'running', label: '进行中', icon: <span className="inline-block w-2 h-2 rounded-full" style={{ background: '#3b82f6' }} /> },
+              { value: 'succeeded', label: '成功', icon: <span className="inline-block w-2 h-2 rounded-full" style={{ background: '#22c55e' }} /> },
+              { value: 'failed', label: '失败', icon: <span className="inline-block w-2 h-2 rounded-full" style={{ background: '#ef4444' }} /> },
+              { value: 'cancelled', label: '已取消', icon: <span className="inline-block w-2 h-2 rounded-full" style={{ background: '#6b7280' }} /> },
+            ]}
+            placeholder="状态"
+            leftIcon={<CheckCircle size={16} />}
             uiSize="sm"
             style={inputStyle}
-            leftIcon={<CheckCircle size={16} />}
-          >
-            <option value="">状态</option>
-            <option value="running">🔵 进行中</option>
-            <option value="succeeded">🟢 成功</option>
-            <option value="failed">🔴 失败</option>
-            <option value="cancelled">⚪ 已取消</option>
-          </Select>
+          />
           <SearchableSelect
             value={qAppCallerCode}
             onValueChange={setQAppCallerCode}
