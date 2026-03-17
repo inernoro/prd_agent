@@ -12,6 +12,7 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   CheckCircle,
+  ChevronDown,
   ChevronRight,
   Clock,
   Copy,
@@ -146,6 +147,7 @@ export default function SystemLogsTab() {
   const [qStatus, setQStatus] = useState('');
   const commonStatusCodes = [200, 201, 204, 301, 302, 304, 400, 401, 403, 404, 409, 422, 429, 500, 502, 503, 504];
   const [excludeNoise, setExcludeNoise] = useState(true);
+  const [showMore, setShowMore] = useState(false);
 
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -312,7 +314,7 @@ export default function SystemLogsTab() {
   return (
     <div className="h-full min-h-0 flex flex-col">
       <GlassCard glow animated className="p-4 flex-1 min-h-0 flex flex-col">
-        <div className="grid gap-3 grid-cols-2 md:grid-cols-7">
+        <div className="grid gap-3 grid-cols-2 sm:grid-cols-4 md:grid-cols-8">
           <UserSearchSelect
             value={qUserId}
             onChange={setQUserId}
@@ -370,35 +372,6 @@ export default function SystemLogsTab() {
             style={inputStyle}
           />
           <SearchableSelect
-            value={qClientType}
-            onValueChange={setQClientType}
-            options={[
-              { value: '', label: '客户端' },
-              ...metaClientTypes.map((t) => ({
-                value: t,
-                label: t,
-                icon: <Monitor size={14} style={{ color: 'var(--text-muted)', opacity: 0.7 }} />,
-              })),
-            ]}
-            placeholder="客户端"
-            leftIcon={<Monitor size={16} />}
-            uiSize="sm"
-            style={inputStyle}
-          />
-          <SearchableSelect
-            value={qDirection}
-            onValueChange={setQDirection}
-            options={[
-              { value: '', label: '方向' },
-              { value: 'inbound', label: '入站', icon: <ArrowDownLeft size={14} style={{ color: '#3b82f6' }} /> },
-              { value: 'outbound', label: '出站', icon: <ArrowUpRight size={14} style={{ color: '#f59e0b' }} /> },
-            ]}
-            placeholder="方向"
-            leftIcon={<ArrowDownLeft size={16} />}
-            uiSize="sm"
-            style={inputStyle}
-          />
-          <SearchableSelect
             value={qStatus}
             onValueChange={setQStatus}
             options={[
@@ -413,8 +386,6 @@ export default function SystemLogsTab() {
             uiSize="sm"
             style={inputStyle}
           />
-        </div>
-        <div className="mt-3 grid gap-3 grid-cols-2 md:grid-cols-4">
           <div className="relative">
             <Server size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
             <input
@@ -435,22 +406,64 @@ export default function SystemLogsTab() {
               placeholder="requestId"
             />
           </div>
-          <input
-            type="datetime-local"
-            value={qFrom}
-            onChange={(e) => setQFrom(e.target.value)}
-            className="h-9 w-full rounded-[12px] px-3 text-sm outline-none"
-            style={inputStyle}
-            placeholder="开始时间"
-          />
-          <input
-            type="datetime-local"
-            value={qTo}
-            onChange={(e) => setQTo(e.target.value)}
-            className="h-9 w-full rounded-[12px] px-3 text-sm outline-none"
-            style={inputStyle}
-            placeholder="结束时间"
-          />
+          <button
+            type="button"
+            onClick={() => setShowMore((v) => !v)}
+            className="h-9 flex items-center justify-center gap-1 rounded-[12px] text-sm cursor-pointer transition-colors hover:brightness-110"
+            style={{ ...inputStyle, color: 'var(--text-secondary)' }}
+          >
+            更多
+            <ChevronDown size={14} className={`transition-transform ${showMore ? 'rotate-180' : ''}`} />
+          </button>
+          {showMore && (
+            <>
+              <SearchableSelect
+                value={qClientType}
+                onValueChange={setQClientType}
+                options={[
+                  { value: '', label: '客户端' },
+                  ...metaClientTypes.map((t) => ({
+                    value: t,
+                    label: t,
+                    icon: <Monitor size={14} style={{ color: 'var(--text-muted)', opacity: 0.7 }} />,
+                  })),
+                ]}
+                placeholder="客户端"
+                leftIcon={<Monitor size={16} />}
+                uiSize="sm"
+                style={inputStyle}
+              />
+              <SearchableSelect
+                value={qDirection}
+                onValueChange={setQDirection}
+                options={[
+                  { value: '', label: '方向' },
+                  { value: 'inbound', label: '入站', icon: <ArrowDownLeft size={14} style={{ color: '#3b82f6' }} /> },
+                  { value: 'outbound', label: '出站', icon: <ArrowUpRight size={14} style={{ color: '#f59e0b' }} /> },
+                ]}
+                placeholder="方向"
+                leftIcon={<ArrowDownLeft size={16} />}
+                uiSize="sm"
+                style={inputStyle}
+              />
+              <input
+                type="datetime-local"
+                value={qFrom}
+                onChange={(e) => setQFrom(e.target.value)}
+                className="h-9 w-full rounded-[12px] px-3 text-sm outline-none"
+                style={inputStyle}
+                placeholder="开始时间"
+              />
+              <input
+                type="datetime-local"
+                value={qTo}
+                onChange={(e) => setQTo(e.target.value)}
+                className="h-9 w-full rounded-[12px] px-3 text-sm outline-none"
+                style={inputStyle}
+                placeholder="结束时间"
+              />
+            </>
+          )}
         </div>
 
         <div className="mt-3 flex items-center justify-between gap-3">
