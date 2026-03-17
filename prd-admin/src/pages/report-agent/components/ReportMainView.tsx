@@ -474,7 +474,7 @@ function OnboardingGuide({ hasTeam, hasTemplate }: { hasTeam: boolean; hasTempla
   return (
     <GlassCard variant="subtle" className="p-6">
       <div className="flex flex-col items-center text-center mb-6">
-        <Zap size={32} style={{ color: 'rgba(59, 130, 246, 0.6)' }} className="mb-3" />
+        <FileText size={32} style={{ color: 'rgba(59, 130, 246, 0.6)' }} className="mb-3" />
         <div className="text-[16px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
           快速开始
         </div>

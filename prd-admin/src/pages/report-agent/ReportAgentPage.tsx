@@ -27,14 +27,7 @@ export default function ReportAgentPage() {
     teams,
   } = useReportAgentStore();
 
-  const permissions = useAuthStore((s) => s.permissions);
   const userId = useAuthStore((s) => s.user?.userId);
-
-  const hasAnyManage =
-    permissions.includes('report-agent.template.manage') ||
-    permissions.includes('report-agent.team.manage') ||
-    permissions.includes('report-agent.datasource.manage') ||
-    permissions.includes('super');
 
   const isLeader = useMemo(() => {
     return teams.some((t) => t.leaderUserId === userId);
@@ -68,11 +61,9 @@ export default function ReportAgentPage() {
     if (isLeader) {
       items.push({ key: 'team', label: '团队', icon: <Users size={14} /> });
     }
-    if (hasAnyManage || true) { // settings always visible for personal data source
-      items.push({ key: 'settings', label: '设置', icon: <Settings size={14} /> });
-    }
+    items.push({ key: 'settings', label: '设置', icon: <Settings size={14} /> });
     return items;
-  }, [isLeader, hasAnyManage]);
+  }, [isLeader]);
 
   // Resolve current tab — default to 'report' if current tab not in items
   const currentTab = tabItems.find((t) => t.key === activeTab) ? activeTab : 'report';
