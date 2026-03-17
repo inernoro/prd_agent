@@ -2,10 +2,13 @@ import { create } from 'zustand';
 import { invoke } from '../lib/tauri';
 import type { ApiResponse, DefectReport, DefectMessage, DefectStats } from '../types';
 
+export type DefectFilter = 'all' | 'submitted' | 'assigned';
+
 interface DefectState {
   defects: DefectReport[];
   stats: DefectStats | null;
   loading: boolean;
+  filter: DefectFilter;
   selectedDefectId: string | null;
   selectedDefect: DefectReport | null;
   defectMessages: DefectMessage[];
@@ -17,8 +20,10 @@ interface DefectState {
   loadDefectMessages: (id: string, afterSeq?: number) => Promise<void>;
   setSelectedDefectId: (id: string | null) => void;
   setShowSubmitPanel: (show: boolean) => void;
+  setFilter: (filter: DefectFilter) => void;
   addDefectToList: (defect: DefectReport) => void;
   updateDefectInList: (defect: DefectReport) => void;
+  removeDefectFromList: (id: string) => void;
   clear: () => void;
 }
 
@@ -26,6 +31,7 @@ export const useDefectStore = create<DefectState>((set) => ({
   defects: [],
   stats: null,
   loading: false,
+  filter: 'all',
   selectedDefectId: null,
   selectedDefect: null,
   defectMessages: [],
@@ -78,7 +84,6 @@ export const useDefectStore = create<DefectState>((set) => ({
       if (resp.success && resp.data) {
         const messages = Array.isArray(resp.data) ? resp.data : (resp.data as any).messages ?? [];
         if (afterSeq && afterSeq > 0) {
-          // 增量追加
           set((state) => ({
             defectMessages: [...state.defectMessages, ...(messages as DefectMessage[])],
           }));
@@ -93,6 +98,7 @@ export const useDefectStore = create<DefectState>((set) => ({
 
   setSelectedDefectId: (id) => set({ selectedDefectId: id }),
   setShowSubmitPanel: (show) => set({ showSubmitPanel: show }),
+  setFilter: (filter) => set({ filter }),
 
   addDefectToList: (defect) => set((state) => ({
     defects: [defect, ...state.defects],
@@ -103,10 +109,17 @@ export const useDefectStore = create<DefectState>((set) => ({
     selectedDefect: state.selectedDefect?.id === defect.id ? defect : state.selectedDefect,
   })),
 
+  removeDefectFromList: (id) => set((state) => ({
+    defects: state.defects.filter((d) => d.id !== id),
+    selectedDefectId: state.selectedDefectId === id ? null : state.selectedDefectId,
+    selectedDefect: state.selectedDefect?.id === id ? null : state.selectedDefect,
+  })),
+
   clear: () => set({
     defects: [],
     stats: null,
     loading: false,
+    filter: 'all',
     selectedDefectId: null,
     selectedDefect: null,
     defectMessages: [],

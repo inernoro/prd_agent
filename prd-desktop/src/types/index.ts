@@ -157,8 +157,20 @@ export interface ApiResponse<T> {
 }
 
 // ━━━ 缺陷管理类型 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-export type DefectStatus = 'draft' | 'submitted' | 'assigned' | 'processing' | 'resolved' | 'rejected' | 'closed';
+export type DefectStatus = 'draft' | 'submitted' | 'assigned' | 'processing' | 'resolved' | 'rejected' | 'closed' | 'verifying';
 export type DefectSeverity = 'critical' | 'major' | 'minor' | 'trivial';
+
+export interface DefectAttachment {
+  id: string;
+  fileName: string;
+  fileSize: number;
+  mimeType: string;
+  url: string;
+  thumbnailUrl?: string;
+  uploadedAt: string;
+  type?: 'file' | 'screenshot' | 'log-request' | 'log-error';
+  isSystemGenerated?: boolean;
+}
 
 export interface DefectReport {
   id: string;
@@ -169,13 +181,23 @@ export interface DefectReport {
   severity?: DefectSeverity;
   reporterId: string;
   reporterName?: string;
+  reporterAvatarFileName?: string;
   assigneeId?: string;
   assigneeName?: string;
+  assigneeAvatarFileName?: string;
+  attachments?: DefectAttachment[];
   resolution?: string;
+  resolvedByName?: string;
+  resolvedByAvatarFileName?: string;
+  resolvedAt?: string;
   rejectReason?: string;
+  rejectedByName?: string;
+  rejectedByAvatarFileName?: string;
   reporterUnread?: boolean;
   assigneeUnread?: boolean;
   lastCommentBy?: 'reporter' | 'assignee' | null;
+  verifyFailReason?: string;
+  closedAt?: string;
   createdAt: string;
   updatedAt: string;
   submittedAt?: string;
@@ -185,10 +207,12 @@ export interface DefectMessage {
   id: string;
   defectId: string;
   seq: number;
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'system';
   userId?: string;
   userName?: string;
+  avatarFileName?: string;
   content: string;
+  attachmentIds?: string[];
   createdAt: string;
 }
 
@@ -196,6 +220,8 @@ export interface DefectStats {
   total: number;
   byStatus: Record<string, number>;
   bySeverity: Record<string, number>;
+  mySubmitted?: number;
+  myAssigned?: number;
 }
 
 // ━━━ 附件类型 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
