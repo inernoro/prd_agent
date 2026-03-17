@@ -1484,26 +1484,6 @@ function MessageListInner() {
         // 系统提示已改为 overlay（SystemNoticeOverlay），避免“锁底”导致提示永远贴底
         if (isSystemNoticeMessage(message)) return null;
 
-        // 请求中占位 assistant：单独渲染，避免影响其它消息气泡的 memo 化
-        if (pendingAssistantId && message.id === pendingAssistantId && message.role === 'Assistant' && !message.content) {
-          // 统一走 MessageBubble：让占位也带头像/昵称，动画作为气泡内容内联
-          return (
-            <div key={message.id} ref={pendingAssistantRef} data-msg-id={message.id}>
-              <MessageBubble
-                message={message}
-                isMessageStreaming={false}
-                showThinking={true}
-                thinkingLabel=""
-                isThinkingPhase={true}
-                activeGroupId={activeGroupId}
-                prdDocumentId={prdDocument?.id ?? null}
-                openCitationDrawer={openCitationDrawer as any}
-                openWithCitations={openWithCitations as any}
-              />
-            </div>
-          );
-        }
-
         const isMessageStreaming = isStreaming && streamingMessageId === message.id;
         // 显示"思考中"加载动画的条件：
         // 1. 消息正在流式输出（isMessageStreaming）
@@ -1536,6 +1516,23 @@ function MessageListInner() {
           />
         );
       })}
+
+      {/* 即时"思考中"占位：纯 UI 标志，不在 messages 数组中，避免 key 变化闪烁和重复消息 */}
+      {!!pendingAssistantId && !isStreaming && (
+        <div ref={pendingAssistantRef} data-msg-id="pending-assistant">
+          <MessageBubble
+            message={{ id: '__pending__', role: 'Assistant', content: '', timestamp: new Date() } as Message}
+            isMessageStreaming={false}
+            showThinking={true}
+            thinkingLabel=""
+            isThinkingPhase={true}
+            activeGroupId={activeGroupId}
+            prdDocumentId={prdDocument?.id ?? null}
+            openCitationDrawer={openCitationDrawer as any}
+            openWithCitations={openWithCitations as any}
+          />
+        </div>
+      )}
 
       {messages.length === 0 && !isStreaming && (
         <div className="h-full flex items-center justify-center text-text-secondary">
