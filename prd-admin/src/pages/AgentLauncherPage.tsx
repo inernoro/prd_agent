@@ -74,6 +74,12 @@ function getCoverUrl(agentKey?: string): string | null {
   return base ? `${base}/${path}` : `/${path}`;
 }
 
+function getHeroBgUrl(): string {
+  const base = (useAuthStore.getState().cdnBaseUrl ?? '').replace(/\/+$/, '');
+  const path = 'icon/title/home.png';
+  return base ? `${base}/${path}` : `/${path}`;
+}
+
 function getIcon(name: string): LucideIcon {
   return ICON_MAP[name] || Bot;
 }
@@ -315,69 +321,110 @@ export default function AgentLauncherPage() {
   const greeting = getGreeting();
   const displayName = user?.displayName || '';
 
+  const heroBgUrl = useMemo(() => getHeroBgUrl(), []);
+
   return (
     <div className="h-full min-h-0 flex flex-col" style={{ background: 'var(--bg-base)' }}>
       <div className="flex-1 min-h-0 overflow-auto">
-        <div className={isMobile ? 'px-4 pt-6 pb-8' : 'px-8 pt-8 pb-12'}>
-          {/* ── Hero: greeting + search ── */}
-          <div className={`flex ${isMobile ? 'flex-col gap-4 mb-5' : 'items-start justify-between gap-8 mb-6'}`}>
-            <div className="shrink-0">
-              <h1
-                className={`font-semibold tracking-tight ${isMobile ? 'text-xl' : 'text-[26px]'}`}
-                style={{ color: 'var(--text-primary, #fff)' }}
-              >
-                {greeting}
-                {displayName ? `，${displayName}` : ''}
-              </h1>
-              <p
-                className="mt-1 text-sm"
-                style={{ color: 'var(--text-muted, rgba(255,255,255,0.45))' }}
-              >
-                选择一个智能助手，开始你的创作
-              </p>
-            </div>
+        <div className={isMobile ? 'px-4 pt-0 pb-8' : 'px-8 pt-0 pb-12'}>
 
-            {/* Search (top-right) */}
-            <div className="relative shrink-0" style={{ width: isMobile ? '100%' : 260 }}>
-              <Search
-                size={15}
-                className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
-                style={{ color: 'var(--text-muted, rgba(255,255,255,0.3))' }}
-              />
-              <input
-                type="text"
-                placeholder="搜索 Agent..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full h-9 pl-9 pr-4 rounded-lg text-[13px] outline-none transition-colors duration-150"
-                style={{
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  color: 'var(--text-primary, #fff)',
-                }}
-                onFocus={(e) => {
-                  e.currentTarget.style.borderColor = 'var(--accent-primary, #818CF8)';
-                  e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
-                }}
-                onBlur={(e) => {
-                  e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
-                  e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
-                }}
-              />
-            </div>
-          </div>
-
-          {/* ── Quick Links — persistent frosted glass banner ── */}
-          {!searchQuery.trim() && (
+          {/* ── Hero banner with background image ── */}
+          <div
+            className="relative overflow-hidden rounded-2xl"
+            style={{
+              marginBottom: isMobile ? 20 : 32,
+              minHeight: isMobile ? 200 : 240,
+            }}
+          >
+            {/* Background image — positioned right, like 文心 reference */}
             <div
-              className={`rounded-2xl ${isMobile ? 'mb-5' : 'mb-8'}`}
+              className="absolute inset-0 pointer-events-none"
               style={{
-                background: 'rgba(255, 255, 255, 0.03)',
-                backdropFilter: 'blur(24px) saturate(140%)',
-                WebkitBackdropFilter: 'blur(24px) saturate(140%)',
-                border: '1px solid rgba(255, 255, 255, 0.07)',
+                backgroundImage: `url(${heroBgUrl})`,
+                backgroundSize: 'auto 100%',
+                backgroundPosition: 'right center',
+                backgroundRepeat: 'no-repeat',
+                opacity: 0.85,
               }}
-            >
+            />
+            {/* Left fade overlay — text readability */}
+            <div
+              className="absolute inset-0 pointer-events-none"
+              style={{
+                background: isMobile
+                  ? 'linear-gradient(180deg, var(--bg-base) 0%, rgba(20,20,24,0.85) 40%, rgba(20,20,24,0.5) 100%)'
+                  : 'linear-gradient(90deg, var(--bg-base) 0%, var(--bg-base) 30%, rgba(20,20,24,0.7) 55%, rgba(20,20,24,0.15) 80%, transparent 100%)',
+              }}
+            />
+            {/* Bottom fade — blend with page */}
+            <div
+              className="absolute inset-0 pointer-events-none"
+              style={{
+                background: 'linear-gradient(180deg, transparent 50%, var(--bg-base) 100%)',
+              }}
+            />
+
+            {/* Hero content */}
+            <div className={`relative z-10 ${isMobile ? 'px-5 pt-8 pb-6' : 'px-8 pt-10 pb-8'}`}>
+              <div className={`flex ${isMobile ? 'flex-col gap-4' : 'items-start justify-between gap-8'}`}>
+                <div className="shrink-0">
+                  <h1
+                    className={`font-semibold tracking-tight ${isMobile ? 'text-xl' : 'text-[26px]'}`}
+                    style={{ color: 'var(--text-primary, #fff)', textShadow: '0 1px 8px rgba(0,0,0,0.3)' }}
+                  >
+                    {greeting}
+                    {displayName ? `，${displayName}` : ''}
+                  </h1>
+                  <p
+                    className="mt-1 text-sm"
+                    style={{ color: 'var(--text-muted, rgba(255,255,255,0.55))', textShadow: '0 1px 4px rgba(0,0,0,0.2)' }}
+                  >
+                    选择一个智能助手，开始你的创作
+                  </p>
+                </div>
+
+                {/* Search (top-right) */}
+                <div className="relative shrink-0" style={{ width: isMobile ? '100%' : 260 }}>
+                  <Search
+                    size={15}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                    style={{ color: 'var(--text-muted, rgba(255,255,255,0.3))' }}
+                  />
+                  <input
+                    type="text"
+                    placeholder="搜索 Agent..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full h-9 pl-9 pr-4 rounded-lg text-[13px] outline-none transition-colors duration-150"
+                    style={{
+                      background: 'rgba(255,255,255,0.06)',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      color: 'var(--text-primary, #fff)',
+                      backdropFilter: 'blur(12px)',
+                    }}
+                    onFocus={(e) => {
+                      e.currentTarget.style.borderColor = 'var(--accent-primary, #818CF8)';
+                      e.currentTarget.style.background = 'rgba(255,255,255,0.1)';
+                    }}
+                    onBlur={(e) => {
+                      e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)';
+                      e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Quick Links — inside hero banner, bottom area */}
+              {!searchQuery.trim() && (
+                <div
+                  className="mt-6 rounded-xl"
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.04)',
+                    backdropFilter: 'blur(16px) saturate(130%)',
+                    WebkitBackdropFilter: 'blur(16px) saturate(130%)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                  }}
+                >
               <div
                 className={`flex items-stretch ${isMobile ? 'flex-col' : ''}`}
                 style={{ minHeight: isMobile ? undefined : 80 }}
@@ -400,8 +447,8 @@ export default function AgentLauncherPage() {
                           ? '1px solid rgba(255,255,255,0.06)'
                           : undefined,
                         borderRadius: isMobile
-                          ? (i === 0 ? '16px 16px 0 0' : i === QUICK_LINKS.length - 1 ? '0 0 16px 16px' : '0')
-                          : (i === 0 ? '16px 0 0 16px' : i === QUICK_LINKS.length - 1 ? '0 16px 16px 0' : '0'),
+                          ? (i === 0 ? '12px 12px 0 0' : i === QUICK_LINKS.length - 1 ? '0 0 12px 12px' : '0')
+                          : (i === 0 ? '12px 0 0 12px' : i === QUICK_LINKS.length - 1 ? '0 12px 12px 0' : '0'),
                       }}
                     >
                       <div
@@ -438,6 +485,11 @@ export default function AgentLauncherPage() {
               </div>
             </div>
           )}
+
+            </div>
+            {/* end hero content */}
+          </div>
+          {/* end hero banner */}
 
           {/* ── Loading ── */}
           {itemsLoading ? (
