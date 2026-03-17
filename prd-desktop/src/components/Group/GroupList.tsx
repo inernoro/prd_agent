@@ -98,11 +98,8 @@ export default function GroupList() {
     }
   };
 
-  const isAdmin = user?.role === 'ADMIN';
-
   const ensureOwnerLoaded = async (groupId: string) => {
     if (!groupId) return;
-    if (isAdmin) return;
     if (ownerMap[groupId] != null) return;
     if (ownerLoadingMap[groupId]) return;
     if (!user?.userId) return;
@@ -131,11 +128,10 @@ export default function GroupList() {
 
   const canDissolveGroup = useMemo(() => {
     return (groupId: string) => {
-      if (isAdmin) return true;
       if (!groupId) return false;
       return ownerMap[groupId] === true;
     };
-  }, [isAdmin, ownerMap]);
+  }, [ownerMap]);
 
   const confirmDissolve = async () => {
     if (!dissolveTarget || dissolveBusy) return;
