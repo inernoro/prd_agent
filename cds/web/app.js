@@ -713,12 +713,19 @@ function openFullDeployLog(id, event) {
   event.stopPropagation();
   const log = inlineDeployLogs.get(id);
   if (!log) return;
+  let isFirst = true;
   const renderInline = () => {
     const body = document.getElementById('logModalBody');
+    const prevScrollTop = body.scrollTop;
     const wasAtBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 30;
     const current = inlineDeployLogs.get(id);
     body.innerHTML = `<pre class="live-log-output">${esc(current ? current.lines.join('\n') : '暂无日志')}</pre>`;
-    if (wasAtBottom) _scrollLogToBottom();
+    if (isFirst || wasAtBottom) {
+      _scrollLogToBottom();
+      isFirst = false;
+    } else {
+      body.scrollTop = prevScrollTop;
+    }
   };
   openLogModal(`部署日志 ${id}`);
   renderInline();
@@ -977,12 +984,19 @@ async function viewBranchLogs(id) {
   // Active inline deploy log — poll from inlineDeployLogs
   const inlineLog = inlineDeployLogs.get(id);
   if (inlineLog) {
+    let isFirst = true;
     const renderInline = () => {
       const body = document.getElementById('logModalBody');
+      const prevScrollTop = body.scrollTop;
       const wasAtBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 30;
       const current = inlineDeployLogs.get(id);
       body.innerHTML = `<pre class="live-log-output">${esc(current ? current.lines.join('\n') : '暂无日志')}</pre>`;
-      if (wasAtBottom) _scrollLogToBottom();
+      if (isFirst || wasAtBottom) {
+        _scrollLogToBottom();
+        isFirst = false;
+      } else {
+        body.scrollTop = prevScrollTop;
+      }
     };
     openLogModal(`部署日志 — ${id}`);
     renderInline();
@@ -991,6 +1005,7 @@ async function viewBranchLogs(id) {
     return;
   }
   // Otherwise fetch historical operation logs from API
+  let isFirst = true;
   const fetchAndRender = async () => {
     const data = await api('GET', `/branches/${encodeURIComponent(id)}/logs`);
     const logs = data.logs || [];
@@ -1008,9 +1023,15 @@ async function viewBranchLogs(id) {
     const statusLabel = latest.status === 'completed' ? '成功' : latest.status === 'error' ? '失败' : '进行中';
     document.getElementById('logModalTitle').textContent = `部署日志 — ${id} (${statusLabel})`;
     const body = document.getElementById('logModalBody');
+    const prevScrollTop = body.scrollTop;
     const wasAtBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 30;
     body.innerHTML = `<pre class="live-log-output">${esc(logLines.join('\n') || '暂无日志')}</pre>`;
-    if (wasAtBottom) _scrollLogToBottom();
+    if (isFirst || wasAtBottom) {
+      _scrollLogToBottom();
+      isFirst = false;
+    } else {
+      body.scrollTop = prevScrollTop;
+    }
   };
   try {
     openLogModal(`部署日志 — ${id}`);
@@ -1021,12 +1042,20 @@ async function viewBranchLogs(id) {
 }
 
 async function viewContainerLogs(id, profileId) {
+  let isFirstLoad = true;
   const fetchAndRender = async () => {
     const data = await api('POST', `/branches/${id}/container-logs`, { profileId });
     const body = document.getElementById('logModalBody');
+    const prevScrollTop = body.scrollTop;
     const wasAtBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 30;
     body.innerHTML = `<pre class="live-log-output">${esc(data.logs || '暂无日志')}</pre>`;
-    if (wasAtBottom) _scrollLogToBottom();
+    if (isFirstLoad || wasAtBottom) {
+      _scrollLogToBottom();
+      isFirstLoad = false;
+    } else {
+      // Restore scroll position after innerHTML replacement
+      body.scrollTop = prevScrollTop;
+    }
   };
   try {
     openLogModal(`日志: ${id}/${profileId || '默认'}`);
@@ -2612,7 +2641,9 @@ function _startLogPoll(fn, intervalMs) {
 
 function _scrollLogToBottom() {
   const body = document.getElementById('logModalBody');
-  if (body) body.scrollTop = body.scrollHeight;
+  if (!body) return;
+  // Use rAF to ensure layout is complete after innerHTML replacement
+  requestAnimationFrame(() => { body.scrollTop = body.scrollHeight; });
 }
 
 // ── Logout ──
