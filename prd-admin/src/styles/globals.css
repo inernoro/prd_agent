@@ -300,6 +300,21 @@ select optgroup {
   color: rgba(34, 197, 94, 0.92) !important;
 }
 
+/* Defect description markdown rendering */
+.defect-md { line-height: 1.7; }
+.defect-md p { margin: 0.4em 0; }
+.defect-md strong { color: var(--text-primary); font-weight: 600; }
+.defect-md ul, .defect-md ol { padding-left: 1.5em; margin: 0.3em 0; }
+.defect-md li { margin: 0.15em 0; }
+.defect-md code { background: rgba(255,255,255,0.06); border-radius: 4px; padding: 1px 4px; font-size: 0.9em; }
+.defect-md pre { background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 10px; overflow: auto; margin: 0.5em 0; }
+.defect-md pre code { background: transparent; border: 0; padding: 0; }
+.defect-md blockquote { border-left: 3px solid rgba(255,255,255,0.15); padding-left: 12px; margin: 0.5em 0; color: var(--text-muted); }
+.defect-md h1, .defect-md h2, .defect-md h3, .defect-md h4 { color: var(--text-primary); margin: 0.6em 0 0.3em; }
+.defect-md table { width: 100%; border-collapse: collapse; margin: 0.5em 0; }
+.defect-md th, .defect-md td { border: 1px solid rgba(255,255,255,0.08); padding: 4px 8px; }
+.defect-md th { color: var(--text-primary); background: rgba(255,255,255,0.03); }
+
 .llm-json-scanBox.llm-json-scanBox--scanning::before {
   content: '';
   position: absolute;
