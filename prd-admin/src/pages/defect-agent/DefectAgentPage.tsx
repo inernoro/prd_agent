@@ -5,7 +5,7 @@ import { TabBar } from '@/components/design/TabBar';
 import { useDefectStore } from '@/stores/defectStore';
 import { toast } from '@/lib/toast';
 import { DefectStatus } from '@/services/contracts/defectAgent';
-import { Bug, Plus, FileText, RefreshCw, LayoutGrid, List, Columns3, BarChart3, FolderKanban } from 'lucide-react';
+import { Bug, Plus, FileText, RefreshCw, LayoutGrid, List, Columns3, BarChart3, FolderKanban, Link2 } from 'lucide-react';
 import { DefectList } from './components/DefectList';
 import { DefectSubmitPanel } from './components/DefectSubmitPanel';
 import { DefectDetailPanel } from './components/DefectDetailPanel';
@@ -13,6 +13,7 @@ import { TemplateDialog } from './components/TemplateDialog';
 import { ProjectDialog } from './components/ProjectDialog';
 import { KanbanBoard } from './components/KanbanBoard';
 import { StatsPanel } from './components/StatsPanel';
+import { DefectTransferDialog } from './components/DefectTransferDialog';
 
 const NOTIFICATION_STORAGE_KEY = 'defect-agent-notified-ids';
 
@@ -40,6 +41,7 @@ export default function DefectAgentPage() {
   } = useDefectStore();
 
   const [showProjectDialog, setShowProjectDialog] = useState(false);
+  const [showTransferDialog, setShowTransferDialog] = useState(false);
   const notifiedRef = useRef(false);
 
   useEffect(() => {
@@ -181,6 +183,14 @@ export default function DefectAgentPage() {
               我的模板
             </Button>
             <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setShowTransferDialog(true)}
+            >
+              <Link2 size={14} />
+              缺陷传输
+            </Button>
+            <Button
               variant="primary"
               size="sm"
               onClick={() => setShowSubmitPanel(true)}
@@ -254,6 +264,9 @@ export default function DefectAgentPage() {
 
       {/* Project Dialog */}
       {showProjectDialog && <ProjectDialog onClose={() => setShowProjectDialog(false)} />}
+
+      {/* Defect Transfer Dialog */}
+      {showTransferDialog && <DefectTransferDialog onClose={() => setShowTransferDialog(false)} />}
     </div>
   );
 }

@@ -118,6 +118,30 @@ public class DefectAgentController : ControllerBase
         return clientId;
     }
 
+    private async Task WriteDefectShareAccessLogAsync(string token, DefectReport? defect, string result, CancellationToken ct)
+    {
+        var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var userAgent = Request.Headers["User-Agent"].ToString();
+        var log = new DefectShareAccessLog
+        {
+            Token = token,
+            DefectId = defect?.Id,
+            DefectNo = defect?.DefectNo,
+            Result = result,
+            Ip = string.IsNullOrWhiteSpace(ip) ? null : ip,
+            UserAgent = string.IsNullOrWhiteSpace(userAgent) ? null : userAgent,
+            AccessedAt = DateTime.UtcNow
+        };
+        try
+        {
+            await _db.DefectShareAccessLogs.InsertOneAsync(log, cancellationToken: ct);
+        }
+        catch
+        {
+            // ignore log write failures
+        }
+    }
+
     #region 模板管理
 
     /// <summary>
@@ -417,6 +441,32 @@ public class DefectAgentController : ControllerBase
     }
 
     /// <summary>
+    /// 获取缺陷外链访问日志
+    /// </summary>
+    [HttpGet("defects/{id}/share-link/logs")]
+    public async Task<IActionResult> GetDefectShareLogs(string id, [FromQuery] int limit = 50, CancellationToken ct = default)
+    {
+        var userId = GetUserId();
+        var isAdmin = HasManagePermission();
+
+        var defect = await _db.DefectReports.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (defect == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "缺陷不存在"));
+
+        if (!isAdmin && defect.ReporterId != userId && defect.AssigneeId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限查看此缺陷日志"));
+
+        var safeLimit = Math.Clamp(limit, 1, 200);
+        var logs = await _db.DefectShareAccessLogs
+            .Find(x => x.DefectId == id)
+            .SortByDescending(x => x.AccessedAt)
+            .Limit(safeLimit)
+            .ToListAsync(ct);
+
+        return Ok(ApiResponse<object>.Ok(new { items = logs }));
+    }
+
+    /// <summary>
     /// 公开获取缺陷信息（携带 token）
     /// </summary>
     [AllowAnonymous]
@@ -432,15 +482,30 @@ public class DefectAgentController : ControllerBase
             .SortByDescending(x => x.CreatedAt)
             .FirstOrDefaultAsync(ct);
 
-        if (shareToken == null || shareToken.IsRevoked)
+        if (shareToken == null)
+        {
+            await WriteDefectShareAccessLogAsync(token, null, "token-not-found", ct);
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "分享链接不存在或已失效"));
+        }
+
+        if (shareToken.IsRevoked)
+        {
+            await WriteDefectShareAccessLogAsync(token, null, "token-revoked", ct);
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "分享链接不存在或已失效"));
+        }
 
         if (shareToken.ExpiresAt <= now)
+        {
+            await WriteDefectShareAccessLogAsync(token, null, "token-expired", ct);
             return StatusCode(410, ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "分享链接已过期"));
+        }
 
         var defect = await _db.DefectReports.Find(x => x.Id == shareToken.DefectId).FirstOrDefaultAsync(ct);
         if (defect == null)
+        {
+            await WriteDefectShareAccessLogAsync(token, null, "defect-not-found", ct);
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "缺陷不存在或已删除"));
+        }
 
         var messages = await _db.DefectMessages
             .Find(x => x.DefectId == defect.Id)
@@ -458,6 +523,7 @@ public class DefectAgentController : ControllerBase
             .Inc(x => x.ViewCount, 1)
             .Set(x => x.LastViewedAt, now);
         await _db.DefectShareTokens.UpdateOneAsync(x => x.Id == shareToken.Id, update, cancellationToken: ct);
+        await WriteDefectShareAccessLogAsync(token, defect, "ok", ct);
 
         return Ok(ApiResponse<object>.Ok(new
         {

@@ -188,6 +188,17 @@ export const DefectPriority = {
   Low: 'low',
 } as const;
 
+export interface DefectShareAccessLog {
+  id: string;
+  token: string;
+  defectId?: string;
+  defectNo?: string;
+  result: string;
+  ip?: string;
+  userAgent?: string;
+  accessedAt: string;
+}
+
 /**
  * 缺陷统计
  */
@@ -552,6 +563,13 @@ export type GetDefectPublicByTokenContract = (input: {
     viewCount: number;
     lastViewedAt?: string;
   };
+}>>;
+
+export type GetDefectShareLogsContract = (input: {
+  id: string;
+  limit?: number;
+}) => Promise<ApiResponse<{
+  items: DefectShareAccessLog[];
 }>>;
 
 export type MoveDefectToFolderContract = (input: {

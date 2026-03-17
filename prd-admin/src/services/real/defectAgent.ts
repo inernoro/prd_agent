@@ -38,6 +38,7 @@ import type {
   BatchMoveDefectsContract,
   CreateDefectShareLinkContract,
   GetDefectPublicByTokenContract,
+  GetDefectShareLogsContract,
   PreviewApiLogsContract,
   VerifyPassContract,
   VerifyFailContract,
@@ -66,6 +67,7 @@ import type {
   DefectWebhookConfig,
   UserStatItem,
   ApiLogPreviewItem,
+  DefectShareAccessLog,
 } from '../contracts/defectAgent';
 
 // ========== Templates ==========
@@ -395,6 +397,16 @@ export const getDefectPublicByTokenReal: GetDefectPublicByTokenContract = async 
   }>(api.defectAgent.defects.publicByToken(encodeURIComponent(input.token)), {
     method: 'GET',
   });
+};
+
+export const getDefectShareLogsReal: GetDefectShareLogsContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input.limit) qs.set('limit', String(input.limit));
+  const q = qs.toString();
+  return await apiRequest<{ items: DefectShareAccessLog[] }>(
+    `${api.defectAgent.defects.shareLogs(encodeURIComponent(input.id))}${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
 };
 
 export const moveDefectToFolderReal: MoveDefectToFolderContract = async (input) => {

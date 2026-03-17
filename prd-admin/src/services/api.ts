@@ -442,6 +442,7 @@ export const api = {
       move: (id: string) => `/api/defect-agent/defects/${id}/move`,
       batchMove: () => '/api/defect-agent/defects/batch-move',
       shareLink: (id: string) => `/api/defect-agent/defects/${id}/share-link`,
+      shareLogs: (id: string) => `/api/defect-agent/defects/${id}/share-link/logs`,
       publicByToken: (token: string) => `/api/defect-agent/public/defects/${token}`,
     },
     folders: {

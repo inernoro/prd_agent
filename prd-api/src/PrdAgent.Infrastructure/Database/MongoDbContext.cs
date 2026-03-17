@@ -109,6 +109,7 @@ public class MongoDbContext
     public IMongoCollection<DefectProject> DefectProjects => _database.GetCollection<DefectProject>("defect_projects");
     public IMongoCollection<DefectWebhookConfig> DefectWebhookConfigs => _database.GetCollection<DefectWebhookConfig>("defect_webhook_configs");
     public IMongoCollection<DefectShareToken> DefectShareTokens => _database.GetCollection<DefectShareToken>("defect_share_tokens");
+    public IMongoCollection<DefectShareAccessLog> DefectShareAccessLogs => _database.GetCollection<DefectShareAccessLog>("defect_share_access_logs");
 
     // Report Agent 周报管理
     public IMongoCollection<ReportTeam> ReportTeams => _database.GetCollection<ReportTeam>("report_teams");
@@ -821,6 +822,21 @@ public class MongoDbContext
             {
                 Name = "ttl_defect_share_tokens_expires",
                 ExpireAfter = TimeSpan.Zero
+            }));
+
+        // DefectShareAccessLogs：按 token / defect 查询 + TTL
+        DefectShareAccessLogs.Indexes.CreateOne(new CreateIndexModel<DefectShareAccessLog>(
+            Builders<DefectShareAccessLog>.IndexKeys.Ascending(x => x.Token).Descending(x => x.AccessedAt),
+            new CreateIndexOptions { Name = "idx_defect_share_access_logs_token" }));
+        DefectShareAccessLogs.Indexes.CreateOne(new CreateIndexModel<DefectShareAccessLog>(
+            Builders<DefectShareAccessLog>.IndexKeys.Ascending(x => x.DefectId).Descending(x => x.AccessedAt),
+            new CreateIndexOptions { Name = "idx_defect_share_access_logs_defect" }));
+        DefectShareAccessLogs.Indexes.CreateOne(new CreateIndexModel<DefectShareAccessLog>(
+            Builders<DefectShareAccessLog>.IndexKeys.Ascending(x => x.AccessedAt),
+            new CreateIndexOptions
+            {
+                Name = "ttl_defect_share_access_logs_accessed",
+                ExpireAfter = TimeSpan.FromDays(30)
             }));
 
         // ========== Channel Adapter 多通道适配器索引 ==========

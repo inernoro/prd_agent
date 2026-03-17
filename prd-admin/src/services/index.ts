@@ -209,6 +209,7 @@ import type {
   BatchMoveDefectsContract,
   CreateDefectShareLinkContract,
   GetDefectPublicByTokenContract,
+  GetDefectShareLogsContract,
   PreviewApiLogsContract,
   VerifyPassContract,
   VerifyFailContract,
@@ -483,6 +484,7 @@ import {
   batchMoveDefectsReal,
   createDefectShareLinkReal,
   getDefectPublicByTokenReal,
+  getDefectShareLogsReal,
   previewApiLogsReal,
   verifyPassReal,
   verifyFailReal,
@@ -930,6 +932,7 @@ export const moveDefectToFolder: MoveDefectToFolderContract = withAuth(moveDefec
 export const batchMoveDefects: BatchMoveDefectsContract = withAuth(batchMoveDefectsReal);
 export const createDefectShareLink: CreateDefectShareLinkContract = withAuth(createDefectShareLinkReal);
 export const getDefectPublicByToken: GetDefectPublicByTokenContract = getDefectPublicByTokenReal;
+export const getDefectShareLogs: GetDefectShareLogsContract = withAuth(getDefectShareLogsReal);
 export const previewApiLogs: PreviewApiLogsContract = withAuth(previewApiLogsReal);
 // Phase 2: 验收
 export const verifyPass: VerifyPassContract = withAuth(verifyPassReal);
