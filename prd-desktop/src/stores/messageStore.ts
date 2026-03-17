@@ -288,17 +288,29 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
         };
       }),
 
-      // 发送消息：只添加用户消息，不创建本地 AI 占位（由后端创建并广播）
+      // 发送消息：添加用户消息 + 本地 AI 占位（立即显示"思考中"动画，无需等后端 SSE）
       addUserMessageWithPendingAssistant: ({ userMessage }) => {
-        set((state) => {
-        const next = [...state.messages, userMessage];
-        return {
-          messages: next,
-          pendingAssistantId: null,
-          pendingUserMessageId: userMessage?.id ?? null,
-          isPinnedToBottom: true,
-          scrollToBottomSeq: (state.scrollToBottomSeq ?? 0) + 1,
+        const pendingId = `pending-assistant-${Date.now()}`;
+        const pendingAssistant: Message = {
+          id: pendingId,
+          role: 'Assistant',
+          content: '',
+          timestamp: new Date(),
+          viewRole: userMessage.viewRole,
         };
+        set((state) => {
+          // 如果之前有未清理的 pending assistant，先清掉
+          const cleaned = state.pendingAssistantId
+            ? state.messages.filter((m) => m.id !== state.pendingAssistantId)
+            : state.messages;
+          const next = [...cleaned, userMessage, pendingAssistant];
+          return {
+            messages: next,
+            pendingAssistantId: pendingId,
+            pendingUserMessageId: userMessage?.id ?? null,
+            isPinnedToBottom: true,
+            scrollToBottomSeq: (state.scrollToBottomSeq ?? 0) + 1,
+          };
         });
       },
 
@@ -547,6 +559,17 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
       ? incomingSeq
       : state.localMaxSeq;
 
+    // 0) 如果有 pending assistant 且收到了真实 Assistant 消息，替换占位
+    const pid = state.pendingAssistantId;
+    if (pid && incoming.role === 'Assistant' && pid !== incoming.id) {
+      const pendingIdx = state.messages.findIndex((m) => m.id === pid);
+      if (pendingIdx !== -1) {
+        const next = [...state.messages];
+        next[pendingIdx] = incoming;
+        return { messages: maybeSortByGroupSeq(next), localMaxSeq: newMaxSeq, pendingAssistantId: null };
+      }
+    }
+
     // 1) 发送者 user message 去重：用 (senderId + content) 在尾部做一次轻量 reconcile
     if (
       incoming.role === 'User' &&
@@ -593,15 +616,36 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
       thinking: message.thinking ?? existing?.thinking,
       blocks: message.blocks ?? existing?.blocks ?? [],
     };
+
+    // 如果有 pending assistant 占位，用真实消息替换它
+    let msgs = state.messages;
+    const pid = state.pendingAssistantId;
+    if (pid && pid !== message.id) {
+      const pendingIdx = msgs.findIndex((m) => m.id === pid);
+      if (pendingIdx !== -1) {
+        // 替换 pending → 真实消息
+        msgs = [...msgs];
+        msgs[pendingIdx] = merged;
+        return {
+          messages: msgs,
+          isStreaming: true,
+          streamingMessageId: message.id,
+          streamingPhase: state.streamingPhase ?? 'requesting',
+          pendingAssistantId: null,
+        };
+      }
+    }
+
     const next = idx === -1
-      ? [...state.messages, merged]
-      : state.messages.map((m) => (m.id === message.id ? merged : m));
+      ? [...msgs, merged]
+      : msgs.map((m) => (m.id === message.id ? merged : m));
 
     return {
       messages: next,
       isStreaming: true,
       streamingMessageId: message.id,
       streamingPhase: state.streamingPhase ?? 'requesting',
+      pendingAssistantId: pid === message.id ? null : state.pendingAssistantId,
     };
   }),
 
