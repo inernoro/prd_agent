@@ -2,7 +2,6 @@ import { Badge } from '@/components/design/Badge';
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
 import { SearchableSelect } from '@/components/design/SearchableSelect';
-import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { getApiLogDetail, getApiLogs, getApiLogsMeta, getLlmLogs } from '@/services';
@@ -11,6 +10,7 @@ import type { LlmRequestLogListItem } from '@/types/admin';
 import {
   AlertTriangle,
   ArrowDownLeft,
+  ArrowUpRight,
   CheckCircle,
   ChevronRight,
   Clock,
@@ -43,6 +43,24 @@ function codeBoxStyle(): React.CSSProperties {
     whiteSpace: 'pre-wrap',
     wordBreak: 'break-word',
   };
+}
+
+function methodColor(m: string): string {
+  switch (m.toUpperCase()) {
+    case 'GET': return '#22c55e';
+    case 'POST': return '#3b82f6';
+    case 'PUT': return '#f59e0b';
+    case 'PATCH': return '#a855f7';
+    case 'DELETE': return '#ef4444';
+    default: return '#6b7280';
+  }
+}
+
+function statusCodeColor(code: number): string {
+  if (code < 300) return '#22c55e';
+  if (code < 400) return '#3b82f6';
+  if (code < 500) return '#eab308';
+  return '#ef4444';
 }
 
 function formatLocalTime(iso: string | null | undefined): string {
@@ -311,6 +329,7 @@ export default function SystemLogsTab() {
                 value: app.value,
                 label: app.displayName !== app.value ? `${app.displayName}` : app.value,
                 displayLabel: app.displayName !== app.value ? app.displayName : app.value,
+                icon: <Zap size={14} style={{ color: 'var(--text-muted)', opacity: 0.7 }} />,
               })),
             ]}
             placeholder="应用"
@@ -318,53 +337,67 @@ export default function SystemLogsTab() {
             uiSize="sm"
             style={inputStyle}
           />
-          <Select
+          <SearchableSelect
             value={qMethod}
-            onChange={(e) => setQMethod(e.target.value)}
-            uiSize="sm"
-            style={inputStyle}
+            onValueChange={setQMethod}
+            options={[
+              { value: '', label: '方法' },
+              ...metaMethods.map((m) => ({
+                value: m,
+                label: m,
+                icon: <span className="inline-block w-2 h-2 rounded-full" style={{ background: methodColor(m) }} />,
+              })),
+            ]}
+            placeholder="方法"
             leftIcon={<Server size={16} />}
-          >
-            <option value="">方法</option>
-            {metaMethods.map((m) => (
-              <option key={m} value={m}>{m}</option>
-            ))}
-          </Select>
-          <Select
+            uiSize="sm"
+            style={inputStyle}
+          />
+          <SearchableSelect
             value={qStatusCode}
-            onChange={(e) => setQStatusCode(e.target.value)}
-            uiSize="sm"
-            style={inputStyle}
+            onValueChange={setQStatusCode}
+            options={[
+              { value: '', label: '状态码' },
+              ...commonStatusCodes.map((code) => ({
+                value: String(code),
+                label: String(code),
+                icon: <span className="inline-block w-2 h-2 rounded-full" style={{ background: statusCodeColor(code) }} />,
+              })),
+            ]}
+            placeholder="状态码"
             leftIcon={<Hash size={16} />}
-          >
-            <option value="">状态码</option>
-            {commonStatusCodes.map((code) => (
-              <option key={code} value={code}>{code}</option>
-            ))}
-          </Select>
-          <Select
+            uiSize="sm"
+            style={inputStyle}
+          />
+          <SearchableSelect
             value={qClientType}
-            onChange={(e) => setQClientType(e.target.value)}
-            uiSize="sm"
-            style={inputStyle}
+            onValueChange={setQClientType}
+            options={[
+              { value: '', label: '客户端' },
+              ...metaClientTypes.map((t) => ({
+                value: t,
+                label: t,
+                icon: <Monitor size={14} style={{ color: 'var(--text-muted)', opacity: 0.7 }} />,
+              })),
+            ]}
+            placeholder="客户端"
             leftIcon={<Monitor size={16} />}
-          >
-            <option value="">客户端</option>
-            {metaClientTypes.map((t) => (
-              <option key={t} value={t}>{t}</option>
-            ))}
-          </Select>
-          <Select
-            value={qDirection}
-            onChange={(e) => setQDirection(e.target.value)}
             uiSize="sm"
             style={inputStyle}
+          />
+          <SearchableSelect
+            value={qDirection}
+            onValueChange={setQDirection}
+            options={[
+              { value: '', label: '方向' },
+              { value: 'inbound', label: '入站', icon: <ArrowDownLeft size={14} style={{ color: '#3b82f6' }} /> },
+              { value: 'outbound', label: '出站', icon: <ArrowUpRight size={14} style={{ color: '#f59e0b' }} /> },
+            ]}
+            placeholder="方向"
             leftIcon={<ArrowDownLeft size={16} />}
-          >
-            <option value="">方向</option>
-            <option value="inbound">⬇ 入站</option>
-            <option value="outbound">⬆ 出站</option>
-          </Select>
+            uiSize="sm"
+            style={inputStyle}
+          />
           <SearchableSelect
             value={qStatus}
             onValueChange={setQStatus}

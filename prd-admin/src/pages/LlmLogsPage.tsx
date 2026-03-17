@@ -11,7 +11,7 @@ import { getAdminDocumentContent, getLlmLogDetail, getLlmLogs, getLlmLogsMeta, l
 import type { LlmLogsMetaAppCallerCode } from '@/services/contracts/llmLogs';
 import type { LlmRequestLog, LlmRequestLogListItem, UploadArtifact } from '@/types/admin';
 import { CheckCircle, ChevronDown, Clock, Copy, Database, Eraser, Hash, HelpCircle, ImagePlus, Layers, Loader2, RefreshCw, Reply, ScanEye, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
-import { AppCallerKeyIcon } from '@/lib/appCallerUtils';
+import { AppCallerKeyIcon, getModelTypeIcon } from '@/lib/appCallerUtils';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { glassPanel } from '@/lib/glassStyles';
@@ -1334,7 +1334,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
             onValueChange={setQModel}
             options={[
               { value: '', label: '模型' },
-              ...metaModels.map((m) => ({ value: m, label: m })),
+              ...metaModels.map((m) => ({ value: m, label: m, icon: <Database size={14} style={{ color: 'var(--text-muted)', opacity: 0.7 }} /> })),
             ]}
             placeholder="模型"
             leftIcon={<Database size={16} />}
@@ -1361,7 +1361,11 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
             onValueChange={setQAppCallerCode}
             options={[
               { value: '', label: '应用' },
-              ...metaAppCallerCodes.map((rp) => ({ value: rp.value, label: rp.displayName })),
+              ...metaAppCallerCodes.map((rp) => {
+                const modelType = rp.value.split('::')[1] || 'unknown';
+                const IconComp = getModelTypeIcon(modelType);
+                return { value: rp.value, label: rp.displayName, icon: <IconComp size={14} style={{ color: 'var(--text-muted)', opacity: 0.7 }} /> };
+              }),
             ]}
             placeholder="应用"
             leftIcon={<Zap size={16} />}
