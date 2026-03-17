@@ -312,8 +312,8 @@ export default function SystemLogsTab() {
   };
 
   return (
-    <div className="h-full min-h-0 flex flex-col">
-      <GlassCard glow animated className="p-4 flex-1 min-h-0 flex flex-col">
+    <div className="h-full min-h-0 flex flex-col gap-4">
+      <GlassCard glow animated className="p-4">
         <div className="grid gap-3 grid-cols-2 sm:grid-cols-4 md:grid-cols-8">
           <UserSearchSelect
             value={qUserId}
@@ -514,11 +514,13 @@ export default function SystemLogsTab() {
             </Button>
           </div>
         </div>
+      </GlassCard>
 
+      <GlassCard glow animated className="p-4 flex-1 min-h-0 flex flex-col overflow-hidden">
         {/* 进行中任务区域（上栏） */}
         {(runningItems.length > 0 || fadingOutIds.size > 0) && qStatus !== 'completed' && qStatus !== 'failed' && qStatus !== 'timeout' && (
           <div
-            className="mt-4 rounded-[14px] p-3"
+            className="mb-3 rounded-[14px] p-3"
             style={{
               background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(147, 51, 234, 0.08) 100%)',
               border: '1px solid rgba(59, 130, 246, 0.3)',
@@ -574,7 +576,7 @@ export default function SystemLogsTab() {
 
         {/* 已完成任务区域（下栏） */}
         {qStatus !== 'running' && (
-          <div className="mt-4 flex-1 min-h-0 overflow-auto grid gap-2 content-start">
+          <div className="flex-1 min-h-0 overflow-auto grid gap-2 content-start">
             {loading && (
               <div className="text-sm flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
                 <Loader2 size={16} className="animate-spin" />
