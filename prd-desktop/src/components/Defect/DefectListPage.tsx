@@ -1,7 +1,9 @@
 import { useEffect } from 'react';
 import { useDefectStore } from '../../stores/defectStore';
+import { useAuthStore } from '../../stores/authStore';
 import DefectSubmitPanel from './DefectSubmitPanel';
 import DefectDetailPanel from './DefectDetailPanel';
+import type { DefectReport } from '../../types';
 
 const severityBadge: Record<string, { label: string; color: string }> = {
   critical: { label: '致命', color: 'bg-red-500' },
@@ -19,6 +21,25 @@ const statusLabel: Record<string, string> = {
   rejected: '已驳回',
   closed: '已关闭',
 };
+
+/** 计算缺陷卡片的未读标签 */
+function useUnreadBadge(defect: DefectReport) {
+  const userId = useAuthStore((s) => s.user?.userId);
+  const isReporter = defect.reporterId === userId;
+  const isAssignee = defect.assigneeId === userId;
+  const isArchived = defect.status === 'closed' || defect.status === 'rejected';
+
+  if (isArchived) return null;
+
+  // 我方未读 → 最高优先级闪动标签
+  if (isReporter && defect.reporterUnread) {
+    return { label: '新回复', color: 'rgb(120,220,180)', bg: 'rgba(120,220,180,0.2)', border: 'rgba(120,220,180,0.6)' };
+  }
+  if (isAssignee && defect.assigneeUnread) {
+    return { label: '新缺陷', color: 'rgb(255,120,120)', bg: 'rgba(255,100,100,0.2)', border: 'rgba(255,100,100,0.6)' };
+  }
+  return null;
+}
 
 export default function DefectListPage() {
   const {
@@ -95,35 +116,12 @@ export default function DefectListPage() {
         ) : (
           <div className="space-y-2">
             {defects.map((defect) => (
-              <button
+              <DefectListItem
                 key={defect.id}
-                onClick={() => setSelectedDefectId(defect.id)}
-                className={`w-full text-left px-4 py-3 rounded-lg transition-colors ${
-                  selectedDefectId === defect.id
-                    ? 'bg-primary-500/10 ring-1 ring-primary-500/20'
-                    : 'hover:bg-black/5 dark:hover:bg-white/5'
-                }`}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs text-text-secondary font-mono">{defect.defectNo}</span>
-                      {defect.severity && severityBadge[defect.severity] && (
-                        <span className="flex items-center gap-1 text-xs">
-                          <span className={`w-1.5 h-1.5 rounded-full ${severityBadge[defect.severity].color}`} />
-                          {severityBadge[defect.severity].label}
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-sm font-medium truncate">
-                      {defect.title || defect.rawContent?.slice(0, 60) || '无标题'}
-                    </p>
-                  </div>
-                  <span className="text-xs text-text-secondary whitespace-nowrap">
-                    {statusLabel[defect.status] || defect.status}
-                  </span>
-                </div>
-              </button>
+                defect={defect}
+                isSelected={selectedDefectId === defect.id}
+                onSelect={() => setSelectedDefectId(defect.id)}
+              />
             ))}
           </div>
         )}
@@ -138,5 +136,52 @@ export default function DefectListPage() {
         />
       )}
     </div>
+  );
+}
+
+function DefectListItem({ defect, isSelected, onSelect }: { defect: DefectReport; isSelected: boolean; onSelect: () => void }) {
+  const badge = useUnreadBadge(defect);
+  return (
+    <button
+      onClick={onSelect}
+      className={`w-full text-left px-4 py-3 rounded-lg transition-colors ${
+        isSelected
+          ? 'bg-primary-500/10 ring-1 ring-primary-500/20'
+          : 'hover:bg-black/5 dark:hover:bg-white/5'
+      }`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-xs text-text-secondary font-mono">{defect.defectNo}</span>
+            {defect.severity && severityBadge[defect.severity] && (
+              <span className="flex items-center gap-1 text-xs">
+                <span className={`w-1.5 h-1.5 rounded-full ${severityBadge[defect.severity].color}`} />
+                {severityBadge[defect.severity].label}
+              </span>
+            )}
+            {badge && (
+              <span
+                className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium animate-pulse"
+                style={{
+                  background: badge.bg,
+                  color: badge.color,
+                  border: `1px solid ${badge.border}`,
+                  boxShadow: `0 0 6px ${badge.bg}`,
+                }}
+              >
+                {badge.label}
+              </span>
+            )}
+          </div>
+          <p className="text-sm font-medium truncate">
+            {defect.title || defect.rawContent?.slice(0, 60) || '无标题'}
+          </p>
+        </div>
+        <span className="text-xs text-text-secondary whitespace-nowrap">
+          {statusLabel[defect.status] || defect.status}
+        </span>
+      </div>
+    </button>
   );
 }

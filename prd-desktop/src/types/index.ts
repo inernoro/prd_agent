@@ -173,6 +173,9 @@ export interface DefectReport {
   assigneeName?: string;
   resolution?: string;
   rejectReason?: string;
+  reporterUnread?: boolean;
+  assigneeUnread?: boolean;
+  lastCommentBy?: 'reporter' | 'assignee' | null;
   createdAt: string;
   updatedAt: string;
   submittedAt?: string;

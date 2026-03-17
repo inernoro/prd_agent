@@ -37,6 +37,7 @@ import {
   Bug,
   Image as ImageIcon,
   FileText,
+  Copy,
   Send,
   User,
   MessageCircle,
@@ -1233,12 +1234,33 @@ export function DefectDetailPanel() {
           style={{ background: 'rgba(0,0,0,0.9)' }}
           onClick={() => setLightboxImage(null)}
         >
-          <button
-            className="absolute top-4 right-4 p-2 rounded-lg hover:bg-white/10 transition-colors"
-            onClick={() => setLightboxImage(null)}
-          >
-            <X size={24} style={{ color: '#fff' }} />
-          </button>
+          <div className="absolute top-4 right-4 flex items-center gap-2">
+            <button
+              className="p-2 rounded-lg hover:bg-white/10 transition-colors"
+              title="复制图片"
+              onClick={async (e) => {
+                e.stopPropagation();
+                try {
+                  const res = await fetch(lightboxImage);
+                  const blob = await res.blob();
+                  await navigator.clipboard.write([
+                    new ClipboardItem({ [blob.type]: blob }),
+                  ]);
+                  toast.success('已复制图片');
+                } catch {
+                  toast.error('复制失败');
+                }
+              }}
+            >
+              <Copy size={20} style={{ color: '#fff' }} />
+            </button>
+            <button
+              className="p-2 rounded-lg hover:bg-white/10 transition-colors"
+              onClick={() => setLightboxImage(null)}
+            >
+              <X size={24} style={{ color: '#fff' }} />
+            </button>
+          </div>
           <img
             src={lightboxImage}
             alt="放大图片"
