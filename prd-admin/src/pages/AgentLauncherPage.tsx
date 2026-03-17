@@ -388,33 +388,57 @@ const AUTO_GRID_QUICK: React.CSSProperties = {
   gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
 };
 
-// ── Compact Quick Link Pill (collapsed state) ──
+// ── Arc-style Icon Slot (dock-like) ──
 
-function QuickLinkPill({ link, onClick }: { link: typeof QUICK_LINKS[number]; onClick: () => void }) {
+function QuickLinkSlot({ link, onClick }: { link: typeof QUICK_LINKS[number]; onClick: () => void }) {
   const Icon = link.icon;
+  const [showTooltip, setShowTooltip] = useState(false);
+
   return (
-    <motion.button
-      type="button"
-      onClick={onClick}
-      className="group flex items-center gap-2 px-3.5 py-2 rounded-lg transition-colors duration-150 cursor-pointer"
-      style={{
-        background: `${link.accent}10`,
-        border: `1px solid ${link.accent}18`,
-      }}
-      whileHover={{ scale: 1.04, backgroundColor: `${link.accent}20` }}
-      whileTap={{ scale: 0.97 }}
-      transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-    >
-      <Icon size={15} style={{ color: link.accent }} />
-      <span className="text-[12px] font-medium whitespace-nowrap" style={{ color: 'var(--text-primary, #fff)' }}>
-        {link.label}
-      </span>
-      <ArrowRight
-        size={12}
-        className="opacity-0 group-hover:opacity-60 transition-opacity duration-150 -ml-0.5"
-        style={{ color: link.accent }}
-      />
-    </motion.button>
+    <div className="relative">
+      <motion.button
+        type="button"
+        onClick={onClick}
+        onMouseEnter={() => setShowTooltip(true)}
+        onMouseLeave={() => setShowTooltip(false)}
+        className="w-9 h-9 rounded-[10px] flex items-center justify-center cursor-pointer transition-colors duration-150"
+        style={{
+          background: 'rgba(255,255,255,0.05)',
+          border: '1px solid rgba(255,255,255,0.08)',
+        }}
+        whileHover={{
+          scale: 1.12,
+          background: `${link.accent}18`,
+          borderColor: `${link.accent}30`,
+        }}
+        whileTap={{ scale: 0.92 }}
+        transition={{ type: 'spring', stiffness: 500, damping: 25 }}
+      >
+        <Icon size={16} style={{ color: 'var(--text-secondary, rgba(255,255,255,0.55))' }} className="transition-colors duration-150 group-hover:text-white" />
+      </motion.button>
+
+      {/* Tooltip */}
+      <AnimatePresence>
+        {showTooltip && (
+          <motion.div
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 4 }}
+            transition={{ duration: 0.15 }}
+            className="absolute top-full left-1/2 -translate-x-1/2 mt-2 px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none z-50"
+            style={{
+              background: 'rgba(0,0,0,0.85)',
+              border: '1px solid rgba(255,255,255,0.1)',
+              fontSize: 11,
+              color: 'rgba(255,255,255,0.85)',
+              backdropFilter: 'blur(8px)',
+            }}
+          >
+            {link.label}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 
@@ -498,20 +522,27 @@ export default function AgentLauncherPage() {
               </p>
             </div>
 
-            {/* Right: quick link pills (collapsed) */}
+            {/* Right: Arc-style icon dock */}
             {!searchQuery.trim() && !isMobile && (
-              <div className="flex items-center gap-2 shrink-0 pb-1">
+              <div className="flex items-center gap-1.5 shrink-0 pb-1 p-1 rounded-xl"
+                style={{
+                  background: 'rgba(255,255,255,0.03)',
+                  border: '1px solid rgba(255,255,255,0.06)',
+                }}
+              >
                 {QUICK_LINKS.map((link) => (
-                  <QuickLinkPill key={link.path} link={link} onClick={() => navigate(link.path)} />
+                  <QuickLinkSlot key={link.path} link={link} onClick={() => navigate(link.path)} />
                 ))}
-                <button
+                <div className="w-px h-5 mx-0.5" style={{ background: 'rgba(255,255,255,0.08)' }} />
+                <motion.button
                   type="button"
                   onClick={() => setQuickLinksExpanded((v) => !v)}
-                  className="ml-1 w-7 h-7 rounded-lg flex items-center justify-center transition-colors duration-150"
+                  className="w-9 h-9 rounded-[10px] flex items-center justify-center cursor-pointer"
                   style={{
-                    background: 'rgba(255,255,255,0.04)',
-                    border: '1px solid rgba(255,255,255,0.08)',
+                    background: 'transparent',
                   }}
+                  whileHover={{ background: 'rgba(255,255,255,0.06)' }}
+                  whileTap={{ scale: 0.92 }}
                   title={quickLinksExpanded ? '收起' : '展开'}
                 >
                   <ChevronDown
@@ -522,25 +553,30 @@ export default function AgentLauncherPage() {
                       transform: quickLinksExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
                     }}
                   />
-                </button>
+                </motion.button>
               </div>
             )}
           </div>
 
-          {/* Mobile: quick link pills inline */}
+          {/* Mobile: icon dock */}
           {!searchQuery.trim() && isMobile && (
-            <div className="flex items-center gap-2 flex-wrap mb-4">
+            <div className="flex items-center gap-1.5 mb-4 p-1 rounded-xl self-start"
+              style={{
+                background: 'rgba(255,255,255,0.03)',
+                border: '1px solid rgba(255,255,255,0.06)',
+              }}
+            >
               {QUICK_LINKS.map((link) => (
-                <QuickLinkPill key={link.path} link={link} onClick={() => navigate(link.path)} />
+                <QuickLinkSlot key={link.path} link={link} onClick={() => navigate(link.path)} />
               ))}
-              <button
+              <div className="w-px h-5 mx-0.5" style={{ background: 'rgba(255,255,255,0.08)' }} />
+              <motion.button
                 type="button"
                 onClick={() => setQuickLinksExpanded((v) => !v)}
-                className="w-7 h-7 rounded-lg flex items-center justify-center"
-                style={{
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                }}
+                className="w-9 h-9 rounded-[10px] flex items-center justify-center"
+                style={{ background: 'transparent' }}
+                whileHover={{ background: 'rgba(255,255,255,0.06)' }}
+                whileTap={{ scale: 0.92 }}
               >
                 <ChevronDown
                   size={14}
@@ -550,7 +586,7 @@ export default function AgentLauncherPage() {
                     transition: 'transform 0.2s',
                   }}
                 />
-              </button>
+              </motion.button>
             </div>
           )}
 
