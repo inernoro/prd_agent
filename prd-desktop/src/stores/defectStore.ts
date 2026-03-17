@@ -3,12 +3,24 @@ import { invoke } from '../lib/tauri';
 import type { ApiResponse, DefectReport, DefectMessage, DefectStats } from '../types';
 
 export type DefectFilter = 'all' | 'submitted' | 'assigned';
+export type DefectViewMode = 'card' | 'list';
+
+const VIEW_MODE_KEY = 'defect-view-mode';
+
+function loadViewMode(): DefectViewMode {
+  try {
+    const v = localStorage.getItem(VIEW_MODE_KEY);
+    if (v === 'list') return 'list';
+    return 'card';
+  } catch { return 'card'; }
+}
 
 interface DefectState {
   defects: DefectReport[];
   stats: DefectStats | null;
   loading: boolean;
   filter: DefectFilter;
+  viewMode: DefectViewMode;
   selectedDefectId: string | null;
   selectedDefect: DefectReport | null;
   defectMessages: DefectMessage[];
@@ -21,6 +33,7 @@ interface DefectState {
   setSelectedDefectId: (id: string | null) => void;
   setShowSubmitPanel: (show: boolean) => void;
   setFilter: (filter: DefectFilter) => void;
+  setViewMode: (mode: DefectViewMode) => void;
   addDefectToList: (defect: DefectReport) => void;
   updateDefectInList: (defect: DefectReport) => void;
   removeDefectFromList: (id: string) => void;
@@ -32,6 +45,7 @@ export const useDefectStore = create<DefectState>((set) => ({
   stats: null,
   loading: false,
   filter: 'all',
+  viewMode: loadViewMode(),
   selectedDefectId: null,
   selectedDefect: null,
   defectMessages: [],
@@ -99,6 +113,10 @@ export const useDefectStore = create<DefectState>((set) => ({
   setSelectedDefectId: (id) => set({ selectedDefectId: id }),
   setShowSubmitPanel: (show) => set({ showSubmitPanel: show }),
   setFilter: (filter) => set({ filter }),
+  setViewMode: (mode) => {
+    set({ viewMode: mode });
+    try { localStorage.setItem(VIEW_MODE_KEY, mode); } catch { /* ignore */ }
+  },
 
   addDefectToList: (defect) => set((state) => ({
     defects: [defect, ...state.defects],
@@ -120,6 +138,7 @@ export const useDefectStore = create<DefectState>((set) => ({
     stats: null,
     loading: false,
     filter: 'all',
+    viewMode: loadViewMode(),
     selectedDefectId: null,
     selectedDefect: null,
     defectMessages: [],
