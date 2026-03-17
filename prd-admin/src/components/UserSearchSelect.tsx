@@ -2,7 +2,8 @@ import { resolveAvatarUrl } from '@/lib/avatar';
 import { getUsers } from '@/services';
 import type { AdminUser } from '@/types/admin';
 import { Check, ChevronDown, Search, User } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 /** 相对时间格式化 */
 function fmtRelative(v?: string | null) {
@@ -53,6 +54,7 @@ export interface UserSearchSelectProps {
  *
  * 显示用户头像、昵称、用户名、角色徽章、最后活跃时间。
  * 支持按昵称、用户名、角色搜索。
+ * 使用 Portal 渲染下拉面板，避免父级 stacking context 导致 z-index 问题。
  *
  * 用法：
  * - 过滤栏场景：`<UserSearchSelect value={userId} onChange={setUserId} showAllOption uiSize="sm" />`
@@ -71,8 +73,12 @@ export function UserSearchSelect({
 }: UserSearchSelectProps) {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState('');
-  const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // 下拉面板位置（Portal 渲染需要绝对坐标）
+  const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null);
 
   // 内部用户数据（当外部未提供时自动获取）
   const [internalUsers, setInternalUsers] = useState<AdminUser[]>([]);
@@ -103,11 +109,38 @@ export function UserSearchSelect({
       )
     : users;
 
-  // Close on outside click
+  // 计算下拉面板位置
+  const updatePos = useCallback(() => {
+    if (!triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    setPos({
+      top: rect.bottom + 4,
+      left: rect.left,
+      width: Math.max(rect.width, 260),
+    });
+  }, []);
+
+  // 打开时计算位置，滚动/resize 时更新
+  useEffect(() => {
+    if (!open) return;
+    updatePos();
+    window.addEventListener('scroll', updatePos, true);
+    window.addEventListener('resize', updatePos);
+    return () => {
+      window.removeEventListener('scroll', updatePos, true);
+      window.removeEventListener('resize', updatePos);
+    };
+  }, [open, updatePos]);
+
+  // Close on outside click (检查 trigger 和 portal panel)
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (
+        triggerRef.current && !triggerRef.current.contains(target) &&
+        panelRef.current && !panelRef.current.contains(target)
+      ) {
         setOpen(false);
         setFilter('');
       }
@@ -127,12 +160,138 @@ export function UserSearchSelect({
   const isCompact = uiSize === 'sm';
   const triggerHeight = isCompact ? 'h-9' : 'h-10';
   const triggerRadius = isCompact ? 'rounded-[12px]' : 'rounded-[10px]';
-  const triggerFontSize = isCompact ? 'text-[13px]' : 'text-[13px]';
+  const triggerFontSize = 'text-[13px]';
+
+  const dropdownPanel = open && pos && createPortal(
+    <div
+      ref={panelRef}
+      className="rounded-[12px] flex flex-col overflow-hidden"
+      style={{
+        position: 'fixed',
+        top: pos.top,
+        left: pos.left,
+        width: pos.width,
+        maxHeight: '320px',
+        zIndex: 9999,
+        background: 'var(--glass-bg-end, rgba(22, 22, 28, 0.98))',
+        border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+        boxShadow: '0 18px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+        backdropFilter: 'blur(40px) saturate(180%)',
+        WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+      }}
+    >
+      {/* Search input */}
+      <div className="px-3 pt-2.5 pb-2 shrink-0" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+        <div className="relative">
+          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--text-muted)' }} />
+          <input
+            ref={inputRef}
+            type="text"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            className="w-full h-[32px] rounded-[8px] pl-8 pr-3 text-[13px] outline-none"
+            style={{
+              background: 'rgba(255,255,255,0.06)',
+              border: '1px solid rgba(255,255,255,0.1)',
+              color: 'var(--text-primary)',
+            }}
+            placeholder={placeholder}
+            autoFocus
+          />
+        </div>
+      </div>
+
+      {/* User list */}
+      <div className="overflow-auto flex-1 py-1">
+        {/* 全部用户选项 */}
+        {showAllOption && !q && (
+          <div
+            className="flex items-center gap-3 px-3 py-2 cursor-pointer transition-colors hover:bg-white/8"
+            style={!value ? { background: 'rgba(var(--accent-gold-rgb, 212,175,55), 0.08)' } : undefined}
+            onClick={() => {
+              onChange('');
+              setOpen(false);
+              setFilter('');
+            }}
+          >
+            <User size={16} style={{ color: 'var(--text-muted)' }} />
+            <span className="text-[13px]" style={{ color: 'var(--text-primary)' }}>{allOptionLabel}</span>
+            {!value && <Check size={14} className="ml-auto shrink-0" style={{ color: 'var(--accent-gold)' }} />}
+          </div>
+        )}
+
+        {filtered.length === 0 ? (
+          <div className="px-3 py-6 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
+            {q ? `未找到匹配「${filter}」的用户` : '暂无可用用户'}
+          </div>
+        ) : (
+          filtered.map((u) => {
+            const ava = resolveAvatarUrl({ username: u.username, userType: u.userType, botKind: u.botKind, avatarFileName: u.avatarFileName });
+            const isSelected = u.userId === value;
+            const rc = ROLE_COLORS[u.role] || ROLE_COLORS.DEV;
+            const isBot = String(u.userType ?? '').toLowerCase() === 'bot';
+            const activeText = fmtRelative(u.lastActiveAt);
+            const loginText = fmtRelative(u.lastLoginAt);
+            return (
+              <div
+                key={u.userId}
+                className="flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors hover:bg-white/8"
+                style={isSelected ? { background: 'rgba(var(--accent-gold-rgb, 212,175,55), 0.08)' } : undefined}
+                onClick={() => {
+                  onChange(u.userId);
+                  setOpen(false);
+                  setFilter('');
+                }}
+              >
+                <img src={ava} alt="" className="w-8 h-8 rounded-full object-cover shrink-0" referrerPolicy="no-referrer" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                      {u.displayName}
+                    </span>
+                    <span
+                      className="shrink-0 text-[9px] font-bold px-1 py-px rounded-[3px] leading-tight"
+                      style={{ background: rc.bg, border: `1px solid ${rc.border}`, color: rc.text }}
+                    >
+                      {u.role}
+                    </span>
+                    {isBot && (
+                      <span className="shrink-0 text-[9px] px-1 py-px rounded-[3px] leading-tight" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.25)', color: 'rgba(34,197,94,0.9)' }}>
+                        BOT
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+                      @{u.username}
+                    </span>
+                    {(activeText || loginText) && (
+                      <span className="text-[10px] shrink-0" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
+                        {activeText ? `活跃 ${activeText}` : loginText ? `登录 ${loginText}` : ''}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {isSelected && <Check size={16} className="shrink-0" style={{ color: 'var(--accent-gold)' }} />}
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* Footer count */}
+      <div className="px-3 py-1.5 text-[10px] shrink-0" style={{ color: 'var(--text-muted)', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+        {q ? `${filtered.length} / ${users.length} 人匹配` : `共 ${users.length} 人`}
+      </div>
+    </div>,
+    document.body,
+  );
 
   return (
-    <div ref={containerRef} className={`relative ${className ?? ''}`} style={style}>
+    <div className={`relative ${className ?? ''}`}>
       {/* Trigger button */}
       <button
+        ref={triggerRef}
         type="button"
         className={`flex items-center gap-2 ${triggerHeight} w-full ${triggerRadius} px-3 cursor-pointer transition-all duration-200 text-left ${triggerFontSize}`}
         style={{
@@ -170,125 +329,7 @@ export function UserSearchSelect({
         />
       </button>
 
-      {/* Dropdown panel */}
-      {open && (
-        <div
-          className="absolute left-0 right-0 top-[calc(100%+4px)] z-50 rounded-[12px] flex flex-col overflow-hidden"
-          style={{
-            maxHeight: '320px',
-            minWidth: 260,
-            background: 'var(--glass-bg-end, rgba(22, 22, 28, 0.98))',
-            border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-            boxShadow: '0 18px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
-            backdropFilter: 'blur(40px) saturate(180%)',
-            WebkitBackdropFilter: 'blur(40px) saturate(180%)',
-          }}
-        >
-          {/* Search input */}
-          <div className="px-3 pt-2.5 pb-2 shrink-0" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-            <div className="relative">
-              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--text-muted)' }} />
-              <input
-                ref={inputRef}
-                type="text"
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-                className="w-full h-[32px] rounded-[8px] pl-8 pr-3 text-[13px] outline-none"
-                style={{
-                  background: 'rgba(255,255,255,0.06)',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  color: 'var(--text-primary)',
-                }}
-                placeholder={placeholder}
-                autoFocus
-              />
-            </div>
-          </div>
-
-          {/* User list */}
-          <div className="overflow-auto flex-1 py-1">
-            {/* 全部用户选项 */}
-            {showAllOption && !q && (
-              <div
-                className="flex items-center gap-3 px-3 py-2 cursor-pointer transition-colors hover:bg-white/8"
-                style={!value ? { background: 'rgba(var(--accent-gold-rgb, 212,175,55), 0.08)' } : undefined}
-                onClick={() => {
-                  onChange('');
-                  setOpen(false);
-                  setFilter('');
-                }}
-              >
-                <User size={16} style={{ color: 'var(--text-muted)' }} />
-                <span className="text-[13px]" style={{ color: 'var(--text-primary)' }}>{allOptionLabel}</span>
-                {!value && <Check size={14} className="ml-auto shrink-0" style={{ color: 'var(--accent-gold)' }} />}
-              </div>
-            )}
-
-            {filtered.length === 0 ? (
-              <div className="px-3 py-6 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
-                {q ? `未找到匹配「${filter}」的用户` : '暂无可用用户'}
-              </div>
-            ) : (
-              filtered.map((u) => {
-                const ava = resolveAvatarUrl({ username: u.username, userType: u.userType, botKind: u.botKind, avatarFileName: u.avatarFileName });
-                const isSelected = u.userId === value;
-                const rc = ROLE_COLORS[u.role] || ROLE_COLORS.DEV;
-                const isBot = String(u.userType ?? '').toLowerCase() === 'bot';
-                const activeText = fmtRelative(u.lastActiveAt);
-                const loginText = fmtRelative(u.lastLoginAt);
-                return (
-                  <div
-                    key={u.userId}
-                    className="flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors hover:bg-white/8"
-                    style={isSelected ? { background: 'rgba(var(--accent-gold-rgb, 212,175,55), 0.08)' } : undefined}
-                    onClick={() => {
-                      onChange(u.userId);
-                      setOpen(false);
-                      setFilter('');
-                    }}
-                  >
-                    <img src={ava} alt="" className="w-8 h-8 rounded-full object-cover shrink-0" referrerPolicy="no-referrer" />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                          {u.displayName}
-                        </span>
-                        <span
-                          className="shrink-0 text-[9px] font-bold px-1 py-px rounded-[3px] leading-tight"
-                          style={{ background: rc.bg, border: `1px solid ${rc.border}`, color: rc.text }}
-                        >
-                          {u.role}
-                        </span>
-                        {isBot && (
-                          <span className="shrink-0 text-[9px] px-1 py-px rounded-[3px] leading-tight" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.25)', color: 'rgba(34,197,94,0.9)' }}>
-                            BOT
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
-                          @{u.username}
-                        </span>
-                        {(activeText || loginText) && (
-                          <span className="text-[10px] shrink-0" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
-                            {activeText ? `活跃 ${activeText}` : loginText ? `登录 ${loginText}` : ''}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    {isSelected && <Check size={16} className="shrink-0" style={{ color: 'var(--accent-gold)' }} />}
-                  </div>
-                );
-              })
-            )}
-          </div>
-
-          {/* Footer count */}
-          <div className="px-3 py-1.5 text-[10px] shrink-0" style={{ color: 'var(--text-muted)', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-            {q ? `${filtered.length} / ${users.length} 人匹配` : `共 ${users.length} 人`}
-          </div>
-        </div>
-      )}
+      {dropdownPanel}
     </div>
   );
 }

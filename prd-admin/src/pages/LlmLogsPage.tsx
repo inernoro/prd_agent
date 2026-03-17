@@ -913,7 +913,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
 
   const [metaModels, setMetaModels] = useState<string[]>([]);
   const [metaAppCallerCodes, setMetaAppCallerCodes] = useState<LlmLogsMetaAppCallerCode[]>([]);
-  const [metaStatuses, setMetaStatuses] = useState<string[]>(['running', 'succeeded', 'failed', 'cancelled']);
+
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -1183,7 +1183,6 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
       if (res.success) {
         setMetaModels(res.data.models ?? []);
         setMetaAppCallerCodes(res.data.appCallerCodes ?? []);
-        setMetaStatuses(res.data.statuses ?? ['running', 'succeeded', 'failed', 'cancelled']);
       }
     })();
   }, []);
@@ -1225,9 +1224,9 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
   const statusBadge = (s: string) => {
     const v = (s || '').toLowerCase();
     if (v === 'succeeded') return <Badge variant="success" size="sm" icon={<CheckCircle size={10} />}>成功</Badge>;
-    if (v === 'failed') return <Badge variant="subtle" size="sm" icon={<XCircle size={10} />}>失败</Badge>;
-    if (v === 'running') return <Badge variant="subtle" size="sm" icon={<Loader2 size={10} className="animate-spin" />}>进行中</Badge>;
-    if (v === 'cancelled') return <Badge variant="subtle" size="sm" icon={<StopCircle size={10} />}>已取消</Badge>;
+    if (v === 'failed') return <Badge variant="danger" size="sm" icon={<XCircle size={10} />}>失败</Badge>;
+    if (v === 'running') return <Badge variant="featured" size="sm" icon={<Loader2 size={10} className="animate-spin" />}>进行中</Badge>;
+    if (v === 'cancelled') return <Badge variant="warning" size="sm" icon={<StopCircle size={10} />}>已取消</Badge>;
     return <Badge variant="subtle" size="sm">{s || '-'}</Badge>;
   };
 
@@ -1350,9 +1349,10 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
             leftIcon={<CheckCircle size={16} />}
           >
             <option value="">状态</option>
-            {metaStatuses.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
+            <option value="running">🔵 进行中</option>
+            <option value="succeeded">🟢 成功</option>
+            <option value="failed">🔴 失败</option>
+            <option value="cancelled">⚪ 已取消</option>
           </Select>
           <SearchableSelect
             value={qAppCallerCode}
