@@ -14,6 +14,57 @@ public interface IPersonalSourceConnector
 }
 
 /// <summary>
+/// 语雀知识库引用（由 URL 解析得到）
+/// </summary>
+public sealed class YuqueRepoRef
+{
+    public string RepoId { get; init; } = string.Empty;
+    public string? RepoName { get; init; }
+    public string? Namespace { get; init; }
+}
+
+/// <summary>
+/// 语雀 URL 工具
+/// </summary>
+public static class YuqueUrlHelper
+{
+    /// <summary>
+    /// 归一化 URL 到知识库级别：
+    /// https://www.yuque.com/{namespace}/{repo}
+    /// </summary>
+    public static string? NormalizeRepoUrl(string? input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+            return null;
+
+        if (!TryExtractNamespaceAndRepo(input, out var ns, out var repo))
+            return null;
+
+        return $"https://www.yuque.com/{ns}/{repo}".ToLowerInvariant();
+    }
+
+    public static bool TryExtractNamespaceAndRepo(string input, out string ns, out string repo)
+    {
+        ns = string.Empty;
+        repo = string.Empty;
+
+        if (!Uri.TryCreate(input.Trim(), UriKind.Absolute, out var uri))
+            return false;
+
+        if (!uri.Host.Contains("yuque.com", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var segs = uri.AbsolutePath.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segs.Length < 2)
+            return false;
+
+        ns = Uri.UnescapeDataString(segs[0]).Trim().ToLowerInvariant();
+        repo = Uri.UnescapeDataString(segs[1]).Trim().ToLowerInvariant();
+        return !string.IsNullOrEmpty(ns) && !string.IsNullOrEmpty(repo);
+    }
+}
+
+/// <summary>
 /// 个人 GitHub 数据源连接器 — 通过 GitHub REST API 采集个人活动统计
 /// </summary>
 public class PersonalGitHubConnector : IPersonalSourceConnector
@@ -191,23 +242,34 @@ public class PersonalYuqueConnector : IPersonalSourceConnector
 
     private readonly string _token;
     private readonly string? _spaceId;
+    private readonly string? _repoId;
+    private readonly string? _yuqueUrl;
 
-    public PersonalYuqueConnector(string token, string? spaceId)
+    public PersonalYuqueConnector(string token, string? spaceId, string? repoId, string? yuqueUrl)
     {
         _token = token;
         _spaceId = spaceId;
+        _repoId = repoId;
+        _yuqueUrl = yuqueUrl;
     }
 
     public async Task<bool> TestConnectionAsync(CancellationToken ct)
     {
         try
         {
-            var request = new HttpRequestMessage(HttpMethod.Get, "https://www.yuque.com/api/v2/user");
-            request.Headers.Add("X-Auth-Token", _token);
-            request.Headers.UserAgent.ParseAdd("PrdAgent/2.0");
+            if (!string.IsNullOrWhiteSpace(_repoId))
+            {
+                return await CheckRepoByIdAsync(_repoId, ct);
+            }
 
-            var response = await Http.SendAsync(request, ct);
-            return response.IsSuccessStatusCode;
+            if (!string.IsNullOrWhiteSpace(_yuqueUrl))
+            {
+                return (await ResolveRepoByUrlAsync(_token, _yuqueUrl, ct)) != null;
+            }
+
+            var req = BuildYuqueRequest(HttpMethod.Get, "https://www.yuque.com/api/v2/user");
+            var res = await Http.SendAsync(req, ct);
+            return res.IsSuccessStatusCode;
         }
         catch
         {
@@ -223,12 +285,9 @@ public class PersonalYuqueConnector : IPersonalSourceConnector
             CollectedAt = DateTime.UtcNow
         };
 
-        // 获取用户信息来确定 login
-        var userLogin = await GetUserLoginAsync(ct);
-        if (string.IsNullOrEmpty(userLogin)) return stats;
-
-        // 获取知识库列表
-        var repos = await GetReposAsync(userLogin, ct);
+        var userLogin = await GetUserLoginAsync(ct) ?? "yuque-user";
+        var repos = await GetTargetReposAsync(ct);
+        if (repos.Count == 0) return stats;
 
         int articlesPublished = 0, docsUpdated = 0;
 
@@ -274,11 +333,70 @@ public class PersonalYuqueConnector : IPersonalSourceConnector
         return stats;
     }
 
+    /// <summary>
+    /// 用 token + 语雀 URL 解析 repoId（用于创建/更新时落库）
+    /// </summary>
+    public static async Task<YuqueRepoRef?> ResolveRepoByUrlAsync(string token, string yuqueUrl, CancellationToken ct)
+    {
+        if (!YuqueUrlHelper.TryExtractNamespaceAndRepo(yuqueUrl, out var ns, out var repo))
+            return null;
+
+        var req = new HttpRequestMessage(HttpMethod.Get, $"https://www.yuque.com/api/v2/repos/{Uri.EscapeDataString(ns)}/{Uri.EscapeDataString(repo)}");
+        req.Headers.Add("X-Auth-Token", token);
+        req.Headers.UserAgent.ParseAdd("PrdAgent/2.0");
+
+        var res = await Http.SendAsync(req, ct);
+        if (!res.IsSuccessStatusCode) return null;
+
+        var json = await res.Content.ReadAsStringAsync(ct);
+        using var doc = JsonDocument.Parse(json);
+        if (!doc.RootElement.TryGetProperty("data", out var data))
+            return null;
+
+        var repoId = data.TryGetProperty("id", out var id) ? id.GetRawText().Trim('"') : null;
+        if (string.IsNullOrWhiteSpace(repoId))
+            return null;
+
+        var repoName = data.TryGetProperty("name", out var name) ? name.GetString() : null;
+        var namespacePath = $"{ns}/{repo}";
+
+        return new YuqueRepoRef
+        {
+            RepoId = repoId,
+            RepoName = repoName,
+            Namespace = namespacePath
+        };
+    }
+
+    private async Task<List<string>> GetTargetReposAsync(CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(_repoId))
+            return new List<string> { _repoId };
+
+        if (!string.IsNullOrWhiteSpace(_yuqueUrl))
+        {
+            var resolved = await ResolveRepoByUrlAsync(_token, _yuqueUrl, ct);
+            if (resolved != null)
+                return new List<string> { resolved.RepoId };
+        }
+
+        var userLogin = await GetUserLoginAsync(ct);
+        if (string.IsNullOrWhiteSpace(userLogin))
+            return new List<string>();
+
+        return await GetReposAsync(userLogin, ct);
+    }
+
+    private async Task<bool> CheckRepoByIdAsync(string repoId, CancellationToken ct)
+    {
+        var req = BuildYuqueRequest(HttpMethod.Get, $"https://www.yuque.com/api/v2/repos/{repoId}");
+        var res = await Http.SendAsync(req, ct);
+        return res.IsSuccessStatusCode;
+    }
+
     private async Task<string?> GetUserLoginAsync(CancellationToken ct)
     {
-        var request = new HttpRequestMessage(HttpMethod.Get, "https://www.yuque.com/api/v2/user");
-        request.Headers.Add("X-Auth-Token", _token);
-        request.Headers.UserAgent.ParseAdd("PrdAgent/2.0");
+        var request = BuildYuqueRequest(HttpMethod.Get, "https://www.yuque.com/api/v2/user");
 
         var response = await Http.SendAsync(request, ct);
         if (!response.IsSuccessStatusCode) return null;
@@ -295,9 +413,7 @@ public class PersonalYuqueConnector : IPersonalSourceConnector
     private async Task<List<string>> GetReposAsync(string userLogin, CancellationToken ct)
     {
         var repos = new List<string>();
-        var request = new HttpRequestMessage(HttpMethod.Get, $"https://www.yuque.com/api/v2/users/{userLogin}/repos");
-        request.Headers.Add("X-Auth-Token", _token);
-        request.Headers.UserAgent.ParseAdd("PrdAgent/2.0");
+        var request = BuildYuqueRequest(HttpMethod.Get, $"https://www.yuque.com/api/v2/users/{userLogin}/repos");
 
         var response = await Http.SendAsync(request, ct);
         if (!response.IsSuccessStatusCode) return repos;
@@ -320,9 +436,7 @@ public class PersonalYuqueConnector : IPersonalSourceConnector
     private async Task<List<YuqueDocInfo>> GetRecentDocsAsync(string repoId, DateTime from, DateTime to, CancellationToken ct)
     {
         var result = new List<YuqueDocInfo>();
-        var request = new HttpRequestMessage(HttpMethod.Get, $"https://www.yuque.com/api/v2/repos/{repoId}/docs");
-        request.Headers.Add("X-Auth-Token", _token);
-        request.Headers.UserAgent.ParseAdd("PrdAgent/2.0");
+        var request = BuildYuqueRequest(HttpMethod.Get, $"https://www.yuque.com/api/v2/repos/{repoId}/docs");
 
         var response = await Http.SendAsync(request, ct);
         if (!response.IsSuccessStatusCode) return result;
@@ -352,6 +466,14 @@ public class PersonalYuqueConnector : IPersonalSourceConnector
         }
 
         return result;
+    }
+
+    private HttpRequestMessage BuildYuqueRequest(HttpMethod method, string url)
+    {
+        var req = new HttpRequestMessage(method, url);
+        req.Headers.Add("X-Auth-Token", _token);
+        req.Headers.UserAgent.ParseAdd("PrdAgent/2.0");
+        return req;
     }
 
     private class YuqueDocInfo

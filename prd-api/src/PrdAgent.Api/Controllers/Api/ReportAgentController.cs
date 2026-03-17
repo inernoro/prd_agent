@@ -102,6 +102,26 @@ public class ReportAgentController : ControllerBase
         DataSources = s.DataSources,
     };
 
+    private static PersonalSourceConfig BuildPersonalSourceConfig(
+        PersonalSourceConfigInput? config,
+        string? repoUrlLegacy,
+        string? usernameLegacy,
+        string? spaceIdLegacy,
+        string? apiEndpointLegacy)
+    {
+        return new PersonalSourceConfig
+        {
+            RepoUrl = config?.RepoUrl ?? repoUrlLegacy,
+            Username = config?.Username ?? usernameLegacy,
+            SpaceId = config?.SpaceId ?? spaceIdLegacy,
+            YuqueUrl = config?.YuqueUrl,
+            YuqueRepoId = config?.YuqueRepoId,
+            YuqueNamespace = config?.YuqueNamespace,
+            YuqueRepoName = config?.YuqueRepoName,
+            ApiEndpoint = config?.ApiEndpoint ?? apiEndpointLegacy
+        };
+    }
+
     #endregion
 
     #region Team Management
@@ -1371,24 +1391,41 @@ public class ReportAgentController : ControllerBase
     [HttpPost("my/sources")]
     public async Task<IActionResult> CreatePersonalSource([FromBody] CreatePersonalSourceRequest req)
     {
-        if (string.IsNullOrWhiteSpace(req.SourceType) || !PersonalSourceType.All.Contains(req.SourceType))
+        var sourceType = req.SourceType?.Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(sourceType) || !PersonalSourceType.All.Contains(sourceType))
             return BadRequest(ApiResponse<object>.Fail("INVALID_SOURCE_TYPE", $"不支持的数据源类型: {req.SourceType}"));
 
-        var svc = HttpContext.RequestServices.GetRequiredService<PersonalSourceService>();
-        var source = await svc.CreateAsync(
-            GetUserId(),
-            req.SourceType,
-            req.DisplayName ?? req.SourceType,
-            new PersonalSourceConfig
-            {
-                RepoUrl = req.RepoUrl,
-                Username = req.Username,
-                SpaceId = req.SpaceId,
-                ApiEndpoint = req.ApiEndpoint
-            },
-            req.Token);
+        var config = BuildPersonalSourceConfig(
+            req.Config,
+            req.RepoUrl,
+            req.Username,
+            req.SpaceId,
+            req.ApiEndpoint);
 
-        return Ok(ApiResponse<object>.Ok(new { source = new { source.Id, source.SourceType, source.DisplayName } }));
+        var svc = HttpContext.RequestServices.GetRequiredService<PersonalSourceService>();
+        try
+        {
+            var source = await svc.CreateAsync(
+                GetUserId(),
+                sourceType,
+                req.DisplayName ?? sourceType,
+                config,
+                req.Token);
+
+            return Ok(ApiResponse<object>.Ok(new { source = new { source.Id, source.SourceType, source.DisplayName, source.Config } }));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == PersonalSourceService.ErrorDuplicateYuqueSource)
+        {
+            return BadRequest(ApiResponse<object>.Fail("DUPLICATE", "该语雀 URL 已绑定，请勿重复配置"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == PersonalSourceService.ErrorYuqueTokenRequired)
+        {
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "语雀 URL 模式必须提供 Token"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == PersonalSourceService.ErrorInvalidYuqueUrl)
+        {
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "语雀 URL 无效，或当前 Token 无访问权限"));
+        }
     }
 
     /// <summary>
@@ -1398,21 +1435,32 @@ public class ReportAgentController : ControllerBase
     public async Task<IActionResult> UpdatePersonalSource(string id, [FromBody] UpdatePersonalSourceRequest req)
     {
         var svc = HttpContext.RequestServices.GetRequiredService<PersonalSourceService>();
-        PersonalSourceConfig? config = (req.RepoUrl != null || req.Username != null || req.SpaceId != null || req.ApiEndpoint != null)
-            ? new PersonalSourceConfig
-            {
-                RepoUrl = req.RepoUrl,
-                Username = req.Username,
-                SpaceId = req.SpaceId,
-                ApiEndpoint = req.ApiEndpoint
-            }
+
+        var hasConfigPatch = req.Config != null || req.RepoUrl != null || req.Username != null || req.SpaceId != null || req.ApiEndpoint != null;
+        PersonalSourceConfig? config = hasConfigPatch
+            ? BuildPersonalSourceConfig(req.Config, req.RepoUrl, req.Username, req.SpaceId, req.ApiEndpoint)
             : null;
 
-        var ok = await svc.UpdateAsync(id, GetUserId(), req.DisplayName, config, req.Token, req.Enabled);
-        if (!ok)
-            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "数据源不存在"));
+        try
+        {
+            var ok = await svc.UpdateAsync(id, GetUserId(), req.DisplayName, config, req.Token, req.Enabled);
+            if (!ok)
+                return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "数据源不存在"));
 
-        return Ok(ApiResponse<object>.Ok(new { updated = true }));
+            return Ok(ApiResponse<object>.Ok(new { updated = true }));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == PersonalSourceService.ErrorDuplicateYuqueSource)
+        {
+            return BadRequest(ApiResponse<object>.Fail("DUPLICATE", "该语雀 URL 已绑定，请勿重复配置"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == PersonalSourceService.ErrorYuqueTokenRequired)
+        {
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "语雀 URL 模式必须提供 Token"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == PersonalSourceService.ErrorInvalidYuqueUrl)
+        {
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "语雀 URL 无效，或当前 Token 无访问权限"));
+        }
     }
 
     /// <summary>
@@ -2414,6 +2462,8 @@ public class CreatePersonalSourceRequest
     public string SourceType { get; set; } = string.Empty;
     public string? DisplayName { get; set; }
     public string? Token { get; set; }
+    public PersonalSourceConfigInput? Config { get; set; }
+    // 兼容旧前端扁平字段
     public string? RepoUrl { get; set; }
     public string? Username { get; set; }
     public string? SpaceId { get; set; }
@@ -2425,8 +2475,22 @@ public class UpdatePersonalSourceRequest
     public string? DisplayName { get; set; }
     public string? Token { get; set; }
     public bool? Enabled { get; set; }
+    public PersonalSourceConfigInput? Config { get; set; }
+    // 兼容旧前端扁平字段
     public string? RepoUrl { get; set; }
     public string? Username { get; set; }
     public string? SpaceId { get; set; }
+    public string? ApiEndpoint { get; set; }
+}
+
+public class PersonalSourceConfigInput
+{
+    public string? RepoUrl { get; set; }
+    public string? Username { get; set; }
+    public string? SpaceId { get; set; }
+    public string? YuqueUrl { get; set; }
+    public string? YuqueRepoId { get; set; }
+    public string? YuqueNamespace { get; set; }
+    public string? YuqueRepoName { get; set; }
     public string? ApiEndpoint { get; set; }
 }

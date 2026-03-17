@@ -531,7 +531,7 @@ export const deletePersonalSourceReal: DeletePersonalSourceContract = async (inp
 };
 
 export const testPersonalSourceReal: TestPersonalSourceContract = async (input) => {
-  return await apiRequest<{ success: boolean }>(
+  return await apiRequest<{ connected: boolean }>(
     api.reportAgent.personalSources.test(encodeURIComponent(input.id)),
     { method: 'POST' }
   );

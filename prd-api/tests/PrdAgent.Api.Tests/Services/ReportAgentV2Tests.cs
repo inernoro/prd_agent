@@ -79,6 +79,8 @@ public class ReportAgentV2Tests
         Assert.True(source.Enabled);
         Assert.Null(source.LastSyncAt);
         Assert.Equal(PersonalSourceSyncStatus.Never, source.LastSyncStatus);
+        Assert.Null(source.Config.YuqueUrl);
+        Assert.Null(source.Config.YuqueRepoId);
     }
 
     [Fact]
@@ -87,6 +89,20 @@ public class ReportAgentV2Tests
         Assert.Contains("github", PersonalSourceType.All);
         Assert.Contains("gitlab", PersonalSourceType.All);
         Assert.Contains("yuque", PersonalSourceType.All);
+    }
+
+    [Fact]
+    public void YuqueUrlHelper_NormalizeRepoUrl_ShouldStripDocPath()
+    {
+        var normalized = YuqueUrlHelper.NormalizeRepoUrl("https://www.yuque.com/acme-team/weekly/abc123");
+        Assert.Equal("https://www.yuque.com/acme-team/weekly", normalized);
+    }
+
+    [Fact]
+    public void YuqueUrlHelper_NormalizeRepoUrl_InvalidHost_ShouldReturnNull()
+    {
+        var normalized = YuqueUrlHelper.NormalizeRepoUrl("https://example.com/acme/weekly");
+        Assert.Null(normalized);
     }
 
     #endregion

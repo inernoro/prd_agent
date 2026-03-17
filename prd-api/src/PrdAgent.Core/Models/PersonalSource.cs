@@ -57,6 +57,21 @@ public class PersonalSourceConfig
     /// <summary>空间 ID（语雀）</summary>
     public string? SpaceId { get; set; }
 
+    /// <summary>语雀 URL（如 https://www.yuque.com/org/repo 或文档 URL）</summary>
+    public string? YuqueUrl { get; set; }
+
+    /// <summary>语雀 URL 规范化后的值（用于去重）</summary>
+    public string? YuqueUrlNormalized { get; set; }
+
+    /// <summary>语雀知识库 ID（由 YuqueUrl 解析得到，采集时优先使用）</summary>
+    public string? YuqueRepoId { get; set; }
+
+    /// <summary>语雀知识库命名空间（如 org/repo，便于排障）</summary>
+    public string? YuqueNamespace { get; set; }
+
+    /// <summary>语雀知识库名称（便于展示）</summary>
+    public string? YuqueRepoName { get; set; }
+
     /// <summary>API 端点（自定义）</summary>
     public string? ApiEndpoint { get; set; }
 }

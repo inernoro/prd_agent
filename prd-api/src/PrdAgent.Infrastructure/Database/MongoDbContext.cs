@@ -1154,6 +1154,28 @@ public class MongoDbContext
         PersonalSources.Indexes.CreateOne(new CreateIndexModel<PersonalSource>(
             Builders<PersonalSource>.IndexKeys.Ascending(x => x.UserId).Ascending(x => x.SourceType),
             new CreateIndexOptions { Name = "idx_personal_sources_user_type" }));
+        // PersonalSources（语雀 URL 去重）：同一用户同一语雀知识库仅允许一条
+        try
+        {
+            PersonalSources.Indexes.CreateOne(new CreateIndexModel<PersonalSource>(
+                Builders<PersonalSource>.IndexKeys
+                    .Ascending(x => x.UserId)
+                    .Ascending(x => x.SourceType)
+                    .Ascending(x => x.Config.YuqueRepoId),
+                new CreateIndexOptions<PersonalSource>
+                {
+                    Name = "uniq_personal_sources_user_yuque_repo",
+                    Unique = true,
+                    PartialFilterExpression = Builders<PersonalSource>.Filter.And(
+                        Builders<PersonalSource>.Filter.Eq(x => x.SourceType, PersonalSourceType.Yuque),
+                        Builders<PersonalSource>.Filter.Ne(x => x.Config.YuqueRepoId, null),
+                        Builders<PersonalSource>.Filter.Ne(x => x.Config.YuqueRepoId, ""))
+                }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
 
         // Arena 竞技场索引
         try

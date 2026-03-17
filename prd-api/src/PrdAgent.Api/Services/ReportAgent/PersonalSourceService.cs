@@ -10,6 +10,10 @@ namespace PrdAgent.Api.Services.ReportAgent;
 /// </summary>
 public class PersonalSourceService
 {
+    public const string ErrorDuplicateYuqueSource = "DUPLICATE_YUQUE_SOURCE";
+    public const string ErrorInvalidYuqueUrl = "INVALID_YUQUE_URL";
+    public const string ErrorYuqueTokenRequired = "YUQUE_TOKEN_REQUIRED";
+
     private readonly MongoDbContext _db;
     private readonly IConfiguration _configuration;
     private readonly ILogger<PersonalSourceService> _logger;
@@ -42,17 +46,22 @@ public class PersonalSourceService
         string userId, string sourceType, string displayName,
         PersonalSourceConfig config, string? token, CancellationToken ct = default)
     {
+        var normalizedType = sourceType.Trim().ToLowerInvariant();
+        var normalizedConfig = await NormalizeConfigAsync(normalizedType, config, token, ct);
+        if (normalizedType == PersonalSourceType.Yuque)
+            await EnsureNoDuplicateYuqueSourceAsync(userId, normalizedConfig, null, ct);
+
         var source = new PersonalSource
         {
             UserId = userId,
-            SourceType = sourceType,
+            SourceType = normalizedType,
             DisplayName = displayName,
-            Config = config,
+            Config = normalizedConfig,
             EncryptedToken = string.IsNullOrEmpty(token) ? null : ApiKeyCrypto.Encrypt(token, CryptoKey),
         };
 
         await _db.PersonalSources.InsertOneAsync(source, cancellationToken: ct);
-        _logger.LogInformation("[PersonalSource] Created {SourceType} for user {UserId}: {Id}", sourceType, userId, source.Id);
+        _logger.LogInformation("[PersonalSource] Created {SourceType} for user {UserId}: {Id}", normalizedType, userId, source.Id);
         return source;
     }
 
@@ -60,16 +69,30 @@ public class PersonalSourceService
         string id, string userId, string? displayName,
         PersonalSourceConfig? config, string? token, bool? enabled, CancellationToken ct = default)
     {
+        var source = await GetAsync(id, userId, ct);
+        if (source == null) return false;
+        var sourceType = (source.SourceType ?? string.Empty).Trim().ToLowerInvariant();
+
         var updates = new List<UpdateDefinition<PersonalSource>>();
 
         if (displayName != null)
             updates.Add(Builders<PersonalSource>.Update.Set(s => s.DisplayName, displayName));
-        if (config != null)
-            updates.Add(Builders<PersonalSource>.Update.Set(s => s.Config, config));
         if (token != null)
             updates.Add(Builders<PersonalSource>.Update.Set(s => s.EncryptedToken, ApiKeyCrypto.Encrypt(token, CryptoKey)));
         if (enabled.HasValue)
             updates.Add(Builders<PersonalSource>.Update.Set(s => s.Enabled, enabled.Value));
+
+        if (config != null)
+        {
+            var mergedConfig = MergeConfig(source.Config, config);
+            var effectiveToken = token ?? (string.IsNullOrEmpty(source.EncryptedToken)
+                ? null
+                : ApiKeyCrypto.Decrypt(source.EncryptedToken, CryptoKey));
+            var normalizedConfig = await NormalizeConfigAsync(sourceType, mergedConfig, effectiveToken, ct);
+            if (sourceType == PersonalSourceType.Yuque)
+                await EnsureNoDuplicateYuqueSourceAsync(userId, normalizedConfig, id, ct);
+            updates.Add(Builders<PersonalSource>.Update.Set(s => s.Config, normalizedConfig));
+        }
 
         updates.Add(Builders<PersonalSource>.Update.Set(s => s.UpdatedAt, DateTime.UtcNow));
 
@@ -175,12 +198,98 @@ public class PersonalSourceService
             : ApiKeyCrypto.Decrypt(source.EncryptedToken, CryptoKey);
 
         if (string.IsNullOrEmpty(token)) return null;
+        var sourceType = (source.SourceType ?? string.Empty).Trim().ToLowerInvariant();
 
-        return source.SourceType switch
+        return sourceType switch
         {
             PersonalSourceType.GitHub => new PersonalGitHubConnector(token, source.Config.Username ?? "", source.Config.RepoUrl),
-            PersonalSourceType.Yuque => new PersonalYuqueConnector(token, source.Config.SpaceId),
+            PersonalSourceType.Yuque => new PersonalYuqueConnector(
+                token,
+                source.Config.SpaceId,
+                source.Config.YuqueRepoId,
+                source.Config.YuqueUrl),
             _ => null
         };
+    }
+
+    private static PersonalSourceConfig MergeConfig(PersonalSourceConfig current, PersonalSourceConfig incoming)
+    {
+        return new PersonalSourceConfig
+        {
+            RepoUrl = incoming.RepoUrl ?? current.RepoUrl,
+            Username = incoming.Username ?? current.Username,
+            SpaceId = incoming.SpaceId ?? current.SpaceId,
+            YuqueUrl = incoming.YuqueUrl ?? current.YuqueUrl,
+            YuqueUrlNormalized = incoming.YuqueUrlNormalized ?? current.YuqueUrlNormalized,
+            YuqueRepoId = incoming.YuqueRepoId ?? current.YuqueRepoId,
+            YuqueNamespace = incoming.YuqueNamespace ?? current.YuqueNamespace,
+            YuqueRepoName = incoming.YuqueRepoName ?? current.YuqueRepoName,
+            ApiEndpoint = incoming.ApiEndpoint ?? current.ApiEndpoint
+        };
+    }
+
+    private async Task<PersonalSourceConfig> NormalizeConfigAsync(
+        string sourceType,
+        PersonalSourceConfig config,
+        string? token,
+        CancellationToken ct)
+    {
+        if (sourceType != PersonalSourceType.Yuque)
+            return config;
+
+        var normalized = new PersonalSourceConfig
+        {
+            RepoUrl = config.RepoUrl,
+            Username = config.Username,
+            SpaceId = config.SpaceId,
+            YuqueUrl = config.YuqueUrl,
+            YuqueUrlNormalized = YuqueUrlHelper.NormalizeRepoUrl(config.YuqueUrl),
+            YuqueRepoId = config.YuqueRepoId,
+            YuqueNamespace = config.YuqueNamespace,
+            YuqueRepoName = config.YuqueRepoName,
+            ApiEndpoint = config.ApiEndpoint
+        };
+
+        if (string.IsNullOrWhiteSpace(normalized.YuqueUrl))
+            return normalized;
+
+        if (string.IsNullOrWhiteSpace(token))
+            throw new InvalidOperationException(ErrorYuqueTokenRequired);
+
+        var resolved = await PersonalYuqueConnector.ResolveRepoByUrlAsync(token, normalized.YuqueUrl, ct);
+        if (resolved == null)
+            throw new InvalidOperationException(ErrorInvalidYuqueUrl);
+
+        normalized.YuqueRepoId = resolved.RepoId;
+        normalized.SpaceId = resolved.RepoId;
+        normalized.YuqueNamespace = resolved.Namespace;
+        normalized.YuqueRepoName = resolved.RepoName;
+
+        return normalized;
+    }
+
+    private async Task EnsureNoDuplicateYuqueSourceAsync(
+        string userId,
+        PersonalSourceConfig config,
+        string? excludingId,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(config.YuqueRepoId) && string.IsNullOrWhiteSpace(config.YuqueUrlNormalized))
+            return;
+
+        var filter = Builders<PersonalSource>.Filter.Eq(s => s.UserId, userId) &
+                     Builders<PersonalSource>.Filter.Eq(s => s.SourceType, PersonalSourceType.Yuque);
+
+        if (!string.IsNullOrWhiteSpace(config.YuqueRepoId))
+            filter &= Builders<PersonalSource>.Filter.Eq(s => s.Config.YuqueRepoId, config.YuqueRepoId);
+        else
+            filter &= Builders<PersonalSource>.Filter.Eq(s => s.Config.YuqueUrlNormalized, config.YuqueUrlNormalized);
+
+        if (!string.IsNullOrWhiteSpace(excludingId))
+            filter &= Builders<PersonalSource>.Filter.Ne(s => s.Id, excludingId);
+
+        var exists = await _db.PersonalSources.Find(filter).AnyAsync(ct);
+        if (exists)
+            throw new InvalidOperationException(ErrorDuplicateYuqueSource);
     }
 }

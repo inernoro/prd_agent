@@ -663,6 +663,12 @@ export interface PersonalSourceConfig {
   repoUrl?: string;
   username?: string;
   spaceId?: string;
+  yuqueUrl?: string;
+  yuqueUrlNormalized?: string;
+  yuqueRepoId?: string;
+  yuqueNamespace?: string;
+  yuqueRepoName?: string;
+  apiEndpoint?: string;
 }
 
 export type ListPersonalSourcesContract = () => Promise<ApiResponse<{ items: PersonalSource[] }>>;
@@ -684,7 +690,7 @@ export type UpdatePersonalSourceContract = (input: {
 
 export type DeletePersonalSourceContract = (input: { id: string }) => Promise<ApiResponse<object>>;
 
-export type TestPersonalSourceContract = (input: { id: string }) => Promise<ApiResponse<{ success: boolean }>>;
+export type TestPersonalSourceContract = (input: { id: string }) => Promise<ApiResponse<{ connected: boolean }>>;
 
 export type SyncPersonalSourceContract = (input: { id: string }) => Promise<ApiResponse<{ success: boolean }>>;
 

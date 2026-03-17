@@ -15,7 +15,7 @@ import type { PersonalSource, PersonalStats } from '@/services/contracts/reportA
 
 const SOURCE_TYPES = [
   { value: 'github', label: 'GitHub', icon: Github, color: 'rgba(36, 41, 47, 0.9)', bg: 'rgba(36, 41, 47, 0.08)', placeholder: 'https://github.com/user/repo' },
-  { value: 'yuque', label: '语雀', icon: BookOpen, color: 'rgba(52, 199, 89, 0.9)', bg: 'rgba(52, 199, 89, 0.08)', placeholder: '语雀空间 ID 或地址' },
+  { value: 'yuque', label: '语雀', icon: BookOpen, color: 'rgba(52, 199, 89, 0.9)', bg: 'rgba(52, 199, 89, 0.08)', placeholder: 'https://www.yuque.com/namespace/repo' },
   { value: 'gitlab', label: 'GitLab', icon: GitBranch, color: 'rgba(226, 67, 41, 0.9)', bg: 'rgba(226, 67, 41, 0.08)', placeholder: 'https://gitlab.com/user/repo' },
 ] as const;
 
@@ -57,13 +57,21 @@ export function PersonalSourcesPanel() {
 
   const handleCreate = async () => {
     if (!formName.trim() || !formToken.trim()) return;
+    if (formType === 'yuque' && !formRepoUrl.trim()) return;
+
+    const config = formType === 'yuque'
+      ? {
+          yuqueUrl: formRepoUrl.trim() || undefined,
+        }
+      : {
+          repoUrl: formRepoUrl || undefined,
+          username: formUsername || undefined,
+        };
+
     const res = await createPersonalSource({
       sourceType: formType,
       displayName: formName.trim(),
-      config: {
-        repoUrl: formRepoUrl || undefined,
-        username: formUsername || undefined,
-      },
+      config,
       token: formToken,
     });
     if (res.success) {
@@ -83,7 +91,7 @@ export function PersonalSourcesPanel() {
     setTestingId(id);
     try {
       const res = await testPersonalSource({ id });
-      alert(res.success && res.data?.success ? '连接成功' : '连接失败');
+      alert(res.success && res.data?.connected ? '连接成功' : '连接失败');
     } finally {
       setTestingId(null);
     }
@@ -200,6 +208,9 @@ export function PersonalSourcesPanel() {
           const st = getSourceType(source.sourceType);
           const Icon = st.icon;
           const ss = statusStyles[source.lastSyncStatus] || statusStyles.never;
+          const sourceUrl = source.sourceType === 'yuque'
+            ? source.config.yuqueUrl ?? source.config.repoUrl
+            : source.config.repoUrl;
 
           return (
             <div
@@ -242,9 +253,9 @@ export function PersonalSourcesPanel() {
                           </span>
                         )}
                       </div>
-                      {source.config.repoUrl && (
+                      {sourceUrl && (
                         <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                          {source.config.repoUrl}
+                          {sourceUrl}
                         </div>
                       )}
                     </div>
@@ -327,7 +338,7 @@ export function PersonalSourcesPanel() {
 
             <div className="space-y-2">
               <label className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                {formType === 'yuque' ? '空间地址（可选）' : '仓库地址（可选，留空采集全部）'}
+                {formType === 'yuque' ? '语雀 URL（必填）' : '仓库地址（可选，留空采集全部）'}
               </label>
               <input
                 value={formRepoUrl}
@@ -365,7 +376,14 @@ export function PersonalSourcesPanel() {
 
             <div className="flex justify-end gap-2 pt-1">
               <Button variant="secondary" size="sm" onClick={() => { setShowCreate(false); resetForm(); }}>取消</Button>
-              <Button variant="primary" size="sm" onClick={handleCreate} disabled={!formName.trim() || !formToken.trim()}>确认绑定</Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleCreate}
+                disabled={!formName.trim() || !formToken.trim() || (formType === 'yuque' && !formRepoUrl.trim())}
+              >
+                确认绑定
+              </Button>
             </div>
           </GlassCard>
         </div>
