@@ -72,7 +72,21 @@ public class UserService : IUserService
         if (user.UserType == UserType.Bot)
             return null;
 
-        if (!BCrypt.Net.BCrypt.Verify(password, user.PasswordHash))
+        // 兼容历史脏数据：密码哈希为空或格式非法时，不应抛 500，按“凭证错误”处理。
+        if (string.IsNullOrWhiteSpace(user.PasswordHash))
+            return null;
+
+        bool passwordMatched;
+        try
+        {
+            passwordMatched = BCrypt.Net.BCrypt.Verify(password, user.PasswordHash);
+        }
+        catch
+        {
+            return null;
+        }
+
+        if (!passwordMatched)
             return null;
 
         return user;
