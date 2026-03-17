@@ -731,7 +731,7 @@ function openFullDeployLog(id, event) {
       if (newPre) newPre.scrollTop = prevScrollTop;
     }
   };
-  openLogModal(`部署日志 ${id}`);
+  openLogModal(`部署日志 ${id}`, id);
   renderInline();
   _scrollLogToBottom();
   _startLogPoll(() => { renderInline(); return Promise.resolve(); }, 1000);
@@ -1006,7 +1006,7 @@ async function viewBranchLogs(id) {
         if (newPre) newPre.scrollTop = prevScrollTop;
       }
     };
-    openLogModal(`部署日志 — ${id}`);
+    openLogModal(`部署日志 — ${id}`, id);
     renderInline();
     _scrollLogToBottom();
     _startLogPoll(() => { renderInline(); return Promise.resolve(); }, 1000);
@@ -1046,7 +1046,7 @@ async function viewBranchLogs(id) {
     }
   };
   try {
-    openLogModal(`部署日志 — ${id}`);
+    openLogModal(`部署日志 — ${id}`, id);
     await fetchAndRender();
     _scrollLogToBottom();
     _startLogPoll(fetchAndRender, 3000);
@@ -1075,7 +1075,7 @@ async function viewContainerLogs(id, profileId) {
     }
   };
   try {
-    openLogModal(`日志: ${id}/${profileId || '默认'}`);
+    openLogModal(`日志: ${id}/${profileId || '默认'}`, id, profileId);
     await fetchAndRender();
     _scrollLogToBottom();
     _startLogPoll(fetchAndRender, 3000);
@@ -2624,23 +2624,115 @@ function toggleModalForm(id) {
   if (el) el.classList.toggle('hidden');
 }
 
-// ── Log modal ──
+// ── Log modal (with tabs: logs / terminal) ──
 
 let _logPollTimer = null;
 let _logPollFn = null;
+let _logModalContext = { branchId: null, profileId: null }; // track which branch/service is open
+let _logModalTab = 'logs'; // 'logs' | 'terminal'
+let _terminalHistory = []; // command history per session
+let _terminalHistoryIdx = -1;
 
-function openLogModal(title) {
+function openLogModal(title, branchId, profileId) {
   document.getElementById('logModalTitle').textContent = title;
   document.getElementById('logModal').classList.remove('hidden');
-  // Auto-scroll to bottom after content renders
+  _logModalContext = { branchId: branchId || null, profileId: profileId || null };
+  // Show tabs only when we have branch context (can exec)
+  const tabsEl = document.getElementById('logModalTabs');
+  if (branchId) {
+    tabsEl.classList.remove('hidden');
+  } else {
+    tabsEl.classList.add('hidden');
+  }
+  // Clear terminal state for new session
+  document.getElementById('terminalOutput').innerHTML = '';
+  document.getElementById('terminalInput').value = '';
+  _terminalHistory = [];
+  _terminalHistoryIdx = -1;
+  switchLogTab('logs');
   _scrollLogToBottom();
 }
 
 function closeLogModal() {
   document.getElementById('logModal').classList.add('hidden');
-  // Stop any active log polling
   if (_logPollTimer) { clearInterval(_logPollTimer); _logPollTimer = null; _logPollFn = null; }
+  _logModalContext = { branchId: null, profileId: null };
 }
+
+function switchLogTab(tab) {
+  _logModalTab = tab;
+  const logBody = document.getElementById('logModalBody');
+  const termBody = document.getElementById('terminalBody');
+  const tabs = document.querySelectorAll('#logModalTabs .log-tab');
+  tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  if (tab === 'logs') {
+    logBody.classList.remove('hidden');
+    termBody.classList.add('hidden');
+  } else {
+    logBody.classList.add('hidden');
+    termBody.classList.remove('hidden');
+    const input = document.getElementById('terminalInput');
+    if (input) setTimeout(() => input.focus(), 50);
+  }
+}
+
+async function execTerminalCmd() {
+  const input = document.getElementById('terminalInput');
+  const command = input.value.trim();
+  if (!command) return;
+  const { branchId, profileId } = _logModalContext;
+  if (!branchId) { showToast('无法执行: 未关联分支', 'error'); return; }
+
+  // Push to history
+  _terminalHistory.push(command);
+  _terminalHistoryIdx = _terminalHistory.length;
+
+  // Append command to output
+  const output = document.getElementById('terminalOutput');
+  output.innerHTML += `<div class="term-line term-cmd"><span class="term-prompt">$</span> ${esc(command)}</div>`;
+  input.value = '';
+  input.disabled = true;
+
+  try {
+    const data = await api('POST', `/branches/${encodeURIComponent(branchId)}/container-exec`, { profileId, command });
+    const text = (data.stdout || '') + (data.stderr || '');
+    if (text.trim()) {
+      const exitClass = data.exitCode !== 0 ? ' term-error' : '';
+      output.innerHTML += `<pre class="term-line term-result${exitClass}">${esc(text)}</pre>`;
+    }
+    if (data.exitCode !== 0) {
+      output.innerHTML += `<div class="term-line term-exit">exit code: ${data.exitCode}</div>`;
+    }
+  } catch (e) {
+    output.innerHTML += `<div class="term-line term-error">${esc(e.message)}</div>`;
+  }
+  input.disabled = false;
+  input.focus();
+  output.scrollTop = output.scrollHeight;
+}
+
+// Terminal history navigation (up/down arrows)
+document.addEventListener('keydown', (e) => {
+  if (_logModalTab !== 'terminal') return;
+  const input = document.getElementById('terminalInput');
+  if (!input || document.activeElement !== input) return;
+  if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (_terminalHistoryIdx > 0) {
+      _terminalHistoryIdx--;
+      input.value = _terminalHistory[_terminalHistoryIdx] || '';
+    }
+  } else if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (_terminalHistoryIdx < _terminalHistory.length - 1) {
+      _terminalHistoryIdx++;
+      input.value = _terminalHistory[_terminalHistoryIdx] || '';
+    } else {
+      _terminalHistoryIdx = _terminalHistory.length;
+      input.value = '';
+    }
+  }
+});
 
 function _startLogPoll(fn, intervalMs) {
   if (_logPollTimer) clearInterval(_logPollTimer);
@@ -2649,14 +2741,13 @@ function _startLogPoll(fn, intervalMs) {
     if (document.getElementById('logModal').classList.contains('hidden')) {
       clearInterval(_logPollTimer); _logPollTimer = null; _logPollFn = null; return;
     }
+    if (_logModalTab !== 'logs') return; // don't poll when on terminal tab
     await _logPollFn();
   }, intervalMs);
 }
 
 function _scrollLogToBottom() {
   requestAnimationFrame(() => {
-    // The actual scrollable element is the <pre> inside logModalBody,
-    // which has max-height + overflow-y: auto via .live-log-output
     const body = document.getElementById('logModalBody');
     if (!body) return;
     const pre = body.querySelector('.live-log-output');

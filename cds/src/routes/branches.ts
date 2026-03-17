@@ -733,6 +733,43 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  // ── Container exec (run command inside container) ──
+
+  router.post('/branches/:id/container-exec', async (req, res) => {
+    const { id } = req.params;
+    const { profileId, command } = req.body as { profileId?: string; command?: string };
+    if (!command || typeof command !== 'string' || !command.trim()) {
+      res.status(400).json({ error: '请输入命令' });
+      return;
+    }
+
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+
+    const svc = profileId ? entry.services[profileId] : Object.values(entry.services)[0];
+    if (!svc) {
+      res.status(404).json({ error: '未找到运行中的服务' });
+      return;
+    }
+
+    try {
+      const result = await shell.exec(
+        `docker exec ${svc.containerName} sh -c ${JSON.stringify(command)}`,
+        { timeout: 30_000 },
+      );
+      res.json({
+        exitCode: result.exitCode,
+        stdout: result.stdout,
+        stderr: result.stderr,
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // ── Git log (historical commits) ──
 
   router.get('/branches/:id/git-log', async (req, res) => {

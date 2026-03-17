@@ -82,17 +82,38 @@
     <div id="toast" class="toast hidden"></div>
   </div>
 
-  <!-- Log modal -->
+  <!-- Log modal (with tabs: logs / terminal) -->
   <div id="logModal" class="modal hidden">
     <div class="modal-backdrop" onclick="closeLogModal()"></div>
     <div class="modal-dialog">
       <div class="modal-header">
         <h2 id="logModalTitle">日志</h2>
+        <div id="logModalTabs" class="log-modal-tabs hidden">
+          <button class="log-tab active" data-tab="logs" onclick="switchLogTab('logs')">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.5 0a.25.25 0 01.25-.25h10.5a.25.25 0 01.25.25v7.5a.25.25 0 01-.25.25h-4.5a.75.75 0 00-.75.75v2.19l-2.72-2.72a.75.75 0 00-.53-.22H2.75a.25.25 0 01-.25-.25v-7.5z"/></svg>
+            日志
+          </button>
+          <button class="log-tab" data-tab="terminal" onclick="switchLogTab('terminal')">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M0 2.75C0 1.784.784 1 1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75zm1.75-.25a.25.25 0 00-.25.25v10.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V2.75a.25.25 0 00-.25-.25H1.75zM7.25 8a.75.75 0 01-.22.53l-2.25 2.25a.75.75 0 11-1.06-1.06L5.44 8 3.72 6.28a.75.75 0 011.06-1.06l2.25 2.25c.141.14.22.331.22.53zm1.5 1.5a.75.75 0 000 1.5h3a.75.75 0 000-1.5h-3z"/></svg>
+            终端
+          </button>
+        </div>
         <button class="modal-close" onclick="closeLogModal()">
           <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor"><path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/></svg>
         </button>
       </div>
       <div id="logModalBody" class="modal-body"></div>
+      <div id="terminalBody" class="modal-body hidden">
+        <div id="terminalOutput" class="terminal-output"></div>
+        <div class="terminal-input-row">
+          <span class="terminal-prompt">$</span>
+          <input id="terminalInput" type="text" class="terminal-input" placeholder="输入命令..." autocomplete="off"
+            onkeydown="if(event.key==='Enter')execTerminalCmd()">
+          <button class="terminal-send-btn" onclick="execTerminalCmd()" title="执行">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M.989 2.94a.75.75 0 011.034-.656l12 4.5a.75.75 0 010 1.423l-12 4.5a.75.75 0 01-1.034-.656v-3.18a.75.75 0 01.635-.74L7.025 8l-5.4-.63a.75.75 0 01-.636-.74V2.94z"/></svg>
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 
