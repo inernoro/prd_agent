@@ -4,12 +4,12 @@ import { useDefectStore } from '@/stores/defectStore';
 import { useAuthStore } from '@/stores/authStore';
 import { deleteDefect, closeDefect } from '@/services';
 import { toast } from '@/lib/toast';
-import type { DefectReport } from '@/services/contracts/defectAgent';
+import type { DefectReport, DefectAttachment } from '@/services/contracts/defectAgent';
 import { DefectStatus, DefectSeverity } from '@/services/contracts/defectAgent';
 import {
   ArrowRight, Clock, Trash2, Check, Bug,
   AlertTriangle, AlertCircle, Info, MinusCircle,
-  MessageCircle, CheckCircle, Paperclip,
+  MessageCircle, CheckCircle, Paperclip, Image as ImageIcon,
 } from 'lucide-react';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
 
@@ -42,6 +42,10 @@ function formatDate(iso: string | null | undefined) {
   return d.toLocaleDateString();
 }
 
+function isImageAttachment(att: DefectAttachment): boolean {
+  return att.mimeType?.startsWith('image/') || false;
+}
+
 export function DefectListRow({ defect, isRead }: DefectListRowProps) {
   const { selectedDefectId, setSelectedDefectId, removeDefectFromList, updateDefectInList, loadStats } = useDefectStore();
   const userId = useAuthStore((s) => s.user?.userId);
@@ -61,6 +65,7 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
 
   const isArchived = defect.status === DefectStatus.Closed || defect.status === DefectStatus.Rejected;
   const attachmentCount = (defect.attachments || []).length;
+  const imageAttachments = (defect.attachments || []).filter(isImageAttachment);
 
   // 未读/已读状态标签逻辑（与 DefectCard 相同）
   const currentRole =
@@ -289,7 +294,7 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
         {severity.label}
       </div>
 
-      {/* 标题 - 已读变灰，tooltip 显示编号 */}
+      {/* 标题 - 已读变灰 */}
       <span
         className="text-[13px] font-medium truncate flex-1 min-w-0 transition-colors"
         style={{
@@ -303,6 +308,39 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
 
       {/* 状态标签 */}
       {renderStatusBadge()}
+
+      {/* 截图缩略图 */}
+      {imageAttachments.length > 0 && (
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {imageAttachments.slice(0, 2).map((att) => (
+            <div
+              key={att.id}
+              className="w-6 h-6 rounded overflow-hidden flex-shrink-0"
+              style={{
+                background: 'var(--nested-block-bg)',
+                border: '1px solid var(--border-default)',
+              }}
+            >
+              {att.url ? (
+                <img
+                  src={att.url}
+                  alt={att.fileName}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center">
+                  <ImageIcon size={10} style={{ color: 'var(--text-muted)' }} />
+                </div>
+              )}
+            </div>
+          ))}
+          {imageAttachments.length > 2 && (
+            <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>
+              +{imageAttachments.length - 2}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* 附件数量 */}
       {attachmentCount > 0 && (
@@ -340,14 +378,22 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
         />
       </div>
 
-      {/* 时间 */}
-      <span
-        className="text-[10px] flex items-center gap-1 flex-shrink-0 w-[64px] justify-end"
-        style={{ color: 'var(--text-muted)' }}
-      >
-        <Clock size={10} />
-        {formatDate(defect.createdAt)}
-      </span>
+      {/* 缺陷编号 + 时间 */}
+      <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
+        <span
+          className="text-[9px] font-mono"
+          style={{ color: 'var(--text-muted)', opacity: 0.7 }}
+        >
+          {defect.defectNo}
+        </span>
+        <span
+          className="text-[10px] flex items-center gap-1"
+          style={{ color: 'var(--text-muted)' }}
+        >
+          <Clock size={10} />
+          {formatDate(defect.createdAt)}
+        </span>
+      </div>
 
       {/* 操作按钮 */}
       <div
