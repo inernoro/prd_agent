@@ -149,6 +149,11 @@ export const Select = React.forwardRef<
           style={selectContentStyle}
           position="popper"
           sideOffset={8}
+          onPointerDownOutside={(e) => {
+            // 允许点击事件穿透到下一个 Select trigger，
+            // 避免"点一下关闭、再点一下才打开"的问题
+            e.preventDefault = () => {};
+          }}
         >
           <SelectPrimitive.Viewport className={selectViewportClass} style={selectViewportStyle}>
             {normalizedOptions.length === 0 ? (
