@@ -929,7 +929,7 @@ export default function AppShell() {
                   {/* 分组分隔线（非首组） */}
                   {gi > 0 && (
                     <div
-                      className={cn('mx-auto', collapsed ? 'my-2' : 'my-2.5 mx-3')}
+                      className={cn('mx-auto', collapsed ? 'my-4' : 'my-5 mx-3')}
                       style={{
                         height: 1,
                         background: collapsed

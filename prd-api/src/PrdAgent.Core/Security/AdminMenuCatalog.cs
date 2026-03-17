@@ -23,6 +23,7 @@ public static class AdminMenuCatalog
         // ── 个人空间 (personal) ──
         new("marketplace", "/marketplace", "探索市场", "发现优质配置与技能", "Store", 30, "personal"),
         new("my-assets", "/my-assets", "我的资源", "图片、文档与附件", "FolderOpen", 40, "personal"),
+        new("web-pages", "/web-pages", "网页托管", "创建与管理网页", "Globe", 45, "personal"),
 
         // ── 系统管理 (admin) ──
         new("mds", "/mds", "模型中心", "模型、提示词与实验室", "Cpu", 50, "admin"),
@@ -31,8 +32,6 @@ public static class AdminMenuCatalog
 
         // ── 头像面板 (无 Group，不在侧边栏显示) ──
         new("executive", "/executive", "总裁面板", null, "Crown", 100),
-        new("open-platform", "/open-platform", "开放平台", null, "Plug", 110),
-        new("web-pages", "/web-pages", "网页托管", null, "Globe", 120),
         new("logs", "/logs", "请求日志", null, "ScrollText", 130),
 
         // ── 隐藏项（已合并到其他菜单，保留权限注册） ──
@@ -62,7 +61,7 @@ public static class AdminMenuCatalog
         foreach (var menu in All)
         {
             // 基础功能：只需要基础访问权限
-            if (menu.AppKey is "ai-toolbox" or "my-assets" or "settings" or "arena" or "shortcuts-agent" or "marketplace")
+            if (menu.AppKey is "ai-toolbox" or "my-assets" or "settings" or "arena" or "shortcuts-agent" or "marketplace" or "web-pages")
             {
                 if (permSet.Contains(AdminPermissionCatalog.Access))
                 {

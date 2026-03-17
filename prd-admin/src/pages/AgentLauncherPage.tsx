@@ -1,11 +1,9 @@
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Search,
-  Sparkles,
   Loader2,
   ArrowRight,
-  ChevronDown,
   FileText,
   Palette,
   PenTool,
@@ -25,7 +23,6 @@ import {
   Zap,
   type LucideIcon,
 } from 'lucide-react';
-import { motion, useMotionValue, useSpring, useTransform, AnimatePresence } from 'motion/react';
 import { useToolboxStore } from '@/stores/toolboxStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -90,122 +87,11 @@ function getGreeting(): string {
   return '晚上好';
 }
 
-// ── Animated Quick Link Card (with glow + tilt) ──
-
 const QUICK_LINKS = [
   { icon: Store, label: '海鲜市场', desc: '发现和 Fork 优质提示词与配置', path: '/marketplace', accent: '#F59E0B', gradient: 'linear-gradient(135deg, #F59E0B, #F97316)' },
   { icon: GraduationCap, label: '使用教程', desc: '从入门到进阶的操作指南', path: '/tutorials', accent: '#3B82F6', gradient: 'linear-gradient(135deg, #3B82F6, #6366F1)' },
   { icon: ClipboardList, label: '缺陷管理', desc: '快速提交和跟踪缺陷报告', path: '/defect', accent: '#F43F5E', gradient: 'linear-gradient(135deg, #F43F5E, #A855F7)' },
 ] as const;
-
-function QuickLinkCard({ link, onClick }: { link: typeof QUICK_LINKS[number]; onClick: () => void }) {
-  const mouseX = useMotionValue(0.5);
-  const mouseY = useMotionValue(0.5);
-
-  const rotateX = useSpring(useTransform(mouseY, [0, 1], [6, -6]), { stiffness: 300, damping: 30 });
-  const rotateY = useSpring(useTransform(mouseX, [0, 1], [-6, 6]), { stiffness: 300, damping: 30 });
-  const glowX = useTransform(mouseX, (v) => `${v * 100}%`);
-  const glowY = useTransform(mouseY, (v) => `${v * 100}%`);
-
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    mouseX.set((e.clientX - rect.left) / rect.width);
-    mouseY.set((e.clientY - rect.top) / rect.height);
-  }, [mouseX, mouseY]);
-
-  const handleMouseLeave = useCallback(() => {
-    mouseX.set(0.5);
-    mouseY.set(0.5);
-  }, [mouseX, mouseY]);
-
-  const Icon = link.icon;
-
-  return (
-    <motion.button
-      type="button"
-      onClick={onClick}
-      onMouseMove={handleMouseMove}
-      onMouseLeave={handleMouseLeave}
-      className="group relative text-left rounded-2xl overflow-hidden cursor-pointer"
-      style={{
-        rotateX,
-        rotateY,
-        transformPerspective: 800,
-        height: 140,
-      }}
-      whileHover={{ scale: 1.02 }}
-      whileTap={{ scale: 0.98 }}
-      transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-    >
-      {/* Animated glow that follows cursor */}
-      <motion.div
-        className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
-        style={{
-          background: useTransform(
-            [glowX, glowY],
-            ([x, y]) => `radial-gradient(circle 120px at ${x} ${y}, ${link.accent}40 0%, transparent 70%)`
-          ),
-        }}
-      />
-
-      {/* Background with subtle gradient */}
-      <div
-        className="absolute inset-0"
-        style={{
-          background: `
-            radial-gradient(ellipse at 80% 20%, ${link.accent}12 0%, transparent 50%),
-            var(--bg-elevated, rgba(255,255,255,0.03))
-          `,
-          border: `1px solid ${link.accent}20`,
-          borderRadius: 16,
-        }}
-      />
-
-      {/* Animated border glow on hover */}
-      <div
-        className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
-        style={{
-          boxShadow: `inset 0 0 0 1px ${link.accent}40, 0 4px 24px ${link.accent}15`,
-        }}
-      />
-
-      {/* Content */}
-      <div className="relative z-10 h-full flex flex-col justify-between p-5">
-        <div className="flex items-start justify-between">
-          <div
-            className="w-11 h-11 rounded-xl flex items-center justify-center transition-transform duration-300 group-hover:scale-110"
-            style={{
-              background: `linear-gradient(135deg, ${link.accent}25, ${link.accent}10)`,
-              border: `1px solid ${link.accent}30`,
-              boxShadow: `0 0 0 0 ${link.accent}00`,
-            }}
-          >
-            <Icon size={22} style={{ color: link.accent }} />
-          </div>
-          <ArrowRight
-            size={16}
-            className="mt-1 opacity-0 group-hover:opacity-70 transition-all duration-300 group-hover:translate-x-1"
-            style={{ color: link.accent }}
-          />
-        </div>
-        <div>
-          <div className="text-[14px] font-semibold mb-1" style={{ color: 'var(--text-primary, #fff)' }}>
-            {link.label}
-          </div>
-          <div className="text-[12px] leading-relaxed" style={{ color: 'var(--text-muted, rgba(255,255,255,0.45))' }}>
-            {link.desc}
-          </div>
-        </div>
-      </div>
-
-      {/* Bottom accent line */}
-      <div
-        className="absolute bottom-0 left-0 right-0 h-[2px] opacity-0 group-hover:opacity-100 transition-opacity duration-500"
-        style={{ background: link.gradient }}
-      />
-    </motion.button>
-  );
-}
 
 // ── Featured Agent Card (large, with cover image) ──
 
@@ -382,71 +268,10 @@ const AUTO_GRID_COMPACT: React.CSSProperties = {
   gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
 };
 
-const AUTO_GRID_QUICK: React.CSSProperties = {
-  display: 'grid',
-  gap: 12,
-  gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
-};
-
-// ── Arc-style Icon Slot (dock-like) ──
-
-function QuickLinkSlot({ link, onClick }: { link: typeof QUICK_LINKS[number]; onClick: () => void }) {
-  const Icon = link.icon;
-  const [showTooltip, setShowTooltip] = useState(false);
-
-  return (
-    <div className="relative">
-      <motion.button
-        type="button"
-        onClick={onClick}
-        onMouseEnter={() => setShowTooltip(true)}
-        onMouseLeave={() => setShowTooltip(false)}
-        className="w-9 h-9 rounded-[10px] flex items-center justify-center cursor-pointer transition-colors duration-150"
-        style={{
-          background: 'rgba(255,255,255,0.05)',
-          border: '1px solid rgba(255,255,255,0.08)',
-        }}
-        whileHover={{
-          scale: 1.12,
-          background: `${link.accent}18`,
-          borderColor: `${link.accent}30`,
-        }}
-        whileTap={{ scale: 0.92 }}
-        transition={{ type: 'spring', stiffness: 500, damping: 25 }}
-      >
-        <Icon size={16} style={{ color: 'var(--text-secondary, rgba(255,255,255,0.55))' }} className="transition-colors duration-150 group-hover:text-white" />
-      </motion.button>
-
-      {/* Tooltip */}
-      <AnimatePresence>
-        {showTooltip && (
-          <motion.div
-            initial={{ opacity: 0, y: 4 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 4 }}
-            transition={{ duration: 0.15 }}
-            className="absolute top-full left-1/2 -translate-x-1/2 mt-2 px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none z-50"
-            style={{
-              background: 'rgba(0,0,0,0.85)',
-              border: '1px solid rgba(255,255,255,0.1)',
-              fontSize: 11,
-              color: 'rgba(255,255,255,0.85)',
-              backdropFilter: 'blur(8px)',
-            }}
-          >
-            {link.label}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
-
 // ── Main Page ──
 
 export default function AgentLauncherPage() {
   const [searchQuery, setSearchQuery] = useState('');
-  const [quickLinksExpanded, setQuickLinksExpanded] = useState(false);
   const { items, itemsLoading, loadItems } = useToolboxStore();
   const { isMobile } = useBreakpoint();
   const navigate = useNavigate();
@@ -494,147 +319,125 @@ export default function AgentLauncherPage() {
     <div className="h-full min-h-0 flex flex-col" style={{ background: 'var(--bg-base)' }}>
       <div className="flex-1 min-h-0 overflow-auto">
         <div className={isMobile ? 'px-4 pt-6 pb-8' : 'px-8 pt-8 pb-12'}>
-          {/* ── Hero: greeting left + quick links right ── */}
-          <div className={`flex ${isMobile ? 'flex-col gap-4 mb-5' : 'items-end justify-between gap-8 mb-8'}`}>
-            {/* Left: greeting */}
+          {/* ── Hero: greeting + search ── */}
+          <div className={`flex ${isMobile ? 'flex-col gap-4 mb-5' : 'items-start justify-between gap-8 mb-6'}`}>
             <div className="shrink-0">
-              <div className="flex items-center gap-2 mb-2">
-                <Sparkles size={16} style={{ color: 'var(--accent-primary, #818CF8)' }} />
-                <span
-                  className="text-xs font-medium tracking-wide uppercase"
-                  style={{ color: 'var(--text-muted, rgba(255,255,255,0.4))' }}
-                >
-                  AI Agent Platform
-                </span>
-              </div>
               <h1
-                className={`font-semibold tracking-tight ${isMobile ? 'text-xl' : 'text-[28px]'}`}
+                className={`font-semibold tracking-tight ${isMobile ? 'text-xl' : 'text-[26px]'}`}
                 style={{ color: 'var(--text-primary, #fff)' }}
               >
                 {greeting}
                 {displayName ? `，${displayName}` : ''}
               </h1>
               <p
-                className="mt-1.5 text-sm"
+                className="mt-1 text-sm"
                 style={{ color: 'var(--text-muted, rgba(255,255,255,0.45))' }}
               >
                 选择一个智能助手，开始你的创作
               </p>
             </div>
 
-            {/* Right: Arc-style icon dock */}
-            {!searchQuery.trim() && !isMobile && (
-              <div className="flex items-center gap-1.5 shrink-0 pb-1 p-1 rounded-xl"
+            {/* Search (top-right) */}
+            <div className="relative shrink-0" style={{ width: isMobile ? '100%' : 260 }}>
+              <Search
+                size={15}
+                className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                style={{ color: 'var(--text-muted, rgba(255,255,255,0.3))' }}
+              />
+              <input
+                type="text"
+                placeholder="搜索 Agent..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full h-9 pl-9 pr-4 rounded-lg text-[13px] outline-none transition-colors duration-150"
                 style={{
-                  background: 'rgba(255,255,255,0.03)',
-                  border: '1px solid rgba(255,255,255,0.06)',
+                  background: 'rgba(255,255,255,0.04)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  color: 'var(--text-primary, #fff)',
                 }}
-              >
-                {QUICK_LINKS.map((link) => (
-                  <QuickLinkSlot key={link.path} link={link} onClick={() => navigate(link.path)} />
-                ))}
-                <div className="w-px h-5 mx-0.5" style={{ background: 'rgba(255,255,255,0.08)' }} />
-                <motion.button
-                  type="button"
-                  onClick={() => setQuickLinksExpanded((v) => !v)}
-                  className="w-9 h-9 rounded-[10px] flex items-center justify-center cursor-pointer"
-                  style={{
-                    background: 'transparent',
-                  }}
-                  whileHover={{ background: 'rgba(255,255,255,0.06)' }}
-                  whileTap={{ scale: 0.92 }}
-                  title={quickLinksExpanded ? '收起' : '展开'}
-                >
-                  <ChevronDown
-                    size={14}
-                    className="transition-transform duration-200"
-                    style={{
-                      color: 'var(--text-muted, rgba(255,255,255,0.4))',
-                      transform: quickLinksExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
-                    }}
-                  />
-                </motion.button>
-              </div>
-            )}
+                onFocus={(e) => {
+                  e.currentTarget.style.borderColor = 'var(--accent-primary, #818CF8)';
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
+                }}
+                onBlur={(e) => {
+                  e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
+                }}
+              />
+            </div>
           </div>
 
-          {/* Mobile: icon dock */}
-          {!searchQuery.trim() && isMobile && (
-            <div className="flex items-center gap-1.5 mb-4 p-1 rounded-xl self-start"
+          {/* ── Quick Links — persistent frosted glass banner ── */}
+          {!searchQuery.trim() && (
+            <div
+              className={`rounded-2xl ${isMobile ? 'mb-5' : 'mb-8'}`}
               style={{
-                background: 'rgba(255,255,255,0.03)',
-                border: '1px solid rgba(255,255,255,0.06)',
+                background: 'rgba(255, 255, 255, 0.03)',
+                backdropFilter: 'blur(24px) saturate(140%)',
+                WebkitBackdropFilter: 'blur(24px) saturate(140%)',
+                border: '1px solid rgba(255, 255, 255, 0.07)',
               }}
             >
-              {QUICK_LINKS.map((link) => (
-                <QuickLinkSlot key={link.path} link={link} onClick={() => navigate(link.path)} />
-              ))}
-              <div className="w-px h-5 mx-0.5" style={{ background: 'rgba(255,255,255,0.08)' }} />
-              <motion.button
-                type="button"
-                onClick={() => setQuickLinksExpanded((v) => !v)}
-                className="w-9 h-9 rounded-[10px] flex items-center justify-center"
-                style={{ background: 'transparent' }}
-                whileHover={{ background: 'rgba(255,255,255,0.06)' }}
-                whileTap={{ scale: 0.92 }}
+              <div
+                className={`flex items-stretch ${isMobile ? 'flex-col' : ''}`}
+                style={{ minHeight: isMobile ? undefined : 80 }}
               >
-                <ChevronDown
-                  size={14}
-                  style={{
-                    color: 'var(--text-muted)',
-                    transform: quickLinksExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
-                    transition: 'transform 0.2s',
-                  }}
-                />
-              </motion.button>
+                {QUICK_LINKS.map((link, i) => {
+                  const Icon = link.icon;
+                  return (
+                    <button
+                      key={link.path}
+                      type="button"
+                      onClick={() => navigate(link.path)}
+                      className={`group flex-1 flex items-center gap-4 transition-colors duration-200 hover:bg-white/[0.03] ${
+                        isMobile ? 'px-5 py-4' : 'px-6 py-5'
+                      }`}
+                      style={{
+                        borderRight: !isMobile && i < QUICK_LINKS.length - 1
+                          ? '1px solid rgba(255,255,255,0.06)'
+                          : undefined,
+                        borderBottom: isMobile && i < QUICK_LINKS.length - 1
+                          ? '1px solid rgba(255,255,255,0.06)'
+                          : undefined,
+                        borderRadius: isMobile
+                          ? (i === 0 ? '16px 16px 0 0' : i === QUICK_LINKS.length - 1 ? '0 0 16px 16px' : '0')
+                          : (i === 0 ? '16px 0 0 16px' : i === QUICK_LINKS.length - 1 ? '0 16px 16px 0' : '0'),
+                      }}
+                    >
+                      <div
+                        className="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-transform duration-200 group-hover:scale-105"
+                        style={{
+                          background: `${link.accent}12`,
+                          border: `1px solid ${link.accent}20`,
+                        }}
+                      >
+                        <Icon size={20} style={{ color: link.accent }} />
+                      </div>
+                      <div className="text-left min-w-0">
+                        <div
+                          className="text-[13px] font-medium"
+                          style={{ color: 'var(--text-primary, #fff)' }}
+                        >
+                          {link.label}
+                        </div>
+                        <div
+                          className="text-[11px] mt-0.5 truncate"
+                          style={{ color: 'var(--text-muted, rgba(255,255,255,0.4))' }}
+                        >
+                          {link.desc}
+                        </div>
+                      </div>
+                      <ArrowRight
+                        size={14}
+                        className="shrink-0 ml-auto opacity-0 group-hover:opacity-50 transition-all duration-200 group-hover:translate-x-0.5"
+                        style={{ color: 'var(--text-muted)' }}
+                      />
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
-
-          {/* ── Quick Links expanded (animated cards) ── */}
-          <AnimatePresence>
-            {!searchQuery.trim() && quickLinksExpanded && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: 'auto', opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
-                className="overflow-hidden"
-              >
-                <div className={isMobile ? 'mb-5' : 'mb-8'} style={AUTO_GRID_QUICK}>
-                  {QUICK_LINKS.map((link) => (
-                    <QuickLinkCard key={link.path} link={link} onClick={() => navigate(link.path)} />
-                  ))}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* ── Search ── */}
-          <div className={`relative ${isMobile ? 'mb-5' : 'mb-8'}`} style={{ maxWidth: 480 }}>
-            <Search
-              size={16}
-              className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
-              style={{ color: 'var(--text-muted, rgba(255,255,255,0.3))' }}
-            />
-            <input
-              type="text"
-              placeholder="搜索 Agent..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full h-10 pl-10 pr-4 rounded-xl text-[13px] outline-none transition-colors duration-150"
-              style={{
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(255,255,255,0.08)',
-                color: 'var(--text-primary, #fff)',
-              }}
-              onFocus={(e) => {
-                e.currentTarget.style.borderColor = 'var(--accent-primary, #818CF8)';
-              }}
-              onBlur={(e) => {
-                e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
-              }}
-            />
-          </div>
 
           {/* ── Loading ── */}
           {itemsLoading ? (
