@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Interfaces.LlmGateway;
 using PrdAgent.Core.Models;
@@ -53,6 +54,15 @@ public class PrdAgentSkillsController : ControllerBase
 
     private string GetUserId()
         => User.FindFirst("userId")?.Value ?? User.FindFirst("sub")?.Value ?? "";
+
+    private static string ToKebabCase(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return "untitled-skill";
+        // Remove non-ASCII (Chinese etc.) chars, replace spaces/underscores with hyphens
+        var ascii = System.Text.RegularExpressions.Regex.Replace(input, @"[^\x20-\x7E]", "");
+        if (string.IsNullOrWhiteSpace(ascii)) return $"skill-{DateTime.UtcNow:yyyyMMddHHmmss}";
+        return System.Text.RegularExpressions.Regex.Replace(ascii.Trim(), @"[\s_]+", "-").ToLowerInvariant();
+    }
 
     private async Task<(Session? Session, UserRole EffectiveAnswerRole, IActionResult? Error)> ResolveAccessibleSessionAsync(
         string sessionId,
@@ -515,6 +525,18 @@ public class PrdAgentSkillsController : ControllerBase
                 "Skill draft extracted from {TurnCount}-turn conversation by {UserId}, title={Title}",
                 request.ConversationMessages.Count, userId, draft.Title);
 
+            // 同时生成 SKILL.md 格式
+            var draftSkill = new Skill
+            {
+                SkillKey = ToKebabCase(draft.Title ?? "untitled-skill"),
+                Title = draft.Title ?? "未命名技能",
+                Description = draft.Description ?? "",
+                Icon = draft.Icon,
+                Category = draft.Category ?? "general",
+                Execution = new SkillExecutionConfig { PromptTemplate = draft.PromptTemplate },
+            };
+            var skillMd = SkillMdFormat.Serialize(draftSkill);
+
             return Ok(ApiResponse<object>.Ok(new
             {
                 promptTemplate = draft.PromptTemplate,
@@ -522,12 +544,22 @@ public class PrdAgentSkillsController : ControllerBase
                 description = draft.Description,
                 category = draft.Category,
                 icon = draft.Icon,
+                skillMd,
             }));
         }
         catch (JsonException)
         {
             // JSON 解析失败时回退：把整个输出当作 promptTemplate
             _logger.LogWarning("Failed to parse skill draft JSON from LLM, falling back to raw promptTemplate");
+
+            var fallbackSkill = new Skill
+            {
+                SkillKey = "untitled-skill",
+                Title = "未命名技能",
+                Execution = new SkillExecutionConfig { PromptTemplate = rawResult },
+            };
+            var fallbackMd = SkillMdFormat.Serialize(fallbackSkill);
+
             return Ok(ApiResponse<object>.Ok(new
             {
                 promptTemplate = rawResult,
@@ -535,8 +567,67 @@ public class PrdAgentSkillsController : ControllerBase
                 description = (string?)null,
                 category = (string?)null,
                 icon = (string?)null,
+                skillMd = fallbackMd,
             }));
         }
+    }
+
+    /// <summary>
+    /// 导出技能为 SKILL.md 格式
+    /// </summary>
+    [HttpGet("{skillKey}/export")]
+    public async Task<IActionResult> Export(string skillKey, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        if (string.IsNullOrWhiteSpace(userId))
+            return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "未授权"));
+
+        var skill = await _skillService.GetByKeyAsync(skillKey, ct);
+        if (skill == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "技能不存在"));
+
+        // 个人技能仅创建者可导出
+        if (skill.Visibility == SkillVisibility.Personal && skill.OwnerUserId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权导出此技能"));
+
+        var skillMd = SkillMdFormat.Serialize(skill);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            skillMd,
+            fileName = $"{skill.SkillKey}.skill.md",
+        }));
+    }
+
+    /// <summary>
+    /// 从 SKILL.md 内容导入创建个人技能
+    /// </summary>
+    [HttpPost("import")]
+    public async Task<IActionResult> Import([FromBody] ImportSkillMdRequest request, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        if (string.IsNullOrWhiteSpace(userId))
+            return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "未授权"));
+
+        if (string.IsNullOrWhiteSpace(request.SkillMd))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "SKILL.md 内容不能为空"));
+
+        var skill = SkillMdFormat.Deserialize(request.SkillMd);
+        if (skill == null || string.IsNullOrWhiteSpace(skill.Execution.PromptTemplate))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "SKILL.md 格式无效或缺少提示词模板"));
+
+        // 如果 skillKey 已存在于个人技能中，生成新的 key
+        var existing = await _skillService.GetByKeyAsync(skill.SkillKey, ct);
+        if (existing != null)
+        {
+            skill.SkillKey = $"{skill.SkillKey}-{DateTime.UtcNow:yyyyMMddHHmmss}";
+        }
+
+        var created = await _skillService.CreatePersonalSkillAsync(userId, skill, ct);
+
+        _logger.LogInformation("Skill imported from SKILL.md: {SkillKey} by {UserId}", created.SkillKey, userId);
+
+        return Ok(ApiResponse<object>.Ok(new { skillKey = created.SkillKey }));
     }
 
     /// <summary>
@@ -589,6 +680,13 @@ public class ConversationMessageItem
 {
     public string Role { get; set; } = string.Empty;
     public string Content { get; set; } = string.Empty;
+}
+
+/// <summary>导入 SKILL.md 的请求体</summary>
+public class ImportSkillMdRequest
+{
+    /// <summary>SKILL.md 文件内容</summary>
+    public string SkillMd { get; set; } = string.Empty;
 }
 
 /// <summary>LLM 提炼的技能草案结果</summary>

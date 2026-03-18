@@ -257,6 +257,9 @@ pub fn run() {
             commands::skill::delete_skill,
             commands::skill::generate_skill_from_message,
             commands::skill::generate_skill_from_conversation,
+            commands::skill::export_skill,
+            commands::skill::import_skill,
+            commands::skill::save_skill_to_file,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

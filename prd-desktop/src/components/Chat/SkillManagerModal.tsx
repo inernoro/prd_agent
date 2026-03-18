@@ -58,6 +58,10 @@ export default function SkillManagerModal({ open, onClose, initialFormData }: Pr
   const [form, setForm] = useState<SkillFormData>(EMPTY_FORM);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importText, setImportText] = useState('');
+  const [showImportPanel, setShowImportPanel] = useState(false);
   const emojiRef = useRef<HTMLDivElement>(null);
 
   // 只显示个人技能
@@ -70,6 +74,7 @@ export default function SkillManagerModal({ open, onClose, initialFormData }: Pr
       setEditingKey('__new__');
       setIsNew(true);
       setShowEmojiPicker(false);
+      setShowImportPanel(false);
     }
   }, [open, initialFormData]);
 
@@ -98,6 +103,7 @@ export default function SkillManagerModal({ open, onClose, initialFormData }: Pr
     setEditingKey('__new__');
     setIsNew(true);
     setShowEmojiPicker(false);
+    setShowImportPanel(false);
   };
 
   const handleEdit = (skill: Skill) => {
@@ -113,6 +119,7 @@ export default function SkillManagerModal({ open, onClose, initialFormData }: Pr
     setEditingKey(skill.skillKey);
     setIsNew(false);
     setShowEmojiPicker(false);
+    setShowImportPanel(false);
   };
 
   const handleSave = async () => {
@@ -173,6 +180,40 @@ export default function SkillManagerModal({ open, onClose, initialFormData }: Pr
     }
   };
 
+  const handleExport = async (skillKey: string) => {
+    setIsExporting(true);
+    try {
+      const resp = await invoke<ApiResponse<{ skillMd: string; fileName: string }>>('export_skill', { skillKey });
+      if (resp?.success && resp.data?.skillMd) {
+        await invoke<boolean>('save_skill_to_file', {
+          content: resp.data.skillMd,
+          defaultName: resp.data.fileName,
+        });
+      }
+    } catch (err) {
+      console.error('Failed to export skill:', err);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleImport = async () => {
+    if (!importText.trim()) return;
+    setIsImporting(true);
+    try {
+      const resp = await invoke<ApiResponse<{ skillKey: string }>>('import_skill', { skillMd: importText.trim() });
+      if (resp?.success) {
+        await refreshSkills();
+        setShowImportPanel(false);
+        setImportText('');
+      }
+    } catch (err) {
+      console.error('Failed to import skill:', err);
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   if (!open) return null;
 
   return createPortal(
@@ -200,6 +241,18 @@ export default function SkillManagerModal({ open, onClose, initialFormData }: Pr
             >
               + 新建技能
             </button>
+            <button
+              onClick={() => { setShowImportPanel(true); setEditingKey(null); }}
+              className="w-full px-3 py-2 text-xs text-left rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-text-secondary transition-colors flex items-center gap-1.5"
+            >
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+              </svg>
+              导入 SKILL.md
+            </button>
+            {personalSkills.length > 0 && (
+              <div className="border-t border-black/5 dark:border-white/5 my-1" />
+            )}
             {personalSkills.map((skill) => (
               <div
                 key={skill.skillKey}
@@ -211,30 +264,83 @@ export default function SkillManagerModal({ open, onClose, initialFormData }: Pr
                 }`}
               >
                 <span className="truncate">{skill.icon ? `${skill.icon} ` : ''}{skill.title || '未命名'}</span>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDelete(skill.skillKey);
-                  }}
-                  className="opacity-0 group-hover:opacity-100 text-red-500 hover:text-red-600 ml-1"
-                  title="删除"
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                </button>
+                <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleExport(skill.skillKey);
+                    }}
+                    className="text-text-secondary hover:text-primary-500"
+                    title="导出为 SKILL.md"
+                    disabled={isExporting}
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDelete(skill.skillKey);
+                    }}
+                    className="text-red-500 hover:text-red-600 ml-0.5"
+                    title="删除"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
+                </div>
               </div>
             ))}
-            {personalSkills.length === 0 && !editingKey && (
+            {personalSkills.length === 0 && !editingKey && !showImportPanel && (
               <p className="text-xs text-text-secondary/60 text-center py-4">
                 点击上方按钮创建你的第一个自定义技能
               </p>
             )}
           </div>
 
-          {/* Right: edit form */}
+          {/* Right: edit form or import panel */}
           <div className="flex-1 overflow-y-auto p-4">
-            {editingKey ? (
+            {showImportPanel ? (
+              <div className="flex flex-col gap-3">
+                <div>
+                  <h3 className="text-sm font-medium mb-1">导入 SKILL.md</h3>
+                  <p className="text-xs text-text-secondary">
+                    粘贴 SKILL.md 文件内容，将自动解析为个人技能
+                  </p>
+                </div>
+                <textarea
+                  value={importText}
+                  onChange={(e) => setImportText(e.target.value)}
+                  className="w-full px-3 py-2 text-xs font-mono rounded-lg ui-control resize-y min-h-[200px]"
+                  placeholder={`---\nname: my-skill\ndescription: "A reusable skill"\nprd-agent:\n  title: "我的技能"\n  icon: "🎯"\n  category: analysis\n---\n\n你的提示词模板内容...`}
+                />
+                <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-blue-500/5 border border-blue-500/10">
+                  <svg className="w-3.5 h-3.5 text-blue-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <p className="text-[11px] text-blue-600 dark:text-blue-300 leading-relaxed">
+                    SKILL.md 是跨平台开放标准。从 Claude Code、Cursor 等平台导出的技能文件可直接导入。
+                  </p>
+                </div>
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <button
+                    onClick={() => { setShowImportPanel(false); setImportText(''); }}
+                    className="px-4 py-2 text-xs rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-text-secondary transition-colors"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={handleImport}
+                    disabled={!importText.trim() || isImporting}
+                    className="px-4 py-2 text-xs rounded-lg bg-primary-500 text-white hover:bg-primary-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isImporting ? '导入中…' : '导入'}
+                  </button>
+                </div>
+              </div>
+            ) : editingKey ? (
               <div className="flex flex-col gap-3">
                 {/* Title + Icon */}
                 <div className="grid grid-cols-[1fr,80px] gap-2">
