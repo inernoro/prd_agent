@@ -293,8 +293,8 @@ export default function DefectListPage() {
   ];
 
   const viewModeButtons: { key: DefectViewMode; Icon: () => JSX.Element; title: string }[] = [
-    { key: 'card', Icon: IconGrid, title: '卡片视图' },
     { key: 'list', Icon: IconList, title: '列表视图' },
+    { key: 'card', Icon: IconGrid, title: '卡片视图' },
   ];
 
   return (
