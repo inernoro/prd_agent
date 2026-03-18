@@ -10,6 +10,24 @@ PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 
 log() { echo "[session-start] $*"; }
 
+ensure_pnpm() {
+  if command -v pnpm &>/dev/null; then
+    return
+  fi
+
+  log "pnpm not found, enabling via corepack..."
+  if command -v corepack &>/dev/null; then
+    corepack enable
+    corepack prepare pnpm@latest --activate
+  fi
+
+  if ! command -v pnpm &>/dev/null; then
+    log "WARNING: pnpm still unavailable, skip frontend setup"
+    return 1
+  fi
+  return 0
+}
+
 # ------------------------------------------------------------------
 # 1. Install .NET 8 SDK (if not already installed)
 # ------------------------------------------------------------------
@@ -80,18 +98,45 @@ fi
 # ------------------------------------------------------------------
 cd "$PROJECT_DIR"
 
-for subdir in prd-admin prd-desktop prd-video; do
-  if [ -f "$PROJECT_DIR/$subdir/package.json" ]; then
-    log "Installing $subdir dependencies..."
-    cd "$PROJECT_DIR/$subdir"
-    pnpm install 2>&1 || npm install 2>&1 || log "WARNING: $subdir install failed"
+if ensure_pnpm; then
+  if [ -f "$PROJECT_DIR/prd-admin/package.json" ]; then
+    if [ -f "$PROJECT_DIR/prd-admin/pnpm-lock.yaml" ]; then
+      log "Warming pnpm store for prd-admin..."
+      pnpm -C "$PROJECT_DIR/prd-admin" fetch --frozen-lockfile 2>&1 || log "WARNING: pnpm fetch failed for prd-admin"
+    fi
+
+    log "Installing prd-admin dependencies (prefer offline)..."
+    pnpm -C "$PROJECT_DIR/prd-admin" install --frozen-lockfile --prefer-offline 2>&1 || log "WARNING: prd-admin install failed"
   fi
-done
+
+  for subdir in prd-desktop prd-video; do
+    if [ -f "$PROJECT_DIR/$subdir/package.json" ]; then
+      log "Installing $subdir dependencies (pnpm)..."
+      pnpm -C "$PROJECT_DIR/$subdir" install --frozen-lockfile --prefer-offline 2>&1 || log "WARNING: $subdir install failed"
+    fi
+  done
+fi
 
 cd "$PROJECT_DIR"
 
 # ------------------------------------------------------------------
-# 5. Stop proxy relay (no longer needed after restore)
+# 5. Verification commands required by cloud setup
+# ------------------------------------------------------------------
+if [ -d "$PROJECT_DIR/prd-api" ]; then
+  log "Verifying backend build command: dotnet build prd-api --no-restore"
+  cd "$PROJECT_DIR"
+  dotnet build prd-api --no-restore 2>&1 || log "WARNING: dotnet build prd-api --no-restore failed"
+fi
+
+if command -v pnpm &>/dev/null && [ -d "$PROJECT_DIR/prd-admin" ]; then
+  log "Verifying frontend command: pnpm -C prd-admin tsc --noEmit"
+  pnpm -C "$PROJECT_DIR/prd-admin" tsc --noEmit 2>&1 || log "WARNING: pnpm -C prd-admin tsc --noEmit failed"
+fi
+
+cd "$PROJECT_DIR"
+
+# ------------------------------------------------------------------
+# 6. Stop proxy relay (no longer needed after restore)
 # ------------------------------------------------------------------
 if [ -n "${RELAY_PID:-}" ] && kill -0 "$RELAY_PID" 2>/dev/null; then
   kill "$RELAY_PID" 2>/dev/null || true
