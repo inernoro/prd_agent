@@ -23,6 +23,9 @@ export default function ReportAgentPage() {
     error,
     activeTab,
     setActiveTab,
+    setSelectedReportId,
+    setShowReportEditor,
+    showReportEditor,
     loadAll,
     teams,
   } = useReportAgentStore();
@@ -58,6 +61,13 @@ export default function ReportAgentPage() {
     }
   }, [activeTab, setActiveTab]);
 
+  // 切换离开“周报”标签时，重置编辑态，避免再次回到周报时直接落在创建页
+  useEffect(() => {
+    if (activeTab === 'report' || !showReportEditor) return;
+    setShowReportEditor(false);
+    setSelectedReportId(null);
+  }, [activeTab, setSelectedReportId, setShowReportEditor, showReportEditor]);
+
   const tabItems = useMemo(() => {
     const items = [
       { key: 'report', label: '周报', icon: <FileText size={14} /> },
@@ -77,7 +87,9 @@ export default function ReportAgentPage() {
       <TabBar
         items={tabItems}
         activeKey={currentTab}
-        onChange={(key) => setActiveTab(key as typeof activeTab)}
+        onChange={(key) => {
+          setActiveTab(key as typeof activeTab);
+        }}
       />
 
       {error && (
