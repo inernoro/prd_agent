@@ -222,6 +222,7 @@ pub fn run() {
             commands::updater::get_updater_platform_info,
             commands::updater::check_for_update,
             commands::updater::fetch_update_manifests,
+            commands::client_config::fetch_client_config,
             commands::defect::list_defects,
             commands::defect::list_defect_users,
             commands::defect::list_defect_templates,
