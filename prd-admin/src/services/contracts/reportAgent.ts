@@ -19,6 +19,14 @@ export interface ReportTeam {
   autoSubmitSchedule?: string;
   /** 团队自定义每日打点标签 */
   customDailyLogTags?: string[];
+  /** 当前用户在该团队的角色: leader / deputy / member */
+  myRole?: string | null;
+  /** 当前用户与团队关系: managed / joined */
+  relationType?: 'managed' | 'joined' | null;
+  /** 当前用户是否可管理成员 */
+  canManageMembers?: boolean;
+  /** 当前用户是否可主动退出该团队 */
+  canLeave?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -328,6 +336,10 @@ export type UpdateReportTeamContract = (input: {
 
 export type DeleteReportTeamContract = (input: { id: string }) => Promise<ApiResponse<object>>;
 
+export type LeaveReportTeamContract = (input: { teamId: string }) => Promise<
+  ApiResponse<{ left: boolean }>
+>;
+
 // --- Team Members ---
 export type AddReportTeamMemberContract = (input: {
   teamId: string;
@@ -403,6 +415,19 @@ export type UpdateWeeklyReportContract = (input: {
   sections: { items: { content: string; source?: string; sourceRef?: string }[] }[];
 }) => Promise<ApiResponse<{ report: WeeklyReport }>>;
 
+export interface ReportRichTextImageUploadData {
+  attachmentId: string;
+  url: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+}
+
+export type UploadReportRichTextImageContract = (input: {
+  id: string;
+  file: File;
+}) => Promise<ApiResponse<ReportRichTextImageUploadData>>;
+
 export type DeleteWeeklyReportContract = (input: { id: string }) => Promise<ApiResponse<object>>;
 
 export type SubmitWeeklyReportContract = (input: { id: string }) => Promise<
@@ -415,7 +440,7 @@ export type ReviewWeeklyReportContract = (input: { id: string }) => Promise<
 
 export type ReturnWeeklyReportContract = (input: {
   id: string;
-  reason?: string;
+  reason: string;
 }) => Promise<ApiResponse<{ report: WeeklyReport }>>;
 
 // --- Dashboard ---
@@ -509,6 +534,19 @@ export interface ReportComment {
   updatedAt?: string;
 }
 
+export interface ReportLikeUser {
+  userId: string;
+  userName: string;
+  avatarFileName?: string;
+  likedAt: string;
+}
+
+export interface ReportLikeSummary {
+  likedByMe: boolean;
+  count: number;
+  users: ReportLikeUser[];
+}
+
 export type ListCommentsContract = (input: {
   reportId: string;
   sectionIndex?: number;
@@ -525,6 +563,18 @@ export type DeleteCommentContract = (input: {
   reportId: string;
   commentId: string;
 }) => Promise<ApiResponse<object>>;
+
+export type ListReportLikesContract = (input: {
+  reportId: string;
+}) => Promise<ApiResponse<ReportLikeSummary>>;
+
+export type LikeReportContract = (input: {
+  reportId: string;
+}) => Promise<ApiResponse<ReportLikeSummary>>;
+
+export type UnlikeReportContract = (input: {
+  reportId: string;
+}) => Promise<ApiResponse<ReportLikeSummary>>;
 
 // ========== Phase 3: Plan Comparison ==========
 
@@ -565,6 +615,61 @@ export interface TeamSummarySection {
   items: string[];
 }
 
+export type TeamSummaryVisibilityScope = 'full_team' | 'self_only' | 'none';
+export type TeamSummaryKind = 'team_summary' | 'self_report' | 'none';
+
+export interface TeamSummaryViewData {
+  team: ReportTeam;
+  weekYear: number;
+  weekNumber: number;
+  periodStart: string;
+  periodEnd: string;
+  visibilityScope: TeamSummaryVisibilityScope;
+  summaryKind: TeamSummaryKind;
+  summary: TeamSummary | null;
+  message?: string;
+  canGenerateSummary: boolean;
+  canManageMembers: boolean;
+  canViewAllMembers: boolean;
+  members: TeamDashboardMember[];
+}
+
+export interface TeamReportsViewStats {
+  totalMembers: number;
+  submittedCount: number;
+  pendingCount: number;
+}
+
+export interface TeamReportListItem {
+  reportId: string;
+  userId: string;
+  userName?: string;
+  avatarFileName?: string;
+  status: string;
+  submittedAt?: string;
+  updatedAt: string;
+  teamId: string;
+  teamName?: string;
+  weekYear: number;
+  weekNumber: number;
+}
+
+export interface TeamReportsViewData {
+  team: ReportTeam;
+  weekYear: number;
+  weekNumber: number;
+  periodStart: string;
+  periodEnd: string;
+  visibilityScope: TeamSummaryVisibilityScope;
+  stats: TeamReportsViewStats;
+  items: TeamReportListItem[];
+  members: TeamDashboardMember[];
+  message?: string;
+  canGenerateSummary: boolean;
+  canManageMembers: boolean;
+  canViewAllMembers: boolean;
+}
+
 export type GenerateTeamSummaryContract = (input: {
   teamId: string;
   weekYear?: number;
@@ -576,6 +681,18 @@ export type GetTeamSummaryContract = (input: {
   weekYear?: number;
   weekNumber?: number;
 }) => Promise<ApiResponse<{ summary: TeamSummary | null }>>;
+
+export type GetTeamSummaryViewContract = (input: {
+  teamId: string;
+  weekYear?: number;
+  weekNumber?: number;
+}) => Promise<ApiResponse<TeamSummaryViewData>>;
+
+export type GetTeamReportsViewContract = (input: {
+  teamId: string;
+  weekYear?: number;
+  weekNumber?: number;
+}) => Promise<ApiResponse<TeamReportsViewData>>;
 
 // ========== Phase 4: History Trends ==========
 

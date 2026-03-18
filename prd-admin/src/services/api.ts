@@ -473,10 +473,13 @@ export const api = {
     teams: {
       list: () => '/api/report-agent/teams',
       byId: (id: string) => `/api/report-agent/teams/${id}`,
+      leave: (id: string) => `/api/report-agent/teams/${id}/leave`,
       members: (id: string) => `/api/report-agent/teams/${id}/members`,
       member: (id: string, userId: string) => `/api/report-agent/teams/${id}/members/${userId}`,
       dashboard: (id: string) => `/api/report-agent/teams/${id}/dashboard`,
+      reportsView: (id: string) => `/api/report-agent/teams/${id}/reports/view`,
       summary: (id: string) => `/api/report-agent/teams/${id}/summary`,
+      summaryView: (id: string) => `/api/report-agent/teams/${id}/summary/view`,
       summaryGenerate: (id: string) => `/api/report-agent/teams/${id}/summary/generate`,
     },
     templates: {
@@ -486,12 +489,14 @@ export const api = {
     reports: {
       list: () => '/api/report-agent/reports',
       byId: (id: string) => `/api/report-agent/reports/${id}`,
+      richTextImages: (id: string) => `/api/report-agent/reports/${id}/rich-text/images`,
       submit: (id: string) => `/api/report-agent/reports/${id}/submit`,
       review: (id: string) => `/api/report-agent/reports/${id}/review`,
       return: (id: string) => `/api/report-agent/reports/${id}/return`,
       generate: (id: string) => `/api/report-agent/reports/${id}/generate`,
       comments: (id: string) => `/api/report-agent/reports/${id}/comments`,
       comment: (id: string, commentId: string) => `/api/report-agent/reports/${id}/comments/${commentId}`,
+      likes: (id: string) => `/api/report-agent/reports/${id}/likes`,
       planComparison: (id: string) => `/api/report-agent/reports/${id}/plan-comparison`,
     },
     dailyLogs: {

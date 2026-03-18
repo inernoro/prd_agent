@@ -118,6 +118,7 @@ public class MongoDbContext
     public IMongoCollection<ReportDataSource> ReportDataSources => _database.GetCollection<ReportDataSource>("report_data_sources");
     public IMongoCollection<ReportCommit> ReportCommits => _database.GetCollection<ReportCommit>("report_commits");
     public IMongoCollection<ReportComment> ReportComments => _database.GetCollection<ReportComment>("report_comments");
+    public IMongoCollection<ReportLike> ReportLikes => _database.GetCollection<ReportLike>("report_likes");
     public IMongoCollection<TeamSummary> ReportTeamSummaries => _database.GetCollection<TeamSummary>("report_team_summaries");
     public IMongoCollection<PersonalSource> PersonalSources => _database.GetCollection<PersonalSource>("report_personal_sources");
 
@@ -1140,6 +1141,22 @@ public class MongoDbContext
         ReportComments.Indexes.CreateOne(new CreateIndexModel<ReportComment>(
             Builders<ReportComment>.IndexKeys.Ascending(x => x.ParentCommentId),
             new CreateIndexOptions { Name = "idx_report_comments_parent" }));
+
+        // ReportLikes：(ReportId, UserId) 唯一，防重复点赞
+        try
+        {
+            ReportLikes.Indexes.CreateOne(new CreateIndexModel<ReportLike>(
+                Builders<ReportLike>.IndexKeys.Ascending(x => x.ReportId).Ascending(x => x.UserId),
+                new CreateIndexOptions { Name = "uniq_report_likes_report_user", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        // ReportLikes：按 ReportId + CreatedAt 查询点赞用户
+        ReportLikes.Indexes.CreateOne(new CreateIndexModel<ReportLike>(
+            Builders<ReportLike>.IndexKeys.Ascending(x => x.ReportId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_report_likes_report_created" }));
 
         // ReportTeamSummaries：(TeamId, WeekYear, WeekNumber) 唯一
         try

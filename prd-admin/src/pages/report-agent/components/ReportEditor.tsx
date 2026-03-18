@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, type ClipboardEvent } from 'react';
 import { ArrowLeft, Save, Send, Plus, Trash2, Sparkles, RefreshCw, FileText } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
@@ -10,9 +10,12 @@ import {
   submitWeeklyReport,
   getWeeklyReport,
   generateReport,
+  deleteWeeklyReport,
+  uploadReportRichTextImage,
 } from '@/services';
 import type { WeeklyReport } from '@/services/contracts/reportAgent';
 import { WeeklyReportStatus, ReportInputType } from '@/services/contracts/reportAgent';
+import { RichTextMarkdownContent } from './RichTextMarkdownContent';
 
 interface Props {
   reportId: string | null;
@@ -21,12 +24,107 @@ interface Props {
   onClose: () => void;
 }
 
+const MAX_RICH_TEXT_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_COMPRESS_DIMENSION = 4096;
+const MIN_COMPRESS_SCALE = 0.4;
+const SCALE_REDUCE_FACTOR = 0.86;
+const MIN_COMPRESS_QUALITY = 0.4;
+const QUALITY_REDUCE_STEP = 0.08;
+const MARKDOWN_IMAGE_REGEX = /!\[[^\]]*]\(([^)]+)\)/;
+
+function inferExtFromMime(mime: string): string {
+  if (mime.includes('webp')) return 'webp';
+  if (mime.includes('png')) return 'png';
+  if (mime.includes('gif')) return 'gif';
+  return 'jpg';
+}
+
+async function toBlob(canvas: HTMLCanvasElement, mimeType: string, quality: number): Promise<Blob | null> {
+  return await new Promise((resolve) => {
+    canvas.toBlob((blob) => resolve(blob), mimeType, quality);
+  });
+}
+
+async function loadImage(file: File): Promise<HTMLImageElement> {
+  return await new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(img);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('图片解码失败，请重试'));
+    };
+    img.src = objectUrl;
+  });
+}
+
+function buildOutputFile(blob: Blob, originFile: File): File {
+  const mimeType = blob.type || 'image/jpeg';
+  const ext = inferExtFromMime(mimeType);
+  const rawName = (originFile.name || '').trim();
+  const baseName = rawName ? rawName.replace(/\.[^/.]+$/, '') : `pasted-image-${Date.now()}`;
+  return new File([blob], `${baseName}.${ext}`, { type: mimeType, lastModified: Date.now() });
+}
+
+function hasMarkdownImage(content: string): boolean {
+  return MARKDOWN_IMAGE_REGEX.test(content);
+}
+
+async function compressImageToLimit(file: File, maxBytes: number): Promise<{ file: File; compressed: boolean }> {
+  if (file.size <= maxBytes) return { file, compressed: false };
+
+  const image = await loadImage(file);
+  const ratio = image.width > 0 && image.height > 0
+    ? Math.min(1, MAX_COMPRESS_DIMENSION / Math.max(image.width, image.height))
+    : 1;
+
+  let bestBlob: Blob | null = null;
+  const outputMimeTypes = file.type === 'image/jpeg' || file.type === 'image/webp'
+    ? [file.type, 'image/jpeg']
+    : ['image/webp', 'image/jpeg'];
+
+  for (let scale = ratio; scale >= MIN_COMPRESS_SCALE; scale *= SCALE_REDUCE_FACTOR) {
+    const width = Math.max(1, Math.floor(image.width * scale));
+    const height = Math.max(1, Math.floor(image.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('当前浏览器不支持图片压缩，请更换浏览器重试');
+
+    ctx.clearRect(0, 0, width, height);
+    ctx.drawImage(image, 0, 0, width, height);
+
+    for (const mimeType of outputMimeTypes) {
+      for (let quality = 0.92; quality >= MIN_COMPRESS_QUALITY; quality -= QUALITY_REDUCE_STEP) {
+        const blob = await toBlob(canvas, mimeType, quality);
+        if (!blob) continue;
+        if (!bestBlob || blob.size < bestBlob.size) bestBlob = blob;
+        if (blob.size <= maxBytes) {
+          return { file: buildOutputFile(blob, file), compressed: true };
+        }
+      }
+    }
+  }
+
+  if (bestBlob && bestBlob.size <= maxBytes) {
+    return { file: buildOutputFile(bestBlob, file), compressed: true };
+  }
+
+  throw new Error('图片压缩后仍超过 5MB，请裁剪后重试');
+}
+
 export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props) {
-  const { teams, templates, updateReportInList, addReportToList } = useReportAgentStore();
+  const { teams, templates, updateReportInList, addReportToList, removeReportFromList } = useReportAgentStore();
   const [report, setReport] = useState<WeeklyReport | null>(null);
   const [sections, setSections] = useState<{ items: { content: string; source: string; sourceRef?: string }[] }[]>([]);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [pastingImageKey, setPastingImageKey] = useState<string | null>(null);
   const [selectedTeamId, setSelectedTeamId] = useState(teams[0]?.id || '');
   const [selectedTemplateId, setSelectedTemplateId] = useState(templates[0]?.id || '');
   const [isNew, setIsNew] = useState(!reportId);
@@ -139,6 +237,22 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
     }
   }, [report, updateReportInList]);
 
+  const handleDelete = useCallback(async () => {
+    if (!report) return;
+    if (!window.confirm('删除后不可恢复，确定删除这份周报吗？')) return;
+
+    setDeleting(true);
+    const res = await deleteWeeklyReport({ id: report.id });
+    setDeleting(false);
+    if (res.success) {
+      removeReportFromList(report.id);
+      toast.success('周报已删除');
+      onClose();
+    } else {
+      toast.error(res.error?.message || '删除失败');
+    }
+  }, [report, removeReportFromList, onClose]);
+
   const updateItem = (sectionIdx: number, itemIdx: number, content: string) => {
     setSections((prev) => {
       const next = [...prev];
@@ -174,7 +288,70 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
     });
   };
 
-  const canEdit = !report || report.status === WeeklyReportStatus.Draft || report.status === WeeklyReportStatus.Returned || report.status === WeeklyReportStatus.Overdue;
+  const canEdit = !report
+    || report.status === WeeklyReportStatus.Draft
+    || report.status === WeeklyReportStatus.Submitted
+    || report.status === WeeklyReportStatus.Returned
+    || report.status === WeeklyReportStatus.Overdue;
+  const canSubmit = !!report
+    && (report.status === WeeklyReportStatus.Draft
+      || report.status === WeeklyReportStatus.Returned
+      || report.status === WeeklyReportStatus.Overdue);
+  const canGenerate = !!report
+    && (report.status === WeeklyReportStatus.Draft
+      || report.status === WeeklyReportStatus.Returned
+      || report.status === WeeklyReportStatus.Overdue);
+  const canDelete = !!report
+    && (report.status === WeeklyReportStatus.Draft
+      || report.status === WeeklyReportStatus.Submitted
+      || report.status === WeeklyReportStatus.Returned
+      || report.status === WeeklyReportStatus.Overdue);
+
+  const handleRichTextPaste = async (
+    e: ClipboardEvent<HTMLTextAreaElement>,
+    sectionIdx: number,
+    itemIdx: number
+  ) => {
+    if (!report || !canEdit) return;
+    const textarea = e.currentTarget;
+    const imageItem = Array.from(e.clipboardData?.items ?? []).find((it) => it.type.startsWith('image/'));
+    if (!imageItem) return;
+
+    const file = imageItem.getAsFile();
+    if (!file) return;
+
+    e.preventDefault();
+    const uploadKey = `${sectionIdx}-${itemIdx}`;
+    setPastingImageKey(uploadKey);
+
+    try {
+      const { file: uploadFile, compressed } = await compressImageToLimit(file, MAX_RICH_TEXT_IMAGE_BYTES);
+      const res = await uploadReportRichTextImage({ id: report.id, file: uploadFile });
+      if (!res.success || !res.data?.url) {
+        toast.error(res.error?.message || '图片上传失败');
+        return;
+      }
+
+      const start = textarea.selectionStart ?? textarea.value.length;
+      const end = textarea.selectionEnd ?? start;
+      const current = textarea.value;
+      const markdown = `\n![粘贴图片](${res.data.url})\n`;
+      const next = `${current.slice(0, start)}${markdown}${current.slice(end)}`;
+      updateItem(sectionIdx, itemIdx, next);
+
+      const cursor = start + markdown.length;
+      requestAnimationFrame(() => {
+        textarea.focus();
+        textarea.setSelectionRange(cursor, cursor);
+      });
+
+      toast.success(compressed ? '图片已自动压缩并插入' : '图片已插入');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '图片处理失败');
+    } finally {
+      setPastingImageKey((prev) => (prev === uploadKey ? null : prev));
+    }
+  };
 
   // Section colors — gradient pairs for headers
   const sectionThemes = [
@@ -315,21 +492,32 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
               )}
             </div>
           </div>
-          {canEdit && (
+          {(canEdit || canSubmit || canGenerate || canDelete) && (
             <div className="flex items-center gap-2">
-              <Button variant="secondary" size="sm" onClick={handleGenerate} disabled={generating || saving}>
-                {generating ? (
-                  <><RefreshCw size={13} className="animate-spin" /> 生成中...</>
-                ) : (
-                  <><Sparkles size={13} /> AI 填充</>
-                )}
-              </Button>
-              <Button variant="secondary" size="sm" onClick={handleSave} disabled={saving}>
-                <Save size={13} /> 保存
-              </Button>
-              <Button variant="primary" size="sm" onClick={handleSubmit} disabled={saving}>
-                <Send size={13} /> 提交
-              </Button>
+              {canGenerate && (
+                <Button variant="secondary" size="sm" onClick={handleGenerate} disabled={generating || saving || deleting}>
+                  {generating ? (
+                    <><RefreshCw size={13} className="animate-spin" /> 生成中...</>
+                  ) : (
+                    <><Sparkles size={13} /> AI 填充</>
+                  )}
+                </Button>
+              )}
+              {canEdit && (
+                <Button variant="secondary" size="sm" onClick={handleSave} disabled={saving || generating || deleting}>
+                  <Save size={13} /> 保存
+                </Button>
+              )}
+              {canSubmit && (
+                <Button variant="primary" size="sm" onClick={handleSubmit} disabled={saving || generating || deleting}>
+                  <Send size={13} /> 提交
+                </Button>
+              )}
+              {canDelete && (
+                <Button variant="ghost" size="sm" onClick={handleDelete} disabled={saving || generating || deleting}>
+                  <Trash2 size={13} /> {deleting ? '删除中...' : '删除'}
+                </Button>
+              )}
             </div>
           )}
         </div>
@@ -353,6 +541,15 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
           style={{ color: 'rgba(239, 68, 68, 0.9)', background: 'rgba(239, 68, 68, 0.06)', border: '1px solid rgba(239, 68, 68, 0.12)' }}
         >
           退回原因: {report.returnReason}
+        </div>
+      )}
+
+      {report.status === WeeklyReportStatus.Submitted && (
+        <div
+          className="flex items-center gap-2.5 text-[12px] px-5 py-3 rounded-xl"
+          style={{ color: 'rgba(59, 130, 246, 0.9)', background: 'rgba(59, 130, 246, 0.06)', border: '1px solid rgba(59, 130, 246, 0.12)' }}
+        >
+          已提交周报在“已审阅”前仍可编辑或删除，变更会即时生效。
         </div>
       )}
 
@@ -418,22 +615,33 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                         />
                       )}
                       {section.templateSection.inputType === ReportInputType.RichText ? (
-                        <textarea
-                          className="flex-1 px-4 py-3 rounded-xl text-[13px] resize-none transition-all duration-200"
-                          style={{
-                            background: 'var(--bg-secondary)',
-                            color: 'var(--text-primary)',
-                            border: '1px solid var(--border-primary)',
-                            minHeight: 100,
-                            outline: 'none',
-                          }}
-                          onFocus={(e) => { e.currentTarget.style.borderColor = theme.color.replace('0.9', '0.4'); e.currentTarget.style.boxShadow = `0 0 0 2px ${theme.color.replace('0.9', '0.08')}`; }}
-                          onBlur={(e) => { e.currentTarget.style.borderColor = 'var(--border-primary)'; e.currentTarget.style.boxShadow = 'none'; }}
-                          value={item.content}
-                          onChange={(e) => updateItem(sIdx, iIdx, e.target.value)}
-                          placeholder="请输入内容..."
-                          disabled={!canEdit}
-                        />
+                        <div className="flex-1">
+                          <textarea
+                            className="w-full px-4 py-3 rounded-xl text-[13px] resize-none transition-all duration-200"
+                            style={{
+                              background: 'var(--bg-secondary)',
+                              color: 'var(--text-primary)',
+                              border: '1px solid var(--border-primary)',
+                              minHeight: 100,
+                              outline: 'none',
+                            }}
+                            onFocus={(e) => { e.currentTarget.style.borderColor = theme.color.replace('0.9', '0.4'); e.currentTarget.style.boxShadow = `0 0 0 2px ${theme.color.replace('0.9', '0.08')}`; }}
+                            onBlur={(e) => { e.currentTarget.style.borderColor = 'var(--border-primary)'; e.currentTarget.style.boxShadow = 'none'; }}
+                            value={item.content}
+                            onChange={(e) => updateItem(sIdx, iIdx, e.target.value)}
+                            onPaste={(e) => { void handleRichTextPaste(e, sIdx, iIdx); }}
+                            placeholder={pastingImageKey === `${sIdx}-${iIdx}` ? '图片上传中...' : '请输入内容（支持直接粘贴图片，超 5MB 自动压缩）...'}
+                            disabled={!canEdit}
+                          />
+                          {hasMarkdownImage(item.content) && (
+                            <RichTextMarkdownContent
+                              content={item.content}
+                              showRealtimeLabel
+                              imageMaxHeight={220}
+                              className="mt-2"
+                            />
+                          )}
+                        </div>
                       ) : (
                         <input
                           className="flex-1 px-4 py-3 rounded-xl text-[13px] transition-all duration-200"

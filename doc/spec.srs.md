@@ -2070,9 +2070,11 @@ sequenceDiagram
 
 **功能详述**：
 1. 团队 CRUD：创建/编辑/删除团队，支持上下级层级（ParentTeamId）
-2. 成员管理：添加/移除成员，设置角色（Member/Leader/Deputy）和岗位
+2. 成员管理：添加/移除成员，设置角色（Member/Leader/Deputy）和岗位；Leader/Deputy 可直接执行成员管理
 3. 创建团队时自动将负责人添加为 Leader 成员
-4. 团队删除前检查是否有关联周报（有则禁止删除）
+4. 团队列表需返回当前用户关系元数据：`myRole`、`relationType(managed/joined)`、`canManageMembers`、`canLeave`
+5. 用户可对“我加入的团队”主动退出（Leader 不可直接退出，需先移交负责人）
+6. 团队删除前检查是否有关联周报（有则禁止删除）
 
 **数据模型**：`ReportTeam`、`ReportTeamMember`（集合：`report_teams`、`report_team_members`）
 
@@ -2080,6 +2082,7 @@ sequenceDiagram
 - `GET/POST /api/report-agent/teams` — 团队列表/创建
 - `GET/PUT/DELETE /api/report-agent/teams/{id}` — 团队详情/更新/删除
 - `POST/DELETE/PUT /api/report-agent/teams/{id}/members/{userId}` — 成员增删改
+- `POST /api/report-agent/teams/{id}/leave` — 主动退出团队（非 Leader）
 
 #### 4.23.2 REPORT-002 周报模板管理
 
@@ -2113,19 +2116,28 @@ sequenceDiagram
 
 **功能详述**：
 1. 周报基于 ISO 8601 周数（WeekYear + WeekNumber），唯一约束 (UserId, TeamId, WeekYear, WeekNumber)
-2. 状态机：Draft/Returned → Submitted（员工操作）→ Reviewed/Returned（领导操作）
-3. 仅草稿/已退回状态可编辑和提交，仅草稿可删除
-4. 团队面板：领导查看成员周报提交状态概览、提交进度统计
+2. 状态机：Draft/Returned/Overdue → Submitted（员工操作）→ Reviewed（领导操作）；团队管理员可对 Submitted/Reviewed 执行 Returned
+3. 仅草稿/已退回/逾期状态可提交；仅作者可在已审阅前（草稿/已提交/已退回/逾期）编辑和删除；打回必须填写原因
+4. 团队工作台：区分“我管理的团队 / 我加入的团队”，选择团队后默认展示团队周报列表（总人数/已提交/待提交）；成员入口通过右侧抽屉打开
+5. 团队周报AI分析为独立入口：从周报列表进入并可返回列表，避免与列表主视图混淆
+6. 分析可见性：`all_members` 团队成员可见完整团队分析；`leaders_only` 普通成员仅可见本人已提交周报分析
+7. RichText 板块支持直接粘贴图片：前端在上传前自动压缩（目标 ≤ 5MB），后端按“作者 + 可编辑状态”校验并返回可嵌入 URL
 
-**数据模型**：`WeeklyReport`、`WeeklyReportSection`、`WeeklyReportItem`（集合：`report_weekly_reports`）
+**数据模型**：`WeeklyReport`、`WeeklyReportSection`、`WeeklyReportItem`、`ReportLike`（集合：`report_weekly_reports`、`report_likes`）
 
 **API 端点**：
 - `GET/POST /api/report-agent/reports` — 周报列表/创建
 - `GET/PUT/DELETE /api/report-agent/reports/{id}` — 周报详情/更新/删除
+- `POST /api/report-agent/reports/{id}/rich-text/images` — 富文本图片上传（粘贴图片）
 - `POST /api/report-agent/reports/{id}/submit` — 提交
 - `POST /api/report-agent/reports/{id}/review` — 审阅
 - `POST /api/report-agent/reports/{id}/return` — 退回
+- `GET /api/report-agent/reports/{id}/likes` — 点赞列表（含是否已点赞、点赞用户）
+- `POST /api/report-agent/reports/{id}/likes` — 点赞（幂等）
+- `DELETE /api/report-agent/reports/{id}/likes` — 取消点赞（幂等）
 - `GET /api/report-agent/teams/{id}/dashboard` — 团队面板
+- `GET /api/report-agent/teams/{id}/reports/view` — 团队周报列表视图（按权限返回 full_team / self_only）
+- `GET /api/report-agent/teams/{id}/summary/view` — 团队周报AI分析视图（按权限返回 full_team / self_only）
 
 **权限定义**：
 - `report-agent.use` — 基础使用

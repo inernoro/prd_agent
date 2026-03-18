@@ -1,11 +1,14 @@
 import { apiRequest } from './apiClient';
 import { api } from '@/services/api';
+import type { ApiResponse } from '@/types/api';
+import { useAuthStore } from '@/stores/authStore';
 import type {
   ListReportTeamsContract,
   GetReportTeamContract,
   CreateReportTeamContract,
   UpdateReportTeamContract,
   DeleteReportTeamContract,
+  LeaveReportTeamContract,
   AddReportTeamMemberContract,
   RemoveReportTeamMemberContract,
   UpdateReportTeamMemberContract,
@@ -19,6 +22,7 @@ import type {
   GetWeeklyReportContract,
   CreateWeeklyReportContract,
   UpdateWeeklyReportContract,
+  UploadReportRichTextImageContract,
   DeleteWeeklyReportContract,
   SubmitWeeklyReportContract,
   ReviewWeeklyReportContract,
@@ -40,9 +44,14 @@ import type {
   ListCommentsContract,
   CreateCommentContract,
   DeleteCommentContract,
+  ListReportLikesContract,
+  LikeReportContract,
+  UnlikeReportContract,
   GetPlanComparisonContract,
   GenerateTeamSummaryContract,
   GetTeamSummaryContract,
+  GetTeamSummaryViewContract,
+  GetTeamReportsViewContract,
   GetPersonalTrendsContract,
   GetTeamTrendsContract,
   MarkVacationContract,
@@ -68,15 +77,74 @@ import type {
   ReportTeamMember,
   ReportTemplate,
   WeeklyReport,
+  ReportRichTextImageUploadData,
   ReportUser,
   TeamDashboardData,
   ReportComment,
+  ReportLikeSummary,
   PlanComparison,
   TeamSummary,
+  TeamSummaryViewData,
+  TeamReportsViewData,
   PersonalSource,
   PersonalStats,
   TeamWorkflowInfo,
 } from '../contracts/reportAgent';
+
+type RefreshOkData = { accessToken: string; refreshToken: string; sessionKey: string };
+
+function getApiBaseUrl() {
+  const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
+  return raw.trim().replace(/\/+$/, '');
+}
+
+function joinUrl(base: string, path: string) {
+  const b = base.replace(/\/+$/, '');
+  const p = path.replace(/^\/+/, '');
+  if (!b) return `/${p}`;
+  return `${b}/${p}`;
+}
+
+function isRefreshOkData(data: unknown): data is RefreshOkData {
+  if (!data || typeof data !== 'object') return false;
+  const obj = data as Record<string, unknown>;
+  return typeof obj.accessToken === 'string'
+    && typeof obj.refreshToken === 'string'
+    && typeof obj.sessionKey === 'string';
+}
+
+async function tryRefreshAdminTokenForUpload(): Promise<boolean> {
+  const authStore = useAuthStore.getState();
+  const token = authStore.token;
+  const refreshToken = authStore.refreshToken;
+  const sessionKey = authStore.sessionKey;
+  const userId = authStore.user?.userId;
+
+  if (!authStore.isAuthenticated || !token || !refreshToken || !sessionKey || !userId) return false;
+
+  const url = joinUrl(getApiBaseUrl(), api.auth.refresh());
+  const body = JSON.stringify({
+    refreshToken,
+    userId,
+    clientType: 'admin',
+    sessionKey,
+  });
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body,
+    });
+    const text = await res.text();
+    const parsed = text ? JSON.parse(text) as ApiResponse<RefreshOkData> : null;
+    if (!res.ok || !parsed?.success || !isRefreshOkData(parsed.data)) return false;
+    authStore.setTokens(parsed.data.accessToken, parsed.data.refreshToken, parsed.data.sessionKey);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // ========== Teams ==========
 
@@ -110,6 +178,13 @@ export const deleteReportTeamReal: DeleteReportTeamContract = async (input) => {
   return await apiRequest<object>(
     api.reportAgent.teams.byId(encodeURIComponent(input.id)),
     { method: 'DELETE' }
+  );
+};
+
+export const leaveReportTeamReal: LeaveReportTeamContract = async (input) => {
+  return await apiRequest<{ left: boolean }>(
+    api.reportAgent.teams.leave(encodeURIComponent(input.teamId)),
+    { method: 'POST' }
   );
 };
 
@@ -214,6 +289,61 @@ export const updateWeeklyReportReal: UpdateWeeklyReportContract = async (input) 
     api.reportAgent.reports.byId(encodeURIComponent(id)),
     { method: 'PUT', body }
   );
+};
+
+export const uploadReportRichTextImageReal: UploadReportRichTextImageContract = async (input) => {
+  const buildHeaders = (token: string | null | undefined) => {
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    return headers;
+  };
+  const createFormData = () => {
+    const fd = new FormData();
+    fd.append('file', input.file);
+    return fd;
+  };
+
+  const parseResponse = async (res: Response): Promise<ApiResponse<ReportRichTextImageUploadData>> => {
+    const text = await res.text();
+    try {
+      return JSON.parse(text) as ApiResponse<ReportRichTextImageUploadData>;
+    } catch {
+      return { success: false, error: { code: 'PARSE_ERROR', message: text || '上传失败' } } as ApiResponse<ReportRichTextImageUploadData>;
+    }
+  };
+
+  const rawBase = getApiBaseUrl();
+  const path = api.reportAgent.reports.richTextImages(encodeURIComponent(input.id));
+  const url = rawBase ? `${rawBase}${path}` : path;
+
+  try {
+    const firstRes = await fetch(url, {
+      method: 'POST',
+      headers: buildHeaders(useAuthStore.getState().token),
+      body: createFormData(),
+    });
+    const firstParsed = await parseResponse(firstRes);
+    const firstUnauthorized = firstRes.status === 401 || firstParsed.error?.code === 'UNAUTHORIZED';
+    if (!firstUnauthorized) return firstParsed;
+
+    const refreshed = await tryRefreshAdminTokenForUpload();
+    if (!refreshed) return firstParsed;
+
+    const retryRes = await fetch(url, {
+      method: 'POST',
+      headers: buildHeaders(useAuthStore.getState().token),
+      body: createFormData(),
+    });
+    return await parseResponse(retryRes);
+  } catch (error) {
+    return {
+      success: false,
+      error: {
+        code: 'NETWORK_ERROR',
+        message: error instanceof Error ? error.message : '网络错误，上传失败',
+      },
+    } as ApiResponse<ReportRichTextImageUploadData>;
+  }
 };
 
 export const deleteWeeklyReportReal: DeleteWeeklyReportContract = async (input) => {
@@ -399,6 +529,27 @@ export const deleteCommentReal: DeleteCommentContract = async (input) => {
   );
 };
 
+export const listReportLikesReal: ListReportLikesContract = async (input) => {
+  return await apiRequest<ReportLikeSummary>(
+    api.reportAgent.reports.likes(encodeURIComponent(input.reportId)),
+    { method: 'GET' }
+  );
+};
+
+export const likeReportReal: LikeReportContract = async (input) => {
+  return await apiRequest<ReportLikeSummary>(
+    api.reportAgent.reports.likes(encodeURIComponent(input.reportId)),
+    { method: 'POST' }
+  );
+};
+
+export const unlikeReportReal: UnlikeReportContract = async (input) => {
+  return await apiRequest<ReportLikeSummary>(
+    api.reportAgent.reports.likes(encodeURIComponent(input.reportId)),
+    { method: 'DELETE' }
+  );
+};
+
 // ========== Phase 3: Plan Comparison ==========
 
 export const getPlanComparisonReal: GetPlanComparisonContract = async (input) => {
@@ -428,6 +579,28 @@ export const getTeamSummaryReal: GetTeamSummaryContract = async (input) => {
   const q = qs.toString();
   return await apiRequest<{ summary: TeamSummary | null }>(
     `${api.reportAgent.teams.summary(encodeURIComponent(input.teamId))}${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
+};
+
+export const getTeamSummaryViewReal: GetTeamSummaryViewContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input.weekYear != null) qs.set('weekYear', String(input.weekYear));
+  if (input.weekNumber != null) qs.set('weekNumber', String(input.weekNumber));
+  const q = qs.toString();
+  return await apiRequest<TeamSummaryViewData>(
+    `${api.reportAgent.teams.summaryView(encodeURIComponent(input.teamId))}${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
+};
+
+export const getTeamReportsViewReal: GetTeamReportsViewContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input.weekYear != null) qs.set('weekYear', String(input.weekYear));
+  if (input.weekNumber != null) qs.set('weekNumber', String(input.weekNumber));
+  const q = qs.toString();
+  return await apiRequest<TeamReportsViewData>(
+    `${api.reportAgent.teams.reportsView(encodeURIComponent(input.teamId))}${q ? `?${q}` : ''}`,
     { method: 'GET' }
   );
 };
