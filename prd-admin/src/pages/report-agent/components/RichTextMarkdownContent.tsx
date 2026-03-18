@@ -50,10 +50,13 @@ export function RichTextMarkdownContent({
             实时预览
           </div>
         )}
-        <div className="text-[12px] leading-relaxed">
+        <div className="text-[12px] leading-relaxed text-left">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
+              p: ({ children }) => (
+                <p className="my-1 whitespace-pre-wrap break-words">{children}</p>
+              ),
               img: ({ src, alt }) => {
                 const imageSrc = typeof src === 'string' ? src : '';
                 if (!imageSrc) return null;
@@ -61,7 +64,7 @@ export function RichTextMarkdownContent({
                 return (
                   <button
                     type="button"
-                    className="group relative block w-full my-2 cursor-zoom-in"
+                    className="group relative inline-block max-w-full my-2 cursor-zoom-in align-top"
                     onClick={() => {
                       setPreviewIndex(idx);
                       setPreviewOpen(true);
@@ -69,7 +72,7 @@ export function RichTextMarkdownContent({
                     title="点击查看大图"
                   >
                     <div
-                      className="relative mx-auto overflow-hidden rounded-xl border transition-all duration-200"
+                      className="relative inline-block overflow-hidden rounded-xl border transition-all duration-200"
                       style={{
                         borderColor: 'var(--border-primary)',
                         background: 'linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.015))',
@@ -79,10 +82,9 @@ export function RichTextMarkdownContent({
                       <img
                         src={imageSrc}
                         alt={alt || '周报图片'}
-                        className="w-full object-contain transition-transform duration-200 group-hover:scale-[1.01]"
+                        className="block h-auto w-auto max-w-full object-contain transition-transform duration-200 group-hover:scale-[1.01]"
                         style={{
                           maxHeight: `min(${imageMaxHeight}px, 42vh)`,
-                          minHeight: '72px',
                           background: 'rgba(255,255,255,0.01)',
                         }}
                       />
