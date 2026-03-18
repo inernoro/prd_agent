@@ -1318,6 +1318,69 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  // ── Cleanup orphan branches: remove local branches that no longer exist on remote ──
+
+  router.post('/cleanup-orphans', async (_req, res) => {
+    initSSE(res);
+    try {
+      // Step 1: fetch remote to get latest branch list
+      sendSSE(res, 'step', { step: 'fetch', status: 'running', title: '正在拉取远程分支列表...' });
+      await shell.exec(
+        'GIT_TERMINAL_PROMPT=0 git fetch origin --prune',
+        { cwd: config.repoRoot, timeout: 30_000 },
+      );
+
+      // Get all remote branch names
+      const result = await shell.exec(
+        'git for-each-ref --format="%(refname:lstrip=3)" refs/remotes/origin',
+        { cwd: config.repoRoot },
+      );
+      const remoteBranches = new Set(
+        result.stdout.trim().split('\n').filter(Boolean).filter(b => b !== 'HEAD'),
+      );
+      sendSSE(res, 'step', { step: 'fetch', status: 'done', title: `远程共 ${remoteBranches.size} 个分支` });
+
+      // Step 2: identify orphans (local CDS branches whose git branch no longer exists on remote)
+      const state = stateService.getState();
+      const allLocal = Object.values(state.branches);
+      const orphans = allLocal.filter(b => !remoteBranches.has(b.branch));
+
+      if (orphans.length === 0) {
+        sendSSE(res, 'complete', { message: '没有发现孤儿分支，一切正常', orphanCount: 0 });
+        res.end();
+        return;
+      }
+
+      sendSSE(res, 'step', { step: 'scan', status: 'info', title: `发现 ${orphans.length} 个孤儿分支`, detail: { orphans: orphans.map(b => ({ id: b.id, branch: b.branch })) } });
+
+      // Step 3: stop containers, remove worktrees, delete from state
+      let cleaned = 0;
+      for (const entry of orphans) {
+        sendSSE(res, 'step', { step: `cleanup-${entry.id}`, status: 'running', title: `正在清理 ${entry.branch}...` });
+
+        // Stop all containers
+        for (const svc of Object.values(entry.services)) {
+          try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+        }
+        // Remove worktree
+        try { await worktreeService.remove(entry.worktreePath); } catch { /* ok */ }
+        // Remove from state
+        stateService.removeLogs(entry.id);
+        stateService.removeBranch(entry.id);
+        cleaned++;
+
+        sendSSE(res, 'step', { step: `cleanup-${entry.id}`, status: 'done', title: `已清理 ${entry.branch}` });
+      }
+
+      stateService.save();
+      sendSSE(res, 'complete', { message: `已清理 ${cleaned} 个孤儿分支`, orphanCount: cleaned });
+    } catch (err) {
+      sendSSE(res, 'error', { message: (err as Error).message });
+    } finally {
+      res.end();
+    }
+  });
+
   // ── Factory reset: stop all containers, clear all config, keep Docker volumes ──
 
   router.post('/factory-reset', async (_req, res) => {
