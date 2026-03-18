@@ -65,6 +65,9 @@ if (cdsTheme === 'light') document.documentElement.dataset.theme = 'light';
 let cdsMode = 'standalone';
 let executors = [];
 
+// ── Container capacity ──
+let containerCapacity = { maxContainers: 999, runningContainers: 0, totalMemGB: 0 };
+
 // ── Utilities ──
 
 async function api(method, path, body) {
@@ -146,6 +149,7 @@ let previewDomain = '';
 let workerPort = '';
 
 async function init() {
+  updateThemeUI();
   await Promise.all([loadBranches(), loadProfiles(), loadRoutingRules(), loadConfig(), loadEnvVars(), loadInfraServices(), loadMirrorState()]);
   refreshRemoteCandidates();
   updatePreviewModeUI();
@@ -363,13 +367,55 @@ function setTheme(theme) {
   updateThemeUI();
 }
 
-function toggleTheme() {
-  setTheme(cdsTheme === 'dark' ? 'light' : 'dark');
+function toggleTheme(event) {
+  const newTheme = cdsTheme === 'dark' ? 'light' : 'dark';
+
+  // Get origin point from button click
+  let x, y;
+  if (event) {
+    const btn = event.currentTarget || event.target;
+    const rect = btn.getBoundingClientRect();
+    x = rect.left + rect.width / 2;
+    y = rect.top + rect.height / 2;
+  } else {
+    x = window.innerWidth / 2;
+    y = 0;
+  }
+
+  // Calculate max radius to cover entire page
+  const maxRadius = Math.ceil(Math.sqrt(
+    Math.max(x, window.innerWidth - x) ** 2 +
+    Math.max(y, window.innerHeight - y) ** 2
+  ));
+
+  // Set CSS custom properties for clip-path animation origin
+  document.documentElement.style.setProperty('--ripple-x', `${x}px`);
+  document.documentElement.style.setProperty('--ripple-y', `${y}px`);
+  document.documentElement.style.setProperty('--ripple-radius', `${maxRadius}px`);
+
+  if (document.startViewTransition) {
+    // View Transition API: captures old state as snapshot, then reveals new state
+    // with clip-path circle animation (like clawhub.ai)
+    document.startViewTransition(() => {
+      setTheme(newTheme);
+    });
+  } else {
+    // Fallback: instant switch
+    setTheme(newTheme);
+  }
 }
 
 function updateThemeUI() {
   const sw = document.querySelector('.settings-switch-theme');
   if (sw) sw.classList.toggle('on', cdsTheme === 'light');
+  // Update header toggle icon
+  const headerBtn = document.getElementById('themeToggleBtn');
+  if (headerBtn) {
+    headerBtn.innerHTML = cdsTheme === 'light'
+      ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>'
+      : '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="4.22" x2="19.78" y2="5.64"/></svg>';
+    headerBtn.title = cdsTheme === 'light' ? '切换到暗色模式' : '切换到亮色模式';
+  }
 }
 
 // ── Data loading ──
@@ -379,6 +425,12 @@ async function loadBranches() {
     const data = await api('GET', '/branches');
     branches = data.branches || [];
     defaultBranch = data.defaultBranch;
+    if (data.capacity) containerCapacity = data.capacity;
+    // Auto-select main/master as default when no default is set
+    if (!defaultBranch && branches.length > 0) {
+      const mainBranch = branches.find(b => b.id === 'main') || branches.find(b => b.id === 'master');
+      if (mainBranch) defaultBranch = mainBranch.id;
+    }
     renderBranches();
   } catch (e) { console.error('loadBranches:', e); }
 }
@@ -562,10 +614,91 @@ async function addBranch(name) {
   await loadBranches();
 }
 
+// ── Container capacity check ──
+
+function getNewContainerCount(branchId, profileId) {
+  const br = branches.find(b => b.id === branchId);
+  if (profileId) {
+    // Single service deploy: only adds 1 if not already running
+    const svc = br?.services?.[profileId];
+    return (!svc || svc.status === 'idle' || svc.status === 'stopped' || svc.status === 'error') ? 1 : 0;
+  }
+  // Full deploy: count services that are not already running
+  const alreadyRunning = br ? Object.values(br.services).filter(s =>
+    s.status === 'running' || s.status === 'building' || s.status === 'starting'
+  ).length : 0;
+  return Math.max(0, buildProfiles.length - alreadyRunning);
+}
+
+function findOldestRunningBranch(excludeId) {
+  return branches
+    .filter(b => b.id !== excludeId && (b.status === 'running' || b.status === 'starting'))
+    .sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0))[0];
+}
+
+function checkCapacityAndDeploy(id, profileId) {
+  const newCount = getNewContainerCount(id, profileId);
+  const afterDeploy = containerCapacity.runningContainers + newCount;
+  if (afterDeploy <= containerCapacity.maxContainers) {
+    // Within capacity, deploy directly
+    if (profileId) deploySingleServiceDirect(id, profileId);
+    else deployBranchDirect(id);
+    return;
+  }
+
+  const oldest = findOldestRunningBranch(id);
+  const oldestName = oldest ? oldest.branch : '';
+
+  // Show capacity warning modal
+  const html = `
+    <div class="capacity-warning">
+      <div class="capacity-warning-icon">⚠️</div>
+      <div class="capacity-warning-text">
+        <p>当前服务器内存 <strong>${containerCapacity.totalMemGB}GB</strong>，最多支持 <strong>${containerCapacity.maxContainers}</strong> 个容器。</p>
+        <p>目前已有 <strong>${containerCapacity.runningContainers}</strong> 个容器运行中，本次部署需新增 <strong>${newCount}</strong> 个。</p>
+        <p style="color:var(--orange);margin-top:8px;">继续部署可能导致容器因内存不足无法正常运行。</p>
+      </div>
+      <div class="capacity-warning-actions">
+        <button class="primary sm" onclick="capacityChoiceForce('${id}', ${profileId ? `'${profileId}'` : 'null'})">我偏要</button>
+        ${oldest ? `<button class="sm" onclick="capacityChoiceStopOldest('${id}', ${profileId ? `'${profileId}'` : 'null'}, '${oldest.id}')">停掉 ${esc(oldestName).slice(0, 30)}</button>` : ''}
+        <button class="sm" onclick="closeConfigModal()">取消</button>
+      </div>
+    </div>
+  `;
+  openConfigModal('容器容量不足', html);
+}
+
+function capacityChoiceForce(id, profileId) {
+  closeConfigModal();
+  if (profileId) deploySingleServiceDirect(id, profileId);
+  else deployBranchDirect(id);
+}
+
+async function capacityChoiceStopOldest(id, profileId, oldestId) {
+  closeConfigModal();
+  showToast(`正在停止分支 ${oldestId}...`, 'info');
+  try {
+    await api('POST', `/branches/${oldestId}/stop`);
+    await loadBranches();
+    showToast(`已停止分支 ${oldestId}`, 'success');
+    if (profileId) deploySingleServiceDirect(id, profileId);
+    else deployBranchDirect(id);
+  } catch (e) {
+    showToast(`停止失败: ${e.message}`, 'error');
+  }
+}
+
 async function deployBranch(id) {
+  checkCapacityAndDeploy(id, null);
+}
+
+async function deployBranchDirect(id) {
   if (busyBranches.has(id)) return;
   markTouched(id);
   busyBranches.add(id);
+  // Clear previous error message immediately on new deploy
+  const br = branches.find(b => b.id === id);
+  if (br) { br.errorMessage = undefined; br.status = 'building'; }
   inlineDeployLogs.set(id, { lines: [], status: 'building', expanded: false });
   renderBranches();
 
@@ -1006,10 +1139,17 @@ async function viewContainerLogs(id, profileId) {
 
 // ── Single-service deploy ──
 
-async function deploySingleService(id, profileId) {
+function deploySingleService(id, profileId) {
+  checkCapacityAndDeploy(id, profileId);
+}
+
+async function deploySingleServiceDirect(id, profileId) {
   if (busyBranches.has(id)) return;
   busyBranches.add(id);
   closeDeployMenu(id);
+  // Clear previous error message immediately on new deploy
+  const br = branches.find(b => b.id === id);
+  if (br) { br.errorMessage = undefined; br.status = 'building'; }
   inlineDeployLogs.set(id, { lines: [], status: 'building', expanded: false });
   renderBranches();
 
@@ -1173,7 +1313,7 @@ function toggleSettingsMenu(event) {
         </span>
       </span>
     </div>
-    <div class="settings-menu-item settings-menu-switch" onclick="toggleTheme()">
+    <div class="settings-menu-item settings-menu-switch" onclick="toggleTheme(event)">
       <span class="settings-menu-switch-label">白天模式</span>
       <span class="settings-switch settings-switch-theme ${cdsTheme === 'light' ? 'on' : ''}">
         <span class="settings-switch-track">

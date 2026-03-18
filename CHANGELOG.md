@@ -12,6 +12,12 @@
 
 | 类型 | 模块 | 描述 |
 |------|------|------|
+| feat | cds | ClawHub 暖色调仅亮色模式：H27° 暖米背景、暖褐文字、朱红 accent、海沫绿 success、alpha 透明度边框/阴影、径向暖光晕；暗色模式保持原翡翠绿方案不变（tag: pre-clawhub-theme 可还原） |
+| fix | cds | 白天模式颜色修复：背景纯白、饱和度提升、modal/日志面板适配、accent 颜色加深 |
+| fix | cds | 重新部署时立即清除之前的拉取/部署错误信息（前后端同步清除） |
+| feat | cds | 主题切换按钮移至顶部栏，View Transition API 水波纹动效（圆形clip-path扩散），暗色 #131314/#1E1F20、亮色 #FFFFFF/#F0F4F9 |
+| feat | cds | 容器容量检查：部署前校验 (内存GB-1)*2 上限，超限弹窗提供"我偏要/停掉最早的/取消"三选项 |
+| feat | cds | 无默认分支时自动选中 main/master 作为默认分支 |
 | feat | prd-desktop | 缺陷管理列表行补充缺陷编号和截图缩略图显示 |
 | feat | prd-desktop | 缺陷列表视图改为单行紧凑布局（对齐 web 端），新增图片预览缩略图及全屏预览 |
 | feat | prd-admin | 缺陷列表视图新增图片预览缩略图（状态列左侧），支持 hover 高亮和点击全屏预览 |

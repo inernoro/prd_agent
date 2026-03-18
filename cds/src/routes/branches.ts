@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { execSync, spawn } from 'node:child_process';
 import { createGzip } from 'node:zlib';
@@ -156,9 +157,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return 0; // preserve original order
     });
 
+    // Compute container capacity: (memoryGB - 1) * 2
+    const totalMemGB = Math.round(os.totalmem() / (1024 * 1024 * 1024));
+    const maxContainers = Math.max(2, (totalMemGB - 1) * 2);
+    let runningContainers = 0;
+    for (const b of branches) {
+      for (const svc of Object.values(b.services)) {
+        if (svc.status === 'running' || svc.status === 'building' || svc.status === 'starting') {
+          runningContainers++;
+        }
+      }
+    }
+
     res.json({
       branches: branchesWithSubject,
       defaultBranch: state.defaultBranch,
+      capacity: { maxContainers, runningContainers, totalMemGB },
     });
   });
 
@@ -282,12 +296,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       logDeploy(id, '开始部署');
 
+      // Clear previous error state on new deploy
+      entry.errorMessage = undefined;
+      for (const svc of Object.values(entry.services)) {
+        if (svc.errorMessage) svc.errorMessage = undefined;
+      }
+      entry.status = 'building';
+      stateService.save();
+
       // Pull latest code
       logEvent({ step: 'pull', status: 'running', title: '正在拉取最新代码...', timestamp: new Date().toISOString() });
       const pullResult = await worktreeService.pull(entry.branch, entry.worktreePath);
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
 
-      entry.status = 'building';
       stateService.save();
 
       // ── Compute startup layers (topological sort by dependsOn) ──
@@ -526,6 +547,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     try {
       logDeploy(id, `开始部署服务 ${profile.name}`);
+
+      // Clear previous error state on new deploy
+      entry.errorMessage = undefined;
+      const existingSvc = entry.services[profile.id];
+      if (existingSvc?.errorMessage) existingSvc.errorMessage = undefined;
+      stateService.save();
 
       // Pull latest code
       logEvent({ step: 'pull', status: 'running', title: '正在拉取最新代码...', timestamp: new Date().toISOString() });
