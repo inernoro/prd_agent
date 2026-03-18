@@ -947,7 +947,12 @@ public class ReportAgentController : ControllerBase
             bytes = ms.ToArray();
         }
 
-        var stored = await _assetStorage.SaveAsync(bytes, mimeType, ct, domain: AppKey, type: "img");
+        var stored = await _assetStorage.SaveAsync(
+            bytes,
+            mimeType,
+            ct,
+            domain: AppDomainPaths.DomainPrdAgent,
+            type: AppDomainPaths.TypeImg);
         var attachment = new Attachment
         {
             UploaderId = userId,
