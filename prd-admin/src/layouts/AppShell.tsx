@@ -5,7 +5,6 @@ import {
   Cpu,
   LogOut,
   PanelLeftClose,
-  PanelLeftOpen,
   Users2,
   ScrollText,
   FlaskConical,
@@ -72,38 +71,50 @@ const NAV_GROUPS: { key: string; label: string }[] = [
   { key: 'admin', label: '系统管理' },
 ];
 
-/** 折叠态短标签映射（2-3 字），未命中则自动截取前 3 字 */
+/** 折叠态短标签映射（2-4 字） */
 const SHORT_LABEL_MAP: Record<string, string> = {
   'ai-toolbox': '百宝箱',
   'report-agent': '周报',
   'workflow-agent': '工作流',
   'marketplace': '市场',
-  'my-resources': '资源',
-  'hosted-sites': '托管',
+  'my-resources': '我的资源',
   'model-center': '模型',
-  'authz': '权限',
-  'data-ops': '运维',
+  'authz': '用户权限',
+  'data-ops': '自定义',
   'visual-agent': '视觉',
   'literary-agent': '文学',
   'video-agent': '视频',
   'defect-agent': '缺陷',
   'prd-agent': '智能体',
   'arena-agent': '竞技场',
-  'shortcuts-agent': '指令',
+  'shortcuts-agent': '快捷指令',
   'data-migration-agent': '迁移',
-  'executive': '总裁',
+  'executive': '团队',
   'tutorial-email': '邮件',
   'lab': '实验室',
   'automations': '自动化',
   'skills': '技能',
+  'dashboard': '仪表盘',
+  'users': '用户',
+  'groups': '群组',
+  'mds': '模型',
+  'prompts': '提示词',
+  'assets': '资源',
+  'logs': '日志',
+  'data': '数据',
+  'open-platform': '开放平台',
+  'settings': '设置',
 };
 
-/** 获取短标签：优先查映射表，否则截取 label 前 3 字 */
+/** 从侧边栏隐藏的 appKey（页面仍可直接访问） */
+const HIDDEN_NAV_KEYS = new Set(['hosted-sites']);
+
+/** 获取短标签：优先查映射表，否则使用完整 label */
 function getShortLabel(appKey: string, label: string): string {
   if (SHORT_LABEL_MAP[appKey]) return SHORT_LABEL_MAP[appKey];
   // 去掉常见后缀
   const clean = label.replace(/\s*(Agent|管理|引擎)\s*/g, '').trim();
-  return clean.length <= 3 ? clean : clean.slice(0, 3);
+  return clean.length <= 4 ? clean : clean.slice(0, 4);
 }
 
 /** 根据 mimeType 推断扩展名，确保下载文件名带后缀 */
@@ -196,7 +207,6 @@ export default function AppShell() {
   const menuCatalog = useAuthStore((s) => s.menuCatalog);
   const menuCatalogLoaded = useAuthStore((s) => s.menuCatalogLoaded);
   const collapsed = useLayoutStore((s) => s.navCollapsed);
-  const toggleNavCollapsed = useLayoutStore((s) => s.toggleNavCollapsed);
   const fullBleedMain = useLayoutStore((s) => s.fullBleedMain);
   const mobileDrawerOpen = useLayoutStore((s) => s.mobileDrawerOpen);
   const setMobileDrawerOpen = useLayoutStore((s) => s.setMobileDrawerOpen);
@@ -259,9 +269,9 @@ export default function AppShell() {
       return [];
     }
 
-    // 只显示有 group 的菜单项（无 group 的放在头像面板）
+    // 只显示有 group 的菜单项（无 group 的放在头像面板），并排除 HIDDEN_NAV_KEYS
     const items = menuCatalog
-      .filter((m) => !!m.group)
+      .filter((m) => !!m.group && !HIDDEN_NAV_KEYS.has(m.appKey))
       .map((m) => {
         const IconComp = iconMap[m.icon] ?? LayoutDashboard;
         return {
@@ -743,16 +753,13 @@ export default function AppShell() {
 
           {/* ── 首页按钮 ── */}
           {homeItem && (
-            <div className={cn(collapsed ? 'flex justify-center' : 'px-1')}>
+            <div className="flex justify-center px-1">
               <button
                 type="button"
                 onClick={() => navigate(homeItem.key)}
                 className={cn(
-                  'group/nav relative rounded-[10px] w-full',
-                  'transition-all duration-200 ease-out',
-                  collapsed
-                    ? 'flex flex-col items-center justify-center gap-0.5 py-1.5 px-1'
-                    : 'flex items-center gap-2.5 px-2.5 py-1.5',
+                  'group/nav relative flex flex-col items-center justify-center gap-1 w-full rounded-[12px]',
+                  'transition-all duration-200 ease-out py-2',
                   activeKey === '/' ? '' : 'nav-item-hover'
                 )}
                 style={{
@@ -760,7 +767,7 @@ export default function AppShell() {
                   border: activeKey === '/' ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid transparent',
                   color: activeKey === '/' ? 'var(--text-primary)' : 'var(--text-secondary)',
                 }}
-                title={collapsed ? homeItem.label : undefined}
+                title={homeItem.label}
               >
                 <span
                   className="inline-flex items-center justify-center shrink-0 transition-all duration-200 group-hover/nav:scale-110"
@@ -768,15 +775,9 @@ export default function AppShell() {
                 >
                   {homeItem.icon}
                 </span>
-                {collapsed ? (
-                  <span className="text-[10px] leading-tight truncate max-w-full" style={{ color: activeKey === '/' ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                    首页
-                  </span>
-                ) : (
-                  <div className="text-[13px] font-medium truncate transition-colors duration-200 group-hover/nav:text-[var(--text-primary)]">
-                    {homeItem.label}
-                  </div>
-                )}
+                <span className="text-[10px] leading-tight" style={{ color: activeKey === '/' ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                  首页
+                </span>
               </button>
             </div>
           )}
@@ -828,7 +829,7 @@ export default function AppShell() {
                   )}
 
                   {/* 分组内的导航项 */}
-                  <div className={cn('flex flex-col', collapsed ? 'gap-0.5 items-center' : 'gap-px')}>
+                  <div className="flex flex-col gap-0.5 items-center px-1">
                     {group.items.map((it) => {
                       const active = it.key === activeKey;
                       return (
@@ -837,11 +838,8 @@ export default function AppShell() {
                           type="button"
                           onClick={() => navigate(it.key)}
                           className={cn(
-                            'group/nav relative rounded-[10px]',
-                            'transition-all duration-200 ease-out',
-                            collapsed
-                              ? 'flex flex-col items-center justify-center gap-0.5 w-full py-1.5 px-1'
-                              : 'flex items-center gap-2.5 px-2.5 py-1.5',
+                            'group/nav relative flex flex-col items-center justify-center gap-1 w-full rounded-[12px]',
+                            'transition-all duration-200 ease-out py-2',
                             !active && 'nav-item-hover'
                           )}
                           style={{
@@ -849,7 +847,7 @@ export default function AppShell() {
                             border: active ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid transparent',
                             color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
                           }}
-                          title={collapsed ? (it.description ? `${it.label} - ${it.description}` : it.label) : undefined}
+                          title={it.description ? `${it.label} - ${it.description}` : it.label}
                         >
                           <span
                             className="inline-flex items-center justify-center shrink-0 transition-all duration-200 group-hover/nav:scale-110"
@@ -857,21 +855,9 @@ export default function AppShell() {
                           >
                             {it.icon}
                           </span>
-                          {collapsed ? (
-                            <span className="text-[10px] leading-tight truncate max-w-full" style={{ color: active ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                              {it.shortLabel}
-                            </span>
-                          ) : (
-                            <div className="min-w-0 flex-1 text-left">
-                              <div className="text-[13px] font-medium truncate transition-colors duration-200 group-hover/nav:text-[var(--text-primary)]">{it.label}</div>
-                            </div>
-                          )}
-                          {active && !collapsed && (
-                            <span
-                              className="absolute left-0 top-1/2 -translate-y-1/2"
-                              style={{ width: 2, height: 14, background: '#818cf8', borderRadius: '0 999px 999px 0' }}
-                            />
-                          )}
+                          <span className="text-[10px] leading-tight text-center" style={{ color: active ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                            {it.shortLabel}
+                          </span>
                         </button>
                       );
                     })}
@@ -1102,25 +1088,8 @@ export default function AppShell() {
             </div>
           </div>
 
-          {/* ── 折叠/展开按钮（底部固定） ── */}
-          <div className={cn('shrink-0 pt-0.5 pb-0.5', collapsed ? 'flex justify-center' : 'px-2')}>
-            <button
-              type="button"
-              onClick={toggleNavCollapsed}
-              className={cn(
-                'inline-flex items-center gap-2 rounded-[10px] transition-colors duration-200 hover:bg-white/[0.06]',
-                collapsed ? 'h-9 w-9 justify-center' : 'h-8 px-3 w-full'
-              )}
-              style={{ color: 'var(--text-muted)' }}
-              aria-label={collapsed ? '展开侧边栏' : '折叠侧边栏'}
-              title={collapsed ? '展开侧边栏' : '折叠侧边栏'}
-            >
-              {collapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
-              {!collapsed && (
-                <span className="text-[12px] opacity-60">收起</span>
-              )}
-            </button>
-          </div>
+          {/* 底部间距 */}
+          <div className="shrink-0 h-1" />
 
           <AvatarEditDialog
             open={avatarOpen}
