@@ -25,6 +25,7 @@ interface DefectState {
   setStatusFilter: (status: string | null) => void;
   addDefectToList: (defect: DefectReport) => void;
   updateDefectInList: (defect: DefectReport) => void;
+  removeDefectFromList: (id: string) => void;
   clear: () => void;
 }
 
@@ -111,6 +112,12 @@ export const useDefectStore = create<DefectState>((set) => ({
   updateDefectInList: (defect) => set((state) => ({
     defects: state.defects.map((d) => d.id === defect.id ? defect : d),
     selectedDefect: state.selectedDefect?.id === defect.id ? defect : state.selectedDefect,
+  })),
+
+  removeDefectFromList: (id) => set((state) => ({
+    defects: state.defects.filter((d) => d.id !== id),
+    selectedDefectId: state.selectedDefectId === id ? null : state.selectedDefectId,
+    selectedDefect: state.selectedDefect?.id === id ? null : state.selectedDefect,
   })),
 
   clear: () => set({

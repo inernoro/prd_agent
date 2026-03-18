@@ -38,6 +38,12 @@ struct RejectDefectRequest {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct VerifyFailRequest {
+    reason: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct PolishDefectRequest {
     content: String,
     template_id: Option<String>,
@@ -180,6 +186,51 @@ pub async fn reject_defect(
             &format!("/api/defect-agent/defects/{}/reject", id),
             &request,
         )
+        .await
+}
+
+/// 验收通过
+#[command]
+pub async fn verify_pass_defect(id: String) -> Result<ApiResponse<serde_json::Value>, String> {
+    let client = ApiClient::new();
+    let body = EmptyBody {};
+    client
+        .post(&format!("/api/defect-agent/defects/{}/verify-pass", id), &body)
+        .await
+}
+
+/// 验收不通过
+#[command]
+pub async fn verify_fail_defect(
+    id: String,
+    reason: String,
+) -> Result<ApiResponse<serde_json::Value>, String> {
+    let client = ApiClient::new();
+    let request = VerifyFailRequest { reason };
+    client
+        .post(
+            &format!("/api/defect-agent/defects/{}/verify-fail", id),
+            &request,
+        )
+        .await
+}
+
+/// 关闭缺陷
+#[command]
+pub async fn close_defect(id: String) -> Result<ApiResponse<serde_json::Value>, String> {
+    let client = ApiClient::new();
+    let body = EmptyBody {};
+    client
+        .post(&format!("/api/defect-agent/defects/{}/close", id), &body)
+        .await
+}
+
+/// 删除缺陷
+#[command]
+pub async fn delete_defect(id: String) -> Result<ApiResponse<serde_json::Value>, String> {
+    let client = ApiClient::new();
+    client
+        .delete(&format!("/api/defect-agent/defects/{}", id))
         .await
 }
 

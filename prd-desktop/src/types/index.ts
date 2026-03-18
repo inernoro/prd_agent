@@ -195,6 +195,8 @@ export interface DefectReport {
   rejectReason?: string;
   rejectedById?: string;
   rejectedByName?: string;
+  verifyFailReason?: string;
+  closedAt?: string;
   createdAt: string;
   updatedAt: string;
   submittedAt?: string;
