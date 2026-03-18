@@ -332,7 +332,7 @@ export default function AgentLauncherPage() {
           <div
             className="relative overflow-hidden rounded-2xl"
             style={{
-              marginBottom: isMobile ? 20 : 32,
+              marginBottom: isMobile ? 12 : 16,
             }}
           >
             {/* Background image — positioned right, like 文心 reference */}
@@ -412,18 +412,21 @@ export default function AgentLauncherPage() {
                   />
                 </div>
               </div>
+            </div>
+            {/* end hero content */}
+          </div>
+          {/* end hero banner */}
 
-              {/* Quick Links — inside hero banner, bottom area */}
-              {!searchQuery.trim() && (
-                <div
-                  className="mt-6 rounded-xl"
-                  style={{
-                    background: 'rgba(255, 255, 255, 0.04)',
-                    backdropFilter: 'blur(16px) saturate(130%)',
-                    WebkitBackdropFilter: 'blur(16px) saturate(130%)',
-                    border: '1px solid rgba(255, 255, 255, 0.08)',
-                  }}
-                >
+          {/* ── Quick Links — outside hero, same width as card grid ── */}
+          {!searchQuery.trim() && (
+            <div
+              className="rounded-xl"
+              style={{
+                marginBottom: isMobile ? 16 : 24,
+                background: 'rgba(255, 255, 255, 0.04)',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+              }}
+            >
               <div
                 className={`flex items-stretch ${isMobile ? 'flex-col' : ''}`}
                 style={{ minHeight: isMobile ? undefined : 80 }}
@@ -484,11 +487,6 @@ export default function AgentLauncherPage() {
               </div>
             </div>
           )}
-
-            </div>
-            {/* end hero content */}
-          </div>
-          {/* end hero banner */}
 
           {/* ── Loading ── */}
           {itemsLoading ? (

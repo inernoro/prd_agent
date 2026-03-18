@@ -601,10 +601,10 @@ export default function AppShell() {
             {groupedNav.map((group, gi) => (
               <div key={group.key}>
                 {gi > 0 && (
-                  <div className="h-px mx-3 my-2" style={{ background: 'rgba(255,255,255,0.06)' }} />
+                  <div className="h-px mx-3 my-3.5" style={{ background: 'rgba(255,255,255,0.06)' }} />
                 )}
                 <div
-                  className="px-3 pt-1 pb-0.5 text-[10px] font-semibold tracking-[0.08em] uppercase select-none"
+                  className="px-3 pt-1 pb-1 text-[10px] font-semibold tracking-[0.08em] uppercase select-none"
                   style={{ color: 'var(--text-muted, rgba(255,255,255,0.32))' }}
                 >
                   {group.label}
@@ -945,7 +945,7 @@ export default function AppShell() {
                   {/* 分组分隔线（非首组） */}
                   {gi > 0 && (
                     <div
-                      className={cn('mx-auto', collapsed ? 'my-2' : 'my-2.5 mx-3')}
+                      className={cn('mx-auto', collapsed ? 'my-3' : 'my-4 mx-3')}
                       style={{
                         height: 1,
                         background: collapsed
@@ -959,7 +959,7 @@ export default function AppShell() {
                   {/* 分组标题（仅展开时显示） */}
                   {!collapsed && (
                     <div
-                      className="px-2.5 pt-0.5 pb-0.5 text-[10px] font-semibold tracking-[0.08em] uppercase select-none"
+                      className="px-2.5 pt-1 pb-1 text-[10px] font-semibold tracking-[0.08em] uppercase select-none"
                       style={{ color: 'var(--text-muted, rgba(255,255,255,0.32))' }}
                     >
                       {group.label}
