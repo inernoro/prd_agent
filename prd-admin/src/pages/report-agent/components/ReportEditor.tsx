@@ -3,6 +3,7 @@ import { ArrowLeft, Save, Send, Plus, Trash2, Sparkles, RefreshCw, FileText } fr
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
+import { systemDialog } from '@/lib/systemDialog';
 import { useReportAgentStore } from '@/stores/reportAgentStore';
 import {
   createWeeklyReport,
@@ -155,11 +156,14 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
       toast.error('请选择团队和模板');
       return;
     }
-    if (
-      creationMode === WeeklyReportCreationMode.AiDraft
-      && !window.confirm('将调用 AI 基于当前周数据生成周报草稿，生成后仍可手动编辑，是否继续？')
-    ) {
-      return;
+    if (creationMode === WeeklyReportCreationMode.AiDraft) {
+      const ok = await systemDialog.confirm({
+        title: '确认使用 AI 生成草稿？',
+        message: '将按当前周数据和模板自动生成周报草稿。\n生成后你仍可手动编辑和调整内容。',
+        confirmText: '开始生成',
+        cancelText: '返回',
+      });
+      if (!ok) return;
     }
     setCreateModeLoading(creationMode);
     const res = await createWeeklyReport({
@@ -231,7 +235,14 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
 
   const handleGenerate = useCallback(async () => {
     if (!report) return;
-    if (!window.confirm('AI 将基于采集数据自动填充周报内容，当前编辑内容会被覆盖，确定继续？')) return;
+    const ok = await systemDialog.confirm({
+      title: '确认重新生成草稿？',
+      message: '将基于当前周采集数据重新生成周报草稿。\n当前编辑内容会被覆盖，建议先保存后再执行。',
+      tone: 'danger',
+      confirmText: '重新生成',
+      cancelText: '取消',
+    });
+    if (!ok) return;
     setGenerating(true);
     try {
       const res = await generateReport({ id: report.id });
@@ -246,7 +257,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
           }))
         );
         updateReportInList(updated);
-        toast.success('AI 已生成周报内容');
+        toast.success('AI 已重新生成周报草稿');
       } else {
         toast.error(res.error?.message || 'AI 生成失败');
       }
@@ -259,7 +270,14 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
 
   const handleDelete = useCallback(async () => {
     if (!report) return;
-    if (!window.confirm('删除后不可恢复，确定删除这份周报吗？')) return;
+    const ok = await systemDialog.confirm({
+      title: '确认删除周报？',
+      message: '删除后不可恢复，请确认是否删除这份周报。',
+      tone: 'danger',
+      confirmText: '确认删除',
+      cancelText: '取消',
+    });
+    if (!ok) return;
 
     setDeleting(true);
     const res = await deleteWeeklyReport({ id: report.id });
@@ -533,7 +551,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                   {generating ? (
                     <><RefreshCw size={13} className="animate-spin" /> 生成中...</>
                   ) : (
-                    <><Sparkles size={13} /> AI 填充</>
+                    <><Sparkles size={13} /> AI重新生成草稿</>
                   )}
                 </Button>
               )}
