@@ -28,23 +28,6 @@
       </div>
     </header>
 
-    <!-- Service status bar -->
-    <div class="gateway-bar" id="serviceStatusBar">
-      <div class="gateway-left" id="serviceStatusSummary" onclick="toggleServiceStatusExpand()">
-        <span class="gateway-dot" id="workerDot"></span>
-        <span class="gateway-label" id="workerLabel">连接中...</span>
-        <svg class="status-chevron" id="statusChevron" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M12.78 5.22a.749.749 0 010 1.06l-4.25 4.25a.749.749 0 01-1.06 0L3.22 6.28a.749.749 0 111.06-1.06L8 8.939l3.72-3.719a.749.749 0 011.06 0z"/></svg>
-      </div>
-      <div class="gateway-right">
-        <svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 3.25a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6a1 1 0 00-1 1v1.128a2.251 2.251 0 11-1.5 0V5.372a2.25 2.25 0 111.5 0v1.836A2.493 2.493 0 016 7h4a1 1 0 001-1v-.628A2.25 2.25 0 019.5 3.25z"/></svg>
-        <select id="defaultBranch" onchange="setDefaultBranch(this.value)">
-          <option value="">无默认</option>
-        </select>
-      </div>
-    </div>
-    <!-- Expandable service list -->
-    <div class="service-status-panel hidden" id="serviceStatusPanel"></div>
-
     <!-- Quickstart banner (shown when no profiles) -->
     <div id="quickstartBanner" class="quickstart-banner hidden">
       <div class="quickstart-content">
