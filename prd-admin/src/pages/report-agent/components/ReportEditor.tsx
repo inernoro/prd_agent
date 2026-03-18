@@ -3,6 +3,8 @@ import { ArrowLeft, Save, Send, Plus, Trash2, Sparkles, RefreshCw, FileText } fr
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useReportAgentStore } from '@/stores/reportAgentStore';
 import {
   createWeeklyReport,
@@ -29,6 +31,7 @@ const MIN_COMPRESS_SCALE = 0.4;
 const SCALE_REDUCE_FACTOR = 0.86;
 const MIN_COMPRESS_QUALITY = 0.4;
 const QUALITY_REDUCE_STEP = 0.08;
+const MARKDOWN_IMAGE_REGEX = /!\[[^\]]*]\(([^)]+)\)/;
 
 function inferExtFromMime(mime: string): string {
   if (mime.includes('webp')) return 'webp';
@@ -65,6 +68,10 @@ function buildOutputFile(blob: Blob, originFile: File): File {
   const rawName = (originFile.name || '').trim();
   const baseName = rawName ? rawName.replace(/\.[^/.]+$/, '') : `pasted-image-${Date.now()}`;
   return new File([blob], `${baseName}.${ext}`, { type: mimeType, lastModified: Date.now() });
+}
+
+function hasMarkdownImage(content: string): boolean {
+  return MARKDOWN_IMAGE_REGEX.test(content);
 }
 
 async function compressImageToLimit(file: File, maxBytes: number): Promise<{ file: File; compressed: boolean }> {
@@ -609,23 +616,40 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                         />
                       )}
                       {section.templateSection.inputType === ReportInputType.RichText ? (
-                        <textarea
-                          className="flex-1 px-4 py-3 rounded-xl text-[13px] resize-none transition-all duration-200"
-                          style={{
-                            background: 'var(--bg-secondary)',
-                            color: 'var(--text-primary)',
-                            border: '1px solid var(--border-primary)',
-                            minHeight: 100,
-                            outline: 'none',
-                          }}
-                          onFocus={(e) => { e.currentTarget.style.borderColor = theme.color.replace('0.9', '0.4'); e.currentTarget.style.boxShadow = `0 0 0 2px ${theme.color.replace('0.9', '0.08')}`; }}
-                          onBlur={(e) => { e.currentTarget.style.borderColor = 'var(--border-primary)'; e.currentTarget.style.boxShadow = 'none'; }}
-                          value={item.content}
-                          onChange={(e) => updateItem(sIdx, iIdx, e.target.value)}
-                          onPaste={(e) => { void handleRichTextPaste(e, sIdx, iIdx); }}
-                          placeholder={pastingImageKey === `${sIdx}-${iIdx}` ? '图片上传中...' : '请输入内容（支持直接粘贴图片，超 5MB 自动压缩）...'}
-                          disabled={!canEdit}
-                        />
+                        <div className="flex-1">
+                          <textarea
+                            className="w-full px-4 py-3 rounded-xl text-[13px] resize-none transition-all duration-200"
+                            style={{
+                              background: 'var(--bg-secondary)',
+                              color: 'var(--text-primary)',
+                              border: '1px solid var(--border-primary)',
+                              minHeight: 100,
+                              outline: 'none',
+                            }}
+                            onFocus={(e) => { e.currentTarget.style.borderColor = theme.color.replace('0.9', '0.4'); e.currentTarget.style.boxShadow = `0 0 0 2px ${theme.color.replace('0.9', '0.08')}`; }}
+                            onBlur={(e) => { e.currentTarget.style.borderColor = 'var(--border-primary)'; e.currentTarget.style.boxShadow = 'none'; }}
+                            value={item.content}
+                            onChange={(e) => updateItem(sIdx, iIdx, e.target.value)}
+                            onPaste={(e) => { void handleRichTextPaste(e, sIdx, iIdx); }}
+                            placeholder={pastingImageKey === `${sIdx}-${iIdx}` ? '图片上传中...' : '请输入内容（支持直接粘贴图片，超 5MB 自动压缩）...'}
+                            disabled={!canEdit}
+                          />
+                          {hasMarkdownImage(item.content) && (
+                            <div
+                              className="mt-2 rounded-xl px-3 py-2"
+                              style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)' }}
+                            >
+                              <div className="text-[11px] mb-1" style={{ color: 'var(--text-muted)' }}>
+                                实时预览
+                              </div>
+                              <div className="text-[12px] leading-relaxed [&_img]:max-w-full [&_img]:rounded-lg [&_img]:my-2 [&_img]:border [&_img]:border-[var(--border-primary)]">
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                  {item.content}
+                                </ReactMarkdown>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       ) : (
                         <input
                           className="flex-1 px-4 py-3 rounded-xl text-[13px] transition-all duration-200"
