@@ -690,66 +690,233 @@ export default function AppShell() {
             pointerEvents: focusHideAside ? 'none' : 'auto',
           }}
         >
-          {/* 用户头像区域 */}
+          {/* ── 顶部 Logo 区域 ── */}
           <div
             className={cn(
-              'group relative shrink-0 rounded-[14px]',
-              collapsed ? 'w-[38px] py-1.5 flex justify-center' : 'px-2.5 py-2'
+              'shrink-0 flex items-center',
+              collapsed ? 'justify-center py-2' : 'px-3 py-2'
             )}
-            style={{ background: 'transparent' }}
           >
-            {/* 悬停背景效果 */}
-            <div 
-              className="absolute inset-0 rounded-[14px] opacity-0 group-hover:opacity-100 transition-opacity duration-200"
-              style={{ background: 'rgba(255, 255, 255, 0.03)' }}
+            <img
+              src="/favicon.svg"
+              alt="Logo"
+              className={cn('transition-all duration-200', collapsed ? 'w-7 h-7' : 'w-8 h-8')}
+              draggable={false}
             />
-            
-            <div className={cn('relative flex items-center', collapsed ? 'justify-center' : 'gap-3')}>
-              {/* 头像+用户名（触发下拉菜单） */}
-              <DropdownMenu.Root>
-                <DropdownMenu.Trigger asChild>
-                  <div
-                    className={cn('flex items-center cursor-pointer', collapsed ? '' : 'gap-3 flex-1 min-w-0')}
-                    title="用户菜单"
-                  >
-                    {/* 头像 */}
-                    <div
-                      className="h-8 w-8 rounded-full overflow-hidden shrink-0 ring-1 ring-white/10 hover:ring-indigo-400/30 transition-colors duration-200"
-                      style={{ boxShadow: '0 0 0 1px rgba(99, 102, 241, 0.1), 0 2px 12px rgba(0, 0, 0, 0.2)' }}
-                    >
-                      <UserAvatar
-                        src={resolveAvatarUrl({
-                          username: user?.username,
-                          userType: user?.userType,
-                          botKind: user?.botKind,
-                          avatarFileName: user?.avatarFileName ?? null,
-                          avatarUrl: user?.avatarUrl,
-                        })}
-                        alt="avatar"
-                        className="h-full w-full object-cover"
-                      />
-                    </div>
-                    
-                    {/* 用户信息（仅展开时显示） */}
-                    {!collapsed && (
-                      <div className="min-w-0 flex-1">
-                        <div className="text-[12px] font-semibold truncate" style={{ color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
-                          {user?.displayName || 'Admin'}
-                        </div>
-                        <div className="text-[10px] truncate" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
-                          {user?.role === 'ADMIN' ? '系统管理员' : user?.role || ''}
-                        </div>
-                      </div>
-                    )}
+          </div>
+
+          {/* ── 首页按钮 ── */}
+          {homeItem && (
+            <div className={cn(collapsed ? 'flex justify-center' : 'px-1')}>
+              <button
+                type="button"
+                onClick={() => navigate(homeItem.key)}
+                className={cn(
+                  'group/nav relative flex items-center gap-2.5 rounded-[10px] w-full',
+                  'transition-all duration-200 ease-out',
+                  collapsed ? 'justify-center w-[38px] h-[38px] shrink-0' : 'px-2.5 py-1.5',
+                  activeKey === '/' ? '' : 'nav-item-hover'
+                )}
+                style={{
+                  background: activeKey === '/' ? 'rgba(255, 255, 255, 0.06)' : 'transparent',
+                  border: activeKey === '/' ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid transparent',
+                  color: activeKey === '/' ? 'var(--text-primary)' : 'var(--text-secondary)',
+                }}
+                title={collapsed ? homeItem.label : undefined}
+              >
+                <span
+                  className="inline-flex items-center justify-center shrink-0 transition-all duration-200 group-hover/nav:scale-110"
+                  style={{ color: activeKey === '/' ? '#818cf8' : undefined }}
+                >
+                  {homeItem.icon}
+                </span>
+                {!collapsed && (
+                  <div className="text-[13px] font-medium truncate transition-colors duration-200 group-hover/nav:text-[var(--text-primary)]">
+                    {homeItem.label}
                   </div>
-                </DropdownMenu.Trigger>
+                )}
+              </button>
+            </div>
+          )}
+
+          {/* 导航区域容器：包含滚动指示器 */}
+          <div className="relative flex-1 min-h-0">
+            {/* 顶部渐变阴影：提示可向上滚动 */}
+            <div
+              className="pointer-events-none absolute top-0 left-0 right-0 z-10 transition-opacity duration-200"
+              style={{
+                height: 32,
+                background: 'linear-gradient(to bottom, var(--bg-elevated, #1e1e24) 0%, transparent 100%)',
+                opacity: navScrollState.canScroll && !navScrollState.atTop ? 0.95 : 0,
+              }}
+            />
+
+            <nav
+              ref={navRef}
+              className={cn(
+                'h-full flex flex-col overflow-y-auto overflow-x-hidden nav-scroll-hidden',
+                collapsed ? 'items-center' : ''
+              )}
+              style={{ paddingTop: 4, paddingRight: collapsed ? 0 : 2, paddingBottom: 8 }}
+            >
+              {groupedNav.map((group, gi) => (
+                <div key={group.key}>
+                  {/* 分组分隔线（非首组）— 组间距比组内间距更大 */}
+                  {gi > 0 && (
+                    <div
+                      className={cn('mx-auto', collapsed ? 'my-4' : 'my-5 mx-3')}
+                      style={{
+                        height: 1,
+                        background: collapsed
+                          ? 'rgba(255, 255, 255, 0.06)'
+                          : 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.08) 20%, rgba(255,255,255,0.08) 80%, transparent 100%)',
+                        width: collapsed ? 24 : undefined,
+                      }}
+                    />
+                  )}
+
+                  {/* 分组标题（仅展开时显示） */}
+                  {!collapsed && (
+                    <div
+                      className="px-2.5 pt-1 pb-1 text-[10px] font-semibold tracking-[0.08em] uppercase select-none"
+                      style={{ color: 'var(--text-muted, rgba(255,255,255,0.32))' }}
+                    >
+                      {group.label}
+                    </div>
+                  )}
+
+                  {/* 分组内的导航项 */}
+                  <div className={cn('flex flex-col', collapsed ? 'gap-px items-center' : 'gap-px')}>
+                    {group.items.map((it) => {
+                      const active = it.key === activeKey;
+                      return (
+                        <button
+                          key={it.key}
+                          type="button"
+                          onClick={() => navigate(it.key)}
+                          className={cn(
+                            'group/nav relative flex items-center gap-2.5 rounded-[10px]',
+                            'transition-all duration-200 ease-out',
+                            collapsed ? 'justify-center w-[38px] h-[38px] shrink-0' : 'px-2.5 py-1.5',
+                            !active && 'nav-item-hover'
+                          )}
+                          style={{
+                            background: active ? 'rgba(255, 255, 255, 0.06)' : 'transparent',
+                            border: active ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid transparent',
+                            color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+                          }}
+                          title={collapsed ? (it.description ? `${it.label} - ${it.description}` : it.label) : undefined}
+                        >
+                          <span
+                            className="inline-flex items-center justify-center shrink-0 transition-all duration-200 group-hover/nav:scale-110"
+                            style={{ color: active ? '#818cf8' : undefined }}
+                          >
+                            {it.icon}
+                          </span>
+                          {!collapsed && (
+                            <div className="min-w-0 flex-1 text-left">
+                              <div className="text-[13px] font-medium truncate transition-colors duration-200 group-hover/nav:text-[var(--text-primary)]">{it.label}</div>
+                            </div>
+                          )}
+                          {active && !collapsed && (
+                            <span
+                              className="absolute left-0 top-1/2 -translate-y-1/2"
+                              style={{ width: 2, height: 14, background: '#818cf8', borderRadius: '0 999px 999px 0' }}
+                            />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </nav>
+
+            {/* 底部渐变阴影：提示可向下滚动 */}
+            <div
+              className="pointer-events-none absolute bottom-0 left-0 right-0 z-10 transition-opacity duration-200"
+              style={{
+                height: 40,
+                background: 'linear-gradient(to top, var(--bg-elevated, #1e1e24) 0%, transparent 100%)',
+                opacity: navScrollState.canScroll && !navScrollState.atBottom ? 0.95 : 0,
+              }}
+            />
+          </div>
+
+          {/* ── 底部用户区域 ── */}
+          <div
+            className={cn(
+              'shrink-0',
+              collapsed ? 'flex flex-col items-center gap-1 py-1' : 'px-1 py-1'
+            )}
+          >
+            {/* 分隔线 */}
+            <div
+              className={cn('mx-auto mb-2', collapsed ? '' : 'mx-3')}
+              style={{
+                height: 1,
+                background: collapsed
+                  ? 'rgba(255, 255, 255, 0.06)'
+                  : 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.08) 20%, rgba(255,255,255,0.08) 80%, transparent 100%)',
+                width: collapsed ? 24 : undefined,
+              }}
+            />
+            <div
+              className={cn(
+                'group relative shrink-0 rounded-[10px]',
+                collapsed ? 'w-[38px] flex justify-center' : 'px-2 py-1.5'
+              )}
+              style={{ background: 'transparent' }}
+            >
+              {/* 悬停背景效果 */}
+              <div
+                className="absolute inset-0 rounded-[10px] opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+                style={{ background: 'rgba(255, 255, 255, 0.03)' }}
+              />
+
+              <div className={cn('relative flex items-center', collapsed ? 'justify-center' : 'gap-3')}>
+                {/* 头像+用户名（触发下拉菜单） */}
+                <DropdownMenu.Root>
+                  <DropdownMenu.Trigger asChild>
+                    <div
+                      className={cn('flex items-center cursor-pointer', collapsed ? '' : 'gap-3 flex-1 min-w-0')}
+                      title="用户菜单"
+                    >
+                      {/* 头像 */}
+                      <div
+                        className="h-7 w-7 rounded-full overflow-hidden shrink-0 ring-1 ring-white/10 hover:ring-indigo-400/30 transition-colors duration-200"
+                        style={{ boxShadow: '0 0 0 1px rgba(99, 102, 241, 0.1), 0 2px 12px rgba(0, 0, 0, 0.2)' }}
+                      >
+                        <UserAvatar
+                          src={resolveAvatarUrl({
+                            username: user?.username,
+                            userType: user?.userType,
+                            botKind: user?.botKind,
+                            avatarFileName: user?.avatarFileName ?? null,
+                            avatarUrl: user?.avatarUrl,
+                          })}
+                          alt="avatar"
+                          className="h-full w-full object-cover"
+                        />
+                      </div>
+
+                      {/* 用户信息（仅展开时显示） */}
+                      {!collapsed && (
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[12px] font-semibold truncate" style={{ color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
+                            {user?.displayName || 'Admin'}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </DropdownMenu.Trigger>
 
             <DropdownMenu.Portal>
               <DropdownMenu.Content
                 className="min-w-[220px] rounded-[16px] p-2 z-50"
                 style={glassPanel}
                 sideOffset={8}
-                side="bottom"
+                side="top"
                 align="start"
               >
                 {/* 用户信息区 */}
@@ -877,155 +1044,18 @@ export default function AppShell() {
                 </DropdownMenu.Item>
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
-          </DropdownMenu.Root>
-          
-          {/* 提交缺陷按钮（仅展开时显示，在 DropdownMenu 外部） */}
-          {!collapsed && (
-            <DefectSubmitButton collapsed={collapsed} />
-          )}
-            </div>
-          </div>
+                </DropdownMenu.Root>
 
-          {/* ── 首页按钮（独立，不在分组内） ── */}
-          {homeItem && (
-            <div className={cn(collapsed ? 'flex justify-center' : 'px-1')}>
-              <button
-                type="button"
-                onClick={() => navigate(homeItem.key)}
-                className={cn(
-                  'group/nav relative flex items-center gap-2.5 rounded-[10px] w-full',
-                  'transition-all duration-200 ease-out',
-                  collapsed ? 'justify-center w-[38px] h-[38px] shrink-0' : 'px-2.5 py-1.5',
-                  activeKey === '/' ? '' : 'nav-item-hover'
-                )}
-                style={{
-                  background: activeKey === '/' ? 'rgba(255, 255, 255, 0.06)' : 'transparent',
-                  border: activeKey === '/' ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid transparent',
-                  color: activeKey === '/' ? 'var(--text-primary)' : 'var(--text-secondary)',
-                }}
-                title={collapsed ? homeItem.label : undefined}
-              >
-                <span
-                  className="inline-flex items-center justify-center shrink-0 transition-all duration-200 group-hover/nav:scale-110"
-                  style={{ color: activeKey === '/' ? '#818cf8' : undefined }}
-                >
-                  {homeItem.icon}
-                </span>
+                {/* 提交缺陷按钮（仅展开时显示，在 DropdownMenu 外部） */}
                 {!collapsed && (
-                  <div className="text-[13px] font-medium truncate transition-colors duration-200 group-hover/nav:text-[var(--text-primary)]">
-                    {homeItem.label}
-                  </div>
+                  <DefectSubmitButton collapsed={collapsed} />
                 )}
-              </button>
+              </div>
             </div>
-          )}
-
-          {/* 导航区域容器：包含滚动指示器 */}
-          <div className="relative flex-1 min-h-0">
-            {/* 顶部渐变阴影：提示可向上滚动 */}
-            <div
-              className="pointer-events-none absolute top-0 left-0 right-0 z-10 transition-opacity duration-200"
-              style={{
-                height: 32,
-                background: 'linear-gradient(to bottom, var(--bg-elevated, #1e1e24) 0%, transparent 100%)',
-                opacity: navScrollState.canScroll && !navScrollState.atTop ? 0.95 : 0,
-              }}
-            />
-            
-            <nav
-              ref={navRef}
-              className={cn(
-                'h-full flex flex-col justify-between overflow-y-auto overflow-x-hidden nav-scroll-hidden',
-                collapsed ? 'items-center' : ''
-              )}
-              style={{ paddingTop: 2, paddingRight: collapsed ? 0 : 2, paddingBottom: 8 }}
-            >
-              {groupedNav.map((group, gi) => (
-                <div key={group.key}>
-                  {/* 分组分隔线（非首组） */}
-                  {gi > 0 && (
-                    <div
-                      className={cn('mx-auto', collapsed ? 'my-3' : 'my-4 mx-3')}
-                      style={{
-                        height: 1,
-                        background: collapsed
-                          ? 'rgba(255, 255, 255, 0.06)'
-                          : 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.08) 20%, rgba(255,255,255,0.08) 80%, transparent 100%)',
-                        width: collapsed ? 24 : undefined,
-                      }}
-                    />
-                  )}
-
-                  {/* 分组标题（仅展开时显示） */}
-                  {!collapsed && (
-                    <div
-                      className="px-2.5 pt-1 pb-1 text-[10px] font-semibold tracking-[0.08em] uppercase select-none"
-                      style={{ color: 'var(--text-muted, rgba(255,255,255,0.32))' }}
-                    >
-                      {group.label}
-                    </div>
-                  )}
-
-                  {/* 分组内的导航项 */}
-                  <div className={cn('flex flex-col', collapsed ? 'gap-px items-center' : 'gap-px')}>
-                    {group.items.map((it) => {
-                      const active = it.key === activeKey;
-                      return (
-                        <button
-                          key={it.key}
-                          type="button"
-                          onClick={() => navigate(it.key)}
-                          className={cn(
-                            'group/nav relative flex items-center gap-2.5 rounded-[10px]',
-                            'transition-all duration-200 ease-out',
-                            collapsed ? 'justify-center w-[38px] h-[38px] shrink-0' : 'px-2.5 py-1.5',
-                            !active && 'nav-item-hover'
-                          )}
-                          style={{
-                            background: active ? 'rgba(255, 255, 255, 0.06)' : 'transparent',
-                            border: active ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid transparent',
-                            color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
-                          }}
-                          title={collapsed ? (it.description ? `${it.label} - ${it.description}` : it.label) : undefined}
-                        >
-                          <span
-                            className="inline-flex items-center justify-center shrink-0 transition-all duration-200 group-hover/nav:scale-110"
-                            style={{ color: active ? '#818cf8' : undefined }}
-                          >
-                            {it.icon}
-                          </span>
-                          {!collapsed && (
-                            <div className="min-w-0 flex-1 text-left">
-                              <div className="text-[13px] font-medium truncate transition-colors duration-200 group-hover/nav:text-[var(--text-primary)]">{it.label}</div>
-                            </div>
-                          )}
-                          {active && !collapsed && (
-                            <span
-                              className="absolute left-0 top-1/2 -translate-y-1/2"
-                              style={{ width: 2, height: 14, background: '#818cf8', borderRadius: '0 999px 999px 0' }}
-                            />
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </nav>
-            
-            {/* 底部渐变阴影：提示可向下滚动 */}
-            <div
-              className="pointer-events-none absolute bottom-0 left-0 right-0 z-10 transition-opacity duration-200"
-              style={{
-                height: 40,
-                background: 'linear-gradient(to top, var(--bg-elevated, #1e1e24) 0%, transparent 100%)',
-                opacity: navScrollState.canScroll && !navScrollState.atBottom ? 0.95 : 0,
-              }}
-            />
           </div>
 
           {/* ── 折叠/展开按钮（底部固定） ── */}
-          <div className={cn('shrink-0 pt-1 pb-0.5', collapsed ? 'flex justify-center' : 'px-2')}>
+          <div className={cn('shrink-0 pt-0.5 pb-0.5', collapsed ? 'flex justify-center' : 'px-2')}>
             <button
               type="button"
               onClick={toggleNavCollapsed}
