@@ -416,6 +416,130 @@ public class PrdAgentSkillsController : ControllerBase
     }
 
     /// <summary>
+    /// 从多轮对话提炼技能草案（增强版）
+    /// 支持用户选择多轮对话上下文，LLM 同时提炼 promptTemplate + title/description/category/icon
+    /// </summary>
+    [HttpPost("generate-from-conversation")]
+    public async Task<IActionResult> GenerateFromConversation([FromBody] GenerateSkillFromConversationRequest request, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        if (string.IsNullOrWhiteSpace(userId))
+            return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "未授权"));
+
+        if (request.ConversationMessages == null || request.ConversationMessages.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "对话内容不能为空"));
+
+        if (string.IsNullOrWhiteSpace(request.KeyAssistantMessage))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "关键 AI 回复不能为空"));
+
+        const string appCallerCode = "prd-agent.skill-gen::chat";
+        var llmClient = _gateway.CreateClient(appCallerCode, "chat", maxTokens: 3072, temperature: 0.3);
+
+        var totalChars = request.ConversationMessages.Sum(m => m.Content?.Length ?? 0);
+        var requestId = Guid.NewGuid().ToString();
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: requestId,
+            GroupId: null,
+            SessionId: null,
+            UserId: userId,
+            ViewRole: null,
+            DocumentChars: totalChars,
+            DocumentHash: null,
+            SystemPromptRedacted: "skill-gen-conversation-system-prompt",
+            RequestType: "skill-generation-conversation",
+            AppCallerCode: appCallerCode));
+
+        var systemPrompt = @"你是一个技能提炼专家。用户提供了一段多轮对话（包含用户的教导/需求和 AI 的回复），你需要从中提炼出一个可复用的技能草案。
+
+请输出 JSON 格式（不要用 ```json 代码块包裹），包含以下字段：
+{
+  ""promptTemplate"": ""提炼出的提示词模板（必填）"",
+  ""title"": ""简洁的技能名称，2-8个字（必填）"",
+  ""description"": ""技能用途描述，一句话（必填）"",
+  ""category"": ""分类（必填，从以下选择：general/analysis/generation/extraction/translation/summary/check/optimization/other）"",
+  ""icon"": ""推荐一个最匹配的 emoji 图标（必填）""
+}
+
+提炼规则：
+1. 重点关注标记为【关键回复】的 AI 回复，它代表用户最终满意的结果
+2. 前面的对话轮次体现了用户的偏好、约束条件和迭代调整，将这些融入模板
+3. 从用户的多次教导中提炼出隐含的「风格偏好」「格式要求」「注意事项」
+4. 如果用户纠正过 AI 的错误，在模板中加入相应的约束避免同类错误
+5. 用 {{userInput}} 作为用户输入占位符（如果模板需要用户提供额外信息）
+6. 不要在模板中包含具体的项目信息或一次性内容
+7. 保留对话中体现的步骤结构、输出格式规范
+8. title 应简洁有力，像「深度分析」「会议纪要」「代码审查」这样的风格";
+
+        var userContent = new StringBuilder();
+        userContent.AppendLine("## 多轮对话记录");
+        userContent.AppendLine();
+
+        for (var i = 0; i < request.ConversationMessages.Count; i++)
+        {
+            var msg = request.ConversationMessages[i];
+            var role = string.Equals(msg.Role, "user", StringComparison.OrdinalIgnoreCase) ? "用户" : "AI";
+            var isKey = string.Equals(msg.Role, "assistant", StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(msg.Content?.Trim(), request.KeyAssistantMessage?.Trim(), StringComparison.Ordinal);
+            userContent.AppendLine(isKey ? $"### {role}（第 {i + 1} 条）【关键回复】" : $"### {role}（第 {i + 1} 条）");
+            userContent.AppendLine(msg.Content);
+            userContent.AppendLine();
+        }
+
+        var messages = new List<LLMMessage>
+        {
+            new() { Role = "user", Content = userContent.ToString() }
+        };
+
+        var resultBuilder = new StringBuilder();
+        await foreach (var chunk in llmClient.StreamGenerateAsync(systemPrompt, messages, false, CancellationToken.None))
+        {
+            if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
+                resultBuilder.Append(chunk.Content);
+        }
+
+        var rawResult = resultBuilder.ToString().Trim();
+
+        if (string.IsNullOrWhiteSpace(rawResult))
+            return StatusCode(500, ApiResponse<object>.Fail("GENERATION_FAILED", "AI 未生成有效内容"));
+
+        // 解析 JSON 响应
+        try
+        {
+            var jsonOpts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var draft = JsonSerializer.Deserialize<SkillDraftResult>(rawResult, jsonOpts);
+
+            if (draft == null || string.IsNullOrWhiteSpace(draft.PromptTemplate))
+                return StatusCode(500, ApiResponse<object>.Fail("GENERATION_FAILED", "AI 未生成有效的提示词模板"));
+
+            _logger.LogInformation(
+                "Skill draft extracted from {TurnCount}-turn conversation by {UserId}, title={Title}",
+                request.ConversationMessages.Count, userId, draft.Title);
+
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                promptTemplate = draft.PromptTemplate,
+                title = draft.Title,
+                description = draft.Description,
+                category = draft.Category,
+                icon = draft.Icon,
+            }));
+        }
+        catch (JsonException)
+        {
+            // JSON 解析失败时回退：把整个输出当作 promptTemplate
+            _logger.LogWarning("Failed to parse skill draft JSON from LLM, falling back to raw promptTemplate");
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                promptTemplate = rawResult,
+                title = (string?)null,
+                description = (string?)null,
+                category = (string?)null,
+                icon = (string?)null,
+            }));
+        }
+    }
+
+    /// <summary>
     /// 从 prompt_stages 迁移到 skills（管理员操作）
     /// </summary>
     [HttpPost("migrate-prompts")]
@@ -440,7 +564,7 @@ public class CreateSkillRequest
     public SkillOutputConfig? Output { get; set; }
 }
 
-/// <summary>从消息生成技能草案的请求体</summary>
+/// <summary>从消息生成技能草案的请求体（旧版：单条消息）</summary>
 public class GenerateSkillFromMessageRequest
 {
     /// <summary>用户的原始消息（可选，提供更多上下文）</summary>
@@ -448,5 +572,32 @@ public class GenerateSkillFromMessageRequest
 
     /// <summary>AI 的回复内容（必填，从中提炼技能模板）</summary>
     public string AssistantMessage { get; set; } = string.Empty;
+}
+
+/// <summary>从多轮对话生成技能草案的请求体（增强版）</summary>
+public class GenerateSkillFromConversationRequest
+{
+    /// <summary>多轮对话消息列表（按时间顺序）</summary>
+    public List<ConversationMessageItem> ConversationMessages { get; set; } = new();
+
+    /// <summary>关键 AI 回复内容（触发"保存为技能"的那条回复）</summary>
+    public string KeyAssistantMessage { get; set; } = string.Empty;
+}
+
+/// <summary>对话消息项</summary>
+public class ConversationMessageItem
+{
+    public string Role { get; set; } = string.Empty;
+    public string Content { get; set; } = string.Empty;
+}
+
+/// <summary>LLM 提炼的技能草案结果</summary>
+public class SkillDraftResult
+{
+    public string PromptTemplate { get; set; } = string.Empty;
+    public string? Title { get; set; }
+    public string? Description { get; set; }
+    public string? Category { get; set; }
+    public string? Icon { get; set; }
 }
 

@@ -201,7 +201,7 @@ pub struct ExtractPromptTemplateResponse {
     pub prompt_template: String,
 }
 
-/// 从对话消息提炼可复用的提示词模板
+/// 从对话消息提炼可复用的提示词模板（旧版：单条消息）
 #[command]
 pub async fn generate_skill_from_message(
     user_message: Option<String>,
@@ -214,5 +214,50 @@ pub async fn generate_skill_from_message(
     };
     client
         .post("/api/prd-agent/skills/generate-from-message", &request)
+        .await
+}
+
+// ━━━ 从多轮对话提炼技能（增强版） ━━━━━━━━
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationMessage {
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerateSkillFromConversationRequest {
+    pub conversation_messages: Vec<ConversationMessage>,
+    pub key_assistant_message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtractedSkillDraftResponse {
+    pub prompt_template: String,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub category: Option<String>,
+    pub icon: Option<String>,
+}
+
+/// 从多轮对话提炼可复用的技能草案（增强版）
+#[command]
+pub async fn generate_skill_from_conversation(
+    conversation_messages: Vec<ConversationMessage>,
+    key_assistant_message: String,
+) -> Result<ApiResponse<ExtractedSkillDraftResponse>, String> {
+    let client = ApiClient::new();
+    let request = GenerateSkillFromConversationRequest {
+        conversation_messages,
+        key_assistant_message,
+    };
+    client
+        .post(
+            "/api/prd-agent/skills/generate-from-conversation",
+            &request,
+        )
         .await
 }
