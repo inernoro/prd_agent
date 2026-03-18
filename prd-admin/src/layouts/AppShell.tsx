@@ -78,9 +78,13 @@ const SHORT_LABEL_MAP: Record<string, string> = {
   'workflow-agent': '工作流',
   'marketplace': '市场',
   'my-resources': '我的资源',
+  'my-assets': '我的资源',
   'model-center': '模型',
+  'mds': '模型',
   'authz': '用户权限',
+  'users': '用户',
   'data-ops': '自定义',
+  'settings': '自定义',
   'visual-agent': '视觉',
   'literary-agent': '文学',
   'video-agent': '视频',
@@ -95,19 +99,16 @@ const SHORT_LABEL_MAP: Record<string, string> = {
   'automations': '自动化',
   'skills': '技能',
   'dashboard': '仪表盘',
-  'users': '用户',
   'groups': '群组',
-  'mds': '模型',
   'prompts': '提示词',
   'assets': '资源',
   'logs': '日志',
   'data': '数据',
   'open-platform': '开放平台',
-  'settings': '设置',
 };
 
 /** 从侧边栏隐藏的 appKey（页面仍可直接访问） */
-const HIDDEN_NAV_KEYS = new Set(['hosted-sites']);
+const HIDDEN_NAV_KEYS = new Set(['web-pages']);
 
 /** 获取短标签：优先查映射表，否则使用完整 label */
 function getShortLabel(appKey: string, label: string): string {
@@ -341,7 +342,7 @@ export default function AppShell() {
   // 根据配置决定是否使用玻璃效果：always 始终启用，auto 仅实验室页面，never 禁用
   const useSidebarGlass = sidebarGlass === 'always' || (sidebarGlass === 'auto' && isLabPage);
 
-  const asideWidth = collapsed ? 68 : 176;
+  const asideWidth = collapsed ? 80 : 176;
   const asideGap = 12;
   // 专注模式（fullBleedMain）、移动端下隐藏侧栏，主区最大化
   const focusHideAside = fullBleedMain || isMobile;
