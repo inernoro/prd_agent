@@ -342,7 +342,7 @@ export default function AppShell() {
   // 根据配置决定是否使用玻璃效果：always 始终启用，auto 仅实验室页面，never 禁用
   const useSidebarGlass = sidebarGlass === 'always' || (sidebarGlass === 'auto' && isLabPage);
 
-  const asideWidth = collapsed ? 80 : 176;
+  const asideWidth = collapsed ? 68 : 176;
   const asideGap = 12;
   // 专注模式（fullBleedMain）、移动端下隐藏侧栏，主区最大化
   const focusHideAside = fullBleedMain || isMobile;
@@ -759,20 +759,24 @@ export default function AppShell() {
                 type="button"
                 onClick={() => navigate(homeItem.key)}
                 className={cn(
-                  'group/nav relative flex flex-col items-center justify-center gap-1 w-full rounded-[12px]',
-                  'transition-all duration-200 ease-out py-2',
+                  'group/nav relative flex flex-col items-center justify-center gap-0.5 w-full',
+                  'transition-all duration-200 ease-out py-1',
                   activeKey === '/' ? '' : 'nav-item-hover'
                 )}
                 style={{
-                  background: activeKey === '/' ? 'rgba(255, 255, 255, 0.06)' : 'transparent',
-                  border: activeKey === '/' ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid transparent',
                   color: activeKey === '/' ? 'var(--text-primary)' : 'var(--text-secondary)',
                 }}
                 title={homeItem.label}
               >
                 <span
-                  className="inline-flex items-center justify-center shrink-0 transition-all duration-200 group-hover/nav:scale-110"
-                  style={{ color: activeKey === '/' ? '#818cf8' : undefined }}
+                  className="inline-flex items-center justify-center shrink-0 rounded-[12px] transition-all duration-200 group-hover/nav:scale-105"
+                  style={{
+                    width: 42,
+                    height: 42,
+                    background: activeKey === '/' ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
+                    border: activeKey === '/' ? '1px solid rgba(255, 255, 255, 0.10)' : '1px solid transparent',
+                    color: activeKey === '/' ? '#818cf8' : undefined,
+                  }}
                 >
                   {homeItem.icon}
                 </span>
@@ -839,20 +843,25 @@ export default function AppShell() {
                           type="button"
                           onClick={() => navigate(it.key)}
                           className={cn(
-                            'group/nav relative flex flex-col items-center justify-center gap-1 w-full rounded-[12px]',
-                            'transition-all duration-200 ease-out py-2',
+                            'group/nav relative flex flex-col items-center justify-center gap-0.5 w-full',
+                            'transition-all duration-200 ease-out py-1',
                             !active && 'nav-item-hover'
                           )}
                           style={{
-                            background: active ? 'rgba(255, 255, 255, 0.06)' : 'transparent',
-                            border: active ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid transparent',
                             color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
                           }}
                           title={it.description ? `${it.label} - ${it.description}` : it.label}
                         >
+                          {/* 图标容器：固定正方形 + 圆角背景 */}
                           <span
-                            className="inline-flex items-center justify-center shrink-0 transition-all duration-200 group-hover/nav:scale-110"
-                            style={{ color: active ? '#818cf8' : undefined }}
+                            className="inline-flex items-center justify-center shrink-0 rounded-[12px] transition-all duration-200 group-hover/nav:scale-105"
+                            style={{
+                              width: 42,
+                              height: 42,
+                              background: active ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
+                              border: active ? '1px solid rgba(255, 255, 255, 0.10)' : '1px solid transparent',
+                              color: active ? '#818cf8' : undefined,
+                            }}
                           >
                             {it.icon}
                           </span>
