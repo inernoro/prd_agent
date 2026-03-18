@@ -382,8 +382,11 @@ export function TeamDashboard() {
             style={{ opacity: memberDrawerOpen ? 1 : 0 }}
           />
           <div
-            className="relative h-full w-[30vw] max-w-[30vw] surface p-0 overflow-y-auto"
+            className="relative h-full flex-none surface p-0 overflow-y-auto overflow-x-hidden"
             style={{
+              width: 'min(560px, 92vw)',
+              minWidth: 'min(560px, 92vw)',
+              maxWidth: 'min(560px, 92vw)',
               opacity: memberDrawerOpen ? 1 : 0,
               transform: memberDrawerOpen ? 'translateX(0)' : 'translateX(20px)',
               transition: `transform 240ms ${DRAWER_ENTER_EASING}, opacity ${DRAWER_CLOSE_MS}ms ease`,
