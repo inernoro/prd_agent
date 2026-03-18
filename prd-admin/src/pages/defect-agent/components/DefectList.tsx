@@ -78,8 +78,8 @@ export function DefectList() {
       <div className="flex flex-col">
         {/* 列表头部 */}
         <div
-          className="flex items-center gap-3 px-3 py-2 text-[10px] font-medium select-none"
-          style={{ color: 'var(--text-muted)', borderBottom: '1px solid var(--border-subtle)' }}
+          className="flex items-center gap-3 px-3 py-2 text-[10px] font-medium select-none sticky top-0 z-10 surface-inset"
+          style={{ color: 'var(--text-muted)' }}
         >
           <div className="w-1 flex-shrink-0" />
           <div className="w-2 flex-shrink-0" />
