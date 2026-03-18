@@ -63,7 +63,7 @@ import type { AdminNotificationItem } from '@/services/contracts/notifications';
 import { GlobalDefectSubmitDialog, DefectSubmitButton } from '@/components/ui/GlobalDefectSubmitDialog';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 
-type NavItem = { key: string; appKey: string; label: string; icon: React.ReactNode; description?: string; group?: string | null };
+type NavItem = { key: string; appKey: string; label: string; shortLabel: string; icon: React.ReactNode; description?: string; group?: string | null };
 
 /** 侧边栏分组定义 */
 const NAV_GROUPS: { key: string; label: string }[] = [
@@ -71,6 +71,40 @@ const NAV_GROUPS: { key: string; label: string }[] = [
   { key: 'personal', label: '个人空间' },
   { key: 'admin', label: '系统管理' },
 ];
+
+/** 折叠态短标签映射（2-3 字），未命中则自动截取前 3 字 */
+const SHORT_LABEL_MAP: Record<string, string> = {
+  'ai-toolbox': '百宝箱',
+  'report-agent': '周报',
+  'workflow-agent': '工作流',
+  'marketplace': '市场',
+  'my-resources': '资源',
+  'hosted-sites': '托管',
+  'model-center': '模型',
+  'authz': '权限',
+  'data-ops': '运维',
+  'visual-agent': '视觉',
+  'literary-agent': '文学',
+  'video-agent': '视频',
+  'defect-agent': '缺陷',
+  'prd-agent': '智能体',
+  'arena-agent': '竞技场',
+  'shortcuts-agent': '指令',
+  'data-migration-agent': '迁移',
+  'executive': '总裁',
+  'tutorial-email': '邮件',
+  'lab': '实验室',
+  'automations': '自动化',
+  'skills': '技能',
+};
+
+/** 获取短标签：优先查映射表，否则截取 label 前 3 字 */
+function getShortLabel(appKey: string, label: string): string {
+  if (SHORT_LABEL_MAP[appKey]) return SHORT_LABEL_MAP[appKey];
+  // 去掉常见后缀
+  const clean = label.replace(/\s*(Agent|管理|引擎)\s*/g, '').trim();
+  return clean.length <= 3 ? clean : clean.slice(0, 3);
+}
 
 /** 根据 mimeType 推断扩展名，确保下载文件名带后缀 */
 function ensureDownloadName(name: string | undefined | null, mimeType?: string | null): string {
@@ -234,6 +268,7 @@ export default function AppShell() {
           key: m.path,
           appKey: m.appKey,
           label: m.label,
+          shortLabel: getShortLabel(m.appKey, m.label),
           icon: <IconComp size={18} />,
           description: m.description ?? undefined,
           group: m.group,
@@ -264,6 +299,7 @@ export default function AppShell() {
           key: m.path,
           appKey: m.appKey,
           label: m.label,
+          shortLabel: getShortLabel(m.appKey, m.label),
           icon: <IconComp size={16} />,
           description: m.description ?? undefined,
           group: null,
@@ -295,7 +331,7 @@ export default function AppShell() {
   // 根据配置决定是否使用玻璃效果：always 始终启用，auto 仅实验室页面，never 禁用
   const useSidebarGlass = sidebarGlass === 'always' || (sidebarGlass === 'auto' && isLabPage);
 
-  const asideWidth = collapsed ? 52 : 176;
+  const asideWidth = collapsed ? 68 : 176;
   const asideGap = 12;
   // 专注模式（fullBleedMain）、移动端下隐藏侧栏，主区最大化
   const focusHideAside = fullBleedMain || isMobile;
@@ -712,9 +748,11 @@ export default function AppShell() {
                 type="button"
                 onClick={() => navigate(homeItem.key)}
                 className={cn(
-                  'group/nav relative flex items-center gap-2.5 rounded-[10px] w-full',
+                  'group/nav relative rounded-[10px] w-full',
                   'transition-all duration-200 ease-out',
-                  collapsed ? 'justify-center w-[38px] h-[38px] shrink-0' : 'px-2.5 py-1.5',
+                  collapsed
+                    ? 'flex flex-col items-center justify-center gap-0.5 py-1.5 px-1'
+                    : 'flex items-center gap-2.5 px-2.5 py-1.5',
                   activeKey === '/' ? '' : 'nav-item-hover'
                 )}
                 style={{
@@ -730,7 +768,11 @@ export default function AppShell() {
                 >
                   {homeItem.icon}
                 </span>
-                {!collapsed && (
+                {collapsed ? (
+                  <span className="text-[10px] leading-tight truncate max-w-full" style={{ color: activeKey === '/' ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                    首页
+                  </span>
+                ) : (
                   <div className="text-[13px] font-medium truncate transition-colors duration-200 group-hover/nav:text-[var(--text-primary)]">
                     {homeItem.label}
                   </div>
@@ -786,7 +828,7 @@ export default function AppShell() {
                   )}
 
                   {/* 分组内的导航项 */}
-                  <div className={cn('flex flex-col', collapsed ? 'gap-px items-center' : 'gap-px')}>
+                  <div className={cn('flex flex-col', collapsed ? 'gap-0.5 items-center' : 'gap-px')}>
                     {group.items.map((it) => {
                       const active = it.key === activeKey;
                       return (
@@ -795,9 +837,11 @@ export default function AppShell() {
                           type="button"
                           onClick={() => navigate(it.key)}
                           className={cn(
-                            'group/nav relative flex items-center gap-2.5 rounded-[10px]',
+                            'group/nav relative rounded-[10px]',
                             'transition-all duration-200 ease-out',
-                            collapsed ? 'justify-center w-[38px] h-[38px] shrink-0' : 'px-2.5 py-1.5',
+                            collapsed
+                              ? 'flex flex-col items-center justify-center gap-0.5 w-full py-1.5 px-1'
+                              : 'flex items-center gap-2.5 px-2.5 py-1.5',
                             !active && 'nav-item-hover'
                           )}
                           style={{
@@ -813,7 +857,11 @@ export default function AppShell() {
                           >
                             {it.icon}
                           </span>
-                          {!collapsed && (
+                          {collapsed ? (
+                            <span className="text-[10px] leading-tight truncate max-w-full" style={{ color: active ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                              {it.shortLabel}
+                            </span>
+                          ) : (
                             <div className="min-w-0 flex-1 text-left">
                               <div className="text-[13px] font-medium truncate transition-colors duration-200 group-hover/nav:text-[var(--text-primary)]">{it.label}</div>
                             </div>
