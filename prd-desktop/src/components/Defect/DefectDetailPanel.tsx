@@ -128,6 +128,12 @@ export default function DefectDetailPanel({ defect, onClose }: Props) {
   const [sending, setSending] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [resolveInput, setResolveInput] = useState('');
+  const [rejectInput, setRejectInput] = useState('');
+  const [verifyFailInput, setVerifyFailInput] = useState('');
+  const [showResolveDialog, setShowResolveDialog] = useState(false);
+  const [showRejectDialog, setShowRejectDialog] = useState(false);
+  const [showVerifyFailDialog, setShowVerifyFailDialog] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -149,6 +155,9 @@ export default function DefectDetailPanel({ defect, onClose }: Props) {
     }
   }, [defect.id]);
 
+  const isReporter = userId === defect.reporterId;
+  const isAssignee = userId === defect.assigneeId;
+
   const handleSendMessage = async () => {
     if (!messageInput.trim() || sending) return;
     setSending(true);
@@ -167,7 +176,7 @@ export default function DefectDetailPanel({ defect, onClose }: Props) {
     }
   };
 
-  const handleAction = async (action: string) => {
+  const handleAction = async (action: string, extraPayload?: Record<string, string>) => {
     setActionLoading(true);
     try {
       let resp: ApiResponse<{ defect: DefectReport }>;
@@ -175,23 +184,16 @@ export default function DefectDetailPanel({ defect, onClose }: Props) {
         case 'process':
           resp = await invoke('process_defect', { id: defect.id });
           break;
-        case 'resolve': {
-          const resolution = prompt('请输入解决说明（可选）：') || '已修复';
-          resp = await invoke('resolve_defect', { id: defect.id, resolution });
+        case 'resolve':
+          resp = await invoke('resolve_defect', { id: defect.id, resolution: extraPayload?.resolution || '已修复' });
           break;
-        }
-        case 'reject': {
-          const reason = prompt('请输入驳回原因：');
-          if (!reason) { setActionLoading(false); return; }
-          resp = await invoke('reject_defect', { id: defect.id, reason });
+        case 'reject':
+          resp = await invoke('reject_defect', { id: defect.id, reason: extraPayload?.reason || '不予修复' });
           break;
-        }
         case 'close':
-          if (!confirm('确定要将该缺陷标记为已完成吗？')) { setActionLoading(false); return; }
           resp = await invoke('close_defect', { id: defect.id });
           break;
         case 'delete':
-          if (!confirm('确定要删除此缺陷吗？')) { setActionLoading(false); return; }
           await invoke('delete_defect', { id: defect.id });
           removeDefectFromList(defect.id);
           loadStats();
@@ -199,15 +201,11 @@ export default function DefectDetailPanel({ defect, onClose }: Props) {
           setActionLoading(false);
           return;
         case 'verify_pass':
-          if (!confirm('确认验收通过？')) { setActionLoading(false); return; }
           resp = await invoke('verify_pass_defect', { id: defect.id });
           break;
-        case 'verify_fail': {
-          const failReason = prompt('请输入验收不通过原因：');
-          if (!failReason) { setActionLoading(false); return; }
-          resp = await invoke('verify_fail_defect', { id: defect.id, reason: failReason });
+        case 'verify_fail':
+          resp = await invoke('verify_fail_defect', { id: defect.id, reason: extraPayload?.reason || '' });
           break;
-        }
         default:
           setActionLoading(false);
           return;
@@ -217,6 +215,9 @@ export default function DefectDetailPanel({ defect, onClose }: Props) {
         updateDefectInList(updated as DefectReport);
         loadStats();
       }
+      setShowResolveDialog(false);
+      setShowRejectDialog(false);
+      setShowVerifyFailDialog(false);
     } catch (err) {
       console.error(`Failed to ${action} defect:`, err);
     } finally {
@@ -407,27 +408,33 @@ export default function DefectDetailPanel({ defect, onClose }: Props) {
 
             {/* Resolution / Reject / VerifyFail info */}
             {defect.resolution && (
-              <div>
-                <div className="text-[11px] mb-2 font-medium" style={{ color: 'rgba(100,200,120,0.9)' }}>解决说明</div>
-                <div className="text-[12px] p-3 rounded-lg" style={{ background: 'rgba(100,200,120,0.1)' }}>
-                  {defect.resolution}
+              <div className="p-3 rounded-lg" style={{ background: 'rgba(100,200,120,0.1)', border: '1px solid rgba(100,200,120,0.2)' }}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[11px] font-medium" style={{ color: 'rgba(100,200,120,0.9)' }}>解决方案</span>
+                  <span className="text-[10px] text-text-secondary">
+                    {defect.resolvedByName && `${defect.resolvedByName}${defect.resolvedByName === (isAssignee ? defect.assigneeName : '') ? ' (我)' : ''} · `}{formatDateTime(defect.resolvedAt)}
+                  </span>
                 </div>
+                <div className="text-[12px]">{defect.resolution}</div>
               </div>
             )}
             {defect.rejectReason && (
-              <div>
-                <div className="text-[11px] mb-2 font-medium" style={{ color: 'rgba(255,100,100,0.9)' }}>驳回原因</div>
-                <div className="text-[12px] p-3 rounded-lg" style={{ background: 'rgba(255,100,100,0.1)' }}>
-                  {defect.rejectReason}
+              <div className="p-3 rounded-lg" style={{ background: 'rgba(255,100,100,0.1)', border: '1px solid rgba(255,100,100,0.2)' }}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[11px] font-medium" style={{ color: 'rgba(255,100,100,0.9)' }}>驳回原因</span>
+                  <span className="text-[10px] text-text-secondary">
+                    {defect.rejectedByName && `${defect.rejectedByName}`}
+                  </span>
                 </div>
+                <div className="text-[12px]">{defect.rejectReason}</div>
               </div>
             )}
             {defect.verifyFailReason && (
-              <div>
-                <div className="text-[11px] mb-2 font-medium" style={{ color: 'rgba(255,160,60,0.9)' }}>验收不通过原因</div>
-                <div className="text-[12px] p-3 rounded-lg" style={{ background: 'rgba(255,160,60,0.1)' }}>
-                  {defect.verifyFailReason}
+              <div className="p-3 rounded-lg" style={{ background: 'rgba(255,160,60,0.1)', border: '1px solid rgba(255,160,60,0.2)' }}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[11px] font-medium" style={{ color: 'rgba(255,160,60,0.9)' }}>验收不通过原因</span>
                 </div>
+                <div className="text-[12px]">{defect.verifyFailReason}</div>
               </div>
             )}
 
@@ -461,17 +468,33 @@ export default function DefectDetailPanel({ defect, onClose }: Props) {
               </span>
               <span className="h-4 w-px bg-black/5 dark:bg-white/10" />
               <div className="flex items-center gap-1 text-[10px] text-text-secondary">
-                <span className="w-4 h-4 rounded-full bg-primary-500/20 flex items-center justify-center text-[9px] font-medium">
+                <span
+                  className="w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-medium"
+                  style={{
+                    background: isReporter ? 'rgba(100,160,255,0.2)' : 'rgba(128,128,128,0.15)',
+                    color: isReporter ? 'rgba(100,160,255,1)' : 'inherit',
+                    border: isReporter ? '1px solid rgba(100,160,255,0.4)' : '1px solid transparent',
+                  }}
+                >
                   {(defect.reporterName || 'U')[0]}
                 </span>
                 <span className="max-w-[50px] truncate">{defect.reporterName || '未知'}</span>
+                {isReporter && <span className="text-primary-500 text-[9px]">(我)</span>}
                 <svg className="w-3 h-3 opacity-40 mx-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
                 </svg>
-                <span className="w-4 h-4 rounded-full bg-blue-500/20 flex items-center justify-center text-[9px] font-medium">
+                <span
+                  className="w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-medium"
+                  style={{
+                    background: isAssignee ? 'rgba(120,220,180,0.2)' : 'rgba(128,128,128,0.15)',
+                    color: isAssignee ? 'rgba(120,220,180,1)' : 'inherit',
+                    border: isAssignee ? '1px solid rgba(120,220,180,0.4)' : '1px solid transparent',
+                  }}
+                >
                   {(defect.assigneeName || 'U')[0]}
                 </span>
                 <span className="max-w-[50px] truncate">{defect.assigneeName || '未指派'}</span>
+                {isAssignee && <span className="text-green-400 text-[9px]">(我)</span>}
               </div>
             </div>
 
@@ -488,7 +511,7 @@ export default function DefectDetailPanel({ defect, onClose }: Props) {
               )}
               {canResolve && (
                 <button
-                  onClick={() => handleAction('resolve')}
+                  onClick={() => setShowResolveDialog(true)}
                   disabled={actionLoading}
                   className="px-3 py-1.5 text-[11px] rounded-lg bg-green-500/10 text-green-400 hover:bg-green-500/20 disabled:opacity-50 transition-colors"
                 >
@@ -505,7 +528,7 @@ export default function DefectDetailPanel({ defect, onClose }: Props) {
                     验收通过
                   </button>
                   <button
-                    onClick={() => handleAction('verify_fail')}
+                    onClick={() => setShowVerifyFailDialog(true)}
                     disabled={actionLoading}
                     className="px-3 py-1.5 text-[11px] rounded-lg bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 disabled:opacity-50 transition-colors"
                   >
@@ -515,7 +538,7 @@ export default function DefectDetailPanel({ defect, onClose }: Props) {
               )}
               {canReject && (
                 <button
-                  onClick={() => handleAction('reject')}
+                  onClick={() => setShowRejectDialog(true)}
                   disabled={actionLoading}
                   className="px-3 py-1.5 text-[11px] rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 disabled:opacity-50 transition-colors"
                 >
@@ -571,16 +594,14 @@ export default function DefectDetailPanel({ defect, onClose }: Props) {
                     <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-medium shrink-0 ${
                       msg.role === 'assistant'
                         ? 'bg-purple-500/20 text-purple-400'
-                        : msg.role === 'system'
-                        ? 'bg-gray-500/20 text-gray-400'
                         : 'bg-primary-500/20 text-primary-500'
                     }`}>
-                      {msg.role === 'assistant' ? 'AI' : msg.role === 'system' ? 'S' : (msg.userName?.[0] || 'U')}
+                      {msg.role === 'assistant' ? 'AI' : (msg.userName?.[0] || 'U')}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
                         <span className="text-[12px] font-medium">
-                          {msg.role === 'assistant' ? 'AI 助手' : msg.role === 'system' ? '系统' : (msg.userName || '用户')}
+                          {msg.role === 'assistant' ? 'AI 助手' : (msg.userName || '用户')}
                         </span>
                         <span className="text-[10px] text-text-secondary">{formatMsgTimestamp(msg.createdAt)}</span>
                       </div>
@@ -622,6 +643,84 @@ export default function DefectDetailPanel({ defect, onClose }: Props) {
           </div>
         )}
       </div>
+
+      {/* Resolve dialog */}
+      {showResolveDialog && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30" onClick={() => setShowResolveDialog(false)}>
+          <div className="w-80 p-4 rounded-lg ui-glass-panel shadow-lg space-y-3" onClick={(e) => e.stopPropagation()}>
+            <h4 className="text-sm font-semibold">标记为已解决</h4>
+            <textarea
+              value={resolveInput}
+              onChange={(e) => setResolveInput(e.target.value)}
+              placeholder="请输入解决方案..."
+              rows={3}
+              className="w-full px-3 py-2 text-sm rounded-lg bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 focus:outline-none focus:ring-1 focus:ring-green-500/30 resize-none"
+            />
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setShowResolveDialog(false)} className="px-3 py-1.5 text-xs rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">取消</button>
+              <button
+                onClick={() => handleAction('resolve', { resolution: resolveInput || '已修复' })}
+                disabled={actionLoading}
+                className="px-3 py-1.5 text-xs rounded-lg bg-green-500 text-white hover:bg-green-600 disabled:opacity-50 transition-colors"
+              >
+                确认解决
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reject dialog */}
+      {showRejectDialog && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30" onClick={() => setShowRejectDialog(false)}>
+          <div className="w-80 p-4 rounded-lg ui-glass-panel shadow-lg space-y-3" onClick={(e) => e.stopPropagation()}>
+            <h4 className="text-sm font-semibold">驳回缺陷</h4>
+            <textarea
+              value={rejectInput}
+              onChange={(e) => setRejectInput(e.target.value)}
+              placeholder="请输入驳回原因..."
+              rows={3}
+              className="w-full px-3 py-2 text-sm rounded-lg bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 focus:outline-none focus:ring-1 focus:ring-red-500/30 resize-none"
+            />
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setShowRejectDialog(false)} className="px-3 py-1.5 text-xs rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">取消</button>
+              <button
+                onClick={() => handleAction('reject', { reason: rejectInput || '不予修复' })}
+                disabled={actionLoading}
+                className="px-3 py-1.5 text-xs rounded-lg bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition-colors"
+              >
+                确认驳回
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Verify fail dialog */}
+      {showVerifyFailDialog && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30" onClick={() => setShowVerifyFailDialog(false)}>
+          <div className="w-80 p-4 rounded-lg ui-glass-panel shadow-lg space-y-3" onClick={(e) => e.stopPropagation()}>
+            <h4 className="text-sm font-semibold">验收不通过</h4>
+            <textarea
+              value={verifyFailInput}
+              onChange={(e) => setVerifyFailInput(e.target.value)}
+              placeholder="请输入不通过原因..."
+              rows={3}
+              className="w-full px-3 py-2 text-sm rounded-lg bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 focus:outline-none focus:ring-1 focus:ring-orange-500/30 resize-none"
+            />
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setShowVerifyFailDialog(false)} className="px-3 py-1.5 text-xs rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">取消</button>
+              <button
+                onClick={() => handleAction('verify_fail', { reason: verifyFailInput })}
+                disabled={actionLoading || !verifyFailInput.trim()}
+                className="px-3 py-1.5 text-xs rounded-lg bg-orange-500 text-white hover:bg-orange-600 disabled:opacity-50 transition-colors"
+              >
+                确认
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Image Lightbox */}
       {lightboxImage && (

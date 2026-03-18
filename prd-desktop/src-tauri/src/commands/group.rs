@@ -112,6 +112,35 @@ pub async fn get_group_members(
     client.get(&format!("/groups/{}/members", group_id)).await
 }
 
+#[command]
+pub async fn leave_group(group_id: String) -> Result<ApiResponse<serde_json::Value>, String> {
+    let client = ApiClient::new();
+    client.delete(&format!("/groups/{}/leave", group_id)).await
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AddGroupMemberRequest {
+    username: String,
+    member_role: String,
+}
+
+#[command]
+pub async fn add_group_member(
+    group_id: String,
+    username: String,
+    member_role: String,
+) -> Result<ApiResponse<GroupMemberInfo>, String> {
+    let client = ApiClient::new();
+    let request = AddGroupMemberRequest {
+        username,
+        member_role,
+    };
+    client
+        .post(&format!("/groups/{}/members", group_id), &request)
+        .await
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct EmptyBody {}

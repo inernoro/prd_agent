@@ -60,6 +60,9 @@ public static class ErrorCodes
     public const string UNAUTHORIZED = "UNAUTHORIZED";
     public const string PERMISSION_DENIED = "PERMISSION_DENIED";
     
+    // 用户相关
+    public const string USER_NOT_FOUND = "USER_NOT_FOUND";
+
     // 群组相关
     public const string GROUP_NOT_FOUND = "GROUP_NOT_FOUND";
     public const string INVALID_INVITE_LINK = "INVALID_INVITE_LINK";

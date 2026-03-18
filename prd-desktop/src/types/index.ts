@@ -1,6 +1,6 @@
 export type UserRole = 'PM' | 'DEV' | 'QA' | 'ADMIN';
 export type InteractionMode = 'QA' | 'Knowledge' | 'PrdPreview' | 'AssetsDiag' | 'Defect';
-export type MessageRole = 'User' | 'Assistant';
+export type MessageRole = 'User' | 'Assistant' | 'System';
 
 export interface DocCitation {
   headingTitle: string;
@@ -157,7 +157,7 @@ export interface ApiResponse<T> {
 }
 
 // ━━━ 缺陷管理类型 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-export type DefectStatus = 'draft' | 'submitted' | 'assigned' | 'processing' | 'resolved' | 'rejected' | 'closed' | 'verifying';
+export type DefectStatus = 'draft' | 'submitted' | 'assigned' | 'processing' | 'verifying' | 'resolved' | 'rejected' | 'closed';
 export type DefectSeverity = 'critical' | 'major' | 'minor' | 'trivial';
 
 export interface DefectAttachment {
@@ -185,17 +185,19 @@ export interface DefectReport {
   assigneeId?: string;
   assigneeName?: string;
   assigneeAvatarFileName?: string;
+  reporterUnread?: boolean;
+  assigneeUnread?: boolean;
+  lastCommentBy?: 'reporter' | 'assignee' | null;
   attachments?: DefectAttachment[];
   resolution?: string;
+  resolvedById?: string;
   resolvedByName?: string;
   resolvedByAvatarFileName?: string;
   resolvedAt?: string;
   rejectReason?: string;
+  rejectedById?: string;
   rejectedByName?: string;
   rejectedByAvatarFileName?: string;
-  reporterUnread?: boolean;
-  assigneeUnread?: boolean;
-  lastCommentBy?: 'reporter' | 'assignee' | null;
   verifyFailReason?: string;
   closedAt?: string;
   createdAt: string;
