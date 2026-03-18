@@ -87,6 +87,61 @@ import type {
   TeamWorkflowInfo,
 } from '../contracts/reportAgent';
 
+type RefreshOkData = { accessToken: string; refreshToken: string; sessionKey: string };
+
+function getApiBaseUrl() {
+  const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
+  return raw.trim().replace(/\/+$/, '');
+}
+
+function joinUrl(base: string, path: string) {
+  const b = base.replace(/\/+$/, '');
+  const p = path.replace(/^\/+/, '');
+  if (!b) return `/${p}`;
+  return `${b}/${p}`;
+}
+
+function isRefreshOkData(data: unknown): data is RefreshOkData {
+  if (!data || typeof data !== 'object') return false;
+  const obj = data as Record<string, unknown>;
+  return typeof obj.accessToken === 'string'
+    && typeof obj.refreshToken === 'string'
+    && typeof obj.sessionKey === 'string';
+}
+
+async function tryRefreshAdminTokenForUpload(): Promise<boolean> {
+  const authStore = useAuthStore.getState();
+  const token = authStore.token;
+  const refreshToken = authStore.refreshToken;
+  const sessionKey = authStore.sessionKey;
+  const userId = authStore.user?.userId;
+
+  if (!authStore.isAuthenticated || !token || !refreshToken || !sessionKey || !userId) return false;
+
+  const url = joinUrl(getApiBaseUrl(), api.auth.refresh());
+  const body = JSON.stringify({
+    refreshToken,
+    userId,
+    clientType: 'admin',
+    sessionKey,
+  });
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body,
+    });
+    const text = await res.text();
+    const parsed = text ? JSON.parse(text) as ApiResponse<RefreshOkData> : null;
+    if (!res.ok || !parsed?.success || !isRefreshOkData(parsed.data)) return false;
+    authStore.setTokens(parsed.data.accessToken, parsed.data.refreshToken, parsed.data.sessionKey);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ========== Teams ==========
 
 export const listReportTeamsReal: ListReportTeamsContract = async () => {
@@ -233,23 +288,57 @@ export const updateWeeklyReportReal: UpdateWeeklyReportContract = async (input) 
 };
 
 export const uploadReportRichTextImageReal: UploadReportRichTextImageContract = async (input) => {
-  const token = useAuthStore.getState().token;
-  const headers: Record<string, string> = { Accept: 'application/json' };
-  if (token) headers.Authorization = `Bearer ${token}`;
+  const buildHeaders = (token: string | null | undefined) => {
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    return headers;
+  };
+  const createFormData = () => {
+    const fd = new FormData();
+    fd.append('file', input.file);
+    return fd;
+  };
 
-  const fd = new FormData();
-  fd.append('file', input.file);
+  const parseResponse = async (res: Response): Promise<ApiResponse<ReportRichTextImageUploadData>> => {
+    const text = await res.text();
+    try {
+      return JSON.parse(text) as ApiResponse<ReportRichTextImageUploadData>;
+    } catch {
+      return { success: false, error: { code: 'PARSE_ERROR', message: text || '上传失败' } } as ApiResponse<ReportRichTextImageUploadData>;
+    }
+  };
 
-  const rawBase = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').trim().replace(/\/+$/, '');
+  const rawBase = getApiBaseUrl();
   const path = api.reportAgent.reports.richTextImages(encodeURIComponent(input.id));
   const url = rawBase ? `${rawBase}${path}` : path;
 
-  const res = await fetch(url, { method: 'POST', headers, body: fd });
-  const text = await res.text();
   try {
-    return JSON.parse(text) as ApiResponse<ReportRichTextImageUploadData>;
-  } catch {
-    return { success: false, error: { code: 'PARSE_ERROR', message: text || '上传失败' } } as ApiResponse<ReportRichTextImageUploadData>;
+    const firstRes = await fetch(url, {
+      method: 'POST',
+      headers: buildHeaders(useAuthStore.getState().token),
+      body: createFormData(),
+    });
+    const firstParsed = await parseResponse(firstRes);
+    const firstUnauthorized = firstRes.status === 401 || firstParsed.error?.code === 'UNAUTHORIZED';
+    if (!firstUnauthorized) return firstParsed;
+
+    const refreshed = await tryRefreshAdminTokenForUpload();
+    if (!refreshed) return firstParsed;
+
+    const retryRes = await fetch(url, {
+      method: 'POST',
+      headers: buildHeaders(useAuthStore.getState().token),
+      body: createFormData(),
+    });
+    return await parseResponse(retryRes);
+  } catch (error) {
+    return {
+      success: false,
+      error: {
+        code: 'NETWORK_ERROR',
+        message: error instanceof Error ? error.message : '网络错误，上传失败',
+      },
+    } as ApiResponse<ReportRichTextImageUploadData>;
   }
 };
 
