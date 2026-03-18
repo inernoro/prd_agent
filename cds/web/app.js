@@ -65,6 +65,9 @@ if (cdsTheme === 'light') document.documentElement.dataset.theme = 'light';
 let cdsMode = 'standalone';
 let executors = [];
 
+// ── Container capacity ──
+let containerCapacity = { maxContainers: 999, runningContainers: 0, totalMemGB: 0 };
+
 // ── Utilities ──
 
 async function api(method, path, body) {
@@ -366,7 +369,6 @@ function setTheme(theme) {
 
 function toggleTheme(event) {
   const newTheme = cdsTheme === 'dark' ? 'light' : 'dark';
-  const rippleColor = newTheme === 'light' ? '#FFFFFF' : '#1E1F20';
 
   // Get origin point from button click
   let x, y;
@@ -386,34 +388,21 @@ function toggleTheme(event) {
     Math.max(y, window.innerHeight - y) ** 2
   ));
 
-  // Create ripple overlay
-  const ripple = document.createElement('div');
-  ripple.className = 'theme-ripple';
-  ripple.style.cssText = `
-    position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-    z-index: 99999; pointer-events: none;
-    background: ${rippleColor};
-    clip-path: circle(0px at ${x}px ${y}px);
-  `;
-  document.body.appendChild(ripple);
+  // Set CSS custom properties for clip-path animation origin
+  document.documentElement.style.setProperty('--ripple-x', `${x}px`);
+  document.documentElement.style.setProperty('--ripple-y', `${y}px`);
+  document.documentElement.style.setProperty('--ripple-radius', `${maxRadius}px`);
 
-  // Trigger animation
-  requestAnimationFrame(() => {
-    ripple.style.transition = 'clip-path 0.6s cubic-bezier(0.4, 0, 0.2, 1)';
-    ripple.style.clipPath = `circle(${maxRadius}px at ${x}px ${y}px)`;
-  });
-
-  // Apply theme at midway point for smooth visual
-  setTimeout(() => {
+  if (document.startViewTransition) {
+    // View Transition API: captures old state as snapshot, then reveals new state
+    // with clip-path circle animation (like clawhub.ai)
+    document.startViewTransition(() => {
+      setTheme(newTheme);
+    });
+  } else {
+    // Fallback: instant switch
     setTheme(newTheme);
-  }, 200);
-
-  // Remove ripple after animation completes
-  setTimeout(() => {
-    ripple.style.opacity = '0';
-    ripple.style.transition = 'opacity 0.2s ease';
-    setTimeout(() => ripple.remove(), 200);
-  }, 600);
+  }
 }
 
 function updateThemeUI() {
@@ -436,6 +425,7 @@ async function loadBranches() {
     const data = await api('GET', '/branches');
     branches = data.branches || [];
     defaultBranch = data.defaultBranch;
+    if (data.capacity) containerCapacity = data.capacity;
     // Auto-select main/master as default when no default is set
     if (!defaultBranch && branches.length > 0) {
       const mainBranch = branches.find(b => b.id === 'main') || branches.find(b => b.id === 'master');
@@ -624,7 +614,85 @@ async function addBranch(name) {
   await loadBranches();
 }
 
+// ── Container capacity check ──
+
+function getNewContainerCount(branchId, profileId) {
+  const br = branches.find(b => b.id === branchId);
+  if (profileId) {
+    // Single service deploy: only adds 1 if not already running
+    const svc = br?.services?.[profileId];
+    return (!svc || svc.status === 'idle' || svc.status === 'stopped' || svc.status === 'error') ? 1 : 0;
+  }
+  // Full deploy: count services that are not already running
+  const alreadyRunning = br ? Object.values(br.services).filter(s =>
+    s.status === 'running' || s.status === 'building' || s.status === 'starting'
+  ).length : 0;
+  return Math.max(0, buildProfiles.length - alreadyRunning);
+}
+
+function findOldestRunningBranch(excludeId) {
+  return branches
+    .filter(b => b.id !== excludeId && (b.status === 'running' || b.status === 'starting'))
+    .sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0))[0];
+}
+
+function checkCapacityAndDeploy(id, profileId) {
+  const newCount = getNewContainerCount(id, profileId);
+  const afterDeploy = containerCapacity.runningContainers + newCount;
+  if (afterDeploy <= containerCapacity.maxContainers) {
+    // Within capacity, deploy directly
+    if (profileId) deploySingleServiceDirect(id, profileId);
+    else deployBranchDirect(id);
+    return;
+  }
+
+  const oldest = findOldestRunningBranch(id);
+  const oldestName = oldest ? oldest.branch : '';
+
+  // Show capacity warning modal
+  const html = `
+    <div class="capacity-warning">
+      <div class="capacity-warning-icon">⚠️</div>
+      <div class="capacity-warning-text">
+        <p>当前服务器内存 <strong>${containerCapacity.totalMemGB}GB</strong>，最多支持 <strong>${containerCapacity.maxContainers}</strong> 个容器。</p>
+        <p>目前已有 <strong>${containerCapacity.runningContainers}</strong> 个容器运行中，本次部署需新增 <strong>${newCount}</strong> 个。</p>
+        <p style="color:var(--orange);margin-top:8px;">继续部署可能导致容器因内存不足无法正常运行。</p>
+      </div>
+      <div class="capacity-warning-actions">
+        <button class="primary sm" onclick="capacityChoiceForce('${id}', ${profileId ? `'${profileId}'` : 'null'})">我偏要</button>
+        ${oldest ? `<button class="sm" onclick="capacityChoiceStopOldest('${id}', ${profileId ? `'${profileId}'` : 'null'}, '${oldest.id}')">停掉 ${esc(oldestName).slice(0, 30)}</button>` : ''}
+        <button class="sm" onclick="closeConfigModal()">取消</button>
+      </div>
+    </div>
+  `;
+  openConfigModal('容器容量不足', html);
+}
+
+function capacityChoiceForce(id, profileId) {
+  closeConfigModal();
+  if (profileId) deploySingleServiceDirect(id, profileId);
+  else deployBranchDirect(id);
+}
+
+async function capacityChoiceStopOldest(id, profileId, oldestId) {
+  closeConfigModal();
+  showToast(`正在停止分支 ${oldestId}...`, 'info');
+  try {
+    await api('POST', `/branches/${oldestId}/stop`);
+    await loadBranches();
+    showToast(`已停止分支 ${oldestId}`, 'success');
+    if (profileId) deploySingleServiceDirect(id, profileId);
+    else deployBranchDirect(id);
+  } catch (e) {
+    showToast(`停止失败: ${e.message}`, 'error');
+  }
+}
+
 async function deployBranch(id) {
+  checkCapacityAndDeploy(id, null);
+}
+
+async function deployBranchDirect(id) {
   if (busyBranches.has(id)) return;
   markTouched(id);
   busyBranches.add(id);
@@ -1071,7 +1139,11 @@ async function viewContainerLogs(id, profileId) {
 
 // ── Single-service deploy ──
 
-async function deploySingleService(id, profileId) {
+function deploySingleService(id, profileId) {
+  checkCapacityAndDeploy(id, profileId);
+}
+
+async function deploySingleServiceDirect(id, profileId) {
   if (busyBranches.has(id)) return;
   busyBranches.add(id);
   closeDeployMenu(id);

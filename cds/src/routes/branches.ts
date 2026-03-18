@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { execSync, spawn } from 'node:child_process';
 import { createGzip } from 'node:zlib';
@@ -156,9 +157,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return 0; // preserve original order
     });
 
+    // Compute container capacity: (memoryGB - 1) * 2
+    const totalMemGB = Math.round(os.totalmem() / (1024 * 1024 * 1024));
+    const maxContainers = Math.max(2, (totalMemGB - 1) * 2);
+    let runningContainers = 0;
+    for (const b of branches) {
+      for (const svc of Object.values(b.services)) {
+        if (svc.status === 'running' || svc.status === 'building' || svc.status === 'starting') {
+          runningContainers++;
+        }
+      }
+    }
+
     res.json({
       branches: branchesWithSubject,
       defaultBranch: state.defaultBranch,
+      capacity: { maxContainers, runningContainers, totalMemGB },
     });
   });
 

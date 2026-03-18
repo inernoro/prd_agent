@@ -1496,3 +1496,35 @@ a.branch-name:hover { color: var(--accent); }
   .container { padding: 28px 20px; }
   h1 { font-size: 20px; }
 }
+
+/* ════════════════ Capacity Warning ════════════════ */
+
+.capacity-warning { text-align: center; padding: 12px 0; }
+.capacity-warning-icon { font-size: 40px; margin-bottom: 12px; }
+.capacity-warning-text { margin-bottom: 20px; line-height: 1.7; }
+.capacity-warning-text p { margin: 0; }
+.capacity-warning-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.capacity-warning-actions button { min-width: 100px; }
+
+/* ════════════════ View Transition (theme ripple) ════════════════ */
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+::view-transition-new(root) {
+  clip-path: circle(0% at var(--ripple-x, 50%) var(--ripple-y, 0));
+  animation: theme-ripple-in 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+::view-transition-old(root) {
+  z-index: -1;
+}
+
+@keyframes theme-ripple-in {
+  to {
+    clip-path: circle(var(--ripple-radius, 150%) at var(--ripple-x, 50%) var(--ripple-y, 0));
+  }
+}
