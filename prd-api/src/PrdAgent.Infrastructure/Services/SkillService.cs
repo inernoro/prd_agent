@@ -18,10 +18,7 @@ public class SkillService : ISkillService
 
     public async Task<List<Skill>> GetVisibleSkillsAsync(string userId, UserRole? roleFilter = null, CancellationToken ct = default)
     {
-        // 1) 从 prompt_stages 读取提示词技能（兼容现有 admin 提示词管理）
-        var promptSkills = await GetSystemSkillsFromPromptsAsync(roleFilter, ct);
-
-        // 2) 从 skills 集合读取 admin 创建的技能（system/public）+ 用户个人技能
+        // 统一从 skills 集合读取所有技能（系统 + 公共 + 个人）
         var dbFilter = Builders<Skill>.Filter.And(
             Builders<Skill>.Filter.Eq(x => x.IsEnabled, true),
             Builders<Skill>.Filter.Or(
@@ -32,37 +29,32 @@ public class SkillService : ISkillService
                 )
             )
         );
-        var dbSkills = await _db.Skills.Find(dbFilter).SortBy(x => x.Order).ToListAsync(ct);
+        var skills = await _db.Skills.Find(dbFilter).SortBy(x => x.Order).ToListAsync(ct);
 
         if (roleFilter.HasValue)
         {
-            dbSkills = dbSkills
+            skills = skills
                 .Where(s => s.Roles.Count == 0 || s.Roles.Contains(roleFilter.Value))
                 .ToList();
         }
 
-        // 提示词技能在前，admin 技能在中，个人技能在后
-        var result = new List<Skill>(promptSkills.Count + dbSkills.Count);
-        result.AddRange(promptSkills);
-        result.AddRange(dbSkills);
-        return result;
+        // 排序：系统技能在前，公共技能在中，个人技能在后
+        return skills
+            .OrderBy(s => s.Visibility switch
+            {
+                SkillVisibility.System => 0,
+                SkillVisibility.Public => 1,
+                SkillVisibility.Personal => 2,
+                _ => 3
+            })
+            .ThenBy(s => s.Order)
+            .ToList();
     }
 
     public async Task<Skill?> GetByKeyAsync(string skillKey, CancellationToken ct = default)
     {
-        // 先查 skills 集合（个人技能）
-        var personal = await _db.Skills.Find(x => x.SkillKey == skillKey).FirstOrDefaultAsync(ct);
-        if (personal != null) return personal;
-
-        // 再查 prompt_stages（系统技能 = promptKey 匹配）
-        var settings = await _promptService.GetEffectiveSettingsAsync(ct);
-        var prompt = settings.Prompts.FirstOrDefault(p =>
-            string.Equals(p.PromptKey, skillKey, StringComparison.Ordinal));
-
-        if (prompt != null)
-            return PromptEntryToSkill(prompt);
-
-        return null;
+        // 统一从 skills 集合查找（迁移后所有数据都在这里）
+        return await _db.Skills.Find(x => x.SkillKey == skillKey).FirstOrDefaultAsync(ct);
     }
 
     public async Task<Skill> CreatePersonalSkillAsync(string userId, Skill skill, CancellationToken ct = default)
@@ -124,42 +116,45 @@ public class SkillService : ISkillService
 
     public async Task IncrementUsageAsync(string skillKey, CancellationToken ct = default)
     {
-        // 仅对 skills 集合中的个人技能计数；系统技能来自 prompt_stages，不计数
         var filter = Builders<Skill>.Filter.Eq(x => x.SkillKey, skillKey);
         var update = Builders<Skill>.Update.Inc(x => x.UsageCount, 1);
         await _db.Skills.UpdateOneAsync(filter, update, cancellationToken: ct);
     }
 
-    public Task<int> MigrateFromPromptsAsync(CancellationToken ct = default)
-    {
-        // 不再需要迁移：系统技能直接从 prompt_stages 实时读取
-        return Task.FromResult(0);
-    }
-
-    // ━━━ 内部：prompt_stages → Skill 转换 ━━━━━━━━
-
-    private async Task<List<Skill>> GetSystemSkillsFromPromptsAsync(UserRole? roleFilter, CancellationToken ct)
+    /// <summary>
+    /// 从 promptstages 迁移提示词到 skills 集合（幂等操作：已存在的 skillKey 跳过）
+    /// </summary>
+    public async Task<int> MigrateFromPromptsAsync(CancellationToken ct = default)
     {
         var settings = await _promptService.GetEffectiveSettingsAsync(ct);
+        if (settings.Prompts.Count == 0) return 0;
 
-        var prompts = settings.Prompts.AsEnumerable();
-
-        if (roleFilter.HasValue)
+        var migrated = 0;
+        foreach (var prompt in settings.Prompts)
         {
-            prompts = prompts.Where(p => p.Role == roleFilter.Value);
+            if (string.IsNullOrWhiteSpace(prompt.PromptKey)) continue;
+
+            // 幂等：跳过已存在的 skillKey
+            var exists = await _db.Skills
+                .Find(x => x.SkillKey == prompt.PromptKey)
+                .AnyAsync(ct);
+            if (exists) continue;
+
+            var skill = PromptEntryToSkill(prompt);
+            await _db.Skills.InsertOneAsync(skill, cancellationToken: ct);
+            migrated++;
         }
 
-        return prompts
-            .OrderBy(p => p.Order)
-            .Select(PromptEntryToSkill)
-            .ToList();
+        return migrated;
     }
+
+    // ━━━ 内部：prompt_stages → Skill 转换（仅用于迁移） ━━━━━━━━
 
     private static Skill PromptEntryToSkill(PromptEntry prompt)
     {
         return new Skill
         {
-            Id = prompt.PromptKey,
+            Id = Guid.NewGuid().ToString("N"),
             SkillKey = prompt.PromptKey,
             Title = prompt.Title,
             Description = prompt.Title,
@@ -185,6 +180,8 @@ public class SkillService : ISkillService
             {
                 Mode = "chat",
             },
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
         };
     }
 

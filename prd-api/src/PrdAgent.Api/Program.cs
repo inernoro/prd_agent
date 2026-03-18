@@ -1008,6 +1008,20 @@ app.Lifetime.ApplicationStarted.Register(() =>
     }
 });
 
+// 启动时自动迁移 promptstages → skills（幂等，已存在的跳过）
+try
+{
+    using var migrationScope = app.Services.CreateScope();
+    var skillService = migrationScope.ServiceProvider.GetRequiredService<PrdAgent.Core.Interfaces.ISkillService>();
+    var migrated = await skillService.MigrateFromPromptsAsync();
+    if (migrated > 0)
+        Log.Information("Migrated {Count} prompts from promptstages to skills collection", migrated);
+}
+catch (Exception ex)
+{
+    Log.Warning(ex, "Prompt-to-skill migration failed (non-fatal, will retry on next startup)");
+}
+
 app.Run();
 
 // 健康检查处理函数

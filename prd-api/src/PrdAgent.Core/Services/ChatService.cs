@@ -17,7 +17,7 @@ public class ChatService : IChatService
     private readonly IDocumentService _documentService;
     private readonly ICacheManager _cache;
     private readonly IPromptManager _promptManager;
-    private readonly IPromptService _promptService;
+    private readonly ISkillService _skillService;
     private readonly ISystemPromptService _systemPromptService;
     private readonly IUserService _userService;
     private readonly IMessageRepository _messageRepository;
@@ -38,7 +38,7 @@ public class ChatService : IChatService
         IDocumentService documentService,
         ICacheManager cache,
         IPromptManager promptManager,
-        IPromptService promptService,
+        ISkillService skillService,
         ISystemPromptService systemPromptService,
         IUserService userService,
         IMessageRepository messageRepository,
@@ -52,7 +52,7 @@ public class ChatService : IChatService
         _documentService = documentService;
         _cache = cache;
         _promptManager = promptManager;
-        _promptService = promptService;
+        _skillService = skillService;
         _systemPromptService = systemPromptService;
         _userService = userService;
         _messageRepository = messageRepository;
@@ -172,34 +172,40 @@ public class ChatService : IChatService
         var effectivePromptKey = (promptKey ?? string.Empty).Trim();
         if (!string.IsNullOrWhiteSpace(effectivePromptKey))
         {
-            var prompt = await _promptService.GetPromptByKeyAsync(effectiveAnswerRole, effectivePromptKey, cancellationToken);
-            if (prompt != null &&
-                (!string.IsNullOrWhiteSpace(prompt.Title) || !string.IsNullOrWhiteSpace(prompt.PromptTemplate)))
+            // 统一从 skills 集合解析提示词/技能（合并后 promptKey = skillKey）
+            var skill = await _skillService.GetByKeyAsync(effectivePromptKey, cancellationToken);
+            // 角色校验：技能有角色限制时，必须匹配当前角色
+            var roleMatch = skill != null && (skill.Roles.Count == 0 || skill.Roles.Contains(effectiveAnswerRole));
+            if (skill != null && roleMatch)
             {
-                // 关键：对 LLM 请求，优先使用 promptTemplate 作为本次“讲解指令”，避免仅发送“【讲解】标题”导致模型无法按模板输出。
-                // 注意：入库的 userMessage.Content 仍保留原始 content（用于 UI 显示与回放），这里只影响发送给大模型的 messages。
-                if (!string.IsNullOrWhiteSpace(prompt.PromptTemplate))
-                {
-                    var pt = prompt.PromptTemplate.Trim();
-                    var c = (content ?? string.Empty).Trim();
-                    // 保留用户的“标题/问题”，并追加模板，便于日志排查与模型对齐输出结构。
-                    llmUserContent = string.IsNullOrWhiteSpace(c) ? pt : (c + "\n\n" + pt);
-                }
+                var promptTitle = skill.Title ?? string.Empty;
+                var promptTemplate = skill.Execution.PromptTemplate ?? string.Empty;
 
-                systemPrompt += @"
+                if (!string.IsNullOrWhiteSpace(promptTitle) || !string.IsNullOrWhiteSpace(promptTemplate))
+                {
+                    // 关键：对 LLM 请求，优先使用 promptTemplate 作为本次”讲解指令”，避免仅发送”【讲解】标题”导致模型无法按模板输出。
+                    // 注意：入库的 userMessage.Content 仍保留原始 content（用于 UI 显示与回放），这里只影响发送给大模型的 messages。
+                    if (!string.IsNullOrWhiteSpace(promptTemplate))
+                    {
+                        var pt = promptTemplate.Trim();
+                        var c = (content ?? string.Empty).Trim();
+                        llmUserContent = string.IsNullOrWhiteSpace(c) ? pt : (c + “\n\n” + pt);
+                    }
+
+                    systemPrompt += @”
 
 ---
 
 # 当前提示词上下文
-你当前正在按提示词（promptKey=" + effectivePromptKey + @"）「" + (prompt.Title ?? string.Empty) + @"」进行讲解/解读。
+你当前正在按提示词（promptKey=” + effectivePromptKey + @”）「” + promptTitle + @”」进行讲解/解读。
 
 ## 提示词模板（作为聚焦指令）
-说明：以下内容用于帮助你聚焦输出；请严格遵守其结构与约束；若 PRD 未覆盖则明确标注“PRD 未覆盖/需补充”，不得编造。
+说明：以下内容用于帮助你聚焦输出；请严格遵守其结构与约束；若 PRD 未覆盖则明确标注”PRD 未覆盖/需补充”，不得编造。
 
-" + (prompt.PromptTemplate ?? string.Empty);
+“ + promptTemplate;
 
-                // 日志侧的 system prompt（脱敏后）也应包含 promptKey/promptTemplate，便于排查与对照管理后台的提示词配置。
-                systemPromptRedacted = systemPrompt;
+                    systemPromptRedacted = systemPrompt;
+                }
             }
         }
 

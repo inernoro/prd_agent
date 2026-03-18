@@ -319,7 +319,7 @@ public class PrdAgentSkillsController : ControllerBase
             {
                 sessionId = request.SessionId,
                 content,
-                // 技能的 promptKey 就是 skillKey，ChatService 会通过 IPromptService 解析
+                // 技能的 promptKey 就是 skillKey，ChatService 通过 ISkillService 解析
                 // 同时传递解析后的模板供 ChatRunWorker 直接使用
                 promptKey = skill.SkillKey,
                 resolvedPromptTemplate = promptTemplate,
