@@ -326,14 +326,13 @@ export default function AgentLauncherPage() {
   return (
     <div className="h-full min-h-0 flex flex-col" style={{ background: 'var(--bg-base)' }}>
       <div className="flex-1 min-h-0 overflow-auto">
-        <div className={isMobile ? 'px-4 pt-0 pb-8' : 'px-8 pt-0 pb-12'}>
+        <div className={isMobile ? 'px-4 pt-4 pb-8' : 'px-8 pt-6 pb-12'}>
 
           {/* ── Hero banner with background image ── */}
           <div
             className="relative overflow-hidden rounded-2xl"
             style={{
               marginBottom: isMobile ? 20 : 32,
-              minHeight: isMobile ? 200 : 240,
             }}
           >
             {/* Background image — positioned right, like 文心 reference */}
