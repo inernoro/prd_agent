@@ -549,7 +549,7 @@ export default function AppShell() {
               {toastNotification.actionUrl && (
                 <button
                   type="button"
-                  className="px-3 py-1.5 text-[12px] rounded-full"
+                  className="px-3 py-1.5 text-[12px] rounded-full transition-all hover:bg-white/15 active:scale-[0.97]"
                   style={{ background: 'rgba(255, 255, 255, 0.08)', color: 'var(--text-primary)' }}
                   onClick={() => handleNotification(toastNotification.id, toastNotification.actionUrl)}
                 >
@@ -558,7 +558,7 @@ export default function AppShell() {
               )}
               <button
                 type="button"
-                className="px-3 py-1.5 text-[12px] rounded-full"
+                className="px-3 py-1.5 text-[12px] rounded-full transition-all hover:brightness-110 active:scale-[0.97]"
                 style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
                 onClick={() => handleNotification(toastNotification.id)}
               >
@@ -1145,7 +1145,7 @@ export default function AppShell() {
                   </div>
                   <button
                     type="button"
-                    className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[12px]"
+                    className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[12px] transition-all hover:bg-white/15 active:scale-[0.97]"
                     style={{ background: 'rgba(255, 255, 255, 0.08)', color: 'var(--text-primary)' }}
                     onClick={() => handleAllNotifications()}
                     disabled={notificationCount === 0}
@@ -1235,7 +1235,7 @@ export default function AppShell() {
                             {item.actionUrl && (
                               <button
                                 type="button"
-                                className="rounded-full px-3 py-1.5 text-[12px]"
+                                className="rounded-full px-3 py-1.5 text-[12px] transition-all hover:bg-white/20 active:scale-[0.97]"
                                 style={{ background: 'rgba(255, 255, 255, 0.15)', color: 'var(--text-primary)' }}
                                 onClick={() => handleNotification(item.id, item.actionUrl)}
                               >
@@ -1244,7 +1244,7 @@ export default function AppShell() {
                             )}
                             <button
                               type="button"
-                              className="rounded-full px-3 py-1.5 text-[12px]"
+                              className="rounded-full px-3 py-1.5 text-[12px] transition-all hover:brightness-110 active:scale-[0.97]"
                               style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
                               onClick={() => handleNotification(item.id)}
                             >

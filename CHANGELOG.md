@@ -18,6 +18,7 @@
 | fix | prd-admin | 修复 favicon 和左上角 Logo 引用不存在的文件导致破图，统一使用 favicon.jpg |
 | fix | prd-admin | 侧边栏导航项图标与文字拉近，圆角矩形统一包裹图标+文字 |
 | fix | prd-admin | 海鲜市场路由移入 AppShell 内部，保留侧边导航栏 |
+| fix | prd-admin | 通知弹窗按钮(去处理/标记已处理/一键处理)添加 hover 和 active 反馈效果 |
 
 ### 2026-03-17
 
