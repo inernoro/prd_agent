@@ -1584,6 +1584,44 @@ a.branch-name:hover { color: var(--accent); }
 .capacity-warning-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
 .capacity-warning-actions button { min-width: 100px; }
 
+/* Split stop button with dropdown */
+.capacity-stop-split {
+  display: inline-flex; position: relative;
+}
+.capacity-stop-btn {
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm) !important;
+  border-right: 1px solid var(--border) !important;
+  white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis;
+}
+.capacity-stop-btn .inline-icon { vertical-align: -2px; opacity: 0.6; }
+.capacity-stop-toggle {
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0 !important;
+  min-width: 28px !important; padding: 4px 6px !important;
+}
+.capacity-stop-list {
+  position: absolute; top: 100%; left: 0; right: 0;
+  min-width: 260px;
+  background: var(--bg-elevated); border: 1px solid var(--card-border);
+  border-radius: var(--radius-sm); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  z-index: 100; margin-top: 4px;
+  max-height: 240px; overflow-y: auto;
+}
+.capacity-stop-list-header {
+  font-size: 11px; color: var(--text-muted); padding: 8px 12px 4px;
+  border-bottom: 1px solid var(--border);
+}
+.capacity-stop-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; cursor: pointer; font-size: 13px;
+  transition: background 0.15s;
+}
+.capacity-stop-item:hover { background: var(--bg-hover); }
+.capacity-stop-item .inline-icon { width: 12px; height: 12px; opacity: 0.6; }
+.capacity-stop-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.capacity-stop-partial {
+  font-size: 10px; color: var(--orange); white-space: nowrap;
+}
+
 /* ════════════════ View Transition (theme ripple) ════════════════ */
 
 ::view-transition-old(root),

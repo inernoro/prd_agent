@@ -630,10 +630,34 @@ function getNewContainerCount(branchId, profileId) {
   return Math.max(0, buildProfiles.length - alreadyRunning);
 }
 
-function findOldestRunningBranch(excludeId) {
+/**
+ * Find all running branches except excludeId, sorted by earliest started first.
+ * Uses lastAccessedAt (set on deploy) as the deploy timestamp.
+ */
+function findRunningBranches(excludeId) {
   return branches
     .filter(b => b.id !== excludeId && (b.status === 'running' || b.status === 'starting'))
-    .sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0))[0];
+    .sort((a, b) => new Date(a.lastAccessedAt || a.createdAt || 0) - new Date(b.lastAccessedAt || b.createdAt || 0));
+}
+
+/**
+ * Count how many running containers a branch has.
+ */
+function countRunningServices(br) {
+  if (!br?.services) return 0;
+  return Object.values(br.services).filter(s =>
+    s.status === 'running' || s.status === 'building' || s.status === 'starting'
+  ).length;
+}
+
+/**
+ * Format a branch label for display in capacity modal.
+ * Shows: tagIcon tag branchName (or just branchName if no tags).
+ */
+function branchDisplayLabel(br) {
+  const tags = br.tags || [];
+  const tagStr = tags.length > 0 ? `${ICON.tag} ${esc(tags[0])} ` : '';
+  return `${tagStr}${esc(br.branch)}`;
 }
 
 function checkCapacityAndDeploy(id, profileId) {
@@ -646,8 +670,24 @@ function checkCapacityAndDeploy(id, profileId) {
     return;
   }
 
-  const oldest = findOldestRunningBranch(id);
-  const oldestName = oldest ? oldest.branch : '';
+  const runningBranches = findRunningBranches(id);
+  const oldest = runningBranches[0];
+
+  // Check if the oldest branch has all services running (fully occupied).
+  // If so, stopping it frees exactly the containers we need — no partial warning needed.
+  // But if a branch is partially running (e.g., 1 of 2), warn the user.
+  const oldestServiceCount = oldest ? countRunningServices(oldest) : 0;
+  const needsPartialWarning = oldest && oldestServiceCount > 0 && oldestServiceCount < buildProfiles.length;
+
+  // Build dropdown list of all stoppable branches (oldest first)
+  const stopListHtml = runningBranches.map(br => {
+    const svcCount = countRunningServices(br);
+    const svcLabel = svcCount < buildProfiles.length ? `(${svcCount}/${buildProfiles.length} 运行中)` : '';
+    return `<div class="capacity-stop-item" onclick="capacityChoiceStopBranch('${esc(id)}', ${profileId ? `'${esc(profileId)}'` : 'null'}, '${esc(br.id)}')">
+      <span class="capacity-stop-label">${branchDisplayLabel(br)}</span>
+      ${svcLabel ? `<span class="capacity-stop-partial">${svcLabel}</span>` : ''}
+    </div>`;
+  }).join('');
 
   // Show capacity warning modal
   const html = `
@@ -656,16 +696,37 @@ function checkCapacityAndDeploy(id, profileId) {
       <div class="capacity-warning-text">
         <p>当前服务器内存 <strong>${containerCapacity.totalMemGB}GB</strong>，最多支持 <strong>${containerCapacity.maxContainers}</strong> 个容器。</p>
         <p>目前已有 <strong>${containerCapacity.runningContainers}</strong> 个容器运行中，本次部署需新增 <strong>${newCount}</strong> 个。</p>
-        <p style="color:var(--orange);margin-top:8px;">继续部署可能导致容器因内存不足无法正常运行。</p>
+        ${needsPartialWarning ? `<p style="color:var(--orange);margin-top:8px;">⚠ 最早的分支仅部分运行，停掉可能影响开发中的服务。</p>` : ''}
       </div>
       <div class="capacity-warning-actions">
-        <button class="primary sm" onclick="capacityChoiceForce('${id}', ${profileId ? `'${profileId}'` : 'null'})">我偏要</button>
-        ${oldest ? `<button class="sm" onclick="capacityChoiceStopOldest('${id}', ${profileId ? `'${profileId}'` : 'null'}, '${oldest.id}')">停掉 ${esc(oldestName).slice(0, 30)}</button>` : ''}
+        <button class="primary sm" onclick="capacityChoiceForce('${esc(id)}', ${profileId ? `'${esc(profileId)}'` : 'null'})">我偏要</button>
+        ${oldest ? `
+          <div class="capacity-stop-split">
+            <button class="sm capacity-stop-btn" onclick="capacityChoiceStopBranch('${esc(id)}', ${profileId ? `'${esc(profileId)}'` : 'null'}, '${esc(oldest.id)}')">
+              停掉 ${branchDisplayLabel(oldest)}
+            </button>
+            ${runningBranches.length > 1 ? `
+              <button class="sm capacity-stop-toggle" onclick="toggleCapacityStopList(event)">
+                <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor"><path d="M1 1l4 4 4-4"/></svg>
+              </button>
+              <div class="capacity-stop-list hidden" id="capacityStopList">
+                <div class="capacity-stop-list-header">选择要停止的分支（最早启动排前）</div>
+                ${stopListHtml}
+              </div>
+            ` : ''}
+          </div>
+        ` : ''}
         <button class="sm" onclick="closeConfigModal()">取消</button>
       </div>
     </div>
   `;
   openConfigModal('容器容量不足', html);
+}
+
+function toggleCapacityStopList(event) {
+  event.stopPropagation();
+  const list = document.getElementById('capacityStopList');
+  if (list) list.classList.toggle('hidden');
 }
 
 function capacityChoiceForce(id, profileId) {
@@ -674,13 +735,23 @@ function capacityChoiceForce(id, profileId) {
   else deployBranchDirect(id);
 }
 
-async function capacityChoiceStopOldest(id, profileId, oldestId) {
+async function capacityChoiceStopBranch(id, profileId, stopId) {
   closeConfigModal();
-  showToast(`正在停止分支 ${oldestId}...`, 'info');
+  const stopBr = branches.find(b => b.id === stopId);
+  const stopName = stopBr ? stopBr.branch : stopId;
+  showToast(`正在停止分支 ${stopName}...`, 'info');
+  // Set stopping state for visual feedback
+  if (stopBr) {
+    stopBr.status = 'stopping';
+    for (const svc of Object.values(stopBr.services || {})) {
+      if (svc.status === 'running' || svc.status === 'starting') svc.status = 'stopping';
+    }
+    renderBranches();
+  }
   try {
-    await api('POST', `/branches/${oldestId}/stop`);
+    await api('POST', `/branches/${stopId}/stop`);
     await loadBranches();
-    showToast(`已停止分支 ${oldestId}`, 'success');
+    showToast(`已停止分支 ${stopName}`, 'success');
     if (profileId) deploySingleServiceDirect(id, profileId);
     else deployBranchDirect(id);
   } catch (e) {
