@@ -182,6 +182,33 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     usageCount: 0,
     createdAt: new Date().toISOString(),
   },
+  // ========== 定制版 Agent（有专门页面，非对话型）==========
+  {
+    id: 'builtin-workflow-agent',
+    name: '工作流引擎',
+    description: '可视化工作流编排，自动化多步骤任务串联',
+    icon: 'Workflow',
+    category: 'builtin',
+    type: 'builtin',
+    agentKey: 'workflow-agent',
+    routePath: '/workflow-agent',
+    tags: ['工作流', '自动化', '编排'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'builtin-shortcuts-agent',
+    name: '快捷指令',
+    description: '一键执行常用操作，支持自定义和分享指令',
+    icon: 'Zap',
+    category: 'builtin',
+    type: 'builtin',
+    agentKey: 'shortcuts-agent',
+    routePath: '/shortcuts-agent',
+    tags: ['快捷', '效率', '指令'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+  },
   // ========== 普通版 Agent（统一对话界面）==========
   {
     id: 'builtin-code-reviewer',

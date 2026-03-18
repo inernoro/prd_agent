@@ -94,6 +94,8 @@ const AGENT_COVER_PATHS: Record<string, string> = {
   'visual-agent': 'icon/backups/agent/visual-agent.png',
   'literary-agent': 'icon/backups/agent/literary-agent.png',
   'defect-agent': 'icon/backups/agent/defect-agent.png',
+  'video-agent': 'icon/backups/agent/video-agent.png',
+  'report-agent': 'icon/backups/agent/report-agent.png',
 };
 
 function getCoverImageUrl(agentKey?: string): string | null {

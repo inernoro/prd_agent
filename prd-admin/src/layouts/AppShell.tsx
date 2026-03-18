@@ -5,7 +5,6 @@ import {
   Cpu,
   LogOut,
   PanelLeftClose,
-  PanelLeftOpen,
   Users2,
   ScrollText,
   FlaskConical,
@@ -29,10 +28,17 @@ import {
   Workflow,
   Swords,
   Menu,
-  ChevronDown,
   Download,
   Globe,
   Smartphone,
+  FolderOpen,
+  Server,
+  Store,
+  Wrench,
+  UserCircle,
+  HardDrive,
+  Home,
+  BarChart3,
   type LucideIcon,
 } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -56,7 +62,61 @@ import type { AdminNotificationItem } from '@/services/contracts/notifications';
 import { GlobalDefectSubmitDialog, DefectSubmitButton } from '@/components/ui/GlobalDefectSubmitDialog';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 
-type NavItem = { key: string; label: string; icon: React.ReactNode; description?: string };
+type NavItem = { key: string; appKey: string; label: string; shortLabel: string; icon: React.ReactNode; description?: string; group?: string | null };
+
+/** 侧边栏分组定义 */
+const NAV_GROUPS: { key: string; label: string }[] = [
+  { key: 'tools', label: '效率工具' },
+  { key: 'personal', label: '个人空间' },
+  { key: 'admin', label: '系统管理' },
+];
+
+/** 折叠态短标签映射（2-4 字） */
+const SHORT_LABEL_MAP: Record<string, string> = {
+  'ai-toolbox': '百宝箱',
+  'report-agent': '周报',
+  'workflow-agent': '工作流',
+  'marketplace': '市场',
+  'my-resources': '我的资源',
+  'my-assets': '我的资源',
+  'model-center': '模型',
+  'mds': '模型',
+  'authz': '用户权限',
+  'users': '用户',
+  'data-ops': '自定义',
+  'settings': '自定义',
+  'visual-agent': '视觉',
+  'literary-agent': '文学',
+  'video-agent': '视频',
+  'defect-agent': '缺陷',
+  'prd-agent': '智能体',
+  'arena-agent': '竞技场',
+  'shortcuts-agent': '快捷指令',
+  'data-migration-agent': '迁移',
+  'executive': '团队',
+  'tutorial-email': '邮件',
+  'lab': '实验室',
+  'automations': '自动化',
+  'skills': '技能',
+  'dashboard': '仪表盘',
+  'groups': '群组',
+  'prompts': '提示词',
+  'assets': '资源',
+  'logs': '日志',
+  'data': '数据',
+  'open-platform': '开放平台',
+};
+
+/** 从侧边栏隐藏的 appKey（页面仍可直接访问） */
+const HIDDEN_NAV_KEYS = new Set(['web-pages']);
+
+/** 获取短标签：优先查映射表，否则使用完整 label */
+function getShortLabel(appKey: string, label: string): string {
+  if (SHORT_LABEL_MAP[appKey]) return SHORT_LABEL_MAP[appKey];
+  // 去掉常见后缀
+  const clean = label.replace(/\s*(Agent|管理|引擎)\s*/g, '').trim();
+  return clean.length <= 4 ? clean : clean.slice(0, 4);
+}
 
 /** 根据 mimeType 推断扩展名，确保下载文件名带后缀 */
 function ensureDownloadName(name: string | undefined | null, mimeType?: string | null): string {
@@ -116,6 +176,15 @@ const iconMap: Record<string, LucideIcon> = {
   Swords,
   Globe,
   Smartphone,
+  FolderOpen,
+  Server,
+  Store,
+  Settings,
+  Wrench,
+  UserCircle,
+  HardDrive,
+  Home,
+  BarChart3,
 };
 
 const notificationTone = {
@@ -139,7 +208,6 @@ export default function AppShell() {
   const menuCatalog = useAuthStore((s) => s.menuCatalog);
   const menuCatalogLoaded = useAuthStore((s) => s.menuCatalogLoaded);
   const collapsed = useLayoutStore((s) => s.navCollapsed);
-  const toggleNavCollapsed = useLayoutStore((s) => s.toggleNavCollapsed);
   const fullBleedMain = useLayoutStore((s) => s.fullBleedMain);
   const mobileDrawerOpen = useLayoutStore((s) => s.mobileDrawerOpen);
   const setMobileDrawerOpen = useLayoutStore((s) => s.setMobileDrawerOpen);
@@ -152,7 +220,7 @@ export default function AppShell() {
   const [dismissedToastIds, setDismissedToastIds] = useState<Set<string>>(new Set());
   const [toastCollapsed, setToastCollapsed] = useState(false);
   const [toastHovering, setToastHovering] = useState(false);
-  const [mobileMoreExpanded, setMobileMoreExpanded] = useState(false);
+
 
   // 导航滚动状态：用于显示渐变阴影指示器
   const navRef = useRef<HTMLElement>(null);
@@ -195,27 +263,26 @@ export default function AppShell() {
     }
   }, [navOrderLoaded, user?.userId, loadNavOrder]);
 
-  // 从后端菜单目录生成导航项，并应用用户自定义排序
-  // 注意：后端已根据用户权限过滤，返回的菜单列表即用户可见的菜单
+  // 从后端菜单目录生成导航项，按 group 分组
+  // 只有带 group 字段的菜单项才在侧边栏显示
   const visibleItems: NavItem[] = useMemo(() => {
     if (!menuCatalogLoaded || !Array.isArray(menuCatalog) || menuCatalog.length === 0) {
       return [];
     }
 
-    // 工具类菜单移到头像下拉面板，不在侧边栏显示
-    const AVATAR_PANEL_KEYS = new Set(['logs', 'settings']);
-
-    // 构建导航项列表（排除已移到头像面板的项）
+    // 只显示有 group 的菜单项（无 group 的放在头像面板），并排除 HIDDEN_NAV_KEYS
     const items = menuCatalog
-      .filter((m) => !AVATAR_PANEL_KEYS.has(m.appKey))
+      .filter((m) => !!m.group && !HIDDEN_NAV_KEYS.has(m.appKey))
       .map((m) => {
         const IconComp = iconMap[m.icon] ?? LayoutDashboard;
         return {
           key: m.path,
-          appKey: m.appKey, // 用于排序匹配
+          appKey: m.appKey,
           label: m.label,
+          shortLabel: getShortLabel(m.appKey, m.label),
           icon: <IconComp size={18} />,
           description: m.description ?? undefined,
+          group: m.group,
         };
       });
 
@@ -231,17 +298,41 @@ export default function AppShell() {
 
     return items;
   }, [menuCatalog, menuCatalogLoaded, navOrder]);
+
+  // 头像面板菜单项（无 group 的项）
+  const avatarPanelItems: NavItem[] = useMemo(() => {
+    if (!menuCatalogLoaded || !Array.isArray(menuCatalog)) return [];
+    return menuCatalog
+      .filter((m) => !m.group)
+      .map((m) => {
+        const IconComp = iconMap[m.icon] ?? LayoutDashboard;
+        return {
+          key: m.path,
+          appKey: m.appKey,
+          label: m.label,
+          shortLabel: getShortLabel(m.appKey, m.label),
+          icon: <IconComp size={16} />,
+          description: m.description ?? undefined,
+          group: null,
+        };
+      });
+  }, [menuCatalog, menuCatalogLoaded]);
+
+  // 首页独立项（不归属任何分组）
+  const homeItem = useMemo(() => visibleItems.find((it) => it.group === 'home'), [visibleItems]);
+
+  // 按 group 分组的导航项（排除 home）
+  const groupedNav = useMemo(() => {
+    return NAV_GROUPS
+      .map((g) => ({
+        ...g,
+        items: visibleItems.filter((it) => it.group === g.key),
+      }))
+      .filter((g) => g.items.length > 0);
+  }, [visibleItems]);
   
-  // 若用户在首页（仪表盘）但菜单中不含仪表盘，自动跳转到第一个可用页面
-  // 仅桌面端执行：移动端首页由 MobileHomePage 独立渲染，不依赖导航菜单
-  useEffect(() => {
-    if (isMobile) return;
-    if (location.pathname !== '/' || !menuCatalogLoaded || visibleItems.length === 0) return;
-    const hasDashboard = visibleItems.some((item) => item.key === '/');
-    if (!hasDashboard) {
-      navigate(visibleItems[0].key, { replace: true });
-    }
-  }, [isMobile, location.pathname, menuCatalogLoaded, visibleItems, navigate]);
+  // 首页为 Agent Launcher 沉浸页，不自动跳转，让用户自主选择 Agent
+  const isHomePage = location.pathname === '/';
 
   const activeKey = location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`;
   const isLabPage = location.pathname.startsWith('/lab');
@@ -251,9 +342,9 @@ export default function AppShell() {
   // 根据配置决定是否使用玻璃效果：always 始终启用，auto 仅实验室页面，never 禁用
   const useSidebarGlass = sidebarGlass === 'always' || (sidebarGlass === 'auto' && isLabPage);
 
-  const asideWidth = collapsed ? 72 : 220;
-  const asideGap = 18;
-  // 专注模式（fullBleedMain）或移动端下隐藏侧栏，主区最大化
+  const asideWidth = collapsed ? 68 : 176;
+  const asideGap = 12;
+  // 专注模式（fullBleedMain）、移动端下隐藏侧栏，主区最大化
   const focusHideAside = fullBleedMain || isMobile;
   const mainPadLeft = focusHideAside ? (isMobile ? 0 : asideGap) : asideWidth + asideGap * 2;
 
@@ -552,59 +643,43 @@ export default function AppShell() {
             </div>
           </div>
 
-          {/* 导航列表 — 核心项 + 折叠更多 */}
-          {(() => {
-            const PRIMARY_COUNT = 5;
-            const primaryItems = visibleItems.slice(0, PRIMARY_COUNT);
-            const secondaryItems = visibleItems.slice(PRIMARY_COUNT);
-            const renderItem = (it: typeof visibleItems[number]) => {
-              const active = it.key === activeKey;
-              return (
-                <button
-                  key={it.key}
-                  type="button"
-                  onClick={() => { navigate(it.key); setMobileDrawerOpen(false); }}
-                  className={cn(
-                    'flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors',
-                    'min-h-[var(--mobile-min-touch,44px)]',
-                  )}
-                  style={{
-                    background: active ? 'rgba(255, 255, 255, 0.06)' : 'transparent',
-                    color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
-                  }}
-                >
-                  <span style={{ color: active ? '#818cf8' : undefined }}>{it.icon}</span>
-                  <span className="text-sm">{it.label}</span>
-                </button>
-              );
-            };
-            return (
-              <nav className="flex flex-col gap-0.5 px-2 mt-2">
-                {primaryItems.map(renderItem)}
-
-                {secondaryItems.length > 0 && (
-                  <>
-                    <div className="h-px mx-3 my-1.5" style={{ background: 'rgba(255,255,255,0.06)' }} />
-                    <button
-                      type="button"
-                      onClick={() => setMobileMoreExpanded((v) => !v)}
-                      className="flex items-center gap-3 px-3 py-2 rounded-xl min-h-[40px]"
-                      style={{ color: 'var(--text-muted)' }}
-                    >
-                      <ChevronDown
-                        size={16}
-                        className="transition-transform duration-200"
-                        style={{ transform: mobileMoreExpanded ? 'rotate(180deg)' : undefined }}
-                      />
-                      <span className="text-xs">更多</span>
-                      <span className="text-[10px] ml-auto opacity-40">{secondaryItems.length}</span>
-                    </button>
-                    {mobileMoreExpanded && secondaryItems.map(renderItem)}
-                  </>
+          {/* 导航列表 — 按分组显示 */}
+          <nav className="flex flex-col gap-0.5 px-2 mt-2">
+            {groupedNav.map((group, gi) => (
+              <div key={group.key}>
+                {gi > 0 && (
+                  <div className="h-px mx-3 my-3.5" style={{ background: 'rgba(255,255,255,0.06)' }} />
                 )}
-              </nav>
-            );
-          })()}
+                <div
+                  className="px-3 pt-1 pb-1 text-[10px] font-semibold tracking-[0.08em] uppercase select-none"
+                  style={{ color: 'var(--text-muted, rgba(255,255,255,0.32))' }}
+                >
+                  {group.label}
+                </div>
+                {group.items.map((it) => {
+                  const active = it.key === activeKey;
+                  return (
+                    <button
+                      key={it.key}
+                      type="button"
+                      onClick={() => { navigate(it.key); setMobileDrawerOpen(false); }}
+                      className={cn(
+                        'flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors',
+                        'min-h-[var(--mobile-min-touch,44px)]',
+                      )}
+                      style={{
+                        background: active ? 'rgba(255, 255, 255, 0.06)' : 'transparent',
+                        color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+                      }}
+                    >
+                      <span style={{ color: active ? '#818cf8' : undefined }}>{it.icon}</span>
+                      <span className="text-sm">{it.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+          </nav>
 
           {/* 底部操作 */}
           <div className="mt-auto px-4 py-4 flex flex-col gap-2">
@@ -638,8 +713,8 @@ export default function AppShell() {
         {/* 悬浮侧边栏：不贴左边，像"挂着" (移动端隐藏) */}
         <aside
           className={cn(
-            'absolute flex flex-col p-2.5 transition-[width] duration-220 ease-out',
-            collapsed ? 'gap-2 items-center' : 'gap-2.5'
+            'absolute flex flex-col p-2 transition-[width] duration-220 ease-out',
+            collapsed ? 'gap-1.5 items-center' : 'gap-1.5'
           )}
           style={{
             left: asideGap,
@@ -662,66 +737,234 @@ export default function AppShell() {
             pointerEvents: focusHideAside ? 'none' : 'auto',
           }}
         >
-          {/* 用户头像区域 */}
+          {/* ── 顶部 Logo 区域 ── */}
           <div
             className={cn(
-              'group relative shrink-0 rounded-[14px]',
-              collapsed ? 'w-[50px] py-2 flex justify-center' : 'px-3 py-2.5'
+              'shrink-0 flex items-center',
+              collapsed ? 'justify-center py-2' : 'px-3 py-2'
             )}
-            style={{ background: 'transparent' }}
           >
-            {/* 悬停背景效果 */}
-            <div 
-              className="absolute inset-0 rounded-[14px] opacity-0 group-hover:opacity-100 transition-opacity duration-200"
-              style={{ background: 'rgba(255, 255, 255, 0.03)' }}
+            <img
+              src="/favicon.svg"
+              alt="Logo"
+              className={cn('transition-all duration-200', collapsed ? 'w-7 h-7' : 'w-8 h-8')}
+              draggable={false}
             />
-            
-            <div className={cn('relative flex items-center', collapsed ? 'justify-center' : 'gap-3')}>
-              {/* 头像+用户名（触发下拉菜单） */}
-              <DropdownMenu.Root>
-                <DropdownMenu.Trigger asChild>
-                  <div
-                    className={cn('flex items-center cursor-pointer', collapsed ? '' : 'gap-3 flex-1 min-w-0')}
-                    title="用户菜单"
-                  >
-                    {/* 头像 */}
+          </div>
+
+          {/* ── 首页按钮 ── */}
+          {homeItem && (
+            <div className="flex justify-center px-1">
+              <button
+                type="button"
+                onClick={() => navigate(homeItem.key)}
+                className={cn(
+                  'group/nav relative flex flex-col items-center justify-center gap-0.5 w-full',
+                  'transition-all duration-200 ease-out py-1',
+                )}
+                style={{
+                  color: activeKey === '/' ? 'var(--text-primary)' : 'var(--text-secondary)',
+                }}
+                title={homeItem.label}
+              >
+                <span
+                  className={cn(
+                    'inline-flex items-center justify-center shrink-0 rounded-[12px] transition-all duration-200 group-hover/nav:scale-105',
+                    activeKey !== '/' && 'nav-item-hover'
+                  )}
+                  style={{
+                    width: 42,
+                    height: 42,
+                    background: activeKey === '/' ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
+                    border: activeKey === '/' ? '1px solid rgba(255, 255, 255, 0.10)' : '1px solid transparent',
+                    color: activeKey === '/' ? '#818cf8' : undefined,
+                  }}
+                >
+                  {homeItem.icon}
+                </span>
+                <span className="text-[10px] leading-tight" style={{ color: activeKey === '/' ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                  首页
+                </span>
+              </button>
+            </div>
+          )}
+
+          {/* 导航区域容器：包含滚动指示器 */}
+          <div className="relative flex-1 min-h-0">
+            {/* 顶部渐变阴影：提示可向上滚动 */}
+            <div
+              className="pointer-events-none absolute top-0 left-0 right-0 z-10 transition-opacity duration-200"
+              style={{
+                height: 32,
+                background: 'linear-gradient(to bottom, var(--bg-elevated, #1e1e24) 0%, transparent 100%)',
+                opacity: navScrollState.canScroll && !navScrollState.atTop ? 0.95 : 0,
+              }}
+            />
+
+            <nav
+              ref={navRef}
+              className={cn(
+                'h-full flex flex-col overflow-y-auto overflow-x-hidden nav-scroll-hidden',
+                collapsed ? 'items-center' : ''
+              )}
+              style={{ paddingTop: 4, paddingRight: collapsed ? 0 : 2, paddingBottom: 8 }}
+            >
+              {groupedNav.map((group, gi) => (
+                <div key={group.key}>
+                  {/* 分组分隔线（非首组）— 组间距比组内间距更大 */}
+                  {gi > 0 && (
                     <div
-                      className="h-9 w-9 rounded-full overflow-hidden shrink-0 ring-1 ring-white/10 hover:ring-indigo-400/30 transition-colors duration-200"
-                      style={{ boxShadow: '0 0 0 1px rgba(99, 102, 241, 0.1), 0 2px 12px rgba(0, 0, 0, 0.2)' }}
+                      className={cn('mx-auto', collapsed ? 'my-4' : 'my-5 mx-3')}
+                      style={{
+                        height: 1,
+                        background: collapsed
+                          ? 'rgba(255, 255, 255, 0.06)'
+                          : 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.08) 20%, rgba(255,255,255,0.08) 80%, transparent 100%)',
+                        width: collapsed ? 24 : undefined,
+                      }}
+                    />
+                  )}
+
+                  {/* 分组标题（仅展开时显示） */}
+                  {!collapsed && (
+                    <div
+                      className="px-2.5 pt-1 pb-1 text-[10px] font-semibold tracking-[0.08em] uppercase select-none"
+                      style={{ color: 'var(--text-muted, rgba(255,255,255,0.32))' }}
                     >
-                      <UserAvatar
-                        src={resolveAvatarUrl({
-                          username: user?.username,
-                          userType: user?.userType,
-                          botKind: user?.botKind,
-                          avatarFileName: user?.avatarFileName ?? null,
-                          avatarUrl: user?.avatarUrl,
-                        })}
-                        alt="avatar"
-                        className="h-full w-full object-cover"
-                      />
+                      {group.label}
                     </div>
-                    
-                    {/* 用户信息（仅展开时显示） */}
-                    {!collapsed && (
-                      <div className="min-w-0 flex-1">
-                        <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
-                          {user?.displayName || 'Admin'}
-                        </div>
-                        <div className="text-[10px] truncate mt-0.5" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
-                          {user?.role === 'ADMIN' ? '系统管理员' : user?.role || ''}
-                        </div>
-                      </div>
-                    )}
+                  )}
+
+                  {/* 分组内的导航项 */}
+                  <div className="flex flex-col gap-0.5 items-center px-1">
+                    {group.items.map((it) => {
+                      const active = it.key === activeKey;
+                      return (
+                        <button
+                          key={it.key}
+                          type="button"
+                          onClick={() => navigate(it.key)}
+                          className={cn(
+                            'group/nav relative flex flex-col items-center justify-center gap-0.5 w-full',
+                            'transition-all duration-200 ease-out py-1',
+                          )}
+                          style={{
+                            color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+                          }}
+                          title={it.description ? `${it.label} - ${it.description}` : it.label}
+                        >
+                          {/* 图标容器：固定正方形 + 圆角背景 */}
+                          <span
+                            className={cn(
+                              'inline-flex items-center justify-center shrink-0 rounded-[12px] transition-all duration-200 group-hover/nav:scale-105',
+                              !active && 'nav-item-hover'
+                            )}
+                            style={{
+                              width: 42,
+                              height: 42,
+                              background: active ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
+                              border: active ? '1px solid rgba(255, 255, 255, 0.10)' : '1px solid transparent',
+                              color: active ? '#818cf8' : undefined,
+                            }}
+                          >
+                            {it.icon}
+                          </span>
+                          <span className="text-[10px] leading-tight text-center" style={{ color: active ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                            {it.shortLabel}
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
-                </DropdownMenu.Trigger>
+                </div>
+              ))}
+            </nav>
+
+            {/* 底部渐变阴影：提示可向下滚动 */}
+            <div
+              className="pointer-events-none absolute bottom-0 left-0 right-0 z-10 transition-opacity duration-200"
+              style={{
+                height: 40,
+                background: 'linear-gradient(to top, var(--bg-elevated, #1e1e24) 0%, transparent 100%)',
+                opacity: navScrollState.canScroll && !navScrollState.atBottom ? 0.95 : 0,
+              }}
+            />
+          </div>
+
+          {/* ── 底部用户区域 ── */}
+          <div
+            className={cn(
+              'shrink-0',
+              collapsed ? 'flex flex-col items-center gap-1 py-1' : 'px-1 py-1'
+            )}
+          >
+            {/* 分隔线 */}
+            <div
+              className={cn('mx-auto mb-2', collapsed ? '' : 'mx-3')}
+              style={{
+                height: 1,
+                background: collapsed
+                  ? 'rgba(255, 255, 255, 0.06)'
+                  : 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.08) 20%, rgba(255,255,255,0.08) 80%, transparent 100%)',
+                width: collapsed ? 24 : undefined,
+              }}
+            />
+            <div
+              className={cn(
+                'group relative shrink-0 rounded-[10px]',
+                collapsed ? 'w-[38px] flex justify-center' : 'px-2 py-1.5'
+              )}
+              style={{ background: 'transparent' }}
+            >
+              {/* 悬停背景效果 */}
+              <div
+                className="absolute inset-0 rounded-[10px] opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+                style={{ background: 'rgba(255, 255, 255, 0.03)' }}
+              />
+
+              <div className={cn('relative flex items-center', collapsed ? 'justify-center' : 'gap-3')}>
+                {/* 头像+用户名（触发下拉菜单） */}
+                <DropdownMenu.Root>
+                  <DropdownMenu.Trigger asChild>
+                    <div
+                      className={cn('flex items-center cursor-pointer', collapsed ? '' : 'gap-3 flex-1 min-w-0')}
+                      title="用户菜单"
+                    >
+                      {/* 头像 */}
+                      <div
+                        className="h-7 w-7 rounded-full overflow-hidden shrink-0 ring-1 ring-white/10 hover:ring-indigo-400/30 transition-colors duration-200"
+                        style={{ boxShadow: '0 0 0 1px rgba(99, 102, 241, 0.1), 0 2px 12px rgba(0, 0, 0, 0.2)' }}
+                      >
+                        <UserAvatar
+                          src={resolveAvatarUrl({
+                            username: user?.username,
+                            userType: user?.userType,
+                            botKind: user?.botKind,
+                            avatarFileName: user?.avatarFileName ?? null,
+                            avatarUrl: user?.avatarUrl,
+                          })}
+                          alt="avatar"
+                          className="h-full w-full object-cover"
+                        />
+                      </div>
+
+                      {/* 用户信息（仅展开时显示） */}
+                      {!collapsed && (
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[12px] font-semibold truncate" style={{ color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
+                            {user?.displayName || 'Admin'}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </DropdownMenu.Trigger>
 
             <DropdownMenu.Portal>
               <DropdownMenu.Content
                 className="min-w-[220px] rounded-[16px] p-2 z-50"
                 style={glassPanel}
                 sideOffset={8}
-                side="bottom"
+                side="top"
                 align="start"
               >
                 {/* 用户信息区 */}
@@ -806,23 +1049,18 @@ export default function AppShell() {
                   <span className="text-[13px]">数据分享</span>
                 </DropdownMenu.Item>
 
-                <DropdownMenu.Item
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
-                  style={{ color: 'var(--text-secondary)' }}
-                  onSelect={() => navigate('/logs')}
-                >
-                  <ScrollText size={16} className="shrink-0" />
-                  <span className="text-[13px]">请求日志</span>
-                </DropdownMenu.Item>
-
-                <DropdownMenu.Item
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
-                  style={{ color: 'var(--text-secondary)' }}
-                  onSelect={() => navigate('/settings')}
-                >
-                  <Settings size={16} className="shrink-0" />
-                  <span className="text-[13px]">系统设置</span>
-                </DropdownMenu.Item>
+                {/* 动态：从后端菜单目录中加载头像面板项 */}
+                {avatarPanelItems.map((it) => (
+                  <DropdownMenu.Item
+                    key={it.key}
+                    className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
+                    style={{ color: 'var(--text-secondary)' }}
+                    onSelect={() => navigate(it.key)}
+                  >
+                    <span className="shrink-0">{it.icon}</span>
+                    <span className="text-[13px]">{it.label}</span>
+                  </DropdownMenu.Item>
+                ))}
 
                 <DropdownMenu.Item
                   className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
@@ -854,113 +1092,18 @@ export default function AppShell() {
                 </DropdownMenu.Item>
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
-          </DropdownMenu.Root>
-          
-          {/* 提交缺陷按钮 + 折叠按钮（仅展开时显示，在 DropdownMenu 外部） */}
-          {!collapsed && (
-            <>
-              <DefectSubmitButton collapsed={collapsed} />
-              <button
-                type="button"
-                onClick={toggleNavCollapsed}
-                className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 opacity-40 hover:opacity-100 shrink-0"
-                style={{ color: 'var(--text-muted)' }}
-                aria-label="折叠侧边栏"
-              >
-                <PanelLeftClose size={14} />
-              </button>
-            </>
-          )}
+                </DropdownMenu.Root>
+
+                {/* 提交缺陷按钮（仅展开时显示，在 DropdownMenu 外部） */}
+                {!collapsed && (
+                  <DefectSubmitButton collapsed={collapsed} />
+                )}
+              </div>
             </div>
           </div>
-          
-          {/* 展开按钮（仅收缩时显示） */}
-          {collapsed && (
-            <button
-              type="button"
-              onClick={toggleNavCollapsed}
-              className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 opacity-60 hover:opacity-100"
-              style={{ color: 'var(--text-muted)' }}
-              aria-label="展开侧边栏"
-              title="展开侧边栏"
-            >
-              <PanelLeftOpen size={14} />
-            </button>
-          )}
 
-          {/* 导航区域容器：包含滚动指示器 */}
-          <div className="relative flex-1 min-h-0">
-            {/* 顶部渐变阴影：提示可向上滚动 */}
-            <div
-              className="pointer-events-none absolute top-0 left-0 right-0 z-10 transition-opacity duration-200"
-              style={{
-                height: 32,
-                background: 'linear-gradient(to bottom, var(--bg-elevated, #1e1e24) 0%, transparent 100%)',
-                opacity: navScrollState.canScroll && !navScrollState.atTop ? 0.95 : 0,
-              }}
-            />
-            
-            <nav 
-              ref={navRef}
-              className={cn(
-                'h-full flex flex-col overflow-y-auto overflow-x-hidden nav-scroll-hidden',
-                collapsed ? 'gap-0.5 items-center' : 'gap-0.5'
-              )}
-              style={{ paddingTop: 2, paddingRight: collapsed ? 0 : 2, paddingBottom: 8 }}
-            >
-              {visibleItems.map((it) => {
-                const active = it.key === activeKey;
-                return (
-                  <button
-                    key={it.key}
-                    type="button"
-                    onClick={() => navigate(it.key)}
-                    className={cn(
-                      'group/nav relative flex items-center gap-3 rounded-[12px]',
-                      'transition-all duration-200 ease-out',
-                      collapsed ? 'justify-center w-[50px] h-[50px] shrink-0' : 'px-3 py-2',
-                      // 使用 CSS 类处理 hover，避免 JS 残影问题
-                      !active && 'nav-item-hover'
-                    )}
-                    style={{
-                      background: active ? 'rgba(255, 255, 255, 0.06)' : 'transparent',
-                      border: active ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid transparent',
-                      color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
-                    }}
-                    title={collapsed && it.description ? `${it.label} - ${it.description}` : undefined}
-                  >
-                    <span
-                      className="inline-flex items-center justify-center shrink-0 transition-all duration-200 group-hover/nav:scale-110"
-                      style={{ color: active ? '#818cf8' : undefined }}
-                    >
-                      {it.icon}
-                    </span>
-                    {!collapsed && (
-                      <div className="min-w-0 flex-1 text-left">
-                        <div className="text-sm font-medium truncate transition-colors duration-200 group-hover/nav:text-[var(--text-primary)]">{it.label}</div>
-                      </div>
-                    )}
-                    {active && !collapsed && (
-                      <span
-                        className="absolute left-0 top-1/2 -translate-y-1/2"
-                        style={{ width: 2, height: 16, background: '#818cf8', borderRadius: '0 999px 999px 0' }}
-                      />
-                    )}
-                  </button>
-                );
-              })}
-            </nav>
-            
-            {/* 底部渐变阴影：提示可向下滚动 */}
-            <div
-              className="pointer-events-none absolute bottom-0 left-0 right-0 z-10 transition-opacity duration-200"
-              style={{
-                height: 40,
-                background: 'linear-gradient(to top, var(--bg-elevated, #1e1e24) 0%, transparent 100%)',
-                opacity: navScrollState.canScroll && !navScrollState.atBottom ? 0.95 : 0,
-              }}
-            />
-          </div>
+          {/* 底部间距 */}
+          <div className="shrink-0 h-1" />
 
           <AvatarEditDialog
             open={avatarOpen}
@@ -1127,7 +1270,7 @@ export default function AppShell() {
           <div
             className={cn(
               'relative w-full flex-1 min-h-0 flex flex-col',
-              isMobile ? 'px-[var(--mobile-padding,16px)] py-3' : fullBleedMain ? 'px-3 py-3' : 'px-5 py-5'
+              isMobile ? 'px-[var(--mobile-padding,16px)] py-3' : fullBleedMain ? 'p-0' : isHomePage ? 'px-3 py-3' : 'px-5 py-5'
             )}
           >
             <div className="flex-1 min-h-0">

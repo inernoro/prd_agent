@@ -86,9 +86,8 @@ select optgroup {
 
 /* 侧边栏导航项：hover 效果（纯 CSS，避免 JS 残影） */
 .nav-item-hover:hover {
-  background: rgba(99, 102, 241, 0.06) !important;
-  border-color: rgba(99, 102, 241, 0.15) !important;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.25), 0 0 0 1px rgba(99, 102, 241, 0.08) inset;
+  background: rgba(255, 255, 255, 0.04) !important;
+  border-color: rgba(255, 255, 255, 0.06) !important;
 }
 
 /* 图片上传：海浪透明遮罩（用于 syncStatus=pending 的画布图片） */

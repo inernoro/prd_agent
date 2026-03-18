@@ -30,6 +30,8 @@ export type AdminMenuItem = {
   icon: string;
   /** 排序权重 */
   sortOrder: number;
+  /** 分组标识：tools=效率工具, personal=个人空间, admin=系统管理, null=头像面板 */
+  group?: string | null;
 };
 
 export type SystemRoleDto = {

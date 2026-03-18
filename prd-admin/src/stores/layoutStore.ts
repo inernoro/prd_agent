@@ -15,7 +15,7 @@ type LayoutState = {
 export const useLayoutStore = create<LayoutState>()(
   persist(
     (set, get) => ({
-      navCollapsed: false,
+      navCollapsed: true,
       fullBleedMain: false,
       mobileDrawerOpen: false,
       setNavCollapsed: (v) => set({ navCollapsed: Boolean(v) }),
