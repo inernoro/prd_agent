@@ -548,3 +548,89 @@ export type PreviewApiLogsContract = () => Promise<ApiResponse<{
   errorCount: number;
   items: ApiLogPreviewItem[];
 }>>;
+
+// ========== 分享链接 ==========
+
+/**
+ * 缺陷分享链接
+ */
+export interface DefectShareLink {
+  id: string;
+  token: string;
+  shareScope: 'single' | 'project' | 'selected';
+  defectIds: string[];
+  projectId?: string;
+  projectName?: string;
+  title?: string;
+  viewCount: number;
+  lastViewedAt?: string;
+  createdBy: string;
+  createdByName?: string;
+  createdAt: string;
+  expiresAt: string;
+  isRevoked: boolean;
+  isExpired?: boolean;
+  reportCount?: number;
+}
+
+/**
+ * 修复报告条目
+ */
+export interface DefectFixReportItem {
+  defectId: string;
+  defectNo?: string;
+  defectTitle?: string;
+  confidenceScore: number;
+  analysis?: string;
+  fixSuggestion?: string;
+  acceptStatus: 'pending' | 'accepted' | 'rejected';
+  reviewedBy?: string;
+  reviewedByName?: string;
+  reviewedAt?: string;
+  reviewNote?: string;
+}
+
+/**
+ * Agent 提交的修复报告
+ */
+export interface DefectFixReport {
+  id: string;
+  shareLinkId: string;
+  shareToken: string;
+  agentName?: string;
+  agentIdentifier?: string;
+  items: DefectFixReportItem[];
+  status: 'pending' | 'partial' | 'completed';
+  createdAt: string;
+  ipAddress?: string;
+  userAgent?: string;
+}
+
+export type CreateDefectShareContract = (input: {
+  shareScope: string;
+  defectIds?: string[];
+  projectId?: string;
+  title?: string;
+  expiresInDays?: number;
+}) => Promise<ApiResponse<{ shareLink: DefectShareLink; shareUrl: string }>>;
+
+export type ListDefectSharesContract = () => Promise<ApiResponse<{ items: DefectShareLink[] }>>;
+
+export type RevokeDefectShareContract = (input: { id: string }) => Promise<ApiResponse<{ revoked: boolean }>>;
+
+export type ListDefectFixReportsContract = (input: {
+  shareId: string;
+}) => Promise<ApiResponse<{ items: DefectFixReport[] }>>;
+
+export type AcceptDefectFixItemContract = (input: {
+  reportId: string;
+  defectId: string;
+  reviewNote?: string;
+  markResolved?: boolean;
+}) => Promise<ApiResponse<{ item: DefectFixReportItem; defect?: DefectReport }>>;
+
+export type RejectDefectFixItemContract = (input: {
+  reportId: string;
+  defectId: string;
+  reviewNote?: string;
+}) => Promise<ApiResponse<{ item: DefectFixReportItem }>>;

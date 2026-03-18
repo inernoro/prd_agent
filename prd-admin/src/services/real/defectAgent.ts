@@ -64,6 +64,15 @@ import type {
   DefectWebhookConfig,
   UserStatItem,
   ApiLogPreviewItem,
+  DefectShareLink,
+  DefectFixReport,
+  DefectFixReportItem,
+  CreateDefectShareContract,
+  ListDefectSharesContract,
+  RevokeDefectShareContract,
+  ListDefectFixReportsContract,
+  AcceptDefectFixItemContract,
+  RejectDefectFixItemContract,
 } from '../contracts/defectAgent';
 
 // ========== Templates ==========
@@ -513,5 +522,51 @@ export const previewApiLogsReal: PreviewApiLogsContract = async () => {
   return await apiRequest<{ totalCount: number; errorCount: number; items: ApiLogPreviewItem[] }>(
     api.defectAgent.logs.preview(),
     { method: 'GET' }
+  );
+};
+
+// ========== 分享管理 ==========
+
+export const createDefectShareReal: CreateDefectShareContract = async (input) => {
+  return await apiRequest<{ shareLink: DefectShareLink; shareUrl: string }>(
+    api.defectAgent.shares.list(),
+    { method: 'POST', body: input }
+  );
+};
+
+export const listDefectSharesReal: ListDefectSharesContract = async () => {
+  return await apiRequest<{ items: DefectShareLink[] }>(
+    api.defectAgent.shares.list(),
+    { method: 'GET' }
+  );
+};
+
+export const revokeDefectShareReal: RevokeDefectShareContract = async (input) => {
+  return await apiRequest<{ revoked: boolean }>(
+    api.defectAgent.shares.byId(encodeURIComponent(input.id)),
+    { method: 'DELETE' }
+  );
+};
+
+export const listDefectFixReportsReal: ListDefectFixReportsContract = async (input) => {
+  return await apiRequest<{ items: DefectFixReport[] }>(
+    api.defectAgent.shares.reports(encodeURIComponent(input.shareId)),
+    { method: 'GET' }
+  );
+};
+
+export const acceptDefectFixItemReal: AcceptDefectFixItemContract = async (input) => {
+  const { reportId, defectId, ...body } = input;
+  return await apiRequest<{ item: DefectFixReportItem; defect?: DefectReport }>(
+    api.defectAgent.shares.acceptItem(encodeURIComponent(reportId), encodeURIComponent(defectId)),
+    { method: 'POST', body }
+  );
+};
+
+export const rejectDefectFixItemReal: RejectDefectFixItemContract = async (input) => {
+  const { reportId, defectId, ...body } = input;
+  return await apiRequest<{ item: DefectFixReportItem }>(
+    api.defectAgent.shares.rejectItem(encodeURIComponent(reportId), encodeURIComponent(defectId)),
+    { method: 'POST', body }
   );
 };

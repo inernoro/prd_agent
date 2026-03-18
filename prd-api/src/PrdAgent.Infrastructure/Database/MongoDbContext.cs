@@ -108,6 +108,8 @@ public class MongoDbContext
     public IMongoCollection<DefectFolder> DefectFolders => _database.GetCollection<DefectFolder>("defect_folders");
     public IMongoCollection<DefectProject> DefectProjects => _database.GetCollection<DefectProject>("defect_projects");
     public IMongoCollection<DefectWebhookConfig> DefectWebhookConfigs => _database.GetCollection<DefectWebhookConfig>("defect_webhook_configs");
+    public IMongoCollection<DefectShareLink> DefectShareLinks => _database.GetCollection<DefectShareLink>("defect_share_links");
+    public IMongoCollection<DefectFixReport> DefectFixReports => _database.GetCollection<DefectFixReport>("defect_fix_reports");
 
     // Report Agent 周报管理
     public IMongoCollection<ReportTeam> ReportTeams => _database.GetCollection<ReportTeam>("report_teams");
@@ -795,6 +797,22 @@ public class MongoDbContext
         DefectWebhookConfigs.Indexes.CreateOne(new CreateIndexModel<DefectWebhookConfig>(
             Builders<DefectWebhookConfig>.IndexKeys.Ascending(x => x.TeamId).Ascending(x => x.ProjectId),
             new CreateIndexOptions { Name = "idx_defect_webhooks_team_project" }));
+
+        // DefectShareLinks：Token 唯一索引
+        DefectShareLinks.Indexes.CreateOne(new CreateIndexModel<DefectShareLink>(
+            Builders<DefectShareLink>.IndexKeys.Ascending(x => x.Token),
+            new CreateIndexOptions { Name = "uniq_defect_share_links_token", Unique = true }));
+        DefectShareLinks.Indexes.CreateOne(new CreateIndexModel<DefectShareLink>(
+            Builders<DefectShareLink>.IndexKeys.Ascending(x => x.CreatedBy).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_defect_share_links_creator" }));
+
+        // DefectFixReports：按分享链接和 Token 查询
+        DefectFixReports.Indexes.CreateOne(new CreateIndexModel<DefectFixReport>(
+            Builders<DefectFixReport>.IndexKeys.Ascending(x => x.ShareLinkId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_defect_fix_reports_share" }));
+        DefectFixReports.Indexes.CreateOne(new CreateIndexModel<DefectFixReport>(
+            Builders<DefectFixReport>.IndexKeys.Ascending(x => x.ShareToken),
+            new CreateIndexOptions { Name = "idx_defect_fix_reports_token" }));
 
         // ========== Channel Adapter 多通道适配器索引 ==========
 

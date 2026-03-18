@@ -223,6 +223,12 @@ import type {
   UpdateDefectWebhookContract,
   DeleteDefectWebhookContract,
   AnalyzeDefectImageContract,
+  CreateDefectShareContract,
+  ListDefectSharesContract,
+  RevokeDefectShareContract,
+  ListDefectFixReportsContract,
+  AcceptDefectFixItemContract,
+  RejectDefectFixItemContract,
 } from '@/services/contracts/defectAgent';
 import type { IOpenPlatformService } from '@/services/contracts/openPlatform';
 import type { IAutomationsService } from '@/services/contracts/automations';
@@ -494,6 +500,12 @@ import {
   createDefectWebhookReal,
   updateDefectWebhookReal,
   deleteDefectWebhookReal,
+  createDefectShareReal,
+  listDefectSharesReal,
+  revokeDefectShareReal,
+  listDefectFixReportsReal,
+  acceptDefectFixItemReal,
+  rejectDefectFixItemReal,
 } from '@/services/real/defectAgent';
 import { OpenPlatformService } from '@/services/real/openPlatform';
 import { AutomationsService } from '@/services/real/automations';
@@ -943,6 +955,13 @@ export const listDefectWebhooks: ListDefectWebhooksContract = withAuth(listDefec
 export const createDefectWebhook: CreateDefectWebhookContract = withAuth(createDefectWebhookReal);
 export const updateDefectWebhook: UpdateDefectWebhookContract = withAuth(updateDefectWebhookReal);
 export const deleteDefectWebhook: DeleteDefectWebhookContract = withAuth(deleteDefectWebhookReal);
+// Defect Shares
+export const createDefectShare: CreateDefectShareContract = withAuth(createDefectShareReal);
+export const listDefectShares: ListDefectSharesContract = withAuth(listDefectSharesReal);
+export const revokeDefectShare: RevokeDefectShareContract = withAuth(revokeDefectShareReal);
+export const listDefectFixReports: ListDefectFixReportsContract = withAuth(listDefectFixReportsReal);
+export const acceptDefectFixItem: AcceptDefectFixItemContract = withAuth(acceptDefectFixItemReal);
+export const rejectDefectFixItem: RejectDefectFixItemContract = withAuth(rejectDefectFixItemReal);
 
 // ─── Mobile Dashboard ───
 export const getMobileFeed: GetMobileFeedContract = withAuth(getMobileFeedReal);

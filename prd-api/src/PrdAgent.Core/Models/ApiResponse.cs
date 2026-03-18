@@ -86,6 +86,10 @@ public static class ErrorCodes
     // 配额相关
     public const string QUOTA_EXCEEDED = "QUOTA_EXCEEDED";
 
+    // 分享相关
+    public const string SHARE_EXPIRED = "SHARE_EXPIRED";
+    public const string SHARE_REVOKED = "SHARE_REVOKED";
+
     // 通用业务
     public const string DUPLICATE = "DUPLICATE";
 }
