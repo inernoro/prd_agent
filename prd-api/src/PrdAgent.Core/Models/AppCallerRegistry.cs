@@ -371,6 +371,17 @@ public static class DefectAgent
         )]
         public const string Vision = "defect-agent.analyze-image::vision";
     }
+
+    public static class Scoring
+    {
+        [AppCallerMetadata(
+            "缺陷批量评分",
+            "AI 自动评估缺陷严重程度、修复难度、影响范围",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Scoring"
+        )]
+        public const string Chat = "defect-agent.scoring::chat";
+    }
 }
 
 /// <summary>

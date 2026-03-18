@@ -73,6 +73,9 @@ import type {
   ListDefectFixReportsContract,
   AcceptDefectFixItemContract,
   RejectDefectFixItemContract,
+  CreateBatchShareContract,
+  GetShareScoresContract,
+  DefectAiScoreItem,
 } from '../contracts/defectAgent';
 
 // ========== Templates ==========
@@ -568,5 +571,19 @@ export const rejectDefectFixItemReal: RejectDefectFixItemContract = async (input
   return await apiRequest<{ item: DefectFixReportItem }>(
     api.defectAgent.shares.rejectItem(encodeURIComponent(reportId), encodeURIComponent(defectId)),
     { method: 'POST', body }
+  );
+};
+
+export const createBatchShareReal: CreateBatchShareContract = async (input) => {
+  return await apiRequest<{ shareLink: DefectShareLink; shareUrl: string }>(
+    api.defectAgent.shares.batch(),
+    { method: 'POST', body: input }
+  );
+};
+
+export const getShareScoresReal: GetShareScoresContract = async (input) => {
+  return await apiRequest<{ aiScoreStatus: string; scores: DefectAiScoreItem[] }>(
+    api.defectAgent.shares.scores(encodeURIComponent(input.shareId)),
+    { method: 'GET' }
   );
 };

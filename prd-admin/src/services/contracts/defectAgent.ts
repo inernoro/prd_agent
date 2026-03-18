@@ -571,6 +571,22 @@ export interface DefectShareLink {
   isRevoked: boolean;
   isExpired?: boolean;
   reportCount?: number;
+  aiScoreStatus?: 'none' | 'scoring' | 'completed' | 'failed';
+  aiScoreCount?: number;
+}
+
+/**
+ * AI 评分条目
+ */
+export interface DefectAiScoreItem {
+  defectId: string;
+  defectNo?: string;
+  defectTitle?: string;
+  severityScore: number;
+  difficultyScore: number;
+  impactScore: number;
+  overallScore: number;
+  reason?: string;
 }
 
 /**
@@ -634,3 +650,14 @@ export type RejectDefectFixItemContract = (input: {
   defectId: string;
   reviewNote?: string;
 }) => Promise<ApiResponse<{ item: DefectFixReportItem }>>;
+
+export type CreateBatchShareContract = (input: {
+  projectId?: string;
+  folderId?: string;
+  title?: string;
+  expiresInDays?: number;
+}) => Promise<ApiResponse<{ shareLink: DefectShareLink; shareUrl: string }>>;
+
+export type GetShareScoresContract = (input: {
+  shareId: string;
+}) => Promise<ApiResponse<{ aiScoreStatus: string; scores: DefectAiScoreItem[] }>>;

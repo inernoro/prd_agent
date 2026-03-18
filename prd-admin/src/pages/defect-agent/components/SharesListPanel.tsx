@@ -1,13 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
-import { Copy, Eye, Trash2, FileText } from 'lucide-react';
-import { listDefectShares, revokeDefectShare } from '@/services';
+import { Copy, Eye, Trash2, FileText, Zap, BarChart3, Loader2 } from 'lucide-react';
+import { listDefectShares, revokeDefectShare, createBatchShare, getShareScores } from '@/services';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
 import { glassPanel } from '@/lib/glassStyles';
 import { DefectFixReportPanel } from './DefectFixReportPanel';
-import type { DefectShareLink } from '@/services/contracts/defectAgent';
+import type { DefectShareLink, DefectAiScoreItem } from '@/services/contracts/defectAgent';
 
 interface SharesListPanelProps {
   open: boolean;
@@ -21,6 +21,10 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
   const [loading, setLoading] = useState(true);
   const [reportShareId, setReportShareId] = useState<string | null>(null);
   const [reportShareTitle, setReportShareTitle] = useState<string | undefined>(undefined);
+  const [batchLoading, setBatchLoading] = useState(false);
+  const [scoreShareId, setScoreShareId] = useState<string | null>(null);
+  const [scores, setScores] = useState<DefectAiScoreItem[]>([]);
+  const [scoresLoading, setScoresLoading] = useState(false);
 
   const loadShares = useCallback(async () => {
     setLoading(true);
@@ -61,16 +65,107 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
     } catch { toast.error('撤销失败'); }
   };
 
-  const handleCopy = (token: string) => {
-    const url = `${window.location.origin}/api/defect-agent/share/view/${token}`;
-    navigator.clipboard.writeText(url).catch(() => {});
-    toast.success('链接已复制');
+  /** 复制分享链接 — 生成 LLM 友好的 prompt 到剪贴板 */
+  const handleCopy = (share: DefectShareLink) => {
+    const baseUrl = window.location.origin;
+    const viewUrl = `${baseUrl}/api/defect-agent/share/view/${share.token}`;
+
+    const prompt = [
+      `## 缺陷修复任务`,
+      ``,
+      `我有 ${share.defectIds?.length || '若干'} 个软件缺陷需要你帮忙分析和修复。`,
+      ``,
+      `### 操作步骤`,
+      ``,
+      `1. **获取缺陷数据**：调用以下 API 获取缺陷详情（需要在 Header 中添加 \`Authorization: Bearer <your-access-key>\`）：`,
+      `   \`\`\``,
+      `   GET ${viewUrl}`,
+      `   \`\`\``,
+      `   响应中包含缺陷列表、附件截图 URL、以及后续操作的 API 端点说明。`,
+      ``,
+      `2. **分析缺陷**：阅读每个缺陷的描述和截图，生成修复计划。`,
+      ``,
+      `3. **提交分析报告**（可选）：`,
+      `   \`\`\``,
+      `   POST ${viewUrl}/report`,
+      `   Content-Type: application/json`,
+      `   Authorization: Bearer <your-access-key>`,
+      `   `,
+      `   { "agentName": "你的名称", "items": [{ "defectId": "...", "confidenceScore": 85, "analysis": "分析内容", "fixSuggestion": "修复建议" }] }`,
+      `   \`\`\``,
+      ``,
+      `4. **执行修复**：根据分析结果修改代码。`,
+      ``,
+      `5. **标记修复完成**：修复完成后调用以下接口通知缺陷提交者：`,
+      `   \`\`\``,
+      `   POST ${viewUrl}/fix-status`,
+      `   Content-Type: application/json`,
+      `   Authorization: Bearer <your-access-key>`,
+      `   `,
+      `   { "items": [{ "defectId": "...", "resolution": "修复说明" }] }`,
+      `   \`\`\``,
+      ``,
+      `请先调用步骤 1 的 API 获取具体缺陷数据，然后告诉我你的修复计划。`,
+    ].join('\n');
+
+    navigator.clipboard.writeText(prompt).catch(() => {});
+    toast.success('已复制 AI 提示词到剪贴板');
+  };
+
+  /** 一键分享所有缺陷 + AI 评分 */
+  const handleBatchShare = async () => {
+    setBatchLoading(true);
+    try {
+      const res = await createBatchShare({ expiresInDays: 7 });
+      if (res.success && res.data) {
+        toast.success('一键分享已创建，AI 正在评分中...');
+        loadShares();
+      } else {
+        toast.error(res.error?.message || '创建失败');
+      }
+    } catch {
+      toast.error('创建失败');
+    } finally {
+      setBatchLoading(false);
+    }
+  };
+
+  /** 查看 AI 评分详情 */
+  const handleViewScores = async (shareId: string) => {
+    setScoreShareId(shareId);
+    setScoresLoading(true);
+    try {
+      const res = await getShareScores({ shareId });
+      if (res.success && res.data) {
+        if (res.data.aiScoreStatus === 'scoring') {
+          toast.info('AI 评分进行中，请稍后再查看');
+          setScoreShareId(null);
+        } else if (res.data.aiScoreStatus === 'failed') {
+          toast.error('AI 评分失败');
+          setScoreShareId(null);
+        } else {
+          setScores(res.data.scores);
+        }
+      }
+    } catch {
+      toast.error('获取评分失败');
+      setScoreShareId(null);
+    } finally {
+      setScoresLoading(false);
+    }
   };
 
   const scopeLabel = (s: DefectShareLink) => {
     if (s.shareScope === 'single') return '单个缺陷';
     if (s.shareScope === 'project') return `项目: ${s.projectName || '未知'}`;
     return `已选 ${s.defectIds.length} 个`;
+  };
+
+  const aiScoreLabel = (s: DefectShareLink) => {
+    if (s.aiScoreStatus === 'scoring') return '评分中...';
+    if (s.aiScoreStatus === 'completed') return `${s.aiScoreCount ?? 0} 项评分`;
+    if (s.aiScoreStatus === 'failed') return '评分失败';
+    return null;
   };
 
   return (
@@ -82,6 +177,18 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
         maxWidth={640}
         content={
           <div className="mt-2 space-y-3 max-h-[60vh] overflow-y-auto pr-1">
+            {/* 一键分享按钮 */}
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={handleBatchShare}
+              disabled={batchLoading}
+              className="w-full"
+            >
+              {batchLoading ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
+              {batchLoading ? '创建中...' : '一键分享所有缺陷（AI 评分）'}
+            </Button>
+
             {loading && <p className="text-sm" style={{ color: 'var(--text-muted)' }}>加载中...</p>}
             {!loading && shares.length === 0 && (
               <p className="text-sm" style={{ color: 'var(--text-muted)' }}>暂无分享记录</p>
@@ -89,6 +196,7 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
             {shares.map((share) => {
               const isExpired = share.isExpired || new Date(share.expiresAt) < new Date();
               const dimmed = isExpired || share.isRevoked;
+              const scoreText = aiScoreLabel(share);
 
               return (
                 <div
@@ -100,7 +208,7 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
                     <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
                       {share.title || '未命名分享'}
                     </p>
-                    <div className="flex items-center gap-3 mt-0.5">
+                    <div className="flex items-center gap-3 mt-0.5 flex-wrap">
                       <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{scopeLabel(share)}</span>
                       <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
                         {new Date(share.createdAt).toLocaleDateString()}
@@ -113,6 +221,20 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
                           <FileText size={10} /> {share.reportCount} 报告
                         </span>
                       )}
+                      {scoreText && (
+                        <span
+                          className="text-xs flex items-center gap-0.5"
+                          style={{
+                            color: share.aiScoreStatus === 'completed'
+                              ? 'rgba(120,180,255,0.9)'
+                              : share.aiScoreStatus === 'scoring'
+                              ? 'rgba(255,200,100,0.9)'
+                              : 'rgba(255,100,100,0.8)',
+                          }}
+                        >
+                          <BarChart3 size={10} /> {scoreText}
+                        </span>
+                      )}
                       {isExpired && (
                         <span className="text-xs" style={{ color: 'rgba(255,100,100,0.8)' }}>已过期</span>
                       )}
@@ -123,6 +245,11 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
                   </div>
 
                   <div className="flex items-center gap-1 flex-shrink-0">
+                    {share.aiScoreStatus === 'completed' && (
+                      <Button variant="secondary" size="xs" onClick={() => handleViewScores(share.id)}>
+                        评分
+                      </Button>
+                    )}
                     {(share.reportCount ?? 0) > 0 && (
                       <Button
                         variant="secondary"
@@ -134,7 +261,7 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
                     )}
                     {!dimmed && (
                       <>
-                        <Button variant="ghost" size="xs" onClick={() => handleCopy(share.token)}>
+                        <Button variant="ghost" size="xs" onClick={() => handleCopy(share)} title="复制 AI 提示词">
                           <Copy size={12} />
                         </Button>
                         <Button variant="ghost" size="xs" onClick={() => handleRevoke(share)} className="text-red-400">
@@ -158,6 +285,90 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
           shareTitle={reportShareTitle}
         />
       )}
+
+      {/* AI 评分详情弹窗 */}
+      {scoreShareId && (
+        <Dialog
+          open={!!scoreShareId}
+          onOpenChange={(v) => { if (!v) { setScoreShareId(null); setScores([]); } }}
+          title="AI 缺陷评分"
+          maxWidth={720}
+          content={
+            <div className="mt-2 max-h-[60vh] overflow-y-auto">
+              {scoresLoading ? (
+                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>加载中...</p>
+              ) : scores.length === 0 ? (
+                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>暂无评分数据</p>
+              ) : (
+                <table className="w-full text-sm" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
+                  <thead>
+                    <tr style={{ color: 'var(--text-secondary)' }}>
+                      <th className="text-left py-2 px-2 text-xs font-medium">编号</th>
+                      <th className="text-left py-2 px-2 text-xs font-medium">标题</th>
+                      <th className="text-center py-2 px-1 text-xs font-medium">严重度</th>
+                      <th className="text-center py-2 px-1 text-xs font-medium">难度</th>
+                      <th className="text-center py-2 px-1 text-xs font-medium">影响</th>
+                      <th className="text-center py-2 px-1 text-xs font-medium">综合</th>
+                      <th className="text-left py-2 px-2 text-xs font-medium">理由</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {scores.map((s) => (
+                      <tr
+                        key={s.defectId}
+                        className="border-t"
+                        style={{ borderColor: 'rgba(255,255,255,0.06)' }}
+                      >
+                        <td className="py-2 px-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+                          {s.defectNo}
+                        </td>
+                        <td className="py-2 px-2 text-xs max-w-[160px] truncate" style={{ color: 'var(--text-primary)' }}>
+                          {s.defectTitle}
+                        </td>
+                        <td className="py-2 px-1 text-center">
+                          <ScoreBadge value={s.severityScore} />
+                        </td>
+                        <td className="py-2 px-1 text-center">
+                          <ScoreBadge value={s.difficultyScore} />
+                        </td>
+                        <td className="py-2 px-1 text-center">
+                          <ScoreBadge value={s.impactScore} />
+                        </td>
+                        <td className="py-2 px-1 text-center">
+                          <ScoreBadge value={s.overallScore} highlight />
+                        </td>
+                        <td className="py-2 px-2 text-xs max-w-[200px]" style={{ color: 'var(--text-secondary)' }}>
+                          {s.reason}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          }
+        />
+      )}
     </>
+  );
+}
+
+function ScoreBadge({ value, highlight }: { value: number; highlight?: boolean }) {
+  const color =
+    value >= 8 ? 'rgba(255,100,100,0.9)' :
+    value >= 5 ? 'rgba(255,200,100,0.9)' :
+    'rgba(120,220,180,0.9)';
+
+  return (
+    <span
+      className="inline-flex items-center justify-center w-6 h-6 rounded text-xs font-medium"
+      style={{
+        background: highlight ? `${color}20` : 'transparent',
+        color,
+        fontWeight: highlight ? 700 : 500,
+      }}
+    >
+      {value}
+    </span>
   );
 }
