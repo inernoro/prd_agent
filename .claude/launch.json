@@ -1,0 +1,29 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "prd-api",
+      "runtimeExecutable": "dotnet",
+      "runtimeArgs": ["watch", "run", "--project", "prd-api/src/PrdAgent.Api"],
+      "port": 5000
+    },
+    {
+      "name": "prd-admin",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--dir", "prd-admin", "dev"],
+      "port": 8000
+    },
+    {
+      "name": "prd-desktop",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--dir", "prd-desktop", "tauri:dev"],
+      "port": 1420
+    },
+    {
+      "name": "prd-video",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--dir", "prd-video", "start"],
+      "port": 3000
+    }
+  ]
+}

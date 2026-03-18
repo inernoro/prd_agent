@@ -9,6 +9,8 @@ import { useGroupListStore } from '../../stores/groupListStore';
 import { useMessageStore } from '../../stores/messageStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useDesktopBrandingStore } from '../../stores/desktopBrandingStore';
+import { useClientConfigStore } from '../../stores/clientConfigStore';
+import { useUpdateStore } from '../../stores/updateStore';
 import NetworkDiagnosticsModal from '../NetworkDiagnosticsModal';
 
 interface ApiTestResult {
@@ -18,18 +20,18 @@ interface ApiTestResult {
   serverStatus: string | null;
 }
 
-const DEFAULT_API_URL_NON_DEV = 'https://pa.759800.com';
+const DEFAULT_API_URL_NON_DEV = 'https://map.ebcone.net';
 const DEFAULT_API_URL_DEV = 'http://localhost:5000';
 
 /** 预设服务器列表（用户可直接选择，无需手动输入） */
 const PRESET_SERVERS = [
-  { label: 'pa.759800.com', url: 'https://pa.759800.com' },
+  { label: 'map.ebcone.net', url: 'https://map.ebcone.net' },
   { label: 'miduo.org', url: 'https://miduo.org' },
   { label: 'sassagent.com', url: 'https://sassagent.com' },
 ];
 
-function getDefaultApiUrl(isDeveloper: boolean) {
-  return isDeveloper ? DEFAULT_API_URL_DEV : DEFAULT_API_URL_NON_DEV;
+function getDefaultApiUrl(isDeveloper: boolean, effectiveDefault?: string) {
+  return isDeveloper ? DEFAULT_API_URL_DEV : (effectiveDefault ?? DEFAULT_API_URL_NON_DEV);
 }
 
 function byteLen(s: string): number {
@@ -75,6 +77,13 @@ export default function SettingsModal() {
   const clearMessages = useMessageStore((s) => s.clearMessages);
   const refreshBranding = useDesktopBrandingStore((s) => s.refresh);
   const resetBranding = useDesktopBrandingStore((s) => s.resetToLocal);
+  const remotePresetServers = useClientConfigStore((s) => s.presetServers);
+  const remoteDefaultApiUrl = useClientConfigStore((s) => s.defaultApiUrl);
+
+  // 动态配置：远程优先，硬编码兜底
+  const effectivePresets = remotePresetServers ?? PRESET_SERVERS;
+  const effectiveDefaultUrl = remoteDefaultApiUrl ?? DEFAULT_API_URL_NON_DEV;
+
   const [apiUrl, setApiUrl] = useState('');
   const [error, setError] = useState('');
   const [isDeveloper, setIsDeveloper] = useState(false);
@@ -105,13 +114,22 @@ export default function SettingsModal() {
     if (isModalOpen) {
       loadConfig();
       setTestResult(null);
-      setUpdateStatus('idle');
-      setUpdateInfo(null);
       setUpdateError('');
-      pendingUpdateRef.current = null;
       setClearConfirmStep(0);
       setCacheBytes(null);
       setCacheNote('');
+
+      // 若自动更新已发现可用版本，直接填充到手动更新 UI，避免用户重复点击"检查更新"
+      const autoUpdate = useUpdateStore.getState();
+      if (autoUpdate.phase === 'ready' && autoUpdate.version) {
+        setUpdateStatus('available');
+        setUpdateInfo({ version: autoUpdate.version, notes: autoUpdate.notes ?? undefined });
+        pendingUpdateRef.current = autoUpdate._updateObject;
+      } else {
+        setUpdateStatus('idle');
+        setUpdateInfo(null);
+        pendingUpdateRef.current = null;
+      }
 
       if (!isTauri()) {
         setAppVersion('');
@@ -651,7 +669,7 @@ export default function SettingsModal() {
                 <button
                   type="button"
                   onClick={() => {
-                    setApiUrl(getDefaultApiUrl(isDeveloper));
+                    setApiUrl(getDefaultApiUrl(isDeveloper, effectiveDefaultUrl));
                     setTestResult(null);
                   }}
                   className="px-2.5 py-1 text-xs font-medium bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-100 rounded-lg transition-colors"
@@ -661,7 +679,7 @@ export default function SettingsModal() {
               </div>
               {!isDeveloper && (
                 <select
-                  value={PRESET_SERVERS.some((s) => s.url === apiUrl.trim()) ? apiUrl.trim() : '__custom__'}
+                  value={effectivePresets.some((s) => s.url === apiUrl.trim()) ? apiUrl.trim() : '__custom__'}
                   onChange={(e) => {
                     if (e.target.value !== '__custom__') {
                       setApiUrl(e.target.value);
@@ -670,10 +688,10 @@ export default function SettingsModal() {
                   }}
                   className="w-full px-4 py-3 ui-control transition-colors"
                 >
-                  {PRESET_SERVERS.map((s) => (
+                  {effectivePresets.map((s) => (
                     <option key={s.url} value={s.url}>{s.label}</option>
                   ))}
-                  {!PRESET_SERVERS.some((s) => s.url === apiUrl.trim()) && (
+                  {!effectivePresets.some((s) => s.url === apiUrl.trim()) && (
                     <option value="__custom__">自定义: {apiUrl.trim()}</option>
                   )}
                 </select>
@@ -685,9 +703,9 @@ export default function SettingsModal() {
                   setApiUrl(e.target.value);
                   setTestResult(null);
                 }}
-                placeholder={getDefaultApiUrl(isDeveloper)}
+                placeholder={getDefaultApiUrl(isDeveloper, effectiveDefaultUrl)}
                 className="w-full px-4 py-3 ui-control transition-colors"
-                style={!isDeveloper && PRESET_SERVERS.some((s) => s.url === apiUrl.trim()) ? { display: 'none' } : undefined}
+                style={!isDeveloper && effectivePresets.some((s) => s.url === apiUrl.trim()) ? { display: 'none' } : undefined}
               />
             </div>
           </div>
@@ -898,7 +916,7 @@ export default function SettingsModal() {
       <NetworkDiagnosticsModal
         isOpen={isDiagnosticsOpen}
         onClose={() => setIsDiagnosticsOpen(false)}
-        apiUrl={apiUrl || getDefaultApiUrl(isDeveloper)}
+        apiUrl={apiUrl || getDefaultApiUrl(isDeveloper, effectiveDefaultUrl)}
       />
     </div>
   );
