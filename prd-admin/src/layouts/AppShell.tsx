@@ -295,8 +295,8 @@ export default function AppShell() {
   // 根据配置决定是否使用玻璃效果：always 始终启用，auto 仅实验室页面，never 禁用
   const useSidebarGlass = sidebarGlass === 'always' || (sidebarGlass === 'auto' && isLabPage);
 
-  const asideWidth = collapsed ? 56 : 192;
-  const asideGap = 18;
+  const asideWidth = collapsed ? 52 : 176;
+  const asideGap = 12;
   // 专注模式（fullBleedMain）、移动端下隐藏侧栏，主区最大化
   const focusHideAside = fullBleedMain || isMobile;
   const mainPadLeft = focusHideAside ? (isMobile ? 0 : asideGap) : asideWidth + asideGap * 2;
@@ -694,7 +694,7 @@ export default function AppShell() {
           <div
             className={cn(
               'group relative shrink-0 rounded-[14px]',
-              collapsed ? 'w-[42px] py-1.5 flex justify-center' : 'px-2.5 py-2'
+              collapsed ? 'w-[38px] py-1.5 flex justify-center' : 'px-2.5 py-2'
             )}
             style={{ background: 'transparent' }}
           >
@@ -895,7 +895,7 @@ export default function AppShell() {
                 className={cn(
                   'group/nav relative flex items-center gap-2.5 rounded-[10px] w-full',
                   'transition-all duration-200 ease-out',
-                  collapsed ? 'justify-center w-[42px] h-[42px] shrink-0' : 'px-2.5 py-1.5',
+                  collapsed ? 'justify-center w-[38px] h-[38px] shrink-0' : 'px-2.5 py-1.5',
                   activeKey === '/' ? '' : 'nav-item-hover'
                 )}
                 style={{
@@ -935,7 +935,7 @@ export default function AppShell() {
             <nav
               ref={navRef}
               className={cn(
-                'h-full flex flex-col overflow-y-auto overflow-x-hidden nav-scroll-hidden',
+                'h-full flex flex-col justify-between overflow-y-auto overflow-x-hidden nav-scroll-hidden',
                 collapsed ? 'items-center' : ''
               )}
               style={{ paddingTop: 2, paddingRight: collapsed ? 0 : 2, paddingBottom: 8 }}
@@ -978,7 +978,7 @@ export default function AppShell() {
                           className={cn(
                             'group/nav relative flex items-center gap-2.5 rounded-[10px]',
                             'transition-all duration-200 ease-out',
-                            collapsed ? 'justify-center w-[42px] h-[42px] shrink-0' : 'px-2.5 py-1.5',
+                            collapsed ? 'justify-center w-[38px] h-[38px] shrink-0' : 'px-2.5 py-1.5',
                             !active && 'nav-item-hover'
                           )}
                           style={{

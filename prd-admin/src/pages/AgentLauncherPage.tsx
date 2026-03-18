@@ -326,13 +326,12 @@ export default function AgentLauncherPage() {
   return (
     <div className="h-full min-h-0 flex flex-col" style={{ background: 'var(--bg-base)' }}>
       <div className="flex-1 min-h-0 overflow-auto">
-        <div className={isMobile ? 'px-4 pt-4 pb-8' : 'px-8 pt-6 pb-12'}>
 
-          {/* ── Hero banner with background image ── */}
+          {/* ── Hero banner with background image — full width ── */}
           <div
-            className="relative overflow-hidden rounded-2xl"
+            className="relative overflow-hidden"
             style={{
-              marginBottom: isMobile ? 12 : 16,
+              marginBottom: 0,
             }}
           >
             {/* Background image — positioned right, like 文心 reference */}
@@ -340,8 +339,8 @@ export default function AgentLauncherPage() {
               className="absolute inset-0 pointer-events-none"
               style={{
                 backgroundImage: `url(${heroBgUrl})`,
-                backgroundSize: 'auto 100%',
-                backgroundPosition: 'right center',
+                backgroundSize: 'cover',
+                backgroundPosition: 'center top',
                 backgroundRepeat: 'no-repeat',
                 opacity: 0.85,
               }}
@@ -417,6 +416,7 @@ export default function AgentLauncherPage() {
           </div>
           {/* end hero banner */}
 
+        <div className={isMobile ? 'px-4 pt-4 pb-8' : 'px-8 pt-5 pb-12'}>
           {/* ── Quick Links — outside hero, same width as card grid ── */}
           {!searchQuery.trim() && (
             <div
