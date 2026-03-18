@@ -146,6 +146,7 @@ let previewDomain = '';
 let workerPort = '';
 
 async function init() {
+  updateThemeUI();
   await Promise.all([loadBranches(), loadProfiles(), loadRoutingRules(), loadConfig(), loadEnvVars(), loadInfraServices(), loadMirrorState()]);
   refreshRemoteCandidates();
   updatePreviewModeUI();
@@ -363,13 +364,69 @@ function setTheme(theme) {
   updateThemeUI();
 }
 
-function toggleTheme() {
-  setTheme(cdsTheme === 'dark' ? 'light' : 'dark');
+function toggleTheme(event) {
+  const newTheme = cdsTheme === 'dark' ? 'light' : 'dark';
+  const rippleColor = newTheme === 'light' ? '#FFFFFF' : '#1E1F20';
+
+  // Get origin point from button click
+  let x, y;
+  if (event) {
+    const btn = event.currentTarget || event.target;
+    const rect = btn.getBoundingClientRect();
+    x = rect.left + rect.width / 2;
+    y = rect.top + rect.height / 2;
+  } else {
+    x = window.innerWidth / 2;
+    y = 0;
+  }
+
+  // Calculate max radius to cover entire page
+  const maxRadius = Math.ceil(Math.sqrt(
+    Math.max(x, window.innerWidth - x) ** 2 +
+    Math.max(y, window.innerHeight - y) ** 2
+  ));
+
+  // Create ripple overlay
+  const ripple = document.createElement('div');
+  ripple.className = 'theme-ripple';
+  ripple.style.cssText = `
+    position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+    z-index: 99999; pointer-events: none;
+    background: ${rippleColor};
+    clip-path: circle(0px at ${x}px ${y}px);
+  `;
+  document.body.appendChild(ripple);
+
+  // Trigger animation
+  requestAnimationFrame(() => {
+    ripple.style.transition = 'clip-path 0.6s cubic-bezier(0.4, 0, 0.2, 1)';
+    ripple.style.clipPath = `circle(${maxRadius}px at ${x}px ${y}px)`;
+  });
+
+  // Apply theme at midway point for smooth visual
+  setTimeout(() => {
+    setTheme(newTheme);
+  }, 200);
+
+  // Remove ripple after animation completes
+  setTimeout(() => {
+    ripple.style.opacity = '0';
+    ripple.style.transition = 'opacity 0.2s ease';
+    setTimeout(() => ripple.remove(), 200);
+  }, 600);
 }
 
 function updateThemeUI() {
   const sw = document.querySelector('.settings-switch-theme');
   if (sw) sw.classList.toggle('on', cdsTheme === 'light');
+  // Update header toggle icon
+  const headerBtn = document.getElementById('themeToggleBtn');
+  if (headerBtn) {
+    headerBtn.innerHTML = cdsTheme === 'light'
+      ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>'
+      : '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="4.22" x2="19.78" y2="5.64"/></svg>';
+    headerBtn.title = cdsTheme === 'light' ? '切换到暗色模式' : '切换到亮色模式';
+  }
 }
 
 // ── Data loading ──
@@ -1184,7 +1241,7 @@ function toggleSettingsMenu(event) {
         </span>
       </span>
     </div>
-    <div class="settings-menu-item settings-menu-switch" onclick="toggleTheme()">
+    <div class="settings-menu-item settings-menu-switch" onclick="toggleTheme(event)">
       <span class="settings-menu-switch-label">白天模式</span>
       <span class="settings-switch settings-switch-theme ${cdsTheme === 'light' ? 'on' : ''}">
         <span class="settings-switch-track">

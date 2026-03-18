@@ -2,12 +2,12 @@
 .inline-icon { vertical-align: -3px; opacity: 0.7; flex-shrink: 0; }
 
 :root {
-  /* Base - Zinc/Slate Dark */
-  --bg-primary: #09090b;
-  --bg-card: #18181b;
-  --bg-card-solid: #27272a;
-  --bg-elevated: #27272a;
-  --bg-input: #18181b;
+  /* Base - Dark */
+  --bg-primary: #131314;
+  --bg-card: #1E1F20;
+  --bg-card-solid: #1E1F20;
+  --bg-elevated: #282A2C;
+  --bg-input: #1E1F20;
   --bg-hover: rgba(63, 63, 70, 0.4);
   
   /* Borders */
@@ -70,10 +70,10 @@
 /* ════════════════ Light Theme ════════════════ */
 
 [data-theme="light"] {
-  --bg-primary: #ffffff;
-  --bg-card: #ffffff;
-  --bg-card-solid: #ffffff;
-  --bg-elevated: #f5f5f5;
+  --bg-primary: #FFFFFF;
+  --bg-card: #F0F4F9;
+  --bg-card-solid: #F0F4F9;
+  --bg-elevated: #E8ECF1;
   --bg-input: #ffffff;
   --bg-hover: rgba(0, 0, 0, 0.05);
   --border: rgba(0, 0, 0, 0.12);
@@ -155,7 +155,7 @@
 }
 
 [data-theme="light"] .branch-card {
-  background: #ffffff;
+  background: #F0F4F9;
   border-left-color: rgba(0, 0, 0, 0.12);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.04);
 }
@@ -199,7 +199,7 @@
   background: var(--bg-elevated);
 }
 [data-theme="light"] .log-tab.active {
-  background: #ffffff;
+  background: #F0F4F9;
   box-shadow: 0 1px 3px rgba(0,0,0,0.08);
 }
 
