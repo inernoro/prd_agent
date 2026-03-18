@@ -282,12 +282,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       logDeploy(id, '开始部署');
 
+      // Clear previous error state on new deploy
+      entry.errorMessage = undefined;
+      for (const svc of Object.values(entry.services)) {
+        if (svc.errorMessage) svc.errorMessage = undefined;
+      }
+      entry.status = 'building';
+      stateService.save();
+
       // Pull latest code
       logEvent({ step: 'pull', status: 'running', title: '正在拉取最新代码...', timestamp: new Date().toISOString() });
       const pullResult = await worktreeService.pull(entry.branch, entry.worktreePath);
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
 
-      entry.status = 'building';
       stateService.save();
 
       // ── Compute startup layers (topological sort by dependsOn) ──
@@ -526,6 +533,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     try {
       logDeploy(id, `开始部署服务 ${profile.name}`);
+
+      // Clear previous error state on new deploy
+      entry.errorMessage = undefined;
+      const existingSvc = entry.services[profile.id];
+      if (existingSvc?.errorMessage) existingSvc.errorMessage = undefined;
+      stateService.save();
 
       // Pull latest code
       logEvent({ step: 'pull', status: 'running', title: '正在拉取最新代码...', timestamp: new Date().toISOString() });

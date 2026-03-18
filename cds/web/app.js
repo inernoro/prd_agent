@@ -571,6 +571,9 @@ async function deployBranch(id) {
   if (busyBranches.has(id)) return;
   markTouched(id);
   busyBranches.add(id);
+  // Clear previous error message immediately on new deploy
+  const br = branches.find(b => b.id === id);
+  if (br) { br.errorMessage = undefined; br.status = 'building'; }
   inlineDeployLogs.set(id, { lines: [], status: 'building', expanded: false });
   renderBranches();
 
@@ -1015,6 +1018,9 @@ async function deploySingleService(id, profileId) {
   if (busyBranches.has(id)) return;
   busyBranches.add(id);
   closeDeployMenu(id);
+  // Clear previous error message immediately on new deploy
+  const br = branches.find(b => b.id === id);
+  if (br) { br.errorMessage = undefined; br.status = 'building'; }
   inlineDeployLogs.set(id, { lines: [], status: 'building', expanded: false });
   renderBranches();
 
