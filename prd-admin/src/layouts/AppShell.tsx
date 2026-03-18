@@ -745,7 +745,7 @@ export default function AppShell() {
             )}
           >
             <img
-              src="/favicon.svg"
+              src="/favicon.jpg"
               alt="Logo"
               className={cn('transition-all duration-200', collapsed ? 'w-7 h-7' : 'w-8 h-8')}
               draggable={false}
@@ -759,30 +759,32 @@ export default function AppShell() {
                 type="button"
                 onClick={() => navigate(homeItem.key)}
                 className={cn(
-                  'group/nav relative flex flex-col items-center justify-center gap-0.5 w-full',
-                  'transition-all duration-200 ease-out py-1',
+                  'group/nav relative flex flex-col items-center justify-center gap-0 w-full',
+                  'transition-all duration-200 ease-out rounded-[14px]',
+                  activeKey !== '/' && 'nav-item-hover'
                 )}
                 style={{
                   color: activeKey === '/' ? 'var(--text-primary)' : 'var(--text-secondary)',
+                  width: 56,
+                  padding: '6px 0 4px',
+                  background: activeKey === '/' ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
+                  border: activeKey === '/' ? '1px solid rgba(255, 255, 255, 0.10)' : '1px solid transparent',
                 }}
                 title={homeItem.label}
               >
                 <span
                   className={cn(
-                    'inline-flex items-center justify-center shrink-0 rounded-[12px] transition-all duration-200 group-hover/nav:scale-105',
-                    activeKey !== '/' && 'nav-item-hover'
+                    'inline-flex items-center justify-center shrink-0 transition-all duration-200 group-hover/nav:scale-105',
                   )}
                   style={{
-                    width: 42,
-                    height: 42,
-                    background: activeKey === '/' ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
-                    border: activeKey === '/' ? '1px solid rgba(255, 255, 255, 0.10)' : '1px solid transparent',
+                    width: 28,
+                    height: 28,
                     color: activeKey === '/' ? '#818cf8' : undefined,
                   }}
                 >
                   {homeItem.icon}
                 </span>
-                <span className="text-[10px] leading-tight" style={{ color: activeKey === '/' ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                <span className="text-[10px] leading-tight mt-0.5" style={{ color: activeKey === '/' ? 'var(--text-primary)' : 'var(--text-muted)' }}>
                   首页
                 </span>
               </button>
@@ -845,31 +847,33 @@ export default function AppShell() {
                           type="button"
                           onClick={() => navigate(it.key)}
                           className={cn(
-                            'group/nav relative flex flex-col items-center justify-center gap-0.5 w-full',
-                            'transition-all duration-200 ease-out py-1',
+                            'group/nav relative flex flex-col items-center justify-center gap-0 w-full',
+                            'transition-all duration-200 ease-out rounded-[14px]',
+                            !active && 'nav-item-hover'
                           )}
                           style={{
                             color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+                            width: 56,
+                            padding: '6px 0 4px',
+                            background: active ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
+                            border: active ? '1px solid rgba(255, 255, 255, 0.10)' : '1px solid transparent',
                           }}
                           title={it.description ? `${it.label} - ${it.description}` : it.label}
                         >
-                          {/* 图标容器：固定正方形 + 圆角背景 */}
+                          {/* 图标容器 */}
                           <span
                             className={cn(
-                              'inline-flex items-center justify-center shrink-0 rounded-[12px] transition-all duration-200 group-hover/nav:scale-105',
-                              !active && 'nav-item-hover'
+                              'inline-flex items-center justify-center shrink-0 transition-all duration-200 group-hover/nav:scale-105',
                             )}
                             style={{
-                              width: 42,
-                              height: 42,
-                              background: active ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
-                              border: active ? '1px solid rgba(255, 255, 255, 0.10)' : '1px solid transparent',
+                              width: 28,
+                              height: 28,
                               color: active ? '#818cf8' : undefined,
                             }}
                           >
                             {it.icon}
                           </span>
-                          <span className="text-[10px] leading-tight text-center" style={{ color: active ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                          <span className="text-[10px] leading-tight text-center mt-0.5" style={{ color: active ? 'var(--text-primary)' : 'var(--text-muted)' }}>
                             {it.shortLabel}
                           </span>
                         </button>
