@@ -1599,11 +1599,11 @@ a.branch-name:hover { color: var(--accent); }
   min-width: 28px !important; padding: 4px 6px !important;
 }
 .capacity-stop-list {
-  position: absolute; top: 100%; left: 0; right: 0;
+  position: absolute; bottom: 100%; left: 0; right: 0;
   min-width: 260px;
   background: var(--bg-elevated); border: 1px solid var(--card-border);
-  border-radius: var(--radius-sm); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-  z-index: 100; margin-top: 4px;
+  border-radius: var(--radius-sm); box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.4);
+  z-index: 100; margin-bottom: 4px;
   max-height: 240px; overflow-y: auto;
 }
 .capacity-stop-list-header {
