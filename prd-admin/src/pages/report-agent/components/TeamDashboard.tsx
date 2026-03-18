@@ -1,8 +1,23 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
-  ChevronLeft, ChevronRight, Calendar, CheckCircle2, Clock, AlertCircle, Sparkles,
-  Loader2, Download, Users, FileCheck, FileClock, ChevronDown, ChevronUp,
-  ExternalLink, UserPlus, UserMinus, LogOut,
+  ChevronLeft,
+  ChevronRight,
+  Calendar,
+  CheckCircle2,
+  Clock,
+  AlertCircle,
+  Sparkles,
+  Loader2,
+  Download,
+  Users,
+  FileCheck,
+  FileClock,
+  ChevronDown,
+  ChevronUp,
+  ExternalLink,
+  UserPlus,
+  UserMinus,
+  LogOut,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -11,8 +26,14 @@ import { toast } from '@/lib/toast';
 import { useReportAgentStore } from '@/stores/reportAgentStore';
 import { useAuthStore } from '@/stores/authStore';
 import {
-  reviewWeeklyReport, returnWeeklyReport, generateTeamSummary, getTeamSummary,
-  exportTeamSummaryMarkdown, addReportTeamMember, removeReportTeamMember, leaveReportTeam,
+  reviewWeeklyReport,
+  returnWeeklyReport,
+  generateTeamSummary,
+  getTeamSummary,
+  exportTeamSummaryMarkdown,
+  addReportTeamMember,
+  removeReportTeamMember,
+  leaveReportTeam,
 } from '@/services';
 import { WeeklyReportStatus, ReportTeamRole } from '@/services/contracts/reportAgent';
 import type { TeamSummary, ReportUser } from '@/services/contracts/reportAgent';
@@ -37,6 +58,22 @@ const statusConfig: Record<string, { label: string; color: string; bg: string; i
 
 const summaryColors = ['rgba(59,130,246,.9)', 'rgba(34,197,94,.9)', 'rgba(168,85,247,.9)', 'rgba(249,115,22,.9)'];
 
+type MemberFilter = 'all' | 'pending' | 'reviewed' | 'attention' | 'notStarted';
+
+function getMemberRoleLabel(role?: string | null): string {
+  if (role === ReportTeamRole.Leader) return '负责人';
+  if (role === ReportTeamRole.Deputy) return '副负责人';
+  return '成员';
+}
+
+function getMemberPriority(status: string): number {
+  if (status === WeeklyReportStatus.Submitted) return 0;
+  if (status === WeeklyReportStatus.Returned || status === WeeklyReportStatus.Overdue) return 1;
+  if (status === WeeklyReportStatus.Reviewed) return 2;
+  if (status === WeeklyReportStatus.Draft) return 3;
+  return 4;
+}
+
 export function TeamDashboard() {
   const { teams, users, dashboard, loadDashboard, loadUsers, loadTeams } = useReportAgentStore();
   const userId = useAuthStore((s) => s.user?.userId);
@@ -45,6 +82,7 @@ export function TeamDashboard() {
   const [teamScope, setTeamScope] = useState<'managed' | 'joined'>('managed');
   const [selectedTeamId, setSelectedTeamId] = useState('');
   const [membersExpanded, setMembersExpanded] = useState(false);
+  const [memberFilter, setMemberFilter] = useState<MemberFilter>('all');
   const now = useMemo(() => getISOWeek(new Date()), []);
   const [weekYear, setWeekYear] = useState(now.weekYear);
   const [weekNumber, setWeekNumber] = useState(now.weekNumber);
@@ -60,14 +98,22 @@ export function TeamDashboard() {
   const [memberJobTitle, setMemberJobTitle] = useState('');
   const [memberSaving, setMemberSaving] = useState(false);
 
-  const managedTeams = useMemo(() => teams.filter((team) => {
-    const myRole = team.myRole ?? (team.leaderUserId === userId ? ReportTeamRole.Leader : undefined);
-    return team.relationType === 'managed' || myRole === ReportTeamRole.Leader || myRole === ReportTeamRole.Deputy;
-  }), [teams, userId]);
-  const joinedTeams = useMemo(() => teams.filter((team) => {
-    const myRole = team.myRole ?? (team.leaderUserId === userId ? ReportTeamRole.Leader : undefined);
-    return team.relationType === 'joined' || myRole === ReportTeamRole.Member;
-  }), [teams, userId]);
+  const managedTeams = useMemo(
+    () =>
+      teams.filter((team) => {
+        const myRole = team.myRole ?? (team.leaderUserId === userId ? ReportTeamRole.Leader : undefined);
+        return team.relationType === 'managed' || myRole === ReportTeamRole.Leader || myRole === ReportTeamRole.Deputy;
+      }),
+    [teams, userId]
+  );
+  const joinedTeams = useMemo(
+    () =>
+      teams.filter((team) => {
+        const myRole = team.myRole ?? (team.leaderUserId === userId ? ReportTeamRole.Leader : undefined);
+        return team.relationType === 'joined' || myRole === ReportTeamRole.Member;
+      }),
+    [teams, userId]
+  );
   const scopedTeams = teamScope === 'managed' ? managedTeams : joinedTeams;
   const selectedTeam = useMemo(() => teams.find((x) => x.id === selectedTeamId) ?? null, [teams, selectedTeamId]);
 
@@ -109,6 +155,10 @@ export function TeamDashboard() {
     if (teamScope !== 'managed' || !selectedTeamId) return setSummary(null);
     void refreshManagedData();
   }, [refreshManagedData, selectedTeamId, teamScope]);
+  useEffect(() => {
+    setMembersExpanded(false);
+    setMemberFilter('all');
+  }, [teamScope, selectedTeamId]);
 
   const handleReview = async (reportId: string) => {
     const res = await reviewWeeklyReport({ id: reportId });
@@ -138,7 +188,10 @@ export function TeamDashboard() {
     if (!selectedTeamId || !memberUserId) return toast.error('请选择要添加的成员');
     setMemberSaving(true);
     const res = await addReportTeamMember({
-      teamId: selectedTeamId, userId: memberUserId, role: memberRole, jobTitle: memberJobTitle.trim() || undefined,
+      teamId: selectedTeamId,
+      userId: memberUserId,
+      role: memberRole,
+      jobTitle: memberJobTitle.trim() || undefined,
     });
     setMemberSaving(false);
     if (!res.success) return toast.error(res.error?.message || '操作失败');
@@ -181,6 +234,40 @@ export function TeamDashboard() {
   };
 
   const submissionRate = dashboard ? Math.round(((dashboard.stats.submitted + dashboard.stats.reviewed) / Math.max(1, dashboard.stats.total)) * 100) : 0;
+  const memberStats = useMemo(() => {
+    if (!dashboard) {
+      return { all: 0, pending: 0, reviewed: 0, attention: 0, notStarted: 0 };
+    }
+    const pending = dashboard.members.filter((m) => m.reportStatus === WeeklyReportStatus.Submitted).length;
+    const reviewed = dashboard.members.filter((m) => m.reportStatus === WeeklyReportStatus.Reviewed).length;
+    const attention = dashboard.members.filter(
+      (m) => m.reportStatus === WeeklyReportStatus.Returned || m.reportStatus === WeeklyReportStatus.Overdue
+    ).length;
+    const notStarted = dashboard.members.filter(
+      (m) => m.reportStatus === WeeklyReportStatus.NotStarted || m.reportStatus === WeeklyReportStatus.Draft
+    ).length;
+    return { all: dashboard.members.length, pending, reviewed, attention, notStarted };
+  }, [dashboard]);
+
+  const filteredMembers = useMemo(() => {
+    if (!dashboard) return [];
+    const list = dashboard.members.filter((member) => {
+      if (memberFilter === 'all') return true;
+      if (memberFilter === 'pending') return member.reportStatus === WeeklyReportStatus.Submitted;
+      if (memberFilter === 'reviewed') return member.reportStatus === WeeklyReportStatus.Reviewed;
+      if (memberFilter === 'attention') {
+        return member.reportStatus === WeeklyReportStatus.Returned || member.reportStatus === WeeklyReportStatus.Overdue;
+      }
+      return member.reportStatus === WeeklyReportStatus.NotStarted || member.reportStatus === WeeklyReportStatus.Draft;
+    });
+
+    return list.slice().sort((a, b) => {
+      const byStatus = getMemberPriority(a.reportStatus) - getMemberPriority(b.reportStatus);
+      if (byStatus !== 0) return byStatus;
+      return (a.userName || '').localeCompare(b.userName || '');
+    });
+  }, [dashboard, memberFilter]);
+
   const handlePrevWeek = () => {
     if (weekNumber <= 1) {
       setWeekYear((v) => v - 1);
@@ -202,6 +289,14 @@ export function TeamDashboard() {
     const ids = new Set(dashboard.members.map((m) => m.userId));
     return users.filter((u) => !ids.has(u.id));
   }, [dashboard, users]);
+
+  const memberFilterItems: Array<{ key: MemberFilter; label: string; count: number }> = [
+    { key: 'all', label: '全部', count: memberStats.all },
+    { key: 'pending', label: '待审阅', count: memberStats.pending },
+    { key: 'reviewed', label: '已审阅', count: memberStats.reviewed },
+    { key: 'attention', label: '需关注', count: memberStats.attention },
+    { key: 'notStarted', label: '未开始/草稿', count: memberStats.notStarted },
+  ];
 
   if (teams.length === 0) {
     return <div className="text-center py-14 text-[13px]" style={{ color: 'var(--text-muted)' }}>暂无可访问团队</div>;
@@ -251,12 +346,35 @@ export function TeamDashboard() {
 
       <GlassCard variant="subtle" className="px-5 py-3">
         <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-2 rounded-xl p-1" style={{ background: 'var(--bg-secondary)' }}>
-            <button className="px-3 py-1.5 rounded-lg text-[12px] font-medium" style={{ background: teamScope === 'managed' ? 'rgba(59,130,246,.15)' : 'transparent' }} onClick={() => setTeamScope('managed')}>我管理的团队 ({managedTeams.length})</button>
-            <button className="px-3 py-1.5 rounded-lg text-[12px] font-medium" style={{ background: teamScope === 'joined' ? 'rgba(34,197,94,.15)' : 'transparent' }} onClick={() => setTeamScope('joined')}>我加入的团队 ({joinedTeams.length})</button>
+          <div className="surface-inset rounded-xl p-1 flex items-center gap-1">
+            <button
+              className="px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all duration-200"
+              style={{
+                background: teamScope === 'managed' ? 'rgba(59,130,246,.15)' : 'transparent',
+                color: teamScope === 'managed' ? 'rgba(59,130,246,.95)' : 'var(--text-secondary)',
+              }}
+              onClick={() => setTeamScope('managed')}
+            >
+              我管理的团队 ({managedTeams.length})
+            </button>
+            <button
+              className="px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all duration-200"
+              style={{
+                background: teamScope === 'joined' ? 'rgba(34,197,94,.15)' : 'transparent',
+                color: teamScope === 'joined' ? 'rgba(34,197,94,.95)' : 'var(--text-secondary)',
+              }}
+              onClick={() => setTeamScope('joined')}
+            >
+              我加入的团队 ({joinedTeams.length})
+            </button>
           </div>
           <div className="flex items-center gap-2.5">
-            <select className="px-3 py-2 rounded-xl text-[13px] min-w-[220px]" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)' }} value={selectedTeamId} onChange={(e) => setSelectedTeamId(e.target.value)} disabled={!hasScopedTeams}>
+            <select
+              className="surface-inset px-3 py-2 rounded-xl text-[13px] min-w-[220px]"
+              value={selectedTeamId}
+              onChange={(e) => setSelectedTeamId(e.target.value)}
+              disabled={!hasScopedTeams}
+            >
               {hasScopedTeams ? scopedTeams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>) : <option value="">暂无团队</option>}
             </select>
             {teamScope === 'managed' && (
@@ -275,11 +393,13 @@ export function TeamDashboard() {
 
       {teamScope === 'joined' && hasScopedTeams && selectedTeam && (
         <GlassCard variant="subtle" className="p-5">
-          <div className="flex items-start justify-between gap-4">
+          <div className="surface-inset rounded-2xl px-4 py-4 flex items-start justify-between gap-4">
             <div>
               <div className="text-[16px] font-semibold mb-1">{selectedTeam.name}</div>
               <div className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>负责人：{selectedTeam.leaderName || selectedTeam.leaderUserId}</div>
-              <div className="text-[12px] mt-1" style={{ color: 'var(--text-muted)' }}>你的角色：{selectedTeam.myRole || 'member'}</div>
+              <div className="text-[12px] mt-1" style={{ color: 'var(--text-muted)' }}>
+                你的角色：{getMemberRoleLabel(selectedTeam.myRole)}
+              </div>
             </div>
             <Button variant="secondary" size="sm" onClick={handleLeaveSelectedTeam} disabled={!canLeaveSelectedTeam}><LogOut size={13} /> 退出团队</Button>
           </div>
@@ -289,9 +409,19 @@ export function TeamDashboard() {
       {teamScope === 'managed' && hasScopedTeams && dashboard && (
         <>
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">
-            <GlassCard variant="subtle" className="p-0 overflow-hidden">
+            <GlassCard variant="subtle" className="surface-raised p-0 overflow-hidden">
               <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid var(--border-primary)' }}>
-                <div className="flex items-center gap-2.5"><Sparkles size={16} /><span className="text-[15px] font-semibold">团队周报汇总</span></div>
+                <div>
+                  <div className="flex items-center gap-2.5">
+                    <Sparkles size={16} />
+                    <span className="text-[15px] font-semibold">团队周报汇总</span>
+                  </div>
+                  {summary && (
+                    <div className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>
+                      覆盖 {summary.submittedCount}/{summary.memberCount} 人 · 最近更新 {new Date(summary.updatedAt).toLocaleString()}
+                    </div>
+                  )}
+                </div>
                 <div className="flex items-center gap-2">
                   {summary && <Button variant="ghost" size="sm" onClick={handleExportSummary}><Download size={13} /></Button>}
                   <Button variant="primary" size="sm" onClick={handleGenerateSummary} disabled={generatingSummary}>{generatingSummary ? <Loader2 size={13} className="animate-spin mr-1" /> : <Sparkles size={13} className="mr-1" />}{summary ? '重新生成' : '生成汇总'}</Button>
@@ -301,7 +431,7 @@ export function TeamDashboard() {
                 {summaryLoading ? <div className="text-[12px] text-center py-10">加载中...</div> : summary ? (
                   <div className="flex flex-col gap-4">
                     {summary.sections.map((section, idx) => (
-                      <div key={idx}>
+                      <div key={idx} className="surface-inset rounded-xl p-3">
                         <div className="flex items-center gap-2.5 mb-2">
                           <div className="w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold text-white" style={{ background: summaryColors[idx % summaryColors.length] }}>{idx + 1}</div>
                           <span className="text-[13px] font-semibold">{section.title}</span>
@@ -316,7 +446,7 @@ export function TeamDashboard() {
               </div>
             </GlassCard>
             <div className="flex flex-col gap-4">
-              <GlassCard variant="subtle" className="p-4">
+              <GlassCard variant="subtle" className="surface-inset p-4">
                 <div className="text-[12px] font-medium mb-2">提交进度</div>
                 <div className="flex items-center justify-between mb-2 text-[12px]"><span>{dashboard.stats.submitted + dashboard.stats.reviewed}/{dashboard.stats.total}</span><span className="font-semibold">{submissionRate}%</span></div>
                 <div className="h-2 rounded-full overflow-hidden" style={{ background: 'var(--bg-tertiary)' }}><div className="h-full rounded-full" style={{ width: `${submissionRate}%`, background: 'linear-gradient(90deg, rgba(59,130,246,.7), rgba(59,130,246,.4))' }} /></div>
@@ -339,14 +469,48 @@ export function TeamDashboard() {
               </div>
             </div>
             {membersExpanded && (
-              <div className="divide-y" style={{ borderColor: 'var(--border-primary)' }}>
-                {dashboard.members.map((member) => {
+              <div className="px-4 py-3 flex flex-col gap-3">
+                <div className="flex flex-wrap gap-2">
+                  {memberFilterItems.map((item) => (
+                    <button
+                      key={item.key}
+                      className="px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all duration-200 surface-inset"
+                      style={{
+                        color: memberFilter === item.key ? 'var(--text-primary)' : 'var(--text-muted)',
+                        borderColor: memberFilter === item.key ? 'var(--border-primary)' : undefined,
+                      }}
+                      onClick={() => setMemberFilter(item.key)}
+                    >
+                      {item.label} · {item.count}
+                    </button>
+                  ))}
+                </div>
+
+                {filteredMembers.length === 0 && (
+                  <div className="surface-inset rounded-xl px-4 py-6 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                    当前筛选下暂无成员
+                  </div>
+                )}
+
+                {filteredMembers.map((member) => {
                   const cfg = statusConfig[member.reportStatus] || statusConfig[WeeklyReportStatus.NotStarted];
                   const StatusIcon = cfg.icon;
                   const canRemove = canManageMembers && member.role !== ReportTeamRole.Leader;
                   return (
-                    <div key={member.userId} className="flex items-center justify-between px-5 py-3">
-                      <div><div className="text-[13px] font-medium">{member.userName || member.userId}</div><div className="flex items-center gap-2 mt-0.5"><span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{member.jobTitle}</span><span className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-medium" style={{ color: cfg.color, background: cfg.bg }}><StatusIcon size={10} />{cfg.label}</span></div></div>
+                    <div key={member.userId} className="surface-row rounded-xl flex items-center justify-between px-4 py-3">
+                      <div className="min-w-0">
+                        <div className="text-[13px] font-medium truncate">{member.userName || member.userId}</div>
+                        <div className="flex items-center flex-wrap gap-2 mt-1">
+                          <span className="text-[11px] surface-inset rounded-full px-2 py-0.5">{getMemberRoleLabel(member.role)}</span>
+                          {member.jobTitle && (
+                            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{member.jobTitle}</span>
+                          )}
+                          <span className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-medium" style={{ color: cfg.color, background: cfg.bg }}>
+                            <StatusIcon size={10} />
+                            {cfg.label}
+                          </span>
+                        </div>
+                      </div>
                       <div className="flex items-center gap-1.5">
                         {member.reportId && <Button variant="ghost" size="sm" onClick={() => openReportDetail(member.reportId!)}><ExternalLink size={13} /> 查看</Button>}
                         {member.reportId && member.reportStatus === WeeklyReportStatus.Submitted && <><Button variant="primary" size="sm" onClick={() => handleReview(member.reportId!)}>审阅</Button><Button variant="secondary" size="sm" onClick={() => setReturnDialogId(member.reportId!)}>打回</Button></>}
@@ -367,7 +531,7 @@ export function TeamDashboard() {
 
 function StatCard({ label, value, icon, color, bg }: { label: string; value: number; icon: React.ReactNode; color: string; bg: string; }) {
   return (
-    <div className="rounded-xl px-4 py-3" style={{ background: `linear-gradient(135deg, ${bg}, var(--surface-glass))`, border: '1px solid var(--border-primary)' }}>
+    <div className="surface-inset rounded-xl px-4 py-3">
       <div className="flex items-center justify-between">
         <div className="text-[12px] font-medium" style={{ color: 'var(--text-muted)' }}>{label}</div>
         <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: bg, color }}>{icon}</div>
