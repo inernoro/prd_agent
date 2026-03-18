@@ -40,7 +40,7 @@
 | 数据采集 | 自动从 GitHub/GitLab/语雀采集活动数据 | 设置 → 我的数据源 |
 | 团队管理 | 创建团队、添加成员、设置角色 | 设置 → 团队管理 |
 | 模板管理 | 定义周报结构（章节、输入类型） | 设置 → 模板管理 |
-| 团队面板 | 查看成员提交状态、审阅/退回 | 团队 Tab |
+| 团队工作台 | 管理/加入分区、周报汇总、成员抽屉 | 团队 Tab |
 | 团队汇总 | AI 聚合所有成员周报生成摘要 | 团队 Tab → 一键汇总 |
 | 数据统计 | 个人/团队 12 周趋势图 | 设置 → 数据统计 |
 | 评论系统 | 按段落评论、回复、删除 | 周报详情页 |
@@ -53,7 +53,7 @@
 | Tab | 谁能看 | 内容 |
 |-----|--------|------|
 | **周报** | 所有人 | 我的周报列表 + 打卡入口 + 数据概览 |
-| **团队** | 仅团队负责人/副负责人 | 成员状态面板 + 团队汇总 |
+| **团队** | 任一团队成员 | 团队汇总主视图 + 成员抽屉入口 |
 | **设置** | 所有人（个人区域）+ 管理员（管理区域） | 数据源、模板、团队配置 |
 
 ---
@@ -270,7 +270,7 @@
 
 ---
 
-## 5. 团队负责人操作
+## 5. 团队工作台操作
 
 ### 5.1 查看团队面板
 
@@ -284,9 +284,14 @@
 - **团队分区**：在“我管理的团队 / 我加入的团队”间切换
 - **周导航器**：切换查看哪一周
 - **团队选择器**：如果负责多个团队可切换
-- **统计概览**：总人数、已提交、已审阅、草稿、未开始
 - **团队周报汇总**：默认主视图
-- **成员状态列表**：默认折叠，按需展开后可快捷增删成员
+- **团队成员按钮**：仅选中团队后显示，点击后在右侧抽屉查看/管理成员
+
+可见性规则：
+- 我管理的团队：查看完整团队汇总，支持生成汇总
+- 我加入的团队：
+  - `all_members`：可查看完整团队汇总
+  - `leaders_only`：仅查看本人已提交周报汇总
 
 ### 5.2 审阅周报
 
@@ -937,9 +942,10 @@ AI 会综合以下数据源自动生成周报内容：
 | POST | `/api/report-agent/teams` | 创建团队 | `team.manage` |
 | PUT | `/api/report-agent/teams/{id}` | 更新团队 | `team.manage` |
 | DELETE | `/api/report-agent/teams/{id}` | 删除团队 | `team.manage` |
-| POST | `/api/report-agent/teams/{id}/members` | 添加成员 | `team.manage` |
-| DELETE | `/api/report-agent/teams/{id}/members/{userId}` | 移除成员 | `team.manage` |
-| PUT | `/api/report-agent/teams/{id}/members/{userId}` | 更新成员 | `team.manage` |
+| POST | `/api/report-agent/teams/{id}/members` | 添加成员 | `team.manage` / leader / deputy |
+| DELETE | `/api/report-agent/teams/{id}/members/{userId}` | 移除成员 | `team.manage` / leader / deputy |
+| PUT | `/api/report-agent/teams/{id}/members/{userId}` | 更新成员 | `team.manage` / leader / deputy |
+| POST | `/api/report-agent/teams/{id}/leave` | 主动退出团队 | 团队成员（leader 除外） |
 | PUT | `/api/report-agent/teams/{id}/members/{userId}/identity-mappings` | 身份映射 | `team.manage` / leader |
 | GET | `/api/report-agent/teams/{id}/workflow` | 工作流信息 | `use` |
 | POST | `/api/report-agent/teams/{id}/workflow/run` | 触发工作流 | leader |
@@ -967,6 +973,7 @@ AI 会综合以下数据源自动生成周报内容：
 | GET | `/api/report-agent/teams/{id}/dashboard` | 团队面板 | leader |
 | POST | `/api/report-agent/teams/{id}/summary/generate` | 生成汇总 | leader |
 | GET | `/api/report-agent/teams/{id}/summary` | 获取汇总 | 团队成员 |
+| GET | `/api/report-agent/teams/{id}/summary/view` | 汇总视图（full_team/self_only） | 团队成员 |
 | GET | `/api/report-agent/teams/{teamId}/summary/export/markdown` | 导出汇总 | leader |
 | POST | `/api/report-agent/daily-logs` | 保存打卡 | `use` |
 | GET | `/api/report-agent/daily-logs` | 打卡列表 | `use` |
