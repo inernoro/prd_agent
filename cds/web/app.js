@@ -1658,9 +1658,18 @@ function renderBranches() {
     const deployFailed = !!deployLog && deployLog.status === 'error';
     const isJustDeployed = justDeployed.has(b.id);
 
-    // Commit area in actions row (always show commit info)
+    // Commit area in actions row — replaced by compact deploy log during deployment
     let commitAreaHtml = '';
-    if (b.subject) {
+    if (isDeploying && deployLog) {
+      // During deploy: show compact log in the commit area
+      const compactLines = deployLog.lines.filter(l => l.trim()).slice(-2);
+      commitAreaHtml = `
+        <div class="branch-actions-deploy-status" title="部署中，点击查看完整日志" onclick="event.stopPropagation(); openFullDeployLog('${esc(b.id)}', event)">
+          <span class="live-dot"></span>
+          <pre class="deploy-status-log">${esc(compactLines.join('\n')) || '正在启动...'}</pre>
+        </div>
+      `;
+    } else if (b.subject) {
       commitAreaHtml = `
         <div class="branch-actions-commit" onclick="event.stopPropagation(); toggleCommitLog('${esc(b.id)}', this)" title="点击查看历史提交">
           ${commitIcon(b.subject)} ${esc(b.subject)}
@@ -1669,17 +1678,17 @@ function renderBranches() {
       `;
     }
 
-    // Inline deploy log (below actions row, at card bottom)
+    // Inline deploy log (below actions row, at card bottom) — only show after deploy finishes
     let inlineLogHtml = '';
-    if (deployLog) {
+    if (deployLog && !isDeploying) {
       const logStatusClass = deployLog.status === 'error' ? 'deploy-log-error' : deployLog.status === 'done' ? 'deploy-log-done' : '';
       const filteredLines = deployLog.lines.filter(l => l.trim());
       const visibleLines = deployLog.expanded ? filteredLines : filteredLines.slice(-20);
       inlineLogHtml = `
         <div class="inline-deploy-log-wrapper ${deployLog.expanded ? 'expanded' : ''} ${logStatusClass}" id="inline-log-wrapper-${esc(b.id)}" onclick="toggleInlineLog('${esc(b.id)}', event)">
           <div class="inline-deploy-log-header">
-            <span class="live-dot ${deployLog.status !== 'building' ? 'stopped' : ''}"></span>
-            <span>${deployLog.status === 'building' ? '部署中...' : deployLog.status === 'done' ? '部署完成' : '部署失败'}</span>
+            <span class="live-dot stopped"></span>
+            <span>${deployLog.status === 'done' ? '部署完成' : '部署失败'}</span>
             <span class="inline-log-expand-hint" onclick="openFullDeployLog('${esc(b.id)}', event)">查看完整日志</span>
           </div>
           <pre class="inline-deploy-log" id="inline-log-${esc(b.id)}">${esc(visibleLines.join('\n'))}</pre>

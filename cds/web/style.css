@@ -910,6 +910,29 @@ a.branch-name:hover { color: var(--accent); }
 .branch-actions-commit svg.inline-icon { flex-shrink: 0; width: 14px; height: 14px; }
 .branch-actions-commit .commit-chevron { flex-shrink: 0; opacity: 0.5; }
 
+/* Compact deploy status — replaces commit area during deployment */
+.branch-actions-deploy-status {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; color: var(--text-muted);
+  cursor: pointer; overflow: hidden;
+  padding: 2px 8px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-input);
+  transition: background var(--transition);
+}
+.branch-actions-deploy-status:hover { background: var(--bg-hover); }
+.branch-actions-deploy-status .live-dot { flex-shrink: 0; }
+.branch-actions-deploy-status .deploy-status-log {
+  flex: 1; min-width: 0;
+  margin: 0; padding: 0;
+  font-family: var(--font-mono, 'SF Mono', 'Fira Code', monospace);
+  font-size: 10px; line-height: 1.4;
+  color: var(--text-secondary);
+  white-space: pre; overflow: hidden; text-overflow: ellipsis;
+  background: transparent; border: none;
+}
+
 .branch-card.is-favorite { border-left-color: var(--yellow); }
 
 /* Card-level update indicator — blue glow so you instantly see which branches updated */
