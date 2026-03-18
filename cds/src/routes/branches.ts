@@ -416,7 +416,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               }
             }, mergedEnv);
 
-            // Phase 1 passed (container alive). Set status based on startup signal / readiness probe.
+            // Phase 1 passed (container alive). Set status based on startup signal.
             if (profile.startupSignal) {
               // Startup signal mode: watch container logs for a known string
               svc.status = 'starting';
@@ -441,32 +441,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 logDeploy(id, `${profile.name} 启动成功 ✓`);
               } else {
                 logDeploy(id, `${profile.name} 启动信号超时，服务可能仍在初始化`);
-              }
-              stateService.save();
-            } else if (profile.readinessProbe) {
-              svc.status = 'starting';
-              stateService.save();
-              const elapsed = Date.now() - serviceStartTime;
-              logEvent({
-                step: `build-${profile.id}`,
-                status: 'done',
-                title: `${profile.name} 容器已启动，等待服务就绪 :${svc.hostPort}`,
-                detail: { elapsedMs: elapsed },
-                timestamp: new Date().toISOString(),
-              });
-
-              // Await readiness probe — keep SSE stream open until ready
-              const ready = await containerService.waitForServiceReady(svc.hostPort, profile.readinessProbe, (chunk) => {
-                for (const line of chunk.split('\n')) {
-                  if (line.trim()) logDeploy(id, line);
-                }
-              });
-              if (ready) {
-                svc.status = 'running';
-                logDeploy(id, `${profile.name} 就绪 ✓`);
-              } else {
-                // Timeout — stay 'starting', not an error
-                logDeploy(id, `${profile.name} 就绪检查超时，服务可能仍在初始化`);
               }
               stateService.save();
             } else {
@@ -631,23 +605,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
             logDeploy(id, `${profile.name} 启动成功 ✓`);
           } else {
             logDeploy(id, `${profile.name} 启动信号超时`);
-          }
-          stateService.save();
-        } else if (profile.readinessProbe) {
-          svc.status = 'starting';
-          stateService.save();
-          logEvent({ step: `build-${profile.id}`, status: 'done', title: `${profile.name} 容器已启动，等待服务就绪 :${svc.hostPort}`, timestamp: new Date().toISOString() });
-
-          const probeReady = await containerService.waitForServiceReady(svc.hostPort, profile.readinessProbe, (chunk) => {
-            for (const line of chunk.split('\n')) {
-              if (line.trim()) logDeploy(id, line);
-            }
-          });
-          if (probeReady) {
-            svc.status = 'running';
-            logDeploy(id, `${profile.name} 就绪 ✓`);
-          } else {
-            logDeploy(id, `${profile.name} 就绪检查超时`);
           }
           stateService.save();
         } else {
