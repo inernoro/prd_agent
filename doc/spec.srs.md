@@ -2121,12 +2121,14 @@ sequenceDiagram
 4. 团队工作台：区分“我管理的团队 / 我加入的团队”，选择团队后默认展示团队周报列表（总人数/已提交/待提交）；成员入口通过右侧抽屉打开
 5. 团队周报AI分析为独立入口：从周报列表进入并可返回列表，避免与列表主视图混淆
 6. 分析可见性：`all_members` 团队成员可见完整团队分析；`leaders_only` 普通成员仅可见本人已提交周报分析
+7. RichText 板块支持直接粘贴图片：前端在上传前自动压缩（目标 ≤ 5MB），后端按“作者 + 可编辑状态”校验并返回可嵌入 URL
 
 **数据模型**：`WeeklyReport`、`WeeklyReportSection`、`WeeklyReportItem`（集合：`report_weekly_reports`）
 
 **API 端点**：
 - `GET/POST /api/report-agent/reports` — 周报列表/创建
 - `GET/PUT/DELETE /api/report-agent/reports/{id}` — 周报详情/更新/删除
+- `POST /api/report-agent/reports/{id}/rich-text/images` — 富文本图片上传（粘贴图片）
 - `POST /api/report-agent/reports/{id}/submit` — 提交
 - `POST /api/report-agent/reports/{id}/review` — 审阅
 - `POST /api/report-agent/reports/{id}/return` — 退回

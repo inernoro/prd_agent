@@ -238,6 +238,7 @@
    - 每个章节有颜色编码的标题
    - 点击「+ 添加一条」输入内容
    - 支持删除已有条目
+   - RichText 章节支持直接粘贴图片；若图片超过 5MB，系统会先自动压缩再上传插入
    - 右上角显示完成进度（如 3/5 项）
 5. 随时点击「保存」存为草稿
 6. 全部填写完成后点击「提交」
@@ -247,7 +248,7 @@
 - 每个用户在每个团队的每一周 **只能创建一份周报**（唯一约束：`userId + teamId + weekYear + weekNumber`），重复创建会返回 `DUPLICATE` 错误
 - 支持补填往期周报：创建时可以指定 `weekYear` 和 `weekNumber`
 - 保存不会改变状态，仍然是草稿
-- 提交后状态变为"已提交"，**不可再编辑**，除非被负责人退回
+- 提交后状态变为"已提交"，在进入"已审阅"前作者仍可继续编辑和删除
 
 ### 4.2 查看周报
 
@@ -962,6 +963,7 @@ AI 会综合以下数据源自动生成周报内容：
 | POST | `/api/report-agent/reports` | 创建周报 | `use` + 团队成员 |
 | PUT | `/api/report-agent/reports/{id}` | 更新周报 | `use` + 本人 |
 | DELETE | `/api/report-agent/reports/{id}` | 删除周报 | `use` + 本人 |
+| POST | `/api/report-agent/reports/{id}/rich-text/images` | RichText 粘贴图片上传（自动压缩后上传） | `use` + 本人 |
 | POST | `/api/report-agent/reports/{id}/submit` | 提交 | `use` + 本人 |
 | POST | `/api/report-agent/reports/{id}/review` | 审阅 | leader |
 | POST | `/api/report-agent/reports/{id}/return` | 退回 | leader |

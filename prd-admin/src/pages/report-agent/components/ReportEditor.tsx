@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, type ClipboardEvent } from 'react';
 import { ArrowLeft, Save, Send, Plus, Trash2, Sparkles, RefreshCw, FileText } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
@@ -11,6 +11,7 @@ import {
   getWeeklyReport,
   generateReport,
   deleteWeeklyReport,
+  uploadReportRichTextImage,
 } from '@/services';
 import type { WeeklyReport } from '@/services/contracts/reportAgent';
 import { WeeklyReportStatus, ReportInputType } from '@/services/contracts/reportAgent';
@@ -22,6 +23,94 @@ interface Props {
   onClose: () => void;
 }
 
+const MAX_RICH_TEXT_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_COMPRESS_DIMENSION = 4096;
+const MIN_COMPRESS_SCALE = 0.4;
+const SCALE_REDUCE_FACTOR = 0.86;
+const MIN_COMPRESS_QUALITY = 0.4;
+const QUALITY_REDUCE_STEP = 0.08;
+
+function inferExtFromMime(mime: string): string {
+  if (mime.includes('webp')) return 'webp';
+  if (mime.includes('png')) return 'png';
+  if (mime.includes('gif')) return 'gif';
+  return 'jpg';
+}
+
+async function toBlob(canvas: HTMLCanvasElement, mimeType: string, quality: number): Promise<Blob | null> {
+  return await new Promise((resolve) => {
+    canvas.toBlob((blob) => resolve(blob), mimeType, quality);
+  });
+}
+
+async function loadImage(file: File): Promise<HTMLImageElement> {
+  return await new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(img);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('图片解码失败，请重试'));
+    };
+    img.src = objectUrl;
+  });
+}
+
+function buildOutputFile(blob: Blob, originFile: File): File {
+  const mimeType = blob.type || 'image/jpeg';
+  const ext = inferExtFromMime(mimeType);
+  const rawName = (originFile.name || '').trim();
+  const baseName = rawName ? rawName.replace(/\.[^/.]+$/, '') : `pasted-image-${Date.now()}`;
+  return new File([blob], `${baseName}.${ext}`, { type: mimeType, lastModified: Date.now() });
+}
+
+async function compressImageToLimit(file: File, maxBytes: number): Promise<{ file: File; compressed: boolean }> {
+  if (file.size <= maxBytes) return { file, compressed: false };
+
+  const image = await loadImage(file);
+  const ratio = image.width > 0 && image.height > 0
+    ? Math.min(1, MAX_COMPRESS_DIMENSION / Math.max(image.width, image.height))
+    : 1;
+
+  let bestBlob: Blob | null = null;
+  const outputMimeTypes = file.type === 'image/jpeg' || file.type === 'image/webp'
+    ? [file.type, 'image/jpeg']
+    : ['image/webp', 'image/jpeg'];
+
+  for (let scale = ratio; scale >= MIN_COMPRESS_SCALE; scale *= SCALE_REDUCE_FACTOR) {
+    const width = Math.max(1, Math.floor(image.width * scale));
+    const height = Math.max(1, Math.floor(image.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('当前浏览器不支持图片压缩，请更换浏览器重试');
+
+    ctx.clearRect(0, 0, width, height);
+    ctx.drawImage(image, 0, 0, width, height);
+
+    for (const mimeType of outputMimeTypes) {
+      for (let quality = 0.92; quality >= MIN_COMPRESS_QUALITY; quality -= QUALITY_REDUCE_STEP) {
+        const blob = await toBlob(canvas, mimeType, quality);
+        if (!blob) continue;
+        if (!bestBlob || blob.size < bestBlob.size) bestBlob = blob;
+        if (blob.size <= maxBytes) {
+          return { file: buildOutputFile(blob, file), compressed: true };
+        }
+      }
+    }
+  }
+
+  if (bestBlob && bestBlob.size <= maxBytes) {
+    return { file: buildOutputFile(bestBlob, file), compressed: true };
+  }
+
+  throw new Error('图片压缩后仍超过 5MB，请裁剪后重试');
+}
+
 export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props) {
   const { teams, templates, updateReportInList, addReportToList, removeReportFromList } = useReportAgentStore();
   const [report, setReport] = useState<WeeklyReport | null>(null);
@@ -29,6 +118,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [pastingImageKey, setPastingImageKey] = useState<string | null>(null);
   const [selectedTeamId, setSelectedTeamId] = useState(teams[0]?.id || '');
   const [selectedTemplateId, setSelectedTemplateId] = useState(templates[0]?.id || '');
   const [isNew, setIsNew] = useState(!reportId);
@@ -210,6 +300,52 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
       || report.status === WeeklyReportStatus.Submitted
       || report.status === WeeklyReportStatus.Returned
       || report.status === WeeklyReportStatus.Overdue);
+
+  const handleRichTextPaste = async (
+    e: ClipboardEvent<HTMLTextAreaElement>,
+    sectionIdx: number,
+    itemIdx: number
+  ) => {
+    if (!report || !canEdit) return;
+    const textarea = e.currentTarget;
+    const imageItem = Array.from(e.clipboardData?.items ?? []).find((it) => it.type.startsWith('image/'));
+    if (!imageItem) return;
+
+    const file = imageItem.getAsFile();
+    if (!file) return;
+
+    e.preventDefault();
+    const uploadKey = `${sectionIdx}-${itemIdx}`;
+    setPastingImageKey(uploadKey);
+
+    try {
+      const { file: uploadFile, compressed } = await compressImageToLimit(file, MAX_RICH_TEXT_IMAGE_BYTES);
+      const res = await uploadReportRichTextImage({ id: report.id, file: uploadFile });
+      if (!res.success || !res.data?.url) {
+        toast.error(res.error?.message || '图片上传失败');
+        return;
+      }
+
+      const start = textarea.selectionStart ?? textarea.value.length;
+      const end = textarea.selectionEnd ?? start;
+      const current = textarea.value;
+      const markdown = `\n![粘贴图片](${res.data.url})\n`;
+      const next = `${current.slice(0, start)}${markdown}${current.slice(end)}`;
+      updateItem(sectionIdx, itemIdx, next);
+
+      const cursor = start + markdown.length;
+      requestAnimationFrame(() => {
+        textarea.focus();
+        textarea.setSelectionRange(cursor, cursor);
+      });
+
+      toast.success(compressed ? '图片已自动压缩并插入' : '图片已插入');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '图片处理失败');
+    } finally {
+      setPastingImageKey((prev) => (prev === uploadKey ? null : prev));
+    }
+  };
 
   // Section colors — gradient pairs for headers
   const sectionThemes = [
@@ -486,7 +622,8 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                           onBlur={(e) => { e.currentTarget.style.borderColor = 'var(--border-primary)'; e.currentTarget.style.boxShadow = 'none'; }}
                           value={item.content}
                           onChange={(e) => updateItem(sIdx, iIdx, e.target.value)}
-                          placeholder="请输入内容..."
+                          onPaste={(e) => { void handleRichTextPaste(e, sIdx, iIdx); }}
+                          placeholder={pastingImageKey === `${sIdx}-${iIdx}` ? '图片上传中...' : '请输入内容（支持直接粘贴图片，超 5MB 自动压缩）...'}
                           disabled={!canEdit}
                         />
                       ) : (

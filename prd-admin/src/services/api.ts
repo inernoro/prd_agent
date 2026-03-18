@@ -489,6 +489,7 @@ export const api = {
     reports: {
       list: () => '/api/report-agent/reports',
       byId: (id: string) => `/api/report-agent/reports/${id}`,
+      richTextImages: (id: string) => `/api/report-agent/reports/${id}/rich-text/images`,
       submit: (id: string) => `/api/report-agent/reports/${id}/submit`,
       review: (id: string) => `/api/report-agent/reports/${id}/review`,
       return: (id: string) => `/api/report-agent/reports/${id}/return`,

@@ -1,5 +1,6 @@
 import { apiRequest } from './apiClient';
 import { api } from '@/services/api';
+import type { ApiResponse } from '@/types/api';
 import type {
   ListReportTeamsContract,
   GetReportTeamContract,
@@ -20,6 +21,7 @@ import type {
   GetWeeklyReportContract,
   CreateWeeklyReportContract,
   UpdateWeeklyReportContract,
+  UploadReportRichTextImageContract,
   DeleteWeeklyReportContract,
   SubmitWeeklyReportContract,
   ReviewWeeklyReportContract,
@@ -71,6 +73,7 @@ import type {
   ReportTeamMember,
   ReportTemplate,
   WeeklyReport,
+  ReportRichTextImageUploadData,
   ReportUser,
   TeamDashboardData,
   ReportComment,
@@ -226,6 +229,27 @@ export const updateWeeklyReportReal: UpdateWeeklyReportContract = async (input) 
     api.reportAgent.reports.byId(encodeURIComponent(id)),
     { method: 'PUT', body }
   );
+};
+
+export const uploadReportRichTextImageReal: UploadReportRichTextImageContract = async (input) => {
+  const token = localStorage.getItem('accessToken');
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const fd = new FormData();
+  fd.append('file', input.file);
+
+  const rawBase = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').trim().replace(/\/+$/, '');
+  const path = api.reportAgent.reports.richTextImages(encodeURIComponent(input.id));
+  const url = rawBase ? `${rawBase}${path}` : path;
+
+  const res = await fetch(url, { method: 'POST', headers, body: fd });
+  const text = await res.text();
+  try {
+    return JSON.parse(text) as ApiResponse<ReportRichTextImageUploadData>;
+  } catch {
+    return { success: false, error: { code: 'PARSE_ERROR', message: text || '上传失败' } } as ApiResponse<ReportRichTextImageUploadData>;
+  }
 };
 
 export const deleteWeeklyReportReal: DeleteWeeklyReportContract = async (input) => {

@@ -415,6 +415,19 @@ export type UpdateWeeklyReportContract = (input: {
   sections: { items: { content: string; source?: string; sourceRef?: string }[] }[];
 }) => Promise<ApiResponse<{ report: WeeklyReport }>>;
 
+export interface ReportRichTextImageUploadData {
+  attachmentId: string;
+  url: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+}
+
+export type UploadReportRichTextImageContract = (input: {
+  id: string;
+  file: File;
+}) => Promise<ApiResponse<ReportRichTextImageUploadData>>;
+
 export type DeleteWeeklyReportContract = (input: { id: string }) => Promise<ApiResponse<object>>;
 
 export type SubmitWeeklyReportContract = (input: { id: string }) => Promise<

@@ -6,6 +6,7 @@ using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 using System.Globalization;
 using System.Security.Claims;
 
@@ -21,7 +22,24 @@ namespace PrdAgent.Api.Controllers.Api;
 public class ReportAgentController : ControllerBase
 {
     private const string AppKey = "report-agent";
+    private const long MaxRichTextImageBytes = 5 * 1024 * 1024;
+    private static readonly string[] EditableReportStatuses =
+    {
+        WeeklyReportStatus.Draft,
+        WeeklyReportStatus.Submitted,
+        WeeklyReportStatus.Returned,
+        WeeklyReportStatus.Overdue
+    };
+    private static readonly HashSet<string> AllowedRichTextImageMimeTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "image/png",
+        "image/jpeg",
+        "image/jpg",
+        "image/webp",
+        "image/gif"
+    };
     private readonly MongoDbContext _db;
+    private readonly IAssetStorage _assetStorage;
     private readonly ILogger<ReportAgentController> _logger;
     private readonly IConfiguration _configuration;
     private readonly MapActivityCollector _activityCollector;
@@ -31,6 +49,7 @@ public class ReportAgentController : ControllerBase
 
     public ReportAgentController(
         MongoDbContext db,
+        IAssetStorage assetStorage,
         ILogger<ReportAgentController> logger,
         IConfiguration configuration,
         MapActivityCollector activityCollector,
@@ -39,6 +58,7 @@ public class ReportAgentController : ControllerBase
         TeamSummaryService teamSummaryService)
     {
         _db = db;
+        _assetStorage = assetStorage;
         _logger = logger;
         _configuration = configuration;
         _activityCollector = activityCollector;
@@ -893,6 +913,64 @@ public class ReportAgentController : ControllerBase
     }
 
     /// <summary>
+    /// 上传富文本粘贴图片（仅作者、仅可编辑状态）
+    /// </summary>
+    [HttpPost("reports/{id}/rich-text/images")]
+    [RequestSizeLimit(MaxRichTextImageBytes)]
+    public async Task<IActionResult> UploadRichTextImage(string id, [FromForm] IFormFile file, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var report = await _db.WeeklyReports.Find(r => r.Id == id).FirstOrDefaultAsync(ct);
+        if (report == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "周报不存在"));
+
+        if (report.UserId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能为自己的周报上传图片"));
+
+        if (!EditableReportStatuses.Contains(report.Status))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "当前周报状态不允许上传图片"));
+
+        if (file == null || file.Length == 0)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FILE", "请选择图片文件"));
+
+        if (file.Length > MaxRichTextImageBytes)
+            return BadRequest(ApiResponse<object>.Fail("FILE_TOO_LARGE", "图片大小不能超过 5MB"));
+
+        var mimeType = file.ContentType?.Trim().ToLowerInvariant() ?? "application/octet-stream";
+        if (!AllowedRichTextImageMimeTypes.Contains(mimeType))
+            return BadRequest(ApiResponse<object>.Fail("UNSUPPORTED_TYPE", $"不支持的图片类型: {mimeType}"));
+
+        byte[] bytes;
+        await using (var ms = new MemoryStream())
+        {
+            await file.CopyToAsync(ms, ct);
+            bytes = ms.ToArray();
+        }
+
+        var stored = await _assetStorage.SaveAsync(bytes, mimeType, ct, domain: AppKey, type: "img");
+        var attachment = new Attachment
+        {
+            UploaderId = userId,
+            FileName = file.FileName,
+            MimeType = mimeType,
+            Size = file.Length,
+            Url = stored.Url,
+            Type = AttachmentType.Image,
+            UploadedAt = DateTime.UtcNow
+        };
+        await _db.Attachments.InsertOneAsync(attachment, cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            attachmentId = attachment.AttachmentId,
+            url = attachment.Url,
+            fileName = attachment.FileName,
+            mimeType = attachment.MimeType,
+            size = attachment.Size
+        }));
+    }
+
+    /// <summary>
     /// 更新周报内容
     /// </summary>
     [HttpPut("reports/{id}")]
@@ -906,13 +984,7 @@ public class ReportAgentController : ControllerBase
         if (report.UserId != userId)
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能编辑自己的周报"));
 
-        var editableStatuses = new[]
-        {
-            WeeklyReportStatus.Draft,
-            WeeklyReportStatus.Submitted,
-            WeeklyReportStatus.Returned,
-            WeeklyReportStatus.Overdue
-        };
+        var editableStatuses = EditableReportStatuses;
         if (!editableStatuses.Contains(report.Status))
             return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "只有草稿、已提交、已退回或逾期状态的周报可以编辑"));
 
@@ -964,13 +1036,7 @@ public class ReportAgentController : ControllerBase
         if (report.UserId != userId)
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能删除自己的周报"));
 
-        var deletableStatuses = new[]
-        {
-            WeeklyReportStatus.Draft,
-            WeeklyReportStatus.Submitted,
-            WeeklyReportStatus.Returned,
-            WeeklyReportStatus.Overdue
-        };
+        var deletableStatuses = EditableReportStatuses;
         if (!deletableStatuses.Contains(report.Status))
             return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "只有草稿、已提交、已退回或逾期状态的周报可以删除"));
 
@@ -2692,10 +2758,32 @@ public class ReportAgentController : ControllerBase
             }
             else
             {
-                foreach (var item in section.Items)
+                if (section.TemplateSection.InputType == ReportInputType.RichText)
                 {
-                    var source = item.Source != "manual" ? $" `[{item.Source}]`" : "";
-                    sb.AppendLine($"- {item.Content}{source}");
+                    var hasRichTextContent = false;
+                    foreach (var item in section.Items)
+                    {
+                        var source = item.Source != "manual" ? $" `[{item.Source}]`" : "";
+                        var content = item.Content?.Trim();
+                        if (!string.IsNullOrWhiteSpace(content))
+                        {
+                            hasRichTextContent = true;
+                            sb.AppendLine(content);
+                            if (!string.IsNullOrWhiteSpace(source))
+                                sb.AppendLine(source);
+                            sb.AppendLine();
+                        }
+                    }
+                    if (!hasRichTextContent)
+                        sb.AppendLine("_（暂无内容）_");
+                }
+                else
+                {
+                    foreach (var item in section.Items)
+                    {
+                        var source = item.Source != "manual" ? $" `[{item.Source}]`" : "";
+                        sb.AppendLine($"- {item.Content}{source}");
+                    }
                 }
             }
             sb.AppendLine();
