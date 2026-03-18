@@ -2,71 +2,70 @@
 .inline-icon { vertical-align: -3px; opacity: 0.7; flex-shrink: 0; }
 
 :root {
-  /* ── ClawHub Warm Dark ── */
-  /* Base — warm browns (H21-27°) */
-  --bg-primary: #14100d;      /* H26 S21 L6  — deepest layer */
-  --bg-card: #241b16;         /* H21 S24 L11 — card surface */
-  --bg-card-solid: #241b16;
-  --bg-elevated: #2e231c;     /* H21 S23 L14 — elevated surface */
-  --bg-input: #1c1510;        /* H24 S25 L9  — input fields */
-  --bg-hover: rgba(247, 238, 232, 0.08);
+  /* Base - Dark */
+  --bg-primary: #131314;
+  --bg-card: #1E1F20;
+  --bg-card-solid: #1E1F20;
+  --bg-elevated: #282A2C;
+  --bg-input: #1E1F20;
+  --bg-hover: rgba(63, 63, 70, 0.4);
 
-  /* Borders — warm alpha-based */
-  --border: #f7ebe129;        /* ~16% warm light */
-  --border-light: #f7ebe114;  /* ~8% warm light */
-  --border-focus: rgba(255, 115, 87, 0.5);
-  --card-border: #f7ebe133;   /* ~20% warm light */
-  --glass-border: #f7ebe11a;  /* ~10% warm light */
-  --glass-highlight: #f7ebe10d; /* ~5% warm light */
+  /* Borders */
+  --border: rgba(255, 255, 255, 0.08);
+  --border-light: rgba(255, 255, 255, 0.04);
+  --border-focus: rgba(16, 185, 129, 0.5); /* Emerald focus */
+  --card-border: rgba(255, 255, 255, 0.12);
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-highlight: rgba(255, 255, 255, 0.05);
 
-  /* Text — warm off-white, NOT pure white */
-  --text-primary: #f7eee8;    /* H24 S48 L94 */
-  --text-secondary: #b5a79d;  /* H24 S12 L66 */
-  --text-muted: #7d706a;      /* H18 S8 L45 */
+  /* Text */
+  --text-primary: #f4f4f5;
+  --text-secondary: #a1a1aa;
+  --text-muted: #71717a;
 
-  /* Accent — vermillion red (H8-10°) */
-  --accent: #ff7357;          /* H10 S100 L67 */
-  --accent-dim: #e65c46;      /* H8 S76 L59 */
-  --accent-bg: rgba(255, 115, 87, 0.12);
-  --accent-border: rgba(255, 115, 87, 0.25);
+  /* Accent (Emerald replaced original yellow-green) */
+  --accent: #10b981;
+  --accent-dim: #059669;
+  --accent-bg: rgba(16, 185, 129, 0.1);
+  --accent-border: rgba(16, 185, 129, 0.2);
 
-  /* Green — seafoam/teal (H174°) for success */
-  --green: #2bc6a4;           /* H174 S64 L47 */
-  --green-dim: #1a9b7e;
-  --green-bg: rgba(43, 198, 164, 0.12);
-  --green-border: rgba(43, 198, 164, 0.22);
+  /* Green (Emerald variant for Running/Success) */
+  --green: #10b981;
+  --green-dim: #059669;
+  --green-bg: rgba(16, 185, 129, 0.1);
+  --green-border: rgba(16, 185, 129, 0.18);
 
-  /* Blue — warm sky for building */
-  --blue: #5bb8d4;            /* warm teal-blue */
-  --blue-bg: rgba(91, 184, 212, 0.10);
-  --blue-border: rgba(91, 184, 212, 0.20);
+  /* Blue (Sky Blue for Building/Updates) */
+  --blue: #38bdf8;
+  --blue-bg: rgba(56, 189, 248, 0.1);
+  --blue-border: rgba(56, 189, 248, 0.18);
 
-  /* Yellow/Orange — warm gold (H38°) */
-  --orange: #e8a849;          /* H38 S78 L60 */
-  --orange-bg: rgba(232, 168, 73, 0.12);
-  --yellow: #d4a84e;
-  --yellow-bg: rgba(212, 168, 78, 0.12);
+  /* Yellow/Orange (Amber for Starting/Warning/Favorite) */
+  --orange: #f59e0b;
+  --orange-bg: rgba(245, 158, 11, 0.1);
+  --yellow: #fbbf24;
+  --yellow-bg: rgba(251, 191, 36, 0.1);
 
-  /* Red — warm rose */
-  --red: #e65c46;             /* same family as accent */
-  --red-bg: rgba(230, 92, 70, 0.12);
-  --red-border: rgba(230, 92, 70, 0.22);
+  /* Red (Rose for Error/Danger) */
+  --red: #f43f5e;
+  --red-bg: rgba(244, 63, 94, 0.1);
+  --red-border: rgba(244, 63, 94, 0.18);
 
   /* Others */
-  --purple: #c49bda;
-  --cyan: #49c9c9;
+  --purple: #c084fc;
+  --cyan: #22d3ee;
 
-  /* Background glow — subtle warm radials */
-  --bg-glow-1: #4b211b;      /* H8 S46 L20 */
-  --bg-glow-2: #3a2018;      /* H14 S40 L16 */
+  /* Background glow (used by light mode, dark mode uses its own) */
+  --bg-glow-1: transparent;
+  --bg-glow-2: transparent;
 
   /* Metrics */
   --radius: 14px;
   --radius-sm: 10px;
   --radius-xs: 6px;
-  --shadow-sm: 0 2px 8px rgba(0,0,0,0.35);
-  --shadow-md: 0 8px 24px #00000059;         /* 35% */
-  --shadow-lg: 0 24px 60px #00000073;         /* 45% */
+  --shadow-sm: 0 2px 8px rgba(0,0,0,0.3);
+  --shadow-md: 0 8px 24px rgba(0,0,0,0.5);
+  --shadow-lg: 0 16px 48px rgba(0,0,0,0.6);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   --font-mono: 'Cascadia Code', 'JetBrains Mono', 'Fira Code', 'Source Code Pro', 'SF Mono', Menlo, Consolas, 'Courier New', monospace;
@@ -144,6 +143,10 @@
 }
 
 [data-theme="light"] body::after {
+  /* Override dark mode's centered glow with warm corner radials */
+  top: 0; left: 0; right: 0; bottom: 0;
+  width: auto; height: auto;
+  transform: none;
   background:
     radial-gradient(ellipse at 15% 15%, var(--bg-glow-1) 0%, transparent 50%),
     radial-gradient(ellipse at 85% 85%, var(--bg-glow-2) 0%, transparent 50%);
@@ -279,23 +282,24 @@ body::before {
   position: fixed;
   inset: 0;
   background-image:
-    linear-gradient(#f7ebe108 1px, transparent 1px),
-    linear-gradient(90deg, #f7ebe108 1px, transparent 1px);
+    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
   background-size: 48px 48px;
   pointer-events: none;
   mask-image: radial-gradient(ellipse 60% 50% at 50% 0%, black 0%, transparent 80%);
   -webkit-mask-image: radial-gradient(ellipse 60% 50% at 50% 0%, black 0%, transparent 80%);
 }
 
-/* Warm ambient glow */
+/* Subtle glow at top */
 body::after {
   content: '';
   position: fixed;
-  inset: 0;
-  background:
-    radial-gradient(ellipse at 15% 15%, var(--bg-glow-1) 0%, transparent 50%),
-    radial-gradient(ellipse at 85% 85%, var(--bg-glow-2) 0%, transparent 50%);
-  opacity: 0.15;
+  top: -200px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 600px;
+  height: 400px;
+  background: radial-gradient(ellipse, rgba(16, 185, 129, 0.05) 0%, rgba(56, 189, 248, 0.03) 40%, transparent 70%);
   pointer-events: none;
 }
 
@@ -308,13 +312,13 @@ body::after {
 }
 
 /* ── Selection ── */
-::selection { background: rgba(255, 115, 87, 0.22); }
+::selection { background: rgba(163, 230, 53, 0.25); }
 
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #f7ebe114; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #f7ebe126; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
 
 /* ════════════════ Header ════════════════ */
 
@@ -392,7 +396,7 @@ h2 { font-size: 14px; font-weight: 600; margin-bottom: 8px; letter-spacing: -0.0
 .icon-btn.xs svg { width: 16px; height: 16px; }
 .icon-btn:hover {
   background: var(--bg-hover); color: var(--text-primary);
-  border-color: rgba(247,235,225,0.07);
+  border-color: rgba(255,255,255,0.06);
   box-shadow: var(--shadow-sm);
 }
 .icon-btn:active { transform: scale(0.95) translateY(0); box-shadow: none; }
@@ -412,7 +416,7 @@ h2 { font-size: 14px; font-weight: 600; margin-bottom: 8px; letter-spacing: -0.0
   cursor: pointer; padding: 2px 6px; border-radius: 8px;
   transition: background var(--transition);
 }
-.update-pull-group:hover { background: rgba(247, 235, 225, 0.07); }
+.update-pull-group:hover { background: rgba(255, 255, 255, 0.06); }
 .update-pull-icon {
   color: var(--text-muted); transition: color var(--transition);
   flex-shrink: 0; vertical-align: -2px;
@@ -460,34 +464,34 @@ select:disabled { opacity: 0.5; cursor: not-allowed; }
 
 button {
   padding: 7px 14px; border-radius: var(--radius-sm);
-  border: 1px solid var(--glass-border); background: rgba(247, 235, 225, 0.05);
+  border: 1px solid var(--glass-border); background: rgba(255, 255, 255, 0.04);
   backdrop-filter: none;
   color: var(--text-secondary); font-size: 13px; cursor: pointer;
   white-space: nowrap; transition: all var(--transition);
   font-weight: 500;
 }
-button:hover { background: rgba(247, 235, 225, 0.09); color: var(--text-primary); border-color: rgba(247,235,225,0.11); }
+button:hover { background: rgba(255, 255, 255, 0.08); color: var(--text-primary); border-color: rgba(255,255,255,0.10); }
 button:active { transform: scale(0.97); }
 button:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
 /* Primary — the only "loud" button */
 button.primary {
-  background: rgba(255, 115, 87, 0.12);
-  border-color: rgba(255, 115, 87, 0.25); color: var(--accent);
+  background: rgba(16, 185, 129, 0.12);
+  border-color: rgba(16, 185, 129, 0.25); color: var(--accent);
   font-weight: 600;
 }
 button.primary:hover {
-  background: rgba(255, 115, 87, 0.22);
-  border-color: rgba(255, 115, 87, 0.35);
+  background: rgba(16, 185, 129, 0.22);
+  border-color: rgba(16, 185, 129, 0.35);
 }
 /* Accent — green emphasis for "go" actions */
 button.accent {
-  background: rgba(255, 115, 87, 0.12);
-  border-color: rgba(255, 115, 87, 0.25); color: var(--accent);
+  background: rgba(16, 185, 129, 0.12);
+  border-color: rgba(16, 185, 129, 0.25); color: var(--accent);
   font-weight: 600;
 }
 button.accent:hover {
-  background: rgba(255, 115, 87, 0.22);
-  border-color: rgba(255, 115, 87, 0.35);
+  background: rgba(16, 185, 129, 0.22);
+  border-color: rgba(16, 185, 129, 0.35);
 }
 /* Preview — ghost text style */
 button.preview {
@@ -549,7 +553,7 @@ button.text-btn:hover { color: var(--accent); }
   backdrop-filter: blur(12px);
   border: 1px solid var(--accent-border);
   border-radius: var(--radius); padding: 14px 18px; margin-bottom: 14px;
-  box-shadow: 0 2px 12px rgba(255, 115, 87, 0.06);
+  box-shadow: 0 2px 12px rgba(16, 185, 129, 0.06);
 }
 .quickstart-banner.hidden { display: none; }
 .quickstart-content { font-size: 13px; }
@@ -619,7 +623,7 @@ button.text-btn:hover { color: var(--accent); }
 }
 .bulk-textarea:focus {
   border-color: var(--border-focus);
-  box-shadow: 0 0 0 3px rgba(255, 115, 87, 0.08);
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.08);
 }
 .bulk-textarea::placeholder { color: var(--text-muted); }
 /* ════════════════ Branch Picker ════════════════ */
@@ -639,7 +643,7 @@ button.text-btn:hover { color: var(--accent); }
 }
 .branch-picker-input-wrap input:focus {
   border-color: var(--border-focus);
-  box-shadow: 0 0 0 3px rgba(255, 115, 87, 0.08);
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.08);
 }
 .branch-picker-input-wrap input::placeholder { color: var(--text-muted); }
 
@@ -695,7 +699,7 @@ button.text-btn:hover { color: var(--accent); }
   padding: 6px 14px 4px; font-size: 10px; font-weight: 600;
   color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em;
   border-bottom: 1px solid var(--border);
-  background: rgba(247, 235, 225, 0.03);
+  background: rgba(255, 255, 255, 0.02);
 }
 /* Local branch items in dropdown — accent icon, status pill */
 .branch-dropdown-local .branch-dropdown-item-name { color: var(--text-primary); }
@@ -728,7 +732,7 @@ button.text-btn:hover { color: var(--accent); }
   padding: 14px 20px;
   background: var(--bg-card);
   border: 1px solid var(--card-border);
-  border-left: 2px solid rgba(247, 235, 225, 0.11);
+  border-left: 2px solid rgba(255, 255, 255, 0.10);
   border-radius: var(--radius);
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
@@ -736,7 +740,7 @@ button.text-btn:hover { color: var(--accent); }
   position: relative;
 }
 .branch-card:hover {
-  border-color: rgba(247, 235, 225, 0.19);
+  border-color: rgba(255, 255, 255, 0.18);
   background: var(--bg-card);
 }
 /* Status-based left border — subtle indicator, not attention-grabbing */
@@ -744,8 +748,8 @@ button.text-btn:hover { color: var(--accent); }
 .branch-card.status-running.show-preview-border { border-left-color: var(--yellow); }
 .branch-card.status-starting { border-left-color: var(--yellow); }
 .branch-card.status-building { border-left-color: var(--blue); }
-.branch-card.status-idle { border-left-color: rgba(247, 235, 225, 0.11); }
-.branch-card.status-stopped { border-left-color: rgba(247, 235, 225, 0.11); }
+.branch-card.status-idle { border-left-color: rgba(255, 255, 255, 0.10); }
+.branch-card.status-stopped { border-left-color: rgba(255, 255, 255, 0.10); }
 .branch-card.status-error { border-left-color: var(--red); }
 .branch-card.active.show-preview-border {
   border-left-color: var(--yellow);
@@ -813,11 +817,11 @@ a.branch-name:hover { color: var(--accent); }
 }
 .port-badge svg.inline-icon { width: 12px; height: 12px; opacity: 0.8; }
 .port-badge.run-port { color: var(--green); background: var(--green-bg); border: 1px solid var(--green-border); }
-.port-badge.run-port:hover { background: rgba(255, 115, 87, 0.18); border-color: rgba(255, 115, 87, 0.3); }
+.port-badge.run-port:hover { background: rgba(16, 185, 129, 0.18); border-color: rgba(16, 185, 129, 0.3); }
 .port-badge.port-starting { color: var(--yellow); background: var(--yellow-bg); border: 1px solid rgba(251, 191, 36, 0.15); }
 .port-badge.port-starting:hover { background: rgba(251, 191, 36, 0.15); }
-.port-badge.port-idle { color: var(--text-muted); background: rgba(247, 235, 225, 0.04); border: 1px solid transparent; }
-.port-badge.port-idle:hover { background: rgba(247, 235, 225, 0.07); }
+.port-badge.port-idle { color: var(--text-muted); background: rgba(255, 255, 255, 0.03); border: 1px solid transparent; }
+.port-badge.port-idle:hover { background: rgba(255, 255, 255, 0.06); }
 
 .branch-error {
   font-size: 11px; color: var(--red); margin-top: 6px;
@@ -859,16 +863,16 @@ a.branch-name:hover { color: var(--accent); }
 /* Card-level update indicator — blue glow so you instantly see which branches updated */
 .branch-card.has-updates {
   border-color: var(--blue-border);
-  background: linear-gradient(90deg, rgba(91, 184, 212, 0.04) 0%, var(--bg-card) 40%);
+  background: linear-gradient(90deg, rgba(56, 189, 248, 0.04) 0%, var(--bg-card) 40%);
 }
 .branch-card.has-updates.active {
-  background: linear-gradient(90deg, rgba(91, 184, 212, 0.03) 0%, rgba(16, 185, 129, 0.03) 20%, var(--bg-card) 40%);
+  background: linear-gradient(90deg, rgba(56, 189, 248, 0.03) 0%, rgba(16, 185, 129, 0.03) 20%, var(--bg-card) 40%);
 }
 
 /* Card-level recently-touched indicator — bold blue border so you know which card you just operated on */
 .branch-card.recently-touched {
   border: 3px solid var(--blue);
-  box-shadow: 0 0 12px rgba(91, 184, 212, 0.35), 0 0 4px rgba(91, 184, 212, 0.2);
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.35), 0 0 4px rgba(56, 189, 248, 0.2);
 }
 
 /* Duplicate-add: gold flash 3 times then settle to blue */
@@ -955,12 +959,12 @@ a.branch-name:hover { color: var(--accent); }
 .tag-filter-chip {
   display: inline-flex; align-items: center; gap: 4px;
   font-size: 12px; font-weight: 500; color: var(--text-secondary);
-  background: rgba(247, 235, 225, 0.05); border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04); border: 1px solid var(--border);
   padding: 4px 10px; border-radius: 16px;
   cursor: pointer; white-space: nowrap; flex-shrink: 0;
   transition: all var(--transition);
 }
-.tag-filter-chip:hover { background: rgba(247, 235, 225, 0.09); border-color: var(--glass-border); color: var(--text-primary); }
+.tag-filter-chip:hover { background: rgba(255, 255, 255, 0.08); border-color: var(--glass-border); color: var(--text-primary); }
 .tag-filter-chip.active {
   color: var(--accent); background: var(--accent-bg);
   border-color: var(--accent-border);
@@ -1056,7 +1060,7 @@ a.branch-name:hover { color: var(--accent); }
 .split-btn-main {
   border-top-right-radius: 0 !important;
   border-bottom-right-radius: 0 !important;
-  border-right: 1px solid rgba(247,235,225,0.09) !important;
+  border-right: 1px solid rgba(255,255,255,0.08) !important;
 }
 .split-btn-toggle {
   border-top-left-radius: 0 !important;
@@ -1123,7 +1127,7 @@ a.branch-name:hover { color: var(--accent); }
 }
 .settings-switch-track {
   width: 32px; height: 18px; border-radius: 9px;
-  background: rgba(247, 235, 225, 0.11);
+  background: rgba(255, 255, 255, 0.10);
   position: relative; transition: background 0.2s ease;
 }
 .settings-switch.on .settings-switch-track {
@@ -1143,7 +1147,7 @@ a.branch-name:hover { color: var(--accent); }
 
 .btn-spinner {
   display: inline-block; width: 10px; height: 10px;
-  border: 1.5px solid rgba(247,235,225,0.16);
+  border: 1.5px solid rgba(255,255,255,0.15);
   border-top-color: currentColor;
   border-radius: 50%; margin-right: 4px;
   animation: spin 0.6s linear infinite;
@@ -1334,7 +1338,7 @@ a.branch-name:hover { color: var(--accent); }
 
 .deploy-progress-bar {
   position: absolute; top: 0; left: 0; right: 0; height: 2px;
-  background: rgba(247, 235, 225, 0.06); overflow: hidden;
+  background: rgba(255, 255, 255, 0.05); overflow: hidden;
   border-radius: var(--radius) var(--radius) 0 0;
 }
 .deploy-progress-bar-fill {
@@ -1426,8 +1430,8 @@ a.branch-name:hover { color: var(--accent); }
   /* Cards — slightly stronger borders for mobile */
   .branch-card {
     padding: 12px 12px;
-    border: 1px solid rgba(247, 235, 225, 0.16);
-    border-left: 2px solid rgba(247, 235, 225, 0.11);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-left: 2px solid rgba(255, 255, 255, 0.10);
   }
   .branch-card + .branch-card { margin-top: 8px; }
 
