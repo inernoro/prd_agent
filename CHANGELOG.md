@@ -12,6 +12,8 @@
 
 | 类型 | 模块 | 描述 |
 |------|------|------|
+| fix | cds | 白天模式颜色修复：背景纯白、饱和度提升、modal/日志面板适配、accent 颜色加深 |
+| feat | cds | 无默认分支时自动选中 main/master 作为默认分支 |
 | feat | prd-desktop | 缺陷管理列表行补充缺陷编号和截图缩略图显示 |
 | feat | prd-desktop | 缺陷详情面板合并优化：双栏布局、截图画廊+lightbox、[IMG]标签解析、验收/关闭/删除操作、内嵌弹窗替代prompt()、角色标识 |
 | feat | prd-desktop | 新增 Tauri 命令：verify_pass_defect、verify_fail_defect、close_defect、delete_defect |

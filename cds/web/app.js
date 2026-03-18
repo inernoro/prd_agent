@@ -379,6 +379,11 @@ async function loadBranches() {
     const data = await api('GET', '/branches');
     branches = data.branches || [];
     defaultBranch = data.defaultBranch;
+    // Auto-select main/master as default when no default is set
+    if (!defaultBranch && branches.length > 0) {
+      const mainBranch = branches.find(b => b.id === 'main') || branches.find(b => b.id === 'master');
+      if (mainBranch) defaultBranch = mainBranch.id;
+    }
     renderBranches();
   } catch (e) { console.error('loadBranches:', e); }
 }
