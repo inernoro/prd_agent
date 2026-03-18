@@ -57,6 +57,10 @@ let previewMode = localStorage.getItem('cds_preview_mode') || 'simple';
 // ── Mirror acceleration (npm/docker registry mirrors) ──
 let mirrorEnabled = false;
 
+// ── Executor/Scheduler state ──
+let cdsMode = 'standalone';
+let executors = [];
+
 // ── Utilities ──
 
 async function api(method, path, body) {
@@ -134,7 +138,6 @@ let infraServices = [];
 
 let githubRepoUrl = '';
 let mainDomain = '';
-let switchDomain = '';
 let previewDomain = '';
 let workerPort = '';
 
@@ -150,10 +153,12 @@ async function loadConfig() {
     const data = await api('GET', '/config');
     githubRepoUrl = data.githubRepoUrl || '';
     mainDomain = data.mainDomain || '';
-    switchDomain = data.switchDomain || '';
     previewDomain = data.previewDomain || '';
     workerPort = data.workerPort || '';
+    cdsMode = data.mode || 'standalone';
+    executors = data.executors || [];
     renderServiceStatusBar();
+    renderExecutorPanel();
   } catch (e) { console.error('loadConfig:', e); }
 }
 
@@ -247,6 +252,101 @@ function scrollToBranch(branchId) {
   if (bar) bar.classList.remove('service-status-bar-expanded');
 }
 
+// ── Executor Panel (scheduler mode) ──
+
+function renderExecutorPanel() {
+  const panel = document.getElementById('executorPanel');
+  if (!panel) return;
+
+  // Only show in scheduler mode or when executors exist
+  if (cdsMode !== 'scheduler' && executors.length === 0) {
+    panel.classList.add('hidden');
+    return;
+  }
+
+  panel.classList.remove('hidden');
+
+  if (executors.length === 0) {
+    panel.innerHTML = `
+      <div class="executor-header">
+        <span class="executor-title">执行器集群</span>
+        <span class="executor-badge empty">无执行器</span>
+      </div>
+      <div class="executor-hint">
+        在远程服务器上运行 <code>CDS_MODE=executor CDS_SCHEDULER_URL=http://本机:9900 node dist/index.js</code> 来注册执行器
+      </div>`;
+    return;
+  }
+
+  const online = executors.filter(e => e.status === 'online').length;
+  const total = executors.length;
+
+  panel.innerHTML = `
+    <div class="executor-header" onclick="toggleExecutorPanel()">
+      <span class="executor-title">执行器集群</span>
+      <span class="executor-badge ${online === total ? 'all-ok' : 'partial'}">${online}/${total} 在线</span>
+      <span class="executor-toggle">▾</span>
+    </div>
+    <div id="executorList" class="executor-list hidden">
+      ${executors.map(ex => {
+        const memPct = ex.capacity.memoryMB > 0 ? Math.round(ex.load.memoryUsedMB / ex.capacity.memoryMB * 100) : 0;
+        const memGB = (ex.load.memoryUsedMB / 1024).toFixed(1);
+        const totalGB = (ex.capacity.memoryMB / 1024).toFixed(1);
+        return `
+          <div class="executor-card executor-${ex.status}">
+            <div class="executor-card-header">
+              <span class="executor-dot ${ex.status}"></span>
+              <span class="executor-id">${esc(ex.id)}</span>
+              <span class="executor-host">${esc(ex.host)}:${ex.port}</span>
+            </div>
+            <div class="executor-metrics">
+              <div class="executor-metric">
+                <span class="metric-label">内存</span>
+                <div class="metric-bar"><div class="metric-fill ${memPct > 85 ? 'danger' : memPct > 65 ? 'warn' : ''}" style="width:${memPct}%"></div></div>
+                <span class="metric-value">${memGB}/${totalGB} GB</span>
+              </div>
+              <div class="executor-metric">
+                <span class="metric-label">CPU</span>
+                <div class="metric-bar"><div class="metric-fill ${ex.load.cpuPercent > 85 ? 'danger' : ex.load.cpuPercent > 65 ? 'warn' : ''}" style="width:${Math.min(ex.load.cpuPercent, 100)}%"></div></div>
+                <span class="metric-value">${ex.load.cpuPercent}%</span>
+              </div>
+            </div>
+            <div class="executor-branches">
+              ${ex.branches.length > 0 ? ex.branches.map(bid => `<span class="executor-branch-tag">${esc(bid)}</span>`).join('') : '<span class="executor-no-branches">无部署分支</span>'}
+            </div>
+            ${ex.status === 'online' ? `<button class="executor-action-btn" onclick="drainExecutor('${esc(ex.id)}')">排空</button>` : ''}
+            <button class="executor-action-btn danger" onclick="removeExecutor('${esc(ex.id)}')">移除</button>
+          </div>`;
+      }).join('')}
+    </div>`;
+}
+
+function toggleExecutorPanel() {
+  const list = document.getElementById('executorList');
+  const toggle = document.querySelector('.executor-toggle');
+  if (list) {
+    list.classList.toggle('hidden');
+    if (toggle) toggle.textContent = list.classList.contains('hidden') ? '▾' : '▴';
+  }
+}
+
+async function drainExecutor(id) {
+  try {
+    await api('POST', `/executors/${id}/drain`);
+    showToast(`执行器 ${id} 已标记为排空`, 'info');
+    loadConfig();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function removeExecutor(id) {
+  if (!confirm(`确定移除执行器 ${id}？该节点上的分支不会自动迁移。`)) return;
+  try {
+    await api('DELETE', `/executors/${id}`);
+    showToast(`执行器 ${id} 已移除`, 'success');
+    loadConfig();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
 // ── Check updates (global refresh) ──
 
 async function checkAllUpdates() {
@@ -261,7 +361,14 @@ async function checkAllUpdates() {
     renderBranches();
     const count = Object.keys(branchUpdates).length;
     if (count > 0) {
-      showToast(`${count} 个分支有远程更新`, 'info');
+      showToast(`${count} 个分支有远程更新，非前端改动可能需要重新部署`, 'info', 8000);
+      // Flash only the updated cards' pull icons to draw attention
+      setTimeout(() => {
+        document.querySelectorAll('.branch-card.has-updates .update-pull-icon').forEach(icon => {
+          icon.classList.add('needs-pull');
+          icon.addEventListener('animationend', () => icon.classList.remove('needs-pull'), { once: true });
+        });
+      }, 100);
     } else {
       showToast('所有分支已是最新', 'success');
     }
@@ -296,8 +403,6 @@ function cyclePreviewMode() {
   }
 }
 
-// Keep backward compat alias
-function togglePreviewMode() { cyclePreviewMode(); }
 
 function updatePreviewModeUI() {
   // Update the label in settings menu if open
@@ -356,7 +461,6 @@ async function loadRoutingRules() {
   try {
     const data = await api('GET', '/routing-rules');
     routingRules = data.rules || [];
-    renderRoutingRules();
   } catch (e) { console.error('loadRoutingRules:', e); }
 }
 
@@ -463,17 +567,23 @@ function filterBranches() {
   dropdown.classList.remove('hidden');
 }
 
-// Scroll to an already-added branch card and highlight it
+// Scroll to an already-added branch card — gold flash 3x then stay blue
 function scrollToAndHighlight(id) {
   dropdown.classList.add('hidden');
   searchInput.value = '';
   renderBranches();
-  // Find and scroll to the card
   requestAnimationFrame(() => {
     const card = document.querySelector(`.branch-card[data-branch-id="${CSS.escape(id)}"]`);
     if (card) {
       card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      markTouched(id);
+      // Gold flash 3 times (0.4s × 3 = 1.2s), then settle to blue
+      card.classList.remove('duplicate-flash', 'recently-touched');
+      void card.offsetWidth; // force reflow to restart animation
+      card.classList.add('duplicate-flash');
+      card.addEventListener('animationend', () => {
+        card.classList.remove('duplicate-flash');
+        markTouched(id);
+      }, { once: true });
     }
   });
 }
@@ -603,9 +713,28 @@ function openFullDeployLog(id, event) {
   event.stopPropagation();
   const log = inlineDeployLogs.get(id);
   if (!log) return;
-  openLogModal(`部署日志 ${id}`);
-  document.getElementById('logModalBody').innerHTML =
-    `<pre class="live-log-output">${esc(log.lines.join('\n') || '暂无日志')}</pre>`;
+  let isFirst = true;
+  const renderInline = () => {
+    const body = document.getElementById('logModalBody');
+    const oldPre = body.querySelector('.live-log-output');
+    const prevScrollTop = oldPre ? oldPre.scrollTop : 0;
+    const wasAtBottom = oldPre
+      ? (oldPre.scrollTop + oldPre.clientHeight >= oldPre.scrollHeight - 30)
+      : true;
+    const current = inlineDeployLogs.get(id);
+    body.innerHTML = `<pre class="live-log-output">${esc(current ? current.lines.join('\n') : '暂无日志')}</pre>`;
+    if (isFirst || wasAtBottom) {
+      _scrollLogToBottom();
+      isFirst = false;
+    } else {
+      const newPre = body.querySelector('.live-log-output');
+      if (newPre) newPre.scrollTop = prevScrollTop;
+    }
+  };
+  openLogModal(`部署日志 ${id}`, id);
+  renderInline();
+  _scrollLogToBottom();
+  _startLogPoll(() => { renderInline(); return Promise.resolve(); }, 1000);
 }
 
 async function stopBranch(id) {
@@ -856,24 +985,42 @@ async function cleanupAll() {
 }
 
 async function viewBranchLogs(id) {
-  // First check if there's an active inline deploy log
+  // Active inline deploy log — poll from inlineDeployLogs
   const inlineLog = inlineDeployLogs.get(id);
   if (inlineLog) {
-    openLogModal(`部署日志 — ${id}`);
-    document.getElementById('logModalBody').innerHTML =
-      `<pre class="live-log-output">${esc(inlineLog.lines.join('\n') || '暂无日志')}</pre>`;
+    let isFirst = true;
+    const renderInline = () => {
+      const body = document.getElementById('logModalBody');
+      const oldPre = body.querySelector('.live-log-output');
+      const prevScrollTop = oldPre ? oldPre.scrollTop : 0;
+      const wasAtBottom = oldPre
+        ? (oldPre.scrollTop + oldPre.clientHeight >= oldPre.scrollHeight - 30)
+        : true;
+      const current = inlineDeployLogs.get(id);
+      body.innerHTML = `<pre class="live-log-output">${esc(current ? current.lines.join('\n') : '暂无日志')}</pre>`;
+      if (isFirst || wasAtBottom) {
+        _scrollLogToBottom();
+        isFirst = false;
+      } else {
+        const newPre = body.querySelector('.live-log-output');
+        if (newPre) newPre.scrollTop = prevScrollTop;
+      }
+    };
+    openLogModal(`部署日志 — ${id}`, id);
+    renderInline();
+    _scrollLogToBottom();
+    _startLogPoll(() => { renderInline(); return Promise.resolve(); }, 1000);
     return;
   }
   // Otherwise fetch historical operation logs from API
-  try {
+  let isFirst = true;
+  const fetchAndRender = async () => {
     const data = await api('GET', `/branches/${encodeURIComponent(id)}/logs`);
     const logs = data.logs || [];
     if (logs.length === 0) {
-      openLogModal(`部署日志 — ${id}`);
       document.getElementById('logModalBody').innerHTML = '<div style="padding:16px;color:var(--text-muted)">暂无部署日志</div>';
       return;
     }
-    // Show latest log
     const latest = logs[logs.length - 1];
     const logLines = (latest.events || []).map(ev => {
       const prefix = ev.status === 'error' ? '✗' : ev.status === 'done' ? '✓' : '…';
@@ -881,17 +1028,57 @@ async function viewBranchLogs(id) {
       if (ev.log) line += '\n    ' + ev.log;
       return line;
     });
-    openLogModal(`部署日志 — ${id} (${latest.status === 'completed' ? '成功' : latest.status === 'error' ? '失败' : '进行中'})`);
-    document.getElementById('logModalBody').innerHTML =
-      `<pre class="live-log-output">${esc(logLines.join('\n') || '暂无日志')}</pre>`;
+    const statusLabel = latest.status === 'completed' ? '成功' : latest.status === 'error' ? '失败' : '进行中';
+    document.getElementById('logModalTitle').textContent = `部署日志 — ${id} (${statusLabel})`;
+    const body = document.getElementById('logModalBody');
+    const oldPre = body.querySelector('.live-log-output');
+    const prevScrollTop = oldPre ? oldPre.scrollTop : 0;
+    const wasAtBottom = oldPre
+      ? (oldPre.scrollTop + oldPre.clientHeight >= oldPre.scrollHeight - 30)
+      : true;
+    body.innerHTML = `<pre class="live-log-output">${esc(logLines.join('\n') || '暂无日志')}</pre>`;
+    if (isFirst || wasAtBottom) {
+      _scrollLogToBottom();
+      isFirst = false;
+    } else {
+      const newPre = body.querySelector('.live-log-output');
+      if (newPre) newPre.scrollTop = prevScrollTop;
+    }
+  };
+  try {
+    openLogModal(`部署日志 — ${id}`, id);
+    await fetchAndRender();
+    _scrollLogToBottom();
+    _startLogPoll(fetchAndRender, 3000);
   } catch (e) { showToast('获取日志失败: ' + e.message, 'error'); }
 }
 
 async function viewContainerLogs(id, profileId) {
-  try {
+  let isFirstLoad = true;
+  const fetchAndRender = async () => {
     const data = await api('POST', `/branches/${id}/container-logs`, { profileId });
-    openLogModal(`日志: ${id}/${profileId || '默认'}`);
-    document.getElementById('logModalBody').innerHTML = `<pre class="live-log-output">${esc(data.logs || '暂无日志')}</pre>`;
+    const body = document.getElementById('logModalBody');
+    // Read scroll state from the OLD <pre> before replacing
+    const oldPre = body.querySelector('.live-log-output');
+    const prevScrollTop = oldPre ? oldPre.scrollTop : 0;
+    const wasAtBottom = oldPre
+      ? (oldPre.scrollTop + oldPre.clientHeight >= oldPre.scrollHeight - 30)
+      : true;
+    body.innerHTML = `<pre class="live-log-output">${esc(data.logs || '暂无日志')}</pre>`;
+    if (isFirstLoad || wasAtBottom) {
+      _scrollLogToBottom();
+      isFirstLoad = false;
+    } else {
+      // Restore scroll position on the NEW <pre>
+      const newPre = body.querySelector('.live-log-output');
+      if (newPre) newPre.scrollTop = prevScrollTop;
+    }
+  };
+  try {
+    openLogModal(`日志: ${id}/${profileId || '默认'}`, id, profileId);
+    await fetchAndRender();
+    _scrollLogToBottom();
+    _startLogPoll(fetchAndRender, 3000);
   } catch (e) { showToast(e.message, 'error'); }
 }
 
@@ -1068,6 +1255,14 @@ function toggleSettingsMenu(event) {
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 13a.5.5 0 01-.5-.5V3a.5.5 0 01.5-.5h5.586a.5.5 0 01.354.146l3.414 3.414a.5.5 0 01.146.354V12.5a.5.5 0 01-.5.5h-9zM3.5 1A1.5 1.5 0 002 2.5v11A1.5 1.5 0 003.5 15h9a1.5 1.5 0 001.5-1.5V6.414a1.5 1.5 0 00-.44-1.06L10.147 1.94A1.5 1.5 0 009.086 1.5H3.5z"/></svg>
       导出配置
     </div>
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); exportSkill()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 1.75a.25.25 0 01.25-.25h3.5a.75.75 0 000-1.5h-3.5A1.75 1.75 0 002 1.75v11.5c0 .966.784 1.75 1.75 1.75h8.5A1.75 1.75 0 0014 13.25v-6a.75.75 0 00-1.5 0v6a.25.25 0 01-.25.25h-8.5a.25.25 0 01-.25-.25V1.75z"/><path d="M11.78.22a.75.75 0 00-1.06 0L6.22 4.72a.75.75 0 000 1.06l.53.53-2.97 2.97a.75.75 0 101.06 1.06l2.97-2.97.53.53a.75.75 0 001.06 0l4.5-4.5a.75.75 0 000-1.06L11.78.22z"/></svg>
+      导出部署技能
+    </div>
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); openSelfUpdate()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0114.95 7.16a.75.75 0 01-1.49.178A5.5 5.5 0 008 2.5zm6.294 5.505a.75.75 0 01.834.656 5.5 5.5 0 01-9.592 2.97l1.204-1.204a.25.25 0 00-.177-.427H3.354a.25.25 0 01-.354-.354l1.38-1.38A7.002 7.002 0 0014.95 7.16z"/><circle cx="8" cy="8" r="2"/></svg>
+      自动更新
+    </div>
     <div class="settings-menu-divider"></div>
     <div class="settings-menu-item danger" onclick="closeSettingsMenu(); cleanupAll()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM11 3V1.75A1.75 1.75 0 009.25 0h-2.5A1.75 1.75 0 005 1.75V3H2.75a.75.75 0 000 1.5h.3l.8 8.2A1.75 1.75 0 005.6 14.5h4.8a1.75 1.75 0 001.75-1.8l.8-8.2h.3a.75.75 0 000-1.5H11z"/></svg>
@@ -1119,20 +1314,13 @@ function renderBranches() {
   const scrollY = window.scrollY;
   const el = document.getElementById('branchList');
   const count = document.getElementById('branchCount');
-  count.textContent = `${branches.length} 个分支`;
+  const modeLabel = cdsMode === 'scheduler' ? ' · 调度端' : cdsMode === 'executor' ? ' · 执行端' : '';
+  count.textContent = `${branches.length} 个分支${modeLabel}`;
 
   // Update default branch selector
   const sel = document.getElementById('defaultBranch');
   sel.innerHTML = '<option value="">无默认</option>' +
     branches.map(b => `<option value="${esc(b.id)}" ${b.id === defaultBranch ? 'selected' : ''}>${esc(b.id)}</option>`).join('');
-
-  // Update cleanup button (if visible in DOM)
-  const cleanupBtn = document.getElementById('cleanupBtn');
-  if (cleanupBtn) {
-    const nonDefault = branches.filter(b => b.id !== defaultBranch);
-    cleanupBtn.disabled = nonDefault.length === 0 || globalBusy;
-    cleanupBtn.title = nonDefault.length > 0 ? `清理 ${nonDefault.length} 个分支` : '没有可清理的分支';
-  }
 
   if (branches.length === 0) {
     el.innerHTML = '<div class="empty-state">暂无分支，请在上方搜索并添加。</div>';
@@ -1156,7 +1344,6 @@ function renderBranches() {
 
   el.innerHTML = filteredBranches.map(b => {
     const isBusy = busyBranches.has(b.id) || globalBusy;
-    const anyLoading = hasAnyLoading(b.id);
     const isDefault = b.id === defaultBranch;
     const services = Object.entries(b.services || {});
     const hasError = b.status === 'error';
@@ -1302,6 +1489,7 @@ function renderBranches() {
           </div>
           ${b.date ? `<div class="branch-card-row2"><span class="branch-meta">${relativeTime(b.date)}更新</span></div>` : ''}
           ${portBadgesHtml ? `<div class="branch-card-ports">${portBadgesHtml}</div>` : ''}
+          ${b.executorId ? `<span class="executor-tag" title="部署在执行器 ${esc(b.executorId)}">⚡ ${esc(b.executorId.replace(/^executor-/, '').slice(0, 20))}</span>` : ''}
         </div>
         ${b.errorMessage && !deployLog ? `<div class="branch-error" title="${esc(b.errorMessage)}">${esc(b.errorMessage)}</div>` : ''}
         <div class="branch-card-body">
@@ -1389,10 +1577,6 @@ function maskValue(key, val) {
 }
 
 // ── Routing rules (data only) ──
-
-function renderRoutingRules() {
-  // Routing rules are now rendered inside modal, no-op for data load callback
-}
 
 // ── Config modal (shared) ──
 
@@ -1830,6 +2014,160 @@ async function exportConfig() {
   } catch (e) {
     showToast('导出失败: ' + e.message, 'error');
   }
+}
+
+async function exportSkill() {
+  try {
+    showToast('正在打包部署技能...', 'info');
+    const resp = await fetch(API + '/export-skill');
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ error: '导出失败' }));
+      throw new Error(err.error || '导出失败');
+    }
+    const blob = await resp.blob();
+    const disposition = resp.headers.get('Content-Disposition') || '';
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    const filename = match ? match[1] : 'cds-deployment-skill.tar.gz';
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast('部署技能包已下载', 'success');
+  } catch (e) {
+    showToast('导出失败: ' + e.message, 'error');
+  }
+}
+
+// ── Self-update: switch branch + pull + restart ──
+
+async function openSelfUpdate() {
+  // Fetch branch list
+  let data;
+  try {
+    data = await api('GET', '/self-branches');
+  } catch (e) {
+    showToast('获取分支列表失败: ' + e.message, 'error');
+    return;
+  }
+
+  const { current, branches } = data;
+  const options = branches.map(b =>
+    `<option value="${esc(b)}" ${b === current ? 'selected' : ''}>${esc(b)}${b === current ? ' (当前)' : ''}</option>`
+  ).join('');
+
+  openConfigModal('自动更新', `
+    <p class="config-panel-desc">
+      切换 CDS 代码分支并重启。操作流程：<code>git fetch → git checkout → git pull → restart</code>
+    </p>
+    <div class="form-row">
+      <label class="form-label">目标分支</label>
+      <select id="selfUpdateBranch" class="form-input" style="width:100%">
+        ${options}
+      </select>
+    </div>
+    <div class="form-row" style="margin-top:4px;font-size:12px;color:var(--fg-muted)">
+      当前分支：<code>${esc(current)}</code>
+    </div>
+    <div id="selfUpdateProgress" style="display:none;margin-top:12px">
+      <div id="selfUpdateSteps" style="display:flex;flex-direction:column;gap:6px"></div>
+      <div id="selfUpdateStatus" style="margin-top:8px;font-size:13px"></div>
+    </div>
+    <div class="form-row" style="margin-top:12px;display:flex;gap:8px">
+      <button class="sm" id="selfUpdateBtn" onclick="executeSelfUpdate()">更新并重启</button>
+      <button class="sm ghost" onclick="closeConfigModal()">取消</button>
+    </div>
+  `);
+}
+
+function executeSelfUpdate() {
+  const select = document.getElementById('selfUpdateBranch');
+  const branch = select ? select.value : '';
+  const btn = document.getElementById('selfUpdateBtn');
+  const progress = document.getElementById('selfUpdateProgress');
+  const stepsEl = document.getElementById('selfUpdateSteps');
+  const statusEl = document.getElementById('selfUpdateStatus');
+
+  if (btn) btn.disabled = true;
+  if (progress) progress.style.display = 'block';
+
+  const stepMap = {};
+  function updateStep(id, status, title) {
+    let el = stepMap[id];
+    if (!el) {
+      el = document.createElement('div');
+      el.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;font-size:13px';
+      el.innerHTML = '<span class="step-dot"></span><span></span>';
+      stepsEl.appendChild(el);
+      stepMap[id] = el;
+    }
+    const dot = el.querySelector('.step-dot');
+    const label = el.querySelector('span:last-child');
+    label.textContent = title;
+    const colors = { running: 'var(--blue)', done: 'var(--green)', error: 'var(--red)' };
+    dot.style.cssText = `width:8px;height:8px;border-radius:50%;background:${colors[status] || 'var(--fg-muted)'}`;
+    if (status === 'running') {
+      dot.style.animation = 'pulse 1s infinite';
+    }
+  }
+
+  // SSE request via fetch
+  fetch(API + '/self-update', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ branch: branch || undefined }),
+  }).then(resp => {
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    function processChunk() {
+      return reader.read().then(({ done, value }) => {
+        if (done) return;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        let eventType = '';
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            eventType = line.slice(7).trim();
+          } else if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (eventType === 'step') {
+                updateStep(data.step, data.status, data.title);
+              } else if (eventType === 'done') {
+                statusEl.innerHTML = '<span style="color:var(--green)">' + esc(data.message) + '</span>';
+                // Auto-reload after delay
+                setTimeout(() => { location.reload(); }, 5000);
+                statusEl.innerHTML += '<br><span style="font-size:12px;color:var(--fg-muted)">5 秒后自动刷新...</span>';
+                let sec = 4;
+                const t = setInterval(() => {
+                  if (sec <= 0) { clearInterval(t); location.reload(); }
+                  else { statusEl.querySelector('span:last-child').textContent = sec + ' 秒后自动刷新...'; sec--; }
+                }, 1000);
+              } else if (eventType === 'error') {
+                statusEl.innerHTML = '<span style="color:var(--red)">❌ ' + esc(data.message) + '</span>';
+                if (btn) btn.disabled = false;
+              }
+            } catch {}
+          }
+        }
+        return processChunk();
+      });
+    }
+    return processChunk();
+  }).catch(err => {
+    // Connection lost is expected during restart
+    if (statusEl && !statusEl.textContent) {
+      statusEl.innerHTML = '<span style="color:var(--fg-muted)">连接已断开（CDS 正在重启），即将刷新...</span>';
+      setTimeout(() => { location.reload(); }, 5000);
+    }
+  });
 }
 
 // ── Infrastructure services ──
@@ -2281,78 +2619,141 @@ async function deleteProfileAndRefresh(id) {
   } catch (e) { showToast(e.message, 'error'); }
 }
 
-// ── Container env viewer ──
-
-async function viewContainerEnv(id, profileId) {
-  openConfigModal('容器环境变量', '<div class="config-empty"><span class="btn-spinner"></span> 加载中...</div>');
-  try {
-    const data = await api('POST', `/branches/${id}/container-env`, { profileId });
-    const envText = data.env || '';
-    const lines = envText.trim().split('\n').filter(Boolean).sort();
-    const listHtml = lines.map(line => {
-      const eqIdx = line.indexOf('=');
-      if (eqIdx <= 0) return `<div class="config-item"><div class="config-item-main"><code class="env-val">${esc(line)}</code></div></div>`;
-      const k = line.substring(0, eqIdx);
-      const v = line.substring(eqIdx + 1);
-      return `
-        <div class="config-item">
-          <div class="config-item-main">
-            <code class="env-key">${esc(k)}</code>
-            <span class="config-item-arrow">=</span>
-            <code class="env-val" title="${esc(v)}">${esc(maskValue(k, v))}</code>
-          </div>
-        </div>
-      `;
-    }).join('');
-    const label = profileId || '默认';
-    openConfigModal(`容器变量: ${id} / ${label}`, `
-      <p class="config-panel-desc">容器内部实际运行的环境变量（只读）。共 ${lines.length} 个变量。</p>
-      ${listHtml}
-    `);
-  } catch (e) {
-    openConfigModal('容器环境变量', `<div class="config-empty" style="color:var(--red)">${esc(e.message)}</div>`);
-  }
-}
-
-function openContainerEnvPicker(branchId) {
-  const branch = branches.find(b => b.id === branchId);
-  if (!branch) return;
-  const services = Object.entries(branch.services || {});
-  if (services.length === 0) {
-    showToast('该分支没有运行中的服务', 'error');
-    return;
-  }
-  if (services.length === 1) {
-    viewContainerEnv(branchId, services[0][0]);
-    return;
-  }
-  // Multiple services — let user pick
-  const listHtml = services.map(([pid, svc]) => `
-    <div class="config-item" style="cursor:pointer" onclick="viewContainerEnv('${esc(branchId)}', '${esc(pid)}')">
-      <div class="config-item-main">
-        <strong>${esc(pid)}</strong>
-        <span class="port-badge ${svc.status === 'running' ? 'run-port' : 'port-idle'}" style="display:inline-block">:${svc.hostPort}</span>
-        <span class="config-item-detail">${svc.status}</span>
-      </div>
-    </div>
-  `).join('');
-  openConfigModal('选择服务查看容器变量', listHtml);
-}
-
 function toggleModalForm(id) {
   const el = document.getElementById(id);
   if (el) el.classList.toggle('hidden');
 }
 
-// ── Log modal ──
+// ── Log modal (with tabs: logs / terminal) ──
 
-function openLogModal(title) {
+let _logPollTimer = null;
+let _logPollFn = null;
+let _logModalContext = { branchId: null, profileId: null }; // track which branch/service is open
+let _logModalTab = 'logs'; // 'logs' | 'terminal'
+let _terminalHistory = []; // command history per session
+let _terminalHistoryIdx = -1;
+
+function openLogModal(title, branchId, profileId) {
   document.getElementById('logModalTitle').textContent = title;
   document.getElementById('logModal').classList.remove('hidden');
+  _logModalContext = { branchId: branchId || null, profileId: profileId || null };
+  // Show tabs only when we have branch context (can exec)
+  const tabsEl = document.getElementById('logModalTabs');
+  if (branchId) {
+    tabsEl.classList.remove('hidden');
+  } else {
+    tabsEl.classList.add('hidden');
+  }
+  // Clear terminal state for new session
+  document.getElementById('terminalOutput').innerHTML = '';
+  document.getElementById('terminalInput').value = '';
+  _terminalHistory = [];
+  _terminalHistoryIdx = -1;
+  switchLogTab('logs');
+  _scrollLogToBottom();
 }
 
 function closeLogModal() {
   document.getElementById('logModal').classList.add('hidden');
+  if (_logPollTimer) { clearInterval(_logPollTimer); _logPollTimer = null; _logPollFn = null; }
+  _logModalContext = { branchId: null, profileId: null };
+}
+
+function switchLogTab(tab) {
+  _logModalTab = tab;
+  const logBody = document.getElementById('logModalBody');
+  const termBody = document.getElementById('terminalBody');
+  const tabs = document.querySelectorAll('#logModalTabs .log-tab');
+  tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  if (tab === 'logs') {
+    logBody.classList.remove('hidden');
+    termBody.classList.add('hidden');
+  } else {
+    logBody.classList.add('hidden');
+    termBody.classList.remove('hidden');
+    const input = document.getElementById('terminalInput');
+    if (input) setTimeout(() => input.focus(), 50);
+  }
+}
+
+async function execTerminalCmd() {
+  const input = document.getElementById('terminalInput');
+  const command = input.value.trim();
+  if (!command) return;
+  const { branchId, profileId } = _logModalContext;
+  if (!branchId) { showToast('无法执行: 未关联分支', 'error'); return; }
+
+  // Push to history
+  _terminalHistory.push(command);
+  _terminalHistoryIdx = _terminalHistory.length;
+
+  // Append command to output
+  const output = document.getElementById('terminalOutput');
+  output.innerHTML += `<div class="term-line term-cmd"><span class="term-prompt">$</span> ${esc(command)}</div>`;
+  input.value = '';
+  input.disabled = true;
+
+  try {
+    const data = await api('POST', `/branches/${encodeURIComponent(branchId)}/container-exec`, { profileId, command });
+    const text = (data.stdout || '') + (data.stderr || '');
+    if (text.trim()) {
+      const exitClass = data.exitCode !== 0 ? ' term-error' : '';
+      output.innerHTML += `<pre class="term-line term-result${exitClass}">${esc(text)}</pre>`;
+    }
+    if (data.exitCode !== 0) {
+      output.innerHTML += `<div class="term-line term-exit">exit code: ${data.exitCode}</div>`;
+    }
+  } catch (e) {
+    output.innerHTML += `<div class="term-line term-error">${esc(e.message)}</div>`;
+  }
+  input.disabled = false;
+  input.focus();
+  output.scrollTop = output.scrollHeight;
+}
+
+// Terminal history navigation (up/down arrows)
+document.addEventListener('keydown', (e) => {
+  if (_logModalTab !== 'terminal') return;
+  const input = document.getElementById('terminalInput');
+  if (!input || document.activeElement !== input) return;
+  if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (_terminalHistoryIdx > 0) {
+      _terminalHistoryIdx--;
+      input.value = _terminalHistory[_terminalHistoryIdx] || '';
+    }
+  } else if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (_terminalHistoryIdx < _terminalHistory.length - 1) {
+      _terminalHistoryIdx++;
+      input.value = _terminalHistory[_terminalHistoryIdx] || '';
+    } else {
+      _terminalHistoryIdx = _terminalHistory.length;
+      input.value = '';
+    }
+  }
+});
+
+function _startLogPoll(fn, intervalMs) {
+  if (_logPollTimer) clearInterval(_logPollTimer);
+  _logPollFn = fn;
+  _logPollTimer = setInterval(async () => {
+    if (document.getElementById('logModal').classList.contains('hidden')) {
+      clearInterval(_logPollTimer); _logPollTimer = null; _logPollFn = null; return;
+    }
+    if (_logModalTab !== 'logs') return; // don't poll when on terminal tab
+    await _logPollFn();
+  }, intervalMs);
+}
+
+function _scrollLogToBottom() {
+  requestAnimationFrame(() => {
+    const body = document.getElementById('logModalBody');
+    if (!body) return;
+    const pre = body.querySelector('.live-log-output');
+    const target = pre || body;
+    target.scrollTop = target.scrollHeight;
+  });
 }
 
 // ── Logout ──

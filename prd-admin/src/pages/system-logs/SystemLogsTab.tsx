@@ -1,12 +1,30 @@
 import { Badge } from '@/components/design/Badge';
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
-import { Select } from '@/components/design/Select';
+import { SearchableSelect } from '@/components/design/SearchableSelect';
 import { Dialog } from '@/components/ui/Dialog';
+import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { getApiLogDetail, getApiLogs, getApiLogsMeta, getLlmLogs } from '@/services';
-import type { ApiLogsListItem, ApiRequestLog } from '@/services/contracts/apiLogs';
+import type { ApiLogsListItem, ApiLogsMetaApp, ApiRequestLog } from '@/services/contracts/apiLogs';
 import type { LlmRequestLogListItem } from '@/types/admin';
-import { CheckCircle, ChevronRight, Clock, Copy, Filter, Hash, Loader2, Server, XCircle, Zap } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowDownLeft,
+  ArrowUpRight,
+  CheckCircle,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  Copy,
+  Filter,
+  Hash,
+  Loader2,
+  Monitor,
+  Server,
+  Sparkles,
+  XCircle,
+  Zap,
+} from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
@@ -26,6 +44,24 @@ function codeBoxStyle(): React.CSSProperties {
     whiteSpace: 'pre-wrap',
     wordBreak: 'break-word',
   };
+}
+
+function methodColor(m: string): string {
+  switch (m.toUpperCase()) {
+    case 'GET': return '#22c55e';
+    case 'POST': return '#3b82f6';
+    case 'PUT': return '#f59e0b';
+    case 'PATCH': return '#a855f7';
+    case 'DELETE': return '#ef4444';
+    default: return '#6b7280';
+  }
+}
+
+function statusCodeColor(code: number): string {
+  if (code < 300) return '#22c55e';
+  if (code < 400) return '#3b82f6';
+  if (code < 500) return '#eab308';
+  return '#ef4444';
 }
 
 function formatLocalTime(iso: string | null | undefined): string {
@@ -63,12 +99,12 @@ function buildMetaLabel(args: {
 
 function statusBadge(statusCode: number, status?: string | null) {
   // 请求状态优先（running/timeout）
-  if (status === 'running') return <Badge variant="new" size="sm" icon={<Clock size={10} />}>进行中</Badge>;
-  if (status === 'timeout') return <Badge variant="subtle" size="sm" icon={<XCircle size={10} />}>超时</Badge>;
+  if (status === 'running') return <Badge variant="featured" size="sm" icon={<Loader2 size={10} className="animate-spin" />}>进行中</Badge>;
+  if (status === 'timeout') return <Badge variant="warning" size="sm" icon={<AlertTriangle size={10} />}>超时</Badge>;
   // HTTP 状态码
-  if (statusCode >= 200 && statusCode < 300) return <Badge variant="success" size="sm" icon={<CheckCircle size={10} />}>成功</Badge>;
-  if (statusCode >= 400 && statusCode < 500) return <Badge variant="subtle" size="sm" icon={<XCircle size={10} />}>失败</Badge>;
-  if (statusCode >= 500) return <Badge variant="subtle" size="sm" icon={<XCircle size={10} />}>异常</Badge>;
+  if (statusCode >= 200 && statusCode < 300) return <Badge variant="success" size="sm" icon={<CheckCircle size={10} />}>{statusCode} 成功</Badge>;
+  if (statusCode >= 400 && statusCode < 500) return <Badge variant="danger" size="sm" icon={<XCircle size={10} />}>{statusCode} 失败</Badge>;
+  if (statusCode >= 500) return <Badge variant="danger" size="sm" icon={<AlertTriangle size={10} />}>{statusCode} 异常</Badge>;
   return <Badge variant="subtle" size="sm">{statusCode || '?'}</Badge>;
 }
 
@@ -103,15 +139,7 @@ export default function SystemLogsTab() {
 
   const [metaClientTypes, setMetaClientTypes] = useState<string[]>([]);
   const [metaMethods, setMetaMethods] = useState<string[]>(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
-  const [metaUserIds, setMetaUserIds] = useState<string[]>([]);
-  const [metaAppNames, setMetaAppNames] = useState<string[]>([]);
-  // 请求状态使用固定选项，不依赖数据库
-  const fixedStatuses = [
-    { value: 'running', label: '进行中' },
-    { value: 'completed', label: '完成' },
-    { value: 'failed', label: '失败' },
-    { value: 'timeout', label: '超时' },
-  ];
+  const [metaAppNames, setMetaAppNames] = useState<ApiLogsMetaApp[]>([]);
   const [qClientType, setQClientType] = useState('');
   const [qMethod, setQMethod] = useState('');
   const [qAppName, setQAppName] = useState('');
@@ -119,6 +147,7 @@ export default function SystemLogsTab() {
   const [qStatus, setQStatus] = useState('');
   const commonStatusCodes = [200, 201, 204, 301, 302, 304, 400, 401, 403, 404, 409, 422, 429, 500, 502, 503, 504];
   const [excludeNoise, setExcludeNoise] = useState(true);
+  const [showMore, setShowMore] = useState(false);
 
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -135,7 +164,6 @@ export default function SystemLogsTab() {
     if (res.success) {
       setMetaClientTypes(res.data.clientTypes ?? []);
       setMetaMethods(res.data.methods ?? metaMethods);
-      setMetaUserIds(res.data.userIds ?? []);
       setMetaAppNames(res.data.appNames ?? []);
     }
   };
@@ -284,87 +312,80 @@ export default function SystemLogsTab() {
   };
 
   return (
-    <div className="h-full min-h-0 flex flex-col">
-      <GlassCard glow animated className="p-4 flex-1 min-h-0 flex flex-col">
-        <div className="grid gap-3 grid-cols-2 md:grid-cols-7">
-          <Select
+    <div className="h-full min-h-0 flex flex-col gap-4">
+      <GlassCard glow animated className="p-4">
+        <div className="grid gap-3 grid-cols-2 sm:grid-cols-4 md:grid-cols-8">
+          <UserSearchSelect
             value={qUserId}
-            onChange={(e) => setQUserId(e.target.value)}
+            onChange={setQUserId}
+            showAllOption
+            allOptionLabel="用户"
             uiSize="sm"
-            style={inputStyle}
-          >
-            <option value="">用户</option>
-            {metaUserIds.map((uid) => (
-              <option key={uid} value={uid}>{uid}</option>
-            ))}
-          </Select>
-          <Select
+          />
+          <SearchableSelect
             value={qAppName}
-            onChange={(e) => setQAppName(e.target.value)}
+            onValueChange={setQAppName}
+            options={[
+              { value: '', label: '应用' },
+              ...metaAppNames.map((app) => ({
+                value: app.value,
+                label: app.displayName !== app.value ? `${app.displayName}` : app.value,
+                displayLabel: app.displayName !== app.value ? app.displayName : app.value,
+                icon: <Zap size={14} style={{ color: 'var(--text-muted)', opacity: 0.7 }} />,
+              })),
+            ]}
+            placeholder="应用"
+            leftIcon={<Sparkles size={16} />}
             uiSize="sm"
             style={inputStyle}
-          >
-            <option value="">应用</option>
-            {metaAppNames.map((name) => (
-              <option key={name} value={name}>{name}</option>
-            ))}
-          </Select>
-          <Select
+          />
+          <SearchableSelect
             value={qMethod}
-            onChange={(e) => setQMethod(e.target.value)}
+            onValueChange={setQMethod}
+            options={[
+              { value: '', label: '方法' },
+              ...metaMethods.map((m) => ({
+                value: m,
+                label: m,
+                icon: <span className="inline-block w-2 h-2 rounded-full" style={{ background: methodColor(m) }} />,
+              })),
+            ]}
+            placeholder="方法"
+            leftIcon={<Server size={16} />}
             uiSize="sm"
             style={inputStyle}
-          >
-            <option value="">方法</option>
-            {metaMethods.map((m) => (
-              <option key={m} value={m}>{m}</option>
-            ))}
-          </Select>
-          <Select
+          />
+          <SearchableSelect
             value={qStatusCode}
-            onChange={(e) => setQStatusCode(e.target.value)}
+            onValueChange={setQStatusCode}
+            options={[
+              { value: '', label: '状态码' },
+              ...commonStatusCodes.map((code) => ({
+                value: String(code),
+                label: String(code),
+                icon: <span className="inline-block w-2 h-2 rounded-full" style={{ background: statusCodeColor(code) }} />,
+              })),
+            ]}
+            placeholder="状态码"
+            leftIcon={<Hash size={16} />}
             uiSize="sm"
             style={inputStyle}
-          >
-            <option value="">状态</option>
-            {commonStatusCodes.map((code) => (
-              <option key={code} value={code}>{code}</option>
-            ))}
-          </Select>
-          <Select
-            value={qClientType}
-            onChange={(e) => setQClientType(e.target.value)}
-            uiSize="sm"
-            style={inputStyle}
-          >
-            <option value="">客户端</option>
-            {metaClientTypes.map((t) => (
-              <option key={t} value={t}>{t}</option>
-            ))}
-          </Select>
-          <Select
-            value={qDirection}
-            onChange={(e) => setQDirection(e.target.value)}
-            uiSize="sm"
-            style={inputStyle}
-          >
-            <option value="">方向</option>
-            <option value="inbound">入站</option>
-            <option value="outbound">出站</option>
-          </Select>
-          <Select
+          />
+          <SearchableSelect
             value={qStatus}
-            onChange={(e) => setQStatus(e.target.value)}
+            onValueChange={setQStatus}
+            options={[
+              { value: '', label: '请求状态' },
+              { value: 'running', label: '进行中', icon: <span className="inline-block w-2 h-2 rounded-full" style={{ background: '#3b82f6' }} /> },
+              { value: 'completed', label: '完成', icon: <span className="inline-block w-2 h-2 rounded-full" style={{ background: '#22c55e' }} /> },
+              { value: 'failed', label: '失败', icon: <span className="inline-block w-2 h-2 rounded-full" style={{ background: '#ef4444' }} /> },
+              { value: 'timeout', label: '超时', icon: <span className="inline-block w-2 h-2 rounded-full" style={{ background: '#eab308' }} /> },
+            ]}
+            placeholder="请求状态"
+            leftIcon={<CheckCircle size={16} />}
             uiSize="sm"
             style={inputStyle}
-          >
-            <option value="">请求状态</option>
-            {fixedStatuses.map((s) => (
-              <option key={s.value} value={s.value}>{s.label}</option>
-            ))}
-          </Select>
-        </div>
-        <div className="mt-3 grid gap-3 grid-cols-2 md:grid-cols-4">
+          />
           <div className="relative">
             <Server size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
             <input
@@ -385,22 +406,64 @@ export default function SystemLogsTab() {
               placeholder="requestId"
             />
           </div>
-          <input
-            type="datetime-local"
-            value={qFrom}
-            onChange={(e) => setQFrom(e.target.value)}
-            className="h-9 w-full rounded-[12px] px-3 text-sm outline-none"
-            style={inputStyle}
-            placeholder="开始时间"
-          />
-          <input
-            type="datetime-local"
-            value={qTo}
-            onChange={(e) => setQTo(e.target.value)}
-            className="h-9 w-full rounded-[12px] px-3 text-sm outline-none"
-            style={inputStyle}
-            placeholder="结束时间"
-          />
+          <button
+            type="button"
+            onClick={() => setShowMore((v) => !v)}
+            className="h-9 flex items-center justify-center gap-1 rounded-[12px] text-sm cursor-pointer transition-colors hover:brightness-110"
+            style={{ ...inputStyle, color: 'var(--text-secondary)' }}
+          >
+            更多
+            <ChevronDown size={14} className={`transition-transform ${showMore ? 'rotate-180' : ''}`} />
+          </button>
+          {showMore && (
+            <>
+              <SearchableSelect
+                value={qClientType}
+                onValueChange={setQClientType}
+                options={[
+                  { value: '', label: '客户端' },
+                  ...metaClientTypes.map((t) => ({
+                    value: t,
+                    label: t,
+                    icon: <Monitor size={14} style={{ color: 'var(--text-muted)', opacity: 0.7 }} />,
+                  })),
+                ]}
+                placeholder="客户端"
+                leftIcon={<Monitor size={16} />}
+                uiSize="sm"
+                style={inputStyle}
+              />
+              <SearchableSelect
+                value={qDirection}
+                onValueChange={setQDirection}
+                options={[
+                  { value: '', label: '方向' },
+                  { value: 'inbound', label: '入站', icon: <ArrowDownLeft size={14} style={{ color: '#3b82f6' }} /> },
+                  { value: 'outbound', label: '出站', icon: <ArrowUpRight size={14} style={{ color: '#f59e0b' }} /> },
+                ]}
+                placeholder="方向"
+                leftIcon={<ArrowDownLeft size={16} />}
+                uiSize="sm"
+                style={inputStyle}
+              />
+              <input
+                type="datetime-local"
+                value={qFrom}
+                onChange={(e) => setQFrom(e.target.value)}
+                className="h-9 w-full rounded-[12px] px-3 text-sm outline-none"
+                style={inputStyle}
+                placeholder="开始时间"
+              />
+              <input
+                type="datetime-local"
+                value={qTo}
+                onChange={(e) => setQTo(e.target.value)}
+                className="h-9 w-full rounded-[12px] px-3 text-sm outline-none"
+                style={inputStyle}
+                placeholder="结束时间"
+              />
+            </>
+          )}
         </div>
 
         <div className="mt-3 flex items-center justify-between gap-3">
@@ -451,11 +514,13 @@ export default function SystemLogsTab() {
             </Button>
           </div>
         </div>
+      </GlassCard>
 
+      <GlassCard glow animated className="p-4 flex-1 min-h-0 flex flex-col overflow-hidden">
         {/* 进行中任务区域（上栏） */}
         {(runningItems.length > 0 || fadingOutIds.size > 0) && qStatus !== 'completed' && qStatus !== 'failed' && qStatus !== 'timeout' && (
           <div
-            className="mt-4 rounded-[14px] p-3"
+            className="mb-3 rounded-[14px] p-3"
             style={{
               background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(147, 51, 234, 0.08) 100%)',
               border: '1px solid rgba(59, 130, 246, 0.3)',
@@ -501,7 +566,7 @@ export default function SystemLogsTab() {
                     </div>
                   </div>
                   <div className="mt-1 text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
-                    userId={it.userId}{it.clientIp ? ` · IP=${it.clientIp}` : ''}{it.groupId ? ` · groupId=${it.groupId}` : ''}{it.sessionId ? ` · sessionId=${it.sessionId}` : ''}
+                    {it.username ?? it.userId}{it.clientIp ? ` · IP=${it.clientIp}` : ''}{it.groupId ? ` · groupId=${it.groupId}` : ''}{it.sessionId ? ` · sessionId=${it.sessionId}` : ''}
                   </div>
                 </button>
               ))}
@@ -511,7 +576,7 @@ export default function SystemLogsTab() {
 
         {/* 已完成任务区域（下栏） */}
         {qStatus !== 'running' && (
-          <div className="mt-4 flex-1 min-h-0 overflow-auto grid gap-2 content-start">
+          <div className="flex-1 min-h-0 overflow-auto grid gap-2 content-start">
             {loading && (
               <div className="text-sm flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
                 <Loader2 size={16} className="animate-spin" />
@@ -545,7 +610,7 @@ export default function SystemLogsTab() {
                   </div>
                 </div>
                 <div className="mt-1 text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
-                  userId={it.userId}{it.clientIp ? ` · IP=${it.clientIp}` : ''}{it.groupId ? ` · groupId=${it.groupId}` : ''}{it.sessionId ? ` · sessionId=${it.sessionId}` : ''}{it.apiSummary ? ` · ${it.apiSummary}` : ''}
+                  {it.username ?? it.userId}{it.clientIp ? ` · IP=${it.clientIp}` : ''}{it.groupId ? ` · groupId=${it.groupId}` : ''}{it.sessionId ? ` · sessionId=${it.sessionId}` : ''}{it.apiSummary ? ` · ${it.apiSummary}` : ''}
                 </div>
                 {(it.requestBodyPreview || it.curlPreview) && (
                   <div className="mt-2 text-[11px] grid gap-1">
@@ -588,7 +653,7 @@ export default function SystemLogsTab() {
                 {detail?.method || '-'} {detail?.path || '-'}
               </div>
               <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                id={selectedId || '-'} · requestId={detail?.requestId || '-'} · userId={detail?.userId || '-'}{detail?.clientIp ? ` · IP=${detail.clientIp}` : ''}
+                id={selectedId || '-'} · requestId={detail?.requestId || '-'} · {detail?.username ? `${detail.username} (${detail.userId})` : `userId=${detail?.userId || '-'}`}{detail?.clientIp ? ` · IP=${detail.clientIp}` : ''}
               </div>
             </div>
             {detail?.curl && (

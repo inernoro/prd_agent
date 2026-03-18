@@ -1,4 +1,5 @@
 import http from 'node:http';
+import express from 'express';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { loadConfig } from './config.js';
@@ -8,6 +9,10 @@ import { StateService } from './services/state.js';
 import { WorktreeService } from './services/worktree.js';
 import { ContainerService } from './services/container.js';
 import { ProxyService } from './services/proxy.js';
+import { ExecutorAgent } from './executor/agent.js';
+import { createExecutorRouter } from './executor/routes.js';
+import { ExecutorRegistry } from './scheduler/executor-registry.js';
+import { createSchedulerRouter } from './scheduler/routes.js';
 
 const configPath = process.argv[2] || undefined;
 const config = loadConfig(configPath);
@@ -494,17 +499,19 @@ const app = createServer({
   config,
 });
 
-// ── Helper: kill only CDS (node) process on port, then retry listen ──
-function tryKillCdsOnPort(port: number): boolean {
+// ── Helper: kill process on port so CDS can bind ──
+// force=true → kill any process (used for masterPort which belongs exclusively to CDS)
+// force=false → kill only CDS node processes (safe default)
+function tryKillOnPort(port: number, force: boolean): boolean {
   try {
     const pids = execSync(`lsof -ti :${port} 2>/dev/null || true`, { encoding: 'utf-8' }).trim();
     if (!pids) return false;
     let killed = false;
     for (const pid of pids.split('\n').filter(Boolean)) {
       const cmd = execSync(`ps -p ${pid} -o comm= 2>/dev/null || true`, { encoding: 'utf-8' }).trim();
-      if (['node', 'tsx', 'ts-node', 'npx'].includes(cmd)) {
-        console.log(`  Stopping old CDS process (PID: ${pid}, cmd: ${cmd})`);
-        execSync(`kill ${pid} 2>/dev/null || true`);
+      if (force || ['node', 'tsx', 'ts-node', 'npx'].includes(cmd)) {
+        console.log(`  Stopping process on port ${port} (PID: ${pid}, cmd: ${cmd})`);
+        execSync(`kill -9 ${pid} 2>/dev/null || true`);
         killed = true;
       } else {
         console.log(`  [WARN] Port ${port} held by non-CDS process (PID: ${pid}, cmd: ${cmd}) — not killing`);
@@ -516,24 +523,31 @@ function tryKillCdsOnPort(port: number): boolean {
   }
 }
 
+// force: force-kill any process on the port (for masterPort)
+// optional: if true, port conflict is non-fatal (for workerPort shared with other services)
 function listenWithRetry(
   server: http.Server | ReturnType<typeof createServer>,
   port: number,
   label: string,
   onSuccess: () => void,
+  opts: { force?: boolean; optional?: boolean } = {},
 ) {
   const doListen = (attempt: number) => {
     const s = server.listen(port, onSuccess);
     s.on('error', (err: Error & { code?: string }) => {
       if (err.code === 'EADDRINUSE' && attempt < 2) {
         console.log(`  [WARN] Port ${port} in use, attempting to reclaim (${label})...`);
-        const killed = tryKillCdsOnPort(port);
+        const killed = tryKillOnPort(port, !!opts.force);
         if (killed) {
           setTimeout(() => doListen(attempt + 1), 1500);
+        } else if (opts.optional) {
+          console.log(`  [INFO] Port ${port} occupied by another service — ${label} skipped (non-essential)`);
         } else {
           console.error(`  [ERROR] Port ${port} is occupied by a non-CDS process. Please free it manually.`);
           process.exit(1);
         }
+      } else if (opts.optional) {
+        console.log(`  [INFO] ${label} on port ${port} unavailable — skipped`);
       } else {
         console.error(`  [ERROR] Cannot bind ${label} to port ${port}: ${err.message}`);
         process.exit(1);
@@ -543,29 +557,71 @@ function listenWithRetry(
   doListen(0);
 }
 
-listenWithRetry(app, config.masterPort, 'Dashboard', () => {
-  console.log(`\n  Cloud Development Suite`);
-  console.log(`  ──────────────────────`);
-  console.log(`  Dashboard:  http://localhost:${config.masterPort}`);
-  console.log(`  Worker:     http://localhost:${config.workerPort}`);
-  if (config.switchDomain) console.log(`  Switch:     ${config.switchDomain} → ${config.mainDomain || '(main domain not set)'}`);
-  if (config.previewDomain) console.log(`  Preview:    *.<${config.previewDomain}>`);
-  console.log(`  State file: ${stateFile}`);
-  console.log(`  Repo root:  ${config.repoRoot}`);
-  console.log('');
-});
+// ── Mode-based startup ──
+const mode = config.mode;
+console.log(`\n  Cloud Development Suite (mode: ${mode})`);
+console.log(`  ──────────────────────`);
 
-// ── Worker server (reverse proxy on workerPort) ──
-const workerServer = http.createServer((req, res) => {
-  proxyService.handleRequest(req, res);
-});
+if (mode === 'executor') {
+  // ── Executor mode: only start executor API, no dashboard/proxy ──
+  const executorApp = express();
+  executorApp.use(express.json());
+  executorApp.use('/exec', createExecutorRouter({
+    stateService, worktreeService, containerService, shell, config,
+  }));
 
-workerServer.on('upgrade', (req, socket, head) => {
-  proxyService.handleUpgrade(req, socket, head);
-});
+  const agent = new ExecutorAgent(config, stateService);
 
-listenWithRetry(workerServer, config.workerPort, 'Worker', () => {
-  console.log(`  Worker proxy listening on :${config.workerPort}`);
-  console.log(`  Route via X-Branch header or configure routing rules in dashboard.`);
-  console.log('');
-});
+  listenWithRetry(executorApp, config.executorPort, 'Executor', async () => {
+    console.log(`  Executor API:  http://localhost:${config.executorPort}`);
+    console.log(`  Scheduler:     ${config.schedulerUrl || '(not set)'}`);
+    console.log(`  State file:    ${stateFile}`);
+    console.log(`  Repo root:     ${config.repoRoot}`);
+    console.log('');
+
+    // Register with scheduler and start heartbeat
+    await agent.register();
+    agent.startHeartbeat();
+  }, { force: true });
+} else {
+  // ── Standalone or Scheduler mode: start dashboard + proxy ──
+  listenWithRetry(app, config.masterPort, 'Dashboard', () => {
+    console.log(`  Dashboard:  http://localhost:${config.masterPort}`);
+    console.log(`  Worker:     http://localhost:${config.workerPort}`);
+    if (config.switchDomain) console.log(`  Switch:     ${config.switchDomain} → ${config.mainDomain || '(main domain not set)'}`);
+    if (config.previewDomain) console.log(`  Preview:    *.<${config.previewDomain}>`);
+    console.log(`  State file: ${stateFile}`);
+    console.log(`  Repo root:  ${config.repoRoot}`);
+    console.log('');
+  }, { force: true });
+
+  // ── Worker server (reverse proxy on workerPort) ──
+  const workerServer = http.createServer((req, res) => {
+    proxyService.handleRequest(req, res);
+  });
+
+  workerServer.on('upgrade', (req, socket, head) => {
+    proxyService.handleUpgrade(req, socket, head);
+  });
+
+  listenWithRetry(workerServer, config.workerPort, 'Worker', () => {
+    console.log(`  Worker proxy listening on :${config.workerPort}`);
+    console.log(`  Route via X-Branch header or configure routing rules in dashboard.`);
+    console.log('');
+  }, { optional: true });
+
+  // ── Scheduler mode: also start executor registry ──
+  if (mode === 'scheduler') {
+    const registry = new ExecutorRegistry(stateService);
+    registry.startHealthChecks();
+
+    // Mount scheduler API routes on the dashboard server
+    app.use('/api/executors', createSchedulerRouter({ registry, config }));
+    console.log(`  Scheduler: executor management API mounted at /api/executors`);
+  }
+
+  // ── Standalone mode: register a local executor implicitly ──
+  if (mode === 'standalone') {
+    // No extra setup needed — current behavior is preserved
+  }
+}

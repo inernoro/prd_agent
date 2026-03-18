@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
 import { getAdminAuthzMe, login, resetPassword } from '@/services';
 import { Button } from '@/components/design/Button';
@@ -21,6 +21,8 @@ export default function LoginPage() {
   const setCdnBaseUrl = useAuthStore((s) => s.setCdnBaseUrl);
   const logout = useAuthStore((s) => s.logout);
   const isAuthed = useAuthStore((s) => s.isAuthenticated);
+  const [searchParams] = useSearchParams();
+  const returnUrl = searchParams.get('returnUrl') || '/';
   const [loading, setLoading] = useState(false);
   const { count: backdropCount, pendingStopId } = useBackdropMotionSnapshot();
   // 登录页默认持续动（更符合登录页氛围）；若 controller 正在刹车/运行，则由其接管
@@ -46,7 +48,7 @@ export default function LoginPage() {
   const canResetSubmit = useMemo(() => Boolean(newPassword.trim() && confirmPassword.trim()), [newPassword, confirmPassword]);
 
   useEffect(() => {
-    if (isAuthed) navigate('/', { replace: true });
+    if (isAuthed) navigate(returnUrl, { replace: true });
   }, [isAuthed, navigate]);
 
   const onSubmit = async () => {
@@ -107,7 +109,7 @@ export default function LoginPage() {
     } catch {
       // ignore
     }
-    navigate('/', { replace: true });
+    navigate(returnUrl, { replace: true });
   };
 
   const onResetPassword = async () => {

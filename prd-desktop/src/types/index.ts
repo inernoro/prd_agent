@@ -168,7 +168,7 @@ export interface DefectAttachment {
   url: string;
   thumbnailUrl?: string;
   uploadedAt: string;
-  type?: string;
+  type?: 'file' | 'screenshot' | 'log-request' | 'log-error';
   isSystemGenerated?: boolean;
 }
 
@@ -192,25 +192,29 @@ export interface DefectReport {
   resolution?: string;
   resolvedById?: string;
   resolvedByName?: string;
+  resolvedByAvatarFileName?: string;
+  resolvedAt?: string;
   rejectReason?: string;
   rejectedById?: string;
   rejectedByName?: string;
+  rejectedByAvatarFileName?: string;
   verifyFailReason?: string;
   closedAt?: string;
   createdAt: string;
   updatedAt: string;
   submittedAt?: string;
-  resolvedAt?: string;
 }
 
 export interface DefectMessage {
   id: string;
   defectId: string;
   seq: number;
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'system';
   userId?: string;
   userName?: string;
+  avatarFileName?: string;
   content: string;
+  attachmentIds?: string[];
   createdAt: string;
 }
 
@@ -218,6 +222,8 @@ export interface DefectStats {
   total: number;
   byStatus: Record<string, number>;
   bySeverity: Record<string, number>;
+  mySubmitted?: number;
+  myAssigned?: number;
 }
 
 // ━━━ 附件类型 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

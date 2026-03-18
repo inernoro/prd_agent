@@ -2,18 +2,29 @@ import { create } from 'zustand';
 import { invoke } from '../lib/tauri';
 import type { ApiResponse, DefectReport, DefectMessage, DefectStats } from '../types';
 
-export type DefectTab = 'received' | 'submitted';
+export type DefectFilter = 'all' | 'submitted' | 'assigned';
+export type DefectViewMode = 'card' | 'list';
+
+const VIEW_MODE_KEY = 'defect-view-mode';
+
+function loadViewMode(): DefectViewMode {
+  try {
+    const v = localStorage.getItem(VIEW_MODE_KEY);
+    if (v === 'list') return 'list';
+    return 'card';
+  } catch { return 'card'; }
+}
 
 interface DefectState {
   defects: DefectReport[];
   stats: DefectStats | null;
   loading: boolean;
+  filter: DefectFilter;
+  viewMode: DefectViewMode;
   selectedDefectId: string | null;
   selectedDefect: DefectReport | null;
   defectMessages: DefectMessage[];
   showSubmitPanel: boolean;
-  tab: DefectTab;
-  statusFilter: string | null;
 
   loadDefects: () => Promise<void>;
   loadStats: () => Promise<void>;
@@ -21,8 +32,8 @@ interface DefectState {
   loadDefectMessages: (id: string, afterSeq?: number) => Promise<void>;
   setSelectedDefectId: (id: string | null) => void;
   setShowSubmitPanel: (show: boolean) => void;
-  setTab: (tab: DefectTab) => void;
-  setStatusFilter: (status: string | null) => void;
+  setFilter: (filter: DefectFilter) => void;
+  setViewMode: (mode: DefectViewMode) => void;
   addDefectToList: (defect: DefectReport) => void;
   updateDefectInList: (defect: DefectReport) => void;
   removeDefectFromList: (id: string) => void;
@@ -33,12 +44,12 @@ export const useDefectStore = create<DefectState>((set) => ({
   defects: [],
   stats: null,
   loading: false,
+  filter: 'all',
+  viewMode: loadViewMode(),
   selectedDefectId: null,
   selectedDefect: null,
   defectMessages: [],
   showSubmitPanel: false,
-  tab: 'received',
-  statusFilter: null,
 
   loadDefects: async () => {
     set({ loading: true });
@@ -87,7 +98,6 @@ export const useDefectStore = create<DefectState>((set) => ({
       if (resp.success && resp.data) {
         const messages = Array.isArray(resp.data) ? resp.data : (resp.data as any).messages ?? [];
         if (afterSeq && afterSeq > 0) {
-          // 增量追加
           set((state) => ({
             defectMessages: [...state.defectMessages, ...(messages as DefectMessage[])],
           }));
@@ -102,8 +112,11 @@ export const useDefectStore = create<DefectState>((set) => ({
 
   setSelectedDefectId: (id) => set({ selectedDefectId: id }),
   setShowSubmitPanel: (show) => set({ showSubmitPanel: show }),
-  setTab: (tab) => set({ tab, statusFilter: null }),
-  setStatusFilter: (status) => set({ statusFilter: status }),
+  setFilter: (filter) => set({ filter }),
+  setViewMode: (mode) => {
+    set({ viewMode: mode });
+    try { localStorage.setItem(VIEW_MODE_KEY, mode); } catch { /* ignore */ }
+  },
 
   addDefectToList: (defect) => set((state) => ({
     defects: [defect, ...state.defects],
@@ -124,11 +137,11 @@ export const useDefectStore = create<DefectState>((set) => ({
     defects: [],
     stats: null,
     loading: false,
+    filter: 'all',
+    viewMode: loadViewMode(),
     selectedDefectId: null,
     selectedDefect: null,
     defectMessages: [],
     showSubmitPanel: false,
-    tab: 'received',
-    statusFilter: null,
   }),
 }));

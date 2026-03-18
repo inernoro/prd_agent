@@ -103,6 +103,8 @@ export interface BranchEntry {
   notes?: string;
   /** User tags — labels for filtering and categorization */
   tags?: string[];
+  /** ID of the executor this branch is deployed on (scheduler mode) */
+  executorId?: string;
 }
 
 /** State of a single service (one build profile instance) within a branch */
@@ -156,6 +158,8 @@ export interface CdsState {
   infraServices: InfraService[];
   /** Mirror acceleration enabled (npm/docker registry mirrors for faster builds in China) */
   mirrorEnabled?: boolean;
+  /** Registered executor nodes (scheduler mode) */
+  executors?: Record<string, ExecutorNode>;
 }
 
 /** Volume mount for an infrastructure service */
@@ -208,6 +212,24 @@ export interface InfraService {
   createdAt: string;
 }
 
+/** CDS running mode */
+export type CdsMode = 'standalone' | 'scheduler' | 'executor';
+
+/** An executor node (remote or local) that runs containers */
+export interface ExecutorNode {
+  id: string;
+  host: string;
+  port: number;
+  status: 'online' | 'offline' | 'draining';
+  capacity: { maxBranches: number; memoryMB: number; cpuCores: number };
+  load: { memoryUsedMB: number; cpuPercent: number };
+  labels: string[];
+  /** Branch IDs deployed on this executor */
+  branches: string[];
+  lastHeartbeat: string;
+  registeredAt: string;
+}
+
 /** Application configuration */
 export interface CdsConfig {
   repoRoot: string;
@@ -234,6 +256,14 @@ export interface CdsConfig {
     secret: string;
     issuer: string;
   };
+  /** CDS running mode: standalone (default), scheduler, or executor */
+  mode: CdsMode;
+  /** (executor mode) URL of the scheduler to register with */
+  schedulerUrl?: string;
+  /** (executor mode) Port for the executor agent API */
+  executorPort: number;
+  /** Shared token for scheduler ↔ executor authentication */
+  executorToken?: string;
 }
 
 /** Shell execution result */

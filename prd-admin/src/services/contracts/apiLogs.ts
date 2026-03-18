@@ -30,6 +30,7 @@ export type ApiLogsListItem = {
   endedAt: string | null;
   durationMs: number | null;
   userId: string;
+  username: string | null;
   groupId: string | null;
   sessionId: string | null;
   method: string;
@@ -63,11 +64,21 @@ export type ApiLogsListData = {
   pageSize: number;
 };
 
+export type ApiLogsMetaUser = {
+  userId: string;
+  username: string | null;
+};
+
+export type ApiLogsMetaApp = {
+  value: string;
+  displayName: string;
+};
+
 export type ApiLogsMetaData = {
   clientTypes: string[];
   methods: string[];
-  userIds: string[];
-  appNames: string[];
+  users: ApiLogsMetaUser[];
+  appNames: ApiLogsMetaApp[];
   directions: string[];
   statuses: string[];
 };
@@ -89,6 +100,7 @@ export type ApiRequestLog = {
   apiSummary: string | null;
   errorCode: string | null;
   userId: string;
+  username: string | null;
   groupId: string | null;
   sessionId: string | null;
   clientIp: string | null;

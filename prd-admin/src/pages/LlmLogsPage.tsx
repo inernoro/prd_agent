@@ -2,15 +2,16 @@ import { Badge } from '@/components/design/Badge';
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
 import { PlatformLabel } from '@/components/design/PlatformLabel';
-import { SearchableSelect, Select } from '@/components/design';
+import { SearchableSelect } from '@/components/design';
 import { TabBar } from '@/components/design/TabBar';
 import { Dialog } from '@/components/ui/Dialog';
 import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
+import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { getAdminDocumentContent, getLlmLogDetail, getLlmLogs, getLlmLogsMeta, listUploadArtifacts, getReplayCurl } from '@/services';
-import type { LlmLogsMetaUser, LlmLogsMetaAppCallerCode } from '@/services/contracts/llmLogs';
+import type { LlmLogsMetaAppCallerCode } from '@/services/contracts/llmLogs';
 import type { LlmRequestLog, LlmRequestLogListItem, UploadArtifact } from '@/types/admin';
 import { CheckCircle, ChevronDown, Clock, Copy, Database, Eraser, Hash, HelpCircle, ImagePlus, Layers, Loader2, RefreshCw, Reply, ScanEye, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
-import { AppCallerKeyIcon } from '@/lib/appCallerUtils';
+import { AppCallerKeyIcon, getModelTypeIcon } from '@/lib/appCallerUtils';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { glassPanel } from '@/lib/glassStyles';
@@ -912,8 +913,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
 
   const [metaModels, setMetaModels] = useState<string[]>([]);
   const [metaAppCallerCodes, setMetaAppCallerCodes] = useState<LlmLogsMetaAppCallerCode[]>([]);
-  const [metaStatuses, setMetaStatuses] = useState<string[]>(['running', 'succeeded', 'failed', 'cancelled']);
-  const [metaUsers, setMetaUsers] = useState<LlmLogsMetaUser[]>([]);
+
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -1183,8 +1183,6 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
       if (res.success) {
         setMetaModels(res.data.models ?? []);
         setMetaAppCallerCodes(res.data.appCallerCodes ?? []);
-        setMetaStatuses(res.data.statuses ?? ['running', 'succeeded', 'failed', 'cancelled']);
-        setMetaUsers(res.data.users ?? []);
       }
     })();
   }, []);
@@ -1226,9 +1224,9 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
   const statusBadge = (s: string) => {
     const v = (s || '').toLowerCase();
     if (v === 'succeeded') return <Badge variant="success" size="sm" icon={<CheckCircle size={10} />}>成功</Badge>;
-    if (v === 'failed') return <Badge variant="subtle" size="sm" icon={<XCircle size={10} />}>失败</Badge>;
-    if (v === 'running') return <Badge variant="subtle" size="sm" icon={<Loader2 size={10} className="animate-spin" />}>进行中</Badge>;
-    if (v === 'cancelled') return <Badge variant="subtle" size="sm" icon={<StopCircle size={10} />}>已取消</Badge>;
+    if (v === 'failed') return <Badge variant="danger" size="sm" icon={<XCircle size={10} />}>失败</Badge>;
+    if (v === 'running') return <Badge variant="featured" size="sm" icon={<Loader2 size={10} className="animate-spin" />}>进行中</Badge>;
+    if (v === 'cancelled') return <Badge variant="warning" size="sm" icon={<StopCircle size={10} />}>已取消</Badge>;
     return <Badge variant="subtle" size="sm">{s || '-'}</Badge>;
   };
 
@@ -1336,52 +1334,50 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
             onValueChange={setQModel}
             options={[
               { value: '', label: '模型' },
-              ...metaModels.map((m) => ({ value: m, label: m })),
+              ...metaModels.map((m) => ({ value: m, label: m, icon: <Database size={14} style={{ color: 'var(--text-muted)', opacity: 0.7 }} /> })),
             ]}
             placeholder="模型"
             leftIcon={<Database size={16} />}
             uiSize="sm"
             style={inputStyle}
           />
-          <Select
+          <SearchableSelect
             value={qStatus}
-            onChange={(e) => setQStatus(e.target.value)}
+            onValueChange={setQStatus}
+            options={[
+              { value: '', label: '状态' },
+              { value: 'running', label: '进行中', icon: <span className="inline-block w-2 h-2 rounded-full" style={{ background: '#3b82f6' }} /> },
+              { value: 'succeeded', label: '成功', icon: <span className="inline-block w-2 h-2 rounded-full" style={{ background: '#22c55e' }} /> },
+              { value: 'failed', label: '失败', icon: <span className="inline-block w-2 h-2 rounded-full" style={{ background: '#ef4444' }} /> },
+              { value: 'cancelled', label: '已取消', icon: <span className="inline-block w-2 h-2 rounded-full" style={{ background: '#6b7280' }} /> },
+            ]}
+            placeholder="状态"
+            leftIcon={<CheckCircle size={16} />}
             uiSize="sm"
             style={inputStyle}
-            leftIcon={<CheckCircle size={16} />}
-          >
-            <option value="">状态</option>
-            {metaStatuses.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </Select>
+          />
           <SearchableSelect
             value={qAppCallerCode}
             onValueChange={setQAppCallerCode}
             options={[
               { value: '', label: '应用' },
-              ...metaAppCallerCodes.map((rp) => ({ value: rp.value, label: rp.displayName })),
+              ...metaAppCallerCodes.map((rp) => {
+                const modelType = rp.value.split('::')[1] || 'unknown';
+                const IconComp = getModelTypeIcon(modelType);
+                return { value: rp.value, label: rp.displayName, icon: <IconComp size={14} style={{ color: 'var(--text-muted)', opacity: 0.7 }} /> };
+              }),
             ]}
             placeholder="应用"
             leftIcon={<Zap size={16} />}
             uiSize="sm"
             style={inputStyle}
           />
-          <SearchableSelect
+          <UserSearchSelect
             value={qUserId}
-            onValueChange={setQUserId}
-            options={[
-              { value: '', label: '用户' },
-              ...metaUsers.map((u) => ({
-                value: u.userId,
-                label: u.username ? `${u.username} / ${u.userId}` : u.userId,
-                displayLabel: u.username || u.userId,
-              })),
-            ]}
-            placeholder="用户"
-            leftIcon={<Users size={16} />}
+            onChange={setQUserId}
+            showAllOption
+            allOptionLabel="用户"
             uiSize="sm"
-            style={inputStyle}
           />
           <div className="relative">
             <Users size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />

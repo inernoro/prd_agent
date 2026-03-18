@@ -1,38 +1,25 @@
 import { useMemo, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
+import { Maximize2 } from 'lucide-react';
 import { glassPanel } from '@/lib/glassStyles';
-import { detectTierFromSize, detectAspectFromSize } from '@/lib/imageAspectOptions';
+import { Button } from '@/components/design/Button';
 import type { SizesByResolution } from '@/lib/imageAspectOptions';
 
 type SizeOption = { size: string; aspectRatio: string };
 
-/** 从 sizeToAspectMap 或 ASPECT_OPTIONS 检测比例，fallback '1:1' */
-function resolveAspect(size: string, sizeToAspectMap: Map<string, string>): string {
-  const mapped = sizeToAspectMap.get(size.toLowerCase());
-  if (mapped) return mapped;
-  return detectAspectFromSize(size) || '1:1';
-}
-
-interface ImageSizePickerProps {
-  /** 按分辨率档位分组的尺寸选项 */
+interface BatchSizePickerProps {
   sizesByResolution: SizesByResolution;
-  /** 当前选中的尺寸（如 "1024x1024"） */
-  value: string;
-  /** 尺寸变更回调 */
-  onChange: (size: string) => void;
-  /** 禁用状态 */
   disabled?: boolean;
+  onApply: (size: string) => void;
 }
 
 /**
- * 图片尺寸选择器（Popover）
- * 支持 1K/2K/4K 分辨率档位切换 + 4列比例网格
- * 从视觉创作工作台提取的共享组件
+ * 批量尺寸选择器 — 选择一个尺寸后统一应用到所有配图
  */
-export function ImageSizePicker({ sizesByResolution, value, onChange, disabled }: ImageSizePickerProps) {
+export function BatchSizePicker({ sizesByResolution, disabled, onApply }: BatchSizePickerProps) {
   const [open, setOpen] = useState(false);
+  const [selectedTier, setSelectedTier] = useState<'1k' | '2k' | '4k'>('1k');
 
-  // 按比例去重，每个比例保留一个尺寸
   const ratiosByResolution = useMemo(() => {
     const result: Record<'1k' | '2k' | '4k', Map<string, SizeOption>> = {
       '1k': new Map(),
@@ -48,79 +35,30 @@ export function ImageSizePicker({ sizesByResolution, value, onChange, disabled }
     return result;
   }, [sizesByResolution]);
 
-  // 尺寸→比例映射（后端数据优先，避免 GCD 计算偏差）
-  const sizeToAspectMap = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const tier of ['1k', '2k', '4k'] as const) {
-      for (const opt of sizesByResolution[tier]) {
-        if (opt.size && opt.aspectRatio) {
-          map.set(opt.size.toLowerCase(), opt.aspectRatio);
-        }
-      }
-    }
-    return map;
-  }, [sizesByResolution]);
-
-  const currentSize = value || '1024x1024';
-  const currentTier = detectTierFromSize(currentSize) || '1k';
-  const currentAspect = resolveAspect(currentSize, sizeToAspectMap);
-
   const availableTiers = (['1k', '2k', '4k'] as const).filter((t) => ratiosByResolution[t].size > 0);
-  const effectiveTier = availableTiers.includes(currentTier) ? currentTier : (availableTiers[0] || '1k');
-  const hasOptions = availableTiers.length > 0;
+  const effectiveTier = availableTiers.includes(selectedTier) ? selectedTier : (availableTiers[0] || '1k');
 
-  const handleTierClick = (tier: '1k' | '2k' | '4k') => {
-    const targetOpt = ratiosByResolution[tier].get(currentAspect);
-    if (targetOpt) {
-      onChange(targetOpt.size);
-    } else {
-      const first = ratiosByResolution[tier].values().next().value;
-      if (first) onChange(first.size);
-    }
-  };
-
-  const tierLabel = effectiveTier === '4k' ? '4K' : effectiveTier === '2k' ? '2K' : '1K';
-
-  if (!hasOptions) {
-    return (
-      <span
-        className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[11px] font-medium"
-        style={{
-          background: 'var(--bg-input-hover)',
-          border: '1px solid var(--border-default)',
-          color: 'var(--text-secondary)',
-        }}
-      >
-        {currentSize}
-      </span>
-    );
-  }
+  if (availableTiers.length === 0) return null;
 
   return (
     <Popover.Root open={open} onOpenChange={(o) => { if (!disabled) setOpen(o); }}>
       <Popover.Trigger asChild>
-        <button
-          type="button"
+        <Button
+          size="xs"
+          variant="secondary"
           disabled={disabled}
-          className="inline-flex items-center gap-1 rounded-full px-2.5 h-6 text-[11px] font-medium cursor-pointer hover:opacity-80 transition-opacity"
-          style={{
-            background: 'rgba(99, 102, 241, 0.12)',
-            border: '1px solid rgba(99, 102, 241, 0.3)',
-            color: 'rgba(129, 140, 248, 0.95)',
-            opacity: disabled ? 0.5 : 1,
-          }}
-          title="选择尺寸"
+          title="批量修改所有配图的尺寸"
           onClick={(e) => e.stopPropagation()}
         >
-          <span style={{ whiteSpace: 'nowrap' }}>{tierLabel} · {currentAspect}</span>
-          <span className="text-[8px] ml-0.5" style={{ opacity: 0.6 }}>▾</span>
-        </button>
+          <Maximize2 size={12} />
+          尺寸
+        </Button>
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Content
-          side="top"
-          align="start"
-          sideOffset={10}
+          side="bottom"
+          align="end"
+          sideOffset={6}
           className="z-50 rounded-[16px] p-3"
           style={{
             ...glassPanel,
@@ -130,6 +68,9 @@ export function ImageSizePicker({ sizesByResolution, value, onChange, disabled }
           onInteractOutside={(e) => e.preventDefault()}
           onFocusOutside={(e) => e.preventDefault()}
         >
+          <div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>
+            批量修改所有配图尺寸
+          </div>
           {/* 分辨率档位 */}
           <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'var(--text-muted)' }}>分辨率</div>
           <div className="flex gap-1.5 mb-3">
@@ -146,7 +87,7 @@ export function ImageSizePicker({ sizesByResolution, value, onChange, disabled }
                     border: isSelected ? '1px solid rgba(99, 102, 241, 0.6)' : '1px solid rgba(255,255,255,0.14)',
                     color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
                   }}
-                  onClick={() => handleTierClick(tier)}
+                  onClick={() => setSelectedTier(tier)}
                 >
                   {label}
                 </button>
@@ -167,7 +108,6 @@ export function ImageSizePicker({ sizesByResolution, value, onChange, disabled }
                 }
               }
               return Array.from(ratios.entries()).map(([ratio, opt]) => {
-                const isSelected = ratio === currentAspect;
                 const [rw, rh] = ratio.includes(':') ? ratio.split(':').map(Number) : [1, 1];
                 const aspectVal = rw && rh ? rw / rh : 1;
                 const iconW = aspectVal >= 1 ? 20 : Math.round(20 * aspectVal);
@@ -178,12 +118,12 @@ export function ImageSizePicker({ sizesByResolution, value, onChange, disabled }
                     type="button"
                     className="flex flex-col items-center justify-center gap-1 py-2 rounded-[8px] transition-colors"
                     style={{
-                      background: isSelected ? 'rgba(99, 102, 241, 0.22)' : 'rgba(255,255,255,0.08)',
-                      border: isSelected ? '1px solid rgba(99, 102, 241, 0.6)' : '1px solid rgba(255,255,255,0.14)',
-                      color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
+                      background: 'rgba(255,255,255,0.08)',
+                      border: '1px solid rgba(255,255,255,0.14)',
+                      color: 'rgba(255,255,255,0.88)',
                     }}
                     onClick={() => {
-                      onChange(opt.size);
+                      onApply(opt.size);
                       setOpen(false);
                     }}
                   >

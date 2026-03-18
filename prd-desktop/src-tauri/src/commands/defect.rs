@@ -189,13 +189,35 @@ pub async fn reject_defect(
         .await
 }
 
+/// 关闭缺陷（标记为已完成）
+#[command]
+pub async fn close_defect(id: String) -> Result<ApiResponse<serde_json::Value>, String> {
+    let client = ApiClient::new();
+    let body = EmptyBody {};
+    client
+        .post(&format!("/api/defect-agent/defects/{}/close", id), &body)
+        .await
+}
+
+/// 删除缺陷（软删除）
+#[command]
+pub async fn delete_defect(id: String) -> Result<ApiResponse<serde_json::Value>, String> {
+    let client = ApiClient::new();
+    client
+        .delete(&format!("/api/defect-agent/defects/{}", id))
+        .await
+}
+
 /// 验收通过
 #[command]
 pub async fn verify_pass_defect(id: String) -> Result<ApiResponse<serde_json::Value>, String> {
     let client = ApiClient::new();
     let body = EmptyBody {};
     client
-        .post(&format!("/api/defect-agent/defects/{}/verify-pass", id), &body)
+        .post(
+            &format!("/api/defect-agent/defects/{}/verify-pass", id),
+            &body,
+        )
         .await
 }
 
@@ -212,25 +234,6 @@ pub async fn verify_fail_defect(
             &format!("/api/defect-agent/defects/{}/verify-fail", id),
             &request,
         )
-        .await
-}
-
-/// 关闭缺陷
-#[command]
-pub async fn close_defect(id: String) -> Result<ApiResponse<serde_json::Value>, String> {
-    let client = ApiClient::new();
-    let body = EmptyBody {};
-    client
-        .post(&format!("/api/defect-agent/defects/{}/close", id), &body)
-        .await
-}
-
-/// 删除缺陷
-#[command]
-pub async fn delete_defect(id: String) -> Result<ApiResponse<serde_json::Value>, String> {
-    let client = ApiClient::new();
-    client
-        .delete(&format!("/api/defect-agent/defects/{}", id))
         .await
 }
 

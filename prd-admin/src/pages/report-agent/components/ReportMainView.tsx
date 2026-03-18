@@ -1,27 +1,54 @@
 import { useState, useMemo } from 'react';
 import {
-  Plus, ChevronLeft, ChevronRight, Calendar, FileText,
+  Plus, Calendar, FileText,
   CheckCircle2, Clock, AlertCircle, Send, Pencil,
-  CalendarCheck, Zap, ArrowRight,
+  CalendarCheck, ArrowRight,
 } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { useReportAgentStore } from '@/stores/reportAgentStore';
+import type { WeeklyReport } from '@/services/contracts/reportAgent';
 import { WeeklyReportStatus } from '@/services/contracts/reportAgent';
 import { ReportEditor } from './ReportEditor';
-import { StatsCardPanel } from './StatsCardPanel';
 import { DailyLogInline } from './DailyLogInline';
-import { MOCK_ACTIVITY, MOCK_REPORT_SECTIONS } from '../mockData';
 
 // ────── helpers ──────
 
-function getISOWeek(date: Date): { weekYear: number; weekNumber: number } {
+interface WeekRef {
+  weekYear: number;
+  weekNumber: number;
+}
+
+function getISOWeek(date: Date): WeekRef {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
   const dayNum = d.getUTCDay() || 7;
   d.setUTCDate(d.getUTCDate() + 4 - dayNum);
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
   const weekNumber = Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
   return { weekYear: d.getUTCFullYear(), weekNumber };
+}
+
+function getPreviousWeek(week: WeekRef): WeekRef {
+  if (week.weekNumber <= 1) {
+    return { weekYear: week.weekYear - 1, weekNumber: 52 };
+  }
+  return { weekYear: week.weekYear, weekNumber: week.weekNumber - 1 };
+}
+
+function getWeekKey(week: WeekRef): string {
+  return `${week.weekYear}-${String(week.weekNumber).padStart(2, '0')}`;
+}
+
+function parseWeekKey(weekKey: string): WeekRef {
+  const [year, week] = weekKey.split('-').map(Number);
+  return {
+    weekYear: Number.isFinite(year) ? year : new Date().getFullYear(),
+    weekNumber: Number.isFinite(week) ? week : 1,
+  };
+}
+
+function formatWeekLabel(week: WeekRef): string {
+  return `${week.weekYear} 年第 ${week.weekNumber} 周`;
 }
 
 const statusConfig: Record<string, { label: string; color: string; bg: string; borderColor: string; icon: React.ElementType }> = {
@@ -39,74 +66,81 @@ export function ReportMainView() {
     reports, teams, templates,
     showReportEditor, setShowReportEditor,
     setSelectedReportId, loadReports,
-    mockPreviewMode,
   } = useReportAgentStore();
 
   const now = useMemo(() => getISOWeek(new Date()), []);
-  const [weekYear, setWeekYear] = useState(now.weekYear);
-  const [weekNumber, setWeekNumber] = useState(now.weekNumber);
+  const prevWeek = useMemo(() => getPreviousWeek(now), [now]);
+  const [weekFilterMode, setWeekFilterMode] = useState<'all' | 'specific'>('all');
+  const [selectedWeekKey, setSelectedWeekKey] = useState(getWeekKey(now));
   const [editingReportId, setEditingReportId] = useState<string | null>(null);
   const [showDailyLog, setShowDailyLog] = useState(false);
 
-  const isCurrentWeek = weekYear === now.weekYear && weekNumber === now.weekNumber;
-
-  const filteredReports = useMemo(() => {
-    return reports.filter((r) => r.weekYear === weekYear && r.weekNumber === weekNumber);
-  }, [reports, weekYear, weekNumber]);
-
-  // Mock reports for preview mode
-  const mockReports = useMemo(() => {
-    if (!mockPreviewMode) return [];
-    return [{
-      id: 'mock-report-1',
-      userId: 'mock-user',
-      userName: 'Mock User',
-      teamId: 'mock-team',
-      teamName: '产品研发组',
-      templateId: 'mock-tpl',
-      weekYear, weekNumber,
-      periodStart: new Date().toISOString(),
-      periodEnd: new Date().toISOString(),
-      status: 'draft',
-      sections: MOCK_REPORT_SECTIONS,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }];
-  }, [mockPreviewMode, weekYear, weekNumber]);
-
-  const displayReports = mockPreviewMode ? mockReports : filteredReports;
-
   const hasTeam = teams.length > 0;
   const hasTemplate = templates.length > 0;
-  const hasReports = displayReports.length > 0;
+  const createWeek = useMemo(
+    () => (weekFilterMode === 'specific' ? parseWeekKey(selectedWeekKey) : now),
+    [weekFilterMode, selectedWeekKey, now]
+  );
 
-  const handlePrevWeek = () => {
-    if (weekNumber <= 1) { setWeekYear(weekYear - 1); setWeekNumber(52); }
-    else setWeekNumber(weekNumber - 1);
-  };
-  const handleNextWeek = () => {
-    if (weekNumber >= 52) { setWeekYear(weekYear + 1); setWeekNumber(1); }
-    else setWeekNumber(weekNumber + 1);
-  };
+  const weekOptions = useMemo(() => {
+    const weekMap = new Map<string, WeekRef>();
+    for (const report of reports) {
+      weekMap.set(getWeekKey(report), { weekYear: report.weekYear, weekNumber: report.weekNumber });
+    }
+    weekMap.set(getWeekKey(now), now);
+    weekMap.set(getWeekKey(prevWeek), prevWeek);
+    return [...weekMap.values()].sort((a, b) => {
+      if (a.weekYear !== b.weekYear) return b.weekYear - a.weekYear;
+      return b.weekNumber - a.weekNumber;
+    });
+  }, [reports, now, prevWeek]);
+
+  const filteredReports = useMemo(() => {
+    const sorted = [...reports].sort((a, b) => {
+      if (a.weekYear !== b.weekYear) return b.weekYear - a.weekYear;
+      if (a.weekNumber !== b.weekNumber) return b.weekNumber - a.weekNumber;
+      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+    });
+    if (weekFilterMode === 'all') return sorted;
+    const selectedWeek = parseWeekKey(selectedWeekKey);
+    return sorted.filter((r) => r.weekYear === selectedWeek.weekYear && r.weekNumber === selectedWeek.weekNumber);
+  }, [reports, weekFilterMode, selectedWeekKey]);
+
+  const groupedReports = useMemo(() => {
+    const map = new Map<string, { week: WeekRef; items: WeeklyReport[] }>();
+    for (const report of filteredReports) {
+      const key = getWeekKey(report);
+      if (!map.has(key)) {
+        map.set(key, { week: { weekYear: report.weekYear, weekNumber: report.weekNumber }, items: [] });
+      }
+      map.get(key)!.items.push(report);
+    }
+    return [...map.values()].sort((a, b) => {
+      if (a.week.weekYear !== b.week.weekYear) return b.week.weekYear - a.week.weekYear;
+      return b.week.weekNumber - a.week.weekNumber;
+    });
+  }, [filteredReports]);
+
+  const hasReports = filteredReports.length > 0;
 
   const handleCreateReport = () => {
     setEditingReportId(null);
     setShowReportEditor(true);
   };
+
   const handleEditReport = (id: string) => {
-    if (mockPreviewMode) return; // don't open editor in mock mode
     setEditingReportId(id);
     setSelectedReportId(id);
     setShowReportEditor(true);
   };
 
   // ── Editor view ──
-  if (showReportEditor && !mockPreviewMode) {
+  if (showReportEditor) {
     return (
       <ReportEditor
         reportId={editingReportId}
-        weekYear={weekYear}
-        weekNumber={weekNumber}
+        weekYear={createWeek.weekYear}
+        weekNumber={createWeek.weekNumber}
         onClose={() => {
           setShowReportEditor(false);
           setEditingReportId(null);
@@ -126,48 +160,109 @@ export function ReportMainView() {
   // ── Main workspace ──
   return (
     <div className="flex flex-col gap-4 h-full overflow-y-auto pb-6" style={{ scrollbarWidth: 'thin' }}>
-
-      {/* ① Week selector — compact header */}
-      <GlassCard variant="subtle" className="px-5 py-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <Calendar size={16} style={{ color: 'var(--text-muted)' }} />
-            <Button variant="ghost" size="sm" onClick={handlePrevWeek}>
-              <ChevronLeft size={15} />
-            </Button>
-            <div className="flex items-center gap-2">
-              <span className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                {weekYear} 年第 {weekNumber} 周
-              </span>
-              {isCurrentWeek && (
-                <span
-                  className="text-[10px] px-2 py-0.5 rounded-full font-medium"
-                  style={{ color: 'rgba(59, 130, 246, 0.9)', background: 'rgba(59, 130, 246, 0.1)' }}
-                >
-                  本周
-                </span>
-              )}
+      <GlassCard variant="subtle" className="px-5 py-4">
+        <div className="flex items-start justify-between flex-wrap gap-3">
+          <div className="flex flex-col gap-3">
+            <div>
+              <div className="text-[16px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                我的周报
+              </div>
+              <div className="text-[12px] mt-1" style={{ color: 'var(--text-muted)' }}>
+                共 {reports.length} 份 · 默认展示全部周报
+              </div>
             </div>
-            <Button variant="ghost" size="sm" onClick={handleNextWeek}>
-              <ChevronRight size={15} />
-            </Button>
-            {!isCurrentWeek && (
-              <Button variant="ghost" size="sm" onClick={() => { setWeekYear(now.weekYear); setWeekNumber(now.weekNumber); }}>
-                回到本周
-              </Button>
-            )}
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                className="whitespace-nowrap px-3 py-1.5 rounded-lg text-[12px] font-medium transition-colors"
+                style={{
+                  color: weekFilterMode === 'all' ? 'rgba(59, 130, 246, 0.95)' : 'var(--text-secondary)',
+                  background: weekFilterMode === 'all' ? 'rgba(59, 130, 246, 0.1)' : 'var(--bg-secondary)',
+                  border: `1px solid ${weekFilterMode === 'all' ? 'rgba(59, 130, 246, 0.2)' : 'var(--border-primary)'}`,
+                }}
+                onClick={() => setWeekFilterMode('all')}
+              >
+                全部
+              </button>
+              <button
+                className="whitespace-nowrap px-3 py-1.5 rounded-lg text-[12px] font-medium transition-colors"
+                style={{
+                  color:
+                    weekFilterMode === 'specific' && selectedWeekKey === getWeekKey(now)
+                      ? 'rgba(59, 130, 246, 0.95)'
+                      : 'var(--text-secondary)',
+                  background:
+                    weekFilterMode === 'specific' && selectedWeekKey === getWeekKey(now)
+                      ? 'rgba(59, 130, 246, 0.1)'
+                      : 'var(--bg-secondary)',
+                  border:
+                    weekFilterMode === 'specific' && selectedWeekKey === getWeekKey(now)
+                      ? '1px solid rgba(59, 130, 246, 0.2)'
+                      : '1px solid var(--border-primary)',
+                }}
+                onClick={() => {
+                  setWeekFilterMode('specific');
+                  setSelectedWeekKey(getWeekKey(now));
+                }}
+              >
+                本周
+              </button>
+              <button
+                className="whitespace-nowrap px-3 py-1.5 rounded-lg text-[12px] font-medium transition-colors"
+                style={{
+                  color:
+                    weekFilterMode === 'specific' && selectedWeekKey === getWeekKey(prevWeek)
+                      ? 'rgba(59, 130, 246, 0.95)'
+                      : 'var(--text-secondary)',
+                  background:
+                    weekFilterMode === 'specific' && selectedWeekKey === getWeekKey(prevWeek)
+                      ? 'rgba(59, 130, 246, 0.1)'
+                      : 'var(--bg-secondary)',
+                  border:
+                    weekFilterMode === 'specific' && selectedWeekKey === getWeekKey(prevWeek)
+                      ? '1px solid rgba(59, 130, 246, 0.2)'
+                      : '1px solid var(--border-primary)',
+                }}
+                onClick={() => {
+                  setWeekFilterMode('specific');
+                  setSelectedWeekKey(getWeekKey(prevWeek));
+                }}
+              >
+                上周
+              </button>
+              <div
+                className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg"
+                style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)' }}
+              >
+                <Calendar size={13} style={{ color: 'var(--text-muted)' }} />
+                <select
+                  className="text-[12px] bg-transparent outline-none"
+                  style={{ color: 'var(--text-primary)' }}
+                  value={selectedWeekKey}
+                  onChange={(e) => {
+                    setWeekFilterMode('specific');
+                    setSelectedWeekKey(e.target.value);
+                  }}
+                >
+                  {weekOptions.map((week) => (
+                    <option key={getWeekKey(week)} value={getWeekKey(week)}>
+                      {formatWeekLabel(week)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
           </div>
           <div className="flex items-center gap-2">
-            {/* Daily log quick entry */}
             <Button
               variant="secondary"
               size="sm"
               onClick={() => setShowDailyLog(true)}
+              className="whitespace-nowrap"
             >
-              <CalendarCheck size={13} /> 打卡
+              <CalendarCheck size={13} /> 日常记录
             </Button>
             {hasTeam && hasTemplate && (
-              <Button variant="primary" size="sm" onClick={handleCreateReport} disabled={mockPreviewMode}>
+              <Button variant="primary" size="sm" onClick={handleCreateReport} className="whitespace-nowrap">
                 <Plus size={14} /> 写周报
               </Button>
             )}
@@ -175,42 +270,35 @@ export function ReportMainView() {
         </div>
       </GlassCard>
 
-      {/* ② Stats overview — always visible */}
-      <StatsCardPanel
-        weekYear={weekYear}
-        weekNumber={weekNumber}
-        mockData={mockPreviewMode ? MOCK_ACTIVITY : undefined}
-      />
-
-      {/* ③ Onboarding guide — shown when missing prerequisites */}
-      {!hasTeam && !hasTemplate && !mockPreviewMode && (
+      {!hasTeam && !hasTemplate && (
         <OnboardingGuide hasTeam={hasTeam} hasTemplate={hasTemplate} />
       )}
 
-      {/* ④ Report cards */}
       {hasReports ? (
-        <div className="flex flex-col gap-3">
-          <div className="flex items-center justify-between px-1">
-            <span className="text-[13px] font-medium" style={{ color: 'var(--text-secondary)' }}>
-              本周周报
-            </span>
-            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-              {displayReports.length} 份
-            </span>
-          </div>
-          <div className="grid grid-cols-1 gap-3">
-            {displayReports.map((report) => (
-              <ReportCard
-                key={report.id}
-                report={report}
-                onClick={() => handleEditReport(report.id)}
-                isMock={mockPreviewMode}
-              />
-            ))}
-          </div>
+        <div className="flex flex-col gap-5">
+          {groupedReports.map((group) => (
+            <div key={getWeekKey(group.week)} className="flex flex-col gap-3">
+              <div className="flex items-center justify-between px-1">
+                <span className="text-[13px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+                  {formatWeekLabel(group.week)}
+                </span>
+                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  {group.items.length} 份
+                </span>
+              </div>
+              <div className="grid grid-cols-1 gap-3">
+                {group.items.map((report) => (
+                  <ReportCard
+                    key={report.id}
+                    report={report}
+                    onClick={() => handleEditReport(report.id)}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
-      ) : !mockPreviewMode && hasTeam && hasTemplate ? (
-        /* Empty state — has prerequisites but no report this week */
+      ) : hasTeam && hasTemplate ? (
         <div className="flex-1 flex items-center justify-center" style={{ minHeight: 240 }}>
           <div className="flex flex-col items-center gap-4 text-center max-w-sm">
             <div
@@ -221,15 +309,19 @@ export function ReportMainView() {
             </div>
             <div>
               <div className="text-[15px] font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
-                本周还没有周报
+                暂无周报
               </div>
               <div className="text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-                开始记录这周的工作成果吧
+                {weekFilterMode === 'all'
+                  ? '还没有任何周报，点击右上角开始创建'
+                  : `${formatWeekLabel(parseWeekKey(selectedWeekKey))} 暂无周报`}
               </div>
             </div>
-            <Button variant="primary" onClick={handleCreateReport}>
-              <Plus size={14} /> 写周报
-            </Button>
+            {hasTeam && hasTemplate && (
+              <Button variant="primary" onClick={handleCreateReport}>
+                <Plus size={14} /> 写周报
+              </Button>
+            )}
           </div>
         </div>
       ) : null}
@@ -239,10 +331,18 @@ export function ReportMainView() {
 
 // ────── Report Card ──────
 
-function ReportCard({ report, onClick, isMock }: {
-  report: { id: string; teamName?: string; status: string; sections: { templateSection?: { title?: string }; items: { content: string }[] }[]; returnReason?: string; submittedAt?: string; reviewedAt?: string };
+function ReportCard({ report, onClick }: {
+  report: {
+    id: string;
+    teamName?: string;
+    status: string;
+    sections: { templateSection?: { title?: string }; items: { content: string }[] }[];
+    returnReason?: string;
+    submittedAt?: string;
+    reviewedAt?: string;
+    updatedAt: string;
+  };
   onClick: () => void;
-  isMock?: boolean;
 }) {
   const cfg = statusConfig[report.status] || statusConfig[WeeklyReportStatus.Draft];
   const StatusIcon = cfg.icon;
@@ -254,14 +354,13 @@ function ReportCard({ report, onClick, isMock }: {
 
   return (
     <div
-      className={`group rounded-xl transition-all duration-200 ${isMock ? '' : 'cursor-pointer hover:translate-y-[-1px]'}`}
+      className="group rounded-xl transition-all duration-200 cursor-pointer hover:translate-y-[-1px]"
       style={{
         background: 'var(--surface-glass)',
         backdropFilter: 'blur(12px)',
         border: `1px solid var(--border-primary)`,
         borderLeft: `3px solid ${cfg.borderColor}`,
         boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
-        opacity: isMock ? 0.85 : 1,
       }}
       onClick={onClick}
     >
@@ -274,11 +373,6 @@ function ReportCard({ report, onClick, isMock }: {
             </div>
           </div>
           <div className="flex items-center gap-2 ml-2">
-            {isMock && (
-              <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ color: 'rgba(168, 85, 247, 0.8)', background: 'rgba(168, 85, 247, 0.1)' }}>
-                Mock
-              </span>
-            )}
             <span
               className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full flex-shrink-0 font-medium"
               style={{ color: cfg.color, backgroundColor: cfg.bg }}
@@ -343,6 +437,9 @@ function ReportCard({ report, onClick, isMock }: {
             {report.returnReason}
           </div>
         )}
+        <div className="text-[10px] mt-3" style={{ color: 'var(--text-muted)' }}>
+          更新于 {new Date(report.updatedAt).toLocaleDateString('zh-CN')}
+        </div>
       </div>
     </div>
   );
@@ -351,7 +448,7 @@ function ReportCard({ report, onClick, isMock }: {
 // ────── Onboarding Guide ──────
 
 function OnboardingGuide({ hasTeam, hasTemplate }: { hasTeam: boolean; hasTemplate: boolean }) {
-  const { setActiveTab, setMockPreviewMode } = useReportAgentStore();
+  const { setActiveTab } = useReportAgentStore();
 
   const steps = [
     {
@@ -377,7 +474,7 @@ function OnboardingGuide({ hasTeam, hasTemplate }: { hasTeam: boolean; hasTempla
   return (
     <GlassCard variant="subtle" className="p-6">
       <div className="flex flex-col items-center text-center mb-6">
-        <Zap size={32} style={{ color: 'rgba(59, 130, 246, 0.6)' }} className="mb-3" />
+        <FileText size={32} style={{ color: 'rgba(59, 130, 246, 0.6)' }} className="mb-3" />
         <div className="text-[16px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
           快速开始
         </div>
@@ -423,16 +520,6 @@ function OnboardingGuide({ hasTeam, hasTemplate }: { hasTeam: boolean; hasTempla
         ))}
       </div>
 
-      {/* CTA: preview with mock data */}
-      <div className="flex justify-center">
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => setMockPreviewMode(true)}
-        >
-          <Zap size={13} /> 先看效果 — 一键预览 Mock 数据
-        </Button>
-      </div>
     </GlassCard>
   );
 }
