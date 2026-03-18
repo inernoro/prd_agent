@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Calendar,
   ChevronLeft,
@@ -45,6 +45,8 @@ function getISOWeek(date: Date): { weekYear: number; weekNumber: number } {
 }
 
 const summaryColors = ['rgba(59,130,246,.9)', 'rgba(34,197,94,.9)', 'rgba(168,85,247,.9)', 'rgba(249,115,22,.9)'];
+const DRAWER_CLOSE_MS = 220;
+const DRAWER_ENTER_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)';
 
 const statusConfig: Record<string, { label: string; color: string; bg: string; icon: typeof CheckCircle2 }> = {
   [WeeklyReportStatus.NotStarted]: { label: '未开始', color: 'rgba(156,163,175,.8)', bg: 'rgba(156,163,175,.08)', icon: Clock },
@@ -77,7 +79,9 @@ export function TeamDashboard() {
 
   const [teamScope, setTeamScope] = useState<'managed' | 'joined'>('managed');
   const [selectedTeamId, setSelectedTeamId] = useState('');
+  const [memberDrawerVisible, setMemberDrawerVisible] = useState(false);
   const [memberDrawerOpen, setMemberDrawerOpen] = useState(false);
+  const drawerCloseTimerRef = useRef<number | null>(null);
 
   const now = useMemo(() => getISOWeek(new Date()), []);
   const [weekYear, setWeekYear] = useState(now.weekYear);
@@ -95,6 +99,33 @@ export function TeamDashboard() {
 
   const [returnDialogId, setReturnDialogId] = useState<string | null>(null);
   const [returnReason, setReturnReason] = useState('');
+
+  const closeMemberDrawer = useCallback((immediate = false) => {
+    if (drawerCloseTimerRef.current) {
+      window.clearTimeout(drawerCloseTimerRef.current);
+      drawerCloseTimerRef.current = null;
+    }
+    setMemberDrawerOpen(false);
+    if (immediate) {
+      setMemberDrawerVisible(false);
+      return;
+    }
+    drawerCloseTimerRef.current = window.setTimeout(() => {
+      setMemberDrawerVisible(false);
+      drawerCloseTimerRef.current = null;
+    }, DRAWER_CLOSE_MS);
+  }, []);
+
+  const openMemberDrawer = useCallback(() => {
+    if (drawerCloseTimerRef.current) {
+      window.clearTimeout(drawerCloseTimerRef.current);
+      drawerCloseTimerRef.current = null;
+    }
+    setMemberDrawerVisible(true);
+    window.requestAnimationFrame(() => {
+      setMemberDrawerOpen(true);
+    });
+  }, []);
 
   const managedTeams = useMemo(
     () =>
@@ -151,21 +182,39 @@ export function TeamDashboard() {
     if (!hasScopedTeams) {
       setSelectedTeamId('');
       setSummaryView(null);
-      setMemberDrawerOpen(false);
+      closeMemberDrawer(true);
       return;
     }
     if (!scopedTeams.some((team) => team.id === selectedTeamId)) {
       setSelectedTeamId(scopedTeams[0].id);
     }
-  }, [hasScopedTeams, scopedTeams, selectedTeamId]);
+  }, [closeMemberDrawer, hasScopedTeams, scopedTeams, selectedTeamId]);
 
   useEffect(() => {
-    setMemberDrawerOpen(false);
-  }, [teamScope, selectedTeamId]);
+    closeMemberDrawer(true);
+  }, [closeMemberDrawer, teamScope, selectedTeamId]);
 
   useEffect(() => {
     void loadSummaryView();
   }, [loadSummaryView]);
+
+  useEffect(() => {
+    return () => {
+      if (drawerCloseTimerRef.current) {
+        window.clearTimeout(drawerCloseTimerRef.current);
+        drawerCloseTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!memberDrawerVisible) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeMemberDrawer();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [closeMemberDrawer, memberDrawerVisible]);
 
   const members = useMemo(() => {
     const list = summaryView?.members ?? [];
@@ -237,7 +286,7 @@ export function TeamDashboard() {
     }
     toast.success('你已退出该团队');
     await loadTeams();
-    setMemberDrawerOpen(false);
+    closeMemberDrawer();
   };
 
   const handleAddMember = async () => {
@@ -351,16 +400,30 @@ export function TeamDashboard() {
         </div>
       )}
 
-      {memberDrawerOpen && selectedTeam && (
-        <div className="fixed inset-0 z-50 flex justify-end" onClick={() => setMemberDrawerOpen(false)}>
-          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
-          <div className="relative h-full w-full max-w-[500px] surface p-0 overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="sticky top-0 z-10 surface-inset px-4 py-3 flex items-center justify-between">
+      {memberDrawerVisible && selectedTeam && (
+        <div className="fixed inset-0 z-50 flex justify-end" onClick={() => closeMemberDrawer()}>
+          <div
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-200"
+            style={{ opacity: memberDrawerOpen ? 1 : 0 }}
+          />
+          <div
+            className="relative h-full w-full max-w-[500px] surface p-0 overflow-y-auto"
+            style={{
+              opacity: memberDrawerOpen ? 1 : 0,
+              transform: memberDrawerOpen ? 'translateX(0)' : 'translateX(24px)',
+              transition: `transform 240ms ${DRAWER_ENTER_EASING}, opacity ${DRAWER_CLOSE_MS}ms ease`,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              className="sticky top-0 z-10 surface-inset px-4 py-3 flex items-center justify-between"
+              style={{ boxShadow: '0 8px 24px -18px rgba(0,0,0,0.55)' }}
+            >
               <div>
                 <div className="text-[15px] font-semibold">团队成员</div>
                 <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{selectedTeam.name}</div>
               </div>
-              <Button variant="ghost" size="sm" onClick={() => setMemberDrawerOpen(false)}><X size={14} /></Button>
+              <Button variant="ghost" size="sm" onClick={() => closeMemberDrawer()}><X size={14} /></Button>
             </div>
             <div className="p-4 space-y-3">
               {!summaryView?.canViewAllMembers && (
@@ -393,17 +456,27 @@ export function TeamDashboard() {
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5">
-                      {member.reportId && <Button variant="ghost" size="sm" onClick={() => openReportDetail(member.reportId!)}><ExternalLink size={13} /> 查看</Button>}
+                      {member.reportId && <Button variant="secondary" size="sm" onClick={() => openReportDetail(member.reportId!)}><ExternalLink size={13} /> 查看</Button>}
                       {isLeaderOrDeputyOnSelectedTeam && member.reportId && member.reportStatus === WeeklyReportStatus.Submitted && (
                         <>
                           <Button variant="primary" size="sm" onClick={() => handleReview(member.reportId!)}>审阅</Button>
-                          <Button variant="secondary" size="sm" onClick={() => setReturnDialogId(member.reportId!)}>打回</Button>
+                          <Button variant="ghost" size="sm" onClick={() => setReturnDialogId(member.reportId!)}>打回</Button>
                         </>
                       )}
                       {isLeaderOrDeputyOnSelectedTeam && member.reportId && member.reportStatus === WeeklyReportStatus.Reviewed && (
-                        <Button variant="secondary" size="sm" onClick={() => setReturnDialogId(member.reportId!)}>打回</Button>
+                        <Button variant="ghost" size="sm" onClick={() => setReturnDialogId(member.reportId!)}>打回</Button>
                       )}
-                      {canRemove && <Button variant="ghost" size="sm" onClick={() => handleRemoveMember(member.userId)}><UserMinus size={12} /></Button>}
+                      {canRemove && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleRemoveMember(member.userId)}
+                          className="hover:text-red-300"
+                          title="移除成员"
+                        >
+                          <UserMinus size={12} />
+                        </Button>
+                      )}
                     </div>
                   </div>
                 );
@@ -454,7 +527,7 @@ export function TeamDashboard() {
             <span className="text-[14px] font-semibold whitespace-nowrap">{weekYear} 年第 {weekNumber} 周</span>
             <Button variant="ghost" size="sm" onClick={handleNextWeek}><ChevronRight size={15} /></Button>
             {selectedTeamId && (
-              <Button variant="secondary" size="sm" onClick={() => setMemberDrawerOpen(true)}>
+              <Button variant="secondary" size="sm" onClick={openMemberDrawer}>
                 <Users size={13} />
                 团队成员
               </Button>
@@ -494,19 +567,37 @@ export function TeamDashboard() {
       {hasScopedTeams && selectedTeamId && (
         <GlassCard variant="subtle" className="surface-raised p-0 overflow-hidden">
           <div className="px-5 py-4 flex items-center justify-between gap-3" style={{ borderBottom: '1px solid var(--border-primary)' }}>
-            <div>
+            <div className="min-w-0">
               <div className="flex items-center gap-2.5">
                 <Sparkles size={16} />
-                <span className="text-[15px] font-semibold">团队周报汇总</span>
+                <span className="text-[16px] font-semibold tracking-tight">团队周报汇总</span>
+              </div>
+              <div className="mt-2 flex items-center flex-wrap gap-2 text-[11px]">
+                <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: 'var(--text-secondary)' }}>
+                  {weekYear} 年第 {weekNumber} 周
+                </span>
+                <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: 'var(--text-secondary)' }}>
+                  {summaryView?.visibilityScope === 'self_only' ? '个人汇总视图' : '团队汇总视图'}
+                </span>
+                {summaryView?.summary && (
+                  <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: 'var(--text-muted)' }}>
+                    更新于 {new Date(summaryView.summary.updatedAt).toLocaleString()}
+                  </span>
+                )}
               </div>
               {summaryView?.visibilityScope === 'self_only' && (
-                <div className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>
+                <div className="mt-2 surface-inset rounded-lg px-2.5 py-1.5 text-[12px]" style={{ color: 'var(--text-muted)' }}>
                   当前团队未公开成员周报，仅展示你本人已提交周报汇总。
                 </div>
               )}
             </div>
             <div className="flex items-center gap-2">
-              {summaryView?.summary && <Button variant="ghost" size="sm" onClick={handleExportSummary}><Download size={13} /></Button>}
+              {summaryView?.summary && (
+                <Button variant="secondary" size="sm" onClick={handleExportSummary}>
+                  <Download size={13} />
+                  导出
+                </Button>
+              )}
               {summaryView?.canGenerateSummary && (
                 <Button variant="primary" size="sm" onClick={handleGenerateSummary} disabled={generatingSummary}>
                   {generatingSummary ? <Loader2 size={13} className="animate-spin mr-1" /> : <Sparkles size={13} className="mr-1" />}
