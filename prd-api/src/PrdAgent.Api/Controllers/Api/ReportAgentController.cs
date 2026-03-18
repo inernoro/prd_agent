@@ -78,6 +78,24 @@ public class ReportAgentController : ControllerBase
         => User.FindFirst("name")?.Value
            ?? User.FindFirst(ClaimTypes.Name)?.Value;
 
+    private static string ResolveUserDisplayName(User? user, string? claimName, string userId)
+    {
+        var displayName = user?.DisplayName?.Trim();
+        if (!string.IsNullOrWhiteSpace(displayName))
+            return displayName;
+
+        var username = user?.Username?.Trim();
+        if (!string.IsNullOrWhiteSpace(username))
+            return username;
+
+        var nameFromClaim = claimName?.Trim();
+        if (!string.IsNullOrWhiteSpace(nameFromClaim))
+            return nameFromClaim;
+
+        // 评论必须实名展示：兜底至少展示 userId，不再显示“匿名”
+        return userId;
+    }
+
     private bool HasPermission(string perm)
     {
         var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
@@ -2064,6 +2082,33 @@ public class ReportAgentController : ControllerBase
             .SortBy(c => c.CreatedAt)
             .ToListAsync();
 
+        var pendingResolved = comments
+            .Where(c => string.IsNullOrWhiteSpace(c.AuthorDisplayName) || c.AuthorDisplayName.Trim() == "匿名")
+            .ToList();
+
+        if (pendingResolved.Count > 0)
+        {
+            var authorIds = pendingResolved
+                .Select(c => c.AuthorUserId)
+                .Where(uid => !string.IsNullOrWhiteSpace(uid))
+                .Distinct()
+                .ToList();
+
+            if (authorIds.Count > 0)
+            {
+                var users = await _db.Users
+                    .Find(u => authorIds.Contains(u.UserId))
+                    .ToListAsync();
+
+                var userMap = users.ToDictionary(u => u.UserId, u => u);
+                foreach (var comment in pendingResolved)
+                {
+                    userMap.TryGetValue(comment.AuthorUserId, out var authorUser);
+                    comment.AuthorDisplayName = ResolveUserDisplayName(authorUser, null, comment.AuthorUserId);
+                }
+            }
+        }
+
         return Ok(ApiResponse<object>.Ok(new { items = comments }));
     }
 
@@ -2075,6 +2120,8 @@ public class ReportAgentController : ControllerBase
     {
         var userId = GetUserId();
         var username = GetUsername();
+        var currentUser = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
+        var authorDisplayName = ResolveUserDisplayName(currentUser, username, userId);
 
         var report = await _db.WeeklyReports.Find(r => r.Id == id).FirstOrDefaultAsync();
         if (report == null)
@@ -2109,7 +2156,7 @@ public class ReportAgentController : ControllerBase
             SectionTitleSnapshot = sectionTitle,
             ParentCommentId = string.IsNullOrEmpty(req.ParentCommentId) ? null : req.ParentCommentId,
             AuthorUserId = userId,
-            AuthorDisplayName = username ?? "匿名",
+            AuthorDisplayName = authorDisplayName,
             Content = req.Content.Trim()
         };
 
