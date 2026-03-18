@@ -122,6 +122,28 @@ function DefectRow({ defect, isSelected, userId, onSelect }: {
       {/* 状态标签 */}
       <div className="shrink-0">{renderBadge()}</div>
 
+      {/* 截图缩略图 */}
+      {(() => {
+        const imgs = (defect.attachments ?? []).filter((a) => a.mimeType?.startsWith('image/'));
+        if (!imgs.length) return null;
+        return (
+          <div className="flex items-center gap-1 shrink-0">
+            {imgs.slice(0, 2).map((att) => (
+              <div
+                key={att.id}
+                className="w-6 h-6 rounded overflow-hidden shrink-0"
+                style={{ background: 'rgba(128,128,128,0.1)', border: '1px solid rgba(128,128,128,0.2)' }}
+              >
+                <img src={att.url} alt={att.fileName} className="w-full h-full object-cover" />
+              </div>
+            ))}
+            {imgs.length > 2 && (
+              <span className="text-[9px] text-text-secondary">+{imgs.length - 2}</span>
+            )}
+          </div>
+        );
+      })()}
+
       {/* 附件数 */}
       {(defect.attachments?.length ?? 0) > 0 && (
         <span className="text-[10px] text-text-secondary shrink-0 flex items-center gap-0.5">
@@ -157,10 +179,15 @@ function DefectRow({ defect, isSelected, userId, onSelect }: {
         </span>
       </div>
 
-      {/* 时间 */}
-      <span className="text-[10px] text-text-secondary shrink-0 w-14 text-right">
-        {timeAgo(defect.updatedAt || defect.createdAt)}
-      </span>
+      {/* 缺陷编号 + 时间 */}
+      <div className="flex flex-col items-end gap-0.5 shrink-0">
+        <span className="text-[9px] font-mono text-text-secondary" style={{ opacity: 0.7 }}>
+          {defect.defectNo}
+        </span>
+        <span className="text-[10px] text-text-secondary">
+          {timeAgo(defect.updatedAt || defect.createdAt)}
+        </span>
+      </div>
     </button>
   );
 }
