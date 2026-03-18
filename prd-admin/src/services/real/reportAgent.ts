@@ -1,6 +1,7 @@
 import { apiRequest } from './apiClient';
 import { api } from '@/services/api';
 import type { ApiResponse } from '@/types/api';
+import { useAuthStore } from '@/stores/authStore';
 import type {
   ListReportTeamsContract,
   GetReportTeamContract,
@@ -232,7 +233,7 @@ export const updateWeeklyReportReal: UpdateWeeklyReportContract = async (input) 
 };
 
 export const uploadReportRichTextImageReal: UploadReportRichTextImageContract = async (input) => {
-  const token = localStorage.getItem('accessToken');
+  const token = useAuthStore.getState().token;
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
 
