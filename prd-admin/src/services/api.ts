@@ -466,6 +466,17 @@ export const api = {
     logs: {
       preview: () => '/api/defect-agent/logs/preview',
     },
+    shares: {
+      list: () => '/api/defect-agent/shares',
+      byId: (id: string) => `/api/defect-agent/shares/${id}`,
+      reports: (shareId: string) => `/api/defect-agent/shares/${shareId}/reports`,
+      acceptItem: (reportId: string, defectId: string) =>
+        `/api/defect-agent/shares/reports/${reportId}/items/${defectId}/accept`,
+      rejectItem: (reportId: string, defectId: string) =>
+        `/api/defect-agent/shares/reports/${reportId}/items/${defectId}/reject`,
+      viewByToken: (token: string) => `/api/defect-agent/share/view/${token}`,
+      submitReport: (token: string) => `/api/defect-agent/share/view/${token}/report`,
+    },
   },
 
   // ============ Report Agent 周报管理 ============

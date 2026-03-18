@@ -23,6 +23,7 @@ import { systemDialog } from '@/lib/systemDialog';
 import { DefectStatus, DefectSeverity, DefectAttachmentType } from '@/services/contracts/defectAgent';
 import type { DefectAttachment, DefectMessage } from '@/services/contracts/defectAgent';
 import { parseContentToSegments, stripImgTags } from '@/lib/defectContentUtils';
+import { ShareDefectDialog } from './ShareDefectDialog';
 import {
   X,
   ArrowRight,
@@ -126,6 +127,7 @@ export function DefectDetailPanel() {
 
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [showShareDialog, setShowShareDialog] = useState(false);
   const [comment, setComment] = useState('');
   const [commentFocused, setCommentFocused] = useState(false);
   const [sendingComment, setSendingComment] = useState(false);
@@ -431,6 +433,7 @@ export function DefectDetailPanel() {
   };
 
   return (
+    <>
     <DialogPrimitive.Root open={!!defect} onOpenChange={(open) => { if (!open) { if (lightboxImage) { setLightboxImage(null); return; } handleClose(); } }}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay
@@ -840,6 +843,15 @@ export function DefectDetailPanel() {
                 />
                 <span className="truncate max-w-[60px]">{defect.assigneeName || '未指派'}</span>
               </div>
+              {/* 分享按钮 */}
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setShowShareDialog(true)}
+              >
+                <ExternalLink size={14} />
+                分享
+              </Button>
               {/* 删除按钮 */}
               {canDelete && !confirmingDelete && (
                 <>
@@ -1272,5 +1284,14 @@ export function DefectDetailPanel() {
       )}
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
+
+    {showShareDialog && (
+      <ShareDefectDialog
+        open={showShareDialog}
+        onClose={() => setShowShareDialog(false)}
+        defectId={defect.id}
+      />
+    )}
+    </>
   );
 }
