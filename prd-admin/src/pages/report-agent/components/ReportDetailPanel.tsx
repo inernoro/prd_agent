@@ -3,13 +3,12 @@ import { X, MessageSquare, CornerDownRight, Trash2, Send, GitCompare, Download }
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { getWeeklyReport, listComments, createComment, deleteComment, exportReportMarkdown } from '@/services';
 import { useAuthStore } from '@/stores/authStore';
 import type { WeeklyReport, ReportComment } from '@/services/contracts/reportAgent';
 import { WeeklyReportStatus, ReportInputType } from '@/services/contracts/reportAgent';
 import { PlanComparisonPanel } from './PlanComparisonPanel';
+import { RichTextMarkdownContent } from './RichTextMarkdownContent';
 
 interface Props {
   reportId: string;
@@ -204,15 +203,11 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
                     ) : section.templateSection.inputType === ReportInputType.RichText ? (
                       <div className="space-y-2 ml-7">
                         {section.items.map((item, iIdx) => (
-                          <div
+                          <RichTextMarkdownContent
                             key={iIdx}
-                            className="text-[12px] leading-relaxed rounded-lg px-3 py-2 [&_img]:max-w-full [&_img]:rounded-lg [&_img]:my-2"
-                            style={{ background: 'var(--bg-secondary)', color: 'var(--text-secondary)' }}
-                          >
-                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                              {item.content?.trim() ? item.content : '（空）'}
-                            </ReactMarkdown>
-                          </div>
+                            content={item.content}
+                            imageMaxHeight={260}
+                          />
                         ))}
                       </div>
                     ) : (

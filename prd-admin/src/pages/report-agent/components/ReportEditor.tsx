@@ -3,8 +3,6 @@ import { ArrowLeft, Save, Send, Plus, Trash2, Sparkles, RefreshCw, FileText } fr
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { useReportAgentStore } from '@/stores/reportAgentStore';
 import {
   createWeeklyReport,
@@ -17,6 +15,7 @@ import {
 } from '@/services';
 import type { WeeklyReport } from '@/services/contracts/reportAgent';
 import { WeeklyReportStatus, ReportInputType } from '@/services/contracts/reportAgent';
+import { RichTextMarkdownContent } from './RichTextMarkdownContent';
 
 interface Props {
   reportId: string | null;
@@ -635,19 +634,12 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                             disabled={!canEdit}
                           />
                           {hasMarkdownImage(item.content) && (
-                            <div
-                              className="mt-2 rounded-xl px-3 py-2"
-                              style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)' }}
-                            >
-                              <div className="text-[11px] mb-1" style={{ color: 'var(--text-muted)' }}>
-                                实时预览
-                              </div>
-                              <div className="text-[12px] leading-relaxed [&_img]:max-w-full [&_img]:rounded-lg [&_img]:my-2 [&_img]:border [&_img]:border-[var(--border-primary)]">
-                                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                  {item.content}
-                                </ReactMarkdown>
-                              </div>
-                            </div>
+                            <RichTextMarkdownContent
+                              content={item.content}
+                              showRealtimeLabel
+                              imageMaxHeight={220}
+                              className="mt-2"
+                            />
                           )}
                         </div>
                       ) : (
