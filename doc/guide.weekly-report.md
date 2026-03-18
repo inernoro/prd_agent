@@ -43,8 +43,8 @@
 | 团队工作台 | 管理/加入分区、周报列表主视图、成员抽屉 | 团队 Tab |
 | 团队周报AI分析 | AI 聚合成员周报生成分析摘要 | 团队 Tab → 团队周报AI分析 |
 | 数据统计 | 个人/团队 12 周趋势图 | 设置 → 数据统计 |
-| 评论系统 | 按段落评论、回复、删除 | 周报详情页 |
-| 导出 | 导出周报/团队汇总为 Markdown | 周报详情页 / 团队汇总 |
+| 评论系统 | 按段落评论、回复、删除（与正文轻量区分） | 周报详情页 |
+| 点赞 | 点赞/取消点赞，展示点赞用户头像与姓名 | 周报详情页底部 |
 
 ### 页面结构
 
@@ -621,7 +621,7 @@ AI 会综合以下数据源自动生成周报内容：
 1. 打开周报详情页
 2. 在目标章节下方点击「评论」按钮
 3. 输入评论内容，点击发送
-4. 评论出现在章节下方，显示作者和时间
+4. 评论出现在章节下方，显示作者和时间，且以轻量卡片样式与正文区分
 5. 点击「回复」可以回复特定评论
 
 ### 10.3 权限规则
@@ -663,27 +663,20 @@ AI 会综合以下数据源自动生成周报内容：
 
 ---
 
-## 12. 导出功能
+## 12. 点赞功能
 
-### 12.1 导出周报
+### 12.1 点赞与取消点赞
 
-**操作路径**：周报详情页 → 导出按钮
+**操作路径**：周报详情页底部 → 点赞按钮（心形图标）
 
-- 导出格式：Markdown（`.md` 文件）
-- 文件名格式：`周报_{用户名}_{年份}W{周数}.md`
-- 包含：周期、团队、状态、各章节内容
+- 首次点击为点赞，再次点击为取消点赞（可反复切换）
+- 点赞人数实时显示在按钮右侧
+- 点赞成功后，底部展示已点赞用户头像与姓名
 
-**权限**：本人可导出自己的；负责人可导出团队成员的；有 `view.all` 权限可导出任何人的。
+### 12.2 点赞可见范围
 
-### 12.2 导出团队周报AI分析
-
-**操作路径**：团队 Tab → 团队周报AI分析区域 → 导出按钮
-
-- 导出格式：Markdown
-- 文件名格式：`团队汇总_{团队名}_{年份}W{周数}.md`
-- 包含：周期、成员数、提交数、生成人、各汇总段落
-
-**权限**：仅 leader/deputy 或有 `view.all` 权限者。
+- 周报本人、同团队成员、有 `view.all` 权限者可查看点赞列表
+- 具备查看权限的用户均可点赞/取消点赞
 
 ---
 
@@ -968,17 +961,18 @@ AI 会综合以下数据源自动生成周报内容：
 | POST | `/api/report-agent/reports/{id}/review` | 审阅 | leader |
 | POST | `/api/report-agent/reports/{id}/return` | 退回 | leader |
 | POST | `/api/report-agent/reports/{id}/generate` | AI 生成 | `use` + 本人 |
-| GET | `/api/report-agent/reports/{id}/export/markdown` | 导出 | `use` |
 | GET | `/api/report-agent/reports/{id}/comments` | 评论列表 | `use` + 团队成员 |
 | POST | `/api/report-agent/reports/{id}/comments` | 创建评论 | `use` + 团队成员 |
 | DELETE | `/api/report-agent/reports/{reportId}/comments/{commentId}` | 删除评论 | 作者本人 |
+| GET | `/api/report-agent/reports/{id}/likes` | 点赞列表 | `use` + 团队成员 |
+| POST | `/api/report-agent/reports/{id}/likes` | 点赞（幂等） | `use` + 团队成员 |
+| DELETE | `/api/report-agent/reports/{id}/likes` | 取消点赞（幂等） | `use` + 团队成员 |
 | GET | `/api/report-agent/reports/{id}/plan-comparison` | 计划对比 | `use` + 团队成员 |
 | GET | `/api/report-agent/teams/{id}/dashboard` | 团队面板 | leader |
 | GET | `/api/report-agent/teams/{id}/reports/view` | 周报列表视图（full_team/self_only） | 团队成员 |
 | POST | `/api/report-agent/teams/{id}/summary/generate` | 生成汇总 | leader |
 | GET | `/api/report-agent/teams/{id}/summary` | 获取汇总 | 团队成员 |
 | GET | `/api/report-agent/teams/{id}/summary/view` | 汇总视图（full_team/self_only） | 团队成员 |
-| GET | `/api/report-agent/teams/{teamId}/summary/export/markdown` | 导出汇总 | leader |
 | POST | `/api/report-agent/daily-logs` | 保存打卡 | `use` |
 | GET | `/api/report-agent/daily-logs` | 打卡列表 | `use` |
 | GET | `/api/report-agent/daily-logs/{date}` | 指定日期打卡 | `use` |
@@ -1017,6 +1011,7 @@ AI 会综合以下数据源自动生成周报内容：
 | `report_data_sources` | 团队数据源配置 |
 | `report_commits` | 同步的 Git 提交 |
 | `report_comments` | 周报评论 |
+| `report_likes` | 周报点赞 |
 | `report_team_summaries` | 团队汇总 |
 
 ---

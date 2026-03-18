@@ -44,6 +44,9 @@ import type {
   ListCommentsContract,
   CreateCommentContract,
   DeleteCommentContract,
+  ListReportLikesContract,
+  LikeReportContract,
+  UnlikeReportContract,
   GetPlanComparisonContract,
   GenerateTeamSummaryContract,
   GetTeamSummaryContract,
@@ -78,6 +81,7 @@ import type {
   ReportUser,
   TeamDashboardData,
   ReportComment,
+  ReportLikeSummary,
   PlanComparison,
   TeamSummary,
   TeamSummaryViewData,
@@ -521,6 +525,27 @@ export const createCommentReal: CreateCommentContract = async (input) => {
 export const deleteCommentReal: DeleteCommentContract = async (input) => {
   return await apiRequest<object>(
     api.reportAgent.reports.comment(encodeURIComponent(input.reportId), encodeURIComponent(input.commentId)),
+    { method: 'DELETE' }
+  );
+};
+
+export const listReportLikesReal: ListReportLikesContract = async (input) => {
+  return await apiRequest<ReportLikeSummary>(
+    api.reportAgent.reports.likes(encodeURIComponent(input.reportId)),
+    { method: 'GET' }
+  );
+};
+
+export const likeReportReal: LikeReportContract = async (input) => {
+  return await apiRequest<ReportLikeSummary>(
+    api.reportAgent.reports.likes(encodeURIComponent(input.reportId)),
+    { method: 'POST' }
+  );
+};
+
+export const unlikeReportReal: UnlikeReportContract = async (input) => {
+  return await apiRequest<ReportLikeSummary>(
+    api.reportAgent.reports.likes(encodeURIComponent(input.reportId)),
     { method: 'DELETE' }
   );
 };

@@ -489,6 +489,7 @@
 领导查看周报后可以：
 - **标记已读**：表示已查阅（员工可看到查阅状态）
 - **评论**：针对具体板块留评论（复用现有 `prdcomments` 组件模式）
+- **点赞**：在周报详情底部点赞/取消点赞，展示已点赞用户头像与姓名
 - **退回**：要求补充或修改，附退回原因
 
 ---
@@ -537,6 +538,7 @@
 | `report_data_sources` | 数据源配置 | teamId, sourceType, repoUrl, accessToken(encrypted), userMapping |
 | `report_commits` | 代码提交缓存 | sourceId, userId, commitHash, message, date, stats |
 | `report_comments` | 周报评论 | reportId, sectionIndex, userId, content, createdAt |
+| `report_likes` | 周报点赞 | reportId, userId, userName, avatarFileName, createdAt |
 
 ### 5.2 核心模型
 

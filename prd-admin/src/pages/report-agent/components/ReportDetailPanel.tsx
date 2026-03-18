@@ -9,6 +9,7 @@ import type { WeeklyReport, ReportComment } from '@/services/contracts/reportAge
 import { WeeklyReportStatus, ReportInputType } from '@/services/contracts/reportAgent';
 import { PlanComparisonPanel } from './PlanComparisonPanel';
 import { RichTextMarkdownContent } from './RichTextMarkdownContent';
+import { ReportLikeBar } from './ReportLikeBar';
 
 interface Props {
   reportId: string;
@@ -281,9 +282,13 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
           {activeTab === 'plan-comparison' && <PlanComparisonPanel reportId={reportId} />}
         </div>
 
+        <div className="px-6 py-3" style={{ borderTop: '1px solid var(--border-primary)' }}>
+          <ReportLikeBar reportId={report.id} compact />
+        </div>
+
         {/* Footer */}
         {(report.status === WeeklyReportStatus.Submitted || report.status === WeeklyReportStatus.Reviewed) && (onReview || onReturn) && (
-          <div className="flex items-center justify-end gap-2 px-6 py-4" style={{ borderTop: '1px solid var(--border-primary)' }}>
+          <div className="flex items-center justify-end gap-2 px-6 py-4">
             {onReturn && (
               <Button variant="secondary" size="sm" onClick={onReturn}>退回</Button>
             )}
@@ -313,16 +318,25 @@ function CommentItem({
   return (
     <div className="group flex items-start gap-1.5">
       {isReply && <CornerDownRight size={10} style={{ color: 'var(--text-muted)', marginTop: 2 }} />}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5">
+      <div
+        className="flex-1 min-w-0 rounded-lg px-2.5 py-2 border"
+        style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border-primary)' }}
+      >
+        <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>
             {comment.authorDisplayName}
+          </span>
+          <span
+            className="text-[10px] px-1.5 py-0.5 rounded-md"
+            style={{ background: 'rgba(99, 102, 241, 0.08)', color: 'rgba(99, 102, 241, 0.82)' }}
+          >
+            评论
           </span>
           <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
             {new Date(comment.createdAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
           </span>
         </div>
-        <div className="text-[12px] leading-relaxed mt-0.5" style={{ color: 'var(--text-secondary)' }}>{comment.content}</div>
+        <div className="text-[12px] leading-relaxed mt-1 whitespace-pre-wrap break-words" style={{ color: 'var(--text-secondary)' }}>{comment.content}</div>
       </div>
       <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
         <button className="p-0.5 rounded hover:bg-[var(--bg-tertiary)]" onClick={onReply} title="回复">

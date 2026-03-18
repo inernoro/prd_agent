@@ -96,6 +96,60 @@ public class ReportAgentController : ControllerBase
         return userId;
     }
 
+    private async Task<bool> CanAccessReportAsync(WeeklyReport report, string userId)
+    {
+        if (report.UserId == userId) return true;
+        if (await IsTeamMember(report.TeamId, userId)) return true;
+        return HasPermission(AdminPermissionCatalog.ReportAgentViewAll);
+    }
+
+    private async Task<object> BuildReportLikeSummaryPayloadAsync(string reportId, string currentUserId)
+    {
+        var likes = await _db.ReportLikes
+            .Find(x => x.ReportId == reportId)
+            .SortByDescending(x => x.CreatedAt)
+            .ToListAsync();
+
+        var authorIds = likes
+            .Select(x => x.UserId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct()
+            .ToList();
+
+        Dictionary<string, User> userMap = new(StringComparer.Ordinal);
+        if (authorIds.Count > 0)
+        {
+            var users = await _db.Users.Find(u => authorIds.Contains(u.UserId)).ToListAsync();
+            userMap = users.ToDictionary(u => u.UserId, u => u);
+        }
+
+        foreach (var like in likes)
+        {
+            userMap.TryGetValue(like.UserId, out var user);
+            if (string.IsNullOrWhiteSpace(like.UserName))
+            {
+                like.UserName = ResolveUserDisplayName(user, null, like.UserId);
+            }
+            if (string.IsNullOrWhiteSpace(like.AvatarFileName) && !string.IsNullOrWhiteSpace(user?.AvatarFileName))
+            {
+                like.AvatarFileName = user!.AvatarFileName;
+            }
+        }
+
+        return new
+        {
+            likedByMe = likes.Any(x => x.UserId == currentUserId),
+            count = likes.Count,
+            users = likes.Select(x => new
+            {
+                userId = x.UserId,
+                userName = !string.IsNullOrWhiteSpace(x.UserName) ? x.UserName : x.UserId,
+                avatarFileName = x.AvatarFileName,
+                likedAt = x.CreatedAt
+            }).ToList()
+        };
+    }
+
     private bool HasPermission(string perm)
     {
         var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
@@ -2183,6 +2237,86 @@ public class ReportAgentController : ControllerBase
             c => c.Id == commentId || c.ParentCommentId == commentId);
 
         return Ok(ApiResponse<object>.Ok(new { }));
+    }
+
+    #endregion
+
+    #region Likes
+
+    /// <summary>
+    /// 获取周报点赞列表
+    /// </summary>
+    [HttpGet("reports/{id}/likes")]
+    public async Task<IActionResult> ListReportLikes(string id)
+    {
+        var userId = GetUserId();
+        var report = await _db.WeeklyReports.Find(r => r.Id == id).FirstOrDefaultAsync();
+        if (report == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "周报不存在"));
+
+        if (!await CanAccessReportAsync(report, userId))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权查看该周报的点赞"));
+
+        var payload = await BuildReportLikeSummaryPayloadAsync(id, userId);
+        return Ok(ApiResponse<object>.Ok(payload));
+    }
+
+    /// <summary>
+    /// 点赞周报（幂等）
+    /// </summary>
+    [HttpPost("reports/{id}/likes")]
+    public async Task<IActionResult> LikeReport(string id)
+    {
+        var userId = GetUserId();
+        var username = GetUsername();
+        var report = await _db.WeeklyReports.Find(r => r.Id == id).FirstOrDefaultAsync();
+        if (report == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "周报不存在"));
+
+        if (!await CanAccessReportAsync(report, userId))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权点赞该周报"));
+
+        var currentUser = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
+        var userDisplayName = ResolveUserDisplayName(currentUser, username, userId);
+        var like = new ReportLike
+        {
+            ReportId = id,
+            UserId = userId,
+            UserName = userDisplayName,
+            AvatarFileName = currentUser?.AvatarFileName
+        };
+
+        try
+        {
+            await _db.ReportLikes.InsertOneAsync(like);
+        }
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            // 幂等：重复点赞不报错
+        }
+
+        var payload = await BuildReportLikeSummaryPayloadAsync(id, userId);
+        return Ok(ApiResponse<object>.Ok(payload));
+    }
+
+    /// <summary>
+    /// 取消点赞周报（幂等）
+    /// </summary>
+    [HttpDelete("reports/{id}/likes")]
+    public async Task<IActionResult> UnlikeReport(string id)
+    {
+        var userId = GetUserId();
+        var report = await _db.WeeklyReports.Find(r => r.Id == id).FirstOrDefaultAsync();
+        if (report == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "周报不存在"));
+
+        if (!await CanAccessReportAsync(report, userId))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权取消点赞该周报"));
+
+        await _db.ReportLikes.DeleteOneAsync(x => x.ReportId == id && x.UserId == userId);
+
+        var payload = await BuildReportLikeSummaryPayloadAsync(id, userId);
+        return Ok(ApiResponse<object>.Ok(payload));
     }
 
     #endregion

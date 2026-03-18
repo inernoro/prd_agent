@@ -496,6 +496,7 @@ export const api = {
       generate: (id: string) => `/api/report-agent/reports/${id}/generate`,
       comments: (id: string) => `/api/report-agent/reports/${id}/comments`,
       comment: (id: string, commentId: string) => `/api/report-agent/reports/${id}/comments/${commentId}`,
+      likes: (id: string) => `/api/report-agent/reports/${id}/likes`,
       planComparison: (id: string) => `/api/report-agent/reports/${id}/plan-comparison`,
     },
     dailyLogs: {

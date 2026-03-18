@@ -534,6 +534,19 @@ export interface ReportComment {
   updatedAt?: string;
 }
 
+export interface ReportLikeUser {
+  userId: string;
+  userName: string;
+  avatarFileName?: string;
+  likedAt: string;
+}
+
+export interface ReportLikeSummary {
+  likedByMe: boolean;
+  count: number;
+  users: ReportLikeUser[];
+}
+
 export type ListCommentsContract = (input: {
   reportId: string;
   sectionIndex?: number;
@@ -550,6 +563,18 @@ export type DeleteCommentContract = (input: {
   reportId: string;
   commentId: string;
 }) => Promise<ApiResponse<object>>;
+
+export type ListReportLikesContract = (input: {
+  reportId: string;
+}) => Promise<ApiResponse<ReportLikeSummary>>;
+
+export type LikeReportContract = (input: {
+  reportId: string;
+}) => Promise<ApiResponse<ReportLikeSummary>>;
+
+export type UnlikeReportContract = (input: {
+  reportId: string;
+}) => Promise<ApiResponse<ReportLikeSummary>>;
 
 // ========== Phase 3: Plan Comparison ==========
 
