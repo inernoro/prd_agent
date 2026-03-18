@@ -4,25 +4,26 @@
     {
       "name": "prd-admin",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["dev"],
+      "runtimeArgs": ["--dir", "prd-admin", "dev"],
       "port": 8000
     },
     {
       "name": "prd-api",
       "runtimeExecutable": "dotnet",
-      "runtimeArgs": ["watch", "run", "--project", "src/PrdAgent.Api"],
-      "port": 5000
+      "runtimeArgs": ["watch", "run", "--project", "prd-api/src/PrdAgent.Api", "--urls", "http://localhost:5001"],
+      "port": 5001,
+      "autoPort": false
     },
     {
       "name": "prd-desktop",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["tauri:dev"],
+      "runtimeArgs": ["--dir", "prd-desktop", "tauri:dev"],
       "port": 1420
     },
     {
       "name": "prd-video",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["start"],
+      "runtimeArgs": ["--dir", "prd-video", "start"],
       "port": 3000
     }
   ]
