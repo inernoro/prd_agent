@@ -117,6 +117,38 @@ public class ReportAgentController : ControllerBase
         };
     }
 
+    private static TeamSummary BuildSelfSummary(ReportTeam team, WeeklyReport report, string userId, string? username)
+    {
+        var sections = report.Sections.Select(s => new TeamSummarySection
+        {
+            Title = s.TemplateSection?.Title ?? "未命名板块",
+            Items = s.Items
+                .Select(i => i.Content?.Trim())
+                .Where(c => !string.IsNullOrWhiteSpace(c))
+                .Cast<string>()
+                .ToList()
+        }).ToList();
+
+        return new TeamSummary
+        {
+            Id = $"self_{report.Id}",
+            TeamId = team.Id,
+            TeamName = team.Name ?? "",
+            WeekYear = report.WeekYear,
+            WeekNumber = report.WeekNumber,
+            PeriodStart = report.PeriodStart,
+            PeriodEnd = report.PeriodEnd,
+            Sections = sections,
+            SourceReportIds = new List<string> { report.Id },
+            MemberCount = 1,
+            SubmittedCount = report.SubmittedAt.HasValue ? 1 : 0,
+            GeneratedBy = userId,
+            GeneratedByName = username ?? report.UserName,
+            GeneratedAt = report.UpdatedAt,
+            UpdatedAt = report.UpdatedAt
+        };
+    }
+
     private static (int weekYear, int weekNumber, DateTime periodStart, DateTime periodEnd) GetWeekInfo(DateTime date)
     {
         var weekYear = ISOWeek.GetYear(date);
@@ -2114,6 +2146,144 @@ public class ReportAgentController : ControllerBase
     #endregion
 
     #region Team Summary
+
+    /// <summary>
+    /// 团队汇总视图（按权限返回 full_team / self_only）
+    /// </summary>
+    [HttpGet("teams/{id}/summary/view")]
+    public async Task<IActionResult> GetTeamSummaryView(string id,
+        [FromQuery] int? weekYear, [FromQuery] int? weekNumber)
+    {
+        var userId = GetUserId();
+        var username = GetUsername();
+        var team = await _db.ReportTeams.Find(t => t.Id == id).FirstOrDefaultAsync();
+        if (team == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "团队不存在"));
+
+        var membership = await _db.ReportTeamMembers.Find(
+            m => m.TeamId == id && m.UserId == userId).FirstOrDefaultAsync();
+
+        var hasViewAll = HasPermission(AdminPermissionCatalog.ReportAgentViewAll);
+        var isLeaderOrDeputy = team.LeaderUserId == userId ||
+            (membership != null && (membership.Role == ReportTeamRole.Leader || membership.Role == ReportTeamRole.Deputy));
+        var isMember = membership != null || team.LeaderUserId == userId;
+
+        if (!isMember && !hasViewAll)
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权查看团队汇总"));
+
+        var canViewAllReports = hasViewAll
+            || isLeaderOrDeputy
+            || (isMember && team.ReportVisibility == ReportVisibilityMode.AllMembers);
+        var hasTeamManagePermission = HasPermission(AdminPermissionCatalog.ReportAgentTeamManage);
+        var canManageMembers = hasTeamManagePermission || isLeaderOrDeputy;
+        var canGenerateSummary = hasViewAll || isLeaderOrDeputy;
+
+        var now = DateTime.UtcNow;
+        var wy = weekYear ?? ISOWeek.GetYear(now);
+        var wn = weekNumber ?? ISOWeek.GetWeekOfYear(now);
+        var monday = ISOWeek.ToDateTime(wy, wn, DayOfWeek.Monday);
+        var sunday = monday.AddDays(6);
+
+        TeamSummary? summary = null;
+        string summaryKind = "none";
+        string? message = null;
+        List<object> members;
+
+        if (canViewAllReports)
+        {
+            summary = await _db.ReportTeamSummaries.Find(
+                s => s.TeamId == id && s.WeekYear == wy && s.WeekNumber == wn
+            ).FirstOrDefaultAsync();
+
+            summaryKind = summary != null ? "team_summary" : "none";
+            if (summary == null)
+                message = canGenerateSummary
+                    ? "暂无团队汇总，可点击“生成汇总”"
+                    : "团队汇总尚未生成";
+
+            var allMembers = await _db.ReportTeamMembers.Find(m => m.TeamId == id).ToListAsync();
+            var reports = await _db.WeeklyReports.Find(
+                r => r.TeamId == id && r.WeekYear == wy && r.WeekNumber == wn
+            ).ToListAsync();
+            var reportMap = reports.ToDictionary(r => r.UserId);
+
+            members = allMembers.Select(m => new
+            {
+                userId = m.UserId,
+                userName = m.UserName,
+                avatarFileName = m.AvatarFileName,
+                role = m.Role,
+                jobTitle = m.JobTitle,
+                reportId = reportMap.TryGetValue(m.UserId, out var rpt) ? rpt.Id : null,
+                reportStatus = reportMap.TryGetValue(m.UserId, out var rpt2) ? rpt2.Status : WeeklyReportStatus.NotStarted,
+                submittedAt = reportMap.TryGetValue(m.UserId, out var rpt3) ? rpt3.SubmittedAt : null
+            }).Cast<object>().ToList();
+        }
+        else
+        {
+            var selfViewableStatuses = new[] {
+                WeeklyReportStatus.Submitted,
+                WeeklyReportStatus.Reviewed,
+                WeeklyReportStatus.Returned,
+                WeeklyReportStatus.Viewed
+            };
+
+            var selfSubmittedReport = await _db.WeeklyReports.Find(
+                r => r.TeamId == id
+                     && r.UserId == userId
+                     && r.WeekYear == wy
+                     && r.WeekNumber == wn
+                     && selfViewableStatuses.Contains(r.Status)
+            ).FirstOrDefaultAsync();
+
+            if (selfSubmittedReport != null)
+            {
+                summary = BuildSelfSummary(team, selfSubmittedReport, userId, username);
+                summaryKind = "self_report";
+                message = "当前团队未公开成员周报，仅展示你本周已提交内容";
+            }
+            else
+            {
+                message = "当前团队未公开成员周报，且你本周暂无已提交周报";
+            }
+
+            var selfReportForStatus = await _db.WeeklyReports.Find(
+                r => r.TeamId == id && r.UserId == userId && r.WeekYear == wy && r.WeekNumber == wn
+            ).FirstOrDefaultAsync();
+
+            members = new List<object>
+            {
+                new
+                {
+                    userId,
+                    userName = username ?? membership?.UserName,
+                    avatarFileName = membership?.AvatarFileName,
+                    role = membership?.Role ?? (team.LeaderUserId == userId ? ReportTeamRole.Leader : ReportTeamRole.Member),
+                    jobTitle = membership?.JobTitle,
+                    reportId = selfReportForStatus?.Id,
+                    reportStatus = selfReportForStatus?.Status ?? WeeklyReportStatus.NotStarted,
+                    submittedAt = selfReportForStatus?.SubmittedAt
+                }
+            };
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            team,
+            weekYear = wy,
+            weekNumber = wn,
+            periodStart = monday,
+            periodEnd = sunday,
+            visibilityScope = canViewAllReports ? "full_team" : "self_only",
+            summaryKind,
+            summary,
+            message,
+            canGenerateSummary,
+            canManageMembers,
+            canViewAllMembers = canViewAllReports,
+            members
+        }));
+    }
 
     /// <summary>
     /// 生成团队周报汇总（AI 聚合）

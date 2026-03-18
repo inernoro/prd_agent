@@ -478,6 +478,7 @@ export const api = {
       member: (id: string, userId: string) => `/api/report-agent/teams/${id}/members/${userId}`,
       dashboard: (id: string) => `/api/report-agent/teams/${id}/dashboard`,
       summary: (id: string) => `/api/report-agent/teams/${id}/summary`,
+      summaryView: (id: string) => `/api/report-agent/teams/${id}/summary/view`,
       summaryGenerate: (id: string) => `/api/report-agent/teams/${id}/summary/generate`,
     },
     templates: {

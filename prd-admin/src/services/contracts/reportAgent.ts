@@ -577,6 +577,25 @@ export interface TeamSummarySection {
   items: string[];
 }
 
+export type TeamSummaryVisibilityScope = 'full_team' | 'self_only' | 'none';
+export type TeamSummaryKind = 'team_summary' | 'self_report' | 'none';
+
+export interface TeamSummaryViewData {
+  team: ReportTeam;
+  weekYear: number;
+  weekNumber: number;
+  periodStart: string;
+  periodEnd: string;
+  visibilityScope: TeamSummaryVisibilityScope;
+  summaryKind: TeamSummaryKind;
+  summary: TeamSummary | null;
+  message?: string;
+  canGenerateSummary: boolean;
+  canManageMembers: boolean;
+  canViewAllMembers: boolean;
+  members: TeamDashboardMember[];
+}
+
 export type GenerateTeamSummaryContract = (input: {
   teamId: string;
   weekYear?: number;
@@ -588,6 +607,12 @@ export type GetTeamSummaryContract = (input: {
   weekYear?: number;
   weekNumber?: number;
 }) => Promise<ApiResponse<{ summary: TeamSummary | null }>>;
+
+export type GetTeamSummaryViewContract = (input: {
+  teamId: string;
+  weekYear?: number;
+  weekNumber?: number;
+}) => Promise<ApiResponse<TeamSummaryViewData>>;
 
 // ========== Phase 4: History Trends ==========
 

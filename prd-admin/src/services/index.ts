@@ -560,6 +560,7 @@ import type {
   GetPlanComparisonContract,
   GenerateTeamSummaryContract,
   GetTeamSummaryContract,
+  GetTeamSummaryViewContract,
   GetPersonalTrendsContract,
   GetTeamTrendsContract,
   MarkVacationContract,
@@ -620,6 +621,7 @@ import {
   getPlanComparisonReal,
   generateTeamSummaryReal,
   getTeamSummaryReal,
+  getTeamSummaryViewReal,
   getPersonalTrendsReal,
   getTeamTrendsReal,
   exportReportMarkdownReal,
@@ -997,6 +999,7 @@ export const deleteComment: DeleteCommentContract = withAuth(deleteCommentReal);
 export const getPlanComparison: GetPlanComparisonContract = withAuth(getPlanComparisonReal);
 export const generateTeamSummary: GenerateTeamSummaryContract = withAuth(generateTeamSummaryReal);
 export const getTeamSummary: GetTeamSummaryContract = withAuth(getTeamSummaryReal);
+export const getTeamSummaryView: GetTeamSummaryViewContract = withAuth(getTeamSummaryViewReal);
 // Report Agent Phase 4: Trends + Export + Vacation
 export const getPersonalTrends: GetPersonalTrendsContract = withAuth(getPersonalTrendsReal);
 export const getTeamTrends: GetTeamTrendsContract = withAuth(getTeamTrendsReal);
