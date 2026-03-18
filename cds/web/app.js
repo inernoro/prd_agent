@@ -663,8 +663,8 @@ function branchDisplayLabel(br) {
 function checkCapacityAndDeploy(id, profileId) {
   const newCount = getNewContainerCount(id, profileId);
   const afterDeploy = containerCapacity.runningContainers + newCount;
-  if (afterDeploy <= containerCapacity.maxContainers) {
-    // Within capacity, deploy directly
+  if (newCount === 0 || afterDeploy <= containerCapacity.maxContainers) {
+    // No new containers needed (redeploy) or within capacity — deploy directly
     if (profileId) deploySingleServiceDirect(id, profileId);
     else deployBranchDirect(id);
     return;
