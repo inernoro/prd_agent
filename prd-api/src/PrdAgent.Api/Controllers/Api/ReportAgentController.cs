@@ -906,11 +906,16 @@ public class ReportAgentController : ControllerBase
     {
         var userId = GetUserId();
         var username = GetUsername();
+        var creationMode = string.IsNullOrWhiteSpace(req.CreationMode)
+            ? ReportCreationMode.Manual
+            : req.CreationMode.Trim().ToLowerInvariant();
 
         if (string.IsNullOrWhiteSpace(req.TeamId))
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "团队 ID 不能为空"));
         if (string.IsNullOrWhiteSpace(req.TemplateId))
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "模板 ID 不能为空"));
+        if (creationMode != ReportCreationMode.Manual && creationMode != ReportCreationMode.AiDraft)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "creationMode 仅支持 manual 或 ai-draft"));
 
         // 验证团队存在且用户是成员
         var team = await _db.ReportTeams.Find(t => t.Id == req.TeamId).FirstOrDefaultAsync();
@@ -979,6 +984,26 @@ public class ReportAgentController : ControllerBase
         catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
             return BadRequest(ApiResponse<object>.Fail("DUPLICATE", "该周已存在周报，不能重复创建"));
+        }
+
+        if (creationMode == ReportCreationMode.AiDraft)
+        {
+            try
+            {
+                report = await _generationService.GenerateAsync(
+                    userId,
+                    req.TeamId,
+                    req.TemplateId,
+                    weekYear,
+                    weekNumber,
+                    CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "创建周报后 AI 草稿生成失败: userId={UserId}, teamId={TeamId}, week={WeekYear}-W{WeekNumber}",
+                    userId, req.TeamId, weekYear, weekNumber);
+            }
         }
 
         return Ok(ApiResponse<object>.Ok(new { report }));
@@ -1438,6 +1463,14 @@ public class ReportAgentController : ControllerBase
         public string TemplateId { get; set; } = string.Empty;
         public int? WeekYear { get; set; }
         public int? WeekNumber { get; set; }
+        /// <summary>创建模式：manual（手动创建）/ ai-draft（创建后自动 AI 生成草稿）</summary>
+        public string? CreationMode { get; set; }
+    }
+
+    public static class ReportCreationMode
+    {
+        public const string Manual = "manual";
+        public const string AiDraft = "ai-draft";
     }
 
     public class UpdateReportRequest

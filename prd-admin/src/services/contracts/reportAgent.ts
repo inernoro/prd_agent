@@ -305,6 +305,11 @@ export const ReportSectionType = {
   FreeText: 'free-text',
 } as const;
 
+export const WeeklyReportCreationMode = {
+  Manual: 'manual',
+  AiDraft: 'ai-draft',
+} as const;
+
 // ========== Contract Types ==========
 
 // --- Teams ---
@@ -408,6 +413,7 @@ export type CreateWeeklyReportContract = (input: {
   templateId: string;
   weekYear?: number;
   weekNumber?: number;
+  creationMode?: (typeof WeeklyReportCreationMode)[keyof typeof WeeklyReportCreationMode];
 }) => Promise<ApiResponse<{ report: WeeklyReport }>>;
 
 export type UpdateWeeklyReportContract = (input: {
