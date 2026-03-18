@@ -254,6 +254,7 @@
 [data-theme="light"] .branch-card.status-building { border-left-color: var(--blue); }
 [data-theme="light"] .branch-card.status-starting { border-left-color: var(--yellow); }
 [data-theme="light"] .branch-card.status-error { border-left-color: var(--red); }
+[data-theme="light"] .branch-card.status-stopping { border-left-color: var(--red); }
 
 [data-theme="light"] .port-badge.run-port {
   color: var(--green); background: var(--green-bg); border-color: var(--green-border);
@@ -751,11 +752,46 @@ button.text-btn:hover { color: var(--accent); }
 .branch-card.status-idle { border-left-color: rgba(255, 255, 255, 0.10); }
 .branch-card.status-stopped { border-left-color: rgba(255, 255, 255, 0.10); }
 .branch-card.status-error { border-left-color: var(--red); }
+/* Stopping state — flashing red glow around the entire card */
+.branch-card.status-stopping {
+  border-left-color: var(--red);
+  animation: stopping-pulse 1.2s ease-in-out infinite;
+}
+@keyframes stopping-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(244, 63, 94, 0), 0 1px 3px rgba(0, 0, 0, 0.2);
+    border-color: var(--card-border);
+    border-left-color: var(--red);
+  }
+  50% {
+    box-shadow: 0 0 12px 2px rgba(244, 63, 94, 0.3), 0 0 24px 4px rgba(244, 63, 94, 0.1);
+    border-color: rgba(244, 63, 94, 0.4);
+    border-left-color: var(--red);
+  }
+}
 .branch-card.active.show-preview-border {
   border-left-color: var(--yellow);
 }
 .branch-card.has-error {
   border-left-color: var(--red);
+}
+
+/* Status badges for transitional states */
+.branch-status-badge {
+  font-size: 10px; font-weight: 500; padding: 1px 8px;
+  border-radius: 10px; margin-left: auto; white-space: nowrap;
+}
+.status-badge-stopping {
+  color: var(--red); background: var(--red-bg); border: 1px solid var(--red-border);
+  animation: port-stopping-blink 1s ease-in-out infinite;
+}
+.status-badge-starting {
+  color: var(--yellow); background: var(--yellow-bg); border: 1px solid rgba(251, 191, 36, 0.2);
+  animation: port-building-pulse 2s ease-in-out infinite;
+}
+.status-badge-building {
+  color: var(--blue); background: var(--blue-bg); border: 1px solid var(--blue-border);
+  animation: port-building-pulse 2s ease-in-out infinite;
 }
 
 /* Card toolbar — fixed top-right corner */
@@ -820,6 +856,22 @@ a.branch-name:hover { color: var(--accent); }
 .port-badge.run-port:hover { background: rgba(16, 185, 129, 0.18); border-color: rgba(16, 185, 129, 0.3); }
 .port-badge.port-starting { color: var(--yellow); background: var(--yellow-bg); border: 1px solid rgba(251, 191, 36, 0.15); }
 .port-badge.port-starting:hover { background: rgba(251, 191, 36, 0.15); }
+.port-badge.port-building {
+  color: var(--blue); background: var(--blue-bg); border: 1px solid var(--blue-border);
+  animation: port-building-pulse 2s ease-in-out infinite;
+}
+@keyframes port-building-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+.port-badge.port-stopping {
+  color: var(--red); background: var(--red-bg); border: 1px solid var(--red-border);
+  animation: port-stopping-blink 1s ease-in-out infinite;
+}
+@keyframes port-stopping-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
 .port-badge.port-idle { color: var(--text-muted); background: rgba(255, 255, 255, 0.03); border: 1px solid transparent; }
 .port-badge.port-idle:hover { background: rgba(255, 255, 255, 0.06); }
 
@@ -1383,12 +1435,12 @@ a.branch-name:hover { color: var(--accent); }
   color: var(--text-secondary); background: rgba(8, 12, 28, 0.8);
   border: 1px solid var(--border); border-radius: var(--radius-sm);
   padding: 10px 12px; margin: 0;
-  max-height: 120px; overflow-y: auto; white-space: pre-wrap;
+  max-height: 280px; overflow-y: auto; white-space: pre-wrap;
   word-break: break-all; line-height: 1.6;
   transition: max-height 0.3s ease;
 }
 .inline-deploy-log-wrapper.expanded .inline-deploy-log {
-  max-height: 400px;
+  max-height: 600px;
 }
 
 /* Deploy log status colors */
@@ -1501,7 +1553,7 @@ a.branch-name:hover { color: var(--accent); }
   .modal-dialog { max-height: 90vh; margin: 0 12px; }
 
   /* Inline deploy log: responsive */
-  .inline-deploy-log { font-size: 10px; padding: 8px 10px; max-height: 100px; }
+  .inline-deploy-log { font-size: 10px; padding: 8px 10px; max-height: 200px; }
 
   /* Commit info: hide on mobile to save space, show on expand */
   .branch-actions-commit { display: none; }

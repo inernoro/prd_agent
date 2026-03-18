@@ -91,7 +91,7 @@ function showToast(msg, type = 'info', duration) {
 }
 
 function statusLabel(s) {
-  const map = { running: '运行中', starting: '启动中', building: '构建中', idle: '空闲', stopped: '已停止', error: '错误' };
+  const map = { running: '运行中', starting: '启动中', building: '构建中', stopping: '正在停止', idle: '空闲', stopped: '已停止', error: '错误' };
   return map[s] || s;
 }
 
@@ -760,7 +760,7 @@ function updateInlineLog(id) {
   const log = inlineDeployLogs.get(id);
   if (!log) return;
   const filtered = log.lines.filter(l => l.trim());
-  const maxLines = log.expanded ? filtered.length : 8;
+  const maxLines = log.expanded ? filtered.length : 20;
   const visibleLines = filtered.slice(-maxLines);
   el.textContent = visibleLines.join('\n');
   el.scrollTop = el.scrollHeight;
@@ -809,6 +809,16 @@ async function stopBranch(id) {
   markTouched(id);
   busyBranches.add(id);
   setLoading(id, 'stop');
+  // Immediately set stopping state for visual feedback
+  const br = branches.find(b => b.id === id);
+  if (br) {
+    br.status = 'stopping';
+    for (const svc of Object.values(br.services || {})) {
+      if (svc.status === 'running' || svc.status === 'starting') {
+        svc.status = 'stopping';
+      }
+    }
+  }
   renderBranches();
   try {
     await api('POST', `/branches/${id}/stop`);
@@ -1297,6 +1307,11 @@ function toggleSettingsMenu(event) {
       基础设施
       ${infraServices.some(s => s.status === 'running') ? '<span style="color:#3fb950;font-size:11px;margin-left:auto">● ' + infraServices.filter(s => s.status === 'running').length + ' 运行中</span>' : ''}
     </div>
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); openStartupSignalModal()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8.834.066C7.494-.087 6.5 1.048 6.5 2.25v.5c0 1.329-.647 2.124-1.318 2.614-.328.24-.66.403-.918.508A1.75 1.75 0 003 7.25v3.5c0 .785.52 1.449 1.235 1.666.186.06.404.145.639.263.461.232.838.49 1.126.756V14.5a.75.75 0 001.5 0v-.329c.247-.075.502-.186.759-.334.364-.21.726-.503 1.051-.886.35-.413.645-.94.822-1.598.114-.424.26-.722.458-.963.2-.245.466-.437.838-.597A1.75 1.75 0 0012 8.25V4.25A1.75 1.75 0 0010.264 2.5h-.129c-.382 0-.733-.074-1.008-.18A2.43 2.43 0 018.834.066z"/></svg>
+      启动成功标志
+      ${buildProfiles.some(p => p.startupSignal) ? '<span style="color:#3fb950;font-size:11px;margin-left:auto">● 已配置</span>' : ''}
+    </div>
     <div class="settings-menu-item" onclick="closeSettingsMenu(); openRoutingModal()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 0113 0h-2.1a8.3 8.3 0 00-.4-2.2 9 9 0 00-1-1.9A4.5 4.5 0 017 7.5H4.5A8.3 8.3 0 001.5 8zm5.5 5.5a6.5 6.5 0 01-5.4-3h2.3c.3 1.2.8 2.2 1.5 3H7zm1-5.5a7.8 7.8 0 014-3.8c.5.6.9 1.2 1.2 1.8H8zm0 1h5.4a8.3 8.3 0 01-.3 2H8.9 8V9zm0 3h3.8c-.6 1.3-1.5 2.4-2.8 3A6.5 6.5 0 018 9z"/></svg>
       路由规则
@@ -1413,7 +1428,8 @@ function renderBranches() {
     const services = Object.entries(b.services || {});
     const hasError = b.status === 'error';
     const isRunning = b.status === 'running';
-    const isStopped = !isRunning && services.length > 0 && !hasError && b.status !== 'building';
+    const isStopping = b.status === 'stopping';
+    const isStopped = !isRunning && !isStopping && services.length > 0 && !hasError && b.status !== 'building';
     const hasMultipleProfiles = buildProfiles.length > 1;
     const hasUpdates = !!branchUpdates[b.id];
 
@@ -1433,7 +1449,7 @@ function renderBranches() {
     const portBadgesHtml = services.length > 0 ? services.map(([pid, svc]) => {
       const profile = buildProfiles.find(p => p.id === pid);
       const icon = getPortIcon(pid, profile);
-      const badgeClass = svc.status === 'running' ? 'run-port' : svc.status === 'starting' ? 'port-starting' : 'port-idle';
+      const badgeClass = svc.status === 'running' ? 'run-port' : svc.status === 'starting' ? 'port-starting' : svc.status === 'stopping' ? 'port-stopping' : svc.status === 'building' ? 'port-building' : 'port-idle';
       const portTitle = `${esc(pid)}: ${statusLabel(svc.status)}${b.lastAccessedAt ? '\n运行时间: ' + relativeTime(b.lastAccessedAt) : ''}`;
       return `<span class="port-badge ${badgeClass}"
                     onclick="event.stopPropagation(); viewContainerLogs('${esc(b.id)}', '${esc(pid)}')"
@@ -1461,7 +1477,12 @@ function renderBranches() {
     let actionsLeftHtml = '';
     let actionsRightHtml = '';
 
-    if (isRunning) {
+    if (isStopping) {
+      actionsLeftHtml = `
+        <button class="sm" disabled><span class="btn-spinner"></span>正在停止...</button>
+      `;
+      actionsRightHtml = '';
+    } else if (isRunning) {
       actionsLeftHtml = `
         <button class="preview sm" onclick="previewBranch('${esc(b.id)}')">${ICON.preview} 预览</button>
       `;
@@ -1519,7 +1540,7 @@ function renderBranches() {
     if (deployLog) {
       const logStatusClass = deployLog.status === 'error' ? 'deploy-log-error' : deployLog.status === 'done' ? 'deploy-log-done' : '';
       const filteredLines = deployLog.lines.filter(l => l.trim());
-      const visibleLines = deployLog.expanded ? filteredLines : filteredLines.slice(-8);
+      const visibleLines = deployLog.expanded ? filteredLines : filteredLines.slice(-20);
       inlineLogHtml = `
         <div class="inline-deploy-log-wrapper ${deployLog.expanded ? 'expanded' : ''} ${logStatusClass}" id="inline-log-wrapper-${esc(b.id)}" onclick="toggleInlineLog('${esc(b.id)}', event)">
           <div class="inline-deploy-log-header">
@@ -1552,7 +1573,7 @@ function renderBranches() {
             </span>
             <a class="branch-name" href="${githubRepoUrl ? githubRepoUrl.replace('github.com', 'github.dev') + '/tree/' + encodeURIComponent(b.branch) : '#'}" target="_blank" onclick="event.stopPropagation(); return confirmOpenGithub(event)" title="在 GitHub.dev 中浏览代码">${ICON.branch} ${esc(b.branch)}</a>
           </div>
-          ${b.date ? `<div class="branch-card-row2"><span class="branch-meta">${relativeTime(b.date)}更新</span></div>` : ''}
+          ${b.date ? `<div class="branch-card-row2"><span class="branch-meta">${relativeTime(b.date)}更新</span>${isStopping ? '<span class="branch-status-badge status-badge-stopping">正在停止...</span>' : b.status === 'starting' ? '<span class="branch-status-badge status-badge-starting">等待服务就绪...</span>' : b.status === 'building' && !isDeploying ? '<span class="branch-status-badge status-badge-building">构建中...</span>' : ''}</div>` : ''}
           ${portBadgesHtml ? `<div class="branch-card-ports">${portBadgesHtml}</div>` : ''}
           ${b.executorId ? `<span class="executor-tag" title="部署在执行器 ${esc(b.executorId)}">⚡ ${esc(b.executorId.replace(/^executor-/, '').slice(0, 20))}</span>` : ''}
         </div>
@@ -2687,6 +2708,70 @@ async function deleteProfileAndRefresh(id) {
 function toggleModalForm(id) {
   const el = document.getElementById(id);
   if (el) el.classList.toggle('hidden');
+}
+
+// ── Startup Signal configuration modal ──
+
+function openStartupSignalModal() {
+  if (buildProfiles.length === 0) {
+    showToast('请先添加构建配置', 'error');
+    return;
+  }
+
+  const signalExamples = {
+    api: 'Now listening on: http://0.0.0.0:5000',
+    admin: '➜  Network:',
+    web: '➜  Network:',
+    frontend: '➜  Network:',
+  };
+
+  const listHtml = buildProfiles.map(p => {
+    const currentSignal = p.startupSignal || '';
+    const placeholder = signalExamples[p.id] || '容器日志中的启动成功标志字符串';
+    return `
+      <div class="config-item" style="flex-direction:column;align-items:stretch;gap:8px;padding:12px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="opacity:0.7">${getPortIcon(p.id, p)}</span>
+          <strong>${esc(p.name)}</strong>
+          <code class="config-item-match" style="margin-left:auto">:${p.containerPort}</code>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input id="signal-${esc(p.id)}" class="form-input" value="${esc(currentSignal)}" placeholder="${esc(placeholder)}" style="flex:1;font-size:12px">
+          ${currentSignal ? '<span style="color:var(--green);font-size:11px;white-space:nowrap">● 已设置</span>' : '<span style="color:var(--text-muted);font-size:11px;white-space:nowrap">未设置</span>'}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  const html = `
+    <p class="config-panel-desc">
+      为每个服务配置启动成功标志。CDS 会监听容器日志，检测到该字符串后才标记服务为"运行中"。<br>
+      <span style="color:var(--text-muted);font-size:11px">未配置时，CDS 仅通过容器存活检查判断启动状态（可能容器活着但服务还没准备好）。</span>
+    </p>
+    <div id="signalProfileList">${listHtml}</div>
+    <div style="margin-top:12px;display:flex;gap:8px">
+      <button class="primary sm" onclick="saveStartupSignals()">保存</button>
+      <button class="sm" onclick="closeConfigModal()">取消</button>
+    </div>
+  `;
+  openConfigModal('启动成功标志', html);
+}
+
+async function saveStartupSignals() {
+  try {
+    for (const p of buildProfiles) {
+      const input = document.getElementById('signal-' + p.id);
+      if (!input) continue;
+      const newSignal = input.value.trim();
+      const oldSignal = p.startupSignal || '';
+      if (newSignal !== oldSignal) {
+        await api('PUT', '/build-profiles/' + encodeURIComponent(p.id), { startupSignal: newSignal || undefined });
+      }
+    }
+    showToast('启动成功标志已保存', 'success');
+    await loadProfiles();
+    closeConfigModal();
+  } catch (e) { showToast(e.message, 'error'); }
 }
 
 // ── Log modal (with tabs: logs / terminal) ──

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService, ReadinessProbe } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { resolveEnvTemplates } from './compose-parser.js';
@@ -238,6 +239,53 @@ export class ContainerService {
     return false;
   }
 
+  /**
+   * Phase 2 alternative: Watch container logs for a startup signal string.
+   * Monitors docker logs in real-time; resolves true when the signal appears,
+   * false on timeout. More reliable than HTTP probes for services that print
+   * a known banner on successful startup.
+   */
+  async waitForStartupSignal(
+    containerName: string,
+    signal: string,
+    onOutput?: (chunk: string) => void,
+    timeoutSeconds = 300,
+  ): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      const timeout = setTimeout(() => {
+        child.kill();
+        onOutput?.(`── 启动信号超时 (${timeoutSeconds}s)，未检测到: "${signal}" ──\n`);
+        resolve(false);
+      }, timeoutSeconds * 1000);
+
+      const child = spawn('docker', ['logs', '-f', '--tail', '0', containerName], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      let resolved = false;
+      const checkChunk = (data: Buffer) => {
+        if (resolved) return;
+        const text = data.toString();
+        if (text.includes(signal)) {
+          resolved = true;
+          clearTimeout(timeout);
+          child.kill();
+          onOutput?.(`── 检测到启动信号: "${signal}" ✓ ──\n`);
+          resolve(true);
+        }
+      };
+
+      child.stdout?.on('data', checkChunk);
+      child.stderr?.on('data', checkChunk);
+      child.on('error', () => {
+        if (!resolved) { clearTimeout(timeout); resolve(false); }
+      });
+      child.on('exit', () => {
+        if (!resolved) { clearTimeout(timeout); resolve(false); }
+      });
+    });
+  }
+
   async stop(containerName: string): Promise<void> {
     await this.shell.exec(`docker stop ${containerName}`);
     await this.shell.exec(`docker rm ${containerName}`);
@@ -250,7 +298,7 @@ export class ContainerService {
     return result.exitCode === 0 && result.stdout.trim() === 'true';
   }
 
-  async getLogs(containerName: string, tail = 100): Promise<string> {
+  async getLogs(containerName: string, tail = 500): Promise<string> {
     const result = await this.shell.exec(`docker logs --tail ${tail} ${containerName}`);
     return combinedOutput(result);
   }
