@@ -596,6 +596,42 @@ export interface TeamSummaryViewData {
   members: TeamDashboardMember[];
 }
 
+export interface TeamReportsViewStats {
+  totalMembers: number;
+  submittedCount: number;
+  pendingCount: number;
+}
+
+export interface TeamReportListItem {
+  reportId: string;
+  userId: string;
+  userName?: string;
+  avatarFileName?: string;
+  status: string;
+  submittedAt?: string;
+  updatedAt: string;
+  teamId: string;
+  teamName?: string;
+  weekYear: number;
+  weekNumber: number;
+}
+
+export interface TeamReportsViewData {
+  team: ReportTeam;
+  weekYear: number;
+  weekNumber: number;
+  periodStart: string;
+  periodEnd: string;
+  visibilityScope: TeamSummaryVisibilityScope;
+  stats: TeamReportsViewStats;
+  items: TeamReportListItem[];
+  members: TeamDashboardMember[];
+  message?: string;
+  canGenerateSummary: boolean;
+  canManageMembers: boolean;
+  canViewAllMembers: boolean;
+}
+
 export type GenerateTeamSummaryContract = (input: {
   teamId: string;
   weekYear?: number;
@@ -613,6 +649,12 @@ export type GetTeamSummaryViewContract = (input: {
   weekYear?: number;
   weekNumber?: number;
 }) => Promise<ApiResponse<TeamSummaryViewData>>;
+
+export type GetTeamReportsViewContract = (input: {
+  teamId: string;
+  weekYear?: number;
+  weekNumber?: number;
+}) => Promise<ApiResponse<TeamReportsViewData>>;
 
 // ========== Phase 4: History Trends ==========
 

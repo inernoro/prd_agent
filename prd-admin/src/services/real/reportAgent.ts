@@ -45,6 +45,7 @@ import type {
   GenerateTeamSummaryContract,
   GetTeamSummaryContract,
   GetTeamSummaryViewContract,
+  GetTeamReportsViewContract,
   GetPersonalTrendsContract,
   GetTeamTrendsContract,
   MarkVacationContract,
@@ -76,6 +77,7 @@ import type {
   PlanComparison,
   TeamSummary,
   TeamSummaryViewData,
+  TeamReportsViewData,
   PersonalSource,
   PersonalStats,
   TeamWorkflowInfo,
@@ -449,6 +451,17 @@ export const getTeamSummaryViewReal: GetTeamSummaryViewContract = async (input) 
   const q = qs.toString();
   return await apiRequest<TeamSummaryViewData>(
     `${api.reportAgent.teams.summaryView(encodeURIComponent(input.teamId))}${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
+};
+
+export const getTeamReportsViewReal: GetTeamReportsViewContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input.weekYear != null) qs.set('weekYear', String(input.weekYear));
+  if (input.weekNumber != null) qs.set('weekNumber', String(input.weekNumber));
+  const q = qs.toString();
+  return await apiRequest<TeamReportsViewData>(
+    `${api.reportAgent.teams.reportsView(encodeURIComponent(input.teamId))}${q ? `?${q}` : ''}`,
     { method: 'GET' }
   );
 };
