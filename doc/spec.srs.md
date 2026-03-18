@@ -2070,9 +2070,11 @@ sequenceDiagram
 
 **功能详述**：
 1. 团队 CRUD：创建/编辑/删除团队，支持上下级层级（ParentTeamId）
-2. 成员管理：添加/移除成员，设置角色（Member/Leader/Deputy）和岗位
+2. 成员管理：添加/移除成员，设置角色（Member/Leader/Deputy）和岗位；Leader/Deputy 可直接执行成员管理
 3. 创建团队时自动将负责人添加为 Leader 成员
-4. 团队删除前检查是否有关联周报（有则禁止删除）
+4. 团队列表需返回当前用户关系元数据：`myRole`、`relationType(managed/joined)`、`canManageMembers`、`canLeave`
+5. 用户可对“我加入的团队”主动退出（Leader 不可直接退出，需先移交负责人）
+6. 团队删除前检查是否有关联周报（有则禁止删除）
 
 **数据模型**：`ReportTeam`、`ReportTeamMember`（集合：`report_teams`、`report_team_members`）
 
@@ -2080,6 +2082,7 @@ sequenceDiagram
 - `GET/POST /api/report-agent/teams` — 团队列表/创建
 - `GET/PUT/DELETE /api/report-agent/teams/{id}` — 团队详情/更新/删除
 - `POST/DELETE/PUT /api/report-agent/teams/{id}/members/{userId}` — 成员增删改
+- `POST /api/report-agent/teams/{id}/leave` — 主动退出团队（非 Leader）
 
 #### 4.23.2 REPORT-002 周报模板管理
 

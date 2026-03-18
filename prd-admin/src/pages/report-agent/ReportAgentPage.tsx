@@ -14,7 +14,7 @@ import { SettingsPanel } from './components/SettingsPanel';
  *
  * 8 tabs → 3 tabs:
  *   周报 = 我的周报 + 每日打点 + 数据统计 (合并为一个完整工作区)
- *   团队 = 团队面板 (仅 leader 可见)
+ *   团队 = 团队面板（区分我管理/我加入）
  *   设置 = 我的数据源 + 模板管理 + 团队管理 + 数据源管理 (一次性配置)
  */
 export default function ReportAgentPage() {
@@ -29,8 +29,12 @@ export default function ReportAgentPage() {
 
   const userId = useAuthStore((s) => s.user?.userId);
 
-  const isLeader = useMemo(() => {
-    return teams.some((t) => t.leaderUserId === userId);
+  const hasTeamWorkspace = useMemo(() => {
+    if (!userId) return false;
+    return teams.some((t) => {
+      const role = t.myRole ?? (t.leaderUserId === userId ? 'leader' : undefined);
+      return !!role;
+    });
   }, [teams, userId]);
 
   useEffect(() => {
@@ -52,18 +56,18 @@ export default function ReportAgentPage() {
     if (oldToNew[activeTab]) {
       setActiveTab(oldToNew[activeTab] as typeof activeTab);
     }
-  }, []);
+  }, [activeTab, setActiveTab]);
 
   const tabItems = useMemo(() => {
     const items = [
       { key: 'report', label: '周报', icon: <FileText size={14} /> },
     ];
-    if (isLeader) {
+    if (hasTeamWorkspace) {
       items.push({ key: 'team', label: '团队', icon: <Users size={14} /> });
     }
     items.push({ key: 'settings', label: '设置', icon: <Settings size={14} /> });
     return items;
-  }, [isLeader]);
+  }, [hasTeamWorkspace]);
 
   // Resolve current tab — default to 'report' if current tab not in items
   const currentTab = tabItems.find((t) => t.key === activeTab) ? activeTab : 'report';

@@ -473,6 +473,7 @@ export const api = {
     teams: {
       list: () => '/api/report-agent/teams',
       byId: (id: string) => `/api/report-agent/teams/${id}`,
+      leave: (id: string) => `/api/report-agent/teams/${id}/leave`,
       members: (id: string) => `/api/report-agent/teams/${id}/members`,
       member: (id: string, userId: string) => `/api/report-agent/teams/${id}/members/${userId}`,
       dashboard: (id: string) => `/api/report-agent/teams/${id}/dashboard`,

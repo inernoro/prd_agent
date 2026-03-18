@@ -80,6 +80,43 @@ public class ReportAgentController : ControllerBase
         ).AnyAsync();
     }
 
+    private static string? GetTeamRelationType(string? myRole)
+    {
+        if (myRole == ReportTeamRole.Leader || myRole == ReportTeamRole.Deputy)
+            return "managed";
+        if (!string.IsNullOrEmpty(myRole))
+            return "joined";
+        return null;
+    }
+
+    private static object MapTeamListItem(
+        ReportTeam team,
+        string? myRole,
+        bool canManageMembers,
+        bool canLeave)
+    {
+        return new
+        {
+            id = team.Id,
+            name = team.Name,
+            parentTeamId = team.ParentTeamId,
+            leaderUserId = team.LeaderUserId,
+            leaderName = team.LeaderName,
+            description = team.Description,
+            dataCollectionWorkflowId = team.DataCollectionWorkflowId,
+            workflowTemplateKey = team.WorkflowTemplateKey,
+            reportVisibility = team.ReportVisibility,
+            autoSubmitSchedule = team.AutoSubmitSchedule,
+            customDailyLogTags = team.CustomDailyLogTags,
+            createdAt = team.CreatedAt,
+            updatedAt = team.UpdatedAt,
+            myRole,
+            relationType = GetTeamRelationType(myRole),
+            canManageMembers,
+            canLeave
+        };
+    }
+
     private static (int weekYear, int weekNumber, DateTime periodStart, DateTime periodEnd) GetWeekInfo(DateTime date)
     {
         var weekYear = ISOWeek.GetYear(date);
@@ -113,26 +150,40 @@ public class ReportAgentController : ControllerBase
     public async Task<IActionResult> ListTeams()
     {
         var userId = GetUserId();
+        var memberships = await _db.ReportTeamMembers.Find(m => m.UserId == userId).ToListAsync();
+        var membershipRoleByTeamId = memberships
+            .GroupBy(m => m.TeamId)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(m => m.JoinedAt).First().Role);
 
+        List<ReportTeam> teams;
         if (HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
         {
-            var all = await _db.ReportTeams.Find(_ => true)
+            teams = await _db.ReportTeams.Find(_ => true)
                 .SortByDescending(t => t.CreatedAt).ToListAsync();
-            return Ok(ApiResponse<object>.Ok(new { items = all }));
+        }
+        else
+        {
+            var teamIds = memberships.Select(m => m.TeamId).Distinct().ToList();
+            var leaderTeams = await _db.ReportTeams.Find(t => t.LeaderUserId == userId).ToListAsync();
+            var leaderTeamIds = leaderTeams.Select(t => t.Id).ToList();
+            teamIds = teamIds.Union(leaderTeamIds).Distinct().ToList();
+
+            teams = await _db.ReportTeams.Find(t => teamIds.Contains(t.Id))
+                .SortByDescending(t => t.CreatedAt).ToListAsync();
         }
 
-        // 查找用户所在的团队 ID
-        var memberships = await _db.ReportTeamMembers.Find(m => m.UserId == userId).ToListAsync();
-        var teamIds = memberships.Select(m => m.TeamId).Distinct().ToList();
+        var hasTeamManagePermission = HasPermission(AdminPermissionCatalog.ReportAgentTeamManage);
+        var items = teams.Select(team =>
+        {
+            membershipRoleByTeamId.TryGetValue(team.Id, out var membershipRole);
+            var myRole = team.LeaderUserId == userId ? ReportTeamRole.Leader : membershipRole;
+            var isManagedTeam = myRole == ReportTeamRole.Leader || myRole == ReportTeamRole.Deputy;
+            var canManageMembers = hasTeamManagePermission || isManagedTeam;
+            var canLeave = !string.IsNullOrEmpty(myRole) && myRole != ReportTeamRole.Leader;
+            return MapTeamListItem(team, myRole, canManageMembers, canLeave);
+        }).ToList();
 
-        // 同时查找用户作为 leader 的团队
-        var leaderTeams = await _db.ReportTeams.Find(t => t.LeaderUserId == userId).ToListAsync();
-        var leaderTeamIds = leaderTeams.Select(t => t.Id).ToList();
-        teamIds = teamIds.Union(leaderTeamIds).Distinct().ToList();
-
-        var teams = await _db.ReportTeams.Find(t => teamIds.Contains(t.Id))
-            .SortByDescending(t => t.CreatedAt).ToListAsync();
-        return Ok(ApiResponse<object>.Ok(new { items = teams }));
+        return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
     /// <summary>
@@ -268,7 +319,9 @@ public class ReportAgentController : ControllerBase
     [HttpPost("teams/{id}/members")]
     public async Task<IActionResult> AddTeamMember(string id, [FromBody] AddTeamMemberRequest req)
     {
-        if (!HasPermission(AdminPermissionCatalog.ReportAgentTeamManage))
+        var currentUserId = GetUserId();
+        if (!HasPermission(AdminPermissionCatalog.ReportAgentTeamManage) &&
+            !await IsTeamLeaderOrDeputy(id, currentUserId))
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "缺少团队管理权限"));
 
         var team = await _db.ReportTeams.Find(t => t.Id == id).FirstOrDefaultAsync();
@@ -305,7 +358,9 @@ public class ReportAgentController : ControllerBase
     [HttpDelete("teams/{id}/members/{userId}")]
     public async Task<IActionResult> RemoveTeamMember(string id, string userId)
     {
-        if (!HasPermission(AdminPermissionCatalog.ReportAgentTeamManage))
+        var currentUserId = GetUserId();
+        if (!HasPermission(AdminPermissionCatalog.ReportAgentTeamManage) &&
+            !await IsTeamLeaderOrDeputy(id, currentUserId))
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "缺少团队管理权限"));
 
         var result = await _db.ReportTeamMembers.DeleteOneAsync(
@@ -322,7 +377,9 @@ public class ReportAgentController : ControllerBase
     [HttpPut("teams/{id}/members/{userId}")]
     public async Task<IActionResult> UpdateTeamMember(string id, string userId, [FromBody] UpdateTeamMemberRequest req)
     {
-        if (!HasPermission(AdminPermissionCatalog.ReportAgentTeamManage))
+        var currentUserId = GetUserId();
+        if (!HasPermission(AdminPermissionCatalog.ReportAgentTeamManage) &&
+            !await IsTeamLeaderOrDeputy(id, currentUserId))
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "缺少团队管理权限"));
 
         var update = Builders<ReportTeamMember>.Update.Combine();
@@ -341,6 +398,33 @@ public class ReportAgentController : ControllerBase
         var updated = await _db.ReportTeamMembers.Find(
             m => m.TeamId == id && m.UserId == userId).FirstOrDefaultAsync();
         return Ok(ApiResponse<object>.Ok(new { member = updated }));
+    }
+
+    /// <summary>
+    /// 主动退出团队（仅成员/副负责人，负责人需先移交）
+    /// </summary>
+    [HttpPost("teams/{id}/leave")]
+    public async Task<IActionResult> LeaveTeam(string id)
+    {
+        var userId = GetUserId();
+        var team = await _db.ReportTeams.Find(t => t.Id == id).FirstOrDefaultAsync();
+        if (team == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "团队不存在"));
+
+        var membership = await _db.ReportTeamMembers.Find(
+            m => m.TeamId == id && m.UserId == userId).FirstOrDefaultAsync();
+        if (membership == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "你不在该团队中"));
+
+        var effectiveRole = team.LeaderUserId == userId ? ReportTeamRole.Leader : membership.Role;
+        if (effectiveRole == ReportTeamRole.Leader || membership.Role == ReportTeamRole.Leader)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_REQUEST", "团队负责人不能直接退出，请先移交负责人"));
+
+        var result = await _db.ReportTeamMembers.DeleteOneAsync(m => m.TeamId == id && m.UserId == userId);
+        if (result.DeletedCount == 0)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "成员不存在"));
+
+        return Ok(ApiResponse<object>.Ok(new { left = true }));
     }
 
     /// <summary>

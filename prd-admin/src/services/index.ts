@@ -522,6 +522,7 @@ import type {
   CreateReportTeamContract,
   UpdateReportTeamContract,
   DeleteReportTeamContract,
+  LeaveReportTeamContract,
   AddReportTeamMemberContract,
   RemoveReportTeamMemberContract,
   UpdateReportTeamMemberContract,
@@ -581,6 +582,7 @@ import {
   createReportTeamReal,
   updateReportTeamReal,
   deleteReportTeamReal,
+  leaveReportTeamReal,
   addReportTeamMemberReal,
   removeReportTeamMemberReal,
   updateReportTeamMemberReal,
@@ -955,6 +957,7 @@ export const getReportTeam: GetReportTeamContract = withAuth(getReportTeamReal);
 export const createReportTeam: CreateReportTeamContract = withAuth(createReportTeamReal);
 export const updateReportTeam: UpdateReportTeamContract = withAuth(updateReportTeamReal);
 export const deleteReportTeam: DeleteReportTeamContract = withAuth(deleteReportTeamReal);
+export const leaveReportTeam: LeaveReportTeamContract = withAuth(leaveReportTeamReal);
 export const addReportTeamMember: AddReportTeamMemberContract = withAuth(addReportTeamMemberReal);
 export const removeReportTeamMember: RemoveReportTeamMemberContract = withAuth(removeReportTeamMemberReal);
 export const updateReportTeamMember: UpdateReportTeamMemberContract = withAuth(updateReportTeamMemberReal);

@@ -6,6 +6,7 @@ import type {
   CreateReportTeamContract,
   UpdateReportTeamContract,
   DeleteReportTeamContract,
+  LeaveReportTeamContract,
   AddReportTeamMemberContract,
   RemoveReportTeamMemberContract,
   UpdateReportTeamMemberContract,
@@ -110,6 +111,13 @@ export const deleteReportTeamReal: DeleteReportTeamContract = async (input) => {
   return await apiRequest<object>(
     api.reportAgent.teams.byId(encodeURIComponent(input.id)),
     { method: 'DELETE' }
+  );
+};
+
+export const leaveReportTeamReal: LeaveReportTeamContract = async (input) => {
+  return await apiRequest<{ left: boolean }>(
+    api.reportAgent.teams.leave(encodeURIComponent(input.teamId)),
+    { method: 'POST' }
   );
 };
 

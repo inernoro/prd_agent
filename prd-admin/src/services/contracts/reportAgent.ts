@@ -19,6 +19,14 @@ export interface ReportTeam {
   autoSubmitSchedule?: string;
   /** 团队自定义每日打点标签 */
   customDailyLogTags?: string[];
+  /** 当前用户在该团队的角色: leader / deputy / member */
+  myRole?: string | null;
+  /** 当前用户与团队关系: managed / joined */
+  relationType?: 'managed' | 'joined' | null;
+  /** 当前用户是否可管理成员 */
+  canManageMembers?: boolean;
+  /** 当前用户是否可主动退出该团队 */
+  canLeave?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -327,6 +335,10 @@ export type UpdateReportTeamContract = (input: {
 }) => Promise<ApiResponse<{ team: ReportTeam }>>;
 
 export type DeleteReportTeamContract = (input: { id: string }) => Promise<ApiResponse<object>>;
+
+export type LeaveReportTeamContract = (input: { teamId: string }) => Promise<
+  ApiResponse<{ left: boolean }>
+>;
 
 // --- Team Members ---
 export type AddReportTeamMemberContract = (input: {
