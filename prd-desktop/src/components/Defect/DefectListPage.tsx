@@ -293,8 +293,8 @@ export default function DefectListPage() {
   ];
 
   const viewModeButtons: { key: DefectViewMode; Icon: () => JSX.Element; title: string }[] = [
-    { key: 'card', Icon: IconGrid, title: '卡片视图' },
     { key: 'list', Icon: IconList, title: '列表视图' },
+    { key: 'card', Icon: IconGrid, title: '卡片视图' },
   ];
 
   return (
@@ -401,7 +401,7 @@ export default function DefectListPage() {
               style={{ color: 'var(--text-muted, rgba(128,128,128,0.6))', borderBottom: '1px solid rgba(128,128,128,0.1)' }}
             >
               <div className="w-1 flex-shrink-0" />
-              <span className="w-[46px] flex-shrink-0">严重性</span>
+              <span className="w-[36px] flex-shrink-0">严重性</span>
               <span className="flex-1 min-w-0">标题</span>
               <span className="w-[52px] flex-shrink-0">状态</span>
               <span className="w-[26px] flex-shrink-0" />
@@ -643,144 +643,182 @@ function DefectListItem({ defect, userId, isSelected, onSelect, onClose, onDelet
   const attachmentCount = (defect.attachments || []).length;
   const isReporterMe = userId && defect.reporterId === userId;
   const isAssigneeMe = userId && defect.assigneeId === userId;
+  const [previewImage, setPreviewImage] = useState<{ url: string; index: number } | null>(null);
 
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={onSelect}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(); } }}
-      className={`group relative flex h-auto transition-colors cursor-pointer ${
-        isSelected
-          ? 'bg-primary-500/10'
-          : 'hover:bg-black/[0.04] dark:hover:bg-white/[0.04]'
-      }`}
-      style={{ borderBottom: '1px solid rgba(128,128,128,0.08)' }}
-    >
-      {/* Severity color bar */}
-      <div className="w-1 flex-shrink-0" style={{ background: severity.color }} />
+    <>
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onSelect}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(); } }}
+        className={`group flex items-center gap-3 px-3 py-2.5 cursor-pointer select-none transition-colors ${
+          isSelected
+            ? 'bg-primary-500/10'
+            : 'hover:bg-black/[0.04] dark:hover:bg-white/[0.04]'
+        }`}
+        style={{ borderBottom: '1px solid rgba(128,128,128,0.08)' }}
+      >
+        {/* Severity color bar */}
+        <div className="w-1 h-6 rounded-full flex-shrink-0" style={{ background: severity.color }} />
 
-      {/* Main content */}
-      <div className="flex-1 min-w-0 px-3 py-2.5">
-        {/* Row 1: badge + title + defect number + time */}
-        <div className="flex items-center gap-2 mb-1">
-          {badge && (
-            <span
-              className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium flex-shrink-0 ${badge.pulse ? 'animate-pulse' : ''}`}
-              style={{ background: badge.bg, color: badge.color, border: `1px solid ${badge.border}` }}
-            >
-              {badge.label}
-            </span>
-          )}
-          <span
-            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0"
-            style={{ background: severity.bgColor, color: severity.color }}
-          >
-            {severity.label}
-          </span>
-          <span className="text-[13px] font-medium truncate flex-1 min-w-0" title={defect.title || defect.rawContent?.slice(0, 60)}>
-            {defect.title || defect.rawContent?.slice(0, 60) || '无标题'}
-          </span>
-          <div className="flex flex-col items-end gap-0.5 flex-shrink-0 ml-2">
-            <span className="text-[10px] font-mono text-text-secondary">{defect.defectNo}</span>
-            <span className="text-[10px] text-text-secondary">{formatDate(defect.createdAt)}</span>
-          </div>
+        {/* Severity badge */}
+        <div
+          className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0"
+          style={{ background: severity.bgColor, color: severity.color }}
+        >
+          {severity.label}
         </div>
 
-        {/* Row 2: preview text */}
-        <div className="text-[12px] text-text-secondary line-clamp-2 mb-1.5">
-          {getPreviewText(defect.rawContent, 120)}
-        </div>
+        {/* Title */}
+        <span
+          className="text-[13px] font-medium truncate flex-1 min-w-0"
+          title={`${defect.defectNo} · ${defect.title || defect.rawContent?.slice(0, 60)}`}
+        >
+          {defect.title || defect.rawContent?.slice(0, 60) || '无标题'}
+        </span>
 
-        {/* Row 3: image thumbnails + attachment count */}
-        {attachmentCount > 0 && (
-          <div className="flex items-center gap-2 mb-1.5">
-            {imageAttachments.slice(0, 3).map((att) => (
-              <div key={att.id} className="w-10 h-10 rounded overflow-hidden flex-shrink-0"
-                style={{ background: 'rgba(128,128,128,0.1)', border: '1px solid rgba(128,128,128,0.15)' }}>
+        {/* Image preview thumbnails */}
+        {imageAttachments.length > 0 && (
+          <div className="flex items-center gap-1 flex-shrink-0">
+            {imageAttachments.slice(0, 2).map((att, idx) => (
+              <div
+                key={att.id}
+                className="w-6 h-6 rounded overflow-hidden flex-shrink-0 cursor-pointer transition-all hover:ring-2 hover:ring-primary-500/50 hover:scale-110"
+                style={{ background: 'rgba(128,128,128,0.1)', border: '1px solid rgba(128,128,128,0.15)' }}
+                onClick={(e) => { e.stopPropagation(); setPreviewImage({ url: att.url, index: idx }); }}
+                title="点击预览图片"
+              >
                 {att.url ? (
                   <img src={att.url} alt={att.fileName} className="w-full h-full object-cover" />
                 ) : (
-                  <div className="w-full h-full flex items-center justify-center text-text-secondary text-[10px]">IMG</div>
+                  <div className="w-full h-full flex items-center justify-center text-text-secondary text-[8px]">IMG</div>
                 )}
               </div>
             ))}
-            {imageAttachments.length > 3 && (
-              <span className="text-[10px] text-text-secondary">+{imageAttachments.length - 3}</span>
-            )}
-            {attachmentCount > imageAttachments.length && (
-              <span className="inline-flex items-center gap-1 text-[10px] text-text-secondary">
-                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                </svg>
-                {attachmentCount - imageAttachments.length}
-              </span>
+            {imageAttachments.length > 2 && (
+              <span className="text-[10px] text-text-secondary">+{imageAttachments.length - 2}</span>
             )}
           </div>
         )}
 
-        {/* Row 4: reporter → assignee + quick actions */}
-        <div className="flex items-center gap-2 text-[10px] text-text-secondary">
-          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded flex-shrink-0"
-            style={{ background: 'rgba(128,128,128,0.08)', border: isReporterMe ? '1px solid rgba(255,255,255,0.4)' : '1px solid rgba(128,128,128,0.1)' }}>
-            <span className="w-3 h-3 rounded-full bg-primary-500/20 flex items-center justify-center text-[8px] font-medium flex-shrink-0">
-              {(defect.reporterName || 'U')[0]}
-            </span>
-            <span className="truncate max-w-[50px]">{defect.reporterName || '未知'}</span>
+        {/* Status badge */}
+        {badge && (
+          <span
+            className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium flex-shrink-0 ${badge.pulse ? 'animate-pulse' : ''}`}
+            style={{ background: badge.bg, color: badge.color, border: `1px solid ${badge.border}` }}
+          >
+            {badge.label}
           </span>
-          <svg className="w-3 h-3 opacity-40 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        )}
+
+        {/* Attachment count */}
+        {attachmentCount > 0 && (
+          <span className="inline-flex items-center gap-1 text-[10px] flex-shrink-0" style={{ color: 'rgba(128,128,128,0.6)' }}>
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+            </svg>
+            {attachmentCount}
+          </span>
+        )}
+
+        {/* Reporter → Assignee */}
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <span
+            className="w-4 h-4 rounded-full bg-primary-500/20 flex items-center justify-center text-[8px] font-medium flex-shrink-0"
+            style={{ border: isReporterMe ? '1px solid rgba(255,255,255,0.5)' : '1px solid rgba(128,128,128,0.1)' }}
+            title={defect.reporterName || '未知'}
+          >
+            {(defect.reporterName || 'U')[0]}
+          </span>
+          <svg className="w-2.5 h-2.5 opacity-40 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
           </svg>
-          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded flex-shrink-0"
-            style={{ background: 'rgba(128,128,128,0.08)', border: isAssigneeMe ? '1px solid rgba(255,255,255,0.4)' : '1px solid rgba(128,128,128,0.1)' }}>
-            <span className="w-3 h-3 rounded-full bg-blue-500/20 flex items-center justify-center text-[8px] font-medium flex-shrink-0">
-              {(defect.assigneeName || 'U')[0]}
-            </span>
-            <span className="truncate max-w-[50px]">{defect.assigneeName || '未指派'}</span>
+          <span
+            className="w-4 h-4 rounded-full bg-blue-500/20 flex items-center justify-center text-[8px] font-medium flex-shrink-0"
+            style={{ border: isAssigneeMe ? '1px solid rgba(255,255,255,0.5)' : '1px solid rgba(128,128,128,0.1)' }}
+            title={defect.assigneeName || '未指派'}
+          >
+            {(defect.assigneeName || 'U')[0]}
           </span>
-          <div className="flex-1" />
-          <div className="flex items-center gap-1 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity">
-            {isArchived ? (
-              <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="p-1 rounded hover:bg-red-500/20 transition-colors" title="删除">
-                <svg className="w-3.5 h-3.5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
-              </button>
-            ) : (
-              <button onClick={(e) => { e.stopPropagation(); onClose(); }} className="p-1 rounded hover:bg-green-500/20 transition-colors" title="完成">
-                <svg className="w-3.5 h-3.5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-              </button>
-            )}
-          </div>
+        </div>
+
+        {/* Time */}
+        <span className="text-[10px] flex-shrink-0 w-[64px] text-right" style={{ color: 'rgba(128,128,128,0.6)' }}>
+          {formatDate(defect.createdAt)}
+        </span>
+
+        {/* Quick action (hover) */}
+        <div className="flex items-center gap-1 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity flex-shrink-0">
+          {isArchived ? (
+            <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="p-1 rounded hover:bg-red-500/20 transition-colors" title="删除">
+              <svg className="w-3.5 h-3.5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+            </button>
+          ) : (
+            <button onClick={(e) => { e.stopPropagation(); onClose(); }} className="p-1 rounded hover:bg-green-500/20 transition-colors" title="完成">
+              <svg className="w-3.5 h-3.5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Archived stamp overlay */}
-      {isArchived && (
-        <div className="absolute right-12 top-1/2 -translate-y-1/2 select-none pointer-events-none" style={{ transform: 'translate(0, -50%) rotate(-12deg)' }}>
-          <div className="flex flex-col items-center px-3 py-1.5 rounded-lg"
-            style={{
-              border: defect.status === 'rejected' ? '2px solid rgba(255,120,120,0.5)' : '2px solid rgba(120,220,180,0.5)',
-              background: defect.status === 'rejected' ? 'rgba(45,30,30,0.6)' : 'rgba(30,40,35,0.6)',
-              backdropFilter: 'blur(4px)',
-            }}>
-            <span className="text-[18px] font-bold tracking-[0.15em] leading-none"
-              style={{ color: defect.status === 'rejected' ? 'rgba(255,120,120,0.85)' : 'rgba(120,220,180,0.85)' }}>
-              {defect.status === 'rejected' ? '驳回' : '完成'}
-            </span>
-            <span className="text-[8px] mt-0.5 truncate max-w-[80px]"
-              style={{ color: defect.status === 'rejected' ? 'rgba(255,120,120,0.6)' : 'rgba(120,220,180,0.6)' }}>
-              {defect.status === 'rejected'
-                ? (defect.rejectedByName || '')
-                : (defect.resolvedByName || '')}
-              {defect.status === 'rejected' && defect.rejectReason ? `: ${defect.rejectReason}` : ''}
-              {defect.status !== 'rejected' && defect.resolution ? `: ${defect.resolution}` : ''}
-            </span>
+      {/* Image preview modal */}
+      {previewImage && (
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center"
+          style={{ background: 'rgba(0, 0, 0, 0.9)' }}
+          onClick={() => setPreviewImage(null)}
+        >
+          <button
+            onClick={() => setPreviewImage(null)}
+            className="absolute top-4 right-4 z-10 w-10 h-10 rounded-full flex items-center justify-center transition-colors"
+            style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)' }}
+          >
+            <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+          <div className="relative max-w-[90vw] max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
+            <img
+              src={imageAttachments[previewImage.index]?.url || previewImage.url}
+              alt="预览"
+              className="max-w-full max-h-[90vh] object-contain"
+            />
+            {imageAttachments.length > 1 && (
+              <>
+                <button
+                  onClick={() => setPreviewImage({ url: '', index: (previewImage.index - 1 + imageAttachments.length) % imageAttachments.length })}
+                  className="absolute left-4 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full flex items-center justify-center transition-colors"
+                  style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)' }}
+                >
+                  <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => setPreviewImage({ url: '', index: (previewImage.index + 1) % imageAttachments.length })}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full flex items-center justify-center transition-colors"
+                  style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)' }}
+                >
+                  <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+                <div
+                  className="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-full text-sm font-medium text-white"
+                  style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)' }}
+                >
+                  {previewImage.index + 1} / {imageAttachments.length}
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

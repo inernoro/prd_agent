@@ -10,9 +10,9 @@ const VIEW_MODE_KEY = 'defect-view-mode';
 function loadViewMode(): DefectViewMode {
   try {
     const v = localStorage.getItem(VIEW_MODE_KEY);
-    if (v === 'list') return 'list';
-    return 'card';
-  } catch { return 'card'; }
+    if (v === 'card') return 'card';
+    return 'list';
+  } catch { return 'list'; }
 }
 
 interface DefectState {
