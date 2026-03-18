@@ -6,7 +6,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
-  Download,
   ExternalLink,
   FileText,
   Loader2,
@@ -25,7 +24,6 @@ import { useReportAgentStore } from '@/stores/reportAgentStore';
 import { useAuthStore } from '@/stores/authStore';
 import {
   addReportTeamMember,
-  exportTeamSummaryMarkdown,
   generateTeamSummary,
   getTeamReportsView,
   getTeamSummaryView,
@@ -296,22 +294,6 @@ export function TeamDashboard() {
     }
     toast.success('团队汇总已生成');
     await loadSummaryView();
-  };
-
-  const handleExportSummary = async () => {
-    if (!selectedTeamId || !summaryView?.summary) return;
-    try {
-      const blob = await exportTeamSummaryMarkdown({ teamId: selectedTeamId, weekYear, weekNumber });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `团队汇总_${weekYear}W${String(weekNumber).padStart(2, '0')}.md`;
-      a.click();
-      URL.revokeObjectURL(url);
-      toast.success('导出成功');
-    } catch {
-      toast.error('导出失败');
-    }
   };
 
   const handleLeaveSelectedTeam = async () => {
@@ -676,12 +658,6 @@ export function TeamDashboard() {
               <Button variant="secondary" size="sm" onClick={() => setViewMode('report_list')}>
                 返回周报列表
               </Button>
-              {summaryView?.summary && (
-                <Button variant="secondary" size="sm" onClick={handleExportSummary}>
-                  <Download size={13} />
-                  导出
-                </Button>
-              )}
               {summaryView?.canGenerateSummary && (
                 <Button variant="primary" size="sm" onClick={handleGenerateSummary} disabled={generatingSummary}>
                   {generatingSummary ? <Loader2 size={13} className="animate-spin mr-1" /> : <Sparkles size={13} className="mr-1" />}

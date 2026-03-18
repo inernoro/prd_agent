@@ -1,10 +1,10 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, MessageSquare, CornerDownRight, Trash2, Send, GitCompare, Download, X, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, MessageSquare, CornerDownRight, Trash2, Send, GitCompare, X, CheckCircle2 } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
-import { getWeeklyReport, listComments, createComment, deleteComment, exportReportMarkdown, reviewWeeklyReport, returnWeeklyReport } from '@/services';
+import { getWeeklyReport, listComments, createComment, deleteComment, reviewWeeklyReport, returnWeeklyReport } from '@/services';
 import { useAuthStore } from '@/stores/authStore';
 import type { WeeklyReport, ReportComment } from '@/services/contracts/reportAgent';
 import { WeeklyReportStatus, ReportInputType } from '@/services/contracts/reportAgent';
@@ -110,22 +110,6 @@ export default function ReportDetailPage() {
     }
   };
 
-  const handleExport = async () => {
-    if (!reportId || !report) return;
-    try {
-      const blob = await exportReportMarkdown({ id: reportId });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `周报_${report.userName ?? ''}_${report.weekYear}W${String(report.weekNumber).padStart(2, '0')}.md`;
-      a.click();
-      URL.revokeObjectURL(url);
-      toast.success('导出成功');
-    } catch {
-      toast.error('导出失败');
-    }
-  };
-
   const commentsBySection = useMemo(() => {
     const map: Record<number, ReportComment[]> = {};
     for (const c of comments) {
@@ -188,9 +172,6 @@ export default function ReportDetailPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={handleExport} title="导出 Markdown">
-              <Download size={14} />
-            </Button>
             {(report.status === WeeklyReportStatus.Submitted || report.status === WeeklyReportStatus.Reviewed) && (
               <>
                 <Button variant="secondary" size="sm" onClick={() => setShowReturnDialog(true)}>退回</Button>

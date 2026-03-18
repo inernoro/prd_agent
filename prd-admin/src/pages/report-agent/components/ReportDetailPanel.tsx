@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
-import { X, MessageSquare, CornerDownRight, Trash2, Send, GitCompare, Download } from 'lucide-react';
+import { X, MessageSquare, CornerDownRight, Trash2, Send, GitCompare } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
-import { getWeeklyReport, listComments, createComment, deleteComment, exportReportMarkdown } from '@/services';
+import { getWeeklyReport, listComments, createComment, deleteComment } from '@/services';
 import { useAuthStore } from '@/stores/authStore';
 import type { WeeklyReport, ReportComment } from '@/services/contracts/reportAgent';
 import { WeeklyReportStatus, ReportInputType } from '@/services/contracts/reportAgent';
@@ -117,20 +117,6 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
             </div>
           </div>
           <div className="flex items-center gap-1">
-            <Button variant="ghost" size="sm" onClick={async () => {
-              try {
-                const blob = await exportReportMarkdown({ id: reportId });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `周报_${report?.userName ?? ''}_${report?.weekYear}W${String(report?.weekNumber ?? 0).padStart(2, '0')}.md`;
-                a.click();
-                URL.revokeObjectURL(url);
-                toast.success('导出成功');
-              } catch { toast.error('导出失败'); }
-            }}>
-              <Download size={14} />
-            </Button>
             <Button variant="ghost" size="sm" onClick={onClose}>
               <X size={14} />
             </Button>
