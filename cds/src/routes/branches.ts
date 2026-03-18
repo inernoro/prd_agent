@@ -430,23 +430,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 timestamp: new Date().toISOString(),
               });
 
-              // Launch startup signal watcher in background (non-blocking)
-              containerService.waitForStartupSignal(svc.containerName, profile.startupSignal, (chunk) => {
+              // Await startup signal — keep SSE stream open until ready
+              const ready = await containerService.waitForStartupSignal(svc.containerName, profile.startupSignal, (chunk) => {
                 for (const line of chunk.split('\n')) {
                   if (line.trim()) logDeploy(id, line);
                 }
-              }).then(ready => {
-                if (ready) {
-                  svc.status = 'running';
-                  logDeploy(id, `${profile.name} 启动成功 ✓`);
-                } else {
-                  logDeploy(id, `${profile.name} 启动信号超时，服务可能仍在初始化`);
-                }
-                const statuses = Object.values(entry.services).map(s => s.status);
-                if (statuses.some(s => s === 'running')) entry.status = 'running';
-                else if (statuses.some(s => s === 'starting')) entry.status = 'starting';
-                stateService.save();
-              }).catch(() => { /* startup signal watcher error — ignore */ });
+              });
+              if (ready) {
+                svc.status = 'running';
+                logDeploy(id, `${profile.name} 启动成功 ✓`);
+              } else {
+                logDeploy(id, `${profile.name} 启动信号超时，服务可能仍在初始化`);
+              }
+              stateService.save();
             } else if (profile.readinessProbe) {
               svc.status = 'starting';
               stateService.save();
@@ -459,25 +455,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 timestamp: new Date().toISOString(),
               });
 
-              // Launch Phase 2 readiness probe in background (non-blocking)
-              containerService.waitForServiceReady(svc.hostPort, profile.readinessProbe, (chunk) => {
+              // Await readiness probe — keep SSE stream open until ready
+              const ready = await containerService.waitForServiceReady(svc.hostPort, profile.readinessProbe, (chunk) => {
                 for (const line of chunk.split('\n')) {
                   if (line.trim()) logDeploy(id, line);
                 }
-              }).then(ready => {
-                if (ready) {
-                  svc.status = 'running';
-                  logDeploy(id, `${profile.name} 就绪 ✓`);
-                } else {
-                  // Timeout — stay 'starting', not an error
-                  logDeploy(id, `${profile.name} 就绪检查超时，服务可能仍在初始化`);
-                }
-                // Update branch-level status
-                const statuses = Object.values(entry.services).map(s => s.status);
-                if (statuses.some(s => s === 'running')) entry.status = 'running';
-                else if (statuses.some(s => s === 'starting')) entry.status = 'starting';
-                stateService.save();
-              }).catch(() => { /* readiness check internal error — ignore */ });
+              });
+              if (ready) {
+                svc.status = 'running';
+                logDeploy(id, `${profile.name} 就绪 ✓`);
+              } else {
+                // Timeout — stay 'starting', not an error
+                logDeploy(id, `${profile.name} 就绪检查超时，服务可能仍在初始化`);
+              }
+              stateService.save();
             } else {
               svc.status = 'running';
               const elapsed = Date.now() - serviceStartTime;
@@ -630,44 +621,35 @@ export function createBranchRouter(deps: RouterDeps): Router {
           stateService.save();
           logEvent({ step: `build-${profile.id}`, status: 'done', title: `${profile.name} 容器已启动，等待启动信号 :${svc.hostPort}`, timestamp: new Date().toISOString() });
 
-          containerService.waitForStartupSignal(svc.containerName, profile.startupSignal, (chunk) => {
+          const signalReady = await containerService.waitForStartupSignal(svc.containerName, profile.startupSignal, (chunk) => {
             for (const line of chunk.split('\n')) {
               if (line.trim()) logDeploy(id, line);
             }
-          }).then(ready => {
-            if (ready) {
-              svc.status = 'running';
-              logDeploy(id, `${profile.name} 启动成功 ✓`);
-            } else {
-              logDeploy(id, `${profile.name} 启动信号超时`);
-            }
-            const sts = Object.values(entry.services).map(s => s.status);
-            if (sts.some(s => s === 'running')) entry.status = 'running';
-            else if (sts.some(s => s === 'starting')) entry.status = 'starting';
-            stateService.save();
-          }).catch(() => { /* ignore */ });
+          });
+          if (signalReady) {
+            svc.status = 'running';
+            logDeploy(id, `${profile.name} 启动成功 ✓`);
+          } else {
+            logDeploy(id, `${profile.name} 启动信号超时`);
+          }
+          stateService.save();
         } else if (profile.readinessProbe) {
           svc.status = 'starting';
           stateService.save();
           logEvent({ step: `build-${profile.id}`, status: 'done', title: `${profile.name} 容器已启动，等待服务就绪 :${svc.hostPort}`, timestamp: new Date().toISOString() });
 
-          // Background readiness probe
-          containerService.waitForServiceReady(svc.hostPort, profile.readinessProbe, (chunk) => {
+          const probeReady = await containerService.waitForServiceReady(svc.hostPort, profile.readinessProbe, (chunk) => {
             for (const line of chunk.split('\n')) {
               if (line.trim()) logDeploy(id, line);
             }
-          }).then(ready => {
-            if (ready) {
-              svc.status = 'running';
-              logDeploy(id, `${profile.name} 就绪 ✓`);
-            } else {
-              logDeploy(id, `${profile.name} 就绪检查超时`);
-            }
-            const sts = Object.values(entry.services).map(s => s.status);
-            if (sts.some(s => s === 'running')) entry.status = 'running';
-            else if (sts.some(s => s === 'starting')) entry.status = 'starting';
-            stateService.save();
-          }).catch(() => { /* ignore */ });
+          });
+          if (probeReady) {
+            svc.status = 'running';
+            logDeploy(id, `${profile.name} 就绪 ✓`);
+          } else {
+            logDeploy(id, `${profile.name} 就绪检查超时`);
+          }
+          stateService.save();
         } else {
           svc.status = 'running';
           logEvent({ step: `build-${profile.id}`, status: 'done', title: `${profile.name} 运行于 :${svc.hostPort}`, timestamp: new Date().toISOString() });
