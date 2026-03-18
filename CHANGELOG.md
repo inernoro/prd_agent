@@ -12,6 +12,7 @@
 
 | 类型 | 模块 | 描述 |
 |------|------|------|
+| feat | cds | ClawHub 暖色调配色方案：暗色 H21-27° 暖棕 + 亮色 H27° 暖米色，朱红 accent，海沫绿 success，透明度边框/阴影体系，径向光晕背景（tag: pre-clawhub-theme 可还原） |
 | fix | cds | 白天模式颜色修复：背景纯白、饱和度提升、modal/日志面板适配、accent 颜色加深 |
 | fix | cds | 重新部署时立即清除之前的拉取/部署错误信息（前后端同步清除） |
 | feat | cds | 主题切换按钮移至顶部栏，View Transition API 水波纹动效（圆形clip-path扩散），暗色 #131314/#1E1F20、亮色 #FFFFFF/#F0F4F9 |
