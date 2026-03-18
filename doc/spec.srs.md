@@ -2119,8 +2119,8 @@ sequenceDiagram
 2. 状态机：Draft/Returned/Overdue → Submitted（员工操作）→ Reviewed（领导操作）；团队管理员可对 Submitted/Reviewed 执行 Returned
 3. 仅草稿/已退回/逾期状态可提交；仅作者可在已审阅前（草稿/已提交/已退回/逾期）编辑和删除；打回必须填写原因
 4. 团队工作台：区分“我管理的团队 / 我加入的团队”，选择团队后默认展示团队周报列表（总人数/已提交/待提交）；成员入口通过右侧抽屉打开
-5. AI 团队汇总为独立入口：从周报列表进入并可返回列表，避免与列表主视图混淆
-6. 汇总可见性：`all_members` 团队成员可见完整团队汇总；`leaders_only` 普通成员仅可见本人已提交周报汇总
+5. 团队周报AI分析为独立入口：从周报列表进入并可返回列表，避免与列表主视图混淆
+6. 分析可见性：`all_members` 团队成员可见完整团队分析；`leaders_only` 普通成员仅可见本人已提交周报分析
 
 **数据模型**：`WeeklyReport`、`WeeklyReportSection`、`WeeklyReportItem`（集合：`report_weekly_reports`）
 
@@ -2132,7 +2132,7 @@ sequenceDiagram
 - `POST /api/report-agent/reports/{id}/return` — 退回
 - `GET /api/report-agent/teams/{id}/dashboard` — 团队面板
 - `GET /api/report-agent/teams/{id}/reports/view` — 团队周报列表视图（按权限返回 full_team / self_only）
-- `GET /api/report-agent/teams/{id}/summary/view` — 团队汇总视图（按权限返回 full_team / self_only）
+- `GET /api/report-agent/teams/{id}/summary/view` — 团队周报AI分析视图（按权限返回 full_team / self_only）
 
 **权限定义**：
 - `report-agent.use` — 基础使用

@@ -31,8 +31,6 @@ import {
   getTeamSummaryView,
   leaveReportTeam,
   removeReportTeamMember,
-  reviewWeeklyReport,
-  returnWeeklyReport,
 } from '@/services';
 import { ReportTeamRole, WeeklyReportStatus } from '@/services/contracts/reportAgent';
 import type { ReportUser, TeamReportsViewData, TeamSummaryViewData } from '@/services/contracts/reportAgent';
@@ -99,14 +97,13 @@ export function TeamDashboard() {
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [generatingSummary, setGeneratingSummary] = useState(false);
 
-  const [showAddMemberDialog, setShowAddMemberDialog] = useState(false);
+  const [memberFormOpen, setMemberFormOpen] = useState(false);
   const [memberUserId, setMemberUserId] = useState('');
   const [memberRole, setMemberRole] = useState<string>(ReportTeamRole.Member);
   const [memberJobTitle, setMemberJobTitle] = useState('');
   const [memberSaving, setMemberSaving] = useState(false);
-
-  const [returnDialogId, setReturnDialogId] = useState<string | null>(null);
-  const [returnReason, setReturnReason] = useState('');
+  const [pendingRemoveUserId, setPendingRemoveUserId] = useState<string | null>(null);
+  const [removingUserId, setRemovingUserId] = useState<string | null>(null);
 
   const closeMemberDrawer = useCallback((immediate = false) => {
     if (drawerCloseTimerRef.current) {
@@ -157,12 +154,6 @@ export function TeamDashboard() {
   const selectedTeam = useMemo(() => teams.find((team) => team.id === selectedTeamId) ?? null, [teams, selectedTeamId]);
   const hasScopedTeams = scopedTeams.length > 0;
   const canLeaveSelectedTeam = !!selectedTeam?.canLeave;
-
-  const isLeaderOrDeputyOnSelectedTeam = useMemo(() => {
-    if (!selectedTeam) return false;
-    const role = selectedTeam.myRole ?? (selectedTeam.leaderUserId === userId ? ReportTeamRole.Leader : undefined);
-    return role === ReportTeamRole.Leader || role === ReportTeamRole.Deputy;
-  }, [selectedTeam, userId]);
 
   const canManageMembers = !!reportsView?.canManageMembers;
 
@@ -225,6 +216,8 @@ export function TeamDashboard() {
   useEffect(() => {
     setViewMode('report_list');
     closeMemberDrawer(true);
+    setMemberFormOpen(false);
+    setPendingRemoveUserId(null);
   }, [closeMemberDrawer, teamScope, selectedTeamId]);
 
   useEffect(() => {
@@ -351,7 +344,7 @@ export function TeamDashboard() {
       return;
     }
     toast.success('成员已添加');
-    setShowAddMemberDialog(false);
+    setMemberFormOpen(false);
     setMemberUserId('');
     setMemberRole(ReportTeamRole.Member);
     setMemberJobTitle('');
@@ -360,40 +353,21 @@ export function TeamDashboard() {
   };
 
   const handleRemoveMember = async (targetUserId: string) => {
-    if (!selectedTeamId || !window.confirm('确认移除该成员？')) return;
+    if (!selectedTeamId) return;
+    if (pendingRemoveUserId !== targetUserId) {
+      setPendingRemoveUserId(targetUserId);
+      return;
+    }
+    setRemovingUserId(targetUserId);
     const res = await removeReportTeamMember({ teamId: selectedTeamId, userId: targetUserId });
+    setRemovingUserId(null);
     if (!res.success) {
       toast.error(res.error?.message || '移除失败');
       return;
     }
     toast.success('成员已移除');
+    setPendingRemoveUserId(null);
     await loadTeams();
-    await reloadListAndSummaryIfNeeded();
-  };
-
-  const handleReview = async (reportId: string) => {
-    const res = await reviewWeeklyReport({ id: reportId });
-    if (!res.success) {
-      toast.error(res.error?.message || '审阅失败');
-      return;
-    }
-    toast.success('已审阅');
-    await reloadListAndSummaryIfNeeded();
-  };
-
-  const handleReturn = async () => {
-    if (!returnDialogId || !returnReason.trim()) {
-      toast.error('请填写退回原因');
-      return;
-    }
-    const res = await returnWeeklyReport({ id: returnDialogId, reason: returnReason.trim() });
-    if (!res.success) {
-      toast.error(res.error?.message || '打回失败');
-      return;
-    }
-    toast.success('已打回');
-    setReturnDialogId(null);
-    setReturnReason('');
     await reloadListAndSummaryIfNeeded();
   };
 
@@ -401,49 +375,6 @@ export function TeamDashboard() {
 
   return (
     <div className="mx-auto w-full max-w-[1180px] flex flex-col gap-4">
-      {returnDialogId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,.55)' }}>
-          <GlassCard className="p-6 w-[440px]">
-            <div className="text-[16px] font-semibold mb-3">退回周报</div>
-            <textarea
-              className="w-full text-[13px] px-4 py-3 rounded-xl resize-none"
-              style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)', minHeight: 110 }}
-              value={returnReason}
-              onChange={(e) => setReturnReason(e.target.value)}
-              placeholder="请输入退回原因（必填）"
-            />
-            <div className="flex justify-end gap-2 mt-4">
-              <Button variant="ghost" size="sm" onClick={() => { setReturnDialogId(null); setReturnReason(''); }}>取消</Button>
-              <Button variant="primary" size="sm" onClick={handleReturn} disabled={!returnReason.trim()}>确认打回</Button>
-            </div>
-          </GlassCard>
-        </div>
-      )}
-
-      {showAddMemberDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,.55)' }}>
-          <GlassCard className="p-6 w-[440px]">
-            <div className="text-[16px] font-semibold mb-3">添加团队成员</div>
-            <div className="flex flex-col gap-3">
-              <select className="surface-inset w-full rounded-xl px-3 py-2.5 text-[13px]" value={memberUserId} onChange={(e) => setMemberUserId(e.target.value)}>
-                <option value="">选择成员</option>
-                {availableUsers.map((user) => <option key={user.id} value={user.id}>{user.displayName || user.username}</option>)}
-              </select>
-              <select className="surface-inset w-full rounded-xl px-3 py-2.5 text-[13px]" value={memberRole} onChange={(e) => setMemberRole(e.target.value)}>
-                <option value={ReportTeamRole.Member}>成员</option>
-                <option value={ReportTeamRole.Deputy}>副负责人</option>
-                <option value={ReportTeamRole.Leader}>负责人</option>
-              </select>
-              <input className="surface-inset w-full rounded-xl px-3 py-2.5 text-[13px]" placeholder="岗位（可选）" value={memberJobTitle} onChange={(e) => setMemberJobTitle(e.target.value)} />
-            </div>
-            <div className="flex justify-end gap-2 mt-4">
-              <Button variant="ghost" size="sm" onClick={() => setShowAddMemberDialog(false)}>取消</Button>
-              <Button variant="primary" size="sm" onClick={handleAddMember} disabled={memberSaving || !memberUserId}>{memberSaving ? '添加中...' : '确认添加'}</Button>
-            </div>
-          </GlassCard>
-        </div>
-      )}
-
       {memberDrawerVisible && selectedTeam && (
         <div className="fixed inset-0 z-50 flex justify-end" onClick={() => closeMemberDrawer()}>
           <div
@@ -478,11 +409,32 @@ export function TeamDashboard() {
               <div className="flex items-center justify-between">
                 <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>成员数：{members.length}</div>
                 {canManageMembers && (
-                  <Button variant="secondary" size="sm" onClick={() => setShowAddMemberDialog(true)}>
+                  <Button variant="secondary" size="sm" onClick={() => setMemberFormOpen((v) => !v)}>
                     <UserPlus size={12} /> 添加成员
                   </Button>
                 )}
               </div>
+              {canManageMembers && memberFormOpen && (
+                <div className="surface-inset rounded-xl p-3 space-y-3">
+                  <div className="text-[12px] font-medium" style={{ color: 'var(--text-secondary)' }}>新增成员</div>
+                  <select className="surface-inset w-full rounded-xl px-3 py-2.5 text-[13px]" value={memberUserId} onChange={(e) => setMemberUserId(e.target.value)}>
+                    <option value="">选择成员</option>
+                    {availableUsers.map((user) => <option key={user.id} value={user.id}>{user.displayName || user.username}</option>)}
+                  </select>
+                  <select className="surface-inset w-full rounded-xl px-3 py-2.5 text-[13px]" value={memberRole} onChange={(e) => setMemberRole(e.target.value)}>
+                    <option value={ReportTeamRole.Member}>成员</option>
+                    <option value={ReportTeamRole.Deputy}>副负责人</option>
+                    <option value={ReportTeamRole.Leader}>负责人</option>
+                  </select>
+                  <input className="surface-inset w-full rounded-xl px-3 py-2.5 text-[13px]" placeholder="岗位（可选）" value={memberJobTitle} onChange={(e) => setMemberJobTitle(e.target.value)} />
+                  <div className="flex justify-end gap-2">
+                    <Button variant="ghost" size="sm" onClick={() => setMemberFormOpen(false)}>取消</Button>
+                    <Button variant="primary" size="sm" onClick={handleAddMember} disabled={memberSaving || !memberUserId}>
+                      {memberSaving ? '添加中...' : '确认添加'}
+                    </Button>
+                  </div>
+                </div>
+              )}
               {members.map((member) => {
                 const cfg = statusConfig[member.reportStatus] || statusConfig[WeeklyReportStatus.NotStarted];
                 const StatusIcon = cfg.icon;
@@ -500,20 +452,38 @@ export function TeamDashboard() {
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5">
-                      {member.reportId && <Button variant="secondary" size="sm" onClick={() => openReportDetail(member.reportId!)}><ExternalLink size={13} /> 查看</Button>}
-                      {isLeaderOrDeputyOnSelectedTeam && member.reportId && member.reportStatus === WeeklyReportStatus.Submitted && (
-                        <>
-                          <Button variant="primary" size="sm" onClick={() => handleReview(member.reportId!)}>审阅</Button>
-                          <Button variant="ghost" size="sm" onClick={() => setReturnDialogId(member.reportId!)}>打回</Button>
-                        </>
-                      )}
-                      {isLeaderOrDeputyOnSelectedTeam && member.reportId && member.reportStatus === WeeklyReportStatus.Reviewed && (
-                        <Button variant="ghost" size="sm" onClick={() => setReturnDialogId(member.reportId!)}>打回</Button>
-                      )}
                       {canRemove && (
-                        <Button variant="ghost" size="sm" onClick={() => handleRemoveMember(member.userId)} className="hover:text-red-300" title="移除成员">
-                          <UserMinus size={12} />
-                        </Button>
+                        pendingRemoveUserId === member.userId ? (
+                          <>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => setPendingRemoveUserId(null)}
+                              disabled={removingUserId === member.userId}
+                            >
+                              取消
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleRemoveMember(member.userId)}
+                              disabled={removingUserId === member.userId}
+                              className="hover:text-red-300"
+                            >
+                              {removingUserId === member.userId ? '移除中...' : '确认移除'}
+                            </Button>
+                          </>
+                        ) : (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleRemoveMember(member.userId)}
+                            className="hover:text-red-300"
+                            title="移除成员"
+                          >
+                            <UserMinus size={12} />
+                          </Button>
+                        )
                       )}
                     </div>
                   </div>
@@ -624,7 +594,7 @@ export function TeamDashboard() {
             </div>
             <Button variant="secondary" size="sm" onClick={handleEnterSummary}>
               <Sparkles size={13} />
-              AI团队汇总
+              团队周报AI分析
             </Button>
           </div>
           <div className="px-5 py-4 max-h-[540px] overflow-auto">
@@ -683,7 +653,7 @@ export function TeamDashboard() {
             <div className="min-w-0">
               <div className="flex items-center gap-2.5">
                 <Sparkles size={16} />
-                <span className="text-[16px] font-semibold tracking-tight">AI 团队周报汇总</span>
+                <span className="text-[16px] font-semibold tracking-tight">团队周报AI分析</span>
               </div>
               <div className="mt-2 flex items-center flex-wrap gap-2 text-[11px]">
                 <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: 'var(--text-secondary)' }}>
