@@ -761,7 +761,6 @@ export default function AppShell() {
                 className={cn(
                   'group/nav relative flex flex-col items-center justify-center gap-0.5 w-full',
                   'transition-all duration-200 ease-out py-1',
-                  activeKey === '/' ? '' : 'nav-item-hover'
                 )}
                 style={{
                   color: activeKey === '/' ? 'var(--text-primary)' : 'var(--text-secondary)',
@@ -769,7 +768,10 @@ export default function AppShell() {
                 title={homeItem.label}
               >
                 <span
-                  className="inline-flex items-center justify-center shrink-0 rounded-[12px] transition-all duration-200 group-hover/nav:scale-105"
+                  className={cn(
+                    'inline-flex items-center justify-center shrink-0 rounded-[12px] transition-all duration-200 group-hover/nav:scale-105',
+                    activeKey !== '/' && 'nav-item-hover'
+                  )}
                   style={{
                     width: 42,
                     height: 42,
@@ -845,7 +847,6 @@ export default function AppShell() {
                           className={cn(
                             'group/nav relative flex flex-col items-center justify-center gap-0.5 w-full',
                             'transition-all duration-200 ease-out py-1',
-                            !active && 'nav-item-hover'
                           )}
                           style={{
                             color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
@@ -854,7 +855,10 @@ export default function AppShell() {
                         >
                           {/* 图标容器：固定正方形 + 圆角背景 */}
                           <span
-                            className="inline-flex items-center justify-center shrink-0 rounded-[12px] transition-all duration-200 group-hover/nav:scale-105"
+                            className={cn(
+                              'inline-flex items-center justify-center shrink-0 rounded-[12px] transition-all duration-200 group-hover/nav:scale-105',
+                              !active && 'nav-item-hover'
+                            )}
                             style={{
                               width: 42,
                               height: 42,
