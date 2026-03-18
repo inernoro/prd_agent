@@ -57,6 +57,10 @@ let previewMode = localStorage.getItem('cds_preview_mode') || 'simple';
 // ── Mirror acceleration (npm/docker registry mirrors) ──
 let mirrorEnabled = false;
 
+// ── Theme (light/dark) ──
+let cdsTheme = localStorage.getItem('cds_theme') || 'dark';
+if (cdsTheme === 'light') document.documentElement.dataset.theme = 'light';
+
 // ── Executor/Scheduler state ──
 let cdsMode = 'standalone';
 let executors = [];
@@ -157,99 +161,8 @@ async function loadConfig() {
     workerPort = data.workerPort || '';
     cdsMode = data.mode || 'standalone';
     executors = data.executors || [];
-    renderServiceStatusBar();
     renderExecutorPanel();
   } catch (e) { console.error('loadConfig:', e); }
-}
-
-// ── Service Status Bar ──
-
-function renderServiceStatusBar() {
-  const dot = document.getElementById('workerDot');
-  const label = document.getElementById('workerLabel');
-  if (!dot || !label) return;
-
-  // Collect all services across all branches
-  const allServices = [];
-  for (const b of branches) {
-    for (const [pid, svc] of Object.entries(b.services || {})) {
-      allServices.push({ branchId: b.id, branchName: b.branch, profileId: pid, ...svc });
-    }
-  }
-
-  const running = allServices.filter(s => s.status === 'running').length;
-  const starting = allServices.filter(s => s.status === 'starting').length;
-  const building = allServices.filter(s => s.status === 'building').length;
-  const errors = allServices.filter(s => s.status === 'error').length;
-
-  // Update dot status
-  dot.className = 'gateway-dot';
-  if (running > 0) dot.classList.add('active');
-  else if (starting > 0 || building > 0) dot.classList.add('starting');
-
-  // Build summary text
-  const parts = [];
-  if (running > 0) parts.push(`<span class="status-summary-badge running">${running} 运行中</span>`);
-  if (starting > 0) parts.push(`<span class="status-summary-badge starting">${starting} 启动中</span>`);
-  if (building > 0) parts.push(`<span class="status-summary-badge starting">${building} 构建中</span>`);
-  if (errors > 0) parts.push(`<span class="status-summary-badge error">${errors} 错误</span>`);
-
-  if (parts.length === 0) {
-    label.innerHTML = '无服务运行';
-    label.title = `Worker :${workerPort || '?'}`;
-  } else {
-    label.innerHTML = parts.join(' ');
-    label.title = `Worker :${workerPort || '?'} · ${allServices.length} 个服务`;
-  }
-
-  // Render expanded panel
-  const panel = document.getElementById('serviceStatusPanel');
-  if (!panel) return;
-
-  const activeServices = allServices.filter(s => s.status !== 'idle' && s.status !== 'stopped');
-  if (activeServices.length === 0) {
-    panel.innerHTML = '<span style="font-size:12px;color:var(--text-muted)">暂无活跃服务</span>';
-    return;
-  }
-
-  // Add infra services to the panel
-  const infraBadges = infraServices.filter(s => s.status === 'running').map(s => `
-    <div class="svc-status-item svc-status-infra" onclick="openInfraModal()" title="基础设施: ${esc(s.id)}">
-      <span class="svc-status-dot running"></span>
-      <span>${esc(s.id)}</span>
-      <span class="svc-status-port">:${s.port || ''}</span>
-    </div>
-  `).join('');
-
-  panel.innerHTML = activeServices.map(s => `
-    <div class="svc-status-item" onclick="scrollToBranch('${esc(s.branchId)}')" title="${esc(s.branchName)} / ${esc(s.profileId)}">
-      <span class="svc-status-dot ${s.status}"></span>
-      <span>${esc(s.profileId)}</span>
-      <span class="svc-status-port">:${s.hostPort}</span>
-    </div>
-  `).join('') + (infraBadges ? infraBadges : '');
-}
-
-function toggleServiceStatusExpand() {
-  const panel = document.getElementById('serviceStatusPanel');
-  const bar = document.getElementById('serviceStatusBar');
-  if (!panel) return;
-  panel.classList.toggle('hidden');
-  bar.classList.toggle('service-status-bar-expanded');
-}
-
-function scrollToBranch(branchId) {
-  const card = document.querySelector(`[data-branch-id="${branchId}"]`);
-  if (card) {
-    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    card.style.boxShadow = '0 0 0 2px var(--accent)';
-    setTimeout(() => { card.style.boxShadow = ''; }, 2000);
-  }
-  // Collapse panel after navigation
-  const panel = document.getElementById('serviceStatusPanel');
-  const bar = document.getElementById('serviceStatusBar');
-  if (panel) panel.classList.add('hidden');
-  if (bar) bar.classList.remove('service-status-bar-expanded');
 }
 
 // ── Executor Panel (scheduler mode) ──
@@ -437,6 +350,28 @@ function updateMirrorUI() {
   if (sw) sw.classList.toggle('on', mirrorEnabled);
 }
 
+// ── Theme toggle ──
+
+function setTheme(theme) {
+  cdsTheme = theme;
+  if (theme === 'dark') {
+    delete document.documentElement.dataset.theme;
+  } else {
+    document.documentElement.dataset.theme = theme;
+  }
+  localStorage.setItem('cds_theme', theme);
+  updateThemeUI();
+}
+
+function toggleTheme() {
+  setTheme(cdsTheme === 'dark' ? 'light' : 'dark');
+}
+
+function updateThemeUI() {
+  const sw = document.querySelector('.settings-switch-theme');
+  if (sw) sw.classList.toggle('on', cdsTheme === 'light');
+}
+
 // ── Data loading ──
 
 async function loadBranches() {
@@ -445,7 +380,6 @@ async function loadBranches() {
     branches = data.branches || [];
     defaultBranch = data.defaultBranch;
     renderBranches();
-    renderServiceStatusBar();
   } catch (e) { console.error('loadBranches:', e); }
 }
 
@@ -943,18 +877,6 @@ function getPortIcon(profileId, profile) {
   return key ? ICON[key] : ICON.portDefault;
 }
 
-async function setDefaultBranch(id) {
-  if (!id) return;
-  if (isLoading(id, 'setDefault')) return;
-  setLoading(id, 'setDefault');
-  try {
-    await api('POST', `/branches/${id}/set-default`);
-    showToast(`默认分支已设为: ${id}`, 'success');
-  } catch (e) { showToast(e.message, 'error'); }
-  clearLoading(id, 'setDefault');
-  await loadBranches();
-}
-
 async function factoryReset() {
   if (!confirm('⚠️ 恢复出厂设置\n\n将清除所有：分支、构建配置、环境变量、基础设施服务、路由规则。\nDocker 数据卷（数据库文件等）会保留。\n\n确定继续？')) return;
   if (!confirm('二次确认：所有配置将被清空，此操作不可撤销。')) return;
@@ -1251,6 +1173,14 @@ function toggleSettingsMenu(event) {
         </span>
       </span>
     </div>
+    <div class="settings-menu-item settings-menu-switch" onclick="toggleTheme()">
+      <span class="settings-menu-switch-label">白天模式</span>
+      <span class="settings-switch settings-switch-theme ${cdsTheme === 'light' ? 'on' : ''}">
+        <span class="settings-switch-track">
+          <span class="settings-switch-thumb"></span>
+        </span>
+      </span>
+    </div>
     <div class="settings-menu-item" onclick="closeSettingsMenu(); exportConfig()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 13a.5.5 0 01-.5-.5V3a.5.5 0 01.5-.5h5.586a.5.5 0 01.354.146l3.414 3.414a.5.5 0 01.146.354V12.5a.5.5 0 01-.5.5h-9zM3.5 1A1.5 1.5 0 002 2.5v11A1.5 1.5 0 003.5 15h9a1.5 1.5 0 001.5-1.5V6.414a1.5 1.5 0 00-.44-1.06L10.147 1.94A1.5 1.5 0 009.086 1.5H3.5z"/></svg>
       导出配置
@@ -1316,11 +1246,6 @@ function renderBranches() {
   const count = document.getElementById('branchCount');
   const modeLabel = cdsMode === 'scheduler' ? ' · 调度端' : cdsMode === 'executor' ? ' · 执行端' : '';
   count.textContent = `${branches.length} 个分支${modeLabel}`;
-
-  // Update default branch selector
-  const sel = document.getElementById('defaultBranch');
-  sel.innerHTML = '<option value="">无默认</option>' +
-    branches.map(b => `<option value="${esc(b.id)}" ${b.id === defaultBranch ? 'selected' : ''}>${esc(b.id)}</option>`).join('');
 
   if (branches.length === 0) {
     el.innerHTML = '<div class="empty-state">暂无分支，请在上方搜索并添加。</div>';
