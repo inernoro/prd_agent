@@ -103,7 +103,7 @@ export default function ShareViewPage() {
     const isExpired = error.code === 'EXPIRED';
     return (
       <div style={styles.fullScreen}>
-        <div style={{ position: 'absolute', inset: 0 }}><BlackHoleVortex /></div>
+        <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}><BlackHoleVortex /></div>
         <div style={styles.overlay} />
         <div style={{ ...styles.glassCard, textAlign: 'center', padding: '40px 32px' }}>
           <div style={{
@@ -133,7 +133,7 @@ export default function ShareViewPage() {
   if (needPassword) {
     return (
       <div style={styles.fullScreen}>
-        <div style={{ position: 'absolute', inset: 0 }}><BlackHoleVortex /></div>
+        <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}><BlackHoleVortex /></div>
         <div style={styles.overlay} />
         <div
           key={shakeKey}
@@ -213,6 +213,7 @@ export default function ShareViewPage() {
                   outline: 'none',
                   width: 220,
                   backdropFilter: 'blur(8px)',
+                  WebkitBackdropFilter: 'blur(8px)',
                   transition: 'border-color 0.3s',
                 }}
               />
@@ -246,6 +247,7 @@ export default function ShareViewPage() {
                 opacity: submitting || !password.trim() ? 0.5 : 1,
                 transition: 'background 0.3s, opacity 0.2s',
                 backdropFilter: 'blur(8px)',
+                WebkitBackdropFilter: 'blur(8px)',
               }}
             >
               {submitting ? '验证中...' : '确认'}
@@ -283,6 +285,7 @@ export default function ShareViewPage() {
           justifyContent: 'space-between',
           background: 'rgba(17, 17, 17, 0.85)',
           backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
           borderBottom: '1px solid rgba(255,255,255,0.06)',
           flexShrink: 0,
         }}>
@@ -351,7 +354,7 @@ export default function ShareViewPage() {
   // Collection -> list cards
   return (
     <div style={{ ...styles.fullScreen, alignItems: 'flex-start', paddingTop: 60 }}>
-      <div style={{ position: 'absolute', inset: 0 }}><BlackHoleVortex /></div>
+      <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}><BlackHoleVortex /></div>
       <div style={styles.overlay} />
       <div style={{ maxWidth: 720, width: '100%', padding: '20px 16px', position: 'relative', zIndex: 1 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
@@ -379,6 +382,7 @@ export default function ShareViewPage() {
                   : saveStatus === 'already' ? 'rgba(234, 179, 8, 0.9)'
                   : 'rgba(59, 130, 246, 0.9)',
                 backdropFilter: 'blur(8px)',
+                WebkitBackdropFilter: 'blur(8px)',
                 transition: 'all 0.2s',
               }}
             >
@@ -416,6 +420,7 @@ export default function ShareViewPage() {
                 border: '1px solid rgba(255,255,255,0.08)',
                 textDecoration: 'none',
                 backdropFilter: 'blur(24px)',
+                WebkitBackdropFilter: 'blur(24px)',
                 transition: 'border-color 0.2s, background 0.2s',
               }}
               onMouseEnter={e => {
@@ -469,7 +474,10 @@ const styles: Record<string, React.CSSProperties> = {
   },
   overlay: {
     position: 'absolute',
-    inset: 0,
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
     background: 'radial-gradient(ellipse at center, rgba(0,0,0,0.3) 0%, rgba(0,0,0,0.6) 100%)',
     zIndex: 1,
     pointerEvents: 'none',

@@ -1262,7 +1262,7 @@ export const VideoAgentPage: React.FC = () => {
       {showDebugModal && selectedRun && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}
+          style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}
           onClick={() => setShowDebugModal(false)}
         >
           <div
