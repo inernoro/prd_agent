@@ -1249,6 +1249,7 @@ async function viewBranchLogs(id) {
       } else {
         const newPre = body.querySelector('.live-log-output');
         if (newPre) newPre.scrollTop = prevScrollTop;
+        checkLogErrors();
       }
     };
     openLogModal(`部署日志 — ${id}`, id);
@@ -1288,6 +1289,7 @@ async function viewBranchLogs(id) {
     } else {
       const newPre = body.querySelector('.live-log-output');
       if (newPre) newPre.scrollTop = prevScrollTop;
+      checkLogErrors();
     }
   };
   try {
@@ -1317,6 +1319,7 @@ async function viewContainerLogs(id, profileId) {
       // Restore scroll position on the NEW <pre>
       const newPre = body.querySelector('.live-log-output');
       if (newPre) newPre.scrollTop = prevScrollTop;
+      checkLogErrors();
     }
   };
   try {
@@ -3047,6 +3050,9 @@ function openLogModal(title, branchId, profileId) {
   } else {
     tabsEl.classList.add('hidden');
   }
+  // Hide copy-error button initially
+  const copyBtn = document.getElementById('copyErrorBtn');
+  if (copyBtn) { copyBtn.classList.add('hidden'); copyBtn.classList.remove('copied'); }
   // Clear terminal state for new session
   document.getElementById('terminalOutput').innerHTML = '';
   document.getElementById('terminalInput').value = '';
@@ -3054,6 +3060,73 @@ function openLogModal(title, branchId, profileId) {
   _terminalHistoryIdx = -1;
   switchLogTab('logs');
   _scrollLogToBottom();
+}
+
+// Error patterns to detect in logs
+const _errorPatterns = /\berror\s+(CS|TS|NG)\d+\b|:\s*error\s+\w+\d+:|Build FAILED|FAILED|Exception:|Unhandled exception|fatal error|npm ERR!|Error:|Cannot find module|ENOENT|EACCES|Segmentation fault/i;
+
+function checkLogErrors() {
+  const body = document.getElementById('logModalBody');
+  const btn = document.getElementById('copyErrorBtn');
+  if (!body || !btn) return;
+  const text = body.textContent || '';
+  if (_errorPatterns.test(text)) {
+    btn.classList.remove('hidden');
+    btn.classList.remove('copied');
+  } else {
+    btn.classList.add('hidden');
+  }
+}
+
+function copyErrorForLLM() {
+  const body = document.getElementById('logModalBody');
+  const btn = document.getElementById('copyErrorBtn');
+  if (!body) return;
+  const logText = body.textContent || '';
+
+  // Extract error lines + some context
+  const lines = logText.split('\n');
+  const errorLines = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (_errorPatterns.test(lines[i])) {
+      // Include 2 lines before for context
+      for (let j = Math.max(0, i - 2); j <= Math.min(lines.length - 1, i + 1); j++) {
+        const line = lines[j].trim();
+        if (line && !errorLines.includes(line)) errorLines.push(line);
+      }
+    }
+  }
+
+  const title = document.getElementById('logModalTitle')?.textContent || '';
+  const ctx = _logModalContext;
+  const prompt = [
+    '我的项目部署出错了，请帮我分析错误原因并给出修复方案。',
+    '',
+    `服务: ${title}`,
+    ctx.branchId ? `分支: ${ctx.branchId}` : '',
+    ctx.profileId ? `配置: ${ctx.profileId}` : '',
+    '',
+    '错误日志:',
+    '```',
+    errorLines.length > 0 ? errorLines.join('\n') : logText.slice(-3000),
+    '```',
+  ].filter(l => l !== false).join('\n');
+
+  navigator.clipboard.writeText(prompt).then(() => {
+    if (btn) {
+      btn.classList.add('copied');
+      btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg> 已复制';
+      setTimeout(() => {
+        if (btn) {
+          btn.classList.remove('copied');
+          btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"/></svg> 一键复制错误给大模型排错';
+        }
+      }, 2000);
+    }
+    showToast('错误日志已复制到剪贴板，粘贴给 AI 即可排错', 'success');
+  }).catch(() => {
+    showToast('复制失败，请手动选择日志文本', 'error');
+  });
 }
 
 function closeLogModal() {
@@ -3156,6 +3229,7 @@ function _scrollLogToBottom() {
     const pre = body.querySelector('.live-log-output');
     const target = pre || body;
     target.scrollTop = target.scrollHeight;
+    checkLogErrors();
   });
 }
 

@@ -1334,6 +1334,28 @@ a.branch-name:hover { color: var(--accent); }
   backdrop-filter: none;
 }
 .modal-close:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+/* Copy-error button in log modal header */
+.copy-error-btn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 12px; font-size: 12px; font-weight: 600;
+  color: var(--red); background: var(--red-bg);
+  border: 1px solid var(--red-border); border-radius: var(--radius-sm);
+  cursor: pointer; white-space: nowrap; flex-shrink: 0;
+  animation: copy-error-pulse 2s ease-in-out infinite;
+  transition: background var(--transition);
+}
+.copy-error-btn:hover { background: rgba(239, 83, 80, 0.2); }
+.copy-error-btn svg { flex-shrink: 0; }
+.copy-error-btn.copied {
+  animation: none; color: var(--green); background: var(--green-bg);
+  border-color: var(--green-border);
+}
+@keyframes copy-error-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
 .modal-body { padding: 14px 18px; overflow-y: auto; flex: 1; }
 .config-modal-dialog { max-width: 640px; }
 
