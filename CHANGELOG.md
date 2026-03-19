@@ -12,11 +12,12 @@
 
 | 类型 | 模块 | 描述 |
 |------|------|------|
-| feat | prd-api, prd-admin | 缺陷分享一键分享所有缺陷 + AI 自动评分（LLM Gateway 评分严重度/难度/影响/优先级） |
+| feat | prd-api, prd-admin | 缺陷分享一键分享 + AI SSE 流式评分（实时推送打字效果和逐条评分结果） |
 | feat | prd-api | 新增外部 AI Agent 标记缺陷修复状态端点（fix-status），自动通知缺陷提交者 |
 | feat | prd-api | ViewShare 端点增强 LLM 友好响应（含 agentInstructions、操作流程、端点 schema） |
 | feat | prd-admin | 分享复制剪贴板改为完整 AI 提示词（含 API 地址、认证说明、操作步骤） |
-| feat | prd-admin | 分享管理弹窗新增 AI 评分表格展示（严重度/难度/影响/综合评分） |
+| feat | prd-admin | AI 评分实时面板：阶段提示、LLM 打字效果、评分表逐行动画 |
+| rule | 全局 | CLAUDE.md 新增强制规则：LLM 交互过程可视化（禁止空白等待） |
 | feat | prd-desktop | 缺陷管理列表行补充缺陷编号和截图缩略图显示 |
 | feat | prd-desktop | 缺陷列表视图改为单行紧凑布局（对齐 web 端），新增图片预览缩略图及全屏预览 |
 | feat | prd-admin | 缺陷列表视图新增图片预览缩略图（状态列左侧），支持 hover 高亮和点击全屏预览 |

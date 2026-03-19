@@ -2333,7 +2333,7 @@ public class DefectAgentController : ControllerBase
     }
 
     /// <summary>
-    /// 一键分享所有缺陷（批量分享 + AI 评分）
+    /// 一键分享所有缺陷（批量分享，评分通过 SSE stream 获取）
     /// </summary>
     [HttpPost("shares/batch")]
     public async Task<IActionResult> CreateBatchShareWithScoring([FromBody] CreateBatchShareRequest request, CancellationToken ct)
@@ -2389,7 +2389,7 @@ public class DefectAgentController : ControllerBase
         if (defects.Count == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "没有可分享的缺陷"));
 
-        // 创建分享链接
+        // 创建分享链接（评分状态为 pending，由 SSE stream 端点触发评分）
         var shareLink = new DefectShareLink
         {
             ShareScope = DefectShareScopeType.Selected,
@@ -2399,37 +2399,20 @@ public class DefectAgentController : ControllerBase
             CreatedBy = userId,
             CreatedByName = userName,
             ExpiresAt = DateTime.UtcNow.AddDays(Math.Clamp(request.ExpiresInDays, 1, 30)),
-            AiScoreStatus = AiScoreStatusType.Scoring,
+            AiScoreStatus = AiScoreStatusType.None,
         };
 
         await _db.DefectShareLinks.InsertOneAsync(shareLink, cancellationToken: ct);
 
-        _logger.LogInformation("[{AppKey}] Batch share created: {Token} with {Count} defects, AI scoring started",
+        _logger.LogInformation("[{AppKey}] Batch share created: {Token} with {Count} defects",
             AppKey, shareLink.Token, defects.Count);
-
-        // 异步 AI 评分（Fire-and-forget，不阻塞请求）
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await ScoreDefectsAsync(shareLink.Id, defects);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "AI scoring failed for share {ShareId}", shareLink.Id);
-                await _db.DefectShareLinks.UpdateOneAsync(
-                    x => x.Id == shareLink.Id,
-                    Builders<DefectShareLink>.Update.Set(x => x.AiScoreStatus, AiScoreStatusType.Failed),
-                    cancellationToken: CancellationToken.None);
-            }
-        });
 
         var shareUrl = $"/api/defect-agent/share/view/{shareLink.Token}";
         return Ok(ApiResponse<object>.Ok(new { shareLink, shareUrl }));
     }
 
     /// <summary>
-    /// 获取分享的 AI 评分结果
+    /// 获取分享的 AI 评分结果（非流式，已完成时用）
     /// </summary>
     [HttpGet("shares/{shareId}/scores")]
     public async Task<IActionResult> GetShareScores(string shareId, CancellationToken ct)
@@ -2448,6 +2431,302 @@ public class DefectAgentController : ControllerBase
             share.AiScoreStatus,
             scores = share.AiScores ?? new List<DefectAiScoreItem>(),
         }));
+    }
+
+    /// <summary>
+    /// AI 评分 SSE 流 — 实时推送评分过程和结果
+    /// </summary>
+    [HttpGet("shares/{shareId}/scores/stream")]
+    [Produces("text/event-stream")]
+    public async Task StreamScores(string shareId, CancellationToken cancellationToken)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers.Connection = "keep-alive";
+
+        var userId = GetUserId();
+
+        var share = await _db.DefectShareLinks.Find(x => x.Id == shareId).FirstOrDefaultAsync(CancellationToken.None);
+        if (share == null)
+        {
+            await WriteSseEventAsync("error", new { message = "分享链接不存在" });
+            return;
+        }
+
+        if (share.CreatedBy != userId && !HasManagePermission())
+        {
+            await WriteSseEventAsync("error", new { message = "无权限" });
+            return;
+        }
+
+        // 如果已完成，直接返回结果
+        if (share.AiScoreStatus == AiScoreStatusType.Completed && share.AiScores != null)
+        {
+            await WriteSseEventAsync("phase", new { phase = "completed", message = "评分已完成" });
+            foreach (var score in share.AiScores)
+                await WriteSseEventAsync("score", score);
+            await WriteSseEventAsync("done", new { total = share.AiScores.Count });
+            return;
+        }
+
+        // 标记为评分中
+        await _db.DefectShareLinks.UpdateOneAsync(
+            x => x.Id == shareId,
+            Builders<DefectShareLink>.Update.Set(x => x.AiScoreStatus, AiScoreStatusType.Scoring),
+            cancellationToken: CancellationToken.None);
+
+        // 查询缺陷
+        var defects = await _db.DefectReports
+            .Find(x => share.DefectIds.Contains(x.Id) && !x.IsDeleted)
+            .ToListAsync(CancellationToken.None);
+
+        await WriteSseEventAsync("phase", new { phase = "preparing", message = $"准备评分 {defects.Count} 个缺陷…" });
+
+        // 构建评分 prompt
+        var defectSummaries = defects.Select((d, i) => new
+        {
+            index = i + 1,
+            id = d.Id,
+            defectNo = d.DefectNo,
+            title = d.Title,
+            content = d.RawContent?.Length > 500 ? d.RawContent[..500] : d.RawContent,
+            severity = d.Severity,
+            priority = d.Priority,
+            status = d.Status,
+            hasAttachments = d.Attachments?.Count > 0,
+        });
+
+        var systemPrompt = """
+            你是缺陷评分专家。请对以下缺陷列表进行评分，每个缺陷需要从四个维度打分（1-10分）：
+            1. severityScore（严重程度）：缺陷对系统功能的影响程度
+            2. difficultyScore（修复难度）：预估修复所需工作量和技术复杂度
+            3. impactScore（影响范围）：受影响的用户数量和业务流程范围
+            4. overallScore（综合优先级）：综合以上因素的修复优先级
+
+            请严格返回 JSON 数组格式，每个元素包含：id, severityScore, difficultyScore, impactScore, overallScore, reason
+            不要返回任何其他文字，只返回 JSON 数组。
+            """;
+
+        var userMessage = JsonSerializer.Serialize(defectSummaries, new JsonSerializerOptions { WriteIndented = true });
+
+        var gatewayRequest = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.DefectAgent.Scoring.Chat,
+            ModelType = ModelTypes.Chat,
+            Stream = true,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                    new JsonObject { ["role"] = "user", ["content"] = userMessage }
+                },
+                ["temperature"] = 0.3,
+                ["max_tokens"] = 4000,
+            },
+        };
+
+        await WriteSseEventAsync("phase", new { phase = "scoring", message = "AI 正在分析缺陷…" });
+
+        var fullContent = new StringBuilder();
+        var defectMap = defects.ToDictionary(d => d.Id);
+        var emittedScores = new List<DefectAiScoreItem>();
+        var lastFlushLen = 0;
+
+        try
+        {
+            await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
+            {
+                if (cancellationToken.IsCancellationRequested)
+                    break; // 客户端断开，但继续处理（服务器权威）
+
+                if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    fullContent.Append(chunk.Content);
+
+                    // 推送打字效果
+                    try
+                    {
+                        await WriteSseEventAsync("typing", new { text = chunk.Content });
+                    }
+                    catch (ObjectDisposedException) { /* 客户端断开 */ }
+                    catch (OperationCanceledException) { /* 客户端断开 */ }
+
+                    // 尝试增量解析已完成的 JSON 对象
+                    var currentContent = fullContent.ToString();
+                    if (currentContent.Length - lastFlushLen > 50)
+                    {
+                        var newScores = TryParseIncrementalScores(currentContent, defectMap, emittedScores);
+                        if (newScores.Count > 0)
+                        {
+                            foreach (var score in newScores)
+                            {
+                                emittedScores.Add(score);
+                                try
+                                {
+                                    await WriteSseEventAsync("score", score);
+                                }
+                                catch (ObjectDisposedException) { }
+                                catch (OperationCanceledException) { }
+                            }
+                            lastFlushLen = currentContent.Length;
+                        }
+                    }
+                }
+                else if (chunk.Type == GatewayChunkType.Error)
+                {
+                    _logger.LogWarning("AI scoring stream error for share {ShareId}: {Error}", shareId, chunk.Content);
+                    try { await WriteSseEventAsync("error", new { message = "AI 评分出错" }); }
+                    catch { /* ignore */ }
+                    await _db.DefectShareLinks.UpdateOneAsync(
+                        x => x.Id == shareId,
+                        Builders<DefectShareLink>.Update.Set(x => x.AiScoreStatus, AiScoreStatusType.Failed),
+                        cancellationToken: CancellationToken.None);
+                    return;
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "AI scoring stream exception for share {ShareId}", shareId);
+            try { await WriteSseEventAsync("error", new { message = "AI 评分失败" }); }
+            catch { /* ignore */ }
+            await _db.DefectShareLinks.UpdateOneAsync(
+                x => x.Id == shareId,
+                Builders<DefectShareLink>.Update.Set(x => x.AiScoreStatus, AiScoreStatusType.Failed),
+                cancellationToken: CancellationToken.None);
+            return;
+        }
+
+        // 最终解析：确保所有结果都被解析
+        var finalContent = fullContent.ToString().Trim();
+        if (finalContent.StartsWith("```"))
+        {
+            var firstNewLine = finalContent.IndexOf('\n');
+            var lastBacktick = finalContent.LastIndexOf("```");
+            if (firstNewLine > 0 && lastBacktick > firstNewLine)
+                finalContent = finalContent[(firstNewLine + 1)..lastBacktick].Trim();
+        }
+
+        try
+        {
+            var emittedIds = new HashSet<string>(emittedScores.Select(s => s.DefectId));
+            using var doc = JsonDocument.Parse(finalContent);
+            foreach (var item in doc.RootElement.EnumerateArray())
+            {
+                var id = item.GetProperty("id").GetString() ?? "";
+                if (!defectMap.TryGetValue(id, out var defect)) continue;
+                if (emittedIds.Contains(id)) continue;
+
+                var score = new DefectAiScoreItem
+                {
+                    DefectId = id,
+                    DefectNo = defect.DefectNo,
+                    DefectTitle = defect.Title,
+                    SeverityScore = item.TryGetProperty("severityScore", out var ss) ? ss.GetInt32() : 0,
+                    DifficultyScore = item.TryGetProperty("difficultyScore", out var ds) ? ds.GetInt32() : 0,
+                    ImpactScore = item.TryGetProperty("impactScore", out var isc) ? isc.GetInt32() : 0,
+                    OverallScore = item.TryGetProperty("overallScore", out var os) ? os.GetInt32() : 0,
+                    Reason = item.TryGetProperty("reason", out var r) ? r.GetString() : null,
+                };
+                emittedScores.Add(score);
+                try { await WriteSseEventAsync("score", score); }
+                catch { /* ignore */ }
+            }
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "Failed to parse final AI scoring response for share {ShareId}", shareId);
+        }
+
+        // 按综合评分排序并保存
+        var allScores = emittedScores.OrderByDescending(s => s.OverallScore).ToList();
+
+        await _db.DefectShareLinks.UpdateOneAsync(
+            x => x.Id == shareId,
+            Builders<DefectShareLink>.Update
+                .Set(x => x.AiScores, allScores)
+                .Set(x => x.AiScoreStatus, AiScoreStatusType.Completed),
+            cancellationToken: CancellationToken.None);
+
+        try
+        {
+            await WriteSseEventAsync("phase", new { phase = "completed", message = "评分完成" });
+            await WriteSseEventAsync("done", new { total = allScores.Count });
+        }
+        catch { /* 客户端可能已断开 */ }
+
+        _logger.LogInformation("[{AppKey}] AI scoring completed via SSE for share {ShareId}, {Count} defects scored",
+            AppKey, shareId, allScores.Count);
+    }
+
+    /// <summary>
+    /// 写入 SSE 事件
+    /// </summary>
+    private async Task WriteSseEventAsync(string eventType, object data)
+    {
+        var json = JsonSerializer.Serialize(data, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        });
+        await Response.WriteAsync($"event: {eventType}\ndata: {json}\n\n");
+        await Response.Body.FlushAsync();
+    }
+
+    /// <summary>
+    /// 增量解析流式 JSON 中已完成的评分对象
+    /// </summary>
+    private static List<DefectAiScoreItem> TryParseIncrementalScores(
+        string content, Dictionary<string, DefectReport> defectMap, List<DefectAiScoreItem> alreadyEmitted)
+    {
+        var results = new List<DefectAiScoreItem>();
+        var emittedIds = new HashSet<string>(alreadyEmitted.Select(s => s.DefectId));
+
+        // 寻找已完成的 JSON 对象（以 } 结束，后跟 , 或 ]）
+        var cleaned = content.Trim();
+        if (cleaned.StartsWith("```"))
+        {
+            var nl = cleaned.IndexOf('\n');
+            if (nl > 0) cleaned = cleaned[(nl + 1)..];
+        }
+        if (cleaned.StartsWith('[')) cleaned = cleaned[1..];
+
+        // 逐个提取 {...} 块
+        var depth = 0;
+        var objStart = -1;
+        for (var i = 0; i < cleaned.Length; i++)
+        {
+            if (cleaned[i] == '{') { if (depth == 0) objStart = i; depth++; }
+            else if (cleaned[i] == '}') { depth--; if (depth == 0 && objStart >= 0)
+            {
+                var objStr = cleaned[objStart..(i + 1)];
+                objStart = -1;
+                try
+                {
+                    using var doc = JsonDocument.Parse(objStr);
+                    var item = doc.RootElement;
+                    var id = item.TryGetProperty("id", out var idProp) ? idProp.GetString() ?? "" : "";
+                    if (!string.IsNullOrEmpty(id) && !emittedIds.Contains(id) && defectMap.TryGetValue(id, out var defect))
+                    {
+                        results.Add(new DefectAiScoreItem
+                        {
+                            DefectId = id,
+                            DefectNo = defect.DefectNo,
+                            DefectTitle = defect.Title,
+                            SeverityScore = item.TryGetProperty("severityScore", out var ss) ? ss.GetInt32() : 0,
+                            DifficultyScore = item.TryGetProperty("difficultyScore", out var ds) ? ds.GetInt32() : 0,
+                            ImpactScore = item.TryGetProperty("impactScore", out var isc) ? isc.GetInt32() : 0,
+                            OverallScore = item.TryGetProperty("overallScore", out var os) ? os.GetInt32() : 0,
+                            Reason = item.TryGetProperty("reason", out var r) ? r.GetString() : null,
+                        });
+                        emittedIds.Add(id);
+                    }
+                }
+                catch { /* 不完整的 JSON，跳过 */ }
+            }}
+        }
+
+        return results;
     }
 
     /// <summary>
@@ -2561,124 +2840,7 @@ public class DefectAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { results }));
     }
 
-    /// <summary>
-    /// AI 缺陷评分（内部方法，异步执行）
-    /// </summary>
-    private async Task ScoreDefectsAsync(string shareLinkId, List<DefectReport> defects)
-    {
-        // 构建评分 prompt
-        var defectSummaries = defects.Select((d, i) => new
-        {
-            index = i + 1,
-            id = d.Id,
-            defectNo = d.DefectNo,
-            title = d.Title,
-            content = d.RawContent?.Length > 500 ? d.RawContent[..500] : d.RawContent,
-            severity = d.Severity,
-            priority = d.Priority,
-            status = d.Status,
-            hasAttachments = d.Attachments?.Count > 0,
-        });
-
-        var systemPrompt = """
-            你是缺陷评分专家。请对以下缺陷列表进行评分，每个缺陷需要从四个维度打分（1-10分）：
-            1. severityScore（严重程度）：缺陷对系统功能的影响程度
-            2. difficultyScore（修复难度）：预估修复所需工作量和技术复杂度
-            3. impactScore（影响范围）：受影响的用户数量和业务流程范围
-            4. overallScore（综合优先级）：综合以上因素的修复优先级
-
-            请严格返回 JSON 数组格式，每个元素包含：id, severityScore, difficultyScore, impactScore, overallScore, reason
-            不要返回任何其他文字，只返回 JSON 数组。
-            """;
-
-        var userMessage = JsonSerializer.Serialize(defectSummaries, new JsonSerializerOptions { WriteIndented = true });
-
-        var gatewayRequest = new GatewayRequest
-        {
-            AppCallerCode = AppCallerRegistry.DefectAgent.Scoring.Chat,
-            ModelType = ModelTypes.Chat,
-            RequestBody = new JsonObject
-            {
-                ["messages"] = new JsonArray
-                {
-                    new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
-                    new JsonObject { ["role"] = "user", ["content"] = userMessage }
-                },
-                ["temperature"] = 0.3,
-                ["max_tokens"] = 4000,
-            },
-        };
-
-        var response = await _gateway.SendAsync(gatewayRequest, CancellationToken.None);
-
-        if (!response.Success || string.IsNullOrWhiteSpace(response.Content))
-        {
-            _logger.LogWarning("AI scoring LLM call failed for share {ShareId}: {Error}", shareLinkId, response.ErrorMessage);
-            await _db.DefectShareLinks.UpdateOneAsync(
-                x => x.Id == shareLinkId,
-                Builders<DefectShareLink>.Update.Set(x => x.AiScoreStatus, AiScoreStatusType.Failed),
-                cancellationToken: CancellationToken.None);
-            return;
-        }
-
-        // 解析 LLM 返回的 JSON
-        var content = response.Content.Trim();
-        // 去掉可能的 markdown 代码块
-        if (content.StartsWith("```"))
-        {
-            var firstNewLine = content.IndexOf('\n');
-            var lastBacktick = content.LastIndexOf("```");
-            if (firstNewLine > 0 && lastBacktick > firstNewLine)
-                content = content[(firstNewLine + 1)..lastBacktick].Trim();
-        }
-
-        var defectMap = defects.ToDictionary(d => d.Id);
-        var scores = new List<DefectAiScoreItem>();
-
-        try
-        {
-            using var doc = JsonDocument.Parse(content);
-            foreach (var item in doc.RootElement.EnumerateArray())
-            {
-                var id = item.GetProperty("id").GetString() ?? "";
-                if (!defectMap.TryGetValue(id, out var defect)) continue;
-
-                scores.Add(new DefectAiScoreItem
-                {
-                    DefectId = id,
-                    DefectNo = defect.DefectNo,
-                    DefectTitle = defect.Title,
-                    SeverityScore = item.TryGetProperty("severityScore", out var ss) ? ss.GetInt32() : 0,
-                    DifficultyScore = item.TryGetProperty("difficultyScore", out var ds) ? ds.GetInt32() : 0,
-                    ImpactScore = item.TryGetProperty("impactScore", out var isc) ? isc.GetInt32() : 0,
-                    OverallScore = item.TryGetProperty("overallScore", out var os) ? os.GetInt32() : 0,
-                    Reason = item.TryGetProperty("reason", out var r) ? r.GetString() : null,
-                });
-            }
-        }
-        catch (JsonException ex)
-        {
-            _logger.LogWarning(ex, "Failed to parse AI scoring response for share {ShareId}", shareLinkId);
-            await _db.DefectShareLinks.UpdateOneAsync(
-                x => x.Id == shareLinkId,
-                Builders<DefectShareLink>.Update.Set(x => x.AiScoreStatus, AiScoreStatusType.Failed),
-                cancellationToken: CancellationToken.None);
-            return;
-        }
-
-        // 按综合评分排序
-        scores = scores.OrderByDescending(s => s.OverallScore).ToList();
-
-        await _db.DefectShareLinks.UpdateOneAsync(
-            x => x.Id == shareLinkId,
-            Builders<DefectShareLink>.Update
-                .Set(x => x.AiScores, scores)
-                .Set(x => x.AiScoreStatus, AiScoreStatusType.Completed),
-            cancellationToken: CancellationToken.None);
-
-        _logger.LogInformation("[{AppKey}] AI scoring completed for share {ShareId}, {Count} defects scored",
-            AppKey, shareLinkId, scores.Count);
-    }
+    // ScoreDefectsAsync 已被 SSE 流式端点 StreamScores 替代
 
     #endregion
 

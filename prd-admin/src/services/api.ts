@@ -478,6 +478,7 @@ export const api = {
       submitReport: (token: string) => `/api/defect-agent/share/view/${token}/report`,
       batch: () => '/api/defect-agent/shares/batch',
       scores: (shareId: string) => `/api/defect-agent/shares/${shareId}/scores`,
+      scoresStream: (shareId: string) => `/api/defect-agent/shares/${shareId}/scores/stream`,
     },
   },
 
