@@ -87,24 +87,50 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
         var keyPrefix = $"pool-unavailable-user:";
         var keySuffix = $":{modelType}";
 
-        // 查找所有匹配的用户通知并关闭
+        // 1. 先查出所有受影响的用户通知（需要提取 userId 来发恢复消息）
         var filter = Builders<AdminNotification>.Filter.And(
             Builders<AdminNotification>.Filter.Regex(n => n.Key, $"^{keyPrefix}.*{keySuffix}$"),
             Builders<AdminNotification>.Filter.Eq(n => n.Status, "open"));
 
+        var openNotifications = await _db.AdminNotifications
+            .Find(filter)
+            .ToListAsync(ct);
+
+        if (openNotifications.Count == 0)
+            return;
+
+        // 2. 关闭所有故障通知
         var update = Builders<AdminNotification>.Update
             .Set(n => n.Status, "closed")
             .Set(n => n.HandledAt, DateTime.UtcNow)
             .Set(n => n.UpdatedAt, DateTime.UtcNow);
 
-        var result = await _db.AdminNotifications.UpdateManyAsync(filter, update, cancellationToken: ct);
+        await _db.AdminNotifications.UpdateManyAsync(filter, update, cancellationToken: ct);
 
-        if (result.ModifiedCount > 0)
+        // 3. 向每个受影响用户发送恢复通知（以最新一条为准，Key 幂等去重）
+        var affectedUserIds = openNotifications
+            .Where(n => !string.IsNullOrWhiteSpace(n.TargetUserId))
+            .Select(n => n.TargetUserId!)
+            .Distinct()
+            .ToList();
+
+        foreach (var userId in affectedUserIds)
         {
-            _logger.LogInformation(
-                "[PoolFailoverNotifier] 已关闭 {Count} 条用户故障通知: ModelType={ModelType}",
-                result.ModifiedCount, modelType);
+            var recoveryKey = $"pool-recovered-user:{userId}:{modelType}";
+
+            await UpsertNotificationAsync(
+                key: recoveryKey,
+                title: "AI 服务已恢复",
+                message: $"{modelType} 类型的 AI 模型已恢复正常，您现在可以继续使用。",
+                level: "success",
+                source: "model-pool-probe",
+                targetUserId: userId,
+                ct: ct);
         }
+
+        _logger.LogInformation(
+            "[PoolFailoverNotifier] 已关闭 {Count} 条用户故障通知并发送恢复消息: ModelType={ModelType}, AffectedUsers={Users}",
+            openNotifications.Count, modelType, affectedUserIds.Count);
     }
 
     private async Task UpsertNotificationAsync(
