@@ -5,9 +5,6 @@ declare const __GIT_BRANCH__: string;
 
 const HIDDEN_BRANCHES = ['main', 'master'];
 
-/** CDS API base — /_cds is rewritten to CDS Dashboard by proxy (both vite dev & CDS worker) */
-const CDS_API = '/_cds/api';
-
 /**
  * Detect deployment mode:
  * - Port 5500 (nginx gateway) = deploy (artifact) mode → auto-hide after 5s
@@ -21,22 +18,20 @@ function isDeployMode(): boolean {
   }
 }
 
-/** Slugify branch name the same way CDS does (lowercase, replace non-alphanumeric with dash) */
+// ── CDS-only helpers (only called when CDS is detected) ──
+
+/** CDS API base — /_cds is rewritten to CDS Dashboard by proxy (both vite dev & CDS worker) */
+const CDS_API = '/_cds/api';
+
 function slugify(branch: string): string {
   return branch.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-}
-
-interface ServiceInfo {
-  profileId: string;
-  status: string;
-  hostPort?: number;
 }
 
 interface BranchInfo {
   id: string;
   branch: string;
   status: string;
-  services: Record<string, ServiceInfo>;
+  services: Record<string, { profileId: string; status: string; hostPort?: number }>;
 }
 
 interface BuildProfile {
@@ -48,7 +43,7 @@ type DeployStatus = 'idle' | 'deploying' | 'success' | 'error';
 
 interface DeployState {
   status: DeployStatus;
-  profileId?: string; // which profile is deploying, undefined = all
+  profileId?: string;
   message?: string;
   steps: Array<{ step: string; status: string; title: string }>;
 }
@@ -60,6 +55,16 @@ async function cdsGet<T>(path: string): Promise<T | null> {
     return await res.json();
   } catch {
     return null;
+  }
+}
+
+/** Detect whether this app is hosted by CDS (silent probe, no UI flicker) */
+async function probeCds(): Promise<boolean> {
+  try {
+    const res = await fetch(`${CDS_API}/branches`, { method: 'GET', signal: AbortSignal.timeout(2000) });
+    return res.ok;
+  } catch {
+    return false;
   }
 }
 
@@ -114,67 +119,13 @@ function deployViaSSE(
   return () => controller.abort();
 }
 
-export function BranchBadge() {
-  const [dismissed, setDismissed] = useState(false);
-  const [visible, setVisible] = useState(true);
-  const [expanded, setExpanded] = useState(false);
-  const [position, setPosition] = useState({ x: 12, y: 12 });
-  const [branchInfo, setBranchInfo] = useState<BranchInfo | null>(null);
-  const [profiles, setProfiles] = useState<BuildProfile[]>([]);
-  const [deploy, setDeploy] = useState<DeployState>({ status: 'idle', steps: [] });
-  const [cdsAvailable, setCdsAvailable] = useState<boolean | null>(null);
+// ── Shared drag hook ──
 
+function useDrag(initial: { x: number; y: number }) {
+  const [position, setPosition] = useState(initial);
   const dragging = useRef(false);
   const dragStart = useRef({ mouseX: 0, mouseY: 0, posX: 0, posY: 0 });
-  const badgeRef = useRef<HTMLDivElement>(null);
-  const abortRef = useRef<(() => void) | null>(null);
 
-  const branch = typeof __GIT_BRANCH__ === 'string' ? __GIT_BRANCH__ : '';
-  const branchSlug = slugify(branch);
-  const deployMode = isDeployMode();
-
-  // Auto-hide after 5s in deploy mode (only when panel is closed)
-  useEffect(() => {
-    if (!branch || HIDDEN_BRANCHES.includes(branch) || dismissed) return;
-    if (deployMode && !expanded) {
-      const timer = setTimeout(() => setVisible(false), 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [branch, dismissed, deployMode, expanded]);
-
-  // Show badge again when panel is expanded
-  useEffect(() => {
-    if (expanded) setVisible(true);
-  }, [expanded]);
-
-  // Fetch CDS branch info when panel expands
-  useEffect(() => {
-    if (!expanded || !branchSlug) return;
-    let cancelled = false;
-
-    (async () => {
-      const [branchesRes, profilesRes] = await Promise.all([
-        cdsGet<BranchInfo[]>('/branches'),
-        cdsGet<BuildProfile[]>('/build-profiles'),
-      ]);
-
-      if (cancelled) return;
-
-      if (branchesRes === null) {
-        setCdsAvailable(false);
-        return;
-      }
-      setCdsAvailable(true);
-
-      const found = (branchesRes as BranchInfo[]).find(b => b.id === branchSlug);
-      setBranchInfo(found || null);
-      setProfiles(profilesRes || []);
-    })();
-
-    return () => { cancelled = true; };
-  }, [expanded, branchSlug]);
-
-  // Drag handlers
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('button')) return;
     dragging.current = true;
@@ -206,12 +157,50 @@ export function BranchBadge() {
     };
   }, []);
 
-  // Deploy a specific profile or all
+  return { position, onMouseDown };
+}
+
+// ── CDS Update Panel (only rendered when CDS is hosting) ──
+
+function CdsUpdatePanel({
+  branchSlug,
+  borderColor,
+}: {
+  branchSlug: string;
+  borderColor: string;
+}) {
+  const [branchInfo, setBranchInfo] = useState<BranchInfo | null>(null);
+  const [profiles, setProfiles] = useState<BuildProfile[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [deploy, setDeploy] = useState<DeployState>({ status: 'idle', steps: [] });
+  const abortRef = useRef<(() => void) | null>(null);
+
+  // Fetch branch + profiles on mount
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [branchesRes, profilesRes] = await Promise.all([
+        cdsGet<BranchInfo[]>('/branches'),
+        cdsGet<BuildProfile[]>('/build-profiles'),
+      ]);
+      if (cancelled) return;
+      setLoaded(true);
+      const found = (branchesRes || []).find(b => b.id === branchSlug);
+      setBranchInfo(found || null);
+      setProfiles(profilesRes || []);
+    })();
+    return () => { cancelled = true; };
+  }, [branchSlug]);
+
+  useEffect(() => {
+    return () => { abortRef.current?.(); };
+  }, []);
+
+  const isDeploying = deploy.status === 'deploying';
+
   const handleDeploy = useCallback((profileId?: string) => {
-    if (!branchSlug || deploy.status === 'deploying') return;
-
+    if (!branchSlug || isDeploying) return;
     setDeploy({ status: 'deploying', profileId, steps: [] });
-
     const abort = deployViaSSE(
       branchSlug,
       profileId,
@@ -221,30 +210,170 @@ export function BranchBadge() {
       })),
       (msg) => {
         setDeploy(prev => ({ ...prev, status: 'success', message: msg }));
-        // Auto-reset after 3s
         setTimeout(() => setDeploy({ status: 'idle', steps: [] }), 3000);
       },
       (msg) => {
         setDeploy(prev => ({ ...prev, status: 'error', message: msg }));
       },
     );
-
     abortRef.current = abort;
-  }, [branchSlug, deploy.status]);
+  }, [branchSlug, isDeploying]);
 
-  // Cleanup on unmount
+  if (!loaded) {
+    return (
+      <div style={{ color: '#8b949e', fontSize: 11, padding: '4px 0' }}>
+        <Loader2 size={11} style={{ animation: 'spin 1s linear infinite', verticalAlign: 'middle' }} /> 加载中...
+      </div>
+    );
+  }
+
+  if (!branchInfo) {
+    return (
+      <div style={{ color: '#8b949e', fontSize: 11, padding: '4px 0' }}>
+        分支 &quot;{branchSlug}&quot; 未在 CDS 中注册
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {/* Service status */}
+      <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 6 }}>
+        状态: <span style={{ color: branchInfo.status === 'running' ? '#3fb950' : '#f0883e' }}>
+          {branchInfo.status}
+        </span>
+      </div>
+
+      {/* Deploy buttons */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {profiles.map(p => (
+          <button
+            key={p.id}
+            disabled={isDeploying}
+            onClick={() => handleDeploy(p.id)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '5px 8px', borderRadius: 6,
+              border: '1px solid #30363d', background: '#21262d',
+              color: '#c9d1d9', fontSize: 11, cursor: isDeploying ? 'wait' : 'pointer',
+              opacity: isDeploying && deploy.profileId !== p.id ? 0.5 : 1,
+            }}
+            onMouseEnter={e => { if (!isDeploying) e.currentTarget.style.borderColor = '#58a6ff'; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = '#30363d'; }}
+          >
+            {isDeploying && deploy.profileId === p.id
+              ? <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} />
+              : <RefreshCw size={11} />}
+            更新 {p.name}
+          </button>
+        ))}
+
+        {profiles.length > 1 && (
+          <button
+            disabled={isDeploying}
+            onClick={() => handleDeploy()}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '5px 8px', borderRadius: 6,
+              border: '1px solid #30363d', background: '#161b22',
+              color: '#c9d1d9', fontSize: 11, cursor: isDeploying ? 'wait' : 'pointer',
+              opacity: isDeploying && deploy.profileId !== undefined ? 0.5 : 1,
+            }}
+            onMouseEnter={e => { if (!isDeploying) e.currentTarget.style.borderColor = '#58a6ff'; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = '#30363d'; }}
+          >
+            {isDeploying && deploy.profileId === undefined
+              ? <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} />
+              : <RefreshCw size={11} />}
+            全量更新
+          </button>
+        )}
+      </div>
+
+      {/* Deploy progress */}
+      {deploy.steps.length > 0 && (
+        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {deploy.steps.map(s => (
+            <div key={s.step} style={{
+              display: 'flex', alignItems: 'center', gap: 4,
+              fontSize: 10, color: s.status === 'done' ? '#3fb950' : s.status === 'error' ? '#f85149' : '#8b949e',
+            }}>
+              {s.status === 'running' && <Loader2 size={9} style={{ animation: 'spin 1s linear infinite' }} />}
+              {s.status === 'done' && <CheckCircle2 size={9} />}
+              {s.status === 'error' && <XCircle size={9} />}
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {s.title}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Result message */}
+      {deploy.status === 'success' && (
+        <div style={{ marginTop: 6, fontSize: 10, color: '#3fb950' }}>
+          {deploy.message}
+        </div>
+      )}
+      {deploy.status === 'error' && (
+        <div style={{ marginTop: 6, fontSize: 10, color: '#f85149' }}>
+          {deploy.message}
+          <button
+            onClick={() => setDeploy({ status: 'idle', steps: [] })}
+            style={{
+              marginLeft: 6, padding: '1px 4px', fontSize: 10, borderRadius: 3,
+              border: '1px solid #f85149', background: 'transparent', color: '#f85149', cursor: 'pointer',
+            }}
+          >
+            重试
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ── Main component ──
+
+export function BranchBadge() {
+  const [dismissed, setDismissed] = useState(false);
+  const [visible, setVisible] = useState(true);
+  const [expanded, setExpanded] = useState(false);
+  const [cdsDetected, setCdsDetected] = useState(false);
+
+  const badgeRef = useRef<HTMLDivElement>(null);
+
+  const branch = typeof __GIT_BRANCH__ === 'string' ? __GIT_BRANCH__ : '';
+  const branchSlug = slugify(branch);
+  const deployMode = isDeployMode();
+  const { position, onMouseDown } = useDrag({ x: 12, y: 12 });
+
+  // Silent CDS probe on mount — only fires once, no UI flicker
   useEffect(() => {
-    return () => { abortRef.current?.(); };
-  }, []);
+    if (!branch || HIDDEN_BRANCHES.includes(branch)) return;
+    probeCds().then(ok => setCdsDetected(ok));
+  }, [branch]);
+
+  // Auto-hide after 5s in deploy mode (only when panel is closed)
+  useEffect(() => {
+    if (!branch || HIDDEN_BRANCHES.includes(branch) || dismissed) return;
+    if (deployMode && !expanded) {
+      const timer = setTimeout(() => setVisible(false), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [branch, dismissed, deployMode, expanded]);
+
+  // Show badge again when panel is expanded
+  useEffect(() => {
+    if (expanded) setVisible(true);
+  }, [expanded]);
 
   if (!branch || HIDDEN_BRANCHES.includes(branch) || dismissed || !visible) return null;
 
   const modeColor = deployMode
-    ? 'rgba(35, 134, 54, 0.85)'  // green for deploy
-    : 'rgba(218, 139, 69, 0.85)'; // orange for run
+    ? 'rgba(35, 134, 54, 0.85)'
+    : 'rgba(218, 139, 69, 0.85)';
   const borderColor = deployMode ? 'rgba(63, 185, 80, 0.3)' : 'rgba(218, 139, 69, 0.3)';
-
-  const isDeploying = deploy.status === 'deploying';
 
   return (
     <div
@@ -260,8 +389,8 @@ export function BranchBadge() {
         userSelect: 'none',
       }}
     >
-      {/* Expanded panel */}
-      {expanded && (
+      {/* CDS update panel — only when CDS is hosting AND user expanded */}
+      {cdsDetected && expanded && (
         <div style={{
           marginBottom: 4,
           padding: '10px 12px',
@@ -273,112 +402,7 @@ export function BranchBadge() {
           boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
           minWidth: 220,
         }}>
-          {cdsAvailable === false && (
-            <div style={{ color: '#8b949e', fontSize: 11, padding: '4px 0' }}>
-              CDS 未连接 — 确认 CDS 正在运行
-            </div>
-          )}
-          {cdsAvailable && !branchInfo && (
-            <div style={{ color: '#8b949e', fontSize: 11, padding: '4px 0' }}>
-              分支 "{branchSlug}" 未在 CDS 中注册
-            </div>
-          )}
-          {cdsAvailable && branchInfo && (
-            <>
-              {/* Service status */}
-              <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 6 }}>
-                状态: <span style={{ color: branchInfo.status === 'running' ? '#3fb950' : '#f0883e' }}>
-                  {branchInfo.status}
-                </span>
-              </div>
-
-              {/* Deploy buttons */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                {profiles.map(p => (
-                  <button
-                    key={p.id}
-                    disabled={isDeploying}
-                    onClick={() => handleDeploy(p.id)}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 6,
-                      padding: '5px 8px', borderRadius: 6,
-                      border: '1px solid #30363d', background: '#21262d',
-                      color: '#c9d1d9', fontSize: 11, cursor: isDeploying ? 'wait' : 'pointer',
-                      opacity: isDeploying && deploy.profileId !== p.id ? 0.5 : 1,
-                    }}
-                    onMouseEnter={e => { if (!isDeploying) e.currentTarget.style.borderColor = '#58a6ff'; }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = '#30363d'; }}
-                  >
-                    {isDeploying && deploy.profileId === p.id
-                      ? <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} />
-                      : <RefreshCw size={11} />}
-                    更新 {p.name}
-                  </button>
-                ))}
-
-                {profiles.length > 1 && (
-                  <button
-                    disabled={isDeploying}
-                    onClick={() => handleDeploy()}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 6,
-                      padding: '5px 8px', borderRadius: 6,
-                      border: '1px solid #30363d', background: '#161b22',
-                      color: '#c9d1d9', fontSize: 11, cursor: isDeploying ? 'wait' : 'pointer',
-                      opacity: isDeploying && deploy.profileId !== undefined ? 0.5 : 1,
-                    }}
-                    onMouseEnter={e => { if (!isDeploying) e.currentTarget.style.borderColor = '#58a6ff'; }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = '#30363d'; }}
-                  >
-                    {isDeploying && deploy.profileId === undefined
-                      ? <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} />
-                      : <RefreshCw size={11} />}
-                    全量更新
-                  </button>
-                )}
-              </div>
-
-              {/* Deploy progress */}
-              {deploy.steps.length > 0 && (
-                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  {deploy.steps.map(s => (
-                    <div key={s.step} style={{
-                      display: 'flex', alignItems: 'center', gap: 4,
-                      fontSize: 10, color: s.status === 'done' ? '#3fb950' : s.status === 'error' ? '#f85149' : '#8b949e',
-                    }}>
-                      {s.status === 'running' && <Loader2 size={9} style={{ animation: 'spin 1s linear infinite' }} />}
-                      {s.status === 'done' && <CheckCircle2 size={9} />}
-                      {s.status === 'error' && <XCircle size={9} />}
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {s.title}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Result message */}
-              {deploy.status === 'success' && (
-                <div style={{ marginTop: 6, fontSize: 10, color: '#3fb950' }}>
-                  {deploy.message}
-                </div>
-              )}
-              {deploy.status === 'error' && (
-                <div style={{ marginTop: 6, fontSize: 10, color: '#f85149' }}>
-                  {deploy.message}
-                  <button
-                    onClick={() => setDeploy({ status: 'idle', steps: [] })}
-                    style={{
-                      marginLeft: 6, padding: '1px 4px', fontSize: 10, borderRadius: 3,
-                      border: '1px solid #f85149', background: 'transparent', color: '#f85149', cursor: 'pointer',
-                    }}
-                  >
-                    重试
-                  </button>
-                </div>
-              )}
-            </>
-          )}
+          <CdsUpdatePanel branchSlug={branchSlug} borderColor={borderColor} />
         </div>
       )}
 
@@ -413,24 +437,29 @@ export function BranchBadge() {
         }}>
           {deployMode ? '制品' : '源码'}
         </span>
-        <button
-          onClick={() => setExpanded(v => !v)}
-          style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            marginLeft: 2, padding: 2, borderRadius: 4,
-            border: 'none', background: 'transparent', color: 'inherit', cursor: 'pointer', opacity: 0.6,
-          }}
-          onMouseEnter={e => { e.currentTarget.style.opacity = '1'; }}
-          onMouseLeave={e => { e.currentTarget.style.opacity = '0.6'; }}
-          title={expanded ? '收起' : '展开更新面板'}
-        >
-          {expanded ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
-        </button>
+
+        {/* Expand button — only visible when CDS is detected */}
+        {cdsDetected && (
+          <button
+            onClick={() => setExpanded(v => !v)}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              marginLeft: 2, padding: 2, borderRadius: 4,
+              border: 'none', background: 'transparent', color: 'inherit', cursor: 'pointer', opacity: 0.6,
+            }}
+            onMouseEnter={e => { e.currentTarget.style.opacity = '1'; }}
+            onMouseLeave={e => { e.currentTarget.style.opacity = '0.6'; }}
+            title={expanded ? '收起' : '展开更新面板'}
+          >
+            {expanded ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
+          </button>
+        )}
+
         <button
           onClick={() => setDismissed(true)}
           style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            padding: 2, borderRadius: 4,
+            marginLeft: 2, padding: 2, borderRadius: 4,
             border: 'none', background: 'transparent', color: 'inherit', cursor: 'pointer', opacity: 0.5,
           }}
           onMouseEnter={e => { e.currentTarget.style.opacity = '1'; }}
@@ -440,8 +469,8 @@ export function BranchBadge() {
         </button>
       </div>
 
-      {/* Keyframe for spinner */}
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      {/* Keyframe for spinner (only injected once, harmless) */}
+      {cdsDetected && <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>}
     </div>
   );
 }
