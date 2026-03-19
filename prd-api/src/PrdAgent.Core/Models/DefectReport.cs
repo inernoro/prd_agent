@@ -94,6 +94,12 @@ public class DefectReport
     /// <summary>解决人名称</summary>
     public string? ResolvedByName { get; set; }
 
+    /// <summary>是否由 AI Agent 自动解决</summary>
+    public bool IsAiResolved { get; set; }
+
+    /// <summary>解决该缺陷的 AI Agent 名称</summary>
+    public string? ResolvedByAgentName { get; set; }
+
     /// <summary>拒绝原因</summary>
     public string? RejectReason { get; set; }
 
@@ -243,6 +249,11 @@ public class DefectAttachment
     /// 是否系统自动生成（日志类附件不可删除、前端不可下载）
     /// </summary>
     public bool IsSystemGenerated { get; set; } = false;
+
+    /// <summary>
+    /// AI 图片分析描述（截图类附件，前端 Vision 解析后持久化）
+    /// </summary>
+    public string? Description { get; set; }
 }
 
 /// <summary>

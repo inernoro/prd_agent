@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { isTauri } from '../lib/tauri';
+import { isTauri, invoke } from '../lib/tauri';
 
 type UpdatePhase =
   | 'idle'        // 无更新活动
@@ -8,6 +8,9 @@ type UpdatePhase =
   | 'ready'       // 下载完成，等待用户确认安装
   | 'installing'  // 用户点击安装
   | 'error';      // 出错
+
+/** 更新源类型 */
+type UpdateSource = 'unknown' | 'accelerated' | 'github' | 'failed';
 
 interface UpdateState {
   phase: UpdatePhase;
@@ -19,6 +22,8 @@ interface UpdateState {
   isDismissed: boolean;
   /** 缓存的 Tauri Update 对象 */
   _updateObject: any | null;
+  /** 更新源：accelerated（加速）/ github（回退）/ unknown */
+  updateSource: UpdateSource;
 
   /** 静默检查并下载更新 */
   checkAndDownload: () => Promise<void>;
@@ -36,6 +41,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   error: null,
   isDismissed: false,
   _updateObject: null,
+  updateSource: 'unknown',
 
   checkAndDownload: async () => {
     const { phase } = get();
@@ -43,7 +49,17 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     if (phase !== 'idle' && phase !== 'error') return;
     if (!isTauri()) return;
 
-    set({ phase: 'checking', error: null });
+    set({ phase: 'checking', error: null, updateSource: 'unknown' });
+
+    // 先探测加速端点，记录更新源（不影响主流程，仅用于 UI 标签展示）
+    try {
+      const accelResult = await invoke<{ source: string }>('fetch_accelerated_manifest');
+      if (accelResult?.source === 'accelerated' || accelResult?.source === 'github') {
+        set({ updateSource: accelResult.source as UpdateSource });
+      }
+    } catch {
+      // 加速探测失败不影响更新流程
+    }
 
     try {
       // 动态导入避免非 Tauri 环境报错

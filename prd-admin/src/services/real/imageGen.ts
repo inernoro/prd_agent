@@ -1,13 +1,10 @@
 import { apiRequest } from '@/services/real/apiClient';
 import { api } from '@/services/api';
-import { useAuthStore } from '@/stores/authStore';
 import { fail, ok, type ApiResponse } from '@/types/api';
 import type {
   CancelImageGenRunContract,
   CreateImageGenRunContract,
   GenerateImageGenContract,
-  ImageGenBatchStreamEvent,
-  ImageGenRunStreamEvent,
   GetImageGenSizeCapsContract,
   GetImageGenRunContract,
   PlanImageGenContract,
@@ -15,35 +12,7 @@ import type {
   RunImageGenRunStreamContract,
   StreamImageGenRunWithRetryContract,
 } from '@/services/contracts/imageGen';
-import { readSseStream } from '@/lib/sse';
-
-function getApiBaseUrl() {
-  const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:5000';
-  return raw.trim().replace(/\/+$/, '');
-}
-
-function joinUrl(base: string, path: string) {
-  const b = base.replace(/\/+$/, '');
-  const p = path.replace(/^\/+/, '');
-  if (!b) return `/${p}`;
-  return `${b}/${p}`;
-}
-
-async function readImageGenSseStream(
-  res: Response,
-  onEvent: (evt: ImageGenBatchStreamEvent) => void,
-  signal: AbortSignal
-): Promise<void> {
-  await readSseStream(res, onEvent, signal);
-}
-
-async function readImageGenRunSseStream(
-  res: Response,
-  onEvent: (evt: ImageGenRunStreamEvent) => void,
-  signal: AbortSignal
-): Promise<void> {
-  await readSseStream(res, onEvent, signal);
-}
+import { connectSse } from '@/lib/useSseStream';
 
 export const planImageGenReal: PlanImageGenContract = async (input) => {
   return await apiRequest(api.visualAgent.imageGen.plan(), {
@@ -71,48 +40,14 @@ export const generateImageGenReal: GenerateImageGenContract = async (input) => {
 };
 
 export const runImageGenBatchStreamReal: RunImageGenBatchStreamContract = async ({ input, onEvent, signal }) => {
-  const token = useAuthStore.getState().token;
-  if (!token) return fail('UNAUTHORIZED', '未登录') as unknown as ApiResponse<true>;
-
-  const url = joinUrl(getApiBaseUrl(), api.visualAgent.imageGen.batch.stream());
-
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Accept: 'text/event-stream',
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(input ?? {}),
-      signal,
-    });
-  } catch (e) {
-    return fail('NETWORK_ERROR', e instanceof Error ? e.message : '网络错误') as unknown as ApiResponse<true>;
-  }
-
-  if (res.status === 401) {
-    const authStore = useAuthStore.getState();
-    if (authStore.isAuthenticated) {
-      authStore.logout();
-      window.location.href = '/login';
-    }
-    return fail('UNAUTHORIZED', '未登录') as unknown as ApiResponse<true>;
-  }
-
-  if (!res.ok) {
-    const t = await res.text();
-    return fail('UNKNOWN', t || `HTTP ${res.status} ${res.statusText}`) as unknown as ApiResponse<true>;
-  }
-
-  try {
-    await readImageGenSseStream(res, onEvent, signal);
-  } catch (e) {
-    if (signal.aborted) return ok(true);
-    return fail('NETWORK_ERROR', e instanceof Error ? e.message : 'SSE 读取失败') as unknown as ApiResponse<true>;
-  }
-  return ok(true);
+  const result = await connectSse({
+    url: api.visualAgent.imageGen.batch.stream(),
+    method: 'POST',
+    body: input ?? {},
+    onEvent,
+    signal,
+  });
+  return (result.success ? ok(true) : fail(result.errorCode!, result.errorMessage!)) as unknown as ApiResponse<true>;
 };
 
 export const getImageGenSizeCapsReal: GetImageGenSizeCapsContract = async (input) => {
@@ -140,49 +75,13 @@ export const cancelImageGenRunReal: CancelImageGenRunContract = async ({ runId }
 };
 
 export const runImageGenRunStreamReal: RunImageGenRunStreamContract = async ({ runId, afterSeq, onEvent, signal }) => {
-  const token = useAuthStore.getState().token;
-  if (!token) return fail('UNAUTHORIZED', '未登录') as unknown as ApiResponse<true>;
-
   const rid = encodeURIComponent(String(runId ?? '').trim());
   const a = Number(afterSeq ?? 0);
   const qs = a > 0 ? `?afterSeq=${encodeURIComponent(String(a))}` : '';
-  const url = joinUrl(getApiBaseUrl(), `${api.visualAgent.imageGen.runs.byId(rid)}/stream${qs}`);
+  const url = `${api.visualAgent.imageGen.runs.byId(rid)}/stream${qs}`;
 
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method: 'GET',
-      headers: {
-        Accept: 'text/event-stream',
-        Authorization: `Bearer ${token}`,
-      },
-      signal,
-    });
-  } catch (e) {
-    return fail('NETWORK_ERROR', e instanceof Error ? e.message : '网络错误') as unknown as ApiResponse<true>;
-  }
-
-  if (res.status === 401) {
-    const authStore = useAuthStore.getState();
-    if (authStore.isAuthenticated) {
-      authStore.logout();
-      window.location.href = '/login';
-    }
-    return fail('UNAUTHORIZED', '未登录') as unknown as ApiResponse<true>;
-  }
-
-  if (!res.ok) {
-    const t = await res.text();
-    return fail('UNKNOWN', t || `HTTP ${res.status} ${res.statusText}`) as unknown as ApiResponse<true>;
-  }
-
-  try {
-    await readImageGenRunSseStream(res, onEvent, signal);
-  } catch (e) {
-    if (signal.aborted) return ok(true);
-    return fail('NETWORK_ERROR', e instanceof Error ? e.message : 'SSE 读取失败') as unknown as ApiResponse<true>;
-  }
-  return ok(true);
+  const result = await connectSse({ url, method: 'GET', onEvent, signal });
+  return (result.success ? ok(true) : fail(result.errorCode!, result.errorMessage!)) as unknown as ApiResponse<true>;
 };
 
 export const streamImageGenRunWithRetryReal: StreamImageGenRunWithRetryContract = async ({ runId, afterSeq, onEvent, signal, maxAttempts }) => {

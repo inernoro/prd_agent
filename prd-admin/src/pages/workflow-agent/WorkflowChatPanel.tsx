@@ -1,9 +1,23 @@
-import { useState, useRef, useEffect, useCallback, type KeyboardEvent } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo, type KeyboardEvent } from 'react';
 import { Send, X, Code, Loader2, CheckCircle2, Wand2, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/design/Button';
-import { readSseStream } from '@/lib/sse';
-import { chatWorkflow, getChatHistory } from '@/services';
+import { useSseStream } from '@/lib/useSseStream';
+import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
+import { getChatHistory } from '@/services';
+import { api } from '@/services/api';
 import type { WorkflowChatGenerated } from '@/services/contracts/workflowAgent';
+
+function getApiBaseUrl() {
+  const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
+  return raw.trim().replace(/\/+$/, '');
+}
+
+function joinUrl(base: string, path: string) {
+  const b = base.replace(/\/+$/, '');
+  const p = path.replace(/^\/+/, '');
+  if (!b) return `/${p}`;
+  return `${b}/${p}`;
+}
 
 // ═══════════════════════════════════════════════════════════════
 // WorkflowChatPanel — 右侧 AI 对话面板
@@ -34,12 +48,80 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
   const [input, setInput] = useState('');
   const [codeSnippet, setCodeSnippet] = useState('');
   const [showCodeInput, setShowCodeInput] = useState(false);
-  const [isStreaming, setIsStreaming] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  /** 当前正在流式输出的 assistant 消息 ID */
+  const assistantMsgIdRef = useRef<string>('');
+  /** 缓存 onApplyWorkflow 最新引用 */
+  const onApplyRef = useRef(onApplyWorkflow);
+  onApplyRef.current = onApplyWorkflow;
+
+  const sseUrl = useMemo(
+    () => joinUrl(getApiBaseUrl(), api.workflowAgent.chat.fromChat()),
+    [],
+  );
+
+  const { phase, phaseMessage, isStreaming, start, abort } = useSseStream({
+    url: sseUrl,
+    method: 'POST',
+    onTyping: (text) => {
+      const id = assistantMsgIdRef.current;
+      if (!id) return;
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === id ? { ...m, content: m.content + text } : m,
+        ),
+      );
+    },
+    onEvent: {
+      workflow_created: (data: unknown) => {
+        const obj = data as { workflow: WorkflowChatGenerated; workflowId: string };
+        const id = assistantMsgIdRef.current;
+        if (!id) return;
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === id
+              ? { ...m, generated: obj.workflow, generatedWorkflowId: obj.workflowId }
+              : m,
+          ),
+        );
+        onApplyRef.current(obj.workflow, obj.workflowId);
+      },
+      workflow_generated: (data: unknown) => {
+        const obj = data as { generated: WorkflowChatGenerated };
+        const id = assistantMsgIdRef.current;
+        if (!id) return;
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === id ? { ...m, generated: obj.generated } : m,
+          ),
+        );
+      },
+    },
+    onError: (msg) => {
+      const id = assistantMsgIdRef.current;
+      if (!id) return;
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === id
+            ? { ...m, content: m.content + `\n\n**错误**: ${msg}`, isStreaming: false }
+            : m,
+        ),
+      );
+    },
+    onDone: () => {
+      const id = assistantMsgIdRef.current;
+      if (!id) return;
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === id ? { ...m, isStreaming: false } : m,
+        ),
+      );
+      assistantMsgIdRef.current = '';
+    },
+  });
 
   // 加载对话历史
   useEffect(() => {
@@ -79,6 +161,21 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
     }
   }, [messages]);
 
+  // stream 结束后确保 isStreaming 标记清除
+  useEffect(() => {
+    if (phase === 'done' || phase === 'error' || phase === 'idle') {
+      const id = assistantMsgIdRef.current;
+      if (id) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === id ? { ...m, isStreaming: false } : m,
+          ),
+        );
+        assistantMsgIdRef.current = '';
+      }
+    }
+  }, [phase]);
+
   const handleSend = useCallback(async () => {
     const text = input.trim();
     if (!text || isStreaming) return;
@@ -98,107 +195,20 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
       timestamp: new Date().toISOString(),
     };
 
+    assistantMsgIdRef.current = assistantMsg.id;
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
     setInput('');
     setCodeSnippet('');
     setShowCodeInput(false);
-    setIsStreaming(true);
 
-    const ac = new AbortController();
-    abortRef.current = ac;
-
-    try {
-      const res = await chatWorkflow({
+    await start({
+      body: {
         workflowId: workflowId || undefined,
         instruction: text,
         codeSnippet: codeSnippet || undefined,
-      });
-
-      if (!res.ok) {
-        const errText = await res.text().catch(() => '请求失败');
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantMsg.id
-              ? { ...m, content: `请求失败: ${errText}`, isStreaming: false }
-              : m
-          )
-        );
-        setIsStreaming(false);
-        return;
-      }
-
-      await readSseStream(
-        res,
-        (evt) => {
-          if (!evt.data) return;
-          try {
-            const obj = JSON.parse(evt.data);
-            if (obj.type === 'delta') {
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === assistantMsg.id
-                    ? { ...m, content: m.content + (obj.content || '') }
-                    : m
-                )
-              );
-            } else if (obj.type === 'workflow_created') {
-              // 新建 — 自动应用
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === assistantMsg.id
-                    ? {
-                        ...m,
-                        generated: obj.workflow,
-                        generatedWorkflowId: obj.workflowId,
-                      }
-                    : m
-                )
-              );
-              onApplyWorkflow(obj.workflow, obj.workflowId);
-            } else if (obj.type === 'workflow_generated') {
-              // 修改 — 等待用户确认
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === assistantMsg.id
-                    ? { ...m, generated: obj.generated }
-                    : m
-                )
-              );
-            } else if (obj.type === 'error') {
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === assistantMsg.id
-                    ? { ...m, content: m.content + `\n\n**错误**: ${obj.content}` }
-                    : m
-                )
-              );
-            }
-          } catch {
-            /* ignore parse errors */
-          }
-        },
-        ac.signal
-      );
-    } catch (err) {
-      if ((err as Error).name !== 'AbortError') {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantMsg.id
-              ? { ...m, content: m.content || '连接中断', isStreaming: false }
-              : m
-          )
-        );
-      }
-    } finally {
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantMsg.id ? { ...m, isStreaming: false } : m
-        )
-      );
-      setIsStreaming(false);
-      abortRef.current = null;
-    }
-  }, [input, codeSnippet, workflowId, isStreaming, onApplyWorkflow]);
+      },
+    });
+  }, [input, codeSnippet, workflowId, isStreaming, start]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -208,7 +218,7 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
   };
 
   const handleStop = () => {
-    abortRef.current?.abort();
+    abort();
   };
 
   return (
@@ -221,6 +231,7 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
         borderLeft: '1px solid rgba(255,255,255,0.08)',
         background: 'rgba(18, 18, 24, 0.6)',
         backdropFilter: 'blur(20px)',
+        WebkitBackdropFilter: 'blur(20px)',
       }}
     >
       {/* Header */}
@@ -252,6 +263,13 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
           <X size={16} />
         </button>
       </div>
+
+      {/* SSE Phase Bar */}
+      {isStreaming && (
+        <div style={{ padding: '8px 16px 0' }}>
+          <SsePhaseBar phase={phase} message={phaseMessage} />
+        </div>
+      )}
 
       {/* Messages Area */}
       <div

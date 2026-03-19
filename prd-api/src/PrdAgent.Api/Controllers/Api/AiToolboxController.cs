@@ -88,7 +88,7 @@ public class AiToolboxController : ControllerBase
         _logger.LogInformation("百宝箱收到消息: UserId={UserId}, Length={Length}", userId, message.Length);
 
         // Step 1: 意图识别
-        var intent = await _intentClassifier.ClassifyAsync(message, ct);
+        var intent = await _intentClassifier.ClassifyAsync(message, userId, ct);
 
         _logger.LogInformation("意图识别完成: PrimaryIntent={Intent}, Confidence={Confidence}, Agents={Agents}",
             intent.PrimaryIntent, intent.Confidence, string.Join(",", intent.SuggestedAgents));
@@ -177,13 +177,14 @@ public class AiToolboxController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<IntentResult>), StatusCodes.Status200OK)]
     public async Task<IActionResult> Analyze([FromBody] ToolboxAnalyzeRequest request, CancellationToken ct)
     {
+        var userId = GetUserId();
         var message = (request.Message ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(message))
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "消息内容不能为空"));
         }
 
-        var intent = await _intentClassifier.ClassifyAsync(message, ct);
+        var intent = await _intentClassifier.ClassifyAsync(message, userId, ct);
         return Ok(ApiResponse<IntentResult>.Ok(intent));
     }
 
@@ -712,6 +713,28 @@ public class AiToolboxController : ControllerBase
             }
         }
 
+        // 如果有附件，加载文件内容并注入上下文
+        if (request.AttachmentIds is { Count: > 0 })
+        {
+            var attachmentFilter = Builders<Attachment>.Filter.In(a => a.AttachmentId, request.AttachmentIds);
+            var attachments = await _db.Attachments.Find(attachmentFilter).ToListAsync(CancellationToken.None);
+
+            var fileParts = new List<string>();
+            foreach (var att in attachments)
+            {
+                if (!string.IsNullOrWhiteSpace(att.ExtractedText))
+                {
+                    fileParts.Add($"=== 文件: {att.FileName} ===\n{att.ExtractedText}");
+                }
+            }
+
+            if (fileParts.Count > 0)
+            {
+                var fileContext = string.Join("\n\n", fileParts);
+                message = $"{message}\n\n以下是用户上传的文件内容，请基于这些内容回答：\n\n{fileContext}";
+            }
+        }
+
         // 添加当前消息
         messages.Add(new JsonObject { ["role"] = "user", ["content"] = message });
 
@@ -1026,6 +1049,11 @@ public class ToolboxChatRequest
     public string? SessionId { get; set; }
 
     /// <summary>
+    /// 附件 ID 列表（文件内容将注入上下文）
+    /// </summary>
+    public List<string>? AttachmentIds { get; set; }
+
+    /// <summary>
     /// 选项
     /// </summary>
     public ToolboxChatOptions? Options { get; set; }
@@ -1159,6 +1187,9 @@ public class DirectChatRequest
 
     /// <summary>对话历史</summary>
     public List<ChatHistoryMessage>? History { get; set; }
+
+    /// <summary>附件 ID 列表（文件内容将注入上下文）</summary>
+    public List<string>? AttachmentIds { get; set; }
 }
 
 /// <summary>

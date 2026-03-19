@@ -5,7 +5,7 @@ import { Button } from '@/components/design/Button';
 import { PlatformLabel } from '@/components/design/PlatformLabel';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/cn';
-import { readSseStream } from '@/lib/sse';
+import { connectSse } from '@/lib/useSseStream';
 import { getAvatarUrlByModelName, getAvatarUrlByPlatformType, useAvatarUpdates } from '@/assets/model-avatars';
 import {
   getArenaLineup,
@@ -26,7 +26,6 @@ import {
 } from '@/services';
 import type { ArenaAttachmentInfo } from '@/services';
 import { api } from '@/services/api';
-import { useAuthStore } from '@/stores/authStore';
 import { Dialog } from '@/components/ui/Dialog';
 import { ConfirmTip } from '@/components/ui/ConfirmTip';
 import { ModelPoolPickerDialog, type SelectedModelItem } from '@/components/model/ModelPoolPickerDialog';
@@ -810,65 +809,48 @@ export function ArenaPage() {
     abortRef.current = abortController;
     afterSeqRef.current = afterSeq;
 
-    try {
-      const token = useAuthStore.getState().token;
-      const streamPath = api.arena.runs.stream(runId);
-      const fullUrl = joinUrl(getApiBaseUrl(), `${streamPath}?afterSeq=${afterSeq}`);
+    const streamPath = api.arena.runs.stream(runId);
+    const fullUrl = joinUrl(getApiBaseUrl(), `${streamPath}?afterSeq=${afterSeq}`);
 
-      const response = await fetch(fullUrl, {
-        method: 'GET',
-        headers: {
-          Accept: 'text/event-stream',
-          Authorization: `Bearer ${token}`,
-        },
-        signal: abortController.signal,
-      });
+    const result = await connectSse({
+      url: fullUrl,
+      signal: abortController.signal,
+      onEvent: (evt) => {
+        if (!evt.data) return;
+        // Track sequence for reconnection
+        if (evt.id) {
+          const seq = parseInt(evt.id, 10);
+          if (!isNaN(seq)) afterSeqRef.current = seq;
+        }
+        // The SSE stream wraps events as RunEventRecord — data contains the full record JSON
+        try {
+          const record = JSON.parse(evt.data);
+          const payloadJson = record.payloadJson ?? evt.data;
+          handleRunEvent(payloadJson);
+        } catch {
+          handleRunEvent(evt.data);
+        }
+      },
+    });
 
-      if (!response.ok) {
-        const errText = await response.text().catch(() => '');
-        throw new Error(errText || `HTTP ${response.status} ${response.statusText}`);
-      }
-
-      await readSseStream(
-        response,
-        (evt) => {
-          if (!evt.data) return;
-          // Track sequence for reconnection
-          if (evt.id) {
-            const seq = parseInt(evt.id, 10);
-            if (!isNaN(seq)) afterSeqRef.current = seq;
-          }
-          // The SSE stream wraps events as RunEventRecord — data contains the full record JSON
-          try {
-            const record = JSON.parse(evt.data);
-            // record is { runId, seq, eventName, payloadJson, createdAt }
-            const payloadJson = record.payloadJson ?? evt.data;
-            handleRunEvent(payloadJson);
-          } catch {
-            // Fallback: try treating data as direct payload
-            handleRunEvent(evt.data);
-          }
-        },
-        abortController.signal
-      );
-    } catch (e: any) {
-      if (e?.name === 'AbortError') return;
+    if (!result.success && !abortController.signal.aborted) {
       // Connection lost — check if run is still active and auto-reconnect
+      // Keep abortRef alive so the reconnect guard can check it
       try {
         const runRes = await getArenaRun(runId);
         if (runRes.success && runRes.data) {
           const status = runRes.data.status as string;
           if (status === 'Running' || status === 'Queued') {
-            // Run still active — reconnect after a short delay
             setTimeout(() => {
-              if (!abortRef.current?.signal.aborted) {
+              // Guard: skip reconnect if user already started a new battle or aborted
+              if (abortRef.current?.signal.aborted === false) {
                 subscribeToRunStream(runId, afterSeqRef.current);
               }
             }, 1000);
             return;
           }
-          // Run completed while we were disconnected
           if (status === 'Done') {
+            abortRef.current = null;
             setAllDone(true);
             setIsStreaming(false);
             sessionStorage.removeItem(ARENA_RUN_STORAGE_KEY);
@@ -880,25 +862,16 @@ export function ArenaPage() {
       } catch {
         // ignore
       }
-      toast.error('流式连接中断', e?.message ?? '网络错误');
-    } finally {
+      abortRef.current = null;
+      toast.error('流式连接中断', result.errorMessage ?? '网络错误');
+    } else {
       abortRef.current = null;
     }
   }
 
-  // --- Send question (Run/Worker mode) ---
-  const handleSend = useCallback(async () => {
-    const question = prompt.trim();
-    if (!question || isStreaming) return;
-    if (slots.length === 0) {
-      toast.warning('暂无可用模型', '请先在管理页配置竞技场阵容');
-      return;
-    }
-
-    // Assign random labels
+  // --- Core battle launcher (shared by handleSend & handleRetry) ---
+  async function launchBattle(question: string, sendAttachmentIds: string[] = []) {
     const newLabelMap = assignLabels(slots);
-
-    // Build slot data for the run
     const runSlots = slots.map((slot) => {
       const info = newLabelMap.get(slot.id) ?? { label: '助手 ?', index: 0 };
       return {
@@ -910,7 +883,6 @@ export function ArenaPage() {
       };
     });
 
-    // Initialize panels
     const initialPanels: ArenaPanel[] = runSlots.map((s) => ({
       slotId: s.slotId,
       label: s.label,
@@ -932,20 +904,9 @@ export function ArenaPage() {
     setRevealedInfos(new Map());
     setActiveBattleId(null);
     afterSeqRef.current = 0;
-
-    // Capture attachments before clearing
-    const sendAttachmentIds = attachments.map((a) => a.attachmentId);
-    setCurrentAttachments(attachments.map((a) => ({
-      attachmentId: a.attachmentId,
-      url: a.url,
-      fileName: a.fileName,
-      mimeType: a.mimeType,
-    })));
     setPrompt('');
-    setAttachments([]);
 
     try {
-      // 1) Create Run (server-side) — returns immediately with runId
       const res = await createArenaRun({
         prompt: question,
         groupKey: selectedGroupKey,
@@ -960,7 +921,6 @@ export function ArenaPage() {
       const runId = res.data.runId as string;
       setActiveRunId(runId);
 
-      // Persist run session for page refresh recovery
       sessionStorage.setItem(ARENA_RUN_STORAGE_KEY, JSON.stringify({
         runId,
         prompt: question,
@@ -968,7 +928,6 @@ export function ArenaPage() {
         slots: runSlots,
       }));
 
-      // 2) Subscribe to SSE stream (afterSeq=0 for fresh start)
       await subscribeToRunStream(runId, 0);
     } catch (e: any) {
       if (e?.name === 'AbortError') return;
@@ -984,6 +943,27 @@ export function ArenaPage() {
       sessionStorage.removeItem(ARENA_RUN_STORAGE_KEY);
       setActiveRunId(null);
     }
+  }
+
+  // --- Send question ---
+  const handleSend = useCallback(async () => {
+    const question = prompt.trim();
+    if (!question || isStreaming) return;
+    if (slots.length === 0) {
+      toast.warning('暂无可用模型', '请先在管理页配置竞技场阵容');
+      return;
+    }
+
+    const sendAttachmentIds = attachments.map((a) => a.attachmentId);
+    setCurrentAttachments(attachments.map((a) => ({
+      attachmentId: a.attachmentId,
+      url: a.url,
+      fileName: a.fileName,
+      mimeType: a.mimeType,
+    })));
+    setAttachments([]);
+
+    await launchBattle(question, sendAttachmentIds);
   }, [prompt, isStreaming, slots, selectedGroupKey, attachments]);
 
   // --- Reveal models ---
@@ -1020,50 +1000,7 @@ export function ArenaPage() {
   // --- Retry: re-send the same question ---
   function handleRetry() {
     if (isStreaming || !currentPrompt.trim()) return;
-    setPrompt(currentPrompt);
-    // Trigger send on next tick after prompt is set
-    setTimeout(() => {
-      const question = currentPrompt.trim();
-      if (!question || slots.length === 0) return;
-
-      const newLabelMap = assignLabels(slots);
-      const runSlots = slots.map((slot) => {
-        const info = newLabelMap.get(slot.id) ?? { label: '助手 ?', index: 0 };
-        return { slotId: slot.id, platformId: slot.platformId, modelId: slot.modelId, label: info.label, labelIndex: info.index };
-      });
-      const initialPanels: ArenaPanel[] = runSlots.map((s) => ({
-        slotId: s.slotId, label: s.label, labelIndex: s.labelIndex,
-        status: 'waiting' as const, text: '', thinking: '', ttftMs: null, totalMs: null, errorMessage: null, startedAt: null,
-      }));
-      setPanels(initialPanels);
-      panelsRef.current = initialPanels;
-      setCurrentPrompt(question);
-      setIsStreaming(true);
-      setAllDone(false);
-      setRevealed(false);
-      setRevealedInfos(new Map());
-      setActiveBattleId(null);
-      setPrompt('');
-      afterSeqRef.current = 0;
-
-      (async () => {
-        try {
-          const res = await createArenaRun({ prompt: question, groupKey: selectedGroupKey, slots: runSlots });
-          if (!res.success || !res.data?.runId) throw new Error(res.error?.message || '创建 Run 失败');
-          const runId = res.data.runId as string;
-          setActiveRunId(runId);
-          sessionStorage.setItem(ARENA_RUN_STORAGE_KEY, JSON.stringify({ runId, prompt: question, groupKey: selectedGroupKey, slots: runSlots }));
-          await subscribeToRunStream(runId, 0);
-        } catch (e: any) {
-          if (e?.name === 'AbortError') return;
-          toast.error('重试失败', e?.message ?? '网络错误');
-          setPanels((prev) => prev.map((p) => p.status === 'waiting' || p.status === 'streaming' ? { ...p, status: 'error', errorMessage: e?.message ?? '连接中断' } : p));
-          setIsStreaming(false);
-          sessionStorage.removeItem(ARENA_RUN_STORAGE_KEY);
-          setActiveRunId(null);
-        }
-      })();
-    }, 0);
+    launchBattle(currentPrompt.trim());
   }
 
   // --- Copy panel text to clipboard ---
@@ -2138,7 +2075,10 @@ export function ArenaPage() {
                 <div
                   style={{
                     position: 'absolute',
-                    inset: '-50%',
+                    top: '-50%',
+                    right: '-50%',
+                    bottom: '-50%',
+                    left: '-50%',
                     background: `conic-gradient(from 0deg, transparent 0deg, #6366f1 60deg, #818cf8 120deg, transparent 180deg)`,
                     animation: 'arena-ring-spin 2.5s linear infinite',
                     borderRadius: 'inherit',

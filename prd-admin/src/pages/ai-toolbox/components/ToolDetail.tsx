@@ -4,7 +4,7 @@ import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
 import { useToolboxStore } from '@/stores/toolboxStore';
 import { formatDistanceToNow } from '@/lib/dateUtils';
-import { streamDirectChat } from '@/services/real/aiToolbox';
+import { streamDirectChat, uploadAttachment } from '@/services/real/aiToolbox';
 import type { DirectChatMessage } from '@/services/real/aiToolbox';
 import {
   ArrowLeft, Edit, Trash2, Zap, Tag, Calendar, User, Send,
@@ -125,9 +125,23 @@ export function ToolDetail() {
 
     setMessages(prev => [...prev, userMessage]);
     const messageText = input.trim();
+    const currentAttachments = [...attachments];
     setInput('');
     setAttachments([]);
     setIsLoading(true);
+
+    // 上传文件附件并收集 attachmentIds
+    const attachmentIds: string[] = [];
+    for (const att of currentAttachments) {
+      try {
+        const result = await uploadAttachment(att.file);
+        if (result.success && result.data?.attachmentId) {
+          attachmentIds.push(result.data.attachmentId);
+        }
+      } catch (e) {
+        console.error('附件上传失败:', att.name, e);
+      }
+    }
 
     // 构建历史消息（排除当前消息）
     const history: DirectChatMessage[] = messages.map(m => ({
@@ -151,6 +165,7 @@ export function ToolDetail() {
       agentKey: selectedItem.agentKey,
       itemId: selectedItem.type === 'custom' ? selectedItem.id : undefined,
       history,
+      attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
       onText: (content) => {
         setMessages(prev => prev.map(m =>
           m.id === assistantId
@@ -499,7 +514,7 @@ export function ToolDetail() {
               type="file"
               multiple
               className="hidden"
-              accept=".pdf,.doc,.docx,.txt,.md,.json,.csv,.xlsx"
+              accept=".pdf,.doc,.docx,.txt,.md,.json,.csv,.xlsx,.xls,.ppt,.pptx"
               onChange={(e) => handleFileSelect(e, 'file')}
             />
             <input

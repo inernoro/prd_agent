@@ -361,6 +361,11 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
     resolvedBranch = await worktreeService.findBranchBySuffix(branchSlug);
   }
 
+  // If still not found, try slug matching (e.g. slug "claude-fix-xxx" → branch "claude/fix-xxx")
+  if (!resolvedBranch) {
+    resolvedBranch = await worktreeService.findBranchBySlug(branchSlug);
+  }
+
   if (!resolvedBranch) {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',

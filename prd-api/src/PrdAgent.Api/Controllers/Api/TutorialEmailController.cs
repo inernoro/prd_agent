@@ -98,6 +98,10 @@ public sealed class TutorialEmailController : ControllerBase
                 ["temperature"] = 0.7,
                 ["max_tokens"] = 4096,
             },
+            Context = new GatewayRequestContext
+            {
+                UserId = User.FindFirst("sub")?.Value ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+            },
         };
 
         var response = await _gateway.SendAsync(gatewayRequest, ct);

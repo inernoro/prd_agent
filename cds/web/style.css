@@ -209,7 +209,6 @@
 
 [data-theme="light"] .modal-backdrop { background: #2a1f1940; }
 
-[data-theme="light"] .inline-deploy-log-wrapper { background: #2a1f1906; }
 
 [data-theme="light"] .settings-switch-track { background: #2a1f1926; }
 
@@ -230,30 +229,29 @@
 }
 
 [data-theme="light"] .live-log-output {
-  background: #1c1510;
-  color: #e8ddd4;
-  border-color: #2a1f1920;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--border);
 }
 
 [data-theme="light"] .terminal-output {
-  background: #1c1510;
-  border-color: #2a1f1920;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--border);
 }
 [data-theme="light"] .terminal-input-row {
-  background: #1c1510;
-  border-color: #2a1f1920;
+  background: var(--bg-elevated);
+  border-color: var(--border);
 }
-[data-theme="light"] .terminal-input { color: #e8ddd4; }
+[data-theme="light"] .terminal-input { color: var(--text-primary); }
+[data-theme="light"] .term-result { color: var(--text-secondary); }
 
-[data-theme="light"] .inline-deploy-log {
-  background: #1c1510;
-  color: #e8ddd4;
-}
 
 [data-theme="light"] .branch-card.status-running { border-left-color: var(--green); }
 [data-theme="light"] .branch-card.status-building { border-left-color: var(--blue); }
 [data-theme="light"] .branch-card.status-starting { border-left-color: var(--yellow); }
 [data-theme="light"] .branch-card.status-error { border-left-color: var(--red); }
+[data-theme="light"] .branch-card.status-stopping { border-left-color: var(--red); }
 
 [data-theme="light"] .port-badge.run-port {
   color: var(--green); background: var(--green-bg); border-color: var(--green-border);
@@ -535,6 +533,33 @@ button.text-btn:hover { color: var(--accent); }
 
 .form-row { display: flex; gap: 8px; margin-bottom: 10px; }
 
+/* ── Combobox (input + dropdown) ── */
+.combobox { position: relative; }
+.combobox-input-wrap { position: relative; display: flex; align-items: center; }
+.combobox-toggle {
+  position: absolute; right: 1px; top: 1px; bottom: 1px;
+  width: 36px; display: flex; align-items: center; justify-content: center;
+  background: transparent; border: none; border-left: 1px solid var(--glass-border);
+  color: var(--fg-muted); cursor: pointer; border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  transition: color var(--transition), background var(--transition);
+}
+.combobox-toggle svg { width: 16px; height: 16px; flex-shrink: 0; }
+.combobox-toggle:hover { color: var(--fg); background: var(--bg-hover); }
+.combobox-dropdown {
+  display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+  max-height: 240px; overflow-y: auto; z-index: 120;
+  background: var(--bg-card); border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm); box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+}
+.combobox-dropdown.open { display: block; }
+.combobox-item {
+  padding: 7px 12px; font-size: 13px; cursor: pointer;
+  color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: background var(--transition);
+}
+.combobox-item:hover { background: var(--bg-hover); }
+.combobox-item.active { background: var(--bg-secondary); }
+
 /* ════════════════ Config Panels ════════════════ */
 
 .config-panel {
@@ -751,11 +776,46 @@ button.text-btn:hover { color: var(--accent); }
 .branch-card.status-idle { border-left-color: rgba(255, 255, 255, 0.10); }
 .branch-card.status-stopped { border-left-color: rgba(255, 255, 255, 0.10); }
 .branch-card.status-error { border-left-color: var(--red); }
+/* Stopping state — flashing red glow around the entire card */
+.branch-card.status-stopping {
+  border-left-color: var(--red);
+  animation: stopping-pulse 1.2s ease-in-out infinite;
+}
+@keyframes stopping-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(244, 63, 94, 0), 0 1px 3px rgba(0, 0, 0, 0.2);
+    border-color: var(--card-border);
+    border-left-color: var(--red);
+  }
+  50% {
+    box-shadow: 0 0 12px 2px rgba(244, 63, 94, 0.3), 0 0 24px 4px rgba(244, 63, 94, 0.1);
+    border-color: rgba(244, 63, 94, 0.4);
+    border-left-color: var(--red);
+  }
+}
 .branch-card.active.show-preview-border {
   border-left-color: var(--yellow);
 }
 .branch-card.has-error {
   border-left-color: var(--red);
+}
+
+/* Status badges for transitional states */
+.branch-status-badge {
+  font-size: 10px; font-weight: 500; padding: 1px 8px;
+  border-radius: 10px; margin-left: auto; white-space: nowrap;
+}
+.status-badge-stopping {
+  color: var(--red); background: var(--red-bg); border: 1px solid var(--red-border);
+  animation: port-stopping-blink 1s ease-in-out infinite;
+}
+.status-badge-starting {
+  color: var(--yellow); background: var(--yellow-bg); border: 1px solid rgba(251, 191, 36, 0.2);
+  animation: port-building-pulse 2s ease-in-out infinite;
+}
+.status-badge-building {
+  color: var(--blue); background: var(--blue-bg); border: 1px solid var(--blue-border);
+  animation: port-building-pulse 2s ease-in-out infinite;
 }
 
 /* Card toolbar — fixed top-right corner */
@@ -782,11 +842,6 @@ button.text-btn:hover { color: var(--accent); }
   display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
   padding-top: 2px;
 }
-.branch-log-btn {
-  color: var(--text-muted); transition: color var(--transition);
-  flex-shrink: 0;
-}
-.branch-log-btn:hover { color: var(--text-primary); }
 
 /* Favorite toggle — inline, minimal */
 .fav-toggle {
@@ -820,8 +875,25 @@ a.branch-name:hover { color: var(--accent); }
 .port-badge.run-port:hover { background: rgba(16, 185, 129, 0.18); border-color: rgba(16, 185, 129, 0.3); }
 .port-badge.port-starting { color: var(--yellow); background: var(--yellow-bg); border: 1px solid rgba(251, 191, 36, 0.15); }
 .port-badge.port-starting:hover { background: rgba(251, 191, 36, 0.15); }
+.port-badge.port-building {
+  color: var(--blue); background: var(--blue-bg); border: 1px solid var(--blue-border);
+  animation: port-building-pulse 2s ease-in-out infinite;
+}
+@keyframes port-building-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+.port-badge.port-stopping {
+  color: var(--red); background: var(--red-bg); border: 1px solid var(--red-border);
+  animation: port-stopping-blink 1s ease-in-out infinite;
+}
+@keyframes port-stopping-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
 .port-badge.port-idle { color: var(--text-muted); background: rgba(255, 255, 255, 0.03); border: 1px solid transparent; }
 .port-badge.port-idle:hover { background: rgba(255, 255, 255, 0.06); }
+.port-badge.port-error { color: var(--red); background: var(--red-bg); border: 1px solid var(--red-border); }
 
 .branch-error {
   font-size: 11px; color: var(--red); margin-top: 6px;
@@ -857,6 +929,29 @@ a.branch-name:hover { color: var(--accent); }
 .branch-actions-commit:hover { color: var(--text-primary); }
 .branch-actions-commit svg.inline-icon { flex-shrink: 0; width: 14px; height: 14px; }
 .branch-actions-commit .commit-chevron { flex-shrink: 0; opacity: 0.5; }
+
+/* Compact deploy status — replaces commit area during deployment */
+.branch-actions-deploy-status {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; color: var(--text-muted);
+  cursor: pointer; overflow: hidden;
+  padding: 2px 8px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-input);
+  transition: background var(--transition);
+}
+.branch-actions-deploy-status:hover { background: var(--bg-hover); }
+.branch-actions-deploy-status .live-dot { flex-shrink: 0; }
+.branch-actions-deploy-status .deploy-status-log {
+  flex: 1; min-width: 0;
+  margin: 0; padding: 0;
+  font-family: var(--font-mono, 'SF Mono', 'Fira Code', monospace);
+  font-size: 10px; line-height: 1.4;
+  color: var(--text-secondary);
+  white-space: pre; overflow: hidden; text-overflow: ellipsis;
+  background: transparent; border: none;
+}
 
 .branch-card.is-favorite { border-left-color: var(--yellow); }
 
@@ -1234,6 +1329,28 @@ a.branch-name:hover { color: var(--accent); }
   backdrop-filter: none;
 }
 .modal-close:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+/* Copy-error button in log modal header */
+.copy-error-btn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 12px; font-size: 12px; font-weight: 600;
+  color: var(--red); background: var(--red-bg);
+  border: 1px solid var(--red-border); border-radius: var(--radius-sm);
+  cursor: pointer; white-space: nowrap; flex-shrink: 0;
+  animation: copy-error-pulse 2s ease-in-out infinite;
+  transition: background var(--transition);
+}
+.copy-error-btn:hover { background: rgba(239, 83, 80, 0.2); }
+.copy-error-btn svg { flex-shrink: 0; }
+.copy-error-btn.copied {
+  animation: none; color: var(--green); background: var(--green-bg);
+  border-color: var(--green-border);
+}
+@keyframes copy-error-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
 .modal-body { padding: 14px 18px; overflow-y: auto; flex: 1; }
 .config-modal-dialog { max-width: 640px; }
 
@@ -1358,49 +1475,6 @@ a.branch-name:hover { color: var(--accent); }
   border-color: var(--accent-border);
 }
 
-/* ════════════════ Inline Deploy Log ════════════════ */
-
-.inline-deploy-log-wrapper {
-  cursor: pointer; border-radius: var(--radius-xs);
-  margin-top: 8px; padding-top: 8px;
-  border-top: 1px solid var(--border);
-}
-.inline-deploy-log-header {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 12px; color: var(--text-secondary);
-  padding: 0 0 6px; font-weight: 500;
-}
-.inline-deploy-log-header .live-dot { width: 6px; height: 6px; }
-.inline-deploy-log-header .live-dot.stopped { background: var(--text-muted); animation: none; }
-.inline-log-expand-hint {
-  margin-left: auto; font-size: 10px; color: var(--text-muted);
-  cursor: pointer; text-decoration: underline;
-  transition: color var(--transition);
-}
-.inline-log-expand-hint:hover { color: var(--accent); }
-.inline-deploy-log {
-  font-family: var(--font-mono); font-size: 11px;
-  color: var(--text-secondary); background: rgba(8, 12, 28, 0.8);
-  border: 1px solid var(--border); border-radius: var(--radius-sm);
-  padding: 10px 12px; margin: 0;
-  max-height: 120px; overflow-y: auto; white-space: pre-wrap;
-  word-break: break-all; line-height: 1.6;
-  transition: max-height 0.3s ease;
-}
-.inline-deploy-log-wrapper.expanded .inline-deploy-log {
-  max-height: 400px;
-}
-
-/* Deploy log status colors */
-.inline-deploy-log-wrapper.deploy-log-done .inline-deploy-log-header { color: var(--green); }
-.inline-deploy-log-wrapper.deploy-log-done .inline-deploy-log { border-color: var(--green-border); }
-.inline-deploy-log-wrapper.deploy-log-error .inline-deploy-log-header { color: var(--red); }
-.inline-deploy-log-wrapper.deploy-log-error .inline-deploy-log { border-color: var(--red-border); }
-.inline-deploy-error {
-  font-size: 11px; color: var(--red); padding: 6px 10px; margin-top: 6px;
-  background: var(--red-bg); border: 1px solid var(--red-border);
-  border-radius: var(--radius-xs);
-}
 
 /* ════════════════ Slide-in Animation ════════════════ */
 
@@ -1501,7 +1575,7 @@ a.branch-name:hover { color: var(--accent); }
   .modal-dialog { max-height: 90vh; margin: 0 12px; }
 
   /* Inline deploy log: responsive */
-  .inline-deploy-log { font-size: 10px; padding: 8px 10px; max-height: 100px; }
+
 
   /* Commit info: hide on mobile to save space, show on expand */
   .branch-actions-commit { display: none; }
@@ -1531,6 +1605,175 @@ a.branch-name:hover { color: var(--accent); }
 .capacity-warning-text p { margin: 0; }
 .capacity-warning-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
 .capacity-warning-actions button { min-width: 100px; }
+
+/* Split stop button with dropdown */
+.capacity-stop-split {
+  display: inline-flex; position: relative;
+}
+.capacity-stop-btn {
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm) !important;
+  border-right: 1px solid var(--border) !important;
+  white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis;
+}
+.capacity-stop-btn .inline-icon { vertical-align: -2px; opacity: 0.6; }
+.capacity-stop-toggle {
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0 !important;
+  min-width: 28px !important; padding: 4px 6px !important;
+}
+.capacity-stop-list {
+  position: absolute; bottom: 100%; left: 0; right: 0;
+  min-width: 260px;
+  background: var(--bg-elevated); border: 1px solid var(--card-border);
+  border-radius: var(--radius-sm); box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.4);
+  z-index: 100; margin-bottom: 4px;
+  max-height: 240px; overflow-y: auto;
+}
+.capacity-stop-list-header {
+  font-size: 11px; color: var(--text-muted); padding: 8px 12px 4px;
+  border-bottom: 1px solid var(--border);
+}
+.capacity-stop-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; cursor: pointer; font-size: 13px;
+  transition: background 0.15s;
+}
+.capacity-stop-item:hover { background: var(--bg-hover); }
+.capacity-stop-item .inline-icon { width: 12px; height: 12px; opacity: 0.6; }
+.capacity-stop-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.capacity-stop-partial {
+  font-size: 10px; color: var(--orange); white-space: nowrap;
+}
+
+/* ════════════════ Color Mark (debug marker) ════════════════ */
+
+/* Four-quadrant circle button — muted by default, colorful on hover/active */
+.color-mark-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 50%;
+  background: none; border: none; cursor: pointer; padding: 0;
+  transition: opacity var(--transition), transform var(--transition);
+  opacity: 0.35;
+  flex-shrink: 0;
+}
+.color-mark-btn svg { display: block; }
+.color-mark-btn .cm-q1,
+.color-mark-btn .cm-q2,
+.color-mark-btn .cm-q3,
+.color-mark-btn .cm-q4 {
+  transition: fill var(--transition);
+  fill: var(--text-muted);
+}
+/* Hover: show four distinct colors */
+.color-mark-btn:hover {
+  opacity: 1;
+  transform: scale(1.15);
+}
+.color-mark-btn:hover .cm-q1 { fill: #f43f5e; }  /* rose */
+.color-mark-btn:hover .cm-q2 { fill: #38bdf8; }  /* sky */
+.color-mark-btn:hover .cm-q3 { fill: #fbbf24; }  /* amber */
+.color-mark-btn:hover .cm-q4 { fill: #10b981; }  /* emerald */
+
+/* Active (marked) state: always show colors */
+.color-mark-btn.active {
+  opacity: 1;
+}
+.color-mark-btn.active .cm-q1 { fill: #f43f5e; }
+.color-mark-btn.active .cm-q2 { fill: #38bdf8; }
+.color-mark-btn.active .cm-q3 { fill: #fbbf24; }
+.color-mark-btn.active .cm-q4 { fill: #10b981; }
+.color-mark-btn.active:hover {
+  opacity: 0.6;
+  transform: scale(0.95);
+}
+
+/* ── Color-marked card — high-contrast vivid styling ── */
+.branch-card.is-color-marked {
+  --cm-glow: rgba(244, 63, 94, 0.12);
+  border-image: linear-gradient(135deg, #f43f5e, #38bdf8, #fbbf24, #10b981) 1;
+  border-width: 2px;
+  border-style: solid;
+  border-radius: 0; /* border-image doesn't support border-radius, use outline trick */
+  box-shadow:
+    0 0 0 1px rgba(0,0,0,0.1),
+    0 0 16px 2px var(--cm-glow),
+    0 2px 8px rgba(0,0,0,0.2);
+  position: relative;
+}
+/* Restore rounded corners via outline + clip approach */
+.branch-card.is-color-marked {
+  border-image: none;
+  border: 2px solid transparent;
+  background-image:
+    linear-gradient(var(--bg-card), var(--bg-card)),
+    linear-gradient(135deg, #f43f5e, #38bdf8, #fbbf24, #10b981);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+  border-radius: var(--radius);
+}
+/* Override status left-border: gradient takes priority for marked cards */
+.branch-card.is-color-marked.status-running,
+.branch-card.is-color-marked.status-idle,
+.branch-card.is-color-marked.status-stopped,
+.branch-card.is-color-marked.status-building,
+.branch-card.is-color-marked.status-starting,
+.branch-card.is-color-marked.status-error {
+  border-left-color: transparent;
+}
+/* Subtle animated gradient glow */
+.branch-card.is-color-marked::before {
+  content: '';
+  position: absolute; inset: -1px;
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, rgba(244,63,94,0.06), rgba(56,189,248,0.06), rgba(251,191,36,0.06), rgba(16,185,129,0.06));
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Light theme adjustments */
+[data-theme="light"] .branch-card.is-color-marked {
+  --cm-glow: rgba(244, 63, 94, 0.08);
+  background-image:
+    linear-gradient(var(--bg-card), var(--bg-card)),
+    linear-gradient(135deg, #e65c46, #3a8fa8, #c48b2a, #1a9b7e);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+}
+
+/* ── Ripple overlay for color-mark transition ── */
+.color-mark-ripple {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 2;
+  overflow: hidden;
+}
+.color-mark-ripple::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  clip-path: circle(0% at var(--cm-ripple-x, 50%) var(--cm-ripple-y, 50%));
+}
+/* Ripple in: reveal marked gradient bg */
+.color-mark-ripple.ripple-marked::after {
+  background: linear-gradient(135deg,
+    rgba(244,63,94,0.08),
+    rgba(56,189,248,0.08),
+    rgba(251,191,36,0.08),
+    rgba(16,185,129,0.08));
+}
+/* Ripple out: reveal normal bg */
+.color-mark-ripple.ripple-normal::after {
+  background: var(--bg-card);
+}
+.color-mark-ripple.animate::after {
+  animation: cm-ripple-expand 0.45s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+@keyframes cm-ripple-expand {
+  to {
+    clip-path: circle(var(--cm-ripple-radius, 150%) at var(--cm-ripple-x, 50%) var(--cm-ripple-y, 50%));
+  }
+}
 
 /* ════════════════ View Transition (theme ripple) ════════════════ */
 

@@ -51,7 +51,7 @@ public class IntentClassifier : IIntentClassifier
         _logger = logger;
     }
 
-    public async Task<IntentResult> ClassifyAsync(string userMessage, CancellationToken ct = default)
+    public async Task<IntentResult> ClassifyAsync(string userMessage, string? userId = null, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(userMessage))
         {
@@ -93,7 +93,8 @@ public class IntentClassifier : IIntentClassifier
                     },
                     ["temperature"] = 0.1,
                     ["max_tokens"] = 500
-                }
+                },
+                Context = new GatewayRequestContext { UserId = userId }
             };
 
             var response = await _gateway.SendAsync(request, ct);

@@ -24,7 +24,4 @@ public interface ISkillService
 
     /// <summary>增加技能使用计数</summary>
     Task IncrementUsageAsync(string skillKey, CancellationToken ct = default);
-
-    /// <summary>从 prompt_stages 迁移数据到 skills 集合</summary>
-    Task<int> MigrateFromPromptsAsync(CancellationToken ct = default);
 }

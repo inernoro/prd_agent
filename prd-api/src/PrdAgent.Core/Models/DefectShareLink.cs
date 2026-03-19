@@ -42,9 +42,53 @@ public class DefectShareLink
 
     public bool IsRevoked { get; set; }
 
+    /// <summary>AI 评分结果列表（一键分享时 LLM 自动评分）</summary>
+    public List<DefectAiScoreItem>? AiScores { get; set; }
+
+    /// <summary>AI 评分状态：none | scoring | completed | failed</summary>
+    public string AiScoreStatus { get; set; } = AiScoreStatusType.None;
+
     private static string GenerateToken()
         => Convert.ToBase64String(RandomNumberGenerator.GetBytes(9))
             .Replace("+", "-").Replace("/", "_").TrimEnd('=');
+}
+
+/// <summary>
+/// 缺陷 AI 评分条目
+/// </summary>
+public class DefectAiScoreItem
+{
+    /// <summary>缺陷 ID</summary>
+    public string DefectId { get; set; } = string.Empty;
+
+    /// <summary>缺陷编号（快照）</summary>
+    public string? DefectNo { get; set; }
+
+    /// <summary>缺陷标题（快照）</summary>
+    public string? DefectTitle { get; set; }
+
+    /// <summary>严重程度评分（1-10）</summary>
+    public int SeverityScore { get; set; }
+
+    /// <summary>修复难度评分（1-10）</summary>
+    public int DifficultyScore { get; set; }
+
+    /// <summary>影响范围评分（1-10）</summary>
+    public int ImpactScore { get; set; }
+
+    /// <summary>综合优先级评分（1-10）</summary>
+    public int OverallScore { get; set; }
+
+    /// <summary>AI 评分理由</summary>
+    public string? Reason { get; set; }
+}
+
+public static class AiScoreStatusType
+{
+    public const string None = "none";
+    public const string Scoring = "scoring";
+    public const string Completed = "completed";
+    public const string Failed = "failed";
 }
 
 public static class DefectShareScopeType

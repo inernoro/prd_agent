@@ -252,6 +252,7 @@ async function apiRequestInner<T>(
   const headers: Record<string, string> = {
     Accept: 'application/json',
     'X-Client': 'admin',
+    'X-Client-Base-Url': window.location.origin,
   };
   const appName = resolveAdminAppName();
   if (appName) headers['X-App-Name'] = appName;

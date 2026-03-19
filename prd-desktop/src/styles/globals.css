@@ -237,31 +237,29 @@ html, body {
 }
 
 /* =========================================
- * Theme linear transition (desktop)
- * - 目标：直接线性过渡到目标主题颜色（避免白->黑->白闪烁）
- * - 实现：切换主题时临时给 html 加 theme-transitioning
+ * Theme Transition — View Transition API Ripple
+ * - 效果：从按钮位置以圆形 clip-path 向外扩散切换主题
+ * - 降级：不支持 View Transition API 的浏览器瞬时切换
  * ========================================= */
 
-html.theme-transitioning,
-html.theme-transitioning body,
-html.theme-transitioning #root,
-html.theme-transitioning * {
-  transition:
-    background-color 520ms linear,
-    color 520ms linear,
-    border-color 520ms linear,
-    box-shadow 520ms linear,
-    fill 520ms linear,
-    stroke 520ms linear,
-    opacity 520ms linear;
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  html.theme-transitioning,
-  html.theme-transitioning body,
-  html.theme-transitioning #root,
-  html.theme-transitioning * {
-    transition: none !important;
+::view-transition-new(root) {
+  clip-path: circle(0% at var(--ripple-x, 50%) var(--ripple-y, 0));
+  animation: theme-ripple-in 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+::view-transition-old(root) {
+  z-index: -1;
+}
+
+@keyframes theme-ripple-in {
+  to {
+    clip-path: circle(var(--ripple-radius, 150%) at var(--ripple-x, 50%) var(--ripple-y, 0));
   }
 }
 

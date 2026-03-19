@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using PrdAgent.Api.Extensions;
 using System.Collections.Concurrent;
 using System.Linq;
 using System.Text.Json;
@@ -36,10 +37,12 @@ public class StubOpenAIController : ControllerBase
     private static string? _fontInitError;
 
     private readonly WatermarkFontRegistry _fontRegistry;
+    private readonly IConfiguration _config;
 
-    public StubOpenAIController(WatermarkFontRegistry fontRegistry)
+    public StubOpenAIController(WatermarkFontRegistry fontRegistry, IConfiguration config)
     {
         _fontRegistry = fontRegistry;
+        _config = config;
     }
 
     [HttpGet("assets/{id}.png")]
@@ -428,7 +431,7 @@ public class StubOpenAIController : ControllerBase
 
     private string BuildAssetUrl(string id)
     {
-        var host = $"{Request.Scheme}://{Request.Host}";
+        var host = Request.ResolveServerUrl(_config);
         return $"{host}/api/v1/stub/assets/{id}.png";
     }
 

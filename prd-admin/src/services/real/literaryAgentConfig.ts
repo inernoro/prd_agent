@@ -234,19 +234,7 @@ import type {
   StreamLiteraryAgentImageGenRunWithRetryContract,
 } from '../contracts/literaryAgentConfig';
 import { fail, ok } from '@/types/api';
-import { readSseStream } from '@/lib/sse';
-
-function getApiBaseUrl() {
-  const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:5000';
-  return raw.trim().replace(/\/+$/, '');
-}
-
-function joinUrl(base: string, path: string) {
-  const b = base.replace(/\/+$/, '');
-  const p = path.replace(/^\/+/, '');
-  if (!b) return `/${p}`;
-  return `${b}/${p}`;
-}
+import { connectSse } from '@/lib/useSseStream';
 
 /**
  * 创建文学创作图片生成任务
@@ -271,49 +259,13 @@ export const cancelLiteraryAgentImageGenRunReal: CancelLiteraryAgentImageGenRunC
  * SSE 流式获取文学创作图片生成任务事件
  */
 export const streamLiteraryAgentImageGenRunReal: StreamLiteraryAgentImageGenRunContract = async ({ runId, afterSeq, onEvent, signal }) => {
-  const token = useAuthStore.getState().token;
-  if (!token) return fail('UNAUTHORIZED', '未登录') as unknown as ReturnType<StreamLiteraryAgentImageGenRunContract>;
-
   const rid = encodeURIComponent(String(runId ?? '').trim());
   const a = Number(afterSeq ?? 0);
   const qs = a > 0 ? `?afterSeq=${encodeURIComponent(String(a))}` : '';
-  const url = joinUrl(getApiBaseUrl(), `${api.literaryAgent.imageGen.runs.stream(rid)}${qs}`);
+  const url = `${api.literaryAgent.imageGen.runs.stream(rid)}${qs}`;
 
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method: 'GET',
-      headers: {
-        Accept: 'text/event-stream',
-        Authorization: `Bearer ${token}`,
-      },
-      signal,
-    });
-  } catch (e) {
-    return fail('NETWORK_ERROR', e instanceof Error ? e.message : '网络错误') as unknown as ReturnType<StreamLiteraryAgentImageGenRunContract>;
-  }
-
-  if (res.status === 401) {
-    const authStore = useAuthStore.getState();
-    if (authStore.isAuthenticated) {
-      authStore.logout();
-      window.location.href = '/login';
-    }
-    return fail('UNAUTHORIZED', '未登录') as unknown as ReturnType<StreamLiteraryAgentImageGenRunContract>;
-  }
-
-  if (!res.ok) {
-    const t = await res.text();
-    return fail('UNKNOWN', t || `HTTP ${res.status} ${res.statusText}`) as unknown as ReturnType<StreamLiteraryAgentImageGenRunContract>;
-  }
-
-  try {
-    await readSseStream(res, onEvent as (evt: unknown) => void, signal);
-  } catch (e) {
-    if (signal.aborted) return ok(true);
-    return fail('NETWORK_ERROR', e instanceof Error ? e.message : 'SSE 读取失败') as unknown as ReturnType<StreamLiteraryAgentImageGenRunContract>;
-  }
-  return ok(true);
+  const result = await connectSse({ url, onEvent: onEvent as (evt: { id?: string; event?: string; data?: string }) => void, signal });
+  return (result.success ? ok(true) : fail(result.errorCode!, result.errorMessage!)) as unknown as ReturnType<StreamLiteraryAgentImageGenRunContract>;
 };
 
 /**

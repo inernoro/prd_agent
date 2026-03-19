@@ -113,9 +113,28 @@ public static class Desktop
             Category = "Skill"
         )]
         public const string ExecuteChat = "prd-agent-desktop.skill.execute::chat";
+
+        [AppCallerMetadata(
+            "技能提炼-对话",
+            "从对话中提炼可复用的技能模板",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Skill"
+        )]
+        public const string SkillGen = "prd-agent.skill-gen::chat";
+    }
+
+    public static class Arena
+    {
+        [AppCallerMetadata(
+            "竞技场对战-对话",
+            "竞技场模式下 AI 对战推理",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Arena"
+        )]
+        public const string BattleChat = "prd-agent.arena.battle::chat";
     }
 }
-    
+
 /// <summary>
 /// Visual Agent 视觉创作
 /// </summary>
@@ -370,6 +389,17 @@ public static class DefectAgent
             Category = "Analyze"
         )]
         public const string Vision = "defect-agent.analyze-image::vision";
+    }
+
+    public static class Scoring
+    {
+        [AppCallerMetadata(
+            "缺陷批量评分",
+            "AI 自动评估缺陷严重程度、修复难度、影响范围",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Scoring"
+        )]
+        public const string Chat = "defect-agent.scoring::chat";
     }
 }
 
@@ -681,6 +711,28 @@ public static class VideoAgent
         )]
         public const string Polish = "video-agent.v2d.polish::chat";
     }
+
+    public static class VideoToText
+    {
+        [AppCallerMetadata(
+            "视频转文字-对话",
+            "将视频内容转换为文字描述",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Video"
+        )]
+        public const string Chat = "video-agent.video-to-text::chat";
+    }
+
+    public static class TextToCopy
+    {
+        [AppCallerMetadata(
+            "文案生成-对话",
+            "根据视频内容生成营销文案",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Video"
+        )]
+        public const string Chat = "video-agent.text-to-copy::chat";
+    }
 }
 
 /// <summary>
@@ -821,6 +873,74 @@ public static class Admin
             Category = "Management"
         )]
         public const string Optimize = "prd-agent-web.prompts.optimize::chat";
+    }
+}
+
+/// <summary>
+/// Channel Adapter 渠道适配
+/// </summary>
+public static class ChannelAdapter
+{
+    public const string AppName = "Channel Adapter";
+
+    public static class Email
+    {
+        [AppCallerMetadata(
+            "邮件分类",
+            "AI 分类邮件内容确定处理方式",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Channel"
+        )]
+        public const string Classify = "channel-adapter.email::classify";
+
+        [AppCallerMetadata(
+            "邮件待办提取",
+            "从邮件内容提取结构化待办事项",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Channel"
+        )]
+        public const string TodoExtract = "channel-adapter.email::todo-extract";
+    }
+}
+
+/// <summary>
+/// System 系统级调用
+/// </summary>
+public static class System
+{
+    public static class HealthProbe
+    {
+        [AppCallerMetadata(
+            "模型池探活",
+            "后台自动探活不健康模型端点，非用户触发",
+            ModelTypes = new[] { ModelTypes.Chat, ModelTypes.Intent, ModelTypes.Vision, ModelTypes.ImageGen },
+            Category = "System"
+        )]
+        public const string Chat = "system.health-probe::chat";
+
+        [AppCallerMetadata(
+            "模型池探活-意图",
+            "后台自动探活意图模型端点",
+            ModelTypes = new[] { ModelTypes.Chat, ModelTypes.Intent, ModelTypes.Vision, ModelTypes.ImageGen },
+            Category = "System"
+        )]
+        public const string Intent = "system.health-probe::intent";
+
+        [AppCallerMetadata(
+            "模型池探活-视觉",
+            "后台自动探活视觉模型端点",
+            ModelTypes = new[] { ModelTypes.Chat, ModelTypes.Intent, ModelTypes.Vision, ModelTypes.ImageGen },
+            Category = "System"
+        )]
+        public const string Vision = "system.health-probe::vision";
+
+        [AppCallerMetadata(
+            "模型池探活-生图",
+            "后台自动探活生图模型端点",
+            ModelTypes = new[] { ModelTypes.Chat, ModelTypes.Intent, ModelTypes.Vision, ModelTypes.ImageGen },
+            Category = "System"
+        )]
+        public const string Generation = "system.health-probe::generation";
     }
 }
 }

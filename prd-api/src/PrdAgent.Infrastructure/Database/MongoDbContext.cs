@@ -48,14 +48,6 @@ public class MongoDbContext
     public IMongoCollection<AdminNotification> AdminNotifications => _database.GetCollection<AdminNotification>("admin_notifications");
     public IMongoCollection<AutomationRule> AutomationRules => _database.GetCollection<AutomationRule>("automation_rules");
     /// <summary>
-    /// Prompts 配置（集合名保持 promptstages 以兼容历史数据；语义已迁移为“提示词”）
-    /// </summary>
-    public IMongoCollection<PromptSettings> Prompts => _database.GetCollection<PromptSettings>("promptstages");
-    /// <summary>
-    /// promptstages 原始集合（用于兼容旧结构迁移，避免 POCO 映射丢字段）
-    /// </summary>
-    public IMongoCollection<BsonDocument> PromptsRaw => _database.GetCollection<BsonDocument>("promptstages");
-    /// <summary>
     /// PRD 问答系统提示词（非 JSON 输出任务）：按角色（PM/DEV/QA）可被管理后台覆盖
     /// </summary>
     public IMongoCollection<SystemPromptSettings> SystemPrompts => _database.GetCollection<SystemPromptSettings>("systemprompts");
@@ -148,10 +140,7 @@ public class MongoDbContext
     public IMongoCollection<ToolboxRun> ToolboxRuns => _database.GetCollection<ToolboxRun>("toolbox_runs");
     public IMongoCollection<ToolboxItem> ToolboxItems => _database.GetCollection<ToolboxItem>("toolbox_items");
 
-    // 技能设置（公共技能定义）
-    public IMongoCollection<SkillSettings> SkillSettings => _database.GetCollection<SkillSettings>("skill_settings");
-
-    // 统一技能集合（替代 prompt_stages + skill_settings）
+    // 统一技能集合
     public IMongoCollection<Skill> Skills => _database.GetCollection<Skill>("skills");
 
     // Workflow Agent 工作流引擎
@@ -178,6 +167,9 @@ public class MongoDbContext
 
     // Video Agent 文章转视频
     public IMongoCollection<VideoGenRun> VideoGenRuns => _database.GetCollection<VideoGenRun>("video_gen_runs");
+
+    // Desktop 更新加速缓存
+    public IMongoCollection<DesktopUpdateCache> DesktopUpdateCaches => _database.GetCollection<DesktopUpdateCache>("desktop_update_caches");
 
     // Web Hosting 网页托管与分享
     public IMongoCollection<HostedSite> HostedSites => _database.GetCollection<HostedSite>("hosted_sites");
@@ -1251,5 +1243,22 @@ public class MongoDbContext
         ShareViewLogs.Indexes.CreateOne(new CreateIndexModel<ShareViewLog>(
             Builders<ShareViewLog>.IndexKeys.Ascending(x => x.ShareToken).Descending(x => x.ViewedAt),
             new CreateIndexOptions { Name = "idx_share_view_logs_token_viewed" }));
+
+        // ========== Desktop 更新加速缓存索引 ==========
+
+        // DesktopUpdateCaches：(Version, Target) 唯一
+        try
+        {
+            DesktopUpdateCaches.Indexes.CreateOne(new CreateIndexModel<DesktopUpdateCache>(
+                Builders<DesktopUpdateCache>.IndexKeys.Ascending(x => x.Version).Ascending(x => x.Target),
+                new CreateIndexOptions { Name = "uniq_desktop_update_caches_version_target", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        DesktopUpdateCaches.Indexes.CreateOne(new CreateIndexModel<DesktopUpdateCache>(
+            Builders<DesktopUpdateCache>.IndexKeys.Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_desktop_update_caches_created" }));
     }
 }

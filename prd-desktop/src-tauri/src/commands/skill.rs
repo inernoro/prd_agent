@@ -5,6 +5,9 @@ use tauri::command;
 use crate::models::ApiResponse;
 use crate::services::ApiClient;
 
+// Re-export for dialog access
+use tauri_plugin_dialog::DialogExt;
+
 // ━━━ 新 Skill API 模型（对应 /api/prd-agent/skills） ━━━━━━━━
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -201,7 +204,7 @@ pub struct ExtractPromptTemplateResponse {
     pub prompt_template: String,
 }
 
-/// 从对话消息提炼可复用的提示词模板
+/// 从对话消息提炼可复用的提示词模板（旧版：单条消息）
 #[command]
 pub async fn generate_skill_from_message(
     user_message: Option<String>,
@@ -214,5 +217,122 @@ pub async fn generate_skill_from_message(
     };
     client
         .post("/api/prd-agent/skills/generate-from-message", &request)
+        .await
+}
+
+// ━━━ 从多轮对话提炼技能（增强版） ━━━━━━━━
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationMessage {
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerateSkillFromConversationRequest {
+    pub conversation_messages: Vec<ConversationMessage>,
+    pub key_assistant_message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtractedSkillDraftResponse {
+    pub prompt_template: String,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub category: Option<String>,
+    pub icon: Option<String>,
+    pub skill_md: Option<String>,
+}
+
+// ━━━ 导出技能为 SKILL.md 文件 ━━━━━━━━
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportSkillResponse {
+    pub skill_md: String,
+    pub file_name: String,
+}
+
+/// 导出技能为 SKILL.md（从 API 获取）
+#[command]
+pub async fn export_skill(skill_key: String) -> Result<ApiResponse<ExportSkillResponse>, String> {
+    let client = ApiClient::new();
+    client
+        .get(&format!("/api/prd-agent/skills/{}/export", skill_key))
+        .await
+}
+
+/// 导入 SKILL.md 文本创建个人技能
+#[command]
+pub async fn import_skill(
+    skill_md: String,
+) -> Result<ApiResponse<CreateSkillResponse>, String> {
+    let client = ApiClient::new();
+    let body = serde_json::json!({ "skillMd": skill_md });
+    client
+        .post("/api/prd-agent/skills/import", &body)
+        .await
+}
+
+/// 将 SKILL.md 内容保存为本地文件（使用系统保存对话框）
+#[command]
+pub async fn save_skill_to_file(
+    app: tauri::AppHandle,
+    content: String,
+    default_name: String,
+) -> Result<bool, String> {
+    use std::sync::mpsc;
+    use tauri_plugin_dialog::FilePath;
+
+    let (tx, rx) = mpsc::channel();
+
+    app.dialog()
+        .file()
+        .set_file_name(&default_name)
+        .add_filter("SKILL.md", &["md"])
+        .add_filter("All Files", &["*"])
+        .save_file(move |path| {
+            tx.send(path).ok();
+        });
+
+    let path = rx.recv().map_err(|e| format!("Dialog error: {}", e))?;
+
+    match path {
+        Some(file_path) => {
+            let path_buf = match file_path {
+                FilePath::Path(p) => p,
+                FilePath::Url(u) => {
+                    // Convert file:// URL to path
+                    u.to_file_path()
+                        .map_err(|_| "Invalid file URL".to_string())?
+                }
+            };
+            std::fs::write(&path_buf, content.as_bytes())
+                .map_err(|e| format!("Failed to write file: {}", e))?;
+            Ok(true)
+        }
+        None => Ok(false), // User cancelled
+    }
+}
+
+/// 从多轮对话提炼可复用的技能草案（增强版）
+#[command]
+pub async fn generate_skill_from_conversation(
+    conversation_messages: Vec<ConversationMessage>,
+    key_assistant_message: String,
+) -> Result<ApiResponse<ExtractedSkillDraftResponse>, String> {
+    let client = ApiClient::new();
+    let request = GenerateSkillFromConversationRequest {
+        conversation_messages,
+        key_assistant_message,
+    };
+    client
+        .post(
+            "/api/prd-agent/skills/generate-from-conversation",
+            &request,
+        )
         .await
 }

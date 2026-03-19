@@ -17,7 +17,7 @@ public class ChatService : IChatService
     private readonly IDocumentService _documentService;
     private readonly ICacheManager _cache;
     private readonly IPromptManager _promptManager;
-    private readonly IPromptService _promptService;
+    private readonly ISkillService _skillService;
     private readonly ISystemPromptService _systemPromptService;
     private readonly IUserService _userService;
     private readonly IMessageRepository _messageRepository;
@@ -38,7 +38,7 @@ public class ChatService : IChatService
         IDocumentService documentService,
         ICacheManager cache,
         IPromptManager promptManager,
-        IPromptService promptService,
+        ISkillService skillService,
         ISystemPromptService systemPromptService,
         IUserService userService,
         IMessageRepository messageRepository,
@@ -52,7 +52,7 @@ public class ChatService : IChatService
         _documentService = documentService;
         _cache = cache;
         _promptManager = promptManager;
-        _promptService = promptService;
+        _skillService = skillService;
         _systemPromptService = systemPromptService;
         _userService = userService;
         _messageRepository = messageRepository;
@@ -77,7 +77,7 @@ public class ChatService : IChatService
         UserRole? answerAsRole = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        // 真实“用户输入时间”：以服务端收到请求并进入业务处理的时间为准（UTC）
+        // 真实"用户输入时间"：以服务端收到请求并进入业务处理的时间为准（UTC）
         var userInputAtUtc = DateTime.UtcNow;
         var startAtUtc = DateTime.UtcNow;
         DateTime? firstTokenAtUtc = null;
@@ -172,34 +172,40 @@ public class ChatService : IChatService
         var effectivePromptKey = (promptKey ?? string.Empty).Trim();
         if (!string.IsNullOrWhiteSpace(effectivePromptKey))
         {
-            var prompt = await _promptService.GetPromptByKeyAsync(effectiveAnswerRole, effectivePromptKey, cancellationToken);
-            if (prompt != null &&
-                (!string.IsNullOrWhiteSpace(prompt.Title) || !string.IsNullOrWhiteSpace(prompt.PromptTemplate)))
+            // 统一从 skills 集合解析提示词/技能（合并后 promptKey = skillKey）
+            var skill = await _skillService.GetByKeyAsync(effectivePromptKey, cancellationToken);
+            // 角色校验：技能有角色限制时，必须匹配当前角色
+            var roleMatch = skill != null && (skill.Roles.Count == 0 || skill.Roles.Contains(effectiveAnswerRole));
+            if (skill != null && roleMatch)
             {
-                // 关键：对 LLM 请求，优先使用 promptTemplate 作为本次“讲解指令”，避免仅发送“【讲解】标题”导致模型无法按模板输出。
-                // 注意：入库的 userMessage.Content 仍保留原始 content（用于 UI 显示与回放），这里只影响发送给大模型的 messages。
-                if (!string.IsNullOrWhiteSpace(prompt.PromptTemplate))
-                {
-                    var pt = prompt.PromptTemplate.Trim();
-                    var c = (content ?? string.Empty).Trim();
-                    // 保留用户的“标题/问题”，并追加模板，便于日志排查与模型对齐输出结构。
-                    llmUserContent = string.IsNullOrWhiteSpace(c) ? pt : (c + "\n\n" + pt);
-                }
+                var promptTitle = skill.Title ?? string.Empty;
+                var promptTemplate = skill.Execution.PromptTemplate ?? string.Empty;
 
-                systemPrompt += @"
+                if (!string.IsNullOrWhiteSpace(promptTitle) || !string.IsNullOrWhiteSpace(promptTemplate))
+                {
+                    // 关键：对 LLM 请求，优先使用 promptTemplate 作为本次"讲解指令"，避免仅发送"【讲解】标题"导致模型无法按模板输出。
+                    // 注意：入库的 userMessage.Content 仍保留原始 content（用于 UI 显示与回放），这里只影响发送给大模型的 messages。
+                    if (!string.IsNullOrWhiteSpace(promptTemplate))
+                    {
+                        var pt = promptTemplate.Trim();
+                        var c = (content ?? string.Empty).Trim();
+                        llmUserContent = string.IsNullOrWhiteSpace(c) ? pt : (c + "\n\n" + pt);
+                    }
+
+                    systemPrompt += @"
 
 ---
 
 # 当前提示词上下文
-你当前正在按提示词（promptKey=" + effectivePromptKey + @"）「" + (prompt.Title ?? string.Empty) + @"」进行讲解/解读。
+你当前正在按提示词（promptKey=" + effectivePromptKey + @"）「" + promptTitle + @"」进行讲解/解读。
 
 ## 提示词模板（作为聚焦指令）
-说明：以下内容用于帮助你聚焦输出；请严格遵守其结构与约束；若 PRD 未覆盖则明确标注“PRD 未覆盖/需补充”，不得编造。
+说明：以下内容用于帮助你聚焦输出；请严格遵守其结构与约束；若 PRD 未覆盖则明确标注""PRD 未覆盖/需补充""，不得编造。
 
-" + (prompt.PromptTemplate ?? string.Empty);
+" + promptTemplate;
 
-                // 日志侧的 system prompt（脱敏后）也应包含 promptKey/promptTemplate，便于排查与对照管理后台的提示词配置。
-                systemPromptRedacted = systemPrompt;
+                    systemPromptRedacted = systemPrompt;
+                }
             }
         }
 
@@ -527,14 +533,14 @@ public class ChatService : IChatService
             }
         }
 
-        // 真实“AI 完成时间”：用于耗时统计/SSE doneAt（不用于落库 Timestamp）
+        // 真实"AI 完成时间"：用于耗时统计/SSE doneAt（不用于落库 Timestamp）
         var assistantDoneAtUtc = DateTime.UtcNow;
         if (assistantDoneAtUtc <= userInputAtUtc)
         {
             assistantDoneAtUtc = userInputAtUtc.AddTicks(1);
         }
 
-        // 你的规约：落库时间以“首字时间（TTFT 对齐的 firstTokenAtUtc）”为准，不使用最终完成时间。
+        // 你的规约：落库时间以"首字时间（TTFT 对齐的 firstTokenAtUtc）"为准，不使用最终完成时间。
         // - 若模型未产出任何可见 token（firstTokenAtUtc=null），退化为 startAtUtc（仍保证 >= userInputAtUtc）。
         var assistantStoreAtUtc = firstTokenAtUtc ?? startAtUtc;
         if (assistantStoreAtUtc <= userInputAtUtc)
@@ -688,18 +694,18 @@ public class ChatService : IChatService
         if (session == null)
         {
             // 兼容：session 元数据可能因 TTL/重启丢失，但消息已持久化在 Mongo。
-            // 这里尽最大努力返回 session 维度历史（用于回放/诊断/后台工具），避免“数据看似丢失”。
+            // 这里尽最大努力返回 session 维度历史（用于回放/诊断/后台工具），避免"数据看似丢失"。
             return await _messageRepository.FindBySessionAsync(sid, before: null, limit: take);
         }
 
-        // 读取历史也视为“活跃”：用户可能长时间阅读/回看聊天记录，首次再提问不应因为纯阅读而过期。
+        // 读取历史也视为"活跃"：用户可能长时间阅读/回看聊天记录，首次再提问不应因为纯阅读而过期。
         await _sessionService.RefreshActivityAsync(sid);
 
         var key = !string.IsNullOrEmpty(session.GroupId)
             ? CacheKeys.ForGroupChatHistory(session.GroupId)
             : CacheKeys.ForChatHistory(sid);
 
-        // 群组上下文“重置点”：用于截断 LLM 上下文拼接（不影响消息历史回放接口）
+        // 群组上下文"重置点"：用于截断 LLM 上下文拼接（不影响消息历史回放接口）
         // 注意：仅删除缓存并不能真正重置，因为 cache miss 会回源 Mongo；所以这里必须按 reset marker 过滤。
         DateTime? groupResetAtUtc = null;
         if (!string.IsNullOrEmpty(session.GroupId))
@@ -722,7 +728,7 @@ public class ChatService : IChatService
             return history.TakeLast(take).ToList();
         }
 
-        // cache miss：回源 Mongo，避免 Redis flush/服务重启/会话重建导致“上下文断链”
+        // cache miss：回源 Mongo，避免 Redis flush/服务重启/会话重建导致"上下文断链"
         List<Message> persisted;
         if (!string.IsNullOrEmpty(session.GroupId))
         {

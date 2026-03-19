@@ -208,6 +208,7 @@ export function PersonalSourcesPanel() {
               style={{
                 background: 'var(--surface-glass)',
                 backdropFilter: 'blur(12px)',
+                WebkitBackdropFilter: 'blur(12px)',
                 border: '1px solid var(--border-primary)',
                 borderLeft: `3px solid ${st.color}`,
                 opacity: source.enabled ? 1 : 0.6,

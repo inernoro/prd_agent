@@ -6,7 +6,7 @@ import { Select } from '@/components/design/Select';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { Dialog } from '@/components/ui/Dialog';
 import { getUsers, createUser, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, updateUserAvatar, updateUserDisplayName, initializeUsers, adminImpersonate, getSystemRoles, getUserAuthz, updateUserAuthz, getAdminPermissionCatalog, getUserRateLimit, updateUserRateLimit, bulkDeleteUsers } from '@/services';
-import { MoreVertical, Pencil, Search, UserCog, Users, Gauge, Trash2 } from 'lucide-react';
+import { MoreVertical, Pencil, Search, UserCog, Users, Gauge, Trash2, FolderOpen, Image, Bug, Zap } from 'lucide-react';
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { UserProfilePopover } from '@/components/ui/UserProfilePopover';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
@@ -35,6 +35,11 @@ type UserRow = {
   lastActiveAt?: string;
   isLocked?: boolean;
   lockoutRemainingSeconds?: number;
+  // 统计信息
+  groupCount?: number;
+  totalRunCount?: number;
+  totalImageCount?: number;
+  defectCount?: number;
 };
 
 // 格式化相对时间（保留供 profile popover 使用）
@@ -59,8 +64,17 @@ function fmtRelativeTime(v?: string | null) {
   return '';
 }
 
-// 抑制 unused warning（将在 profile popover 中使用）
-void fmtRelativeTime;
+/** 统计数字单元格（表格内使用） */
+function StatCell({ icon: Icon, value }: { icon: typeof FolderOpen; value?: number }) {
+  const v = value ?? 0;
+  if (v === 0) return <span className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>-</span>;
+  return (
+    <span className="inline-flex items-center gap-1 text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+      <Icon size={11} style={{ color: 'var(--text-tertiary)' }} />
+      {v}
+    </span>
+  );
+}
 
 export default function UsersPage() {
   const { isMobile } = useBreakpoint();
@@ -843,361 +857,335 @@ export default function UsersPage() {
               暂无数据
             </div>
           ) : (
-            <div className="grid gap-2 grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 items-stretch">
-              {items.map((u) => {
-                const displayName = (u.displayName || u.username).trim();
-                const isBot = String(u.userType ?? '').toLowerCase() === 'bot';
-                const roleColors: Record<string, { bg: string; border: string; text: string }> = {
-                  PM: { bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.25)', text: 'rgba(59,130,246,0.95)' },
-                  DEV: { bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.25)', text: 'rgba(34,197,94,0.95)' },
-                  QA: { bg: 'rgba(168,85,247,0.12)', border: 'rgba(168,85,247,0.25)', text: 'rgba(168,85,247,0.95)' },
-                  ADMIN: { bg: 'rgba(99,102,241,0.12)', border: 'rgba(99,102,241,0.25)', text: 'var(--accent-gold)' },
-                };
-                const rc = roleColors[u.role] || roleColors.DEV;
-                return (
-                  <div
-                    key={u.userId}
-                    className={`group relative rounded-[10px] p-2.5 ${isBot ? '' : 'surface-row'}`}
-                    style={isBot ? {
-                      background: 'rgba(34,197,94,0.03)',
-                      border: '1px solid rgba(34,197,94,0.15)',
-                      transition: 'all 0.15s',
-                    } : undefined}
-                    onMouseEnter={isBot ? (e) => {
-                      e.currentTarget.style.background = 'rgba(34,197,94,0.06)';
-                      e.currentTarget.style.borderColor = 'rgba(34,197,94,0.25)';
-                    } : undefined}
-                    onMouseLeave={isBot ? (e) => {
-                      e.currentTarget.style.background = 'rgba(34,197,94,0.03)';
-                      e.currentTarget.style.borderColor = 'rgba(34,197,94,0.15)';
-                    } : undefined}
-                  >
-                    {/* 操作按钮：悬浮显示 */}
-                    <div className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-                      <DropdownMenu.Root>
-                        <DropdownMenu.Trigger asChild>
-                          <button
-                            type="button"
-                            className="inline-flex items-center justify-center h-6 w-6 rounded-[6px] transition-colors hover:bg-white/10"
-                            style={{ background: 'var(--nested-block-bg)', color: 'var(--text-secondary)' }}
-                            aria-label="更多操作"
-                          >
-                            <MoreVertical size={14} />
-                          </button>
-                        </DropdownMenu.Trigger>
-                        <DropdownMenu.Portal>
-                          <DropdownMenu.Content
-                            side="bottom"
-                            align="end"
-                            sideOffset={4}
-                            className="rounded-[10px] p-1 min-w-[160px]"
-                            style={{
-                              zIndex: 90,
-                              ...glassPanel,
-                            }}
-                          >
-                            {/* 状态切换 */}
-                            <DropdownMenu.Item
-                              className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
-                              style={{ color: u.status === 'Active' ? 'rgba(239,68,68,0.9)' : 'rgba(34,197,94,0.9)' }}
-                              disabled={statusUpdatingUserId === u.userId}
-                              onSelect={(e) => {
-                                e.preventDefault();
-                                onToggleStatus(u);
-                              }}
-                            >
-                              {statusUpdatingUserId === u.userId ? '处理中...' : u.status === 'Active' ? '停用账户' : '启用账户'}
-                            </DropdownMenu.Item>
-
-                            <DropdownMenu.Separator className="h-px my-1" style={{ background: 'var(--nested-block-border)' }} />
-
-                            {/* 角色切换子菜单 */}
-                            <DropdownMenu.Sub>
-                              <DropdownMenu.SubTrigger
-                                className="flex items-center justify-between gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
-                                style={{ color: 'var(--text-primary)' }}
-                              >
-                                切换角色
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                  <path d="M9 18l6-6-6-6" />
-                                </svg>
-                              </DropdownMenu.SubTrigger>
-                              <DropdownMenu.Portal>
-                                <DropdownMenu.SubContent
-                                  sideOffset={4}
-                                  className="rounded-[10px] p-1 min-w-[100px]"
-                                  style={{
-                                    zIndex: 91,
-                                    ...glassPanel,
-                                  }}
-                                >
-                                  {(['PM', 'DEV', 'QA', 'ADMIN'] as const).map((r) => (
-                                    <DropdownMenu.Item
-                                      key={r}
-                                      className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
-                                      style={{ color: u.role === r ? roleColors[r].text : 'var(--text-primary)' }}
-                                      disabled={roleUpdatingUserId === u.userId || u.role === r}
-                                      onSelect={(e) => {
-                                        e.preventDefault();
-                                        onSetRole(u, r);
-                                      }}
-                                    >
-                                      {u.role === r && <span className="w-1.5 h-1.5 rounded-full" style={{ background: roleColors[r].text }} />}
-                                      {r}
-                                    </DropdownMenu.Item>
-                                  ))}
-                                </DropdownMenu.SubContent>
-                              </DropdownMenu.Portal>
-                            </DropdownMenu.Sub>
-
-                            <DropdownMenu.Separator className="h-px my-1" style={{ background: 'var(--nested-block-border)' }} />
-
-                            {isLockedUser(u) && (
-                              <DropdownMenu.Item
-                                className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
-                                style={{ color: 'var(--text-primary)' }}
-                                disabled={unlockingUserId === u.userId}
-                                onSelect={(e) => {
-                                  e.preventDefault();
-                                  onUnlock(u);
-                                }}
-                              >
-                                {unlockingUserId === u.userId ? '解除中...' : '解除锁定'}
-                              </DropdownMenu.Item>
-                            )}
-                            {isHumanUser(u) && (
-                              <DropdownMenu.Item
-                                className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
-                                style={{ color: 'var(--text-primary)' }}
-                                onSelect={(e) => {
-                                  e.preventDefault();
-                                  openChangeDisplayName(u);
-                                }}
-                              >
-                                <Pencil size={12} />
-                                修改姓名
-                              </DropdownMenu.Item>
-                            )}
-                            <DropdownMenu.Item
-                              className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
-                              style={{ color: 'var(--text-primary)' }}
-                              onSelect={(e) => {
-                                e.preventDefault();
-                                openChangeAvatar(u);
-                              }}
-                            >
-                              修改头像
-                            </DropdownMenu.Item>
-                            <DropdownMenu.Item
-                              className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
-                              style={{ color: 'var(--text-primary)' }}
-                              onSelect={(e) => {
-                                e.preventDefault();
-                                openChangePassword(u);
-                              }}
-                            >
-                              修改密码
-                            </DropdownMenu.Item>
-                            <DropdownMenu.Item
-                              className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
-                              style={{ color: 'var(--text-primary)' }}
-                              onSelect={(e) => {
-                                e.preventDefault();
-                                openForceExpire(u);
-                              }}
-                            >
-                              一键过期
-                            </DropdownMenu.Item>
-
-                            {canAuthzManage && (
-                              <DropdownMenu.Item
-                                className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
-                                style={{ color: 'var(--text-primary)' }}
-                                onSelect={(e) => {
-                                  e.preventDefault();
-                                  void openUserAuthz(u);
-                                }}
-                              >
-                                后台权限
-                              </DropdownMenu.Item>
-                            )}
-                            <DropdownMenu.Item
-                              className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
-                              style={{ color: 'var(--text-primary)' }}
-                              onSelect={(e) => {
-                                e.preventDefault();
-                                void openRateLimitConfig(u);
-                              }}
-                            >
-                              <Gauge size={12} />
-                              限流配置
-                            </DropdownMenu.Item>
-
-                            <DropdownMenu.Separator className="h-px my-1" style={{ background: 'var(--nested-block-border)' }} />
-
-                            <DropdownMenu.Item
-                              className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
-                              style={{ color: 'var(--text-primary)' }}
-                              disabled={switchingUserId === u.userId}
-                              onSelect={(e) => {
-                                e.preventDefault();
-                                onSwitchToUser(u);
-                              }}
-                            >
-                              <UserCog size={12} />
-                              {switchingUserId === u.userId ? '切换中...' : '切换登录'}
-                            </DropdownMenu.Item>
-
-                            <DropdownMenu.Separator className="h-px my-1" style={{ background: 'var(--nested-block-border)' }} />
-
-                            <DropdownMenu.Item
-                              className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
-                              style={{ color: 'var(--text-primary)' }}
-                              onSelect={(e) => {
-                                e.preventDefault();
-                                navigate(`/logs?tab=llm&userId=${encodeURIComponent(u.userId)}`);
-                              }}
-                            >
-                              LLM 日志
-                            </DropdownMenu.Item>
-                            <DropdownMenu.Item
-                              className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
-                              style={{ color: 'var(--text-primary)' }}
-                              onSelect={(e) => {
-                                e.preventDefault();
-                                navigate(`/logs?tab=system&userId=${encodeURIComponent(u.userId)}`);
-                              }}
-                            >
-                              系统日志
-                            </DropdownMenu.Item>
-                          </DropdownMenu.Content>
-                        </DropdownMenu.Portal>
-                      </DropdownMenu.Root>
-                    </div>
-
-                    {/* 紧凑卡片内容 */}
-                    <div className="flex items-center gap-2.5">
-                      {/* 选择框 */}
-                      {u.userId !== currentUserId && (
-                        <input
-                          type="checkbox"
-                          checked={selectedUserIds.has(u.userId)}
-                          onChange={(e) => {
-                            e.stopPropagation();
-                            toggleUserSelection(u.userId);
-                          }}
-                          className="accent-[var(--accent-gold)] shrink-0 cursor-pointer"
-                          title="选择此用户"
-                        />
-                      )}
-                      {/* 头像（悬浮/点击显示用户详情） */}
-                      <UserProfilePopover
-                        userId={u.userId}
-                        username={u.username}
-                        userType={u.userType}
-                        botKind={u.botKind}
-                        avatarFileName={u.avatarFileName}
-                        avatarUrl={u.avatarUrl}
-                        role={u.role}
-                        onChangeAvatar={() => openChangeAvatar(u)}
+            <div className="overflow-x-auto">
+              <table className="w-full text-[12px]">
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--border-primary)' }}>
+                    <th className="text-left py-2 px-2 font-medium w-8" style={{ color: 'var(--text-tertiary)' }}>
+                      <input
+                        type="checkbox"
+                        checked={items.filter((u) => u.userId !== currentUserId).length > 0 && items.filter((u) => u.userId !== currentUserId).every((u) => selectedUserIds.has(u.userId))}
+                        onChange={toggleSelectAll}
+                        className="accent-[var(--accent-gold)]"
+                      />
+                    </th>
+                    <th className="text-left py-2 px-2 font-medium" style={{ color: 'var(--text-tertiary)' }}>用户</th>
+                    <th className="text-center py-2 px-2 font-medium" style={{ color: 'var(--text-tertiary)' }}>角色</th>
+                    <th className="text-center py-2 px-2 font-medium" style={{ color: 'var(--text-tertiary)' }}>状态</th>
+                    <th className="text-center py-2 px-2 font-medium" style={{ color: 'var(--text-tertiary)' }}>
+                      <span title="加入的群组数">群组</span>
+                    </th>
+                    <th className="text-center py-2 px-2 font-medium" style={{ color: 'var(--text-tertiary)' }}>
+                      <span title="近30天生图任务">任务</span>
+                    </th>
+                    <th className="text-center py-2 px-2 font-medium" style={{ color: 'var(--text-tertiary)' }}>
+                      <span title="近30天生成图片">图片</span>
+                    </th>
+                    <th className="text-center py-2 px-2 font-medium" style={{ color: 'var(--text-tertiary)' }}>
+                      <span title="近30天缺陷数">缺陷</span>
+                    </th>
+                    <th className="text-left py-2 px-2 font-medium" style={{ color: 'var(--text-tertiary)' }}>最后活跃</th>
+                    <th className="text-left py-2 px-2 font-medium" style={{ color: 'var(--text-tertiary)' }}>创建时间</th>
+                    <th className="text-right py-2 px-2 font-medium w-10" style={{ color: 'var(--text-tertiary)' }}>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((u) => {
+                    const displayName = (u.displayName || u.username).trim();
+                    const isBot = String(u.userType ?? '').toLowerCase() === 'bot';
+                    const roleColors: Record<string, { bg: string; border: string; text: string }> = {
+                      PM: { bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.25)', text: 'rgba(59,130,246,0.95)' },
+                      DEV: { bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.25)', text: 'rgba(34,197,94,0.95)' },
+                      QA: { bg: 'rgba(168,85,247,0.12)', border: 'rgba(168,85,247,0.25)', text: 'rgba(168,85,247,0.95)' },
+                      ADMIN: { bg: 'rgba(99,102,241,0.12)', border: 'rgba(99,102,241,0.25)', text: 'var(--accent-gold)' },
+                    };
+                    const rc = roleColors[u.role] || roleColors.DEV;
+                    return (
+                      <tr
+                        key={u.userId}
+                        className="group transition-colors hover:bg-white/[0.03]"
+                        style={{ borderBottom: '1px solid var(--border-primary)' }}
                       >
-                        <div
-                          className="relative h-9 w-9 rounded-[8px] overflow-hidden shrink-0 cursor-pointer ring-1 ring-white/8 hover:ring-[var(--accent-gold)]/40 transition-all"
-                        >
-                          <UserAvatar
-                            src={resolveAvatarUrl({
-                              username: u.username,
-                              userType: u.userType,
-                              botKind: u.botKind,
-                              avatarFileName: u.avatarFileName ?? null,
-                              avatarUrl: u.avatarUrl,
-                            })}
-                            alt="avatar"
-                            className="h-full w-full object-cover"
-                          />
-                          {/* 角色/机器人图标（右下角） */}
-                          {(() => {
-                            // 机器人使用特殊图标
-                            if (isBot) {
-                              return (
-                                <span
-                                  className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full flex items-center justify-center border-2"
-                                  style={{ background: 'rgba(34,197,94,0.9)', borderColor: 'rgba(0,0,0,0.5)', color: '#fff' }}
-                                  title="机器人"
-                                >
-                                  <svg className="w-2 h-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v2m-6 7a6 6 0 0112 0v5a3 3 0 01-3 3H9a3 3 0 01-3-3v-5z" />
-                                    <circle cx="9" cy="13" r="1" fill="currentColor" />
-                                    <circle cx="15" cy="13" r="1" fill="currentColor" />
-                                  </svg>
-                                </span>
-                              );
-                            }
-                            // 人类用户显示角色图标
-                            const roleIconConfig: Record<string, { bg: string; color: string; icon: React.ReactNode }> = {
-                              PM: {
-                                bg: 'rgba(59,130,246,0.9)',
-                                color: '#fff',
-                                icon: <svg className="w-2 h-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" /></svg>,
-                              },
-                              DEV: {
-                                bg: 'rgba(34,197,94,0.9)',
-                                color: '#fff',
-                                icon: <svg className="w-2 h-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6" /></svg>,
-                              },
-                              QA: {
-                                bg: 'rgba(168,85,247,0.9)',
-                                color: '#fff',
-                                icon: <svg className="w-2 h-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" /></svg>,
-                              },
-                              ADMIN: {
-                                bg: 'rgba(99,102,241,0.95)',
-                                color: '#000',
-                                icon: <svg className="w-2 h-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M12 2l7 4v6c0 5-3 9-7 10-4-1-7-5-7-10V6l7-4z" /></svg>,
-                              },
-                            };
-                            const cfg = roleIconConfig[u.role] || roleIconConfig.DEV;
-                            return (
-                              <span
-                                className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full flex items-center justify-center border-2"
-                                style={{ background: cfg.bg, borderColor: 'rgba(0,0,0,0.5)', color: cfg.color }}
-                                title={u.role}
-                              >
-                                {cfg.icon}
-                              </span>
-                            );
-                          })()}
-                        </div>
-                      </UserProfilePopover>
+                        {/* 选择框 */}
+                        <td className="py-2 px-2">
+                          {u.userId !== currentUserId ? (
+                            <input
+                              type="checkbox"
+                              checked={selectedUserIds.has(u.userId)}
+                              onChange={() => toggleUserSelection(u.userId)}
+                              className="accent-[var(--accent-gold)] cursor-pointer"
+                            />
+                          ) : <span className="inline-block w-[13px]" />}
+                        </td>
 
-                      {/* 信息区 */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          {/* 名称 */}
+                        {/* 用户信息：头像 + 名称 + 用户名 */}
+                        <td className="py-2 px-2">
+                          <div className="flex items-center gap-2.5">
+                            <UserProfilePopover
+                              userId={u.userId}
+                              username={u.username}
+                              userType={u.userType}
+                              botKind={u.botKind}
+                              avatarFileName={u.avatarFileName}
+                              avatarUrl={u.avatarUrl}
+                              role={u.role}
+                              onChangeAvatar={() => openChangeAvatar(u)}
+                            >
+                              <div className="relative h-8 w-8 rounded-[7px] overflow-hidden shrink-0 cursor-pointer ring-1 ring-white/8 hover:ring-[var(--accent-gold)]/40 transition-all">
+                                <UserAvatar
+                                  src={resolveAvatarUrl({
+                                    username: u.username,
+                                    userType: u.userType,
+                                    botKind: u.botKind,
+                                    avatarFileName: u.avatarFileName ?? null,
+                                    avatarUrl: u.avatarUrl,
+                                  })}
+                                  alt="avatar"
+                                  className="h-full w-full object-cover"
+                                />
+                                {isBot && (
+                                  <span
+                                    className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full flex items-center justify-center border-[1.5px]"
+                                    style={{ background: 'rgba(34,197,94,0.9)', borderColor: 'rgba(0,0,0,0.5)', color: '#fff' }}
+                                    title="机器人"
+                                  >
+                                    <svg className="w-1.5 h-1.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v2m-6 7a6 6 0 0112 0v5a3 3 0 01-3 3H9a3 3 0 01-3-3v-5z" />
+                                    </svg>
+                                  </span>
+                                )}
+                              </div>
+                            </UserProfilePopover>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[12px] font-semibold truncate max-w-[140px]" style={{ color: 'var(--text-primary)' }} title={displayName}>
+                                  {displayName}
+                                </span>
+                                {isBot && (
+                                  <span className="shrink-0 text-[9px] font-medium px-1 py-0 rounded" style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.9)' }}>
+                                    BOT
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }} title={`@${u.username}`}>
+                                @{u.username}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* 角色 */}
+                        <td className="py-2 px-2 text-center">
                           <span
-                            className="text-[12px] font-semibold truncate"
-                            style={{ color: 'var(--text-primary)' }}
-                            title={displayName}
-                          >
-                            {displayName}
-                          </span>
-                          {/* 角色标签 */}
-                          <span
-                            className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-[4px]"
+                            className="inline-block text-[10px] font-bold px-1.5 py-0.5 rounded-[4px]"
                             style={{ background: rc.bg, border: `1px solid ${rc.border}`, color: rc.text }}
                           >
                             {u.role}
                           </span>
-                        </div>
-                        {/* 用户名 */}
-                        <div className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }} title={`@${u.username}`}>
-                          @{u.username}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+                        </td>
+
+                        {/* 状态 */}
+                        <td className="py-2 px-2 text-center">
+                          {isLockedUser(u) ? (
+                            <span className="inline-block text-[10px] font-medium px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(239,68,68,0.12)', color: 'rgba(239,68,68,0.9)' }}>
+                              锁定
+                            </span>
+                          ) : u.status === 'Active' ? (
+                            <span className="inline-block text-[10px] font-medium px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.9)' }}>
+                              正常
+                            </span>
+                          ) : (
+                            <span className="inline-block text-[10px] font-medium px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(156,163,175,0.12)', color: 'rgba(156,163,175,0.9)' }}>
+                              禁用
+                            </span>
+                          )}
+                        </td>
+
+                        {/* 群组数 */}
+                        <td className="py-2 px-2 text-center">
+                          <StatCell icon={FolderOpen} value={u.groupCount} />
+                        </td>
+
+                        {/* 任务数 (30d) */}
+                        <td className="py-2 px-2 text-center">
+                          <StatCell icon={Zap} value={u.totalRunCount} />
+                        </td>
+
+                        {/* 图片数 (30d) */}
+                        <td className="py-2 px-2 text-center">
+                          <StatCell icon={Image} value={u.totalImageCount} />
+                        </td>
+
+                        {/* 缺陷数 (30d) */}
+                        <td className="py-2 px-2 text-center">
+                          <StatCell icon={Bug} value={u.defectCount} />
+                        </td>
+
+                        {/* 最后活跃 */}
+                        <td className="py-2 px-2 whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
+                          {fmtRelativeTime(u.lastActiveAt || u.lastLoginAt) || (
+                            <span style={{ color: 'var(--text-tertiary)' }}>-</span>
+                          )}
+                        </td>
+
+                        {/* 创建时间 */}
+                        <td className="py-2 px-2 whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
+                          {u.createdAt ? new Date(u.createdAt).toLocaleDateString() : '-'}
+                        </td>
+
+                        {/* 操作 */}
+                        <td className="py-2 px-2 text-right">
+                          <DropdownMenu.Root>
+                            <DropdownMenu.Trigger asChild>
+                              <button
+                                type="button"
+                                className="inline-flex items-center justify-center h-6 w-6 rounded-[6px] transition-colors opacity-0 group-hover:opacity-100 hover:bg-white/10"
+                                style={{ color: 'var(--text-secondary)' }}
+                                aria-label="更多操作"
+                              >
+                                <MoreVertical size={14} />
+                              </button>
+                            </DropdownMenu.Trigger>
+                            <DropdownMenu.Portal>
+                              <DropdownMenu.Content
+                                side="bottom"
+                                align="end"
+                                sideOffset={4}
+                                className="rounded-[10px] p-1 min-w-[160px]"
+                                style={{ zIndex: 90, ...glassPanel }}
+                              >
+                                <DropdownMenu.Item
+                                  className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
+                                  style={{ color: u.status === 'Active' ? 'rgba(239,68,68,0.9)' : 'rgba(34,197,94,0.9)' }}
+                                  disabled={statusUpdatingUserId === u.userId}
+                                  onSelect={(e) => { e.preventDefault(); onToggleStatus(u); }}
+                                >
+                                  {statusUpdatingUserId === u.userId ? '处理中...' : u.status === 'Active' ? '停用账户' : '启用账户'}
+                                </DropdownMenu.Item>
+
+                                <DropdownMenu.Separator className="h-px my-1" style={{ background: 'var(--nested-block-border)' }} />
+
+                                <DropdownMenu.Sub>
+                                  <DropdownMenu.SubTrigger
+                                    className="flex items-center justify-between gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
+                                    style={{ color: 'var(--text-primary)' }}
+                                  >
+                                    切换角色
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6" /></svg>
+                                  </DropdownMenu.SubTrigger>
+                                  <DropdownMenu.Portal>
+                                    <DropdownMenu.SubContent sideOffset={4} className="rounded-[10px] p-1 min-w-[100px]" style={{ zIndex: 91, ...glassPanel }}>
+                                      {(['PM', 'DEV', 'QA', 'ADMIN'] as const).map((r) => (
+                                        <DropdownMenu.Item
+                                          key={r}
+                                          className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
+                                          style={{ color: u.role === r ? roleColors[r].text : 'var(--text-primary)' }}
+                                          disabled={roleUpdatingUserId === u.userId || u.role === r}
+                                          onSelect={(e) => { e.preventDefault(); onSetRole(u, r); }}
+                                        >
+                                          {u.role === r && <span className="w-1.5 h-1.5 rounded-full" style={{ background: roleColors[r].text }} />}
+                                          {r}
+                                        </DropdownMenu.Item>
+                                      ))}
+                                    </DropdownMenu.SubContent>
+                                  </DropdownMenu.Portal>
+                                </DropdownMenu.Sub>
+
+                                <DropdownMenu.Separator className="h-px my-1" style={{ background: 'var(--nested-block-border)' }} />
+
+                                {isLockedUser(u) && (
+                                  <DropdownMenu.Item
+                                    className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
+                                    style={{ color: 'var(--text-primary)' }}
+                                    disabled={unlockingUserId === u.userId}
+                                    onSelect={(e) => { e.preventDefault(); onUnlock(u); }}
+                                  >
+                                    {unlockingUserId === u.userId ? '解除中...' : '解除锁定'}
+                                  </DropdownMenu.Item>
+                                )}
+                                {isHumanUser(u) && (
+                                  <DropdownMenu.Item
+                                    className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
+                                    style={{ color: 'var(--text-primary)' }}
+                                    onSelect={(e) => { e.preventDefault(); openChangeDisplayName(u); }}
+                                  >
+                                    <Pencil size={12} /> 修改姓名
+                                  </DropdownMenu.Item>
+                                )}
+                                <DropdownMenu.Item
+                                  className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
+                                  style={{ color: 'var(--text-primary)' }}
+                                  onSelect={(e) => { e.preventDefault(); openChangeAvatar(u); }}
+                                >
+                                  修改头像
+                                </DropdownMenu.Item>
+                                <DropdownMenu.Item
+                                  className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
+                                  style={{ color: 'var(--text-primary)' }}
+                                  onSelect={(e) => { e.preventDefault(); openChangePassword(u); }}
+                                >
+                                  修改密码
+                                </DropdownMenu.Item>
+                                <DropdownMenu.Item
+                                  className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
+                                  style={{ color: 'var(--text-primary)' }}
+                                  onSelect={(e) => { e.preventDefault(); openForceExpire(u); }}
+                                >
+                                  一键过期
+                                </DropdownMenu.Item>
+                                {canAuthzManage && (
+                                  <DropdownMenu.Item
+                                    className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
+                                    style={{ color: 'var(--text-primary)' }}
+                                    onSelect={(e) => { e.preventDefault(); void openUserAuthz(u); }}
+                                  >
+                                    后台权限
+                                  </DropdownMenu.Item>
+                                )}
+                                <DropdownMenu.Item
+                                  className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
+                                  style={{ color: 'var(--text-primary)' }}
+                                  onSelect={(e) => { e.preventDefault(); void openRateLimitConfig(u); }}
+                                >
+                                  <Gauge size={12} /> 限流配置
+                                </DropdownMenu.Item>
+
+                                <DropdownMenu.Separator className="h-px my-1" style={{ background: 'var(--nested-block-border)' }} />
+
+                                <DropdownMenu.Item
+                                  className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
+                                  style={{ color: 'var(--text-primary)' }}
+                                  disabled={switchingUserId === u.userId}
+                                  onSelect={(e) => { e.preventDefault(); onSwitchToUser(u); }}
+                                >
+                                  <UserCog size={12} /> {switchingUserId === u.userId ? '切换中...' : '切换登录'}
+                                </DropdownMenu.Item>
+
+                                <DropdownMenu.Separator className="h-px my-1" style={{ background: 'var(--nested-block-border)' }} />
+
+                                <DropdownMenu.Item
+                                  className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
+                                  style={{ color: 'var(--text-primary)' }}
+                                  onSelect={(e) => { e.preventDefault(); navigate(`/logs?tab=llm&userId=${encodeURIComponent(u.userId)}`); }}
+                                >
+                                  LLM 日志
+                                </DropdownMenu.Item>
+                                <DropdownMenu.Item
+                                  className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
+                                  style={{ color: 'var(--text-primary)' }}
+                                  onSelect={(e) => { e.preventDefault(); navigate(`/logs?tab=system&userId=${encodeURIComponent(u.userId)}`); }}
+                                >
+                                  系统日志
+                                </DropdownMenu.Item>
+                              </DropdownMenu.Content>
+                            </DropdownMenu.Portal>
+                          </DropdownMenu.Root>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
         </div>

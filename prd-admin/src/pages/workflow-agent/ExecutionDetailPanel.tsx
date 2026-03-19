@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   ArrowLeft, RefreshCw, RotateCcw, Share2, XCircle,
   CheckCircle2, Clock, AlertCircle, Loader2, MinusCircle,
@@ -11,10 +11,11 @@ import { getExecution, getNodeLogs, resumeFromNode, cancelExecution, continueExe
 import { ExecutionStatusLabels } from '@/services/contracts/workflowAgent';
 import type { ExecutionArtifact, WorkflowExecution } from '@/services/contracts/workflowAgent';
 import { getCapsuleType } from './capsuleRegistry';
-import { readSseStream } from '@/lib/sse';
-import { useAuthStore } from '@/stores/authStore';
+import { connectSse } from '@/lib/useSseStream';
 import { api } from '@/services/api';
 import { ArtifactPreviewModal } from './ArtifactPreviewModal';
+import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
+import type { SsePhase } from '@/lib/useSseStream';
 
 // ═══════════════════════════════════════════════════════════════
 // 日志条目
@@ -62,6 +63,10 @@ export function ExecutionDetailPanel() {
   const logBottomRef = useRef<HTMLDivElement>(null);
   const sseAbortRef = useRef<AbortController | null>(null);
 
+  // SSE connection phase
+  const [ssePhase, setSsePhase] = useState<SsePhase>('idle');
+  const [ssePhaseMessage, setSsePhaseMessage] = useState('');
+
   // LLM streaming state
   const [llmStreamContent, setLlmStreamContent] = useState('');
   const [llmStreamNodeName, setLlmStreamNodeName] = useState('');
@@ -95,67 +100,12 @@ export function ExecutionDetailPanel() {
     }
   }, [llmStreamContent, llmStreamExpanded]);
 
-  // Start SSE for running executions, load logs for completed ones
-  useEffect(() => {
-    if (!exec) return;
-    if (['queued', 'running'].includes(exec.status)) {
-      startLogSse(exec.id);
-    } else {
-      // Load historical logs from all nodes
-      loadHistoricalLogs(exec);
-    }
-    return () => stopLogSse();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [exec?.id]);
-
-  if (!exec) return null;
-
-  // ── SSE for real-time logs ──
-
-  function startLogSse(execId: string) {
-    stopLogSse();
-    const ac = new AbortController();
-    sseAbortRef.current = ac;
-    const token = useAuthStore.getState().token;
-    const baseUrl = (import.meta as unknown as { env: Record<string, string> }).env.VITE_API_BASE_URL || '';
-    const url = `${baseUrl}${api.workflowAgent.executions.stream(execId)}`;
-
-    addLog('info', '开始监听执行事件流...');
-
-    (async () => {
-      try {
-        const res = await fetch(url, {
-          headers: { Authorization: `Bearer ${token}`, Accept: 'text/event-stream' },
-          signal: ac.signal,
-        });
-        if (!res.ok) {
-          addLog('warn', `SSE 连接失败 (${res.status})，使用轮询模式`);
-          fallbackPolling(execId);
-          return;
-        }
-
-        await readSseStream(res, (evt) => {
-          if (!evt.data || !evt.event) return;
-          try {
-            const payload = JSON.parse(evt.data) as Record<string, unknown>;
-            handleLogSseEvent(evt.event, payload, execId);
-          } catch { /* ignore */ }
-        }, ac.signal);
-      } catch {
-        if (!ac.signal.aborted) {
-          addLog('warn', 'SSE 连接中断，切换到轮询');
-          fallbackPolling(execId);
-        }
-      }
-    })();
-  }
-
-  function handleLogSseEvent(eventName: string, payload: Record<string, unknown>, execId: string) {
+  // ── SSE event handler (stable ref to avoid re-creating connectSse) ──
+  const handleLogSseEvent = useCallback((eventName: string, payload: Record<string, unknown>, execId: string) => {
     const nodeId = payload.nodeId as string;
     const nodeName = payload.nodeName as string;
     const nodeType = payload.nodeType as string;
 
-    // Debug logging for SSE events (helps diagnose streaming issues)
     if (eventName.startsWith('llm-')) {
       console.debug('[Workflow SSE]', eventName, payload);
     }
@@ -164,9 +114,8 @@ export function ExecutionDetailPanel() {
       addLog('info', `执行开始，共 ${payload.totalNodes} 个节点`);
     } else if (eventName === 'node-started') {
       const inputCount = payload.inputArtifactCount as number;
-      addLog('info', `开始执行`, `接收 ${inputCount ?? 0} 个输入产物`, nodeId, nodeName, nodeType);
+      addLog('info', '开始执行', `接收 ${inputCount ?? 0} 个输入产物`, nodeId, nodeName, nodeType);
 
-      // Pre-activate LLM streaming panel for LLM analyzer nodes
       if (nodeType === 'llm-analyzer') {
         setLlmStreamContent('');
         setLlmStreamNodeName(nodeName || 'AI 分析');
@@ -185,10 +134,9 @@ export function ExecutionDetailPanel() {
       addLog('success', `完成 (${(durationMs / 1000).toFixed(1)}s)，产出 ${artifactCount} 个产物`,
         logs || undefined, nodeId, nodeName, nodeType);
 
-      // Update node state via store
       const current = useWorkflowStore.getState().selectedExecution;
       if (current) {
-        setSelectedExecution({
+        useWorkflowStore.getState().setSelectedExecution({
           ...current,
           nodeExecutions: current.nodeExecutions.map(ne =>
             ne.nodeId === nodeId
@@ -204,7 +152,7 @@ export function ExecutionDetailPanel() {
 
       const current = useWorkflowStore.getState().selectedExecution;
       if (current) {
-        setSelectedExecution({
+        useWorkflowStore.getState().setSelectedExecution({
           ...current,
           nodeExecutions: current.nodeExecutions.map(ne =>
             ne.nodeId === nodeId
@@ -214,14 +162,10 @@ export function ExecutionDetailPanel() {
         });
       }
     } else if (eventName === 'llm-stream-start') {
-      // Only reset content on the first llm-stream-start (no model yet);
-      // the second one (with model info) just updates the model name
       const model = (payload.model as string) || '';
       if (model) {
-        // Second emission — just update model, don't reset content
         setLlmStreamModel(model);
       } else {
-        // First emission — initialize panel
         setLlmStreamContent('');
         setLlmStreamNodeName((payload.nodeName as string) || 'AI 分析');
         setLlmStreamModel('');
@@ -234,7 +178,6 @@ export function ExecutionDetailPanel() {
       const chunkContent = payload.content as string;
       if (chunkContent) {
         setLlmStreamContent(prev => prev + chunkContent);
-        // Ensure panel is active in case llm-stream-start was missed
         setLlmStreamActive(true);
       }
     } else if (eventName === 'llm-stream-end') {
@@ -245,12 +188,14 @@ export function ExecutionDetailPanel() {
       const outTok = payload.outputTokens as number;
       addLog('info',
         `LLM 流式完成 (${(dMs / 1000).toFixed(1)}s, ${totalLen} chars, tokens: ${inTok}/${outTok})`,
-        undefined, payload.nodeId as string, payload.nodeName as string || undefined);
+        undefined, payload.nodeId as string, (payload.nodeName as string) || undefined);
     } else if (eventName === 'execution-paused') {
       const pausedNodeName = payload.pausedAtNodeName as string;
       addLog('warn', `断点暂停 — 节点「${pausedNodeName}」执行完成后暂停，等待继续`);
       stopLogSse();
-      loadExecution(execId);
+      setSsePhase('done');
+      setSsePhaseMessage('执行已暂停');
+      useWorkflowStore.getState().loadExecution(execId);
     } else if (eventName === 'execution-completed') {
       const status = payload.status as string;
       const completed = payload.completedNodes as number;
@@ -261,10 +206,50 @@ export function ExecutionDetailPanel() {
         `执行${status === 'completed' ? '完成' : '失败'} — 成功: ${completed}, 失败: ${failed}, 跳过: ${skipped}`
       );
       stopLogSse();
-      // Refresh full state
-      loadExecution(execId);
+      setSsePhase('done');
+      setSsePhaseMessage(status === 'completed' ? '执行完成' : '执行失败');
+      useWorkflowStore.getState().loadExecution(execId);
     }
-  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Start SSE via connectSse ──
+  const startLogSse = useCallback((execId: string) => {
+    stopLogSse();
+    const ac = new AbortController();
+    sseAbortRef.current = ac;
+    const baseUrl = (import.meta as unknown as { env: Record<string, string> }).env.VITE_API_BASE_URL || '';
+    const url = `${baseUrl}${api.workflowAgent.executions.stream(execId)}`;
+
+    addLog('info', '开始监听执行事件流...');
+    setSsePhase('connecting');
+    setSsePhaseMessage('连接执行事件流…');
+
+    (async () => {
+      const result = await connectSse({
+        url,
+        signal: ac.signal,
+        onEvent: (evt) => {
+          if (!evt.data || !evt.event) return;
+          try {
+            const payload = JSON.parse(evt.data) as Record<string, unknown>;
+            handleLogSseEvent(evt.event, payload, execId);
+            // Update phase on first real event
+            setSsePhase('streaming');
+            setSsePhaseMessage('实时监控中');
+          } catch { /* ignore */ }
+        },
+      });
+
+      if (!result.success && !ac.signal.aborted) {
+        addLog('warn', `SSE 连接失败 (${result.errorMessage})，使用轮询模式`);
+        setSsePhase('error');
+        setSsePhaseMessage(result.errorMessage || '连接失败');
+        fallbackPolling(execId);
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handleLogSseEvent]);
 
   function fallbackPolling(execId: string) {
     const iv = setInterval(async () => {
@@ -274,6 +259,8 @@ export function ExecutionDetailPanel() {
           setSelectedExecution(res.data.execution);
           if (['completed', 'failed', 'cancelled', 'paused'].includes(res.data.execution.status)) {
             clearInterval(iv);
+            setSsePhase('done');
+            setSsePhaseMessage('执行结束');
             loadHistoricalLogs(res.data.execution);
           }
         }
@@ -286,6 +273,26 @@ export function ExecutionDetailPanel() {
     sseAbortRef.current?.abort();
     sseAbortRef.current = null;
   }
+
+  // Start SSE for running executions, load logs for completed ones
+  useEffect(() => {
+    if (!exec) return;
+    if (['queued', 'running'].includes(exec.status)) {
+      startLogSse(exec.id);
+    } else {
+      setSsePhase('idle');
+      loadHistoricalLogs(exec);
+    }
+    return () => stopLogSse();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exec?.id]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => stopLogSse();
+  }, []);
+
+  if (!exec) return null;
 
   async function loadHistoricalLogs(execution: typeof exec) {
     if (!execution) return;
@@ -534,6 +541,11 @@ export function ExecutionDetailPanel() {
           );
         })}
       </div>
+
+      {/* SSE Phase Bar — visible during streaming or on error */}
+      {ssePhase !== 'idle' && (
+        <SsePhaseBar phase={ssePhase} message={ssePhaseMessage} />
+      )}
 
       {/* Tab switcher */}
       <div className="flex gap-1 p-1 rounded-lg" style={{ background: 'rgba(255,255,255,0.04)' }}>

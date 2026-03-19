@@ -33,18 +33,6 @@ export interface Session {
   mode: InteractionMode;
 }
 
-export interface PromptItem {
-  promptKey: string;
-  order: number;
-  role: UserRole; // PM/DEV/QA
-  title: string;
-}
-
-export interface PromptsClientResponse {
-  updatedAt: string;
-  prompts: PromptItem[];
-}
-
 export type DocumentType = 'product' | 'technical' | 'design' | 'reference';
 
 export const DOCUMENT_TYPE_LABELS: Record<DocumentType, string> = {

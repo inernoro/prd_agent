@@ -190,7 +190,6 @@ pub fn run() {
             commands::session::subscribe_chat_run,
             commands::session::cancel_chat_run,
             commands::session::resend_message,
-            commands::session::get_prompts,
             commands::session::cancel_stream,
             commands::session::preview_ask_in_section,
             commands::auth::login,
@@ -224,6 +223,7 @@ pub fn run() {
             commands::updater::get_updater_platform_info,
             commands::updater::check_for_update,
             commands::updater::fetch_update_manifests,
+            commands::updater::fetch_accelerated_manifest,
             commands::client_config::fetch_client_config,
             commands::defect::list_defects,
             commands::defect::list_defect_users,
@@ -256,6 +256,10 @@ pub fn run() {
             commands::skill::update_skill,
             commands::skill::delete_skill,
             commands::skill::generate_skill_from_message,
+            commands::skill::generate_skill_from_conversation,
+            commands::skill::export_skill,
+            commands::skill::import_skill,
+            commands::skill::save_skill_to_file,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

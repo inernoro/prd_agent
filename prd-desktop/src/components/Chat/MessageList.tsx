@@ -10,8 +10,7 @@ import type { GroupMemberTag, Message, MessageBlock } from '../../types';
 import MarkdownRenderer from '../Markdown/MarkdownRenderer';
 import AsyncIconButton from '../ui/AsyncIconButton';
 import { copyText } from '../../lib/clipboard';
-import { invoke } from '../../lib/tauri';
-import type { ApiResponse } from '../../types';
+
 import WizardLoader from './WizardLoader';
 import { AvatarWithFallback } from './AvatarWithFallback';
 
@@ -1383,34 +1382,19 @@ function MessageListInner() {
                       )}
                       className="inline-flex items-center justify-center w-8 h-8 rounded-md text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-black/5 dark:hover:bg-white/5"
                     />
-                    <AsyncIconButton
+                    <button
                       title="保存为技能"
-                      successTitle="模板已提炼"
-                      onAction={async () => {
-                        const resp = await invoke<ApiResponse<{
-                          promptTemplate: string;
-                        }>>('generate_skill_from_message', {
-                          assistantMessage: message.content,
-                        });
-                        if (resp?.success && resp.data?.promptTemplate) {
-                          window.dispatchEvent(new CustomEvent('prdAgent:createSkillFromMessage', {
-                            detail: {
-                              formData: {
-                                promptTemplate: resp.data.promptTemplate,
-                              },
-                            },
-                          }));
-                        } else {
-                          throw new Error('生成失败');
-                        }
+                      onClick={() => {
+                        window.dispatchEvent(new CustomEvent('prdAgent:openSaveAsSkill', {
+                          detail: { message },
+                        }));
                       }}
-                      icon={(
-                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                        </svg>
-                      )}
                       className="inline-flex items-center justify-center w-8 h-8 rounded-md text-text-secondary hover:text-amber-500 dark:hover:text-amber-400 hover:bg-black/5 dark:hover:bg-white/5"
-                    />
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                      </svg>
+                    </button>
                   </div>
                 </div>
               ) : null}
@@ -1547,6 +1531,23 @@ function MessageListInner() {
           />
         );
       })}
+
+      {/* 即时"思考中"占位：纯 UI 标志，不在 messages 数组中，避免 key 变化闪烁和重复消息 */}
+      {!!pendingAssistantId && !isStreaming && (
+        <div ref={pendingAssistantRef} data-msg-id="pending-assistant">
+          <MessageBubble
+            message={{ id: '__pending__', role: 'Assistant', content: '', timestamp: new Date() } as Message}
+            isMessageStreaming={false}
+            showThinking={true}
+            thinkingLabel=""
+            isThinkingPhase={true}
+            activeGroupId={activeGroupId}
+            prdDocumentId={prdDocument?.id ?? null}
+            openCitationDrawer={openCitationDrawer as any}
+            openWithCitations={openWithCitations as any}
+          />
+        </div>
+      )}
 
       {messages.length === 0 && !isStreaming && (
         <div className="h-full flex items-center justify-center text-text-secondary">
