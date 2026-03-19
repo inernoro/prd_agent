@@ -209,7 +209,6 @@
 
 [data-theme="light"] .modal-backdrop { background: #2a1f1940; }
 
-[data-theme="light"] .inline-deploy-log-wrapper { background: #2a1f1906; }
 
 [data-theme="light"] .settings-switch-track { background: #2a1f1926; }
 
@@ -230,25 +229,23 @@
 }
 
 [data-theme="light"] .live-log-output {
-  background: #1c1510;
-  color: #e8ddd4;
-  border-color: #2a1f1920;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--border);
 }
 
 [data-theme="light"] .terminal-output {
-  background: #1c1510;
-  border-color: #2a1f1920;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--border);
 }
 [data-theme="light"] .terminal-input-row {
-  background: #1c1510;
-  border-color: #2a1f1920;
+  background: var(--bg-elevated);
+  border-color: var(--border);
 }
-[data-theme="light"] .terminal-input { color: #e8ddd4; }
+[data-theme="light"] .terminal-input { color: var(--text-primary); }
+[data-theme="light"] .term-result { color: var(--text-secondary); }
 
-[data-theme="light"] .inline-deploy-log {
-  background: #1c1510;
-  color: #e8ddd4;
-}
 
 [data-theme="light"] .branch-card.status-running { border-left-color: var(--green); }
 [data-theme="light"] .branch-card.status-building { border-left-color: var(--blue); }
@@ -535,6 +532,33 @@ button.text-btn:hover { color: var(--accent); }
 .form-input.xs { max-width: 80px; }
 
 .form-row { display: flex; gap: 8px; margin-bottom: 10px; }
+
+/* ── Combobox (input + dropdown) ── */
+.combobox { position: relative; }
+.combobox-input-wrap { position: relative; display: flex; align-items: center; }
+.combobox-toggle {
+  position: absolute; right: 1px; top: 1px; bottom: 1px;
+  width: 36px; display: flex; align-items: center; justify-content: center;
+  background: transparent; border: none; border-left: 1px solid var(--glass-border);
+  color: var(--fg-muted); cursor: pointer; border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  transition: color var(--transition), background var(--transition);
+}
+.combobox-toggle svg { width: 16px; height: 16px; flex-shrink: 0; }
+.combobox-toggle:hover { color: var(--fg); background: var(--bg-hover); }
+.combobox-dropdown {
+  display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+  max-height: 240px; overflow-y: auto; z-index: 120;
+  background: var(--bg-card); border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm); box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+}
+.combobox-dropdown.open { display: block; }
+.combobox-item {
+  padding: 7px 12px; font-size: 13px; cursor: pointer;
+  color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: background var(--transition);
+}
+.combobox-item:hover { background: var(--bg-hover); }
+.combobox-item.active { background: var(--bg-secondary); }
 
 /* ════════════════ Config Panels ════════════════ */
 
@@ -874,6 +898,7 @@ a.branch-name:hover { color: var(--accent); }
 }
 .port-badge.port-idle { color: var(--text-muted); background: rgba(255, 255, 255, 0.03); border: 1px solid transparent; }
 .port-badge.port-idle:hover { background: rgba(255, 255, 255, 0.06); }
+.port-badge.port-error { color: var(--red); background: var(--red-bg); border: 1px solid var(--red-border); }
 
 .branch-error {
   font-size: 11px; color: var(--red); margin-top: 6px;
@@ -1309,6 +1334,28 @@ a.branch-name:hover { color: var(--accent); }
   backdrop-filter: none;
 }
 .modal-close:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+/* Copy-error button in log modal header */
+.copy-error-btn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 12px; font-size: 12px; font-weight: 600;
+  color: var(--red); background: var(--red-bg);
+  border: 1px solid var(--red-border); border-radius: var(--radius-sm);
+  cursor: pointer; white-space: nowrap; flex-shrink: 0;
+  animation: copy-error-pulse 2s ease-in-out infinite;
+  transition: background var(--transition);
+}
+.copy-error-btn:hover { background: rgba(239, 83, 80, 0.2); }
+.copy-error-btn svg { flex-shrink: 0; }
+.copy-error-btn.copied {
+  animation: none; color: var(--green); background: var(--green-bg);
+  border-color: var(--green-border);
+}
+@keyframes copy-error-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
 .modal-body { padding: 14px 18px; overflow-y: auto; flex: 1; }
 .config-modal-dialog { max-width: 640px; }
 
@@ -1433,49 +1480,6 @@ a.branch-name:hover { color: var(--accent); }
   border-color: var(--accent-border);
 }
 
-/* ════════════════ Inline Deploy Log ════════════════ */
-
-.inline-deploy-log-wrapper {
-  cursor: pointer; border-radius: var(--radius-xs);
-  margin-top: 8px; padding-top: 8px;
-  border-top: 1px solid var(--border);
-}
-.inline-deploy-log-header {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 12px; color: var(--text-secondary);
-  padding: 0 0 6px; font-weight: 500;
-}
-.inline-deploy-log-header .live-dot { width: 6px; height: 6px; }
-.inline-deploy-log-header .live-dot.stopped { background: var(--text-muted); animation: none; }
-.inline-log-expand-hint {
-  margin-left: auto; font-size: 10px; color: var(--text-muted);
-  cursor: pointer; text-decoration: underline;
-  transition: color var(--transition);
-}
-.inline-log-expand-hint:hover { color: var(--accent); }
-.inline-deploy-log {
-  font-family: var(--font-mono); font-size: 11px;
-  color: var(--text-secondary); background: rgba(8, 12, 28, 0.8);
-  border: 1px solid var(--border); border-radius: var(--radius-sm);
-  padding: 10px 12px; margin: 0;
-  max-height: 280px; overflow-y: auto; white-space: pre-wrap;
-  word-break: break-all; line-height: 1.6;
-  transition: max-height 0.3s ease;
-}
-.inline-deploy-log-wrapper.expanded .inline-deploy-log {
-  max-height: 600px;
-}
-
-/* Deploy log status colors */
-.inline-deploy-log-wrapper.deploy-log-done .inline-deploy-log-header { color: var(--green); }
-.inline-deploy-log-wrapper.deploy-log-done .inline-deploy-log { border-color: var(--green-border); }
-.inline-deploy-log-wrapper.deploy-log-error .inline-deploy-log-header { color: var(--red); }
-.inline-deploy-log-wrapper.deploy-log-error .inline-deploy-log { border-color: var(--red-border); }
-.inline-deploy-error {
-  font-size: 11px; color: var(--red); padding: 6px 10px; margin-top: 6px;
-  background: var(--red-bg); border: 1px solid var(--red-border);
-  border-radius: var(--radius-xs);
-}
 
 /* ════════════════ Slide-in Animation ════════════════ */
 
@@ -1576,7 +1580,7 @@ a.branch-name:hover { color: var(--accent); }
   .modal-dialog { max-height: 90vh; margin: 0 12px; }
 
   /* Inline deploy log: responsive */
-  .inline-deploy-log { font-size: 10px; padding: 8px 10px; max-height: 200px; }
+
 
   /* Commit info: hide on mobile to save space, show on expand */
   .branch-actions-commit { display: none; }

@@ -738,6 +738,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
 
     try {
+      const running = await containerService.isRunning(svc.containerName);
+      if (!running) {
+        // Container may exist but stopped, or not exist at all – try docker inspect
+        const inspectResult = await shell.exec(
+          `docker inspect --format="{{.State.Status}}" ${svc.containerName}`,
+        );
+        if (inspectResult.exitCode !== 0) {
+          res.json({ logs: `容器 ${svc.containerName} 不存在，可能已被清理。请重新部署。` });
+          return;
+        }
+      }
       const logs = await containerService.getLogs(svc.containerName);
       res.json({ logs });
     } catch (err) {
@@ -1313,6 +1324,70 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       stateService.save();
       sendSSE(res, 'complete', { message: `已清理 ${cleaned} 个孤儿分支`, orphanCount: cleaned });
+    } catch (err) {
+      sendSSE(res, 'error', { message: (err as Error).message });
+    } finally {
+      res.end();
+    }
+  });
+
+  // ── Prune stale local git branches not in CDS deployment list ──
+
+  router.post('/prune-stale-branches', async (_req, res) => {
+    initSSE(res);
+    try {
+      // Step 1: get current branch + CDS deployment branches
+      const currentResult = await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: config.repoRoot });
+      const currentBranch = currentResult.stdout.trim();
+
+      const state = stateService.getState();
+      const deployedBranches = new Set(
+        Object.values(state.branches).map(b => b.branch),
+      );
+      // Always keep current branch and common defaults
+      const protectedBranches = new Set([currentBranch, 'main', 'master', 'develop', 'dev']);
+
+      sendSSE(res, 'step', { step: 'scan', status: 'running', title: '正在扫描本地分支...' });
+
+      // Step 2: list all local branches
+      const localResult = await shell.exec('git branch --format="%(refname:short)"', { cwd: config.repoRoot });
+      const localBranches = localResult.stdout.trim().split('\n').filter(Boolean);
+
+      // Step 3: identify stale branches (not deployed, not protected)
+      const staleBranches = localBranches.filter(b =>
+        !deployedBranches.has(b) && !protectedBranches.has(b),
+      );
+
+      sendSSE(res, 'step', {
+        step: 'scan', status: 'done',
+        title: `本地 ${localBranches.length} 个分支，已部署 ${deployedBranches.size} 个，保护 ${protectedBranches.size} 个`,
+      });
+
+      if (staleBranches.length === 0) {
+        sendSSE(res, 'complete', { message: '没有需要清理的分支', pruneCount: 0 });
+        res.end();
+        return;
+      }
+
+      sendSSE(res, 'step', {
+        step: 'list', status: 'info',
+        title: `发现 ${staleBranches.length} 个非列表分支待清理`,
+      });
+
+      // Step 4: delete each stale branch
+      let pruned = 0;
+      for (const branch of staleBranches) {
+        sendSSE(res, 'step', { step: `del-${branch}`, status: 'running', title: `正在删除 ${branch}...` });
+        try {
+          await shell.exec(`git branch -D "${branch}"`, { cwd: config.repoRoot });
+          pruned++;
+          sendSSE(res, 'step', { step: `del-${branch}`, status: 'done', title: `已删除 ${branch}` });
+        } catch (err) {
+          sendSSE(res, 'step', { step: `del-${branch}`, status: 'error', title: `删除失败 ${branch}: ${(err as Error).message}` });
+        }
+      }
+
+      sendSSE(res, 'complete', { message: `已清理 ${pruned} 个非列表分支`, pruneCount: pruned });
     } catch (err) {
       sendSSE(res, 'error', { message: (err as Error).message });
     } finally {

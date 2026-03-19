@@ -58,8 +58,8 @@ let previewMode = localStorage.getItem('cds_preview_mode') || 'simple';
 let mirrorEnabled = false;
 
 // ── Theme (light/dark) ──
+// Theme is applied in <head> inline script to prevent FOUC (flash of unstyled content).
 let cdsTheme = localStorage.getItem('cds_theme') || 'dark';
-if (cdsTheme === 'light') document.documentElement.dataset.theme = 'light';
 
 // ── Executor/Scheduler state ──
 let cdsMode = 'standalone';
@@ -821,8 +821,8 @@ async function deployBranchDirect(id) {
 
   busyBranches.delete(id);
   await loadBranches();
-  // Keep inline log visible for a moment, then clean up
-  setTimeout(() => { inlineDeployLogs.delete(id); renderBranches(); }, 5000);
+  inlineDeployLogs.delete(id);
+  renderBranches();
 }
 
 function updateInlineLog(id) {
@@ -837,15 +837,6 @@ function updateInlineLog(id) {
   el.scrollTop = el.scrollHeight;
 }
 
-function toggleInlineLog(id, event) {
-  event.stopPropagation();
-  const log = inlineDeployLogs.get(id);
-  if (!log) return;
-  log.expanded = !log.expanded;
-  const wrapper = document.getElementById(`inline-log-wrapper-${CSS.escape(id)}`);
-  if (wrapper) wrapper.classList.toggle('expanded', log.expanded);
-  updateInlineLog(id);
-}
 
 function openFullDeployLog(id, event) {
   event.stopPropagation();
@@ -1120,6 +1111,65 @@ async function cleanupAll() {
   await loadBranches();
 }
 
+async function pruneStaleBranches() {
+  const html = `
+    <div class="capacity-warning">
+      <div class="capacity-warning-icon">🧹</div>
+      <div class="capacity-warning-text">
+        <p>删除本地 git 分支中不在 CDS 部署列表上的分支</p>
+        <p style="color:var(--text-muted);font-size:12px">保护分支（main/master/develop/当前分支）不会被删除</p>
+      </div>
+      <pre id="pruneLog" style="text-align:left;font-size:11px;color:var(--text-secondary);background:rgba(8,12,28,0.6);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;margin:12px 0;max-height:200px;overflow-y:auto;white-space:pre-wrap;font-family:var(--font-mono)">正在扫描本地分支...</pre>
+      <div class="capacity-warning-actions" id="pruneActions">
+        <button class="sm" disabled><span class="btn-spinner"></span>扫描中...</button>
+      </div>
+    </div>
+  `;
+  openConfigModal('清理非列表分支', html);
+
+  try {
+    const res = await fetch(`${API}/prune-stale-branches`, { method: 'POST' });
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    const logEl = document.getElementById('pruneLog');
+    let pruneCount = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.title && logEl) {
+              const prefix = data.status === 'error' ? '✗' : data.status === 'done' ? '✓' : data.status === 'info' ? 'ℹ' : '…';
+              logEl.textContent += `\n[${prefix}] ${data.title}`;
+              logEl.scrollTop = logEl.scrollHeight;
+            }
+            if (data.pruneCount !== undefined) pruneCount = data.pruneCount;
+          } catch {}
+        }
+      }
+    }
+
+    const actionsEl = document.getElementById('pruneActions');
+    if (actionsEl) {
+      actionsEl.innerHTML = `<button class="primary sm" onclick="closeConfigModal()">完成 (${pruneCount} 个已清理)</button>`;
+    }
+    showToast(pruneCount > 0 ? `已清理 ${pruneCount} 个非列表分支` : '没有需要清理的分支', pruneCount > 0 ? 'success' : 'info');
+  } catch (e) {
+    showToast('清理失败: ' + e.message, 'error');
+    const actionsEl = document.getElementById('pruneActions');
+    if (actionsEl) {
+      actionsEl.innerHTML = `<button class="sm" onclick="closeConfigModal()">关闭</button>`;
+    }
+  }
+}
+
 async function cleanupOrphans() {
   // Show progress in a modal with SSE streaming
   const html = `
@@ -1199,6 +1249,7 @@ async function viewBranchLogs(id) {
       } else {
         const newPre = body.querySelector('.live-log-output');
         if (newPre) newPre.scrollTop = prevScrollTop;
+        checkLogErrors();
       }
     };
     openLogModal(`部署日志 — ${id}`, id);
@@ -1238,6 +1289,7 @@ async function viewBranchLogs(id) {
     } else {
       const newPre = body.querySelector('.live-log-output');
       if (newPre) newPre.scrollTop = prevScrollTop;
+      checkLogErrors();
     }
   };
   try {
@@ -1267,6 +1319,7 @@ async function viewContainerLogs(id, profileId) {
       // Restore scroll position on the NEW <pre>
       const newPre = body.querySelector('.live-log-output');
       if (newPre) newPre.scrollTop = prevScrollTop;
+      checkLogErrors();
     }
   };
   try {
@@ -1479,6 +1532,10 @@ function toggleSettingsMenu(event) {
       自动更新
     </div>
     <div class="settings-menu-divider"></div>
+    <div class="settings-menu-item danger" onclick="closeSettingsMenu(); pruneStaleBranches()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 3.25a2.25 2.25 0 113 2.122v5.256a2.251 2.251 0 11-1.5 0V5.372A2.25 2.25 0 011.5 3.25zm5.677-.177L9.573.677A.25.25 0 0110 .854V2.5h1A2.5 2.5 0 0113.5 5v5.628a2.251 2.251 0 11-1.5 0V5a1 1 0 00-1-1h-1v1.646a.25.25 0 01-.427.177L7.177 3.427a.25.25 0 010-.354z"/></svg>
+      清理非列表分支
+    </div>
     <div class="settings-menu-item danger" onclick="closeSettingsMenu(); cleanupOrphans()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5 3.254V3.25a.75.75 0 01.75-.75h4.5a.75.75 0 01.75.75v.004a2.5 2.5 0 011.94 2.204l.089.713a.75.75 0 11-1.486.186l-.089-.714A1 1 0 0010.47 4.75H5.53a1 1 0 00-.984.893l-.089.714a.75.75 0 01-1.486-.186l.089-.714A2.5 2.5 0 015 3.254zM4.07 6.5l.7 5.95c.09.747.71 1.3 1.46 1.3h3.54c.75 0 1.37-.553 1.46-1.3l.7-5.95H4.07z"/></svg>
       清理孤儿分支
@@ -1583,7 +1640,7 @@ function renderBranches() {
     const portBadgesHtml = services.length > 0 ? services.map(([pid, svc]) => {
       const profile = buildProfiles.find(p => p.id === pid);
       const icon = getPortIcon(pid, profile);
-      const badgeClass = svc.status === 'running' ? 'run-port' : svc.status === 'starting' ? 'port-starting' : svc.status === 'stopping' ? 'port-stopping' : svc.status === 'building' ? 'port-building' : 'port-idle';
+      const badgeClass = svc.status === 'running' ? 'run-port' : svc.status === 'starting' ? 'port-starting' : svc.status === 'stopping' ? 'port-stopping' : svc.status === 'building' ? 'port-building' : svc.status === 'error' ? 'port-error' : 'port-idle';
       const portTitle = `${esc(pid)}: ${statusLabel(svc.status)}${b.lastAccessedAt ? '\n运行时间: ' + relativeTime(b.lastAccessedAt) : ''}`;
       return `<span class="port-badge ${badgeClass}"
                     onclick="event.stopPropagation(); viewContainerLogs('${esc(b.id)}', '${esc(pid)}')"
@@ -1678,24 +1735,8 @@ function renderBranches() {
       `;
     }
 
-    // Inline deploy log (below actions row, at card bottom) — only show after deploy finishes
-    let inlineLogHtml = '';
-    if (deployLog && !isDeploying) {
-      const logStatusClass = deployLog.status === 'error' ? 'deploy-log-error' : deployLog.status === 'done' ? 'deploy-log-done' : '';
-      const filteredLines = deployLog.lines.filter(l => l.trim());
-      const visibleLines = deployLog.expanded ? filteredLines : filteredLines.slice(-20);
-      inlineLogHtml = `
-        <div class="inline-deploy-log-wrapper ${deployLog.expanded ? 'expanded' : ''} ${logStatusClass}" id="inline-log-wrapper-${esc(b.id)}" onclick="toggleInlineLog('${esc(b.id)}', event)">
-          <div class="inline-deploy-log-header">
-            <span class="live-dot stopped"></span>
-            <span>${deployLog.status === 'done' ? '部署完成' : '部署失败'}</span>
-            <span class="inline-log-expand-hint" onclick="openFullDeployLog('${esc(b.id)}', event)">查看完整日志</span>
-          </div>
-          <pre class="inline-deploy-log" id="inline-log-${esc(b.id)}">${esc(visibleLines.join('\n'))}</pre>
-          ${deployFailed && deployLog.errorMsg ? `<div class="inline-deploy-error">${esc(deployLog.errorMsg)}</div>` : ''}
-        </div>
-      `;
-    }
+    // Inline deploy log was removed (squeezes card layout).
+    // Deploy logs are accessible via the log button in toolbar.
 
     return `
       <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} expanded ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''} ${previewMode === 'multi' && isRunning ? 'show-preview-border' : ''} ${isDeploying ? 'is-deploying' : ''}" data-branch-id="${esc(b.id)}">
@@ -1732,7 +1773,6 @@ function renderBranches() {
               ${actionsRightHtml}
             </div>
           </div>
-          ${inlineLogHtml}
         </div>
       </div>
     `;
@@ -2120,7 +2160,7 @@ async function importAndInit() {
     <div id="initProgressContainer" style="min-height:300px">
       <div style="margin-bottom:12px;font-size:14px;font-weight:600">正在初始化项目...</div>
       <div id="initSteps" style="font-size:13px"></div>
-      <pre id="initLog" class="inline-deploy-log" style="margin-top:8px;max-height:200px;overflow-y:auto;font-size:11px;display:none"></pre>
+      <pre id="initLog" class="live-log-output" style="margin-top:8px;max-height:200px;overflow-y:auto;font-size:11px;display:none"></pre>
       <div id="initResult" style="margin-top:12px;display:none"></div>
     </div>
   `;
@@ -2284,19 +2324,31 @@ async function openSelfUpdate() {
   }
 
   const { current, branches } = data;
-  const options = branches.map(b =>
-    `<option value="${esc(b)}" ${b === current ? 'selected' : ''}>${esc(b)}${b === current ? ' (当前)' : ''}</option>`
+  const branchItems = branches.map(b =>
+    `<div class="combobox-item${b === current ? ' active' : ''}" data-value="${esc(b)}" onclick="selectComboItem(this)">
+      ${b === current ? '<span style="color:var(--green);margin-right:4px">✓</span>' : ''}${esc(b)}${b === current ? ' <span style="color:var(--fg-muted);font-size:11px">(当前)</span>' : ''}
+    </div>`
   ).join('');
 
   openConfigModal('自动更新', `
     <p class="config-panel-desc">
       切换 CDS 代码分支并重启。操作流程：<code>git fetch → git checkout → git pull → restart</code>
     </p>
-    <div class="form-row">
+    <div class="form-row" style="flex-direction:column;align-items:stretch">
       <label class="form-label">目标分支</label>
-      <select id="selfUpdateBranch" class="form-input" style="width:100%">
-        ${options}
-      </select>
+      <div class="combobox" id="selfUpdateCombobox">
+        <div class="combobox-input-wrap">
+          <input id="selfUpdateBranch" class="form-input" style="width:100%;padding-right:36px"
+            value="${esc(current)}" placeholder="输入或选择分支名" autocomplete="off"
+            onfocus="openComboDropdown()" oninput="filterComboItems(this.value)">
+          <button type="button" class="combobox-toggle" onclick="toggleComboDropdown()" tabindex="-1">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 6 8 10 12 6"/></svg>
+          </button>
+        </div>
+        <div class="combobox-dropdown" id="selfUpdateDropdown">
+          ${branchItems}
+        </div>
+      </div>
     </div>
     <div class="form-row" style="margin-top:4px;font-size:12px;color:var(--fg-muted)">
       当前分支：<code>${esc(current)}</code>
@@ -2305,16 +2357,79 @@ async function openSelfUpdate() {
       <div id="selfUpdateSteps" style="display:flex;flex-direction:column;gap:6px"></div>
       <div id="selfUpdateStatus" style="margin-top:8px;font-size:13px"></div>
     </div>
-    <div class="form-row" style="margin-top:12px;display:flex;gap:8px">
+    <div class="form-row" style="margin-top:12px;display:flex;gap:8px;align-items:center">
       <button class="sm" id="selfUpdateBtn" onclick="executeSelfUpdate()">更新并重启</button>
       <button class="sm ghost" onclick="closeConfigModal()">取消</button>
+      <span style="flex:1"></span>
+      <button class="sm ghost" style="color:var(--red);font-size:12px" onclick="closeConfigModal();pruneStaleBranches()">🧹 清理未托管分支</button>
     </div>
   `);
+
+  // Allow combobox dropdown to overflow the modal body
+  const modalBody = document.querySelector('.config-modal-dialog .modal-body');
+  if (modalBody) modalBody.style.overflow = 'visible';
+
+  // Close dropdown when clicking outside
+  document.addEventListener('click', _comboOutsideClick);
+}
+
+// ── Combobox helpers ──
+
+function _comboOutsideClick(e) {
+  const box = document.getElementById('selfUpdateCombobox');
+  if (box && !box.contains(e.target)) {
+    closeComboDropdown();
+  }
+}
+
+function openComboDropdown() {
+  const dd = document.getElementById('selfUpdateDropdown');
+  if (dd) dd.classList.add('open');
+}
+
+function closeComboDropdown() {
+  const dd = document.getElementById('selfUpdateDropdown');
+  if (dd) dd.classList.remove('open');
+  document.removeEventListener('click', _comboOutsideClick);
+}
+
+function toggleComboDropdown() {
+  const dd = document.getElementById('selfUpdateDropdown');
+  if (dd) {
+    if (dd.classList.contains('open')) {
+      closeComboDropdown();
+    } else {
+      // Reset filter to show all
+      filterComboItems('');
+      dd.classList.add('open');
+      document.getElementById('selfUpdateBranch')?.focus();
+    }
+  }
+}
+
+function filterComboItems(query) {
+  const dd = document.getElementById('selfUpdateDropdown');
+  if (!dd) return;
+  const q = query.toLowerCase();
+  let visible = 0;
+  for (const item of dd.querySelectorAll('.combobox-item')) {
+    const val = (item.dataset.value || '').toLowerCase();
+    const show = !q || val.includes(q);
+    item.style.display = show ? '' : 'none';
+    if (show) visible++;
+  }
+  if (visible > 0 && q) dd.classList.add('open');
+}
+
+function selectComboItem(el) {
+  const input = document.getElementById('selfUpdateBranch');
+  if (input) input.value = el.dataset.value;
+  closeComboDropdown();
 }
 
 function executeSelfUpdate() {
-  const select = document.getElementById('selfUpdateBranch');
-  const branch = select ? select.value : '';
+  const input = document.getElementById('selfUpdateBranch');
+  const branch = input ? input.value.trim() : '';
   const btn = document.getElementById('selfUpdateBtn');
   const progress = document.getElementById('selfUpdateProgress');
   const stepsEl = document.getElementById('selfUpdateSteps');
@@ -2937,6 +3052,9 @@ function openLogModal(title, branchId, profileId) {
   } else {
     tabsEl.classList.add('hidden');
   }
+  // Hide copy-error button initially
+  const copyBtn = document.getElementById('copyErrorBtn');
+  if (copyBtn) { copyBtn.classList.add('hidden'); copyBtn.classList.remove('copied'); }
   // Clear terminal state for new session
   document.getElementById('terminalOutput').innerHTML = '';
   document.getElementById('terminalInput').value = '';
@@ -2944,6 +3062,73 @@ function openLogModal(title, branchId, profileId) {
   _terminalHistoryIdx = -1;
   switchLogTab('logs');
   _scrollLogToBottom();
+}
+
+// Error patterns to detect in logs
+const _errorPatterns = /\berror\s+(CS|TS|NG)\d+\b|:\s*error\s+\w+\d+:|Build FAILED|FAILED|Exception:|Unhandled exception|fatal error|npm ERR!|Error:|Cannot find module|ENOENT|EACCES|Segmentation fault/i;
+
+function checkLogErrors() {
+  const body = document.getElementById('logModalBody');
+  const btn = document.getElementById('copyErrorBtn');
+  if (!body || !btn) return;
+  const text = body.textContent || '';
+  if (_errorPatterns.test(text)) {
+    btn.classList.remove('hidden');
+    btn.classList.remove('copied');
+  } else {
+    btn.classList.add('hidden');
+  }
+}
+
+function copyErrorForLLM() {
+  const body = document.getElementById('logModalBody');
+  const btn = document.getElementById('copyErrorBtn');
+  if (!body) return;
+  const logText = body.textContent || '';
+
+  // Extract error lines + some context
+  const lines = logText.split('\n');
+  const errorLines = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (_errorPatterns.test(lines[i])) {
+      // Include 2 lines before for context
+      for (let j = Math.max(0, i - 2); j <= Math.min(lines.length - 1, i + 1); j++) {
+        const line = lines[j].trim();
+        if (line && !errorLines.includes(line)) errorLines.push(line);
+      }
+    }
+  }
+
+  const title = document.getElementById('logModalTitle')?.textContent || '';
+  const ctx = _logModalContext;
+  const prompt = [
+    '我的项目部署出错了，请帮我分析错误原因并给出修复方案。',
+    '',
+    `服务: ${title}`,
+    ctx.branchId ? `分支: ${ctx.branchId}` : '',
+    ctx.profileId ? `配置: ${ctx.profileId}` : '',
+    '',
+    '错误日志:',
+    '```',
+    errorLines.length > 0 ? errorLines.join('\n') : logText.slice(-3000),
+    '```',
+  ].filter(l => l !== false).join('\n');
+
+  navigator.clipboard.writeText(prompt).then(() => {
+    if (btn) {
+      btn.classList.add('copied');
+      btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg> 已复制';
+      setTimeout(() => {
+        if (btn) {
+          btn.classList.remove('copied');
+          btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"/></svg> 一键复制错误给大模型排错';
+        }
+      }, 2000);
+    }
+    showToast('错误日志已复制到剪贴板，粘贴给 AI 即可排错', 'success');
+  }).catch(() => {
+    showToast('复制失败，请手动选择日志文本', 'error');
+  });
 }
 
 function closeLogModal() {
@@ -3046,6 +3231,7 @@ function _scrollLogToBottom() {
     const pre = body.querySelector('.live-log-output');
     const target = pre || body;
     target.scrollTop = target.scrollHeight;
+    checkLogErrors();
   });
 }
 
