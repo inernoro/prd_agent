@@ -150,6 +150,55 @@ public class UsersController : ControllerBase
             .Limit(pageSize)
             .ToListAsync();
 
+        var userIds = users.Select(u => u.UserId).ToList();
+        var thirtyDaysAgo = DateTime.UtcNow.AddDays(-30);
+
+        // 批量查询统计信息（并行）
+        var groupCountsTask = _db.GroupMembers.Aggregate()
+            .Match(Builders<GroupMember>.Filter.In(m => m.UserId, userIds))
+            .Group(m => m.UserId, g => new { UserId = g.Key, Count = g.Count() })
+            .ToListAsync();
+
+        var runCountsTask = _db.ImageGenRuns.Aggregate()
+            .Match(Builders<ImageGenRun>.Filter.And(
+                Builders<ImageGenRun>.Filter.In(r => r.OwnerAdminId, userIds),
+                Builders<ImageGenRun>.Filter.Gte(r => r.CreatedAt, thirtyDaysAgo)))
+            .Group(r => r.OwnerAdminId, g => new { UserId = g.Key, Count = g.Count() })
+            .ToListAsync();
+
+        var imageCountsTask = _db.ImageGenRunItems.Aggregate()
+            .Match(Builders<ImageGenRunItem>.Filter.And(
+                Builders<ImageGenRunItem>.Filter.In(i => i.OwnerAdminId, userIds),
+                Builders<ImageGenRunItem>.Filter.Gte(i => i.CreatedAt, thirtyDaysAgo)))
+            .Group(i => i.OwnerAdminId, g => new { UserId = g.Key, Count = g.Count() })
+            .ToListAsync();
+
+        var defectCountsTask = _db.DefectReports.Aggregate()
+            .Match(Builders<DefectReport>.Filter.And(
+                Builders<DefectReport>.Filter.Eq(d => d.IsDeleted, false),
+                Builders<DefectReport>.Filter.Gte(d => d.CreatedAt, thirtyDaysAgo),
+                Builders<DefectReport>.Filter.Or(
+                    Builders<DefectReport>.Filter.In(d => d.AssigneeId, userIds),
+                    Builders<DefectReport>.Filter.In(d => d.ReporterId, userIds))))
+            .ToListAsync();
+
+        await Task.WhenAll(groupCountsTask, runCountsTask, imageCountsTask, defectCountsTask);
+
+        var groupCountMap = (await groupCountsTask).ToDictionary(x => x.UserId, x => x.Count);
+        var runCountMap = (await runCountsTask).ToDictionary(x => x.UserId, x => x.Count);
+        var imageCountMap = (await imageCountsTask).ToDictionary(x => x.UserId, x => x.Count);
+
+        // 缺陷统计需要按用户汇总（一个缺陷可能同时与 AssigneeId 和 ReporterId 关联）
+        var defectReports = await defectCountsTask;
+        var defectCountMap = new Dictionary<string, int>();
+        foreach (var d in defectReports)
+        {
+            if (d.AssigneeId != null && userIds.Contains(d.AssigneeId))
+                defectCountMap[d.AssigneeId] = defectCountMap.GetValueOrDefault(d.AssigneeId) + 1;
+            if (d.ReporterId != null && userIds.Contains(d.ReporterId) && d.ReporterId != d.AssigneeId)
+                defectCountMap[d.ReporterId] = defectCountMap.GetValueOrDefault(d.ReporterId) + 1;
+        }
+
         var items = await Task.WhenAll(users.Select(async u =>
         {
             var remaining = await _loginAttemptService.GetLockoutRemainingSecondsAsync(u.Username);
@@ -169,7 +218,11 @@ public class UsersController : ControllerBase
                 LastActiveAt = u.LastActiveAt,
                 IsLocked = remaining > 0,
                 LockoutRemainingSeconds = remaining,
-                SystemRoleKey = u.SystemRoleKey
+                SystemRoleKey = u.SystemRoleKey,
+                GroupCount = groupCountMap.GetValueOrDefault(u.UserId),
+                TotalRunCount = runCountMap.GetValueOrDefault(u.UserId),
+                TotalImageCount = imageCountMap.GetValueOrDefault(u.UserId),
+                DefectCount = defectCountMap.GetValueOrDefault(u.UserId),
             };
         }));
 

@@ -40,6 +40,17 @@ public class UserListItem
     public int LockoutRemainingSeconds { get; set; }
     /// <summary>系统角色 key（用于权限管理）</summary>
     public string? SystemRoleKey { get; set; }
+
+    // ── 统计信息（批量查询，用于列表展示） ──
+
+    /// <summary>加入的群组数量</summary>
+    public int GroupCount { get; set; }
+    /// <summary>生图任务总数（最近30天）</summary>
+    public int TotalRunCount { get; set; }
+    /// <summary>生成的图片总数（最近30天）</summary>
+    public int TotalImageCount { get; set; }
+    /// <summary>缺陷总数：收到+提交（最近30天）</summary>
+    public int DefectCount { get; set; }
 }
 
 /// <summary>
