@@ -177,6 +177,7 @@ public class AiToolboxController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<IntentResult>), StatusCodes.Status200OK)]
     public async Task<IActionResult> Analyze([FromBody] ToolboxAnalyzeRequest request, CancellationToken ct)
     {
+        var userId = GetUserId();
         var message = (request.Message ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(message))
         {
