@@ -285,6 +285,7 @@ export default function ShareViewPage() {
           justifyContent: 'space-between',
           background: 'rgba(17, 17, 17, 0.85)',
           backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
           borderBottom: '1px solid rgba(255,255,255,0.06)',
           flexShrink: 0,
         }}>
@@ -381,6 +382,7 @@ export default function ShareViewPage() {
                   : saveStatus === 'already' ? 'rgba(234, 179, 8, 0.9)'
                   : 'rgba(59, 130, 246, 0.9)',
                 backdropFilter: 'blur(8px)',
+                WebkitBackdropFilter: 'blur(8px)',
                 transition: 'all 0.2s',
               }}
             >
@@ -418,6 +420,7 @@ export default function ShareViewPage() {
                 border: '1px solid rgba(255,255,255,0.08)',
                 textDecoration: 'none',
                 backdropFilter: 'blur(24px)',
+                WebkitBackdropFilter: 'blur(24px)',
                 transition: 'border-color 0.2s, background 0.2s',
               }}
               onMouseEnter={e => {
