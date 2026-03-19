@@ -2596,7 +2596,7 @@ public class DefectAgentController : ControllerBase
                 else if (chunk.Type == GatewayChunkType.Error)
                 {
                     _logger.LogWarning("AI scoring stream error for share {ShareId}: {Error}", shareId, chunk.Content);
-                    try { await WriteSseEventAsync("error", new { message = "AI 评分出错" }); }
+                    try { await WriteSseEventAsync("error", new { message = "AI 评分出错", detail = chunk.Content }); }
                     catch { /* ignore */ }
                     await _db.DefectShareLinks.UpdateOneAsync(
                         x => x.Id == shareId,
@@ -2609,7 +2609,7 @@ public class DefectAgentController : ControllerBase
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogError(ex, "AI scoring stream exception for share {ShareId}", shareId);
-            try { await WriteSseEventAsync("error", new { message = "AI 评分失败" }); }
+            try { await WriteSseEventAsync("error", new { message = "AI 评分失败", detail = ex.Message }); }
             catch { /* ignore */ }
             await _db.DefectShareLinks.UpdateOneAsync(
                 x => x.Id == shareId,
