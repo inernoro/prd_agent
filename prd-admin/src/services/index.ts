@@ -189,6 +189,7 @@ import type {
   ProcessDefectContract,
   ResolveDefectContract,
   RejectDefectContract,
+  UpdateDefectSeverityContract,
   CloseDefectContract,
   ReopenDefectContract,
   GetDefectMessagesContract,
@@ -466,6 +467,7 @@ import {
   processDefectReal,
   resolveDefectReal,
   rejectDefectReal,
+  updateDefectSeverityReal,
   closeDefectReal,
   reopenDefectReal,
   getDefectMessagesReal,
@@ -931,6 +933,7 @@ export const submitDefect: SubmitDefectContract = withAuth(submitDefectReal);
 export const processDefect: ProcessDefectContract = withAuth(processDefectReal);
 export const resolveDefect: ResolveDefectContract = withAuth(resolveDefectReal);
 export const rejectDefect: RejectDefectContract = withAuth(rejectDefectReal);
+export const updateDefectSeverity: UpdateDefectSeverityContract = withAuth(updateDefectSeverityReal);
 export const closeDefect: CloseDefectContract = withAuth(closeDefectReal);
 export const reopenDefect: ReopenDefectContract = withAuth(reopenDefectReal);
 export const getDefectMessages: GetDefectMessagesContract = withAuth(getDefectMessagesReal);

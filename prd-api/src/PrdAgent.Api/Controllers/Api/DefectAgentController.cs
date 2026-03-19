@@ -538,6 +538,34 @@ public class DefectAgentController : ControllerBase
     }
 
     /// <summary>
+    /// 修改缺陷严重程度（报告人、受理人或管理员均可操作）
+    /// </summary>
+    [HttpPatch("defects/{id}/severity")]
+    public async Task<IActionResult> UpdateDefectSeverity(string id, [FromBody] UpdateSeverityRequest request, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var isAdmin = HasManagePermission();
+
+        var defect = await _db.DefectReports.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (defect == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "缺陷不存在"));
+
+        if (!isAdmin && defect.ReporterId != userId && defect.AssigneeId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限修改严重程度"));
+
+        var validSeverities = new[] { DefectSeverity.Blocker, DefectSeverity.Critical, DefectSeverity.Major, DefectSeverity.Minor, DefectSeverity.Suggestion };
+        if (string.IsNullOrWhiteSpace(request.Severity) || !validSeverities.Contains(request.Severity))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的严重程度"));
+
+        defect.Severity = request.Severity;
+        defect.UpdatedAt = DateTime.UtcNow;
+
+        await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new { defect }));
+    }
+
+    /// <summary>
     /// 删除缺陷（软删除，移入回收站）
     /// </summary>
     [HttpDelete("defects/{id}")]
@@ -957,8 +985,12 @@ public class DefectAgentController : ControllerBase
         if (defect == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "缺陷不存在"));
 
-        // 允许任何可见用户拒绝
-        if (!isAdmin && defect.ReporterId != userId && defect.AssigneeId != userId)
+        // 报告人不能驳回自己提交的缺陷（应使用撤销操作）
+        if (defect.ReporterId == userId && !isAdmin)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不能驳回自己提交的缺陷，如需取消请使用关闭功能"));
+
+        // 允许受理人或管理员拒绝
+        if (!isAdmin && defect.AssigneeId != userId)
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限拒绝"));
 
         if (string.IsNullOrWhiteSpace(request.Reason))
@@ -3022,6 +3054,11 @@ public class ResolveDefectRequest
 public class RejectDefectRequest
 {
     public string Reason { get; set; } = string.Empty;
+}
+
+public class UpdateSeverityRequest
+{
+    public string Severity { get; set; } = string.Empty;
 }
 
 public class DefectSendMessageRequest
