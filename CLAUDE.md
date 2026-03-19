@@ -121,6 +121,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | **code-hygiene** | `/hygiene` | 9 维度代码卫生审计 |
 | **create-skill-file** | `/create-skill` | 技能创建 & 质量评分 |
 | **cds-project-scan** | `/cds-scan` | CDS compose YAML 生成 |
+| **llm-visibility** | `/visibility` | LLM 交互可视化审计 + 组件指南 |
 
 ### 使用指引
 

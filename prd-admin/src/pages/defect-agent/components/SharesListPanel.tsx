@@ -1,11 +1,11 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
 import { Copy, Eye, Trash2, FileText, Zap, BarChart3, Loader2 } from 'lucide-react';
 import { listDefectShares, revokeDefectShare, createBatchShare, getShareScores } from '@/services';
 import { api } from '@/services/api';
-import { readSseStream } from '@/lib/sse';
-import { useAuthStore } from '@/stores/authStore';
+import { useSseStream } from '@/lib/useSseStream';
+import { SseStreamPanel } from '@/components/sse';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
 import { glassPanel } from '@/lib/glassStyles';
@@ -29,10 +29,6 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
   // AI 评分流式状态
   const [scoreShareId, setScoreShareId] = useState<string | null>(null);
   const [scores, setScores] = useState<DefectAiScoreItem[]>([]);
-  const [scorePhase, setScorePhase] = useState('');
-  const [scoreTyping, setScoreTyping] = useState('');
-  const [scoreDone, setScoreDone] = useState(false);
-  const abortRef = useRef<AbortController | null>(null);
 
   const loadShares = useCallback(async () => {
     setLoading(true);
@@ -42,6 +38,15 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
     } catch { /* ignore */ }
     setLoading(false);
   }, []);
+
+  // SSE 流式 hook
+  const sse = useSseStream<DefectAiScoreItem>({
+    url: scoreShareId ? api.defectAgent.shares.scoresStream(scoreShareId) : '',
+    itemEvent: 'score',
+    onItem: (item) => setScores((prev) => [...prev, item]),
+    onDone: () => loadShares(),
+    onError: (msg) => toast.error(msg),
+  });
 
   useEffect(() => {
     if (open) loadShares();
@@ -57,11 +62,6 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
       }
     }
   }, [autoOpenShareId, shares]);
-
-  // Cleanup SSE on unmount
-  useEffect(() => {
-    return () => { abortRef.current?.abort(); };
-  }, []);
 
   const handleRevoke = async (share: DefectShareLink) => {
     const confirmed = await systemDialog.confirm('确定要撤销此分享链接吗？撤销后外部 Agent 将无法访问。');
@@ -90,7 +90,7 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
       ``,
       `### 操作步骤`,
       ``,
-      `1. **获取缺陷数据**：调用以下 API 获取缺陷详情（需要在 Header 中添加 \`Authorization: Bearer <your-access-key>\`）：`,
+      `1. **获取缺陷数据**（Header 添加 \`Authorization: Bearer <your-access-key>\`）：`,
       `   \`\`\``,
       `   GET ${viewUrl}`,
       `   \`\`\``,
@@ -127,71 +127,12 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
 
   /** 启动 SSE 流式评分 */
   const startScoringStream = useCallback(async (shareId: string) => {
-    // 清理上一次
-    abortRef.current?.abort();
     setScoreShareId(shareId);
     setScores([]);
-    setScorePhase('连接中…');
-    setScoreTyping('');
-    setScoreDone(false);
-
-    const ac = new AbortController();
-    abortRef.current = ac;
-
-    try {
-      const token = useAuthStore.getState().token;
-      const res = await fetch(api.defectAgent.shares.scoresStream(shareId), {
-        headers: {
-          'Accept': 'text/event-stream',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-        },
-        signal: ac.signal,
-      });
-
-      if (!res.ok) {
-        toast.error('评分请求失败');
-        setScoreShareId(null);
-        return;
-      }
-
-      await readSseStream(res, (evt) => {
-        if (!evt.data) return;
-        try {
-          const data = JSON.parse(evt.data);
-
-          switch (evt.event) {
-            case 'phase':
-              setScorePhase(data.message || data.phase);
-              break;
-            case 'typing':
-              setScoreTyping((prev) => prev + (data.text || ''));
-              break;
-            case 'score':
-              setScores((prev) => [...prev, data as DefectAiScoreItem]);
-              setScorePhase((prev) =>
-                prev.startsWith('已评分') ? `已评分 ${prev.match(/\d+/)?.[0] ? Number(prev.match(/\d+/)![0]) + 1 : 1} 个` : '已评分 1 个'
-              );
-              break;
-            case 'done':
-              setScoreDone(true);
-              setScorePhase(`评分完成，共 ${data.total} 个`);
-              loadShares(); // 刷新列表
-              break;
-            case 'error':
-              toast.error(data.message || 'AI 评分出错');
-              setScorePhase('评分失败');
-              setScoreDone(true);
-              break;
-          }
-        } catch { /* ignore parse errors */ }
-      }, ac.signal);
-    } catch (err) {
-      if ((err as Error).name !== 'AbortError') {
-        toast.error('评分连接失败');
-        setScoreShareId(null);
-      }
-    }
-  }, [loadShares]);
+    // useSseStream 会在 url 变化后手动调用 start
+    // 这里需要等下一个 render 后 sse.start()
+    setTimeout(() => sse.start(), 0);
+  }, [sse]);
 
   /** 一键分享所有缺陷 + 自动打开 SSE 评分 */
   const handleBatchShare = async () => {
@@ -200,7 +141,6 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
       const res = await createBatchShare({ expiresInDays: 7 });
       if (res.success && res.data) {
         loadShares();
-        // 自动打开评分面板并启动 SSE 流
         startScoringStream(res.data.shareLink.id);
       } else {
         toast.error(res.error?.message || '创建失败');
@@ -214,37 +154,29 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
 
   /** 查看已有评分（已完成的用非流式，未完成的用 SSE） */
   const handleViewScores = async (share: DefectShareLink) => {
+    setScoreShareId(share.id);
+    setScores([]);
+
     if (share.aiScoreStatus === 'completed') {
-      // 已完成：直接获取
-      setScoreShareId(share.id);
-      setScores([]);
-      setScorePhase('加载中…');
-      setScoreDone(false);
-      setScoreTyping('');
       try {
         const res = await getShareScores({ shareId: share.id });
         if (res.success && res.data) {
           setScores(res.data.scores);
-          setScorePhase(`评分完成，共 ${res.data.scores.length} 个`);
-          setScoreDone(true);
         }
       } catch {
         toast.error('获取评分失败');
         setScoreShareId(null);
       }
     } else {
-      // 未完成或 none：启动 SSE 流
       startScoringStream(share.id);
     }
   };
 
   const closeScoring = () => {
-    abortRef.current?.abort();
+    sse.abort();
+    sse.reset();
     setScoreShareId(null);
     setScores([]);
-    setScorePhase('');
-    setScoreTyping('');
-    setScoreDone(false);
   };
 
   const scopeLabel = (s: DefectShareLink) => {
@@ -387,46 +319,15 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
           maxWidth={760}
           content={
             <div className="mt-2 max-h-[65vh] overflow-y-auto">
-              {/* 阶段状态栏 */}
-              <div
-                className="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg"
-                style={{
-                  background: scoreDone ? 'rgba(120,220,180,0.08)' : 'rgba(120,180,255,0.08)',
-                  border: `1px solid ${scoreDone ? 'rgba(120,220,180,0.2)' : 'rgba(120,180,255,0.2)'}`,
-                }}
+              <SseStreamPanel
+                phase={scores.length > 0 && !sse.isStreaming ? 'done' : sse.phase}
+                phaseMessage={scores.length > 0 && !sse.isStreaming ? `评分完成，共 ${scores.length} 个` : sse.phaseMessage}
+                typing={sse.typing}
+                isDone={sse.isDone || (scores.length > 0 && !sse.isStreaming)}
+                hasData={scores.length > 0}
+                phaseExtra={sse.isStreaming && scores.length > 0 ? `已完成 ${scores.length} 个` : undefined}
+                typingLabel="AI 分析过程"
               >
-                {!scoreDone && <Loader2 size={14} className="animate-spin" style={{ color: 'rgba(120,180,255,0.9)' }} />}
-                <span className="text-xs font-medium" style={{ color: scoreDone ? 'rgba(120,220,180,0.9)' : 'rgba(120,180,255,0.9)' }}>
-                  {scorePhase}
-                </span>
-                {scores.length > 0 && !scoreDone && (
-                  <span className="text-xs ml-auto" style={{ color: 'var(--text-muted)' }}>
-                    已完成 {scores.length} 个
-                  </span>
-                )}
-              </div>
-
-              {/* AI 思考过程（打字效果） */}
-              {!scoreDone && scoreTyping && (
-                <div
-                  className="mb-3 px-3 py-2 rounded-lg text-xs font-mono overflow-x-auto"
-                  style={{
-                    background: 'rgba(255,255,255,0.03)',
-                    border: '1px solid rgba(255,255,255,0.06)',
-                    color: 'var(--text-muted)',
-                    maxHeight: 80,
-                    overflowY: 'auto',
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-all',
-                  }}
-                >
-                  {scoreTyping.slice(-300)}
-                  <span className="animate-pulse">|</span>
-                </div>
-              )}
-
-              {/* 评分表格 */}
-              {scores.length > 0 ? (
                 <table className="w-full text-sm" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
                   <thead>
                     <tr style={{ color: 'var(--text-secondary)' }}>
@@ -440,14 +341,11 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
                     </tr>
                   </thead>
                   <tbody>
-                    {scores.map((s, idx) => (
+                    {scores.map((s) => (
                       <tr
                         key={s.defectId}
-                        className="border-t animate-in fade-in"
-                        style={{
-                          borderColor: 'rgba(255,255,255,0.06)',
-                          animationDelay: `${idx * 50}ms`,
-                        }}
+                        className="border-t"
+                        style={{ borderColor: 'rgba(255,255,255,0.06)' }}
                       >
                         <td className="py-2 px-2 text-xs" style={{ color: 'var(--text-muted)' }}>
                           {s.defectNo}
@@ -455,18 +353,10 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
                         <td className="py-2 px-2 text-xs max-w-[160px] truncate" style={{ color: 'var(--text-primary)' }}>
                           {s.defectTitle}
                         </td>
-                        <td className="py-2 px-1 text-center">
-                          <ScoreBadge value={s.severityScore} />
-                        </td>
-                        <td className="py-2 px-1 text-center">
-                          <ScoreBadge value={s.difficultyScore} />
-                        </td>
-                        <td className="py-2 px-1 text-center">
-                          <ScoreBadge value={s.impactScore} />
-                        </td>
-                        <td className="py-2 px-1 text-center">
-                          <ScoreBadge value={s.overallScore} highlight />
-                        </td>
+                        <td className="py-2 px-1 text-center"><ScoreBadge value={s.severityScore} /></td>
+                        <td className="py-2 px-1 text-center"><ScoreBadge value={s.difficultyScore} /></td>
+                        <td className="py-2 px-1 text-center"><ScoreBadge value={s.impactScore} /></td>
+                        <td className="py-2 px-1 text-center"><ScoreBadge value={s.overallScore} highlight /></td>
                         <td className="py-2 px-2 text-xs max-w-[200px]" style={{ color: 'var(--text-secondary)' }}>
                           {s.reason}
                         </td>
@@ -474,14 +364,7 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
                     ))}
                   </tbody>
                 </table>
-              ) : !scoreDone ? (
-                <div className="flex flex-col items-center gap-2 py-8" style={{ color: 'var(--text-muted)' }}>
-                  <Loader2 size={24} className="animate-spin" style={{ color: 'rgba(120,180,255,0.5)' }} />
-                  <span className="text-xs">AI 正在分析缺陷数据…</span>
-                </div>
-              ) : (
-                <p className="text-sm text-center py-4" style={{ color: 'var(--text-muted)' }}>暂无评分数据</p>
-              )}
+              </SseStreamPanel>
             </div>
           }
         />
