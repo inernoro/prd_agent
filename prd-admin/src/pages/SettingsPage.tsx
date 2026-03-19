@@ -6,12 +6,13 @@ import type { TabBarItem } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
 import { useNavOrderStore } from '@/stores/navOrderStore';
 import { useAuthStore } from '@/stores/authStore';
-import { GripVertical, Palette, RefreshCw, RotateCcw, Image, UserCog, Database, ListOrdered } from 'lucide-react';
+import { GripVertical, Palette, RefreshCw, RotateCcw, Image, UserCog, Database, ListOrdered, Zap } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 import { ThemeSkinEditor } from '@/pages/settings/ThemeSkinEditor';
 import AssetsManagePage from '@/pages/AssetsManagePage';
 import AuthzPage from '@/pages/AuthzPage';
 import DataManagePage from '@/pages/DataManagePage';
+import { UpdateAccelerationSettings } from '@/pages/settings/UpdateAccelerationSettings';
 
 interface NavItem {
   key: string;
@@ -264,6 +265,7 @@ export default function SettingsPage() {
     if (hasPerm('assets.read')) list.push({ key: 'assets', label: '资源管理', icon: <Image size={14} /> });
     if (hasPerm('authz.manage')) list.push({ key: 'authz', label: '权限管理', icon: <UserCog size={14} /> });
     if (hasPerm('data.read')) list.push({ key: 'data', label: '数据管理', icon: <Database size={14} /> });
+    if (hasPerm('settings.write')) list.push({ key: 'update-accel', label: '更新加速', icon: <Zap size={14} /> });
     return list;
   }, [perms, isRoot]);
 
@@ -297,6 +299,7 @@ export default function SettingsPage() {
         {activeTab === 'assets' && <AssetsManagePage />}
         {activeTab === 'authz' && <AuthzPage />}
         {activeTab === 'data' && <DataManagePage />}
+        {activeTab === 'update-accel' && <UpdateAccelerationSettings />}
       </div>
     </div>
   );
