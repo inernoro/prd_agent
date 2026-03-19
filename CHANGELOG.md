@@ -8,6 +8,12 @@
 
 ## [未发布]
 
+### 2026-03-19
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | prd-admin | Safari 弹窗显示不全：Dialog 居中方式从 `fixed inset-0 m-auto h-fit` 改为 Overlay flex 居中，修复 Safari 不支持 `height: fit-content` 在 fixed 定位下的布局问题 |
+
 ### 2026-03-18
 
 | 类型 | 模块 | 描述 |
