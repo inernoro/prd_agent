@@ -204,7 +204,7 @@ export default function AiToolboxPage() {
             )}
           </GlassCard>
         ) : (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3">
+          <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))' }}>
             {filteredItems.map((item) => (
               <ToolCard key={item.id} item={item} />
             ))}

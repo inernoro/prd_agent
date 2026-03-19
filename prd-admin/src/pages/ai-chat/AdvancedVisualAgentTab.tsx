@@ -5873,7 +5873,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           viewBox={`0 0 ${selW} ${selH}`}
                           preserveAspectRatio="none"
                           overflow="visible"
-                          style={{ position: 'absolute', inset: 0 }}
+                          style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
                         >
                           {/* 外描边：深色更粗，提升在大图/复杂背景下的可见性（动态宽度确保 >= 2px 屏幕像素） */}
                           <rect

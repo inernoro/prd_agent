@@ -1548,6 +1548,23 @@ function MessageListInner() {
         );
       })}
 
+      {/* 即时"思考中"占位：纯 UI 标志，不在 messages 数组中，避免 key 变化闪烁和重复消息 */}
+      {!!pendingAssistantId && !isStreaming && (
+        <div ref={pendingAssistantRef} data-msg-id="pending-assistant">
+          <MessageBubble
+            message={{ id: '__pending__', role: 'Assistant', content: '', timestamp: new Date() } as Message}
+            isMessageStreaming={false}
+            showThinking={true}
+            thinkingLabel=""
+            isThinkingPhase={true}
+            activeGroupId={activeGroupId}
+            prdDocumentId={prdDocument?.id ?? null}
+            openCitationDrawer={openCitationDrawer as any}
+            openWithCitations={openWithCitations as any}
+          />
+        </div>
+      )}
+
       {messages.length === 0 && !isStreaming && (
         <div className="h-full flex items-center justify-center text-text-secondary">
           <div className="text-center">

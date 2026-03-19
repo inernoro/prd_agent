@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Api.Controllers;
@@ -17,6 +18,7 @@ public class AttachmentsController : ControllerBase
 {
     private readonly MongoDbContext _db;
     private readonly IAssetStorage _assetStorage;
+    private readonly IFileContentExtractor _fileContentExtractor;
     private readonly ILogger<AttachmentsController> _logger;
 
     /// <summary>20 MB per file</summary>
@@ -39,6 +41,15 @@ public class AttachmentsController : ControllerBase
         "application/xml",
         "text/xml",
         "text/html",
+        // Office: Word
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/msword",
+        // Office: Excel
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-excel",
+        // Office: PowerPoint
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "application/vnd.ms-powerpoint",
     };
 
     private static readonly HashSet<string> ImageMimeTypes = new(StringComparer.OrdinalIgnoreCase)
@@ -49,10 +60,12 @@ public class AttachmentsController : ControllerBase
     public AttachmentsController(
         MongoDbContext db,
         IAssetStorage assetStorage,
+        IFileContentExtractor fileContentExtractor,
         ILogger<AttachmentsController> logger)
     {
         _db = db;
         _assetStorage = assetStorage;
+        _fileContentExtractor = fileContentExtractor;
         _logger = logger;
     }
 
@@ -89,6 +102,13 @@ public class AttachmentsController : ControllerBase
         var isImage = ImageMimeTypes.Contains(mime);
         var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: "prd-agent", type: isImage ? "img" : "doc");
 
+        // 提取文档文本内容（PDF/Word/Excel/PPT 等）
+        string? extractedText = null;
+        if (!isImage && _fileContentExtractor.IsSupported(mime))
+        {
+            extractedText = _fileContentExtractor.Extract(bytes, mime, file.FileName);
+        }
+
         var attachment = new Attachment
         {
             UploaderId = userId,
@@ -98,6 +118,7 @@ public class AttachmentsController : ControllerBase
             Url = stored.Url,
             Type = isImage ? AttachmentType.Image : AttachmentType.Document,
             UploadedAt = DateTime.UtcNow,
+            ExtractedText = extractedText,
         };
 
         await _db.Attachments.InsertOneAsync(attachment, cancellationToken: ct);
