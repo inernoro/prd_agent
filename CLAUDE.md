@@ -84,6 +84,18 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 多分支并行开发时，直接编辑 `CHANGELOG.md` 会在同一位置插入内容导致 **必然冲突**。碎片文件各自独立，彻底消除合并冲突。
 
+### 5. LLM 交互过程可视化
+
+任何涉及大模型调用的功能，**必须**向用户展示交互过程，禁止让用户面对空白等待：
+
+- **流式输出**：LLM 响应必须使用 SSE 流式推送，前端逐字/逐块渲染（打字效果）
+- **进度反馈**：批量 LLM 任务必须推送进度事件（如"正在分析第 3/45 个缺陷…"）
+- **思考过程**：如果 LLM 支持 thinking，应展示思考过程
+- **阶段提示**：长任务拆分阶段，每个阶段开始时推送状态（准备中 → 分析中 → 生成中 → 完成）
+- **兜底方案**：如无法流式输出，至少显示动画加载状态 + 预估耗时提示
+
+原则：用户在等待 AI 响应时，屏幕上必须有持续变化的内容。静止的"加载中…"超过 2 秒即为体验缺陷。
+
 ---
 
 ## 架构规则索引
@@ -125,6 +137,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | **code-hygiene** | `/hygiene` | 9 维度代码卫生审计 |
 | **create-skill-file** | `/create-skill` | 技能创建 & 质量评分 |
 | **cds-project-scan** | `/cds-scan` | CDS compose YAML 生成 |
+| **llm-visibility** | `/visibility` | LLM 交互可视化审计 + 组件指南 |
 | **theme-transition** | `/theme-transition` | 主题切换圆形过渡动效 (View Transition API) |
 
 ### 使用指引
