@@ -17,6 +17,7 @@ import {
   addDefectAttachment,
   verifyPass,
   verifyFail,
+  updateDefectSeverity,
 } from '@/services';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
@@ -134,6 +135,7 @@ export function DefectDetailPanel() {
   const [messages, setMessages] = useState<DefectMessage[]>([]);
   const [pendingAttachments, setPendingAttachments] = useState<DefectAttachment[]>([]);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
+  const [severityMenuOpen, setSeverityMenuOpen] = useState(false);
   const [attachmentCache, setAttachmentCache] = useState<Record<string, DefectAttachment>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -165,7 +167,16 @@ export function DefectDetailPanel() {
       setMessages([]);
     }
     setPendingAttachments([]);
+    setSeverityMenuOpen(false);
   }, [selectedDefectId, loadMessages]);
+
+  // 点击外部关闭严重程度菜单
+  useEffect(() => {
+    if (!severityMenuOpen) return;
+    const handler = () => setSeverityMenuOpen(false);
+    document.addEventListener('click', handler);
+    return () => document.removeEventListener('click', handler);
+  }, [severityMenuOpen]);
 
   useEffect(() => {
     if (!defect) {
@@ -779,18 +790,61 @@ export function DefectDetailPanel() {
           >
             {/* Left: 严重程度 + 人员信息 + 删除按钮 */}
             <div className={`flex items-center gap-3 ${isMobile ? 'flex-wrap' : ''}`}>
-              {/* 严重程度 */}
+              {/* 严重程度（可点击修改） */}
               <div
-                className="flex items-center gap-2 text-[12px]"
+                className="flex items-center gap-2 text-[12px] relative"
                 style={{ color: 'var(--text-muted)' }}
               >
                 <span>严重程度</span>
-                <span
-                  className="px-2.5 py-1 rounded text-[12px]"
-                  style={{ background: `${severityColor}20`, color: severityColor }}
+                <button
+                  className="px-2.5 py-1 rounded text-[12px] cursor-pointer hover:opacity-80 transition-opacity"
+                  style={{ background: `${severityColor}20`, color: severityColor, border: 'none' }}
+                  title="点击修改严重程度"
+                  onClick={(e) => { e.stopPropagation(); setSeverityMenuOpen(!severityMenuOpen); }}
                 >
                   {severityLabel}
-                </span>
+                </button>
+                {severityMenuOpen && (
+                  <div
+                    className="absolute top-full left-0 mt-1 rounded-lg overflow-hidden z-50"
+                    style={{
+                      background: 'var(--bg-elevated)',
+                      border: '1px solid var(--border-default)',
+                      boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+                    }}
+                  >
+                    {([
+                      { key: DefectSeverity.Critical, label: '致命' },
+                      { key: DefectSeverity.Major, label: '严重' },
+                      { key: DefectSeverity.Minor, label: '一般' },
+                      { key: DefectSeverity.Trivial, label: '轻微' },
+                    ] as const).map((item) => (
+                      <button
+                        key={item.key}
+                        className="block w-full text-left px-4 py-2 text-[12px] hover:bg-white/10 transition-colors"
+                        style={{
+                          color: severityColors[item.key] || 'var(--text-primary)',
+                          border: 'none',
+                          background: defect.severity === item.key ? 'rgba(255,255,255,0.08)' : 'transparent',
+                          cursor: 'pointer',
+                        }}
+                        onClick={async () => {
+                          setSeverityMenuOpen(false);
+                          if (defect.severity === item.key) return;
+                          const res = await updateDefectSeverity({ id: defect.id, severity: item.key });
+                          if (res.success && res.data) {
+                            updateDefectInList(res.data.defect);
+                            toast.success('严重程度已更新');
+                          } else {
+                            toast.error(res.error?.message || '修改失败');
+                          }
+                        }}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
               <span
                 className="h-5 w-px"
