@@ -108,6 +108,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | **doc-sync** | `/doc-sync` | 文档索引同步 |
 | **code-hygiene** | `/hygiene` | 9 维度代码卫生审计 |
 | **create-skill-file** | `/create-skill` | 技能创建 & 质量评分 |
+| **cn-brief-summary** | `200字总结` | 最终回复末尾追加200字内通俗总结 |
 | **cds-project-scan** | `/cds-scan` | CDS compose YAML 生成 |
 
 ### 使用指引
