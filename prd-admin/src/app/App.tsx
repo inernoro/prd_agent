@@ -43,6 +43,7 @@ const WebPagesPage = lazy(() => import('@/pages/WebPagesPage'));
 const ShareViewPage = lazy(() => import('@/pages/ShareViewPage'));
 const ExecutiveDashboardPage = lazy(() => import('@/pages/ExecutiveDashboardPage'));
 const PrdAgentTabsPage = lazy(() => import('@/pages/PrdAgentTabsPage').then(m => ({ default: m.PrdAgentTabsPage })));
+const TutorialsPage = lazy(() => import('@/pages/TutorialsPage'));
 const AgentLauncherPage = lazy(() => import('@/pages/AgentLauncherPage'));
 const MobileHomePage = lazy(() => import('@/pages/MobileHomePage'));
 const MobileAssetsPage = lazy(() => import('@/pages/MobileAssetsPage'));
@@ -298,6 +299,7 @@ export default function App() {
         <Route path="assets" element={<RequirePermission perm="assets.read"><AssetsManagePage /></RequirePermission>} />
         <Route path="skills" element={<RequirePermission perm="skills.read"><SkillsPage /></RequirePermission>} />
         <Route path="web-pages" element={<RequirePermission perm="web-pages.read"><WebPagesPage /></RequirePermission>} />
+        <Route path="tutorials" element={<RequirePermission perm="access"><TutorialsPage /></RequirePermission>} />
         <Route path="marketplace" element={<RequirePermission perm="access"><MarketplacePage /></RequirePermission>} />
         <Route path="arena" element={<RequirePermission perm="arena-agent.use"><ArenaPage /></RequirePermission>} />
         <Route path="lab" element={<RequirePermission perm="lab.read"><LabPage /></RequirePermission>} />
