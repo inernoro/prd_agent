@@ -256,12 +256,12 @@ install_frontend_deps() {
 }
 
 verify_required_commands() {
-  info "Verifying required command: dotnet build prd-api --no-restore"
+  info "Verifying required command: dotnet build prd-api"
   cd "$PROJECT_ROOT"
-  if dotnet build prd-api --no-restore >/tmp/prdapi-build.log 2>&1; then
-    info "dotnet build prd-api --no-restore succeeded."
+  if dotnet build prd-api >/tmp/prdapi-build.log 2>&1; then
+    info "dotnet build prd-api succeeded."
   else
-    warn "dotnet build prd-api --no-restore failed. Last 10 lines:"
+    warn "dotnet build prd-api failed. Last 10 lines:"
     tail -10 /tmp/prdapi-build.log || true
   fi
 

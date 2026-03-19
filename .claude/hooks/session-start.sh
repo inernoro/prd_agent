@@ -123,9 +123,9 @@ cd "$PROJECT_DIR"
 # 5. Verification commands required by cloud setup
 # ------------------------------------------------------------------
 if [ -d "$PROJECT_DIR/prd-api" ]; then
-  log "Verifying backend build command: dotnet build prd-api --no-restore"
+  log "Verifying backend build command: dotnet build prd-api"
   cd "$PROJECT_DIR"
-  dotnet build prd-api --no-restore 2>&1 || log "WARNING: dotnet build prd-api --no-restore failed"
+  dotnet build prd-api 2>&1 || log "WARNING: dotnet build prd-api failed"
 fi
 
 if command -v pnpm &>/dev/null && [ -d "$PROJECT_DIR/prd-admin" ]; then
