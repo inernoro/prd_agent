@@ -92,11 +92,12 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 ## 质量保障技能链
 
 ```
-设计 → /risk → /trace → 实现 → /verify → /smoke → /handoff → /weekly
+需求 → /validate → 设计 → /risk → /trace → 实现 → /verify → /smoke → /handoff → /weekly
 ```
 
 | 技能 | 触发词 | 用途 |
 |------|--------|------|
+| **skill-validation** | `/validate` | 需求气味检测 + 雷同排查 + 七维度打分 |
 | **risk-matrix** | `/risk` | MECE 六维度风险评估 |
 | **flow-trace** | `/trace` | 全链路数据流追踪 |
 | **human-verify** | `/verify` | 多角度模拟验证 |
@@ -113,10 +114,11 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 ### 使用指引
 
-1. **方案评审时** → 先 `/risk` 评估风险，再 `/trace` 追踪关键链路
-2. **开发完成后** → 先 `/verify` 交叉验证，再 `/smoke-test` 跑端到端
-3. **提 PR 前** → `/resolve` 预合并主分支，AI 代替人类解决冲突
-4. **准备上线时** → `/handoff` 生成交接清单（涉及 3+ 文件时自动触发）
-5. **周五收尾时** → `/weekly` 生成本周总结（完成后自动触发 `/doc-sync`）
-6. **写文档时** → `/doc` 查看类型速查，或直接创建文档时自动套用模板
-7. **迁移/重构后** → `/hygiene`
+1. **新需求提出时** → `/validate` 验证需求质量和价值（中大型功能必跑）
+3. **方案评审时** → 先 `/risk` 评估风险，再 `/trace` 追踪关键链路
+4. **开发完成后** → 先 `/verify` 交叉验证，再 `/smoke-test` 跑端到端
+5. **提 PR 前** → `/resolve` 预合并主分支，AI 代替人类解决冲突
+6. **准备上线时** → `/handoff` 生成交接清单（涉及 3+ 文件时自动触发）
+7. **周五收尾时** → `/weekly` 生成本周总结（完成后自动触发 `/doc-sync`）
+8. **写文档时** → `/doc` 查看类型速查，或直接创建文档时自动套用模板
+9. **迁移/重构后** → `/hygiene`
