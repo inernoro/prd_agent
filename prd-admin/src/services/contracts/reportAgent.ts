@@ -767,6 +767,22 @@ export type CancelVacationContract = (input: {
 
 // ========== Phase 5/6: v2.0 Contracts ==========
 
+// --- AI Sources ---
+export interface ReportAiSource {
+  key: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  locked: boolean;
+}
+
+export type ListMyAiSourcesContract = () => Promise<ApiResponse<{ items: ReportAiSource[] }>>;
+
+export type UpdateMyAiSourceContract = (input: {
+  key: string;
+  enabled: boolean;
+}) => Promise<ApiResponse<{ source: { key: string; enabled: boolean } }>>;
+
 // --- Personal Sources ---
 export interface PersonalSource {
   id: string;

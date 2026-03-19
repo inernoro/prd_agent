@@ -523,6 +523,10 @@ export const api = {
       test: (id: string) => `/api/report-agent/my/sources/${id}/test`,
       sync: (id: string) => `/api/report-agent/my/sources/${id}/sync`,
     },
+    aiSources: {
+      list: () => '/api/report-agent/my/ai-sources',
+      byKey: (key: string) => `/api/report-agent/my/ai-sources/${key}`,
+    },
     personalStats: () => '/api/report-agent/my/stats',
     teamWorkflow: (teamId: string) => `/api/report-agent/teams/${teamId}/workflow`,
     teamWorkflowRun: (teamId: string) => `/api/report-agent/teams/${teamId}/workflow/run`,

@@ -24,7 +24,7 @@ const SECTIONS: SectionDef[] = [
   {
     key: 'my-sources',
     label: '我的数据源',
-    desc: '绑定 GitHub / GitLab / 语雀，自动采集提交和文档',
+    desc: '管理 AI 周报的数据源开关与个人扩展数据源',
     icon: Link2,
     color: 'rgba(59, 130, 246, 0.85)',
     isPersonal: true,

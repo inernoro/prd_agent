@@ -1,8 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Github, BookOpen, Plus, RefreshCw, Trash2, TestTube, Link2, Check, X, GitBranch } from 'lucide-react';
+import { Github, BookOpen, Plus, RefreshCw, Trash2, TestTube, Link2, Check, X, Database } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
+import { toast } from '@/lib/toast';
+import { systemDialog } from '@/lib/systemDialog';
 import {
+  listMyAiSources,
+  updateMyAiSource,
   listPersonalSources,
   createPersonalSource,
   updatePersonalSource,
@@ -11,12 +15,11 @@ import {
   syncPersonalSource,
   getPersonalStats,
 } from '@/services';
-import type { PersonalSource, PersonalStats } from '@/services/contracts/reportAgent';
+import type { ReportAiSource, PersonalSource, PersonalStats } from '@/services/contracts/reportAgent';
 
 const SOURCE_TYPES = [
   { value: 'github', label: 'GitHub', icon: Github, color: 'rgba(36, 41, 47, 0.9)', bg: 'rgba(36, 41, 47, 0.08)', placeholder: 'https://github.com/user/repo' },
   { value: 'yuque', label: '语雀', icon: BookOpen, color: 'rgba(52, 199, 89, 0.9)', bg: 'rgba(52, 199, 89, 0.08)', placeholder: '语雀空间 ID 或地址' },
-  { value: 'gitlab', label: 'GitLab', icon: GitBranch, color: 'rgba(226, 67, 41, 0.9)', bg: 'rgba(226, 67, 41, 0.08)', placeholder: 'https://gitlab.com/user/repo' },
 ] as const;
 
 const statusStyles: Record<string, { label: string; color: string; bg: string }> = {
@@ -26,9 +29,11 @@ const statusStyles: Record<string, { label: string; color: string; bg: string }>
 };
 
 export function PersonalSourcesPanel() {
+  const [aiSources, setAiSources] = useState<ReportAiSource[]>([]);
   const [sources, setSources] = useState<PersonalSource[]>([]);
   const [stats, setStats] = useState<PersonalStats | null>(null);
   const [loading, setLoading] = useState(false);
+  const [togglingAiSourceKey, setTogglingAiSourceKey] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [syncingId, setSyncingId] = useState<string | null>(null);
@@ -42,10 +47,12 @@ export function PersonalSourcesPanel() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [srcRes, statsRes] = await Promise.all([
+      const [aiRes, srcRes, statsRes] = await Promise.all([
+        listMyAiSources(),
         listPersonalSources(),
         getPersonalStats(),
       ]);
+      if (aiRes.success && aiRes.data) setAiSources(aiRes.data.items);
       if (srcRes.success && srcRes.data) setSources(srcRes.data.items);
       if (statsRes.success && statsRes.data) setStats(statsRes.data);
     } finally {
@@ -74,16 +81,32 @@ export function PersonalSourcesPanel() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('确定解绑此数据源？')) return;
+    const ok = await systemDialog.confirm({
+      title: '确认解绑此扩展数据源？',
+      message: '解绑后将不会再采集该来源的数据。',
+      tone: 'danger',
+      confirmText: '确认解绑',
+      cancelText: '取消',
+    });
+    if (!ok) return;
     const res = await deletePersonalSource({ id });
-    if (res.success) void load();
+    if (res.success) {
+      toast.success('已解绑');
+      void load();
+    } else {
+      toast.error(res.error?.message || '解绑失败');
+    }
   };
 
   const handleTest = async (id: string) => {
     setTestingId(id);
     try {
       const res = await testPersonalSource({ id });
-      alert(res.success && res.data?.success ? '连接成功' : '连接失败');
+      if (res.success && res.data?.success) {
+        toast.success('连接成功');
+      } else {
+        toast.error('连接失败');
+      }
     } finally {
       setTestingId(null);
     }
@@ -104,6 +127,23 @@ export function PersonalSourcesPanel() {
     void load();
   };
 
+  const handleToggleAiSource = async (source: ReportAiSource) => {
+    if (source.locked) return;
+    setTogglingAiSourceKey(source.key);
+    try {
+      const nextEnabled = !source.enabled;
+      const res = await updateMyAiSource({ key: source.key, enabled: nextEnabled });
+      if (res.success) {
+        setAiSources((prev) => prev.map((s) => (s.key === source.key ? { ...s, enabled: nextEnabled } : s)));
+        toast.success(nextEnabled ? '已开启' : '已关闭');
+      } else {
+        toast.error(res.error?.message || '更新失败');
+      }
+    } finally {
+      setTogglingAiSourceKey(null);
+    }
+  };
+
   const resetForm = () => {
     setFormType('github');
     setFormName('');
@@ -118,7 +158,6 @@ export function PersonalSourcesPanel() {
 
   return (
     <div className="flex flex-col gap-5">
-      {/* Header — card-wrapped */}
       <GlassCard variant="subtle" className="px-5 py-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -128,7 +167,7 @@ export function PersonalSourcesPanel() {
             <div>
               <h3 className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>我的数据源</h3>
               <p className="text-[12px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                绑定个人 GitHub / 语雀 / GitLab 账号，系统自动采集产出数据
+                已添加数据源会作为 AI 生成周报草稿的上下文
               </p>
             </div>
           </div>
@@ -136,14 +175,72 @@ export function PersonalSourcesPanel() {
             <Button variant="secondary" size="sm" onClick={() => load()} disabled={loading}>
               <RefreshCw size={12} className={loading ? 'animate-spin' : ''} /> 刷新
             </Button>
-            <Button variant="primary" size="sm" onClick={() => setShowCreate(true)}>
-              <Plus size={12} /> 添加数据源
-            </Button>
           </div>
         </div>
       </GlassCard>
 
-      {/* Stats Preview */}
+      <GlassCard variant="subtle" className="p-4">
+        <div className="text-[12px] font-medium mb-3" style={{ color: 'var(--text-secondary)' }}>
+          已添加数据源
+        </div>
+        <div className="flex flex-col gap-3">
+          {aiSources.map((source) => (
+            <div
+              key={source.key}
+              className="rounded-xl p-4 flex items-start justify-between gap-3"
+              style={{
+                background: 'var(--surface-glass)',
+                border: '1px solid var(--border-primary)',
+              }}
+            >
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <Database size={14} style={{ color: 'var(--text-muted)' }} />
+                  <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    {source.name}
+                  </span>
+                  <span
+                    className="text-[10px] px-1.5 py-0.5 rounded-full"
+                    style={{
+                      color: source.enabled ? 'rgba(34, 197, 94, 0.95)' : 'rgba(156, 163, 175, 0.95)',
+                      background: source.enabled ? 'rgba(34, 197, 94, 0.12)' : 'rgba(156, 163, 175, 0.12)',
+                    }}
+                  >
+                    {source.enabled ? '已开启' : '已关闭'}
+                  </span>
+                  {source.locked && (
+                    <span
+                      className="text-[10px] px-1.5 py-0.5 rounded-full"
+                      style={{ color: 'var(--text-muted)', background: 'var(--bg-tertiary)' }}
+                    >
+                      默认开启
+                    </span>
+                  )}
+                </div>
+                <div className="text-[12px] mt-1 leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                  {source.description}
+                </div>
+              </div>
+              <Button
+                variant={source.enabled ? 'secondary' : 'primary'}
+                size="sm"
+                onClick={() => { void handleToggleAiSource(source); }}
+                disabled={source.locked || togglingAiSourceKey === source.key}
+                className="whitespace-nowrap"
+              >
+                {togglingAiSourceKey === source.key ? (
+                  <><RefreshCw size={12} className="animate-spin" /> 更新中...</>
+                ) : source.enabled ? (
+                  <><Check size={12} /> 已开启</>
+                ) : (
+                  <><X size={12} /> 去开启</>
+                )}
+              </Button>
+            </div>
+          ))}
+        </div>
+      </GlassCard>
+
       {stats && stats.sources.length > 0 && (
         <GlassCard variant="subtle" className="p-4">
           <div className="text-[12px] font-medium mb-3" style={{ color: 'var(--text-secondary)' }}>本周统计预览</div>
@@ -163,7 +260,22 @@ export function PersonalSourcesPanel() {
         </GlassCard>
       )}
 
-      {/* Empty state */}
+      <GlassCard variant="subtle" className="px-5 py-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              扩展数据源（可选）
+            </div>
+            <div className="text-[12px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+              可额外绑定 GitHub / 语雀来源用于数据采集与统计
+            </div>
+          </div>
+          <Button variant="primary" size="sm" onClick={() => setShowCreate(true)}>
+            <Plus size={12} /> 添加扩展源
+          </Button>
+        </div>
+      </GlassCard>
+
       {sources.length === 0 && !loading && (
         <div className="flex items-center justify-center" style={{ minHeight: 320 }}>
           <div className="flex flex-col items-center gap-5 text-center max-w-sm">
@@ -173,7 +285,7 @@ export function PersonalSourcesPanel() {
             <div>
               <div className="text-[15px] font-medium mb-1.5" style={{ color: 'var(--text-primary)' }}>暂无数据源</div>
               <div className="text-[13px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-                绑定 GitHub、语雀 或 GitLab 账号后，系统将自动采集你的代码提交和文档产出
+                绑定 GitHub 或语雀账号后，系统将自动采集你的代码提交和文档产出
               </div>
             </div>
             <div className="flex gap-3">
@@ -188,13 +300,12 @@ export function PersonalSourcesPanel() {
               ))}
             </div>
             <Button variant="primary" onClick={() => setShowCreate(true)}>
-              <Plus size={14} /> 添加数据源
+              <Plus size={14} /> 添加扩展源
             </Button>
           </div>
         </div>
       )}
 
-      {/* Source cards */}
       <div className="flex flex-col gap-3">
         {sources.map((source) => {
           const st = getSourceType(source.sourceType);
@@ -344,7 +455,7 @@ export function PersonalSourcesPanel() {
                 <input
                   value={formUsername}
                   onChange={e => setFormUsername(e.target.value)}
-                  placeholder="GitHub/GitLab 用户名"
+                  placeholder="GitHub 用户名"
                   className="w-full px-3 py-2 rounded-xl text-[13px]"
                   style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
                 />
@@ -357,7 +468,7 @@ export function PersonalSourcesPanel() {
                 type="password"
                 value={formToken}
                 onChange={e => setFormToken(e.target.value)}
-                placeholder={formType === 'github' ? 'ghp_...' : formType === 'yuque' ? '语雀 Token' : 'GitLab Token'}
+                placeholder={formType === 'github' ? 'ghp_...' : '语雀 Token'}
                 className="w-full px-3 py-2 rounded-xl text-[13px]"
                 style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
               />

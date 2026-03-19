@@ -1473,6 +1473,12 @@ public class ReportAgentController : ControllerBase
         public const string AiDraft = "ai-draft";
     }
 
+    public static class ReportAiSourceKey
+    {
+        public const string DailyLog = "daily-log";
+        public const string MapPlatform = "map-platform";
+    }
+
     public class UpdateReportRequest
     {
         public List<UpdateReportSectionInput>? Sections { get; set; }
@@ -1658,6 +1664,80 @@ public class ReportAgentController : ControllerBase
             x => x.UserId == userId && x.Date == parsedDate.Date);
 
         return Ok(ApiResponse<object>.Ok(new { deleted = result.DeletedCount > 0 }));
+    }
+
+    #endregion
+
+    #region My AI Sources
+
+    /// <summary>
+    /// 获取我的 AI 周报数据源配置
+    /// </summary>
+    [HttpGet("my/ai-sources")]
+    public async Task<IActionResult> ListMyAiSources(CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var prefs = await _db.UserPreferences
+            .Find(x => x.UserId == userId)
+            .FirstOrDefaultAsync(ct);
+        var mapPlatformEnabled = prefs?.ReportAgentPreferences?.MapPlatformSourceEnabled ?? true;
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            items = BuildMyAiSourcesPayload(mapPlatformEnabled)
+        }));
+    }
+
+    /// <summary>
+    /// 更新我的 AI 周报数据源配置
+    /// </summary>
+    [HttpPut("my/ai-sources/{key}")]
+    public async Task<IActionResult> UpdateMyAiSource(string key, [FromBody] UpdateMyAiSourceRequest req, CancellationToken ct)
+    {
+        var normalizedKey = (key ?? string.Empty).Trim().ToLowerInvariant();
+        if (normalizedKey == ReportAiSourceKey.DailyLog)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_OPERATION", "“日常记录”为默认数据源，不能关闭"));
+        if (normalizedKey != ReportAiSourceKey.MapPlatform)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", $"不支持的数据源类型: {key}"));
+
+        var userId = GetUserId();
+        var update = Builders<UserPreferences>.Update
+            .Set(x => x.ReportAgentPreferences!.MapPlatformSourceEnabled, req.Enabled)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+        await _db.UserPreferences.UpdateOneAsync(
+            x => x.UserId == userId,
+            update,
+            new UpdateOptions { IsUpsert = true },
+            ct);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            source = new { key = normalizedKey, enabled = req.Enabled }
+        }));
+    }
+
+    private static object[] BuildMyAiSourcesPayload(bool mapPlatformEnabled)
+    {
+        return new object[]
+        {
+            new
+            {
+                key = ReportAiSourceKey.DailyLog,
+                name = "日常记录",
+                enabled = true,
+                locked = true,
+                description = "AI 每周会从当周的日常记录中提取和分析内容，作为周报内容。默认开启，且不可关闭。"
+            },
+            new
+            {
+                key = ReportAiSourceKey.MapPlatform,
+                name = "MAP平台工作记录",
+                enabled = mapPlatformEnabled,
+                locked = false,
+                description = "MAP 平台内的行为记录等。关闭后，AI 生成周报时不再使用该类上下文。"
+            }
+        };
     }
 
     #endregion
@@ -3171,6 +3251,11 @@ public class CreatePersonalSourceRequest
     public string? Username { get; set; }
     public string? SpaceId { get; set; }
     public string? ApiEndpoint { get; set; }
+}
+
+public class UpdateMyAiSourceRequest
+{
+    public bool Enabled { get; set; }
 }
 
 public class UpdatePersonalSourceRequest

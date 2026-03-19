@@ -29,6 +29,11 @@ public class UserPreferences
     /// </summary>
     public VisualAgentPreferences? VisualAgentPreferences { get; set; }
 
+    /// <summary>
+    /// 周报 Agent 偏好设置
+    /// </summary>
+    public ReportAgentPreferences? ReportAgentPreferences { get; set; }
+
     /// <summary>更新时间</summary>
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
@@ -81,6 +86,18 @@ public class VisualAgentPreferences
 
     /// <summary>用户自定义快捷指令（最多 10 个）</summary>
     public List<QuickActionConfig>? QuickActions { get; set; }
+}
+
+/// <summary>
+/// 周报 Agent 偏好设置
+/// </summary>
+[BsonIgnoreExtraElements]
+public class ReportAgentPreferences
+{
+    /// <summary>
+    /// 是否启用 MAP 平台工作记录作为 AI 周报生成上下文
+    /// </summary>
+    public bool MapPlatformSourceEnabled { get; set; } = true;
 }
 
 /// <summary>

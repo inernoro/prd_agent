@@ -570,6 +570,8 @@ import type {
   GetTeamTrendsContract,
   MarkVacationContract,
   CancelVacationContract,
+  ListMyAiSourcesContract,
+  UpdateMyAiSourceContract,
   ListPersonalSourcesContract,
   CreatePersonalSourceContract,
   UpdatePersonalSourceContract,
@@ -638,6 +640,8 @@ import {
   exportTeamSummaryMarkdownReal,
   markVacationReal,
   cancelVacationReal,
+  listMyAiSourcesReal,
+  updateMyAiSourceReal,
   listPersonalSourcesReal,
   createPersonalSourceReal,
   updatePersonalSourceReal,
@@ -1023,6 +1027,8 @@ export const exportTeamSummaryMarkdown = exportTeamSummaryMarkdownReal;
 export const markVacation: MarkVacationContract = withAuth(markVacationReal);
 export const cancelVacation: CancelVacationContract = withAuth(cancelVacationReal);
 // Report Agent Phase 5/6 v2.0: Personal Sources + Workflow + Identity Mappings
+export const listMyAiSources: ListMyAiSourcesContract = withAuth(listMyAiSourcesReal);
+export const updateMyAiSource: UpdateMyAiSourceContract = withAuth(updateMyAiSourceReal);
 export const listPersonalSources: ListPersonalSourcesContract = withAuth(listPersonalSourcesReal);
 export const createPersonalSource: CreatePersonalSourceContract = withAuth(createPersonalSourceReal);
 export const updatePersonalSource: UpdatePersonalSourceContract = withAuth(updatePersonalSourceReal);

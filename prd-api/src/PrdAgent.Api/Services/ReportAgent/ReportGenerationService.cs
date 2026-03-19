@@ -69,11 +69,14 @@ public class ReportGenerationService
         var monday = ISOWeek.ToDateTime(weekYear, weekNumber, DayOfWeek.Monday);
         var sunday = monday.AddDays(6).AddHours(23).AddMinutes(59).AddSeconds(59);
 
+        // 2.1 读取“我的数据源”偏好（默认：日常记录开启、MAP 平台工作记录开启）
+        var sourcePrefs = await LoadGenerationSourcePrefsAsync(userId, ct);
+
         // 3. 采集数据（使用 CancellationToken.None，服务器权威性）
         var activity = await _collector.CollectAsync(userId, monday, sunday, CancellationToken.None);
 
         // 4. 构建 Prompt
-        var userPrompt = BuildUserPrompt(template, activity, weekYear, weekNumber);
+        var userPrompt = BuildUserPrompt(template, activity, weekYear, weekNumber, sourcePrefs);
 
         // 5. 调用 LLM（非流式，CancellationToken.None）
         var request = new GatewayRequest
@@ -170,7 +173,12 @@ public class ReportGenerationService
         }
     }
 
-    private string BuildUserPrompt(ReportTemplate template, CollectedActivity activity, int weekYear, int weekNumber)
+    private string BuildUserPrompt(
+        ReportTemplate template,
+        CollectedActivity activity,
+        int weekYear,
+        int weekNumber,
+        GenerationSourcePrefs sourcePrefs)
     {
         var sb = new System.Text.StringBuilder();
         sb.AppendLine($"## 周报周期: {weekYear} 年第 {weekNumber} 周");
@@ -201,9 +209,9 @@ public class ReportGenerationService
         sb.AppendLine("## 采集到的原始数据");
         sb.AppendLine();
 
-        if (activity.Commits.Count > 0)
+        if (sourcePrefs.MapPlatformEnabled && activity.Commits.Count > 0)
         {
-            sb.AppendLine("### Git 提交记录");
+            sb.AppendLine("### MAP 平台工作记录（代码提交）");
             foreach (var c in activity.Commits.Take(50))
             {
                 sb.AppendLine($"- [{c.CommittedAt:MM-dd}] {c.Message}");
@@ -215,7 +223,7 @@ public class ReportGenerationService
             sb.AppendLine();
         }
 
-        if (activity.DailyLogs.Count > 0)
+        if (sourcePrefs.DailyLogEnabled && activity.DailyLogs.Count > 0)
         {
             sb.AppendLine("### 每日打点");
             foreach (var log in activity.DailyLogs)
@@ -230,38 +238,58 @@ public class ReportGenerationService
             sb.AppendLine();
         }
 
-        sb.AppendLine("### 系统活动统计");
-        sb.AppendLine($"- PRD 对话会话: {activity.PrdSessions} 次");
-        if (activity.PrdMessageCount > 0)
-            sb.AppendLine($"- PRD 对话消息: {activity.PrdMessageCount} 条");
-        sb.AppendLine($"- 缺陷提交: {activity.DefectsSubmitted} 个");
-        if (activity.DefectDetails is { Resolved: > 0 })
-            sb.AppendLine($"  · 已解决 {activity.DefectDetails.Resolved} 个，平均 {activity.DefectDetails.AvgResolutionHours} 小时");
-        if (activity.DefectDetails is { Reopened: > 0 })
-            sb.AppendLine($"  · 退回/重开 {activity.DefectDetails.Reopened} 个");
-        sb.AppendLine($"- 视觉创作会话: {activity.VisualSessions} 次");
-        if (activity.ImageGenCompletedCount > 0)
-            sb.AppendLine($"- 图片生成完成: {activity.ImageGenCompletedCount} 次");
-        if (activity.VideoGenCompletedCount > 0)
-            sb.AppendLine($"- 视频生成完成: {activity.VideoGenCompletedCount} 次");
-        if (activity.DocumentEditCount > 0)
-            sb.AppendLine($"- 文档编辑/创建: {activity.DocumentEditCount} 篇");
-        if (activity.WorkflowExecutionCount > 0)
-            sb.AppendLine($"- 自动化工作流执行: {activity.WorkflowExecutionCount} 次");
-        if (activity.ToolboxRunCount > 0)
-            sb.AppendLine($"- AI 工具箱使用: {activity.ToolboxRunCount} 次");
-        if (activity.WebPagePublishCount > 0)
-            sb.AppendLine($"- 网页发布/更新: {activity.WebPagePublishCount} 次");
-        if (activity.AttachmentUploadCount > 0)
-            sb.AppendLine($"- 附件上传: {activity.AttachmentUploadCount} 个");
-        sb.AppendLine($"- AI 调用: {activity.LlmCalls} 次");
-        sb.AppendLine();
+        if (sourcePrefs.MapPlatformEnabled)
+        {
+            sb.AppendLine("### MAP 平台工作记录（行为统计）");
+            sb.AppendLine($"- PRD 对话会话: {activity.PrdSessions} 次");
+            if (activity.PrdMessageCount > 0)
+                sb.AppendLine($"- PRD 对话消息: {activity.PrdMessageCount} 条");
+            sb.AppendLine($"- 缺陷提交: {activity.DefectsSubmitted} 个");
+            if (activity.DefectDetails is { Resolved: > 0 })
+                sb.AppendLine($"  · 已解决 {activity.DefectDetails.Resolved} 个，平均 {activity.DefectDetails.AvgResolutionHours} 小时");
+            if (activity.DefectDetails is { Reopened: > 0 })
+                sb.AppendLine($"  · 退回/重开 {activity.DefectDetails.Reopened} 个");
+            sb.AppendLine($"- 视觉创作会话: {activity.VisualSessions} 次");
+            if (activity.ImageGenCompletedCount > 0)
+                sb.AppendLine($"- 图片生成完成: {activity.ImageGenCompletedCount} 次");
+            if (activity.VideoGenCompletedCount > 0)
+                sb.AppendLine($"- 视频生成完成: {activity.VideoGenCompletedCount} 次");
+            if (activity.DocumentEditCount > 0)
+                sb.AppendLine($"- 文档编辑/创建: {activity.DocumentEditCount} 篇");
+            if (activity.WorkflowExecutionCount > 0)
+                sb.AppendLine($"- 自动化工作流执行: {activity.WorkflowExecutionCount} 次");
+            if (activity.ToolboxRunCount > 0)
+                sb.AppendLine($"- AI 工具箱使用: {activity.ToolboxRunCount} 次");
+            if (activity.WebPagePublishCount > 0)
+                sb.AppendLine($"- 网页发布/更新: {activity.WebPagePublishCount} 次");
+            if (activity.AttachmentUploadCount > 0)
+                sb.AppendLine($"- 附件上传: {activity.AttachmentUploadCount} 个");
+            sb.AppendLine($"- AI 调用: {activity.LlmCalls} 次");
+            sb.AppendLine();
+        }
 
-        sb.AppendLine("请基于以上数据生成周报，每个条目的 source 字段标记来源：git / daily_log / system_activity / ai");
+        var sourceTags = new List<string> { "daily_log", "ai" };
+        if (sourcePrefs.MapPlatformEnabled)
+            sourceTags.Insert(0, "map_activity");
+        sb.AppendLine($"请基于以上数据生成周报，每个条目的 source 字段标记来源：{string.Join(" / ", sourceTags)}");
         sb.AppendLine("重要：即使数据较少，也要基于已有数据写出有价值的总结，不要输出「无数据」。");
 
         return sb.ToString();
     }
+
+    private async Task<GenerationSourcePrefs> LoadGenerationSourcePrefsAsync(string userId, CancellationToken ct)
+    {
+        var prefs = await _db.UserPreferences
+            .Find(x => x.UserId == userId)
+            .FirstOrDefaultAsync(ct);
+
+        return new GenerationSourcePrefs(
+            DailyLogEnabled: true,
+            MapPlatformEnabled: prefs?.ReportAgentPreferences?.MapPlatformSourceEnabled ?? true
+        );
+    }
+
+    private sealed record GenerationSourcePrefs(bool DailyLogEnabled, bool MapPlatformEnabled);
 
     private List<WeeklyReportSection>? ParseGeneratedSections(string content, ReportTemplate template)
     {

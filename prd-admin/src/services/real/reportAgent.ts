@@ -56,6 +56,8 @@ import type {
   GetTeamTrendsContract,
   MarkVacationContract,
   CancelVacationContract,
+  ListMyAiSourcesContract,
+  UpdateMyAiSourceContract,
   ListPersonalSourcesContract,
   CreatePersonalSourceContract,
   UpdatePersonalSourceContract,
@@ -86,6 +88,7 @@ import type {
   TeamSummary,
   TeamSummaryViewData,
   TeamReportsViewData,
+  ReportAiSource,
   PersonalSource,
   PersonalStats,
   TeamWorkflowInfo,
@@ -676,6 +679,17 @@ export const cancelVacationReal: CancelVacationContract = async (input) => {
 };
 
 // ========== Phase 5/6 v2.0: Personal Sources ==========
+
+export const listMyAiSourcesReal: ListMyAiSourcesContract = async () => {
+  return await apiRequest<{ items: ReportAiSource[] }>(api.reportAgent.aiSources.list(), { method: 'GET' });
+};
+
+export const updateMyAiSourceReal: UpdateMyAiSourceContract = async (input) => {
+  return await apiRequest<{ source: { key: string; enabled: boolean } }>(
+    api.reportAgent.aiSources.byKey(encodeURIComponent(input.key)),
+    { method: 'PUT', body: { enabled: input.enabled } }
+  );
+};
 
 export const listPersonalSourcesReal: ListPersonalSourcesContract = async () => {
   return await apiRequest<{ items: PersonalSource[] }>(api.reportAgent.personalSources.list(), { method: 'GET' });
