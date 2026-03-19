@@ -869,7 +869,7 @@ builder.Services.AddScoped<IChatService>(sp =>
     var documentService = sp.GetRequiredService<IDocumentService>();
     var cache = sp.GetRequiredService<ICacheManager>();
     var promptManager = sp.GetRequiredService<IPromptManager>();
-    var promptService = sp.GetRequiredService<IPromptService>();
+    var skillService = sp.GetRequiredService<PrdAgent.Core.Interfaces.ISkillService>();
     var systemPromptService = sp.GetRequiredService<PrdAgent.Core.Interfaces.ISystemPromptService>();
     var userService = sp.GetRequiredService<IUserService>();
     var messageRepo = sp.GetRequiredService<IMessageRepository>();
@@ -877,7 +877,7 @@ builder.Services.AddScoped<IChatService>(sp =>
     var groupHub = sp.GetRequiredService<IGroupMessageStreamHub>();
     var llmCtx = sp.GetRequiredService<ILLMRequestContextAccessor>();
     var idGenerator = sp.GetRequiredService<IIdGenerator>();
-    return new ChatService(gateway, sessionService, documentService, cache, promptManager, promptService, systemPromptService, userService, messageRepo, groupSeq, groupHub, llmCtx, idGenerator);
+    return new ChatService(gateway, sessionService, documentService, cache, promptManager, skillService, systemPromptService, userService, messageRepo, groupSeq, groupHub, llmCtx, idGenerator);
 });
 
 builder.Services.AddScoped<IPreviewAskService>(sp =>
