@@ -246,6 +246,7 @@ export default function SkillsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [listCollapsed, setListCollapsed] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   // ━━━ 表单状态 ━━━
 
@@ -907,160 +908,177 @@ export default function SkillsPage() {
 
                   {/* 编辑表单 */}
                   <div className="flex-1 overflow-y-auto p-4 space-y-5">
-                    {/* 基本信息 */}
-                    <Section title="基本信息">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <Field label="名称 *">
-                          <input value={title} onChange={e => setTitle(e.target.value)}
-                            className="field-input" placeholder="技能名称" />
-                        </Field>
-                        <Field label="SkillKey">
-                          <input value={skillKey} onChange={e => setSkillKey(e.target.value)}
-                            className="field-input" placeholder="自动生成" disabled={!isCreating} />
-                        </Field>
-                        <Field label="图标">
+                    {/* ━━━ 核心区：名称 + 角色 + 提示词模板 ━━━ */}
+                    <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 items-end">
+                      <Field label="名称 *">
+                        <div className="flex items-center gap-2">
                           <input value={icon} onChange={e => setIcon(e.target.value)}
-                            className="field-input" placeholder="emoji 如: ⚡🔍🧪" />
-                        </Field>
-                        <Field label="分类">
-                          <select value={category} onChange={e => setCategory(e.target.value)} className="field-input">
-                            {Object.entries(CATEGORY_MAP).map(([k, v]) => (
-                              <option key={k} value={k}>{v.icon} {v.label}</option>
-                            ))}
-                          </select>
-                        </Field>
-                        <Field label="排序">
-                          <input type="number" value={order} onChange={e => setOrder(Number(e.target.value))}
-                            className="field-input" />
-                        </Field>
-                        <Field label="可见性">
-                          <select value={visibility} onChange={e => setVisibility(e.target.value)} className="field-input">
-                            {VISIBILITY_OPTIONS.map(o => (
-                              <option key={o.value} value={o.value}>{o.label}</option>
-                            ))}
-                          </select>
-                        </Field>
-                      </div>
-                      <Field label="描述" className="mt-3">
-                        <input value={description} onChange={e => setDescription(e.target.value)}
-                          className="field-input" placeholder="简要描述技能的功能和用途" />
+                            className="field-input w-12 text-center shrink-0" placeholder="⚡" title="图标" />
+                          <input value={title} onChange={e => setTitle(e.target.value)}
+                            className="field-input flex-1" placeholder="技能名称" />
+                        </div>
                       </Field>
-                      <Field label="标签" className="mt-3">
-                        <input value={tags} onChange={e => setTags(e.target.value)}
-                          className="field-input" placeholder="逗号分隔，如: 分析, PRD, 审查" />
-                      </Field>
-
-                      {/* 角色 */}
-                      <div className="mt-3">
-                        <label className="text-xs text-white/50 mb-1.5 block">适用角色（空 = 全部）</label>
-                        <div className="flex flex-wrap gap-2">
+                      <div>
+                        <label className="text-xs text-white/50 mb-1 block">适用角色</label>
+                        <div className="flex gap-1.5">
                           {ROLE_OPTIONS.map(r => (
                             <button key={r} onClick={() => toggleRole(r)}
-                              className={`text-xs px-3 py-1 rounded-full border transition ${
+                              className={`text-xs px-3 py-1.5 rounded-lg border transition ${
                                 roles.includes(r)
                                   ? 'border-amber-400/60 bg-amber-500/20 text-amber-300'
                                   : 'border-white/10 bg-white/5 text-white/40 hover:border-white/20'
                               }`}
                             >{r}</button>
                           ))}
+                          {roles.length === 0 && <span className="text-[10px] text-white/30 self-center ml-1">全部</span>}
                         </div>
                       </div>
+                    </div>
 
-                      {/* 开关 */}
-                      <div className="mt-3 flex flex-wrap gap-4">
-                        <label className="flex items-center gap-1.5 text-xs text-white/60">
-                          <input type="checkbox" checked={isEnabled} onChange={e => setIsEnabled(e.target.checked)} />
-                          启用
-                        </label>
-                        <label className="flex items-center gap-1.5 text-xs text-white/60">
-                          <input type="checkbox" checked={isBuiltIn} onChange={e => setIsBuiltIn(e.target.checked)} />
-                          内置（不可被用户删除）
-                        </label>
+                    <Field label="提示词模板">
+                      <div className="relative">
+                        <textarea value={promptTemplate} onChange={e => setPromptTemplate(e.target.value)}
+                          className="field-input min-h-[200px] font-mono text-xs pr-12" placeholder="支持 {{userInput}} 占位符" />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (optBusy) { cancelOptimize(); return; }
+                            setOptOriginal(promptTemplate.trim());
+                            setOptText('');
+                            setOptError(null);
+                            setOptOpen(true);
+                            void startOptimize();
+                          }}
+                          className="absolute bottom-2 right-2 h-8 w-8 inline-flex items-center justify-center rounded-[10px] transition-colors"
+                          style={{
+                            background: optBusy ? 'rgba(239,68,68,0.12)' : 'rgba(255,255,255,0.06)',
+                            border: optBusy ? '1px solid rgba(239,68,68,0.28)' : '1px solid rgba(255,255,255,0.14)',
+                            color: optBusy ? 'rgba(239,68,68,0.95)' : 'rgba(255,255,255,0.5)',
+                          }}
+                          title={optBusy ? '停止优化' : '魔法棒：优化提示词（大模型）'}
+                        >
+                          {optBusy ? <Square size={14} /> : <Sparkles size={14} />}
+                        </button>
                       </div>
-                    </Section>
+                    </Field>
 
-                    {/* 输入配置 */}
-                    <Section title="输入配置">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <Field label="上下文范围">
-                          <select value={contextScope} onChange={e => setContextScope(e.target.value)} className="field-input">
-                            {CONTEXT_OPTIONS.map(o => (
-                              <option key={o.value} value={o.value}>{o.label}</option>
-                            ))}
-                          </select>
-                        </Field>
-                        <div className="flex flex-wrap items-end gap-4 pb-1">
-                          <label className="flex items-center gap-1.5 text-xs text-white/60">
-                            <input type="checkbox" checked={acceptsUserInput} onChange={e => setAcceptsUserInput(e.target.checked)} />
-                            接受用户输入
-                          </label>
-                          <label className="flex items-center gap-1.5 text-xs text-white/60">
-                            <input type="checkbox" checked={acceptsAttachments} onChange={e => setAcceptsAttachments(e.target.checked)} />
-                            接受附件
-                          </label>
-                        </div>
-                      </div>
-                    </Section>
-
-                    {/* 执行配置 */}
-                    <Section title="执行配置">
-                      <Field label="提示词模板 (promptTemplate)">
-                        <div className="relative">
-                          <textarea value={promptTemplate} onChange={e => setPromptTemplate(e.target.value)}
-                            className="field-input min-h-[120px] font-mono text-xs pr-12" placeholder="支持 {{变量}} 占位符" />
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (optBusy) { cancelOptimize(); return; }
-                              setOptOriginal(promptTemplate.trim());
-                              setOptText('');
-                              setOptError(null);
-                              setOptOpen(true);
-                              void startOptimize();
-                            }}
-                            className="absolute bottom-2 right-2 h-8 w-8 inline-flex items-center justify-center rounded-[10px] transition-colors"
-                            style={{
-                              background: optBusy ? 'rgba(239,68,68,0.12)' : 'rgba(255,255,255,0.06)',
-                              border: optBusy ? '1px solid rgba(239,68,68,0.28)' : '1px solid rgba(255,255,255,0.14)',
-                              color: optBusy ? 'rgba(239,68,68,0.95)' : 'rgba(255,255,255,0.5)',
-                            }}
-                            title={optBusy ? '停止优化' : '魔法棒：优化提示词（大模型）'}
-                          >
-                            {optBusy ? <Square size={14} /> : <Sparkles size={14} />}
-                          </button>
-                        </div>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <label className="flex items-center gap-1.5 text-xs text-white/60">
+                        <input type="checkbox" checked={isEnabled} onChange={e => setIsEnabled(e.target.checked)} />
+                        启用
+                      </label>
+                      <label className="flex items-center gap-1.5 text-xs text-white/60">
+                        <input type="checkbox" checked={isBuiltIn} onChange={e => setIsBuiltIn(e.target.checked)} />
+                        内置
+                      </label>
+                      <span className="text-white/10">|</span>
+                      <Field label="排序">
+                        <input type="number" value={order} onChange={e => setOrder(Number(e.target.value))}
+                          className="field-input w-16" />
                       </Field>
-                      <Field label="系统提示词覆盖 (可选)" className="mt-3">
-                        <textarea value={systemPromptOverride} onChange={e => setSystemPromptOverride(e.target.value)}
-                          className="field-input min-h-[80px] font-mono text-xs" placeholder="留空使用默认角色系统提示词" />
-                      </Field>
-                      <Field label="模型类型" className="mt-3">
-                        <ModelTypePicker
-                          value={modelType}
-                          onChange={setModelType}
-                          compact
-                        />
-                      </Field>
-                    </Section>
+                    </div>
 
-                    {/* 输出配置 */}
-                    <Section title="输出配置">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <Field label="输出模式">
-                          <select value={outputMode} onChange={e => setOutputMode(e.target.value)} className="field-input">
-                            {OUTPUT_MODES.map(o => (
-                              <option key={o.value} value={o.value}>{o.label}</option>
-                            ))}
-                          </select>
-                        </Field>
-                        <div className="flex items-end pb-1">
-                          <label className="flex items-center gap-1.5 text-xs text-white/60">
-                            <input type="checkbox" checked={echoToChat} onChange={e => setEchoToChat(e.target.checked)} />
-                            同时回显到对话
-                          </label>
+                    {/* ━━━ 高级配置：折叠 ━━━ */}
+                    <div>
+                      <button
+                        type="button"
+                        onClick={() => setAdvancedOpen(!advancedOpen)}
+                        className="text-xs text-white/40 hover:text-white/60 transition flex items-center gap-1.5"
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                          className={`transition-transform ${advancedOpen ? 'rotate-90' : ''}`}
+                        ><path d="M9 18l6-6-6-6"/></svg>
+                        高级配置
+                        <span className="text-white/20">
+                          （SkillKey / 分类 / 描述 / 标签 / 上下文 / 输出模式 / 模型类型）
+                        </span>
+                      </button>
+
+                      {advancedOpen && (
+                        <div className="mt-3 space-y-4 pl-3 border-l border-white/8">
+                          <Section title="基本信息">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <Field label="SkillKey">
+                                <input value={skillKey} onChange={e => setSkillKey(e.target.value)}
+                                  className="field-input" placeholder="自动生成" disabled={!isCreating} />
+                              </Field>
+                              <Field label="分类">
+                                <select value={category} onChange={e => setCategory(e.target.value)} className="field-input">
+                                  {Object.entries(CATEGORY_MAP).map(([k, v]) => (
+                                    <option key={k} value={k}>{v.icon} {v.label}</option>
+                                  ))}
+                                </select>
+                              </Field>
+                              <Field label="可见性">
+                                <select value={visibility} onChange={e => setVisibility(e.target.value)} className="field-input">
+                                  {VISIBILITY_OPTIONS.map(o => (
+                                    <option key={o.value} value={o.value}>{o.label}</option>
+                                  ))}
+                                </select>
+                              </Field>
+                            </div>
+                            <Field label="描述" className="mt-3">
+                              <input value={description} onChange={e => setDescription(e.target.value)}
+                                className="field-input" placeholder="简要描述技能的功能和用途" />
+                            </Field>
+                            <Field label="标签" className="mt-3">
+                              <input value={tags} onChange={e => setTags(e.target.value)}
+                                className="field-input" placeholder="逗号分隔，如: 分析, PRD, 审查" />
+                            </Field>
+                          </Section>
+
+                          <Section title="输入配置">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <Field label="上下文范围">
+                                <select value={contextScope} onChange={e => setContextScope(e.target.value)} className="field-input">
+                                  {CONTEXT_OPTIONS.map(o => (
+                                    <option key={o.value} value={o.value}>{o.label}</option>
+                                  ))}
+                                </select>
+                              </Field>
+                              <div className="flex flex-wrap items-end gap-4 pb-1">
+                                <label className="flex items-center gap-1.5 text-xs text-white/60">
+                                  <input type="checkbox" checked={acceptsUserInput} onChange={e => setAcceptsUserInput(e.target.checked)} />
+                                  接受用户输入
+                                </label>
+                                <label className="flex items-center gap-1.5 text-xs text-white/60">
+                                  <input type="checkbox" checked={acceptsAttachments} onChange={e => setAcceptsAttachments(e.target.checked)} />
+                                  接受附件
+                                </label>
+                              </div>
+                            </div>
+                          </Section>
+
+                          <Section title="执行配置">
+                            <Field label="系统提示词覆盖（可选）">
+                              <textarea value={systemPromptOverride} onChange={e => setSystemPromptOverride(e.target.value)}
+                                className="field-input min-h-[80px] font-mono text-xs" placeholder="留空使用默认角色系统提示词" />
+                            </Field>
+                            <Field label="模型类型" className="mt-3">
+                              <ModelTypePicker value={modelType} onChange={setModelType} compact />
+                            </Field>
+                          </Section>
+
+                          <Section title="输出配置">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <Field label="输出模式">
+                                <select value={outputMode} onChange={e => setOutputMode(e.target.value)} className="field-input">
+                                  {OUTPUT_MODES.map(o => (
+                                    <option key={o.value} value={o.value}>{o.label}</option>
+                                  ))}
+                                </select>
+                              </Field>
+                              <div className="flex items-end pb-1">
+                                <label className="flex items-center gap-1.5 text-xs text-white/60">
+                                  <input type="checkbox" checked={echoToChat} onChange={e => setEchoToChat(e.target.checked)} />
+                                  同时回显到对话
+                                </label>
+                              </div>
+                            </div>
+                          </Section>
                         </div>
-                      </div>
-                    </Section>
+                      )}
+                    </div>
                   </div>
                 </>
               )}

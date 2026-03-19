@@ -12,9 +12,11 @@
 
 | 类型 | 模块 | 描述 |
 |------|------|------|
-| refactor | prd-admin | 废弃提示词管理页（PromptStagesPage），功能统一迁移至技能管理页（SkillsPage）：新增魔法棒（AI 提示词优化 SSE 流式）、拖拽排序、系统指令 Tab、文学创作 Tab |
-| feat | prd-admin | 新增 SegmentedTabs 共享组件、SystemPromptsPanel / LiteraryPromptsPanel 独立面板组件 |
-| fix | prd-admin | /prompts 路由重定向至 /skills，避免旧书签 404 |
+| refactor | prd-admin | 废弃提示词管理页，功能统一迁移至技能管理页：新增魔法棒、拖拽排序、系统指令 Tab |
+| refactor | prd-admin | 技能编辑器分简洁/高级模式：核心区只显示名称+角色+提示词，其余字段折叠到「高级配置」 |
+| fix | prd-admin | 修复右侧编辑器面板不撑满高度的布局问题；移除无用的文学创作 Tab |
+| fix | prd-desktop | 移除旧 get_prompts 5 分钟轮询（技能统一后 ChatInput 已走 get_skills 事件驱动） |
+| fix | prd-api | 提示词迁移技能时 SkillKey 从标题生成有意义的名称，替代 legacy-prompt-N-role 格式 |
 
 ### 2026-03-18
 

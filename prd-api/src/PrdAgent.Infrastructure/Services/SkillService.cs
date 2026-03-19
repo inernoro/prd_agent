@@ -134,9 +134,11 @@ public class SkillService : ISkillService
         {
             if (string.IsNullOrWhiteSpace(prompt.PromptKey)) continue;
 
-            // 幂等：跳过已存在的 skillKey
+            var newKey = GenerateSkillKeyFromTitle(prompt.Title, prompt.Role, prompt.Order);
+
+            // 幂等：跳过已存在的 skillKey（兼容旧 legacy-prompt-* 和新格式）
             var exists = await _db.Skills
-                .Find(x => x.SkillKey == prompt.PromptKey)
+                .Find(x => x.SkillKey == prompt.PromptKey || x.SkillKey == newKey)
                 .AnyAsync(ct);
             if (exists) continue;
 
@@ -152,10 +154,12 @@ public class SkillService : ISkillService
 
     private static Skill PromptEntryToSkill(PromptEntry prompt)
     {
+        // 从 title 生成有意义的 SkillKey，而非沿用 legacy-prompt-N-role
+        var key = GenerateSkillKeyFromTitle(prompt.Title, prompt.Role, prompt.Order);
         return new Skill
         {
             Id = Guid.NewGuid().ToString("N"),
-            SkillKey = prompt.PromptKey,
+            SkillKey = key,
             Title = prompt.Title,
             Description = prompt.Title,
             Icon = GetDefaultIconForRole(prompt.Role),
@@ -194,5 +198,35 @@ public class SkillService : ISkillService
             UserRole.PM => "📋",
             _ => "📝"
         };
+    }
+
+    /// <summary>
+    /// 从中文标题生成 SkillKey：拼音化/简化 + role 后缀，避免无意义的 legacy-prompt-N-role
+    /// </summary>
+    private static string GenerateSkillKeyFromTitle(string title, UserRole role, int order)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+            return $"prompt-{order}-{role.ToString().ToLowerInvariant()}";
+
+        // 简单中文→拼音首字母映射不现实，改用 title hash + role 生成短且稳定的 key
+        var normalized = title.Trim().ToLowerInvariant().Replace(" ", "-");
+        // 保留 ASCII 字母数字和连字符
+        var sb = new System.Text.StringBuilder(normalized.Length);
+        foreach (var c in normalized)
+        {
+            if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')
+                sb.Append(c);
+        }
+        var ascii = sb.ToString().Trim('-');
+
+        // 如果中文标题提取不到 ASCII（纯中文），用 hash 缩写
+        if (string.IsNullOrEmpty(ascii))
+        {
+            var hash = Math.Abs(title.GetHashCode()).ToString("x8");
+            ascii = $"skill-{hash}";
+        }
+
+        var suffix = role.ToString().ToLowerInvariant();
+        return $"{ascii}-{order}-{suffix}";
     }
 }

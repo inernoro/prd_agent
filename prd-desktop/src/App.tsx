@@ -22,7 +22,7 @@ import { isSystemErrorCode } from './lib/systemError';
 import { useConnectionStore } from './stores/connectionStore';
 import { useDesktopBrandingStore } from './stores/desktopBrandingStore';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import type { ApiResponse, PromptsClientResponse, UserRole } from './types';
+import type { ApiResponse, UserRole } from './types';
 import { openGroupSessionAndSetStore } from './lib/openGroupSession';
 import { useClientConfigStore } from './stores/clientConfigStore';
 import { useUpdateStore } from './stores/updateStore';
@@ -312,48 +312,8 @@ function App() {
     useGroupListStore.getState().loadGroups().catch(() => {});
   }, [isAuthenticated]);
 
-  // 登录后拉取提示词列表（用于提示词按钮）
-  useEffect(() => {
-    if (!isAuthenticated) return;
-
-    let stopped = false;
-    let isLoading = false;
-    const fetchOnce = () => {
-      // 防止并发调用
-      if (isLoading) return Promise.resolve();
-      // 在函数内部检查连接状态，而不是作为依赖项
-      if (useConnectionStore.getState().status === 'disconnected') return Promise.resolve();
-      isLoading = true;
-      return invoke<ApiResponse<PromptsClientResponse>>('get_prompts')
-        .then((res) => {
-          if (stopped) return;
-          if (res?.success && res.data) {
-            useSessionStore.getState().setPrompts(res.data);
-          }
-        })
-        .catch(() => {
-          // 网络波动/断连不打扰用户；UI 会回落到本地硬编码
-        })
-        .finally(() => {
-          isLoading = false;
-        });
-    };
-
-    // 立刻拉一次
-    void fetchOnce();
-
-    // 后台配置变更后，Desktop 需要定期刷新（否则用户会误以为"保存没生效"）
-    // 频率：5 分钟（与后端 prompts cache TTL 对齐）
-    const timer = window.setInterval(() => void fetchOnce(), 5 * 60 * 1000);
-
-    // 移除 focus 事件监听，避免频繁切换窗口时重复请求
-    // 5分钟的轮询已经足够保持提示词列表的新鲜度
-
-    return () => {
-      stopped = true;
-      window.clearInterval(timer);
-    };
-  }, [isAuthenticated]);
+  // [已废弃] 旧 get_prompts 轮询已移除。
+  // 技能统一后，ChatInput 通过 get_skills 事件驱动加载技能列表，不再需要此处的 5 分钟轮询。
 
   // 监听 deep link：prdagent://join/{inviteCode}
   useEffect(() => {
