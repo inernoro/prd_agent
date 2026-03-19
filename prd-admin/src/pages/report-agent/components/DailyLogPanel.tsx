@@ -97,6 +97,20 @@ interface LogItemInput {
   createdAt?: string;
 }
 
+function dedupePreserveOrder(tags: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const raw of tags) {
+    const tag = raw.trim();
+    if (!tag) continue;
+    const key = tag.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(tag);
+  }
+  return result;
+}
+
 // ── Main Component ─────────────────────────────────────
 
 export function DailyLogPanel() {
@@ -122,7 +136,8 @@ export function DailyLogPanel() {
   // Editing state
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [editContent, setEditContent] = useState('');
-  const [editCategory, setEditCategory] = useState('');
+  const [editSystemTags, setEditSystemTags] = useState<string[]>([]);
+  const [editCustomTags, setEditCustomTags] = useState<string[]>([]);
   const [editDuration, setEditDuration] = useState<number | undefined>(undefined);
 
   // Data source commits
@@ -281,9 +296,9 @@ export function DailyLogPanel() {
       return;
     }
 
-    const primaryCategory = SYSTEM_TAG_ORDER.find((key) => selectedSystemTags.includes(key)) ?? DailyLogCategory.Other;
-    const extraSystemTags = SYSTEM_TAG_ORDER.filter((key) => key !== primaryCategory && selectedSystemTags.includes(key));
-    const tags = [...extraSystemTags, ...selectedCustomTags];
+    const orderedSystemTags = SYSTEM_TAG_ORDER.filter((key) => selectedSystemTags.includes(key));
+    const primaryCategory = orderedSystemTags.find((key) => key !== DailyLogCategory.Other) ?? DailyLogCategory.Other;
+    const tags = dedupePreserveOrder([...orderedSystemTags, ...selectedCustomTags]);
 
     const newItem: LogItemInput = {
       content: text,
@@ -318,6 +333,35 @@ export function DailyLogPanel() {
       prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]
     ));
     inputRef.current?.focus();
+  };
+
+  const splitItemTagsForEdit = useCallback((item: LogItemInput) => {
+    const rawTags = item.tags ?? [];
+    const normalized = dedupePreserveOrder(rawTags);
+    const systemTags = normalized.filter((tag) => SYSTEM_TAG_ORDER.includes(tag as typeof SYSTEM_TAG_ORDER[number]));
+    const custom = normalized.filter((tag) => !SYSTEM_TAG_ORDER.includes(tag as typeof SYSTEM_TAG_ORDER[number]));
+
+    if (systemTags.length > 0 || custom.length > 0) {
+      return { systemTags, customTags: custom };
+    }
+
+    // 兼容历史数据：无 tags 时回退到 category
+    const fallbackSystem = SYSTEM_TAG_ORDER.includes(item.category as typeof SYSTEM_TAG_ORDER[number])
+      ? [item.category]
+      : [DailyLogCategory.Other];
+    return { systemTags: fallbackSystem, customTags: [] as string[] };
+  }, []);
+
+  const handleEditSystemTagToggle = (tag: string) => {
+    setEditSystemTags((prev) => (
+      prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]
+    ));
+  };
+
+  const handleEditCustomTagToggle = (tag: string) => {
+    setEditCustomTags((prev) => (
+      prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]
+    ));
   };
 
   const handleAddCustomTag = async () => {
@@ -444,21 +488,37 @@ export function DailyLogPanel() {
   const startEdit = (idx: number) => {
     setEditingIdx(idx);
     setEditContent(items[idx].content);
-    setEditCategory(items[idx].category);
+    const selection = splitItemTagsForEdit(items[idx]);
+    setEditSystemTags(selection.systemTags);
+    setEditCustomTags(selection.customTags);
     setEditDuration(items[idx].durationMinutes);
   };
 
   const cancelEdit = () => {
     setEditingIdx(null);
+    setEditSystemTags([]);
+    setEditCustomTags([]);
   };
 
   const confirmEdit = async () => {
     if (editingIdx === null) return;
+    const editSelectedCount = editSystemTags.length + editCustomTags.length;
+    if (editSelectedCount === 0) {
+      toast.error('请至少选择一个标签');
+      return;
+    }
+
+    const orderedSystemTags = SYSTEM_TAG_ORDER.filter((key) => editSystemTags.includes(key));
+    const primaryCategory = orderedSystemTags.find((key) => key !== DailyLogCategory.Other) ?? DailyLogCategory.Other;
+    const tags = dedupePreserveOrder([...orderedSystemTags, ...editCustomTags]);
+
     const newItems = items.map((item, i) =>
-      i === editingIdx ? { content: editContent, category: editCategory, durationMinutes: editDuration } : item
+      i === editingIdx ? { content: editContent, category: primaryCategory, tags, durationMinutes: editDuration } : item
     );
     setItems(newItems);
     setEditingIdx(null);
+    setEditSystemTags([]);
+    setEditCustomTags([]);
     await doSave(newItems);
   };
 
@@ -1000,24 +1060,66 @@ export function DailyLogPanel() {
                                 autoFocus
                               />
                               <div className="flex items-center gap-2 flex-wrap">
-                                <div className="flex gap-1">
-                                  {Object.entries(CATEGORY_CONFIG).map(([key, c]) => {
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  {systemCategoryKeys.map((key) => {
+                                    const c = CATEGORY_CONFIG[key];
                                     const CIcon = c.icon;
+                                    const isActive = editSystemTags.includes(key);
                                     return (
                                       <button
-                                        key={key}
+                                        key={`edit-system-${key}`}
                                         className="px-2 py-0.5 rounded text-[10px] transition-colors"
                                         style={{
-                                          background: editCategory === key ? c.bg : 'transparent',
-                                          color: editCategory === key ? c.color : 'var(--text-muted)',
+                                          background: isActive ? c.bg : 'transparent',
+                                          color: isActive ? c.color : 'var(--text-muted)',
+                                          border: `1px solid ${isActive ? c.color.replace('0.95', '0.3') : 'transparent'}`,
                                         }}
-                                        onClick={() => setEditCategory(key)}
+                                        onClick={() => handleEditSystemTagToggle(key)}
                                       >
                                         <CIcon size={10} className="inline mr-0.5" />
                                         {c.label}
                                       </button>
                                     );
                                   })}
+                                  {customTags.map((tag) => {
+                                    const isActive = editCustomTags.includes(tag);
+                                    return (
+                                      <button
+                                        key={`edit-custom-${tag}`}
+                                        className="px-2 py-0.5 rounded text-[10px] transition-colors"
+                                        style={{
+                                          background: isActive ? 'rgba(20, 184, 166, 0.12)' : 'transparent',
+                                          color: isActive ? 'rgba(20, 184, 166, 0.95)' : 'var(--text-muted)',
+                                          border: `1px solid ${isActive ? 'rgba(20, 184, 166, 0.3)' : 'transparent'}`,
+                                        }}
+                                        onClick={() => handleEditCustomTagToggle(tag)}
+                                      >
+                                        <Tag size={8} className="inline mr-0.5" />
+                                        {tag}
+                                      </button>
+                                    );
+                                  })}
+                                  {(() => {
+                                    const key = DailyLogCategory.Other;
+                                    const c = CATEGORY_CONFIG[key];
+                                    const CIcon = c.icon;
+                                    const isActive = editSystemTags.includes(key);
+                                    return (
+                                      <button
+                                        key="edit-system-other"
+                                        className="px-2 py-0.5 rounded text-[10px] transition-colors"
+                                        style={{
+                                          background: isActive ? c.bg : 'transparent',
+                                          color: isActive ? c.color : 'var(--text-muted)',
+                                          border: `1px solid ${isActive ? c.color.replace('0.95', '0.3') : 'transparent'}`,
+                                        }}
+                                        onClick={() => handleEditSystemTagToggle(key)}
+                                      >
+                                        <CIcon size={10} className="inline mr-0.5" />
+                                        {c.label}
+                                      </button>
+                                    );
+                                  })()}
                                 </div>
                                 <div className="flex items-center gap-1 ml-2">
                                   <Clock size={11} style={{ color: 'var(--text-muted)' }} />
@@ -1051,21 +1153,37 @@ export function DailyLogPanel() {
                                 {item.content}
                               </div>
                               <div className="flex items-center gap-2 mt-1 flex-wrap">
-                                <span
-                                  className="text-[10px] px-1.5 py-0.5 rounded"
-                                  style={{ background: cfg.bg, color: cfg.color }}
-                                >
-                                  {cfg.label}
-                                </span>
-                                {item.tags && item.tags.map((tag, ti) => (
+                                {item.tags && item.tags.length > 0 ? item.tags.map((tag, ti) => {
+                                  const sysCfg = CATEGORY_CONFIG[tag];
+                                  if (sysCfg) {
+                                    const Icon = sysCfg.icon;
+                                    return (
+                                      <span
+                                        key={ti}
+                                        className="text-[10px] px-1.5 py-0.5 rounded flex items-center gap-0.5"
+                                        style={{ background: sysCfg.bg, color: sysCfg.color }}
+                                      >
+                                        <Icon size={8} /> {sysCfg.label}
+                                      </span>
+                                    );
+                                  }
+                                  return (
+                                    <span
+                                      key={ti}
+                                      className="text-[10px] px-1.5 py-0.5 rounded flex items-center gap-0.5"
+                                      style={{ background: 'rgba(20, 184, 166, 0.1)', color: 'rgba(20, 184, 166, 0.85)' }}
+                                    >
+                                      <Tag size={8} /> {tag}
+                                    </span>
+                                  );
+                                }) : (
                                   <span
-                                    key={ti}
-                                    className="text-[10px] px-1.5 py-0.5 rounded flex items-center gap-0.5"
-                                    style={{ background: 'rgba(20, 184, 166, 0.1)', color: 'rgba(20, 184, 166, 0.85)' }}
+                                    className="text-[10px] px-1.5 py-0.5 rounded"
+                                    style={{ background: cfg.bg, color: cfg.color }}
                                   >
-                                    <Tag size={8} /> {tag}
+                                    {cfg.label}
                                   </span>
-                                ))}
+                                )}
                                 {item.durationMinutes != null && item.durationMinutes > 0 && (
                                   <span className="text-[10px] flex items-center gap-0.5" style={{ color: 'var(--text-muted)' }}>
                                     <Clock size={9} />
