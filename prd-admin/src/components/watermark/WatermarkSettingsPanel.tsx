@@ -2235,8 +2235,8 @@ function WatermarkPreview(props: {
   }, [draggable]);
 
   const distanceWrapperStyle = distancePlacement === 'outside'
-    ? { inset: -18 }
-    : { inset: 6 };
+    ? { top: -18, right: -18, bottom: -18, left: -18 }
+    : { top: 6, right: 6, bottom: 6, left: 6 };
   const topLabelClass = distancePlacement === 'outside'
     ? 'absolute left-1/2 top-0 -translate-x-1/2 text-[11px] font-semibold'
     : 'absolute left-1/2 top-2 -translate-x-1/2 text-[11px] font-semibold';

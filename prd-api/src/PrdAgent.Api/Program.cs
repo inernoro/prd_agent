@@ -317,6 +317,9 @@ builder.Services.AddSingleton<IAssetStorage>(sp =>
     throw new InvalidOperationException($"AssetStorage provider 选择异常：providerRaw={providerRaw} provider={provider}");
 });
 
+// 文件内容提取器（PDF/Word/Excel/PPT）
+builder.Services.AddSingleton<IFileContentExtractor, FileContentExtractor>();
+
 // 配置Redis
 var redisConnectionString = builder.Configuration["Redis:ConnectionString"] ?? "localhost:6379";
 var sessionTimeout = builder.Configuration.GetValue<int>("Session:TimeoutMinutes", 30);

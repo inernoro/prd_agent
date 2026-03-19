@@ -137,7 +137,7 @@ export default function ReportDetailPage() {
     <div className="h-full min-h-0 flex flex-col gap-4">
       {/* Return Dialog */}
       {showReturnDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)' }}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}>
           <GlassCard className="p-6 w-[440px]">
             <div className="text-[16px] font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>退回周报</div>
             <textarea

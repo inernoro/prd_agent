@@ -1420,6 +1420,7 @@ function WorkspaceCheckItem({ ws, checked, onChange }: { ws: ShareableWorkspace;
               background: checked ? 'rgba(99,102,241,0.9)' : 'rgba(0,0,0,0.5)',
               border: `1.5px solid ${checked ? 'rgba(99,102,241,0.9)' : 'rgba(255,255,255,0.3)'}`,
               backdropFilter: 'blur(4px)',
+              WebkitBackdropFilter: 'blur(4px)',
             }}
           >
             {checked && <Check size={12} className="text-white" />}
@@ -1432,7 +1433,7 @@ function WorkspaceCheckItem({ ws, checked, onChange }: { ws: ShareableWorkspace;
           target="_blank"
           rel="noopener noreferrer"
           className="absolute top-2 right-2 z-10 w-6 h-6 rounded-[6px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-150"
-          style={{ background: 'rgba(0,0,0,0.5)', color: 'rgba(255,255,255,0.8)', backdropFilter: 'blur(4px)' }}
+          style={{ background: 'rgba(0,0,0,0.5)', color: 'rgba(255,255,255,0.8)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}
           onClick={(e) => e.stopPropagation()}
           title="在新标签页打开"
         >

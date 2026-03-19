@@ -35,13 +35,13 @@ export function Dialog({
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay
-          className="fixed inset-0 z-100 prd-dialog-overlay"
+          className="fixed inset-0 z-100 flex items-center justify-center prd-dialog-overlay"
           style={{ background: 'rgba(0,0,0,0.72)' }}
-        />
+        >
         <DialogPrimitive.Content
           {...(description ? {} : ({ 'aria-describedby': undefined } as const))}
           className={[
-            'fixed inset-0 z-110 m-auto h-fit w-[92vw] rounded-[22px] p-6 flex flex-col prd-dialog-content',
+            'w-[92vw] rounded-[22px] p-6 flex flex-col prd-dialog-content',
             contentClassName ?? '',
           ].join(' ')}
           style={{
@@ -79,8 +79,10 @@ export function Dialog({
             </div>
           </div>
 
-          <div className="mt-5 flex-1 min-h-0 overflow-y-auto">{content}</div>
+          {/* -mx-1 px-1: Safari 裁剪 overflow 容器内子元素 box-shadow，留 4px 呼吸空间 */}
+          <div className="mt-5 flex-1 min-h-0 overflow-y-auto -mx-1 px-1">{content}</div>
         </DialogPrimitive.Content>
+        </DialogPrimitive.Overlay>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
   );
