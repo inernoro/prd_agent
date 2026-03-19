@@ -224,7 +224,8 @@ public class VisualAgentAdapter : IAgentAdapter
                     }
                 },
                 ["max_tokens"] = 1000
-            }
+            },
+            Context = new GatewayRequestContext { UserId = context.UserId }
         };
 
         var fullContent = new System.Text.StringBuilder();

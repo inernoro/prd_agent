@@ -431,7 +431,7 @@ public sealed class ArenaRunWorker : BackgroundService
             RequestId: Guid.NewGuid().ToString("N"),
             GroupId: null,
             SessionId: null,
-            UserId: null,
+            UserId: input.UserId,
             ViewRole: null,
             DocumentChars: null,
             DocumentHash: null,

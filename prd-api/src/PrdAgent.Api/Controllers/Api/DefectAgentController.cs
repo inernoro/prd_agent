@@ -30,6 +30,7 @@ public class DefectAgentController : ControllerBase
     private readonly ICacheManager _cache;
     private readonly DefectWebhookService _webhookService;
     private readonly IOpenPlatformService _openPlatformService;
+    private readonly ILLMRequestContextAccessor _llmRequestContext;
     private static readonly TimeSpan ClientBindingTtl = TimeSpan.FromDays(3);
 
     public DefectAgentController(
@@ -39,7 +40,8 @@ public class DefectAgentController : ControllerBase
         IAssetStorage assetStorage,
         ICacheManager cache,
         DefectWebhookService webhookService,
-        IOpenPlatformService openPlatformService)
+        IOpenPlatformService openPlatformService,
+        ILLMRequestContextAccessor llmRequestContext)
     {
         _db = db;
         _gateway = gateway;
@@ -48,6 +50,7 @@ public class DefectAgentController : ControllerBase
         _cache = cache;
         _webhookService = webhookService;
         _openPlatformService = openPlatformService;
+        _llmRequestContext = llmRequestContext;
     }
 
     private string GetUserId()
@@ -2591,6 +2594,15 @@ public class DefectAgentController : ControllerBase
             }
 
             // 获取 LLM 客户端（使用注册的 AppCallerCode）
+            using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+                RequestId: Guid.NewGuid().ToString("N"),
+                GroupId: null, SessionId: null,
+                UserId: GetUserId(),
+                ViewRole: null, DocumentChars: null, DocumentHash: null,
+                SystemPromptRedacted: null,
+                RequestType: "chat",
+                AppCallerCode: AppCallerRegistry.DefectAgent.Polish.Chat,
+                ModelResolutionType: null));
             var client = _gateway.CreateClient(AppCallerRegistry.DefectAgent.Polish.Chat, "chat");
 
             // 构建用户消息（包含截图分析描述）
@@ -2672,6 +2684,15 @@ public class DefectAgentController : ControllerBase
 
 请用简洁准确的语言描述截图中展示的缺陷内容（2-5句话）。直接输出描述，不要添加前缀或解释。";
 
+            using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+                RequestId: Guid.NewGuid().ToString("N"),
+                GroupId: null, SessionId: null,
+                UserId: GetUserId(),
+                ViewRole: null, DocumentChars: null, DocumentHash: null,
+                SystemPromptRedacted: null,
+                RequestType: "vision",
+                AppCallerCode: AppCallerRegistry.DefectAgent.AnalyzeImage.Vision,
+                ModelResolutionType: null));
             var client = _gateway.CreateClient(AppCallerRegistry.DefectAgent.AnalyzeImage.Vision, "vision");
 
             var messages = new List<LLMMessage>

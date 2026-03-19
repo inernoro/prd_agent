@@ -89,7 +89,8 @@ public class ReportGenerationService
                 },
                 ["temperature"] = 0.3,
                 ["max_tokens"] = 4096
-            }
+            },
+            Context = new GatewayRequestContext { UserId = userId }
         };
 
         var response = await _gateway.SendAsync(request, CancellationToken.None);
@@ -485,7 +486,8 @@ public class ReportGenerationService
                 },
                 ["temperature"] = 0.3,
                 ["max_tokens"] = 4096
-            }
+            },
+            Context = new GatewayRequestContext { UserId = member.UserId }
         };
 
         var response = await _gateway.SendAsync(request, CancellationToken.None);

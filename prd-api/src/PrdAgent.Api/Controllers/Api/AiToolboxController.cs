@@ -88,7 +88,7 @@ public class AiToolboxController : ControllerBase
         _logger.LogInformation("百宝箱收到消息: UserId={UserId}, Length={Length}", userId, message.Length);
 
         // Step 1: 意图识别
-        var intent = await _intentClassifier.ClassifyAsync(message, ct);
+        var intent = await _intentClassifier.ClassifyAsync(message, userId, ct);
 
         _logger.LogInformation("意图识别完成: PrimaryIntent={Intent}, Confidence={Confidence}, Agents={Agents}",
             intent.PrimaryIntent, intent.Confidence, string.Join(",", intent.SuggestedAgents));
@@ -183,7 +183,7 @@ public class AiToolboxController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "消息内容不能为空"));
         }
 
-        var intent = await _intentClassifier.ClassifyAsync(message, ct);
+        var intent = await _intentClassifier.ClassifyAsync(message, userId, ct);
         return Ok(ApiResponse<IntentResult>.Ok(intent));
     }
 
