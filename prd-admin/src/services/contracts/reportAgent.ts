@@ -783,6 +783,12 @@ export type UpdateMyAiSourceContract = (input: {
   enabled: boolean;
 }) => Promise<ApiResponse<{ source: { key: string; enabled: boolean } }>>;
 
+export type GetMyDailyLogTagsContract = () => Promise<ApiResponse<{ items: string[] }>>;
+
+export type UpdateMyDailyLogTagsContract = (input: {
+  items: string[];
+}) => Promise<ApiResponse<{ items: string[] }>>;
+
 // --- Personal Sources ---
 export interface PersonalSource {
   id: string;

@@ -58,6 +58,8 @@ import type {
   CancelVacationContract,
   ListMyAiSourcesContract,
   UpdateMyAiSourceContract,
+  GetMyDailyLogTagsContract,
+  UpdateMyDailyLogTagsContract,
   ListPersonalSourcesContract,
   CreatePersonalSourceContract,
   UpdatePersonalSourceContract,
@@ -689,6 +691,17 @@ export const updateMyAiSourceReal: UpdateMyAiSourceContract = async (input) => {
     api.reportAgent.aiSources.byKey(encodeURIComponent(input.key)),
     { method: 'PUT', body: { enabled: input.enabled } }
   );
+};
+
+export const getMyDailyLogTagsReal: GetMyDailyLogTagsContract = async () => {
+  return await apiRequest<{ items: string[] }>(api.reportAgent.dailyLogTags.get(), { method: 'GET' });
+};
+
+export const updateMyDailyLogTagsReal: UpdateMyDailyLogTagsContract = async (input) => {
+  return await apiRequest<{ items: string[] }>(api.reportAgent.dailyLogTags.update(), {
+    method: 'PUT',
+    body: { items: input.items },
+  });
 };
 
 export const listPersonalSourcesReal: ListPersonalSourcesContract = async () => {

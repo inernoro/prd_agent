@@ -98,6 +98,11 @@ public class ReportAgentPreferences
     /// 是否启用 MAP 平台工作记录作为 AI 周报生成上下文
     /// </summary>
     public bool MapPlatformSourceEnabled { get; set; } = true;
+
+    /// <summary>
+    /// 日常记录页的自定义快捷标签（用户级）
+    /// </summary>
+    public List<string>? DailyLogCustomTags { get; set; }
 }
 
 /// <summary>

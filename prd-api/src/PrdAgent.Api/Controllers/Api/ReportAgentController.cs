@@ -23,6 +23,8 @@ public class ReportAgentController : ControllerBase
 {
     private const string AppKey = "report-agent";
     private const long MaxRichTextImageBytes = 5 * 1024 * 1024;
+    private const int MaxDailyLogCustomTagCount = 20;
+    private const int MaxDailyLogCustomTagLength = 16;
     private static readonly string[] EditableReportStatuses =
     {
         WeeklyReportStatus.Draft,
@@ -1742,6 +1744,67 @@ public class ReportAgentController : ControllerBase
 
     #endregion
 
+    #region My Daily Log Tags
+
+    /// <summary>
+    /// 获取我的日常记录自定义标签
+    /// </summary>
+    [HttpGet("my/daily-log-tags")]
+    public async Task<IActionResult> GetMyDailyLogTags(CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var prefs = await _db.UserPreferences
+            .Find(x => x.UserId == userId)
+            .FirstOrDefaultAsync(ct);
+
+        var tags = NormalizeDailyLogCustomTags(prefs?.ReportAgentPreferences?.DailyLogCustomTags);
+        return Ok(ApiResponse<object>.Ok(new { items = tags }));
+    }
+
+    /// <summary>
+    /// 更新我的日常记录自定义标签
+    /// </summary>
+    [HttpPut("my/daily-log-tags")]
+    public async Task<IActionResult> UpdateMyDailyLogTags([FromBody] UpdateMyDailyLogTagsRequest req, CancellationToken ct)
+    {
+        var normalizedTags = NormalizeDailyLogCustomTags(req?.Items);
+        if (normalizedTags.Count > MaxDailyLogCustomTagCount)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", $"自定义标签最多 {MaxDailyLogCustomTagCount} 个"));
+
+        if (normalizedTags.Any(x => x.Length > MaxDailyLogCustomTagLength))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", $"单个标签最多 {MaxDailyLogCustomTagLength} 个字符"));
+
+        var userId = GetUserId();
+        var update = Builders<UserPreferences>.Update
+            .Set(x => x.ReportAgentPreferences!.DailyLogCustomTags, normalizedTags)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+        await _db.UserPreferences.UpdateOneAsync(
+            x => x.UserId == userId,
+            update,
+            new UpdateOptions { IsUpsert = true },
+            ct);
+
+        return Ok(ApiResponse<object>.Ok(new { items = normalizedTags }));
+    }
+
+    private static List<string> NormalizeDailyLogCustomTags(IEnumerable<string>? tags)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var result = new List<string>();
+        foreach (var raw in tags ?? Enumerable.Empty<string>())
+        {
+            var tag = (raw ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(tag))
+                continue;
+            if (seen.Add(tag))
+                result.Add(tag);
+        }
+        return result;
+    }
+
+    #endregion
+
     #region Personal Sources (v2.0)
 
     /// <summary>
@@ -3256,6 +3319,11 @@ public class CreatePersonalSourceRequest
 public class UpdateMyAiSourceRequest
 {
     public bool Enabled { get; set; }
+}
+
+public class UpdateMyDailyLogTagsRequest
+{
+    public List<string>? Items { get; set; }
 }
 
 public class UpdatePersonalSourceRequest

@@ -12,6 +12,8 @@ import {
   getDailyLog,
   deleteDailyLog,
   listDailyLogs,
+  getMyDailyLogTags,
+  updateMyDailyLogTags,
   listPersonalSources,
   listDataSourceCommits,
 } from '@/services';
@@ -19,7 +21,6 @@ import {
   DailyLogCategory,
 } from '@/services/contracts/reportAgent';
 import type { DailyLog, DailyLogItem, ReportCommit, PersonalSource } from '@/services/contracts/reportAgent';
-import { useReportAgentStore } from '@/stores/reportAgentStore';
 
 // ── Helpers ────────────────────────────────────────────
 
@@ -73,6 +74,13 @@ const CATEGORY_CONFIG: Record<string, { label: string; color: string; bg: string
   other:         { label: '其他', color: 'rgba(148, 163, 184, 0.95)', bg: 'rgba(148, 163, 184, 0.12)', icon: MoreHorizontal },
 };
 
+const MAX_CUSTOM_TAG_COUNT = 20;
+const MAX_CUSTOM_TAG_LENGTH = 16;
+
+function normalizeCustomTag(tag: string): string {
+  return tag.trim().replace(/\s+/g, ' ');
+}
+
 interface LogItemInput {
   content: string;
   category: string;
@@ -95,19 +103,13 @@ export function DailyLogPanel() {
   const [quickInput, setQuickInput] = useState('');
   const [quickCategory, setQuickCategory] = useState<string>(DailyLogCategory.Development);
   const [quickTags, setQuickTags] = useState<string[]>([]);
+  const [customTags, setCustomTags] = useState<string[]>([]);
+  const [showTagManager, setShowTagManager] = useState(false);
+  const [tagDraft, setTagDraft] = useState('');
+  const [savingTags, setSavingTags] = useState(false);
+  const [editingTagIdx, setEditingTagIdx] = useState<number | null>(null);
+  const [editingTagDraft, setEditingTagDraft] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
-
-  // Team custom tags
-  const teams = useReportAgentStore((s) => s.teams);
-  const teamCustomTags = useMemo(() => {
-    const allTags = new Set<string>();
-    for (const t of teams) {
-      if (t.customDailyLogTags) {
-        for (const tag of t.customDailyLogTags) allTags.add(tag);
-      }
-    }
-    return Array.from(allTags);
-  }, [teams]);
 
   // Editing state
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
@@ -162,12 +164,31 @@ export function DailyLogPanel() {
     setLoaded(true);
   }, [selectedDate]);
 
-  // Load personal data sources once
+  const saveCustomTags = useCallback(async (nextTags: string[], successMessage?: string) => {
+    setSavingTags(true);
+    const res = await updateMyDailyLogTags({ items: nextTags });
+    setSavingTags(false);
+    if (res.success && res.data) {
+      setCustomTags(res.data.items);
+      if (successMessage) toast.success(successMessage);
+      return true;
+    }
+    toast.error(res.error?.message || '标签保存失败');
+    return false;
+  }, []);
+
+  // Load personal data sources + custom tags once
   useEffect(() => {
     void (async () => {
-      const res = await listPersonalSources();
-      if (res.success && res.data) {
-        setDataSources(res.data.items.filter((s) => s.enabled));
+      const [sourceRes, tagRes] = await Promise.all([
+        listPersonalSources(),
+        getMyDailyLogTags(),
+      ]);
+      if (sourceRes.success && sourceRes.data) {
+        setDataSources(sourceRes.data.items.filter((s) => s.enabled));
+      }
+      if (tagRes.success && tagRes.data) {
+        setCustomTags(tagRes.data.items);
       }
     })();
   }, []);
@@ -280,6 +301,100 @@ export function DailyLogPanel() {
     }
   };
 
+  const handleAddCustomTag = async () => {
+    const nextTag = normalizeCustomTag(tagDraft);
+    if (!nextTag) return;
+    if (nextTag.length > MAX_CUSTOM_TAG_LENGTH) {
+      toast.error(`标签最多 ${MAX_CUSTOM_TAG_LENGTH} 个字符`);
+      return;
+    }
+    const exists = customTags.some((tag) => tag.toLowerCase() === nextTag.toLowerCase());
+    if (exists) {
+      toast.error('标签已存在');
+      return;
+    }
+    if (customTags.length >= MAX_CUSTOM_TAG_COUNT) {
+      toast.error(`最多添加 ${MAX_CUSTOM_TAG_COUNT} 个标签`);
+      return;
+    }
+
+    const prevTags = customTags;
+    const updatedTags = [...customTags, nextTag];
+    setCustomTags(updatedTags);
+    setTagDraft('');
+
+    const ok = await saveCustomTags(updatedTags, '标签已添加');
+    if (!ok) {
+      setCustomTags(prevTags);
+      setTagDraft(nextTag);
+    }
+  };
+
+  const handleDeleteCustomTag = async (idx: number) => {
+    const removedTag = customTags[idx];
+    if (!removedTag) return;
+    const prevTags = customTags;
+    const prevQuickTags = quickTags;
+    const updatedTags = customTags.filter((_, i) => i !== idx);
+    setCustomTags(updatedTags);
+    setQuickTags(quickTags.filter((tag) => tag.toLowerCase() !== removedTag.toLowerCase()));
+    if (editingTagIdx === idx) {
+      setEditingTagIdx(null);
+      setEditingTagDraft('');
+    }
+
+    const ok = await saveCustomTags(updatedTags, '标签已删除');
+    if (!ok) {
+      setCustomTags(prevTags);
+      setQuickTags(prevQuickTags);
+    }
+  };
+
+  const handleConfirmEditCustomTag = async () => {
+    if (editingTagIdx === null) return;
+    const target = customTags[editingTagIdx];
+    if (!target) {
+      setEditingTagIdx(null);
+      setEditingTagDraft('');
+      return;
+    }
+
+    const nextTag = normalizeCustomTag(editingTagDraft);
+    if (!nextTag) {
+      toast.error('标签不能为空');
+      return;
+    }
+    if (nextTag.length > MAX_CUSTOM_TAG_LENGTH) {
+      toast.error(`标签最多 ${MAX_CUSTOM_TAG_LENGTH} 个字符`);
+      return;
+    }
+
+    const duplicated = customTags.some(
+      (tag, idx) => idx !== editingTagIdx && tag.toLowerCase() === nextTag.toLowerCase()
+    );
+    if (duplicated) {
+      toast.error('标签已存在');
+      return;
+    }
+
+    const prevTags = customTags;
+    const prevQuickTags = quickTags;
+    const updatedTags = customTags.map((tag, idx) => (idx === editingTagIdx ? nextTag : tag));
+    const updatedQuickTags = quickTags.map((tag) => (
+      tag.toLowerCase() === target.toLowerCase() ? nextTag : tag
+    ));
+    setCustomTags(updatedTags);
+    setQuickTags(updatedQuickTags);
+    setEditingTagIdx(null);
+    setEditingTagDraft('');
+
+    const ok = await saveCustomTags(updatedTags, '标签已更新');
+    if (!ok) {
+      setCustomTags(prevTags);
+      setQuickTags(prevQuickTags);
+    }
+  };
+
   const handleDeleteItem = async (idx: number) => {
     const newItems = items.filter((_, i) => i !== idx);
     setItems(newItems);
@@ -364,7 +479,10 @@ export function DailyLogPanel() {
   // ── Computed ──
 
   const todayMinutes = items.reduce((sum, i) => sum + (i.durationMinutes || 0), 0);
-  const loggedDates = new Set(weekLogs.map((l) => l.date.substring(0, 10)));
+  const loggedDates = useMemo(
+    () => new Set(weekLogs.map((l) => l.date.substring(0, 10))),
+    [weekLogs]
+  );
 
   // Week days array
   const weekDays = useMemo(() => {
@@ -539,8 +657,7 @@ export function DailyLogPanel() {
                     </button>
                   );
                 })}
-                {/* Custom tags from team settings */}
-                {teamCustomTags.map((tag) => {
+                {customTags.map((tag) => {
                   const isActive = quickTags.includes(tag);
                   return (
                     <button
@@ -562,7 +679,139 @@ export function DailyLogPanel() {
                     </button>
                   );
                 })}
+                <button
+                  className="px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all duration-150"
+                  style={{
+                    background: showTagManager ? 'rgba(59, 130, 246, 0.12)' : 'transparent',
+                    color: showTagManager ? 'rgba(59, 130, 246, 0.95)' : 'var(--text-muted)',
+                    border: `1px solid ${showTagManager ? 'rgba(59, 130, 246, 0.32)' : 'transparent'}`,
+                  }}
+                  onClick={() => setShowTagManager((v) => !v)}
+                >
+                  管理标签
+                </button>
               </div>
+              {showTagManager && (
+                <div
+                  className="mt-1 rounded-xl px-3 py-2.5 flex flex-col gap-2.5"
+                  style={{ border: '1px solid var(--border-primary)', background: 'var(--bg-tertiary)' }}
+                >
+                  <div className="flex items-center gap-2">
+                    <input
+                      className="flex-1 px-3 py-1.5 rounded-lg text-[12px] outline-none"
+                      style={{
+                        background: 'var(--bg-secondary)',
+                        color: 'var(--text-primary)',
+                        border: '1px solid var(--border-primary)',
+                      }}
+                      placeholder={`新增标签（最多 ${MAX_CUSTOM_TAG_COUNT} 个）`}
+                      value={tagDraft}
+                      onChange={(e) => setTagDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          void handleAddCustomTag();
+                        }
+                      }}
+                      disabled={savingTags}
+                    />
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => void handleAddCustomTag()}
+                      disabled={!tagDraft.trim() || savingTags}
+                    >
+                      添加
+                    </Button>
+                  </div>
+
+                  <div className="flex flex-wrap gap-1.5">
+                    {customTags.length === 0 ? (
+                      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                        暂无自定义标签
+                      </span>
+                    ) : (
+                      customTags.map((tag, idx) => {
+                        const isEditing = editingTagIdx === idx;
+                        return (
+                          <span
+                            key={`custom-tag-${tag}-${idx}`}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px]"
+                            style={{
+                              background: 'rgba(20, 184, 166, 0.1)',
+                              color: 'rgba(20, 184, 166, 0.92)',
+                              border: '1px solid rgba(20, 184, 166, 0.2)',
+                            }}
+                          >
+                            {isEditing ? (
+                              <>
+                                <input
+                                  className="w-24 bg-transparent outline-none text-[11px]"
+                                  value={editingTagDraft}
+                                  onChange={(e) => setEditingTagDraft(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      void handleConfirmEditCustomTag();
+                                    }
+                                    if (e.key === 'Escape') {
+                                      setEditingTagIdx(null);
+                                      setEditingTagDraft('');
+                                    }
+                                  }}
+                                  autoFocus
+                                />
+                                <button
+                                  className="hover:opacity-80"
+                                  onClick={() => void handleConfirmEditCustomTag()}
+                                  title="确认修改"
+                                >
+                                  <Check size={10} />
+                                </button>
+                                <button
+                                  className="hover:opacity-80"
+                                  onClick={() => {
+                                    setEditingTagIdx(null);
+                                    setEditingTagDraft('');
+                                  }}
+                                  title="取消"
+                                >
+                                  <X size={10} />
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <Tag size={9} />
+                                {tag}
+                                <button
+                                  className="hover:opacity-80"
+                                  onClick={() => {
+                                    setEditingTagIdx(idx);
+                                    setEditingTagDraft(tag);
+                                  }}
+                                  title="修改"
+                                >
+                                  <Pencil size={10} />
+                                </button>
+                                <button
+                                  className="hover:opacity-80"
+                                  onClick={() => void handleDeleteCustomTag(idx)}
+                                  title="删除"
+                                >
+                                  <Trash2 size={10} />
+                                </button>
+                              </>
+                            )}
+                          </span>
+                        );
+                      })
+                    )}
+                  </div>
+                  <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                    自定义标签仅影响你的日常记录快捷标签，不会改变系统默认分类。
+                  </div>
+                </div>
+              )}
             </div>
           </GlassCard>
 
