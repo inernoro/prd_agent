@@ -1101,6 +1101,14 @@ public class GroupsController : ControllerBase
             return;
         }
 
+        // 关键：先订阅 Channel 再回放 Mongo，避免回放期间的实时事件丢失（subscribe-before-replay 模式）
+        // 回放期间 Channel 中积累的事件会在回放后被读取，有 seq 的 message 通过 afterSeq 去重
+        using var sub = _groupMessageStreamHub.Subscribe(groupId);
+        var reader = sub.Reader;
+        var lastKeepAliveAt = DateTime.UtcNow;
+        var senderInfoCache = new Dictionary<string, (string Name, UserRole Role, string? AvatarUrl, List<GroupMemberTag>? Tags)>(StringComparer.Ordinal);
+        var groupMembersCache = await _groupService.GetMembersAsync(groupId);
+
         // 1) 回放 Mongo：按 groupSeq 递增（仅回放用户态可见消息，过滤已删除）
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -1124,10 +1132,10 @@ public class GroupsController : ControllerBase
                 var users = await _db.Users
                     .Find(u => batchSenderIds.Contains(u.UserId))
                     .ToListAsync(cancellationToken);
-                
+
                 // 获取群成员信息（用于 tags）
                 var batchMembers = await _groupService.GetMembersAsync(groupId);
-                
+
                 foreach (var u in users)
                 {
                     var uid = u.UserId;
@@ -1148,7 +1156,7 @@ public class GroupsController : ControllerBase
                 UserRole? senderRole = null;
                 string? senderAvatarUrl = null;
                 List<GroupMemberTag>? senderTags = null;
-                
+
                 if (m.SenderId != null && batchSenderInfoMap.TryGetValue(m.SenderId, out var info))
                 {
                     senderName = info.Name;
@@ -1156,7 +1164,7 @@ public class GroupsController : ControllerBase
                     senderAvatarUrl = info.AvatarUrl;
                     senderTags = info.Tags;
                 }
-                
+
                 var payload = ToStreamEvent(m, "message", senderName, senderRole, senderAvatarUrl, senderTags);
                 var json = JsonSerializer.Serialize(payload, AppJsonContext.Default.GroupMessageStreamEventDto);
                 await WriteSseAsync(id: seq.ToString(), eventName: "message", dataJson: json, ct: cancellationToken);
@@ -1164,12 +1172,7 @@ public class GroupsController : ControllerBase
             }
         }
 
-        // 2) 实时订阅：进程内广播（断线续传靠上面的 Mongo 回放）
-        using var sub = _groupMessageStreamHub.Subscribe(groupId);
-        var reader = sub.Reader;
-        var lastKeepAliveAt = DateTime.UtcNow;
-        var senderInfoCache = new Dictionary<string, (string Name, UserRole Role, string? AvatarUrl, List<GroupMemberTag>? Tags)>(StringComparer.Ordinal);
-        var groupMembersCache = await _groupService.GetMembersAsync(groupId);
+        // 2) 实时事件循环（Channel 在回放前已订阅，回放期间积累的事件会在此处被消费）
 
         async Task<(string? Name, UserRole? Role, string? AvatarUrl, List<GroupMemberTag>? Tags)> ResolveSenderInfoAsync(string? senderId)
         {
@@ -1201,12 +1204,21 @@ public class GroupsController : ControllerBase
                 lastKeepAliveAt = DateTime.UtcNow;
             }
 
-            // 等待一会儿（短轮询），让 keepalive 有机会写出；同时避免 WaitToReadAsync 一直阻塞导致 keepalive 缺失
-            var waitTask = reader.WaitToReadAsync(cancellationToken).AsTask();
-            var tick = Task.Delay(650, cancellationToken);
-            var done = await Task.WhenAny(waitTask, tick);
-            if (done != waitTask) continue;
-            if (!await waitTask) break;
+            // 短超时等待：既不阻塞 keepalive，又能在数据到达时尽快响应
+            // 原 650ms 会导致 delta 事件最坏延迟 650ms（tick 先就绪时 continue 跳过已到达的数据）
+            using var keepaliveCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            keepaliveCts.CancelAfter(TimeSpan.FromMilliseconds(100));
+            bool hasData;
+            try
+            {
+                hasData = await reader.WaitToReadAsync(keepaliveCts.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // 100ms 超时：无新数据，回到循环顶部检查 keepalive
+                continue;
+            }
+            if (!hasData) break;
 
             while (reader.TryRead(out var ev))
             {
