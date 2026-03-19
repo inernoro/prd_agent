@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -31,6 +32,7 @@ public class DefectAgentController : ControllerBase
     private readonly DefectWebhookService _webhookService;
     private readonly IOpenPlatformService _openPlatformService;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
+    private readonly IConfiguration _config;
     private static readonly TimeSpan ClientBindingTtl = TimeSpan.FromDays(3);
 
     public DefectAgentController(
@@ -41,7 +43,8 @@ public class DefectAgentController : ControllerBase
         ICacheManager cache,
         DefectWebhookService webhookService,
         IOpenPlatformService openPlatformService,
-        ILLMRequestContextAccessor llmRequestContext)
+        ILLMRequestContextAccessor llmRequestContext,
+        IConfiguration config)
     {
         _db = db;
         _gateway = gateway;
@@ -51,6 +54,7 @@ public class DefectAgentController : ControllerBase
         _webhookService = webhookService;
         _openPlatformService = openPlatformService;
         _llmRequestContext = llmRequestContext;
+        _config = config;
     }
 
     private string GetUserId()
@@ -2260,7 +2264,7 @@ public class DefectAgentController : ControllerBase
                 Method = method,
                 Path = path,
                 Query = query,
-                AbsoluteUrl = $"{Request.Scheme}://{Request.Host}{path}{query ?? ""}",
+                AbsoluteUrl = $"{Request.ResolveServerUrl(_config)}{path}{query ?? ""}",
                 RequestBodyRedacted = "[redacted]",
                 StatusCode = statusCode,
                 ErrorCode = errorCode,

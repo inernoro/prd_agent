@@ -637,7 +637,13 @@ function getNewContainerCount(branchId, profileId) {
 function findRunningBranches(excludeId) {
   return branches
     .filter(b => b.id !== excludeId && (b.status === 'running' || b.status === 'starting'))
-    .sort((a, b) => new Date(a.lastAccessedAt || a.createdAt || 0) - new Date(b.lastAccessedAt || b.createdAt || 0));
+    .sort((a, b) => {
+      // Color-marked branches are deprioritized (sorted to end) — they won't be stopped first
+      const am = a.isColorMarked ? 1 : 0;
+      const bm = b.isColorMarked ? 1 : 0;
+      if (am !== bm) return am - bm;
+      return new Date(a.lastAccessedAt || a.createdAt || 0) - new Date(b.lastAccessedAt || b.createdAt || 0);
+    });
 }
 
 /**
@@ -990,11 +996,86 @@ async function toggleFavorite(id) {
   const branch = branches.find(b => b.id === id);
   if (!branch) return;
   const newVal = !branch.isFavorite;
+
+  // Optimistic UI: apply visual state immediately
+  branch.isFavorite = newVal;
+  const card = document.querySelector(`.branch-card[data-branch-id="${CSS.escape(id)}"]`);
+  if (card) {
+    card.classList.toggle('is-favorite', newVal);
+    const toggle = card.querySelector('.fav-toggle');
+    if (toggle) {
+      toggle.classList.toggle('active', newVal);
+      toggle.innerHTML = newVal ? ICON.star : ICON.starOutline;
+    }
+  }
+
   try {
     await api('PATCH', `/branches/${id}`, { isFavorite: newVal });
-    branch.isFavorite = newVal;
-    await loadBranches();
-  } catch (e) { showToast(e.message, 'error'); }
+  } catch (e) {
+    // Rollback
+    branch.isFavorite = !newVal;
+    if (card) {
+      card.classList.toggle('is-favorite', !newVal);
+      const toggle = card.querySelector('.fav-toggle');
+      if (toggle) {
+        toggle.classList.toggle('active', !newVal);
+        toggle.innerHTML = !newVal ? ICON.star : ICON.starOutline;
+      }
+    }
+    showToast(e.message, 'error');
+  }
+}
+
+async function toggleColorMark(id, event) {
+  event.stopPropagation();
+  const branch = branches.find(b => b.id === id);
+  if (!branch) return;
+  const newVal = !branch.isColorMarked;
+  const card = event.currentTarget.closest('.branch-card');
+  const btn = event.currentTarget;
+
+  // Optimistic UI: apply visual state immediately
+  branch.isColorMarked = newVal;
+  if (card) {
+    card.classList.toggle('is-color-marked', newVal);
+    btn.classList.toggle('active', newVal);
+  }
+
+  // Card-scoped ripple transition (cosmetic, non-blocking)
+  if (card) {
+    const cardRect = card.getBoundingClientRect();
+    const btnRect = btn.getBoundingClientRect();
+    const x = btnRect.left + btnRect.width / 2 - cardRect.left;
+    const y = btnRect.top + btnRect.height / 2 - cardRect.top;
+    const maxRadius = Math.ceil(Math.sqrt(
+      Math.max(x, cardRect.width - x) ** 2 +
+      Math.max(y, cardRect.height - y) ** 2
+    ));
+
+    const overlay = document.createElement('div');
+    overlay.className = 'color-mark-ripple';
+    overlay.style.setProperty('--cm-ripple-x', `${x}px`);
+    overlay.style.setProperty('--cm-ripple-y', `${y}px`);
+    overlay.style.setProperty('--cm-ripple-radius', `${maxRadius}px`);
+    overlay.classList.add(newVal ? 'ripple-marked' : 'ripple-normal');
+    card.appendChild(overlay);
+    overlay.offsetHeight;
+    overlay.classList.add('animate');
+    overlay.addEventListener('animationend', () => overlay.remove(), { once: true });
+  }
+
+  // Persist in background — rollback on failure
+  try {
+    await api('PATCH', `/branches/${id}`, { isColorMarked: newVal });
+  } catch (e) {
+    // Rollback optimistic state
+    branch.isColorMarked = !newVal;
+    if (card) {
+      card.classList.toggle('is-color-marked', !newVal);
+      btn.classList.toggle('active', !newVal);
+    }
+    showToast(e.message, 'error');
+  }
 }
 
 // ── Tag management ──
@@ -1685,6 +1766,7 @@ function renderBranches() {
           </button>
           <template id="deploy-menu-tpl-${esc(b.id)}">
             ${hasMultipleProfiles ? `<div class="deploy-menu-header">选择重部署的服务</div>${deployMenuItems}` : ''}
+            <div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); viewBranchLogs('${esc(b.id)}')"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:4px"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.5 0a.25.25 0 01.25-.25h10.5a.25.25 0 01.25.25v7.5a.25.25 0 01-.25.25h-4.5a.75.75 0 00-.75.75v2.19l-2.72-2.72a.75.75 0 00-.53-.22H2.75a.25.25 0 01-.25-.25v-7.5z"/></svg>部署日志</div>
             ${stopMenuItem}
             <div class="deploy-menu-divider"></div>
             <div class="deploy-menu-item deploy-menu-item-danger" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); removeBranch('${esc(b.id)}')">${ICON.trash} 删除分支</div>
@@ -1739,15 +1821,20 @@ function renderBranches() {
     // Deploy logs are accessible via the log button in toolbar.
 
     return `
-      <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} expanded ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''} ${previewMode === 'multi' && isRunning ? 'show-preview-border' : ''} ${isDeploying ? 'is-deploying' : ''}" data-branch-id="${esc(b.id)}">
+      <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} expanded ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''} ${previewMode === 'multi' && isRunning ? 'show-preview-border' : ''} ${isDeploying ? 'is-deploying' : ''} ${b.isColorMarked ? 'is-color-marked' : ''}" data-branch-id="${esc(b.id)}">
         ${isDeploying ? '<div class="deploy-progress-bar"><div class="deploy-progress-bar-fill"></div></div>' : ''}
         <div class="branch-card-toolbar">
           ${!isBusy ? `<span class="update-pull-group" onclick="event.stopPropagation(); pullBranch('${esc(b.id)}')" title="${hasUpdates ? branchUpdates[b.id].behind + ' 个新提交，点击拉取' : '点击拉取最新代码'}">
             ${hasUpdates ? `<span class="update-badge">↓${branchUpdates[b.id].behind}</span>` : ''}
             <svg class="update-pull-icon ${isLoading(b.id, 'pull') ? 'spinning' : ''}" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
           </span>` : ''}
-          <button class="icon-btn sm branch-log-btn" onclick="event.stopPropagation(); viewBranchLogs('${esc(b.id)}')" title="查看部署日志">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.5 0a.25.25 0 01.25-.25h10.5a.25.25 0 01.25.25v7.5a.25.25 0 01-.25.25h-4.5a.75.75 0 00-.75.75v2.19l-2.72-2.72a.75.75 0 00-.53-.22H2.75a.25.25 0 01-.25-.25v-7.5z"/></svg>
+          <button class="color-mark-btn ${b.isColorMarked ? 'active' : ''}" onclick="toggleColorMark('${esc(b.id)}', event)" title="${b.isColorMarked ? '取消调试标记' : '标记为调试中'}">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M7 1 A6 6 0 0 1 13 7 L7 7 Z" class="cm-q1"/>
+              <path d="M13 7 A6 6 0 0 1 7 13 L7 7 Z" class="cm-q2"/>
+              <path d="M7 13 A6 6 0 0 1 1 7 L7 7 Z" class="cm-q3"/>
+              <path d="M1 7 A6 6 0 0 1 7 1 L7 7 Z" class="cm-q4"/>
+            </svg>
           </button>
         </div>
         <div class="branch-card-header">

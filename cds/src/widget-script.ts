@@ -179,16 +179,16 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   // ── CDS API calls ──
   function fetchBranchInfo(){
     Promise.all([
-      fetch(API+'/branches').then(function(r){return r.ok?r.json():[];}),
-      fetch(API+'/build-profiles').then(function(r){return r.ok?r.json():[];})
+      fetch(API+'/branches').then(function(r){return r.ok?r.json():{};}),
+      fetch(API+'/build-profiles').then(function(r){return r.ok?r.json():{};})
     ]).then(function(res){
-      var branches=res[0]||[];
+      var branchList=(res[0]&&res[0].branches)||[];
       var found=null;
-      for(var i=0;i<branches.length;i++){
-        if(branches[i].id===BRANCH_ID){found=branches[i];break;}
+      for(var i=0;i<branchList.length;i++){
+        if(branchList[i].id===BRANCH_ID){found=branchList[i];break;}
       }
       branchStatus=found?found.status:'';
-      profiles=res[1]||[];
+      profiles=(res[1]&&res[1].profiles)||[];
       render();
     }).catch(function(){
       branchStatus='';
