@@ -7,6 +7,7 @@ import { api } from '@/services/api';
 import { useSseStream } from '@/lib/useSseStream';
 import { SseStreamPanel } from '@/components/sse';
 import { toast } from '@/lib/toast';
+import { useAuthStore } from '@/stores/authStore';
 import { systemDialog } from '@/lib/systemDialog';
 import { glassPanel } from '@/lib/glassStyles';
 import { DefectFixReportPanel } from './DefectFixReportPanel';
@@ -82,20 +83,26 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
   const handleCopy = (share: DefectShareLink) => {
     const baseUrl = window.location.origin;
     const viewUrl = `${baseUrl}/api/defect-agent/share/view/${share.token}`;
+    const { user, token } = useAuthStore.getState();
+    const username = user?.username ?? 'admin';
 
     const prompt = [
       `## 缺陷修复任务`,
       ``,
       `我有 ${share.defectIds?.length || '若干'} 个软件缺陷需要你帮忙分析和修复。`,
       ``,
-      `### 认证信息`,
+      `### 认证信息（二选一）`,
       ``,
-      `所有请求都需要携带以下两个 Header：`,
+      `**方式 A — AI Access Key**（推荐，从环境变量读取，不会过期）：`,
       `\`\`\``,
       `X-AI-Access-Key: $AI_ACCESS_KEY`,
-      `X-AI-Impersonate: admin`,
+      `X-AI-Impersonate: ${username}`,
       `\`\`\``,
-      `> AI_ACCESS_KEY 从环境变量中读取，请确保已设置。`,
+      ``,
+      `**方式 B — Bearer Token**（当前用户令牌，可能会过期）：`,
+      `\`\`\``,
+      `Authorization: Bearer ${token}`,
+      `\`\`\``,
       ``,
       `### 操作步骤`,
       ``,
