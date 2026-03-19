@@ -1688,7 +1688,8 @@ document.addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key==='ArrowD
                     }
                 },
                 Stream = false,
-                TimeoutSeconds = 120
+                TimeoutSeconds = 120,
+                Context = new GatewayRequestContext { UserId = run.OwnerAdminId }
             };
 
             var response = await gateway.SendAsync(request, CancellationToken.None);

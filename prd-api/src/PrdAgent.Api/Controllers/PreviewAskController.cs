@@ -97,7 +97,8 @@ public class PreviewAskController : ControllerBase
                                request.HeadingTitle,
                                request.Question,
                                answerAsRole: answerAsRole,
-                               cancellationToken))
+                               userId: userId,
+                               cancellationToken: cancellationToken))
             {
                 var eventData = JsonSerializer.Serialize(streamEvent, AppJsonContext.Default.PreviewAskStreamEvent);
                 await Response.WriteAsync($"event: previewAsk\n", cancellationToken);

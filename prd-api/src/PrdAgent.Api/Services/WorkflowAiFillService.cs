@@ -31,7 +31,7 @@ public class WorkflowAiFillService
         _logger = logger;
     }
 
-    public async Task<AiFillResult> FillAsync(AiFillInput input, CancellationToken ct)
+    public async Task<AiFillResult> FillAsync(AiFillInput input, string? userId = null, CancellationToken ct = default)
     {
         // 1. 查找目标节点
         var targetNode = input.Workflow.Nodes.FirstOrDefault(n => n.NodeId == input.NodeId);
@@ -123,6 +123,7 @@ public class WorkflowAiFillService
                 ["temperature"] = 0.2,
             },
             TimeoutSeconds = 60,
+            Context = new GatewayRequestContext { UserId = userId }
         };
 
         try

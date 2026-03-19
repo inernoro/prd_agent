@@ -105,7 +105,7 @@ public class PromptsOptimizeController : ControllerBase
                 RequestId: Guid.NewGuid().ToString("N"),
                 GroupId: null,
                 SessionId: null,
-                UserId: null,
+                UserId: User.FindFirst("sub")?.Value ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value,
                 ViewRole: "ADMIN",
                 DocumentChars: null,
                 DocumentHash: null,
