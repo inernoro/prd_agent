@@ -843,7 +843,8 @@ button.text-btn:hover { color: var(--accent); }
   padding-top: 2px;
 }
 .branch-card-ports .color-mark-btn {
-  margin-left: auto;
+  position: absolute;
+  right: 12px;
 }
 .branch-log-btn {
   color: var(--text-muted); transition: color var(--transition);
