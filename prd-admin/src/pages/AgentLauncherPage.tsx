@@ -42,6 +42,9 @@ const AGENT_COVERS: Record<string, string> = {
   'defect-agent': 'icon/backups/agent/defect-agent.png',
   'video-agent': 'icon/backups/agent/video-agent.png',
   'report-agent': 'icon/backups/agent/report-agent.png',
+  'arena': 'icon/backups/agent/arena.png',
+  'shortcuts-agent': 'icon/backups/agent/shortcuts-agent.png',
+  'workflow-agent': 'icon/backups/agent/workflow-agent.png',
 };
 
 /** 每个图标对应的主题色 */
