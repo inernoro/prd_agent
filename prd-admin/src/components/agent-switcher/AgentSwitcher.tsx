@@ -27,6 +27,10 @@ const ICON_PATHS: Record<string, string> = {
   'literary-agent': 'icon/backups/agent/literary-agent.png',
   'defect-agent': 'icon/backups/agent/defect-agent.png',
   'video-agent': 'icon/backups/agent/video-agent.png',
+  'report-agent': 'icon/backups/agent/report-agent.png',
+  'arena': 'icon/backups/agent/arena.png',
+  'shortcuts-agent': 'icon/backups/agent/shortcuts-agent.png',
+  'workflow-agent': 'icon/backups/agent/workflow-agent.png',
 };
 
 function getAgentIconUrl(appKey: string): string {

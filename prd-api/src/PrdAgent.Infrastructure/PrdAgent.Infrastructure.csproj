@@ -22,6 +22,9 @@
     <PackageReference Include="SixLabors.ImageSharp.Drawing" Version="2.1.5" />
     <PackageReference Include="SixLabors.Fonts" Version="2.0.8" />
     <PackageReference Include="MailKit" Version="4.7.1" />
+    <!-- Document parsing: Word/Excel/PPT via OpenXml, PDF via PdfPig -->
+    <PackageReference Include="DocumentFormat.OpenXml" Version="3.2.0" />
+    <PackageReference Include="UglyToad.PdfPig" Version="0.4.1" />
   </ItemGroup>
 
   <ItemGroup>

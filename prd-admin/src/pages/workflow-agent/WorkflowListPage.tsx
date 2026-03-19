@@ -652,7 +652,7 @@ export function WorkflowListPage() {
         tags: [],
       });
       if (res.success && res.data) {
-        navigate(`/workflow-agent/${res.data.workflow.id}`);
+        navigate(`/workflow-agent/${res.data.workflow.id}/canvas`);
       }
     } catch { /* ignore */ }
     setCreating(false);
@@ -671,7 +671,7 @@ export function WorkflowListPage() {
         edges,
       });
       if (res.success && res.data) {
-        navigate(`/workflow-agent/${res.data.workflow.id}`);
+        navigate(`/workflow-agent/${res.data.workflow.id}/canvas`);
       }
     } catch { /* ignore */ }
     setCreatingTest(false);
@@ -702,7 +702,7 @@ export function WorkflowListPage() {
       });
       if (res.success && res.data) {
         setTemplateOpen(false);
-        navigate(`/workflow-agent/${res.data.workflow.id}`);
+        navigate(`/workflow-agent/${res.data.workflow.id}/canvas`);
       }
     } catch { /* ignore */ }
     setTemplateImporting(false);
