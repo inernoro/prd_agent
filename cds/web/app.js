@@ -996,11 +996,34 @@ async function toggleFavorite(id) {
   const branch = branches.find(b => b.id === id);
   if (!branch) return;
   const newVal = !branch.isFavorite;
+
+  // Optimistic UI: apply visual state immediately
+  branch.isFavorite = newVal;
+  const card = document.querySelector(`.branch-card[data-branch-id="${CSS.escape(id)}"]`);
+  if (card) {
+    card.classList.toggle('is-favorite', newVal);
+    const toggle = card.querySelector('.fav-toggle');
+    if (toggle) {
+      toggle.classList.toggle('active', newVal);
+      toggle.innerHTML = newVal ? ICON.star : ICON.starOutline;
+    }
+  }
+
   try {
     await api('PATCH', `/branches/${id}`, { isFavorite: newVal });
-    branch.isFavorite = newVal;
-    await loadBranches();
-  } catch (e) { showToast(e.message, 'error'); }
+  } catch (e) {
+    // Rollback
+    branch.isFavorite = !newVal;
+    if (card) {
+      card.classList.toggle('is-favorite', !newVal);
+      const toggle = card.querySelector('.fav-toggle');
+      if (toggle) {
+        toggle.classList.toggle('active', !newVal);
+        toggle.innerHTML = !newVal ? ICON.star : ICON.starOutline;
+      }
+    }
+    showToast(e.message, 'error');
+  }
 }
 
 async function toggleColorMark(id, event) {
