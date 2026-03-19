@@ -58,8 +58,8 @@ let previewMode = localStorage.getItem('cds_preview_mode') || 'simple';
 let mirrorEnabled = false;
 
 // ── Theme (light/dark) ──
+// Theme is applied in <head> inline script to prevent FOUC (flash of unstyled content).
 let cdsTheme = localStorage.getItem('cds_theme') || 'dark';
-if (cdsTheme === 'light') document.documentElement.dataset.theme = 'light';
 
 // ── Executor/Scheduler state ──
 let cdsMode = 'standalone';

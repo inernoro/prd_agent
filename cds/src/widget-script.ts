@@ -259,6 +259,11 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
             }
           }
           read();
+        }).catch(function(err){
+          deploying=false;
+          resultMsg=err.message||'流读取错误';
+          resultOk=false;
+          render();
         });
       }
       read();

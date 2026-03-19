@@ -8,7 +8,11 @@
   <meta http-equiv="Expires" content="0">
   <title>Cloud Development Suite</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
-  <script>document.write('<link rel="stylesheet" href="style.css?t='+Date.now()+'">');</script>
+  <script>
+    // Apply theme BEFORE CSS loads to prevent dark→light flash
+    (function(){var t=localStorage.getItem('cds_theme');if(t==='light')document.documentElement.dataset.theme='light';})();
+    document.write('<link rel="stylesheet" href="style.css?t='+Date.now()+'">');
+  </script>
 </head>
 <body>
   <div class="container">

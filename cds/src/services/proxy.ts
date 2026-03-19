@@ -1,4 +1,5 @@
 import http from 'node:http';
+import zlib from 'node:zlib';
 import type { RoutingRule, BranchEntry, CdsConfig, BuildProfile } from '../types.js';
 import { StateService } from './state.js';
 import type { WorktreeService } from './worktree.js';
@@ -489,32 +490,41 @@ export class ProxyService {
       },
     };
 
-    // If branch context is provided, strip accept-encoding so upstream sends uncompressed HTML.
-    // This allows us to inject the CDS widget script without needing to decompress.
-    if (branchCtx && options.headers) {
-      delete options.headers['accept-encoding'];
-    }
+    // NOTE: Do NOT strip accept-encoding here. We handle decompression on the
+    // response side only for HTML responses that need widget injection.
+    // Non-HTML resources (JS/CSS/images) keep compression intact.
 
     const proxyReq = http.request(options, (proxyRes) => {
       const headers = { ...proxyRes.headers };
       // When routing via cookie (same URL serves different branches), prevent
       // browser disk-cache from mixing assets across branch switches.
-      // "no-store" is stronger than "no-cache" — it tells the browser to never
-      // reuse this response without a fresh fetch.
       if (clientReq.headers.cookie?.includes('cds_branch')) {
         headers['cache-control'] = 'no-store, must-revalidate';
         headers['vary'] = 'Cookie';
       }
 
-      // ── Widget injection: only for HTML responses with branch context ──
+      // ── Widget injection: only for HTML 200 responses with branch context ──
       const contentType = proxyRes.headers['content-type'] || '';
-      const isHtml = contentType.includes('text/html') && branchCtx;
+      const statusCode = proxyRes.statusCode || 200;
+      const isHtml = contentType.includes('text/html') && branchCtx && statusCode >= 200 && statusCode < 300;
 
       if (isHtml) {
-        // Buffer the HTML response, inject widget script before </body>
+        // Buffer the HTML response, decompress if needed, inject widget before </body>
+        const encoding = (proxyRes.headers['content-encoding'] || '').toLowerCase();
+        let stream: NodeJS.ReadableStream = proxyRes;
+
+        // Decompress if upstream sent compressed HTML
+        if (encoding === 'gzip') {
+          stream = proxyRes.pipe(zlib.createGunzip());
+        } else if (encoding === 'br') {
+          stream = proxyRes.pipe(zlib.createBrotliDecompress());
+        } else if (encoding === 'deflate') {
+          stream = proxyRes.pipe(zlib.createInflate());
+        }
+
         const chunks: Buffer[] = [];
-        proxyRes.on('data', (chunk: Buffer) => chunks.push(chunk));
-        proxyRes.on('end', () => {
+        stream.on('data', (chunk: Buffer) => chunks.push(chunk));
+        stream.on('end', () => {
           let body = Buffer.concat(chunks).toString('utf-8');
           const widget = buildWidgetScript(branchCtx.branchId, branchCtx.branchName);
 
@@ -526,16 +536,23 @@ export class ProxyService {
             body += widget;
           }
 
-          // Update content-length and remove content-encoding (we decoded it)
-          delete headers['content-length'];
-          delete headers['transfer-encoding'];
+          // Remove encoding headers (we decoded), recalculate content-length
           delete headers['content-encoding'];
-          clientRes.writeHead(proxyRes.statusCode || 200, headers);
+          delete headers['transfer-encoding'];
+          headers['content-length'] = String(Buffer.byteLength(body, 'utf-8'));
+          clientRes.writeHead(statusCode, headers);
           clientRes.end(body);
         });
+        stream.on('error', () => {
+          // Decompression failed — passthrough original response without injection
+          if (!clientRes.headersSent) {
+            clientRes.writeHead(statusCode, proxyRes.headers);
+            clientRes.end();
+          }
+        });
       } else {
-        // Non-HTML: passthrough as before
-        clientRes.writeHead(proxyRes.statusCode || 502, headers);
+        // Non-HTML or non-2xx: passthrough as-is (compressed, chunked, etc.)
+        clientRes.writeHead(statusCode, headers);
         proxyRes.pipe(clientRes, { end: true });
       }
     });
