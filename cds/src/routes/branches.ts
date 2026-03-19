@@ -738,6 +738,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
 
     try {
+      const running = await containerService.isRunning(svc.containerName);
+      if (!running) {
+        // Container may exist but stopped, or not exist at all – try docker inspect
+        const inspectResult = await shell.exec(
+          `docker inspect --format="{{.State.Status}}" ${svc.containerName}`,
+        );
+        if (inspectResult.exitCode !== 0) {
+          res.json({ logs: `容器 ${svc.containerName} 不存在，可能已被清理。请重新部署。` });
+          return;
+        }
+      }
       const logs = await containerService.getLogs(svc.containerName);
       res.json({ logs });
     } catch (err) {
