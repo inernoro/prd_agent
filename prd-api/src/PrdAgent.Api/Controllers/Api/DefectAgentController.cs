@@ -61,6 +61,26 @@ public class DefectAgentController : ControllerBase
         => User.FindFirst("name")?.Value
            ?? User.FindFirst(ClaimTypes.Name)?.Value;
 
+    /// <summary>
+    /// 解析真实的外部 BaseUrl：X-Forwarded-Host/Proto > Origin > Request.Host
+    /// Docker/反向代理场景下避免返回容器内部地址
+    /// </summary>
+    private string ResolveBaseUrl()
+    {
+        var forwardedHost = Request.Headers["X-Forwarded-Host"].FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(forwardedHost))
+        {
+            var scheme = Request.Headers["X-Forwarded-Proto"].FirstOrDefault() ?? "https";
+            return $"{scheme}://{forwardedHost.Split(',')[0].Trim()}";
+        }
+
+        var origin = Request.Headers.Origin.FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(origin))
+            return origin.TrimEnd('/');
+
+        return $"{Request.Scheme}://{Request.Host}";
+    }
+
     private bool HasManagePermission()
     {
         var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
@@ -2113,7 +2133,7 @@ public class DefectAgentController : ControllerBase
 
         await LogOpenPlatformRequestAsync(appId, startedAt, sw.ElapsedMilliseconds, "GET", 200, null, boundUserId);
 
-        var baseUrl = $"{Request.Scheme}://{Request.Host}";
+        var baseUrl = ResolveBaseUrl();
 
         return Ok(ApiResponse<object>.Ok(new
         {
