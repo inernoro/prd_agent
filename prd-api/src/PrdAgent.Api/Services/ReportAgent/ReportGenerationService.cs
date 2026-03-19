@@ -268,9 +268,9 @@ public class ReportGenerationService
             sb.AppendLine();
         }
 
-        var sourceTags = new List<string> { "daily_log", "ai" };
+        var sourceTags = new List<string> { "daily-log", "ai" };
         if (sourcePrefs.MapPlatformEnabled)
-            sourceTags.Insert(0, "map_activity");
+            sourceTags.Insert(0, "map-platform");
         sb.AppendLine($"请基于以上数据生成周报，每个条目的 source 字段标记来源：{string.Join(" / ", sourceTags)}");
         sb.AppendLine("重要：即使数据较少，也要基于已有数据写出有价值的总结，不要输出「无数据」。");
 
@@ -759,7 +759,7 @@ public class ReportGenerationService
             sb.AppendLine($"- 附件上传: {activity.AttachmentUploadCount} 个");
         sb.AppendLine($"- AI 调用: {activity.LlmCalls} 次");
         sb.AppendLine();
-        sb.AppendLine("请基于以上数据生成周报，source 可选值: git / tapd / yuque / daily_log / system_activity / ai");
+        sb.AppendLine("请基于以上数据生成周报，source 可选值: map-platform / github / yuque / daily-log / ai");
         sb.AppendLine("重要：即使数据较少，也要基于已有数据写出有价值的总结，不要输出「无数据」。");
 
         return sb.ToString();

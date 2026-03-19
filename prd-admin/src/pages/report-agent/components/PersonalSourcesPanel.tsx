@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Github, BookOpen, Plus, RefreshCw, Trash2, TestTube, Link2, Check, X, Database } from 'lucide-react';
+import { Github, BookOpen, Plus, RefreshCw, Trash2, TestTube, Link2, Check, X, Database, CheckCircle2 } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
@@ -18,8 +18,22 @@ import {
 import type { ReportAiSource, PersonalSource, PersonalStats } from '@/services/contracts/reportAgent';
 
 const SOURCE_TYPES = [
-  { value: 'github', label: 'GitHub', icon: Github, color: 'rgba(36, 41, 47, 0.9)', bg: 'rgba(36, 41, 47, 0.08)', placeholder: 'https://github.com/user/repo' },
-  { value: 'yuque', label: '语雀', icon: BookOpen, color: 'rgba(52, 199, 89, 0.9)', bg: 'rgba(52, 199, 89, 0.08)', placeholder: '语雀空间 ID 或地址' },
+  {
+    value: 'github',
+    label: 'GitHub',
+    icon: Github,
+    color: 'rgba(96, 165, 250, 0.95)',
+    bg: 'rgba(59, 130, 246, 0.14)',
+    placeholder: 'https://github.com/user/repo',
+  },
+  {
+    value: 'yuque',
+    label: '语雀',
+    icon: BookOpen,
+    color: 'rgba(74, 222, 128, 0.95)',
+    bg: 'rgba(34, 197, 94, 0.14)',
+    placeholder: '如：123456 / your-space / https://www.yuque.com/xxx/yyy',
+  },
 ] as const;
 
 const statusStyles: Record<string, { label: string; color: string; bg: string }> = {
@@ -41,6 +55,7 @@ export function PersonalSourcesPanel() {
   const [formType, setFormType] = useState('github');
   const [formName, setFormName] = useState('');
   const [formRepoUrl, setFormRepoUrl] = useState('');
+  const [formSpaceId, setFormSpaceId] = useState('');
   const [formUsername, setFormUsername] = useState('');
   const [formToken, setFormToken] = useState('');
 
@@ -67,10 +82,9 @@ export function PersonalSourcesPanel() {
     const res = await createPersonalSource({
       sourceType: formType,
       displayName: formName.trim(),
-      config: {
-        repoUrl: formRepoUrl || undefined,
-        username: formUsername || undefined,
-      },
+      repoUrl: formType === 'github' ? (formRepoUrl || undefined) : undefined,
+      username: formType === 'github' ? (formUsername || undefined) : undefined,
+      spaceId: formType === 'yuque' ? (formSpaceId || undefined) : undefined,
       token: formToken,
     });
     if (res.success) {
@@ -148,6 +162,7 @@ export function PersonalSourcesPanel() {
     setFormType('github');
     setFormName('');
     setFormRepoUrl('');
+    setFormSpaceId('');
     setFormUsername('');
     setFormToken('');
   };
@@ -293,7 +308,7 @@ export function PersonalSourcesPanel() {
                 <div
                   key={stype.value}
                   className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-[12px]"
-                  style={{ background: stype.bg, color: stype.color, border: `1px solid ${stype.color.replace('0.9', '0.15')}` }}
+                  style={{ background: stype.bg, color: stype.color, border: `1px solid ${stype.color.replace('0.95', '0.42')}` }}
                 >
                   <stype.icon size={13} /> {stype.label}
                 </div>
@@ -353,9 +368,9 @@ export function PersonalSourcesPanel() {
                           </span>
                         )}
                       </div>
-                      {source.config.repoUrl && (
+                      {(source.config.repoUrl || source.config.spaceId) && (
                         <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                          {source.config.repoUrl}
+                          {source.config.repoUrl || `语雀空间：${source.config.spaceId}`}
                         </div>
                       )}
                     </div>
@@ -415,10 +430,13 @@ export function PersonalSourcesPanel() {
                       style={{
                         background: isActive ? stype.bg : 'var(--bg-secondary)',
                         color: isActive ? stype.color : 'var(--text-secondary)',
-                        border: `1px solid ${isActive ? stype.color.replace('0.9', '0.3') : 'var(--border-primary)'}`,
+                        border: `1px solid ${isActive ? stype.color.replace('0.95', '0.5') : 'var(--border-primary)'}`,
+                        boxShadow: isActive ? `0 0 0 2px ${stype.color.replace('0.95', '0.12')}` : 'none',
+                        fontWeight: isActive ? 600 : 500,
                       }}
                     >
                       <stype.icon size={13} /> {stype.label}
+                      {isActive && <CheckCircle2 size={12} />}
                     </button>
                   );
                 })}
@@ -436,18 +454,33 @@ export function PersonalSourcesPanel() {
               />
             </div>
 
-            <div className="space-y-2">
-              <label className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                {formType === 'yuque' ? '空间地址（可选）' : '仓库地址（可选，留空采集全部）'}
-              </label>
-              <input
-                value={formRepoUrl}
-                onChange={e => setFormRepoUrl(e.target.value)}
-                placeholder={SOURCE_TYPES.find(s => s.value === formType)?.placeholder || ''}
-                className="w-full px-3 py-2 rounded-xl text-[13px]"
-                style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
-              />
-            </div>
+            {formType === 'yuque' ? (
+              <div className="space-y-2">
+                <label className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+                  空间标识（可选）
+                </label>
+                <input
+                  value={formSpaceId}
+                  onChange={e => setFormSpaceId(e.target.value)}
+                  placeholder={SOURCE_TYPES.find(s => s.value === formType)?.placeholder || ''}
+                  className="w-full px-3 py-2 rounded-xl text-[13px]"
+                  style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
+                />
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <label className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+                  仓库地址（可选，留空采集全部）
+                </label>
+                <input
+                  value={formRepoUrl}
+                  onChange={e => setFormRepoUrl(e.target.value)}
+                  placeholder={SOURCE_TYPES.find(s => s.value === formType)?.placeholder || ''}
+                  className="w-full px-3 py-2 rounded-xl text-[13px]"
+                  style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
+                />
+              </div>
+            )}
 
             {formType !== 'yuque' && (
               <div className="space-y-2">

@@ -13,8 +13,10 @@ import {
   generateReport,
   deleteWeeklyReport,
   uploadReportRichTextImage,
+  listMyAiSources,
+  listPersonalSources,
 } from '@/services';
-import type { WeeklyReport } from '@/services/contracts/reportAgent';
+import type { WeeklyReport, ReportAiSource, PersonalSource } from '@/services/contracts/reportAgent';
 import { WeeklyReportStatus, ReportInputType, WeeklyReportCreationMode } from '@/services/contracts/reportAgent';
 import { RichTextMarkdownContent } from './RichTextMarkdownContent';
 
@@ -34,6 +36,27 @@ const SCALE_REDUCE_FACTOR = 0.86;
 const MIN_COMPRESS_QUALITY = 0.4;
 const QUALITY_REDUCE_STEP = 0.08;
 const MARKDOWN_IMAGE_REGEX = /!\[[^\]]*]\(([^)]+)\)/;
+const SOURCE_KEY_ALIASES: Record<string, string> = {
+  daily_log: 'daily-log',
+  system_activity: 'map-platform',
+  map_activity: 'map-platform',
+  git: 'map-platform',
+  tapd: 'map-platform',
+};
+
+const DEFAULT_SOURCE_LABELS: Record<string, string> = {
+  'daily-log': '日常记录',
+  'map-platform': 'MAP平台工作记录',
+  github: 'GitHub',
+  yuque: '语雀',
+  ai: 'AI归纳',
+};
+
+function normalizeSourceKey(source?: string): string {
+  if (!source) return '';
+  const normalized = source.trim().toLowerCase();
+  return SOURCE_KEY_ALIASES[normalized] ?? normalized;
+}
 
 function inferExtFromMime(mime: string): string {
   if (mime.includes('webp')) return 'webp';
@@ -132,6 +155,59 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
   const [selectedTeamId, setSelectedTeamId] = useState(teams[0]?.id || '');
   const [selectedTemplateId, setSelectedTemplateId] = useState(templates[0]?.id || '');
   const [isNew, setIsNew] = useState(!reportId);
+  const [sourceLabelMap, setSourceLabelMap] = useState<Record<string, string>>(DEFAULT_SOURCE_LABELS);
+
+  useEffect(() => {
+    let disposed = false;
+    (async () => {
+      try {
+        const [aiRes, personalRes] = await Promise.all([listMyAiSources(), listPersonalSources()]);
+        if (disposed) return;
+
+        const nextMap: Record<string, string> = { ...DEFAULT_SOURCE_LABELS };
+        if (aiRes.success && aiRes.data) {
+          for (const item of aiRes.data.items as ReportAiSource[]) {
+            const key = normalizeSourceKey(item.key);
+            if (key) nextMap[key] = item.name;
+          }
+        }
+        if (personalRes.success && personalRes.data) {
+          for (const item of personalRes.data.items as PersonalSource[]) {
+            const key = normalizeSourceKey(item.sourceType);
+            if (key && !nextMap[key]) nextMap[key] = item.displayName;
+          }
+        }
+        setSourceLabelMap(nextMap);
+      } catch {
+        // 保留默认映射，不中断编辑流程
+      }
+    })();
+    return () => { disposed = true; };
+  }, []);
+
+  const resolveSourceLabel = useCallback((source: string) => {
+    const normalized = normalizeSourceKey(source);
+    return sourceLabelMap[normalized] || sourceLabelMap[source] || source;
+  }, [sourceLabelMap]);
+
+  const renderSourceBadge = useCallback((source?: string) => {
+    const normalized = normalizeSourceKey(source);
+    if (!normalized || normalized === 'manual') return null;
+    const isAi = normalized === 'ai';
+    return (
+      <span
+        className="text-[10px] px-2 py-1 rounded-full self-center flex-shrink-0 font-medium border"
+        style={{
+          color: isAi ? 'rgba(196, 138, 255, 0.96)' : 'rgba(125, 211, 252, 0.96)',
+          background: isAi ? 'rgba(168, 85, 247, 0.16)' : 'rgba(56, 189, 248, 0.16)',
+          borderColor: isAi ? 'rgba(168, 85, 247, 0.35)' : 'rgba(56, 189, 248, 0.35)',
+        }}
+        title={normalized}
+      >
+        {resolveSourceLabel(normalized)}
+      </span>
+    );
+  }, [resolveSourceLabel]);
 
   useEffect(() => {
     if (!reportId) return;
@@ -711,17 +787,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                           disabled={!canEdit}
                         />
                       )}
-                      {item.source && item.source !== 'manual' && (
-                        <span
-                          className="text-[10px] px-2 py-1 rounded-full self-center flex-shrink-0 font-medium"
-                          style={{
-                            color: item.source === 'ai' ? 'rgba(168, 85, 247, 0.9)' : 'rgba(59, 130, 246, 0.9)',
-                            background: item.source === 'ai' ? 'rgba(168, 85, 247, 0.08)' : 'rgba(59, 130, 246, 0.08)',
-                          }}
-                        >
-                          {item.source === 'ai' ? 'AI' : item.source}
-                        </span>
-                      )}
+                      {renderSourceBadge(item.source)}
                       {canEdit && sections[sIdx]?.items.length > 1 && (
                         <button
                           className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-[rgba(239,68,68,0.08)] transition-all self-center"

@@ -809,14 +809,20 @@ export type ListPersonalSourcesContract = () => Promise<ApiResponse<{ items: Per
 export type CreatePersonalSourceContract = (input: {
   sourceType: string;
   displayName: string;
-  config: PersonalSourceConfig;
+  repoUrl?: string;
+  username?: string;
+  spaceId?: string;
+  apiEndpoint?: string;
   token: string;
 }) => Promise<ApiResponse<{ source: PersonalSource }>>;
 
 export type UpdatePersonalSourceContract = (input: {
   id: string;
   displayName?: string;
-  config?: Partial<PersonalSourceConfig>;
+  repoUrl?: string;
+  username?: string;
+  spaceId?: string;
+  apiEndpoint?: string;
   token?: string;
   enabled?: boolean;
 }) => Promise<ApiResponse<{ source: PersonalSource }>>;
