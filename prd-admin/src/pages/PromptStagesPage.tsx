@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
@@ -10,8 +10,8 @@ import { WatermarkSettingsPanel } from '@/components/watermark/WatermarkSettings
 import { getAdminPrompts, getAdminSystemPrompts, putAdminPrompts, putAdminSystemPrompts, resetAdminPrompts, resetAdminSystemPrompts, listLiteraryPrompts, createLiteraryPrompt, updateLiteraryPrompt, deleteLiteraryPrompt } from '@/services';
 import type { PromptEntry, PromptSettings } from '@/services/contracts/prompts';
 import type { SystemPromptEntry, SystemPromptSettings } from '@/services/contracts/systemPrompts';
-import { readSseStream } from '@/lib/sse';
-import { useAuthStore } from '@/stores/authStore';
+import { useSseStream } from '@/lib/useSseStream';
+import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
 import { RefreshCw, Save, RotateCcw, AlertTriangle, Plus, Trash2, Copy, Sparkles, Square, Rocket, FileText, BookOpen } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -110,12 +110,6 @@ function joinUrl(base: string, path: string) {
   return `${b}/${p}`;
 }
 
-type PromptOptimizeStreamEvent = {
-  type: 'start' | 'delta' | 'done' | 'error';
-  content?: string;
-  errorCode?: string;
-  errorMessage?: string;
-};
 
 function normalizePrompts(prompts: PromptEntry[] | null | undefined): PromptEntry[] {
   const src = Array.isArray(prompts) ? prompts : [];
@@ -202,7 +196,7 @@ function validatePrompts(prompts: PromptEntry[]) {
 
 export default function PromptStagesPage() {
   const navigate = useNavigate();
-  const token = useAuthStore((s) => s.token);
+
   const { isMobile } = useBreakpoint();
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -249,11 +243,18 @@ export default function PromptStagesPage() {
 
   // 提示词优化（魔法棒）
   const [optOpen, setOptOpen] = useState(false);
-  const [optBusy, setOptBusy] = useState(false);
   const [optError, setOptError] = useState<string | null>(null);
   const [optText, setOptText] = useState<string>('');
   const [optOriginal, setOptOriginal] = useState<string>('');
-  const optAbortRef = useRef<AbortController | null>(null);
+
+  const optStream = useSseStream({
+    url: joinUrl(getApiBaseUrl(), '/api/prompts/optimize/stream'),
+    method: 'POST',
+    onTyping: (text) => setOptText((prev) => prev + text),
+    onDone: () => { /* phase auto-transitions */ },
+    onError: (msg) => setOptError(msg),
+  });
+  const optBusy = optStream.isStreaming;
 
   // 系统提示词结构化编辑
   const [sysEditMode, setSysEditMode] = useState<'structured' | 'raw'>('structured');
@@ -544,100 +545,30 @@ export default function PromptStagesPage() {
   };
 
   const cancelOptimize = () => {
-    try {
-      optAbortRef.current?.abort();
-    } catch {
-      // ignore
-    }
-    optAbortRef.current = null;
-    setOptBusy(false);
+    optStream.abort();
   };
 
   const startOptimize = async () => {
-    if (!token) {
-      setOptError('未登录或 Token 缺失');
-      return;
-    }
     const promptTemplate = (stage?.promptTemplate ?? '').trim();
     if (!promptTemplate) {
       setOptError('当前提示词为空，无法优化');
       return;
     }
 
-    cancelOptimize();
-    const ac = new AbortController();
-    optAbortRef.current = ac;
-    setOptBusy(true);
     setOptError(null);
     setOptText('');
     setOptOriginal(promptTemplate);
 
-    let res: Response;
-    try {
-      const url = joinUrl(getApiBaseUrl(), '/api/prompts/optimize/stream');
-      res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          Accept: 'text/event-stream',
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          promptKey: stage?.promptKey ?? null,
-          order: stage?.order ?? null,
-          role: roleEnum,
-          title: stage?.title ?? null,
-          promptTemplate,
-          mode: 'strict',
-        }),
-        signal: ac.signal,
-      });
-    } catch (e) {
-      setOptBusy(false);
-      optAbortRef.current = null;
-      const m = e instanceof Error ? e.message : '网络错误';
-      setOptError(`请求失败：${m}`);
-      return;
-    }
-
-    if (!res.ok) {
-      setOptBusy(false);
-      optAbortRef.current = null;
-      const t = await res.text().catch(() => '');
-      setOptError(t || `HTTP ${res.status} ${res.statusText}`);
-      return;
-    }
-
-    try {
-      await readSseStream(
-        res,
-        (evt) => {
-          if (!evt.data) return;
-          try {
-            const obj = JSON.parse(evt.data) as PromptOptimizeStreamEvent;
-            if (obj.type === 'delta' && obj.content) {
-              setOptText((prev) => prev + obj.content);
-            } else if (obj.type === 'error') {
-              setOptError(obj.errorMessage || '优化失败');
-              setOptBusy(false);
-              optAbortRef.current = null;
-            } else if (obj.type === 'done') {
-              setOptBusy(false);
-              optAbortRef.current = null;
-            }
-          } catch {
-            // ignore
-          }
-        },
-        ac.signal
-      );
-    } finally {
-      // 若中途被 abort，readSseStream 会退出；这里兜底结束状态
-      if (ac.signal.aborted) {
-        setOptBusy(false);
-        optAbortRef.current = null;
-      }
-    }
+    await optStream.start({
+      body: {
+        promptKey: stage?.promptKey ?? null,
+        order: stage?.order ?? null,
+        role: roleEnum,
+        title: stage?.title ?? null,
+        promptTemplate,
+        mode: 'strict',
+      },
+    });
   };
 
   const applyOptimized = () => {
@@ -1578,6 +1509,13 @@ export default function PromptStagesPage() {
         maxWidth={1040}
         content={
           <div className="min-h-0 flex flex-col gap-4">
+            {optStream.phase !== 'idle' && (
+              <SsePhaseBar
+                phase={optStream.phase}
+                message={optStream.phaseMessage}
+                extra={optBusy ? `${(optText || '').length} 字符` : undefined}
+              />
+            )}
             {optError && (
               <div
                 className="rounded-[14px] px-4 py-3 text-sm"

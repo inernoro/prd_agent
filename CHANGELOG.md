@@ -8,6 +8,13 @@
 
 ## [未发布]
 
+### 2026-03-19
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| refactor | prd-admin | useSseStream hook 增强：支持 POST/body/headers/动态 URL 覆盖 + connectSse 服务层工具 |
+| refactor | prd-admin | 6 个 SSE 组件迁移至 useSseStream/connectSse 基础组件（PromptStagesPage、QuickActionConfigPanel、DesktopLabTab、WorkflowChatPanel、imageGen、literaryAgentConfig） |
+
 ### 2026-03-18
 
 | 类型 | 模块 | 描述 |
