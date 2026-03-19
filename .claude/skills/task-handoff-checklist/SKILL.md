@@ -122,6 +122,24 @@ git diff --stat main...HEAD 2>/dev/null || git diff --stat HEAD~10
 | 页面测试 | ✅/➖ | ⚠️ 需人工 | {页面} |
 | 回归测试 | ✅/➖ | ⚠️ 需人工 | {受影响功能} |
 
+### 预览验收地址（需人工验收时必填）
+
+当测试矩阵中存在"⚠️ 需人工"的项目时，自动生成预览地址：
+
+```bash
+# 获取分支名并生成预览 URL
+BRANCH=$(git branch --show-current)
+SLUG=$(echo "$BRANCH" | tr '/' '-')
+echo "https://${SLUG}.miduo.org/"
+```
+
+> **预览地址**: https://{branch-slug}.miduo.org/
+>
+> **验收路径**:
+> 1. 打开 https://{branch-slug}.miduo.org/{页面路径}
+> 2. {具体操作步骤}
+> 3. {期望结果}
+
 ### 推荐顺序
 
 第 1 步: ... → 第 2 步: ... → 第 3 步: ...
@@ -130,6 +148,7 @@ git diff --stat main...HEAD 2>/dev/null || git diff --stat HEAD~10
 
 - [ ] `/smoke {模块}` → 冒烟测试
 - [ ] `/verify` → 多角度验证
+- [ ] `/preview` → 生成预览验收地址
 - [ ] `fix unused imports` → 清理导入
 
 ---
