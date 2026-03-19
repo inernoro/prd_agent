@@ -478,6 +478,11 @@ export function DailyLogPanel() {
 
   // ── Computed ──
 
+  const normalizedTagDraft = normalizeCustomTag(tagDraft);
+  const tagDraftTooLong = normalizedTagDraft.length > MAX_CUSTOM_TAG_LENGTH;
+  const tagLimitReached = customTags.length >= MAX_CUSTOM_TAG_COUNT;
+  const canSubmitTagDraft = normalizedTagDraft.length > 0 && !tagDraftTooLong && !tagLimitReached;
+
   const todayMinutes = items.reduce((sum, i) => sum + (i.durationMinutes || 0), 0);
   const loggedDates = useMemo(
     () => new Set(weekLogs.map((l) => l.date.substring(0, 10))),
@@ -682,9 +687,9 @@ export function DailyLogPanel() {
                 <button
                   className="px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all duration-150"
                   style={{
-                    background: showTagManager ? 'rgba(59, 130, 246, 0.12)' : 'transparent',
-                    color: showTagManager ? 'rgba(59, 130, 246, 0.95)' : 'var(--text-muted)',
-                    border: `1px solid ${showTagManager ? 'rgba(59, 130, 246, 0.32)' : 'transparent'}`,
+                    background: showTagManager ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
+                    color: showTagManager ? 'rgba(59, 130, 246, 0.88)' : 'var(--text-muted)',
+                    border: `1px solid ${showTagManager ? 'rgba(59, 130, 246, 0.24)' : 'transparent'}`,
                   }}
                   onClick={() => setShowTagManager((v) => !v)}
                 >
@@ -693,16 +698,25 @@ export function DailyLogPanel() {
               </div>
               {showTagManager && (
                 <div
-                  className="mt-1 rounded-xl px-3 py-2.5 flex flex-col gap-2.5"
-                  style={{ border: '1px solid var(--border-primary)', background: 'var(--bg-tertiary)' }}
+                  className="mt-1 rounded-xl px-3 py-2.5 flex flex-col gap-2"
+                  style={{
+                    border: '1px solid rgba(148, 163, 184, 0.2)',
+                    background: 'linear-gradient(180deg, rgba(148,163,184,0.06) 0%, rgba(148,163,184,0.03) 100%)',
+                  }}
                 >
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>自定义标签</span>
+                    <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                      {customTags.length}/{MAX_CUSTOM_TAG_COUNT}
+                    </span>
+                  </div>
                   <div className="flex items-center gap-2">
                     <input
-                      className="flex-1 px-3 py-1.5 rounded-lg text-[12px] outline-none"
+                      className="flex-1 px-3 py-1.5 rounded-lg text-[12px] outline-none transition-colors duration-150"
                       style={{
                         background: 'var(--bg-secondary)',
                         color: 'var(--text-primary)',
-                        border: '1px solid var(--border-primary)',
+                        border: `1px solid ${tagDraftTooLong ? 'rgba(239, 68, 68, 0.45)' : 'rgba(148, 163, 184, 0.28)'}`,
                       }}
                       placeholder={`新增标签（最多 ${MAX_CUSTOM_TAG_COUNT} 个）`}
                       value={tagDraft}
@@ -719,10 +733,21 @@ export function DailyLogPanel() {
                       variant="secondary"
                       size="sm"
                       onClick={() => void handleAddCustomTag()}
-                      disabled={!tagDraft.trim() || savingTags}
+                      disabled={!canSubmitTagDraft || savingTags}
                     >
                       添加
                     </Button>
+                  </div>
+                  <div className="flex items-center justify-between min-h-[16px]">
+                    <span
+                      className="text-[10px]"
+                      style={{ color: tagDraftTooLong ? 'rgba(239, 68, 68, 0.9)' : 'var(--text-muted)' }}
+                    >
+                      {tagDraftTooLong ? `超出 ${normalizedTagDraft.length - MAX_CUSTOM_TAG_LENGTH} 个字符` : '回车可快速添加'}
+                    </span>
+                    <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                      {normalizedTagDraft.length}/{MAX_CUSTOM_TAG_LENGTH}
+                    </span>
                   </div>
 
                   <div className="flex flex-wrap gap-1.5">
@@ -736,17 +761,17 @@ export function DailyLogPanel() {
                         return (
                           <span
                             key={`custom-tag-${tag}-${idx}`}
-                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px]"
+                            className="group inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] transition-colors duration-150"
                             style={{
-                              background: 'rgba(20, 184, 166, 0.1)',
-                              color: 'rgba(20, 184, 166, 0.92)',
-                              border: '1px solid rgba(20, 184, 166, 0.2)',
+                              background: isEditing ? 'rgba(59, 130, 246, 0.08)' : 'rgba(20, 184, 166, 0.09)',
+                              color: isEditing ? 'rgba(59, 130, 246, 0.92)' : 'rgba(20, 184, 166, 0.9)',
+                              border: `1px solid ${isEditing ? 'rgba(59, 130, 246, 0.25)' : 'rgba(20, 184, 166, 0.18)'}`,
                             }}
                           >
                             {isEditing ? (
                               <>
                                 <input
-                                  className="w-24 bg-transparent outline-none text-[11px]"
+                                  className="w-20 bg-transparent outline-none text-[11px]"
                                   value={editingTagDraft}
                                   onChange={(e) => setEditingTagDraft(e.target.value)}
                                   onKeyDown={(e) => {
@@ -762,21 +787,23 @@ export function DailyLogPanel() {
                                   autoFocus
                                 />
                                 <button
-                                  className="hover:opacity-80"
+                                  className="inline-flex items-center justify-center w-4 h-4 rounded transition-colors duration-150 hover:bg-[rgba(59,130,246,0.12)]"
                                   onClick={() => void handleConfirmEditCustomTag()}
                                   title="确认修改"
+                                  aria-label="确认修改标签"
                                 >
-                                  <Check size={10} />
+                                  <Check size={9} />
                                 </button>
                                 <button
-                                  className="hover:opacity-80"
+                                  className="inline-flex items-center justify-center w-4 h-4 rounded transition-colors duration-150 hover:bg-[rgba(148,163,184,0.14)]"
                                   onClick={() => {
                                     setEditingTagIdx(null);
                                     setEditingTagDraft('');
                                   }}
                                   title="取消"
+                                  aria-label="取消修改标签"
                                 >
-                                  <X size={10} />
+                                  <X size={9} />
                                 </button>
                               </>
                             ) : (
@@ -784,21 +811,23 @@ export function DailyLogPanel() {
                                 <Tag size={9} />
                                 {tag}
                                 <button
-                                  className="hover:opacity-80"
+                                  className="inline-flex items-center justify-center w-4 h-4 rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-all duration-150 hover:bg-[rgba(148,163,184,0.14)]"
                                   onClick={() => {
                                     setEditingTagIdx(idx);
                                     setEditingTagDraft(tag);
                                   }}
                                   title="修改"
+                                  aria-label="修改标签"
                                 >
-                                  <Pencil size={10} />
+                                  <Pencil size={9} />
                                 </button>
                                 <button
-                                  className="hover:opacity-80"
+                                  className="inline-flex items-center justify-center w-4 h-4 rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-all duration-150 hover:bg-[rgba(239,68,68,0.12)]"
                                   onClick={() => void handleDeleteCustomTag(idx)}
                                   title="删除"
+                                  aria-label="删除标签"
                                 >
-                                  <Trash2 size={10} />
+                                  <Trash2 size={9} />
                                 </button>
                               </>
                             )}
