@@ -47,7 +47,8 @@
       "Bash(git checkout -b claude/desktop-asset-features-MrHFd)",
       "Bash(git add prd-admin/src/pages/DesktopAssetsPage.tsx prd-admin/src/services/contracts/mobile.ts prd-admin/src/services/real/mobile.ts prd-api/src/PrdAgent.Api/Controllers/Api/MobileDashboardController.cs)",
       "Bash(git commit:*)",
-      "Bash(git push -u origin claude/desktop-asset-features-MrHFd)"
+      "Bash(git push -u origin claude/desktop-asset-features-MrHFd)",
+      "Bash(powershell:*)"
     ]
   }
 }
