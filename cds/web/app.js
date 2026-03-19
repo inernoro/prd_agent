@@ -2321,19 +2321,31 @@ async function openSelfUpdate() {
   }
 
   const { current, branches } = data;
-  const datalistOptions = branches.map(b =>
-    `<option value="${esc(b)}">${b === current ? '(当前)' : ''}</option>`
+  const branchItems = branches.map(b =>
+    `<div class="combobox-item${b === current ? ' active' : ''}" data-value="${esc(b)}" onclick="selectComboItem(this)">
+      ${b === current ? '<span style="color:var(--green);margin-right:4px">✓</span>' : ''}${esc(b)}${b === current ? ' <span style="color:var(--fg-muted);font-size:11px">(当前)</span>' : ''}
+    </div>`
   ).join('');
 
   openConfigModal('自动更新', `
     <p class="config-panel-desc">
       切换 CDS 代码分支并重启。操作流程：<code>git fetch → git checkout → git pull → restart</code>
     </p>
-    <div class="form-row">
+    <div class="form-row" style="flex-direction:column;align-items:stretch">
       <label class="form-label">目标分支</label>
-      <input id="selfUpdateBranch" class="form-input" style="width:100%" list="selfUpdateBranchList"
-        value="${esc(current)}" placeholder="输入或选择分支名" autocomplete="off">
-      <datalist id="selfUpdateBranchList">${datalistOptions}</datalist>
+      <div class="combobox" id="branchCombobox">
+        <div class="combobox-input-wrap">
+          <input id="selfUpdateBranch" class="form-input" style="width:100%;padding-right:32px"
+            value="${esc(current)}" placeholder="输入或选择分支名" autocomplete="off"
+            onfocus="openComboDropdown()" oninput="filterComboItems(this.value)">
+          <button type="button" class="combobox-toggle" onclick="toggleComboDropdown()" tabindex="-1">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M2.5 4.5L6 8l3.5-3.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+        <div class="combobox-dropdown" id="branchDropdown">
+          ${branchItems}
+        </div>
+      </div>
     </div>
     <div class="form-row" style="margin-top:4px;font-size:12px;color:var(--fg-muted)">
       当前分支：<code>${esc(current)}</code>
@@ -2347,6 +2359,63 @@ async function openSelfUpdate() {
       <button class="sm ghost" onclick="closeConfigModal()">取消</button>
     </div>
   `);
+
+  // Close dropdown when clicking outside
+  document.addEventListener('click', _comboOutsideClick);
+}
+
+// ── Combobox helpers ──
+
+function _comboOutsideClick(e) {
+  const box = document.getElementById('branchCombobox');
+  if (box && !box.contains(e.target)) {
+    closeComboDropdown();
+  }
+}
+
+function openComboDropdown() {
+  const dd = document.getElementById('branchDropdown');
+  if (dd) dd.classList.add('open');
+}
+
+function closeComboDropdown() {
+  const dd = document.getElementById('branchDropdown');
+  if (dd) dd.classList.remove('open');
+  document.removeEventListener('click', _comboOutsideClick);
+}
+
+function toggleComboDropdown() {
+  const dd = document.getElementById('branchDropdown');
+  if (dd) {
+    if (dd.classList.contains('open')) {
+      closeComboDropdown();
+    } else {
+      // Reset filter to show all
+      filterComboItems('');
+      dd.classList.add('open');
+      document.getElementById('selfUpdateBranch')?.focus();
+    }
+  }
+}
+
+function filterComboItems(query) {
+  const dd = document.getElementById('branchDropdown');
+  if (!dd) return;
+  const q = query.toLowerCase();
+  let visible = 0;
+  for (const item of dd.querySelectorAll('.combobox-item')) {
+    const val = (item.dataset.value || '').toLowerCase();
+    const show = !q || val.includes(q);
+    item.style.display = show ? '' : 'none';
+    if (show) visible++;
+  }
+  if (visible > 0 && q) dd.classList.add('open');
+}
+
+function selectComboItem(el) {
+  const input = document.getElementById('selfUpdateBranch');
+  if (input) input.value = el.dataset.value;
+  closeComboDropdown();
 }
 
 function executeSelfUpdate() {

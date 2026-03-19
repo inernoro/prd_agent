@@ -533,6 +533,32 @@ button.text-btn:hover { color: var(--accent); }
 
 .form-row { display: flex; gap: 8px; margin-bottom: 10px; }
 
+/* ── Combobox (input + dropdown) ── */
+.combobox { position: relative; }
+.combobox-input-wrap { position: relative; display: flex; align-items: center; }
+.combobox-toggle {
+  position: absolute; right: 1px; top: 1px; bottom: 1px;
+  width: 32px; display: flex; align-items: center; justify-content: center;
+  background: transparent; border: none; border-left: 1px solid var(--glass-border);
+  color: var(--fg-muted); cursor: pointer; border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  transition: color var(--transition), background var(--transition);
+}
+.combobox-toggle:hover { color: var(--fg); background: var(--bg-hover); }
+.combobox-dropdown {
+  display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+  max-height: 240px; overflow-y: auto; z-index: 120;
+  background: var(--bg-card); border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm); box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+}
+.combobox-dropdown.open { display: block; }
+.combobox-item {
+  padding: 7px 12px; font-size: 13px; cursor: pointer;
+  color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: background var(--transition);
+}
+.combobox-item:hover { background: var(--bg-hover); }
+.combobox-item.active { background: var(--bg-secondary); }
+
 /* ════════════════ Config Panels ════════════════ */
 
 .config-panel {
