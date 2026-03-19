@@ -113,6 +113,14 @@ public static class Desktop
             Category = "Skill"
         )]
         public const string ExecuteChat = "prd-agent-desktop.skill.execute::chat";
+
+        [AppCallerMetadata(
+            "技能提炼-对话",
+            "从对话中提炼可复用的技能模板",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Skill"
+        )]
+        public const string SkillGen = "prd-agent.skill-gen::chat";
     }
 }
     
