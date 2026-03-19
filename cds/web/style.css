@@ -837,20 +837,11 @@ button.text-btn:hover { color: var(--accent); }
 .branch-card-row2 {
   display: flex; align-items: center; gap: 8px;
 }
-/* Row 3: Port badges + color mark — independent row */
+/* Row 3: Port badges — independent row */
 .branch-card-ports {
   display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
   padding-top: 2px;
 }
-.branch-card-ports .color-mark-btn {
-  position: absolute;
-  right: 12px;
-}
-.branch-log-btn {
-  color: var(--text-muted); transition: color var(--transition);
-  flex-shrink: 0;
-}
-.branch-log-btn:hover { color: var(--text-primary); }
 
 /* Favorite toggle — inline, minimal */
 .fav-toggle {

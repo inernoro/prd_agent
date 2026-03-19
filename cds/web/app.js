@@ -1009,10 +1009,17 @@ async function toggleColorMark(id, event) {
   if (!branch) return;
   const newVal = !branch.isColorMarked;
   const card = event.currentTarget.closest('.branch-card');
+  const btn = event.currentTarget;
 
-  // Card-scoped ripple transition (mimic theme toggle)
+  // Optimistic UI: apply visual state immediately
+  branch.isColorMarked = newVal;
   if (card) {
-    const btn = event.currentTarget;
+    card.classList.toggle('is-color-marked', newVal);
+    btn.classList.toggle('active', newVal);
+  }
+
+  // Card-scoped ripple transition (cosmetic, non-blocking)
+  if (card) {
     const cardRect = card.getBoundingClientRect();
     const btnRect = btn.getBoundingClientRect();
     const x = btnRect.left + btnRect.width / 2 - cardRect.left;
@@ -1022,42 +1029,29 @@ async function toggleColorMark(id, event) {
       Math.max(y, cardRect.height - y) ** 2
     ));
 
-    // Create ripple overlay
     const overlay = document.createElement('div');
     overlay.className = 'color-mark-ripple';
     overlay.style.setProperty('--cm-ripple-x', `${x}px`);
     overlay.style.setProperty('--cm-ripple-y', `${y}px`);
     overlay.style.setProperty('--cm-ripple-radius', `${maxRadius}px`);
-
-    if (newVal) {
-      // Ripple in: overlay shows the marked color, expands from button
-      overlay.classList.add('ripple-marked');
-    } else {
-      // Ripple out: overlay shows the normal color, expands from button
-      overlay.classList.add('ripple-normal');
-    }
-    card.style.position = 'relative';
+    overlay.classList.add(newVal ? 'ripple-marked' : 'ripple-normal');
     card.appendChild(overlay);
-    // Force reflow then animate
     overlay.offsetHeight;
     overlay.classList.add('animate');
+    overlay.addEventListener('animationend', () => overlay.remove(), { once: true });
+  }
 
-    // After animation, apply real class and remove overlay
-    overlay.addEventListener('animationend', async () => {
-      overlay.remove();
-      try {
-        await api('PATCH', `/branches/${id}`, { isColorMarked: newVal });
-        branch.isColorMarked = newVal;
-        await loadBranches();
-      } catch (e) { showToast(e.message, 'error'); }
-    }, { once: true });
-  } else {
-    // Fallback without animation
-    try {
-      await api('PATCH', `/branches/${id}`, { isColorMarked: newVal });
-      branch.isColorMarked = newVal;
-      await loadBranches();
-    } catch (e) { showToast(e.message, 'error'); }
+  // Persist in background — rollback on failure
+  try {
+    await api('PATCH', `/branches/${id}`, { isColorMarked: newVal });
+  } catch (e) {
+    // Rollback optimistic state
+    branch.isColorMarked = !newVal;
+    if (card) {
+      card.classList.toggle('is-color-marked', !newVal);
+      btn.classList.toggle('active', !newVal);
+    }
+    showToast(e.message, 'error');
   }
 }
 
@@ -1749,6 +1743,7 @@ function renderBranches() {
           </button>
           <template id="deploy-menu-tpl-${esc(b.id)}">
             ${hasMultipleProfiles ? `<div class="deploy-menu-header">选择重部署的服务</div>${deployMenuItems}` : ''}
+            <div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); viewBranchLogs('${esc(b.id)}')"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:4px"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.5 0a.25.25 0 01.25-.25h10.5a.25.25 0 01.25.25v7.5a.25.25 0 01-.25.25h-4.5a.75.75 0 00-.75.75v2.19l-2.72-2.72a.75.75 0 00-.53-.22H2.75a.25.25 0 01-.25-.25v-7.5z"/></svg>部署日志</div>
             ${stopMenuItem}
             <div class="deploy-menu-divider"></div>
             <div class="deploy-menu-item deploy-menu-item-danger" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); removeBranch('${esc(b.id)}')">${ICON.trash} 删除分支</div>
@@ -1810,8 +1805,13 @@ function renderBranches() {
             ${hasUpdates ? `<span class="update-badge">↓${branchUpdates[b.id].behind}</span>` : ''}
             <svg class="update-pull-icon ${isLoading(b.id, 'pull') ? 'spinning' : ''}" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
           </span>` : ''}
-          <button class="icon-btn sm branch-log-btn" onclick="event.stopPropagation(); viewBranchLogs('${esc(b.id)}')" title="查看部署日志">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.5 0a.25.25 0 01.25-.25h10.5a.25.25 0 01.25.25v7.5a.25.25 0 01-.25.25h-4.5a.75.75 0 00-.75.75v2.19l-2.72-2.72a.75.75 0 00-.53-.22H2.75a.25.25 0 01-.25-.25v-7.5z"/></svg>
+          <button class="color-mark-btn ${b.isColorMarked ? 'active' : ''}" onclick="toggleColorMark('${esc(b.id)}', event)" title="${b.isColorMarked ? '取消调试标记' : '标记为调试中'}">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M7 1 A6 6 0 0 1 13 7 L7 7 Z" class="cm-q1"/>
+              <path d="M13 7 A6 6 0 0 1 7 13 L7 7 Z" class="cm-q2"/>
+              <path d="M7 13 A6 6 0 0 1 1 7 L7 7 Z" class="cm-q3"/>
+              <path d="M1 7 A6 6 0 0 1 7 1 L7 7 Z" class="cm-q4"/>
+            </svg>
           </button>
         </div>
         <div class="branch-card-header">
@@ -1822,16 +1822,7 @@ function renderBranches() {
             <a class="branch-name" href="${githubRepoUrl ? githubRepoUrl.replace('github.com', 'github.dev') + '/tree/' + encodeURIComponent(b.branch) : '#'}" target="_blank" onclick="event.stopPropagation(); return confirmOpenGithub(event)" title="在 GitHub.dev 中浏览代码">${ICON.branch} ${esc(b.branch)}</a>
           </div>
           ${b.date ? `<div class="branch-card-row2"><span class="branch-meta">${relativeTime(b.date)}更新</span>${isStopping ? '<span class="branch-status-badge status-badge-stopping">正在停止...</span>' : b.status === 'starting' ? '<span class="branch-status-badge status-badge-starting">等待服务就绪...</span>' : b.status === 'building' && !isDeploying ? '<span class="branch-status-badge status-badge-building">构建中...</span>' : ''}</div>` : ''}
-          <div class="branch-card-ports">${portBadgesHtml || ''}
-            <button class="color-mark-btn ${b.isColorMarked ? 'active' : ''}" onclick="toggleColorMark('${esc(b.id)}', event)" title="${b.isColorMarked ? '取消调试标记' : '标记为调试中'}">
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                <path d="M7 1 A6 6 0 0 1 13 7 L7 7 Z" class="cm-q1"/>
-                <path d="M13 7 A6 6 0 0 1 7 13 L7 7 Z" class="cm-q2"/>
-                <path d="M7 13 A6 6 0 0 1 1 7 L7 7 Z" class="cm-q3"/>
-                <path d="M1 7 A6 6 0 0 1 7 1 L7 7 Z" class="cm-q4"/>
-              </svg>
-            </button>
-          </div>
+          ${portBadgesHtml ? `<div class="branch-card-ports">${portBadgesHtml}</div>` : ''}
           ${b.executorId ? `<span class="executor-tag" title="部署在执行器 ${esc(b.executorId)}">⚡ ${esc(b.executorId.replace(/^executor-/, '').slice(0, 20))}</span>` : ''}
         </div>
         ${b.errorMessage && !deployLog ? `<div class="branch-error" title="${esc(b.errorMessage)}">${esc(b.errorMessage)}</div>` : ''}
