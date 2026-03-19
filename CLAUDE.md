@@ -12,6 +12,7 @@ prd_agent/
 ├── prd-admin/        # React 18 管理后台 (Vite)    → prd-admin/CLAUDE.md
 ├── prd-desktop/      # Tauri 2.0 桌面客户端        → prd-desktop/CLAUDE.md
 ├── prd-video/        # Remotion 视频合成
+├── changelogs/       # 更新记录碎片（每 PR 一个文件，发版时合并）
 ├── doc/              # 编号文档 (spec/design/plan/rule/guide/report)
 └── scripts/          # 构建/部署脚本
 ```
@@ -60,15 +61,28 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 完成开发任务后，**必须主动**使用 `task-handoff-checklist` 技能生成交接清单（涉及 3+ 文件变更、API 端点变更、或 UI 页面变更时）。1-2 个文件小修改无需生成。
 
-### 4. 更新记录维护
+### 4. 更新记录维护（Changelog Fragments）
 
-对 `prd-api/`、`prd-admin/`、`prd-desktop/`、`prd-video/` 的任何代码变更（feat/fix/refactor/perf），**提交前必须**在 `CHANGELOG.md` 的 `[未发布]` 区域追加记录。
+对 `prd-api/`、`prd-admin/`、`prd-desktop/`、`prd-video/` 的任何代码变更（feat/fix/refactor/perf），**提交前必须**在 `changelogs/` 目录创建碎片文件，**禁止直接编辑 `CHANGELOG.md`**。
 
-规则：
-- 按日期分组，当日已有同类型同模块条目时**合并**而非新增行
+#### 碎片文件规则
+
+- 文件名：`changelogs/YYYY-MM-DD_<短描述>.md`（如 `2026-03-19_safari-fix.md`）
+- 内容为纯表格行（无表头），每行一条记录：
+  ```
+  | feat | prd-admin | 新增XX功能 |
+  | fix | prd-api | 修复XX问题 |
+  ```
+- 同一 PR 的所有变更放在**一个碎片文件**中
 - 纯文档变更（`doc/`）、纯 CLAUDE.md 规则调整可选记录
-- 版本发布时将 `[未发布]` 条目包裹进 `## [x.y.z] - YYYY-MM-DD` 并补写 `用户更新项` 摘要
-- 格式详见 `CHANGELOG.md` 底部维护规则
+
+#### 发版合并
+
+版本发布时执行 `bash scripts/assemble-changelog.sh`，自动将碎片文件按日期合并进 `CHANGELOG.md` 的 `[未发布]` 区域并删除碎片文件。
+
+#### 为什么这样做
+
+多分支并行开发时，直接编辑 `CHANGELOG.md` 会在同一位置插入内容导致 **必然冲突**。碎片文件各自独立，彻底消除合并冲突。
 
 ---
 
