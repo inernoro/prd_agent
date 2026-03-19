@@ -103,7 +103,7 @@ export default function ShareViewPage() {
     const isExpired = error.code === 'EXPIRED';
     return (
       <div style={styles.fullScreen}>
-        <div style={{ position: 'absolute', inset: 0 }}><BlackHoleVortex /></div>
+        <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}><BlackHoleVortex /></div>
         <div style={styles.overlay} />
         <div style={{ ...styles.glassCard, textAlign: 'center', padding: '40px 32px' }}>
           <div style={{
@@ -133,7 +133,7 @@ export default function ShareViewPage() {
   if (needPassword) {
     return (
       <div style={styles.fullScreen}>
-        <div style={{ position: 'absolute', inset: 0 }}><BlackHoleVortex /></div>
+        <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}><BlackHoleVortex /></div>
         <div style={styles.overlay} />
         <div
           key={shakeKey}
@@ -213,6 +213,7 @@ export default function ShareViewPage() {
                   outline: 'none',
                   width: 220,
                   backdropFilter: 'blur(8px)',
+                  WebkitBackdropFilter: 'blur(8px)',
                   transition: 'border-color 0.3s',
                 }}
               />
@@ -246,6 +247,7 @@ export default function ShareViewPage() {
                 opacity: submitting || !password.trim() ? 0.5 : 1,
                 transition: 'background 0.3s, opacity 0.2s',
                 backdropFilter: 'blur(8px)',
+                WebkitBackdropFilter: 'blur(8px)',
               }}
             >
               {submitting ? '验证中...' : '确认'}
@@ -351,7 +353,7 @@ export default function ShareViewPage() {
   // Collection -> list cards
   return (
     <div style={{ ...styles.fullScreen, alignItems: 'flex-start', paddingTop: 60 }}>
-      <div style={{ position: 'absolute', inset: 0 }}><BlackHoleVortex /></div>
+      <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}><BlackHoleVortex /></div>
       <div style={styles.overlay} />
       <div style={{ maxWidth: 720, width: '100%', padding: '20px 16px', position: 'relative', zIndex: 1 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
@@ -469,7 +471,10 @@ const styles: Record<string, React.CSSProperties> = {
   },
   overlay: {
     position: 'absolute',
-    inset: 0,
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
     background: 'radial-gradient(ellipse at center, rgba(0,0,0,0.3) 0%, rgba(0,0,0,0.6) 100%)',
     zIndex: 1,
     pointerEvents: 'none',
