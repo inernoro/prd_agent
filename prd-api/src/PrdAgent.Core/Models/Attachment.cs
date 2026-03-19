@@ -37,4 +37,7 @@ public class Attachment
     
     /// <summary>上传时间</summary>
     public DateTime UploadedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>从文件中提取的纯文本内容（PDF/Word/Excel/PPT 等）</summary>
+    public string? ExtractedText { get; set; }
 }

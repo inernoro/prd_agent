@@ -99,6 +99,8 @@ export default function SettingsModal() {
   );
   const [updateInfo, setUpdateInfo] = useState<{ version?: string; notes?: string } | null>(null);
   const [updateError, setUpdateError] = useState<string>('');
+  /** 更新源标记：accelerated=加速 / github=回退 GitHub */
+  const [updateSource, setUpdateSource] = useState<'unknown' | 'accelerated' | 'github'>('unknown');
   
   // API 测试状态
   const [isTesting, setIsTesting] = useState(false);
@@ -266,6 +268,7 @@ export default function SettingsModal() {
   const handleCheckUpdate = async () => {
     setUpdateError('');
     setUpdateInfo(null);
+    setUpdateSource('unknown');
 
     if (!isTauri()) {
       setUpdateStatus('error');
@@ -274,6 +277,19 @@ export default function SettingsModal() {
     }
 
     setUpdateStatus('checking');
+
+    // 探测加速端点，记录更新源
+    try {
+      const accelResult = await invoke<{ source: string; acceleratedLatencyMs?: number; githubLatencyMs?: number }>('fetch_accelerated_manifest');
+      if (accelResult?.source === 'accelerated' || accelResult?.source === 'github') {
+        setUpdateSource(accelResult.source as 'accelerated' | 'github');
+        console.log('[Updater] Update source:', accelResult.source,
+          'accel:', accelResult.acceleratedLatencyMs, 'ms',
+          'github:', accelResult.githubLatencyMs, 'ms');
+      }
+    } catch (e) {
+      console.warn('[Updater] Accelerated manifest probe failed:', e);
+    }
     
     // 调试日志：打印更新检查开始
     console.log('[Updater] ========== UPDATE CHECK START ==========');
@@ -600,11 +616,19 @@ export default function SettingsModal() {
               )}
 
               {(updateStatus === 'available' || updateStatus === 'installing') && (
-                <div className="mt-3 p-3 rounded-lg border border-cyan-500/25 bg-cyan-500/8">
+                <div className={`mt-3 p-3 rounded-lg border ${updateSource === 'accelerated' ? 'border-amber-500/25 bg-amber-500/8' : 'border-cyan-500/25 bg-cyan-500/8'}`}>
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
-                      <div className="text-xs text-cyan-400">
+                      <div className={`text-xs flex items-center gap-1.5 ${updateSource === 'accelerated' ? 'text-amber-400' : 'text-cyan-400'}`}>
                         {updateStatus === 'installing' ? '正在安装更新' : '发现新版本'}
+                        {updateSource === 'accelerated' && updateStatus !== 'installing' && (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/25 text-amber-300 border border-amber-500/30">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-2.5 h-2.5">
+                              <path d="M11.983 1.907a.75.75 0 00-1.292-.657l-8.5 9.5A.75.75 0 002.75 12h6.572l-1.305 6.093a.75.75 0 001.292.657l8.5-9.5A.75.75 0 0017.25 8h-6.572l1.305-6.093z" />
+                            </svg>
+                            极速下载
+                          </span>
+                        )}
                       </div>
                       <div className="text-sm text-text-primary font-mono break-all">
                         {updateInfo?.version || '新版本'}
@@ -613,7 +637,7 @@ export default function SettingsModal() {
                     <button
                       onClick={handleDownloadAndInstall}
                       disabled={updateStatus === 'installing'}
-                      className="px-3 py-1.5 text-xs font-medium bg-cyan-500/30 hover:bg-cyan-500/40 text-white rounded-lg transition-colors disabled:opacity-50"
+                      className={`px-3 py-1.5 text-xs font-medium text-white rounded-lg transition-colors disabled:opacity-50 ${updateSource === 'accelerated' ? 'bg-amber-500/30 hover:bg-amber-500/40' : 'bg-cyan-500/30 hover:bg-cyan-500/40'}`}
                     >
                       {updateStatus === 'installing' ? '安装中...' : '下载并安装'}
                     </button>

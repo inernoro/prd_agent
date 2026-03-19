@@ -712,6 +712,28 @@ public class AiToolboxController : ControllerBase
             }
         }
 
+        // 如果有附件，加载文件内容并注入上下文
+        if (request.AttachmentIds is { Count: > 0 })
+        {
+            var attachmentFilter = Builders<Attachment>.Filter.In(a => a.AttachmentId, request.AttachmentIds);
+            var attachments = await _db.Attachments.Find(attachmentFilter).ToListAsync(CancellationToken.None);
+
+            var fileParts = new List<string>();
+            foreach (var att in attachments)
+            {
+                if (!string.IsNullOrWhiteSpace(att.ExtractedText))
+                {
+                    fileParts.Add($"=== 文件: {att.FileName} ===\n{att.ExtractedText}");
+                }
+            }
+
+            if (fileParts.Count > 0)
+            {
+                var fileContext = string.Join("\n\n", fileParts);
+                message = $"{message}\n\n以下是用户上传的文件内容，请基于这些内容回答：\n\n{fileContext}";
+            }
+        }
+
         // 添加当前消息
         messages.Add(new JsonObject { ["role"] = "user", ["content"] = message });
 
@@ -1026,6 +1048,11 @@ public class ToolboxChatRequest
     public string? SessionId { get; set; }
 
     /// <summary>
+    /// 附件 ID 列表（文件内容将注入上下文）
+    /// </summary>
+    public List<string>? AttachmentIds { get; set; }
+
+    /// <summary>
     /// 选项
     /// </summary>
     public ToolboxChatOptions? Options { get; set; }
@@ -1159,6 +1186,9 @@ public class DirectChatRequest
 
     /// <summary>对话历史</summary>
     public List<ChatHistoryMessage>? History { get; set; }
+
+    /// <summary>附件 ID 列表（文件内容将注入上下文）</summary>
+    public List<string>? AttachmentIds { get; set; }
 }
 
 /// <summary>

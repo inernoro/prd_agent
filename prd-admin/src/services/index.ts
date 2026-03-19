@@ -1219,6 +1219,7 @@ export {
   subscribeToolboxRunEvents,
   streamDirectChat,
   streamCapabilityChat,
+  uploadAttachment,
   // Legacy API
   getToolboxRun,
   listToolboxRuns,
@@ -1227,6 +1228,7 @@ export type {
   ToolboxItem,
   ToolboxItemRun,
   AgentInfo,
+  UploadedAttachment,
   ToolboxRunEvent,
   DirectChatMessage,
   // Legacy types
