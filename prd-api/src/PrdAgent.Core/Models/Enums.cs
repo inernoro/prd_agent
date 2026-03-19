@@ -69,7 +69,9 @@ public enum MessageRole
     /// <summary>用户消息</summary>
     User,
     /// <summary>AI助手消息</summary>
-    Assistant
+    Assistant,
+    /// <summary>系统消息（加入/退出/解散等群事件通知）</summary>
+    System
 }
 
 /// <summary>

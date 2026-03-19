@@ -50,6 +50,7 @@ import {
 } from '@/services/real/literaryAgentConfig';
 import type { LiteraryAgentModelPool, LiteraryAgentAllModelsResponse } from '@/services/contracts/literaryAgentConfig';
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
+import { BatchSizePicker } from '@/components/ui/BatchSizePicker';
 import { ASPECT_OPTIONS, type SizesByResolution } from '@/lib/imageAspectOptions';
 import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2, Loader2, ArrowLeft } from 'lucide-react';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
@@ -2561,6 +2562,26 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   <Sparkles size={12} />
                   生成
                 </Button>
+                <BatchSizePicker
+                  sizesByResolution={sizesByResolutionForPicker}
+                  disabled={isBusy || markerRunItems.length === 0}
+                  onApply={(size) => {
+                    setMarkerRunItems((prev) =>
+                      prev.map((x) => ({
+                        ...x,
+                        planItem: { ...(x.planItem || { prompt: x.draftText || x.markerText, count: 1 }), size },
+                      }))
+                    );
+                    // 持久化所有 marker 的尺寸到后端
+                    for (const item of markerRunItems) {
+                      const planItem = item.planItem || { prompt: item.draftText || item.markerText, count: 1 };
+                      void updateMarkerStatus(item.markerIndex, {
+                        planItem: { prompt: planItem.prompt, count: planItem.count ?? 1, size },
+                      });
+                    }
+                    toast.success('批量修改尺寸', `已将 ${markerRunItems.length} 张配图尺寸统一更新`);
+                  }}
+                />
                 <Button
                   size="xs"
                   variant="secondary"
@@ -2738,13 +2759,18 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         sizesByResolution={sizesByResolutionForPicker}
                         value={it.planItem?.size || '1024x1024'}
                         onChange={(s) => {
+                          const updatedPlanItem = { ...(it.planItem || { prompt: it.draftText || it.markerText, count: 1 }), size: s };
                           setMarkerRunItems((prev) =>
                             prev.map((x) =>
                               x.markerIndex === it.markerIndex
-                                ? { ...x, planItem: { ...(x.planItem || { prompt: x.draftText || x.markerText, count: 1 }), size: s } }
+                                ? { ...x, planItem: updatedPlanItem }
                                 : x
                             )
                           );
+                          // 持久化尺寸到后端
+                          void updateMarkerStatus(it.markerIndex, {
+                            planItem: { prompt: updatedPlanItem.prompt, count: updatedPlanItem.count ?? 1, size: s },
+                          });
                         }}
                         disabled={it.status === 'running' || it.status === 'parsing'}
                       />

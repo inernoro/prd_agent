@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { ASPECT_OPTIONS, type AspectOptionId } from '../imageAspectOptions';
+import { ASPECT_OPTIONS, type AspectOptionId, detectTierFromSize } from '../imageAspectOptions';
 
 // 复制核心逻辑（纯函数，不依赖 React）
 function detectTierFromRefImage(w: number, h: number): '1k' | '2k' | '4k' {
@@ -217,6 +217,28 @@ describe('尺寸适配测试', () => {
         console.error('以下随机尺寸映射到了白名单之外:', failures);
       }
       expect(failures.length).toBe(0);
+    });
+  });
+
+  describe('detectTierFromSize 回退测试', () => {
+    it('ASPECT_OPTIONS 内的尺寸应精确匹配', () => {
+      expect(detectTierFromSize('1024x1024')).toBe('1k');
+      expect(detectTierFromSize('2048x2048')).toBe('2k');
+      expect(detectTierFromSize('4096x4096')).toBe('4k');
+    });
+
+    it('不在 ASPECT_OPTIONS 中的白名单尺寸应按像素面积回退', () => {
+      // Gemini 白名单中的尺寸，不在 ASPECT_OPTIONS 的 size1k/size2k/size4k 中
+      expect(detectTierFromSize('1344x768')).toBe('1k');   // 1,032,192 < 2,500,000
+      expect(detectTierFromSize('832x1248')).toBe('1k');   // 1,038,336 < 2,500,000
+      expect(detectTierFromSize('1184x864')).toBe('1k');   // 1,022,976 < 2,500,000
+      expect(detectTierFromSize('896x1152')).toBe('1k');   // 1,032,192 < 2,500,000
+    });
+
+    it('无效输入仍返回 null', () => {
+      expect(detectTierFromSize('')).toBeNull();
+      expect(detectTierFromSize('abc')).toBeNull();
+      expect(detectTierFromSize('0x0')).toBeNull();
     });
   });
 

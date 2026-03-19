@@ -92,5 +92,10 @@ public sealed class AdminMenuItemResponse
     /// 排序权重
     /// </summary>
     public int SortOrder { get; set; }
+
+    /// <summary>
+    /// 分组标识：tools=效率工具, personal=个人空间, admin=系统管理, null=头像面板
+    /// </summary>
+    public string? Group { get; set; }
 }
 

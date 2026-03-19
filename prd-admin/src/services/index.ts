@@ -223,6 +223,12 @@ import type {
   UpdateDefectWebhookContract,
   DeleteDefectWebhookContract,
   AnalyzeDefectImageContract,
+  CreateDefectShareContract,
+  ListDefectSharesContract,
+  RevokeDefectShareContract,
+  ListDefectFixReportsContract,
+  AcceptDefectFixItemContract,
+  RejectDefectFixItemContract,
 } from '@/services/contracts/defectAgent';
 import type { IOpenPlatformService } from '@/services/contracts/openPlatform';
 import type { IAutomationsService } from '@/services/contracts/automations';
@@ -494,6 +500,12 @@ import {
   createDefectWebhookReal,
   updateDefectWebhookReal,
   deleteDefectWebhookReal,
+  createDefectShareReal,
+  listDefectSharesReal,
+  revokeDefectShareReal,
+  listDefectFixReportsReal,
+  acceptDefectFixItemReal,
+  rejectDefectFixItemReal,
 } from '@/services/real/defectAgent';
 import { OpenPlatformService } from '@/services/real/openPlatform';
 import { AutomationsService } from '@/services/real/automations';
@@ -522,6 +534,7 @@ import type {
   CreateReportTeamContract,
   UpdateReportTeamContract,
   DeleteReportTeamContract,
+  LeaveReportTeamContract,
   AddReportTeamMemberContract,
   RemoveReportTeamMemberContract,
   UpdateReportTeamMemberContract,
@@ -535,6 +548,7 @@ import type {
   GetWeeklyReportContract,
   CreateWeeklyReportContract,
   UpdateWeeklyReportContract,
+  UploadReportRichTextImageContract,
   DeleteWeeklyReportContract,
   SubmitWeeklyReportContract,
   ReviewWeeklyReportContract,
@@ -556,9 +570,14 @@ import type {
   ListCommentsContract,
   CreateCommentContract,
   DeleteCommentContract,
+  ListReportLikesContract,
+  LikeReportContract,
+  UnlikeReportContract,
   GetPlanComparisonContract,
   GenerateTeamSummaryContract,
   GetTeamSummaryContract,
+  GetTeamSummaryViewContract,
+  GetTeamReportsViewContract,
   GetPersonalTrendsContract,
   GetTeamTrendsContract,
   MarkVacationContract,
@@ -581,6 +600,7 @@ import {
   createReportTeamReal,
   updateReportTeamReal,
   deleteReportTeamReal,
+  leaveReportTeamReal,
   addReportTeamMemberReal,
   removeReportTeamMemberReal,
   updateReportTeamMemberReal,
@@ -594,6 +614,7 @@ import {
   getWeeklyReportReal,
   createWeeklyReportReal,
   updateWeeklyReportReal,
+  uploadReportRichTextImageReal,
   deleteWeeklyReportReal,
   submitWeeklyReportReal,
   reviewWeeklyReportReal,
@@ -615,9 +636,14 @@ import {
   listCommentsReal,
   createCommentReal,
   deleteCommentReal,
+  listReportLikesReal,
+  likeReportReal,
+  unlikeReportReal,
   getPlanComparisonReal,
   generateTeamSummaryReal,
   getTeamSummaryReal,
+  getTeamSummaryViewReal,
+  getTeamReportsViewReal,
   getPersonalTrendsReal,
   getTeamTrendsReal,
   exportReportMarkdownReal,
@@ -943,6 +969,13 @@ export const listDefectWebhooks: ListDefectWebhooksContract = withAuth(listDefec
 export const createDefectWebhook: CreateDefectWebhookContract = withAuth(createDefectWebhookReal);
 export const updateDefectWebhook: UpdateDefectWebhookContract = withAuth(updateDefectWebhookReal);
 export const deleteDefectWebhook: DeleteDefectWebhookContract = withAuth(deleteDefectWebhookReal);
+// Defect Shares
+export const createDefectShare: CreateDefectShareContract = withAuth(createDefectShareReal);
+export const listDefectShares: ListDefectSharesContract = withAuth(listDefectSharesReal);
+export const revokeDefectShare: RevokeDefectShareContract = withAuth(revokeDefectShareReal);
+export const listDefectFixReports: ListDefectFixReportsContract = withAuth(listDefectFixReportsReal);
+export const acceptDefectFixItem: AcceptDefectFixItemContract = withAuth(acceptDefectFixItemReal);
+export const rejectDefectFixItem: RejectDefectFixItemContract = withAuth(rejectDefectFixItemReal);
 
 // ─── Mobile Dashboard ───
 export const getMobileFeed: GetMobileFeedContract = withAuth(getMobileFeedReal);
@@ -955,6 +988,7 @@ export const getReportTeam: GetReportTeamContract = withAuth(getReportTeamReal);
 export const createReportTeam: CreateReportTeamContract = withAuth(createReportTeamReal);
 export const updateReportTeam: UpdateReportTeamContract = withAuth(updateReportTeamReal);
 export const deleteReportTeam: DeleteReportTeamContract = withAuth(deleteReportTeamReal);
+export const leaveReportTeam: LeaveReportTeamContract = withAuth(leaveReportTeamReal);
 export const addReportTeamMember: AddReportTeamMemberContract = withAuth(addReportTeamMemberReal);
 export const removeReportTeamMember: RemoveReportTeamMemberContract = withAuth(removeReportTeamMemberReal);
 export const updateReportTeamMember: UpdateReportTeamMemberContract = withAuth(updateReportTeamMemberReal);
@@ -968,6 +1002,7 @@ export const listWeeklyReports: ListWeeklyReportsContract = withAuth(listWeeklyR
 export const getWeeklyReport: GetWeeklyReportContract = withAuth(getWeeklyReportReal);
 export const createWeeklyReport: CreateWeeklyReportContract = withAuth(createWeeklyReportReal);
 export const updateWeeklyReport: UpdateWeeklyReportContract = withAuth(updateWeeklyReportReal);
+export const uploadReportRichTextImage: UploadReportRichTextImageContract = withAuth(uploadReportRichTextImageReal);
 export const deleteWeeklyReport: DeleteWeeklyReportContract = withAuth(deleteWeeklyReportReal);
 export const submitWeeklyReport: SubmitWeeklyReportContract = withAuth(submitWeeklyReportReal);
 export const reviewWeeklyReport: ReviewWeeklyReportContract = withAuth(reviewWeeklyReportReal);
@@ -991,9 +1026,14 @@ export const getCollectedActivity: GetCollectedActivityContract = withAuth(getCo
 export const listComments: ListCommentsContract = withAuth(listCommentsReal);
 export const createComment: CreateCommentContract = withAuth(createCommentReal);
 export const deleteComment: DeleteCommentContract = withAuth(deleteCommentReal);
+export const listReportLikes: ListReportLikesContract = withAuth(listReportLikesReal);
+export const likeReport: LikeReportContract = withAuth(likeReportReal);
+export const unlikeReport: UnlikeReportContract = withAuth(unlikeReportReal);
 export const getPlanComparison: GetPlanComparisonContract = withAuth(getPlanComparisonReal);
 export const generateTeamSummary: GenerateTeamSummaryContract = withAuth(generateTeamSummaryReal);
 export const getTeamSummary: GetTeamSummaryContract = withAuth(getTeamSummaryReal);
+export const getTeamSummaryView: GetTeamSummaryViewContract = withAuth(getTeamSummaryViewReal);
+export const getTeamReportsView: GetTeamReportsViewContract = withAuth(getTeamReportsViewReal);
 // Report Agent Phase 4: Trends + Export + Vacation
 export const getPersonalTrends: GetPersonalTrendsContract = withAuth(getPersonalTrendsReal);
 export const getTeamTrends: GetTeamTrendsContract = withAuth(getTeamTrendsReal);

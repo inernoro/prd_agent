@@ -38,7 +38,7 @@ function getProcessedContent(messageId: string, content: string, processor: (raw
   return processed;
 }
 
-// 注意：阶段文案（如“正在接收信息…”）会造成“AI 回复未带头像/昵称”的割裂观感。
+// 注意：阶段文案（如"正在接收信息…"）会造成"AI 回复未带头像/昵称"的割裂观感。
 // 这里改为：阶段仅用动画表达，避免在 UI 中出现多处状态文案。
 
 const roleZh: Record<string, string> = {
@@ -81,7 +81,7 @@ function roleTheme(role?: string | null): { badgeClass: string; avatarBgClass: s
 
 function tagTheme(tag: GroupMemberTag): string {
   const r = String(tag?.role || '').trim().toLowerCase();
-  // 机器人：使用“实心填充”铭牌（绿色底 + 白字），让“机器人”显性标识
+  // 机器人：使用"实心填充"铭牌（绿色底 + 白字），让"机器人"显性标识
   if (r === 'robot') return 'bg-green-600 text-white border-green-700/40 dark:bg-green-500 dark:text-white dark:border-green-300/30 font-semibold';
   if (r === 'pm') return 'bg-emerald-500/10 text-emerald-700 border-emerald-300/40 dark:bg-emerald-500/15 dark:text-emerald-200 dark:border-emerald-400/30';
   if (r === 'dev') return 'bg-sky-500/10 text-sky-700 border-sky-300/40 dark:bg-sky-500/15 dark:text-sky-200 dark:border-sky-400/30';
@@ -278,7 +278,7 @@ function formatDurationShort(ms: unknown): string {
 
 function unwrapMarkdownFences(text: string) {
   if (!text) return text;
-  // 兼容：LLM 常用 ```markdown / ```md 包裹“本来就想渲染的 Markdown”，会被当作代码块显示
+  // 兼容：LLM 常用 ```markdown / ```md 包裹"本来就想渲染的 Markdown"，会被当作代码块显示
   // 这里仅解包 markdown/md 语言标记，其它代码块保持不动
   let result = text.replace(/```(?:markdown|md)\s*\n([\s\S]*?)\n```/g, '$1');
   // 去除开头的空白行，避免 prose 渲染时产生多余的空白区域
@@ -295,7 +295,7 @@ function injectSectionNumberLinks(raw: string) {
   // - （章节4.2，4.3）
   // - (章节 4.2, 4.3)
   // - （4.2，4.3）
-  // 目标：把每个章节号变成内部链接，点击后用 title 去预览页匹配（包含匹配即可命中 “4.2 xxx”）
+  // 目标：把每个章节号变成内部链接，点击后用 title 去预览页匹配（包含匹配即可命中 "4.2 xxx"）
   const re = /[（(]\s*(?:章节\s*)?(\d+(?:\.\d+){0,3})(?:\s*[,，、]\s*(\d+(?:\.\d+){0,3}))*\s*[）)]/g;
   return raw.replace(re, (m) => {
     // 抽取全部数字（不依赖捕获组数量）
@@ -308,7 +308,7 @@ function injectSectionNumberLinks(raw: string) {
     const linked = nums.map((n, i) => {
       const label = `${prefix}${n}`;
       const href = `prd-nav:${n}`;
-      // prefix 只在第一个展示，避免 “章节4.2，章节4.3”
+      // prefix 只在第一个展示，避免 "章节4.2，章节4.3"
       const show = i === 0 ? label : n;
       return `[${show}](${href})`;
     }).join(sep);
@@ -317,12 +317,12 @@ function injectSectionNumberLinks(raw: string) {
 }
 
 /**
- * 将回答中的“来源：...”行改造成可点击的章节来源标记（chip）。
+ * 将回答中的"来源：..."行改造成可点击的章节来源标记（chip）。
  * 目标形态（示例）：
  *   来源： [1.2.3](prd-nav:1.2.3) 文本理解的天然效率上限。
  *   来源： [7.3](prd-nav:7.3) LLM支持、[4.1](prd-nav:4.1) 文档上传与解析…
  *
- * 说明：不依赖后端 citations；若 citations 存在，仍可通过点击底部“来源”或引用抽屉导航查看摘录。
+ * 说明：不依赖后端 citations；若 citations 存在，仍可通过点击底部"来源"或引用抽屉导航查看摘录。
  */
 function injectSourceLines(raw: string) {
   if (!raw) return raw;
@@ -354,7 +354,7 @@ function injectSourceLines(raw: string) {
       continue;
     }
 
-    // 策略：优先匹配 “编号 + 空格 + 标题片段”
+    // 策略：优先匹配 "编号 + 空格 + 标题片段"
     // - 编号形态：11 / 7.3 / 1.2.3 / 11.
     // - 标题片段：直到遇到分隔符（，、,；;）或行尾
     const re = /(\d+(?:\.\d+){0,3}\.?)\s*([^\s，、,；;]+[^\n，、,；;]*)?/g;
@@ -364,7 +364,7 @@ function injectSourceLines(raw: string) {
       // 防止误把年份/数量当来源：来源行里一般不会出现 2025 这种，但仍限制长度
       const num = String(n || '').trim();
       if (!num) return all;
-      // 如果标题看起来是“纯连接词”，忽略
+      // 如果标题看起来是"纯连接词"，忽略
       const title = String(t || '').trim();
       return toChip(num, title);
     });
@@ -392,7 +392,7 @@ function parseNavTitleFromHref(href: string) {
 }
 
 function isSystemNoticeMessage(message: Message): boolean {
-  // 系统提示（如 SSE 订阅失败）不作为“对话气泡”，而是居中提示条（参考图2）
+  // 系统提示（如 SSE 订阅失败）不作为"对话气泡"，而是居中提示条（参考图2）
   const id = String(message?.id || '');
   const content = String(message?.content || '');
   if (id.startsWith('group-stream-error-')) return true;
@@ -431,7 +431,7 @@ function MessageListInner() {
     return clamp(screens * 3, 50, 180);
   }, [containerHeight]);
 
-  // pinned 场景下限制最大渲染窗口，避免“跳到最新”时一次性 mount 太多节点导致滚动同步卡顿
+  // pinned 场景下限制最大渲染窗口，避免"跳到最新"时一次性 mount 太多节点导致滚动同步卡顿
   const pinnedWindowSize = useMemo(() => Math.min(windowSize, 60), [windowSize]);
 
   const [range, setRange] = useState<{ start: number; end: number }>({ start: 0, end: 0 });
@@ -445,11 +445,11 @@ function MessageListInner() {
   showScrollToBottomRef.current = showScrollToBottom;
 
   // 群组切换兜底：
-  // 目标：点击群组后默认定位到“最新消息”，而不是停留在顶部（最老消息）。
+  // 目标：点击群组后默认定位到"最新消息"，而不是停留在顶部（最老消息）。
   // 背景：切群时 messages 可能被清空/再填充，也可能复用缓存导致数组引用不变；
-  // 因此不应仅依赖“messages 变化”来触发滚动。
+  // 因此不应仅依赖"messages 变化"来触发滚动。
   const pendingScrollOnGroupSwitchRef = useRef<string | null>(null);
-  // 切群首帧：抑制 onScroll 的 pinned 计算，避免“还没滚到底就把 pinned 改回 false”导致随机顶部/底部
+  // 切群首帧：抑制 onScroll 的 pinned 计算，避免"还没滚到底就把 pinned 改回 false"导致随机顶部/底部
   const suppressPinnedByScrollRef = useRef(false);
   useEffect(() => {
     const gid = String(activeGroupId || '').trim();
@@ -461,7 +461,7 @@ function MessageListInner() {
     // 标记：等待该群组的消息变为非空后，再强制滚到底部
     pendingScrollOnGroupSwitchRef.current = gid;
     suppressPinnedByScrollRef.current = true;
-    // 重置窗口化/锚点状态，避免沿用上一个群组的 range 导致“看起来像从最老开始”
+    // 重置窗口化/锚点状态，避免沿用上一个群组的 range 导致"看起来像从最老开始"
     ensuredInitialRangeRef.current = false;
     pendingAnchorRef.current = null;
     setRange({ start: 0, end: 0 });
@@ -484,7 +484,7 @@ function MessageListInner() {
     pendingScrollOnGroupSwitchRef.current = null;
   }, [activeGroupId, messages.length]);
 
-  // 关键修复：避免“messages 已存在但 range 仍是 0”导致白屏（用户一滚动才触发 range 更新）
+  // 关键修复：避免"messages 已存在但 range 仍是 0"导致白屏（用户一滚动才触发 range 更新）
   // 这里用 layoutEffect，保证首帧就有可见消息；本身只是一次 setState，不涉及滚动/读布局。
   useLayoutEffect(() => {
     if (ensuredInitialRangeRef.current) return;
@@ -553,13 +553,13 @@ function MessageListInner() {
   const lastStreamingTransitionAtRef = useRef<number>(0);
 
   // 用户主动发送/提示词：强制跳到最新一页
-  // 注意：这里不再做“同步滚动”（会触发 300ms 级别的同步布局/卡顿），只做状态更新与记录，
+  // 注意：这里不再做"同步滚动"（会触发 300ms 级别的同步布局/卡顿），只做状态更新与记录，
   // 真正的滚动延后到 useEffect（浏览器完成一次 paint 之后）执行。
   useLayoutEffect(() => {
-    // 关键：用 layout effect 同步滚动，避免用户点击发送后“空等一帧甚至更久”
+    // 关键：用 layout effect 同步滚动，避免用户点击发送后"空等一帧甚至更久"
     if (!scrollToBottomSeq) return;
-    // 与“点击回到底部/刷新”的体验对齐：在滚动发生前短暂抑制 onScroll 的 pinned 误判，
-    // 避免出现“明明要回到底部却被瞬间判定为 pinned=false”的随机现象。
+    // 与"点击回到底部/刷新"的体验对齐：在滚动发生前短暂抑制 onScroll 的 pinned 误判，
+    // 避免出现"明明要回到底部却被瞬间判定为 pinned=false"的随机现象。
     suppressPinnedByScrollRef.current = true;
     setPinnedToBottom(true);
     pendingScrollToBottomSeqRef.current = scrollToBottomSeq;
@@ -581,7 +581,7 @@ function MessageListInner() {
     });
   }, [scrollToBottomSeq, messages.length, isStreaming, pendingAssistantId]);
 
-  // 记录 streaming 状态切换时间：用于抑制“done 后 smooth 再滚一次”的晃动
+  // 记录 streaming 状态切换时间：用于抑制"done 后 smooth 再滚一次"的晃动
   useEffect(() => {
     const prev = prevIsStreamingRef.current;
     if (prev !== isStreaming) {
@@ -668,13 +668,13 @@ function MessageListInner() {
     return Array.from(set);
   };
 
-  // 记录用户是否“锁定在底部”：用于从预览页返回时恢复到最新对话
+  // 记录用户是否"锁定在底部"：用于从预览页返回时恢复到最新对话
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
 
     let raf: number | null = null;
-    // 滞回阈值：避免“临界抖动”导致 pinned/show 状态在滚动时频繁翻转
+    // 滞回阈值：避免"临界抖动"导致 pinned/show 状态在滚动时频繁翻转
     const PIN_ON_PX = 120;
     const PIN_OFF_PX = 240;
     const SHOW_ON_PX = 220;
@@ -684,7 +684,7 @@ function MessageListInner() {
       if (raf != null) return;
       raf = requestAnimationFrame(() => {
         raf = null;
-        // 切群首帧：避免 pinned 被 “distanceToBottom 很大” 的初始测量误判覆盖
+        // 切群首帧：避免 pinned 被 "distanceToBottom 很大" 的初始测量误判覆盖
         if (suppressPinnedByScrollRef.current) {
           const prevPinned = useMessageStore.getState().isPinnedToBottom;
           if (!prevPinned) setPinnedToBottom(true);
@@ -701,7 +701,7 @@ function MessageListInner() {
           setPinnedToBottom(nextPinned);
         }
 
-        // scroll-to-bottom icon：滞回（并与 pinned 脱钩，避免 pinned=true 但仍“离底较远”的瞬态）
+        // scroll-to-bottom icon：滞回（并与 pinned 脱钩，避免 pinned=true 但仍"离底较远"的瞬态）
         const prevShow = showScrollToBottomRef.current;
         const nextShow =
           prevShow ? distanceToBottom >= SHOW_OFF_PX : distanceToBottom >= SHOW_ON_PX;
@@ -724,14 +724,14 @@ function MessageListInner() {
     const el = containerRef.current;
     if (!el) return;
 
-    // 若用户“锁底”，则无条件滚到最新；否则沿用“接近底部才滚动”的策略
+    // 若用户"锁底"，则无条件滚到最新；否则沿用"接近底部才滚动"的策略
     const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     const isNearBottom = distanceToBottom < 140;
-    // 已在最底部（或极接近）：不要再触发 smooth scroll，避免出现“到 done 时又滚一次”的观感
+    // 已在最底部（或极接近）：不要再触发 smooth scroll，避免出现"到 done 时又滚一次"的观感
     if (distanceToBottom < 8) return;
     if (!isPinnedToBottom && !isNearBottom) return;
 
-    // 经验：done 时 content 高度会“最后抖一次”，如果此时用 smooth，会出现“到结尾又滚一遍”的晃动
+    // 经验：done 时 content 高度会"最后抖一次"，如果此时用 smooth，会出现"到结尾又滚一遍"的晃动
     // 策略：
     // - streaming 期间始终 auto
     // - streaming 刚结束后的 1.2s 内也用 auto（避免 smooth 二次滚动）
@@ -751,7 +751,7 @@ function MessageListInner() {
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  // 关键：pinned 时不要等 effect 更新 range，直接按最新尾部计算，确保“发送后立刻看到消息”
+  // 关键：pinned 时不要等 effect 更新 range，直接按最新尾部计算，确保"发送后立刻看到消息"
   const effectiveRange = useMemo(() => {
     if (isPinnedToBottom) {
       const end = messages.length;
@@ -785,7 +785,7 @@ function MessageListInner() {
             const atTop = (root?.scrollTop ?? 0) < 2;
             // pinned=true 但同时在顶部（内容不足一屏/滚动阈值误判）时，仍应允许触发加载更早消息
             if (isPinnedToBottom && !atTop) continue;
-            // 先在本地已加载数据中“展开”更早部分；start==0 后触发瀑布加载（向前分页）
+            // 先在本地已加载数据中"展开"更早部分；start==0 后触发瀑布加载（向前分页）
             if (rangeRef.current.start > 0) {
               shiftEarlier();
             } else {
@@ -1443,7 +1443,7 @@ function MessageListInner() {
     <div className="relative flex-1 min-h-0 flex flex-col">
       <div
         ref={containerRef}
-        // 强制合成层：缓解 WebKit/Tauri WebView 偶发“不 repaint，滚一下才显示”的现象
+        // 强制合成层：缓解 WebKit/Tauri WebView 偶发"不 repaint，滚一下才显示"的现象
         className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 transform-gpu"
       >
         <div ref={topSentinelRef} />
@@ -1481,8 +1481,39 @@ function MessageListInner() {
       ) : null}
 
       {visible.map((message: Message) => {
-        // 系统提示已改为 overlay（SystemNoticeOverlay），避免“锁底”导致提示永远贴底
+        // 系统提示已改为 overlay（SystemNoticeOverlay），避免"锁底"导致提示永远贴底
         if (isSystemNoticeMessage(message)) return null;
+
+        // 系统消息（加入/退出/解散等群事件）：居中通知条
+        if (message.role === 'System') {
+          return (
+            <div key={message.id} data-msg-id={message.id} className="flex justify-center py-2 px-4">
+              <span className="inline-block px-4 py-1.5 rounded-full text-xs text-text-secondary bg-black/5 dark:bg-white/10 border border-black/5 dark:border-white/10">
+                {message.content}
+              </span>
+            </div>
+          );
+        }
+
+        // 请求中占位 assistant：单独渲染，避免影响其它消息气泡的 memo 化
+        if (pendingAssistantId && message.id === pendingAssistantId && message.role === 'Assistant' && !message.content) {
+          // 统一走 MessageBubble：让占位也带头像/昵称，动画作为气泡内容内联
+          return (
+            <div key={message.id} ref={pendingAssistantRef} data-msg-id={message.id}>
+              <MessageBubble
+                message={message}
+                isMessageStreaming={false}
+                showThinking={true}
+                thinkingLabel=""
+                isThinkingPhase={true}
+                activeGroupId={activeGroupId}
+                prdDocumentId={prdDocument?.id ?? null}
+                openCitationDrawer={openCitationDrawer as any}
+                openWithCitations={openWithCitations as any}
+              />
+            </div>
+          );
+        }
 
         const isMessageStreaming = isStreaming && streamingMessageId === message.id;
         // 显示"思考中"加载动画的条件：
@@ -1571,7 +1602,7 @@ function MessageListInner() {
         <div ref={bottomRef} />
       </div>
 
-      {/* 右下角悬浮“回到底部”按钮：仅在用户不在底部时显示（避免滚动时一闪一闪） */}
+      {/* 右下角悬浮"回到底部"按钮：仅在用户不在底部时显示（避免滚动时一闪一闪） */}
       <button
         type="button"
         onClick={scrollToLatest}

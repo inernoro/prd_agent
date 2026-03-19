@@ -86,9 +86,9 @@ export function ImageSizePicker({ sizesByResolution, value, onChange, disabled }
       <span
         className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[11px] font-medium"
         style={{
-          background: 'rgba(99, 102, 241, 0.12)',
-          border: '1px solid rgba(99, 102, 241, 0.24)',
-          color: 'rgba(129, 140, 248, 0.95)',
+          background: 'var(--bg-input-hover)',
+          border: '1px solid var(--border-default)',
+          color: 'var(--text-secondary)',
         }}
       >
         {currentSize}
@@ -104,9 +104,9 @@ export function ImageSizePicker({ sizesByResolution, value, onChange, disabled }
           disabled={disabled}
           className="inline-flex items-center gap-1 rounded-full px-2.5 h-6 text-[11px] font-medium cursor-pointer hover:opacity-80 transition-opacity"
           style={{
-            background: 'rgba(34, 197, 94, 0.12)',
-            border: '1px solid rgba(34, 197, 94, 0.35)',
-            color: 'rgba(74, 222, 128, 0.95)',
+            background: 'rgba(99, 102, 241, 0.12)',
+            border: '1px solid rgba(99, 102, 241, 0.3)',
+            color: 'rgba(129, 140, 248, 0.95)',
             opacity: disabled ? 0.5 : 1,
           }}
           title="选择尺寸"
@@ -131,7 +131,7 @@ export function ImageSizePicker({ sizesByResolution, value, onChange, disabled }
           onFocusOutside={(e) => e.preventDefault()}
         >
           {/* 分辨率档位 */}
-          <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>分辨率</div>
+          <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'var(--text-muted)' }}>分辨率</div>
           <div className="flex gap-1.5 mb-3">
             {availableTiers.map((tier) => {
               const isSelected = effectiveTier === tier;
@@ -154,7 +154,7 @@ export function ImageSizePicker({ sizesByResolution, value, onChange, disabled }
             })}
           </div>
           {/* 比例网格 */}
-          <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>尺寸</div>
+          <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'var(--text-muted)' }}>尺寸</div>
           <div className="grid grid-cols-4 gap-1.5">
             {(() => {
               let ratios = ratiosByResolution[effectiveTier];

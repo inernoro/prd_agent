@@ -34,6 +34,8 @@ public class GroupsController : ControllerBase
     private readonly IGroupMessageStreamHub _groupMessageStreamHub;
     private readonly IConfiguration _cfg;
     private readonly IGroupNameSuggestionService _groupNameSuggestionService;
+    private readonly IGroupMessageSeqService _groupMessageSeqService;
+    private readonly IIdGenerator _idGenerator;
 
     private static readonly TimeSpan GroupSessionExpiry = TimeSpan.FromMinutes(30);
 
@@ -58,7 +60,9 @@ public class GroupsController : ControllerBase
         MongoDbContext db,
         IGroupMessageStreamHub groupMessageStreamHub,
         IConfiguration cfg,
-        IGroupNameSuggestionService groupNameSuggestionService)
+        IGroupNameSuggestionService groupNameSuggestionService,
+        IGroupMessageSeqService groupMessageSeqService,
+        IIdGenerator idGenerator)
     {
         _groupService = groupService;
         _groupBotService = groupBotService;
@@ -72,6 +76,8 @@ public class GroupsController : ControllerBase
         _groupMessageStreamHub = groupMessageStreamHub;
         _cfg = cfg;
         _groupNameSuggestionService = groupNameSuggestionService;
+        _groupMessageSeqService = groupMessageSeqService;
+        _idGenerator = idGenerator;
     }
 
     private string? BuildAvatarUrl(User user)
@@ -208,6 +214,11 @@ public class GroupsController : ControllerBase
             };
 
             _logger.LogInformation("User {UserId} joined group {GroupId}", userId, member.GroupId);
+
+            // 广播系统消息
+            var joiner = await _userService.GetByIdAsync(userId);
+            var joinerName = joiner?.DisplayName ?? joiner?.Username ?? userId;
+            await PublishSystemMessageAsync(member.GroupId, $"{joinerName} 加入了群组");
 
             return Ok(ApiResponse<JoinGroupResponse>.Ok(response));
         }
@@ -701,10 +712,144 @@ public class GroupsController : ControllerBase
                 ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅群主可解散群组"));
         }
 
+        // 解散前广播系统消息
+        await PublishSystemMessageAsync(groupId, $"{user.DisplayName ?? user.Username} 解散了群组");
+
         await _groupService.DissolveAsync(groupId);
         _logger.LogInformation("Group dissolved: {GroupId} by {UserId}", groupId, userId);
 
         return Ok(ApiResponse<object>.Ok(new object()));
+    }
+
+    /// <summary>
+    /// 退出群组（任何成员可退出，群主除外）
+    /// </summary>
+    [HttpDelete("{groupId}/leave")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> LeaveGroup(string groupId)
+    {
+        var userId = GetUserId(User);
+        if (string.IsNullOrEmpty(userId))
+        {
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+        }
+
+        var user = await _userService.GetByIdAsync(userId);
+        if (user == null)
+        {
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+        }
+
+        try
+        {
+            await _groupService.LeaveAsync(groupId, userId);
+
+            // 广播系统消息
+            await PublishSystemMessageAsync(groupId, $"{user.DisplayName ?? user.Username} 退出了群组");
+
+            _logger.LogInformation("User {UserId} left group {GroupId}", userId, groupId);
+            return Ok(ApiResponse<object>.Ok(new object()));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, ex.Message));
+        }
+        catch (ArgumentException ex)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.GROUP_NOT_FOUND, ex.Message));
+        }
+    }
+
+    /// <summary>
+    /// 添加群成员（群主/管理员可操作）
+    /// </summary>
+    [HttpPost("{groupId}/members")]
+    [ProducesResponseType(typeof(ApiResponse<GroupMemberResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> AddMember(string groupId, [FromBody] AddGroupMemberRequest request)
+    {
+        var (isValid, errorMessage) = request.Validate();
+        if (!isValid)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, errorMessage!));
+        }
+
+        var userId = GetUserId(User);
+        if (string.IsNullOrEmpty(userId))
+        {
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+        }
+
+        var group = await _groupService.GetByIdAsync(groupId);
+        if (group == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.GROUP_NOT_FOUND, "群组不存在"));
+        }
+
+        // 仅群主/管理员可添加成员
+        var actor = await _userService.GetByIdAsync(userId);
+        if (actor == null)
+        {
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+        }
+        if (actor.Role != UserRole.ADMIN && group.OwnerId != userId)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅群主/管理员可添加成员"));
+        }
+
+        // 查找目标用户
+        var targetUser = await _userService.GetByUsernameAsync(request.Username.Trim());
+        if (targetUser == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.USER_NOT_FOUND, "用户不存在"));
+        }
+
+        try
+        {
+            var member = await _groupService.AddMemberAsync(groupId, targetUser.UserId, request.MemberRole);
+
+            // 广播系统消息
+            var actorName = actor.DisplayName ?? actor.Username;
+            var targetName = targetUser.DisplayName ?? targetUser.Username;
+            await PublishSystemMessageAsync(groupId, $"{actorName} 邀请 {targetName} 加入了群组");
+
+            var tags = member.Tags ?? new List<GroupMemberTag>();
+            if (tags.Count == 0)
+            {
+                tags = targetUser.UserType == UserType.Bot
+                    ? BuildDefaultBotTags(targetUser.BotKind ?? BotKind.DEV)
+                    : BuildDefaultHumanTags(member.MemberRole);
+            }
+
+            var response = new GroupMemberResponse
+            {
+                UserId = targetUser.UserId,
+                Username = targetUser.Username,
+                DisplayName = targetUser.DisplayName,
+                MemberRole = member.MemberRole,
+                IsBot = targetUser.UserType == UserType.Bot,
+                BotKind = targetUser.UserType == UserType.Bot ? targetUser.BotKind : null,
+                AvatarFileName = targetUser.AvatarFileName,
+                AvatarUrl = BuildAvatarUrl(targetUser),
+                Tags = tags.Select(t => new GroupMemberTagDto { Name = t.Name, Role = t.Role }).ToList(),
+                JoinedAt = member.JoinedAt,
+                IsOwner = false
+            };
+
+            _logger.LogInformation("User {TargetUserId} added to group {GroupId} by {ActorUserId}",
+                targetUser.UserId, groupId, userId);
+
+            return Ok(ApiResponse<GroupMemberResponse>.Ok(response));
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
     }
 
     /// <summary>
@@ -1158,17 +1303,8 @@ public class GroupsController : ControllerBase
 
                 // message：严格按 afterSeq 去重/推进
                 if (ev.Seq <= afterSeq) continue;
-                // Fast path: 占位消息（空内容）跳过 DB 查询，减少 thinking 事件的竞争窗口
-                var isPlaceholder = ev.Message != null && string.IsNullOrEmpty(ev.Message.Content);
-                (string? Name, UserRole? Role, string? AvatarUrl, List<GroupMemberTag>? Tags) info2;
-                if (isPlaceholder)
-                {
-                    info2 = (null, null, null, null);
-                }
-                else
-                {
-                    info2 = await ResolveSenderInfoAsync(ev.Message!.SenderId);
-                }
+                // 始终解析发送者信息（含头像），senderInfoCache 保证重复查询 O(1)
+                var info2 = await ResolveSenderInfoAsync(ev.Message!.SenderId);
                 var json2 = JsonSerializer.Serialize(ToStreamEvent(ev.Message!, "message", info2.Name, info2.Role, info2.AvatarUrl, info2.Tags), AppJsonContext.Default.GroupMessageStreamEventDto);
                 await WriteSseAsync(id: ev.Seq.ToString(), eventName: "message", dataJson: json2, ct: cancellationToken);
                 afterSeq = ev.Seq;
@@ -1297,6 +1433,44 @@ public class GroupsController : ControllerBase
         _logger.LogInformation("Group name updated: {GroupId} -> {GroupName}", groupId, request.GroupName);
 
         return Ok(ApiResponse<object?>.Ok(null));
+    }
+
+    /// <summary>
+    /// 发布系统消息（保存到数据库并广播到 SSE）
+    /// </summary>
+    private async Task PublishSystemMessageAsync(string groupId, string content)
+    {
+        try
+        {
+            var seq = await _groupMessageSeqService.NextAsync(groupId, CancellationToken.None);
+            var messageId = await _idGenerator.GenerateIdAsync("msg");
+
+            // 查找该群关联的 session（取最近的一个）
+            var sessions = await _db.Sessions
+                .Find(s => s.GroupId == groupId)
+                .SortByDescending(s => s.CreatedAt)
+                .Limit(1)
+                .ToListAsync();
+            var sessionId = sessions.FirstOrDefault()?.SessionId ?? "";
+
+            var message = new Message
+            {
+                Id = messageId,
+                GroupId = groupId,
+                GroupSeq = seq,
+                SessionId = sessionId,
+                Role = MessageRole.System,
+                Content = content,
+                Timestamp = DateTime.UtcNow
+            };
+
+            await _messageRepository.InsertManyAsync(new[] { message });
+            _groupMessageStreamHub.Publish(message);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to publish system message for group {GroupId}", groupId);
+        }
     }
 
     private async Task WriteSseAsync(string? id, string eventName, string dataJson, CancellationToken ct)

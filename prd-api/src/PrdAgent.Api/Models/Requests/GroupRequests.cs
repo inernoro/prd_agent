@@ -101,6 +101,25 @@ public class BindGroupPrdRequest
 }
 
 /// <summary>
+/// 添加群成员请求
+/// </summary>
+public class AddGroupMemberRequest
+{
+    /// <summary>要添加的用户名</summary>
+    public string Username { get; set; } = string.Empty;
+
+    /// <summary>成员角色</summary>
+    public UserRole MemberRole { get; set; } = UserRole.DEV;
+
+    public (bool IsValid, string? ErrorMessage) Validate()
+    {
+        if (string.IsNullOrWhiteSpace(Username))
+            return (false, "用户名不能为空");
+        return (true, null);
+    }
+}
+
+/// <summary>
 /// 更新群组名称请求
 /// </summary>
 public class UpdateGroupNameRequest

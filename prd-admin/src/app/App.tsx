@@ -55,7 +55,11 @@ const MobileAuditPage = lazy(() => import('@/pages/_dev/MobileAuditPage'));
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  if (!isAuthenticated) return <Navigate to="/home" replace />;
+  const location = useLocation();
+  if (!isAuthenticated) {
+    const returnUrl = location.pathname + location.search;
+    return <Navigate to={`/login?returnUrl=${encodeURIComponent(returnUrl)}`} replace />;
+  }
   return <>{children}</>;
 }
 
@@ -251,17 +255,6 @@ export default function App() {
           }
         />
 
-        {/* 海鲜市场 - 独立全屏页面 */}
-        <Route
-          path="/marketplace"
-          element={
-            <RequireAuth>
-              <RequirePermission perm="access">
-                <MarketplacePage />
-              </RequirePermission>
-            </RequireAuth>
-          }
-        />
 
         {/* 工作流画布 - 独立全屏页面（ReactFlow 的 zustand 会干扰 AppShell 的 Outlet 路由更新） */}
         <Route
@@ -309,6 +302,7 @@ export default function App() {
         <Route path="assets" element={<RequirePermission perm="assets.read"><AssetsManagePage /></RequirePermission>} />
         <Route path="skills" element={<RequirePermission perm="skills.read"><SkillsPage /></RequirePermission>} />
         <Route path="web-pages" element={<RequirePermission perm="web-pages.read"><WebPagesPage /></RequirePermission>} />
+        <Route path="marketplace" element={<RequirePermission perm="access"><MarketplacePage /></RequirePermission>} />
         <Route path="arena" element={<RequirePermission perm="arena-agent.use"><ArenaPage /></RequirePermission>} />
         <Route path="lab" element={<RequirePermission perm="lab.read"><LabPage /></RequirePermission>} />
         <Route path="settings" element={<RequirePermission perm="access"><SettingsPage /></RequirePermission>} />

@@ -1,6 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { CdsConfig } from './types.js';
+import type { CdsConfig, CdsMode } from './types.js';
+
+function resolveMode(): CdsMode {
+  const env = (process.env.CDS_MODE || '').toLowerCase();
+  if (env === 'scheduler' || env === 'executor') return env;
+  return 'standalone';
+}
 
 const DEFAULT_CONFIG: CdsConfig = {
   repoRoot: path.resolve(process.cwd(), '..'),
@@ -18,6 +24,10 @@ const DEFAULT_CONFIG: CdsConfig = {
     secret: process.env.CDS_JWT_SECRET ?? process.env.JWT_SECRET ?? 'dev-only-change-me-32bytes-minimum!!',
     issuer: 'prdagent',
   },
+  mode: resolveMode(),
+  schedulerUrl: process.env.CDS_SCHEDULER_URL || undefined,
+  executorPort: parseInt(process.env.CDS_EXECUTOR_PORT || '9901', 10),
+  executorToken: process.env.CDS_EXECUTOR_TOKEN || undefined,
 };
 
 export function loadConfig(configPath?: string): CdsConfig {

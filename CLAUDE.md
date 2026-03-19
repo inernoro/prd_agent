@@ -60,6 +60,16 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 完成开发任务后，**必须主动**使用 `task-handoff-checklist` 技能生成交接清单（涉及 3+ 文件变更、API 端点变更、或 UI 页面变更时）。1-2 个文件小修改无需生成。
 
+### 4. 更新记录维护
+
+对 `prd-api/`、`prd-admin/`、`prd-desktop/`、`prd-video/` 的任何代码变更（feat/fix/refactor/perf），**提交前必须**在 `CHANGELOG.md` 的 `[未发布]` 区域追加记录。
+
+规则：
+- 按日期分组，当日已有同类型同模块条目时**合并**而非新增行
+- 纯文档变更（`doc/`）、纯 CLAUDE.md 规则调整可选记录
+- 版本发布时将 `[未发布]` 条目包裹进 `## [x.y.z] - YYYY-MM-DD` 并补写 `用户更新项` 摘要
+- 格式详见 `CHANGELOG.md` 底部维护规则
+
 ---
 
 ## 架构规则索引
@@ -99,6 +109,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | **code-hygiene** | `/hygiene` | 9 维度代码卫生审计 |
 | **create-skill-file** | `/create-skill` | 技能创建 & 质量评分 |
 | **cds-project-scan** | `/cds-scan` | CDS compose YAML 生成 |
+| **theme-transition** | `/theme-transition` | 主题切换圆形过渡动效 (View Transition API) |
 
 ### 使用指引
 

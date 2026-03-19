@@ -1,5 +1,8 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { execSync, spawn } from 'node:child_process';
+import { createGzip } from 'node:zlib';
 import { Router } from 'express';
 import { StateService } from '../services/state.js';
 import type { WorktreeService } from '../services/worktree.js';
@@ -154,9 +157,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return 0; // preserve original order
     });
 
+    // Compute container capacity: (memoryGB - 1) * 2
+    const totalMemGB = Math.round(os.totalmem() / (1024 * 1024 * 1024));
+    const maxContainers = Math.max(2, (totalMemGB - 1) * 2);
+    let runningContainers = 0;
+    for (const b of branches) {
+      for (const svc of Object.values(b.services)) {
+        if (svc.status === 'running' || svc.status === 'building' || svc.status === 'starting') {
+          runningContainers++;
+        }
+      }
+    }
+
     res.json({
       branches: branchesWithSubject,
       defaultBranch: state.defaultBranch,
+      capacity: { maxContainers, runningContainers, totalMemGB },
     });
   });
 
@@ -280,12 +296,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       logDeploy(id, '开始部署');
 
+      // Clear previous error state on new deploy
+      entry.errorMessage = undefined;
+      for (const svc of Object.values(entry.services)) {
+        if (svc.errorMessage) svc.errorMessage = undefined;
+      }
+      entry.status = 'building';
+      stateService.save();
+
       // Pull latest code
       logEvent({ step: 'pull', status: 'running', title: '正在拉取最新代码...', timestamp: new Date().toISOString() });
       const pullResult = await worktreeService.pull(entry.branch, entry.worktreePath);
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
 
-      entry.status = 'building';
       stateService.save();
 
       // ── Compute startup layers (topological sort by dependsOn) ──
@@ -380,42 +403,46 @@ export function createBranchRouter(deps: RouterDeps): Router {
             await containerService.runService(entry, profile, svc, (chunk) => {
               sendSSE(res, 'log', { profileId: profile.id, chunk });
               for (const line of chunk.split('\n')) {
-                if (line.trim()) logDeploy(id, line);
+                if (line.trim()) {
+                  logDeploy(id, line);
+                  // Also store container output in operation log for historical viewing
+                  opLog.events.push({
+                    step: `log-${profile.id}`,
+                    status: 'info',
+                    title: line.trim(),
+                    timestamp: new Date().toISOString(),
+                  });
+                }
               }
             }, mergedEnv);
 
-            // Phase 1 passed (container alive). Set status based on readiness probe config.
-            if (profile.readinessProbe) {
+            // Phase 1 passed (container alive). Set status based on startup signal.
+            if (profile.startupSignal) {
+              // Startup signal mode: watch container logs for a known string
               svc.status = 'starting';
               stateService.save();
               const elapsed = Date.now() - serviceStartTime;
               logEvent({
                 step: `build-${profile.id}`,
                 status: 'done',
-                title: `${profile.name} 容器已启动，等待服务就绪 :${svc.hostPort}`,
-                detail: { elapsedMs: elapsed },
+                title: `${profile.name} 容器已启动，等待启动信号 :${svc.hostPort}`,
+                detail: { elapsedMs: elapsed, startupSignal: profile.startupSignal },
                 timestamp: new Date().toISOString(),
               });
 
-              // Launch Phase 2 readiness probe in background (non-blocking)
-              containerService.waitForServiceReady(svc.hostPort, profile.readinessProbe, (chunk) => {
+              // Await startup signal — keep SSE stream open until ready
+              const ready = await containerService.waitForStartupSignal(svc.containerName, profile.startupSignal, (chunk) => {
                 for (const line of chunk.split('\n')) {
                   if (line.trim()) logDeploy(id, line);
                 }
-              }).then(ready => {
-                if (ready) {
-                  svc.status = 'running';
-                  logDeploy(id, `${profile.name} 就绪 ✓`);
-                } else {
-                  // Timeout — stay 'starting', not an error
-                  logDeploy(id, `${profile.name} 就绪检查超时，服务可能仍在初始化`);
-                }
-                // Update branch-level status
-                const statuses = Object.values(entry.services).map(s => s.status);
-                if (statuses.some(s => s === 'running')) entry.status = 'running';
-                else if (statuses.some(s => s === 'starting')) entry.status = 'starting';
-                stateService.save();
-              }).catch(() => { /* readiness check internal error — ignore */ });
+              });
+              if (ready) {
+                svc.status = 'running';
+                logDeploy(id, `${profile.name} 启动成功 ✓`);
+              } else {
+                logDeploy(id, `${profile.name} 启动信号超时，服务可能仍在初始化`);
+              }
+              stateService.save();
             } else {
               svc.status = 'running';
               const elapsed = Date.now() - serviceStartTime;
@@ -525,6 +552,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       logDeploy(id, `开始部署服务 ${profile.name}`);
 
+      // Clear previous error state on new deploy
+      entry.errorMessage = undefined;
+      const existingSvc = entry.services[profile.id];
+      if (existingSvc?.errorMessage) existingSvc.errorMessage = undefined;
+      stateService.save();
+
       // Pull latest code
       logEvent({ step: 'pull', status: 'running', title: '正在拉取最新代码...', timestamp: new Date().toISOString() });
       const pullResult = await worktreeService.pull(entry.branch, entry.worktreePath);
@@ -556,28 +589,24 @@ export function createBranchRouter(deps: RouterDeps): Router {
           }
         }, mergedEnv);
 
-        if (profile.readinessProbe) {
+        if (profile.startupSignal) {
+          // Startup signal mode: watch container logs for a known string
           svc.status = 'starting';
           stateService.save();
-          logEvent({ step: `build-${profile.id}`, status: 'done', title: `${profile.name} 容器已启动，等待服务就绪 :${svc.hostPort}`, timestamp: new Date().toISOString() });
+          logEvent({ step: `build-${profile.id}`, status: 'done', title: `${profile.name} 容器已启动，等待启动信号 :${svc.hostPort}`, timestamp: new Date().toISOString() });
 
-          // Background readiness probe
-          containerService.waitForServiceReady(svc.hostPort, profile.readinessProbe, (chunk) => {
+          const signalReady = await containerService.waitForStartupSignal(svc.containerName, profile.startupSignal, (chunk) => {
             for (const line of chunk.split('\n')) {
               if (line.trim()) logDeploy(id, line);
             }
-          }).then(ready => {
-            if (ready) {
-              svc.status = 'running';
-              logDeploy(id, `${profile.name} 就绪 ✓`);
-            } else {
-              logDeploy(id, `${profile.name} 就绪检查超时`);
-            }
-            const sts = Object.values(entry.services).map(s => s.status);
-            if (sts.some(s => s === 'running')) entry.status = 'running';
-            else if (sts.some(s => s === 'starting')) entry.status = 'starting';
-            stateService.save();
-          }).catch(() => { /* ignore */ });
+          });
+          if (signalReady) {
+            svc.status = 'running';
+            logDeploy(id, `${profile.name} 启动成功 ✓`);
+          } else {
+            logDeploy(id, `${profile.name} 启动信号超时`);
+          }
+          stateService.save();
         } else {
           svc.status = 'running';
           logEvent({ step: `build-${profile.id}`, status: 'done', title: `${profile.name} 运行于 :${svc.hostPort}`, timestamp: new Date().toISOString() });
@@ -630,6 +659,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     try {
+      // Set stopping state immediately so frontend can show animation
+      entry.status = 'stopping';
+      for (const svc of Object.values(entry.services)) {
+        if (svc.status === 'running' || svc.status === 'starting') {
+          svc.status = 'stopping';
+        }
+      }
+      stateService.save();
+
+      // Actually stop containers
       for (const svc of Object.values(entry.services)) {
         try { await containerService.stop(svc.containerName); } catch { /* ok */ }
         svc.status = 'stopped';
@@ -726,6 +765,43 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       const env = await containerService.getEnv(svc.containerName);
       res.json({ env });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ── Container exec (run command inside container) ──
+
+  router.post('/branches/:id/container-exec', async (req, res) => {
+    const { id } = req.params;
+    const { profileId, command } = req.body as { profileId?: string; command?: string };
+    if (!command || typeof command !== 'string' || !command.trim()) {
+      res.status(400).json({ error: '请输入命令' });
+      return;
+    }
+
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+
+    const svc = profileId ? entry.services[profileId] : Object.values(entry.services)[0];
+    if (!svc) {
+      res.status(404).json({ error: '未找到运行中的服务' });
+      return;
+    }
+
+    try {
+      const result = await shell.exec(
+        `docker exec ${svc.containerName} sh -c ${JSON.stringify(command)}`,
+        { timeout: 30_000 },
+      );
+      res.json({
+        exitCode: result.exitCode,
+        stdout: result.stdout,
+        stderr: result.stderr,
+      });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -1100,9 +1176,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       ...config,
       githubRepoUrl,
       jwt: { ...config.jwt, secret: '***' },
+      executorToken: config.executorToken ? '***' : undefined,
       sharedEnv: Object.fromEntries(
         Object.entries(config.sharedEnv).map(([k, v]) => [k, k.includes('PASSWORD') || k.includes('SECRET') ? '***' : v]),
       ),
+      executors: Object.values(stateService.getExecutors()),
     });
   });
 
@@ -1172,6 +1250,69 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       stateService.save();
       sendSSE(res, 'complete', { message: `已清理 ${toRemove.length} 个分支` });
+    } catch (err) {
+      sendSSE(res, 'error', { message: (err as Error).message });
+    } finally {
+      res.end();
+    }
+  });
+
+  // ── Cleanup orphan branches: remove local branches that no longer exist on remote ──
+
+  router.post('/cleanup-orphans', async (_req, res) => {
+    initSSE(res);
+    try {
+      // Step 1: fetch remote to get latest branch list
+      sendSSE(res, 'step', { step: 'fetch', status: 'running', title: '正在拉取远程分支列表...' });
+      await shell.exec(
+        'GIT_TERMINAL_PROMPT=0 git fetch origin --prune',
+        { cwd: config.repoRoot, timeout: 30_000 },
+      );
+
+      // Get all remote branch names
+      const result = await shell.exec(
+        'git for-each-ref --format="%(refname:lstrip=3)" refs/remotes/origin',
+        { cwd: config.repoRoot },
+      );
+      const remoteBranches = new Set(
+        result.stdout.trim().split('\n').filter(Boolean).filter(b => b !== 'HEAD'),
+      );
+      sendSSE(res, 'step', { step: 'fetch', status: 'done', title: `远程共 ${remoteBranches.size} 个分支` });
+
+      // Step 2: identify orphans (local CDS branches whose git branch no longer exists on remote)
+      const state = stateService.getState();
+      const allLocal = Object.values(state.branches);
+      const orphans = allLocal.filter(b => !remoteBranches.has(b.branch));
+
+      if (orphans.length === 0) {
+        sendSSE(res, 'complete', { message: '没有发现孤儿分支，一切正常', orphanCount: 0 });
+        res.end();
+        return;
+      }
+
+      sendSSE(res, 'step', { step: 'scan', status: 'info', title: `发现 ${orphans.length} 个孤儿分支`, detail: { orphans: orphans.map(b => ({ id: b.id, branch: b.branch })) } });
+
+      // Step 3: stop containers, remove worktrees, delete from state
+      let cleaned = 0;
+      for (const entry of orphans) {
+        sendSSE(res, 'step', { step: `cleanup-${entry.id}`, status: 'running', title: `正在清理 ${entry.branch}...` });
+
+        // Stop all containers
+        for (const svc of Object.values(entry.services)) {
+          try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+        }
+        // Remove worktree
+        try { await worktreeService.remove(entry.worktreePath); } catch { /* ok */ }
+        // Remove from state
+        stateService.removeLogs(entry.id);
+        stateService.removeBranch(entry.id);
+        cleaned++;
+
+        sendSSE(res, 'step', { step: `cleanup-${entry.id}`, status: 'done', title: `已清理 ${entry.branch}` });
+      }
+
+      stateService.save();
+      sendSSE(res, 'complete', { message: `已清理 ${cleaned} 个孤儿分支`, orphanCount: cleaned });
     } catch (err) {
       sendSSE(res, 'error', { message: (err as Error).message });
     } finally {
@@ -1806,6 +1947,81 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.type('text/yaml').send(yamlContent);
   });
 
+  // GET /api/export-skill — export cds-project-scan skill as tar.gz
+  // Contains only skill files and README — no config/cds-compose.yml
+  router.get('/export-skill', (_req, res) => {
+    try {
+      const skillDir = path.join(config.repoRoot, '.claude', 'skills', 'cds-project-scan');
+      if (!fs.existsSync(skillDir)) {
+        res.status(404).json({ error: '未找到 cds-project-scan 技能目录' });
+        return;
+      }
+
+      // Build pack in a temp directory
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const packName = `cds-deployment-skill-${timestamp}`;
+      const tmpDir = path.join(config.repoRoot, '.cds', 'tmp');
+      const packDir = path.join(tmpDir, packName);
+
+      // Clean & create temp dirs
+      fs.mkdirSync(path.join(packDir, 'skills', 'reference'), { recursive: true });
+
+      // Copy skill files
+      const skillMain = path.join(skillDir, 'SKILL.md');
+      if (fs.existsSync(skillMain)) {
+        fs.copyFileSync(skillMain, path.join(packDir, 'skills', 'SKILL.md'));
+      }
+      const refDir = path.join(skillDir, 'reference');
+      if (fs.existsSync(refDir)) {
+        for (const f of fs.readdirSync(refDir)) {
+          fs.copyFileSync(path.join(refDir, f), path.join(packDir, 'skills', 'reference', f));
+        }
+      }
+
+      // Write README
+      fs.writeFileSync(path.join(packDir, 'README.md'), `# CDS 部署技能包
+
+本压缩包包含 CDS (Cloud Dev Space) 项目扫描技能文档。
+
+## 包含内容
+
+| 目录 | 内容 | 用途 |
+|------|------|------|
+| \`skills/\` | CDS 扫描技能文档 | 了解扫描规则和配置生成逻辑 |
+
+## 使用方式
+
+1. 将 \`skills/\` 目录复制到目标项目的 \`.claude/skills/cds-project-scan/\`
+2. 在 Claude Code 中使用 \`/cds-scan\` 触发扫描
+3. 扫描生成的 CDS Compose YAML 可在 CDS Dashboard 中一键导入
+`, 'utf-8');
+
+      // Create tar.gz using tar command (available on all Linux)
+      const tarName = `${packName}.tar.gz`;
+      execSync(`cd "${tmpDir}" && tar -czf "${tarName}" "${packName}/"`, { stdio: 'pipe' });
+
+      // Clean up pack dir
+      fs.rmSync(packDir, { recursive: true, force: true });
+
+      // Send tar.gz
+      const tarPath = path.join(tmpDir, tarName);
+      const stat = fs.statSync(tarPath);
+      res.setHeader('Content-Type', 'application/gzip');
+      res.setHeader('Content-Disposition', `attachment; filename="${tarName}"`);
+      res.setHeader('Content-Length', stat.size);
+      const stream = fs.createReadStream(tarPath);
+      stream.pipe(res);
+      stream.on('end', () => {
+        fs.unlink(tarPath, () => {});
+      });
+    } catch (e) {
+      console.error('export-skill error:', e);
+      if (!res.headersSent) {
+        res.status(500).json({ error: '导出失败: ' + (e as Error).message });
+      }
+    }
+  });
+
   // POST /api/import-and-init — import config + start infra + create main branch + deploy (SSE progress)
   // Same config parsing as /import-config, but after applying config it also:
   //   1. Starts all new infra services
@@ -2032,6 +2248,96 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
 
     res.end();
+  });
+
+  // ── Self-update: switch CDS's own branch, pull, and restart ──
+
+  // GET /api/self-branches — list git branches of the CDS repo itself
+  router.get('/self-branches', async (_req, res) => {
+    try {
+      const cdsDir = path.join(config.repoRoot, 'cds');
+      // Get current branch
+      const currentResult = await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: config.repoRoot });
+      const currentBranch = currentResult.stdout.trim();
+
+      // Fetch latest (ignore errors if offline)
+      await shell.exec('git fetch --all --prune', { cwd: config.repoRoot }).catch(() => {});
+
+      // List all branches (local + remote)
+      const localResult = await shell.exec('git branch --format="%(refname:short)"', { cwd: config.repoRoot });
+      const localBranches = localResult.stdout.trim().split('\n').filter(Boolean);
+
+      const remoteResult = await shell.exec('git branch -r --format="%(refname:short)"', { cwd: config.repoRoot });
+      const remoteBranches = remoteResult.stdout.trim().split('\n')
+        .filter(Boolean)
+        .filter(b => !b.includes('HEAD'))
+        .map(b => b.replace(/^origin\//, ''));
+
+      // Merge and deduplicate
+      const allBranches = [...new Set([...localBranches, ...remoteBranches])].sort();
+
+      res.json({ current: currentBranch, branches: allBranches });
+    } catch (e) {
+      res.status(500).json({ error: '获取分支列表失败: ' + (e as Error).message });
+    }
+  });
+
+  // POST /api/self-update — switch branch + pull + restart CDS (SSE progress)
+  router.post('/self-update', async (req, res) => {
+    const { branch } = req.body as { branch?: string };
+
+    initSSE(res);
+    const send = (step: string, status: string, title: string) => {
+      sendSSE(res, 'step', { step, status, title, timestamp: new Date().toISOString() });
+    };
+
+    try {
+      const repoRoot = config.repoRoot;
+
+      // Step 1: fetch latest
+      send('fetch', 'running', '正在拉取远程更新...');
+      await shell.exec('git fetch --all --prune', { cwd: repoRoot });
+      send('fetch', 'done', '远程更新已拉取');
+
+      // Step 2: switch branch if specified
+      if (branch) {
+        send('checkout', 'running', `正在切换到分支 ${branch}...`);
+        const checkoutResult = await shell.exec(`git checkout ${branch}`, { cwd: repoRoot });
+        if (checkoutResult.exitCode !== 0) {
+          // Try creating tracking branch from remote
+          await shell.exec(`git checkout -b ${branch} origin/${branch}`, { cwd: repoRoot });
+        }
+        send('checkout', 'done', `已切换到 ${branch}`);
+      }
+
+      // Step 3: pull latest
+      send('pull', 'running', '正在拉取最新代码...');
+      const pullResult = await shell.exec('git pull', { cwd: repoRoot });
+      const pullOutput = pullResult.stdout.trim();
+      send('pull', 'done', pullOutput.includes('Already up to date') ? '代码已是最新' : '代码已更新');
+
+      // Step 4: restart CDS via detached process
+      send('restart', 'running', '正在重启 CDS...');
+      sendSSE(res, 'done', { message: 'CDS 即将重启，页面将在几秒后自动刷新...' });
+      res.end();
+
+      // Give time for response to flush, then spawn detached restart
+      setTimeout(() => {
+        const cdsDir = path.join(repoRoot, 'cds');
+        const child = spawn('bash', ['./exec_cds.sh', '--background'], {
+          cwd: cdsDir,
+          detached: true,
+          stdio: 'ignore',
+          env: { ...process.env },
+        });
+        child.unref();
+        // exec_cds.sh will kill the old process (us) via PID file + port detection
+      }, 500);
+    } catch (err) {
+      send('error', 'error', `更新失败: ${(err as Error).message}`);
+      sendSSE(res, 'error', { message: (err as Error).message });
+      res.end();
+    }
   });
 
   return router;

@@ -215,4 +215,43 @@ public class GroupService : IGroupService
     {
         await _groupRepository.UpdateGroupNameAsync(groupId, groupName);
     }
+
+    public async Task LeaveAsync(string groupId, string userId)
+    {
+        var group = await _groupRepository.GetByIdAsync(groupId)
+            ?? throw new ArgumentException("群组不存在");
+
+        if (group.OwnerId == userId)
+            throw new InvalidOperationException("群主不能退出群组，请先解散群组");
+
+        var member = await _memberRepository.GetAsync(groupId, userId)
+            ?? throw new ArgumentException("您不是该群组成员");
+
+        await _memberRepository.DeleteAsync(groupId, userId);
+    }
+
+    public async Task<GroupMember> AddMemberAsync(string groupId, string userId, UserRole memberRole)
+    {
+        var group = await _groupRepository.GetByIdAsync(groupId)
+            ?? throw new ArgumentException("群组不存在");
+
+        var existingMember = await _memberRepository.GetAsync(groupId, userId);
+        if (existingMember != null)
+            throw new ArgumentException("该用户已是群组成员");
+
+        var memberCount = await _memberRepository.CountByGroupIdAsync(groupId);
+        if (memberCount >= group.MaxMembers)
+            throw new ArgumentException("群组已满");
+
+        var member = new GroupMember
+        {
+            GroupId = groupId,
+            UserId = userId,
+            MemberRole = memberRole,
+            Tags = BuildDefaultHumanTags(memberRole)
+        };
+
+        await _memberRepository.InsertAsync(member);
+        return member;
+    }
 }

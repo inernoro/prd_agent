@@ -1,5 +1,7 @@
 import { useMemo, useState, useEffect, useCallback, useRef, type DragEvent, type ClipboardEvent } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Button } from '@/components/design/Button';
 import { glassPanel } from '@/lib/glassStyles';
 import { useDefectStore } from '@/stores/defectStore';
@@ -21,6 +23,7 @@ import { systemDialog } from '@/lib/systemDialog';
 import { DefectStatus, DefectSeverity, DefectAttachmentType } from '@/services/contracts/defectAgent';
 import type { DefectAttachment, DefectMessage } from '@/services/contracts/defectAgent';
 import { parseContentToSegments, stripImgTags } from '@/lib/defectContentUtils';
+import { ShareDefectDialog } from './ShareDefectDialog';
 import {
   X,
   ArrowRight,
@@ -35,6 +38,7 @@ import {
   Bug,
   Image as ImageIcon,
   FileText,
+  Copy,
   Send,
   User,
   MessageCircle,
@@ -123,6 +127,7 @@ export function DefectDetailPanel() {
 
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [showShareDialog, setShowShareDialog] = useState(false);
   const [comment, setComment] = useState('');
   const [commentFocused, setCommentFocused] = useState(false);
   const [sendingComment, setSendingComment] = useState(false);
@@ -325,6 +330,8 @@ export function DefectDetailPanel() {
   const canDelete = defect.status === DefectStatus.Draft;
   const canProcess = defect.status === DefectStatus.Pending;
   const canVerify = defect.status === DefectStatus.Verifying && defect.reporterId === userId;
+  const canClose = ([DefectStatus.Verifying, DefectStatus.Resolved, DefectStatus.Rejected] as string[]).includes(defect.status);
+  const canReject = !([DefectStatus.Draft, DefectStatus.Rejected, DefectStatus.Closed] as string[]).includes(defect.status);
   const _statusLabel = statusLabels[defect.status] || defect.status;
   const _statusColor = statusColors[defect.status] || 'var(--text-muted)';
   void _statusLabel; void _statusColor; // 预留给未来使用
@@ -426,7 +433,8 @@ export function DefectDetailPanel() {
   };
 
   return (
-    <DialogPrimitive.Root open={!!defect} onOpenChange={(open) => { if (!open) handleClose(); }}>
+    <>
+    <DialogPrimitive.Root open={!!defect} onOpenChange={(open) => { if (!open) { if (lightboxImage) { setLightboxImage(null); return; } handleClose(); } }}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay
           className="fixed inset-0 z-100"
@@ -436,6 +444,8 @@ export function DefectDetailPanel() {
         {/* 弹窗内容 - 液态玻璃样式 */}
         <DialogPrimitive.Content
           aria-describedby={undefined}
+          onPointerDownOutside={(e) => { if (lightboxImage) e.preventDefault(); }}
+          onEscapeKeyDown={(e) => { if (lightboxImage) { e.preventDefault(); setLightboxImage(null); } }}
           className={
             isMobile
               ? 'fixed inset-0 z-110 overflow-hidden flex flex-col'
@@ -648,7 +658,11 @@ export function DefectDetailPanel() {
                 {contentSegments.length > 0 ? (
                   contentSegments.map((seg, idx) =>
                     seg.type === 'text' ? (
-                      <span key={idx} style={{ whiteSpace: 'pre-wrap' }}>{seg.content}</span>
+                      <div key={idx} className="defect-md">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {seg.content}
+                        </ReactMarkdown>
+                      </div>
                     ) : (
                       <button
                         key={idx}
@@ -829,6 +843,15 @@ export function DefectDetailPanel() {
                 />
                 <span className="truncate max-w-[60px]">{defect.assigneeName || '未指派'}</span>
               </div>
+              {/* 分享按钮 */}
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setShowShareDialog(true)}
+              >
+                <ExternalLink size={14} />
+                分享
+              </Button>
               {/* 删除按钮 */}
               {canDelete && !confirmingDelete && (
                 <>
@@ -901,30 +924,34 @@ export function DefectDetailPanel() {
                   </button>
                 </>
               )}
-              <button
-                type="button"
-                className="h-7 w-7 rounded-full flex items-center justify-center transition-all hover:ring-2 hover:ring-white/20"
-                style={{
-                  border: '1px solid rgba(255, 100, 100, 0.55)',
-                  color: 'rgba(255, 100, 100, 0.95)',
-                }}
-                title="拒绝"
-                onClick={handleReject}
-              >
-                <XCircle size={14} />
-              </button>
-              <button
-                type="button"
-                className="h-7 w-7 rounded-full flex items-center justify-center transition-all hover:ring-2 hover:ring-white/20"
-                style={{
-                  border: '1px solid rgba(120, 220, 180, 0.45)',
-                  color: 'rgba(120, 220, 180, 0.95)',
-                }}
-                title="完成"
-                onClick={handleCloseDefect}
-              >
-                <CheckCircle size={14} />
-              </button>
+              {canReject && (
+                <button
+                  type="button"
+                  className="h-7 w-7 rounded-full flex items-center justify-center transition-all hover:ring-2 hover:ring-white/20"
+                  style={{
+                    border: '1px solid rgba(255, 100, 100, 0.55)',
+                    color: 'rgba(255, 100, 100, 0.95)',
+                  }}
+                  title="拒绝"
+                  onClick={handleReject}
+                >
+                  <XCircle size={14} />
+                </button>
+              )}
+              {canClose && (
+                <button
+                  type="button"
+                  className="h-7 w-7 rounded-full flex items-center justify-center transition-all hover:ring-2 hover:ring-white/20"
+                  style={{
+                    border: '1px solid rgba(120, 220, 180, 0.45)',
+                    color: 'rgba(120, 220, 180, 0.95)',
+                  }}
+                  title="完成"
+                  onClick={handleCloseDefect}
+                >
+                  <CheckCircle size={14} />
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -1219,12 +1246,33 @@ export function DefectDetailPanel() {
           style={{ background: 'rgba(0,0,0,0.9)' }}
           onClick={() => setLightboxImage(null)}
         >
-          <button
-            className="absolute top-4 right-4 p-2 rounded-lg hover:bg-white/10 transition-colors"
-            onClick={() => setLightboxImage(null)}
-          >
-            <X size={24} style={{ color: '#fff' }} />
-          </button>
+          <div className="absolute top-4 right-4 flex items-center gap-2">
+            <button
+              className="p-2 rounded-lg hover:bg-white/10 transition-colors"
+              title="复制图片"
+              onClick={async (e) => {
+                e.stopPropagation();
+                try {
+                  const res = await fetch(lightboxImage);
+                  const blob = await res.blob();
+                  await navigator.clipboard.write([
+                    new ClipboardItem({ [blob.type]: blob }),
+                  ]);
+                  toast.success('已复制图片');
+                } catch {
+                  toast.error('复制失败');
+                }
+              }}
+            >
+              <Copy size={20} style={{ color: '#fff' }} />
+            </button>
+            <button
+              className="p-2 rounded-lg hover:bg-white/10 transition-colors"
+              onClick={() => setLightboxImage(null)}
+            >
+              <X size={24} style={{ color: '#fff' }} />
+            </button>
+          </div>
           <img
             src={lightboxImage}
             alt="放大图片"
@@ -1236,5 +1284,14 @@ export function DefectDetailPanel() {
       )}
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
+
+    {showShareDialog && (
+      <ShareDefectDialog
+        open={showShareDialog}
+        onClose={() => setShowShareDialog(false)}
+        defectId={defect.id}
+      />
+    )}
+    </>
   );
 }

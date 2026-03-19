@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { invoke } from '../../lib/tauri';
 import { useGroupInfoDrawerStore } from '../../stores/groupInfoDrawerStore';
 import { useGroupListStore } from '../../stores/groupListStore';
 import { useAuthStore } from '../../stores/authStore';
+import { useSessionStore } from '../../stores/sessionStore';
 import { AvatarWithFallback } from '../Chat/AvatarWithFallback';
-import type { ApiResponse, GroupMember, GroupMemberTag } from '../../types';
+import type { ApiResponse, GroupMember, GroupMemberTag, UserRole } from '../../types';
 
 function parseJoinedAtMs(value: unknown): number {
   const t = typeof value === 'string' ? Date.parse(value) : Number.NaN;
@@ -121,6 +123,78 @@ export default function GroupInfoDrawer() {
     const me = members.find((m) => m.userId === currentUserId);
     return Boolean(me?.isOwner);
   }, [members, currentUserId]);
+
+  const isOwner = useMemo(() => {
+    if (!currentUserId) return false;
+    const me = members.find((m) => m.userId === currentUserId);
+    return Boolean(me?.isOwner);
+  }, [members, currentUserId]);
+
+  // Add member dialog state
+  const [showAddMember, setShowAddMember] = useState(false);
+  const [addUsername, setAddUsername] = useState('');
+  const [addRole, setAddRole] = useState<UserRole>('DEV');
+  const [addBusy, setAddBusy] = useState(false);
+  const [addError, setAddError] = useState('');
+
+  // Leave group state
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+  const [leaveBusy, setLeaveBusy] = useState(false);
+  const [leaveError, setLeaveError] = useState('');
+
+  const loadGroups = useGroupListStore((s) => s.loadGroups);
+  const clearSession = useSessionStore((s) => s.clearSession);
+
+  const handleAddMember = async () => {
+    if (!groupId || !addUsername.trim() || addBusy) return;
+    setAddError('');
+    setAddBusy(true);
+    try {
+      const resp = await invoke<ApiResponse<GroupMember>>('add_group_member', {
+        groupId,
+        username: addUsername.trim(),
+        memberRole: addRole,
+      });
+      if (!resp.success) {
+        setAddError(resp.error?.message || '添加成员失败');
+        return;
+      }
+      // Refresh members
+      setAddUsername('');
+      setShowAddMember(false);
+      // Reload members
+      const membersResp = await invoke<ApiResponse<GroupMember[]>>('get_group_members', { groupId });
+      if (membersResp?.success && Array.isArray(membersResp.data)) {
+        setMembers(membersResp.data);
+      }
+      await loadGroups({ force: true, silent: true });
+    } catch {
+      setAddError('添加成员失败');
+    } finally {
+      setAddBusy(false);
+    }
+  };
+
+  const handleLeaveGroup = async () => {
+    if (!groupId || leaveBusy) return;
+    setLeaveError('');
+    setLeaveBusy(true);
+    try {
+      const resp = await invoke<ApiResponse<any>>('leave_group', { groupId });
+      if (!resp.success) {
+        setLeaveError(resp.error?.message || '退出群组失败');
+        return;
+      }
+      setShowLeaveConfirm(false);
+      close();
+      try { clearSession(); } catch { /* ignore */ }
+      await loadGroups({ force: true, silent: true });
+    } catch {
+      setLeaveError('退出群组失败');
+    } finally {
+      setLeaveBusy(false);
+    }
+  };
 
   const dragRef = useRef<{
     startX: number;
@@ -271,13 +345,13 @@ export default function GroupInfoDrawer() {
               <div className="mt-3 text-sm text-red-700 dark:text-red-200">{error}</div>
             ) : (
               <div className="mt-3 grid grid-cols-4 gap-3">
-                {sortedMembers.slice(0, 16).map((m) => (
+                {sortedMembers.slice(0, 15).map((m) => (
                   <div key={m.userId} className="min-w-0">
                     <div className="mx-auto w-12">
-                      <AvatarWithFallback 
-                        avatarUrl={m.avatarUrl} 
-                        displayName={m.displayName || m.username} 
-                        size="lg" 
+                      <AvatarWithFallback
+                        avatarUrl={m.avatarUrl}
+                        displayName={m.displayName || m.username}
+                        size="lg"
                       />
                     </div>
                     <div className="mt-2 text-xs text-text-secondary text-center truncate" title={m.displayName || m.username}>
@@ -303,6 +377,22 @@ export default function GroupInfoDrawer() {
                     </div>
                   </div>
                 ))}
+                {/* 添加成员按钮 */}
+                {isOwnerOrAdmin ? (
+                  <div className="min-w-0">
+                    <button
+                      type="button"
+                      onClick={() => { setAddError(''); setShowAddMember(true); }}
+                      className="mx-auto w-12 h-12 rounded-full border-2 border-dashed border-border hover:border-primary-500 flex items-center justify-center text-text-secondary hover:text-primary-500 transition-colors"
+                      title="添加成员"
+                    >
+                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                    </button>
+                    <div className="mt-2 text-xs text-text-secondary text-center">邀请</div>
+                  </div>
+                ) : null}
               </div>
             )}
           </div>
@@ -340,9 +430,128 @@ export default function GroupInfoDrawer() {
               群资料设置（绑定/更换 PRD）
               <div className="mt-1 text-xs text-text-secondary">将打开文件选择器</div>
             </button>
+
+            {/* 退出群组（非群主可见） */}
+            {!isOwner ? (
+              <button
+                type="button"
+                className="w-full px-4 py-3 ui-control text-left text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                onClick={() => { setLeaveError(''); setShowLeaveConfirm(true); }}
+              >
+                退出群组
+                <div className="mt-1 text-xs text-text-secondary">退出后将无法查看群消息</div>
+              </button>
+            ) : null}
           </div>
         </div>
       </div>
+
+      {/* 添加成员弹窗 */}
+      {showAddMember && typeof document !== 'undefined'
+        ? createPortal(
+            <div className="fixed inset-0 z-[1000] flex items-center justify-center">
+              <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => !addBusy && setShowAddMember(false)} />
+              <div className="relative w-full max-w-sm mx-4 ui-glass-modal">
+                <div className="px-6 py-4 border-b border-black/10 dark:border-white/10 ui-glass-bar">
+                  <div className="text-lg font-semibold text-text-primary">添加群成员</div>
+                  <div className="mt-1 text-sm text-text-secondary">输入用户名邀请加入群组</div>
+                </div>
+                <div className="p-6 space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-text-primary mb-1">用户名</label>
+                    <input
+                      type="text"
+                      value={addUsername}
+                      onChange={(e) => setAddUsername(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') void handleAddMember(); }}
+                      placeholder="请输入要添加的用户名"
+                      className="w-full px-3 py-2 rounded-lg border border-border bg-surface-light dark:bg-surface-dark text-text-primary text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+                      autoFocus
+                      disabled={addBusy}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-text-primary mb-1">角色</label>
+                    <select
+                      value={addRole}
+                      onChange={(e) => setAddRole(e.target.value as UserRole)}
+                      className="w-full px-3 py-2 rounded-lg border border-border bg-surface-light dark:bg-surface-dark text-text-primary text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+                      disabled={addBusy}
+                    >
+                      <option value="PM">产品经理</option>
+                      <option value="DEV">开发</option>
+                      <option value="QA">测试</option>
+                    </select>
+                  </div>
+                  {addError ? (
+                    <div className="p-3 bg-red-500/15 border border-red-500/35 rounded-lg text-red-700 dark:text-red-200 text-sm">
+                      {addError}
+                    </div>
+                  ) : null}
+                </div>
+                <div className="flex gap-3 px-6 py-4 border-t border-black/10 dark:border-white/10 ui-glass-bar">
+                  <button
+                    onClick={() => setShowAddMember(false)}
+                    disabled={addBusy}
+                    className="flex-1 py-2.5 ui-control text-text-secondary font-medium hover:bg-black/5 dark:hover:bg-white/10 transition-colors disabled:opacity-50"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={() => void handleAddMember()}
+                    disabled={addBusy || !addUsername.trim()}
+                    className="flex-1 py-2.5 bg-primary-500 text-white font-medium rounded-lg hover:bg-primary-600 transition-colors disabled:opacity-50"
+                  >
+                    {addBusy ? '添加中...' : '确认添加'}
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
+
+      {/* 退出群组确认弹窗 */}
+      {showLeaveConfirm && typeof document !== 'undefined'
+        ? createPortal(
+            <div className="fixed inset-0 z-[1000] flex items-center justify-center">
+              <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => !leaveBusy && setShowLeaveConfirm(false)} />
+              <div className="relative w-full max-w-md mx-4 ui-glass-modal">
+                <div className="px-6 py-4 border-b border-black/10 dark:border-white/10 ui-glass-bar">
+                  <div className="text-lg font-semibold text-text-primary">退出群组</div>
+                  <div className="mt-1 text-sm text-text-secondary">
+                    确定要退出 <span className="text-text-primary">{group?.groupName}</span> 吗？
+                  </div>
+                </div>
+                <div className="p-6 space-y-3">
+                  <div className="text-sm text-text-secondary">退出后将无法查看群消息，需要重新被邀请才能加入。</div>
+                  {leaveError ? (
+                    <div className="p-3 bg-red-500/15 border border-red-500/35 rounded-lg text-red-700 dark:text-red-200 text-sm">
+                      {leaveError}
+                    </div>
+                  ) : null}
+                </div>
+                <div className="flex gap-3 px-6 py-4 border-t border-black/10 dark:border-white/10 ui-glass-bar">
+                  <button
+                    onClick={() => setShowLeaveConfirm(false)}
+                    disabled={leaveBusy}
+                    className="flex-1 py-2.5 ui-control text-text-secondary font-medium hover:bg-black/5 dark:hover:bg-white/10 transition-colors disabled:opacity-50"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={() => void handleLeaveGroup()}
+                    disabled={leaveBusy}
+                    className="flex-1 py-2.5 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
+                  >
+                    {leaveBusy ? '退出中...' : '确认退出'}
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   );
 }

@@ -108,6 +108,8 @@ public class MongoDbContext
     public IMongoCollection<DefectFolder> DefectFolders => _database.GetCollection<DefectFolder>("defect_folders");
     public IMongoCollection<DefectProject> DefectProjects => _database.GetCollection<DefectProject>("defect_projects");
     public IMongoCollection<DefectWebhookConfig> DefectWebhookConfigs => _database.GetCollection<DefectWebhookConfig>("defect_webhook_configs");
+    public IMongoCollection<DefectShareLink> DefectShareLinks => _database.GetCollection<DefectShareLink>("defect_share_links");
+    public IMongoCollection<DefectFixReport> DefectFixReports => _database.GetCollection<DefectFixReport>("defect_fix_reports");
 
     // Report Agent 周报管理
     public IMongoCollection<ReportTeam> ReportTeams => _database.GetCollection<ReportTeam>("report_teams");
@@ -118,6 +120,7 @@ public class MongoDbContext
     public IMongoCollection<ReportDataSource> ReportDataSources => _database.GetCollection<ReportDataSource>("report_data_sources");
     public IMongoCollection<ReportCommit> ReportCommits => _database.GetCollection<ReportCommit>("report_commits");
     public IMongoCollection<ReportComment> ReportComments => _database.GetCollection<ReportComment>("report_comments");
+    public IMongoCollection<ReportLike> ReportLikes => _database.GetCollection<ReportLike>("report_likes");
     public IMongoCollection<TeamSummary> ReportTeamSummaries => _database.GetCollection<TeamSummary>("report_team_summaries");
     public IMongoCollection<PersonalSource> PersonalSources => _database.GetCollection<PersonalSource>("report_personal_sources");
 
@@ -796,6 +799,22 @@ public class MongoDbContext
             Builders<DefectWebhookConfig>.IndexKeys.Ascending(x => x.TeamId).Ascending(x => x.ProjectId),
             new CreateIndexOptions { Name = "idx_defect_webhooks_team_project" }));
 
+        // DefectShareLinks：Token 唯一索引
+        DefectShareLinks.Indexes.CreateOne(new CreateIndexModel<DefectShareLink>(
+            Builders<DefectShareLink>.IndexKeys.Ascending(x => x.Token),
+            new CreateIndexOptions { Name = "uniq_defect_share_links_token", Unique = true }));
+        DefectShareLinks.Indexes.CreateOne(new CreateIndexModel<DefectShareLink>(
+            Builders<DefectShareLink>.IndexKeys.Ascending(x => x.CreatedBy).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_defect_share_links_creator" }));
+
+        // DefectFixReports：按分享链接和 Token 查询
+        DefectFixReports.Indexes.CreateOne(new CreateIndexModel<DefectFixReport>(
+            Builders<DefectFixReport>.IndexKeys.Ascending(x => x.ShareLinkId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_defect_fix_reports_share" }));
+        DefectFixReports.Indexes.CreateOne(new CreateIndexModel<DefectFixReport>(
+            Builders<DefectFixReport>.IndexKeys.Ascending(x => x.ShareToken),
+            new CreateIndexOptions { Name = "idx_defect_fix_reports_token" }));
+
         // ========== Channel Adapter 多通道适配器索引 ==========
 
         // ChannelWhitelists：按 channelType + identifierPattern 查询；按 isActive + priority 排序
@@ -1140,6 +1159,22 @@ public class MongoDbContext
         ReportComments.Indexes.CreateOne(new CreateIndexModel<ReportComment>(
             Builders<ReportComment>.IndexKeys.Ascending(x => x.ParentCommentId),
             new CreateIndexOptions { Name = "idx_report_comments_parent" }));
+
+        // ReportLikes：(ReportId, UserId) 唯一，防重复点赞
+        try
+        {
+            ReportLikes.Indexes.CreateOne(new CreateIndexModel<ReportLike>(
+                Builders<ReportLike>.IndexKeys.Ascending(x => x.ReportId).Ascending(x => x.UserId),
+                new CreateIndexOptions { Name = "uniq_report_likes_report_user", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        // ReportLikes：按 ReportId + CreatedAt 查询点赞用户
+        ReportLikes.Indexes.CreateOne(new CreateIndexModel<ReportLike>(
+            Builders<ReportLike>.IndexKeys.Ascending(x => x.ReportId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_report_likes_report_created" }));
 
         // ReportTeamSummaries：(TeamId, WeekYear, WeekNumber) 唯一
         try

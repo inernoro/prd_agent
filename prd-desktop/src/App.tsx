@@ -24,6 +24,9 @@ import { useDesktopBrandingStore } from './stores/desktopBrandingStore';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import type { ApiResponse, PromptsClientResponse, UserRole } from './types';
 import { openGroupSessionAndSetStore } from './lib/openGroupSession';
+import { useClientConfigStore } from './stores/clientConfigStore';
+import { useUpdateStore } from './stores/updateStore';
+import UpdateNotification from './components/Feedback/UpdateNotification';
 
 const THEME_STORAGE_KEY = 'prd-desktop-theme';
 
@@ -78,6 +81,35 @@ function App() {
     const skin = isDark ? 'dark' : 'white';
     void refreshBranding('app-start', skin);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 启动时从 GitHub Release 拉取远程客户端配置（预设服务器列表等）
+  useEffect(() => {
+    if (isTauri()) {
+      void useClientConfigStore.getState().fetchClientConfig();
+    }
+  }, []);
+
+  // 静默更新调度：启动 30s 后首次检查，之后每 2 小时检查一次
+  useEffect(() => {
+    if (!isTauri()) return;
+
+    const INITIAL_DELAY = 30 * 1000;           // 30 秒
+    const PERIODIC_INTERVAL = 2 * 60 * 60 * 1000; // 2 小时
+
+    const check = () => void useUpdateStore.getState().checkAndDownload();
+
+    const initialTimer = window.setTimeout(() => {
+      check();
+      periodicTimer = window.setInterval(check, PERIODIC_INTERVAL);
+    }, INITIAL_DELAY);
+
+    let periodicTimer: ReturnType<typeof setInterval> | undefined;
+
+    return () => {
+      window.clearTimeout(initialTimer);
+      if (periodicTimer) window.clearInterval(periodicTimer);
+    };
   }, []);
 
   // 将窗口标题与服务器下发配置对齐（若未下发则由 store 默认值兜底）
@@ -427,6 +459,9 @@ function App() {
 
       {/* 设置模态框 */}
       <SettingsModal />
+
+      {/* 静默更新右下角通知 */}
+      <UpdateNotification />
 
       {/* 冷启动全局加载遮罩（唯一加载动画） */}
       <StartLoadOverlay open={showColdStartLoading} />

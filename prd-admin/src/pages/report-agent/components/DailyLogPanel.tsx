@@ -469,7 +469,7 @@ export function DailyLogPanel() {
             )}
             {/* Week check-in + streak */}
             <div className="flex items-center gap-1.5 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-              <span>本周已打卡 {weekLoggedCount}/7</span>
+              <span>本周已记录 {weekLoggedCount}/7</span>
               {streakCount > 1 && (
                 <span className="flex items-center gap-0.5" style={{ color: 'rgba(249, 115, 22, 0.9)' }}>
                   <Flame size={13} /> {streakCount}天
