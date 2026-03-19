@@ -8,12 +8,10 @@ namespace PrdAgent.Infrastructure.Services;
 public class SkillService : ISkillService
 {
     private readonly MongoDbContext _db;
-    private readonly IPromptService _promptService;
 
-    public SkillService(MongoDbContext db, IPromptService promptService)
+    public SkillService(MongoDbContext db)
     {
         _db = db;
-        _promptService = promptService;
     }
 
     public async Task<List<Skill>> GetVisibleSkillsAsync(string userId, UserRole? roleFilter = null, CancellationToken ct = default)
@@ -121,116 +119,4 @@ public class SkillService : ISkillService
         await _db.Skills.UpdateOneAsync(filter, update, cancellationToken: ct);
     }
 
-    /// <summary>
-    /// 从 promptstages 迁移提示词到 skills 集合。
-    /// 清理旧 legacy-prompt-* 数据，用干净的 key 重建。
-    /// </summary>
-    public async Task<int> MigrateFromPromptsAsync(CancellationToken ct = default)
-    {
-        var settings = await _promptService.GetEffectiveSettingsAsync(ct);
-        if (settings.Prompts.Count == 0) return 0;
-
-        // 清理旧迁移残留（legacy-prompt-* 和 skill-* hash 格式）
-        await _db.Skills.DeleteManyAsync(
-            Builders<Skill>.Filter.Regex(x => x.SkillKey, new MongoDB.Bson.BsonRegularExpression("^legacy-prompt-")),
-            ct);
-
-        var migrated = 0;
-        foreach (var prompt in settings.Prompts)
-        {
-            if (string.IsNullOrWhiteSpace(prompt.PromptKey)) continue;
-
-            var skill = PromptEntryToSkill(prompt);
-
-            // 幂等：跳过已存在的 skillKey
-            var exists = await _db.Skills
-                .Find(x => x.SkillKey == skill.SkillKey)
-                .AnyAsync(ct);
-            if (exists) continue;
-
-            await _db.Skills.InsertOneAsync(skill, cancellationToken: ct);
-            migrated++;
-        }
-
-        return migrated;
-    }
-
-    // ━━━ 内部：prompt_stages → Skill 转换（仅用于迁移） ━━━━━━━━
-
-    private static Skill PromptEntryToSkill(PromptEntry prompt)
-    {
-        // 从 title 生成有意义的 SkillKey，而非沿用 legacy-prompt-N-role
-        var key = GenerateSkillKeyFromTitle(prompt.Title, prompt.Role, prompt.Order);
-        return new Skill
-        {
-            Id = Guid.NewGuid().ToString("N"),
-            SkillKey = key,
-            Title = prompt.Title,
-            Description = prompt.Title,
-            Icon = GetDefaultIconForRole(prompt.Role),
-            Category = "analysis",
-            Visibility = SkillVisibility.System,
-            IsBuiltIn = true,
-            IsEnabled = true,
-            Roles = new List<UserRole> { prompt.Role },
-            Order = prompt.Order,
-            Input = new SkillInputConfig
-            {
-                ContextScope = "prd",
-                AcceptsUserInput = false,
-                AcceptsAttachments = false,
-            },
-            Execution = new SkillExecutionConfig
-            {
-                PromptTemplate = prompt.PromptTemplate,
-                ModelType = "chat",
-            },
-            Output = new SkillOutputConfig
-            {
-                Mode = "chat",
-            },
-            CreatedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow,
-        };
-    }
-
-    private static string GetDefaultIconForRole(UserRole role)
-    {
-        return role switch
-        {
-            UserRole.DEV => "💻",
-            UserRole.QA => "🧪",
-            UserRole.PM => "📋",
-            _ => "📝"
-        };
-    }
-
-    /// <summary>
-    /// 生成 SkillKey：从标题提取 ASCII 部分或用 role-order 格式。
-    /// 格式与主流 skill 平台一致：kebab-case。
-    /// </summary>
-    private static string GenerateSkillKeyFromTitle(string title, UserRole role, int order)
-    {
-        var roleLower = role.ToString().ToLowerInvariant();
-
-        if (string.IsNullOrWhiteSpace(title))
-            return $"{roleLower}-prompt-{order}";
-
-        // 从标题提取 ASCII 字母数字部分
-        var normalized = title.Trim().ToLowerInvariant().Replace(" ", "-");
-        var sb = new System.Text.StringBuilder(normalized.Length);
-        foreach (var c in normalized)
-        {
-            if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')
-                sb.Append(c);
-        }
-        var ascii = sb.ToString().Trim('-');
-
-        // 纯中文标题：用 role-order 格式
-        if (string.IsNullOrEmpty(ascii))
-            return $"{roleLower}-prompt-{order}";
-
-        // 混合标题（如 "PRD 需求审查"）：用提取到的 ASCII + role
-        return $"{ascii}-{roleLower}";
-    }
 }

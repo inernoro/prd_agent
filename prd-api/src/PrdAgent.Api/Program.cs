@@ -134,7 +134,6 @@ builder.Services.AddHostedService<PrdAgent.Api.Middleware.ApiRequestLogWatchdog>
 // 应用设置服务（带缓存）
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IAppSettingsService, PrdAgent.Infrastructure.Services.AppSettingsService>();
-builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IPromptService, PrdAgent.Infrastructure.Services.PromptService>();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.ISystemPromptService, PrdAgent.Infrastructure.Services.SystemPromptService>();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.ISkillService, PrdAgent.Infrastructure.Services.SkillService>();
 
@@ -1007,20 +1006,6 @@ app.Lifetime.ApplicationStarted.Register(() =>
         Log.Information("Root 破窗账户未配置（如需启用，请设置 ROOT_ACCESS_USERNAME 和 ROOT_ACCESS_PASSWORD）");
     }
 });
-
-// 启动时自动迁移 promptstages → skills（幂等，已存在的跳过）
-try
-{
-    using var migrationScope = app.Services.CreateScope();
-    var skillService = migrationScope.ServiceProvider.GetRequiredService<PrdAgent.Core.Interfaces.ISkillService>();
-    var migrated = await skillService.MigrateFromPromptsAsync();
-    if (migrated > 0)
-        Log.Information("Migrated {Count} prompts from promptstages to skills collection", migrated);
-}
-catch (Exception ex)
-{
-    Log.Warning(ex, "Prompt-to-skill migration failed (non-fatal, will retry on next startup)");
-}
 
 app.Run();
 

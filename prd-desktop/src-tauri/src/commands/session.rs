@@ -6,7 +6,7 @@ use tauri::{command, AppHandle, Emitter, State};
 use tokio_util::sync::CancellationToken;
 
 use crate::models::{
-    ApiResponse, MessageHistoryItem, PromptsClientResponse, SessionInfo, SwitchRoleResponse,
+    ApiResponse, MessageHistoryItem, SessionInfo, SwitchRoleResponse,
 };
 use crate::services::{api_client, ApiClient};
 
@@ -751,12 +751,6 @@ pub async fn resend_message(
     }
 
     Ok(())
-}
-
-#[command]
-pub async fn get_prompts() -> Result<ApiResponse<PromptsClientResponse>, String> {
-    let client = ApiClient::new();
-    client.get("/prompts").await
 }
 
 #[command]

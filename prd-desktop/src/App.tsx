@@ -312,9 +312,6 @@ function App() {
     useGroupListStore.getState().loadGroups().catch(() => {});
   }, [isAuthenticated]);
 
-  // [已废弃] 旧 get_prompts 轮询已移除。
-  // 技能统一后，ChatInput 通过 get_skills 事件驱动加载技能列表，不再需要此处的 5 分钟轮询。
-
   // 监听 deep link：prdagent://join/{inviteCode}
   useEffect(() => {
     const unlistenPromise = listen<string>('deep-link', (event) => {

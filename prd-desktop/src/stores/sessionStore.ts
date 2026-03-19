@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { Document, InteractionMode, PromptItem, PromptsClientResponse, Session, UserRole } from '../types';
+import { Document, InteractionMode, Session, UserRole } from '../types';
 
 interface SessionState {
   sessionId: string | null;
@@ -12,8 +12,6 @@ interface SessionState {
   currentRole: UserRole;
   mode: InteractionMode;
   previousMode: InteractionMode | null;
-  prompts: PromptItem[] | null;
-  promptsUpdatedAt: string | null;
 
   setSession: (session: Session, doc: Document, docs?: Document[]) => void;
   setDocuments: (docs: Document[]) => void;
@@ -25,7 +23,6 @@ interface SessionState {
   setMode: (mode: InteractionMode) => void;
   openPrdPreviewPage: () => void;
   backFromPrdPreview: () => void;
-  setPrompts: (resp: PromptsClientResponse) => void;
   clearContext: () => void;
   clearSession: () => void;
 }
@@ -42,8 +39,6 @@ export const useSessionStore = create<SessionState>()(
       currentRole: 'PM',
       mode: 'QA',
       previousMode: null,
-      prompts: null,
-      promptsUpdatedAt: null,
 
       setSession: (session, doc, docs) => set({
         sessionId: session.sessionId,
@@ -59,7 +54,7 @@ export const useSessionStore = create<SessionState>()(
 
       setActiveGroupId: (groupId) => set({ activeGroupId: groupId }),
 
-      // 仅切换当前群组上下文（用于”未绑定 PRD 的群组”），必须清空旧 session/document，避免串信息
+      // 仅切换当前群组上下文（用于"未绑定 PRD 的群组"），必须清空旧 session/document，避免串信息
       setActiveGroupContext: (groupId) => set((state) => ({
         sessionId: null,
         activeGroupId: groupId,
@@ -93,7 +88,7 @@ export const useSessionStore = create<SessionState>()(
 
       setMode: (mode) => set((state) => ({
         mode,
-        // 只要离开 PRD 预览页，就清空 previousMode，避免“跨页面返回”错乱
+        // 只要离开 PRD 预览页，就清空 previousMode，避免"跨页面返回"错乱
         previousMode: mode === 'PrdPreview' ? state.previousMode : null,
       })),
 
@@ -107,15 +102,7 @@ export const useSessionStore = create<SessionState>()(
         previousMode: null,
       })),
 
-      setPrompts: (resp) => set(() => {
-        const prompts = Array.isArray(resp?.prompts) ? resp.prompts : null;
-        const updatedAt = typeof resp?.updatedAt === 'string' ? resp.updatedAt : null;
-        return { prompts, promptsUpdatedAt: updatedAt };
-      }),
-
-      // 仅清理”当前上下文”（不登出、不清群组列表、不清 prompts）
-      // - 不应影响 PRD 绑定与会话（否则 UI 会误显示”未绑定 PRD”）
-      // - 仅用于把页面状态从 PrdPreview 等拉回到 QA，避免”清理后仍停留在预览页”的错觉
+      // 仅清理"当前上下文"（不登出、不清群组列表）
       clearContext: () => set((state) => ({
         sessionId: state.sessionId ?? null,
         activeGroupId: state.activeGroupId ?? null,
@@ -125,8 +112,6 @@ export const useSessionStore = create<SessionState>()(
         currentRole: state.currentRole ?? 'PM',
         mode: 'QA',
         previousMode: null,
-        prompts: state.prompts ?? null,
-        promptsUpdatedAt: state.promptsUpdatedAt ?? null,
       })),
 
       clearSession: () => set({
@@ -139,32 +124,29 @@ export const useSessionStore = create<SessionState>()(
         currentRole: 'PM',
         mode: 'QA',
         previousMode: null,
-        prompts: null,
-        promptsUpdatedAt: null,
       }),
     }),
     {
       name: 'session-storage',
-      version: 1,
+      version: 2,
       partialize: (s) => ({
         sessionId: s.sessionId,
         activeGroupId: s.activeGroupId,
         lastGroupSeqByGroup: s.lastGroupSeqByGroup,
-        // 不持久化 document/documents/documentLoaded：文档数据必须从后端拉取，
-        // 持久化会导致切换群组或重启后显示上一个 session 的脏数据。
         currentRole: s.currentRole,
         mode: s.mode,
         previousMode: s.previousMode,
-        prompts: s.prompts,
-        promptsUpdatedAt: s.promptsUpdatedAt,
       }),
       onRehydrateStorage: () => (state, err) => {
         if (!err && state) {
           const s = state as any;
-          // 修复：刷新/重启时停留在 PrdPreview，会导致用户误以为”聊天丢失”
+          // 修复：刷新/重启时停留在 PrdPreview，会导致用户误以为"聊天丢失"
           if (s.mode === 'PrdPreview' && typeof s.backFromPrdPreview === 'function') {
             try { s.backFromPrdPreview(); } catch { /* ignore */ }
           }
+          // 清理旧版本残留的 prompts 字段
+          delete s.prompts;
+          delete s.promptsUpdatedAt;
         }
       },
     }

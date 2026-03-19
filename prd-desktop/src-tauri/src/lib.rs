@@ -190,7 +190,6 @@ pub fn run() {
             commands::session::subscribe_chat_run,
             commands::session::cancel_chat_run,
             commands::session::resend_message,
-            commands::session::get_prompts,
             commands::session::cancel_stream,
             commands::session::preview_ask_in_section,
             commands::auth::login,

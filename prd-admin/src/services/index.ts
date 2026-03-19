@@ -76,7 +76,6 @@ import type {
   PurgeUsersContract,
 } from '@/services/contracts/data';
 import type { GetApiLogDetailContract, GetApiLogsContract, GetApiLogsMetaContract } from '@/services/contracts/apiLogs';
-import type { GetAdminPromptsContract, PutAdminPromptsContract, ResetAdminPromptsContract } from '@/services/contracts/prompts';
 import type {
   GetAdminSystemPromptsContract,
   PutAdminSystemPromptsContract,
@@ -379,7 +378,6 @@ import {
   purgeUsersReal,
 } from '@/services/real/data';
 import { getApiLogDetailReal, getApiLogsMetaReal, getApiLogsReal } from '@/services/real/apiLogs';
-import { getAdminPromptsReal, putAdminPromptsReal, resetAdminPromptsReal } from '@/services/real/prompts';
 import { getAdminSystemPromptsReal, putAdminSystemPromptsReal, resetAdminSystemPromptsReal } from '@/services/real/systemPrompts';
 import {
   deleteAdminImageGenPlanPromptOverrideReal,
@@ -776,9 +774,6 @@ export const getAdminDocumentContent: GetAdminDocumentContentContract = withAuth
 export const getApiLogs: GetApiLogsContract = withAuth(getApiLogsReal);
 export const getApiLogDetail: GetApiLogDetailContract = withAuth(getApiLogDetailReal);
 
-export const getAdminPrompts: GetAdminPromptsContract = withAuth(getAdminPromptsReal);
-export const putAdminPrompts: PutAdminPromptsContract = withAuth(putAdminPromptsReal);
-export const resetAdminPrompts: ResetAdminPromptsContract = withAuth(resetAdminPromptsReal);
 export const getAdminSystemPrompts: GetAdminSystemPromptsContract = withAuth(getAdminSystemPromptsReal);
 export const putAdminSystemPrompts: PutAdminSystemPromptsContract = withAuth(putAdminSystemPromptsReal);
 export const resetAdminSystemPrompts: ResetAdminSystemPromptsContract = withAuth(resetAdminSystemPromptsReal);

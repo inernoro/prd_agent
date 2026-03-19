@@ -206,22 +206,6 @@ pub struct MessageHistoryItem {
     pub token_usage: Option<TokenUsage>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PromptClientItem {
-    pub prompt_key: String,
-    pub order: i32,
-    pub role: String,
-    pub title: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PromptsClientResponse {
-    pub updated_at: String,
-    pub prompts: Vec<PromptClientItem>,
-}
-
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamEvent {

@@ -2,8 +2,8 @@ namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 文学创作提示词（全局共享，按场景分类）
-/// - 与 PromptEntry 不同：不绑定 UserRole（PM/DEV/QA），而是按 ScenarioType 分类
-/// - 存储在独立集合 LiteraryPrompts 中，避免与现有 Prompts 冲突
+/// - 不绑定 UserRole（PM/DEV/QA），而是按 ScenarioType 分类
+/// - 存储在独立集合 literary_prompts 中
 /// </summary>
 public class LiteraryPrompt
 {
