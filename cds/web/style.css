@@ -538,11 +538,12 @@ button.text-btn:hover { color: var(--accent); }
 .combobox-input-wrap { position: relative; display: flex; align-items: center; }
 .combobox-toggle {
   position: absolute; right: 1px; top: 1px; bottom: 1px;
-  width: 32px; display: flex; align-items: center; justify-content: center;
+  width: 36px; display: flex; align-items: center; justify-content: center;
   background: transparent; border: none; border-left: 1px solid var(--glass-border);
   color: var(--fg-muted); cursor: pointer; border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   transition: color var(--transition), background var(--transition);
 }
+.combobox-toggle svg { width: 16px; height: 16px; flex-shrink: 0; }
 .combobox-toggle:hover { color: var(--fg); background: var(--bg-hover); }
 .combobox-dropdown {
   display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0;

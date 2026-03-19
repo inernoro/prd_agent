@@ -2333,16 +2333,16 @@ async function openSelfUpdate() {
     </p>
     <div class="form-row" style="flex-direction:column;align-items:stretch">
       <label class="form-label">目标分支</label>
-      <div class="combobox" id="branchCombobox">
+      <div class="combobox" id="selfUpdateCombobox">
         <div class="combobox-input-wrap">
-          <input id="selfUpdateBranch" class="form-input" style="width:100%;padding-right:32px"
+          <input id="selfUpdateBranch" class="form-input" style="width:100%;padding-right:36px"
             value="${esc(current)}" placeholder="输入或选择分支名" autocomplete="off"
             onfocus="openComboDropdown()" oninput="filterComboItems(this.value)">
           <button type="button" class="combobox-toggle" onclick="toggleComboDropdown()" tabindex="-1">
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M2.5 4.5L6 8l3.5-3.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 6 8 10 12 6"/></svg>
           </button>
         </div>
-        <div class="combobox-dropdown" id="branchDropdown">
+        <div class="combobox-dropdown" id="selfUpdateDropdown">
           ${branchItems}
         </div>
       </div>
@@ -2367,25 +2367,25 @@ async function openSelfUpdate() {
 // ── Combobox helpers ──
 
 function _comboOutsideClick(e) {
-  const box = document.getElementById('branchCombobox');
+  const box = document.getElementById('selfUpdateCombobox');
   if (box && !box.contains(e.target)) {
     closeComboDropdown();
   }
 }
 
 function openComboDropdown() {
-  const dd = document.getElementById('branchDropdown');
+  const dd = document.getElementById('selfUpdateDropdown');
   if (dd) dd.classList.add('open');
 }
 
 function closeComboDropdown() {
-  const dd = document.getElementById('branchDropdown');
+  const dd = document.getElementById('selfUpdateDropdown');
   if (dd) dd.classList.remove('open');
   document.removeEventListener('click', _comboOutsideClick);
 }
 
 function toggleComboDropdown() {
-  const dd = document.getElementById('branchDropdown');
+  const dd = document.getElementById('selfUpdateDropdown');
   if (dd) {
     if (dd.classList.contains('open')) {
       closeComboDropdown();
@@ -2399,7 +2399,7 @@ function toggleComboDropdown() {
 }
 
 function filterComboItems(query) {
-  const dd = document.getElementById('branchDropdown');
+  const dd = document.getElementById('selfUpdateDropdown');
   if (!dd) return;
   const q = query.toLowerCase();
   let visible = 0;
