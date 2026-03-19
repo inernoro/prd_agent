@@ -76,6 +76,14 @@ const CATEGORY_CONFIG: Record<string, { label: string; color: string; bg: string
 
 const MAX_CUSTOM_TAG_COUNT = 20;
 const MAX_CUSTOM_TAG_LENGTH = 16;
+const SYSTEM_TAG_ORDER = [
+  DailyLogCategory.Development,
+  DailyLogCategory.Meeting,
+  DailyLogCategory.Communication,
+  DailyLogCategory.Documentation,
+  DailyLogCategory.Testing,
+  DailyLogCategory.Other,
+] as const;
 
 function normalizeCustomTag(tag: string): string {
   return tag.trim().replace(/\s+/g, ' ');
@@ -101,8 +109,8 @@ export function DailyLogPanel() {
 
   // Quick input state
   const [quickInput, setQuickInput] = useState('');
-  const [quickCategory, setQuickCategory] = useState<string>(DailyLogCategory.Development);
-  const [quickTag, setQuickTag] = useState<string | null>(null);
+  const [selectedSystemTags, setSelectedSystemTags] = useState<string[]>([DailyLogCategory.Development]);
+  const [selectedCustomTags, setSelectedCustomTags] = useState<string[]>([]);
   const [customTags, setCustomTags] = useState<string[]>([]);
   const [showTagManager, setShowTagManager] = useState(false);
   const [tagDraft, setTagDraft] = useState('');
@@ -266,14 +274,27 @@ export function DailyLogPanel() {
   const handleQuickAdd = async () => {
     const text = quickInput.trim();
     if (!text) return;
+
+    const totalSelectedTagCount = selectedSystemTags.length + selectedCustomTags.length;
+    if (totalSelectedTagCount === 0) {
+      toast.error('请至少选择一个标签');
+      return;
+    }
+
+    const primaryCategory = SYSTEM_TAG_ORDER.find((key) => selectedSystemTags.includes(key)) ?? DailyLogCategory.Other;
+    const extraSystemTags = SYSTEM_TAG_ORDER.filter((key) => key !== primaryCategory && selectedSystemTags.includes(key));
+    const tags = [...extraSystemTags, ...selectedCustomTags];
+
     const newItem: LogItemInput = {
-      content: text, category: quickCategory, durationMinutes: undefined,
-      tags: quickTag ? [quickTag] : undefined,
+      content: text,
+      category: primaryCategory,
+      durationMinutes: undefined,
+      tags: tags.length > 0 ? tags : undefined,
     };
     const newItems = [...items, newItem];
     setItems(newItems);
     setQuickInput('');
-    setQuickTag(null);
+    setSelectedCustomTags([]);
     inputRef.current?.focus();
     await doSave(newItems);
   };
@@ -285,20 +306,18 @@ export function DailyLogPanel() {
     }
   };
 
-  const handleQuickCategoryClick = (cat: string) => {
-    const text = quickInput.trim();
-    if (text) {
-      const newItem: LogItemInput = { content: text, category: cat, durationMinutes: undefined };
-      const newItems = [...items, newItem];
-      setItems(newItems);
-      setQuickInput('');
-      setQuickCategory(cat);
-      inputRef.current?.focus();
-      void doSave(newItems);
-    } else {
-      setQuickCategory(cat);
-      inputRef.current?.focus();
-    }
+  const handleSystemTagToggle = (tag: string) => {
+    setSelectedSystemTags((prev) => (
+      prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]
+    ));
+    inputRef.current?.focus();
+  };
+
+  const handleCustomTagToggle = (tag: string) => {
+    setSelectedCustomTags((prev) => (
+      prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]
+    ));
+    inputRef.current?.focus();
   };
 
   const handleAddCustomTag = async () => {
@@ -334,12 +353,10 @@ export function DailyLogPanel() {
     const removedTag = customTags[idx];
     if (!removedTag) return;
     const prevTags = customTags;
-    const prevQuickTag = quickTag;
+    const prevSelectedCustomTags = selectedCustomTags;
     const updatedTags = customTags.filter((_, i) => i !== idx);
     setCustomTags(updatedTags);
-    if (quickTag?.toLowerCase() === removedTag.toLowerCase()) {
-      setQuickTag(null);
-    }
+    setSelectedCustomTags((prev) => prev.filter((x) => x.toLowerCase() !== removedTag.toLowerCase()));
     if (editingTagIdx === idx) {
       setEditingTagIdx(null);
       setEditingTagDraft('');
@@ -348,7 +365,7 @@ export function DailyLogPanel() {
     const ok = await saveCustomTags(updatedTags, '标签已删除');
     if (!ok) {
       setCustomTags(prevTags);
-      setQuickTag(prevQuickTag);
+      setSelectedCustomTags(prevSelectedCustomTags);
     }
   };
 
@@ -380,19 +397,17 @@ export function DailyLogPanel() {
     }
 
     const prevTags = customTags;
-    const prevQuickTag = quickTag;
+    const prevSelectedCustomTags = selectedCustomTags;
     const updatedTags = customTags.map((tag, idx) => (idx === editingTagIdx ? nextTag : tag));
     setCustomTags(updatedTags);
-    if (quickTag?.toLowerCase() === target.toLowerCase()) {
-      setQuickTag(nextTag);
-    }
+    setSelectedCustomTags((prev) => prev.map((x) => (x.toLowerCase() === target.toLowerCase() ? nextTag : x)));
     setEditingTagIdx(null);
     setEditingTagDraft('');
 
     const ok = await saveCustomTags(updatedTags, '标签已更新');
     if (!ok) {
       setCustomTags(prevTags);
-      setQuickTag(prevQuickTag);
+      setSelectedCustomTags(prevSelectedCustomTags);
     }
   };
 
@@ -483,8 +498,9 @@ export function DailyLogPanel() {
   const tagDraftTooLong = normalizedTagDraft.length > MAX_CUSTOM_TAG_LENGTH;
   const tagLimitReached = customTags.length >= MAX_CUSTOM_TAG_COUNT;
   const canSubmitTagDraft = normalizedTagDraft.length > 0 && !tagDraftTooLong && !tagLimitReached;
+  const totalSelectedTagCount = selectedSystemTags.length + selectedCustomTags.length;
   const systemCategoryKeys = useMemo(
-    () => Object.keys(CATEGORY_CONFIG).filter((key) => key !== DailyLogCategory.Other),
+    () => SYSTEM_TAG_ORDER.filter((key) => key !== DailyLogCategory.Other),
     []
   );
 
@@ -640,7 +656,7 @@ export function DailyLogPanel() {
                   variant="primary"
                   size="sm"
                   onClick={handleQuickAdd}
-                  disabled={!quickInput.trim() || saving}
+                  disabled={!quickInput.trim() || saving || totalSelectedTagCount === 0}
                   style={{ borderRadius: 12 }}
                 >
                   <Send size={13} />
@@ -651,7 +667,7 @@ export function DailyLogPanel() {
                 <div className="flex items-center gap-1.5 flex-wrap">
                 {systemCategoryKeys.map((key) => {
                   const cfg = CATEGORY_CONFIG[key];
-                  const isActive = quickCategory === key;
+                  const isActive = selectedSystemTags.includes(key);
                   const Icon = cfg.icon;
                   return (
                     <button
@@ -662,7 +678,7 @@ export function DailyLogPanel() {
                         color: isActive ? cfg.color : 'var(--text-muted)',
                         border: `1px solid ${isActive ? cfg.color.replace('0.95', '0.3') : 'transparent'}`,
                       }}
-                      onClick={() => handleQuickCategoryClick(key)}
+                      onClick={() => handleSystemTagToggle(key)}
                     >
                       <Icon size={11} />
                       {cfg.label}
@@ -670,7 +686,7 @@ export function DailyLogPanel() {
                   );
                 })}
                 {customTags.map((tag) => {
-                  const isActive = quickTag === tag;
+                  const isActive = selectedCustomTags.includes(tag);
                   return (
                     <button
                       key={`tag-${tag}`}
@@ -680,9 +696,7 @@ export function DailyLogPanel() {
                         color: isActive ? 'rgba(20, 184, 166, 0.95)' : 'var(--text-muted)',
                         border: `1px solid ${isActive ? 'rgba(20, 184, 166, 0.3)' : 'transparent'}`,
                       }}
-                      onClick={() => {
-                        setQuickTag(isActive ? null : tag);
-                      }}
+                      onClick={() => handleCustomTagToggle(tag)}
                     >
                       <Tag size={10} />
                       {tag}
@@ -692,7 +706,7 @@ export function DailyLogPanel() {
                 {(() => {
                   const key = DailyLogCategory.Other;
                   const cfg = CATEGORY_CONFIG[key];
-                  const isActive = quickCategory === key;
+                  const isActive = selectedSystemTags.includes(key);
                   const Icon = cfg.icon;
                   return (
                     <button
@@ -703,7 +717,7 @@ export function DailyLogPanel() {
                         color: isActive ? cfg.color : 'var(--text-muted)',
                         border: `1px solid ${isActive ? cfg.color.replace('0.95', '0.3') : 'transparent'}`,
                       }}
-                      onClick={() => handleQuickCategoryClick(key)}
+                      onClick={() => handleSystemTagToggle(key)}
                     >
                       <Icon size={11} />
                       {cfg.label}
@@ -725,6 +739,9 @@ export function DailyLogPanel() {
                   管理标签
                 </button>
                 </div>
+              </div>
+              <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                已选标签 {totalSelectedTagCount} 个，提交前至少选择 1 个
               </div>
               {showTagManager && (
                 <div
@@ -915,7 +932,7 @@ export function DailyLogPanel() {
                       }}
                       onClick={() => {
                         setQuickInput(text);
-                        setQuickCategory(cat);
+                        setSelectedSystemTags([cat]);
                         inputRef.current?.focus();
                       }}
                     >

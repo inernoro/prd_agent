@@ -1569,7 +1569,7 @@ public class ReportAgentController : ControllerBase
         {
             Content = i.Content ?? string.Empty,
             Category = DailyLogCategory.All.Contains(i.Category ?? "") ? i.Category! : DailyLogCategory.Other,
-            Tags = NormalizeSingleDailyLogTag(i.Tags),
+            Tags = NormalizeDailyLogTags(i.Tags),
             DurationMinutes = i.DurationMinutes,
             CreatedAt = i.CreatedAt ?? now
         }).Where(i => !string.IsNullOrWhiteSpace(i.Content)).ToList();
@@ -1606,15 +1606,19 @@ public class ReportAgentController : ControllerBase
         }
     }
 
-    private static List<string> NormalizeSingleDailyLogTag(IEnumerable<string>? tags)
+    private static List<string> NormalizeDailyLogTags(IEnumerable<string>? tags)
     {
-        var firstValidTag = tags?
-            .Select(x => (x ?? string.Empty).Trim())
-            .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
-
-        return string.IsNullOrWhiteSpace(firstValidTag)
-            ? new List<string>()
-            : new List<string> { firstValidTag };
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var result = new List<string>();
+        foreach (var raw in tags ?? Enumerable.Empty<string>())
+        {
+            var tag = (raw ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(tag))
+                continue;
+            if (seen.Add(tag))
+                result.Add(tag);
+        }
+        return result;
     }
 
     /// <summary>
