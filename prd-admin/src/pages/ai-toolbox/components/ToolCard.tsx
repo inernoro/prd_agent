@@ -38,6 +38,7 @@ import {
   Search,
   Layers,
   Swords,
+  Users,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -96,6 +97,9 @@ const AGENT_COVER_PATHS: Record<string, string> = {
   'defect-agent': 'icon/backups/agent/defect-agent.png',
   'video-agent': 'icon/backups/agent/video-agent.png',
   'report-agent': 'icon/backups/agent/report-agent.png',
+  'arena': 'icon/backups/agent/arena.png',
+  'shortcuts-agent': 'icon/backups/agent/shortcuts-agent.png',
+  'workflow-agent': 'icon/backups/agent/workflow-agent.png',
 };
 
 function getCoverImageUrl(agentKey?: string): string | null {
@@ -287,43 +291,92 @@ export function ToolCard({ item }: ToolCardProps) {
           </div>
         )}
 
-        {/* Footer */}
+        {/* Footer — 内置: 徽章 + 收藏; 自定义: 作者 + 统计 */}
         <div
           className="flex items-center justify-between pt-1.5"
           style={{ borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}
         >
-          <span
-            className="text-[8px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
-            style={{
-              background: isCustomized ? `${palette.from}25` : 'transparent',
-              color: isCustomized ? palette.soft : 'rgba(255, 255, 255, 0.4)',
-              border: isCustomized ? `1px solid ${palette.from}40` : '1px solid rgba(255, 255, 255, 0.1)',
-            }}
-          >
-            {isCustomized ? (
-              <>
-                <Sparkles size={8} />
-                定制版
-              </>
-            ) : item.type === 'builtin' ? '系统内置' : '自定义'}
-          </span>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleToggleFavorite}
-              className="flex items-center justify-center transition-all duration-300 hover:scale-125"
-              title={favorited ? '取消收藏' : '收藏'}
-            >
-              <Star
-                size={11}
-                fill={favorited ? '#FBBF24' : 'none'}
+          {item.type === 'custom' ? (
+            <>
+              {/* 作者头像 + 名字 */}
+              <div className="flex items-center gap-1 min-w-0">
+                <div
+                  className="w-3.5 h-3.5 rounded-full shrink-0 flex items-center justify-center text-[7px] font-bold"
+                  style={{
+                    background: `linear-gradient(135deg, ${palette.from}, ${palette.soft})`,
+                    color: 'rgba(0, 0, 0, 0.7)',
+                  }}
+                >
+                  {(item.createdByName || '?')[0]}
+                </div>
+                <span
+                  className="text-[8px] truncate"
+                  style={{ color: 'rgba(255, 255, 255, 0.5)' }}
+                >
+                  {item.createdByName || '未知'}
+                </span>
+              </div>
+              {/* 使用次数 */}
+              <div className="flex items-center gap-1.5 shrink-0">
+                {item.usageCount > 0 && (
+                  <span
+                    className="flex items-center gap-0.5 text-[8px]"
+                    style={{ color: 'rgba(255, 255, 255, 0.45)' }}
+                  >
+                    <Zap size={8} style={{ color: palette.soft }} />
+                    {item.usageCount >= 1000 ? `${(item.usageCount / 1000).toFixed(1)}k` : item.usageCount}
+                  </span>
+                )}
+                <button
+                  onClick={handleToggleFavorite}
+                  className="flex items-center justify-center transition-all duration-300 hover:scale-125"
+                  title={favorited ? '取消收藏' : '收藏'}
+                >
+                  <Star
+                    size={10}
+                    fill={favorited ? '#FBBF24' : 'none'}
+                    style={{
+                      color: favorited ? '#FBBF24' : 'rgba(255, 255, 255, 0.25)',
+                      filter: favorited ? 'drop-shadow(0 0 4px rgba(251, 191, 36, 0.5))' : 'none',
+                    }}
+                  />
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              {/* 内置工具: 徽章 */}
+              <span
+                className="text-[8px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
                 style={{
-                  color: favorited ? '#FBBF24' : 'rgba(255, 255, 255, 0.3)',
-                  filter: favorited ? 'drop-shadow(0 0 4px rgba(251, 191, 36, 0.5))' : 'none',
+                  background: isCustomized ? `${palette.from}25` : 'transparent',
+                  color: isCustomized ? palette.soft : 'rgba(255, 255, 255, 0.4)',
+                  border: isCustomized ? `1px solid ${palette.from}40` : '1px solid rgba(255, 255, 255, 0.1)',
                 }}
-              />
-            </button>
-          </div>
+              >
+                {isCustomized ? (
+                  <>
+                    <Sparkles size={8} />
+                    定制版
+                  </>
+                ) : '系统内置'}
+              </span>
+              <button
+                onClick={handleToggleFavorite}
+                className="flex items-center justify-center transition-all duration-300 hover:scale-125"
+                title={favorited ? '取消收藏' : '收藏'}
+              >
+                <Star
+                  size={10}
+                  fill={favorited ? '#FBBF24' : 'none'}
+                  style={{
+                    color: favorited ? '#FBBF24' : 'rgba(255, 255, 255, 0.25)',
+                    filter: favorited ? 'drop-shadow(0 0 4px rgba(251, 191, 36, 0.5))' : 'none',
+                  }}
+                />
+              </button>
+            </>
+          )}
         </div>
       </div>
 
