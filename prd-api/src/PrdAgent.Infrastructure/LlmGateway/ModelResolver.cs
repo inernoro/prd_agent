@@ -42,10 +42,19 @@ public class ModelResolver : IModelResolver
 
         var jwtSecret = _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
 
-        // ========== 第一步：查找 AppCaller 配置 ==========
+        // ========== 第一步：查找 AppCaller 配置（必须已注册） ==========
         var appCaller = await _db.LLMAppCallers
             .Find(a => a.AppCode == appCallerCode)
             .FirstOrDefaultAsync(ct);
+
+        if (appCaller == null)
+        {
+            _logger.LogWarning(
+                "[ModelResolver] AppCallerCode 未在数据库中注册: {Code}，请在管理后台初始化应用",
+                appCallerCode);
+            return ModelResolutionResult.NotFound(expectedModel,
+                $"AppCallerCode '{appCallerCode}' 未在数据库中注册，请在管理后台点击「初始化应用」");
+        }
 
         List<ModelGroup>? candidateGroups = null;
         string resolutionType = "NotFound";

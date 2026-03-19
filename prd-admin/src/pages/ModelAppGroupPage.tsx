@@ -124,6 +124,14 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
   const [availableOpen, setAvailableOpen] = useState(false);
   const [availablePlatformId, setAvailablePlatformId] = useState('');
 
+  // 初始化结果弹窗
+  const [initResult, setInitResult] = useState<{
+    deleted: string[];
+    orphanDeleted: string[];
+    created: string[];
+    message: string;
+  } | null>(null);
+
   // 模型池绑定弹窗
   const [bindingDialogOpen, setBindingDialogOpen] = useState(false);
   const [bindingTarget, setBindingTarget] = useState<{ appId: string; modelType: string; currentIds: string[] } | null>(null);
@@ -584,14 +592,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
       const result = await response.json();
       
       if (result.success && result.data) {
-        const { deleted, created, message } = result.data;
-        const deletedCount = deleted?.length || 0;
-        const createdCount = created?.length || 0;
-        
-        toast.success(
-          '初始化成功',
-          `${message || '操作完成'}\n删除 ${deletedCount} 个旧应用，创建 ${createdCount} 个新应用`
-        );
+        setInitResult(result.data);
         await loadData();
       } else {
         throw new Error(result.error?.message || '初始化失败');
@@ -2242,6 +2243,71 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
           />
         );
       })()}
+
+      {/* 初始化结果弹窗 */}
+      {initResult && (
+        <Dialog
+          open={!!initResult}
+          onOpenChange={(open) => { if (!open) setInitResult(null); }}
+          title="初始化完成"
+          description={initResult.message}
+          maxWidth={680}
+          content={
+            <div className="space-y-4 max-h-[60vh] overflow-auto">
+              {/* 删除的系统默认应用 */}
+              {initResult.deleted.length > 0 && (
+                <div>
+                  <div className="text-[12px] font-semibold mb-2 flex items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
+                    <span className="inline-block w-2 h-2 rounded-full" style={{ background: 'rgba(239,68,68,0.8)' }} />
+                    删除旧应用（{initResult.deleted.length}）
+                  </div>
+                  <div className="rounded-lg p-2 space-y-1" style={{ background: 'var(--bg-input)' }}>
+                    {initResult.deleted.map((code: string) => (
+                      <div key={code} className="text-[11px] font-mono px-2 py-1 rounded" style={{ color: 'rgba(239,68,68,0.9)', background: 'rgba(239,68,68,0.06)' }}>
+                        {code}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 清理的孤儿应用 */}
+              {initResult.orphanDeleted.length > 0 && (
+                <div>
+                  <div className="text-[12px] font-semibold mb-2 flex items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
+                    <span className="inline-block w-2 h-2 rounded-full" style={{ background: 'rgba(251,191,36,0.8)' }} />
+                    清理孤儿应用（{initResult.orphanDeleted.length}）
+                  </div>
+                  <div className="rounded-lg p-2 space-y-1" style={{ background: 'var(--bg-input)' }}>
+                    {initResult.orphanDeleted.map((code: string) => (
+                      <div key={code} className="text-[11px] font-mono px-2 py-1 rounded" style={{ color: 'rgba(251,191,36,0.9)', background: 'rgba(251,191,36,0.06)' }}>
+                        {code}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 创建的新应用 */}
+              {initResult.created.length > 0 && (
+                <div>
+                  <div className="text-[12px] font-semibold mb-2 flex items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
+                    <span className="inline-block w-2 h-2 rounded-full" style={{ background: 'rgba(34,197,94,0.8)' }} />
+                    创建新应用（{initResult.created.length}）
+                  </div>
+                  <div className="rounded-lg p-2 space-y-1" style={{ background: 'var(--bg-input)' }}>
+                    {initResult.created.map((code: string) => (
+                      <div key={code} className="text-[11px] font-mono px-2 py-1 rounded" style={{ color: 'rgba(34,197,94,0.9)', background: 'rgba(34,197,94,0.06)' }}>
+                        {code}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          }
+        />
+      )}
     </div>
   );
 }

@@ -1126,7 +1126,7 @@ export const predictNextDispatch = async (groupId: string) => {
 };
 
 export const getAppCallers = async () => {
-  const response = await appCallersService.getAppCallers();
+  const response = await appCallersService.getAppCallers(1, 500);
   if (response.success && response.data) {
     return response.data.items;
   }

@@ -217,8 +217,8 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.ArenaRunWorker>();
 
 // 权限字符串迁移服务（启动时自动迁移旧格式 admin.xxx → 新格式 appKey.action）
 builder.Services.AddHostedService<PrdAgent.Api.Services.PermissionMigrationService>();
-// 应用调用者同步服务（启动时自动将 AppCallerRegistry 增量同步到 llm_app_callers）
-builder.Services.AddHostedService<PrdAgent.Api.Services.AppCallerRegistrySyncService>();
+// 应用调用者同步：已移除自动启动同步，改为管理后台手动点击「初始化应用」触发
+// builder.Services.AddHostedService<PrdAgent.Api.Services.AppCallerRegistrySyncService>();
 
 // 邮件通道服务
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmailIntentDetector, PrdAgent.Infrastructure.Services.Email.EmailIntentDetector>();
