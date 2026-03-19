@@ -323,13 +323,13 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
         />
       )}
 
-      {/* AI 评分实时面板 */}
+      {/* AI 评分实时面板 — 表格布局 */}
       {scoreShareId && (
         <Dialog
           open={!!scoreShareId}
           onOpenChange={(v) => { if (!v) closeScoring(); }}
           title="AI 缺陷评分"
-          maxWidth={720}
+          maxWidth={900}
           content={
             <div className="mt-2 max-h-[65vh] overflow-y-auto pr-1">
               <SseStreamPanel
@@ -341,11 +341,7 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
                 phaseExtra={sse.isStreaming && scores.length > 0 ? `已完成 ${scores.length} 个` : undefined}
                 typingLabel="AI 分析过程"
               >
-                <div className="space-y-2">
-                  {scores.map((s, i) => (
-                    <ScoreCard key={s.defectId} score={s} index={i} />
-                  ))}
-                </div>
+                <ScoreTable scores={scores} />
               </SseStreamPanel>
             </div>
           }
@@ -355,79 +351,123 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
   );
 }
 
-/** 单个评分卡片 */
-function ScoreCard({ score: s, index }: { score: DefectAiScoreItem; index: number }) {
-  const overallColor = scoreColor(s.overallScore);
+/** 评分表格 */
+function ScoreTable({ scores }: { scores: DefectAiScoreItem[] }) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  if (scores.length === 0) return null;
 
   return (
-    <div
-      className="rounded-xl p-3 transition-all duration-300"
-      style={{
-        ...glassPanel,
-        animationDelay: `${index * 60}ms`,
-        borderLeft: `2px solid ${overallColor}`,
-      }}
-    >
-      {/* 顶行：编号 + 标题 + 综合分 */}
-      <div className="flex items-start gap-2">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] font-mono shrink-0" style={{ color: 'var(--text-muted)' }}>
-              {s.defectNo}
-            </span>
-            <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-              {s.defectTitle}
-            </span>
-          </div>
-        </div>
-        {/* 综合分圆环 */}
-        <div
-          className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold"
-          style={{
-            background: `${overallColor}18`,
-            border: `1.5px solid ${overallColor}50`,
-            color: overallColor,
-          }}
-        >
-          {s.overallScore}
-        </div>
-      </div>
-
-      {/* 分数条 */}
-      <div className="flex items-center gap-3 mt-2.5">
-        <ScoreBar label="严重度" value={s.severityScore} />
-        <ScoreBar label="难度" value={s.difficultyScore} />
-        <ScoreBar label="影响" value={s.impactScore} />
-      </div>
-
-      {/* 理由 */}
-      {s.reason && (
-        <p className="mt-2 text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-          {s.reason}
-        </p>
-      )}
+    <div className="rounded-lg overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.06)' }}>
+      <table className="w-full text-sm" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
+        <thead>
+          <tr style={{ background: 'rgba(255,255,255,0.04)' }}>
+            <th className="text-left text-[11px] font-medium px-3 py-2.5" style={{ color: 'var(--text-muted)', width: 48 }}>#</th>
+            <th className="text-left text-[11px] font-medium px-3 py-2.5" style={{ color: 'var(--text-muted)' }}>缺陷</th>
+            <th className="text-center text-[11px] font-medium px-2 py-2.5" style={{ color: 'var(--text-muted)', width: 64 }}>严重度</th>
+            <th className="text-center text-[11px] font-medium px-2 py-2.5" style={{ color: 'var(--text-muted)', width: 56 }}>难度</th>
+            <th className="text-center text-[11px] font-medium px-2 py-2.5" style={{ color: 'var(--text-muted)', width: 56 }}>影响</th>
+            <th className="text-center text-[11px] font-medium px-2 py-2.5" style={{ color: 'var(--text-muted)', width: 56 }}>综合</th>
+          </tr>
+        </thead>
+        <tbody>
+          {scores.map((s, i) => {
+            const isExpanded = expandedId === s.defectId;
+            return (
+              <ScoreRow
+                key={s.defectId}
+                score={s}
+                rank={i + 1}
+                isExpanded={isExpanded}
+                onToggle={() => setExpandedId(isExpanded ? null : s.defectId)}
+              />
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
 
-/** 分数条形指示器 */
-function ScoreBar({ label, value }: { label: string; value: number }) {
-  const color = scoreColor(value);
-  const pct = Math.max(value * 10, 5);
+/** 单行评分 */
+function ScoreRow({ score: s, rank, isExpanded, onToggle }: {
+  score: DefectAiScoreItem;
+  rank: number;
+  isExpanded: boolean;
+  onToggle: () => void;
+}) {
+  const rowBorder = 'rgba(255,255,255,0.04)';
+  const hoverBg = 'rgba(255,255,255,0.02)';
 
   return (
-    <div className="flex-1 min-w-0">
-      <div className="flex items-center justify-between mb-1">
-        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{label}</span>
-        <span className="text-[10px] font-medium tabular-nums" style={{ color }}>{value}</span>
-      </div>
-      <div className="h-1 rounded-full" style={{ background: 'rgba(255,255,255,0.06)' }}>
-        <div
-          className="h-full rounded-full transition-all duration-500"
-          style={{ width: `${pct}%`, background: color }}
-        />
-      </div>
-    </div>
+    <>
+      <tr
+        className="group cursor-pointer transition-colors"
+        style={{ borderBottom: `1px solid ${rowBorder}` }}
+        onClick={onToggle}
+        onMouseEnter={(e) => { e.currentTarget.style.background = hoverBg; }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = ''; }}
+      >
+        {/* 排名 */}
+        <td className="px-3 py-2.5 font-mono text-xs tabular-nums" style={{ color: 'var(--text-muted)', borderBottom: `1px solid ${rowBorder}` }}>
+          {rank}
+        </td>
+        {/* 编号 + 标题 */}
+        <td className="px-3 py-2.5" style={{ borderBottom: `1px solid ${rowBorder}` }}>
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-[10px] font-mono shrink-0" style={{ color: 'var(--text-muted)' }}>
+              {s.defectNo}
+            </span>
+            <span className="text-sm truncate" style={{ color: 'var(--text-primary)' }}>
+              {s.defectTitle}
+            </span>
+          </div>
+        </td>
+        {/* 严重度 */}
+        <td className="px-2 py-2.5 text-center" style={{ borderBottom: `1px solid ${rowBorder}` }}>
+          <ScoreBadge value={s.severityScore} />
+        </td>
+        {/* 难度 */}
+        <td className="px-2 py-2.5 text-center" style={{ borderBottom: `1px solid ${rowBorder}` }}>
+          <ScoreBadge value={s.difficultyScore} />
+        </td>
+        {/* 影响 */}
+        <td className="px-2 py-2.5 text-center" style={{ borderBottom: `1px solid ${rowBorder}` }}>
+          <ScoreBadge value={s.impactScore} />
+        </td>
+        {/* 综合分 */}
+        <td className="px-2 py-2.5 text-center" style={{ borderBottom: `1px solid ${rowBorder}` }}>
+          <ScoreBadge value={s.overallScore} bold />
+        </td>
+      </tr>
+      {/* 展开行：理由 */}
+      {isExpanded && s.reason && (
+        <tr>
+          <td colSpan={6} className="px-3 py-2.5" style={{ background: 'rgba(255,255,255,0.02)', borderBottom: `1px solid ${rowBorder}` }}>
+            <p className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+              {s.reason}
+            </p>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+/** 分数徽章 — 带背景色的数字 */
+function ScoreBadge({ value, bold }: { value: number; bold?: boolean }) {
+  const color = scoreColor(value);
+  return (
+    <span
+      className={`inline-flex items-center justify-center rounded-md tabular-nums text-xs ${bold ? 'font-semibold min-w-[32px] h-[26px]' : 'min-w-[28px] h-[22px]'}`}
+      style={{
+        background: `${color}18`,
+        color,
+        ...(bold ? { border: `1px solid ${color}40` } : {}),
+      }}
+    >
+      {value}
+    </span>
   );
 }
 

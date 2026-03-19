@@ -17,7 +17,7 @@
 | refactor | prd-admin | ArenaPage handleRetry/handleSend 去重，提取 launchBattle 公共方法 |
 | fix | prd-api | ViewShare agentInstructions URL 修复：读取 X-Forwarded-Host/Proto 避免返回容器内部地址 |
 | fix | prd-admin | AI 评分 SSE 404 修复：闭包陷阱导致 fetch('') 请求页面路径 |
-| enhance | prd-admin | AI 评分面板改为卡片列表布局：GlassCard 风格 + 条形分数指示器 + 综合分圆环 |
+| enhance | prd-admin | AI 评分面板改为表格布局：表头排列严重度/难度/影响/综合分，点击行展开理由，色块徽章替代进度条 |
 
 ### 2026-03-18
 
