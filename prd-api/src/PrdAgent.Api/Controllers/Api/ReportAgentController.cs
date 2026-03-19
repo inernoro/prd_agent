@@ -2270,6 +2270,11 @@ public class ReportAgentController : ControllerBase
 
             return Ok(ApiResponse<object>.Ok(updatedReport));
         }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(ex, "AI 生成周报失败(可预期): reportId={ReportId}", id);
+            return BadRequest(ApiResponse<object>.Fail("AI_GENERATION_FAILED", ex.Message));
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "AI 生成周报失败: reportId={ReportId}", id);

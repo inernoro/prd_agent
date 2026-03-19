@@ -74,6 +74,10 @@ public class ReportGenerationService
 
         // 3. 采集数据（使用 CancellationToken.None，服务器权威性）
         var activity = await _collector.CollectAsync(userId, monday, sunday, CancellationToken.None);
+        var activitySummary = BuildActivitySummary(activity, sourcePrefs);
+        _logger.LogInformation(
+            "开始 AI 生成周报: userId={UserId}, teamId={TeamId}, week={WeekYear}-W{WeekNumber}, data={ActivitySummary}",
+            userId, teamId, weekYear, weekNumber, activitySummary);
 
         // 4. 构建 Prompt
         var userPrompt = BuildUserPrompt(template, activity, weekYear, weekNumber, sourcePrefs);
@@ -96,22 +100,41 @@ public class ReportGenerationService
         };
 
         var response = await _gateway.SendAsync(request, CancellationToken.None);
-
-        List<WeeklyReportSection>? generatedSections = null;
-        if (response.Success && !string.IsNullOrWhiteSpace(response.Content))
+        if (!response.Success)
         {
-            generatedSections = ParseGeneratedSections(response.Content, template);
+            _logger.LogWarning(
+                "AI 生成周报失败: userId={UserId}, teamId={TeamId}, week={WeekYear}-W{WeekNumber}, errorCode={ErrorCode}, error={ErrorMessage}, data={ActivitySummary}",
+                userId, teamId, weekYear, weekNumber, response.ErrorCode, response.ErrorMessage, activitySummary);
+            throw new InvalidOperationException(
+                string.IsNullOrWhiteSpace(response.ErrorMessage)
+                    ? "AI 生成失败，请稍后重试"
+                    : $"AI 生成失败：{response.ErrorMessage}");
         }
 
-        // 6. 如果 LLM 失败或解析失败，回退到空模板
+        if (string.IsNullOrWhiteSpace(response.Content))
+        {
+            _logger.LogWarning(
+                "AI 生成周报返回空内容: userId={UserId}, teamId={TeamId}, week={WeekYear}-W{WeekNumber}, logId={LogId}, data={ActivitySummary}",
+                userId, teamId, weekYear, weekNumber, response.LogId, activitySummary);
+            throw new InvalidOperationException("AI 返回空内容，未生成周报草稿");
+        }
+
+        var generatedSections = ParseGeneratedSections(response.Content, template);
         if (generatedSections == null)
         {
-            _logger.LogWarning("AI 生成解析失败，使用空模板。LLM response: {Content}", response.Content?[..Math.Min(200, response.Content?.Length ?? 0)]);
-            generatedSections = template.Sections.Select(s => new WeeklyReportSection
-            {
-                TemplateSection = s,
-                Items = new()
-            }).ToList();
+            _logger.LogWarning(
+                "AI 生成周报解析失败: userId={UserId}, teamId={TeamId}, week={WeekYear}-W{WeekNumber}, logId={LogId}, preview={Preview}, data={ActivitySummary}",
+                userId, teamId, weekYear, weekNumber, response.LogId, Preview(response.Content), activitySummary);
+            throw new InvalidOperationException("AI 返回格式异常，未生成有效周报内容");
+        }
+
+        var totalGeneratedItems = CountGeneratedItems(generatedSections);
+        if (totalGeneratedItems <= 0)
+        {
+            _logger.LogWarning(
+                "AI 生成周报无有效条目: userId={UserId}, teamId={TeamId}, week={WeekYear}-W{WeekNumber}, logId={LogId}, preview={Preview}, data={ActivitySummary}",
+                userId, teamId, weekYear, weekNumber, response.LogId, Preview(response.Content), activitySummary);
+            throw new InvalidOperationException("AI 未生成有效周报条目，请稍后重试");
         }
 
         // 7. Upsert 周报
@@ -295,8 +318,11 @@ public class ReportGenerationService
     {
         try
         {
-            // 尝试提取 JSON（可能被 markdown 代码块包裹）
-            var json = ExtractJson(content);
+            // 先尝试提取文本主体（兼容 OpenAI/Claude 外层响应）
+            var normalizedContent = NormalizeGatewayContent(content);
+
+            // 再提取 JSON（可能被 markdown 代码块包裹）
+            var json = ExtractJson(normalizedContent);
             if (string.IsNullOrEmpty(json)) return null;
 
             using var doc = JsonDocument.Parse(json);
@@ -322,10 +348,15 @@ public class ReportGenerationService
                     {
                         foreach (var itemJson in itemsArray.EnumerateArray())
                         {
-                            var itemContent = itemJson.TryGetProperty("content", out var c)
-                                ? c.GetString() ?? ""
-                                : "";
-                            var source = itemJson.TryGetProperty("source", out var s)
+                            var itemContent = itemJson.ValueKind switch
+                            {
+                                JsonValueKind.String => itemJson.GetString() ?? "",
+                                JsonValueKind.Object when itemJson.TryGetProperty("content", out var c) => c.GetString() ?? "",
+                                JsonValueKind.Object when itemJson.TryGetProperty("text", out var t) => t.GetString() ?? "",
+                                _ => ""
+                            };
+                            var source = itemJson.ValueKind == JsonValueKind.Object
+                                && itemJson.TryGetProperty("source", out var s)
                                 ? s.GetString() ?? "ai"
                                 : "ai";
 
@@ -370,6 +401,78 @@ public class ReportGenerationService
         return null;
     }
 
+    private static string NormalizeGatewayContent(string content)
+    {
+        var trimmed = (content ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(trimmed))
+            return trimmed;
+
+        // 先移除可能干扰 JSON 提取的思考标签
+        trimmed = System.Text.RegularExpressions.Regex
+            .Replace(trimmed, "<think>[\\s\\S]*?</think>", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            .Trim();
+
+        if (!trimmed.StartsWith('{'))
+            return trimmed;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(trimmed);
+            var root = doc.RootElement;
+
+            // 已经是目标格式
+            if (root.TryGetProperty("sections", out _))
+                return trimmed;
+
+            // OpenAI 样式：choices[0].message.content
+            if (root.TryGetProperty("choices", out var choices)
+                && choices.ValueKind == JsonValueKind.Array
+                && choices.GetArrayLength() > 0)
+            {
+                var firstChoice = choices[0];
+                if (firstChoice.TryGetProperty("message", out var message)
+                    && message.TryGetProperty("content", out var messageContent))
+                {
+                    var extracted = ExtractTextValue(messageContent);
+                    if (!string.IsNullOrWhiteSpace(extracted))
+                        return extracted;
+                }
+            }
+
+            // Claude 样式：content[0].text
+            if (root.TryGetProperty("content", out var claudeContent))
+            {
+                var extracted = ExtractTextValue(claudeContent);
+                if (!string.IsNullOrWhiteSpace(extracted))
+                    return extracted;
+            }
+        }
+        catch
+        {
+            // ignore - 继续走后续提取逻辑
+        }
+
+        return trimmed;
+    }
+
+    private static string ExtractTextValue(JsonElement element)
+    {
+        return element.ValueKind switch
+        {
+            JsonValueKind.String => element.GetString() ?? "",
+            JsonValueKind.Array => string.Join(
+                "\n",
+                element.EnumerateArray()
+                    .Select(ExtractTextValue)
+                    .Where(x => !string.IsNullOrWhiteSpace(x))),
+            JsonValueKind.Object when element.TryGetProperty("text", out var text)
+                => text.GetString() ?? "",
+            JsonValueKind.Object when element.TryGetProperty("content", out var content)
+                => ExtractTextValue(content),
+            _ => ""
+        };
+    }
+
     private static string? ExtractJson(string content)
     {
         // 尝试直接解析
@@ -395,6 +498,20 @@ public class ReportGenerationService
 
         return null;
     }
+
+    private static int CountGeneratedItems(IEnumerable<WeeklyReportSection> sections)
+        => sections.Sum(s => s.Items?.Count ?? 0);
+
+    private static string Preview(string? content, int maxLength = 240)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+            return string.Empty;
+        var normalized = content.Trim();
+        return normalized.Length <= maxLength ? normalized : normalized[..maxLength];
+    }
+
+    private static string BuildActivitySummary(CollectedActivity activity, GenerationSourcePrefs sourcePrefs)
+        => $"dailyLogs={activity.DailyLogs.Count}, commits={activity.Commits.Count}, prdSessions={activity.PrdSessions}, prdMessages={activity.PrdMessageCount}, llmCalls={activity.LlmCalls}, mapEnabled={sourcePrefs.MapPlatformEnabled}, dailyEnabled={sourcePrefs.DailyLogEnabled}";
 
     // ═══════════════════════════════════════════════════════════════
     // v2.0 — Workflow Pipeline Generation
