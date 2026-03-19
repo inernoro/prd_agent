@@ -315,9 +315,9 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
           open={!!scoreShareId}
           onOpenChange={(v) => { if (!v) closeScoring(); }}
           title="AI 缺陷评分"
-          maxWidth={760}
+          maxWidth={720}
           content={
-            <div className="mt-2 max-h-[65vh] overflow-y-auto">
+            <div className="mt-2 max-h-[65vh] overflow-y-auto pr-1">
               <SseStreamPanel
                 phase={scores.length > 0 && !sse.isStreaming ? 'done' : sse.phase}
                 phaseMessage={scores.length > 0 && !sse.isStreaming ? `评分完成，共 ${scores.length} 个` : sse.phaseMessage}
@@ -327,42 +327,11 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
                 phaseExtra={sse.isStreaming && scores.length > 0 ? `已完成 ${scores.length} 个` : undefined}
                 typingLabel="AI 分析过程"
               >
-                <table className="w-full text-sm" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
-                  <thead>
-                    <tr style={{ color: 'var(--text-secondary)' }}>
-                      <th className="text-left py-2 px-2 text-xs font-medium">编号</th>
-                      <th className="text-left py-2 px-2 text-xs font-medium">标题</th>
-                      <th className="text-center py-2 px-1 text-xs font-medium">严重度</th>
-                      <th className="text-center py-2 px-1 text-xs font-medium">难度</th>
-                      <th className="text-center py-2 px-1 text-xs font-medium">影响</th>
-                      <th className="text-center py-2 px-1 text-xs font-medium">综合</th>
-                      <th className="text-left py-2 px-2 text-xs font-medium">理由</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {scores.map((s) => (
-                      <tr
-                        key={s.defectId}
-                        className="border-t"
-                        style={{ borderColor: 'rgba(255,255,255,0.06)' }}
-                      >
-                        <td className="py-2 px-2 text-xs" style={{ color: 'var(--text-muted)' }}>
-                          {s.defectNo}
-                        </td>
-                        <td className="py-2 px-2 text-xs max-w-[160px] truncate" style={{ color: 'var(--text-primary)' }}>
-                          {s.defectTitle}
-                        </td>
-                        <td className="py-2 px-1 text-center"><ScoreBadge value={s.severityScore} /></td>
-                        <td className="py-2 px-1 text-center"><ScoreBadge value={s.difficultyScore} /></td>
-                        <td className="py-2 px-1 text-center"><ScoreBadge value={s.impactScore} /></td>
-                        <td className="py-2 px-1 text-center"><ScoreBadge value={s.overallScore} highlight /></td>
-                        <td className="py-2 px-2 text-xs max-w-[200px]" style={{ color: 'var(--text-secondary)' }}>
-                          {s.reason}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <div className="space-y-2">
+                  {scores.map((s, i) => (
+                    <ScoreCard key={s.defectId} score={s} index={i} />
+                  ))}
+                </div>
               </SseStreamPanel>
             </div>
           }
@@ -372,22 +341,84 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
   );
 }
 
-function ScoreBadge({ value, highlight }: { value: number; highlight?: boolean }) {
-  const color =
-    value >= 8 ? 'rgba(255,100,100,0.9)' :
-    value >= 5 ? 'rgba(255,200,100,0.9)' :
-    'rgba(120,220,180,0.9)';
+/** 单个评分卡片 */
+function ScoreCard({ score: s, index }: { score: DefectAiScoreItem; index: number }) {
+  const overallColor = scoreColor(s.overallScore);
 
   return (
-    <span
-      className="inline-flex items-center justify-center w-6 h-6 rounded text-xs font-medium"
+    <div
+      className="rounded-xl p-3 transition-all duration-300"
       style={{
-        background: highlight ? `${color}20` : 'transparent',
-        color,
-        fontWeight: highlight ? 700 : 500,
+        ...glassPanel,
+        animationDelay: `${index * 60}ms`,
+        borderLeft: `2px solid ${overallColor}`,
       }}
     >
-      {value}
-    </span>
+      {/* 顶行：编号 + 标题 + 综合分 */}
+      <div className="flex items-start gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-mono shrink-0" style={{ color: 'var(--text-muted)' }}>
+              {s.defectNo}
+            </span>
+            <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+              {s.defectTitle}
+            </span>
+          </div>
+        </div>
+        {/* 综合分圆环 */}
+        <div
+          className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold"
+          style={{
+            background: `${overallColor}18`,
+            border: `1.5px solid ${overallColor}50`,
+            color: overallColor,
+          }}
+        >
+          {s.overallScore}
+        </div>
+      </div>
+
+      {/* 分数条 */}
+      <div className="flex items-center gap-3 mt-2.5">
+        <ScoreBar label="严重度" value={s.severityScore} />
+        <ScoreBar label="难度" value={s.difficultyScore} />
+        <ScoreBar label="影响" value={s.impactScore} />
+      </div>
+
+      {/* 理由 */}
+      {s.reason && (
+        <p className="mt-2 text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+          {s.reason}
+        </p>
+      )}
+    </div>
   );
+}
+
+/** 分数条形指示器 */
+function ScoreBar({ label, value }: { label: string; value: number }) {
+  const color = scoreColor(value);
+  const pct = Math.max(value * 10, 5);
+
+  return (
+    <div className="flex-1 min-w-0">
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{label}</span>
+        <span className="text-[10px] font-medium tabular-nums" style={{ color }}>{value}</span>
+      </div>
+      <div className="h-1 rounded-full" style={{ background: 'rgba(255,255,255,0.06)' }}>
+        <div
+          className="h-full rounded-full transition-all duration-500"
+          style={{ width: `${pct}%`, background: color }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function scoreColor(value: number): string {
+  if (value >= 8) return 'rgba(248,113,113,0.9)';
+  if (value >= 5) return 'rgba(251,191,36,0.9)';
+  return 'rgba(52,211,153,0.9)';
 }
