@@ -122,27 +122,32 @@ public class SkillService : ISkillService
     }
 
     /// <summary>
-    /// 从 promptstages 迁移提示词到 skills 集合（幂等操作：已存在的 skillKey 跳过）
+    /// 从 promptstages 迁移提示词到 skills 集合。
+    /// 清理旧 legacy-prompt-* 数据，用干净的 key 重建。
     /// </summary>
     public async Task<int> MigrateFromPromptsAsync(CancellationToken ct = default)
     {
         var settings = await _promptService.GetEffectiveSettingsAsync(ct);
         if (settings.Prompts.Count == 0) return 0;
 
+        // 清理旧迁移残留（legacy-prompt-* 和 skill-* hash 格式）
+        await _db.Skills.DeleteManyAsync(
+            Builders<Skill>.Filter.Regex(x => x.SkillKey, new MongoDB.Bson.BsonRegularExpression("^legacy-prompt-")),
+            ct);
+
         var migrated = 0;
         foreach (var prompt in settings.Prompts)
         {
             if (string.IsNullOrWhiteSpace(prompt.PromptKey)) continue;
 
-            var newKey = GenerateSkillKeyFromTitle(prompt.Title, prompt.Role, prompt.Order);
+            var skill = PromptEntryToSkill(prompt);
 
-            // 幂等：跳过已存在的 skillKey（兼容旧 legacy-prompt-* 和新格式）
+            // 幂等：跳过已存在的 skillKey
             var exists = await _db.Skills
-                .Find(x => x.SkillKey == prompt.PromptKey || x.SkillKey == newKey)
+                .Find(x => x.SkillKey == skill.SkillKey)
                 .AnyAsync(ct);
             if (exists) continue;
 
-            var skill = PromptEntryToSkill(prompt);
             await _db.Skills.InsertOneAsync(skill, cancellationToken: ct);
             migrated++;
         }
@@ -201,16 +206,18 @@ public class SkillService : ISkillService
     }
 
     /// <summary>
-    /// 从中文标题生成 SkillKey：拼音化/简化 + role 后缀，避免无意义的 legacy-prompt-N-role
+    /// 生成 SkillKey：从标题提取 ASCII 部分或用 role-order 格式。
+    /// 格式与主流 skill 平台一致：kebab-case。
     /// </summary>
     private static string GenerateSkillKeyFromTitle(string title, UserRole role, int order)
     {
-        if (string.IsNullOrWhiteSpace(title))
-            return $"prompt-{order}-{role.ToString().ToLowerInvariant()}";
+        var roleLower = role.ToString().ToLowerInvariant();
 
-        // 简单中文→拼音首字母映射不现实，改用 title hash + role 生成短且稳定的 key
+        if (string.IsNullOrWhiteSpace(title))
+            return $"{roleLower}-prompt-{order}";
+
+        // 从标题提取 ASCII 字母数字部分
         var normalized = title.Trim().ToLowerInvariant().Replace(" ", "-");
-        // 保留 ASCII 字母数字和连字符
         var sb = new System.Text.StringBuilder(normalized.Length);
         foreach (var c in normalized)
         {
@@ -219,14 +226,11 @@ public class SkillService : ISkillService
         }
         var ascii = sb.ToString().Trim('-');
 
-        // 如果中文标题提取不到 ASCII（纯中文），用 hash 缩写
+        // 纯中文标题：用 role-order 格式
         if (string.IsNullOrEmpty(ascii))
-        {
-            var hash = Math.Abs(title.GetHashCode()).ToString("x8");
-            ascii = $"skill-{hash}";
-        }
+            return $"{roleLower}-prompt-{order}";
 
-        var suffix = role.ToString().ToLowerInvariant();
-        return $"{ascii}-{order}-{suffix}";
+        // 混合标题（如 "PRD 需求审查"）：用提取到的 ASCII + role
+        return $"{ascii}-{roleLower}";
     }
 }
