@@ -93,7 +93,8 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 // 模型降级信息
                 IsFallback = start.IsFallback,
                 FallbackReason = start.FallbackReason,
-                ExpectedModel = start.ExpectedModel
+                ExpectedModel = start.ExpectedModel,
+                IsHealthProbe = start.IsHealthProbe
             };
 
             await _db.LlmRequestLogs.InsertOneAsync(log, cancellationToken: ct);

@@ -144,6 +144,10 @@ builder.Services.AddScoped<IModelDomainService, ModelDomainService>();
 // 模型池查询服务（三级互斥解析：专属池 > 默认池 > 传统配置）
 builder.Services.AddScoped<IModelPoolQueryService, ModelPoolQueryService>();
 
+// 模型池故障通知与自动探活
+builder.Services.AddScoped<PrdAgent.Infrastructure.ModelPool.IPoolFailoverNotifier, PrdAgent.Infrastructure.ModelPool.PoolFailoverNotifier>();
+builder.Services.AddHostedService<PrdAgent.Infrastructure.ModelPool.ModelPoolHealthProbeService>();
+
 // 模型调度执行器（支持单元测试 Mock）
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
 

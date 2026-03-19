@@ -43,7 +43,9 @@ public record LlmLogStart(
     // 模型降级信息
     bool? IsFallback = null,
     string? FallbackReason = null,
-    string? ExpectedModel = null);
+    string? ExpectedModel = null,
+    // 健康探活标记
+    bool? IsHealthProbe = null);
 
 public record LlmLogDone(
     int? StatusCode,

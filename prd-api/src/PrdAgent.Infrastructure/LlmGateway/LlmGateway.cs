@@ -22,6 +22,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private readonly ILogger<LlmGateway> _logger;
     private readonly ILlmRequestLogWriter? _logWriter;
     private readonly ILLMRequestContextAccessor? _contextAccessor;
+    private readonly ModelPool.IPoolFailoverNotifier? _failoverNotifier;
     private readonly Dictionary<string, IGatewayAdapter> _adapters = new(StringComparer.OrdinalIgnoreCase);
     private readonly ExchangeTransformerRegistry _transformerRegistry = new();
     private const string InvalidAppCallerErrorCode = "APP_CALLER_INVALID";
@@ -31,13 +32,15 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         IHttpClientFactory httpClientFactory,
         ILogger<LlmGateway> logger,
         ILlmRequestLogWriter? logWriter = null,
-        ILLMRequestContextAccessor? contextAccessor = null)
+        ILLMRequestContextAccessor? contextAccessor = null,
+        ModelPool.IPoolFailoverNotifier? failoverNotifier = null)
     {
         _modelResolver = modelResolver;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
         _logWriter = logWriter;
         _contextAccessor = contextAccessor;
+        _failoverNotifier = failoverNotifier;
 
         // 注册适配器
         RegisterAdapter(new OpenAIGatewayAdapter());
@@ -80,6 +83,9 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
             {
+                // 向请求失败的用户发送故障通知
+                _ = TryNotifyUserFailureAsync(request, resolution);
+
                 return GatewayResponse.Fail("MODEL_NOT_FOUND",
                     resolution.ErrorMessage ?? "未找到可用模型", 404);
             }
@@ -211,6 +217,9 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
             {
+                // 向请求失败的用户发送故障通知
+                _ = TryNotifyUserFailureAsync(request, resolution);
+
                 yield return GatewayStreamChunk.Fail(resolution.ErrorMessage ?? "未找到可用模型");
                 yield break;
             }
@@ -876,6 +885,28 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         }
 
         return body;
+    }
+
+    /// <summary>
+    /// 尝试向请求失败的用户发送故障通知（fire-and-forget，不阻断主流程）
+    /// </summary>
+    private async Task TryNotifyUserFailureAsync(GatewayRequest request, ModelResolutionResult resolution)
+    {
+        try
+        {
+            var userId = request.Context?.UserId;
+            if (string.IsNullOrWhiteSpace(userId) || _failoverNotifier == null)
+                return;
+
+            await _failoverNotifier.NotifyUserFailureAsync(
+                userId, request.ModelType,
+                resolution.OriginalPoolName ?? "未知",
+                CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "[LlmGateway] 发送用户故障通知失败");
+        }
     }
 
     private IGatewayAdapter? GetAdapter(string? platformType)
