@@ -80,12 +80,13 @@ export class StateService {
     this.state.branches[entry.id] = entry;
   }
 
-  updateBranchMeta(id: string, updates: { isFavorite?: boolean; notes?: string; tags?: string[] }): void {
+  updateBranchMeta(id: string, updates: { isFavorite?: boolean; notes?: string; tags?: string[]; isColorMarked?: boolean }): void {
     const branch = this.state.branches[id];
     if (!branch) throw new Error(`分支 "${id}" 不存在`);
     if (updates.isFavorite !== undefined) branch.isFavorite = updates.isFavorite;
     if (updates.notes !== undefined) branch.notes = updates.notes;
     if (updates.tags !== undefined) branch.tags = updates.tags;
+    if (updates.isColorMarked !== undefined) branch.isColorMarked = updates.isColorMarked;
   }
 
   removeBranch(id: string): void {

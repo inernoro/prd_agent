@@ -705,8 +705,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     try {
-      const { isFavorite, notes, tags } = req.body as { isFavorite?: boolean; notes?: string; tags?: string[] };
-      stateService.updateBranchMeta(id, { isFavorite, notes, tags });
+      const { isFavorite, notes, tags, isColorMarked } = req.body as { isFavorite?: boolean; notes?: string; tags?: string[]; isColorMarked?: boolean };
+      stateService.updateBranchMeta(id, { isFavorite, notes, tags, isColorMarked });
       stateService.save();
       res.json({ message: '已更新' });
     } catch (err) {

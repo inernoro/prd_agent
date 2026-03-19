@@ -110,6 +110,8 @@ export interface BranchEntry {
   notes?: string;
   /** User tags — labels for filtering and categorization */
   tags?: string[];
+  /** Color marker — marks branch as actively debugging, prevents priority stop */
+  isColorMarked?: boolean;
   /** ID of the executor this branch is deployed on (scheduler mode) */
   executorId?: string;
 }

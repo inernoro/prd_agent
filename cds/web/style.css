@@ -1649,6 +1649,137 @@ a.branch-name:hover { color: var(--accent); }
   font-size: 10px; color: var(--orange); white-space: nowrap;
 }
 
+/* ════════════════ Color Mark (debug marker) ════════════════ */
+
+/* Four-quadrant circle button — muted by default, colorful on hover/active */
+.color-mark-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 50%;
+  background: none; border: none; cursor: pointer; padding: 0;
+  transition: opacity var(--transition), transform var(--transition);
+  opacity: 0.35;
+  flex-shrink: 0;
+}
+.color-mark-btn svg { display: block; }
+.color-mark-btn .cm-q1,
+.color-mark-btn .cm-q2,
+.color-mark-btn .cm-q3,
+.color-mark-btn .cm-q4 {
+  transition: fill var(--transition);
+  fill: var(--text-muted);
+}
+/* Hover: show four distinct colors */
+.color-mark-btn:hover {
+  opacity: 1;
+  transform: scale(1.15);
+}
+.color-mark-btn:hover .cm-q1 { fill: #f43f5e; }  /* rose */
+.color-mark-btn:hover .cm-q2 { fill: #38bdf8; }  /* sky */
+.color-mark-btn:hover .cm-q3 { fill: #fbbf24; }  /* amber */
+.color-mark-btn:hover .cm-q4 { fill: #10b981; }  /* emerald */
+
+/* Active (marked) state: always show colors */
+.color-mark-btn.active {
+  opacity: 1;
+}
+.color-mark-btn.active .cm-q1 { fill: #f43f5e; }
+.color-mark-btn.active .cm-q2 { fill: #38bdf8; }
+.color-mark-btn.active .cm-q3 { fill: #fbbf24; }
+.color-mark-btn.active .cm-q4 { fill: #10b981; }
+.color-mark-btn.active:hover {
+  opacity: 0.6;
+  transform: scale(0.95);
+}
+
+/* ── Color-marked card — high-contrast vivid styling ── */
+.branch-card.is-color-marked {
+  --cm-glow: rgba(244, 63, 94, 0.12);
+  border-image: linear-gradient(135deg, #f43f5e, #38bdf8, #fbbf24, #10b981) 1;
+  border-width: 2px;
+  border-style: solid;
+  border-radius: 0; /* border-image doesn't support border-radius, use outline trick */
+  box-shadow:
+    0 0 0 1px rgba(0,0,0,0.1),
+    0 0 16px 2px var(--cm-glow),
+    0 2px 8px rgba(0,0,0,0.2);
+  position: relative;
+}
+/* Restore rounded corners via outline + clip approach */
+.branch-card.is-color-marked {
+  border-image: none;
+  border: 2px solid transparent;
+  background-image:
+    linear-gradient(var(--bg-card), var(--bg-card)),
+    linear-gradient(135deg, #f43f5e, #38bdf8, #fbbf24, #10b981);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+  border-radius: var(--radius);
+}
+/* Override status left-border: gradient takes priority for marked cards */
+.branch-card.is-color-marked.status-running,
+.branch-card.is-color-marked.status-idle,
+.branch-card.is-color-marked.status-stopped,
+.branch-card.is-color-marked.status-building,
+.branch-card.is-color-marked.status-starting,
+.branch-card.is-color-marked.status-error {
+  border-left-color: transparent;
+}
+/* Subtle animated gradient glow */
+.branch-card.is-color-marked::before {
+  content: '';
+  position: absolute; inset: -1px;
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, rgba(244,63,94,0.06), rgba(56,189,248,0.06), rgba(251,191,36,0.06), rgba(16,185,129,0.06));
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Light theme adjustments */
+[data-theme="light"] .branch-card.is-color-marked {
+  --cm-glow: rgba(244, 63, 94, 0.08);
+  background-image:
+    linear-gradient(var(--bg-card), var(--bg-card)),
+    linear-gradient(135deg, #e65c46, #3a8fa8, #c48b2a, #1a9b7e);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+}
+
+/* ── Ripple overlay for color-mark transition ── */
+.color-mark-ripple {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 2;
+  overflow: hidden;
+}
+.color-mark-ripple::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  clip-path: circle(0% at var(--cm-ripple-x, 50%) var(--cm-ripple-y, 50%));
+}
+/* Ripple in: reveal marked gradient bg */
+.color-mark-ripple.ripple-marked::after {
+  background: linear-gradient(135deg,
+    rgba(244,63,94,0.08),
+    rgba(56,189,248,0.08),
+    rgba(251,191,36,0.08),
+    rgba(16,185,129,0.08));
+}
+/* Ripple out: reveal normal bg */
+.color-mark-ripple.ripple-normal::after {
+  background: var(--bg-card);
+}
+.color-mark-ripple.animate::after {
+  animation: cm-ripple-expand 0.45s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+@keyframes cm-ripple-expand {
+  to {
+    clip-path: circle(var(--cm-ripple-radius, 150%) at var(--cm-ripple-x, 50%) var(--cm-ripple-y, 50%));
+  }
+}
+
 /* ════════════════ View Transition (theme ripple) ════════════════ */
 
 ::view-transition-old(root),
