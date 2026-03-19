@@ -189,22 +189,31 @@ const PRD_MD_STYLE = `
     75%  { opacity: 1; }
     100% { --marker-glow-angle: 360deg; opacity: 0; }
   }
-  /* Safari < 17.2 fallback: use transform rotate instead of @property animation */
-  @keyframes marker-glow-spin-fallback {
-    0%   { transform: rotate(0deg);   opacity: 1; }
-    75%  { opacity: 1; }
-    100% { transform: rotate(360deg); opacity: 0; }
-  }
   @keyframes marker-glow-sweep {
     0%   { opacity: 1; }
     75%  { opacity: 1; }
     100% { opacity: 0; }
   }
-  /* Safari < 17.2: use transform-based rotation fallback */
+  /* Safari < 17.2: @property 不支持，conic-gradient 角度无法动画化。
+     降级为静态渐变边框 + 淡入淡出，避免 transform:rotate 导致矩形溢出 */
   @supports not (syntax: '<angle>') {
-    .marker-card-glow-entrance::before,
+    .marker-card-glow-entrance::before {
+      background: linear-gradient(
+        135deg,
+        rgba(168, 85, 247, 0.5),
+        rgba(99, 102, 241, 0.7),
+        rgba(147, 197, 253, 0.5)
+      ) !important;
+      animation: marker-glow-sweep 2s ease-out forwards !important;
+    }
     .marker-card-glow-entrance::after {
-      animation: marker-glow-spin-fallback 2s ease-out forwards !important;
+      background: linear-gradient(
+        135deg,
+        rgba(168, 85, 247, 0.1),
+        rgba(99, 102, 241, 0.2),
+        rgba(147, 197, 253, 0.1)
+      ) !important;
+      animation: marker-glow-sweep 2s ease-out forwards !important;
     }
   }
 
