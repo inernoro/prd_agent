@@ -90,7 +90,8 @@ public class TeamSummaryService
                 },
                 ["temperature"] = 0.3,
                 ["max_tokens"] = 4096
-            }
+            },
+            Context = new GatewayRequestContext { UserId = generatedByUserId }
         };
 
         var response = await _gateway.SendAsync(request, CancellationToken.None);

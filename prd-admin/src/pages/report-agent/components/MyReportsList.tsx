@@ -165,6 +165,7 @@ export function MyReportsList() {
                 style={{
                   background: 'var(--surface-glass)',
                   backdropFilter: 'blur(12px)',
+                  WebkitBackdropFilter: 'blur(12px)',
                   border: '1px solid var(--border-primary)',
                   borderLeft: `3px solid ${cfg.borderColor}`,
                   boxShadow: '0 2px 8px rgba(0,0,0,0.04)',

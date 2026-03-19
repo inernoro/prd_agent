@@ -147,7 +147,8 @@ public class DefectAgentAdapter : IAgentAdapter
                 },
                 ["temperature"] = 0.3,
                 ["max_tokens"] = 2000
-            }
+            },
+            Context = new GatewayRequestContext { UserId = context.UserId }
         };
 
         var fullContent = new System.Text.StringBuilder();

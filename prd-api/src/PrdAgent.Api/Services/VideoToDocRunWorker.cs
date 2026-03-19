@@ -396,7 +396,8 @@ public class VideoToDocRunWorker : BackgroundService
             },
             Stream = true,
             IncludeThinking = true,
-            TimeoutSeconds = 300
+            TimeoutSeconds = 300,
+            Context = new GatewayRequestContext { UserId = run.OwnerAdminId }
         };
 
         var resultBuilder = new StringBuilder();

@@ -141,7 +141,8 @@ public class PrdAgentAdapter : IAgentAdapter
                 },
                 ["temperature"] = 0.5,
                 ["max_tokens"] = 4000
-            }
+            },
+            Context = new GatewayRequestContext { UserId = context.UserId }
         };
 
         var fullContent = new System.Text.StringBuilder();

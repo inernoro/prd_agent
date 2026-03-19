@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { invoke, isTauri } from '../../lib/tauri';
 import { useAuthStore } from '../../stores/authStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -15,7 +15,7 @@ interface LoginResponse {
   user: User;
 }
 
-export default function LoginPage(props: { isDark: boolean; onToggleTheme: () => void }) {
+export default function LoginPage(props: { isDark: boolean; onToggleTheme: (e?: React.MouseEvent) => void }) {
   const { isDark, onToggleTheme } = props;
   const { login } = useAuthStore();
   const { openModal } = useSettingsStore();
@@ -179,7 +179,7 @@ export default function LoginPage(props: { isDark: boolean; onToggleTheme: () =>
       {/* 右上角：夜晚模式 + 设置 */}
       <div className="absolute top-4 right-4 z-20 flex items-center gap-2">
         <button
-          onClick={onToggleTheme}
+          onClick={(e) => onToggleTheme(e)}
           className="p-2.5 rounded-xl ui-glass-panel hover:bg-black/5 dark:hover:bg-white/10 transition-all hover:scale-105 motion-reduce:transition-none motion-reduce:hover:scale-100"
           title={isDark ? '切换到亮色模式' : '切换到暗色模式'}
           type="button"
