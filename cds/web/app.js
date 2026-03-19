@@ -1813,14 +1813,6 @@ function renderBranches() {
           <button class="icon-btn sm branch-log-btn" onclick="event.stopPropagation(); viewBranchLogs('${esc(b.id)}')" title="查看部署日志">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.5 0a.25.25 0 01.25-.25h10.5a.25.25 0 01.25.25v7.5a.25.25 0 01-.25.25h-4.5a.75.75 0 00-.75.75v2.19l-2.72-2.72a.75.75 0 00-.53-.22H2.75a.25.25 0 01-.25-.25v-7.5z"/></svg>
           </button>
-          <button class="color-mark-btn ${b.isColorMarked ? 'active' : ''}" onclick="toggleColorMark('${esc(b.id)}', event)" title="${b.isColorMarked ? '取消调试标记' : '标记为调试中'}">
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path d="M7 1 A6 6 0 0 1 13 7 L7 7 Z" class="cm-q1"/>
-              <path d="M13 7 A6 6 0 0 1 7 13 L7 7 Z" class="cm-q2"/>
-              <path d="M7 13 A6 6 0 0 1 1 7 L7 7 Z" class="cm-q3"/>
-              <path d="M1 7 A6 6 0 0 1 7 1 L7 7 Z" class="cm-q4"/>
-            </svg>
-          </button>
         </div>
         <div class="branch-card-header">
           <div class="branch-card-row1">
@@ -1830,7 +1822,16 @@ function renderBranches() {
             <a class="branch-name" href="${githubRepoUrl ? githubRepoUrl.replace('github.com', 'github.dev') + '/tree/' + encodeURIComponent(b.branch) : '#'}" target="_blank" onclick="event.stopPropagation(); return confirmOpenGithub(event)" title="在 GitHub.dev 中浏览代码">${ICON.branch} ${esc(b.branch)}</a>
           </div>
           ${b.date ? `<div class="branch-card-row2"><span class="branch-meta">${relativeTime(b.date)}更新</span>${isStopping ? '<span class="branch-status-badge status-badge-stopping">正在停止...</span>' : b.status === 'starting' ? '<span class="branch-status-badge status-badge-starting">等待服务就绪...</span>' : b.status === 'building' && !isDeploying ? '<span class="branch-status-badge status-badge-building">构建中...</span>' : ''}</div>` : ''}
-          ${portBadgesHtml ? `<div class="branch-card-ports">${portBadgesHtml}</div>` : ''}
+          <div class="branch-card-ports">${portBadgesHtml || ''}
+            <button class="color-mark-btn ${b.isColorMarked ? 'active' : ''}" onclick="toggleColorMark('${esc(b.id)}', event)" title="${b.isColorMarked ? '取消调试标记' : '标记为调试中'}">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M7 1 A6 6 0 0 1 13 7 L7 7 Z" class="cm-q1"/>
+                <path d="M13 7 A6 6 0 0 1 7 13 L7 7 Z" class="cm-q2"/>
+                <path d="M7 13 A6 6 0 0 1 1 7 L7 7 Z" class="cm-q3"/>
+                <path d="M1 7 A6 6 0 0 1 7 1 L7 7 Z" class="cm-q4"/>
+              </svg>
+            </button>
+          </div>
           ${b.executorId ? `<span class="executor-tag" title="部署在执行器 ${esc(b.executorId)}">⚡ ${esc(b.executorId.replace(/^executor-/, '').slice(0, 20))}</span>` : ''}
         </div>
         ${b.errorMessage && !deployLog ? `<div class="branch-error" title="${esc(b.errorMessage)}">${esc(b.errorMessage)}</div>` : ''}
