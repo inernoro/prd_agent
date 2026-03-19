@@ -97,6 +97,7 @@ export function BranchBadge() {
         color: '#e2e8f0',
         background: modeColor,
         backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
         border: `1px solid ${deployMode ? 'rgba(63, 185, 80, 0.3)' : 'rgba(218, 139, 69, 0.3)'}`,
         boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
         userSelect: 'none',

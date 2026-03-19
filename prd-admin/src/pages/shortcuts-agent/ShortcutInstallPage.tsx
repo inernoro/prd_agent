@@ -294,6 +294,7 @@ const containerStyle: React.CSSProperties = {
 const cardStyle: React.CSSProperties = {
   background: 'rgba(255,255,255,0.08)',
   backdropFilter: 'blur(20px)',
+  WebkitBackdropFilter: 'blur(20px)',
   borderRadius: 24,
   padding: '36px 24px',
   maxWidth: 400,

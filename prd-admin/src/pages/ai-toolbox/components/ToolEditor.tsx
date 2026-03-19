@@ -483,6 +483,7 @@ export function ToolEditor() {
                     border: '1px solid rgba(168, 85, 247, 0.2)',
                     boxShadow: '0 12px 40px -8px rgba(0, 0, 0, 0.6)',
                     backdropFilter: 'blur(16px)',
+                    WebkitBackdropFilter: 'blur(16px)',
                     maxHeight: 260,
                     overflowY: 'auto',
                     animation: 'wfDropIn 0.15s ease-out',
