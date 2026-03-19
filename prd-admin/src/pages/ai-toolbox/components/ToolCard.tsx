@@ -143,10 +143,10 @@ export function ToolCard({ item }: ToolCardProps) {
     <SpotlightEffect
       spotlightColor={`${palette.from}33`} // 20% opacity of the main color
       onClick={handleClick}
-      className="group relative rounded-[20px] overflow-hidden cursor-pointer transition-all duration-500 hover:-translate-y-1.5"
+      className="group relative rounded-xl overflow-hidden cursor-pointer transition-all duration-500 hover:-translate-y-1"
       style={{
         background: 'rgba(15, 23, 42, 0.4)',
-        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 1px rgba(255, 255, 255, 0.1)',
+        boxShadow: '0 4px 16px rgba(0, 0, 0, 0.3), inset 0 1px 1px rgba(255, 255, 255, 0.1)',
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',
         border: '1px solid rgba(255, 255, 255, 0.08)',
@@ -180,14 +180,14 @@ export function ToolCard({ item }: ToolCardProps) {
         >
           {/* 图标视觉焦点 + 光晕 */}
           <div
-            className="absolute inset-x-0 top-[15%] flex justify-center transition-transform duration-700 ease-out group-hover:scale-110 group-hover:-translate-y-2"
+            className="absolute inset-x-0 top-[18%] flex justify-center transition-transform duration-700 ease-out group-hover:scale-110 group-hover:-translate-y-1"
           >
             {/* 图标背后的柔光圈 */}
             <div
-              className="absolute rounded-full blur-3xl transition-opacity duration-500 group-hover:opacity-100 opacity-60"
+              className="absolute rounded-full blur-2xl transition-opacity duration-500 group-hover:opacity-100 opacity-60"
               style={{
-                width: 120,
-                height: 120,
+                width: 64,
+                height: 64,
                 background: `radial-gradient(circle, ${palette.from}60 0%, ${palette.from}20 50%, transparent 100%)`,
                 top: '50%',
                 left: '50%',
@@ -195,15 +195,15 @@ export function ToolCard({ item }: ToolCardProps) {
               }}
             />
             <IconComponent
-              size={56}
-              strokeWidth={1.2}
+              size={28}
+              strokeWidth={1.4}
               className="relative drop-shadow-2xl"
               style={{ color: palette.soft, opacity: 0.95 }}
             />
           </div>
           {/* 装饰性光点 */}
           <div
-            className="absolute w-32 h-32 rounded-full blur-[40px] opacity-20 group-hover:opacity-40 transition-opacity duration-500"
+            className="absolute w-16 h-16 rounded-full blur-[20px] opacity-20 group-hover:opacity-40 transition-opacity duration-500"
             style={{
               background: palette.from,
               top: '5%',
@@ -231,33 +231,33 @@ export function ToolCard({ item }: ToolCardProps) {
 
       {/* 底部信息区 */}
       <div
-        className="absolute bottom-0 left-0 right-0 p-4 z-20"
+        className="absolute bottom-0 left-0 right-0 px-2.5 pb-2 pt-1 z-20"
       >
         {/* 标题行 */}
-        <div className="flex items-center gap-2 mb-1.5">
+        <div className="flex items-center gap-1 mb-0.5">
           <div
-            className="font-semibold text-base truncate flex-1 tracking-wide"
+            className="font-semibold text-[11px] truncate flex-1"
             style={{
               color: '#ffffff',
-              textShadow: '0 2px 8px rgba(0,0,0,0.8)',
+              textShadow: '0 1px 4px rgba(0,0,0,0.8)',
             }}
           >
             {item.name}
           </div>
           <ArrowUpRight
-            size={16}
-            className="shrink-0 opacity-0 group-hover:opacity-100 transition-all duration-300 group-hover:translate-x-1 group-hover:-translate-y-1"
+            size={11}
+            className="shrink-0 opacity-0 group-hover:opacity-100 transition-all duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
             style={{ color: palette.soft }}
           />
         </div>
 
         {/* 描述 */}
         <div
-          className="text-xs line-clamp-2 leading-relaxed mb-3 transition-colors duration-300 group-hover:text-white/85"
+          className="text-[9px] line-clamp-2 leading-snug mb-1.5 transition-colors duration-300 group-hover:text-white/85"
           style={{
             color: 'rgba(255, 255, 255, 0.55)',
             textShadow: '0 1px 4px rgba(0,0,0,0.8)',
-            minHeight: '2.4em',
+            minHeight: '2em',
           }}
         >
           {item.description}
@@ -265,11 +265,11 @@ export function ToolCard({ item }: ToolCardProps) {
 
         {/* Tags */}
         {item.tags.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mb-3">
-            {item.tags.slice(0, 3).map((tag) => (
+          <div className="flex flex-wrap gap-1 mb-1.5">
+            {item.tags.slice(0, 2).map((tag) => (
               <span
                 key={tag}
-                className="text-[10px] px-2 py-0.5 rounded-md backdrop-blur-md transition-colors duration-300"
+                className="text-[8px] px-1.5 py-px rounded backdrop-blur-md transition-colors duration-300"
                 style={{
                   background: 'rgba(255, 255, 255, 0.05)',
                   color: 'rgba(255, 255, 255, 0.7)',
@@ -279,9 +279,9 @@ export function ToolCard({ item }: ToolCardProps) {
                 {tag}
               </span>
             ))}
-            {item.tags.length > 3 && (
-              <span className="text-[10px] px-1 font-medium" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>
-                +{item.tags.length - 3}
+            {item.tags.length > 2 && (
+              <span className="text-[8px] px-0.5 font-medium" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>
+                +{item.tags.length - 2}
               </span>
             )}
           </div>
@@ -289,11 +289,11 @@ export function ToolCard({ item }: ToolCardProps) {
 
         {/* Footer */}
         <div
-          className="flex items-center justify-between pt-3"
+          className="flex items-center justify-between pt-1.5"
           style={{ borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}
         >
           <span
-            className="text-[10px] px-2 py-1 rounded-md font-medium inline-flex items-center gap-1.5"
+            className="text-[8px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
             style={{
               background: isCustomized ? `${palette.from}25` : 'transparent',
               color: isCustomized ? palette.soft : 'rgba(255, 255, 255, 0.4)',
@@ -302,33 +302,24 @@ export function ToolCard({ item }: ToolCardProps) {
           >
             {isCustomized ? (
               <>
-                <Sparkles size={10} />
+                <Sparkles size={8} />
                 定制版
               </>
             ) : item.type === 'builtin' ? '系统内置' : '自定义'}
           </span>
 
-          <div className="flex items-center gap-3">
-            {item.usageCount > 0 && (
-              <span
-                className="flex items-center gap-1 text-[11px] font-medium tracking-wide"
-                style={{ color: 'rgba(255, 255, 255, 0.6)' }}
-              >
-                <Zap size={10} style={{ color: palette.soft }} />
-                {item.usageCount}
-              </span>
-            )}
+          <div className="flex items-center gap-2">
             <button
               onClick={handleToggleFavorite}
               className="flex items-center justify-center transition-all duration-300 hover:scale-125"
               title={favorited ? '取消收藏' : '收藏'}
             >
               <Star
-                size={16}
+                size={11}
                 fill={favorited ? '#FBBF24' : 'none'}
                 style={{
                   color: favorited ? '#FBBF24' : 'rgba(255, 255, 255, 0.3)',
-                  filter: favorited ? 'drop-shadow(0 0 6px rgba(251, 191, 36, 0.5))' : 'none',
+                  filter: favorited ? 'drop-shadow(0 0 4px rgba(251, 191, 36, 0.5))' : 'none',
                 }}
               />
             </button>
@@ -338,7 +329,7 @@ export function ToolCard({ item }: ToolCardProps) {
 
       {/* Hover inner border glow */}
       <div
-        className="absolute inset-0 rounded-[20px] pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-500 z-30"
+        className="absolute inset-0 rounded-xl pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-500 z-30"
         style={{
           boxShadow: `inset 0 0 0 1px ${palette.from}60`,
         }}
