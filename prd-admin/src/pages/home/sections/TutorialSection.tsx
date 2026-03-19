@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { cn } from '@/lib/cn';
 import { SectionHeader } from '@/components/design/SectionHeader';
 
-// Tutorial data for top 4 agents
+// Tutorial data for all agents
 const tutorials = [
   {
     id: 'prd-agent',
@@ -72,58 +72,101 @@ const tutorials = [
     ],
     features: ['缺陷看板', '智能分析', 'AI 修复建议', '分享协作'],
   },
+  {
+    id: 'video-agent',
+    title: '视频创作 Agent',
+    subtitle: '文章一键转视频',
+    description: '上传文章自动生成分镜脚本、场景图片和配音，合成可下载的完整视频。',
+    gradient: 'from-rose-500 via-red-500 to-pink-500',
+    glowColor: 'rgba(244, 63, 94, 0.3)',
+    iconColor: 'text-rose-400',
+    bgColor: 'bg-rose-500/10',
+    borderColor: 'border-rose-500/20',
+    steps: [
+      { title: '上传文章', desc: '粘贴文章内容或 Markdown' },
+      { title: '生成分镜', desc: 'AI 拆分场景并生成脚本' },
+      { title: '合成视频', desc: '一键渲染并下载成品' },
+    ],
+    features: ['分镜生成', '场景编辑', '预览图片', '视频下载'],
+  },
+  {
+    id: 'report-agent',
+    title: '周报管理 Agent',
+    subtitle: 'AI 辅助周报生成',
+    description: '日志记录、数据源集成、AI 自动汇总，让周报从「苦差事」变成「一键完成」。',
+    gradient: 'from-indigo-500 via-violet-500 to-purple-500',
+    glowColor: 'rgba(99, 102, 241, 0.3)',
+    iconColor: 'text-indigo-400',
+    bgColor: 'bg-indigo-500/10',
+    borderColor: 'border-indigo-500/20',
+    steps: [
+      { title: '创建团队', desc: '建立团队并邀请成员' },
+      { title: '记录日志', desc: '每日记录工作内容' },
+      { title: 'AI 生成', desc: '一键生成结构化周报' },
+    ],
+    features: ['日志记录', 'AI 生成', '团队汇总', '评论协作'],
+  },
+  {
+    id: 'arena',
+    title: 'AI 竞技场',
+    subtitle: '多模型盲测对比',
+    description: '将多个大语言模型匿名回答同一问题，消除品牌偏见，找到最适合的模型。',
+    gradient: 'from-yellow-500 via-amber-500 to-orange-500',
+    glowColor: 'rgba(245, 158, 11, 0.3)',
+    iconColor: 'text-amber-400',
+    bgColor: 'bg-amber-500/10',
+    borderColor: 'border-amber-500/20',
+    steps: [
+      { title: '创建竞技组', desc: '选择 2-4 个模型' },
+      { title: '发起对战', desc: '输入问题同时提问' },
+      { title: '评判揭晓', desc: '盲评后揭晓模型身份' },
+    ],
+    features: ['盲测对比', 'TTFT 指标', '思考过程', '对战历史'],
+  },
+  {
+    id: 'workflow-agent',
+    title: '工作流引擎',
+    subtitle: '可视化流程编排',
+    description: '拖拽胶囊节点编排 HTTP 请求、条件判断、数据转换等，实现自动化任务。',
+    gradient: 'from-teal-500 via-cyan-500 to-sky-500',
+    glowColor: 'rgba(20, 184, 166, 0.3)',
+    iconColor: 'text-teal-400',
+    bgColor: 'bg-teal-500/10',
+    borderColor: 'border-teal-500/20',
+    steps: [
+      { title: '创建工作流', desc: '定义名称和描述' },
+      { title: '编排节点', desc: '拖拽胶囊并连线' },
+      { title: '测试运行', desc: '验证流程并启用' },
+    ],
+    features: ['画布编辑', '胶囊节点', '条件分支', '定时调度'],
+  },
+  {
+    id: 'shortcuts-agent',
+    title: '快捷指令',
+    subtitle: 'iOS 一键调用 AI',
+    description: '将平台 AI 能力接入 iOS 快捷指令，手机端一键触发对话、工作流等功能。',
+    gradient: 'from-orange-500 via-yellow-500 to-amber-500',
+    glowColor: 'rgba(249, 115, 22, 0.3)',
+    iconColor: 'text-orange-400',
+    bgColor: 'bg-orange-500/10',
+    borderColor: 'border-orange-500/20',
+    steps: [
+      { title: '创建指令', desc: '选择绑定类型' },
+      { title: '扫码安装', desc: 'iPhone 扫码添加' },
+      { title: 'Siri 触发', desc: '语音一键调用' },
+    ],
+    features: ['收藏书签', '绑定工作流', '绑定智能体', 'QR 安装'],
+  },
 ];
 
 // Skill documents data
 const skillDocs = [
-  {
-    id: 'run-worker',
-    title: 'Run/Worker 异步架构',
-    category: '架构',
-    desc: '了解任务如何后台执行、断线续传的核心机制',
-    color: 'text-cyan-400',
-    bgColor: 'bg-cyan-500/10',
-  },
-  {
-    id: 'llm-gateway',
-    title: 'LLM Gateway 统一调用',
-    category: '核心',
-    desc: '所有大模型调用的统一入口，三级调度策略',
-    color: 'text-indigo-400',
-    bgColor: 'bg-indigo-500/10',
-  },
-  {
-    id: 'marketplace',
-    title: '配置市场',
-    category: '功能',
-    desc: '浏览和分享提示词、参考图等配置模板',
-    color: 'text-pink-400',
-    bgColor: 'bg-pink-500/10',
-  },
-  {
-    id: 'open-platform',
-    title: '开放平台 API',
-    category: 'API',
-    desc: '标准 RESTful 接口，轻松接入 AI 能力',
-    color: 'text-violet-400',
-    bgColor: 'bg-violet-500/10',
-  },
-  {
-    id: 'rbac',
-    title: '权限与角色管理',
-    category: '安全',
-    desc: '精细化权限管控，60+ 权限项',
-    color: 'text-emerald-400',
-    bgColor: 'bg-emerald-500/10',
-  },
-  {
-    id: 'model-pool',
-    title: '模型池策略引擎',
-    category: '调度',
-    desc: '6 种策略引擎，智能模型选择与负载均衡',
-    color: 'text-amber-400',
-    bgColor: 'bg-amber-500/10',
-  },
+  { id: 'run-worker', title: 'Run/Worker 异步架构', category: '架构', desc: '了解任务如何后台执行、断线续传的核心机制', color: 'text-cyan-400', bgColor: 'bg-cyan-500/10' },
+  { id: 'llm-gateway', title: 'LLM Gateway 统一调用', category: '核心', desc: '所有大模型调用的统一入口，三级调度策略', color: 'text-indigo-400', bgColor: 'bg-indigo-500/10' },
+  { id: 'marketplace', title: '配置市场', category: '功能', desc: '浏览和分享提示词、参考图等配置模板', color: 'text-pink-400', bgColor: 'bg-pink-500/10' },
+  { id: 'open-platform', title: '开放平台 API', category: 'API', desc: '标准 RESTful 接口，轻松接入 AI 能力', color: 'text-violet-400', bgColor: 'bg-violet-500/10' },
+  { id: 'rbac', title: '权限与角色管理', category: '安全', desc: '精细化权限管控，60+ 权限项', color: 'text-emerald-400', bgColor: 'bg-emerald-500/10' },
+  { id: 'model-pool', title: '模型池策略引擎', category: '调度', desc: '6 种策略引擎，智能模型选择与负载均衡', color: 'text-amber-400', bgColor: 'bg-amber-500/10' },
 ];
 
 type TabKey = 'tutorials' | 'docs';
@@ -241,6 +284,9 @@ interface TutorialSectionProps {
 
 export function TutorialSection({ className }: TutorialSectionProps) {
   const [activeTab, setActiveTab] = useState<TabKey>('tutorials');
+  // Show first 4 by default, expandable
+  const [showAll, setShowAll] = useState(false);
+  const visibleTutorials = showAll ? tutorials : tutorials.slice(0, 4);
 
   const tabs: { key: TabKey; label: string; icon: React.ReactNode }[] = [
     {
@@ -314,10 +360,28 @@ export function TutorialSection({ className }: TutorialSectionProps) {
         {/* Tutorials tab content */}
         <div className={cn(activeTab === 'tutorials' ? 'block' : 'hidden')}>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            {tutorials.map((tutorial, index) => (
+            {visibleTutorials.map((tutorial, index) => (
               <TutorialCard key={tutorial.id} tutorial={tutorial} index={index} />
             ))}
           </div>
+
+          {/* Show more / less */}
+          {tutorials.length > 4 && (
+            <div className="flex justify-center mt-8">
+              <button
+                onClick={() => setShowAll(!showAll)}
+                className="flex items-center gap-2 px-6 py-2.5 rounded-full text-sm font-medium text-white/60 hover:text-white/80 bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.1] transition-all duration-300"
+              >
+                {showAll ? '收起' : `查看全部 ${tutorials.length} 个教程`}
+                <svg
+                  className={cn('w-4 h-4 transition-transform duration-300', showAll && 'rotate-180')}
+                  fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Skill docs tab content */}
