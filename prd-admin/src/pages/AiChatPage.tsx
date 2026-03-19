@@ -1504,15 +1504,36 @@ export default function AiChatPage() {
                           <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
                             依据（引用）
                           </div>
-                          <button
-                            type="button"
-                            className="text-[11px] rounded-full px-2 py-1 hover:bg-white/5"
-                            style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
-                            onClick={() => openCitationDrawer(m.citations || [], 0)}
-                            title="右侧展开引用内容"
-                          >
-                            查看引用（{Math.min(m.citations.length, 50)}）
-                          </button>
+                          <div className="flex items-center gap-1.5">
+                            {activeSession?.documentId && (
+                              <button
+                                type="button"
+                                className="text-[11px] rounded-full px-2 py-1 hover:bg-white/5"
+                                style={{ border: '1px solid rgba(99, 102, 241, 0.30)', color: '#818CF8', background: 'rgba(99, 102, 241, 0.08)' }}
+                                onClick={() => {
+                                  window.dispatchEvent(new CustomEvent('prdAgent:openPreview', {
+                                    detail: {
+                                      documentId: activeSession.documentId,
+                                      groupId: '', // 个人会话无 groupId
+                                      sessionId: activeSessionId,
+                                    },
+                                  }));
+                                }}
+                                title="在 PRD 预览页中查看引用定位"
+                              >
+                                预览 PRD
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className="text-[11px] rounded-full px-2 py-1 hover:bg-white/5"
+                              style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
+                              onClick={() => openCitationDrawer(m.citations || [], 0)}
+                              title="右侧展开引用内容"
+                            >
+                              查看引用（{Math.min(m.citations.length, 50)}）
+                            </button>
+                          </div>
                         </div>
                         <div className="flex flex-wrap gap-1.5">
                           {m.citations.slice(0, 12).map((c, idx) => (
