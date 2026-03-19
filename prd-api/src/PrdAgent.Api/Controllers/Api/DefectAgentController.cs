@@ -2051,7 +2051,7 @@ public class DefectAgentController : ControllerBase
     /// <summary>
     /// [开放平台] 外部 Agent 读取缺陷列表
     /// </summary>
-    [Authorize(AuthenticationSchemes = "ApiKey")]
+    [Authorize(AuthenticationSchemes = "ApiKey,AiAccessKey")]
     [HttpGet("share/view/{token}")]
     public async Task<IActionResult> ViewShare(string token)
     {
@@ -2197,7 +2197,7 @@ public class DefectAgentController : ControllerBase
     /// <summary>
     /// [开放平台] 外部 Agent 提交修复报告
     /// </summary>
-    [Authorize(AuthenticationSchemes = "ApiKey")]
+    [Authorize(AuthenticationSchemes = "ApiKey,AiAccessKey")]
     [HttpPost("share/view/{token}/report")]
     public async Task<IActionResult> SubmitFixReport(string token, [FromBody] SubmitDefectFixReportRequest request)
     {
@@ -2752,7 +2752,7 @@ public class DefectAgentController : ControllerBase
     /// <summary>
     /// [开放平台] 外部 AI Agent 标记缺陷修复状态
     /// </summary>
-    [Authorize(AuthenticationSchemes = "ApiKey")]
+    [Authorize(AuthenticationSchemes = "ApiKey,AiAccessKey")]
     [HttpPost("share/view/{token}/fix-status")]
     public async Task<IActionResult> UpdateFixStatus(string token, [FromBody] UpdateDefectFixStatusRequest request)
     {
