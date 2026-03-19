@@ -834,7 +834,7 @@ public static class System
         [AppCallerMetadata(
             "模型池探活",
             "后台自动探活不健康模型端点，非用户触发",
-            ModelTypes = new[] { ModelTypes.Chat, ModelTypes.Intent, ModelTypes.Vision, ModelTypes.Generation },
+            ModelTypes = new[] { ModelTypes.Chat, ModelTypes.Intent, ModelTypes.Vision, ModelTypes.ImageGen },
             Category = "System"
         )]
         public const string Chat = "system.health-probe::chat";
@@ -842,7 +842,7 @@ public static class System
         [AppCallerMetadata(
             "模型池探活-意图",
             "后台自动探活意图模型端点",
-            ModelTypes = new[] { ModelTypes.Chat, ModelTypes.Intent, ModelTypes.Vision, ModelTypes.Generation },
+            ModelTypes = new[] { ModelTypes.Chat, ModelTypes.Intent, ModelTypes.Vision, ModelTypes.ImageGen },
             Category = "System"
         )]
         public const string Intent = "system.health-probe::intent";
@@ -850,7 +850,7 @@ public static class System
         [AppCallerMetadata(
             "模型池探活-视觉",
             "后台自动探活视觉模型端点",
-            ModelTypes = new[] { ModelTypes.Chat, ModelTypes.Intent, ModelTypes.Vision, ModelTypes.Generation },
+            ModelTypes = new[] { ModelTypes.Chat, ModelTypes.Intent, ModelTypes.Vision, ModelTypes.ImageGen },
             Category = "System"
         )]
         public const string Vision = "system.health-probe::vision";
@@ -858,7 +858,7 @@ public static class System
         [AppCallerMetadata(
             "模型池探活-生图",
             "后台自动探活生图模型端点",
-            ModelTypes = new[] { ModelTypes.Chat, ModelTypes.Intent, ModelTypes.Vision, ModelTypes.Generation },
+            ModelTypes = new[] { ModelTypes.Chat, ModelTypes.Intent, ModelTypes.Vision, ModelTypes.ImageGen },
             Category = "System"
         )]
         public const string Generation = "system.health-probe::generation";
