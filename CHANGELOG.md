@@ -8,6 +8,14 @@
 
 ## [未发布]
 
+### 2026-03-19
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| refactor | prd-admin | 废弃提示词管理页（PromptStagesPage），功能统一迁移至技能管理页（SkillsPage）：新增魔法棒（AI 提示词优化 SSE 流式）、拖拽排序、系统指令 Tab、文学创作 Tab |
+| feat | prd-admin | 新增 SegmentedTabs 共享组件、SystemPromptsPanel / LiteraryPromptsPanel 独立面板组件 |
+| fix | prd-admin | /prompts 路由重定向至 /skills，避免旧书签 404 |
+
 ### 2026-03-18
 
 | 类型 | 模块 | 描述 |
