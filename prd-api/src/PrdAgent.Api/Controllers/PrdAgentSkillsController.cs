@@ -365,7 +365,7 @@ public class PrdAgentSkillsController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.AssistantMessage))
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "AI 回复内容不能为空"));
 
-        const string appCallerCode = AppCallerRegistry.PrdAgentDesktop.Skill.SkillGen;
+        const string appCallerCode = AppCallerRegistry.Desktop.Skill.SkillGen;
         var llmClient = _gateway.CreateClient(appCallerCode, "chat", maxTokens: 2048, temperature: 0.3);
 
         var requestId = Guid.NewGuid().ToString();
@@ -442,7 +442,7 @@ public class PrdAgentSkillsController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.KeyAssistantMessage))
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "关键 AI 回复不能为空"));
 
-        const string appCallerCode = AppCallerRegistry.PrdAgentDesktop.Skill.SkillGen;
+        const string appCallerCode = AppCallerRegistry.Desktop.Skill.SkillGen;
         var llmClient = _gateway.CreateClient(appCallerCode, "chat", maxTokens: 3072, temperature: 0.3);
 
         var totalChars = request.ConversationMessages.Sum(m => m.Content?.Length ?? 0);

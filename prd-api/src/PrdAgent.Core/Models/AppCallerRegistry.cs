@@ -122,8 +122,19 @@ public static class Desktop
         )]
         public const string SkillGen = "prd-agent.skill-gen::chat";
     }
+
+    public static class Arena
+    {
+        [AppCallerMetadata(
+            "竞技场对战-对话",
+            "竞技场模式下 AI 对战推理",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Arena"
+        )]
+        public const string BattleChat = "prd-agent.arena.battle::chat";
+    }
 }
-    
+
 /// <summary>
 /// Visual Agent 视觉创作
 /// </summary>
@@ -689,6 +700,28 @@ public static class VideoAgent
         )]
         public const string Polish = "video-agent.v2d.polish::chat";
     }
+
+    public static class VideoToText
+    {
+        [AppCallerMetadata(
+            "视频转文字-对话",
+            "将视频内容转换为文字描述",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Video"
+        )]
+        public const string Chat = "video-agent.video-to-text::chat";
+    }
+
+    public static class TextToCopy
+    {
+        [AppCallerMetadata(
+            "文案生成-对话",
+            "根据视频内容生成营销文案",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Video"
+        )]
+        public const string Chat = "video-agent.text-to-copy::chat";
+    }
 }
 
 /// <summary>
@@ -829,6 +862,33 @@ public static class Admin
             Category = "Management"
         )]
         public const string Optimize = "prd-agent-web.prompts.optimize::chat";
+    }
+}
+
+/// <summary>
+/// Channel Adapter 渠道适配
+/// </summary>
+public static class ChannelAdapter
+{
+    public const string AppName = "Channel Adapter";
+
+    public static class Email
+    {
+        [AppCallerMetadata(
+            "邮件分类",
+            "AI 分类邮件内容确定处理方式",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Channel"
+        )]
+        public const string Classify = "channel-adapter.email::classify";
+
+        [AppCallerMetadata(
+            "邮件待办提取",
+            "从邮件内容提取结构化待办事项",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Channel"
+        )]
+        public const string TodoExtract = "channel-adapter.email::todo-extract";
     }
 }
 }
