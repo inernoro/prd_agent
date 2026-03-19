@@ -901,6 +901,104 @@ public class ModelGroupsController : ControllerBase
         PoolStrategyType.LeastLatency => "跟踪历史延迟数据，优先选择响应最快的端点",
         _ => "未知策略"
     };
+
+    /// <summary>
+    /// 快捷创建带降级链的模型池
+    /// 一次性创建 ModelGroup 并可选绑定 AppCaller
+    /// </summary>
+    [HttpPost("quick-setup")]
+    public async Task<IActionResult> QuickSetup([FromBody] QuickSetupRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Name))
+            return BadRequest(new { error = "name 不能为空" });
+        if (string.IsNullOrWhiteSpace(request.ModelType))
+            return BadRequest(new { error = "modelType 不能为空" });
+        if (request.Models == null || request.Models.Count == 0)
+            return BadRequest(new { error = "至少需要一个模型" });
+
+        // 验证所有平台存在
+        var platformIds = request.Models.Select(m => m.PlatformId).Distinct().ToList();
+        var platforms = await _db.LLMPlatforms
+            .Find(p => platformIds.Contains(p.Id))
+            .ToListAsync(ct);
+
+        var missingPlatforms = platformIds.Except(platforms.Select(p => p.Id)).ToList();
+        if (missingPlatforms.Count > 0)
+        {
+            return BadRequest(new { error = $"平台不存在: {string.Join(", ", missingPlatforms)}" });
+        }
+
+        // 创建 ModelGroup
+        var group = new ModelGroup
+        {
+            Name = request.Name,
+            Code = request.Code ?? request.Name,
+            ModelType = request.ModelType,
+            Priority = request.Priority ?? 50,
+            IsDefaultForType = request.IsDefaultForType,
+            StrategyType = request.Strategy ?? 2, // 默认 Sequential
+            Description = request.Description,
+            Models = request.Models.Select((m, i) => new ModelGroupItem
+            {
+                ModelId = m.ModelId,
+                PlatformId = m.PlatformId,
+                Priority = m.Priority ?? (i + 1),
+                HealthStatus = ModelHealthStatus.Healthy,
+                MaxTokens = m.MaxTokens,
+                EnablePromptCache = m.EnablePromptCache
+            }).ToList()
+        };
+
+        await _db.ModelGroups.InsertOneAsync(group, cancellationToken: ct);
+
+        // 可选：绑定 AppCaller
+        if (!string.IsNullOrWhiteSpace(request.BindToAppCallerCode))
+        {
+            var appCaller = await _db.LLMAppCallers
+                .Find(a => a.AppCode == request.BindToAppCallerCode)
+                .FirstOrDefaultAsync(ct);
+
+            if (appCaller != null)
+            {
+                var requirement = appCaller.ModelRequirements
+                    .FirstOrDefault(r => r.ModelType == request.ModelType);
+
+                if (requirement != null)
+                {
+                    if (!requirement.ModelGroupIds.Contains(group.Id))
+                    {
+                        requirement.ModelGroupIds.Add(group.Id);
+                    }
+                }
+                else
+                {
+                    appCaller.ModelRequirements.Add(new AppModelRequirement
+                    {
+                        ModelType = request.ModelType,
+                        ModelGroupIds = new List<string> { group.Id }
+                    });
+                }
+
+                await _db.LLMAppCallers.ReplaceOneAsync(
+                    a => a.Id == appCaller.Id, appCaller, cancellationToken: ct);
+
+                _logger.LogInformation(
+                    "[QuickSetup] 模型池已绑定 AppCaller: Pool={Pool}, AppCaller={AppCaller}",
+                    group.Name, request.BindToAppCallerCode);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "[QuickSetup] AppCaller 不存在，跳过绑定: {AppCaller}", request.BindToAppCallerCode);
+            }
+        }
+
+        _logger.LogInformation(
+            "[QuickSetup] 快捷创建模型池成功: Name={Name}, Models={Count}, Strategy={Strategy}",
+            group.Name, group.Models.Count, (PoolStrategyType)group.StrategyType);
+
+        return Ok(group);
+    }
 }
 
 /// <summary>
@@ -968,4 +1066,46 @@ public class ModelGroupForAppResponse
     public bool IsDefault { get; set; }
     /// <summary>是否为传统配置模型（isImageGen 等标记）</summary>
     public bool IsLegacy { get; set; }
+}
+
+/// <summary>
+/// 快捷创建带降级链的模型池
+/// </summary>
+public class QuickSetupRequest
+{
+    /// <summary>模型池名称</summary>
+    public string Name { get; set; } = string.Empty;
+    /// <summary>对外暴露的模型名字</summary>
+    public string? Code { get; set; }
+    /// <summary>模型类型（chat/intent/vision/generation 等）</summary>
+    public string ModelType { get; set; } = string.Empty;
+    /// <summary>优先级（默认 50）</summary>
+    public int? Priority { get; set; }
+    /// <summary>是否设为该类型的默认池</summary>
+    public bool IsDefaultForType { get; set; }
+    /// <summary>调度策略（默认 2=Sequential 顺序降级）</summary>
+    public int? Strategy { get; set; }
+    /// <summary>描述</summary>
+    public string? Description { get; set; }
+    /// <summary>模型列表（按降级优先级排列）</summary>
+    public List<QuickSetupModelItem> Models { get; set; } = new();
+    /// <summary>可选：自动绑定到指定 AppCallerCode</summary>
+    public string? BindToAppCallerCode { get; set; }
+}
+
+/// <summary>
+/// 快捷创建模型池的模型项
+/// </summary>
+public class QuickSetupModelItem
+{
+    /// <summary>模型 ID</summary>
+    public string ModelId { get; set; } = string.Empty;
+    /// <summary>平台 ID</summary>
+    public string PlatformId { get; set; } = string.Empty;
+    /// <summary>优先级（可选，默认按顺序自动分配 1, 2, 3...）</summary>
+    public int? Priority { get; set; }
+    /// <summary>最大输出 Token 数</summary>
+    public int? MaxTokens { get; set; }
+    /// <summary>是否启用 Prompt Cache</summary>
+    public bool? EnablePromptCache { get; set; }
 }
