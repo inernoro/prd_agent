@@ -92,7 +92,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 ## 质量保障技能链
 
 ```
-需求 → /validate → 设计 → /risk → /trace → 实现 → /verify → /smoke → /handoff → /weekly
+需求 → /validate → 设计 → /risk → /trace → 实现 → /verify → /smoke → /preview → /handoff → /weekly
 ```
 
 | 技能 | 触发词 | 用途 |
@@ -103,6 +103,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | **human-verify** | `/verify` | 多角度模拟验证 |
 | **smoke-test** | `/smoke` | 链式 curl 端到端测试 |
 | **task-handoff-checklist** | `/handoff` | 8 维度交接清单 |
+| **preview-url** | `/preview` | 分支名生成预览验收地址 |
 | **conflict-resolution** | `/resolve` | PR 前预合并 main |
 | **weekly-update-summary** | `/weekly` | git 历史生成周报 |
 | **doc-writer** | `/doc` | doc/ 文档类型守护 |
@@ -117,8 +118,9 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 1. **新需求提出时** → `/validate` 验证需求质量和价值（中大型功能必跑）
 3. **方案评审时** → 先 `/risk` 评估风险，再 `/trace` 追踪关键链路
 4. **开发完成后** → 先 `/verify` 交叉验证，再 `/smoke-test` 跑端到端
-5. **提 PR 前** → `/resolve` 预合并主分支，AI 代替人类解决冲突
-6. **准备上线时** → `/handoff` 生成交接清单（涉及 3+ 文件时自动触发）
-7. **周五收尾时** → `/weekly` 生成本周总结（完成后自动触发 `/doc-sync`）
-8. **写文档时** → `/doc` 查看类型速查，或直接创建文档时自动套用模板
-9. **迁移/重构后** → `/hygiene`
+5. **需人工验收时** → `/preview` 生成预览地址，用户直接打开验收
+6. **提 PR 前** → `/resolve` 预合并主分支，AI 代替人类解决冲突
+7. **准备上线时** → `/handoff` 生成交接清单（涉及 3+ 文件时自动触发）
+8. **周五收尾时** → `/weekly` 生成本周总结（完成后自动触发 `/doc-sync`）
+9. **写文档时** → `/doc` 查看类型速查，或直接创建文档时自动套用模板
+10. **迁移/重构后** → `/hygiene`
