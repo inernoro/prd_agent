@@ -2817,10 +2817,14 @@ public class DefectAgentController : ControllerBase
             }
 
             // 更新缺陷状态
+            var resolvedByAgent = item.AgentName?.Trim() ?? appName ?? "AI Agent";
             var update = Builders<DefectReport>.Update
                 .Set(x => x.Status, DefectStatus.Resolved)
                 .Set(x => x.Resolution, item.Resolution?.Trim() ?? "AI Agent 自动修复")
                 .Set(x => x.ResolvedAt, DateTime.UtcNow)
+                .Set(x => x.IsAiResolved, true)
+                .Set(x => x.ResolvedByAgentName, resolvedByAgent)
+                .Set(x => x.ResolvedByName, resolvedByAgent)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow);
 
             await _db.DefectReports.UpdateOneAsync(
@@ -2834,7 +2838,7 @@ public class DefectAgentController : ControllerBase
                 Key = $"defect-ai-fixed:{item.DefectId}:{appId}",
                 TargetUserId = defect.ReporterId,
                 Title = "缺陷已由 AI 修复",
-                Message = $"缺陷「{defect.Title}」已由外部 AI Agent「{appName ?? "未知"}」标记为已修复：{item.Resolution?.Trim() ?? "AI Agent 自动修复"}",
+                Message = $"缺陷「{defect.Title}」已由外部 AI Agent「{resolvedByAgent}」标记为已修复：{item.Resolution?.Trim() ?? "AI Agent 自动修复"}",
                 Level = "success",
                 ActionLabel = "查看缺陷",
                 ActionUrl = $"/defect-agent?defectId={item.DefectId}",
@@ -2861,6 +2865,120 @@ public class DefectAgentController : ControllerBase
     }
 
     // ScoreDefectsAsync 已被 SSE 流式端点 StreamScores 替代
+
+    /// <summary>
+    /// [开放平台] 外部 AI Agent 发表评论（在缺陷对话中留言）
+    /// </summary>
+    [Authorize(AuthenticationSchemes = "ApiKey,AiAccessKey")]
+    [HttpPost("share/view/{token}/comments")]
+    public async Task<IActionResult> AiComment(string token, [FromBody] AiCommentRequest request)
+    {
+        var startedAt = DateTime.UtcNow;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var appId = User.FindFirst("appId")?.Value ?? "unknown";
+        var boundUserId = User.FindFirst("boundUserId")?.Value;
+
+        var share = await _db.DefectShareLinks
+            .Find(x => x.Token == token && !x.IsRevoked)
+            .FirstOrDefaultAsync(CancellationToken.None);
+
+        if (share == null)
+        {
+            await LogOpenPlatformRequestAsync(appId, startedAt, sw.ElapsedMilliseconds, "POST", 404, "DOCUMENT_NOT_FOUND", boundUserId);
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "分享链接不存在或已撤销"));
+        }
+
+        if (share.ExpiresAt < DateTime.UtcNow)
+        {
+            await LogOpenPlatformRequestAsync(appId, startedAt, sw.ElapsedMilliseconds, "POST", 410, "SHARE_EXPIRED", boundUserId);
+            return StatusCode(410, ApiResponse<object>.Fail(ErrorCodes.SHARE_EXPIRED, "分享链接已过期"));
+        }
+
+        if (request.Items == null || request.Items.Count == 0)
+        {
+            await LogOpenPlatformRequestAsync(appId, startedAt, sw.ElapsedMilliseconds, "POST", 400, "INVALID_FORMAT", boundUserId);
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "评论条目不能为空"));
+        }
+
+        // 验证缺陷在分享范围内
+        HashSet<string> validDefectIds;
+        if (share.ShareScope == DefectShareScopeType.Project)
+        {
+            var projectDefects = await _db.DefectReports
+                .Find(x => x.ProjectId == share.ProjectId && !x.IsDeleted)
+                .Project(x => x.Id)
+                .ToListAsync(CancellationToken.None);
+            validDefectIds = new HashSet<string>(projectDefects);
+        }
+        else
+        {
+            validDefectIds = new HashSet<string>(share.DefectIds);
+        }
+
+        var agentName = request.AgentName?.Trim() ?? "AI Agent";
+        var results = new List<object>();
+
+        foreach (var item in request.Items)
+        {
+            if (string.IsNullOrWhiteSpace(item.Content))
+            {
+                results.Add(new { item.DefectId, success = false, error = "评论内容不能为空" });
+                continue;
+            }
+
+            if (!validDefectIds.Contains(item.DefectId))
+            {
+                results.Add(new { item.DefectId, success = false, error = "缺陷不在分享范围内" });
+                continue;
+            }
+
+            var defect = await _db.DefectReports.Find(x => x.Id == item.DefectId).FirstOrDefaultAsync(CancellationToken.None);
+            if (defect == null)
+            {
+                results.Add(new { item.DefectId, success = false, error = "缺陷不存在" });
+                continue;
+            }
+
+            // 获取当前最大 seq
+            var maxSeq = await _db.DefectMessages
+                .Find(x => x.DefectId == item.DefectId)
+                .SortByDescending(x => x.Seq)
+                .Project(x => x.Seq)
+                .FirstOrDefaultAsync(CancellationToken.None);
+
+            var message = new DefectMessage
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                DefectId = item.DefectId,
+                Seq = maxSeq + 1,
+                Role = DefectMessageRole.User,
+                UserName = agentName,
+                Content = item.Content.Trim(),
+                Source = DefectMessageSource.Ai,
+                AgentName = agentName,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            await _db.DefectMessages.InsertOneAsync(message, cancellationToken: CancellationToken.None);
+
+            // 标记报告人未读
+            await _db.DefectReports.UpdateOneAsync(
+                x => x.Id == item.DefectId,
+                Builders<DefectReport>.Update
+                    .Set(x => x.ReporterUnread, true)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: CancellationToken.None);
+
+            results.Add(new { item.DefectId, success = true, messageId = message.Id });
+        }
+
+        _logger.LogInformation("[{AppKey}] AI comment via token {Token}, agent={Agent}, {Count} items, appId={AppId}",
+            AppKey, token, agentName, request.Items.Count, appId);
+
+        await LogOpenPlatformRequestAsync(appId, startedAt, sw.ElapsedMilliseconds, "POST", 200, null, boundUserId);
+
+        return Ok(ApiResponse<object>.Ok(new { results }));
+    }
 
     #endregion
 
@@ -3710,6 +3828,22 @@ public class DefectFixStatusItem
 {
     public string DefectId { get; set; } = string.Empty;
     public string? Resolution { get; set; }
+    /// <summary>AI Agent 名称（用于标记 IsAiResolved）</summary>
+    public string? AgentName { get; set; }
+}
+
+public class AiCommentRequest
+{
+    /// <summary>AI Agent 名称（展示在消息中）</summary>
+    public string? AgentName { get; set; }
+    public List<AiCommentItem> Items { get; set; } = new();
+}
+
+public class AiCommentItem
+{
+    public string DefectId { get; set; } = string.Empty;
+    /// <summary>评论内容（支持 Markdown）</summary>
+    public string Content { get; set; } = string.Empty;
 }
 
 #endregion

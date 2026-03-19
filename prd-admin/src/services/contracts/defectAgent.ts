@@ -93,6 +93,10 @@ export interface DefectReport {
   resolvedById?: string;
   resolvedByAvatarFileName?: string;
   resolvedByName?: string;
+  /** 是否由 AI Agent 自动解决 */
+  isAiResolved?: boolean;
+  /** 解决该缺陷的 AI Agent 名称 */
+  resolvedByAgentName?: string;
   rejectReason?: string;
   rejectedById?: string;
   rejectedByAvatarFileName?: string;
@@ -152,6 +156,10 @@ export interface DefectMessage {
   content: string;
   attachmentIds?: string[];
   extractedFields?: Record<string, string>;
+  /** 消息来源：human（默认）、ai */
+  source?: 'human' | 'ai';
+  /** AI Agent 名称（source=ai 时有值） */
+  agentName?: string;
   createdAt: string;
 }
 

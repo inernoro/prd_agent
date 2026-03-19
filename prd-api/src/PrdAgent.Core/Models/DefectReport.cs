@@ -94,6 +94,12 @@ public class DefectReport
     /// <summary>解决人名称</summary>
     public string? ResolvedByName { get; set; }
 
+    /// <summary>是否由 AI Agent 自动解决</summary>
+    public bool IsAiResolved { get; set; }
+
+    /// <summary>解决该缺陷的 AI Agent 名称</summary>
+    public string? ResolvedByAgentName { get; set; }
+
     /// <summary>拒绝原因</summary>
     public string? RejectReason { get; set; }
 

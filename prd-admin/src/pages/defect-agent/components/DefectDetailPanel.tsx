@@ -761,6 +761,14 @@ export function DefectDetailPanel() {
                 <div className="flex items-center gap-2">
                   <CheckCircle size={12} style={{ color: 'rgba(100,200,120,0.9)' }} />
                   <span>解决于 {formatDateTime(defect.resolvedAt)}</span>
+                  {defect.isAiResolved && (
+                    <span
+                      className="text-[9px] px-1.5 py-px rounded font-medium"
+                      style={{ background: 'rgba(100,180,255,0.15)', color: 'rgba(100,180,255,0.9)', border: '1px solid rgba(100,180,255,0.2)' }}
+                    >
+                      AI {defect.resolvedByAgentName || '自动解决'}
+                    </span>
+                  )}
                 </div>
               )}
               {defect.closedAt && (
@@ -1007,14 +1015,15 @@ export function DefectDetailPanel() {
                   const isSelf = Boolean(userId && msg.userId && msg.userId === userId);
                   const isUser = msg.role === 'user';
                   const isAssistant = msg.role === 'assistant';
+                  const isAiSource = msg.source === 'ai';
                   const msgSegments = parseContentToSegments(msg.content);
                   const msgAttachments = (msg.attachmentIds || [])
                     .map((id) => attachmentCache[id])
                     .filter(Boolean);
-                  const avatarSrc = !isAssistant
+                  const avatarSrc = !isAssistant && !isAiSource
                     ? resolveAvatarUrl({ avatarFileName: msg.avatarFileName ?? null })
                     : null;
-                  const displayName = msg.userName || (isAssistant ? 'AI 助手' : '用户');
+                  const displayName = msg.agentName || msg.userName || (isAssistant ? 'AI 助手' : '用户');
 
                   return (
                     <div key={msg.id} className={`flex flex-col gap-1 ${isSelf ? 'items-end' : 'items-start'}`}>
@@ -1024,22 +1033,30 @@ export function DefectDetailPanel() {
                         <div
                           className="w-5 h-5 rounded-full flex-shrink-0 overflow-hidden flex items-center justify-center"
                           style={{
-                            background: isAssistant ? 'rgba(100,180,255,0.2)' : 'rgba(255,180,70,0.15)',
+                            background: isAssistant || isAiSource ? 'rgba(100,180,255,0.2)' : 'rgba(255,180,70,0.15)',
                             border: '1px solid var(--border-default)',
                           }}
                         >
                           {avatarSrc ? (
                             <UserAvatar src={avatarSrc} alt={displayName} className="w-full h-full object-cover" />
-                          ) : isAssistant ? (
+                          ) : isAssistant || isAiSource ? (
                             <Bot size={12} style={{ color: 'rgba(100,180,255,0.9)' }} />
                           ) : (
                             <User size={12} style={{ color: 'rgba(255,180,70,0.9)' }} />
                           )}
                         </div>
-                        {/* 名字 */}
+                        {/* 名字 + AI 标记 */}
                         <span className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>
                           {displayName}
                         </span>
+                        {isAiSource && (
+                          <span
+                            className="text-[9px] px-1 py-px rounded font-medium"
+                            style={{ background: 'rgba(100,180,255,0.15)', color: 'rgba(100,180,255,0.9)', border: '1px solid rgba(100,180,255,0.2)' }}
+                          >
+                            AI
+                          </span>
+                        )}
                       </div>
 
                       {/* 消息气泡 */}
