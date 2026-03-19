@@ -8,6 +8,12 @@
 
 ## [未发布]
 
+### 2026-03-19
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| feat | prd-api, prd-admin | 自定义智能体多格式文件支持：上传 PDF/Word/Excel/PPT 时自动提取文本内容注入 LLM 上下文，新增 IFileContentExtractor 服务（DocumentFormat.OpenXml + PdfPig），Attachment 模型增加 ExtractedText 字段，DirectChat 端点支持 attachmentIds 参数 |
+
 ### 2026-03-18
 
 | 类型 | 模块 | 描述 |
