@@ -1027,16 +1027,20 @@ export function DailyLogPanel() {
                     return (
                       <div key={idx} className="group flex items-start gap-3 py-2 px-3 rounded-xl transition-colors duration-150 hover:bg-[var(--bg-tertiary)]">
                         {/* Colored dot + timestamp */}
-                        <div className="flex flex-col items-center gap-1 flex-shrink-0 mt-1">
+                        <div className="flex flex-col items-center gap-1 flex-shrink-0 mt-1 w-10">
                           <div
                             className="w-3 h-3 rounded-full"
                             style={{ background: cfg.color }}
                           />
-                          {item.createdAt && (
-                            <span className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
-                              {formatTime(item.createdAt)}
-                            </span>
-                          )}
+                          <span
+                            className="text-[10px] font-mono leading-none"
+                            style={{
+                              color: item.createdAt ? 'var(--text-muted)' : 'transparent',
+                              minHeight: 12,
+                            }}
+                          >
+                            {item.createdAt ? formatTime(item.createdAt) : '--:--'}
+                          </span>
                         </div>
 
                         {/* Content */}
