@@ -1,2 +1,3 @@
 | feat | prd-admin | 用户列表从卡片布局改为表格布局，新增群组数/任务数/图片数/缺陷数统计列 |
 | feat | prd-api | 用户列表 API 批量返回用户统计信息（群组数、生图任务、图片数、缺陷数，近30天） |
+| fix | prd-api | 修复 UglyToad.PdfPig 包已下架导致部署 restore 失败，迁移到官方更名后的 PdfPig 包 |
