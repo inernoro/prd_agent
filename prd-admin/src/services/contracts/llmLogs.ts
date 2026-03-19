@@ -39,6 +39,7 @@ export type LlmLogsMetaData = {
 export type LlmLogsMetaUser = {
   userId: string;
   username?: string | null;
+  displayName?: string | null;
 };
 
 export type GetLlmLogsContract = (params?: GetLlmLogsParams) => Promise<ApiResponse<LlmLogsListData>>;

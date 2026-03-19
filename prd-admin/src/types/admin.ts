@@ -108,6 +108,8 @@ export type LlmRequestLogListItem = {
   userId?: string | null;
   /** 用户名（从 users 集合 join 获取） */
   username?: string | null;
+  /** 用户显示名称（从 users 集合 join 获取） */
+  displayName?: string | null;
   /** 用户头像文件名（从 users 集合 join 获取） */
   avatarFileName?: string | null;
   viewRole?: string | null;
