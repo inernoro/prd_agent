@@ -192,6 +192,9 @@ export class ProxyService {
     if (url.startsWith('/_cds/')) {
       // Rewrite path: /_cds/api/branches → /api/branches
       req.url = url.slice(5); // strip "/_cds" prefix
+      // Add internal header to bypass auth on master — this request comes
+      // from a widget embedded in a proxied app, not an external caller.
+      req.headers['x-cds-internal'] = '1';
       const masterPort = this.config?.masterPort || 9900;
       this.proxyRequest(req, res, `http://127.0.0.1:${masterPort}`);
       return;

@@ -2360,6 +2360,10 @@ async function openSelfUpdate() {
     </div>
   `);
 
+  // Allow combobox dropdown to overflow the modal body
+  const modalBody = document.querySelector('.config-modal-dialog .modal-body');
+  if (modalBody) modalBody.style.overflow = 'visible';
+
   // Close dropdown when clicking outside
   document.addEventListener('click', _comboOutsideClick);
 }

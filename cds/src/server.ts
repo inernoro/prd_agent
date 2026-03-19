@@ -71,6 +71,8 @@ export function createServer(deps: ServerDeps): express.Express {
     app.use((req, res, next) => {
       if (req.path === '/login.html' || req.path === '/api/login' || req.path === '/api/logout') return next();
       if (/\.(css|js|ico|png|svg|woff2?)$/i.test(req.path)) return next();
+      // Allow internal requests from widget proxy (/_cds/ → master)
+      if (req.headers['x-cds-internal'] === '1') return next();
 
       const cookieToken = parseCookie(req.headers.cookie || '', 'cds_token');
       const headerToken = req.headers['x-cds-token'] as string | undefined;
