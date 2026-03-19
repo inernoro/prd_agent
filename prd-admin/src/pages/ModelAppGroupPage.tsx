@@ -1062,7 +1062,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                       const isDefaultGroup = boundGroups.length === 0;
                       
                       // 从后端解析结果获取默认模型信息
-                      const resolveKey = `${app.appCode || ''}::${req?.modelType || featureItem.parsed.modelType}`;
+                      const resolveKey = app.appCode || '';
                       const resolvedModel = isDefaultGroup ? resolvedModels[resolveKey] : null;
                       const isLegacySingle = isDefaultGroup && resolvedModel?.source === 'legacy';
                       const isDefaultPool = isDefaultGroup && !isLegacySingle;
