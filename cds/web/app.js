@@ -2357,9 +2357,11 @@ async function openSelfUpdate() {
       <div id="selfUpdateSteps" style="display:flex;flex-direction:column;gap:6px"></div>
       <div id="selfUpdateStatus" style="margin-top:8px;font-size:13px"></div>
     </div>
-    <div class="form-row" style="margin-top:12px;display:flex;gap:8px">
+    <div class="form-row" style="margin-top:12px;display:flex;gap:8px;align-items:center">
       <button class="sm" id="selfUpdateBtn" onclick="executeSelfUpdate()">更新并重启</button>
       <button class="sm ghost" onclick="closeConfigModal()">取消</button>
+      <span style="flex:1"></span>
+      <button class="sm ghost" style="color:var(--red);font-size:12px" onclick="closeConfigModal();pruneStaleBranches()">🧹 清理未托管分支</button>
     </div>
   `);
 
