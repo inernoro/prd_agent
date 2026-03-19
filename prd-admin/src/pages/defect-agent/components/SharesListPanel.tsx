@@ -126,12 +126,11 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
   };
 
   /** 启动 SSE 流式评分 */
-  const startScoringStream = useCallback(async (shareId: string) => {
+  const startScoringStream = useCallback((shareId: string) => {
     setScoreShareId(shareId);
     setScores([]);
-    // useSseStream 会在 url 变化后手动调用 start
-    // 这里需要等下一个 render 后 sse.start()
-    setTimeout(() => sse.start(), 0);
+    // 直接传入 URL 覆盖，避免闭包捕获旧 url
+    sse.start({ url: api.defectAgent.shares.scoresStream(shareId) });
   }, [sse]);
 
   /** 一键分享所有缺陷 + 自动打开 SSE 评分 */
