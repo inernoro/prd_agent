@@ -20,7 +20,7 @@ interface UpdateInfo {
 
 interface HeaderProps {
   isDark: boolean;
-  onToggleTheme: () => void;
+  onToggleTheme: (e?: React.MouseEvent) => void;
 }
 
 export default function Header({ isDark, onToggleTheme }: HeaderProps) {
@@ -174,7 +174,7 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
           )}
 
           <button
-            onClick={onToggleTheme}
+            onClick={(e) => onToggleTheme(e)}
             className="p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
             title={isDark ? '切换到亮色模式' : '切换到暗色模式'}
           >
