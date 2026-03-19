@@ -185,6 +185,16 @@ export class ProxyService {
     const host = req.headers.host || '';
     const url = req.url || '/';
 
+    // ── /_cds/api/* — passthrough to CDS Dashboard API (master port) ──
+    // Allows widgets embedded in proxied apps to call CDS API without CORS issues.
+    if (url.startsWith('/_cds/')) {
+      // Rewrite path: /_cds/api/branches → /api/branches
+      req.url = url.slice(5); // strip "/_cds" prefix
+      const masterPort = this.config?.masterPort || 9900;
+      this.proxyRequest(req, res, `http://127.0.0.1:${masterPort}`);
+      return;
+    }
+
     // ── Switch domain: switch.example.com/<prefix>/<suffix> ──
     if (this.isSwitchDomain(host)) {
       this.handleSwitchRequest(req, res);
