@@ -7,7 +7,6 @@ import { api } from '@/services/api';
 import { useSseStream } from '@/lib/useSseStream';
 import { SseStreamPanel } from '@/components/sse';
 import { toast } from '@/lib/toast';
-import { useAuthStore } from '@/stores/authStore';
 import { systemDialog } from '@/lib/systemDialog';
 import { glassPanel } from '@/lib/glassStyles';
 import { DefectFixReportPanel } from './DefectFixReportPanel';
@@ -83,7 +82,6 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
   const handleCopy = (share: DefectShareLink) => {
     const baseUrl = window.location.origin;
     const viewUrl = `${baseUrl}/api/defect-agent/share/view/${share.token}`;
-    const token = useAuthStore.getState().token ?? '<your-access-key>';
 
     const prompt = [
       `## 缺陷修复任务`,
@@ -92,10 +90,12 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
       ``,
       `### 认证信息`,
       ``,
-      `所有请求都需要携带以下 Header：`,
+      `所有请求都需要携带以下两个 Header：`,
       `\`\`\``,
-      `Authorization: Bearer ${token}`,
+      `X-AI-Access-Key: $AI_ACCESS_KEY`,
+      `X-AI-Impersonate: admin`,
       `\`\`\``,
+      `> AI_ACCESS_KEY 从环境变量中读取，请确保已设置。`,
       ``,
       `### 操作步骤`,
       ``,
@@ -129,7 +129,7 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
     ].join('\n');
 
     navigator.clipboard.writeText(prompt).catch(() => {});
-    toast.success('已复制 AI 提示词到剪贴板（含认证信息）');
+    toast.success('已复制 AI 提示词到剪贴板');
   };
 
   /** 启动 SSE 流式评分 */
