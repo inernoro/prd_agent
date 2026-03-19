@@ -8,7 +8,6 @@ import { Dialog } from '@/components/ui/Dialog';
 import { readSseStream } from '@/lib/sse';
 import { useAuthStore } from '@/stores/authStore';
 import { SystemPromptsPanel } from '@/components/skills/SystemPromptsPanel';
-import { LiteraryPromptsPanel } from '@/components/skills/LiteraryPromptsPanel';
 import { Sparkles, Square, Copy, Save } from 'lucide-react';
 import {
   listAdminSkills,
@@ -225,12 +224,11 @@ type PromptOptimizeStreamEvent = {
 
 // ━━━ Tabs ━━━━━━━━
 
-type TabKey = 'skills' | 'system' | 'literary' | 'templates';
+type TabKey = 'skills' | 'system' | 'templates';
 
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: 'skills', label: '技能管理' },
   { key: 'system', label: '系统指令' },
-  { key: 'literary', label: '文学创作' },
   { key: 'templates', label: '模板市场' },
 ];
 
@@ -815,7 +813,8 @@ export default function SkillsPage() {
 
           {/* 右侧编辑器 - 占满剩余空间 */}
           {(!isMobile || mobileShowEditor) && (
-            <GlassCard animated className="flex-1 min-w-0 flex flex-col overflow-hidden" padding="none">
+            <div className="flex-1 min-w-0 flex flex-col min-h-0">
+            <GlassCard animated className="flex-1 flex flex-col h-full" overflow="hidden" padding="none">
               {!showEditor ? (
                 <div className="flex-1 flex flex-col items-center justify-center text-center px-6">
                   <div className="text-5xl mb-4">⚡</div>
@@ -1066,6 +1065,7 @@ export default function SkillsPage() {
                 </>
               )}
             </GlassCard>
+            </div>
           )}
         </div>
       )}
@@ -1125,9 +1125,6 @@ export default function SkillsPage() {
 
       {/* ━━━ Tab: 系统指令 ━━━ */}
       {activeTab === 'system' && <SystemPromptsPanel />}
-
-      {/* ━━━ Tab: 文学创作 ━━━ */}
-      {activeTab === 'literary' && <LiteraryPromptsPanel />}
 
       {/* ━━━ 魔法棒对话框 ━━━ */}
       <Dialog
