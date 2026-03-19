@@ -79,7 +79,8 @@ export function Dialog({
             </div>
           </div>
 
-          <div className="mt-5 flex-1 min-h-0 overflow-y-auto">{content}</div>
+          {/* -mx-1 px-1: Safari 裁剪 overflow 容器内子元素 box-shadow，留 4px 呼吸空间 */}
+          <div className="mt-5 flex-1 min-h-0 overflow-y-auto -mx-1 px-1">{content}</div>
         </DialogPrimitive.Content>
         </DialogPrimitive.Overlay>
       </DialogPrimitive.Portal>
