@@ -341,10 +341,12 @@ export class ProxyService {
     // Resolve original branch name from state (preserve "/" and casing)
     let originalBranch = matchedSlug ? state.branches[matchedSlug]?.branch : null;
 
-    // If not found locally, try remote (full path first, then last segment)
+    // If not found locally, try remote (full path first, then last segment, then slug matching)
     if (!matchedSlug && this.worktreeService) {
       const remoteBranch = await this.worktreeService.findBranchBySuffix(fullPath)
-        || (fullPath !== lastSegment ? await this.worktreeService.findBranchBySuffix(lastSegment) : null);
+        || (fullPath !== lastSegment ? await this.worktreeService.findBranchBySuffix(lastSegment) : null)
+        || await this.worktreeService.findBranchBySlug(fullPath)
+        || (fullPath !== lastSegment ? await this.worktreeService.findBranchBySlug(lastSegment) : null);
       if (remoteBranch) {
         matchedSlug = StateService.slugify(remoteBranch);
         originalBranch = remoteBranch;  // keep original name like "claude/fix-login-password-issue-CQBMO"

@@ -173,4 +173,54 @@ describe('WorktreeService', () => {
       expect(exists).toBe(false);
     });
   });
+
+  describe('findBranchBySlug', () => {
+    it('should match branch by slugified name (slash to hyphen)', async () => {
+      mock.addResponsePattern(/git ls-remote/, () => ({
+        stdout: [
+          'abc123\trefs/heads/main',
+          'def456\trefs/heads/claude/fix-software-defects-dlxzp',
+          'ghi789\trefs/heads/feature/new-ui',
+        ].join('\n'),
+        stderr: '',
+        exitCode: 0,
+      }));
+
+      const result = await service.findBranchBySlug('claude-fix-software-defects-dlxzp');
+      expect(result).toBe('claude/fix-software-defects-dlxzp');
+    });
+
+    it('should return null when no branch slug matches', async () => {
+      mock.addResponsePattern(/git ls-remote/, () => ({
+        stdout: 'abc123\trefs/heads/main\ndef456\trefs/heads/develop\n',
+        stderr: '',
+        exitCode: 0,
+      }));
+
+      const result = await service.findBranchBySlug('claude-nonexistent-branch');
+      expect(result).toBeNull();
+    });
+
+    it('should handle case-insensitive slug matching', async () => {
+      mock.addResponsePattern(/git ls-remote/, () => ({
+        stdout: 'abc123\trefs/heads/Claude/Fix-Login-ISSUE\n',
+        stderr: '',
+        exitCode: 0,
+      }));
+
+      const result = await service.findBranchBySlug('claude-fix-login-issue');
+      expect(result).toBe('Claude/Fix-Login-ISSUE');
+    });
+
+    it('should return null on git command failure', async () => {
+      mock.addResponsePattern(/git ls-remote/, () => ({
+        stdout: '',
+        stderr: 'fatal: error',
+        exitCode: 128,
+      }));
+
+      const result = await service.findBranchBySlug('anything');
+      expect(result).toBeNull();
+    });
+  });
 });
