@@ -821,8 +821,8 @@ async function deployBranchDirect(id) {
 
   busyBranches.delete(id);
   await loadBranches();
-  // Keep inline log visible for a moment, then clean up
-  setTimeout(() => { inlineDeployLogs.delete(id); renderBranches(); }, 5000);
+  inlineDeployLogs.delete(id);
+  renderBranches();
 }
 
 function updateInlineLog(id) {
@@ -837,15 +837,6 @@ function updateInlineLog(id) {
   el.scrollTop = el.scrollHeight;
 }
 
-function toggleInlineLog(id, event) {
-  event.stopPropagation();
-  const log = inlineDeployLogs.get(id);
-  if (!log) return;
-  log.expanded = !log.expanded;
-  const wrapper = document.getElementById(`inline-log-wrapper-${CSS.escape(id)}`);
-  if (wrapper) wrapper.classList.toggle('expanded', log.expanded);
-  updateInlineLog(id);
-}
 
 function openFullDeployLog(id, event) {
   event.stopPropagation();
@@ -1678,24 +1669,8 @@ function renderBranches() {
       `;
     }
 
-    // Inline deploy log (below actions row, at card bottom) — only show after deploy finishes
-    let inlineLogHtml = '';
-    if (deployLog && !isDeploying) {
-      const logStatusClass = deployLog.status === 'error' ? 'deploy-log-error' : deployLog.status === 'done' ? 'deploy-log-done' : '';
-      const filteredLines = deployLog.lines.filter(l => l.trim());
-      const visibleLines = deployLog.expanded ? filteredLines : filteredLines.slice(-20);
-      inlineLogHtml = `
-        <div class="inline-deploy-log-wrapper ${deployLog.expanded ? 'expanded' : ''} ${logStatusClass}" id="inline-log-wrapper-${esc(b.id)}" onclick="toggleInlineLog('${esc(b.id)}', event)">
-          <div class="inline-deploy-log-header">
-            <span class="live-dot stopped"></span>
-            <span>${deployLog.status === 'done' ? '部署完成' : '部署失败'}</span>
-            <span class="inline-log-expand-hint" onclick="openFullDeployLog('${esc(b.id)}', event)">查看完整日志</span>
-          </div>
-          <pre class="inline-deploy-log" id="inline-log-${esc(b.id)}">${esc(visibleLines.join('\n'))}</pre>
-          ${deployFailed && deployLog.errorMsg ? `<div class="inline-deploy-error">${esc(deployLog.errorMsg)}</div>` : ''}
-        </div>
-      `;
-    }
+    // Inline deploy log was removed (squeezes card layout).
+    // Deploy logs are accessible via the log button in toolbar.
 
     return `
       <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} expanded ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''} ${previewMode === 'multi' && isRunning ? 'show-preview-border' : ''} ${isDeploying ? 'is-deploying' : ''}" data-branch-id="${esc(b.id)}">
@@ -1732,7 +1707,6 @@ function renderBranches() {
               ${actionsRightHtml}
             </div>
           </div>
-          ${inlineLogHtml}
         </div>
       </div>
     `;
@@ -2120,7 +2094,7 @@ async function importAndInit() {
     <div id="initProgressContainer" style="min-height:300px">
       <div style="margin-bottom:12px;font-size:14px;font-weight:600">正在初始化项目...</div>
       <div id="initSteps" style="font-size:13px"></div>
-      <pre id="initLog" class="inline-deploy-log" style="margin-top:8px;max-height:200px;overflow-y:auto;font-size:11px;display:none"></pre>
+      <pre id="initLog" class="live-log-output" style="margin-top:8px;max-height:200px;overflow-y:auto;font-size:11px;display:none"></pre>
       <div id="initResult" style="margin-top:12px;display:none"></div>
     </div>
   `;
