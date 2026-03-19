@@ -1111,6 +1111,65 @@ async function cleanupAll() {
   await loadBranches();
 }
 
+async function pruneStaleBranches() {
+  const html = `
+    <div class="capacity-warning">
+      <div class="capacity-warning-icon">🧹</div>
+      <div class="capacity-warning-text">
+        <p>删除本地 git 分支中不在 CDS 部署列表上的分支</p>
+        <p style="color:var(--text-muted);font-size:12px">保护分支（main/master/develop/当前分支）不会被删除</p>
+      </div>
+      <pre id="pruneLog" style="text-align:left;font-size:11px;color:var(--text-secondary);background:rgba(8,12,28,0.6);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;margin:12px 0;max-height:200px;overflow-y:auto;white-space:pre-wrap;font-family:var(--font-mono)">正在扫描本地分支...</pre>
+      <div class="capacity-warning-actions" id="pruneActions">
+        <button class="sm" disabled><span class="btn-spinner"></span>扫描中...</button>
+      </div>
+    </div>
+  `;
+  openConfigModal('清理非列表分支', html);
+
+  try {
+    const res = await fetch(`${API}/prune-stale-branches`, { method: 'POST' });
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    const logEl = document.getElementById('pruneLog');
+    let pruneCount = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.title && logEl) {
+              const prefix = data.status === 'error' ? '✗' : data.status === 'done' ? '✓' : data.status === 'info' ? 'ℹ' : '…';
+              logEl.textContent += `\n[${prefix}] ${data.title}`;
+              logEl.scrollTop = logEl.scrollHeight;
+            }
+            if (data.pruneCount !== undefined) pruneCount = data.pruneCount;
+          } catch {}
+        }
+      }
+    }
+
+    const actionsEl = document.getElementById('pruneActions');
+    if (actionsEl) {
+      actionsEl.innerHTML = `<button class="primary sm" onclick="closeConfigModal()">完成 (${pruneCount} 个已清理)</button>`;
+    }
+    showToast(pruneCount > 0 ? `已清理 ${pruneCount} 个非列表分支` : '没有需要清理的分支', pruneCount > 0 ? 'success' : 'info');
+  } catch (e) {
+    showToast('清理失败: ' + e.message, 'error');
+    const actionsEl = document.getElementById('pruneActions');
+    if (actionsEl) {
+      actionsEl.innerHTML = `<button class="sm" onclick="closeConfigModal()">关闭</button>`;
+    }
+  }
+}
+
 async function cleanupOrphans() {
   // Show progress in a modal with SSE streaming
   const html = `
@@ -1470,6 +1529,10 @@ function toggleSettingsMenu(event) {
       自动更新
     </div>
     <div class="settings-menu-divider"></div>
+    <div class="settings-menu-item danger" onclick="closeSettingsMenu(); pruneStaleBranches()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 3.25a2.25 2.25 0 113 2.122v5.256a2.251 2.251 0 11-1.5 0V5.372A2.25 2.25 0 011.5 3.25zm5.677-.177L9.573.677A.25.25 0 0110 .854V2.5h1A2.5 2.5 0 0113.5 5v5.628a2.251 2.251 0 11-1.5 0V5a1 1 0 00-1-1h-1v1.646a.25.25 0 01-.427.177L7.177 3.427a.25.25 0 010-.354z"/></svg>
+      清理非列表分支
+    </div>
     <div class="settings-menu-item danger" onclick="closeSettingsMenu(); cleanupOrphans()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5 3.254V3.25a.75.75 0 01.75-.75h4.5a.75.75 0 01.75.75v.004a2.5 2.5 0 011.94 2.204l.089.713a.75.75 0 11-1.486.186l-.089-.714A1 1 0 0010.47 4.75H5.53a1 1 0 00-.984.893l-.089.714a.75.75 0 01-1.486-.186l.089-.714A2.5 2.5 0 015 3.254zM4.07 6.5l.7 5.95c.09.747.71 1.3 1.46 1.3h3.54c.75 0 1.37-.553 1.46-1.3l.7-5.95H4.07z"/></svg>
       清理孤儿分支
@@ -2258,8 +2321,8 @@ async function openSelfUpdate() {
   }
 
   const { current, branches } = data;
-  const options = branches.map(b =>
-    `<option value="${esc(b)}" ${b === current ? 'selected' : ''}>${esc(b)}${b === current ? ' (当前)' : ''}</option>`
+  const datalistOptions = branches.map(b =>
+    `<option value="${esc(b)}">${b === current ? '(当前)' : ''}</option>`
   ).join('');
 
   openConfigModal('自动更新', `
@@ -2268,9 +2331,9 @@ async function openSelfUpdate() {
     </p>
     <div class="form-row">
       <label class="form-label">目标分支</label>
-      <select id="selfUpdateBranch" class="form-input" style="width:100%">
-        ${options}
-      </select>
+      <input id="selfUpdateBranch" class="form-input" style="width:100%" list="selfUpdateBranchList"
+        value="${esc(current)}" placeholder="输入或选择分支名" autocomplete="off">
+      <datalist id="selfUpdateBranchList">${datalistOptions}</datalist>
     </div>
     <div class="form-row" style="margin-top:4px;font-size:12px;color:var(--fg-muted)">
       当前分支：<code>${esc(current)}</code>
@@ -2287,8 +2350,8 @@ async function openSelfUpdate() {
 }
 
 function executeSelfUpdate() {
-  const select = document.getElementById('selfUpdateBranch');
-  const branch = select ? select.value : '';
+  const input = document.getElementById('selfUpdateBranch');
+  const branch = input ? input.value.trim() : '';
   const btn = document.getElementById('selfUpdateBtn');
   const progress = document.getElementById('selfUpdateProgress');
   const stepsEl = document.getElementById('selfUpdateSteps');
