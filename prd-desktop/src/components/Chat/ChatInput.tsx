@@ -9,6 +9,7 @@ import { useSkillStore } from '../../stores/skillStore';
 import { ApiResponse, AttachmentInfo, Message, Skill, SkillsResponse } from '../../types';
 import AttachmentPreview from './AttachmentPreview';
 import SkillManagerModal, { type SkillFormData } from './SkillManagerModal';
+import SaveAsSkillModal from './SaveAsSkillModal';
 import { open as tauriDialogOpen } from '@tauri-apps/plugin-dialog';
 
 export default function ChatInput() {
@@ -35,6 +36,10 @@ export default function ChatInput() {
   // 技能管理弹窗
   const [showSkillManager, setShowSkillManager] = useState(false);
   const [skillFormPrefill, setSkillFormPrefill] = useState<Partial<SkillFormData> | null>(null);
+
+  // 保存为技能弹窗（对话选择器）
+  const [showSaveAsSkill, setShowSaveAsSkill] = useState(false);
+  const [saveAsSkillTriggerMessage, setSaveAsSkillTriggerMessage] = useState<Message | null>(null);
 
   // 技能 store
   const { skills, setSkills, setLoading, getVisibleSkills, pinnedSkillKeys } = useSkillStore();
@@ -75,7 +80,16 @@ export default function ChatInput() {
   }, []);
 
   // 外部触发：从消息创建技能（MessageList 中点击 "保存为技能" 按钮）
+  // 新流程：先打开对话选择器 → AI 提炼 → 再打开技能管理弹窗
   useEffect(() => {
+    const onOpenSaveAsSkill = (e: Event) => {
+      const ce = e as CustomEvent<{ message: Message }>;
+      if (ce?.detail?.message) {
+        setSaveAsSkillTriggerMessage(ce.detail.message);
+        setShowSaveAsSkill(true);
+      }
+    };
+    // 兼容旧事件（直接传 formData 的场景）
     const onCreateSkill = (e: Event) => {
       const ce = e as CustomEvent<{ formData: Partial<SkillFormData> }>;
       if (ce?.detail?.formData) {
@@ -83,8 +97,12 @@ export default function ChatInput() {
         setShowSkillManager(true);
       }
     };
+    window.addEventListener('prdAgent:openSaveAsSkill' as any, onOpenSaveAsSkill as EventListener);
     window.addEventListener('prdAgent:createSkillFromMessage' as any, onCreateSkill as EventListener);
-    return () => window.removeEventListener('prdAgent:createSkillFromMessage' as any, onCreateSkill as EventListener);
+    return () => {
+      window.removeEventListener('prdAgent:openSaveAsSkill' as any, onOpenSaveAsSkill as EventListener);
+      window.removeEventListener('prdAgent:createSkillFromMessage' as any, onCreateSkill as EventListener);
+    };
   }, []);
 
   // 从新 API 加载技能列表
@@ -483,6 +501,27 @@ export default function ChatInput() {
               })
               .catch(() => {});
           }
+        }}
+      />
+
+      {/* 保存为技能：对话选择器弹窗 */}
+      <SaveAsSkillModal
+        open={showSaveAsSkill}
+        triggerMessage={saveAsSkillTriggerMessage}
+        onClose={() => {
+          setShowSaveAsSkill(false);
+          setSaveAsSkillTriggerMessage(null);
+        }}
+        onExtracted={(draft) => {
+          // AI 提炼完成后，打开技能管理弹窗并预填所有字段
+          setSkillFormPrefill({
+            promptTemplate: draft.promptTemplate,
+            title: draft.title || '',
+            description: draft.description || '',
+            category: draft.category || 'general',
+            icon: draft.icon || '',
+          });
+          setShowSkillManager(true);
         }}
       />
     </div>

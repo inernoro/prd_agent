@@ -39,12 +39,6 @@ export const menuList: MenuDef[] = [
     permissions: ['mds.read', 'mds.write'],
   },
   {
-    appKey: 'prompts',
-    label: '提示词管理',
-    icon: 'FileText',
-    permissions: ['prompts.write'],
-  },
-  {
     appKey: 'prd-agent',
     label: '米多智能体平台',
     icon: 'MessagesSquare',
@@ -229,9 +223,6 @@ export const allPermissions: PermissionDef[] = [
   { key: 'settings.write', label: '系统设置 - 写', description: '修改系统设置', category: 'write' },
 
   // 提示词管理
-  { key: 'prompts.read', label: '提示词管理 - 读', description: '查看提示词配置', category: 'read' },
-  { key: 'prompts.write', label: '提示词管理 - 写', description: '编辑提示词', category: 'write' },
-
   // 实验室
   { key: 'lab.read', label: '实验室 - 读', description: '查看实验室功能', category: 'read' },
   { key: 'lab.write', label: '实验室 - 写', description: '使用实验室功能', category: 'write' },

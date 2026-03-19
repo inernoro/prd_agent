@@ -48,14 +48,6 @@ public class MongoDbContext
     public IMongoCollection<AdminNotification> AdminNotifications => _database.GetCollection<AdminNotification>("admin_notifications");
     public IMongoCollection<AutomationRule> AutomationRules => _database.GetCollection<AutomationRule>("automation_rules");
     /// <summary>
-    /// Prompts 配置（集合名保持 promptstages 以兼容历史数据；语义已迁移为“提示词”）
-    /// </summary>
-    public IMongoCollection<PromptSettings> Prompts => _database.GetCollection<PromptSettings>("promptstages");
-    /// <summary>
-    /// promptstages 原始集合（用于兼容旧结构迁移，避免 POCO 映射丢字段）
-    /// </summary>
-    public IMongoCollection<BsonDocument> PromptsRaw => _database.GetCollection<BsonDocument>("promptstages");
-    /// <summary>
     /// PRD 问答系统提示词（非 JSON 输出任务）：按角色（PM/DEV/QA）可被管理后台覆盖
     /// </summary>
     public IMongoCollection<SystemPromptSettings> SystemPrompts => _database.GetCollection<SystemPromptSettings>("systemprompts");
@@ -148,10 +140,7 @@ public class MongoDbContext
     public IMongoCollection<ToolboxRun> ToolboxRuns => _database.GetCollection<ToolboxRun>("toolbox_runs");
     public IMongoCollection<ToolboxItem> ToolboxItems => _database.GetCollection<ToolboxItem>("toolbox_items");
 
-    // 技能设置（公共技能定义）
-    public IMongoCollection<SkillSettings> SkillSettings => _database.GetCollection<SkillSettings>("skill_settings");
-
-    // 统一技能集合（替代 prompt_stages + skill_settings）
+    // 统一技能集合
     public IMongoCollection<Skill> Skills => _database.GetCollection<Skill>("skills");
 
     // Workflow Agent 工作流引擎

@@ -175,3 +175,27 @@ public class SkillExecuteRequest
     /// <summary>输出模式覆盖（null = 使用技能默认值）</summary>
     public string? OutputModeOverride { get; set; }
 }
+
+/// <summary>
+/// 技能参数定义（变量槽）
+/// </summary>
+public class SkillParameter
+{
+    /// <summary>参数 key（用于模板替换 {{key}}）</summary>
+    public string Key { get; set; } = string.Empty;
+
+    /// <summary>参数标签</summary>
+    public string Label { get; set; } = string.Empty;
+
+    /// <summary>参数类型：text, select, number</summary>
+    public string Type { get; set; } = "text";
+
+    /// <summary>默认值</summary>
+    public string? DefaultValue { get; set; }
+
+    /// <summary>select 类型的选项列表</summary>
+    public List<string>? Options { get; set; }
+
+    /// <summary>是否必填</summary>
+    public bool Required { get; set; } = false;
+}

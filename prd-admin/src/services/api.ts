@@ -186,19 +186,14 @@ export const api = {
     byKey: (skillKey: string) => `/api/skills/${encodeURIComponent(skillKey)}`,
   },
 
-  // ============ Prompts 提示词 ============
+  // ============ Prompts (系统提示词 + 覆盖) ============
   prompts: {
-    list: () => '/api/prompts',
-    reset: () => '/api/prompts/reset',
     system: {
       get: () => '/api/prompts/system',
       reset: () => '/api/prompts/system/reset',
     },
     overrides: {
       imageGenPlan: () => '/api/prompts/overrides/image-gen-plan',
-    },
-    optimize: {
-      stream: () => '/api/prompts/optimize/stream',
     },
   },
 
@@ -707,7 +702,6 @@ export const api = {
     intent: {
       groupName: () => '/api/v1/intent/group-name',
     },
-    prompts: () => '/api/v1/prompts',
   },
 
   // ============ Workflow Agent 工作流引擎 ============

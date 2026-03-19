@@ -1,9 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ModelTypePicker } from '@/components/model/ModelTypePicker';
 import { GlassCard } from '@/components/design/GlassCard';
 import { PageHeader } from '@/components/design/PageHeader';
 import { Badge } from '@/components/design/Badge';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { Dialog } from '@/components/ui/Dialog';
+import { readSseStream } from '@/lib/sse';
+import { useAuthStore } from '@/stores/authStore';
+import { SystemPromptsPanel } from '@/components/skills/SystemPromptsPanel';
+import { Sparkles, Square, Copy, Save } from 'lucide-react';
 import {
   listAdminSkills,
   createAdminSkill,
@@ -196,12 +201,34 @@ const VISIBILITY_OPTIONS = [
   { value: 'public', label: '公共' },
 ];
 
+// ━━━ Helpers ━━━━━━━━
+
+function getApiBaseUrl() {
+  const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
+  return raw.trim().replace(/\/+$/, '');
+}
+
+function joinUrl(base: string, path: string) {
+  const b = base.replace(/\/+$/, '');
+  const p = path.replace(/^\/+/, '');
+  if (!b) return `/${p}`;
+  return `${b}/${p}`;
+}
+
+type PromptOptimizeStreamEvent = {
+  type: 'start' | 'delta' | 'done' | 'error';
+  content?: string;
+  errorCode?: string;
+  errorMessage?: string;
+};
+
 // ━━━ Tabs ━━━━━━━━
 
-type TabKey = 'skills' | 'templates';
+type TabKey = 'skills' | 'system' | 'templates';
 
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: 'skills', label: '技能管理' },
+  { key: 'system', label: '系统指令' },
   { key: 'templates', label: '模板市场' },
 ];
 
@@ -219,6 +246,7 @@ export default function SkillsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [listCollapsed, setListCollapsed] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   // ━━━ 表单状态 ━━━
 
@@ -241,6 +269,20 @@ export default function SkillsPage() {
   const [modelType, setModelType] = useState('chat');
   const [outputMode, setOutputMode] = useState('chat');
   const [echoToChat, setEchoToChat] = useState(false);
+
+  // ━━━ 魔法棒（提示词优化）━━━
+
+  const token = useAuthStore((s) => s.token);
+  const [optOpen, setOptOpen] = useState(false);
+  const [optBusy, setOptBusy] = useState(false);
+  const [optError, setOptError] = useState<string | null>(null);
+  const [optText, setOptText] = useState('');
+  const [optOriginal, setOptOriginal] = useState('');
+  const optAbortRef = useRef<AbortController | null>(null);
+
+  // ━━━ 拖拽排序 ━━━
+
+  const [dragOverKey, setDragOverKey] = useState<string | null>(null);
 
   // ━━━ 加载 ━━━
 
@@ -417,6 +459,138 @@ export default function SkillsPage() {
     }
   }, [selected, fetchSkills, fillForm]);
 
+  // ━━━ 魔法棒函数 ━━━
+
+  const cancelOptimize = useCallback(() => {
+    try { optAbortRef.current?.abort(); } catch { /* ignore */ }
+    optAbortRef.current = null;
+    setOptBusy(false);
+  }, []);
+
+  const startOptimize = useCallback(async () => {
+    if (!token) { setOptError('未登录或 Token 缺失'); return; }
+    const pt = promptTemplate.trim();
+    if (!pt) { setOptError('当前提示词为空，无法优化'); return; }
+
+    cancelOptimize();
+    const ac = new AbortController();
+    optAbortRef.current = ac;
+    setOptBusy(true);
+    setOptError(null);
+    setOptText('');
+    setOptOriginal(pt);
+
+    let res: Response;
+    try {
+      const url = joinUrl(getApiBaseUrl(), '/api/prompts/optimize/stream');
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ promptTemplate: pt, title, mode: 'strict' }),
+        signal: ac.signal,
+      });
+    } catch (e) {
+      setOptBusy(false);
+      optAbortRef.current = null;
+      setOptError(`请求失败：${e instanceof Error ? e.message : '网络错误'}`);
+      return;
+    }
+
+    if (!res.ok) {
+      setOptBusy(false);
+      optAbortRef.current = null;
+      const t = await res.text().catch(() => '');
+      setOptError(t || `HTTP ${res.status} ${res.statusText}`);
+      return;
+    }
+
+    try {
+      await readSseStream(res, (evt) => {
+        if (!evt.data) return;
+        try {
+          const obj = JSON.parse(evt.data) as PromptOptimizeStreamEvent;
+          if (obj.type === 'delta' && obj.content) setOptText((prev) => prev + obj.content);
+          else if (obj.type === 'error') { setOptError(obj.errorMessage || '优化失败'); setOptBusy(false); optAbortRef.current = null; }
+          else if (obj.type === 'done') { setOptBusy(false); optAbortRef.current = null; }
+        } catch { /* ignore */ }
+      }, ac.signal);
+    } finally {
+      if (ac.signal.aborted) { setOptBusy(false); optAbortRef.current = null; }
+    }
+  }, [token, promptTemplate, title, cancelOptimize]);
+
+  const applyOptimized = useCallback(() => {
+    const next = optText.trim();
+    if (!next) return;
+    setPromptTemplate(next);
+    setOptOpen(false);
+    setMsg({ type: 'ok', text: '已替换为优化后的提示词（别忘了点保存）' });
+  }, [optText]);
+
+  // ━━━ 拖拽排序处理 ━━━
+
+  const handleDragStart = useCallback((e: React.DragEvent, skillKey: string) => {
+    e.dataTransfer.setData('text/plain', skillKey);
+    e.dataTransfer.effectAllowed = 'move';
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent, skillKey: string) => {
+    e.preventDefault();
+    setDragOverKey(skillKey);
+  }, []);
+
+  const handleDragLeave = useCallback(() => {
+    setDragOverKey(null);
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent, toKey: string) => {
+    e.preventDefault();
+    setDragOverKey(null);
+    const fromKey = e.dataTransfer.getData('text/plain');
+    if (!fromKey || fromKey === toKey) return;
+
+    // Find skills and swap order
+    const fromSkill = skills.find(s => s.skillKey === fromKey);
+    const toSkill = skills.find(s => s.skillKey === toKey);
+    if (!fromSkill || !toSkill) return;
+
+    // Get list in same visibility group, sorted by order
+    const group = skills.filter(s => s.visibility === fromSkill.visibility).sort((a, b) => a.order - b.order);
+    const fromIdx = group.findIndex(s => s.skillKey === fromKey);
+    const toIdx = group.findIndex(s => s.skillKey === toKey);
+    if (fromIdx < 0 || toIdx < 0) return;
+
+    // Reorder
+    const reordered = [...group];
+    const [moved] = reordered.splice(fromIdx, 1);
+    reordered.splice(toIdx, 0, moved);
+
+    // Update local state with new orders
+    const orderUpdates = new Map<string, number>();
+    reordered.forEach((s, i) => { orderUpdates.set(s.skillKey, i + 1); });
+
+    setSkills(prev => prev.map(s => {
+      const newOrder = orderUpdates.get(s.skillKey);
+      return newOrder !== undefined ? { ...s, order: newOrder } : s;
+    }));
+
+    // Persist changed skills silently
+    const changedSkills = reordered.filter((s, i) => s.order !== i + 1);
+    for (const s of changedSkills) {
+      const newOrder = orderUpdates.get(s.skillKey)!;
+      await updateAdminSkill(s.skillKey, {
+        title: s.title, description: s.description, icon: s.icon, category: s.category,
+        tags: s.tags, roles: s.roles, visibility: s.visibility, order: newOrder,
+        isEnabled: s.isEnabled, isBuiltIn: s.isBuiltIn, input: s.input, execution: s.execution, output: s.output,
+      });
+    }
+
+    // Update selected skill's order in form if needed
+    if (selected && orderUpdates.has(selected.skillKey)) {
+      setOrder(orderUpdates.get(selected.skillKey)!);
+    }
+  }, [skills, selected]);
+
   // ━━━ 角色切换 ━━━
 
   const toggleRole = useCallback((r: string) => {
@@ -578,6 +752,11 @@ export default function SkillsPage() {
                                 key={s.skillKey} skill={s}
                                 active={selected?.skillKey === s.skillKey}
                                 onClick={() => handleSelect(s)}
+                                dragOver={dragOverKey === s.skillKey}
+                                onDragStart={(e) => handleDragStart(e, s.skillKey)}
+                                onDragOver={(e) => handleDragOver(e, s.skillKey)}
+                                onDragLeave={handleDragLeave}
+                                onDrop={(e) => handleDrop(e, s.skillKey)}
                               />
                             ))}
                         </div>
@@ -595,6 +774,11 @@ export default function SkillsPage() {
                                 key={s.skillKey} skill={s}
                                 active={selected?.skillKey === s.skillKey}
                                 onClick={() => handleSelect(s)}
+                                dragOver={dragOverKey === s.skillKey}
+                                onDragStart={(e) => handleDragStart(e, s.skillKey)}
+                                onDragOver={(e) => handleDragOver(e, s.skillKey)}
+                                onDragLeave={handleDragLeave}
+                                onDrop={(e) => handleDrop(e, s.skillKey)}
                               />
                             ))}
                         </div>
@@ -630,7 +814,8 @@ export default function SkillsPage() {
 
           {/* 右侧编辑器 - 占满剩余空间 */}
           {(!isMobile || mobileShowEditor) && (
-            <GlassCard animated className="flex-1 min-w-0 flex flex-col overflow-hidden" padding="none">
+            <div className="flex-1 min-w-0 flex flex-col min-h-0">
+            <GlassCard animated className="flex-1 flex flex-col h-full" overflow="hidden" padding="none">
               {!showEditor ? (
                 <div className="flex-1 flex flex-col items-center justify-center text-center px-6">
                   <div className="text-5xl mb-4">⚡</div>
@@ -723,142 +908,182 @@ export default function SkillsPage() {
 
                   {/* 编辑表单 */}
                   <div className="flex-1 overflow-y-auto p-4 space-y-5">
-                    {/* 基本信息 */}
-                    <Section title="基本信息">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <Field label="名称 *">
-                          <input value={title} onChange={e => setTitle(e.target.value)}
-                            className="field-input" placeholder="技能名称" />
-                        </Field>
-                        <Field label="SkillKey">
-                          <input value={skillKey} onChange={e => setSkillKey(e.target.value)}
-                            className="field-input" placeholder="自动生成" disabled={!isCreating} />
-                        </Field>
-                        <Field label="图标">
+                    {/* ━━━ 核心区：名称 + 角色 + 提示词模板 ━━━ */}
+                    <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 items-end">
+                      <Field label="名称 *">
+                        <div className="flex items-center gap-2">
                           <input value={icon} onChange={e => setIcon(e.target.value)}
-                            className="field-input" placeholder="emoji 如: ⚡🔍🧪" />
-                        </Field>
-                        <Field label="分类">
-                          <select value={category} onChange={e => setCategory(e.target.value)} className="field-input">
-                            {Object.entries(CATEGORY_MAP).map(([k, v]) => (
-                              <option key={k} value={k}>{v.icon} {v.label}</option>
-                            ))}
-                          </select>
-                        </Field>
-                        <Field label="排序">
-                          <input type="number" value={order} onChange={e => setOrder(Number(e.target.value))}
-                            className="field-input" />
-                        </Field>
-                        <Field label="可见性">
-                          <select value={visibility} onChange={e => setVisibility(e.target.value)} className="field-input">
-                            {VISIBILITY_OPTIONS.map(o => (
-                              <option key={o.value} value={o.value}>{o.label}</option>
-                            ))}
-                          </select>
-                        </Field>
-                      </div>
-                      <Field label="描述" className="mt-3">
-                        <input value={description} onChange={e => setDescription(e.target.value)}
-                          className="field-input" placeholder="简要描述技能的功能和用途" />
+                            className="field-input w-12 text-center shrink-0" placeholder="⚡" title="图标" />
+                          <input value={title} onChange={e => setTitle(e.target.value)}
+                            className="field-input flex-1" placeholder="技能名称" />
+                        </div>
                       </Field>
-                      <Field label="标签" className="mt-3">
-                        <input value={tags} onChange={e => setTags(e.target.value)}
-                          className="field-input" placeholder="逗号分隔，如: 分析, PRD, 审查" />
-                      </Field>
-
-                      {/* 角色 */}
-                      <div className="mt-3">
-                        <label className="text-xs text-white/50 mb-1.5 block">适用角色（空 = 全部）</label>
-                        <div className="flex flex-wrap gap-2">
+                      <div>
+                        <label className="text-xs text-white/50 mb-1 block">适用角色</label>
+                        <div className="flex gap-1.5">
                           {ROLE_OPTIONS.map(r => (
                             <button key={r} onClick={() => toggleRole(r)}
-                              className={`text-xs px-3 py-1 rounded-full border transition ${
+                              className={`text-xs px-3 py-1.5 rounded-lg border transition ${
                                 roles.includes(r)
                                   ? 'border-amber-400/60 bg-amber-500/20 text-amber-300'
                                   : 'border-white/10 bg-white/5 text-white/40 hover:border-white/20'
                               }`}
                             >{r}</button>
                           ))}
+                          {roles.length === 0 && <span className="text-[10px] text-white/30 self-center ml-1">全部</span>}
                         </div>
                       </div>
+                    </div>
 
-                      {/* 开关 */}
-                      <div className="mt-3 flex flex-wrap gap-4">
-                        <label className="flex items-center gap-1.5 text-xs text-white/60">
-                          <input type="checkbox" checked={isEnabled} onChange={e => setIsEnabled(e.target.checked)} />
-                          启用
-                        </label>
-                        <label className="flex items-center gap-1.5 text-xs text-white/60">
-                          <input type="checkbox" checked={isBuiltIn} onChange={e => setIsBuiltIn(e.target.checked)} />
-                          内置（不可被用户删除）
-                        </label>
-                      </div>
-                    </Section>
-
-                    {/* 输入配置 */}
-                    <Section title="输入配置">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <Field label="上下文范围">
-                          <select value={contextScope} onChange={e => setContextScope(e.target.value)} className="field-input">
-                            {CONTEXT_OPTIONS.map(o => (
-                              <option key={o.value} value={o.value}>{o.label}</option>
-                            ))}
-                          </select>
-                        </Field>
-                        <div className="flex flex-wrap items-end gap-4 pb-1">
-                          <label className="flex items-center gap-1.5 text-xs text-white/60">
-                            <input type="checkbox" checked={acceptsUserInput} onChange={e => setAcceptsUserInput(e.target.checked)} />
-                            接受用户输入
-                          </label>
-                          <label className="flex items-center gap-1.5 text-xs text-white/60">
-                            <input type="checkbox" checked={acceptsAttachments} onChange={e => setAcceptsAttachments(e.target.checked)} />
-                            接受附件
-                          </label>
-                        </div>
-                      </div>
-                    </Section>
-
-                    {/* 执行配置 */}
-                    <Section title="执行配置">
-                      <Field label="提示词模板 (promptTemplate)">
+                    <Field label="提示词模板">
+                      <div className="relative">
                         <textarea value={promptTemplate} onChange={e => setPromptTemplate(e.target.value)}
-                          className="field-input min-h-[120px] font-mono text-xs" placeholder="支持 {{变量}} 占位符" />
-                      </Field>
-                      <Field label="系统提示词覆盖 (可选)" className="mt-3">
-                        <textarea value={systemPromptOverride} onChange={e => setSystemPromptOverride(e.target.value)}
-                          className="field-input min-h-[80px] font-mono text-xs" placeholder="留空使用默认角色系统提示词" />
-                      </Field>
-                      <Field label="模型类型" className="mt-3">
-                        <ModelTypePicker
-                          value={modelType}
-                          onChange={setModelType}
-                          compact
-                        />
-                      </Field>
-                    </Section>
-
-                    {/* 输出配置 */}
-                    <Section title="输出配置">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <Field label="输出模式">
-                          <select value={outputMode} onChange={e => setOutputMode(e.target.value)} className="field-input">
-                            {OUTPUT_MODES.map(o => (
-                              <option key={o.value} value={o.value}>{o.label}</option>
-                            ))}
-                          </select>
-                        </Field>
-                        <div className="flex items-end pb-1">
-                          <label className="flex items-center gap-1.5 text-xs text-white/60">
-                            <input type="checkbox" checked={echoToChat} onChange={e => setEchoToChat(e.target.checked)} />
-                            同时回显到对话
-                          </label>
-                        </div>
+                          className="field-input min-h-[200px] font-mono text-xs pr-12" placeholder="支持 {{userInput}} 占位符" />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (optBusy) { cancelOptimize(); return; }
+                            setOptOriginal(promptTemplate.trim());
+                            setOptText('');
+                            setOptError(null);
+                            setOptOpen(true);
+                            void startOptimize();
+                          }}
+                          className="absolute bottom-2 right-2 h-8 w-8 inline-flex items-center justify-center rounded-[10px] transition-colors"
+                          style={{
+                            background: optBusy ? 'rgba(239,68,68,0.12)' : 'rgba(255,255,255,0.06)',
+                            border: optBusy ? '1px solid rgba(239,68,68,0.28)' : '1px solid rgba(255,255,255,0.14)',
+                            color: optBusy ? 'rgba(239,68,68,0.95)' : 'rgba(255,255,255,0.5)',
+                          }}
+                          title={optBusy ? '停止优化' : '魔法棒：优化提示词（大模型）'}
+                        >
+                          {optBusy ? <Square size={14} /> : <Sparkles size={14} />}
+                        </button>
                       </div>
-                    </Section>
+                    </Field>
+
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <label className="flex items-center gap-1.5 text-xs text-white/60">
+                        <input type="checkbox" checked={isEnabled} onChange={e => setIsEnabled(e.target.checked)} />
+                        启用
+                      </label>
+                      <label className="flex items-center gap-1.5 text-xs text-white/60">
+                        <input type="checkbox" checked={isBuiltIn} onChange={e => setIsBuiltIn(e.target.checked)} />
+                        内置
+                      </label>
+                      <span className="text-white/10">|</span>
+                      <Field label="排序">
+                        <input type="number" value={order} onChange={e => setOrder(Number(e.target.value))}
+                          className="field-input w-16" />
+                      </Field>
+                    </div>
+
+                    {/* ━━━ 高级配置：折叠 ━━━ */}
+                    <div>
+                      <button
+                        type="button"
+                        onClick={() => setAdvancedOpen(!advancedOpen)}
+                        className="text-xs text-white/40 hover:text-white/60 transition flex items-center gap-1.5"
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                          className={`transition-transform ${advancedOpen ? 'rotate-90' : ''}`}
+                        ><path d="M9 18l6-6-6-6"/></svg>
+                        高级配置
+                        <span className="text-white/20">
+                          （SkillKey / 分类 / 描述 / 标签 / 上下文 / 输出模式 / 模型类型）
+                        </span>
+                      </button>
+
+                      {advancedOpen && (
+                        <div className="mt-3 space-y-4 pl-3 border-l border-white/8">
+                          <Section title="基本信息">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <Field label="SkillKey">
+                                <input value={skillKey} onChange={e => setSkillKey(e.target.value)}
+                                  className="field-input" placeholder="自动生成" disabled={!isCreating} />
+                              </Field>
+                              <Field label="分类">
+                                <select value={category} onChange={e => setCategory(e.target.value)} className="field-input">
+                                  {Object.entries(CATEGORY_MAP).map(([k, v]) => (
+                                    <option key={k} value={k}>{v.icon} {v.label}</option>
+                                  ))}
+                                </select>
+                              </Field>
+                              <Field label="可见性">
+                                <select value={visibility} onChange={e => setVisibility(e.target.value)} className="field-input">
+                                  {VISIBILITY_OPTIONS.map(o => (
+                                    <option key={o.value} value={o.value}>{o.label}</option>
+                                  ))}
+                                </select>
+                              </Field>
+                            </div>
+                            <Field label="描述" className="mt-3">
+                              <input value={description} onChange={e => setDescription(e.target.value)}
+                                className="field-input" placeholder="简要描述技能的功能和用途" />
+                            </Field>
+                            <Field label="标签" className="mt-3">
+                              <input value={tags} onChange={e => setTags(e.target.value)}
+                                className="field-input" placeholder="逗号分隔，如: 分析, PRD, 审查" />
+                            </Field>
+                          </Section>
+
+                          <Section title="输入配置">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <Field label="上下文范围">
+                                <select value={contextScope} onChange={e => setContextScope(e.target.value)} className="field-input">
+                                  {CONTEXT_OPTIONS.map(o => (
+                                    <option key={o.value} value={o.value}>{o.label}</option>
+                                  ))}
+                                </select>
+                              </Field>
+                              <div className="flex flex-wrap items-end gap-4 pb-1">
+                                <label className="flex items-center gap-1.5 text-xs text-white/60">
+                                  <input type="checkbox" checked={acceptsUserInput} onChange={e => setAcceptsUserInput(e.target.checked)} />
+                                  接受用户输入
+                                </label>
+                                <label className="flex items-center gap-1.5 text-xs text-white/60">
+                                  <input type="checkbox" checked={acceptsAttachments} onChange={e => setAcceptsAttachments(e.target.checked)} />
+                                  接受附件
+                                </label>
+                              </div>
+                            </div>
+                          </Section>
+
+                          <Section title="执行配置">
+                            <Field label="系统提示词覆盖（可选）">
+                              <textarea value={systemPromptOverride} onChange={e => setSystemPromptOverride(e.target.value)}
+                                className="field-input min-h-[80px] font-mono text-xs" placeholder="留空使用默认角色系统提示词" />
+                            </Field>
+                            <Field label="模型类型" className="mt-3">
+                              <ModelTypePicker value={modelType} onChange={setModelType} compact />
+                            </Field>
+                          </Section>
+
+                          <Section title="输出配置">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <Field label="输出模式">
+                                <select value={outputMode} onChange={e => setOutputMode(e.target.value)} className="field-input">
+                                  {OUTPUT_MODES.map(o => (
+                                    <option key={o.value} value={o.value}>{o.label}</option>
+                                  ))}
+                                </select>
+                              </Field>
+                              <div className="flex items-end pb-1">
+                                <label className="flex items-center gap-1.5 text-xs text-white/60">
+                                  <input type="checkbox" checked={echoToChat} onChange={e => setEchoToChat(e.target.checked)} />
+                                  同时回显到对话
+                                </label>
+                              </div>
+                            </div>
+                          </Section>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </>
               )}
             </GlassCard>
+            </div>
           )}
         </div>
       )}
@@ -915,6 +1140,77 @@ export default function SkillsPage() {
           </div>
         </div>
       )}
+
+      {/* ━━━ Tab: 系统指令 ━━━ */}
+      {activeTab === 'system' && <SystemPromptsPanel />}
+
+      {/* ━━━ 魔法棒对话框 ━━━ */}
+      <Dialog
+        open={optOpen}
+        onOpenChange={(o) => { if (!o) cancelOptimize(); setOptOpen(o); }}
+        title="提示词优化（魔法棒）"
+        description="大模型会在不改变意图的前提下，让提示词更清晰、更可执行。先预览再替换。"
+        maxWidth={1040}
+        content={
+          <div className="min-h-0 flex flex-col gap-4">
+            {optError && (
+              <div className="rounded-[14px] px-4 py-3 text-sm"
+                style={{ border: '1px solid var(--border-default)', background: 'var(--nested-block-bg)', color: 'rgba(255,120,120,0.95)' }}>
+                {optError}
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                技能：{title || '—'}
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={() => void startOptimize()} disabled={optBusy}
+                  className="text-xs px-3 py-1.5 rounded-lg transition disabled:opacity-40 inline-flex items-center gap-1.5"
+                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.14)', color: 'var(--text-secondary)' }}>
+                  <Sparkles size={14} /> 重新优化
+                </button>
+                <button onClick={cancelOptimize} disabled={!optBusy}
+                  className="text-xs px-3 py-1.5 rounded-lg transition disabled:opacity-40 inline-flex items-center gap-1.5 bg-red-500/20 text-red-300">
+                  <Square size={14} /> 停止
+                </button>
+                <button onClick={applyOptimized} disabled={optBusy || !optText.trim()}
+                  className="text-xs px-3 py-1.5 rounded-lg transition disabled:opacity-40 inline-flex items-center gap-1.5"
+                  style={{ background: 'var(--gold-gradient)', color: '#fff', boxShadow: '0 2px 8px -1px rgba(99, 102, 241, 0.35)' }}>
+                  <Save size={14} /> 替换到编辑器
+                </button>
+                <button onClick={async () => {
+                    const t = optText.trim();
+                    if (!t) return;
+                    try { await navigator.clipboard.writeText(t); setMsg({ type: 'ok', text: '已复制优化结果' }); } catch { /* ignore */ }
+                  }} disabled={optBusy || !optText.trim()}
+                  className="text-xs px-3 py-1.5 rounded-lg transition disabled:opacity-40 inline-flex items-center gap-1.5"
+                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.14)', color: 'var(--text-secondary)' }}>
+                  <Copy size={14} /> 复制
+                </button>
+              </div>
+            </div>
+            <div className="grid gap-4 min-h-0" style={{ gridTemplateColumns: '1fr 1fr' }}>
+              <GlassCard animated className="p-4 min-h-0 flex flex-col">
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>原文</div>
+                <textarea value={optOriginal} readOnly
+                  className="mt-3 flex-1 min-h-[360px] w-full rounded-[14px] px-3 py-3 text-sm outline-none resize-none"
+                  style={{ border: '1px solid var(--border-subtle)', background: 'var(--nested-block-bg)', color: 'var(--text-primary)', lineHeight: 1.6,
+                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace' }} />
+              </GlassCard>
+              <GlassCard animated className="p-4 min-h-0 flex flex-col">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>优化结果（流式）</div>
+                  <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>字符：{optText.length.toLocaleString()}</div>
+                </div>
+                <textarea value={optText} readOnly
+                  className="mt-3 flex-1 min-h-[360px] w-full rounded-[14px] px-3 py-3 text-sm outline-none resize-none"
+                  style={{ border: '1px solid var(--border-subtle)', background: 'var(--nested-block-bg)', color: 'var(--text-primary)', lineHeight: 1.6,
+                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace' }} />
+              </GlassCard>
+            </div>
+          </div>
+        }
+      />
 
       <style>{`
         .field-input {
@@ -1127,17 +1423,32 @@ function Field({ label, className, children }: { label: string; className?: stri
   );
 }
 
-function SkillListItem({ skill, active, onClick }: { skill: AdminSkill; active: boolean; onClick: () => void }) {
+function SkillListItem({ skill, active, onClick, dragOver, onDragStart, onDragOver, onDragLeave, onDrop }: {
+  skill: AdminSkill; active: boolean; onClick: () => void;
+  dragOver?: boolean;
+  onDragStart?: (e: React.DragEvent) => void;
+  onDragOver?: (e: React.DragEvent) => void;
+  onDragLeave?: () => void;
+  onDrop?: (e: React.DragEvent) => void;
+}) {
   const catInfo = CATEGORY_MAP[skill.category] || CATEGORY_MAP.general;
 
   return (
-    <button
+    <div
+      draggable
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
       onClick={onClick}
-      className={`w-full text-left px-3 py-2.5 rounded-lg text-xs transition ${
+      className={`w-full text-left px-3 py-2.5 rounded-lg text-xs transition cursor-pointer ${
         active
           ? 'bg-white/10 border border-white/20'
-          : 'hover:bg-white/5 border border-transparent'
+          : dragOver
+            ? 'bg-white/8 border border-amber-400/40'
+            : 'hover:bg-white/5 border border-transparent'
       }`}
+      style={{ cursor: 'grab' }}
     >
       <div className="flex items-center gap-2.5">
         <span className="text-base">{skill.icon || '⚡'}</span>
@@ -1160,6 +1471,6 @@ function SkillListItem({ skill, active, onClick }: { skill: AdminSkill; active: 
         </div>
         <span className="text-[10px] text-white/15 shrink-0">#{skill.order}</span>
       </div>
-    </button>
+    </div>
   );
 }
