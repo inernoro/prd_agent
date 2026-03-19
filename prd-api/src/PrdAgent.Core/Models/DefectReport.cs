@@ -249,6 +249,11 @@ public class DefectAttachment
     /// 是否系统自动生成（日志类附件不可删除、前端不可下载）
     /// </summary>
     public bool IsSystemGenerated { get; set; } = false;
+
+    /// <summary>
+    /// AI 图片分析描述（截图类附件，前端 Vision 解析后持久化）
+    /// </summary>
+    public string? Description { get; set; }
 }
 
 /// <summary>

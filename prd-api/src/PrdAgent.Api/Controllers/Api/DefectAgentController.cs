@@ -1208,7 +1208,7 @@ public class DefectAgentController : ControllerBase
     /// </summary>
     [HttpPost("defects/{id}/attachments")]
     [RequestSizeLimit(MaxAttachmentBytes)]
-    public async Task<IActionResult> AddAttachment(string id, [FromForm] IFormFile file, CancellationToken ct)
+    public async Task<IActionResult> AddAttachment(string id, [FromForm] IFormFile file, [FromForm] string? description, CancellationToken ct)
     {
         var userId = GetUserId();
 
@@ -1245,6 +1245,7 @@ public class DefectAgentController : ControllerBase
             FileSize = file.Length,
             MimeType = mime,
             Url = stored.Url,
+            Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim(),
             UploadedAt = DateTime.UtcNow
         };
 
@@ -2118,17 +2119,58 @@ public class DefectAgentController : ControllerBase
             .GroupBy(d => d.ReporterId)
             .ToDictionary(g => g.Key, g => g.Take(10).ToList());
 
-        // 构建外部 Agent 友好的响应
-        var defectItems = defects.Select(d => new
+        // 查询每个缺陷的消息（评论/对话历史）
+        var defectIds = defects.Select(d => d.Id).ToList();
+        var allMessages = await _db.DefectMessages
+            .Find(x => defectIds.Contains(x.DefectId))
+            .SortBy(x => x.Seq)
+            .ToListAsync(CancellationToken.None);
+        var msgByDefect = allMessages
+            .GroupBy(m => m.DefectId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        // 构建外部 Agent 友好的响应（按重要性排序：截图 > 日志 > 描述）
+        var defectItems = defects.Select(d =>
         {
-            d.Id, d.DefectNo, d.Title, d.RawContent, d.StructuredData,
-            d.Status, d.Severity, d.Priority,
-            d.ReporterName, d.ProjectName, d.TeamName,
-            Attachments = d.Attachments?.Select(a => new { a.FileName, a.Url, a.MimeType }),
-            d.CreatedAt, d.UpdatedAt,
-            HistoricalDefectsFromReporter = histByReporter.GetValueOrDefault(d.ReporterId)?
-                .Select(h => new { h.Id, h.DefectNo, h.Title, h.RawContent, h.Status, h.Severity, h.CreatedAt })
-                ?? Enumerable.Empty<object>(),
+            // 附件分类：截图、日志、普通文件
+            var screenshots = d.Attachments?
+                .Where(a => a.Type == DefectAttachmentType.Screenshot || (a.MimeType?.StartsWith("image/") ?? false))
+                .Select(a => new { a.FileName, a.Url, a.MimeType, a.Type, a.Description,
+                    hint = a.Description != null
+                        ? "已有 AI 图片分析描述，请结合描述和图片链接理解问题"
+                        : "此截图暂无 AI 描述，如有视觉能力请查看图片 URL" })
+                .ToList() ?? new();
+            var logs = d.Attachments?
+                .Where(a => a.Type == DefectAttachmentType.LogRequest || a.Type == DefectAttachmentType.LogError)
+                .Select(a => new { a.FileName, a.Url, a.MimeType, a.Type, a.Description,
+                    hint = "请下载并分析此日志文件，日志包含精确的错误信息" })
+                .ToList() ?? new();
+            var otherFiles = d.Attachments?
+                .Where(a => a.Type == DefectAttachmentType.File && !(a.MimeType?.StartsWith("image/") ?? false))
+                .Select(a => new { a.FileName, a.Url, a.MimeType, a.Type, a.Description, hint = (string?)null })
+                .ToList() ?? new();
+
+            // 消息历史
+            var messages = msgByDefect.GetValueOrDefault(d.Id)?
+                .Select(m => new { m.Role, m.UserName, m.Content, m.Source, m.AgentName, m.CreatedAt })
+                .ToList();
+
+            return new
+            {
+                d.Id, d.DefectNo, d.Title, d.RawContent, d.StructuredData,
+                d.Status, d.Severity, d.Priority,
+                d.ReporterName, d.ProjectName, d.TeamName,
+                // 按重要性分组的附件
+                screenshots,
+                logs,
+                otherFiles,
+                // 消息历史（用于了解上下文）
+                messages,
+                d.CreatedAt, d.UpdatedAt,
+                HistoricalDefectsFromReporter = histByReporter.GetValueOrDefault(d.ReporterId)?
+                    .Select(h => new { h.Id, h.DefectNo, h.Title, h.RawContent, h.Status, h.Severity, h.CreatedAt })
+                    ?? Enumerable.Empty<object>(),
+            };
         });
 
         await LogOpenPlatformRequestAsync(appId, startedAt, sw.ElapsedMilliseconds, "GET", 200, null, boundUserId);
@@ -2148,24 +2190,50 @@ public class DefectAgentController : ControllerBase
             // LLM Agent 操作指引
             agentInstructions = new
             {
-                description = "这是一个缺陷分享 API，你可以读取缺陷数据、提交修复报告、标记修复状态。",
+                description = "缺陷分享 API：读取缺陷、查看截图和日志、发表评论、提交报告、标记修复。",
+                importantNotes = new[]
+                {
+                    "【截图最重要】每个缺陷的 screenshots 数组包含截图 URL 和 AI 图片分析描述(description 字段)，description 是 AI Vision 对截图的解析结果，请仔细阅读。图片 URL 也可以直接访问查看",
+                    "【日志很重要】logs 数组包含请求日志和错误日志的 URL，请下载并分析日志中的精确错误信息和调用堆栈",
+                    "【描述辅助参考】rawContent 和 structuredData 是用户文字描述，结合截图描述和日志一起理解问题全貌",
+                    "【消息历史】messages 数组包含该缺陷的对话历史，可能包含补充说明、之前的讨论或其他 AI 的评论",
+                    "【分析优先级】截图描述 > 日志 > 对话历史 > 文字描述。请按此优先级分析缺陷",
+                },
                 endpoints = new
                 {
+                    postComment = new
+                    {
+                        method = "POST",
+                        url = $"{baseUrl}/api/defect-agent/share/view/{token}/comments",
+                        description = "在缺陷对话中发表评论（修复计划、进度、验收方式等），评论会自动标记为 AI 来源",
+                        bodySchema = new
+                        {
+                            agentName = "你的名称",
+                            items = new[]
+                            {
+                                new
+                                {
+                                    defectId = "缺陷ID",
+                                    content = "评论内容（支持 Markdown）",
+                                }
+                            },
+                        },
+                    },
                     submitFixReport = new
                     {
                         method = "POST",
                         url = $"{baseUrl}/api/defect-agent/share/view/{token}/report",
-                        description = "提交缺陷分析报告（分析结果和修复建议）",
+                        description = "提交缺陷分析报告（根因分析和修复建议）",
                         bodySchema = new
                         {
-                            agentName = "你的名称（可选）",
+                            agentName = "你的名称",
                             items = new[]
                             {
                                 new
                                 {
                                     defectId = "缺陷ID（从 defects 列表获取）",
                                     confidenceScore = "可信度 0-100",
-                                    analysis = "你的分析内容",
+                                    analysis = "根因分析",
                                     fixSuggestion = "修复建议",
                                 }
                             },
@@ -2175,7 +2243,7 @@ public class DefectAgentController : ControllerBase
                     {
                         method = "POST",
                         url = $"{baseUrl}/api/defect-agent/share/view/{token}/fix-status",
-                        description = "修复完成后标记缺陷为已解决，会自动通知缺陷提交者",
+                        description = "修复完成后标记缺陷为已解决（自动标记为 AI 解决），会通知缺陷提交者",
                         bodySchema = new
                         {
                             items = new[]
@@ -2183,13 +2251,14 @@ public class DefectAgentController : ControllerBase
                                 new
                                 {
                                     defectId = "缺陷ID",
-                                    resolution = "修复说明（描述你做了什么）",
+                                    agentName = "你的名称",
+                                    resolution = "修复说明（必须包含验收方式）",
                                 }
                             },
                         },
                     },
                 },
-                workflow = "建议流程：1) 读取缺陷列表和附件 → 2) 分析问题并生成修复计划 → 3) POST /report 提交分析 → 4) 执行修复 → 5) POST /fix-status 标记完成",
+                workflow = "必须按此顺序：1) 查看截图和日志（最重要） → 2) 列出修复清单（有争议的先和人确认） → 3) 发评论说明计划 → 4) 执行修复 → 5) 发评论说明验收方式 → 6) 标记完成",
             },
         }));
     }

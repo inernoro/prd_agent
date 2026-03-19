@@ -255,6 +255,7 @@ export const addDefectAttachmentReal: AddDefectAttachmentContract = async (input
 
   const fd = new FormData();
   fd.append('file', input.file);
+  if (input.description) fd.append('description', input.description);
 
   const rawBase = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').trim().replace(/\/+$/, '');
   const url = rawBase

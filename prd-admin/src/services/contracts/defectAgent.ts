@@ -52,6 +52,8 @@ export interface DefectAttachment {
   type?: string;
   /** 是否系统自动生成（日志类附件不可删除） */
   isSystemGenerated?: boolean;
+  /** AI 图片分析描述（Vision 解析结果） */
+  description?: string;
 }
 
 /**
@@ -329,6 +331,8 @@ export type SendDefectMessageContract = (input: {
 export type AddDefectAttachmentContract = (input: {
   id: string;
   file: File;
+  /** AI 图片分析描述（Vision 解析结果） */
+  description?: string;
 }) => Promise<ApiResponse<{ attachment: DefectAttachment }>>;
 
 export type DeleteDefectAttachmentContract = (input: {

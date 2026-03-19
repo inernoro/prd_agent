@@ -281,9 +281,9 @@ export function DefectSubmitPanel() {
 
       const defect = createRes.data.defect;
 
-      // Upload attachments
+      // Upload attachments (with AI image description if available)
       for (const item of attachments) {
-        await addDefectAttachment({ id: defect.id, file: item.file });
+        await addDefectAttachment({ id: defect.id, file: item.file, description: item.description });
       }
 
       // Submit defect
