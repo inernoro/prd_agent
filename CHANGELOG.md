@@ -93,14 +93,17 @@
 
 ## 维护规则
 
-### 记录格式
+### ⚠ 禁止直接编辑此文件
+
+日常开发请在 `changelogs/` 目录创建碎片文件（见 `CLAUDE.md` 规则 4），发版时执行 `bash scripts/assemble-changelog.sh` 自动合并。
+
+### 碎片文件格式
+
+文件名：`changelogs/YYYY-MM-DD_<短描述>.md`，内容为纯表格行：
 
 ```markdown
-### YYYY-MM-DD
-
-| 类型 | 模块 | 描述 |
-|------|------|------|
-| feat/fix/refactor/docs/perf/chore | 模块名 | 一句话描述 |
+| feat | prd-admin | 新增XX功能 |
+| fix | prd-api | 修复XX问题 |
 ```
 
 ### 类型定义
@@ -116,16 +119,16 @@
 
 ### 模块名
 
-`prd-api` · `prd-desktop` · `prd-admin` · `prd-video` · `doc` · `scripts` · `infra`
+`prd-api` · `prd-desktop` · `prd-admin` · `prd-video` · `doc` · `scripts` · `infra` · `cds` · `skills`
 
 ### 合并规则
 
 - 同一天、同一类型、同一模块的多条变更合并为一条，用顿号分隔要点
-- 例：`feat | prd-desktop | 群组管理：解散群、退出群、添加成员`
+- 例：`| feat | prd-desktop | 群组管理：解散群、退出群、添加成员 |`
 
 ### 版本发布标记
 
-发布版本时，将 `[未发布]` 下的条目包裹进版本号标题：
+发布版本时，先执行 `bash scripts/assemble-changelog.sh`，再将 `[未发布]` 下的条目包裹进版本号标题：
 
 ```markdown
 ## [1.7.0] - 2026-03-20
