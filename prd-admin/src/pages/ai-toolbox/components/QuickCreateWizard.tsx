@@ -315,7 +315,7 @@ function PromptExpandModal({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-6"
-      style={{ background: 'rgba(0, 0, 0, 0.7)', backdropFilter: 'blur(8px)' }}
+      style={{ background: 'rgba(0, 0, 0, 0.7)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' }}
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div
@@ -733,6 +733,7 @@ export function QuickCreateWizard() {
               border: '1px solid rgba(168, 85, 247, 0.2)',
               boxShadow: '0 12px 40px -8px rgba(0, 0, 0, 0.6)',
               backdropFilter: 'blur(16px)',
+              WebkitBackdropFilter: 'blur(16px)',
               maxHeight: 220,
               overflowY: 'auto',
               animation: 'wfPickerIn 0.15s ease-out',
@@ -939,6 +940,7 @@ export function QuickCreateWizard() {
             border: '1px solid rgba(168, 85, 247, 0.15)',
             color: 'rgba(192, 132, 252, 0.9)',
             backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
           }}
         >
           <Sparkles size={13} style={{ animation: 'wizardPulse 2s ease-in-out infinite' }} />
@@ -1363,7 +1365,7 @@ export function QuickCreateWizard() {
       {showPolishResult && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-6"
-          style={{ background: 'rgba(0, 0, 0, 0.6)', backdropFilter: 'blur(4px)' }}
+          style={{ background: 'rgba(0, 0, 0, 0.6)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}
           onClick={(e) => e.target === e.currentTarget && !polishing && handleCancelPolish()}
         >
           <div

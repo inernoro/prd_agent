@@ -430,6 +430,7 @@ export const api = {
       process: (id: string) => `/api/defect-agent/defects/${id}/process`,
       resolve: (id: string) => `/api/defect-agent/defects/${id}/resolve`,
       reject: (id: string) => `/api/defect-agent/defects/${id}/reject`,
+      severity: (id: string) => `/api/defect-agent/defects/${id}/severity`,
       close: (id: string) => `/api/defect-agent/defects/${id}/close`,
       reopen: (id: string) => `/api/defect-agent/defects/${id}/reopen`,
       verifyPass: (id: string) => `/api/defect-agent/defects/${id}/verify-pass`,

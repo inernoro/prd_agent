@@ -678,7 +678,8 @@ public class VideoGenRunWorker : BackgroundService
             },
             Stream = true,
             IncludeThinking = true,
-            TimeoutSeconds = 120
+            TimeoutSeconds = 120,
+            Context = new GatewayRequestContext { UserId = run.OwnerAdminId }
         };
 
         await UpdatePhaseAsync(run, "scripting", 20);
@@ -1098,7 +1099,8 @@ public class VideoGenRunWorker : BackgroundService
                     }
                 },
                 Stream = false,
-                TimeoutSeconds = 60
+                TimeoutSeconds = 60,
+                Context = new GatewayRequestContext { UserId = run.OwnerAdminId }
             };
 
             var response = await gateway.SendAsync(request, CancellationToken.None);
@@ -1686,7 +1688,8 @@ document.addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key==='ArrowD
                     }
                 },
                 Stream = false,
-                TimeoutSeconds = 120
+                TimeoutSeconds = 120,
+                Context = new GatewayRequestContext { UserId = run.OwnerAdminId }
             };
 
             var response = await gateway.SendAsync(request, CancellationToken.None);

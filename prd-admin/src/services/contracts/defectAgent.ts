@@ -313,6 +313,11 @@ export type RejectDefectContract = (input: {
   reason?: string;
 }) => Promise<ApiResponse<{ defect: DefectReport }>>;
 
+export type UpdateDefectSeverityContract = (input: {
+  id: string;
+  severity: string;
+}) => Promise<ApiResponse<{ defect: DefectReport }>>;
+
 export type CloseDefectContract = (input: { id: string }) => Promise<ApiResponse<{ defect: DefectReport }>>;
 
 export type ReopenDefectContract = (input: { id: string }) => Promise<ApiResponse<{ defect: DefectReport }>>;

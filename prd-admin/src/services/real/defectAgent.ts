@@ -17,6 +17,7 @@ import type {
   ProcessDefectContract,
   ResolveDefectContract,
   RejectDefectContract,
+  UpdateDefectSeverityContract,
   CloseDefectContract,
   ReopenDefectContract,
   GetDefectMessagesContract,
@@ -204,6 +205,17 @@ export const rejectDefectReal: RejectDefectContract = async (input) => {
     api.defectAgent.defects.reject(encodeURIComponent(id)),
     {
       method: 'POST',
+      body: data,
+    }
+  );
+};
+
+export const updateDefectSeverityReal: UpdateDefectSeverityContract = async (input) => {
+  const { id, ...data } = input;
+  return await apiRequest<{ defect: DefectReport }>(
+    api.defectAgent.defects.severity(encodeURIComponent(id)),
+    {
+      method: 'PATCH',
       body: data,
     }
   );

@@ -47,6 +47,7 @@ public class PreviewAskService : IPreviewAskService
         string? headingTitle,
         string question,
         UserRole? answerAsRole = null,
+        string? userId = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var q = (question ?? string.Empty).Trim();
@@ -152,7 +153,7 @@ public class PreviewAskService : IPreviewAskService
             RequestId: requestId,
             GroupId: session.GroupId,
             SessionId: session.SessionId,
-            UserId: null,
+            UserId: userId,
             ViewRole: effectiveAnswerRole.ToString(),
             DocumentChars: sectionMarkdown.Length,
             DocumentHash: docHash,

@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Models.Requests;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Services;
@@ -26,19 +27,22 @@ public class WatermarkController : ControllerBase
     private readonly IAssetStorage _assetStorage;
     private readonly WatermarkRenderer _watermarkRenderer;
     private readonly ILogger<WatermarkController> _logger;
+    private readonly IConfiguration _config;
 
     public WatermarkController(
         MongoDbContext db,
         WatermarkFontRegistry fontRegistry,
         IAssetStorage assetStorage,
         WatermarkRenderer watermarkRenderer,
-        ILogger<WatermarkController> logger)
+        ILogger<WatermarkController> logger,
+        IConfiguration config)
     {
         _db = db;
         _fontRegistry = fontRegistry;
         _assetStorage = assetStorage;
         _watermarkRenderer = watermarkRenderer;
         _logger = logger;
+        _config = config;
     }
 
     /// <summary>
@@ -958,7 +962,7 @@ public class WatermarkController : ControllerBase
             return cosStorage.BuildPublicUrl(key);
         }
 
-        var baseUrl = $"{Request.Scheme}://{Request.Host}";
+        var baseUrl = Request.ResolveServerUrl(_config);
         var pathBase = Request.PathBase.HasValue ? Request.PathBase.Value : string.Empty;
         var escapedId = Uri.EscapeDataString(watermarkId);
         return $"{baseUrl}{pathBase}/api/watermark/preview/{escapedId}.png";

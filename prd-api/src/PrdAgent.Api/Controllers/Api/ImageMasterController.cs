@@ -2729,7 +2729,8 @@ public class ImageMasterController : ControllerBase
                 ["messages"] = messages,
                 ["temperature"] = 0.8,
                 ["max_tokens"] = 4000
-            }
+            },
+            Context = new GatewayRequestContext { UserId = GetAdminId() }
         };
 
         try

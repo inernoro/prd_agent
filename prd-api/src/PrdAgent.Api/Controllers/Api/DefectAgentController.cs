@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -32,6 +33,8 @@ public class DefectAgentController : ControllerBase
     private readonly ICacheManager _cache;
     private readonly DefectWebhookService _webhookService;
     private readonly IOpenPlatformService _openPlatformService;
+    private readonly ILLMRequestContextAccessor _llmRequestContext;
+    private readonly IConfiguration _config;
     private static readonly TimeSpan ClientBindingTtl = TimeSpan.FromDays(3);
 
     public DefectAgentController(
@@ -41,7 +44,9 @@ public class DefectAgentController : ControllerBase
         IAssetStorage assetStorage,
         ICacheManager cache,
         DefectWebhookService webhookService,
-        IOpenPlatformService openPlatformService)
+        IOpenPlatformService openPlatformService,
+        ILLMRequestContextAccessor llmRequestContext,
+        IConfiguration config)
     {
         _db = db;
         _gateway = gateway;
@@ -50,6 +55,8 @@ public class DefectAgentController : ControllerBase
         _cache = cache;
         _webhookService = webhookService;
         _openPlatformService = openPlatformService;
+        _llmRequestContext = llmRequestContext;
+        _config = config;
     }
 
     private string GetUserId()
@@ -553,6 +560,34 @@ public class DefectAgentController : ControllerBase
     }
 
     /// <summary>
+    /// 修改缺陷严重程度（报告人、受理人或管理员均可操作）
+    /// </summary>
+    [HttpPatch("defects/{id}/severity")]
+    public async Task<IActionResult> UpdateDefectSeverity(string id, [FromBody] UpdateSeverityRequest request, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var isAdmin = HasManagePermission();
+
+        var defect = await _db.DefectReports.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (defect == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "缺陷不存在"));
+
+        if (!isAdmin && defect.ReporterId != userId && defect.AssigneeId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限修改严重程度"));
+
+        var validSeverities = new[] { DefectSeverity.Blocker, DefectSeverity.Critical, DefectSeverity.Major, DefectSeverity.Minor, DefectSeverity.Suggestion };
+        if (string.IsNullOrWhiteSpace(request.Severity) || !validSeverities.Contains(request.Severity))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的严重程度"));
+
+        defect.Severity = request.Severity;
+        defect.UpdatedAt = DateTime.UtcNow;
+
+        await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new { defect }));
+    }
+
+    /// <summary>
     /// 删除缺陷（软删除，移入回收站）
     /// </summary>
     [HttpDelete("defects/{id}")]
@@ -972,8 +1007,12 @@ public class DefectAgentController : ControllerBase
         if (defect == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "缺陷不存在"));
 
-        // 允许任何可见用户拒绝
-        if (!isAdmin && defect.ReporterId != userId && defect.AssigneeId != userId)
+        // 报告人不能驳回自己提交的缺陷（应使用撤销操作）
+        if (defect.ReporterId == userId && !isAdmin)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不能驳回自己提交的缺陷，如需取消请使用关闭功能"));
+
+        // 允许受理人或管理员拒绝
+        if (!isAdmin && defect.AssigneeId != userId)
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限拒绝"));
 
         if (string.IsNullOrWhiteSpace(request.Reason))
@@ -2403,7 +2442,7 @@ public class DefectAgentController : ControllerBase
                 Method = method,
                 Path = path,
                 Query = query,
-                AbsoluteUrl = $"{Request.Scheme}://{Request.Host}{path}{query ?? ""}",
+                AbsoluteUrl = $"{Request.ResolveServerUrl(_config)}{path}{query ?? ""}",
                 RequestBodyRedacted = "[redacted]",
                 StatusCode = statusCode,
                 ErrorCode = errorCode,
@@ -3365,6 +3404,15 @@ public class DefectAgentController : ControllerBase
             }
 
             // 获取 LLM 客户端（使用注册的 AppCallerCode）
+            using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+                RequestId: Guid.NewGuid().ToString("N"),
+                GroupId: null, SessionId: null,
+                UserId: GetUserId(),
+                ViewRole: null, DocumentChars: null, DocumentHash: null,
+                SystemPromptRedacted: null,
+                RequestType: "chat",
+                AppCallerCode: AppCallerRegistry.DefectAgent.Polish.Chat,
+                ModelResolutionType: null));
             var client = _gateway.CreateClient(AppCallerRegistry.DefectAgent.Polish.Chat, "chat");
 
             // 构建用户消息（包含截图分析描述）
@@ -3446,6 +3494,15 @@ public class DefectAgentController : ControllerBase
 
 请用简洁准确的语言描述截图中展示的缺陷内容（2-5句话）。直接输出描述，不要添加前缀或解释。";
 
+            using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+                RequestId: Guid.NewGuid().ToString("N"),
+                GroupId: null, SessionId: null,
+                UserId: GetUserId(),
+                ViewRole: null, DocumentChars: null, DocumentHash: null,
+                SystemPromptRedacted: null,
+                RequestType: "vision",
+                AppCallerCode: AppCallerRegistry.DefectAgent.AnalyzeImage.Vision,
+                ModelResolutionType: null));
             var client = _gateway.CreateClient(AppCallerRegistry.DefectAgent.AnalyzeImage.Vision, "vision");
 
             var messages = new List<LLMMessage>
@@ -3771,6 +3828,11 @@ public class ResolveDefectRequest
 public class RejectDefectRequest
 {
     public string Reason { get; set; } = string.Empty;
+}
+
+public class UpdateSeverityRequest
+{
+    public string Severity { get; set; } = string.Empty;
 }
 
 public class DefectSendMessageRequest

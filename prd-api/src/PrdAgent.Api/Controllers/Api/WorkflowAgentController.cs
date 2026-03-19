@@ -1271,7 +1271,7 @@ public class WorkflowAgentController : ControllerBase
             Mode = request.Mode ?? "full",
         };
 
-        var result = await _aiFillService.FillAsync(input, CancellationToken.None);
+        var result = await _aiFillService.FillAsync(input, GetUserId(), CancellationToken.None);
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -1617,6 +1617,7 @@ public class WorkflowAgentController : ControllerBase
                 ["temperature"] = 0.2,
                 ["stream"] = true,
             },
+            Context = new GatewayRequestContext { UserId = userId },
         };
 
         try

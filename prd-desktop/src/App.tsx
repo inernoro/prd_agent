@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { invoke, isTauri, listen } from './lib/tauri';
 import { useSessionStore } from './stores/sessionStore';
 import { useAuthStore } from './stores/authStore';
@@ -64,7 +64,6 @@ function App() {
   const groupsLoading = useGroupListStore((s) => s.loading);
   const refreshBranding = useDesktopBrandingStore((s) => s.refresh);
   const windowTitle = useDesktopBrandingStore((s) => s.branding.windowTitle);
-  const [isThemeTransitioning, setIsThemeTransitioning] = useState(false);
   const [isDark, setIsDark] = useState(() => {
     const stored = readStoredTheme();
     if (stored) return stored === 'dark';
@@ -216,10 +215,7 @@ function App() {
     }
   };
 
-  const onToggleTheme = () => {
-    // 过渡进行中则忽略，避免连点造成状态错乱
-    if (isThemeTransitioning) return;
-
+  const onToggleTheme = (e?: React.MouseEvent) => {
     // 无动画偏好：直接切换
     try {
       const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -231,25 +227,31 @@ function App() {
       // ignore
     }
 
-    // 直接线性过渡到目标主题颜色：不使用遮罩，避免“白->黑->白”闪烁
-    const DURATION_MS = 520;
-    setIsThemeTransitioning(true);
-    try {
-      document.documentElement.classList.add('theme-transitioning');
-    } catch {
-      // ignore
+    // 计算按钮中心坐标作为水波纹原点
+    let x = window.innerWidth / 2, y = 0;
+    if (e) {
+      const btn = (e.currentTarget || e.target) as HTMLElement;
+      const rect = btn.getBoundingClientRect();
+      x = rect.left + rect.width / 2;
+      y = rect.top + rect.height / 2;
     }
 
-    applyTheme(!isDark);
+    // 计算覆盖全屏所需的最大半径
+    const maxRadius = Math.ceil(Math.sqrt(
+      Math.max(x, window.innerWidth - x) ** 2 +
+      Math.max(y, window.innerHeight - y) ** 2
+    ));
 
-    window.setTimeout(() => {
-      try {
-        document.documentElement.classList.remove('theme-transitioning');
-      } catch {
-        // ignore
-      }
-      setIsThemeTransitioning(false);
-    }, DURATION_MS);
+    document.documentElement.style.setProperty('--ripple-x', `${x}px`);
+    document.documentElement.style.setProperty('--ripple-y', `${y}px`);
+    document.documentElement.style.setProperty('--ripple-radius', `${maxRadius}px`);
+
+    // View Transition API 水波纹扩散，自动降级到瞬时切换
+    if (document.startViewTransition) {
+      document.startViewTransition(() => applyTheme(!isDark));
+    } else {
+      applyTheme(!isDark);
+    }
   };
 
   // 将持久化的 token 同步到 Rust（避免重启后 Rust 侧没有 token 导致请求 401）

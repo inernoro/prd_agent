@@ -64,6 +64,13 @@ export interface BuildProfile {
    * Derived from compose label `cds.readiness-path`.
    */
   readinessProbe?: ReadinessProbe;
+  /**
+   * Startup signal — a string pattern to watch for in container stdout/stderr.
+   * When this pattern appears in the logs, the service is considered successfully started.
+   * Example: 'API listening on: ["http://0.0.0.0:5000"]' for .NET, '➜  Network:' for Vite.
+   * Takes priority over readinessProbe when set.
+   */
+  startupSignal?: string;
 }
 
 /** Readiness probe configuration for app services */
@@ -93,7 +100,7 @@ export interface BranchEntry {
   /** Per-profile container state */
   services: Record<string, ServiceState>;
   /** Overall branch status */
-  status: 'idle' | 'building' | 'starting' | 'running' | 'error';
+  status: 'idle' | 'building' | 'starting' | 'running' | 'stopping' | 'error';
   errorMessage?: string;
   createdAt: string;
   lastAccessedAt?: string;
@@ -103,6 +110,8 @@ export interface BranchEntry {
   notes?: string;
   /** User tags — labels for filtering and categorization */
   tags?: string[];
+  /** Color marker — marks branch as actively debugging, prevents priority stop */
+  isColorMarked?: boolean;
   /** ID of the executor this branch is deployed on (scheduler mode) */
   executorId?: string;
 }
@@ -113,7 +122,7 @@ export interface ServiceState {
   containerName: string;
   /** Host port allocated for this service */
   hostPort: number;
-  status: 'idle' | 'building' | 'starting' | 'running' | 'stopped' | 'error';
+  status: 'idle' | 'building' | 'starting' | 'running' | 'stopping' | 'stopped' | 'error';
   buildLog?: string;
   errorMessage?: string;
 }

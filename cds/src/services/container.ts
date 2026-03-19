@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService, ReadinessProbe } from '../types.js';
+import { spawn } from 'node:child_process';
+import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { resolveEnvTemplates } from './compose-parser.js';
 
@@ -193,49 +194,50 @@ export class ContainerService {
   }
 
   /**
-   * Phase 2: Readiness probe — poll an HTTP endpoint to determine when the
-   * service is truly ready to serve traffic (not just "container alive").
-   *
-   * This runs in the background after deploy returns. The caller should set
-   * service status to 'starting' before calling, and update to 'running' on success.
-   *
-   * Returns true if service became ready, false if timed out (not an error).
+   * Phase 2 alternative: Watch container logs for a startup signal string.
+   * Monitors docker logs in real-time; resolves true when the signal appears,
+   * false on timeout. More reliable than HTTP probes for services that print
+   * a known banner on successful startup.
    */
-  async waitForServiceReady(
-    hostPort: number,
-    probe: ReadinessProbe,
+  async waitForStartupSignal(
+    containerName: string,
+    signal: string,
     onOutput?: (chunk: string) => void,
+    timeoutSeconds = 300,
   ): Promise<boolean> {
-    const probePath = probe.path || '/';
-    const interval = (probe.intervalSeconds || 5) * 1000;
-    const timeout = (probe.timeoutSeconds || 300) * 1000;
-    const url = `http://127.0.0.1:${hostPort}${probePath}`;
-    const deadline = Date.now() + timeout;
-    let attempt = 0;
+    return new Promise<boolean>((resolve) => {
+      const timeout = setTimeout(() => {
+        child.kill();
+        onOutput?.(`── 启动信号超时 (${timeoutSeconds}s)，未检测到: "${signal}" ──\n`);
+        resolve(false);
+      }, timeoutSeconds * 1000);
 
-    while (Date.now() < deadline) {
-      attempt++;
-      await new Promise(r => setTimeout(r, interval));
+      const child = spawn('docker', ['logs', '-f', containerName], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
 
-      try {
-        const res = await fetch(url, {
-          method: 'GET',
-          signal: AbortSignal.timeout(5000),
-          redirect: 'follow',
-        });
-        // Any HTTP response (even 404) means the server is up and serving
-        onOutput?.(`── 就绪检查 #${attempt}: HTTP ${res.status} ✓ ──\n`);
-        return true;
-      } catch {
-        // Connection refused, timeout, etc. — service not ready yet
-        if (attempt <= 3 || attempt % 6 === 0) {
-          onOutput?.(`── 就绪检查 #${attempt}: 等待服务响应... ──\n`);
+      let resolved = false;
+      const checkChunk = (data: Buffer) => {
+        if (resolved) return;
+        const text = data.toString();
+        if (text.includes(signal)) {
+          resolved = true;
+          clearTimeout(timeout);
+          child.kill();
+          onOutput?.(`── 检测到启动信号: "${signal}" ✓ ──\n`);
+          resolve(true);
         }
-      }
-    }
+      };
 
-    onOutput?.(`── 就绪检查超时 (${probe.timeoutSeconds || 300}s)，服务可能仍在启动中 ──\n`);
-    return false;
+      child.stdout?.on('data', checkChunk);
+      child.stderr?.on('data', checkChunk);
+      child.on('error', () => {
+        if (!resolved) { clearTimeout(timeout); resolve(false); }
+      });
+      child.on('exit', () => {
+        if (!resolved) { clearTimeout(timeout); resolve(false); }
+      });
+    });
   }
 
   async stop(containerName: string): Promise<void> {
@@ -250,7 +252,7 @@ export class ContainerService {
     return result.exitCode === 0 && result.stdout.trim() === 'true';
   }
 
-  async getLogs(containerName: string, tail = 100): Promise<string> {
+  async getLogs(containerName: string, tail = 500): Promise<string> {
     const result = await this.shell.exec(`docker logs --tail ${tail} ${containerName}`);
     return combinedOutput(result);
   }

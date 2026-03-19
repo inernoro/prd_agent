@@ -527,10 +527,11 @@ export function DefectSubmitPanel() {
               onFocus={() => setFocused(true)}
               onBlur={() => setFocused(false)}
               placeholder={'描述您发现的问题...\n\n第一行将作为标题\n\n支持粘贴截图或拖拽文件\n\n提示：点击右下角 AI 按钮可自动润色内容'}
-              className="flex-1 min-h-0 p-4 text-[13px] resize-none outline-none no-focus-ring"
+              className="flex-1 p-4 text-[13px] resize-none outline-none no-focus-ring"
               style={{
                 background: 'transparent',
                 color: 'var(--text-primary)',
+                minHeight: '200px',
               }}
             />
 
