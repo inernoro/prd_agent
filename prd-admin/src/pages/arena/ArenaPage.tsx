@@ -833,21 +833,24 @@ export function ArenaPage() {
       },
     });
 
-    abortRef.current = null;
-
     if (!result.success && !abortController.signal.aborted) {
       // Connection lost — check if run is still active and auto-reconnect
+      // Keep abortRef alive so the reconnect guard can check it
       try {
         const runRes = await getArenaRun(runId);
         if (runRes.success && runRes.data) {
           const status = runRes.data.status as string;
           if (status === 'Running' || status === 'Queued') {
             setTimeout(() => {
-              subscribeToRunStream(runId, afterSeqRef.current);
+              // Guard: skip reconnect if user already started a new battle or aborted
+              if (abortRef.current?.signal.aborted === false) {
+                subscribeToRunStream(runId, afterSeqRef.current);
+              }
             }, 1000);
             return;
           }
           if (status === 'Done') {
+            abortRef.current = null;
             setAllDone(true);
             setIsStreaming(false);
             sessionStorage.removeItem(ARENA_RUN_STORAGE_KEY);
@@ -859,7 +862,10 @@ export function ArenaPage() {
       } catch {
         // ignore
       }
+      abortRef.current = null;
       toast.error('流式连接中断', result.errorMessage ?? '网络错误');
+    } else {
+      abortRef.current = null;
     }
   }
 
