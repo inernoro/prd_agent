@@ -194,26 +194,18 @@ const PRD_MD_STYLE = `
     75%  { opacity: 1; }
     100% { opacity: 0; }
   }
-  /* Safari < 17.2: @property 不支持，conic-gradient 角度无法动画化。
-     降级为静态渐变边框 + 淡入淡出，避免 transform:rotate 导致矩形溢出 */
+  /* Safari < 17.2: @property 不支持 + mask-composite 可能失效。
+     降级：隐藏伪元素，改用 box-shadow 做发光边框，纯 box-shadow 无需 mask */
   @supports not (syntax: '<angle>') {
-    .marker-card-glow-entrance::before {
-      background: linear-gradient(
-        135deg,
-        rgba(168, 85, 247, 0.5),
-        rgba(99, 102, 241, 0.7),
-        rgba(147, 197, 253, 0.5)
-      ) !important;
-      animation: marker-glow-sweep 2s ease-out forwards !important;
-    }
+    .marker-card-glow-entrance::before,
     .marker-card-glow-entrance::after {
-      background: linear-gradient(
-        135deg,
-        rgba(168, 85, 247, 0.1),
-        rgba(99, 102, 241, 0.2),
-        rgba(147, 197, 253, 0.1)
-      ) !important;
-      animation: marker-glow-sweep 2s ease-out forwards !important;
+      display: none !important;
+    }
+    .marker-card-glow-entrance {
+      box-shadow:
+        inset 0 0 0 1.5px rgba(99, 102, 241, 0.5),
+        0 0 12px rgba(99, 102, 241, 0.3),
+        0 0 28px rgba(168, 85, 247, 0.12);
     }
   }
 
