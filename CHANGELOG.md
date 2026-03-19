@@ -14,6 +14,7 @@
 |------|------|------|
 | fix | prd-api, prd-admin | LLM 日志用户信息增强：列表和筛选元数据接口补充 DisplayName 字段，前端显示格式改为"姓名 用户名" |
 | fix | prd-api | LLM 日志补全缺失的 UserId：ArenaRunWorker、DefectAgentController(polish/analyze-image)、ReportGenerationService、TeamSummaryService、VideoGenRunWorker |
+| feat | prd-api | LlmRequestLogWriter 写入时检测 UserId 为空自动输出 Warning 日志，防止未来新增调用路径遗漏 |
 
 ### 2026-03-18
 
