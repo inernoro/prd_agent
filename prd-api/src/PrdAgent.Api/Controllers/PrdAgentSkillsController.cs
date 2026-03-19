@@ -630,15 +630,6 @@ public class PrdAgentSkillsController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { skillKey = created.SkillKey }));
     }
 
-    /// <summary>
-    /// 从 prompt_stages 迁移到 skills（管理员操作）
-    /// </summary>
-    [HttpPost("migrate-prompts")]
-    public async Task<IActionResult> MigratePrompts(CancellationToken ct)
-    {
-        var count = await _skillService.MigrateFromPromptsAsync(ct);
-        return Ok(ApiResponse<object>.Ok(new { migratedCount = count }));
-    }
 }
 
 /// <summary>创建/更新技能的请求体</summary>
