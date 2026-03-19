@@ -10,16 +10,21 @@ public static class HttpRequestExtensions
 {
     /// <summary>
     /// 解析服务器的外部可访问 URL。
-    /// 优先级：配置 ServerUrl > X-Forwarded-Host/Proto > Origin > Request.Host
+    /// 优先级：X-Client-Base-Url（前端传递）> 配置 ServerUrl > X-Forwarded-Host/Proto > Origin > Request.Host
     /// </summary>
     public static string ResolveServerUrl(this HttpRequest request, IConfiguration config)
     {
-        // 1. 优先使用显式配置
+        // 1. 前端显式传递（前端最清楚自己的真实域名）
+        var clientBaseUrl = request.Headers["X-Client-Base-Url"].FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(clientBaseUrl))
+            return clientBaseUrl.TrimEnd('/');
+
+        // 2. 显式配置（环境变量 / appsettings）
         var configured = config["ServerUrl"];
         if (!string.IsNullOrWhiteSpace(configured))
             return configured.TrimEnd('/');
 
-        // 2. X-Forwarded-Host (反向代理 / Docker / CDS)
+        // 3. X-Forwarded-Host (反向代理 / Docker / CDS)
         var forwardedHost = request.Headers["X-Forwarded-Host"].FirstOrDefault();
         if (!string.IsNullOrWhiteSpace(forwardedHost))
         {
@@ -27,12 +32,12 @@ public static class HttpRequestExtensions
             return $"{forwardedScheme}://{forwardedHost.Split(',')[0].Trim()}";
         }
 
-        // 3. Origin header (浏览器请求会带)
+        // 4. Origin header (浏览器请求会带)
         var origin = request.Headers.Origin.FirstOrDefault();
         if (!string.IsNullOrWhiteSpace(origin))
             return origin.TrimEnd('/');
 
-        // 4. Fallback: Request.Host
+        // 5. Fallback: Request.Host
         return $"{request.Scheme}://{request.Host}";
     }
 }
