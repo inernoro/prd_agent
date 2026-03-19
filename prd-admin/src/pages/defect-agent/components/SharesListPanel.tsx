@@ -7,6 +7,7 @@ import { api } from '@/services/api';
 import { useSseStream } from '@/lib/useSseStream';
 import { SseStreamPanel } from '@/components/sse';
 import { toast } from '@/lib/toast';
+import { useAuthStore } from '@/stores/authStore';
 import { systemDialog } from '@/lib/systemDialog';
 import { glassPanel } from '@/lib/glassStyles';
 import { DefectFixReportPanel } from './DefectFixReportPanel';
@@ -82,15 +83,23 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
   const handleCopy = (share: DefectShareLink) => {
     const baseUrl = window.location.origin;
     const viewUrl = `${baseUrl}/api/defect-agent/share/view/${share.token}`;
+    const token = useAuthStore.getState().token ?? '<your-access-key>';
 
     const prompt = [
       `## 缺陷修复任务`,
       ``,
       `我有 ${share.defectIds?.length || '若干'} 个软件缺陷需要你帮忙分析和修复。`,
       ``,
+      `### 认证信息`,
+      ``,
+      `所有请求都需要携带以下 Header：`,
+      `\`\`\``,
+      `Authorization: Bearer ${token}`,
+      `\`\`\``,
+      ``,
       `### 操作步骤`,
       ``,
-      `1. **获取缺陷数据**（Header 添加 \`Authorization: Bearer <your-access-key>\`）：`,
+      `1. **获取缺陷数据**：`,
       `   \`\`\``,
       `   GET ${viewUrl}`,
       `   \`\`\``,
@@ -102,7 +111,6 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
       `   \`\`\``,
       `   POST ${viewUrl}/report`,
       `   Content-Type: application/json`,
-      `   Authorization: Bearer <your-access-key>`,
       `   `,
       `   { "agentName": "你的名称", "items": [{ "defectId": "...", "confidenceScore": 85, "analysis": "分析内容", "fixSuggestion": "修复建议" }] }`,
       `   \`\`\``,
@@ -113,7 +121,6 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
       `   \`\`\``,
       `   POST ${viewUrl}/fix-status`,
       `   Content-Type: application/json`,
-      `   Authorization: Bearer <your-access-key>`,
       `   `,
       `   { "items": [{ "defectId": "...", "resolution": "修复说明" }] }`,
       `   \`\`\``,
@@ -122,7 +129,7 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
     ].join('\n');
 
     navigator.clipboard.writeText(prompt).catch(() => {});
-    toast.success('已复制 AI 提示词到剪贴板');
+    toast.success('已复制 AI 提示词到剪贴板（含认证信息）');
   };
 
   /** 启动 SSE 流式评分 */
