@@ -49,8 +49,10 @@ import {
   Layers,
   Swords,
   Info,
+  File,
   Workflow as WorkflowIcon,
 } from 'lucide-react';
+import { uploadAttachment } from '@/services/real/aiToolbox';
 
 // 图标组件映射
 const ICON_MAP: Record<string, LucideIcon> = {
@@ -145,6 +147,15 @@ export function ToolEditor() {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [workflowsLoading, setWorkflowsLoading] = useState(false);
   const [wfDropdownOpen, setWfDropdownOpen] = useState(false);
+  const [knowledgeFiles, setKnowledgeFiles] = useState<Array<{
+    id: string;
+    fileName: string;
+    mimeType: string;
+    size: number;
+    attachmentId?: string;
+    status: 'uploading' | 'done' | 'error';
+  }>>([]);
+  const knowledgeFileInputRef = useRef<HTMLInputElement>(null);
   const wfDropdownRef = useRef<HTMLDivElement>(null);
 
   // 当启用工作流能力时加载工作流列表
@@ -231,6 +242,45 @@ export function ToolEditor() {
   const removeConversationStarter = (index: number) => {
     const newStarters = form.conversationStarters.filter((_, i) => i !== index);
     setForm({ ...form, conversationStarters: newStarters });
+  };
+
+  const handleKnowledgeFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    e.target.value = '';
+
+    for (const file of Array.from(files)) {
+      const tempId = Math.random().toString(36).slice(2, 11);
+      const entry = {
+        id: tempId,
+        fileName: file.name,
+        mimeType: file.type,
+        size: file.size,
+        status: 'uploading' as const,
+      };
+      setKnowledgeFiles(prev => [...prev, entry]);
+
+      try {
+        const result = await uploadAttachment(file);
+        if (result.success && result.data?.attachmentId) {
+          setKnowledgeFiles(prev => prev.map(f =>
+            f.id === tempId ? { ...f, attachmentId: result.data!.attachmentId, status: 'done' as const } : f
+          ));
+        } else {
+          setKnowledgeFiles(prev => prev.map(f =>
+            f.id === tempId ? { ...f, status: 'error' as const } : f
+          ));
+        }
+      } catch {
+        setKnowledgeFiles(prev => prev.map(f =>
+          f.id === tempId ? { ...f, status: 'error' as const } : f
+        ));
+      }
+    }
+  };
+
+  const removeKnowledgeFile = (id: string) => {
+    setKnowledgeFiles(prev => prev.filter(f => f.id !== id));
   };
 
   const toggleTool = (toolKey: string) => {
@@ -563,9 +613,62 @@ export function ToolEditor() {
           <label className="text-[12px] font-semibold" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>
             知识库
           </label>
+          {knowledgeFiles.length > 0 && (
+            <span
+              className="text-[10px] px-1.5 py-0.5 rounded"
+              style={{ background: 'rgba(34, 197, 94, 0.15)', color: 'rgb(74, 222, 128)' }}
+            >
+              {knowledgeFiles.filter(f => f.status === 'done').length} 个文件
+            </span>
+          )}
         </div>
-        <div
-          className="p-4 rounded-xl text-center cursor-pointer transition-all hover:border-green-500/30 group"
+
+        {/* 已上传的文件列表 */}
+        {knowledgeFiles.length > 0 && (
+          <div className="space-y-1.5 mb-3">
+            {knowledgeFiles.map((file) => (
+              <div
+                key={file.id}
+                className="flex items-center gap-2.5 px-3 py-2 rounded-lg"
+                style={{
+                  background: 'rgba(0, 0, 0, 0.15)',
+                  border: file.status === 'error'
+                    ? '1px solid rgba(239, 68, 68, 0.25)'
+                    : '1px solid rgba(255, 255, 255, 0.06)',
+                }}
+              >
+                <File size={14} style={{
+                  color: file.status === 'error' ? 'rgb(239, 68, 68)'
+                    : file.status === 'uploading' ? 'rgba(255, 255, 255, 0.4)'
+                    : 'rgb(74, 222, 128)',
+                }} />
+                <span className="flex-1 text-[11px] truncate" style={{ color: 'rgba(255, 255, 255, 0.8)' }}>
+                  {file.fileName}
+                </span>
+                <span className="text-[10px] flex-shrink-0" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>
+                  {(file.size / 1024).toFixed(0)} KB
+                </span>
+                {file.status === 'uploading' && (
+                  <Loader2 size={12} className="animate-spin flex-shrink-0" style={{ color: 'rgba(255, 255, 255, 0.4)' }} />
+                )}
+                {file.status === 'error' && (
+                  <span className="text-[10px] flex-shrink-0" style={{ color: 'rgb(239, 68, 68)' }}>失败</span>
+                )}
+                <button
+                  onClick={() => removeKnowledgeFile(file.id)}
+                  className="p-1 rounded hover:bg-white/10 transition-colors flex-shrink-0"
+                >
+                  <X size={12} style={{ color: 'rgba(255, 255, 255, 0.4)' }} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={() => knowledgeFileInputRef.current?.click()}
+          className="w-full p-4 rounded-xl text-center cursor-pointer transition-all hover:border-green-500/30 group"
           style={{
             background: 'linear-gradient(180deg, rgba(34, 197, 94, 0.04) 0%, transparent 100%)',
             border: '1px dashed rgba(34, 197, 94, 0.2)',
@@ -584,9 +687,17 @@ export function ToolEditor() {
             上传文档或连接知识库
           </div>
           <div className="text-[10px] mt-1" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>
-            支持 PDF、Word、TXT 等格式
+            支持 PDF、Word、Excel、PPT、TXT 等格式
           </div>
-        </div>
+        </button>
+        <input
+          ref={knowledgeFileInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          accept=".pdf,.doc,.docx,.txt,.md,.json,.csv,.xlsx,.xls,.ppt,.pptx"
+          onChange={handleKnowledgeFileSelect}
+        />
       </div>
     </div>
   );

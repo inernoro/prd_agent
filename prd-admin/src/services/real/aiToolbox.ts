@@ -336,6 +336,39 @@ export async function triggerAgentWorkflow(
   );
 }
 
+// ============ Attachment Upload ============
+
+export interface UploadedAttachment {
+  attachmentId: string;
+  url: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+}
+
+/**
+ * 上传附件文件（PDF/Word/Excel/PPT/图片等）
+ */
+export async function uploadAttachment(file: File): Promise<ApiResponse<UploadedAttachment>> {
+  const token = useAuthStore.getState().token;
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const fd = new FormData();
+  fd.append('file', file);
+
+  const rawBase = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').trim().replace(/\/+$/, '');
+  const url = rawBase ? `${rawBase}/api/v1/attachments` : '/api/v1/attachments';
+
+  const res = await fetch(url, { method: 'POST', headers, body: fd });
+  const text = await res.text();
+  try {
+    return JSON.parse(text) as ApiResponse<UploadedAttachment>;
+  } catch {
+    return { success: false, error: { code: 'PARSE_ERROR', message: text || '上传失败' } } as any;
+  }
+}
+
 // ============ Direct Chat (SSE Streaming) ============
 
 export interface DirectChatMessage {
@@ -353,6 +386,7 @@ export function streamDirectChat(
     agentKey?: string;
     itemId?: string;
     history?: DirectChatMessage[];
+    attachmentIds?: string[];
     onText: (content: string) => void;
     onError?: (error: string) => void;
     onDone?: () => void;
@@ -380,6 +414,7 @@ export function streamDirectChat(
           agentKey: options.agentKey,
           itemId: options.itemId,
           history: options.history,
+          attachmentIds: options.attachmentIds,
         }),
         signal: abortController.signal,
       });
