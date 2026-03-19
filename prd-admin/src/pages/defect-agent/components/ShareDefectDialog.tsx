@@ -51,7 +51,7 @@ export function ShareDefectDialog({ open, onClose, defectId, defectIds }: ShareD
       if (res.success && res.data) {
         const fullUrl = `${window.location.origin}${res.data.shareUrl}`;
         setShareUrl(fullUrl);
-        navigator.clipboard.writeText(fullUrl).catch(() => {});
+        navigator.clipboard.writeText(buildAgentPrompt(fullUrl)).catch(() => {});
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
       } else {
@@ -65,7 +65,8 @@ export function ShareDefectDialog({ open, onClose, defectId, defectIds }: ShareD
   };
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(shareUrl).catch(() => {});
+    const prompt = buildAgentPrompt(shareUrl);
+    navigator.clipboard.writeText(prompt).catch(() => {});
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -177,7 +178,7 @@ export function ShareDefectDialog({ open, onClose, defectId, defectIds }: ShareD
             </div>
 
             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-              将此链接发送给外部 AI Agent，Agent 可读取缺陷数据并提交修复分析报告。您将在收到报告时收到通知。
+              剪贴板已包含完整的 AI 提示词（含 API 地址和操作指引），直接粘贴给 AI Agent 即可开始修复。
             </p>
 
             <Button variant="secondary" size="md" onClick={handleClose} className="w-full">
@@ -188,6 +189,38 @@ export function ShareDefectDialog({ open, onClose, defectId, defectIds }: ShareD
       }
     />
   );
+}
+
+function buildAgentPrompt(viewUrl: string): string {
+  return [
+    `## 缺陷修复任务`,
+    ``,
+    `我有软件缺陷需要你帮忙分析和修复。`,
+    ``,
+    `### 操作步骤`,
+    ``,
+    `1. **获取缺陷数据**（Header 添加 \`Authorization: Bearer <your-access-key>\`）：`,
+    `   \`\`\``,
+    `   GET ${viewUrl}`,
+    `   \`\`\``,
+    `   响应包含缺陷列表、附件截图 URL、后续 API 端点说明。`,
+    ``,
+    `2. **分析缺陷**：阅读描述和截图，生成修复计划。`,
+    ``,
+    `3. **提交分析报告**（可选）：`,
+    `   \`\`\``,
+    `   POST ${viewUrl}/report`,
+    `   { "agentName": "你的名称", "items": [{ "defectId": "...", "confidenceScore": 85, "analysis": "分析内容", "fixSuggestion": "修复建议" }] }`,
+    `   \`\`\``,
+    ``,
+    `4. **执行修复**后调用接口通知提交者：`,
+    `   \`\`\``,
+    `   POST ${viewUrl}/fix-status`,
+    `   { "items": [{ "defectId": "...", "resolution": "修复说明" }] }`,
+    `   \`\`\``,
+    ``,
+    `请先调用步骤 1 获取缺陷数据，然后告诉我修复计划。`,
+  ].join('\n');
 }
 
 function ScopeBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {

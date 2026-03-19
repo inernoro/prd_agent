@@ -1,10 +1,10 @@
-import { Loader2, Pencil, Plus, Trash, Wand2 } from 'lucide-react';
-import { useCallback, useRef, useState } from 'react';
+import { Pencil, Plus, Trash, Wand2 } from 'lucide-react';
+import { useCallback, useState } from 'react';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { SparkleButton } from '@/components/effects/SparkleButton';
-import { readSseStream } from '@/lib/sse';
-import { useAuthStore } from '@/stores/authStore';
+import { useSseStream } from '@/lib/useSseStream';
+import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
 import { toast } from '@/lib/toast';
 import type { QuickActionConfig } from '@/services/contracts/userPreferences';
 import { MAX_DIY_QUICK_ACTIONS } from './quickActionTypes';
@@ -20,13 +20,6 @@ function joinUrl(base: string, path: string) {
   if (!b) return `/${p}`;
   return `${b}/${p}`;
 }
-
-type PromptOptimizeStreamEvent = {
-  type: 'start' | 'delta' | 'done' | 'error';
-  content?: string;
-  errorCode?: string;
-  errorMessage?: string;
-};
 
 export type QuickActionConfigPanelProps = {
   open: boolean;
@@ -53,20 +46,31 @@ function QuickActionEditDialog({ open, onOpenChange, initial, onSubmit }: EditDi
   const isNew = !initial;
   const [name, setName] = useState(initial?.name ?? '');
   const [prompt, setPrompt] = useState(initial?.prompt ?? '');
-  const [optimizing, setOptimizing] = useState(false);
-  const optAbortRef = useRef<AbortController | null>(null);
-  const idRef = useRef(initial?.id ?? generateId());
+  const [editId, setEditId] = useState(initial?.id ?? generateId());
+
+  let accumulated = '';
+  const optStream = useSseStream({
+    url: joinUrl(getApiBaseUrl(), '/api/prompts/optimize/stream'),
+    method: 'POST',
+    onTyping: (text) => {
+      accumulated += text;
+      setPrompt(accumulated);
+    },
+    onDone: () => {
+      if (accumulated.trim()) toast.success('提示词优化完成');
+    },
+    onError: (msg) => toast.error(msg),
+  });
+  const optimizing = optStream.isStreaming;
 
   // 当 initial 变化时重置表单
-  const prevInitialRef = useRef(initial);
-  if (initial !== prevInitialRef.current) {
-    prevInitialRef.current = initial;
+  const [prevInitial, setPrevInitial] = useState(initial);
+  if (initial !== prevInitial) {
+    setPrevInitial(initial);
     setName(initial?.name ?? '');
     setPrompt(initial?.prompt ?? '');
-    setOptimizing(false);
-    optAbortRef.current?.abort();
-    optAbortRef.current = null;
-    idRef.current = initial?.id ?? generateId();
+    setEditId(initial?.id ?? generateId());
+    optStream.abort();
   }
 
   const handleOptimize = useCallback(async () => {
@@ -75,85 +79,18 @@ function QuickActionEditDialog({ open, onOpenChange, initial, onSubmit }: EditDi
       toast.warning('请先输入提示词内容');
       return;
     }
-    const token = useAuthStore.getState().token;
-    if (!token) {
-      toast.error('未登录');
-      return;
-    }
 
-    optAbortRef.current?.abort();
-    const ac = new AbortController();
-    optAbortRef.current = ac;
-    setOptimizing(true);
-
-    let accumulated = '';
-    let res: Response;
-    try {
-      const url = joinUrl(getApiBaseUrl(), '/api/prompts/optimize/stream');
-      res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          Accept: 'text/event-stream',
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          promptKey: 'visual-agent.quick-action',
-          order: 1,
-          role: 'PM',
-          title: name || '快捷指令优化',
-          promptTemplate: promptText,
-          mode: 'strict',
-        }),
-        signal: ac.signal,
-      });
-    } catch (e) {
-      if (ac.signal.aborted) return;
-      toast.error(`请求失败：${e instanceof Error ? e.message : '网络错误'}`);
-      setOptimizing(false);
-      optAbortRef.current = null;
-      return;
-    }
-
-    if (!res.ok) {
-      const t = await res.text().catch(() => '');
-      toast.error(t || `HTTP ${res.status} ${res.statusText}`);
-      setOptimizing(false);
-      optAbortRef.current = null;
-      return;
-    }
-
-    try {
-      await readSseStream(
-        res,
-        (evt) => {
-          if (!evt.data) return;
-          try {
-            const obj = JSON.parse(evt.data) as PromptOptimizeStreamEvent;
-            if (obj.type === 'delta' && obj.content) {
-              accumulated += obj.content;
-              setPrompt(accumulated);
-            } else if (obj.type === 'error') {
-              toast.error(obj.errorMessage || '优化失败');
-              setOptimizing(false);
-              optAbortRef.current = null;
-            } else if (obj.type === 'done') {
-              if (accumulated.trim()) toast.success('提示词优化完成');
-              setOptimizing(false);
-              optAbortRef.current = null;
-            }
-          } catch {
-            // ignore
-          }
-        },
-        ac.signal,
-      );
-    } finally {
-      if (ac.signal.aborted) {
-        setOptimizing(false);
-        optAbortRef.current = null;
-      }
-    }
+    accumulated = '';
+    await optStream.start({
+      body: {
+        promptKey: 'visual-agent.quick-action',
+        order: 1,
+        role: 'PM',
+        title: name || '快捷指令优化',
+        promptTemplate: promptText,
+        mode: 'strict',
+      },
+    });
   }, [prompt, name]);
 
   const handleSubmit = useCallback(() => {
@@ -168,7 +105,7 @@ function QuickActionEditDialog({ open, onOpenChange, initial, onSubmit }: EditDi
       return;
     }
     onSubmit({
-      id: idRef.current,
+      id: editId,
       name: trimmedName,
       prompt: trimmedPrompt,
       icon: initial?.icon ?? 'Wand2',
@@ -210,16 +147,12 @@ function QuickActionEditDialog({ open, onOpenChange, initial, onSubmit }: EditDi
           >
             提示词
           </label>
-          {optimizing ? (
-            <span
-              className="inline-flex items-center gap-1 text-[11px]"
-              style={{ color: 'rgba(99, 102, 241, 0.85)' }}
-            >
-              <Loader2 size={12} className="animate-spin" />
-              优化中…
-            </span>
-          ) : null}
         </div>
+        {optStream.phase !== 'idle' && (
+          <div className="mb-2">
+            <SsePhaseBar phase={optStream.phase} message={optStream.phaseMessage} />
+          </div>
+        )}
         <textarea
           className="w-full rounded-[8px] px-3 py-2.5 text-[13px] outline-none resize-none"
           style={{
@@ -264,11 +197,7 @@ function QuickActionEditDialog({ open, onOpenChange, initial, onSubmit }: EditDi
     <Dialog
       open={open}
       onOpenChange={(v) => {
-        if (!v) {
-          optAbortRef.current?.abort();
-          optAbortRef.current = null;
-          setOptimizing(false);
-        }
+        if (!v) optStream.abort();
         onOpenChange(v);
       }}
       title={isNew ? '新建快捷指令' : '编辑快捷指令'}
