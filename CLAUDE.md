@@ -12,6 +12,7 @@ prd_agent/
 ├── prd-admin/        # React 18 管理后台 (Vite)    → prd-admin/CLAUDE.md
 ├── prd-desktop/      # Tauri 2.0 桌面客户端        → prd-desktop/CLAUDE.md
 ├── prd-video/        # Remotion 视频合成
+├── changelogs/       # 更新记录碎片（每 PR 一个文件，发版时合并）
 ├── doc/              # 编号文档 (spec/design/plan/rule/guide/report)
 └── scripts/          # 构建/部署脚本
 ```
@@ -60,15 +61,28 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 完成开发任务后，**必须主动**使用 `task-handoff-checklist` 技能生成交接清单（涉及 3+ 文件变更、API 端点变更、或 UI 页面变更时）。1-2 个文件小修改无需生成。
 
-### 4. 更新记录维护
+### 4. 更新记录维护（Changelog Fragments）
 
-对 `prd-api/`、`prd-admin/`、`prd-desktop/`、`prd-video/` 的任何代码变更（feat/fix/refactor/perf），**提交前必须**在 `CHANGELOG.md` 的 `[未发布]` 区域追加记录。
+对 `prd-api/`、`prd-admin/`、`prd-desktop/`、`prd-video/` 的任何代码变更（feat/fix/refactor/perf），**提交前必须**在 `changelogs/` 目录创建碎片文件，**禁止直接编辑 `CHANGELOG.md`**。
 
-规则：
-- 按日期分组，当日已有同类型同模块条目时**合并**而非新增行
+#### 碎片文件规则
+
+- 文件名：`changelogs/YYYY-MM-DD_<短描述>.md`（如 `2026-03-19_safari-fix.md`）
+- 内容为纯表格行（无表头），每行一条记录：
+  ```
+  | feat | prd-admin | 新增XX功能 |
+  | fix | prd-api | 修复XX问题 |
+  ```
+- 同一 PR 的所有变更放在**一个碎片文件**中
 - 纯文档变更（`doc/`）、纯 CLAUDE.md 规则调整可选记录
-- 版本发布时将 `[未发布]` 条目包裹进 `## [x.y.z] - YYYY-MM-DD` 并补写 `用户更新项` 摘要
-- 格式详见 `CHANGELOG.md` 底部维护规则
+
+#### 发版合并
+
+版本发布时执行 `bash scripts/assemble-changelog.sh`，自动将碎片文件按日期合并进 `CHANGELOG.md` 的 `[未发布]` 区域并删除碎片文件。
+
+#### 为什么这样做
+
+多分支并行开发时，直接编辑 `CHANGELOG.md` 会在同一位置插入内容导致 **必然冲突**。碎片文件各自独立，彻底消除合并冲突。
 
 ---
 
@@ -92,16 +106,18 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 ## 质量保障技能链
 
 ```
-设计 → /risk → /trace → 实现 → /verify → /smoke → /handoff → /weekly
+需求 → /validate → 设计 → /risk → /trace → 实现 → /verify → /smoke → /preview → /handoff → /weekly
 ```
 
 | 技能 | 触发词 | 用途 |
 |------|--------|------|
+| **skill-validation** | `/validate` | 需求气味检测 + 雷同排查 + 七维度打分 |
 | **risk-matrix** | `/risk` | MECE 六维度风险评估 |
 | **flow-trace** | `/trace` | 全链路数据流追踪 |
 | **human-verify** | `/verify` | 多角度模拟验证 |
 | **smoke-test** | `/smoke` | 链式 curl 端到端测试 |
 | **task-handoff-checklist** | `/handoff` | 8 维度交接清单 |
+| **preview-url** | `/preview` | 分支名生成预览验收地址 |
 | **conflict-resolution** | `/resolve` | PR 前预合并 main |
 | **weekly-update-summary** | `/weekly` | git 历史生成周报 |
 | **doc-writer** | `/doc` | doc/ 文档类型守护 |
@@ -109,13 +125,16 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | **code-hygiene** | `/hygiene` | 9 维度代码卫生审计 |
 | **create-skill-file** | `/create-skill` | 技能创建 & 质量评分 |
 | **cds-project-scan** | `/cds-scan` | CDS compose YAML 生成 |
+| **theme-transition** | `/theme-transition` | 主题切换圆形过渡动效 (View Transition API) |
 
 ### 使用指引
 
-1. **方案评审时** → 先 `/risk` 评估风险，再 `/trace` 追踪关键链路
-2. **开发完成后** → 先 `/verify` 交叉验证，再 `/smoke-test` 跑端到端
-3. **提 PR 前** → `/resolve` 预合并主分支，AI 代替人类解决冲突
-4. **准备上线时** → `/handoff` 生成交接清单（涉及 3+ 文件时自动触发）
-5. **周五收尾时** → `/weekly` 生成本周总结（完成后自动触发 `/doc-sync`）
-6. **写文档时** → `/doc` 查看类型速查，或直接创建文档时自动套用模板
-7. **迁移/重构后** → `/hygiene`
+1. **新需求提出时** → `/validate` 验证需求质量和价值（中大型功能必跑）
+3. **方案评审时** → 先 `/risk` 评估风险，再 `/trace` 追踪关键链路
+4. **开发完成后** → 先 `/verify` 交叉验证，再 `/smoke-test` 跑端到端
+5. **需人工验收时** → `/preview` 生成预览地址，用户直接打开验收
+6. **提 PR 前** → `/resolve` 预合并主分支，AI 代替人类解决冲突
+7. **准备上线时** → `/handoff` 生成交接清单（涉及 3+ 文件时自动触发）
+8. **周五收尾时** → `/weekly` 生成本周总结（完成后自动触发 `/doc-sync`）
+9. **写文档时** → `/doc` 查看类型速查，或直接创建文档时自动套用模板
+10. **迁移/重构后** → `/hygiene`

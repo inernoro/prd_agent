@@ -9,8 +9,9 @@ import { DefectStatus, DefectSeverity } from '@/services/contracts/defectAgent';
 import {
   ArrowRight, Clock, Trash2, Check, Bug,
   AlertTriangle, AlertCircle, Info, MinusCircle,
-  MessageCircle, CheckCircle, Paperclip,
+  MessageCircle, CheckCircle, Paperclip, Image,
 } from 'lucide-react';
+import { ImagePreviewDialog } from '@/components/ui/ImagePreviewDialog';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
 
 interface DefectListRowProps {
@@ -61,6 +62,9 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
 
   const isArchived = defect.status === DefectStatus.Closed || defect.status === DefectStatus.Rejected;
   const attachmentCount = (defect.attachments || []).length;
+  const imageAttachments = (defect.attachments || []).filter((a) => a.mimeType?.startsWith('image/'));
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewIndex, setPreviewIndex] = useState(0);
 
   // 未读/已读状态标签逻辑（与 DefectCard 相同）
   const currentRole =
@@ -245,6 +249,7 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
   };
 
   return (
+    <>
     <div
       role="button"
       tabIndex={0}
@@ -300,6 +305,38 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
       >
         {title}
       </span>
+
+      {/* 图片预览缩略图 */}
+      {imageAttachments.length > 0 && (
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {imageAttachments.slice(0, 2).map((att, idx) => (
+            <div
+              key={att.id}
+              className="w-6 h-6 rounded overflow-hidden flex-shrink-0 cursor-pointer transition-all hover:ring-2 hover:ring-primary-500/50 hover:scale-110"
+              style={{ background: 'rgba(128,128,128,0.1)', border: '1px solid rgba(128,128,128,0.15)' }}
+              onClick={(e) => { e.stopPropagation(); setPreviewIndex(idx); setPreviewOpen(true); }}
+              title="点击预览图片"
+            >
+              {att.url ? (
+                <img src={att.url} alt={att.fileName} className="w-full h-full object-cover" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>
+                  <Image size={10} />
+                </div>
+              )}
+            </div>
+          ))}
+          {imageAttachments.length > 2 && (
+            <span
+              className="text-[10px] flex-shrink-0 cursor-pointer hover:underline"
+              style={{ color: 'var(--text-muted)' }}
+              onClick={(e) => { e.stopPropagation(); setPreviewIndex(0); setPreviewOpen(true); }}
+            >
+              +{imageAttachments.length - 2}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* 状态标签 */}
       {renderStatusBadge()}
@@ -384,5 +421,14 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
         )}
       </div>
     </div>
+    {imageAttachments.length > 0 && (
+      <ImagePreviewDialog
+        images={imageAttachments.map((a) => ({ url: a.url, alt: a.fileName }))}
+        initialIndex={previewIndex}
+        open={previewOpen}
+        onClose={() => setPreviewOpen(false)}
+      />
+    )}
+    </>
   );
 }

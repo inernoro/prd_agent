@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services;
@@ -898,33 +899,7 @@ public class ShortcutsController : ControllerBase
         return User.FindFirst("sub")?.Value ?? User.FindFirst("userId")?.Value;
     }
 
-    /// <summary>
-    /// 解析真实的 ServerUrl：优先配置 > X-Forwarded-* > Origin > Request.Host
-    /// Docker/反向代理场景下，读取 X-Forwarded-Host 避免返回 127.0.0.1
-    /// </summary>
-    private string ResolveServerUrl()
-    {
-        // 1. 优先使用显式配置
-        var configured = _config["ServerUrl"];
-        if (!string.IsNullOrWhiteSpace(configured))
-            return configured.TrimEnd('/');
-
-        // 2. X-Forwarded-Host (反向代理 / Docker)
-        var forwardedHost = Request.Headers["X-Forwarded-Host"].FirstOrDefault();
-        if (!string.IsNullOrWhiteSpace(forwardedHost))
-        {
-            var forwardedScheme = Request.Headers["X-Forwarded-Proto"].FirstOrDefault() ?? "https";
-            return $"{forwardedScheme}://{forwardedHost.Split(',')[0].Trim()}";
-        }
-
-        // 3. Origin header (浏览器请求会带)
-        var origin = Request.Headers.Origin.FirstOrDefault();
-        if (!string.IsNullOrWhiteSpace(origin))
-            return origin.TrimEnd('/');
-
-        // 4. Fallback: Request.Host
-        return $"{Request.Scheme}://{Request.Host}";
-    }
+    private string ResolveServerUrl() => Request.ResolveServerUrl(_config);
 
     private static string GenerateTaskId()
     {

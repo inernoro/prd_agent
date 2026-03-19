@@ -1,7 +1,9 @@
 import http from 'node:http';
+import zlib from 'node:zlib';
 import type { RoutingRule, BranchEntry, CdsConfig, BuildProfile } from '../types.js';
 import { StateService } from './state.js';
 import type { WorktreeService } from './worktree.js';
+import { buildWidgetScript } from '../widget-script.js';
 
 /**
  * ProxyService — the core of CDS worker port.
@@ -185,6 +187,19 @@ export class ProxyService {
     const host = req.headers.host || '';
     const url = req.url || '/';
 
+    // ── /_cds/api/* — passthrough to CDS Dashboard API (master port) ──
+    // Allows widgets embedded in proxied apps to call CDS API without CORS issues.
+    if (url.startsWith('/_cds/')) {
+      // Rewrite path: /_cds/api/branches → /api/branches
+      req.url = url.slice(5); // strip "/_cds" prefix
+      // Add internal header to bypass auth on master — this request comes
+      // from a widget embedded in a proxied app, not an external caller.
+      req.headers['x-cds-internal'] = '1';
+      const masterPort = this.config?.masterPort || 9900;
+      this.proxyRequest(req, res, `http://127.0.0.1:${masterPort}`);
+      return;
+    }
+
     // ── Switch domain: switch.example.com/<prefix>/<suffix> ──
     if (this.isSwitchDomain(host)) {
       this.handleSwitchRequest(req, res);
@@ -278,7 +293,7 @@ export class ProxyService {
     }
 
     console.log(`[proxy] ${req.method} ${req.url} → ${upstream} (branch=${branchSlug}, profile=${profileId || 'default'})`);
-    this.proxyRequest(req, res, upstream);
+    this.proxyRequest(req, res, upstream, { branchId: branchSlug, branchName: branchRef });
   }
 
   /**
@@ -326,10 +341,12 @@ export class ProxyService {
     // Resolve original branch name from state (preserve "/" and casing)
     let originalBranch = matchedSlug ? state.branches[matchedSlug]?.branch : null;
 
-    // If not found locally, try remote (full path first, then last segment)
+    // If not found locally, try remote (full path first, then last segment, then slug matching)
     if (!matchedSlug && this.worktreeService) {
       const remoteBranch = await this.worktreeService.findBranchBySuffix(fullPath)
-        || (fullPath !== lastSegment ? await this.worktreeService.findBranchBySuffix(lastSegment) : null);
+        || (fullPath !== lastSegment ? await this.worktreeService.findBranchBySuffix(lastSegment) : null)
+        || await this.worktreeService.findBranchBySlug(fullPath)
+        || (fullPath !== lastSegment ? await this.worktreeService.findBranchBySlug(lastSegment) : null);
       if (remoteBranch) {
         matchedSlug = StateService.slugify(remoteBranch);
         originalBranch = remoteBranch;  // keep original name like "claude/fix-login-password-issue-CQBMO"
@@ -460,7 +477,12 @@ export class ProxyService {
    * Proxy an HTTP request to an upstream URL.
    * Simple implementation using Node.js http module.
    */
-  private proxyRequest(clientReq: http.IncomingMessage, clientRes: http.ServerResponse, upstream: string): void {
+  private proxyRequest(
+    clientReq: http.IncomingMessage,
+    clientRes: http.ServerResponse,
+    upstream: string,
+    branchCtx?: { branchId: string; branchName: string },
+  ): void {
     const url = new URL(upstream);
     const options: http.RequestOptions = {
       hostname: url.hostname,
@@ -473,18 +495,71 @@ export class ProxyService {
       },
     };
 
+    // NOTE: Do NOT strip accept-encoding here. We handle decompression on the
+    // response side only for HTML responses that need widget injection.
+    // Non-HTML resources (JS/CSS/images) keep compression intact.
+
     const proxyReq = http.request(options, (proxyRes) => {
       const headers = { ...proxyRes.headers };
       // When routing via cookie (same URL serves different branches), prevent
       // browser disk-cache from mixing assets across branch switches.
-      // "no-store" is stronger than "no-cache" — it tells the browser to never
-      // reuse this response without a fresh fetch.
       if (clientReq.headers.cookie?.includes('cds_branch')) {
         headers['cache-control'] = 'no-store, must-revalidate';
         headers['vary'] = 'Cookie';
       }
-      clientRes.writeHead(proxyRes.statusCode || 502, headers);
-      proxyRes.pipe(clientRes, { end: true });
+
+      // ── Widget injection: only for HTML 200 responses with branch context ──
+      const contentType = proxyRes.headers['content-type'] || '';
+      const statusCode = proxyRes.statusCode || 200;
+      const isHtml = contentType.includes('text/html') && branchCtx && statusCode >= 200 && statusCode < 300;
+
+      if (isHtml) {
+        // Buffer the HTML response, decompress if needed, inject widget before </body>
+        const encoding = (proxyRes.headers['content-encoding'] || '').toLowerCase();
+        let stream: NodeJS.ReadableStream = proxyRes;
+
+        // Decompress if upstream sent compressed HTML
+        if (encoding === 'gzip') {
+          stream = proxyRes.pipe(zlib.createGunzip());
+        } else if (encoding === 'br') {
+          stream = proxyRes.pipe(zlib.createBrotliDecompress());
+        } else if (encoding === 'deflate') {
+          stream = proxyRes.pipe(zlib.createInflate());
+        }
+
+        const chunks: Buffer[] = [];
+        stream.on('data', (chunk: Buffer) => chunks.push(chunk));
+        stream.on('end', () => {
+          let body = Buffer.concat(chunks).toString('utf-8');
+          const widget = buildWidgetScript(branchCtx.branchId, branchCtx.branchName);
+
+          // Inject before </body> if present, otherwise append
+          const idx = body.lastIndexOf('</body>');
+          if (idx !== -1) {
+            body = body.slice(0, idx) + widget + body.slice(idx);
+          } else {
+            body += widget;
+          }
+
+          // Remove encoding headers (we decoded), recalculate content-length
+          delete headers['content-encoding'];
+          delete headers['transfer-encoding'];
+          headers['content-length'] = String(Buffer.byteLength(body, 'utf-8'));
+          clientRes.writeHead(statusCode, headers);
+          clientRes.end(body);
+        });
+        stream.on('error', () => {
+          // Decompression failed — passthrough original response without injection
+          if (!clientRes.headersSent) {
+            clientRes.writeHead(statusCode, proxyRes.headers);
+            clientRes.end();
+          }
+        });
+      } else {
+        // Non-HTML or non-2xx: passthrough as-is (compressed, chunked, etc.)
+        clientRes.writeHead(statusCode, headers);
+        proxyRes.pipe(clientRes, { end: true });
+      }
     });
 
     proxyReq.on('error', (err) => {

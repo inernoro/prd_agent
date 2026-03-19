@@ -36,6 +36,33 @@ export function GlowingCard({ title = 'Glowing shadows', label = 'cool', classNa
           inherits: true;
           initial-value: 0;
         }
+        /* Safari < 17.2 fallback: use transform rotate instead of custom property animation */
+        @supports not (syntax: '<number>') {
+          .glow-spot {
+            animation: glow-rotate-fallback var(--animation-speed) linear infinite !important;
+            transform-origin: center !important;
+          }
+          .glow-spot:after {
+            animation: glow-hue-fallback var(--animation-speed) linear infinite !important;
+          }
+          .glowing-card-inner:before {
+            animation: glow-hue-fallback var(--animation-speed) linear infinite !important;
+            background: #292929 radial-gradient(
+              30% 30% at 50% 50%,
+              hsl(260deg, 100%, 80%) 0%,
+              hsl(260deg, 100%, 60%) 40%,
+              transparent 100%
+            ) !important;
+          }
+        }
+        @keyframes glow-rotate-fallback {
+          from { transform: rotateZ(-70deg); }
+          to { transform: rotateZ(290deg); }
+        }
+        @keyframes glow-hue-fallback {
+          0% { filter: hue-rotate(0deg); }
+          100% { filter: hue-rotate(360deg); }
+        }
         .glowing-card-wrapper {
           --card-color: hsl(260deg 100% 3%);
           --text-color: hsl(260deg 10% 55%);

@@ -143,6 +143,10 @@ builder.Services.AddScoped<IModelDomainService, ModelDomainService>();
 // 模型池查询服务（三级互斥解析：专属池 > 默认池 > 传统配置）
 builder.Services.AddScoped<IModelPoolQueryService, ModelPoolQueryService>();
 
+// 模型池故障通知与自动探活
+builder.Services.AddScoped<PrdAgent.Infrastructure.ModelPool.IPoolFailoverNotifier, PrdAgent.Infrastructure.ModelPool.PoolFailoverNotifier>();
+builder.Services.AddHostedService<PrdAgent.Infrastructure.ModelPool.ModelPoolHealthProbeService>();
+
 // 模型调度执行器（支持单元测试 Mock）
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
 
@@ -315,6 +319,9 @@ builder.Services.AddSingleton<IAssetStorage>(sp =>
     // 理论上不会走到这里；保留以满足编译器对"所有路径均有返回"的要求
     throw new InvalidOperationException($"AssetStorage provider 选择异常：providerRaw={providerRaw} provider={provider}");
 });
+
+// 文件内容提取器（PDF/Word/Excel/PPT）
+builder.Services.AddSingleton<IFileContentExtractor, FileContentExtractor>();
 
 // 配置Redis
 var redisConnectionString = builder.Configuration["Redis:ConnectionString"] ?? "localhost:6379";
@@ -932,6 +939,14 @@ builder.Services.AddScoped<IWebhookNotificationService>(sp =>
     var logger = sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.Services.WebhookNotificationService>>();
     return new PrdAgent.Infrastructure.Services.WebhookNotificationService(db, openPlatformService, httpClientFactory, automationHub, logger);
 });
+
+// 桌面更新加速服务
+builder.Services.AddHttpClient("GitHubUpdate", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(120);
+    client.DefaultRequestHeaders.Add("User-Agent", "PrdAgent-UpdateAccelerator");
+});
+builder.Services.AddSingleton<PrdAgent.Api.Services.DesktopUpdateAccelerator>();
 
 // 注册缺口通知服务
 builder.Services.AddScoped<IGapNotificationService>(sp =>

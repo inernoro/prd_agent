@@ -57,6 +57,7 @@ export function NeonButton({ text = 'Next Step', color = 'pink', onClick, classN
           font-size: 14px;
           z-index: 1;
           transition: 0.5s;
+          -webkit-backdrop-filter: blur(15px);
           backdrop-filter: blur(15px);
           cursor: pointer;
         }

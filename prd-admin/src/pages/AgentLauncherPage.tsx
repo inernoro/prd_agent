@@ -42,6 +42,9 @@ const AGENT_COVERS: Record<string, string> = {
   'defect-agent': 'icon/backups/agent/defect-agent.png',
   'video-agent': 'icon/backups/agent/video-agent.png',
   'report-agent': 'icon/backups/agent/report-agent.png',
+  'arena': 'icon/backups/agent/arena.png',
+  'shortcuts-agent': 'icon/backups/agent/shortcuts-agent.png',
+  'workflow-agent': 'icon/backups/agent/workflow-agent.png',
 };
 
 /** 每个图标对应的主题色 */
@@ -399,6 +402,7 @@ export default function AgentLauncherPage() {
                       border: '1px solid rgba(255,255,255,0.1)',
                       color: 'var(--text-primary, #fff)',
                       backdropFilter: 'blur(12px)',
+                      WebkitBackdropFilter: 'blur(12px)',
                     }}
                     onFocus={(e) => {
                       e.currentTarget.style.borderColor = 'var(--accent-primary, #818CF8)';

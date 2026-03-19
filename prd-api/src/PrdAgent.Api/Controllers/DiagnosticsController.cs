@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Models;
 using System.Diagnostics;
 using System.Net;
@@ -16,10 +17,12 @@ namespace PrdAgent.Api.Controllers;
 public class DiagnosticsController : ControllerBase
 {
     private readonly ILogger<DiagnosticsController> _logger;
+    private readonly IConfiguration _config;
 
-    public DiagnosticsController(ILogger<DiagnosticsController> logger)
+    public DiagnosticsController(ILogger<DiagnosticsController> logger, IConfiguration config)
     {
         _logger = logger;
+        _config = config;
     }
 
     /// <summary>
@@ -39,7 +42,7 @@ public class DiagnosticsController : ControllerBase
         if (string.IsNullOrEmpty(clientUrl))
         {
             // 如果客户端未提供 URL，使用当前请求的 Host
-            clientUrl = $"{Request.Scheme}://{Request.Host}";
+            clientUrl = Request.ResolveServerUrl(_config);
         }
 
         Uri? uri = null;

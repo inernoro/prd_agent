@@ -90,8 +90,8 @@ export default function DefectAgentPage() {
   );
 
   const viewButtons: { key: typeof viewMode; icon: typeof LayoutGrid; title: string }[] = [
-    { key: 'card', icon: LayoutGrid, title: '卡片视图' },
     { key: 'list', icon: List, title: '列表视图' },
+    { key: 'card', icon: LayoutGrid, title: '卡片视图' },
     { key: 'kanban', icon: Columns3, title: '看板视图' },
     { key: 'stats', icon: BarChart3, title: '统计看板' },
   ];

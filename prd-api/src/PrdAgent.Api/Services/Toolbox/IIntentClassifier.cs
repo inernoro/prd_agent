@@ -14,5 +14,5 @@ public interface IIntentClassifier
     /// <param name="userMessage">用户输入的自然语言</param>
     /// <param name="ct">取消令牌</param>
     /// <returns>意图识别结果</returns>
-    Task<IntentResult> ClassifyAsync(string userMessage, CancellationToken ct = default);
+    Task<IntentResult> ClassifyAsync(string userMessage, string? userId = null, CancellationToken ct = default);
 }

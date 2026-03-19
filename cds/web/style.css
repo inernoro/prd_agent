@@ -2,14 +2,14 @@
 .inline-icon { vertical-align: -3px; opacity: 0.7; flex-shrink: 0; }
 
 :root {
-  /* Base - Zinc/Slate Dark */
-  --bg-primary: #09090b;
-  --bg-card: #18181b;
-  --bg-card-solid: #27272a;
-  --bg-elevated: #27272a;
-  --bg-input: #18181b;
+  /* Base - Dark */
+  --bg-primary: #131314;
+  --bg-card: #1E1F20;
+  --bg-card-solid: #1E1F20;
+  --bg-elevated: #282A2C;
+  --bg-input: #1E1F20;
   --bg-hover: rgba(63, 63, 70, 0.4);
-  
+
   /* Borders */
   --border: rgba(255, 255, 255, 0.08);
   --border-light: rgba(255, 255, 255, 0.04);
@@ -17,44 +17,48 @@
   --card-border: rgba(255, 255, 255, 0.12);
   --glass-border: rgba(255, 255, 255, 0.1);
   --glass-highlight: rgba(255, 255, 255, 0.05);
-  
+
   /* Text */
   --text-primary: #f4f4f5;
   --text-secondary: #a1a1aa;
   --text-muted: #71717a;
-  
+
   /* Accent (Emerald replaced original yellow-green) */
   --accent: #10b981;
   --accent-dim: #059669;
   --accent-bg: rgba(16, 185, 129, 0.1);
   --accent-border: rgba(16, 185, 129, 0.2);
-  
+
   /* Green (Emerald variant for Running/Success) */
   --green: #10b981;
   --green-dim: #059669;
   --green-bg: rgba(16, 185, 129, 0.1);
   --green-border: rgba(16, 185, 129, 0.18);
-  
+
   /* Blue (Sky Blue for Building/Updates) */
   --blue: #38bdf8;
   --blue-bg: rgba(56, 189, 248, 0.1);
   --blue-border: rgba(56, 189, 248, 0.18);
-  
+
   /* Yellow/Orange (Amber for Starting/Warning/Favorite) */
   --orange: #f59e0b;
   --orange-bg: rgba(245, 158, 11, 0.1);
   --yellow: #fbbf24;
   --yellow-bg: rgba(251, 191, 36, 0.1);
-  
+
   /* Red (Rose for Error/Danger) */
   --red: #f43f5e;
   --red-bg: rgba(244, 63, 94, 0.1);
   --red-border: rgba(244, 63, 94, 0.18);
-  
+
   /* Others */
   --purple: #c084fc;
   --cyan: #22d3ee;
-  
+
+  /* Background glow (used by light mode, dark mode uses its own) */
+  --bg-glow-1: transparent;
+  --bg-glow-2: transparent;
+
   /* Metrics */
   --radius: 14px;
   --radius-sm: 10px;
@@ -70,102 +74,192 @@
 /* ════════════════ Light Theme ════════════════ */
 
 [data-theme="light"] {
-  --bg-primary: #fafafa;
-  --bg-card: #ffffff;
-  --bg-card-solid: #f4f4f5;
-  --bg-elevated: #f4f4f5;
+  /* ── ClawHub Warm Light ── */
+  --bg-primary: #f8f2ed;      /* H27 S44 L95 — warm parchment */
+  --bg-card: #ffffff;          /* pure white card surface */
+  --bg-card-solid: #ffffff;
+  --bg-elevated: #f1eae4;     /* H27 S30 L92 */
   --bg-input: #ffffff;
-  --bg-hover: rgba(0, 0, 0, 0.04);
-  --border: rgba(0, 0, 0, 0.08);
-  --border-light: rgba(0, 0, 0, 0.04);
-  --border-focus: rgba(16, 185, 129, 0.5);
-  --card-border: rgba(0, 0, 0, 0.1);
-  --glass-border: rgba(0, 0, 0, 0.08);
-  --glass-highlight: rgba(0, 0, 0, 0.03);
-  --text-primary: #18181b;
-  --text-secondary: #52525b;
-  --text-muted: #a1a1aa;
-  --shadow-sm: 0 2px 8px rgba(0,0,0,0.06);
-  --shadow-md: 0 8px 24px rgba(0,0,0,0.08);
-  --shadow-lg: 0 16px 48px rgba(0,0,0,0.12);
+  --bg-hover: #2a1f1910;      /* ~6% warm dark */
+
+  /* Borders — warm alpha-based */
+  --border: #2a1f1924;        /* ~14% warm dark */
+  --border-light: #2a1f1912;  /* ~7% warm dark */
+  --border-focus: rgba(230, 92, 70, 0.5);
+  --card-border: #2a1f1920;   /* ~12% warm dark */
+  --glass-border: #2a1f191a;  /* ~10% warm dark */
+  --glass-highlight: #2a1f190a; /* ~4% warm dark */
+
+  /* Text — warm off-black, NOT pure black */
+  --text-primary: #2a1f19;    /* H21 S25 L13 */
+  --text-secondary: #5c4e46;  /* H21 S12 L32 */
+  --text-muted: #8c7e76;      /* H18 S8 L50 */
+
+  /* Shadows — warm-tinted, low opacity */
+  --shadow-sm: 0 2px 8px #2c1c140d;           /* 5% */
+  --shadow-md: 0 8px 24px #2c1c1414;          /* 8% */
+  --shadow-lg: 0 22px 52px #2c1c141c;         /* 11% */
+
+  /* Accent — vermillion, slightly deeper for contrast on light bg */
+  --accent: #e65c46;          /* H8 S76 L59 */
+  --accent-dim: #c34a38;
+  --accent-bg: rgba(230, 92, 70, 0.10);
+  --accent-border: rgba(230, 92, 70, 0.22);
+
+  /* Green — seafoam, deeper for light mode readability */
+  --green: #1a9b7e;
+  --green-dim: #15806a;
+  --green-bg: rgba(26, 155, 126, 0.10);
+  --green-border: rgba(26, 155, 126, 0.22);
+
+  /* Blue */
+  --blue: #3a8fa8;
+  --blue-bg: rgba(58, 143, 168, 0.10);
+  --blue-border: rgba(58, 143, 168, 0.22);
+
+  /* Orange/Yellow — warm gold */
+  --orange: #c48b2a;
+  --orange-bg: rgba(196, 139, 42, 0.10);
+  --yellow: #b07d28;
+  --yellow-bg: rgba(176, 125, 40, 0.10);
+
+  /* Red */
+  --red: #c34a38;
+  --red-bg: rgba(195, 74, 56, 0.10);
+  --red-border: rgba(195, 74, 56, 0.22);
+
+  --purple: #8a45c0;
+  --cyan: #1a8f8f;
+
+  /* Background glow — warm peach radials */
+  --bg-glow-1: #ffe1d4;      /* H18 S100 L92 */
+  --bg-glow-2: #ffe8d8;      /* H25 S100 L93 */
 }
 
 [data-theme="light"] body::before {
   background-image:
-    linear-gradient(rgba(0, 0, 0, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 0, 0, 0.04) 1px, transparent 1px);
+    linear-gradient(rgba(42, 31, 25, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(42, 31, 25, 0.025) 1px, transparent 1px);
 }
 
 [data-theme="light"] body::after {
-  background: radial-gradient(ellipse, rgba(16, 185, 129, 0.06) 0%, rgba(56, 189, 248, 0.04) 40%, transparent 70%);
+  /* Override dark mode's centered glow with warm corner radials */
+  top: 0; left: 0; right: 0; bottom: 0;
+  width: auto; height: auto;
+  transform: none;
+  background:
+    radial-gradient(ellipse at 15% 15%, var(--bg-glow-1) 0%, transparent 50%),
+    radial-gradient(ellipse at 85% 85%, var(--bg-glow-2) 0%, transparent 50%);
+  opacity: 0.35;
 }
 
 /* Light theme — component overrides for hardcoded rgba values */
-[data-theme="light"] ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); }
-[data-theme="light"] ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.2); }
-[data-theme="light"] ::selection { background: rgba(16, 185, 129, 0.2); }
+[data-theme="light"] ::-webkit-scrollbar-thumb { background: #2a1f1920; }
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover { background: #2a1f1933; }
+[data-theme="light"] ::selection { background: rgba(230, 92, 70, 0.18); }
 
 [data-theme="light"] .icon-btn:hover {
-  border-color: rgba(0,0,0,0.06);
+  border-color: #2a1f190f;
 }
-[data-theme="light"] .update-pull-group:hover { background: rgba(0, 0, 0, 0.04); }
+[data-theme="light"] .update-pull-group:hover { background: #2a1f190a; }
 
 [data-theme="light"] button {
-  background: rgba(0, 0, 0, 0.03);
-  border-color: rgba(0, 0, 0, 0.08);
+  background: #2a1f1908;
+  border-color: #2a1f1914;
 }
 [data-theme="light"] button:hover {
-  background: rgba(0, 0, 0, 0.06);
-  border-color: rgba(0,0,0,0.12);
+  background: #2a1f190f;
+  border-color: #2a1f1920;
 }
 [data-theme="light"] button.primary {
-  background: rgba(16, 185, 129, 0.1);
-  border-color: rgba(16, 185, 129, 0.25);
+  background: rgba(230, 92, 70, 0.10);
+  border-color: rgba(230, 92, 70, 0.22);
 }
 [data-theme="light"] button.primary:hover {
-  background: rgba(16, 185, 129, 0.18);
-  border-color: rgba(16, 185, 129, 0.35);
+  background: rgba(230, 92, 70, 0.18);
+  border-color: rgba(230, 92, 70, 0.32);
 }
 
 [data-theme="light"] .branch-card {
-  background: rgba(255, 255, 255, 0.8);
-  border-left-color: rgba(0, 0, 0, 0.10);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  background: #ffffff;
+  border-left-color: #2a1f1920;
+  box-shadow: 0 1px 4px #2c1c140d, 0 0 0 1px #2a1f190a;
 }
 [data-theme="light"] .branch-card:hover {
-  border-color: rgba(0, 0, 0, 0.15);
+  border-color: #2a1f192b;
+  box-shadow: 0 4px 16px #2c1c1414, 0 0 0 1px #2a1f190f;
 }
 [data-theme="light"] .branch-card.status-idle,
 [data-theme="light"] .branch-card.status-stopped {
-  border-left-color: rgba(0, 0, 0, 0.10);
+  border-left-color: #2a1f1920;
 }
 
-[data-theme="light"] .port-badge.port-idle { background: rgba(0, 0, 0, 0.03); }
-[data-theme="light"] .port-badge.port-idle:hover { background: rgba(0, 0, 0, 0.06); }
+[data-theme="light"] .port-badge.port-idle { background: #2a1f1908; }
+[data-theme="light"] .port-badge.port-idle:hover { background: #2a1f190f; }
 
-[data-theme="light"] .tag-filter-chip { background: rgba(0, 0, 0, 0.04); }
-[data-theme="light"] .tag-filter-chip:hover { background: rgba(0, 0, 0, 0.08); }
+[data-theme="light"] .tag-filter-chip { background: #2a1f190a; }
+[data-theme="light"] .tag-filter-chip:hover { background: #2a1f1914; }
 
 [data-theme="light"] .settings-menu,
 [data-theme="light"] .deploy-menu,
 [data-theme="light"] .branch-dropdown {
   background: var(--bg-card);
-  box-shadow: 0 8px 30px rgba(0,0,0,0.12);
+  box-shadow: 0 8px 30px #2c1c141c;
 }
 
-[data-theme="light"] .modal-backdrop { background: rgba(0,0,0,0.3); }
+[data-theme="light"] .modal-backdrop { background: #2a1f1940; }
 
-[data-theme="light"] .inline-deploy-log-wrapper { background: rgba(0, 0, 0, 0.02); }
 
-[data-theme="light"] .settings-switch-track { background: rgba(0, 0, 0, 0.15); }
+[data-theme="light"] .settings-switch-track { background: #2a1f1926; }
 
-[data-theme="light"] .btn-spinner { border-color: rgba(0,0,0,0.1); border-top-color: currentColor; }
+[data-theme="light"] .btn-spinner { border-color: #2a1f1918; border-top-color: currentColor; }
 
 [data-theme="light"] .commit-log-popover { background: var(--bg-card); }
 
+[data-theme="light"] .modal-backdrop { backdrop-filter: blur(4px); }
+[data-theme="light"] .modal-dialog {
+  box-shadow: 0 8px 40px #2c1c141c, 0 0 0 1px #2a1f1914;
+}
+[data-theme="light"] .log-modal-tabs {
+  background: var(--bg-elevated);
+}
+[data-theme="light"] .log-tab.active {
+  background: #ffffff;
+  box-shadow: 0 1px 3px #2c1c140d;
+}
+
+[data-theme="light"] .live-log-output {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+
+[data-theme="light"] .terminal-output {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+[data-theme="light"] .terminal-input-row {
+  background: var(--bg-elevated);
+  border-color: var(--border);
+}
+[data-theme="light"] .terminal-input { color: var(--text-primary); }
+[data-theme="light"] .term-result { color: var(--text-secondary); }
+
+
+[data-theme="light"] .branch-card.status-running { border-left-color: var(--green); }
+[data-theme="light"] .branch-card.status-building { border-left-color: var(--blue); }
+[data-theme="light"] .branch-card.status-starting { border-left-color: var(--yellow); }
+[data-theme="light"] .branch-card.status-error { border-left-color: var(--red); }
+[data-theme="light"] .branch-card.status-stopping { border-left-color: var(--red); }
+
+[data-theme="light"] .port-badge.run-port {
+  color: var(--green); background: var(--green-bg); border-color: var(--green-border);
+}
+
 [data-theme="light"] select {
   background-color: var(--bg-input);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2352525b' viewBox='0 0 16 16'%3E%3Cpath d='M4.427 7.427l3.396 3.396a.25.25 0 00.354 0l3.396-3.396A.25.25 0 0011.396 7H4.604a.25.25 0 00-.177.427z'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%235c4e46' viewBox='0 0 16 16'%3E%3Cpath d='M4.427 7.427l3.396 3.396a.25.25 0 00.354 0l3.396-3.396A.25.25 0 0011.396 7H4.604a.25.25 0 00-.177.427z'/%3E%3C/svg%3E");
 }
 
 /* ════════════════ Grid Background ════════════════ */
@@ -390,7 +484,7 @@ button.primary:hover {
 /* Accent — green emphasis for "go" actions */
 button.accent {
   background: rgba(16, 185, 129, 0.12);
-  border-color: rgba(16, 185, 129, 0.25); color: #10b981;
+  border-color: rgba(16, 185, 129, 0.25); color: var(--accent);
   font-weight: 600;
 }
 button.accent:hover {
@@ -438,6 +532,33 @@ button.text-btn:hover { color: var(--accent); }
 .form-input.xs { max-width: 80px; }
 
 .form-row { display: flex; gap: 8px; margin-bottom: 10px; }
+
+/* ── Combobox (input + dropdown) ── */
+.combobox { position: relative; }
+.combobox-input-wrap { position: relative; display: flex; align-items: center; }
+.combobox-toggle {
+  position: absolute; right: 1px; top: 1px; bottom: 1px;
+  width: 36px; display: flex; align-items: center; justify-content: center;
+  background: transparent; border: none; border-left: 1px solid var(--glass-border);
+  color: var(--fg-muted); cursor: pointer; border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  transition: color var(--transition), background var(--transition);
+}
+.combobox-toggle svg { width: 16px; height: 16px; flex-shrink: 0; }
+.combobox-toggle:hover { color: var(--fg); background: var(--bg-hover); }
+.combobox-dropdown {
+  display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+  max-height: 240px; overflow-y: auto; z-index: 120;
+  background: var(--bg-card); border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm); box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+}
+.combobox-dropdown.open { display: block; }
+.combobox-item {
+  padding: 7px 12px; font-size: 13px; cursor: pointer;
+  color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: background var(--transition);
+}
+.combobox-item:hover { background: var(--bg-hover); }
+.combobox-item.active { background: var(--bg-secondary); }
 
 /* ════════════════ Config Panels ════════════════ */
 
@@ -655,11 +776,46 @@ button.text-btn:hover { color: var(--accent); }
 .branch-card.status-idle { border-left-color: rgba(255, 255, 255, 0.10); }
 .branch-card.status-stopped { border-left-color: rgba(255, 255, 255, 0.10); }
 .branch-card.status-error { border-left-color: var(--red); }
+/* Stopping state — flashing red glow around the entire card */
+.branch-card.status-stopping {
+  border-left-color: var(--red);
+  animation: stopping-pulse 1.2s ease-in-out infinite;
+}
+@keyframes stopping-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(244, 63, 94, 0), 0 1px 3px rgba(0, 0, 0, 0.2);
+    border-color: var(--card-border);
+    border-left-color: var(--red);
+  }
+  50% {
+    box-shadow: 0 0 12px 2px rgba(244, 63, 94, 0.3), 0 0 24px 4px rgba(244, 63, 94, 0.1);
+    border-color: rgba(244, 63, 94, 0.4);
+    border-left-color: var(--red);
+  }
+}
 .branch-card.active.show-preview-border {
   border-left-color: var(--yellow);
 }
 .branch-card.has-error {
   border-left-color: var(--red);
+}
+
+/* Status badges for transitional states */
+.branch-status-badge {
+  font-size: 10px; font-weight: 500; padding: 1px 8px;
+  border-radius: 10px; margin-left: auto; white-space: nowrap;
+}
+.status-badge-stopping {
+  color: var(--red); background: var(--red-bg); border: 1px solid var(--red-border);
+  animation: port-stopping-blink 1s ease-in-out infinite;
+}
+.status-badge-starting {
+  color: var(--yellow); background: var(--yellow-bg); border: 1px solid rgba(251, 191, 36, 0.2);
+  animation: port-building-pulse 2s ease-in-out infinite;
+}
+.status-badge-building {
+  color: var(--blue); background: var(--blue-bg); border: 1px solid var(--blue-border);
+  animation: port-building-pulse 2s ease-in-out infinite;
 }
 
 /* Card toolbar — fixed top-right corner */
@@ -686,11 +842,6 @@ button.text-btn:hover { color: var(--accent); }
   display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
   padding-top: 2px;
 }
-.branch-log-btn {
-  color: var(--text-muted); transition: color var(--transition);
-  flex-shrink: 0;
-}
-.branch-log-btn:hover { color: var(--text-primary); }
 
 /* Favorite toggle — inline, minimal */
 .fav-toggle {
@@ -724,8 +875,25 @@ a.branch-name:hover { color: var(--accent); }
 .port-badge.run-port:hover { background: rgba(16, 185, 129, 0.18); border-color: rgba(16, 185, 129, 0.3); }
 .port-badge.port-starting { color: var(--yellow); background: var(--yellow-bg); border: 1px solid rgba(251, 191, 36, 0.15); }
 .port-badge.port-starting:hover { background: rgba(251, 191, 36, 0.15); }
+.port-badge.port-building {
+  color: var(--blue); background: var(--blue-bg); border: 1px solid var(--blue-border);
+  animation: port-building-pulse 2s ease-in-out infinite;
+}
+@keyframes port-building-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+.port-badge.port-stopping {
+  color: var(--red); background: var(--red-bg); border: 1px solid var(--red-border);
+  animation: port-stopping-blink 1s ease-in-out infinite;
+}
+@keyframes port-stopping-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
 .port-badge.port-idle { color: var(--text-muted); background: rgba(255, 255, 255, 0.03); border: 1px solid transparent; }
 .port-badge.port-idle:hover { background: rgba(255, 255, 255, 0.06); }
+.port-badge.port-error { color: var(--red); background: var(--red-bg); border: 1px solid var(--red-border); }
 
 .branch-error {
   font-size: 11px; color: var(--red); margin-top: 6px;
@@ -761,6 +929,29 @@ a.branch-name:hover { color: var(--accent); }
 .branch-actions-commit:hover { color: var(--text-primary); }
 .branch-actions-commit svg.inline-icon { flex-shrink: 0; width: 14px; height: 14px; }
 .branch-actions-commit .commit-chevron { flex-shrink: 0; opacity: 0.5; }
+
+/* Compact deploy status — replaces commit area during deployment */
+.branch-actions-deploy-status {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; color: var(--text-muted);
+  cursor: pointer; overflow: hidden;
+  padding: 2px 8px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-input);
+  transition: background var(--transition);
+}
+.branch-actions-deploy-status:hover { background: var(--bg-hover); }
+.branch-actions-deploy-status .live-dot { flex-shrink: 0; }
+.branch-actions-deploy-status .deploy-status-log {
+  flex: 1; min-width: 0;
+  margin: 0; padding: 0;
+  font-family: var(--font-mono, 'SF Mono', 'Fira Code', monospace);
+  font-size: 10px; line-height: 1.4;
+  color: var(--text-secondary);
+  white-space: pre; overflow: hidden; text-overflow: ellipsis;
+  background: transparent; border: none;
+}
 
 .branch-card.is-favorite { border-left-color: var(--yellow); }
 
@@ -1031,7 +1222,7 @@ a.branch-name:hover { color: var(--accent); }
 }
 .settings-switch-track {
   width: 32px; height: 18px; border-radius: 9px;
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.10);
   position: relative; transition: background 0.2s ease;
 }
 .settings-switch.on .settings-switch-track {
@@ -1138,6 +1329,28 @@ a.branch-name:hover { color: var(--accent); }
   backdrop-filter: none;
 }
 .modal-close:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+/* Copy-error button in log modal header */
+.copy-error-btn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 12px; font-size: 12px; font-weight: 600;
+  color: var(--red); background: var(--red-bg);
+  border: 1px solid var(--red-border); border-radius: var(--radius-sm);
+  cursor: pointer; white-space: nowrap; flex-shrink: 0;
+  animation: copy-error-pulse 2s ease-in-out infinite;
+  transition: background var(--transition);
+}
+.copy-error-btn:hover { background: rgba(239, 83, 80, 0.2); }
+.copy-error-btn svg { flex-shrink: 0; }
+.copy-error-btn.copied {
+  animation: none; color: var(--green); background: var(--green-bg);
+  border-color: var(--green-border);
+}
+@keyframes copy-error-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
 .modal-body { padding: 14px 18px; overflow-y: auto; flex: 1; }
 .config-modal-dialog { max-width: 640px; }
 
@@ -1262,49 +1475,6 @@ a.branch-name:hover { color: var(--accent); }
   border-color: var(--accent-border);
 }
 
-/* ════════════════ Inline Deploy Log ════════════════ */
-
-.inline-deploy-log-wrapper {
-  cursor: pointer; border-radius: var(--radius-xs);
-  margin-top: 8px; padding-top: 8px;
-  border-top: 1px solid var(--border);
-}
-.inline-deploy-log-header {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 12px; color: var(--text-secondary);
-  padding: 0 0 6px; font-weight: 500;
-}
-.inline-deploy-log-header .live-dot { width: 6px; height: 6px; }
-.inline-deploy-log-header .live-dot.stopped { background: var(--text-muted); animation: none; }
-.inline-log-expand-hint {
-  margin-left: auto; font-size: 10px; color: var(--text-muted);
-  cursor: pointer; text-decoration: underline;
-  transition: color var(--transition);
-}
-.inline-log-expand-hint:hover { color: var(--accent); }
-.inline-deploy-log {
-  font-family: var(--font-mono); font-size: 11px;
-  color: var(--text-secondary); background: rgba(8, 12, 28, 0.8);
-  border: 1px solid var(--border); border-radius: var(--radius-sm);
-  padding: 10px 12px; margin: 0;
-  max-height: 120px; overflow-y: auto; white-space: pre-wrap;
-  word-break: break-all; line-height: 1.6;
-  transition: max-height 0.3s ease;
-}
-.inline-deploy-log-wrapper.expanded .inline-deploy-log {
-  max-height: 400px;
-}
-
-/* Deploy log status colors */
-.inline-deploy-log-wrapper.deploy-log-done .inline-deploy-log-header { color: var(--green); }
-.inline-deploy-log-wrapper.deploy-log-done .inline-deploy-log { border-color: var(--green-border); }
-.inline-deploy-log-wrapper.deploy-log-error .inline-deploy-log-header { color: var(--red); }
-.inline-deploy-log-wrapper.deploy-log-error .inline-deploy-log { border-color: var(--red-border); }
-.inline-deploy-error {
-  font-size: 11px; color: var(--red); padding: 6px 10px; margin-top: 6px;
-  background: var(--red-bg); border: 1px solid var(--red-border);
-  border-radius: var(--radius-xs);
-}
 
 /* ════════════════ Slide-in Animation ════════════════ */
 
@@ -1405,7 +1575,7 @@ a.branch-name:hover { color: var(--accent); }
   .modal-dialog { max-height: 90vh; margin: 0 12px; }
 
   /* Inline deploy log: responsive */
-  .inline-deploy-log { font-size: 10px; padding: 8px 10px; max-height: 100px; }
+
 
   /* Commit info: hide on mobile to save space, show on expand */
   .branch-actions-commit { display: none; }
@@ -1425,4 +1595,205 @@ a.branch-name:hover { color: var(--accent); }
 @media (min-width: 641px) {
   .container { padding: 28px 20px; }
   h1 { font-size: 20px; }
+}
+
+/* ════════════════ Capacity Warning ════════════════ */
+
+.capacity-warning { text-align: center; padding: 12px 0; }
+.capacity-warning-icon { font-size: 40px; margin-bottom: 12px; }
+.capacity-warning-text { margin-bottom: 20px; line-height: 1.7; }
+.capacity-warning-text p { margin: 0; }
+.capacity-warning-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.capacity-warning-actions button { min-width: 100px; }
+
+/* Split stop button with dropdown */
+.capacity-stop-split {
+  display: inline-flex; position: relative;
+}
+.capacity-stop-btn {
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm) !important;
+  border-right: 1px solid var(--border) !important;
+  white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis;
+}
+.capacity-stop-btn .inline-icon { vertical-align: -2px; opacity: 0.6; }
+.capacity-stop-toggle {
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0 !important;
+  min-width: 28px !important; padding: 4px 6px !important;
+}
+.capacity-stop-list {
+  position: absolute; bottom: 100%; left: 0; right: 0;
+  min-width: 260px;
+  background: var(--bg-elevated); border: 1px solid var(--card-border);
+  border-radius: var(--radius-sm); box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.4);
+  z-index: 100; margin-bottom: 4px;
+  max-height: 240px; overflow-y: auto;
+}
+.capacity-stop-list-header {
+  font-size: 11px; color: var(--text-muted); padding: 8px 12px 4px;
+  border-bottom: 1px solid var(--border);
+}
+.capacity-stop-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; cursor: pointer; font-size: 13px;
+  transition: background 0.15s;
+}
+.capacity-stop-item:hover { background: var(--bg-hover); }
+.capacity-stop-item .inline-icon { width: 12px; height: 12px; opacity: 0.6; }
+.capacity-stop-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.capacity-stop-partial {
+  font-size: 10px; color: var(--orange); white-space: nowrap;
+}
+
+/* ════════════════ Color Mark (debug marker) ════════════════ */
+
+/* Four-quadrant circle button — muted by default, colorful on hover/active */
+.color-mark-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 50%;
+  background: none; border: none; cursor: pointer; padding: 0;
+  transition: opacity var(--transition), transform var(--transition);
+  opacity: 0.35;
+  flex-shrink: 0;
+}
+.color-mark-btn svg { display: block; }
+.color-mark-btn .cm-q1,
+.color-mark-btn .cm-q2,
+.color-mark-btn .cm-q3,
+.color-mark-btn .cm-q4 {
+  transition: fill var(--transition);
+  fill: var(--text-muted);
+}
+/* Hover: show four distinct colors */
+.color-mark-btn:hover {
+  opacity: 1;
+  transform: scale(1.15);
+}
+.color-mark-btn:hover .cm-q1 { fill: #f43f5e; }  /* rose */
+.color-mark-btn:hover .cm-q2 { fill: #38bdf8; }  /* sky */
+.color-mark-btn:hover .cm-q3 { fill: #fbbf24; }  /* amber */
+.color-mark-btn:hover .cm-q4 { fill: #10b981; }  /* emerald */
+
+/* Active (marked) state: always show colors */
+.color-mark-btn.active {
+  opacity: 1;
+}
+.color-mark-btn.active .cm-q1 { fill: #f43f5e; }
+.color-mark-btn.active .cm-q2 { fill: #38bdf8; }
+.color-mark-btn.active .cm-q3 { fill: #fbbf24; }
+.color-mark-btn.active .cm-q4 { fill: #10b981; }
+.color-mark-btn.active:hover {
+  opacity: 0.6;
+  transform: scale(0.95);
+}
+
+/* ── Color-marked card — high-contrast vivid styling ── */
+.branch-card.is-color-marked {
+  --cm-glow: rgba(244, 63, 94, 0.12);
+  border-image: linear-gradient(135deg, #f43f5e, #38bdf8, #fbbf24, #10b981) 1;
+  border-width: 2px;
+  border-style: solid;
+  border-radius: 0; /* border-image doesn't support border-radius, use outline trick */
+  box-shadow:
+    0 0 0 1px rgba(0,0,0,0.1),
+    0 0 16px 2px var(--cm-glow),
+    0 2px 8px rgba(0,0,0,0.2);
+  position: relative;
+}
+/* Restore rounded corners via outline + clip approach */
+.branch-card.is-color-marked {
+  border-image: none;
+  border: 2px solid transparent;
+  background-image:
+    linear-gradient(var(--bg-card), var(--bg-card)),
+    linear-gradient(135deg, #f43f5e, #38bdf8, #fbbf24, #10b981);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+  border-radius: var(--radius);
+}
+/* Override status left-border: gradient takes priority for marked cards */
+.branch-card.is-color-marked.status-running,
+.branch-card.is-color-marked.status-idle,
+.branch-card.is-color-marked.status-stopped,
+.branch-card.is-color-marked.status-building,
+.branch-card.is-color-marked.status-starting,
+.branch-card.is-color-marked.status-error {
+  border-left-color: transparent;
+}
+/* Subtle animated gradient glow */
+.branch-card.is-color-marked::before {
+  content: '';
+  position: absolute; inset: -1px;
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, rgba(244,63,94,0.06), rgba(56,189,248,0.06), rgba(251,191,36,0.06), rgba(16,185,129,0.06));
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Light theme adjustments */
+[data-theme="light"] .branch-card.is-color-marked {
+  --cm-glow: rgba(244, 63, 94, 0.08);
+  background-image:
+    linear-gradient(var(--bg-card), var(--bg-card)),
+    linear-gradient(135deg, #e65c46, #3a8fa8, #c48b2a, #1a9b7e);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+}
+
+/* ── Ripple overlay for color-mark transition ── */
+.color-mark-ripple {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 2;
+  overflow: hidden;
+}
+.color-mark-ripple::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  clip-path: circle(0% at var(--cm-ripple-x, 50%) var(--cm-ripple-y, 50%));
+}
+/* Ripple in: reveal marked gradient bg */
+.color-mark-ripple.ripple-marked::after {
+  background: linear-gradient(135deg,
+    rgba(244,63,94,0.08),
+    rgba(56,189,248,0.08),
+    rgba(251,191,36,0.08),
+    rgba(16,185,129,0.08));
+}
+/* Ripple out: reveal normal bg */
+.color-mark-ripple.ripple-normal::after {
+  background: var(--bg-card);
+}
+.color-mark-ripple.animate::after {
+  animation: cm-ripple-expand 0.45s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+@keyframes cm-ripple-expand {
+  to {
+    clip-path: circle(var(--cm-ripple-radius, 150%) at var(--cm-ripple-x, 50%) var(--cm-ripple-y, 50%));
+  }
+}
+
+/* ════════════════ View Transition (theme ripple) ════════════════ */
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+::view-transition-new(root) {
+  clip-path: circle(0% at var(--ripple-x, 50%) var(--ripple-y, 0));
+  animation: theme-ripple-in 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+::view-transition-old(root) {
+  z-index: -1;
+}
+
+@keyframes theme-ripple-in {
+  to {
+    clip-path: circle(var(--ripple-radius, 150%) at var(--ripple-x, 50%) var(--ripple-y, 0));
+  }
 }

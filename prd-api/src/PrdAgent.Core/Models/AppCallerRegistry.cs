@@ -891,6 +891,47 @@ public static class ChannelAdapter
         public const string TodoExtract = "channel-adapter.email::todo-extract";
     }
 }
+
+/// <summary>
+/// System 系统级调用
+/// </summary>
+public static class System
+{
+    public static class HealthProbe
+    {
+        [AppCallerMetadata(
+            "模型池探活",
+            "后台自动探活不健康模型端点，非用户触发",
+            ModelTypes = new[] { ModelTypes.Chat, ModelTypes.Intent, ModelTypes.Vision, ModelTypes.Generation },
+            Category = "System"
+        )]
+        public const string Chat = "system.health-probe::chat";
+
+        [AppCallerMetadata(
+            "模型池探活-意图",
+            "后台自动探活意图模型端点",
+            ModelTypes = new[] { ModelTypes.Chat, ModelTypes.Intent, ModelTypes.Vision, ModelTypes.Generation },
+            Category = "System"
+        )]
+        public const string Intent = "system.health-probe::intent";
+
+        [AppCallerMetadata(
+            "模型池探活-视觉",
+            "后台自动探活视觉模型端点",
+            ModelTypes = new[] { ModelTypes.Chat, ModelTypes.Intent, ModelTypes.Vision, ModelTypes.Generation },
+            Category = "System"
+        )]
+        public const string Vision = "system.health-probe::vision";
+
+        [AppCallerMetadata(
+            "模型池探活-生图",
+            "后台自动探活生图模型端点",
+            ModelTypes = new[] { ModelTypes.Chat, ModelTypes.Intent, ModelTypes.Vision, ModelTypes.Generation },
+            Category = "System"
+        )]
+        public const string Generation = "system.health-probe::generation";
+    }
+}
 }
 
 /// <summary>

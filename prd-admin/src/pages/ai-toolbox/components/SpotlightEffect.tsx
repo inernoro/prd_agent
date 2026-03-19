@@ -50,7 +50,7 @@ export function SpotlightEffect({ children, className, spotlightColor = 'rgba(25
       {...props}
     >
       <div
-        className="pointer-events-none absolute -inset-px opacity-0 transition duration-300 z-50"
+        className="pointer-events-none absolute inset-0 opacity-0 transition duration-300 z-50"
         style={{
           opacity,
           background: `radial-gradient(400px circle at ${position.x}px ${position.y}px, ${spotlightColor}, transparent 40%)`,
