@@ -100,41 +100,59 @@ public class ReportGenerationService
         };
 
         var response = await _gateway.SendAsync(request, CancellationToken.None);
+        List<WeeklyReportSection>? generatedSections = null;
+        string? primaryFailureReason = null;
+
         if (!response.Success)
         {
+            primaryFailureReason = string.IsNullOrWhiteSpace(response.ErrorMessage)
+                ? "AI 生成失败，请稍后重试"
+                : $"AI 生成失败：{response.ErrorMessage}";
             _logger.LogWarning(
-                "AI 生成周报失败: userId={UserId}, teamId={TeamId}, week={WeekYear}-W{WeekNumber}, errorCode={ErrorCode}, error={ErrorMessage}, data={ActivitySummary}",
+                "AI 生成周报失败，准备启用规则兜底: userId={UserId}, teamId={TeamId}, week={WeekYear}-W{WeekNumber}, errorCode={ErrorCode}, error={ErrorMessage}, data={ActivitySummary}",
                 userId, teamId, weekYear, weekNumber, response.ErrorCode, response.ErrorMessage, activitySummary);
-            throw new InvalidOperationException(
-                string.IsNullOrWhiteSpace(response.ErrorMessage)
-                    ? "AI 生成失败，请稍后重试"
-                    : $"AI 生成失败：{response.ErrorMessage}");
         }
-
-        if (string.IsNullOrWhiteSpace(response.Content))
+        else if (string.IsNullOrWhiteSpace(response.Content))
         {
+            primaryFailureReason = "AI 返回空内容，未生成周报草稿";
             _logger.LogWarning(
-                "AI 生成周报返回空内容: userId={UserId}, teamId={TeamId}, week={WeekYear}-W{WeekNumber}, logId={LogId}, data={ActivitySummary}",
+                "AI 生成周报返回空内容，准备启用规则兜底: userId={UserId}, teamId={TeamId}, week={WeekYear}-W{WeekNumber}, logId={LogId}, data={ActivitySummary}",
                 userId, teamId, weekYear, weekNumber, response.LogId, activitySummary);
-            throw new InvalidOperationException("AI 返回空内容，未生成周报草稿");
+        }
+        else
+        {
+            generatedSections = ParseGeneratedSections(response.Content, template);
+            if (generatedSections == null)
+            {
+                primaryFailureReason = "AI 返回格式异常，未生成有效周报内容";
+                _logger.LogWarning(
+                    "AI 生成周报解析失败，准备启用规则兜底: userId={UserId}, teamId={TeamId}, week={WeekYear}-W{WeekNumber}, logId={LogId}, preview={Preview}, data={ActivitySummary}",
+                    userId, teamId, weekYear, weekNumber, response.LogId, Preview(response.Content), activitySummary);
+            }
+            else if (CountGeneratedItems(generatedSections) <= 0)
+            {
+                primaryFailureReason = "AI 未生成有效周报条目，请稍后重试";
+                _logger.LogWarning(
+                    "AI 生成周报无有效条目，准备启用规则兜底: userId={UserId}, teamId={TeamId}, week={WeekYear}-W{WeekNumber}, logId={LogId}, preview={Preview}, data={ActivitySummary}",
+                    userId, teamId, weekYear, weekNumber, response.LogId, Preview(response.Content), activitySummary);
+                generatedSections = null;
+            }
         }
 
-        var generatedSections = ParseGeneratedSections(response.Content, template);
         if (generatedSections == null)
         {
-            _logger.LogWarning(
-                "AI 生成周报解析失败: userId={UserId}, teamId={TeamId}, week={WeekYear}-W{WeekNumber}, logId={LogId}, preview={Preview}, data={ActivitySummary}",
-                userId, teamId, weekYear, weekNumber, response.LogId, Preview(response.Content), activitySummary);
-            throw new InvalidOperationException("AI 返回格式异常，未生成有效周报内容");
-        }
-
-        var totalGeneratedItems = CountGeneratedItems(generatedSections);
-        if (totalGeneratedItems <= 0)
-        {
-            _logger.LogWarning(
-                "AI 生成周报无有效条目: userId={UserId}, teamId={TeamId}, week={WeekYear}-W{WeekNumber}, logId={LogId}, preview={Preview}, data={ActivitySummary}",
-                userId, teamId, weekYear, weekNumber, response.LogId, Preview(response.Content), activitySummary);
-            throw new InvalidOperationException("AI 未生成有效周报条目，请稍后重试");
+            var fallbackSections = BuildRuleBasedSections(template, activity, sourcePrefs);
+            if (fallbackSections != null && CountGeneratedItems(fallbackSections) > 0)
+            {
+                generatedSections = fallbackSections;
+                _logger.LogInformation(
+                    "AI 生成周报已切换规则兜底成功: userId={UserId}, teamId={TeamId}, week={WeekYear}-W{WeekNumber}, reason={Reason}, data={ActivitySummary}",
+                    userId, teamId, weekYear, weekNumber, primaryFailureReason ?? "unknown", activitySummary);
+            }
+            else
+            {
+                throw new InvalidOperationException(primaryFailureReason ?? "AI 生成失败，请稍后重试");
+            }
         }
 
         // 7. Upsert 周报
@@ -512,6 +530,215 @@ public class ReportGenerationService
 
     private static string BuildActivitySummary(CollectedActivity activity, GenerationSourcePrefs sourcePrefs)
         => $"dailyLogs={activity.DailyLogs.Count}, commits={activity.Commits.Count}, prdSessions={activity.PrdSessions}, prdMessages={activity.PrdMessageCount}, llmCalls={activity.LlmCalls}, mapEnabled={sourcePrefs.MapPlatformEnabled}, dailyEnabled={sourcePrefs.DailyLogEnabled}";
+
+    private static List<WeeklyReportSection>? BuildRuleBasedSections(
+        ReportTemplate template,
+        CollectedActivity activity,
+        GenerationSourcePrefs sourcePrefs)
+    {
+        var completionPool = BuildCompletionPool(activity, sourcePrefs);
+        var hasStats = HasAnyActivity(activity, sourcePrefs);
+        if (completionPool.Count == 0 && !hasStats)
+            return null;
+
+        var sections = new List<WeeklyReportSection>();
+        var completionCursor = 0;
+
+        foreach (var section in template.Sections)
+        {
+            var sectionType = section.SectionType;
+            var normalizedKey = $"{section.Title} {section.Description}".Trim().ToLowerInvariant();
+            var maxItems = Math.Clamp(section.MaxItems ?? 5, 1, 8);
+            var items = new List<WeeklyReportItem>();
+
+            if (sectionType == ReportSectionType.ManualList || sectionType == ReportSectionType.FreeText)
+            {
+                sections.Add(new WeeklyReportSection
+                {
+                    TemplateSection = section,
+                    Items = items
+                });
+                continue;
+            }
+
+            if (normalizedKey.Contains("风险", StringComparison.Ordinal)
+                || normalizedKey.Contains("问题", StringComparison.Ordinal)
+                || normalizedKey.Contains("阻塞", StringComparison.Ordinal))
+            {
+                items.AddRange(BuildRiskItems(activity, sourcePrefs, maxItems));
+            }
+            else if (normalizedKey.Contains("计划", StringComparison.Ordinal)
+                || normalizedKey.Contains("下周", StringComparison.Ordinal)
+                || normalizedKey.Contains("待办", StringComparison.Ordinal))
+            {
+                items.AddRange(BuildPlanItems(completionPool, maxItems));
+            }
+            else if (normalizedKey.Contains("总结", StringComparison.Ordinal)
+                || normalizedKey.Contains("复盘", StringComparison.Ordinal)
+                || normalizedKey.Contains("思考", StringComparison.Ordinal))
+            {
+                items.AddRange(BuildSummaryItems(activity, sourcePrefs, maxItems));
+            }
+            else
+            {
+                while (items.Count < maxItems && completionCursor < completionPool.Count)
+                {
+                    items.Add(completionPool[completionCursor]);
+                    completionCursor++;
+                }
+            }
+
+            // 如果该章节未命中专用策略但整体有数据，至少补一条摘要，避免空章节。
+            if (items.Count == 0 && hasStats)
+            {
+                items.AddRange(BuildSummaryItems(activity, sourcePrefs, 1));
+            }
+
+            sections.Add(new WeeklyReportSection
+            {
+                TemplateSection = section,
+                Items = items
+            });
+        }
+
+        return sections;
+    }
+
+    private static List<WeeklyReportItem> BuildCompletionPool(CollectedActivity activity, GenerationSourcePrefs sourcePrefs)
+    {
+        var result = new List<WeeklyReportItem>();
+
+        if (sourcePrefs.DailyLogEnabled)
+        {
+            foreach (var log in activity.DailyLogs.OrderBy(x => x.Date))
+            {
+                foreach (var item in log.Items.Where(i => !string.IsNullOrWhiteSpace(i.Content)))
+                {
+                    var content = $"{log.Date:MM-dd} {item.Content.Trim()}";
+                    if (item.DurationMinutes is > 0)
+                        content += $"（约 {item.DurationMinutes} 分钟）";
+                    result.Add(new WeeklyReportItem
+                    {
+                        Content = content,
+                        Source = "daily-log"
+                    });
+                }
+            }
+        }
+
+        if (sourcePrefs.MapPlatformEnabled)
+        {
+            foreach (var commit in activity.Commits
+                         .Where(c => !string.IsNullOrWhiteSpace(c.Message))
+                         .OrderByDescending(c => c.CommittedAt)
+                         .Take(20))
+            {
+                result.Add(new WeeklyReportItem
+                {
+                    Content = $"代码提交：{commit.Message.Trim()}",
+                    Source = "map-platform"
+                });
+            }
+        }
+
+        return result;
+    }
+
+    private static List<WeeklyReportItem> BuildRiskItems(CollectedActivity activity, GenerationSourcePrefs sourcePrefs, int maxItems)
+    {
+        var items = new List<WeeklyReportItem>();
+
+        if (sourcePrefs.MapPlatformEnabled && activity.DefectsSubmitted > 0)
+        {
+            items.Add(new WeeklyReportItem
+            {
+                Content = $"本周提交缺陷 {activity.DefectsSubmitted} 个，重点跟进高优先级问题闭环。",
+                Source = "map-platform"
+            });
+        }
+
+        if (activity.DefectDetails is { Reopened: > 0 })
+        {
+            items.Add(new WeeklyReportItem
+            {
+                Content = $"存在 {activity.DefectDetails.Reopened} 个退回/重开问题，需提前补充验收标准。",
+                Source = "map-platform"
+            });
+        }
+
+        if (items.Count == 0)
+        {
+            items.Add(new WeeklyReportItem
+            {
+                Content = "本周未发现明显阻塞风险，建议保持每日同步并提前暴露依赖问题。",
+                Source = sourcePrefs.MapPlatformEnabled ? "map-platform" : "daily-log"
+            });
+        }
+
+        return items.Take(maxItems).ToList();
+    }
+
+    private static List<WeeklyReportItem> BuildPlanItems(List<WeeklyReportItem> completionPool, int maxItems)
+    {
+        var seed = completionPool
+            .Where(x => !string.IsNullOrWhiteSpace(x.Content))
+            .Take(maxItems)
+            .Select(x => new WeeklyReportItem
+            {
+                Content = $"继续推进：{x.Content}",
+                Source = x.Source
+            })
+            .ToList();
+
+        if (seed.Count == 0)
+        {
+            seed.Add(new WeeklyReportItem
+            {
+                Content = "下周聚焦核心目标拆解与交付节奏，按优先级推进并按日复盘。",
+                Source = "ai"
+            });
+        }
+
+        return seed;
+    }
+
+    private static List<WeeklyReportItem> BuildSummaryItems(CollectedActivity activity, GenerationSourcePrefs sourcePrefs, int maxItems)
+    {
+        var source = sourcePrefs.MapPlatformEnabled ? "map-platform" : "daily-log";
+        var summaries = new List<string>();
+
+        if (sourcePrefs.DailyLogEnabled && activity.DailyLogs.Count > 0)
+            summaries.Add($"本周累计记录 {activity.DailyLogs.Count} 天日常工作，执行节奏整体稳定。");
+        if (sourcePrefs.MapPlatformEnabled && activity.Commits.Count > 0)
+            summaries.Add($"本周完成 {activity.Commits.Count} 次代码提交，持续推进需求落地。");
+        if (sourcePrefs.MapPlatformEnabled && activity.PrdSessions > 0)
+            summaries.Add($"围绕需求与方案开展 {activity.PrdSessions} 次对话会话，协作沟通较充分。");
+        if (sourcePrefs.MapPlatformEnabled && activity.DefectsSubmitted > 0)
+            summaries.Add($"缺陷处理侧提交 {activity.DefectsSubmitted} 个问题，质量治理持续推进。");
+
+        if (summaries.Count == 0)
+        {
+            summaries.Add("本周工作按计划推进，建议下周继续围绕核心目标聚焦执行。");
+        }
+
+        return summaries.Take(maxItems)
+            .Select(s => new WeeklyReportItem { Content = s, Source = source })
+            .ToList();
+    }
+
+    private static bool HasAnyActivity(CollectedActivity activity, GenerationSourcePrefs sourcePrefs)
+    {
+        if (sourcePrefs.DailyLogEnabled && activity.DailyLogs.Count > 0)
+            return true;
+        if (sourcePrefs.MapPlatformEnabled &&
+            (activity.Commits.Count > 0
+             || activity.PrdSessions > 0
+             || activity.DefectsSubmitted > 0
+             || activity.LlmCalls > 0
+             || activity.PrdMessageCount > 0))
+            return true;
+        return false;
+    }
 
     // ═══════════════════════════════════════════════════════════════
     // v2.0 — Workflow Pipeline Generation

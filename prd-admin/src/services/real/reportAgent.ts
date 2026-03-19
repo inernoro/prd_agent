@@ -282,7 +282,7 @@ export const getWeeklyReportReal: GetWeeklyReportContract = async (input) => {
 };
 
 export const createWeeklyReportReal: CreateWeeklyReportContract = async (input) => {
-  return await apiRequest<{ report: WeeklyReport }>(api.reportAgent.reports.list(), {
+  return await apiRequest<{ report: WeeklyReport; aiGenerationError?: string }>(api.reportAgent.reports.list(), {
     method: 'POST',
     body: input,
   });

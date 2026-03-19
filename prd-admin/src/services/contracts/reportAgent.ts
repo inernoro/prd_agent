@@ -414,7 +414,7 @@ export type CreateWeeklyReportContract = (input: {
   weekYear?: number;
   weekNumber?: number;
   creationMode?: (typeof WeeklyReportCreationMode)[keyof typeof WeeklyReportCreationMode];
-}) => Promise<ApiResponse<{ report: WeeklyReport }>>;
+}) => Promise<ApiResponse<{ report: WeeklyReport; aiGenerationError?: string }>>;
 
 export type UpdateWeeklyReportContract = (input: {
   id: string;

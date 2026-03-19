@@ -988,6 +988,7 @@ public class ReportAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail("DUPLICATE", "该周已存在周报，不能重复创建"));
         }
 
+        string? aiGenerationError = null;
         if (creationMode == ReportCreationMode.AiDraft)
         {
             try
@@ -1000,15 +1001,23 @@ public class ReportAgentController : ControllerBase
                     weekNumber,
                     CancellationToken.None);
             }
+            catch (InvalidOperationException ex)
+            {
+                aiGenerationError = ex.Message;
+                _logger.LogWarning(ex,
+                    "创建周报后 AI 草稿生成失败(可预期): userId={UserId}, teamId={TeamId}, week={WeekYear}-W{WeekNumber}",
+                    userId, req.TeamId, weekYear, weekNumber);
+            }
             catch (Exception ex)
             {
+                aiGenerationError = "AI 生成失败，请稍后重试";
                 _logger.LogWarning(ex,
                     "创建周报后 AI 草稿生成失败: userId={UserId}, teamId={TeamId}, week={WeekYear}-W{WeekNumber}",
                     userId, req.TeamId, weekYear, weekNumber);
             }
         }
 
-        return Ok(ApiResponse<object>.Ok(new { report }));
+        return Ok(ApiResponse<object>.Ok(new { report, aiGenerationError }));
     }
 
     /// <summary>
