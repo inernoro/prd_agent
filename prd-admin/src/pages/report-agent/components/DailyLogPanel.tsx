@@ -102,7 +102,7 @@ export function DailyLogPanel() {
   // Quick input state
   const [quickInput, setQuickInput] = useState('');
   const [quickCategory, setQuickCategory] = useState<string>(DailyLogCategory.Development);
-  const [quickTags, setQuickTags] = useState<string[]>([]);
+  const [quickTag, setQuickTag] = useState<string | null>(null);
   const [customTags, setCustomTags] = useState<string[]>([]);
   const [showTagManager, setShowTagManager] = useState(false);
   const [tagDraft, setTagDraft] = useState('');
@@ -268,12 +268,12 @@ export function DailyLogPanel() {
     if (!text) return;
     const newItem: LogItemInput = {
       content: text, category: quickCategory, durationMinutes: undefined,
-      tags: quickTags.length > 0 ? [...quickTags] : undefined,
+      tags: quickTag ? [quickTag] : undefined,
     };
     const newItems = [...items, newItem];
     setItems(newItems);
     setQuickInput('');
-    setQuickTags([]);
+    setQuickTag(null);
     inputRef.current?.focus();
     await doSave(newItems);
   };
@@ -334,10 +334,12 @@ export function DailyLogPanel() {
     const removedTag = customTags[idx];
     if (!removedTag) return;
     const prevTags = customTags;
-    const prevQuickTags = quickTags;
+    const prevQuickTag = quickTag;
     const updatedTags = customTags.filter((_, i) => i !== idx);
     setCustomTags(updatedTags);
-    setQuickTags(quickTags.filter((tag) => tag.toLowerCase() !== removedTag.toLowerCase()));
+    if (quickTag?.toLowerCase() === removedTag.toLowerCase()) {
+      setQuickTag(null);
+    }
     if (editingTagIdx === idx) {
       setEditingTagIdx(null);
       setEditingTagDraft('');
@@ -346,7 +348,7 @@ export function DailyLogPanel() {
     const ok = await saveCustomTags(updatedTags, '标签已删除');
     if (!ok) {
       setCustomTags(prevTags);
-      setQuickTags(prevQuickTags);
+      setQuickTag(prevQuickTag);
     }
   };
 
@@ -378,20 +380,19 @@ export function DailyLogPanel() {
     }
 
     const prevTags = customTags;
-    const prevQuickTags = quickTags;
+    const prevQuickTag = quickTag;
     const updatedTags = customTags.map((tag, idx) => (idx === editingTagIdx ? nextTag : tag));
-    const updatedQuickTags = quickTags.map((tag) => (
-      tag.toLowerCase() === target.toLowerCase() ? nextTag : tag
-    ));
     setCustomTags(updatedTags);
-    setQuickTags(updatedQuickTags);
+    if (quickTag?.toLowerCase() === target.toLowerCase()) {
+      setQuickTag(nextTag);
+    }
     setEditingTagIdx(null);
     setEditingTagDraft('');
 
     const ok = await saveCustomTags(updatedTags, '标签已更新');
     if (!ok) {
       setCustomTags(prevTags);
-      setQuickTags(prevQuickTags);
+      setQuickTag(prevQuickTag);
     }
   };
 
@@ -482,6 +483,10 @@ export function DailyLogPanel() {
   const tagDraftTooLong = normalizedTagDraft.length > MAX_CUSTOM_TAG_LENGTH;
   const tagLimitReached = customTags.length >= MAX_CUSTOM_TAG_COUNT;
   const canSubmitTagDraft = normalizedTagDraft.length > 0 && !tagDraftTooLong && !tagLimitReached;
+  const systemCategoryKeys = useMemo(
+    () => Object.keys(CATEGORY_CONFIG).filter((key) => key !== DailyLogCategory.Other),
+    []
+  );
 
   const todayMinutes = items.reduce((sum, i) => sum + (i.durationMinutes || 0), 0);
   const loggedDates = useMemo(
@@ -642,8 +647,10 @@ export function DailyLogPanel() {
                 </Button>
               </div>
               {/* Category quick-pick tags */}
-              <div className="flex items-center gap-1.5 flex-wrap">
-                {Object.entries(CATEGORY_CONFIG).map(([key, cfg]) => {
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                {systemCategoryKeys.map((key) => {
+                  const cfg = CATEGORY_CONFIG[key];
                   const isActive = quickCategory === key;
                   const Icon = cfg.icon;
                   return (
@@ -663,7 +670,7 @@ export function DailyLogPanel() {
                   );
                 })}
                 {customTags.map((tag) => {
-                  const isActive = quickTags.includes(tag);
+                  const isActive = quickTag === tag;
                   return (
                     <button
                       key={`tag-${tag}`}
@@ -674,9 +681,7 @@ export function DailyLogPanel() {
                         border: `1px solid ${isActive ? 'rgba(20, 184, 166, 0.3)' : 'transparent'}`,
                       }}
                       onClick={() => {
-                        setQuickTags(isActive
-                          ? quickTags.filter((t) => t !== tag)
-                          : [...quickTags, tag]);
+                        setQuickTag(isActive ? null : tag);
                       }}
                     >
                       <Tag size={10} />
@@ -684,17 +689,42 @@ export function DailyLogPanel() {
                     </button>
                   );
                 })}
+                {(() => {
+                  const key = DailyLogCategory.Other;
+                  const cfg = CATEGORY_CONFIG[key];
+                  const isActive = quickCategory === key;
+                  const Icon = cfg.icon;
+                  return (
+                    <button
+                      key={key}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all duration-150"
+                      style={{
+                        background: isActive ? cfg.bg : 'transparent',
+                        color: isActive ? cfg.color : 'var(--text-muted)',
+                        border: `1px solid ${isActive ? cfg.color.replace('0.95', '0.3') : 'transparent'}`,
+                      }}
+                      onClick={() => handleQuickCategoryClick(key)}
+                    >
+                      <Icon size={11} />
+                      {cfg.label}
+                    </button>
+                  );
+                })()}
+                </div>
+                <div className="h-4 w-px" style={{ background: 'var(--border-primary)' }} />
+                <div className="flex items-center">
                 <button
-                  className="px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all duration-150"
+                  className="px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all duration-150 whitespace-nowrap"
                   style={{
-                    background: showTagManager ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
-                    color: showTagManager ? 'rgba(59, 130, 246, 0.88)' : 'var(--text-muted)',
-                    border: `1px solid ${showTagManager ? 'rgba(59, 130, 246, 0.24)' : 'transparent'}`,
+                    background: showTagManager ? 'rgba(148, 163, 184, 0.1)' : 'transparent',
+                    color: showTagManager ? 'var(--text-secondary)' : 'var(--text-muted)',
+                    border: `1px solid ${showTagManager ? 'rgba(148, 163, 184, 0.28)' : 'rgba(148, 163, 184, 0.14)'}`,
                   }}
                   onClick={() => setShowTagManager((v) => !v)}
                 >
                   管理标签
                 </button>
+                </div>
               </div>
               {showTagManager && (
                 <div
