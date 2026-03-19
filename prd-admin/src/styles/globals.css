@@ -529,6 +529,14 @@ select optgroup {
   display: block;
 }
 
+/* Safari < 15 fallback for aspect-ratio */
+@supports not (aspect-ratio: 1 / 1) {
+  .model-map-frame {
+    padding-bottom: 100%; /* 1:1 aspect ratio */
+    height: 0;
+  }
+}
+
 .model-map-svg {
   position: absolute;
   inset: 0;
@@ -724,6 +732,7 @@ select optgroup {
   box-shadow:
     0 24px 90px rgba(0,0,0,0.55),
     0 1px 0 rgba(255,255,255,0.06) inset;
+  -webkit-backdrop-filter: blur(40px) saturate(160%);
   backdrop-filter: blur(40px) saturate(160%);
 }
 
@@ -1658,6 +1667,8 @@ html[data-perf-mode="performance"] .blur-text span {
   position: relative;
   border-radius: 14px;
   padding: 2px;
+  /* Fallback for browsers that don't support conic-gradient or @property */
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.8), rgba(168, 85, 247, 0.6), rgba(34, 197, 94, 0.5), rgba(250, 204, 21, 0.6), rgba(99, 102, 241, 0.8));
   background: conic-gradient(
     from var(--capsule-border-angle),
     rgba(99, 102, 241, 0.8),
@@ -1667,6 +1678,33 @@ html[data-perf-mode="performance"] .blur-text span {
     rgba(99, 102, 241, 0.8)
   );
   animation: capsule-border-spin 2.5s linear infinite;
+}
+
+/* Safari < 17.2 fallback: rotate a pseudo-element instead of animating @property */
+@supports not (syntax: '<angle>') {
+  .capsule-running-border {
+    animation: none;
+    overflow: hidden;
+  }
+  .capsule-running-border::before {
+    content: '';
+    position: absolute;
+    inset: -50%;
+    background: conic-gradient(
+      rgba(99, 102, 241, 0.8),
+      rgba(168, 85, 247, 0.6),
+      rgba(34, 197, 94, 0.5),
+      rgba(250, 204, 21, 0.6),
+      rgba(99, 102, 241, 0.8)
+    );
+    animation: capsule-border-spin-fallback 2.5s linear infinite;
+    z-index: -1;
+  }
+}
+
+@keyframes capsule-border-spin-fallback {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .capsule-running-border > * {

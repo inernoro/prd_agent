@@ -99,6 +99,7 @@ export function SparkleButton({ text = 'Generate', onClick, className }: Sparkle
           rotate: 0;
           transform: rotate(-90deg);
           opacity: calc((var(--active)) + 0.4);
+          background: linear-gradient(90deg, transparent 0%, transparent 85%, white 100%);
           background: conic-gradient(from 0deg, transparent 0 340deg, white 360deg);
           transition: opacity var(--transition);
           animation: sparkle-rotate var(--spark) linear infinite both;

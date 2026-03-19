@@ -288,27 +288,26 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
         };
       }),
 
-      // 发送消息：只添加用户消息，不创建本地 AI 占位（由后端创建并广播）
+      // 发送消息：添加用户消息 + 设置 pending 标志（立即显示"思考中"动画，无需等后端 SSE）
+      // 注意：不往 messages 数组插入假消息，避免 key 变化导致闪烁和重复消息 bug
       addUserMessageWithPendingAssistant: ({ userMessage }) => {
         set((state) => {
-        const next = [...state.messages, userMessage];
-        return {
-          messages: next,
-          pendingAssistantId: null,
-          pendingUserMessageId: userMessage?.id ?? null,
-          isPinnedToBottom: true,
-          scrollToBottomSeq: (state.scrollToBottomSeq ?? 0) + 1,
-        };
+          const next = [...state.messages, userMessage];
+          return {
+            messages: next,
+            pendingAssistantId: '__pending__',
+            pendingUserMessageId: userMessage?.id ?? null,
+            isPinnedToBottom: true,
+            scrollToBottomSeq: (state.scrollToBottomSeq ?? 0) + 1,
+          };
         });
       },
 
       clearPendingAssistant: () => set((state) => {
         if (!state.pendingAssistantId) return state;
-        const pid = state.pendingAssistantId;
         return {
           pendingAssistantId: null,
           pendingUserMessageId: state.pendingUserMessageId ?? null,
-          messages: state.messages.filter((m) => m.id !== pid),
         };
       }),
 
@@ -547,6 +546,11 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
       ? incomingSeq
       : state.localMaxSeq;
 
+    // 0) 收到真实 Assistant 消息时清除 pending 标志
+    const clearPending = state.pendingAssistantId && incoming.role === 'Assistant'
+      ? { pendingAssistantId: null }
+      : {};
+
     // 1) 发送者 user message 去重：用 (senderId + content) 在尾部做一次轻量 reconcile
     if (
       incoming.role === 'User' &&
@@ -566,7 +570,7 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
         const idx = state.messages.length - 1 - idxFromEnd;
         const next = [...state.messages];
         next[idx] = { ...next[idx], ...incoming };
-        return { messages: maybeSortByGroupSeq(next), localMaxSeq: newMaxSeq };
+        return { messages: maybeSortByGroupSeq(next), localMaxSeq: newMaxSeq, ...clearPending };
       }
     }
 
@@ -575,12 +579,12 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
     if (existingIdx !== -1) {
       const next = [...state.messages];
       next[existingIdx] = { ...next[existingIdx], ...incoming };
-      return { messages: maybeSortByGroupSeq(next), localMaxSeq: newMaxSeq };
+      return { messages: maybeSortByGroupSeq(next), localMaxSeq: newMaxSeq, ...clearPending };
     }
 
     // 3) 新消息：追加并按需排序
     const next = [...state.messages, incoming];
-    return { messages: maybeSortByGroupSeq(next), localMaxSeq: newMaxSeq };
+    return { messages: maybeSortByGroupSeq(next), localMaxSeq: newMaxSeq, ...clearPending };
   }),
 
   startStreaming: (message) => set((state) => {
@@ -602,6 +606,8 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
       isStreaming: true,
       streamingMessageId: message.id,
       streamingPhase: state.streamingPhase ?? 'requesting',
+      // 真实流式消息到达，清除 pending 标志（思考动画由 streaming 接管）
+      pendingAssistantId: null,
     };
   }),
 

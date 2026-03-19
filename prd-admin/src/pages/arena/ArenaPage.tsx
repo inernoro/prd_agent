@@ -2138,7 +2138,10 @@ export function ArenaPage() {
                 <div
                   style={{
                     position: 'absolute',
-                    inset: '-50%',
+                    top: '-50%',
+                    right: '-50%',
+                    bottom: '-50%',
+                    left: '-50%',
                     background: `conic-gradient(from 0deg, transparent 0deg, #6366f1 60deg, #818cf8 120deg, transparent 180deg)`,
                     animation: 'arena-ring-spin 2.5s linear infinite',
                     borderRadius: 'inherit',

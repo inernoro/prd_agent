@@ -179,6 +179,9 @@ public class MongoDbContext
     // Video Agent 文章转视频
     public IMongoCollection<VideoGenRun> VideoGenRuns => _database.GetCollection<VideoGenRun>("video_gen_runs");
 
+    // Desktop 更新加速缓存
+    public IMongoCollection<DesktopUpdateCache> DesktopUpdateCaches => _database.GetCollection<DesktopUpdateCache>("desktop_update_caches");
+
     // Web Hosting 网页托管与分享
     public IMongoCollection<HostedSite> HostedSites => _database.GetCollection<HostedSite>("hosted_sites");
     public IMongoCollection<WebPageShareLink> WebPageShareLinks => _database.GetCollection<WebPageShareLink>("web_page_share_links");
@@ -1251,5 +1254,22 @@ public class MongoDbContext
         ShareViewLogs.Indexes.CreateOne(new CreateIndexModel<ShareViewLog>(
             Builders<ShareViewLog>.IndexKeys.Ascending(x => x.ShareToken).Descending(x => x.ViewedAt),
             new CreateIndexOptions { Name = "idx_share_view_logs_token_viewed" }));
+
+        // ========== Desktop 更新加速缓存索引 ==========
+
+        // DesktopUpdateCaches：(Version, Target) 唯一
+        try
+        {
+            DesktopUpdateCaches.Indexes.CreateOne(new CreateIndexModel<DesktopUpdateCache>(
+                Builders<DesktopUpdateCache>.IndexKeys.Ascending(x => x.Version).Ascending(x => x.Target),
+                new CreateIndexOptions { Name = "uniq_desktop_update_caches_version_target", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        DesktopUpdateCaches.Indexes.CreateOne(new CreateIndexModel<DesktopUpdateCache>(
+            Builders<DesktopUpdateCache>.IndexKeys.Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_desktop_update_caches_created" }));
     }
 }

@@ -937,6 +937,14 @@ builder.Services.AddScoped<IWebhookNotificationService>(sp =>
     return new PrdAgent.Infrastructure.Services.WebhookNotificationService(db, openPlatformService, httpClientFactory, automationHub, logger);
 });
 
+// 桌面更新加速服务
+builder.Services.AddHttpClient("GitHubUpdate", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(120);
+    client.DefaultRequestHeaders.Add("User-Agent", "PrdAgent-UpdateAccelerator");
+});
+builder.Services.AddSingleton<PrdAgent.Api.Services.DesktopUpdateAccelerator>();
+
 // 注册缺口通知服务
 builder.Services.AddScoped<IGapNotificationService>(sp =>
 {
