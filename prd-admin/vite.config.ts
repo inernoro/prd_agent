@@ -29,12 +29,6 @@ export default defineConfig({
     allowedHosts: true,
     // 本地联调：通过同源 /api 反代到后端，彻底避免 CORS/OPTIONS 预检 403
     proxy: {
-      // CDS Dashboard API passthrough — allows BranchBadge widget to call CDS API in dev mode
-      '/_cds': {
-        target: `http://localhost:${process.env.VITE_CDS_PORT || 9900}`,
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/_cds/, ''),
-      },
       '/api': {
         target: 'http://localhost:5001',
         changeOrigin: true,

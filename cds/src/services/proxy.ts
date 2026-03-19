@@ -2,6 +2,7 @@ import http from 'node:http';
 import type { RoutingRule, BranchEntry, CdsConfig, BuildProfile } from '../types.js';
 import { StateService } from './state.js';
 import type { WorktreeService } from './worktree.js';
+import { buildWidgetScript } from '../widget-script.js';
 
 /**
  * ProxyService — the core of CDS worker port.
@@ -288,7 +289,7 @@ export class ProxyService {
     }
 
     console.log(`[proxy] ${req.method} ${req.url} → ${upstream} (branch=${branchSlug}, profile=${profileId || 'default'})`);
-    this.proxyRequest(req, res, upstream);
+    this.proxyRequest(req, res, upstream, { branchId: branchSlug, branchName: branchRef });
   }
 
   /**
@@ -470,7 +471,12 @@ export class ProxyService {
    * Proxy an HTTP request to an upstream URL.
    * Simple implementation using Node.js http module.
    */
-  private proxyRequest(clientReq: http.IncomingMessage, clientRes: http.ServerResponse, upstream: string): void {
+  private proxyRequest(
+    clientReq: http.IncomingMessage,
+    clientRes: http.ServerResponse,
+    upstream: string,
+    branchCtx?: { branchId: string; branchName: string },
+  ): void {
     const url = new URL(upstream);
     const options: http.RequestOptions = {
       hostname: url.hostname,
@@ -483,6 +489,12 @@ export class ProxyService {
       },
     };
 
+    // If branch context is provided, strip accept-encoding so upstream sends uncompressed HTML.
+    // This allows us to inject the CDS widget script without needing to decompress.
+    if (branchCtx && options.headers) {
+      delete options.headers['accept-encoding'];
+    }
+
     const proxyReq = http.request(options, (proxyRes) => {
       const headers = { ...proxyRes.headers };
       // When routing via cookie (same URL serves different branches), prevent
@@ -493,8 +505,39 @@ export class ProxyService {
         headers['cache-control'] = 'no-store, must-revalidate';
         headers['vary'] = 'Cookie';
       }
-      clientRes.writeHead(proxyRes.statusCode || 502, headers);
-      proxyRes.pipe(clientRes, { end: true });
+
+      // ── Widget injection: only for HTML responses with branch context ──
+      const contentType = proxyRes.headers['content-type'] || '';
+      const isHtml = contentType.includes('text/html') && branchCtx;
+
+      if (isHtml) {
+        // Buffer the HTML response, inject widget script before </body>
+        const chunks: Buffer[] = [];
+        proxyRes.on('data', (chunk: Buffer) => chunks.push(chunk));
+        proxyRes.on('end', () => {
+          let body = Buffer.concat(chunks).toString('utf-8');
+          const widget = buildWidgetScript(branchCtx.branchId, branchCtx.branchName);
+
+          // Inject before </body> if present, otherwise append
+          const idx = body.lastIndexOf('</body>');
+          if (idx !== -1) {
+            body = body.slice(0, idx) + widget + body.slice(idx);
+          } else {
+            body += widget;
+          }
+
+          // Update content-length and remove content-encoding (we decoded it)
+          delete headers['content-length'];
+          delete headers['transfer-encoding'];
+          delete headers['content-encoding'];
+          clientRes.writeHead(proxyRes.statusCode || 200, headers);
+          clientRes.end(body);
+        });
+      } else {
+        // Non-HTML: passthrough as before
+        clientRes.writeHead(proxyRes.statusCode || 502, headers);
+        proxyRes.pipe(clientRes, { end: true });
+      }
     });
 
     proxyReq.on('error', (err) => {
