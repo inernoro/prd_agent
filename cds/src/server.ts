@@ -198,6 +198,7 @@ function resolveAiSession(req: express.Request): ApprovedAiSession | null {
 
 export function createServer(deps: ServerDeps): express.Express {
   const app = express();
+  app.set('etag', false);            // Disable ETag — prevents 304 on API polling (CDS is a dev tool, caching is misleading)
   app.use(express.json());
 
   const webDir = path.resolve(__dirname, '..', 'web');
