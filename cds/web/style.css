@@ -1945,7 +1945,7 @@ a.branch-name:hover { color: var(--accent); }
   position: fixed;
   bottom: 16px;
   right: 16px;
-  width: 380px;
+  width: 480px;
   max-height: 420px;
   z-index: 9998;
   border-radius: var(--radius);
@@ -2200,7 +2200,8 @@ a.branch-name:hover { color: var(--accent); }
   color: var(--text-muted);
   font-size: 10px;
   flex-shrink: 0;
-  width: 52px;
+  min-width: 36px;
+  text-align: right;
 }
 
 .activity-method {

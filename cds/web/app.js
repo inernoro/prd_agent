@@ -3696,10 +3696,15 @@ function updateTotalCount() {
 }
 
 function toUTC8Time(isoStr) {
-  // Convert ISO string to UTC+8 HH:MM:SS
+  // Convert ISO string to UTC+8, show MM:SS if same hour, else HH:MM:SS
   const d = new Date(isoStr);
   const utc8 = new Date(d.getTime() + 8 * 60 * 60 * 1000);
-  return utc8.toISOString().slice(11, 19);
+  const full = utc8.toISOString().slice(11, 19);
+  const nowUtc8 = new Date(Date.now() + 8 * 60 * 60 * 1000);
+  if (utc8.getUTCHours() === nowUtc8.getUTCHours() && utc8.toISOString().slice(0, 10) === nowUtc8.toISOString().slice(0, 10)) {
+    return full.slice(3); // MM:SS
+  }
+  return full;
 }
 
 function renderActivityItem(event) {
@@ -3728,7 +3733,6 @@ function renderActivityItem(event) {
     const agentShort = (event.agent || 'AI').replace(/\s*\(static key\)/, '');
     html += `<span class="activity-source ai" title="${escapeHtml(event.agent || 'AI')}">${escapeHtml(agentShort)}</span>`;
   }
-  html += `<span class="activity-method ${event.method}">${event.method}</span>`;
   // Show Chinese label (golden glow) if available, path as tooltip
   if (label) {
     html += `<span class="activity-label" title="${escapeHtml(event.path)}">${escapeHtml(label)}</span>`;
@@ -3762,7 +3766,7 @@ function renderWebActivityItem(event) {
   const statusClass = event.status < 400 ? 'ok' : 'err';
   const dur = event.duration < 1000 ? `${event.duration}ms` : `${(event.duration / 1000).toFixed(1)}s`;
   const ts = toUTC8Time(event.ts);
-  const shortPath = event.path.length > 40 ? event.path.slice(0, 37) + '…' : event.path;
+  const shortPath = event.path;
 
   // Determine container type from profileId
   const profileId = event.profileId || '';
@@ -3775,10 +3779,11 @@ function renderWebActivityItem(event) {
   // Container badge (api / admin)
   html += `<span class="web-container-badge" style="background:${containerBg};color:${containerColor}">${containerLabel}</span>`;
   if (event.branchId) {
-    const branchShort = event.branchId.length > 16 ? event.branchId.slice(0, 13) + '…' : event.branchId;
+    const lastDash = event.branchId.lastIndexOf('-');
+    const branchTail = lastDash >= 0 ? event.branchId.slice(lastDash + 1) : event.branchId;
+    const branchShort = branchTail.length > 16 ? branchTail.slice(0, 13) + '…' : branchTail;
     html += `<span class="activity-source" style="background:var(--accent-bg);color:var(--accent);font-size:9px;font-weight:600;padding:1px 4px;border-radius:3px" title="${escapeHtml(event.branchId)}">${escapeHtml(branchShort)}</span>`;
   }
-  html += `<span class="activity-method ${event.method}">${event.method}</span>`;
   html += `<span class="activity-path" title="${escapeHtml(event.path)}">${escapeHtml(shortPath)}</span>`;
   html += `<span class="activity-status ${statusClass}">${event.status}</span>`;
   html += `<span class="activity-dur">${dur}</span>`;
@@ -3801,7 +3806,7 @@ function updateActivityRoller(event) {
   const dur = event.duration < 1000 ? `${event.duration}ms` : `${(event.duration / 1000).toFixed(1)}s`;
 
   const isWeb = event.type === 'web';
-  const html = `${isAi ? '<span class="roller-ai">AI</span>' : ''}${isWeb ? '<span class="roller-web">Web</span>' : ''}<span class="activity-method ${event.method}">${event.method}</span><span class="roller-label">${escapeHtml(label)}</span><span class="activity-status ${statusCls}">${event.status}</span><span class="roller-dur">${dur}</span>`;
+  const html = `${isAi ? '<span class="roller-ai">AI</span>' : ''}${isWeb ? '<span class="roller-web">Web</span>' : ''}<span class="roller-label">${escapeHtml(label)}</span><span class="activity-status ${statusCls}">${event.status}</span><span class="roller-dur">${dur}</span>`;
 
   // Single element replace — no overlap possible
   roller.innerHTML = `<div class="roller-line roller-flip">${html}</div>`;
