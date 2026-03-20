@@ -27,10 +27,10 @@ AI 作为 DevOps 操作员，通过 HTTP API 远程驱动 CDS 完成代码部署
 
 | 变量 | 用途 | 默认值 |
 |------|------|--------|
-| `CDS_DASHBOARD_URL` | CDS Dashboard 地址（远程） | 必填 |
+| `CDS_HOST` | CDS 地址（如 `cds.miduo.org`） | 必填 |
 | `AI_ACCESS_KEY` | CDS 静态 AI 认证密钥（推荐配置在 `.bashrc`） | 无 |
 
-> **前置检查**：Pipeline 启动前必须验证 `CDS_DASHBOARD_URL` 已设置。未设置时立即终止并询问用户。
+> **前置检查**：Pipeline 启动前必须验证 `CDS_HOST` 已设置。未设置时立即终止并询问用户。
 
 ## AI 认证方式（三种，按优先级）
 
@@ -241,13 +241,13 @@ Phase 5: Smoke Test → 通过 CDS 对部署的服务执行冒烟测试
 
 ```bash
 # 0. 前置：验证环境变量
-[[ -z "$CDS_DASHBOARD_URL" ]] && echo "✗ CDS_DASHBOARD_URL 未设置" && exit 1
+[[ -z "$CDS_HOST" ]] && echo "✗ CDS_HOST 未设置（格式: cds.miduo.org）" && exit 1
 
 # 1. 获取当前分支，禁止在 main/master 上操作
 BRANCH=$(git branch --show-current)
 
 # 2. 认证 CDS（三种方式自动尝试）
-CDS="$CDS_DASHBOARD_URL"
+CDS="https://$CDS_HOST"
 
 # 方式 A: 静态密钥（AI_ACCESS_KEY 环境变量，推荐配置在 .bashrc）
 if [[ -n "$AI_ACCESS_KEY" ]]; then
@@ -649,7 +649,7 @@ curl -sf $AUTH "$CDS/api/branches/$BRANCH_ID/git-log" | jq '.commits'
 1. **不在 main/master 上操作**：检测到则终止并警告
 2. **密钥不硬编码**：CDS_TOKEN / AI_ACCESS_KEY 仅从环境变量读取
 3. **删除操作需确认**：`DELETE /api/branches/:id` 必须先询问用户
-4. **生产环境检测**：CDS_DASHBOARD_URL 非 localhost/内网时输出警告
+4. **生产环境检测**：`CDS_HOST` 非 localhost/内网时输出警告
 5. **冒烟测试数据清理**：测试创建的资源必须在测试结束时删除
 
 ---
