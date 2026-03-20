@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Github, BookOpen, Plus, RefreshCw, Trash2, TestTube, Link2, Check, X, Database, CheckCircle2 } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Github, BookOpen, Plus, RefreshCw, Trash2, TestTube, Link2, Check, X, Database } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
@@ -8,7 +8,6 @@ import {
   listMyAiSources,
   updateMyAiSource,
   listPersonalSources,
-  createPersonalSource,
   updatePersonalSource,
   deletePersonalSource,
   testPersonalSource,
@@ -48,16 +47,9 @@ export function PersonalSourcesPanel() {
   const [stats, setStats] = useState<PersonalStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [togglingAiSourceKey, setTogglingAiSourceKey] = useState<string | null>(null);
-  const [showCreate, setShowCreate] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [syncingId, setSyncingId] = useState<string | null>(null);
-
-  const [formType, setFormType] = useState('github');
-  const [formName, setFormName] = useState('');
-  const [formRepoUrl, setFormRepoUrl] = useState('');
-  const [formSpaceId, setFormSpaceId] = useState('');
-  const [formUsername, setFormUsername] = useState('');
-  const [formToken, setFormToken] = useState('');
+  const lastComingSoonNoticeAtRef = useRef(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -76,23 +68,6 @@ export function PersonalSourcesPanel() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
-
-  const handleCreate = async () => {
-    if (!formName.trim() || !formToken.trim()) return;
-    const res = await createPersonalSource({
-      sourceType: formType,
-      displayName: formName.trim(),
-      repoUrl: formType === 'github' ? (formRepoUrl || undefined) : undefined,
-      username: formType === 'github' ? (formUsername || undefined) : undefined,
-      spaceId: formType === 'yuque' ? (formSpaceId || undefined) : undefined,
-      token: formToken,
-    });
-    if (res.success) {
-      setShowCreate(false);
-      resetForm();
-      void load();
-    }
-  };
 
   const handleDelete = async (id: string) => {
     const ok = await systemDialog.confirm({
@@ -158,14 +133,15 @@ export function PersonalSourcesPanel() {
     }
   };
 
-  const resetForm = () => {
-    setFormType('github');
-    setFormName('');
-    setFormRepoUrl('');
-    setFormSpaceId('');
-    setFormUsername('');
-    setFormToken('');
-  };
+  const handleAddExtensionSourceComingSoon = useCallback(() => {
+    const now = Date.now();
+    if (now - lastComingSoonNoticeAtRef.current < 1000) return;
+    lastComingSoonNoticeAtRef.current = now;
+    toast.info(
+      '添加扩展源功能正在精细打磨中，敬请期待',
+      '送你一束鲜花，感谢你的耐心支持'
+    );
+  }, []);
 
   const getSourceType = (type: string) => {
     return SOURCE_TYPES.find(s => s.value === type) || { value: type, label: type, icon: Link2, color: 'var(--text-muted)', bg: 'var(--bg-tertiary)', placeholder: '' };
@@ -285,7 +261,7 @@ export function PersonalSourcesPanel() {
               可额外绑定 GitHub / 语雀来源用于数据采集与统计
             </div>
           </div>
-          <Button variant="primary" size="sm" onClick={() => setShowCreate(true)}>
+          <Button variant="primary" size="sm" onClick={handleAddExtensionSourceComingSoon}>
             <Plus size={12} /> 添加扩展源
           </Button>
         </div>
@@ -314,7 +290,7 @@ export function PersonalSourcesPanel() {
                 </div>
               ))}
             </div>
-            <Button variant="primary" onClick={() => setShowCreate(true)}>
+            <Button variant="primary" onClick={handleAddExtensionSourceComingSoon}>
               <Plus size={14} /> 添加扩展源
             </Button>
           </div>
@@ -406,114 +382,6 @@ export function PersonalSourcesPanel() {
         })}
       </div>
 
-      {/* Create Dialog */}
-      {showCreate && (
-        <div className="fixed inset-0 flex items-center justify-center z-50" style={{ background: 'rgba(0,0,0,0.4)' }}>
-          <GlassCard className="w-[440px] p-5 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>添加数据源</h3>
-              <Button variant="ghost" size="sm" onClick={() => { setShowCreate(false); resetForm(); }}>
-                <X size={14} />
-              </Button>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>数据源类型</label>
-              <div className="flex gap-2">
-                {SOURCE_TYPES.map(stype => {
-                  const isActive = formType === stype.value;
-                  return (
-                    <button
-                      key={stype.value}
-                      onClick={() => setFormType(stype.value)}
-                      className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-[12px] transition-all duration-200"
-                      style={{
-                        background: isActive ? stype.bg : 'var(--bg-secondary)',
-                        color: isActive ? stype.color : 'var(--text-secondary)',
-                        border: `1px solid ${isActive ? stype.color.replace('0.95', '0.5') : 'var(--border-primary)'}`,
-                        boxShadow: isActive ? `0 0 0 2px ${stype.color.replace('0.95', '0.12')}` : 'none',
-                        fontWeight: isActive ? 600 : 500,
-                      }}
-                    >
-                      <stype.icon size={13} /> {stype.label}
-                      {isActive && <CheckCircle2 size={12} />}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>显示名称</label>
-              <input
-                value={formName}
-                onChange={e => setFormName(e.target.value)}
-                placeholder={`我的 ${SOURCE_TYPES.find(s => s.value === formType)?.label || ''}`}
-                className="w-full px-3 py-2 rounded-xl text-[13px]"
-                style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
-              />
-            </div>
-
-            {formType === 'yuque' ? (
-              <div className="space-y-2">
-                <label className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                  空间标识（可选）
-                </label>
-                <input
-                  value={formSpaceId}
-                  onChange={e => setFormSpaceId(e.target.value)}
-                  placeholder={SOURCE_TYPES.find(s => s.value === formType)?.placeholder || ''}
-                  className="w-full px-3 py-2 rounded-xl text-[13px]"
-                  style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
-                />
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <label className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                  仓库地址（可选，留空采集全部）
-                </label>
-                <input
-                  value={formRepoUrl}
-                  onChange={e => setFormRepoUrl(e.target.value)}
-                  placeholder={SOURCE_TYPES.find(s => s.value === formType)?.placeholder || ''}
-                  className="w-full px-3 py-2 rounded-xl text-[13px]"
-                  style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
-                />
-              </div>
-            )}
-
-            {formType !== 'yuque' && (
-              <div className="space-y-2">
-                <label className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>用户名（可选）</label>
-                <input
-                  value={formUsername}
-                  onChange={e => setFormUsername(e.target.value)}
-                  placeholder="GitHub 用户名"
-                  className="w-full px-3 py-2 rounded-xl text-[13px]"
-                  style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
-                />
-              </div>
-            )}
-
-            <div className="space-y-2">
-              <label className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>Access Token</label>
-              <input
-                type="password"
-                value={formToken}
-                onChange={e => setFormToken(e.target.value)}
-                placeholder={formType === 'github' ? 'ghp_...' : '语雀 Token'}
-                className="w-full px-3 py-2 rounded-xl text-[13px]"
-                style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
-              />
-            </div>
-
-            <div className="flex justify-end gap-2 pt-1">
-              <Button variant="secondary" size="sm" onClick={() => { setShowCreate(false); resetForm(); }}>取消</Button>
-              <Button variant="primary" size="sm" onClick={handleCreate} disabled={!formName.trim() || !formToken.trim()}>确认绑定</Button>
-            </div>
-          </GlassCard>
-        </div>
-      )}
     </div>
   );
 }
