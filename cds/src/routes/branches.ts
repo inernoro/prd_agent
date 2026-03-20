@@ -2396,7 +2396,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       sendSSE(res, 'done', { message: 'CDS 即将重启，页面将在几秒后自动刷新...' });
       res.end();
 
-      // Give time for response to flush, then spawn detached restart
+      // Give time for response to flush, then spawn detached restart.
+      // exec_cds.sh uses "pnpm serve" (no file watcher) in background mode,
+      // so git pull changing files won't trigger a competing restart.
       setTimeout(() => {
         const cdsDir = path.join(repoRoot, 'cds');
         const child = spawn('bash', ['./exec_cds.sh', '--background'], {
@@ -2406,7 +2408,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           env: { ...process.env },
         });
         child.unref();
-        // exec_cds.sh will kill the old process (us) via PID file + port detection
+        // exec_cds.sh will kill the old process (us) via PID file + port reclaim
       }, 500);
     } catch (err) {
       send('error', 'error', `更新失败: ${(err as Error).message}`);

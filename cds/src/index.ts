@@ -516,11 +516,25 @@ function tryKillOnPort(port: number, force: boolean): boolean {
       const cmd = execSync(`ps -p ${pid} -o comm= 2>/dev/null || true`, { encoding: 'utf-8' }).trim();
       if (force || ['node', 'tsx', 'ts-node', 'npx'].includes(cmd)) {
         console.log(`  Stopping process on port ${port} (PID: ${pid}, cmd: ${cmd})`);
-        execSync(`kill -9 ${pid} 2>/dev/null || true`);
+        // Kill the entire process group to prevent tsx watch from respawning
+        try {
+          const pgid = execSync(`ps -p ${pid} -o pgid= 2>/dev/null || true`, { encoding: 'utf-8' }).trim();
+          if (pgid && pgid !== String(process.pid)) {
+            execSync(`kill -9 -- -${pgid} 2>/dev/null || true`);
+          } else {
+            execSync(`kill -9 ${pid} 2>/dev/null || true`);
+          }
+        } catch {
+          execSync(`kill -9 ${pid} 2>/dev/null || true`);
+        }
         killed = true;
       } else {
         console.log(`  [WARN] Port ${port} held by non-CDS process (PID: ${pid}, cmd: ${cmd}) — not killing`);
       }
+    }
+    if (killed) {
+      // Wait briefly for kernel to release the socket
+      execSync('sleep 0.5');
     }
     return killed;
   } catch {
@@ -537,14 +551,17 @@ function listenWithRetry(
   onSuccess: () => void,
   opts: { force?: boolean; optional?: boolean } = {},
 ) {
+  const MAX_ATTEMPTS = 5;
   const doListen = (attempt: number) => {
     const s = server.listen(port, onSuccess);
     s.on('error', (err: Error & { code?: string }) => {
-      if (err.code === 'EADDRINUSE' && attempt < 2) {
-        console.log(`  [WARN] Port ${port} in use, attempting to reclaim (${label})...`);
+      if (err.code === 'EADDRINUSE' && attempt < MAX_ATTEMPTS) {
+        console.log(`  [WARN] Port ${port} in use, attempting to reclaim (${label}, attempt ${attempt + 1}/${MAX_ATTEMPTS})...`);
         const killed = tryKillOnPort(port, !!opts.force);
         if (killed) {
-          setTimeout(() => doListen(attempt + 1), 1500);
+          // Exponential backoff: 1.5s, 2s, 3s, 4s, 5s
+          const delay = 1500 + attempt * 500;
+          setTimeout(() => doListen(attempt + 1), delay);
         } else if (opts.optional) {
           console.log(`  [INFO] Port ${port} occupied by another service — ${label} skipped (non-essential)`);
         } else {
