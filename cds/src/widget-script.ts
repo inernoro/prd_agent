@@ -32,6 +32,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     #cds-widget .cds-badge:active{cursor:grabbing}
     #cds-widget .cds-branch{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     #cds-widget .cds-tag{font-size:10px;padding:1px 5px;border-radius:4px;background:rgba(255,255,255,0.15);margin-left:2px}
+    #cds-widget .cds-sha{font-size:9px;padding:1px 5px;border-radius:4px;background:rgba(255,255,255,0.1);color:rgba(255,255,255,0.6);font-family:ui-monospace,SFMono-Regular,monospace;letter-spacing:0.3px}
     #cds-widget button{display:flex;align-items:center;justify-content:center;padding:2px;border-radius:4px;border:none;background:transparent;color:inherit;cursor:pointer;opacity:0.6}
     #cds-widget button:hover{opacity:1}
     #cds-widget .cds-panel{margin-bottom:4px;padding:10px 12px;border-radius:8px;background:rgba(22,27,34,0.95);backdrop-filter:blur(12px);border:1px solid rgba(63,185,80,0.3);box-shadow:0 4px 16px rgba(0,0,0,0.4);min-width:220px}
@@ -60,6 +61,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   var deployProfileId=null;
   var profiles=[];
   var branchStatus='';
+  var commitSha='';
   var steps=[];
   var resultMsg='';
   var resultOk=true;
@@ -144,6 +146,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     h+='<div class="cds-badge" onmousedown="return false">';
     h+=ICON_BRANCH;
     h+='<span class="cds-branch">'+BRANCH_NAME+'</span>';
+    if(commitSha)h+='<span class="cds-sha" title="'+commitSha+'">'+commitSha+'</span>';
     h+='<span class="cds-tag">CDS</span>';
     h+='<button data-action="toggle" title="'+(expanded?'收起':'展开更新面板')+'">'+(expanded?ICON_DOWN:ICON_UP)+'</button>';
     h+='<button data-action="dismiss">'+ICON_X+'</button>';
@@ -188,6 +191,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
         if(branchList[i].id===BRANCH_ID){found=branchList[i];break;}
       }
       branchStatus=found?found.status:'';
+      commitSha=found&&found.commitSha?found.commitSha:'';
       profiles=(res[1]&&res[1].profiles)||[];
       render();
     }).catch(function(){

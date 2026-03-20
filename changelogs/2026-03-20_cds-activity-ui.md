@@ -7,3 +7,8 @@
 | refactor | cds | Remove left border glow from cards, replaced by status dot |
 | refactor | cds | Remove Chinese text from Preview/Build buttons, use hammer icon for deploy |
 | refactor | cds | Remove 30s branch polling, replaced by SSE state push |
+| feat | cds | Human web access shown as blinking footprint icon (not rainbow border) |
+| feat | cds | Commit SHA badge moved to CDS widget (preview page bottom-left) |
+| refactor | cds | Color mark icon changed from pie-chart to lightbulb |
+| refactor | cds | Deploy button restored to hammer + 部署 text |
+| fix | prd-admin | AppShell.tsx favicon.jpg → favicon.png (unified with index.html) |

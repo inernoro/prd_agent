@@ -781,30 +781,20 @@ button.text-btn:hover { color: var(--accent); }
     border-color: rgba(244, 63, 94, 0.4);
   }
 }
-/* Web access activity — rotating rainbow border on card (stops after idle) */
-.branch-card.is-previewing {
-  border-image: none;
-  border-color: transparent;
-  background-origin: border-box;
-  background-clip: padding-box, border-box;
-  background-image:
-    linear-gradient(var(--bg-card), var(--bg-card)),
-    conic-gradient(from var(--preview-border-angle, 0deg), #10b981, #38bdf8, #a78bfa, #f43f5e, #fbbf24, #10b981);
-  border: 2px solid transparent;
-  animation: preview-border-spin 2.5s linear infinite;
+/* Human web access — blinking footprint icon in toolbar */
+.human-access-icon {
+  display: none;
+  width: 16px; height: 16px;
+  color: var(--green);
+  animation: human-access-blink 1.5s ease-in-out infinite;
+  flex-shrink: 0;
 }
-@keyframes preview-border-spin {
-  to { --preview-border-angle: 360deg; }
+.branch-card.is-previewing .human-access-icon {
+  display: block;
 }
-@property --preview-border-angle {
-  syntax: '<angle>';
-  initial-value: 0deg;
-  inherits: false;
-}
-
-/* AI occupation overrides preview spinner */
-.branch-card.is-previewing.is-ai-occupied {
-  animation: ai-border-spin 3s linear infinite;
+@keyframes human-access-blink {
+  0%, 100% { opacity: 1; filter: drop-shadow(0 0 3px var(--green)); }
+  50% { opacity: 0.25; filter: none; }
 }
 
 /* AI occupation — rotating gradient border on card */
