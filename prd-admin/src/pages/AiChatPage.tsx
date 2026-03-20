@@ -18,6 +18,7 @@ import rehypeRaw from 'rehype-raw';
 import type { AiChatStreamEvent } from '@/services/contracts/aiChat';
 import { toast } from '@/lib/toast';
 import { useLocation } from 'react-router-dom';
+import { usePrdAgentStore } from '@/stores/prdAgentStore';
 
 const DOC_TYPE_LABELS: Record<string, string> = {
   product: '产品',
@@ -538,6 +539,45 @@ export default function AiChatPage() {
     void refreshSessionsFromServer({ silent: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
+
+  // ── 同步状态到 prdAgentStore（供 Sidebar 读取） ──
+  const syncSessions = usePrdAgentStore((s) => s.syncSessions);
+  const syncActiveSessionId = usePrdAgentStore((s) => s.syncActiveSessionId);
+  const syncCurrentRole = usePrdAgentStore((s) => s.syncCurrentRole);
+
+  useEffect(() => {
+    syncSessions(sessions);
+  }, [sessions, syncSessions]);
+
+  useEffect(() => {
+    syncActiveSessionId(activeSessionId);
+  }, [activeSessionId, syncActiveSessionId]);
+
+  useEffect(() => {
+    syncCurrentRole(currentRole);
+  }, [currentRole, syncCurrentRole]);
+
+  // ── 监听 Sidebar 事件 ──
+  useEffect(() => {
+    const onCreateSession = () => {
+      setCreateOpen(true);
+    };
+    const onSwitchSession = (e: Event) => {
+      const ce = e as CustomEvent<{ sessionId?: string }>;
+      const sid = ce?.detail?.sessionId;
+      if (sid) {
+        setActiveSessionId(sid);
+        setActiveSessionExpired(false);
+        expiredNotifiedSessionIdRef.current = '';
+      }
+    };
+    window.addEventListener('prdAgent:createSession', onCreateSession);
+    window.addEventListener('prdAgent:switchSession', onSwitchSession);
+    return () => {
+      window.removeEventListener('prdAgent:createSession', onCreateSession);
+      window.removeEventListener('prdAgent:switchSession', onSwitchSession);
+    };
+  }, []);
 
   // 加载提示词列表（用于底部快捷标签）
   useEffect(() => {
@@ -1101,49 +1141,6 @@ export default function AiChatPage() {
     </DialogPrimitive.Root>
   );
 
-  // 头部左侧内容：会话切换 + 角色切换
-  const headerLeftContent = (
-    <div className="flex items-center gap-3">
-      {/* 会话切换按钮 + 下拉菜单 */}
-      <div className="relative">
-        <button
-          type="button"
-          className="px-3 h-[28px] rounded-[9px] text-[12px] font-semibold hover:bg-white/5 transition-colors truncate flex items-center gap-1.5"
-          style={{ border: '1px solid var(--border-default)', color: 'var(--text-primary)', maxWidth: '280px', background: 'var(--bg-input)' }}
-          onClick={() => {
-            if (sessions.length === 0) {
-              setCreateOpen(true);
-            } else {
-              setSessionMenuOpen((v) => !v);
-            }
-          }}
-          disabled={!userId}
-          title={sessions.length > 0 ? '点击切换对话' : '上传 PRD'}
-        >
-          <span className="truncate">
-            {activeSession?.title || activeSession?.documentTitle || '上传 PRD'}
-          </span>
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style={{ opacity: sessions.length > 0 ? 0.75 : 0.35, flexShrink: 0 }}>
-            <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        </button>
-        {sessionDropdownMenu}
-      </div>
-      {/* 角色切换 */}
-      <GlassSwitch
-        options={[
-          { key: 'PM', label: 'PM' },
-          { key: 'DEV', label: 'DEV' },
-          { key: 'QA', label: 'QA' },
-        ]}
-        value={currentRole}
-        onChange={(key) => setCurrentRole(key as 'PM' | 'DEV' | 'QA')}
-        accentHue={240}
-        size="sm"
-      />
-    </div>
-  );
-
   // 头部右侧按钮
   const headerRightActions = (
     <>
@@ -1297,17 +1294,47 @@ export default function AiChatPage() {
   ) : null;
 
   const chatPanel = (
-    <div className="h-full min-h-0 flex flex-col gap-2">
-      {/* 紧凑操作栏（不再使用独立 TabBar，由父级 PrdAgentTabsPage 提供标签栏） */}
-      <div className="flex items-center justify-between gap-3 flex-wrap px-1">
-        {headerLeftContent}
-        <div className="flex items-center gap-2 shrink-0 flex-wrap">
-          {headerRightActions}
+    <div className="h-full min-h-0 flex flex-col">
+      {/* ── 标题栏（对标 Desktop ChatContainer 的 group title bar） ── */}
+      <div
+        className="h-12 px-4 flex items-center justify-between border-b shrink-0"
+        style={{ borderColor: 'var(--border-default)' }}
+      >
+        <div className="min-w-0 flex items-center gap-3">
+          <span
+            className="text-sm font-semibold truncate"
+            style={{ color: 'var(--text-primary)', maxWidth: 320 }}
+            title={activeSession?.title || activeSession?.documentTitle || 'PRD Agent'}
+          >
+            {activeSession?.title || activeSession?.documentTitle || 'PRD Agent'}
+          </span>
+        </div>
+        <div className="flex items-center gap-3">
+          {/* 角色切换 */}
+          <GlassSwitch
+            options={[
+              { key: 'PM', label: '产品经理' },
+              { key: 'DEV', label: '开发' },
+              { key: 'QA', label: '测试' },
+            ]}
+            value={currentRole}
+            onChange={(key) => setCurrentRole(key as 'PM' | 'DEV' | 'QA')}
+            accentHue={240}
+            size="sm"
+          />
+          {/* 功能按钮 */}
+          <div className="flex items-center gap-2 shrink-0">
+            {headerRightActions}
+          </div>
         </div>
       </div>
 
       {/* 多文档标签条 */}
-      {documentBar}
+      {documentBar && (
+        <div className="px-3 py-1.5 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
+          {documentBar}
+        </div>
+      )}
 
       {/* 内容区 */}
       <GlassCard animated className="flex-1 min-h-0 flex flex-col ai-chat-card" overflow="hidden" padding="none" glow accentHue={240}>
@@ -1752,6 +1779,9 @@ export default function AiChatPage() {
       />
 
       {rightPanel}
+
+      {/* 会话选择弹窗（由 sessionDropdownMenu 渲染，Portal 形式） */}
+      {sessionDropdownMenu}
 
       {/* 系统提示词查看弹窗 */}
       <Dialog
