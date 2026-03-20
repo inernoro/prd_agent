@@ -134,7 +134,7 @@ export function AiPromptSettingsPanel() {
         <textarea
           value={systemDefaultPrompt}
           readOnly
-          className="w-full min-h-[170px] px-3 py-2 rounded-xl text-[12px] leading-6 resize-y"
+          className="w-full min-h-[320px] px-3 py-2 rounded-xl text-[12px] leading-6 resize-y"
           style={{
             background: 'var(--bg-secondary)',
             color: 'var(--text-muted)',
