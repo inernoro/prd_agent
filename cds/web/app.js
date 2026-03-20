@@ -3412,5 +3412,208 @@ function initTitleRotation() {
 
 initTitleRotation();
 
+// ════════════════ API Activity Monitor ════════════════
+
+let activityEvents = [];
+let activityExpanded = false;
+let activityEventSource = null;
+
+function initActivityMonitor() {
+  activityEventSource = new EventSource(`${API}/activity-stream`);
+  activityEventSource.onmessage = (e) => {
+    try {
+      const event = JSON.parse(e.data);
+      activityEvents.push(event);
+      if (activityEvents.length > 200) activityEvents = activityEvents.slice(-200);
+      renderActivityItem(event);
+      document.getElementById('activityCount').textContent = activityEvents.length;
+    } catch {}
+  };
+  activityEventSource.onerror = () => {
+    // Reconnect after 3s
+    setTimeout(() => {
+      if (activityEventSource) activityEventSource.close();
+      initActivityMonitor();
+    }, 3000);
+  };
+}
+
+function renderActivityItem(event) {
+  const body = document.getElementById('activityBody');
+  if (!body) return;
+
+  const el = document.createElement('div');
+  el.className = 'activity-item';
+
+  const ts = event.ts.slice(11, 19);
+  const statusClass = event.status < 400 ? 'ok' : 'err';
+  const dur = event.duration < 1000 ? `${event.duration}ms` : `${(event.duration / 1000).toFixed(1)}s`;
+
+  // Shorten path for display
+  const shortPath = event.path.replace(/^\/api\//, '').replace(/branches\/([^/]+)/, (_, id) => {
+    return id.length > 16 ? id.slice(0, 12) + '…' : id;
+  });
+
+  let html = `<span class="activity-ts">${ts}</span>`;
+  html += `<span class="activity-method ${event.method}">${event.method}</span>`;
+  html += `<span class="activity-path" title="${event.path}">${shortPath}</span>`;
+  html += `<span class="activity-status ${statusClass}">${event.status}</span>`;
+  html += `<span class="activity-dur">${dur}</span>`;
+  if (event.source === 'ai') {
+    html += `<span class="activity-source ai" title="${event.agent || 'AI'}">AI</span>`;
+  }
+
+  el.innerHTML = html;
+  body.appendChild(el);
+
+  // Auto-scroll to bottom
+  requestAnimationFrame(() => { body.scrollTop = body.scrollHeight; });
+}
+
+function toggleActivityMonitor() {
+  const monitor = document.getElementById('activityMonitor');
+  monitor.classList.toggle('collapsed');
+  activityExpanded = !monitor.classList.contains('collapsed');
+  if (activityExpanded) {
+    const body = document.getElementById('activityBody');
+    requestAnimationFrame(() => { body.scrollTop = body.scrollHeight; });
+  }
+}
+
+function clearActivityLog() {
+  activityEvents = [];
+  document.getElementById('activityBody').innerHTML = '';
+  document.getElementById('activityCount').textContent = '0';
+}
+
+// ════════════════ AI Pairing System ════════════════
+
+let aiPairingRequests = [];
+let aiPairingEventSource = null;
+
+function initAiPairing() {
+  aiPairingEventSource = new EventSource(`${API}/ai/pairing-stream`);
+
+  aiPairingEventSource.addEventListener('new-request', (e) => {
+    try {
+      const req = JSON.parse(e.data);
+      // Avoid duplicates
+      if (!aiPairingRequests.find(r => r.id === req.id)) {
+        aiPairingRequests.push(req);
+      }
+      updateAiIndicator();
+      showToast(`AI "${req.agentName}" 请求连接`, 'info', 5000);
+    } catch {}
+  });
+
+  aiPairingEventSource.addEventListener('request-approved', (e) => {
+    try {
+      const { id } = JSON.parse(e.data);
+      aiPairingRequests = aiPairingRequests.filter(r => r.id !== id);
+      updateAiIndicator();
+    } catch {}
+  });
+
+  aiPairingEventSource.addEventListener('request-rejected', (e) => {
+    try {
+      const { id } = JSON.parse(e.data);
+      aiPairingRequests = aiPairingRequests.filter(r => r.id !== id);
+      updateAiIndicator();
+    } catch {}
+  });
+
+  aiPairingEventSource.addEventListener('request-expired', (e) => {
+    try {
+      const { id } = JSON.parse(e.data);
+      aiPairingRequests = aiPairingRequests.filter(r => r.id !== id);
+      updateAiIndicator();
+    } catch {}
+  });
+
+  aiPairingEventSource.onerror = () => {
+    setTimeout(() => {
+      if (aiPairingEventSource) aiPairingEventSource.close();
+      initAiPairing();
+    }, 3000);
+  };
+}
+
+function updateAiIndicator() {
+  const indicator = document.getElementById('aiPairingIndicator');
+  if (aiPairingRequests.length > 0) {
+    indicator.classList.remove('hidden');
+  } else {
+    indicator.classList.add('hidden');
+  }
+}
+
+function showAiPairingPanel() {
+  document.getElementById('aiPairingPanel').classList.remove('hidden');
+  renderAiPairingBody();
+}
+
+function closeAiPairingPanel() {
+  document.getElementById('aiPairingPanel').classList.add('hidden');
+}
+
+function renderAiPairingBody() {
+  const body = document.getElementById('aiPairingBody');
+  if (aiPairingRequests.length === 0) {
+    body.innerHTML = '<div style="color:var(--text-muted);font-size:13px;text-align:center;padding:20px 0">暂无待处理的 AI 连接请求</div>';
+    return;
+  }
+
+  body.innerHTML = aiPairingRequests.map(req => {
+    const ago = relativeTime(req.createdAt);
+    return `
+      <div class="ai-request-card" id="ai-req-${req.id}">
+        <div class="ai-agent-name">${escapeHtml(req.agentName)}</div>
+        ${req.purpose ? `<div class="ai-purpose">${escapeHtml(req.purpose)}</div>` : ''}
+        <div class="ai-meta">来自 ${escapeHtml(req.ip)} · ${ago || '刚刚'}</div>
+        <div class="ai-actions">
+          <button class="ai-approve-btn" onclick="approveAiRequest('${req.id}')">批准连接</button>
+          <button class="ai-reject-btn" onclick="rejectAiRequest('${req.id}')">拒绝</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function approveAiRequest(id) {
+  try {
+    await api('POST', `/ai/approve/${id}`);
+    aiPairingRequests = aiPairingRequests.filter(r => r.id !== id);
+    updateAiIndicator();
+    renderAiPairingBody();
+    showToast('已批准 AI 连接', 'success');
+    if (aiPairingRequests.length === 0) closeAiPairingPanel();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function rejectAiRequest(id) {
+  try {
+    await api('POST', `/ai/reject/${id}`);
+    aiPairingRequests = aiPairingRequests.filter(r => r.id !== id);
+    updateAiIndicator();
+    renderAiPairingBody();
+    showToast('已拒绝', 'info');
+    if (aiPairingRequests.length === 0) closeAiPairingPanel();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// ── Init activity monitor & AI pairing ──
+initActivityMonitor();
+initAiPairing();
+
 // ── Start ──
 init();
