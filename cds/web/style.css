@@ -793,7 +793,7 @@ button.text-btn:hover { color: var(--accent); }
     border-left-color: var(--red);
   }
 }
-/* AI occupation — rotating gradient border */
+/* AI occupation — rotating gradient border on card */
 .branch-card.is-ai-occupied {
   border-image: none;
   border-color: transparent;
@@ -801,7 +801,7 @@ button.text-btn:hover { color: var(--accent); }
   background-clip: padding-box, border-box;
   background-image:
     linear-gradient(var(--bg-card), var(--bg-card)),
-    conic-gradient(from var(--ai-border-angle, 0deg), var(--purple), rgba(96, 165, 250, 0.8), var(--purple), rgba(192, 132, 252, 0.6), var(--purple));
+    conic-gradient(from var(--ai-border-angle, 0deg), #a78bfa, #60a5fa, #c084fc, #818cf8, #a78bfa);
   border: 2px solid transparent;
   animation: ai-border-spin 3s linear infinite;
 }
@@ -814,42 +814,53 @@ button.text-btn:hover { color: var(--accent); }
   inherits: false;
 }
 
-/* AI badge in branch card toolbar */
-.ai-occupy-badge {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 18px;
+/* AI mark replaces color-mark button — spinning dashed circle with "AI" text */
+.color-mark-btn.ai-mark {
+  opacity: 1;
   cursor: default;
+  pointer-events: none;
 }
-.ai-occupy-border {
-  position: absolute;
-  inset: 0;
-  border-radius: 4px;
-  background: conic-gradient(from var(--ai-border-angle, 0deg), var(--purple), rgba(96, 165, 250, 0.8), var(--purple));
-  animation: ai-border-spin 2s linear infinite;
-  opacity: 0.8;
+.ai-mark-spinner {
+  display: block;
+  animation: ai-icon-spin 4s linear infinite;
 }
-.ai-occupy-border::after {
-  content: '';
-  position: absolute;
-  inset: 1.5px;
-  border-radius: 3px;
-  background: var(--bg-card);
+@keyframes ai-icon-spin {
+  to { transform: rotate(360deg); }
 }
-.ai-occupy-text {
-  position: relative;
-  z-index: 1;
+
+/* AI branch activity feed — inline in card */
+.ai-branch-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  margin: 4px 0;
+  background: linear-gradient(135deg, rgba(167, 139, 250, 0.06), rgba(96, 165, 250, 0.04));
+  border: 1px solid rgba(167, 139, 250, 0.15);
+  border-radius: 6px;
+  max-height: 100px;
+  overflow-y: auto;
+}
+.ai-feed-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+.ai-feed-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #a78bfa;
+  font-weight: 500;
+}
+.ai-feed-dur {
+  color: var(--text-muted);
   font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 0.5px;
-  background: linear-gradient(135deg, var(--purple), #60a5fa);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  text-shadow: none;
+  flex-shrink: 0;
 }
 
 .branch-card.active.show-preview-border {

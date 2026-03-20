@@ -147,6 +147,10 @@ let infraServices = [];
 const aiOccupation = new Map();
 const AI_OCCUPY_TTL = 30000; // 30s — if no AI activity, consider released
 
+// Per-branch AI activity log (last N events)
+const aiBranchEvents = new Map(); // branchId → [event, ...]
+const AI_BRANCH_EVENTS_MAX = 5;
+
 function getAiOccupant(branchId) {
   const entry = aiOccupation.get(branchId);
   if (!entry) return null;
@@ -157,12 +161,33 @@ function getAiOccupant(branchId) {
   return entry.agent;
 }
 
+function trackAiBranchEvent(event) {
+  if (event.source !== 'ai' || !event.branchId) return;
+  let list = aiBranchEvents.get(event.branchId);
+  if (!list) { list = []; aiBranchEvents.set(event.branchId, list); }
+  list.push(event);
+  if (list.length > AI_BRANCH_EVENTS_MAX) list.shift();
+}
+
+function renderAiBranchFeed(branchId) {
+  const events = aiBranchEvents.get(branchId);
+  if (!events || events.length === 0) return '';
+  const items = events.map(ev => {
+    const statusCls = ev.status < 400 ? 'ok' : 'err';
+    const label = ev.label || ev.path.replace(/^\/api\//, '').replace(/branches\/[^/]+\/?/, '');
+    const dur = ev.duration < 1000 ? `${ev.duration}ms` : `${(ev.duration / 1000).toFixed(1)}s`;
+    return `<div class="ai-feed-item"><span class="activity-method ${ev.method}">${ev.method}</span><span class="ai-feed-label">${escapeHtml(label)}</span><span class="activity-status ${statusCls}">${ev.status}</span><span class="ai-feed-dur">${dur}</span></div>`;
+  }).join('');
+  return `<div class="ai-branch-feed">${items}</div>`;
+}
+
 // Periodically expire stale AI occupations and refresh cards
 setInterval(() => {
   let changed = false;
   for (const [id, entry] of aiOccupation) {
     if (Date.now() - entry.lastSeen > AI_OCCUPY_TTL) {
       aiOccupation.delete(id);
+      aiBranchEvents.delete(id);
       changed = true;
     }
   }
@@ -1862,19 +1887,36 @@ function renderBranches() {
       <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} expanded ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''} ${previewMode === 'multi' && isRunning ? 'show-preview-border' : ''} ${isDeploying ? 'is-deploying' : ''} ${b.isColorMarked ? 'is-color-marked' : ''} ${getAiOccupant(b.id) ? 'is-ai-occupied' : ''}" data-branch-id="${esc(b.id)}">
         ${isDeploying ? '<div class="deploy-progress-bar"><div class="deploy-progress-bar-fill"></div></div>' : ''}
         <div class="branch-card-toolbar">
-          ${(() => { const occupant = getAiOccupant(b.id); return occupant ? `<span class="ai-occupy-badge" title="AI 占用中: ${esc(occupant)}"><span class="ai-occupy-border"></span><span class="ai-occupy-text">AI</span></span>` : ''; })()}
           ${!isBusy ? `<span class="update-pull-group" onclick="event.stopPropagation(); pullBranch('${esc(b.id)}')" title="${hasUpdates ? branchUpdates[b.id].behind + ' 个新提交，点击拉取' : '点击拉取最新代码'}">
             ${hasUpdates ? `<span class="update-badge">↓${branchUpdates[b.id].behind}</span>` : ''}
             <svg class="update-pull-icon ${isLoading(b.id, 'pull') ? 'spinning' : ''}" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
           </span>` : ''}
-          <button class="color-mark-btn ${b.isColorMarked ? 'active' : ''}" onclick="toggleColorMark('${esc(b.id)}', event)" title="${b.isColorMarked ? '取消调试标记' : '标记为调试中'}">
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path d="M7 1 A6 6 0 0 1 13 7 L7 7 Z" class="cm-q1"/>
-              <path d="M13 7 A6 6 0 0 1 7 13 L7 7 Z" class="cm-q2"/>
-              <path d="M7 13 A6 6 0 0 1 1 7 L7 7 Z" class="cm-q3"/>
-              <path d="M1 7 A6 6 0 0 1 7 1 L7 7 Z" class="cm-q4"/>
-            </svg>
-          </button>
+          ${(() => {
+            const occupant = getAiOccupant(b.id);
+            if (occupant) {
+              return `<button class="color-mark-btn ai-mark active" title="AI 操控中: ${esc(occupant)}">
+                <svg class="ai-mark-spinner" width="18" height="18" viewBox="0 0 18 18" fill="none">
+                  <defs>
+                    <linearGradient id="aiGrad${esc(b.id)}" x1="0" y1="0" x2="1" y2="1">
+                      <stop offset="0%" stop-color="#a78bfa"/>
+                      <stop offset="50%" stop-color="#60a5fa"/>
+                      <stop offset="100%" stop-color="#c084fc"/>
+                    </linearGradient>
+                  </defs>
+                  <circle cx="9" cy="9" r="7.5" stroke="url(#aiGrad${esc(b.id)})" stroke-width="1.5" fill="none" stroke-dasharray="12 6" />
+                  <text x="9" y="9" text-anchor="middle" dominant-baseline="central" fill="url(#aiGrad${esc(b.id)})" font-size="7" font-weight="800" letter-spacing="0.3">AI</text>
+                </svg>
+              </button>`;
+            }
+            return `<button class="color-mark-btn ${b.isColorMarked ? 'active' : ''}" onclick="toggleColorMark('${esc(b.id)}', event)" title="${b.isColorMarked ? '取消调试标记' : '标记为调试中'}">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M7 1 A6 6 0 0 1 13 7 L7 7 Z" class="cm-q1"/>
+                <path d="M13 7 A6 6 0 0 1 7 13 L7 7 Z" class="cm-q2"/>
+                <path d="M7 13 A6 6 0 0 1 1 7 L7 7 Z" class="cm-q3"/>
+                <path d="M1 7 A6 6 0 0 1 7 1 L7 7 Z" class="cm-q4"/>
+              </svg>
+            </button>`;
+          })()}
         </div>
         <div class="branch-card-header">
           <div class="branch-card-row1">
@@ -1890,6 +1932,7 @@ function renderBranches() {
         ${b.errorMessage && !deployLog ? `<div class="branch-error" title="${esc(b.errorMessage)}">${esc(b.errorMessage)}</div>` : ''}
         <div class="branch-card-body">
           ${tagsHtml}
+          ${renderAiBranchFeed(b.id)}
           <div class="branch-card-actions-row">
             <div class="branch-actions-left">
               ${actionsLeftHtml}
@@ -3460,8 +3503,9 @@ function initActivityMonitor() {
       if (event.source === 'ai' && event.branchId) {
         const prev = aiOccupation.get(event.branchId);
         aiOccupation.set(event.branchId, { agent: event.agent || 'AI', lastSeen: Date.now() });
-        // If newly occupied, re-render to show badge
-        if (!prev) renderBranches();
+        trackAiBranchEvent(event);
+        // Re-render cards to update AI feed + badge
+        renderBranches();
       }
     } catch {}
   };
