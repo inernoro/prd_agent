@@ -3778,14 +3778,14 @@ function renderWebActivityItem(event) {
   const containerBg = isApi ? 'rgba(56,139,253,0.12)' : 'rgba(63,185,80,0.12)';
 
   let html = '';
-  // Container badge (api / admin)
-  html += `<span class="web-container-badge" style="background:${containerBg};color:${containerColor}">${containerLabel}</span>`;
+  // Branch first, then container badge
   if (event.branchId) {
     const lastDash = event.branchId.lastIndexOf('-');
     const branchTail = lastDash >= 0 ? event.branchId.slice(lastDash + 1) : event.branchId;
     const branchShort = branchTail.length > 16 ? branchTail.slice(0, 13) + '…' : branchTail;
     html += `<span class="activity-source" style="background:var(--accent-bg);color:var(--accent);font-size:9px;font-weight:600;padding:1px 4px;border-radius:3px" title="${escapeHtml(event.branchId)}">${escapeHtml(branchShort)}</span>`;
   }
+  html += `<span class="web-container-badge" style="background:${containerBg};color:${containerColor}">${containerLabel}</span>`;
   html += `<span class="activity-path" title="${escapeHtml(event.path)}">${escapeHtml(shortPath)}</span>`;
   html += `<span class="activity-status ${statusClass}">${event.status}</span>`;
   html += `<span class="activity-dur">${dur}</span>`;
