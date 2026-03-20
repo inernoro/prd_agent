@@ -111,9 +111,18 @@ kill_cds_on_port() {
     local cmd
     cmd=$(ps -p "$pid" -o comm= 2>/dev/null || true)
     case "$cmd" in
-      node|tsx|ts-node|npx)
-        echo "  Stopping CDS process on port $port (PID: $pid, cmd: $cmd)"
-        kill "$pid" 2>/dev/null || true
+      node|tsx|ts-node|npx|"")
+        # Empty cmd means process is dying/zombie — still kill to release port.
+        # Kill entire process group to prevent tsx watch from respawning children.
+        local pgid
+        pgid=$(ps -p "$pid" -o pgid= 2>/dev/null | tr -d ' ' || true)
+        if [ -n "$pgid" ] && [ "$pgid" != "$$" ]; then
+          echo "  Stopping CDS process group on port $port (PID: $pid, PGID: $pgid, cmd: $cmd)"
+          kill -- -"$pgid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+        else
+          echo "  Stopping CDS process on port $port (PID: $pid, cmd: $cmd)"
+          kill "$pid" 2>/dev/null || true
+        fi
         killed=true
         ;;
       *)
@@ -123,22 +132,29 @@ kill_cds_on_port() {
   done
 
   if [ "$killed" = true ]; then
-    # Wait up to 3 seconds for process to exit
-    for i in 1 2 3; do
+    # Wait up to 5 seconds for process to exit (increased from 3 for reliability)
+    for i in 1 2 3 4 5; do
       if ! lsof -ti :"$port" >/dev/null 2>&1; then
         return 0
       fi
       sleep 1
     done
-    # Force kill only node/tsx processes still alive
+    # Force kill only node/tsx processes still alive (by process group)
     pids=$(lsof -ti :"$port" 2>/dev/null || true)
     for pid in $pids; do
       local cmd
       cmd=$(ps -p "$pid" -o comm= 2>/dev/null || true)
       case "$cmd" in
-        node|tsx|ts-node|npx)
-          echo "  Force killing CDS process (PID: $pid)"
-          kill -9 "$pid" 2>/dev/null || true
+        node|tsx|ts-node|npx|"")
+          local pgid
+          pgid=$(ps -p "$pid" -o pgid= 2>/dev/null | tr -d ' ' || true)
+          if [ -n "$pgid" ] && [ "$pgid" != "$$" ]; then
+            echo "  Force killing CDS process group (PID: $pid, PGID: $pgid)"
+            kill -9 -- -"$pgid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true
+          else
+            echo "  Force killing CDS process (PID: $pid)"
+            kill -9 "$pid" 2>/dev/null || true
+          fi
           ;;
       esac
     done
@@ -191,8 +207,11 @@ kill_cds_on_port "$WORKER_PORT"
 
 if [ "$BACKGROUND" = true ]; then
 
-  # Start in background
-  nohup pnpm dev -- "$CONFIG_FILE" > "$LOG_FILE" 2>&1 &
+  # Start in background — use "serve" (tsx without watch) instead of "dev" (tsx watch).
+  # tsx watch monitors file changes and auto-restarts, which races with exec_cds.sh
+  # during self-update (git pull changes files → tsx watch restarts → two instances
+  # compete for port 9900 → ~20% chance of 502). Background mode doesn't need hot-reload.
+  nohup pnpm serve -- "$CONFIG_FILE" > "$LOG_FILE" 2>&1 &
   CDS_PID=$!
   echo "$CDS_PID" > "$PID_FILE"
 

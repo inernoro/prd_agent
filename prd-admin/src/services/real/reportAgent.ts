@@ -56,6 +56,16 @@ import type {
   GetTeamTrendsContract,
   MarkVacationContract,
   CancelVacationContract,
+  ListMyAiSourcesContract,
+  UpdateMyAiSourceContract,
+  GetMyAiReportPromptContract,
+  UpdateMyAiReportPromptContract,
+  ResetMyAiReportPromptContract,
+  GetTeamAiSummaryPromptContract,
+  UpdateTeamAiSummaryPromptContract,
+  ResetTeamAiSummaryPromptContract,
+  GetMyDailyLogTagsContract,
+  UpdateMyDailyLogTagsContract,
   ListPersonalSourcesContract,
   CreatePersonalSourceContract,
   UpdatePersonalSourceContract,
@@ -69,6 +79,7 @@ import type {
   SeedSystemTemplatesContract,
   PersonalTrendItem,
   TeamTrendItem,
+  ReportAiPromptSettings,
   DailyLog,
   ReportDataSource,
   ReportCommit,
@@ -86,6 +97,7 @@ import type {
   TeamSummary,
   TeamSummaryViewData,
   TeamReportsViewData,
+  ReportAiSource,
   PersonalSource,
   PersonalStats,
   TeamWorkflowInfo,
@@ -277,7 +289,7 @@ export const getWeeklyReportReal: GetWeeklyReportContract = async (input) => {
 };
 
 export const createWeeklyReportReal: CreateWeeklyReportContract = async (input) => {
-  return await apiRequest<{ report: WeeklyReport }>(api.reportAgent.reports.list(), {
+  return await apiRequest<{ report: WeeklyReport; aiGenerationError?: string }>(api.reportAgent.reports.list(), {
     method: 'POST',
     body: input,
   });
@@ -676,6 +688,67 @@ export const cancelVacationReal: CancelVacationContract = async (input) => {
 };
 
 // ========== Phase 5/6 v2.0: Personal Sources ==========
+
+export const listMyAiSourcesReal: ListMyAiSourcesContract = async () => {
+  return await apiRequest<{ items: ReportAiSource[] }>(api.reportAgent.aiSources.list(), { method: 'GET' });
+};
+
+export const updateMyAiSourceReal: UpdateMyAiSourceContract = async (input) => {
+  return await apiRequest<{ source: { key: string; enabled: boolean } }>(
+    api.reportAgent.aiSources.byKey(encodeURIComponent(input.key)),
+    { method: 'PUT', body: { enabled: input.enabled } }
+  );
+};
+
+export const getMyAiReportPromptReal: GetMyAiReportPromptContract = async () => {
+  return await apiRequest<ReportAiPromptSettings>(api.reportAgent.aiReportPrompt.get(), { method: 'GET' });
+};
+
+export const updateMyAiReportPromptReal: UpdateMyAiReportPromptContract = async (input) => {
+  return await apiRequest<ReportAiPromptSettings>(api.reportAgent.aiReportPrompt.update(), {
+    method: 'PUT',
+    body: { prompt: input.prompt },
+  });
+};
+
+export const resetMyAiReportPromptReal: ResetMyAiReportPromptContract = async () => {
+  return await apiRequest<ReportAiPromptSettings>(api.reportAgent.aiReportPrompt.reset(), { method: 'POST' });
+};
+
+export const getTeamAiSummaryPromptReal: GetTeamAiSummaryPromptContract = async (input) => {
+  return await apiRequest<ReportAiPromptSettings>(
+    api.reportAgent.teams.aiSummaryPrompt(encodeURIComponent(input.teamId)),
+    { method: 'GET' }
+  );
+};
+
+export const updateTeamAiSummaryPromptReal: UpdateTeamAiSummaryPromptContract = async (input) => {
+  return await apiRequest<ReportAiPromptSettings>(
+    api.reportAgent.teams.aiSummaryPrompt(encodeURIComponent(input.teamId)),
+    {
+      method: 'PUT',
+      body: { prompt: input.prompt },
+    }
+  );
+};
+
+export const resetTeamAiSummaryPromptReal: ResetTeamAiSummaryPromptContract = async (input) => {
+  return await apiRequest<ReportAiPromptSettings>(
+    api.reportAgent.teams.aiSummaryPromptReset(encodeURIComponent(input.teamId)),
+    { method: 'POST' }
+  );
+};
+
+export const getMyDailyLogTagsReal: GetMyDailyLogTagsContract = async () => {
+  return await apiRequest<{ items: string[] }>(api.reportAgent.dailyLogTags.get(), { method: 'GET' });
+};
+
+export const updateMyDailyLogTagsReal: UpdateMyDailyLogTagsContract = async (input) => {
+  return await apiRequest<{ items: string[] }>(api.reportAgent.dailyLogTags.update(), {
+    method: 'PUT',
+    body: { items: input.items },
+  });
+};
 
 export const listPersonalSourcesReal: ListPersonalSourcesContract = async () => {
   return await apiRequest<{ items: PersonalSource[] }>(api.reportAgent.personalSources.list(), { method: 'GET' });

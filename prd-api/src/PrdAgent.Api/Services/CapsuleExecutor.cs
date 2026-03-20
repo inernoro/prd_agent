@@ -4591,14 +4591,25 @@ function safeChart(canvasId, config) {
                 }
                 catch
                 {
-                    // 非 JSON 格式，当作纯文本 URL
-                    videoUrl = inputContent.Trim();
+                    // 非 JSON 格式，尝试从分享文本中提取视频链接
+                    videoUrl = ExtractVideoUrlFromShareText(inputContent) ?? inputContent.Trim();
                 }
             }
         }
 
         if (string.IsNullOrWhiteSpace(videoUrl))
             throw new InvalidOperationException("视频链接为空，请在配置或上游输入中提供 videoUrl");
+
+        // 如果 videoUrl 不是有效 URL（可能是抖音分享文本），尝试提取其中的链接
+        if (!videoUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+        {
+            var extracted = ExtractVideoUrlFromShareText(videoUrl);
+            if (!string.IsNullOrWhiteSpace(extracted))
+            {
+                sb.AppendLine($"[DouyinParser] 从分享文本中提取链接: {extracted}");
+                videoUrl = extracted;
+            }
+        }
 
         // 识别链接平台特征
         var platform = DetectVideoPlatform(videoUrl);
@@ -4944,6 +4955,48 @@ function safeChart(canvasId, config) {
             return "xigua";
 
         return "unknown";
+    }
+
+    /// <summary>
+    /// 从分享文本中提取视频平台链接。
+    /// 支持抖音、TikTok、快手、B站、小红书等平台的分享口令文本。
+    /// 例如："4.84 复制打开抖音...https://v.douyin.com/tLiSIq6JnNc/ aaa:/"
+    /// </summary>
+    private static string? ExtractVideoUrlFromShareText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+
+        // 视频平台域名关键词（按优先级排列）
+        string[] videoDomains =
+        [
+            "douyin.com", "v.douyin.com", "iesdouyin.com",
+            "tiktok.com", "vm.tiktok.com",
+            "kuaishou.com", "v.kuaishou.com", "gifshow.com",
+            "bilibili.com", "b23.tv",
+            "xiaohongshu.com", "xhslink.com",
+            "weibo.com", "weibo.cn",
+            "youtube.com", "youtu.be",
+            "ixigua.com",
+        ];
+
+        // 从文本中提取所有 URL
+        var urlMatches = System.Text.RegularExpressions.Regex.Matches(text,
+            @"https?://[^\s""'<>\]）》]+",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        foreach (System.Text.RegularExpressions.Match m in urlMatches)
+        {
+            var url = m.Value.TrimEnd('.', ',', ')', '>', '）', '》', ';', '/', ' ');
+            // 补回被 TrimEnd 移除的必要尾部斜杠
+            if (!url.EndsWith('/') && m.Value.TrimEnd().EndsWith('/'))
+                url += '/';
+
+            var lower = url.ToLowerInvariant();
+            if (Array.Exists(videoDomains, d => lower.Contains(d)))
+                return url;
+        }
+
+        return null;
     }
 
     /// <summary>

@@ -23,6 +23,9 @@ public class ReportAgentController : ControllerBase
 {
     private const string AppKey = "report-agent";
     private const long MaxRichTextImageBytes = 5 * 1024 * 1024;
+    private const int MaxDailyLogCustomTagCount = 20;
+    private const int MaxDailyLogCustomTagLength = 16;
+    private const int MaxWeeklyReportPromptLength = ReportAgentPromptDefaults.MaxCustomPromptLength;
     private static readonly string[] EditableReportStatuses =
     {
         WeeklyReportStatus.Draft,
@@ -411,6 +414,110 @@ public class ReportAgentController : ControllerBase
         var updated = await _db.ReportTeams.Find(t => t.Id == id).FirstOrDefaultAsync();
         return Ok(ApiResponse<object>.Ok(new { team = updated }));
     }
+
+    #region Team AI Summary Prompt
+
+    /// <summary>
+    /// 获取团队周报 AI 分析 Prompt 设置
+    /// </summary>
+    [HttpGet("teams/{id}/ai-summary-prompt")]
+    public async Task<IActionResult> GetTeamAiSummaryPrompt(string id, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var team = await _db.ReportTeams.Find(t => t.Id == id).FirstOrDefaultAsync(ct);
+        if (team == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "团队不存在"));
+
+        var hasTeamManagePermission = HasPermission(AdminPermissionCatalog.ReportAgentTeamManage);
+        var hasViewAll = HasPermission(AdminPermissionCatalog.ReportAgentViewAll);
+        var isLeaderOrDeputy = team.LeaderUserId == userId || await IsTeamLeaderOrDeputy(id, userId);
+        if (!hasTeamManagePermission && !hasViewAll && !isLeaderOrDeputy)
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "缺少团队管理权限"));
+
+        var customPrompt = NormalizeTeamAiSummaryPrompt(team.TeamSummaryPrompt);
+        return Ok(ApiResponse<object>.Ok(BuildTeamAiSummaryPromptPayload(customPrompt)));
+    }
+
+    /// <summary>
+    /// 更新团队周报 AI 分析 Prompt 设置
+    /// </summary>
+    [HttpPut("teams/{id}/ai-summary-prompt")]
+    public async Task<IActionResult> UpdateTeamAiSummaryPrompt(string id, [FromBody] UpdateTeamAiSummaryPromptRequest req, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var team = await _db.ReportTeams.Find(t => t.Id == id).FirstOrDefaultAsync(ct);
+        if (team == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "团队不存在"));
+
+        var hasTeamManagePermission = HasPermission(AdminPermissionCatalog.ReportAgentTeamManage);
+        var hasViewAll = HasPermission(AdminPermissionCatalog.ReportAgentViewAll);
+        var isLeaderOrDeputy = team.LeaderUserId == userId || await IsTeamLeaderOrDeputy(id, userId);
+        if (!hasTeamManagePermission && !hasViewAll && !isLeaderOrDeputy)
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "缺少团队管理权限"));
+
+        var customPrompt = NormalizeTeamAiSummaryPrompt(req?.Prompt);
+        if (string.IsNullOrWhiteSpace(customPrompt))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "Prompt 不能为空"));
+        if (customPrompt.Length > MaxWeeklyReportPromptLength)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", $"Prompt 长度不能超过 {MaxWeeklyReportPromptLength} 字符"));
+
+        var update = Builders<ReportTeam>.Update
+            .Set(x => x.TeamSummaryPrompt, customPrompt)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+        await _db.ReportTeams.UpdateOneAsync(x => x.Id == id, update, cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(BuildTeamAiSummaryPromptPayload(customPrompt)));
+    }
+
+    /// <summary>
+    /// 重置团队周报 AI 分析 Prompt 到系统默认
+    /// </summary>
+    [HttpPost("teams/{id}/ai-summary-prompt/reset")]
+    public async Task<IActionResult> ResetTeamAiSummaryPrompt(string id, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var team = await _db.ReportTeams.Find(t => t.Id == id).FirstOrDefaultAsync(ct);
+        if (team == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "团队不存在"));
+
+        var hasTeamManagePermission = HasPermission(AdminPermissionCatalog.ReportAgentTeamManage);
+        var hasViewAll = HasPermission(AdminPermissionCatalog.ReportAgentViewAll);
+        var isLeaderOrDeputy = team.LeaderUserId == userId || await IsTeamLeaderOrDeputy(id, userId);
+        if (!hasTeamManagePermission && !hasViewAll && !isLeaderOrDeputy)
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "缺少团队管理权限"));
+
+        var update = Builders<ReportTeam>.Update
+            .Set(x => x.TeamSummaryPrompt, null)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+        await _db.ReportTeams.UpdateOneAsync(x => x.Id == id, update, cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(BuildTeamAiSummaryPromptPayload(null)));
+    }
+
+    private static object BuildTeamAiSummaryPromptPayload(string? customPrompt)
+    {
+        var normalizedCustomPrompt = NormalizeTeamAiSummaryPrompt(customPrompt);
+        var systemDefaultPrompt = ReportAgentPromptDefaults.TeamSummarySystemDefaultPrompt;
+
+        return new
+        {
+            systemDefaultPrompt,
+            customPrompt = normalizedCustomPrompt,
+            effectivePrompt = normalizedCustomPrompt ?? systemDefaultPrompt,
+            usingSystemDefault = normalizedCustomPrompt == null,
+            maxCustomPromptLength = ReportAgentPromptDefaults.MaxCustomPromptLength
+        };
+    }
+
+    private static string? NormalizeTeamAiSummaryPrompt(string? prompt)
+    {
+        var normalized = (prompt ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+            return null;
+        return normalized;
+    }
+
+    #endregion
 
     /// <summary>
     /// 删除团队
@@ -906,11 +1013,16 @@ public class ReportAgentController : ControllerBase
     {
         var userId = GetUserId();
         var username = GetUsername();
+        var creationMode = string.IsNullOrWhiteSpace(req.CreationMode)
+            ? ReportCreationMode.Manual
+            : req.CreationMode.Trim().ToLowerInvariant();
 
         if (string.IsNullOrWhiteSpace(req.TeamId))
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "团队 ID 不能为空"));
         if (string.IsNullOrWhiteSpace(req.TemplateId))
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "模板 ID 不能为空"));
+        if (creationMode != ReportCreationMode.Manual && creationMode != ReportCreationMode.AiDraft)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "creationMode 仅支持 manual 或 ai-draft"));
 
         // 验证团队存在且用户是成员
         var team = await _db.ReportTeams.Find(t => t.Id == req.TeamId).FirstOrDefaultAsync();
@@ -981,7 +1093,36 @@ public class ReportAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail("DUPLICATE", "该周已存在周报，不能重复创建"));
         }
 
-        return Ok(ApiResponse<object>.Ok(new { report }));
+        string? aiGenerationError = null;
+        if (creationMode == ReportCreationMode.AiDraft)
+        {
+            try
+            {
+                report = await _generationService.GenerateAsync(
+                    userId,
+                    req.TeamId,
+                    req.TemplateId,
+                    weekYear,
+                    weekNumber,
+                    CancellationToken.None);
+            }
+            catch (InvalidOperationException ex)
+            {
+                aiGenerationError = ex.Message;
+                _logger.LogWarning(ex,
+                    "创建周报后 AI 草稿生成失败(可预期): userId={UserId}, teamId={TeamId}, week={WeekYear}-W{WeekNumber}",
+                    userId, req.TeamId, weekYear, weekNumber);
+            }
+            catch (Exception ex)
+            {
+                aiGenerationError = "AI 生成失败，请稍后重试";
+                _logger.LogWarning(ex,
+                    "创建周报后 AI 草稿生成失败: userId={UserId}, teamId={TeamId}, week={WeekYear}-W{WeekNumber}",
+                    userId, req.TeamId, weekYear, weekNumber);
+            }
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { report, aiGenerationError }));
     }
 
     /// <summary>
@@ -1438,6 +1579,20 @@ public class ReportAgentController : ControllerBase
         public string TemplateId { get; set; } = string.Empty;
         public int? WeekYear { get; set; }
         public int? WeekNumber { get; set; }
+        /// <summary>创建模式：manual（手动创建）/ ai-draft（创建后自动 AI 生成草稿）</summary>
+        public string? CreationMode { get; set; }
+    }
+
+    public static class ReportCreationMode
+    {
+        public const string Manual = "manual";
+        public const string AiDraft = "ai-draft";
+    }
+
+    public static class ReportAiSourceKey
+    {
+        public const string DailyLog = "daily-log";
+        public const string MapPlatform = "map-platform";
     }
 
     public class UpdateReportRequest
@@ -1528,7 +1683,7 @@ public class ReportAgentController : ControllerBase
         {
             Content = i.Content ?? string.Empty,
             Category = DailyLogCategory.All.Contains(i.Category ?? "") ? i.Category! : DailyLogCategory.Other,
-            Tags = i.Tags ?? new List<string>(),
+            Tags = NormalizeDailyLogTags(i.Tags),
             DurationMinutes = i.DurationMinutes,
             CreatedAt = i.CreatedAt ?? now
         }).Where(i => !string.IsNullOrWhiteSpace(i.Content)).ToList();
@@ -1563,6 +1718,21 @@ public class ReportAgentController : ControllerBase
             await _db.ReportDailyLogs.InsertOneAsync(log);
             return Ok(ApiResponse<object>.Ok(log));
         }
+    }
+
+    private static List<string> NormalizeDailyLogTags(IEnumerable<string>? tags)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var result = new List<string>();
+        foreach (var raw in tags ?? Enumerable.Empty<string>())
+        {
+            var tag = (raw ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(tag))
+                continue;
+            if (seen.Add(tag))
+                result.Add(tag);
+        }
+        return result;
     }
 
     /// <summary>
@@ -1625,6 +1795,229 @@ public class ReportAgentController : ControllerBase
             x => x.UserId == userId && x.Date == parsedDate.Date);
 
         return Ok(ApiResponse<object>.Ok(new { deleted = result.DeletedCount > 0 }));
+    }
+
+    #endregion
+
+    #region My AI Sources
+
+    /// <summary>
+    /// 获取我的 AI 周报数据源配置
+    /// </summary>
+    [HttpGet("my/ai-sources")]
+    public async Task<IActionResult> ListMyAiSources(CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var prefs = await _db.UserPreferences
+            .Find(x => x.UserId == userId)
+            .FirstOrDefaultAsync(ct);
+        var mapPlatformEnabled = prefs?.ReportAgentPreferences?.MapPlatformSourceEnabled ?? true;
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            items = BuildMyAiSourcesPayload(mapPlatformEnabled)
+        }));
+    }
+
+    /// <summary>
+    /// 更新我的 AI 周报数据源配置
+    /// </summary>
+    [HttpPut("my/ai-sources/{key}")]
+    public async Task<IActionResult> UpdateMyAiSource(string key, [FromBody] UpdateMyAiSourceRequest req, CancellationToken ct)
+    {
+        var normalizedKey = (key ?? string.Empty).Trim().ToLowerInvariant();
+        if (normalizedKey == ReportAiSourceKey.DailyLog)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_OPERATION", "“日常记录”为默认数据源，不能关闭"));
+        if (normalizedKey != ReportAiSourceKey.MapPlatform)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", $"不支持的数据源类型: {key}"));
+
+        var userId = GetUserId();
+        var update = Builders<UserPreferences>.Update
+            .Set(x => x.ReportAgentPreferences!.MapPlatformSourceEnabled, req.Enabled)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+        await _db.UserPreferences.UpdateOneAsync(
+            x => x.UserId == userId,
+            update,
+            new UpdateOptions { IsUpsert = true },
+            ct);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            source = new { key = normalizedKey, enabled = req.Enabled }
+        }));
+    }
+
+    private static object[] BuildMyAiSourcesPayload(bool mapPlatformEnabled)
+    {
+        return new object[]
+        {
+            new
+            {
+                key = ReportAiSourceKey.DailyLog,
+                name = "日常记录",
+                enabled = true,
+                locked = true,
+                description = "AI 每周会从当周的日常记录中提取和分析内容，作为周报内容。默认开启，且不可关闭。"
+            },
+            new
+            {
+                key = ReportAiSourceKey.MapPlatform,
+                name = "MAP平台工作记录",
+                enabled = mapPlatformEnabled,
+                locked = false,
+                description = "MAP 平台内的行为记录等。关闭后，AI 生成周报时不再使用该类上下文。"
+            }
+        };
+    }
+
+    #endregion
+
+    #region My AI Report Prompt
+
+    /// <summary>
+    /// 获取我的 AI 生成周报 Prompt 设置
+    /// </summary>
+    [HttpGet("my/ai-report-prompt")]
+    public async Task<IActionResult> GetMyAiReportPrompt(CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var prefs = await _db.UserPreferences
+            .Find(x => x.UserId == userId)
+            .FirstOrDefaultAsync(ct);
+        var customPrompt = NormalizeMyAiReportPrompt(prefs?.ReportAgentPreferences?.WeeklyReportPrompt);
+
+        return Ok(ApiResponse<object>.Ok(BuildMyAiReportPromptPayload(customPrompt)));
+    }
+
+    /// <summary>
+    /// 更新我的 AI 生成周报 Prompt 设置
+    /// </summary>
+    [HttpPut("my/ai-report-prompt")]
+    public async Task<IActionResult> UpdateMyAiReportPrompt([FromBody] UpdateMyAiReportPromptRequest req, CancellationToken ct)
+    {
+        var customPrompt = NormalizeMyAiReportPrompt(req?.Prompt);
+        if (string.IsNullOrWhiteSpace(customPrompt))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "Prompt 不能为空"));
+        if (customPrompt.Length > MaxWeeklyReportPromptLength)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", $"Prompt 长度不能超过 {MaxWeeklyReportPromptLength} 字符"));
+
+        var userId = GetUserId();
+        var update = Builders<UserPreferences>.Update
+            .Set(x => x.ReportAgentPreferences!.WeeklyReportPrompt, customPrompt)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+        await _db.UserPreferences.UpdateOneAsync(
+            x => x.UserId == userId,
+            update,
+            new UpdateOptions { IsUpsert = true },
+            ct);
+
+        return Ok(ApiResponse<object>.Ok(BuildMyAiReportPromptPayload(customPrompt)));
+    }
+
+    /// <summary>
+    /// 重置我的 AI 生成周报 Prompt 到系统默认
+    /// </summary>
+    [HttpPost("my/ai-report-prompt/reset")]
+    public async Task<IActionResult> ResetMyAiReportPrompt(CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var update = Builders<UserPreferences>.Update
+            .Set(x => x.ReportAgentPreferences!.WeeklyReportPrompt, null)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+        await _db.UserPreferences.UpdateOneAsync(
+            x => x.UserId == userId,
+            update,
+            new UpdateOptions { IsUpsert = true },
+            ct);
+
+        return Ok(ApiResponse<object>.Ok(BuildMyAiReportPromptPayload(null)));
+    }
+
+    private static object BuildMyAiReportPromptPayload(string? customPrompt)
+    {
+        var normalizedCustomPrompt = NormalizeMyAiReportPrompt(customPrompt);
+        var systemDefaultPrompt = ReportAgentPromptDefaults.WeeklyReportSystemDefaultPrompt;
+
+        return new
+        {
+            systemDefaultPrompt,
+            customPrompt = normalizedCustomPrompt,
+            effectivePrompt = normalizedCustomPrompt ?? systemDefaultPrompt,
+            usingSystemDefault = normalizedCustomPrompt == null,
+            maxCustomPromptLength = ReportAgentPromptDefaults.MaxCustomPromptLength
+        };
+    }
+
+    private static string? NormalizeMyAiReportPrompt(string? prompt)
+    {
+        var normalized = (prompt ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+            return null;
+        return normalized;
+    }
+
+    #endregion
+
+    #region My Daily Log Tags
+
+    /// <summary>
+    /// 获取我的日常记录自定义标签
+    /// </summary>
+    [HttpGet("my/daily-log-tags")]
+    public async Task<IActionResult> GetMyDailyLogTags(CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var prefs = await _db.UserPreferences
+            .Find(x => x.UserId == userId)
+            .FirstOrDefaultAsync(ct);
+
+        var tags = NormalizeDailyLogCustomTags(prefs?.ReportAgentPreferences?.DailyLogCustomTags);
+        return Ok(ApiResponse<object>.Ok(new { items = tags }));
+    }
+
+    /// <summary>
+    /// 更新我的日常记录自定义标签
+    /// </summary>
+    [HttpPut("my/daily-log-tags")]
+    public async Task<IActionResult> UpdateMyDailyLogTags([FromBody] UpdateMyDailyLogTagsRequest req, CancellationToken ct)
+    {
+        var normalizedTags = NormalizeDailyLogCustomTags(req?.Items);
+        if (normalizedTags.Count > MaxDailyLogCustomTagCount)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", $"自定义标签最多 {MaxDailyLogCustomTagCount} 个"));
+
+        if (normalizedTags.Any(x => x.Length > MaxDailyLogCustomTagLength))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", $"单个标签最多 {MaxDailyLogCustomTagLength} 个字符"));
+
+        var userId = GetUserId();
+        var update = Builders<UserPreferences>.Update
+            .Set(x => x.ReportAgentPreferences!.DailyLogCustomTags, normalizedTags)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+        await _db.UserPreferences.UpdateOneAsync(
+            x => x.UserId == userId,
+            update,
+            new UpdateOptions { IsUpsert = true },
+            ct);
+
+        return Ok(ApiResponse<object>.Ok(new { items = normalizedTags }));
+    }
+
+    private static List<string> NormalizeDailyLogCustomTags(IEnumerable<string>? tags)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var result = new List<string>();
+        foreach (var raw in tags ?? Enumerable.Empty<string>())
+        {
+            var tag = (raw ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(tag))
+                continue;
+            if (seen.Add(tag))
+                result.Add(tag);
+        }
+        return result;
     }
 
     #endregion
@@ -2078,6 +2471,11 @@ public class ReportAgentController : ControllerBase
                 report.WeekYear, report.WeekNumber, CancellationToken.None);
 
             return Ok(ApiResponse<object>.Ok(updatedReport));
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(ex, "AI 生成周报失败(可预期): reportId={ReportId}", id);
+            return BadRequest(ApiResponse<object>.Fail("AI_GENERATION_FAILED", ex.Message));
         }
         catch (Exception ex)
         {
@@ -3138,6 +3536,26 @@ public class CreatePersonalSourceRequest
     public string? Username { get; set; }
     public string? SpaceId { get; set; }
     public string? ApiEndpoint { get; set; }
+}
+
+public class UpdateMyAiSourceRequest
+{
+    public bool Enabled { get; set; }
+}
+
+public class UpdateMyDailyLogTagsRequest
+{
+    public List<string>? Items { get; set; }
+}
+
+public class UpdateMyAiReportPromptRequest
+{
+    public string? Prompt { get; set; }
+}
+
+public class UpdateTeamAiSummaryPromptRequest
+{
+    public string? Prompt { get; set; }
 }
 
 public class UpdatePersonalSourceRequest

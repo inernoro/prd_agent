@@ -5,7 +5,7 @@ interface SpotlightEffectProps extends React.HTMLAttributes<HTMLDivElement> {
   spotlightColor?: string;
 }
 
-export function SpotlightEffect({ children, className, spotlightColor = 'rgba(255, 255, 255, 0.25)', ...props }: SpotlightEffectProps) {
+export function SpotlightEffect({ children, className, spotlightColor = 'rgba(255, 255, 255, 0.25)', onMouseEnter: onMouseEnterProp, onMouseLeave: onMouseLeaveProp, ...props }: SpotlightEffectProps) {
   const divRef = useRef<HTMLDivElement>(null);
   const [isFocused, setIsFocused] = useState(false);
   const [position, setPosition] = useState({ x: 0, y: 0 });
@@ -30,12 +30,14 @@ export function SpotlightEffect({ children, className, spotlightColor = 'rgba(25
     setOpacity(0);
   };
 
-  const handleMouseEnter = () => {
+  const handleMouseEnter = (e: MouseEvent<HTMLDivElement>) => {
     setOpacity(1);
+    onMouseEnterProp?.(e);
   };
 
-  const handleMouseLeave = () => {
+  const handleMouseLeave = (e: MouseEvent<HTMLDivElement>) => {
     setOpacity(0);
+    onMouseLeaveProp?.(e);
   };
 
   return (

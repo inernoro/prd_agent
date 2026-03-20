@@ -20,13 +20,16 @@ const ICON = {
   pr: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5.45 5.154A4.25 4.25 0 009.25 7.5h1.378a2.251 2.251 0 110 1.5H9.25A5.734 5.734 0 015 7.123v3.505a2.25 2.25 0 11-1.5 0V5.372a2.25 2.25 0 111.95-.218zM4.25 13.5a.75.75 0 100-1.5.75.75 0 000 1.5zm8.5-4.5a.75.75 0 100-1.5.75.75 0 000 1.5zM5 3.25a.75.75 0 10-1.5 0 .75.75 0 001.5 0z"/></svg>',
   pull: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.004a.75.75 0 01.75.75v5.689l1.97-1.97a.749.749 0 111.06 1.06l-3.25 3.25a.749.749 0 01-1.06 0L4.22 7.533a.749.749 0 111.06-1.06l1.97 1.97V2.754a.75.75 0 01.75-.75zM2.75 12.5h10.5a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5z"/></svg>',
   preview: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 8s3-5.5 8-5.5S16 8 16 8s-3 5.5-8 5.5S0 8 0 8zm8 3.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7zm0-1.5a2 2 0 110-4 2 2 0 010 4z"/></svg>',
-  deploy: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8.75.75a.75.75 0 00-1.5 0V2h-3A1.75 1.75 0 002.5 3.75v2.5A1.75 1.75 0 004.25 8h7.5A1.75 1.75 0 0013.5 6.25v-2.5A1.75 1.75 0 0011.75 2h-3V.75zM4.25 3.5h7.5a.25.25 0 01.25.25v2.5a.25.25 0 01-.25.25h-7.5a.25.25 0 01-.25-.25v-2.5a.25.25 0 01.25-.25zM2.5 10.25a.75.75 0 01.75-.75h9.5a.75.75 0 010 1.5h-9.5a.75.75 0 01-.75-.75zm.75 2.25a.75.75 0 000 1.5h9.5a.75.75 0 000-1.5h-9.5z"/></svg>',
+  deploy: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 12-8.373 8.373a1 1 0 1 1-3-3L12 9"/><path d="m18 15 4-4"/><path d="m21.5 11.5c.7-1 .5-2.4-.3-3.2L17 4.2c-.8-.8-2.2-1-3.2-.3L12 5.5l6.5 6.5z"/></svg>',
   trash: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM11 3V1.75A1.75 1.75 0 009.25 0h-2.5A1.75 1.75 0 005 1.75V3H2.75a.75.75 0 000 1.5h.3l.8 8.2A1.75 1.75 0 005.6 14.5h4.8a1.75 1.75 0 001.75-1.8l.8-8.2h.3a.75.75 0 000-1.5H11z"/></svg>',
   reset: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5z"/></svg>',
   star: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg>',
   starOutline: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.751.751 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25zm0 2.445L6.615 5.5a.75.75 0 01-.564.41l-3.097.45 2.24 2.184a.75.75 0 01.216.664l-.528 3.084 2.769-1.456a.75.75 0 01.698 0l2.77 1.456-.53-3.084a.75.75 0 01.216-.664l2.24-2.183-3.096-.45a.75.75 0 01-.564-.41L8 2.694z"/></svg>',
   edit: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M11.013 1.427a1.75 1.75 0 012.474 0l1.086 1.086a1.75 1.75 0 010 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 01-.927-.928l.929-3.25c.081-.286.235-.547.445-.758l8.61-8.61zM11.189 3L3.75 10.44l-.528 1.849 1.85-.528L12.5 4.311 11.189 3z"/></svg>',
   tag: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1 7.775V2.75C1 1.784 1.784 1 2.75 1h5.025c.464 0 .91.184 1.238.513l6.25 6.25a1.75 1.75 0 010 2.474l-5.026 5.026a1.75 1.75 0 01-2.474 0l-6.25-6.25A1.75 1.75 0 011 7.775zM5 5a1 1 0 100-2 1 1 0 000 2z"/></svg>',
+  // Human footprint (web access indicator)
+  footprint: '<svg class="human-access-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C9.24 2 7 4.24 7 7c0 2.85 2.92 7.21 5 9.88 2.11-2.69 5-7 5-9.88 0-2.76-2.24-5-5-5zm0 7.5a2.5 2.5 0 010-5 2.5 2.5 0 010 5z"/><path d="M7.05 16.87C5.01 17.46 3.5 18.5 3.5 19.5 3.5 21.15 7.36 22 12 22s8.5-.85 8.5-2.5c0-1-.51-2.04-2.55-2.63-.53 1.04-1.3 2.13-2.21 3.13H8.26c-.91-1-1.68-2.09-2.21-3.13z"/></svg>',
+  lightbulb: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.5a4.5 4.5 0 00-1.68 8.68.5.5 0 01.3.46v1.86h2.76v-1.86a.5.5 0 01.3-.46A4.5 4.5 0 008 1.5zM5.5 13v.5c0 .83.67 1.5 1.5 1.5h2c.83 0 1.5-.67 1.5-1.5V13h-5z"/></svg>',
   // Port beacon icons by profile type
   portApi: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 1.75a.75.75 0 00-1.5 0v12.5c0 .414.336.75.75.75h14.5a.75.75 0 000-1.5H1.5V1.75zm14.28 2.53a.75.75 0 00-1.06-1.06L10 7.94 7.53 5.47a.75.75 0 00-1.06 0L2.22 9.72a.75.75 0 001.06 1.06L7 7.06l2.47 2.47a.75.75 0 001.06 0l5.25-5.25z"/></svg>',
   portWeb: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M0 8a8 8 0 1116 0A8 8 0 010 8zm7.5-6.923c-.67.204-1.335.82-1.887 1.855A7.97 7.97 0 005.145 4H7.5V1.077zM4.09 4a9.27 9.27 0 01.64-1.539 6.7 6.7 0 01.597-.933A6.536 6.536 0 002.535 4H4.09zm-.582 3.5c.03-.877.138-1.718.312-2.5H1.674a6.958 6.958 0 00-.656 2.5H3.508zM7.5 11H5.145a7.97 7.97 0 00.468 1.068c.552 1.035 1.218 1.65 1.887 1.855V11zm1 2.923c.67-.204 1.335-.82 1.887-1.855A7.97 7.97 0 0010.855 11H8.5v2.923zM11.91 11a9.27 9.27 0 00.64 1.539 6.7 6.7 0 00.597.933A6.536 6.536 0 0015.465 11H11.91zm.582-1.5c.03-.877.138-1.718.312-2.5h2.49a6.958 6.958 0 01.656 2.5h-3.458z"/></svg>',
@@ -70,8 +73,9 @@ let containerCapacity = { maxContainers: 999, runningContainers: 0, totalMemGB: 
 
 // ── Utilities ──
 
-async function api(method, path, body) {
+async function api(method, path, body, { poll } = {}) {
   const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (poll) opts.headers['X-CDS-Poll'] = 'true';
   if (body) opts.body = JSON.stringify(body);
   const res = await fetch(`${API}${path}`, opts);
   if (res.status === 401) { location.href = '/login.html'; return; }
@@ -141,6 +145,70 @@ let defaultBranch = null;
 let customEnvVars = {};
 let infraServices = [];
 
+// ── AI Occupation Tracking ──
+// Maps branchId → { agent, lastSeen (timestamp) }
+const aiOccupation = new Map();
+const AI_OCCUPY_TTL = 30000; // 30s — if no AI activity, consider released
+
+// Per-branch AI activity log (last N events)
+const aiBranchEvents = new Map(); // branchId → [event, ...]
+const AI_BRANCH_EVENTS_MAX = 5;
+
+function getAiOccupant(branchId) {
+  const entry = aiOccupation.get(branchId);
+  if (!entry) return null;
+  if (Date.now() - entry.lastSeen > AI_OCCUPY_TTL) {
+    aiOccupation.delete(branchId);
+    return null;
+  }
+  return entry.agent;
+}
+
+function trackAiBranchEvent(event) {
+  if (event.source !== 'ai' || !event.branchId) return;
+  let list = aiBranchEvents.get(event.branchId);
+  if (!list) { list = []; aiBranchEvents.set(event.branchId, list); }
+  list.push(event);
+  if (list.length > AI_BRANCH_EVENTS_MAX) list.shift();
+}
+
+function renderAiBranchFeed(branchId) {
+  const events = aiBranchEvents.get(branchId);
+  if (!events || events.length === 0) return '';
+  // Show only the latest event — roller animation is done via DOM updates
+  const ev = events[events.length - 1];
+  const statusCls = ev.status < 400 ? 'ok' : 'err';
+  const label = ev.label || ev.path.replace(/^\/api\//, '').replace(/branches\/[^/]+\/?/, '');
+  const dur = ev.duration < 1000 ? `${ev.duration}ms` : `${(ev.duration / 1000).toFixed(1)}s`;
+  return `<div class="ai-branch-feed" data-branch-feed="${escapeHtml(branchId)}"><div class="roller-line roller-active"><span class="roller-ai">AI</span><span class="activity-method ${ev.method}">${ev.method}</span><span class="ai-feed-label">${escapeHtml(label)}</span><span class="activity-status ${statusCls}">${ev.status}</span><span class="ai-feed-dur">${dur}</span></div></div>`;
+}
+
+function updateBranchFeedRoller(event) {
+  const feed = document.querySelector(`[data-branch-feed="${event.branchId}"]`);
+  if (!feed) { renderBranches(); return; }
+
+  const statusCls = event.status < 400 ? 'ok' : 'err';
+  const label = event.label || event.path.replace(/^\/api\//, '').replace(/branches\/[^/]+\/?/, '');
+  const dur = event.duration < 1000 ? `${event.duration}ms` : `${(event.duration / 1000).toFixed(1)}s`;
+
+  const html = `<span class="roller-ai">AI</span><span class="activity-method ${event.method}">${event.method}</span><span class="ai-feed-label">${escapeHtml(label)}</span><span class="activity-status ${statusCls}">${event.status}</span><span class="ai-feed-dur">${dur}</span>`;
+
+  feed.innerHTML = `<div class="roller-line roller-flip">${html}</div>`;
+}
+
+// Periodically expire stale AI occupations and refresh cards
+setInterval(() => {
+  let changed = false;
+  for (const [id, entry] of aiOccupation) {
+    if (Date.now() - entry.lastSeen > AI_OCCUPY_TTL) {
+      aiOccupation.delete(id);
+      aiBranchEvents.delete(id);
+      changed = true;
+    }
+  }
+  if (changed) renderBranches();
+}, 10000);
+
 // ── Init ──
 
 let githubRepoUrl = '';
@@ -153,7 +221,47 @@ async function init() {
   await Promise.all([loadBranches(), loadProfiles(), loadRoutingRules(), loadConfig(), loadEnvVars(), loadInfraServices(), loadMirrorState()]);
   refreshRemoteCandidates();
   updatePreviewModeUI();
-  setInterval(loadBranches, 10000);
+  initStateStream(); // Server-authority: listen for state changes via SSE (replaces polling)
+}
+
+// ── State stream: server pushes branch state changes (no polling needed) ──
+let stateEventSource = null;
+
+function initStateStream() {
+  stateEventSource = new EventSource(`${API}/state-stream`);
+  stateEventSource.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.branches) {
+        // Merge commit info: state-stream has no git data, so preserve existing subject/commitSha
+        // Only update status and service states from server push
+        const branchMap = new Map(branches.map(b => [b.id, b]));
+        for (const pushed of data.branches) {
+          const existing = branchMap.get(pushed.id);
+          if (existing) {
+            // Preserve git info, update status/services
+            Object.assign(existing, pushed, {
+              subject: existing.subject,
+              commitSha: existing.commitSha,
+            });
+          } else {
+            branches.push(pushed);
+          }
+        }
+        // Remove branches that no longer exist
+        const pushedIds = new Set(data.branches.map(b => b.id));
+        branches = branches.filter(b => pushedIds.has(b.id));
+        if (data.defaultBranch !== undefined) defaultBranch = data.defaultBranch;
+        renderBranches();
+      }
+    } catch {}
+  };
+  stateEventSource.onerror = () => {
+    setTimeout(() => {
+      if (stateEventSource) stateEventSource.close();
+      initStateStream();
+    }, 3000);
+  };
 }
 
 async function loadConfig() {
@@ -396,8 +504,18 @@ function toggleTheme(event) {
   if (document.startViewTransition) {
     // View Transition API: captures old state as snapshot, then reveals new state
     // with clip-path circle animation (like clawhub.ai)
-    document.startViewTransition(() => {
+    const transition = document.startViewTransition(() => {
+      // Disable CSS transitions so the "new" snapshot captures final theme colors
+      // immediately, not mid-transition states (which cause cards to show wrong skin
+      // as the ripple sweeps over them).
+      document.documentElement.classList.add('vt-snapshotting');
       setTheme(newTheme);
+    });
+    // Re-enable CSS transitions after the view transition snapshots are captured
+    transition.ready.then(() => {
+      document.documentElement.classList.remove('vt-snapshotting');
+    }).catch(() => {
+      document.documentElement.classList.remove('vt-snapshotting');
     });
   } else {
     // Fallback: instant switch
@@ -420,9 +538,10 @@ function updateThemeUI() {
 
 // ── Data loading ──
 
-async function loadBranches() {
+async function loadBranches({ silent } = {}) {
   try {
-    const data = await api('GET', '/branches');
+    if (silent) _pollInFlight = true;
+    const data = await api('GET', '/branches', null, { poll: !!silent });
     branches = data.branches || [];
     defaultBranch = data.defaultBranch;
     if (data.capacity) containerCapacity = data.capacity;
@@ -433,6 +552,7 @@ async function loadBranches() {
     }
     renderBranches();
   } catch (e) { console.error('loadBranches:', e); }
+  finally { if (silent) setTimeout(() => { _pollInFlight = false; }, 500); }
 }
 
 async function loadProfiles() {
@@ -1381,34 +1501,75 @@ async function viewBranchLogs(id) {
   } catch (e) { showToast('获取日志失败: ' + e.message, 'error'); }
 }
 
+let _logStreamController = null;
+
 async function viewContainerLogs(id, profileId) {
-  let isFirstLoad = true;
-  const fetchAndRender = async () => {
-    const data = await api('POST', `/branches/${id}/container-logs`, { profileId });
-    const body = document.getElementById('logModalBody');
-    // Read scroll state from the OLD <pre> before replacing
-    const oldPre = body.querySelector('.live-log-output');
-    const prevScrollTop = oldPre ? oldPre.scrollTop : 0;
-    const wasAtBottom = oldPre
-      ? (oldPre.scrollTop + oldPre.clientHeight >= oldPre.scrollHeight - 30)
-      : true;
-    body.innerHTML = `<pre class="live-log-output">${esc(data.logs || '暂无日志')}</pre>`;
-    if (isFirstLoad || wasAtBottom) {
-      _scrollLogToBottom();
-      isFirstLoad = false;
-    } else {
-      // Restore scroll position on the NEW <pre>
-      const newPre = body.querySelector('.live-log-output');
-      if (newPre) newPre.scrollTop = prevScrollTop;
-      checkLogErrors();
-    }
-  };
+  // Abort any previous log stream
+  if (_logStreamController) { _logStreamController.abort(); _logStreamController = null; }
+
   try {
     openLogModal(`日志: ${id}/${profileId || '默认'}`, id, profileId);
-    await fetchAndRender();
-    _scrollLogToBottom();
-    _startLogPoll(fetchAndRender, 3000);
-  } catch (e) { showToast(e.message, 'error'); }
+    const body = document.getElementById('logModalBody');
+    body.innerHTML = '<pre class="live-log-output"></pre>';
+
+    // Start SSE log stream
+    const ac = new AbortController();
+    _logStreamController = ac;
+    const res = await fetch(`/api/branches/${id}/container-logs-stream/${profileId}`, {
+      signal: ac.signal,
+    });
+    if (!res.ok) {
+      // Fallback: one-shot fetch if SSE not available
+      const data = await api('POST', `/branches/${id}/container-logs`, { profileId });
+      body.innerHTML = `<pre class="live-log-output">${esc(data.logs || '暂无日志')}</pre>`;
+      _scrollLogToBottom();
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    const processStream = async () => {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // Parse SSE lines
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const evt = JSON.parse(line.slice(6));
+            if (evt.chunk) {
+              const pre = body.querySelector('.live-log-output');
+              if (!pre) break;
+              const wasAtBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 30;
+              pre.textContent += evt.chunk;
+              if (wasAtBottom) _scrollLogToBottom();
+            }
+          } catch { /* skip malformed */ }
+        }
+      }
+    };
+
+    processStream().catch(() => { /* stream closed */ });
+
+    // Stop stream when modal closes
+    const observer = new MutationObserver(() => {
+      const modal = document.getElementById('logModal');
+      if (modal && modal.classList.contains('hidden')) {
+        ac.abort();
+        observer.disconnect();
+      }
+    });
+    observer.observe(document.getElementById('logModal'), { attributes: true, attributeFilter: ['class'] });
+
+  } catch (e) {
+    if (e.name !== 'AbortError') showToast(e.message, 'error');
+  }
 }
 
 // ── Single-service deploy ──
@@ -1756,11 +1917,11 @@ function renderBranches() {
       actionsRightHtml = '';
     } else if (isRunning) {
       actionsLeftHtml = `
-        <button class="preview sm" onclick="previewBranch('${esc(b.id)}')">${ICON.preview} 预览</button>
+        <button class="preview sm" onclick="previewBranch('${esc(b.id)}')" title="Preview">${ICON.preview}</button>
       `;
       actionsRightHtml = `
         <div class="split-btn">
-          <button class="sm split-btn-main" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.deploy} 重新部署</button>
+          <button class="sm split-btn-main" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="重新部署">${ICON.deploy} 部署</button>
           <button class="sm split-btn-toggle" onclick="toggleDeployMenu('${esc(b.id)}', event)" ${isBusy ? 'disabled' : ''}>
             <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor"><path d="M1 1l4 4 4-4"/></svg>
           </button>
@@ -1776,19 +1937,19 @@ function renderBranches() {
     } else if (isStopped) {
       // Container exists but stopped — neutral deploy, not primary
       actionsLeftHtml = `
-        <button class="sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.deploy} 部署</button>
+        <button class="sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="部署">${ICON.deploy} 部署</button>
       `;
       actionsRightHtml = `
-        <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.trash} 删除</button>
+        <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.trash}</button>
       `;
     } else {
       // Idle (never deployed) or building — neutral deploy button
       actionsLeftHtml = `
-        <button class="sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.deploy} 部署</button>
+        <button class="sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="部署">${ICON.deploy} 部署</button>
       `;
       actionsRightHtml = `
         ${hasError ? `<button class="sm" onclick="resetBranch('${esc(b.id)}')" ${btnDisabled('reset')}>${btnLabel('reset', ICON.reset + ' 重置')}</button>` : ''}
-        <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.trash} 删除</button>
+        <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.trash}</button>
       `;
     }
 
@@ -1797,10 +1958,9 @@ function renderBranches() {
     const deployFailed = !!deployLog && deployLog.status === 'error';
     const isJustDeployed = justDeployed.has(b.id);
 
-    // Commit area in actions row — replaced by compact deploy log during deployment
+    // Commit area in actions row — shows commit info or deploy log during deployment
     let commitAreaHtml = '';
     if (isDeploying && deployLog) {
-      // During deploy: show compact log in the commit area
       const compactLines = deployLog.lines.filter(l => l.trim()).slice(-2);
       commitAreaHtml = `
         <div class="branch-actions-deploy-status" title="部署中，点击查看完整日志" onclick="event.stopPropagation(); openFullDeployLog('${esc(b.id)}', event)">
@@ -1821,36 +1981,52 @@ function renderBranches() {
     // Deploy logs are accessible via the log button in toolbar.
 
     return `
-      <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} expanded ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''} ${previewMode === 'multi' && isRunning ? 'show-preview-border' : ''} ${isDeploying ? 'is-deploying' : ''} ${b.isColorMarked ? 'is-color-marked' : ''}" data-branch-id="${esc(b.id)}">
+      <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} expanded ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''} ${isDeploying ? 'is-deploying' : ''} ${b.isColorMarked ? 'is-color-marked' : ''} ${getAiOccupant(b.id) ? 'is-ai-occupied' : ''}" data-branch-id="${esc(b.id)}">
         ${isDeploying ? '<div class="deploy-progress-bar"><div class="deploy-progress-bar-fill"></div></div>' : ''}
         <div class="branch-card-toolbar">
           ${!isBusy ? `<span class="update-pull-group" onclick="event.stopPropagation(); pullBranch('${esc(b.id)}')" title="${hasUpdates ? branchUpdates[b.id].behind + ' 个新提交，点击拉取' : '点击拉取最新代码'}">
             ${hasUpdates ? `<span class="update-badge">↓${branchUpdates[b.id].behind}</span>` : ''}
             <svg class="update-pull-icon ${isLoading(b.id, 'pull') ? 'spinning' : ''}" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
           </span>` : ''}
-          <button class="color-mark-btn ${b.isColorMarked ? 'active' : ''}" onclick="toggleColorMark('${esc(b.id)}', event)" title="${b.isColorMarked ? '取消调试标记' : '标记为调试中'}">
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path d="M7 1 A6 6 0 0 1 13 7 L7 7 Z" class="cm-q1"/>
-              <path d="M13 7 A6 6 0 0 1 7 13 L7 7 Z" class="cm-q2"/>
-              <path d="M7 13 A6 6 0 0 1 1 7 L7 7 Z" class="cm-q3"/>
-              <path d="M1 7 A6 6 0 0 1 7 1 L7 7 Z" class="cm-q4"/>
-            </svg>
-          </button>
+          ${(() => {
+            const occupant = getAiOccupant(b.id);
+            if (occupant) {
+              return `<button class="color-mark-btn ai-mark active" title="AI 操控中: ${esc(occupant)}">
+                <svg class="ai-mark-spinner" width="18" height="18" viewBox="0 0 18 18" fill="none">
+                  <defs>
+                    <linearGradient id="aiGrad${esc(b.id)}" x1="0" y1="0" x2="1" y2="1">
+                      <stop offset="0%" stop-color="#a78bfa"/>
+                      <stop offset="50%" stop-color="#60a5fa"/>
+                      <stop offset="100%" stop-color="#c084fc"/>
+                    </linearGradient>
+                  </defs>
+                  <circle cx="9" cy="9" r="7.5" stroke="url(#aiGrad${esc(b.id)})" stroke-width="1.5" fill="none" stroke-dasharray="12 6" />
+                  <text x="9" y="9" text-anchor="middle" dominant-baseline="central" fill="url(#aiGrad${esc(b.id)})" font-size="7" font-weight="800" letter-spacing="0.3">AI</text>
+                </svg>
+              </button>`;
+            }
+            return `<button class="color-mark-btn ${b.isColorMarked ? 'active' : ''}" onclick="toggleColorMark('${esc(b.id)}', event)" title="${b.isColorMarked ? '取消调试标记' : '标记为调试中'}">
+              ${ICON.lightbulb}
+            </button>`;
+          })()}
+          ${ICON.footprint}
         </div>
         <div class="branch-card-header">
           <div class="branch-card-row1">
+            <span class="status-dot status-dot-${b.status || 'idle'}" title="${statusLabel(b.status || 'idle')}"></span>
             <span class="fav-toggle ${b.isFavorite ? 'active' : ''}" onclick="event.stopPropagation(); toggleFavorite('${esc(b.id)}')" title="${b.isFavorite ? '取消收藏' : '收藏'}">
               ${b.isFavorite ? ICON.star : ICON.starOutline}
             </span>
             <a class="branch-name" href="${githubRepoUrl ? githubRepoUrl.replace('github.com', 'github.dev') + '/tree/' + encodeURIComponent(b.branch) : '#'}" target="_blank" onclick="event.stopPropagation(); return confirmOpenGithub(event)" title="在 GitHub.dev 中浏览代码">${ICON.branch} ${esc(b.branch)}</a>
           </div>
-          ${b.date ? `<div class="branch-card-row2"><span class="branch-meta">${relativeTime(b.date)}更新</span>${isStopping ? '<span class="branch-status-badge status-badge-stopping">正在停止...</span>' : b.status === 'starting' ? '<span class="branch-status-badge status-badge-starting">等待服务就绪...</span>' : b.status === 'building' && !isDeploying ? '<span class="branch-status-badge status-badge-building">构建中...</span>' : ''}</div>` : ''}
+          ${b.subject ? `<div class="branch-card-row2"><span class="branch-commit-msg" title="${esc(b.subject)}">${commitIcon(b.subject)} ${esc(b.subject)}</span></div>` : ''}
           ${portBadgesHtml ? `<div class="branch-card-ports">${portBadgesHtml}</div>` : ''}
           ${b.executorId ? `<span class="executor-tag" title="部署在执行器 ${esc(b.executorId)}">⚡ ${esc(b.executorId.replace(/^executor-/, '').slice(0, 20))}</span>` : ''}
         </div>
         ${b.errorMessage && !deployLog ? `<div class="branch-error" title="${esc(b.errorMessage)}">${esc(b.errorMessage)}</div>` : ''}
         <div class="branch-card-body">
           ${tagsHtml}
+          ${renderAiBranchFeed(b.id)}
           <div class="branch-card-actions-row">
             <div class="branch-actions-left">
               ${actionsLeftHtml}
@@ -1867,6 +2043,12 @@ function renderBranches() {
 
   // Restore scroll position after re-render
   window.scrollTo(0, scrollY);
+
+  // Re-apply preview activity spinners (cards were rebuilt)
+  for (const branchId of previewingBranches.keys()) {
+    const card = document.querySelector(`.branch-card[data-branch-id="${branchId}"]`);
+    if (card) card.classList.add('is-previewing');
+  }
 }
 
 // ── Build profiles (data only) ──
@@ -3131,6 +3313,7 @@ let _terminalHistoryIdx = -1;
 function openLogModal(title, branchId, profileId) {
   document.getElementById('logModalTitle').textContent = title;
   document.getElementById('logModal').classList.remove('hidden');
+  document.getElementById('logModal').dataset.mode = 'logs';
   _logModalContext = { branchId: branchId || null, profileId: profileId || null };
   // Show tabs only when we have branch context (can exec)
   const tabsEl = document.getElementById('logModalTabs');
@@ -3155,9 +3338,12 @@ function openLogModal(title, branchId, profileId) {
 const _errorPatterns = /\berror\s+(CS|TS|NG)\d+\b|:\s*error\s+\w+\d+:|Build FAILED|FAILED|Exception:|Unhandled exception|fatal error|npm ERR!|Error:|Cannot find module|ENOENT|EACCES|Segmentation fault/i;
 
 function checkLogErrors() {
+  const modal = document.getElementById('logModal');
   const body = document.getElementById('logModalBody');
   const btn = document.getElementById('copyErrorBtn');
   if (!body || !btn) return;
+  // Don't show error button in activity-detail mode (not a log view)
+  if (modal && modal.dataset.mode === 'activity-detail') { btn.classList.add('hidden'); return; }
   const text = body.textContent || '';
   if (_errorPatterns.test(text)) {
     btn.classList.remove('hidden');
@@ -3221,6 +3407,7 @@ function copyErrorForLLM() {
 function closeLogModal() {
   document.getElementById('logModal').classList.add('hidden');
   if (_logPollTimer) { clearInterval(_logPollTimer); _logPollTimer = null; _logPollFn = null; }
+  if (_logStreamController) { _logStreamController.abort(); _logStreamController = null; }
   _logModalContext = { branchId: null, profileId: null };
 }
 
@@ -3401,6 +3588,443 @@ function initTitleRotation() {
 }
 
 initTitleRotation();
+
+// ════════════════ API Activity Monitor ════════════════
+
+let activityEvents = [];
+let webActivityEvents = [];
+let activityExpanded = false;
+let activityEventSource = null;
+let _pollInFlight = false; // true while silent poll is running
+let activeActivityTab = 'cds'; // 'cds' or 'web'
+
+// ── Card preview activity tracking ──
+// { branchId: timeoutHandle } — auto-clear after idle
+const previewingBranches = new Map();
+const PREVIEW_IDLE_TIMEOUT = 8000; // 8s idle → stop spinner
+
+function markBranchPreviewing(branchId) {
+  // Clear previous timeout
+  if (previewingBranches.has(branchId)) {
+    clearTimeout(previewingBranches.get(branchId));
+  }
+  // Add class to card
+  const card = document.querySelector(`.branch-card[data-branch-id="${branchId}"]`);
+  if (card && !card.classList.contains('is-previewing')) {
+    card.classList.add('is-previewing');
+  }
+  // Set idle timeout
+  previewingBranches.set(branchId, setTimeout(() => {
+    const card = document.querySelector(`.branch-card[data-branch-id="${branchId}"]`);
+    if (card) card.classList.remove('is-previewing');
+    previewingBranches.delete(branchId);
+  }, PREVIEW_IDLE_TIMEOUT));
+}
+
+function switchActivityTab(tab) {
+  activeActivityTab = tab;
+  const cdsBody = document.getElementById('activityBody');
+  const webBody = document.getElementById('webActivityBody');
+  document.querySelectorAll('.activity-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.tab === tab);
+  });
+  if (tab === 'cds') {
+    cdsBody.style.display = '';
+    webBody.style.display = 'none';
+    requestAnimationFrame(() => { cdsBody.scrollTop = cdsBody.scrollHeight; });
+  } else {
+    cdsBody.style.display = 'none';
+    webBody.style.display = '';
+    requestAnimationFrame(() => { webBody.scrollTop = webBody.scrollHeight; });
+  }
+}
+
+function initActivityMonitor() {
+  activityEventSource = new EventSource(`${API}/activity-stream`);
+  activityEventSource.onmessage = (e) => {
+    try {
+      const event = JSON.parse(e.data);
+
+      // Web access events → separate tab + card spinner
+      if (event.type === 'web') {
+        webActivityEvents.push(event);
+        if (webActivityEvents.length > 200) webActivityEvents = webActivityEvents.slice(-200);
+        renderWebActivityItem(event);
+        document.getElementById('webTabCount').textContent = webActivityEvents.length;
+        // Trigger card preview spinner
+        if (event.branchId) markBranchPreviewing(event.branchId);
+        // Update total count & roller
+        updateTotalCount();
+        updateActivityRoller(event);
+        return;
+      }
+
+      // CDS API events (default)
+      // Frontend poll filter: skip poll responses (defense-in-depth, server also filters)
+      if (_pollInFlight && event.method === 'GET' && event.path === '/api/branches' && event.source !== 'ai') return;
+      activityEvents.push(event);
+      if (activityEvents.length > 200) activityEvents = activityEvents.slice(-200);
+      renderActivityItem(event);
+      document.getElementById('cdsTabCount').textContent = activityEvents.length;
+      updateTotalCount();
+      // Track AI occupation per branch
+      if (event.source === 'ai' && event.branchId) {
+        const prev = aiOccupation.get(event.branchId);
+        aiOccupation.set(event.branchId, { agent: event.agent || 'AI', lastSeen: Date.now() });
+        trackAiBranchEvent(event);
+        if (!prev) {
+          // Newly occupied — full re-render to show badge + feed
+          renderBranches();
+        } else {
+          // Already occupied — roller-update the inline feed (no full re-render)
+          updateBranchFeedRoller(event);
+        }
+      }
+    } catch {}
+  };
+  activityEventSource.onerror = () => {
+    // Reconnect after 3s
+    setTimeout(() => {
+      if (activityEventSource) activityEventSource.close();
+      initActivityMonitor();
+    }, 3000);
+  };
+}
+
+function updateTotalCount() {
+  document.getElementById('activityCount').textContent = activityEvents.length + webActivityEvents.length;
+}
+
+function toUTC8Time(isoStr) {
+  // Convert ISO string to UTC+8, show MM:SS if same hour, else HH:MM:SS
+  const d = new Date(isoStr);
+  const utc8 = new Date(d.getTime() + 8 * 60 * 60 * 1000);
+  const full = utc8.toISOString().slice(11, 19);
+  const nowUtc8 = new Date(Date.now() + 8 * 60 * 60 * 1000);
+  if (utc8.getUTCHours() === nowUtc8.getUTCHours() && utc8.toISOString().slice(0, 10) === nowUtc8.toISOString().slice(0, 10)) {
+    return full.slice(3); // MM:SS
+  }
+  return full;
+}
+
+function renderActivityItem(event) {
+  const body = document.getElementById('activityBody');
+  if (!body) return;
+
+  const isAi = event.source === 'ai';
+  const el = document.createElement('div');
+  el.className = 'activity-item' + (isAi ? ' activity-item-ai' : '');
+  el.style.cursor = 'pointer';
+  el.onclick = () => showActivityDetail(event);
+
+  const statusClass = event.status < 400 ? 'ok' : 'err';
+  const dur = event.duration < 1000 ? `${event.duration}ms` : `${(event.duration / 1000).toFixed(1)}s`;
+  const ts = toUTC8Time(event.ts);
+
+  // Chinese label from server, or fallback to shortened path
+  const label = event.label || '';
+  const shortPath = event.path.replace(/^\/api\//, '').replace(/branches\/([^/]+)/, (_, id) => {
+    return id.length > 16 ? id.slice(0, 12) + '…' : id;
+  });
+
+  let html = '';
+  // AI badge first if applicable
+  if (isAi) {
+    const agentShort = (event.agent || 'AI').replace(/\s*\(static key\)/, '');
+    html += `<span class="activity-source ai" title="${escapeHtml(event.agent || 'AI')}">${escapeHtml(agentShort)}</span>`;
+  }
+  html += `<span class="activity-method ${event.method}">${event.method}</span>`;
+  // Show Chinese label (golden glow) if available, path as tooltip
+  if (label) {
+    html += `<span class="activity-label" title="${escapeHtml(event.path)}">${escapeHtml(label)}</span>`;
+    html += `<span class="activity-path-suffix" title="${escapeHtml(event.path)}">${escapeHtml(shortPath)}</span>`;
+  } else {
+    html += `<span class="activity-path" title="${escapeHtml(event.path)}">${shortPath}</span>`;
+  }
+  html += `<span class="activity-status ${statusClass}">${event.status}</span>`;
+  html += `<span class="activity-dur">${dur}</span>`;
+  // Time at the end
+  html += `<span class="activity-ts">${ts}</span>`;
+
+  el.innerHTML = html;
+  body.appendChild(el);
+
+  // Auto-scroll to bottom
+  requestAnimationFrame(() => { body.scrollTop = body.scrollHeight; });
+
+  // Update roller (collapsed header ticker)
+  updateActivityRoller(event);
+}
+
+function renderWebActivityItem(event) {
+  const body = document.getElementById('webActivityBody');
+  if (!body) return;
+
+  const el = document.createElement('div');
+  el.className = 'activity-item';
+  el.style.cursor = 'pointer';
+  el.onclick = () => showActivityDetail(event);
+
+  const statusClass = event.status < 400 ? 'ok' : 'err';
+  const dur = event.duration < 1000 ? `${event.duration}ms` : `${(event.duration / 1000).toFixed(1)}s`;
+  const ts = toUTC8Time(event.ts);
+  const shortPath = event.path;
+
+  // Determine container type from profileId
+  const profileId = event.profileId || '';
+  const isApi = profileId.includes('api') || profileId.includes('backend') || event.path.startsWith('/api/');
+  const containerLabel = isApi ? 'api' : 'admin';
+  const containerColor = isApi ? 'var(--blue)' : 'var(--green)';
+  const containerBg = isApi ? 'rgba(56,139,253,0.12)' : 'rgba(63,185,80,0.12)';
+
+  let html = '';
+  // Branch first, then container badge
+  if (event.branchId) {
+    const lastDash = event.branchId.lastIndexOf('-');
+    const branchTail = lastDash >= 0 ? event.branchId.slice(lastDash + 1) : event.branchId;
+    const branchShort = branchTail.length > 16 ? branchTail.slice(0, 13) + '…' : branchTail;
+    html += `<span class="activity-source" style="background:var(--accent-bg);color:var(--accent);font-size:9px;font-weight:600;padding:1px 4px;border-radius:3px" title="${escapeHtml(event.branchId)}">${escapeHtml(branchShort)}</span>`;
+  }
+  html += `<span class="web-container-badge" style="background:${containerBg};color:${containerColor}">${containerLabel}</span>`;
+  html += `<span class="activity-path" title="${escapeHtml(event.path)}">${escapeHtml(shortPath)}</span>`;
+  html += `<span class="activity-status ${statusClass}">${event.status}</span>`;
+  html += `<span class="activity-dur">${dur}</span>`;
+  html += `<span class="activity-ts">${ts}</span>`;
+
+  el.innerHTML = html;
+  body.appendChild(el);
+
+  requestAnimationFrame(() => { body.scrollTop = body.scrollHeight; });
+}
+
+// ── Activity Roller (flip-clock style single-line ticker) ──
+function updateActivityRoller(event) {
+  const roller = document.getElementById('activityRoller');
+  if (!roller) return;
+
+  const isAi = event.source === 'ai';
+  const statusCls = event.status < 400 ? 'ok' : 'err';
+  const label = event.label || event.path.replace(/^\/api\//, '');
+  const dur = event.duration < 1000 ? `${event.duration}ms` : `${(event.duration / 1000).toFixed(1)}s`;
+
+  const isWeb = event.type === 'web';
+  const html = `${isAi ? '<span class="roller-ai">AI</span>' : ''}${isWeb ? '<span class="roller-web">Web</span>' : ''}<span class="activity-method ${event.method}">${event.method}</span><span class="roller-label">${escapeHtml(label)}</span><span class="activity-status ${statusCls}">${event.status}</span><span class="roller-dur">${dur}</span>`;
+
+  // Single element replace — no overlap possible
+  roller.innerHTML = `<div class="roller-line roller-flip">${html}</div>`;
+}
+
+// ── Activity Detail Modal ──
+function showActivityDetail(event) {
+  const d = new Date(event.ts);
+  const utc8 = new Date(d.getTime() + 8 * 60 * 60 * 1000);
+  const ts = utc8.toISOString().replace('T', ' ').slice(0, 19) + ' (UTC+8)';
+  const statusClass = event.status < 400 ? 'color:var(--green)' : 'color:var(--red)';
+  const isAi = event.source === 'ai';
+
+  let html = '<div class="activity-detail">';
+
+  // Header: label + AI badge
+  html += '<div class="activity-detail-header">';
+  if (event.label) {
+    html += `<span class="activity-detail-label">${escapeHtml(event.label)}</span>`;
+  }
+  if (isAi) {
+    html += `<span class="activity-source ai" style="font-size:11px">${escapeHtml(event.agent || 'AI')}</span>`;
+  }
+  html += '</div>';
+
+  // Info grid
+  html += '<div class="activity-detail-grid">';
+  html += `<div class="activity-detail-row"><span class="activity-detail-key">时间</span><span>${escapeHtml(ts)}</span></div>`;
+  html += `<div class="activity-detail-row"><span class="activity-detail-key">方法</span><span class="activity-method ${event.method}" style="font-size:11px">${event.method}</span></div>`;
+  html += `<div class="activity-detail-row"><span class="activity-detail-key">路径</span><span style="font-family:var(--font-mono);font-size:12px;word-break:break-all">${escapeHtml(event.path)}</span></div>`;
+  if (event.query) {
+    html += `<div class="activity-detail-row"><span class="activity-detail-key">参数</span><span style="font-family:var(--font-mono);font-size:11px;word-break:break-all">${escapeHtml(event.query)}</span></div>`;
+  }
+  html += `<div class="activity-detail-row"><span class="activity-detail-key">状态码</span><span style="${statusClass};font-weight:600">${event.status}</span></div>`;
+  html += `<div class="activity-detail-row"><span class="activity-detail-key">耗时</span><span>${event.duration < 1000 ? event.duration + 'ms' : (event.duration / 1000).toFixed(1) + 's'}</span></div>`;
+  html += `<div class="activity-detail-row"><span class="activity-detail-key">来源</span><span>${isAi ? '🤖 AI (' + escapeHtml(event.agent || '未知') + ')' : '👤 用户'}</span></div>`;
+  html += '</div>';
+
+  // Request body
+  if (event.body) {
+    html += '<div class="activity-detail-section">';
+    html += '<div class="activity-detail-key" style="margin-bottom:6px">请求体</div>';
+    html += `<pre class="activity-detail-code">${escapeHtml(formatJsonSafe(event.body))}</pre>`;
+    html += '</div>';
+  }
+
+  html += '</div>';
+
+  // Reuse the log modal for detail display
+  document.getElementById('logModalTitle').textContent = event.label || `${event.method} ${event.path}`;
+  document.getElementById('logModalBody').innerHTML = html;
+  document.getElementById('logModalTabs').classList.add('hidden');
+  document.getElementById('terminalBody').classList.add('hidden');
+  document.getElementById('logModalBody').classList.remove('hidden');
+  document.getElementById('copyErrorBtn').classList.add('hidden');
+  document.getElementById('logModal').classList.remove('hidden');
+  // Mark as activity-detail mode so checkLogErrors won't re-show the button
+  document.getElementById('logModal').dataset.mode = 'activity-detail';
+}
+
+function formatJsonSafe(str) {
+  try {
+    return JSON.stringify(JSON.parse(str), null, 2);
+  } catch {
+    return str;
+  }
+}
+
+function toggleActivityMonitor() {
+  const monitor = document.getElementById('activityMonitor');
+  monitor.classList.toggle('collapsed');
+  activityExpanded = !monitor.classList.contains('collapsed');
+  if (activityExpanded) {
+    const body = document.getElementById('activityBody');
+    requestAnimationFrame(() => { body.scrollTop = body.scrollHeight; });
+  }
+}
+
+function clearActivityLog() {
+  activityEvents = [];
+  webActivityEvents = [];
+  document.getElementById('activityBody').innerHTML = '';
+  document.getElementById('webActivityBody').innerHTML = '';
+  document.getElementById('activityCount').textContent = '0';
+  document.getElementById('cdsTabCount').textContent = '0';
+  document.getElementById('webTabCount').textContent = '0';
+}
+
+// ════════════════ AI Pairing System ════════════════
+
+let aiPairingRequests = [];
+let aiPairingEventSource = null;
+
+function initAiPairing() {
+  aiPairingEventSource = new EventSource(`${API}/ai/pairing-stream`);
+
+  aiPairingEventSource.addEventListener('new-request', (e) => {
+    try {
+      const req = JSON.parse(e.data);
+      // Avoid duplicates
+      if (!aiPairingRequests.find(r => r.id === req.id)) {
+        aiPairingRequests.push(req);
+      }
+      updateAiIndicator();
+      showToast(`AI "${req.agentName}" 请求连接`, 'info', 5000);
+    } catch {}
+  });
+
+  aiPairingEventSource.addEventListener('request-approved', (e) => {
+    try {
+      const { id } = JSON.parse(e.data);
+      aiPairingRequests = aiPairingRequests.filter(r => r.id !== id);
+      updateAiIndicator();
+    } catch {}
+  });
+
+  aiPairingEventSource.addEventListener('request-rejected', (e) => {
+    try {
+      const { id } = JSON.parse(e.data);
+      aiPairingRequests = aiPairingRequests.filter(r => r.id !== id);
+      updateAiIndicator();
+    } catch {}
+  });
+
+  aiPairingEventSource.addEventListener('request-expired', (e) => {
+    try {
+      const { id } = JSON.parse(e.data);
+      aiPairingRequests = aiPairingRequests.filter(r => r.id !== id);
+      updateAiIndicator();
+    } catch {}
+  });
+
+  aiPairingEventSource.onerror = () => {
+    setTimeout(() => {
+      if (aiPairingEventSource) aiPairingEventSource.close();
+      initAiPairing();
+    }, 3000);
+  };
+}
+
+function updateAiIndicator() {
+  const indicator = document.getElementById('aiPairingIndicator');
+  if (aiPairingRequests.length > 0) {
+    indicator.classList.remove('hidden');
+  } else {
+    indicator.classList.add('hidden');
+  }
+}
+
+function showAiPairingPanel() {
+  document.getElementById('aiPairingPanel').classList.remove('hidden');
+  renderAiPairingBody();
+}
+
+function closeAiPairingPanel() {
+  document.getElementById('aiPairingPanel').classList.add('hidden');
+}
+
+function renderAiPairingBody() {
+  const body = document.getElementById('aiPairingBody');
+  if (aiPairingRequests.length === 0) {
+    body.innerHTML = '<div style="color:var(--text-muted);font-size:13px;text-align:center;padding:20px 0">暂无待处理的 AI 连接请求</div>';
+    return;
+  }
+
+  body.innerHTML = aiPairingRequests.map(req => {
+    const ago = relativeTime(req.createdAt);
+    return `
+      <div class="ai-request-card" id="ai-req-${req.id}">
+        <div class="ai-agent-name">${escapeHtml(req.agentName)}</div>
+        ${req.purpose ? `<div class="ai-purpose">${escapeHtml(req.purpose)}</div>` : ''}
+        <div class="ai-meta">来自 ${escapeHtml(req.ip)} · ${ago || '刚刚'}</div>
+        <div class="ai-actions">
+          <button class="ai-approve-btn" onclick="approveAiRequest('${req.id}')">批准连接</button>
+          <button class="ai-reject-btn" onclick="rejectAiRequest('${req.id}')">拒绝</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function approveAiRequest(id) {
+  try {
+    await api('POST', `/ai/approve/${id}`);
+    aiPairingRequests = aiPairingRequests.filter(r => r.id !== id);
+    updateAiIndicator();
+    renderAiPairingBody();
+    showToast('已批准 AI 连接', 'success');
+    if (aiPairingRequests.length === 0) closeAiPairingPanel();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function rejectAiRequest(id) {
+  try {
+    await api('POST', `/ai/reject/${id}`);
+    aiPairingRequests = aiPairingRequests.filter(r => r.id !== id);
+    updateAiIndicator();
+    renderAiPairingBody();
+    showToast('已拒绝', 'info');
+    if (aiPairingRequests.length === 0) closeAiPairingPanel();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// ── Init activity monitor & AI pairing ──
+initActivityMonitor();
+initAiPairing();
 
 // ── Start ──
 init();
