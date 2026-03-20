@@ -38,7 +38,6 @@ import {
   Search,
   Layers,
   Swords,
-  Users,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 

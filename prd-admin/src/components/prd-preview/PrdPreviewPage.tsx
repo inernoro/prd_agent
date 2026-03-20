@@ -9,9 +9,25 @@ import { api } from '@/services/api';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
+import GithubSlugger from 'github-slugger';
 import PrdCommentsPanel from './PrdCommentsPanel';
 import { usePrdPreviewNavStore, type DocCitation } from '@/stores/prdPreviewNavStore';
 import { applyHighlights as applyHighlightsHelper, clearHighlights as clearHighlightsHelper, focusCitation } from '@/lib/prdCitationHighlighter';
+
+function childrenToText(children: any): string {
+  if (children == null) return '';
+  if (typeof children === 'string') return children;
+  if (Array.isArray(children)) return children.map(childrenToText).join('');
+  if (typeof children === 'object' && 'props' in children) return childrenToText((children as any).props?.children);
+  return '';
+}
+
+function normalizeHeadingText(raw: string) {
+  let s = String(raw || '');
+  s = s.replace(/\s+#+\s*$/, '').trim();
+  s = s.replace(/\s+/g, ' ');
+  return s;
+}
 
 type DocumentContent = { id: string; title: string; content: string };
 
@@ -280,18 +296,32 @@ export default function PrdPreviewPage(props: {
     setActiveHeadingTitle((prev) => (prev === current.title ? prev : current.title));
   }, []);
 
+  // slugger 在 content 变化时重建，保证 heading ID 一致性
+  const slugger = useMemo(() => new GithubSlugger(), [prdPreview?.content]);
+
+  const headingComponents = useMemo(() => {
+    const make = (Tag: 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6') => {
+      return ({ children }: any) => {
+        const text = normalizeHeadingText(childrenToText(children));
+        const id = text ? slugger.slug(text) : undefined;
+        return <Tag id={id}>{children}</Tag>;
+      };
+    };
+    return { h1: make('h1'), h2: make('h2'), h3: make('h3'), h4: make('h4'), h5: make('h5'), h6: make('h6') };
+  }, [slugger]);
+
   const prdPreviewBody = useMemo(() => {
     if (!canPreview) return <div className="text-sm" style={{ color: 'var(--text-muted)' }}>请先选择群组并绑定 PRD</div>;
     if (loading) return <div className="text-sm" style={{ color: 'var(--text-muted)' }}>加载中...</div>;
-    if (error) return <div className="text-sm" style={{ color: 'var(--status-error)' }}>{error}</div>;
+    if (error) return <div className="text-sm text-red-500">{error}</div>;
     return (
       <div className="prose prose-sm max-w-none prd-preview-content" style={{ color: 'var(--text-primary)' }}>
-        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={headingComponents}>
           {prdPreview?.content || ''}
         </ReactMarkdown>
       </div>
     );
-  }, [canPreview, prdPreview?.content, error, loading]);
+  }, [canPreview, prdPreview?.content, error, loading, headingComponents]);
 
   // 从 DOM 抽取 TOC
   useEffect(() => {
@@ -464,13 +494,13 @@ export default function PrdPreviewPage(props: {
   return (
     <div className="flex-1 flex flex-col min-h-0">
       {/* 顶栏 */}
-      <div className="h-12 px-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-default)' }}>
+      <div className="h-12 px-4 flex items-center justify-between border-b ui-glass-bar">
         <div className="flex items-center gap-2 min-w-0">
           {onRequestClose && (
             <button
               type="button"
               onClick={onRequestClose}
-              className="h-8 px-2 rounded-md transition-colors hover:bg-white/5"
+              className="h-8 px-2 rounded-md transition-colors hover:bg-black/5 dark:hover:bg-white/5"
               style={{ color: 'var(--text-secondary)' }}
               title="返回"
               aria-label="返回"
@@ -482,7 +512,7 @@ export default function PrdPreviewPage(props: {
           )}
           <div className="min-w-0">
             <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>PRD 预览</div>
-            <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }} title={prdPreview?.title || ''}>
+            <div className="text-xs truncate" style={{ color: 'var(--text-secondary)' }} title={prdPreview?.title || ''}>
               {prdPreview?.title || ''}
             </div>
           </div>
@@ -490,8 +520,8 @@ export default function PrdPreviewPage(props: {
         <div className="flex items-center gap-1.5">
           <button
             type="button"
-            className="h-8 w-8 inline-flex items-center justify-center rounded-md transition-colors hover:bg-white/5"
-            style={{ color: tocOpen ? 'rgba(99, 102, 241, 0.8)' : 'var(--text-secondary)' }}
+            className={`h-8 w-8 inline-flex items-center justify-center rounded-md transition-colors hover:bg-black/5 dark:hover:bg-white/5 ${tocOpen ? 'text-indigo-400' : ''}`}
+            style={tocOpen ? undefined : { color: 'var(--text-secondary)' }}
             onClick={() => setTocOpen((v) => !v)}
             aria-label="章节目录"
             title="章节目录"
@@ -502,8 +532,8 @@ export default function PrdPreviewPage(props: {
           </button>
           <button
             type="button"
-            className="h-8 w-8 inline-flex items-center justify-center rounded-md transition-colors hover:bg-white/5"
-            style={{ color: commentsOpen ? 'rgba(99, 102, 241, 0.8)' : 'var(--text-secondary)' }}
+            className={`h-8 w-8 inline-flex items-center justify-center rounded-md transition-colors hover:bg-black/5 dark:hover:bg-white/5 ${commentsOpen ? 'text-indigo-400' : ''}`}
+            style={commentsOpen ? undefined : { color: 'var(--text-secondary)' }}
             onClick={() => setCommentsOpen((v) => !v)}
             aria-label="评论"
             title="评论"
@@ -521,10 +551,10 @@ export default function PrdPreviewPage(props: {
           {/* 左：目录 */}
           {tocOpen && (
             <div
-              className="overflow-auto p-3"
-              style={{ width: `${tocWidth}px`, borderRight: '1px solid var(--border-default)' }}
+              className="overflow-auto p-3 border-r ui-glass-bar"
+              style={{ width: `${tocWidth}px` }}
             >
-              <div className="text-xs font-semibold px-2 py-1" style={{ color: 'var(--text-muted)' }}>目录</div>
+              <div className="text-xs font-semibold px-2 py-1" style={{ color: 'var(--text-secondary)' }}>目录</div>
               <div className="mt-1 space-y-1">
                 {tocItems.length > 0 ? (
                   tocItems.map((t) => (
@@ -537,15 +567,17 @@ export default function PrdPreviewPage(props: {
                         setActiveHeadingTitle(t.text);
                         scrollToHeading(t.id);
                       }}
-                      className={`w-full text-left text-xs rounded-md pr-2 py-1 transition-colors hover:bg-white/5 ${tocIndentClass(t.level)}`}
-                      style={{ color: activeHeadingId === t.id ? 'rgba(99, 102, 241, 0.9)' : 'var(--text-secondary)' }}
+                      className={`w-full text-left text-xs rounded-md pr-2 py-1 transition-colors hover:bg-black/5 dark:hover:bg-white/5 ${tocIndentClass(t.level)} ${
+                        activeHeadingId === t.id ? 'text-indigo-400' : 'hover:text-indigo-300'
+                      }`}
+                      style={activeHeadingId === t.id ? undefined : { color: 'var(--text-secondary)' }}
                       title={t.text}
                     >
                       <span className="block whitespace-normal break-words">{t.text}</span>
                     </button>
                   ))
                 ) : (
-                  <div className="mt-2 text-xs px-2" style={{ color: 'var(--text-muted)' }}>
+                  <div className="mt-2 text-xs px-2" style={{ color: 'var(--text-secondary)' }}>
                     {loading ? '加载中...' : '未识别到章节标题'}
                   </div>
                 )}
@@ -567,7 +599,7 @@ export default function PrdPreviewPage(props: {
               onLostPointerCapture={endResize}
               style={{ touchAction: 'none' }}
             >
-              <div className="h-full w-full hover:bg-indigo-500/10" />
+              <div className="h-full w-full hover:bg-indigo-500/10 dark:hover:bg-indigo-500/10" />
             </div>
           )}
 
@@ -592,15 +624,15 @@ export default function PrdPreviewPage(props: {
               onLostPointerCapture={endResize}
               style={{ touchAction: 'none' }}
             >
-              <div className="h-full w-full hover:bg-indigo-500/10" />
+              <div className="h-full w-full hover:bg-indigo-500/10 dark:hover:bg-indigo-500/10" />
             </div>
           )}
 
           {/* 右：评论 */}
           {commentsOpen && (
             <div
-              className="overflow-hidden"
-              style={{ width: `${commentsWidth}px`, borderLeft: '1px solid var(--border-default)' }}
+              className="overflow-hidden border-l ui-glass-bar"
+              style={{ width: `${commentsWidth}px` }}
             >
               <PrdCommentsPanel
                 documentId={prdPreview?.documentId || documentId || ''}
@@ -617,10 +649,7 @@ export default function PrdPreviewPage(props: {
       {/* 引用导航浮层 */}
       {Array.isArray(navCitations) && navCitations.length > 0 ? (
         <div className="fixed z-40 right-4 top-16">
-          <div
-            className="px-3 py-2 w-[320px] rounded-xl"
-            style={{ background: 'rgba(30, 30, 32, 0.95)', border: '1px solid var(--border-default)', boxShadow: '0 8px 32px rgba(0,0,0,0.3)' }}
-          >
+          <div className="ui-glass-panel px-3 py-2 w-[320px]">
             <div className="flex items-center justify-between gap-2">
               <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
                 引用 {Math.min((navActiveIndex ?? 0) + 1, navCitations.length)}/{navCitations.length}
@@ -648,7 +677,7 @@ export default function PrdPreviewPage(props: {
             </div>
             <div
               className={`mt-2 text-[11px] whitespace-pre-wrap break-words ${isCitationExcerptExpanded ? 'max-h-[220px] overflow-auto pr-1' : 'line-clamp-3'}`}
-              style={{ color: 'var(--text-muted)' }}
+              style={{ color: 'var(--text-secondary)' }}
               title={navCitations[navActiveIndex]?.excerpt || ''}
             >
               {navCitations[navActiveIndex]?.excerpt || ''}
@@ -656,8 +685,8 @@ export default function PrdPreviewPage(props: {
             <div className="mt-2 flex items-center justify-between gap-2">
               <button
                 type="button"
-                className="px-2 py-1 text-xs rounded-md disabled:opacity-50 hover:bg-white/5"
-                style={{ border: '1px solid var(--border-default)', color: 'var(--text-secondary)' }}
+                className="px-2 py-1 text-xs rounded-md disabled:opacity-50 border border-white/10 hover:bg-black/5 dark:hover:bg-white/5"
+                style={{ color: 'var(--text-secondary)' }}
                 onClick={() => setNavActiveIndex((navActiveIndex ?? 0) - 1)}
                 disabled={!highlightReady || (navActiveIndex ?? 0) <= 0}
               >
@@ -665,8 +694,8 @@ export default function PrdPreviewPage(props: {
               </button>
               <button
                 type="button"
-                className="px-2 py-1 text-xs rounded-md disabled:opacity-50 hover:bg-white/5"
-                style={{ border: '1px solid var(--border-default)', color: 'var(--text-secondary)' }}
+                className="px-2 py-1 text-xs rounded-md disabled:opacity-50 border border-white/10 hover:bg-black/5 dark:hover:bg-white/5"
+                style={{ color: 'var(--text-secondary)' }}
                 onClick={() => setNavActiveIndex((navActiveIndex ?? 0) + 1)}
                 disabled={!highlightReady || (navActiveIndex ?? 0) >= navCitations.length - 1}
               >
