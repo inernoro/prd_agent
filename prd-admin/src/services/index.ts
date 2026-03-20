@@ -575,6 +575,9 @@ import type {
   GetMyAiReportPromptContract,
   UpdateMyAiReportPromptContract,
   ResetMyAiReportPromptContract,
+  GetTeamAiSummaryPromptContract,
+  UpdateTeamAiSummaryPromptContract,
+  ResetTeamAiSummaryPromptContract,
   GetMyDailyLogTagsContract,
   UpdateMyDailyLogTagsContract,
   ListPersonalSourcesContract,
@@ -650,6 +653,9 @@ import {
   getMyAiReportPromptReal,
   updateMyAiReportPromptReal,
   resetMyAiReportPromptReal,
+  getTeamAiSummaryPromptReal,
+  updateTeamAiSummaryPromptReal,
+  resetTeamAiSummaryPromptReal,
   getMyDailyLogTagsReal,
   updateMyDailyLogTagsReal,
   listPersonalSourcesReal,
@@ -1042,6 +1048,9 @@ export const updateMyAiSource: UpdateMyAiSourceContract = withAuth(updateMyAiSou
 export const getMyAiReportPrompt: GetMyAiReportPromptContract = withAuth(getMyAiReportPromptReal);
 export const updateMyAiReportPrompt: UpdateMyAiReportPromptContract = withAuth(updateMyAiReportPromptReal);
 export const resetMyAiReportPrompt: ResetMyAiReportPromptContract = withAuth(resetMyAiReportPromptReal);
+export const getTeamAiSummaryPrompt: GetTeamAiSummaryPromptContract = withAuth(getTeamAiSummaryPromptReal);
+export const updateTeamAiSummaryPrompt: UpdateTeamAiSummaryPromptContract = withAuth(updateTeamAiSummaryPromptReal);
+export const resetTeamAiSummaryPrompt: ResetTeamAiSummaryPromptContract = withAuth(resetTeamAiSummaryPromptReal);
 export const getMyDailyLogTags: GetMyDailyLogTagsContract = withAuth(getMyDailyLogTagsReal);
 export const updateMyDailyLogTags: UpdateMyDailyLogTagsContract = withAuth(updateMyDailyLogTagsReal);
 export const listPersonalSources: ListPersonalSourcesContract = withAuth(listPersonalSourcesReal);

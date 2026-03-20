@@ -61,6 +61,9 @@ import type {
   GetMyAiReportPromptContract,
   UpdateMyAiReportPromptContract,
   ResetMyAiReportPromptContract,
+  GetTeamAiSummaryPromptContract,
+  UpdateTeamAiSummaryPromptContract,
+  ResetTeamAiSummaryPromptContract,
   GetMyDailyLogTagsContract,
   UpdateMyDailyLogTagsContract,
   ListPersonalSourcesContract,
@@ -710,6 +713,30 @@ export const updateMyAiReportPromptReal: UpdateMyAiReportPromptContract = async 
 
 export const resetMyAiReportPromptReal: ResetMyAiReportPromptContract = async () => {
   return await apiRequest<ReportAiPromptSettings>(api.reportAgent.aiReportPrompt.reset(), { method: 'POST' });
+};
+
+export const getTeamAiSummaryPromptReal: GetTeamAiSummaryPromptContract = async (input) => {
+  return await apiRequest<ReportAiPromptSettings>(
+    api.reportAgent.teams.aiSummaryPrompt(encodeURIComponent(input.teamId)),
+    { method: 'GET' }
+  );
+};
+
+export const updateTeamAiSummaryPromptReal: UpdateTeamAiSummaryPromptContract = async (input) => {
+  return await apiRequest<ReportAiPromptSettings>(
+    api.reportAgent.teams.aiSummaryPrompt(encodeURIComponent(input.teamId)),
+    {
+      method: 'PUT',
+      body: { prompt: input.prompt },
+    }
+  );
+};
+
+export const resetTeamAiSummaryPromptReal: ResetTeamAiSummaryPromptContract = async (input) => {
+  return await apiRequest<ReportAiPromptSettings>(
+    api.reportAgent.teams.aiSummaryPromptReset(encodeURIComponent(input.teamId)),
+    { method: 'POST' }
+  );
 };
 
 export const getMyDailyLogTagsReal: GetMyDailyLogTagsContract = async () => {

@@ -802,6 +802,19 @@ export type UpdateMyAiReportPromptContract = (input: {
 
 export type ResetMyAiReportPromptContract = () => Promise<ApiResponse<ReportAiPromptSettings>>;
 
+export type GetTeamAiSummaryPromptContract = (input: {
+  teamId: string;
+}) => Promise<ApiResponse<ReportAiPromptSettings>>;
+
+export type UpdateTeamAiSummaryPromptContract = (input: {
+  teamId: string;
+  prompt: string;
+}) => Promise<ApiResponse<ReportAiPromptSettings>>;
+
+export type ResetTeamAiSummaryPromptContract = (input: {
+  teamId: string;
+}) => Promise<ApiResponse<ReportAiPromptSettings>>;
+
 export type GetMyDailyLogTagsContract = () => Promise<ApiResponse<{ items: string[] }>>;
 
 export type UpdateMyDailyLogTagsContract = (input: {

@@ -415,6 +415,110 @@ public class ReportAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { team = updated }));
     }
 
+    #region Team AI Summary Prompt
+
+    /// <summary>
+    /// 获取团队周报 AI 分析 Prompt 设置
+    /// </summary>
+    [HttpGet("teams/{id}/ai-summary-prompt")]
+    public async Task<IActionResult> GetTeamAiSummaryPrompt(string id, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var team = await _db.ReportTeams.Find(t => t.Id == id).FirstOrDefaultAsync(ct);
+        if (team == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "团队不存在"));
+
+        var hasTeamManagePermission = HasPermission(AdminPermissionCatalog.ReportAgentTeamManage);
+        var hasViewAll = HasPermission(AdminPermissionCatalog.ReportAgentViewAll);
+        var isLeaderOrDeputy = team.LeaderUserId == userId || await IsTeamLeaderOrDeputy(id, userId);
+        if (!hasTeamManagePermission && !hasViewAll && !isLeaderOrDeputy)
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "缺少团队管理权限"));
+
+        var customPrompt = NormalizeTeamAiSummaryPrompt(team.TeamSummaryPrompt);
+        return Ok(ApiResponse<object>.Ok(BuildTeamAiSummaryPromptPayload(customPrompt)));
+    }
+
+    /// <summary>
+    /// 更新团队周报 AI 分析 Prompt 设置
+    /// </summary>
+    [HttpPut("teams/{id}/ai-summary-prompt")]
+    public async Task<IActionResult> UpdateTeamAiSummaryPrompt(string id, [FromBody] UpdateTeamAiSummaryPromptRequest req, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var team = await _db.ReportTeams.Find(t => t.Id == id).FirstOrDefaultAsync(ct);
+        if (team == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "团队不存在"));
+
+        var hasTeamManagePermission = HasPermission(AdminPermissionCatalog.ReportAgentTeamManage);
+        var hasViewAll = HasPermission(AdminPermissionCatalog.ReportAgentViewAll);
+        var isLeaderOrDeputy = team.LeaderUserId == userId || await IsTeamLeaderOrDeputy(id, userId);
+        if (!hasTeamManagePermission && !hasViewAll && !isLeaderOrDeputy)
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "缺少团队管理权限"));
+
+        var customPrompt = NormalizeTeamAiSummaryPrompt(req?.Prompt);
+        if (string.IsNullOrWhiteSpace(customPrompt))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "Prompt 不能为空"));
+        if (customPrompt.Length > MaxWeeklyReportPromptLength)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", $"Prompt 长度不能超过 {MaxWeeklyReportPromptLength} 字符"));
+
+        var update = Builders<ReportTeam>.Update
+            .Set(x => x.TeamSummaryPrompt, customPrompt)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+        await _db.ReportTeams.UpdateOneAsync(x => x.Id == id, update, cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(BuildTeamAiSummaryPromptPayload(customPrompt)));
+    }
+
+    /// <summary>
+    /// 重置团队周报 AI 分析 Prompt 到系统默认
+    /// </summary>
+    [HttpPost("teams/{id}/ai-summary-prompt/reset")]
+    public async Task<IActionResult> ResetTeamAiSummaryPrompt(string id, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var team = await _db.ReportTeams.Find(t => t.Id == id).FirstOrDefaultAsync(ct);
+        if (team == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "团队不存在"));
+
+        var hasTeamManagePermission = HasPermission(AdminPermissionCatalog.ReportAgentTeamManage);
+        var hasViewAll = HasPermission(AdminPermissionCatalog.ReportAgentViewAll);
+        var isLeaderOrDeputy = team.LeaderUserId == userId || await IsTeamLeaderOrDeputy(id, userId);
+        if (!hasTeamManagePermission && !hasViewAll && !isLeaderOrDeputy)
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "缺少团队管理权限"));
+
+        var update = Builders<ReportTeam>.Update
+            .Set(x => x.TeamSummaryPrompt, null)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+        await _db.ReportTeams.UpdateOneAsync(x => x.Id == id, update, cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(BuildTeamAiSummaryPromptPayload(null)));
+    }
+
+    private static object BuildTeamAiSummaryPromptPayload(string? customPrompt)
+    {
+        var normalizedCustomPrompt = NormalizeTeamAiSummaryPrompt(customPrompt);
+        var systemDefaultPrompt = ReportAgentPromptDefaults.TeamSummarySystemDefaultPrompt;
+
+        return new
+        {
+            systemDefaultPrompt,
+            customPrompt = normalizedCustomPrompt,
+            effectivePrompt = normalizedCustomPrompt ?? systemDefaultPrompt,
+            usingSystemDefault = normalizedCustomPrompt == null,
+            maxCustomPromptLength = ReportAgentPromptDefaults.MaxCustomPromptLength
+        };
+    }
+
+    private static string? NormalizeTeamAiSummaryPrompt(string? prompt)
+    {
+        var normalized = (prompt ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+            return null;
+        return normalized;
+    }
+
+    #endregion
+
     /// <summary>
     /// 删除团队
     /// </summary>
@@ -3445,6 +3549,11 @@ public class UpdateMyDailyLogTagsRequest
 }
 
 public class UpdateMyAiReportPromptRequest
+{
+    public string? Prompt { get; set; }
+}
+
+public class UpdateTeamAiSummaryPromptRequest
 {
     public string? Prompt { get; set; }
 }

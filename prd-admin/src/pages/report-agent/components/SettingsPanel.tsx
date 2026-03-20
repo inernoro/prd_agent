@@ -4,10 +4,11 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { useAuthStore } from '@/stores/authStore';
 import { PersonalSourcesPanel } from './PersonalSourcesPanel';
 import { AiPromptSettingsPanel } from './AiPromptSettingsPanel';
+import { TeamAiPromptSettingsPanel } from './TeamAiPromptSettingsPanel';
 import { TemplateManager } from './TemplateManager';
 import { TeamManager } from './TeamManager';
 
-type SettingsSection = 'overview' | 'my-sources' | 'ai-prompt' | 'templates' | 'teams';
+type SettingsSection = 'overview' | 'my-sources' | 'ai-prompt' | 'team-ai-prompt' | 'templates' | 'teams';
 
 interface SectionDef {
   key: SettingsSection;
@@ -43,6 +44,14 @@ const SECTIONS: SectionDef[] = [
     icon: FileBarChart,
     color: 'rgba(168, 85, 247, 0.85)',
     requirePerm: 'report-agent.template.manage',
+  },
+  {
+    key: 'team-ai-prompt',
+    label: '团队周报AI分析Prompt',
+    desc: '配置团队周报AI分析汇总使用的系统默认与团队自定义 Prompt',
+    icon: Sparkles,
+    color: 'rgba(14, 165, 233, 0.9)',
+    requirePerm: 'report-agent.team.manage',
   },
   {
     key: 'teams',
@@ -127,6 +136,7 @@ export function SettingsPanel() {
       <div className="flex-1 min-h-0">
         {activeSection === 'my-sources' && <PersonalSourcesPanel />}
         {activeSection === 'ai-prompt' && <AiPromptSettingsPanel />}
+        {activeSection === 'team-ai-prompt' && <TeamAiPromptSettingsPanel />}
         {activeSection === 'templates' && <TemplateManager />}
         {activeSection === 'teams' && <TeamManager />}
       </div>

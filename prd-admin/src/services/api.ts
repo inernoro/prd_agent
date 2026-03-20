@@ -481,6 +481,8 @@ export const api = {
       summary: (id: string) => `/api/report-agent/teams/${id}/summary`,
       summaryView: (id: string) => `/api/report-agent/teams/${id}/summary/view`,
       summaryGenerate: (id: string) => `/api/report-agent/teams/${id}/summary/generate`,
+      aiSummaryPrompt: (id: string) => `/api/report-agent/teams/${id}/ai-summary-prompt`,
+      aiSummaryPromptReset: (id: string) => `/api/report-agent/teams/${id}/ai-summary-prompt/reset`,
     },
     templates: {
       list: () => '/api/report-agent/templates',
