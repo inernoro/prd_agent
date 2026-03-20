@@ -1988,26 +1988,19 @@ a.branch-name:hover { color: var(--accent); }
   font-family: var(--font-mono);
   height: 20px;
   white-space: nowrap;
-  position: absolute;
-  inset: 0;
-  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.35s;
 }
 
-.roller-enter {
-  transform: translateY(100%);
-  opacity: 0;
+.roller-flip {
+  animation: roller-flip-in 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
-.roller-active {
-  transform: translateY(0);
-  opacity: 1;
-}
-.roller-exit {
-  animation: roller-out 0.35s cubic-bezier(0.4, 0, 0.2, 1) forwards;
-}
-@keyframes roller-out {
-  to {
-    transform: translateY(-100%);
+@keyframes roller-flip-in {
+  from {
+    transform: translateY(100%);
     opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
   }
 }
 

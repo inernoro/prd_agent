@@ -188,17 +188,9 @@ function updateBranchFeedRoller(event) {
   const label = event.label || event.path.replace(/^\/api\//, '').replace(/branches\/[^/]+\/?/, '');
   const dur = event.duration < 1000 ? `${event.duration}ms` : `${(event.duration / 1000).toFixed(1)}s`;
 
-  const newLine = document.createElement('div');
-  newLine.className = 'roller-line roller-enter';
-  newLine.innerHTML = `<span class="roller-ai">AI</span><span class="activity-method ${event.method}">${event.method}</span><span class="ai-feed-label">${escapeHtml(label)}</span><span class="activity-status ${statusCls}">${event.status}</span><span class="ai-feed-dur">${dur}</span>`;
+  const html = `<span class="roller-ai">AI</span><span class="activity-method ${event.method}">${event.method}</span><span class="ai-feed-label">${escapeHtml(label)}</span><span class="activity-status ${statusCls}">${event.status}</span><span class="ai-feed-dur">${dur}</span>`;
 
-  const oldLine = feed.querySelector('.roller-line');
-  if (oldLine) {
-    oldLine.classList.add('roller-exit');
-    oldLine.addEventListener('animationend', () => oldLine.remove(), { once: true });
-  }
-  feed.appendChild(newLine);
-  requestAnimationFrame(() => { newLine.classList.remove('roller-enter'); newLine.classList.add('roller-active'); });
+  feed.innerHTML = `<div class="roller-line roller-flip">${html}</div>`;
 }
 
 // Periodically expire stale AI occupations and refresh cards
@@ -3608,20 +3600,10 @@ function updateActivityRoller(event) {
   const label = event.label || event.path.replace(/^\/api\//, '');
   const dur = event.duration < 1000 ? `${event.duration}ms` : `${(event.duration / 1000).toFixed(1)}s`;
 
-  const newLine = document.createElement('div');
-  newLine.className = 'roller-line roller-enter';
-  newLine.innerHTML = `${isAi ? '<span class="roller-ai">AI</span>' : ''}<span class="activity-method ${event.method}">${event.method}</span><span class="roller-label">${escapeHtml(label)}</span><span class="activity-status ${statusCls}">${event.status}</span><span class="roller-dur">${dur}</span>`;
+  const html = `${isAi ? '<span class="roller-ai">AI</span>' : ''}<span class="activity-method ${event.method}">${event.method}</span><span class="roller-label">${escapeHtml(label)}</span><span class="activity-status ${statusCls}">${event.status}</span><span class="roller-dur">${dur}</span>`;
 
-  // Animate out the old line, animate in the new
-  const oldLine = roller.querySelector('.roller-line');
-  if (oldLine) {
-    oldLine.classList.add('roller-exit');
-    oldLine.addEventListener('animationend', () => oldLine.remove(), { once: true });
-  }
-
-  roller.appendChild(newLine);
-  // Trigger reflow then start enter animation
-  requestAnimationFrame(() => { newLine.classList.remove('roller-enter'); newLine.classList.add('roller-active'); });
+  // Single element replace — no overlap possible
+  roller.innerHTML = `<div class="roller-line roller-flip">${html}</div>`;
 }
 
 // ── Activity Detail Modal ──
