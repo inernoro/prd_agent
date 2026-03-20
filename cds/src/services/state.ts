@@ -71,7 +71,17 @@ export class StateService {
 
     let changed = false;
     for (const profile of this.state.buildProfiles) {
-      if (profile.cacheMounts && profile.cacheMounts.length > 0) continue;
+      // Migrate old hardcoded paths (e.g. /data/cds/default/cache → /data/cds/prd-agent/cache)
+      if (profile.cacheMounts) {
+        for (const cm of profile.cacheMounts) {
+          const updated = cm.hostPath.replace(/\/data\/cds\/[^/]+\/cache/, `${CACHE_BASE}`);
+          if (updated !== cm.hostPath) {
+            cm.hostPath = updated;
+            changed = true;
+          }
+        }
+        if (profile.cacheMounts.length > 0) continue;
+      }
       const image = profile.dockerImage || '';
       for (const [key, mounts] of Object.entries(IMAGE_CACHE_MAP)) {
         if (image.includes(key)) {
