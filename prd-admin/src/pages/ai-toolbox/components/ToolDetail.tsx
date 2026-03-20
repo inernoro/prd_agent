@@ -23,6 +23,7 @@ import {
   GraduationCap, Briefcase, Heart, Star, Shield, Lock, Search, Layers,
   Swords, Paperclip, ImagePlus, X, File, Loader2,
   Plus, MessageCircle, Share2, Globe2, AlertCircle,
+  Square, Copy, Check, RotateCcw,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -474,8 +475,25 @@ export function ToolDetail() {
               </div>
             ) : (
               <>
-                {messages.map(message => (
-                  <MessageBubble key={message.id} message={message} accentHue={accentHue} />
+                {messages.map((message, idx) => (
+                  <MessageBubble
+                    key={message.id}
+                    message={message}
+                    accentHue={accentHue}
+                    onCopy={message.role === 'assistant' && message.content && !message.isStreaming ? () => {
+                      navigator.clipboard.writeText(message.content);
+                      toast.success('已复制到剪贴板');
+                    } : undefined}
+                    onRetry={message.content?.startsWith('[错误]') && idx === messages.length - 1 ? () => {
+                      // Find last user message
+                      const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+                      if (lastUserMsg) {
+                        // Remove the error message and re-send
+                        setMessages(prev => prev.filter(m => m.id !== message.id));
+                        handleSend(lastUserMsg.content);
+                      }
+                    } : undefined}
+                  />
                 ))}
                 <div ref={messagesEndRef} />
               </>
@@ -520,9 +538,15 @@ export function ToolDetail() {
                 className="flex-1 bg-transparent border-none outline-none resize-none text-sm py-1.5"
                 style={{ color: 'var(--text-primary)', maxHeight: '150px' }}
               />
-              <Button variant="primary" size="sm" onClick={() => handleSend()} disabled={!input.trim() && attachments.length === 0} className="mb-0.5">
-                <Send size={16} />
-              </Button>
+              {isLoading ? (
+                <Button variant="secondary" size="sm" onClick={() => { abortRef.current?.(); setIsLoading(false); }} className="mb-0.5" title="停止生成">
+                  <Square size={14} />
+                </Button>
+              ) : (
+                <Button variant="primary" size="sm" onClick={() => handleSend()} disabled={!input.trim() && attachments.length === 0} className="mb-0.5">
+                  <Send size={16} />
+                </Button>
+              )}
             </div>
             <input ref={fileInputRef} type="file" multiple className="hidden" accept=".pdf,.doc,.docx,.txt,.md,.json,.csv,.xlsx,.xls,.ppt,.pptx" onChange={(e) => handleFileSelect(e, 'file')} />
             <input ref={imageInputRef} type="file" multiple className="hidden" accept="image/*" onChange={(e) => handleFileSelect(e, 'image')} />
@@ -570,11 +594,20 @@ const AssistantMarkdown = memo(function AssistantMarkdown({ content }: { content
   );
 });
 
-function MessageBubble({ message, accentHue }: { message: ChatMessage; accentHue: number }) {
+function MessageBubble({ message, accentHue, onCopy, onRetry }: { message: ChatMessage; accentHue: number; onCopy?: () => void; onRetry?: () => void }) {
   const isUser = message.role === 'user';
   const isError = message.content?.startsWith('[错误]');
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    if (!onCopy) return;
+    onCopy();
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   return (
-    <div className={`flex items-start gap-3 ${isUser ? 'flex-row-reverse' : ''}`}>
+    <div className={`group/msg flex items-start gap-3 ${isUser ? 'flex-row-reverse' : ''}`}>
       <div
         className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
         style={{
@@ -620,9 +653,34 @@ function MessageBubble({ message, accentHue }: { message: ChatMessage; accentHue
             message.isStreaming && <Loader2 size={16} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
           )}
         </div>
-        <span className="text-[10px] px-1" style={{ color: 'var(--text-muted)' }}>
-          {message.timestamp.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
-        </span>
+        {/* Action buttons row */}
+        <div className="flex items-center gap-1 px-1">
+          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+            {message.timestamp.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+          </span>
+          {onCopy && (
+            <button
+              onClick={handleCopy}
+              className="opacity-0 group-hover/msg:opacity-100 p-0.5 rounded hover:bg-white/10 transition-all"
+              title="复制内容"
+            >
+              {copied
+                ? <Check size={12} style={{ color: 'rgb(74, 222, 128)' }} />
+                : <Copy size={12} style={{ color: 'var(--text-muted)' }} />}
+            </button>
+          )}
+          {onRetry && (
+            <button
+              onClick={onRetry}
+              className="opacity-0 group-hover/msg:opacity-100 flex items-center gap-0.5 px-1.5 py-0.5 rounded hover:bg-white/10 transition-all text-[10px]"
+              style={{ color: 'var(--status-error)' }}
+              title="重试"
+            >
+              <RotateCcw size={11} />
+              <span>重试</span>
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
