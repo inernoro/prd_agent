@@ -8,6 +8,7 @@ import { apiRequest } from '@/services/real/apiClient';
 import { api } from '@/services/api';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import rehypeRaw from 'rehype-raw';
 import GithubSlugger from 'github-slugger';
 import PrdCommentsPanel from './PrdCommentsPanel';
@@ -27,6 +28,39 @@ function normalizeHeadingText(raw: string) {
   s = s.replace(/\s+#+\s*$/, '').trim();
   s = s.replace(/\s+/g, ' ');
   return s;
+}
+
+/**
+ * Strip inline color styles from <font color="..."> and style="color:..." attributes
+ * so elements inherit colors from the dark-mode CSS instead of being hardcoded to light colors.
+ */
+function walkHast(node: any) {
+  if (node.type === 'element') {
+    const props = node.properties;
+    if (props) {
+      if (node.tagName === 'font' && props.color != null) {
+        delete props.color;
+      }
+      const style = props.style;
+      if (typeof style === 'string' && style.length > 0) {
+        const cleaned = style
+          .replace(/\b(?:color|background-color)\s*:\s*[^;]+;?/gi, '')
+          .trim();
+        if (cleaned) {
+          props.style = cleaned;
+        } else {
+          delete props.style;
+        }
+      }
+    }
+  }
+  if (Array.isArray(node.children)) {
+    for (const child of node.children) walkHast(child);
+  }
+}
+
+function rehypeStripInlineColors() {
+  return (tree: any) => { walkHast(tree); };
 }
 
 type DocumentContent = { id: string; title: string; content: string };
@@ -316,7 +350,7 @@ export default function PrdPreviewPage(props: {
     if (error) return <div className="text-sm text-red-500">{error}</div>;
     return (
       <div className="prose prose-sm max-w-none prd-preview-content" style={{ color: 'var(--text-primary)' }}>
-        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={headingComponents}>
+        <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} rehypePlugins={[rehypeRaw, rehypeStripInlineColors]} components={headingComponents}>
           {prdPreview?.content || ''}
         </ReactMarkdown>
       </div>
@@ -685,7 +719,7 @@ export default function PrdPreviewPage(props: {
             <div className="mt-2 flex items-center justify-between gap-2">
               <button
                 type="button"
-                className="px-2 py-1 text-xs rounded-md disabled:opacity-50 border border-white/10 hover:bg-black/5 dark:hover:bg-white/5"
+                className="px-2 py-1 text-xs rounded-md disabled:opacity-50 border border-black/10 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/5"
                 style={{ color: 'var(--text-secondary)' }}
                 onClick={() => setNavActiveIndex((navActiveIndex ?? 0) - 1)}
                 disabled={!highlightReady || (navActiveIndex ?? 0) <= 0}
@@ -694,7 +728,7 @@ export default function PrdPreviewPage(props: {
               </button>
               <button
                 type="button"
-                className="px-2 py-1 text-xs rounded-md disabled:opacity-50 border border-white/10 hover:bg-black/5 dark:hover:bg-white/5"
+                className="px-2 py-1 text-xs rounded-md disabled:opacity-50 border border-black/10 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/5"
                 style={{ color: 'var(--text-secondary)' }}
                 onClick={() => setNavActiveIndex((navActiveIndex ?? 0) + 1)}
                 disabled={!highlightReady || (navActiveIndex ?? 0) >= navCitations.length - 1}
@@ -725,7 +759,7 @@ export default function PrdPreviewPage(props: {
         .prd-preview-content table { border-collapse: collapse; width: 100%; margin: 0.8em 0; }
         .prd-preview-content th, .prd-preview-content td { border: 1px solid var(--border-default); padding: 6px 10px; text-align: left; }
         .prd-preview-content th { background: var(--bg-input); font-weight: 600; }
-        .prd-preview-content a { color: #818CF8; text-decoration: underline; }
+        .prd-preview-content a { color: var(--accent-gold, #818CF8); text-decoration: underline; text-underline-offset: 2px; }
         .prd-preview-content img { max-width: 100%; border-radius: 8px; }
         .prd-preview-content hr { border: 0; border-top: 1px solid var(--border-default); margin: 1.2em 0; }
       `}</style>
