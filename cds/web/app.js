@@ -20,7 +20,7 @@ const ICON = {
   pr: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5.45 5.154A4.25 4.25 0 009.25 7.5h1.378a2.251 2.251 0 110 1.5H9.25A5.734 5.734 0 015 7.123v3.505a2.25 2.25 0 11-1.5 0V5.372a2.25 2.25 0 111.95-.218zM4.25 13.5a.75.75 0 100-1.5.75.75 0 000 1.5zm8.5-4.5a.75.75 0 100-1.5.75.75 0 000 1.5zM5 3.25a.75.75 0 10-1.5 0 .75.75 0 001.5 0z"/></svg>',
   pull: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.004a.75.75 0 01.75.75v5.689l1.97-1.97a.749.749 0 111.06 1.06l-3.25 3.25a.749.749 0 01-1.06 0L4.22 7.533a.749.749 0 111.06-1.06l1.97 1.97V2.754a.75.75 0 01.75-.75zM2.75 12.5h10.5a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5z"/></svg>',
   preview: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 8s3-5.5 8-5.5S16 8 16 8s-3 5.5-8 5.5S0 8 0 8zm8 3.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7zm0-1.5a2 2 0 110-4 2 2 0 010 4z"/></svg>',
-  deploy: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8.75.75a.75.75 0 00-1.5 0V2h-3A1.75 1.75 0 002.5 3.75v2.5A1.75 1.75 0 004.25 8h7.5A1.75 1.75 0 0013.5 6.25v-2.5A1.75 1.75 0 0011.75 2h-3V.75zM4.25 3.5h7.5a.25.25 0 01.25.25v2.5a.25.25 0 01-.25.25h-7.5a.25.25 0 01-.25-.25v-2.5a.25.25 0 01.25-.25zM2.5 10.25a.75.75 0 01.75-.75h9.5a.75.75 0 010 1.5h-9.5a.75.75 0 01-.75-.75zm.75 2.25a.75.75 0 000 1.5h9.5a.75.75 0 000-1.5h-9.5z"/></svg>',
+  deploy: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 12l-8.5 8.5a2.12 2.12 0 01-3-3L12 9"/><path d="M17.64 15L22 10.64"/><path d="M20.91 11.7a1 1 0 00-.2-.33l-5.13-5.12a1 1 0 00-.68-.29 1 1 0 00-.7.29l-1.85 1.83 6.36 6.37 1.84-1.84a1 1 0 00.31-.91z"/></svg>',
   trash: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM11 3V1.75A1.75 1.75 0 009.25 0h-2.5A1.75 1.75 0 005 1.75V3H2.75a.75.75 0 000 1.5h.3l.8 8.2A1.75 1.75 0 005.6 14.5h4.8a1.75 1.75 0 001.75-1.8l.8-8.2h.3a.75.75 0 000-1.5H11z"/></svg>',
   reset: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5z"/></svg>',
   star: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg>',
@@ -1874,11 +1874,11 @@ function renderBranches() {
       actionsRightHtml = '';
     } else if (isRunning) {
       actionsLeftHtml = `
-        <button class="preview sm" onclick="previewBranch('${esc(b.id)}')">${ICON.preview} 预览</button>
+        <button class="preview sm" onclick="previewBranch('${esc(b.id)}')" title="Preview">${ICON.preview}</button>
       `;
       actionsRightHtml = `
         <div class="split-btn">
-          <button class="sm split-btn-main" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.deploy} 重新部署</button>
+          <button class="sm split-btn-main" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="Rebuild">${ICON.deploy}</button>
           <button class="sm split-btn-toggle" onclick="toggleDeployMenu('${esc(b.id)}', event)" ${isBusy ? 'disabled' : ''}>
             <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor"><path d="M1 1l4 4 4-4"/></svg>
           </button>
@@ -1894,19 +1894,19 @@ function renderBranches() {
     } else if (isStopped) {
       // Container exists but stopped — neutral deploy, not primary
       actionsLeftHtml = `
-        <button class="sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.deploy} 部署</button>
+        <button class="sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="Build">${ICON.deploy} Build</button>
       `;
       actionsRightHtml = `
-        <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.trash} 删除</button>
+        <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.trash}</button>
       `;
     } else {
       // Idle (never deployed) or building — neutral deploy button
       actionsLeftHtml = `
-        <button class="sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.deploy} 部署</button>
+        <button class="sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="Build">${ICON.deploy} Build</button>
       `;
       actionsRightHtml = `
-        ${hasError ? `<button class="sm" onclick="resetBranch('${esc(b.id)}')" ${btnDisabled('reset')}>${btnLabel('reset', ICON.reset + ' 重置')}</button>` : ''}
-        <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.trash} 删除</button>
+        ${hasError ? `<button class="sm" onclick="resetBranch('${esc(b.id)}')" ${btnDisabled('reset')}>${btnLabel('reset', ICON.reset + ' Reset')}</button>` : ''}
+        <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.trash}</button>
       `;
     }
 
@@ -2004,6 +2004,12 @@ function renderBranches() {
 
   // Restore scroll position after re-render
   window.scrollTo(0, scrollY);
+
+  // Re-apply preview activity spinners (cards were rebuilt)
+  for (const branchId of previewingBranches.keys()) {
+    const card = document.querySelector(`.branch-card[data-branch-id="${branchId}"]`);
+    if (card) card.classList.add('is-previewing');
+  }
 }
 
 // ── Build profiles (data only) ──
@@ -3547,21 +3553,81 @@ initTitleRotation();
 // ════════════════ API Activity Monitor ════════════════
 
 let activityEvents = [];
+let webActivityEvents = [];
 let activityExpanded = false;
 let activityEventSource = null;
 let _pollInFlight = false; // true while silent poll is running
+let activeActivityTab = 'cds'; // 'cds' or 'web'
+
+// ── Card preview activity tracking ──
+// { branchId: timeoutHandle } — auto-clear after idle
+const previewingBranches = new Map();
+const PREVIEW_IDLE_TIMEOUT = 8000; // 8s idle → stop spinner
+
+function markBranchPreviewing(branchId) {
+  // Clear previous timeout
+  if (previewingBranches.has(branchId)) {
+    clearTimeout(previewingBranches.get(branchId));
+  }
+  // Add class to card
+  const card = document.querySelector(`.branch-card[data-branch-id="${branchId}"]`);
+  if (card && !card.classList.contains('is-previewing')) {
+    card.classList.add('is-previewing');
+  }
+  // Set idle timeout
+  previewingBranches.set(branchId, setTimeout(() => {
+    const card = document.querySelector(`.branch-card[data-branch-id="${branchId}"]`);
+    if (card) card.classList.remove('is-previewing');
+    previewingBranches.delete(branchId);
+  }, PREVIEW_IDLE_TIMEOUT));
+}
+
+function switchActivityTab(tab) {
+  activeActivityTab = tab;
+  const cdsBody = document.getElementById('activityBody');
+  const webBody = document.getElementById('webActivityBody');
+  document.querySelectorAll('.activity-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.tab === tab);
+  });
+  if (tab === 'cds') {
+    cdsBody.style.display = '';
+    webBody.style.display = 'none';
+    requestAnimationFrame(() => { cdsBody.scrollTop = cdsBody.scrollHeight; });
+  } else {
+    cdsBody.style.display = 'none';
+    webBody.style.display = '';
+    requestAnimationFrame(() => { webBody.scrollTop = webBody.scrollHeight; });
+  }
+}
 
 function initActivityMonitor() {
   activityEventSource = new EventSource(`${API}/activity-stream`);
   activityEventSource.onmessage = (e) => {
     try {
       const event = JSON.parse(e.data);
+
+      // Web access events → separate tab + card spinner
+      if (event.type === 'web') {
+        webActivityEvents.push(event);
+        if (webActivityEvents.length > 200) webActivityEvents = webActivityEvents.slice(-200);
+        renderWebActivityItem(event);
+        document.getElementById('webTabCount').textContent = webActivityEvents.length;
+        // Trigger card preview spinner
+        if (event.branchId) markBranchPreviewing(event.branchId);
+        // Update total count & roller
+        updateTotalCount();
+        updateActivityRoller(event);
+        return;
+      }
+
+      // CDS API events (default)
       // Frontend poll filter: skip poll responses (defense-in-depth, server also filters)
       if (_pollInFlight && event.method === 'GET' && event.path === '/api/branches' && event.source !== 'ai') return;
       activityEvents.push(event);
       if (activityEvents.length > 200) activityEvents = activityEvents.slice(-200);
       renderActivityItem(event);
-      document.getElementById('activityCount').textContent = activityEvents.length;
+      document.getElementById('cdsTabCount').textContent = activityEvents.length;
+      updateTotalCount();
       // Track AI occupation per branch
       if (event.source === 'ai' && event.branchId) {
         const prev = aiOccupation.get(event.branchId);
@@ -3584,6 +3650,10 @@ function initActivityMonitor() {
       initActivityMonitor();
     }, 3000);
   };
+}
+
+function updateTotalCount() {
+  document.getElementById('activityCount').textContent = activityEvents.length + webActivityEvents.length;
 }
 
 function toUTC8Time(isoStr) {
@@ -3641,6 +3711,37 @@ function renderActivityItem(event) {
   updateActivityRoller(event);
 }
 
+function renderWebActivityItem(event) {
+  const body = document.getElementById('webActivityBody');
+  if (!body) return;
+
+  const el = document.createElement('div');
+  el.className = 'activity-item';
+  el.style.cursor = 'pointer';
+  el.onclick = () => showActivityDetail(event);
+
+  const statusClass = event.status < 400 ? 'ok' : 'err';
+  const dur = event.duration < 1000 ? `${event.duration}ms` : `${(event.duration / 1000).toFixed(1)}s`;
+  const ts = toUTC8Time(event.ts);
+  const shortPath = event.path.length > 40 ? event.path.slice(0, 37) + '…' : event.path;
+
+  let html = '';
+  if (event.branchId) {
+    const branchShort = event.branchId.length > 16 ? event.branchId.slice(0, 13) + '…' : event.branchId;
+    html += `<span class="activity-source" style="background:var(--accent-bg);color:var(--accent);font-size:9px;font-weight:600;padding:1px 4px;border-radius:3px" title="${escapeHtml(event.branchId)}">${escapeHtml(branchShort)}</span>`;
+  }
+  html += `<span class="activity-method ${event.method}">${event.method}</span>`;
+  html += `<span class="activity-path" title="${escapeHtml(event.path)}">${escapeHtml(shortPath)}</span>`;
+  html += `<span class="activity-status ${statusClass}">${event.status}</span>`;
+  html += `<span class="activity-dur">${dur}</span>`;
+  html += `<span class="activity-ts">${ts}</span>`;
+
+  el.innerHTML = html;
+  body.appendChild(el);
+
+  requestAnimationFrame(() => { body.scrollTop = body.scrollHeight; });
+}
+
 // ── Activity Roller (flip-clock style single-line ticker) ──
 function updateActivityRoller(event) {
   const roller = document.getElementById('activityRoller');
@@ -3651,7 +3752,8 @@ function updateActivityRoller(event) {
   const label = event.label || event.path.replace(/^\/api\//, '');
   const dur = event.duration < 1000 ? `${event.duration}ms` : `${(event.duration / 1000).toFixed(1)}s`;
 
-  const html = `${isAi ? '<span class="roller-ai">AI</span>' : ''}<span class="activity-method ${event.method}">${event.method}</span><span class="roller-label">${escapeHtml(label)}</span><span class="activity-status ${statusCls}">${event.status}</span><span class="roller-dur">${dur}</span>`;
+  const isWeb = event.type === 'web';
+  const html = `${isAi ? '<span class="roller-ai">AI</span>' : ''}${isWeb ? '<span class="roller-web">Web</span>' : ''}<span class="activity-method ${event.method}">${event.method}</span><span class="roller-label">${escapeHtml(label)}</span><span class="activity-status ${statusCls}">${event.status}</span><span class="roller-dur">${dur}</span>`;
 
   // Single element replace — no overlap possible
   roller.innerHTML = `<div class="roller-line roller-flip">${html}</div>`;
@@ -3732,8 +3834,12 @@ function toggleActivityMonitor() {
 
 function clearActivityLog() {
   activityEvents = [];
+  webActivityEvents = [];
   document.getElementById('activityBody').innerHTML = '';
+  document.getElementById('webActivityBody').innerHTML = '';
   document.getElementById('activityCount').textContent = '0';
+  document.getElementById('cdsTabCount').textContent = '0';
+  document.getElementById('webTabCount').textContent = '0';
 }
 
 // ════════════════ AI Pairing System ════════════════

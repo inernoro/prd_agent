@@ -25,7 +25,7 @@ function makeToken(user: string, pass: string): string {
 }
 
 // ── Activity Stream (SSE broadcast for API operation monitor) ──
-interface ActivityEvent {
+export interface ActivityEvent {
   id: number;
   ts: string;
   method: string;
@@ -33,6 +33,8 @@ interface ActivityEvent {
   status: number;
   duration: number;
   source: 'user' | 'ai';
+  /** Event type: 'cds' for dashboard API calls, 'web' for proxied website access */
+  type?: 'cds' | 'web';
   /** AI agent name if source is 'ai' */
   agent?: string;
   /** Chinese label describing what this API does */
@@ -133,10 +135,11 @@ function resolveApiLabel(method: string, path: string): string {
 
 const activityClients = new Set<express.Response>();
 let activitySeq = 0;
+export function nextActivitySeq(): number { return ++activitySeq; }
 const activityBuffer: ActivityEvent[] = []; // ring buffer, keep last 200
 const ACTIVITY_BUFFER_MAX = 200;
 
-function broadcastActivity(event: ActivityEvent) {
+export function broadcastActivity(event: ActivityEvent) {
   activityBuffer.push(event);
   if (activityBuffer.length > ACTIVITY_BUFFER_MAX) activityBuffer.shift();
   const data = JSON.stringify(event);
@@ -434,6 +437,7 @@ export function createServer(deps: ServerDeps): express.Express {
         path: fullPath,
         status: res.statusCode,
         duration,
+        type: 'cds',
         source: aiSession ? 'ai' : 'user',
         agent: aiSession?.agentName,
         label: resolveApiLabel(req.method, fullPath),

@@ -793,6 +793,32 @@ button.text-btn:hover { color: var(--accent); }
     border-left-color: var(--red);
   }
 }
+/* Web access activity — rotating rainbow border on card (stops after idle) */
+.branch-card.is-previewing {
+  border-image: none;
+  border-color: transparent;
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+  background-image:
+    linear-gradient(var(--bg-card), var(--bg-card)),
+    conic-gradient(from var(--preview-border-angle, 0deg), #10b981, #38bdf8, #a78bfa, #f43f5e, #fbbf24, #10b981);
+  border: 2px solid transparent;
+  animation: preview-border-spin 2.5s linear infinite;
+}
+@keyframes preview-border-spin {
+  to { --preview-border-angle: 360deg; }
+}
+@property --preview-border-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+/* AI occupation overrides preview spinner */
+.branch-card.is-previewing.is-ai-occupied {
+  animation: ai-border-spin 3s linear infinite;
+}
+
 /* AI occupation — rotating gradient border on card */
 .branch-card.is-ai-occupied {
   border-image: none;
@@ -986,9 +1012,10 @@ a.branch-name:hover { color: var(--accent); }
   justify-content: flex-end;
   font-size: 12px; color: var(--text-muted);
   cursor: pointer; overflow: hidden;
-  white-space: nowrap; padding: 0 8px;
+  white-space: nowrap; padding: 0 4px;
   border-radius: var(--radius-xs);
   transition: color var(--transition);
+  text-overflow: ellipsis;
 }
 .branch-actions-commit:hover { color: var(--text-primary); }
 .branch-actions-commit svg.inline-icon { flex-shrink: 0; width: 14px; height: 14px; }
@@ -2014,6 +2041,16 @@ a.branch-name:hover { color: var(--accent); }
   letter-spacing: 0.5px;
   flex-shrink: 0;
 }
+.roller-web {
+  font-size: 8px;
+  font-weight: 800;
+  padding: 0 3px;
+  border-radius: 2px;
+  background: var(--accent-bg);
+  color: var(--accent);
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
 .roller-label {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2047,6 +2084,49 @@ a.branch-name:hover { color: var(--accent); }
 
 .activity-monitor:not(.collapsed) .activity-chevron {
   transform: rotate(180deg);
+}
+
+/* ── Activity Monitor Tabs ── */
+.activity-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border-light);
+  flex-shrink: 0;
+  background: var(--bg-primary);
+}
+.activity-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border-bottom: 2px solid transparent;
+  position: relative;
+}
+.activity-tab:hover { color: var(--text-secondary); background: var(--bg-hover); }
+.activity-tab.active { color: var(--text-primary); border-bottom-color: var(--accent); }
+.activity-tab-count {
+  font-size: 9px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--text-muted);
+  font-weight: 700;
+  min-width: 16px;
+  text-align: center;
+}
+.activity-tab.active .activity-tab-count {
+  background: var(--accent-bg);
+  color: var(--accent);
 }
 
 .activity-body {

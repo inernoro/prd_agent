@@ -3,7 +3,8 @@ import express from 'express';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { loadConfig } from './config.js';
-import { createServer } from './server.js';
+import { createServer, broadcastActivity, nextActivitySeq } from './server.js';
+import type { ActivityEvent } from './server.js';
 import { ShellExecutor } from './services/shell-executor.js';
 import { StateService } from './services/state.js';
 import { WorktreeService } from './services/worktree.js';
@@ -132,6 +133,28 @@ proxyService.setResolveUpstream((branchId, profileId) => {
     if (svc.status === 'running') return `http://127.0.0.1:${svc.hostPort}`;
   }
   return null;
+});
+
+// ── Web access tracking (throttled: max 1 event per branch per 2s) ──
+const webAccessThrottle = new Map<string, number>();
+proxyService.setOnAccess((branchId, method, reqPath, status, duration) => {
+  const now = Date.now();
+  const lastSent = webAccessThrottle.get(branchId) || 0;
+  if (now - lastSent < 2000) return; // throttle: 1 event per 2 seconds per branch
+  webAccessThrottle.set(branchId, now);
+
+  const event: ActivityEvent = {
+    id: nextActivitySeq(),
+    ts: new Date().toISOString(),
+    method,
+    path: reqPath,
+    status,
+    duration,
+    type: 'web',
+    source: 'user',
+    branchId,
+  };
+  broadcastActivity(event);
 });
 
 // ── Build lock for race conditions ──
