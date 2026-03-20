@@ -46,9 +46,37 @@ export class StateService {
       if (!this.state.infraServices) this.state.infraServices = [];
       if (this.state.mirrorEnabled === undefined) this.state.mirrorEnabled = false;
       if (!this.state.executors) this.state.executors = {};
+      // Migrate: backfill cacheMounts for existing build profiles
+      this.migrateCacheMounts();
     } else {
       this.state = emptyState();
     }
+  }
+
+  /**
+   * Backfill cacheMounts for profiles that were created before cache support.
+   * Uses dockerImage to detect the correct cache type.
+   */
+  private migrateCacheMounts(): void {
+    const CACHE_BASE = '/data/cds/default/cache';
+    const IMAGE_CACHE_MAP: Record<string, Array<{ hostPath: string; containerPath: string }>> = {
+      'dotnet': [{ hostPath: `${CACHE_BASE}/nuget`, containerPath: '/root/.nuget/packages' }],
+      'node': [{ hostPath: `${CACHE_BASE}/pnpm`, containerPath: '/root/.local/share/pnpm/store' }],
+    };
+
+    let changed = false;
+    for (const profile of this.state.buildProfiles) {
+      if (profile.cacheMounts && profile.cacheMounts.length > 0) continue;
+      const image = profile.dockerImage || '';
+      for (const [key, mounts] of Object.entries(IMAGE_CACHE_MAP)) {
+        if (image.includes(key)) {
+          profile.cacheMounts = mounts;
+          changed = true;
+          break;
+        }
+      }
+    }
+    if (changed) this.save();
   }
 
   save(): void {
