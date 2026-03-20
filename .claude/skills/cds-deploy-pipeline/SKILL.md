@@ -34,6 +34,30 @@ AI 作为 DevOps 操作员，通过 HTTP API 远程驱动 CDS 完成代码部署
 
 ## AI 认证方式（三种，按优先级）
 
+> **交互要求**：认证失败时，AI **必须**向用户展示选项让用户选择，而不是静默失败。
+> 所有 AI 发起的 CDS 请求在监控浮窗中都会标记为 **金色标签 + 紫色 AI 标记**。
+
+### 认证流程（AI 必须遵循）
+
+```
+Phase 0 认证：
+1. 检查环境变量 AI_ACCESS_KEY 是否存在
+   ├─ 存在 → 方式 A（静态密钥），尝试 curl 验证
+   │   ├─ 成功 → 认证完成
+   │   └─ 失败 → 提示用户选择 ↓
+   └─ 不存在 → 提示用户选择 ↓
+
+2. 向用户展示选项（必须明确展示，不可跳过）：
+   ────────────────────────────────
+   CDS 认证方式，请选择：
+   (1) 我已在 CDS Dashboard 批准 → AI 发送配对请求，等待批准
+   (2) 输入 Access Key → 用户提供密钥，AI 直接使用
+   (3) 输入 Cookie Token → 用户提供 cds_token
+   ────────────────────────────────
+
+3. 用户选择后执行对应认证方式
+```
+
 ### 方式 A：静态密钥（推荐，零交互）
 
 CDS 服务端配置 `AI_ACCESS_KEY` 环境变量，AI 请求时带 `X-AI-Access-Key` header：
@@ -58,7 +82,10 @@ RESP=$(curl -sf "$CDS/api/ai/request-access" \
   -d '{"agentName":"Claude Code","purpose":"CDS 部署流水线"}')
 REQUEST_ID=$(echo "$RESP" | jq -r '.requestId')
 
-# Step 2: 等待用户在 CDS Dashboard 批准（轮询，最多 5 分钟）
+# Step 2: 提示用户去 CDS Dashboard 批准
+echo "⏳ 请在 CDS Dashboard 右上角点击闪烁的 AI 标识并批准连接..."
+
+# Step 3: 等待用户批准（轮询，最多 5 分钟）
 for i in $(seq 1 60); do
   STATUS=$(curl -sf "$CDS/api/ai/request-status/$REQUEST_ID" | jq -r '.status')
   case "$STATUS" in
@@ -70,7 +97,7 @@ for i in $(seq 1 60); do
   esac
 done
 
-# Step 3: 后续所有请求使用 AI token
+# Step 4: 后续所有请求使用 AI token
 AUTH="-H 'X-CDS-AI-Token: $AI_TOKEN'"
 curl -sf $AUTH "$CDS/api/branches"
 ```
@@ -84,6 +111,7 @@ AUTH="-H 'Cookie: cds_token=$CDS_TOKEN'"
 ```
 
 > **认证优先级**：AI 自动尝试 A → B → C。方式 A 配置后完全静默，方式 B 需要用户在 Dashboard 点一次批准。
+> **关键**：当方式 A 失败或未配置时，AI 必须向用户展示选项菜单，不可静默跳过。
 
 ## API 操作监控
 
