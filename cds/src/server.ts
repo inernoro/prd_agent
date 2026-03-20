@@ -35,6 +35,98 @@ interface ActivityEvent {
   source: 'user' | 'ai';
   /** AI agent name if source is 'ai' */
   agent?: string;
+  /** Chinese label describing what this API does */
+  label?: string;
+  /** Request body summary (first 500 chars of JSON) */
+  body?: string;
+  /** Query string params */
+  query?: string;
+}
+
+/** Map API path patterns to Chinese labels */
+function resolveApiLabel(method: string, path: string): string {
+  // Normalize: remove /api prefix, trim trailing slash
+  const p = path.replace(/^\/api/, '').replace(/\/$/, '');
+
+  // Static exact matches
+  const staticMap: Record<string, string> = {
+    'GET /branches': '获取分支列表',
+    'POST /branches': '注册新分支',
+    'GET /remote-branches': '获取远程分支',
+    'GET /build-profiles': '获取构建配置',
+    'POST /build-profiles': '创建构建配置',
+    'GET /routing-rules': '获取路由规则',
+    'POST /routing-rules': '创建路由规则',
+    'GET /env': '获取环境变量',
+    'PUT /env': '批量设置环境变量',
+    'GET /config': '获取全局配置',
+    'GET /infra': '获取基础设施列表',
+    'GET /infra/discover': '发现基础设施',
+    'POST /infra': '添加基础设施',
+    'POST /infra/quickstart': '快速初始化基础设施',
+    'GET /docker-images': '获取 Docker 镜像',
+    'POST /cleanup': '清理已停止容器',
+    'POST /cleanup-orphans': '清理孤儿容器',
+    'POST /prune-stale-branches': '清理过期分支',
+    'POST /factory-reset': '恢复出厂设置',
+    'GET /check-updates': '检查远程更新',
+    'POST /quickstart': '快速开始配置',
+    'GET /mirror': '获取镜像配置',
+    'PUT /mirror': '更新镜像配置',
+    'POST /import-config': '导入配置',
+    'GET /export-config': '导出配置',
+    'GET /export-skill': '导出技能配置',
+    'POST /import-and-init': '导入并初始化',
+    'GET /self-branches': '获取自身分支',
+    'POST /self-update': '自我更新',
+    'POST /login': '用户登录',
+    'POST /logout': '用户登出',
+    'GET /ai/pending': '查看待处理 AI 请求',
+    'GET /ai/sessions': '查看 AI 会话',
+    'POST /ai/request-access': 'AI 请求连接',
+  };
+
+  const key = `${method} ${p}`;
+  if (staticMap[key]) return staticMap[key];
+
+  // Dynamic pattern matches (with :id params)
+  const patterns: Array<[RegExp, string]> = [
+    [/^DELETE \/branches\/(.+)$/, '删除分支'],
+    [/^PATCH \/branches\/(.+)$/, '更新分支信息'],
+    [/^POST \/branches\/(.+)\/pull$/, '拉取分支代码'],
+    [/^POST \/branches\/(.+)\/deploy\/(.+)$/, '部署单服务'],
+    [/^POST \/branches\/(.+)\/deploy$/, '全量部署'],
+    [/^POST \/branches\/(.+)\/stop$/, '停止分支服务'],
+    [/^POST \/branches\/(.+)\/set-default$/, '设为默认分支'],
+    [/^POST \/branches\/(.+)\/reset$/, '重置分支状态'],
+    [/^GET \/branches\/(.+)\/logs$/, '查看操作日志'],
+    [/^POST \/branches\/(.+)\/container-logs$/, '查看容器日志'],
+    [/^POST \/branches\/(.+)\/container-env$/, '查看容器环境变量'],
+    [/^POST \/branches\/(.+)\/container-exec$/, '容器内执行命令'],
+    [/^GET \/branches\/(.+)\/git-log$/, '查看 Git 提交历史'],
+    [/^PUT \/env\/(.+)$/, '设置环境变量'],
+    [/^DELETE \/env\/(.+)$/, '删除环境变量'],
+    [/^PUT \/routing-rules\/(.+)$/, '更新路由规则'],
+    [/^DELETE \/routing-rules\/(.+)$/, '删除路由规则'],
+    [/^PUT \/build-profiles\/(.+)$/, '更新构建配置'],
+    [/^DELETE \/build-profiles\/(.+)$/, '删除构建配置'],
+    [/^POST \/infra\/(.+)\/start$/, '启动基础设施'],
+    [/^POST \/infra\/(.+)\/stop$/, '停止基础设施'],
+    [/^POST \/infra\/(.+)\/restart$/, '重启基础设施'],
+    [/^GET \/infra\/(.+)\/logs$/, '查看基础设施日志'],
+    [/^GET \/infra\/(.+)\/health$/, '基础设施健康检查'],
+    [/^PUT \/infra\/(.+)$/, '更新基础设施'],
+    [/^DELETE \/infra\/(.+)$/, '删除基础设施'],
+    [/^DELETE \/ai\/sessions\/(.+)$/, '撤销 AI 会话'],
+    [/^POST \/ai\/approve\/(.+)$/, '批准 AI 连接'],
+    [/^POST \/ai\/reject\/(.+)$/, '拒绝 AI 连接'],
+  ];
+
+  for (const [regex, label] of patterns) {
+    if (regex.test(key)) return label;
+  }
+
+  return '';
 }
 
 const activityClients = new Set<express.Response>();
@@ -314,17 +406,29 @@ export function createServer(deps: ServerDeps): express.Express {
     const origEnd = res.end.bind(res);
     const aiSession = (req as any)._aiSession as ApprovedAiSession | undefined;
 
+    // Capture request body for detail view (truncate to 500 chars)
+    const reqBody = req.body && Object.keys(req.body).length > 0
+      ? JSON.stringify(req.body).slice(0, 500)
+      : undefined;
+    const reqQuery = Object.keys(req.query).length > 0
+      ? new URLSearchParams(req.query as Record<string, string>).toString()
+      : undefined;
+
     (res as any).end = function (...args: any[]) {
       const duration = Date.now() - start;
+      const fullPath = `/api${req.path}`;
       const event: ActivityEvent = {
         id: ++activitySeq,
         ts: new Date().toISOString(),
         method: req.method,
-        path: `/api${req.path}`,
+        path: fullPath,
         status: res.statusCode,
         duration,
         source: aiSession ? 'ai' : 'user',
         agent: aiSession?.agentName,
+        label: resolveApiLabel(req.method, fullPath),
+        body: reqBody,
+        query: reqQuery,
       };
       broadcastActivity(event);
       return origEnd(...args);

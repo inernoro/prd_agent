@@ -153,7 +153,7 @@ async function init() {
   await Promise.all([loadBranches(), loadProfiles(), loadRoutingRules(), loadConfig(), loadEnvVars(), loadInfraServices(), loadMirrorState()]);
   refreshRemoteCandidates();
   updatePreviewModeUI();
-  setInterval(loadBranches, 10000);
+  setInterval(loadBranches, 30000); // 30s — branches don't change that often
 }
 
 async function loadConfig() {
@@ -3442,32 +3442,103 @@ function renderActivityItem(event) {
   const body = document.getElementById('activityBody');
   if (!body) return;
 
+  const isAi = event.source === 'ai';
   const el = document.createElement('div');
-  el.className = 'activity-item';
+  el.className = 'activity-item' + (isAi ? ' activity-item-ai' : '');
+  el.style.cursor = 'pointer';
+  el.onclick = () => showActivityDetail(event);
 
   const ts = event.ts.slice(11, 19);
   const statusClass = event.status < 400 ? 'ok' : 'err';
   const dur = event.duration < 1000 ? `${event.duration}ms` : `${(event.duration / 1000).toFixed(1)}s`;
 
-  // Shorten path for display
+  // Chinese label from server, or fallback to shortened path
+  const label = event.label || '';
   const shortPath = event.path.replace(/^\/api\//, '').replace(/branches\/([^/]+)/, (_, id) => {
     return id.length > 16 ? id.slice(0, 12) + '…' : id;
   });
 
-  let html = `<span class="activity-ts">${ts}</span>`;
+  let html = '';
+  // AI badge first if applicable
+  if (isAi) {
+    const agentShort = (event.agent || 'AI').replace(/\s*\(static key\)/, '');
+    html += `<span class="activity-source ai" title="${escapeHtml(event.agent || 'AI')}">${escapeHtml(agentShort)}</span>`;
+  }
+  html += `<span class="activity-ts">${ts}</span>`;
   html += `<span class="activity-method ${event.method}">${event.method}</span>`;
-  html += `<span class="activity-path" title="${event.path}">${shortPath}</span>`;
+  // Show Chinese label if available, path as tooltip
+  if (label) {
+    html += `<span class="activity-label" title="${escapeHtml(event.path)}">${escapeHtml(label)}</span>`;
+  } else {
+    html += `<span class="activity-path" title="${escapeHtml(event.path)}">${shortPath}</span>`;
+  }
   html += `<span class="activity-status ${statusClass}">${event.status}</span>`;
   html += `<span class="activity-dur">${dur}</span>`;
-  if (event.source === 'ai') {
-    html += `<span class="activity-source ai" title="${event.agent || 'AI'}">AI</span>`;
-  }
 
   el.innerHTML = html;
   body.appendChild(el);
 
   // Auto-scroll to bottom
   requestAnimationFrame(() => { body.scrollTop = body.scrollHeight; });
+}
+
+// ── Activity Detail Modal ──
+function showActivityDetail(event) {
+  const ts = new Date(event.ts).toLocaleString('zh-CN');
+  const statusClass = event.status < 400 ? 'color:var(--green)' : 'color:var(--red)';
+  const isAi = event.source === 'ai';
+
+  let html = '<div class="activity-detail">';
+
+  // Header: label + AI badge
+  html += '<div class="activity-detail-header">';
+  if (event.label) {
+    html += `<span class="activity-detail-label">${escapeHtml(event.label)}</span>`;
+  }
+  if (isAi) {
+    html += `<span class="activity-source ai" style="font-size:11px">${escapeHtml(event.agent || 'AI')}</span>`;
+  }
+  html += '</div>';
+
+  // Info grid
+  html += '<div class="activity-detail-grid">';
+  html += `<div class="activity-detail-row"><span class="activity-detail-key">时间</span><span>${escapeHtml(ts)}</span></div>`;
+  html += `<div class="activity-detail-row"><span class="activity-detail-key">方法</span><span class="activity-method ${event.method}" style="font-size:11px">${event.method}</span></div>`;
+  html += `<div class="activity-detail-row"><span class="activity-detail-key">路径</span><span style="font-family:var(--font-mono);font-size:12px;word-break:break-all">${escapeHtml(event.path)}</span></div>`;
+  if (event.query) {
+    html += `<div class="activity-detail-row"><span class="activity-detail-key">参数</span><span style="font-family:var(--font-mono);font-size:11px;word-break:break-all">${escapeHtml(event.query)}</span></div>`;
+  }
+  html += `<div class="activity-detail-row"><span class="activity-detail-key">状态码</span><span style="${statusClass};font-weight:600">${event.status}</span></div>`;
+  html += `<div class="activity-detail-row"><span class="activity-detail-key">耗时</span><span>${event.duration < 1000 ? event.duration + 'ms' : (event.duration / 1000).toFixed(1) + 's'}</span></div>`;
+  html += `<div class="activity-detail-row"><span class="activity-detail-key">来源</span><span>${isAi ? '🤖 AI (' + escapeHtml(event.agent || '未知') + ')' : '👤 用户'}</span></div>`;
+  html += '</div>';
+
+  // Request body
+  if (event.body) {
+    html += '<div class="activity-detail-section">';
+    html += '<div class="activity-detail-key" style="margin-bottom:6px">请求体</div>';
+    html += `<pre class="activity-detail-code">${escapeHtml(formatJsonSafe(event.body))}</pre>`;
+    html += '</div>';
+  }
+
+  html += '</div>';
+
+  // Reuse the log modal for detail display
+  document.getElementById('logModalTitle').textContent = event.label || `${event.method} ${event.path}`;
+  document.getElementById('logModalBody').innerHTML = html;
+  document.getElementById('logModalTabs').classList.add('hidden');
+  document.getElementById('terminalBody').classList.add('hidden');
+  document.getElementById('logModalBody').classList.remove('hidden');
+  document.getElementById('copyErrorBtn').classList.add('hidden');
+  document.getElementById('logModal').classList.remove('hidden');
+}
+
+function formatJsonSafe(str) {
+  try {
+    return JSON.stringify(JSON.parse(str), null, 2);
+  } catch {
+    return str;
+  }
 }
 
 function toggleActivityMonitor() {

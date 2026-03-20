@@ -2004,6 +2004,89 @@ a.branch-name:hover { color: var(--accent); }
   font-weight: 600;
 }
 
+/* Chinese label tag in activity items */
+.activity-label {
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  font-size: 11px;
+  font-family: inherit;
+}
+
+/* AI operation item highlight */
+.activity-item-ai {
+  background: linear-gradient(90deg, rgba(192, 132, 252, 0.06) 0%, transparent 60%);
+  border-left: 2px solid var(--purple);
+}
+
+.activity-item-ai:hover {
+  background: linear-gradient(90deg, rgba(192, 132, 252, 0.12) 0%, var(--bg-hover) 60%);
+}
+
+/* ── Activity Detail Panel (inside log modal) ── */
+.activity-detail {
+  padding: 4px 0;
+}
+
+.activity-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.activity-detail-label {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.activity-detail-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.activity-detail-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.activity-detail-key {
+  flex-shrink: 0;
+  width: 56px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.activity-detail-section {
+  margin-top: 12px;
+}
+
+.activity-detail-code {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-primary);
+  overflow-x: auto;
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+}
+
 /* ════════════════ AI Pairing Indicator ════════════════ */
 
 .ai-pairing-indicator {
