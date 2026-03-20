@@ -497,6 +497,7 @@ function updateThemeUI() {
 
 async function loadBranches({ silent } = {}) {
   try {
+    if (silent) _pollInFlight = true;
     const data = await api('GET', '/branches', null, { poll: !!silent });
     branches = data.branches || [];
     defaultBranch = data.defaultBranch;
@@ -508,6 +509,7 @@ async function loadBranches({ silent } = {}) {
     }
     renderBranches();
   } catch (e) { console.error('loadBranches:', e); }
+  finally { if (silent) setTimeout(() => { _pollInFlight = false; }, 500); }
 }
 
 async function loadProfiles() {
@@ -3225,6 +3227,7 @@ let _terminalHistoryIdx = -1;
 function openLogModal(title, branchId, profileId) {
   document.getElementById('logModalTitle').textContent = title;
   document.getElementById('logModal').classList.remove('hidden');
+  document.getElementById('logModal').dataset.mode = 'logs';
   _logModalContext = { branchId: branchId || null, profileId: profileId || null };
   // Show tabs only when we have branch context (can exec)
   const tabsEl = document.getElementById('logModalTabs');
@@ -3249,9 +3252,12 @@ function openLogModal(title, branchId, profileId) {
 const _errorPatterns = /\berror\s+(CS|TS|NG)\d+\b|:\s*error\s+\w+\d+:|Build FAILED|FAILED|Exception:|Unhandled exception|fatal error|npm ERR!|Error:|Cannot find module|ENOENT|EACCES|Segmentation fault/i;
 
 function checkLogErrors() {
+  const modal = document.getElementById('logModal');
   const body = document.getElementById('logModalBody');
   const btn = document.getElementById('copyErrorBtn');
   if (!body || !btn) return;
+  // Don't show error button in activity-detail mode (not a log view)
+  if (modal && modal.dataset.mode === 'activity-detail') { btn.classList.add('hidden'); return; }
   const text = body.textContent || '';
   if (_errorPatterns.test(text)) {
     btn.classList.remove('hidden');
@@ -3501,12 +3507,15 @@ initTitleRotation();
 let activityEvents = [];
 let activityExpanded = false;
 let activityEventSource = null;
+let _pollInFlight = false; // true while silent poll is running
 
 function initActivityMonitor() {
   activityEventSource = new EventSource(`${API}/activity-stream`);
   activityEventSource.onmessage = (e) => {
     try {
       const event = JSON.parse(e.data);
+      // Frontend poll filter: skip poll responses (defense-in-depth, server also filters)
+      if (_pollInFlight && event.method === 'GET' && event.path === '/api/branches' && event.source !== 'ai') return;
       activityEvents.push(event);
       if (activityEvents.length > 200) activityEvents = activityEvents.slice(-200);
       renderActivityItem(event);
@@ -3657,6 +3666,8 @@ function showActivityDetail(event) {
   document.getElementById('logModalBody').classList.remove('hidden');
   document.getElementById('copyErrorBtn').classList.add('hidden');
   document.getElementById('logModal').classList.remove('hidden');
+  // Mark as activity-detail mode so checkLogErrors won't re-show the button
+  document.getElementById('logModal').dataset.mode = 'activity-detail';
 }
 
 function formatJsonSafe(str) {
