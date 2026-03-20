@@ -992,6 +992,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return 'npm';
   }
 
+  // Cache base path: /data/cds/{projectSlug}/cache — isolated per project (1 project = 1 github repo = 1 cache)
+  const cacheBase = `/data/cds/${stateService.projectSlug}/cache`;
+
   /** Build command prefix and cache mount for a detected package manager */
   function nodeProfileCommands(pm: PackageManager) {
     switch (pm) {
@@ -999,19 +1002,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return {
           installPrefix: 'corepack enable && pnpm install --frozen-lockfile && ',
           runPrefix: 'corepack enable && pnpm exec ',
-          cacheMounts: [{ hostPath: '/data/cds/default/cache/pnpm', containerPath: '/root/.local/share/pnpm/store' }],
+          cacheMounts: [{ hostPath: `${cacheBase}/pnpm`, containerPath: '/root/.local/share/pnpm/store' }],
         };
       case 'yarn':
         return {
           installPrefix: 'corepack enable && yarn install --frozen-lockfile && ',
           runPrefix: 'corepack enable && yarn exec ',
-          cacheMounts: [{ hostPath: '/data/cds/default/cache/yarn', containerPath: '/usr/local/share/.cache/yarn' }],
+          cacheMounts: [{ hostPath: `${cacheBase}/yarn`, containerPath: '/usr/local/share/.cache/yarn' }],
         };
       default:
         return {
           installPrefix: 'npm install && ',
           runPrefix: 'npx ',
-          cacheMounts: [{ hostPath: '/data/cds/default/cache/npm', containerPath: '/root/.npm' }],
+          cacheMounts: [{ hostPath: `${cacheBase}/npm`, containerPath: '/root/.npm' }],
         };
     }
   }
@@ -1066,7 +1069,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         command: 'dotnet restore && dotnet build --no-restore && dotnet run --no-build --project src/PrdAgent.Api/PrdAgent.Api.csproj --urls http://0.0.0.0:8080',
         containerPort: 8080,
         cacheMounts: [
-          { hostPath: '/data/cds/default/cache/nuget', containerPath: '/root/.nuget/packages' },
+          { hostPath: `${cacheBase}/nuget`, containerPath: '/root/.nuget/packages' },
         ],
       },
       {

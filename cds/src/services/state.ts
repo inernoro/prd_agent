@@ -20,9 +20,14 @@ function emptyState(): CdsState {
 export class StateService {
   private state: CdsState = emptyState();
   private readonly filePath: string;
+  /** Project slug derived from repoRoot directory name, used for cache isolation */
+  readonly projectSlug: string;
 
-  constructor(filePath: string) {
+  constructor(filePath: string, repoRoot?: string) {
     this.filePath = filePath;
+    // Derive project slug from repoRoot (e.g. /root/inernoro/prd_agent → prd-agent)
+    const dirName = path.basename(repoRoot || path.dirname(path.dirname(filePath)));
+    this.projectSlug = dirName.replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').toLowerCase() || 'default';
   }
 
   static slugify(branch: string): string {
@@ -58,7 +63,7 @@ export class StateService {
    * Uses dockerImage to detect the correct cache type.
    */
   private migrateCacheMounts(): void {
-    const CACHE_BASE = '/data/cds/default/cache';
+    const CACHE_BASE = `/data/cds/${this.projectSlug}/cache`;
     const IMAGE_CACHE_MAP: Record<string, Array<{ hostPath: string; containerPath: string }>> = {
       'dotnet': [{ hostPath: `${CACHE_BASE}/nuget`, containerPath: '/root/.nuget/packages' }],
       'node': [{ hostPath: `${CACHE_BASE}/pnpm`, containerPath: '/root/.local/share/pnpm/store' }],

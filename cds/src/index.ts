@@ -21,7 +21,7 @@ const shell = new ShellExecutor();
 
 // ── State ──
 const stateFile = path.join(config.repoRoot, '.cds', 'state.json');
-const stateService = new StateService(stateFile);
+const stateService = new StateService(stateFile, config.repoRoot);
 stateService.load();
 
 // ── Apply custom env overrides to config ──

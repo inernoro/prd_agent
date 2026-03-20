@@ -14,6 +14,7 @@ AI 作为 DevOps 操作员，通过 HTTP API 远程驱动 CDS 完成代码部署
 - "灰度环境什么状态" / "看看部署情况"
 - "容器报错了" / "部署失败了" / "帮我排查"
 - "重启服务" / "更新灰度" / "清理环境"
+- "更新 CDS" / "CDS 自更新" / "self-update"
 
 ## 核心理念
 
@@ -206,6 +207,16 @@ CDS Dashboard **右下角**有实时操作监控浮窗，通过 SSE (`GET /api/a
 | GET | `/api/export-config` | 导出当前配置为 YAML |
 | POST | `/api/import-config` | 导入 CDS Compose YAML |
 | GET | `/api/remote-branches` | 列出远程 Git 分支 |
+
+### CDS 自更新
+
+| 方法 | 路径 | 用途 | 需认证 |
+|------|------|------|--------|
+| GET | `/api/self-branches` | 列出 CDS 自身可切换的分支（含当前分支） | 是 |
+| POST | `/api/self-update` | 切换分支 + 拉取 + 重编译 + 重启 CDS（SSE 流） | 是 |
+
+> `POST /api/self-update` body: `{ "branch": "feature/xxx" }`（可选，不传则在当前分支 pull）
+> 调用后 CDS 进程会重启，需等待 ~10s 后轮询 `/api/config` 确认恢复。
 
 ### 维护
 
@@ -558,6 +569,70 @@ curl -sf $AUTH "$CDS/api/branches/$BRANCH_ID/git-log" | jq '.commits'
 
 ---
 
+### 场景 8：CDS 自身更新（改了 cds/ 目录的代码）
+
+**触发条件**（AI 自动判断）：当本次提交包含 `cds/` 目录下的文件变更时，部署流水线在 Phase 1（Git Push）后 **必须** 插入 CDS 自更新阶段。
+
+**判断逻辑**：
+```bash
+# 检查本次改动是否涉及 CDS 自身代码
+CDS_CHANGED=$(git diff --name-only HEAD~1 HEAD | grep -c "^cds/" || true)
+if [ "$CDS_CHANGED" -gt 0 ]; then
+  echo "检测到 CDS 代码变更，需要自更新"
+fi
+```
+
+**为什么需要**：CDS 运行在宿主机上（不在容器里），`POST /api/branches/:id/deploy` 只更新容器内的应用代码。如果改了 CDS 自身（如 `cds/src/`），必须通过 self-update 让宿主机上的 CDS 加载新代码。
+
+**操作步骤**：
+
+```bash
+# 1. 触发自更新（切换到功能分支 + pull + 重启）
+curl -sf $AUTH "$CDS/api/self-update" \
+  -X POST -H "Content-Type: application/json" \
+  -d "{\"branch\": \"$BRANCH\"}" \
+  --max-time 10 || true
+
+# 2. 等待 CDS 重启（进程会被 kill 并重启，约 10s）
+sleep 10
+
+# 3. 轮询确认 CDS 恢复（最多等 60s）
+for i in $(seq 1 12); do
+  if curl -sf $AUTH "$CDS/api/config" -o /dev/null --max-time 5; then
+    echo "✓ CDS 已恢复"
+    break
+  fi
+  sleep 5
+done
+
+# 4. 验证 CDS 运行在正确的分支上
+curl -sf $AUTH "$CDS/api/self-branches" | \
+  python3 -c "import json,sys;d=json.load(sys.stdin);print(f'当前分支: {d[\"current\"]}')"
+```
+
+**完整流水线（含 CDS 自更新）**：
+
+```
+Pipeline [trace:{traceId}]
+Phase 0: 环境预检
+Phase 1: Git Push
+Phase 1.5: CDS Self-Update ← 仅当 cds/ 有变更时插入
+  ├─ POST /api/self-update（切换分支 + pull + 重启）
+  ├─ 等待 CDS 恢复（轮询 /api/config）
+  └─ 验证分支正确
+Phase 2: CDS Pull（应用代码）
+Phase 3: CDS Deploy
+Phase 4: Readiness Check
+Phase 5: Smoke Test
+```
+
+**注意事项**：
+- self-update 会重启 CDS 进程，期间所有 API 不可用（~10s）
+- 重启后 CDS 会重新加载 state.json，迁移逻辑会自动执行
+- 如果 CDS 未恢复，检查宿主机上 `cds/cds.log` 或 `exec_cds.sh` 输出
+
+---
+
 ## 链路追踪规范
 
 ### traceId 生成
@@ -643,6 +718,7 @@ curl -sf $AUTH "$CDS/api/branches/$BRANCH_ID/git-log" | jq '.commits'
 | Readiness 超时 | 通过 container-exec 在容器内诊断 |
 | 冒烟测试失败 | 输出失败请求和响应，建议修复 |
 | 基础设施异常 | 检查 infra health，尝试重启 |
+| cds/ 代码变更未生效 | `POST /api/self-update` 切换分支并重启 CDS |
 
 ## 安全规则
 
