@@ -891,7 +891,7 @@ public static class ChannelAdapter
             ModelTypes = new[] { ModelTypes.Chat },
             Category = "Channel"
         )]
-        public const string Classify = "channel-adapter.email::classify";
+        public const string Classify = "channel-adapter.email.classify::chat";
 
         [AppCallerMetadata(
             "邮件待办提取",
@@ -899,7 +899,7 @@ public static class ChannelAdapter
             ModelTypes = new[] { ModelTypes.Chat },
             Category = "Channel"
         )]
-        public const string TodoExtract = "channel-adapter.email::todo-extract";
+        public const string TodoExtract = "channel-adapter.email.todo-extract::chat";
     }
 }
 
