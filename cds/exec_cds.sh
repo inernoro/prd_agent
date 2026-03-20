@@ -207,8 +207,11 @@ kill_cds_on_port "$WORKER_PORT"
 
 if [ "$BACKGROUND" = true ]; then
 
-  # Start in background
-  nohup pnpm dev -- "$CONFIG_FILE" > "$LOG_FILE" 2>&1 &
+  # Start in background — use "serve" (tsx without watch) instead of "dev" (tsx watch).
+  # tsx watch monitors file changes and auto-restarts, which races with exec_cds.sh
+  # during self-update (git pull changes files → tsx watch restarts → two instances
+  # compete for port 9900 → ~20% chance of 502). Background mode doesn't need hot-reload.
+  nohup pnpm serve -- "$CONFIG_FILE" > "$LOG_FILE" 2>&1 &
   CDS_PID=$!
   echo "$CDS_PID" > "$PID_FILE"
 
