@@ -2024,13 +2024,22 @@ a.branch-name:hover { color: var(--accent); }
 .roller-label {
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
   flex: 1;
+  min-width: 0;
   color: var(--text-secondary);
+}
+.roller-line .activity-status {
+  flex-shrink: 0;
+  min-width: 24px;
+  text-align: right;
 }
 .roller-dur {
   color: var(--text-muted);
   font-size: 9px;
   flex-shrink: 0;
+  min-width: 30px;
+  text-align: right;
 }
 
 /* Hide roller when expanded (full list visible) */
