@@ -172,13 +172,33 @@ function trackAiBranchEvent(event) {
 function renderAiBranchFeed(branchId) {
   const events = aiBranchEvents.get(branchId);
   if (!events || events.length === 0) return '';
-  const items = events.map(ev => {
-    const statusCls = ev.status < 400 ? 'ok' : 'err';
-    const label = ev.label || ev.path.replace(/^\/api\//, '').replace(/branches\/[^/]+\/?/, '');
-    const dur = ev.duration < 1000 ? `${ev.duration}ms` : `${(ev.duration / 1000).toFixed(1)}s`;
-    return `<div class="ai-feed-item"><span class="activity-method ${ev.method}">${ev.method}</span><span class="ai-feed-label">${escapeHtml(label)}</span><span class="activity-status ${statusCls}">${ev.status}</span><span class="ai-feed-dur">${dur}</span></div>`;
-  }).join('');
-  return `<div class="ai-branch-feed">${items}</div>`;
+  // Show only the latest event — roller animation is done via DOM updates
+  const ev = events[events.length - 1];
+  const statusCls = ev.status < 400 ? 'ok' : 'err';
+  const label = ev.label || ev.path.replace(/^\/api\//, '').replace(/branches\/[^/]+\/?/, '');
+  const dur = ev.duration < 1000 ? `${ev.duration}ms` : `${(ev.duration / 1000).toFixed(1)}s`;
+  return `<div class="ai-branch-feed" data-branch-feed="${escapeHtml(branchId)}"><div class="roller-line roller-active"><span class="roller-ai">AI</span><span class="activity-method ${ev.method}">${ev.method}</span><span class="ai-feed-label">${escapeHtml(label)}</span><span class="activity-status ${statusCls}">${ev.status}</span><span class="ai-feed-dur">${dur}</span></div></div>`;
+}
+
+function updateBranchFeedRoller(event) {
+  const feed = document.querySelector(`[data-branch-feed="${event.branchId}"]`);
+  if (!feed) { renderBranches(); return; }
+
+  const statusCls = event.status < 400 ? 'ok' : 'err';
+  const label = event.label || event.path.replace(/^\/api\//, '').replace(/branches\/[^/]+\/?/, '');
+  const dur = event.duration < 1000 ? `${event.duration}ms` : `${(event.duration / 1000).toFixed(1)}s`;
+
+  const newLine = document.createElement('div');
+  newLine.className = 'roller-line roller-enter';
+  newLine.innerHTML = `<span class="roller-ai">AI</span><span class="activity-method ${event.method}">${event.method}</span><span class="ai-feed-label">${escapeHtml(label)}</span><span class="activity-status ${statusCls}">${event.status}</span><span class="ai-feed-dur">${dur}</span>`;
+
+  const oldLine = feed.querySelector('.roller-line');
+  if (oldLine) {
+    oldLine.classList.add('roller-exit');
+    oldLine.addEventListener('animationend', () => oldLine.remove(), { once: true });
+  }
+  feed.appendChild(newLine);
+  requestAnimationFrame(() => { newLine.classList.remove('roller-enter'); newLine.classList.add('roller-active'); });
 }
 
 // Periodically expire stale AI occupations and refresh cards
@@ -3504,8 +3524,13 @@ function initActivityMonitor() {
         const prev = aiOccupation.get(event.branchId);
         aiOccupation.set(event.branchId, { agent: event.agent || 'AI', lastSeen: Date.now() });
         trackAiBranchEvent(event);
-        // Re-render cards to update AI feed + badge
-        renderBranches();
+        if (!prev) {
+          // Newly occupied — full re-render to show badge + feed
+          renderBranches();
+        } else {
+          // Already occupied — roller-update the inline feed (no full re-render)
+          updateBranchFeedRoller(event);
+        }
       }
     } catch {}
   };
@@ -3568,6 +3593,35 @@ function renderActivityItem(event) {
 
   // Auto-scroll to bottom
   requestAnimationFrame(() => { body.scrollTop = body.scrollHeight; });
+
+  // Update roller (collapsed header ticker)
+  updateActivityRoller(event);
+}
+
+// ── Activity Roller (flip-clock style single-line ticker) ──
+function updateActivityRoller(event) {
+  const roller = document.getElementById('activityRoller');
+  if (!roller) return;
+
+  const isAi = event.source === 'ai';
+  const statusCls = event.status < 400 ? 'ok' : 'err';
+  const label = event.label || event.path.replace(/^\/api\//, '');
+  const dur = event.duration < 1000 ? `${event.duration}ms` : `${(event.duration / 1000).toFixed(1)}s`;
+
+  const newLine = document.createElement('div');
+  newLine.className = 'roller-line roller-enter';
+  newLine.innerHTML = `${isAi ? '<span class="roller-ai">AI</span>' : ''}<span class="activity-method ${event.method}">${event.method}</span><span class="roller-label">${escapeHtml(label)}</span><span class="activity-status ${statusCls}">${event.status}</span><span class="roller-dur">${dur}</span>`;
+
+  // Animate out the old line, animate in the new
+  const oldLine = roller.querySelector('.roller-line');
+  if (oldLine) {
+    oldLine.classList.add('roller-exit');
+    oldLine.addEventListener('animationend', () => oldLine.remove(), { once: true });
+  }
+
+  roller.appendChild(newLine);
+  // Trigger reflow then start enter animation
+  requestAnimationFrame(() => { newLine.classList.remove('roller-enter'); newLine.classList.add('roller-active'); });
 }
 
 // ── Activity Detail Modal ──
