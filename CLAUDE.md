@@ -118,7 +118,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 ## 质量保障技能链
 
 ```
-需求 → /validate → 设计 → /risk → /trace → 实现 → /verify → /smoke → /preview → /handoff → /weekly
+需求 → /validate → 设计 → /risk → /trace → 实现 → /verify → /cds-deploy → /preview → /handoff → /weekly
 ```
 
 | 技能 | 触发词 | 用途 |
@@ -137,6 +137,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | **code-hygiene** | `/hygiene` | 9 维度代码卫生审计 |
 | **create-skill-file** | `/create-skill` | 技能创建 & 质量评分 |
 | **cds-project-scan** | `/cds-scan` | CDS compose YAML 生成 |
+| **cds-deploy-pipeline** | `/cds-deploy` | Push → CDS 部署 → 就绪检查 → 冒烟测试全链路 |
 | **llm-visibility** | `/visibility` | LLM 交互可视化审计 + 组件指南 |
 | **theme-transition** | `/theme-transition` | 主题切换圆形过渡动效 (View Transition API) |
 
@@ -144,7 +145,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 1. **新需求提出时** → `/validate` 验证需求质量和价值（中大型功能必跑）
 3. **方案评审时** → 先 `/risk` 评估风险，再 `/trace` 追踪关键链路
-4. **开发完成后** → 先 `/verify` 交叉验证，再 `/smoke-test` 跑端到端
+4. **开发完成后** → 先 `/verify` 交叉验证，再 `/cds-deploy` 一键部署+冒烟测试
 5. **需人工验收时** → `/preview` 生成预览地址，用户直接打开验收
 6. **提 PR 前** → `/resolve` 预合并主分支，AI 代替人类解决冲突
 7. **准备上线时** → `/handoff` 生成交接清单（涉及 3+ 文件时自动触发）
