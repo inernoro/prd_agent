@@ -653,6 +653,28 @@ jobs:
           
           echo "[INFO] Upload complete for $TARGET"
 
+      # 上传客户端动态配置（预设服务器列表等，各 matrix job 用 --clobber 幂等上传）
+      - name: Upload client-config.json
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          cat > client-config.json << 'CCEOF'
+          {
+            "version": 1,
+            "defaultApiUrl": "https://map.ebcone.net",
+            "presetServers": [
+              { "label": "map.ebcone.net", "url": "https://map.ebcone.net" },
+              { "label": "miduo.org", "url": "https://miduo.org" },
+              { "label": "sassagent.com", "url": "https://sassagent.com" }
+            ]
+          }
+          CCEOF
+          gh release upload "$TAG" client-config.json --clobber
+          echo "[INFO] Uploaded client-config.json to $TAG"
+
       # 生成并上传 updater manifest (latest-{target}.json)
       # 重要：此步骤在上传 .sig 文件后执行，从 GitHub Release 下载已上传的 .sig 文件
       # 以确保 manifest 中的签名与实际可下载的 .sig 文件完全一致

@@ -93,10 +93,21 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 // 模型降级信息
                 IsFallback = start.IsFallback,
                 FallbackReason = start.FallbackReason,
-                ExpectedModel = start.ExpectedModel
+                ExpectedModel = start.ExpectedModel,
+                IsHealthProbe = start.IsHealthProbe
             };
 
             await _db.LlmRequestLogs.InsertOneAsync(log, cancellationToken: ct);
+
+            // 运行时警告：UserId 为空意味着日志无法关联到用户
+            if (string.IsNullOrWhiteSpace(log.UserId))
+            {
+                _logger.LogWarning(
+                    "[LlmLog] UserId 为空，请检查调用方是否设置了 LlmRequestContext 或 GatewayRequestContext。" +
+                    " AppCallerCode={AppCallerCode}, RequestId={RequestId}",
+                    log.AppCallerCode, log.RequestId);
+            }
+
             return log.Id;
         }
         catch (Exception ex)

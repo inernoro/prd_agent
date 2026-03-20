@@ -52,6 +52,8 @@ export interface DefectAttachment {
   type?: string;
   /** 是否系统自动生成（日志类附件不可删除） */
   isSystemGenerated?: boolean;
+  /** AI 图片分析描述（Vision 解析结果） */
+  description?: string;
 }
 
 /**
@@ -93,6 +95,10 @@ export interface DefectReport {
   resolvedById?: string;
   resolvedByAvatarFileName?: string;
   resolvedByName?: string;
+  /** 是否由 AI Agent 自动解决 */
+  isAiResolved?: boolean;
+  /** 解决该缺陷的 AI Agent 名称 */
+  resolvedByAgentName?: string;
   rejectReason?: string;
   rejectedById?: string;
   rejectedByAvatarFileName?: string;
@@ -152,6 +158,10 @@ export interface DefectMessage {
   content: string;
   attachmentIds?: string[];
   extractedFields?: Record<string, string>;
+  /** 消息来源：human（默认）、ai */
+  source?: 'human' | 'ai';
+  /** AI Agent 名称（source=ai 时有值） */
+  agentName?: string;
   createdAt: string;
 }
 
@@ -303,6 +313,11 @@ export type RejectDefectContract = (input: {
   reason?: string;
 }) => Promise<ApiResponse<{ defect: DefectReport }>>;
 
+export type UpdateDefectSeverityContract = (input: {
+  id: string;
+  severity: string;
+}) => Promise<ApiResponse<{ defect: DefectReport }>>;
+
 export type CloseDefectContract = (input: { id: string }) => Promise<ApiResponse<{ defect: DefectReport }>>;
 
 export type ReopenDefectContract = (input: { id: string }) => Promise<ApiResponse<{ defect: DefectReport }>>;
@@ -321,6 +336,8 @@ export type SendDefectMessageContract = (input: {
 export type AddDefectAttachmentContract = (input: {
   id: string;
   file: File;
+  /** AI 图片分析描述（Vision 解析结果） */
+  description?: string;
 }) => Promise<ApiResponse<{ attachment: DefectAttachment }>>;
 
 export type DeleteDefectAttachmentContract = (input: {
@@ -548,3 +565,116 @@ export type PreviewApiLogsContract = () => Promise<ApiResponse<{
   errorCount: number;
   items: ApiLogPreviewItem[];
 }>>;
+
+// ========== 分享链接 ==========
+
+/**
+ * 缺陷分享链接
+ */
+export interface DefectShareLink {
+  id: string;
+  token: string;
+  shareScope: 'single' | 'project' | 'selected';
+  defectIds: string[];
+  projectId?: string;
+  projectName?: string;
+  title?: string;
+  viewCount: number;
+  lastViewedAt?: string;
+  createdBy: string;
+  createdByName?: string;
+  createdAt: string;
+  expiresAt: string;
+  isRevoked: boolean;
+  isExpired?: boolean;
+  reportCount?: number;
+  aiScoreStatus?: 'none' | 'scoring' | 'completed' | 'failed';
+  aiScoreCount?: number;
+}
+
+/**
+ * AI 评分条目
+ */
+export interface DefectAiScoreItem {
+  defectId: string;
+  defectNo?: string;
+  defectTitle?: string;
+  severityScore: number;
+  difficultyScore: number;
+  impactScore: number;
+  overallScore: number;
+  reason?: string;
+}
+
+/**
+ * 修复报告条目
+ */
+export interface DefectFixReportItem {
+  defectId: string;
+  defectNo?: string;
+  defectTitle?: string;
+  confidenceScore: number;
+  analysis?: string;
+  fixSuggestion?: string;
+  acceptStatus: 'pending' | 'accepted' | 'rejected';
+  reviewedBy?: string;
+  reviewedByName?: string;
+  reviewedAt?: string;
+  reviewNote?: string;
+}
+
+/**
+ * Agent 提交的修复报告
+ */
+export interface DefectFixReport {
+  id: string;
+  shareLinkId: string;
+  shareToken: string;
+  agentName?: string;
+  agentIdentifier?: string;
+  items: DefectFixReportItem[];
+  status: 'pending' | 'partial' | 'completed';
+  createdAt: string;
+  ipAddress?: string;
+  userAgent?: string;
+}
+
+export type CreateDefectShareContract = (input: {
+  shareScope: string;
+  defectIds?: string[];
+  projectId?: string;
+  title?: string;
+  expiresInDays?: number;
+}) => Promise<ApiResponse<{ shareLink: DefectShareLink; shareUrl: string }>>;
+
+export type ListDefectSharesContract = () => Promise<ApiResponse<{ items: DefectShareLink[] }>>;
+
+export type RevokeDefectShareContract = (input: { id: string }) => Promise<ApiResponse<{ revoked: boolean }>>;
+
+export type ListDefectFixReportsContract = (input: {
+  shareId: string;
+}) => Promise<ApiResponse<{ items: DefectFixReport[] }>>;
+
+export type AcceptDefectFixItemContract = (input: {
+  reportId: string;
+  defectId: string;
+  reviewNote?: string;
+  markResolved?: boolean;
+}) => Promise<ApiResponse<{ item: DefectFixReportItem; defect?: DefectReport }>>;
+
+export type RejectDefectFixItemContract = (input: {
+  reportId: string;
+  defectId: string;
+  reviewNote?: string;
+}) => Promise<ApiResponse<{ item: DefectFixReportItem }>>;
+
+export type CreateBatchShareContract = (input: {
+  projectId?: string;
+  folderId?: string;
+  title?: string;
+  expiresInDays?: number;
+}) => Promise<ApiResponse<{ shareLink: DefectShareLink; shareUrl: string }>>;
+
+export type GetShareScoresContract = (input: {
+  shareId: string;
+}) => Promise<ApiResponse<{ aiScoreStatus: string; scores: DefectAiScoreItem[] }>>;

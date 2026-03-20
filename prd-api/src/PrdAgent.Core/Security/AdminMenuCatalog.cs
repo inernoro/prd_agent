@@ -16,53 +16,34 @@ public static class AdminMenuCatalog
     /// </summary>
     public static readonly IReadOnlyList<AdminMenuDef> All = new List<AdminMenuDef>
     {
-        // 总裁面板（替代原仪表盘）
-        new("executive", "/executive", "总裁面板", null, "Crown", 5),
+        // ── 首页 (home) ──
+        new("home", "/", "首页", "回到欢迎页", "Home", 1, "home"),
 
-        // AI 百宝箱（Agent 统一入口，PRD协作已合并至此）
-        new("ai-toolbox", "/ai-toolbox", "AI 百宝箱", null, "Sparkles", 8),
+        // ── 效率工具 (tools) ──
+        new("ai-toolbox", "/ai-toolbox", "AI 百宝箱", "智能工具集合", "Sparkles", 10, "tools"),
+        new("workflow-agent", "/workflow-agent", "工作流", "自动化流程编排", "Workflow", 20, "tools"),
+        new("executive", "/executive", "团队洞察", "团队数据概览与分析", "BarChart3", 25, "tools"),
 
-        // 我的资产（聚合用户所有产出物：图片、文档、附件）
-        new("my-assets", "/my-assets", "我的资产", null, "Database", 10),
+        // ── 个人空间 (personal) ──
+        new("marketplace", "/marketplace", "探索市场", "发现优质配置与技能", "Store", 30, "personal"),
+        new("my-assets", "/my-assets", "我的资源", "图片、文档与附件", "FolderOpen", 40, "personal"),
+        new("web-pages", "/web-pages", "网页托管", "创建与管理网页", "Globe", 45, "personal"),
 
-        // 用户管理
-        new("users", "/users", "用户管理", null, "Users", 20),
+        // ── 系统管理 (admin) ──
+        new("mds", "/mds", "模型中心", "模型、提示词与实验室", "Cpu", 50, "admin"),
+        new("users", "/users", "用户权限", "用户与角色管理", "Users", 60, "admin"),
+        new("settings", "/settings", "数据运维", "数据管理与系统配置", "Server", 70, "admin"),
 
-        // 模型管理
-        new("mds", "/mds", "模型管理", null, "Cpu", 40),
+        // ── 头像面板 (无 Group，不在侧边栏显示) ──
+        new("logs", "/logs", "请求日志", null, "ScrollText", 130),
 
-        // 提示词管理
-        new("prompts", "/prompts", "提示词管理", null, "FileText", 50),
-
-        // 技能管理
-        new("skills", "/skills", "技能管理", null, "Zap", 55),
-
-        // 日志
-        new("logs", "/logs", "请求日志", null, "ScrollText", 100),
-
-        // 系统设置（含资源管理、权限管理、数据管理页签，仅管理员可见）
-        new("settings", "/settings", "系统设置", null, "Settings", 115),
-
-        // 开放平台
-        new("open-platform", "/open-platform", "开放平台", null, "Plug", 120),
-
-        // 工作流引擎
-        new("workflow-agent", "/workflow-agent", "工作流引擎", null, "Workflow", 124),
-
-        // 自动化
-        new("automations", "/automations", "自动化", null, "Zap", 125),
-
-        // AI 竞技场（用户侧盲评对战）
-        new("arena", "/arena", "AI 竞技场", null, "Swords", 135),
-
-        // 网页托管
-        new("web-pages", "/web-pages", "网页托管", null, "Globe", 127),
-
-        // 快捷指令
-        new("shortcuts-agent", "/shortcuts-agent", "快捷指令", null, "Smartphone", 128),
-
-        // 实验室
-        new("lab", "/lab", "实验室", null, "FlaskConical", 140),
+        // ── 隐藏项（已合并到其他菜单，保留权限注册） ──
+        new("prompts", "/prompts", "提示词管理", null, "FileText", 200),
+        new("skills", "/skills", "技能管理", null, "Zap", 210),
+        new("lab", "/lab", "实验室", null, "FlaskConical", 220),
+        new("automations", "/automations", "自动化", null, "Zap", 230),
+        new("arena", "/arena", "AI 竞技场", null, "Swords", 240),
+        new("shortcuts-agent", "/shortcuts-agent", "快捷指令", null, "Smartphone", 250),
     };
 
     /// <summary>
@@ -82,8 +63,8 @@ public static class AdminMenuCatalog
 
         foreach (var menu in All)
         {
-            // AI 百宝箱 / 我的资产 / 系统设置 / AI 竞技场 / 快捷指令：只需要基础访问权限
-            if (menu.AppKey is "ai-toolbox" or "my-assets" or "settings" or "arena" or "shortcuts-agent")
+            // 基础功能：只需要基础访问权限
+            if (menu.AppKey is "home" or "ai-toolbox" or "my-assets" or "settings" or "arena" or "shortcuts-agent" or "marketplace" or "web-pages")
             {
                 if (permSet.Contains(AdminPermissionCatalog.Access))
                 {
@@ -134,11 +115,13 @@ public static class AdminMenuCatalog
 /// <param name="Description">菜单描述</param>
 /// <param name="Icon">图标名称（Lucide icon name）</param>
 /// <param name="SortOrder">排序权重（越小越靠前）</param>
+/// <param name="Group">分组标识：tools=效率工具, personal=个人空间, admin=系统管理, null=仅头像面板</param>
 public sealed record AdminMenuDef(
     string AppKey,
     string Path,
     string Label,
     string? Description,
     string Icon,
-    int SortOrder
+    int SortOrder,
+    string? Group = null
 );

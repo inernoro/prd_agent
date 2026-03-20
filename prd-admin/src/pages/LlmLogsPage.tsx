@@ -1695,8 +1695,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                       {/* 用户头像 + 用户名 */}
                       {it.userId && (
                         <div className="flex items-center justify-end gap-1.5 mb-1">
-                          <span className="text-[11px] truncate max-w-[100px]" style={{ color: 'var(--text-secondary)' }} title={it.username || it.userId}>
-                            {it.username || it.userId}
+                          <span className="text-[11px] truncate max-w-[100px]" style={{ color: 'var(--text-secondary)' }} title={it.displayName && it.username ? `${it.displayName} ${it.username}` : it.username || it.userId}>
+                            {it.displayName && it.username ? `${it.displayName} ${it.username}` : it.username || it.userId}
                           </span>
                           <UserAvatar
                             src={resolveAvatarUrl({ avatarFileName: it.avatarFileName, username: it.username })}

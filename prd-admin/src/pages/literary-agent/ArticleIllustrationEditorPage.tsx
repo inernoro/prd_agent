@@ -147,6 +147,8 @@ const PRD_MD_STYLE = `
     inset: -2px;
     border-radius: inherit;
     padding: 2px;
+    /* Fallback for browsers without conic-gradient */
+    background: linear-gradient(135deg, transparent 0%, rgba(168, 85, 247, 0.7) 40%, rgba(99, 102, 241, 0.9) 60%, rgba(147, 197, 253, 0.7) 80%, transparent 100%);
     background: conic-gradient(
       from var(--marker-glow-angle),
       transparent 0%,
@@ -158,6 +160,7 @@ const PRD_MD_STYLE = `
     );
     -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
     -webkit-mask-composite: xor;
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
     mask-composite: exclude;
     animation: marker-glow-spin 2s ease-out forwards;
   }
@@ -166,6 +169,8 @@ const PRD_MD_STYLE = `
     position: absolute;
     inset: -6px;
     border-radius: inherit;
+    /* Fallback for browsers without conic-gradient */
+    background: linear-gradient(135deg, transparent 0%, rgba(168, 85, 247, 0.15) 40%, rgba(99, 102, 241, 0.25) 60%, rgba(147, 197, 253, 0.15) 80%, transparent 100%);
     background: conic-gradient(
       from var(--marker-glow-angle),
       transparent 0%,
@@ -188,6 +193,20 @@ const PRD_MD_STYLE = `
     0%   { opacity: 1; }
     75%  { opacity: 1; }
     100% { opacity: 0; }
+  }
+  /* Safari < 17.2: @property 不支持 + mask-composite 可能失效。
+     降级：隐藏伪元素，改用 box-shadow 做发光边框，纯 box-shadow 无需 mask */
+  @supports not (syntax: '<angle>') {
+    .marker-card-glow-entrance::before,
+    .marker-card-glow-entrance::after {
+      display: none !important;
+    }
+    .marker-card-glow-entrance {
+      box-shadow:
+        inset 0 0 0 1.5px rgba(99, 102, 241, 0.5),
+        0 0 12px rgba(99, 102, 241, 0.3),
+        0 0 28px rgba(168, 85, 247, 0.12);
+    }
   }
 
   /* 文章内图片显示尺寸控制 */

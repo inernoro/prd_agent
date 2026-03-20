@@ -130,6 +130,10 @@ public class LlmRequestLog
     /// <summary>Exchange 转换器类型</summary>
     public string? ExchangeTransformerType { get; set; }
 
+    // 健康探活标记
+    /// <summary>是否为健康探活请求（后台自动发送，非用户触发）</summary>
+    public bool? IsHealthProbe { get; set; }
+
     // 模型降级/回退信息
     /// <summary>是否发生了模型降级（期望模型与实际模型不一致，或模型池回退）</summary>
     public bool? IsFallback { get; set; }

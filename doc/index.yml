@@ -37,6 +37,7 @@ docs:
   # ── 二、设计文档 ──
   # 先看核心架构，再看各模块设计
   design.server-authority: 服务器权威性设计
+  design.unified-skill-system: 技能系统统一设计
   design.im-architecture: PRD Agent IM 架构重设计方案
   design.model-pool: 大模型池设计（三级调度/三级链路）
   design.open-platform: 开放平台功能概要

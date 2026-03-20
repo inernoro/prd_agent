@@ -25,6 +25,7 @@ public class LlmLogsController : ControllerBase
     {
         public string UserId { get; init; } = string.Empty;
         public string? Username { get; init; }
+        public string? DisplayName { get; init; }
     }
 
     private readonly MongoDbContext _db;
@@ -180,7 +181,7 @@ public class LlmLogsController : ControllerBase
             .ToArray();
 
         var users = await _db.Users.Find(u => userIds.Contains(u.UserId))
-            .Project(u => new MetaUser { UserId = u.UserId, Username = u.Username })
+            .Project(u => new MetaUser { UserId = u.UserId, Username = u.Username, DisplayName = u.DisplayName })
             .ToListAsync();
 
         var metaUsers = users.ToList();
@@ -283,15 +284,15 @@ public class LlmLogsController : ControllerBase
             .Distinct()
             .ToList();
 
-        var userMap = new Dictionary<string, (string? Username, string? AvatarFileName)>();
+        var userMap = new Dictionary<string, (string? Username, string? DisplayName, string? AvatarFileName)>();
         if (userIds.Count > 0)
         {
             var users = await _db.Users
                 .Find(u => userIds.Contains(u.UserId))
-                .Project(u => new { u.UserId, u.Username, u.AvatarFileName })
+                .Project(u => new { u.UserId, u.Username, u.DisplayName, u.AvatarFileName })
                 .ToListAsync();
             foreach (var u in users)
-                userMap[u.UserId] = (u.Username, u.AvatarFileName);
+                userMap[u.UserId] = (u.Username, u.DisplayName, u.AvatarFileName);
         }
 
         var items = rawItems.Select(x =>
@@ -315,6 +316,7 @@ public class LlmLogsController : ControllerBase
                 x.SessionId,
                 x.UserId,
                 username = userInfo.Username,
+                displayName = userInfo.DisplayName,
                 avatarFileName = userInfo.AvatarFileName,
                 x.ViewRole,
                 x.RequestType,

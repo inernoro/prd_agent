@@ -280,7 +280,7 @@ public sealed class ArenaRunWorker : BackgroundService
                 await sem.WaitAsync(CancellationToken.None);
                 try
                 {
-                    await RunOneSlotAsync(runId, slot, input.Prompt, llmAttachments, db, httpClientFactory, logWriter, ctxAccessor, claudeLogger, jwtSecret, slotTexts, cts.Token);
+                    await RunOneSlotAsync(runId, slot, input.Prompt, input.UserId, llmAttachments, db, httpClientFactory, logWriter, ctxAccessor, claudeLogger, jwtSecret, slotTexts, cts.Token);
                 }
                 catch (OperationCanceledException) { /* expected on cancel */ }
                 catch (Exception ex)
@@ -376,6 +376,7 @@ public sealed class ArenaRunWorker : BackgroundService
         string runId,
         ArenaSlotInput slot,
         string prompt,
+        string userId,
         List<LLMAttachment> llmAttachments,
         MongoDbContext db,
         IHttpClientFactory httpClientFactory,
@@ -431,7 +432,7 @@ public sealed class ArenaRunWorker : BackgroundService
             RequestId: Guid.NewGuid().ToString("N"),
             GroupId: null,
             SessionId: null,
-            UserId: null,
+            UserId: userId,
             ViewRole: null,
             DocumentChars: null,
             DocumentHash: null,

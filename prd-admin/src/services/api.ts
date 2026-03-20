@@ -186,19 +186,14 @@ export const api = {
     byKey: (skillKey: string) => `/api/skills/${encodeURIComponent(skillKey)}`,
   },
 
-  // ============ Prompts 提示词 ============
+  // ============ Prompts (系统提示词 + 覆盖) ============
   prompts: {
-    list: () => '/api/prompts',
-    reset: () => '/api/prompts/reset',
     system: {
       get: () => '/api/prompts/system',
       reset: () => '/api/prompts/system/reset',
     },
     overrides: {
       imageGenPlan: () => '/api/prompts/overrides/image-gen-plan',
-    },
-    optimize: {
-      stream: () => '/api/prompts/optimize/stream',
     },
   },
 
@@ -430,6 +425,7 @@ export const api = {
       process: (id: string) => `/api/defect-agent/defects/${id}/process`,
       resolve: (id: string) => `/api/defect-agent/defects/${id}/resolve`,
       reject: (id: string) => `/api/defect-agent/defects/${id}/reject`,
+      severity: (id: string) => `/api/defect-agent/defects/${id}/severity`,
       close: (id: string) => `/api/defect-agent/defects/${id}/close`,
       reopen: (id: string) => `/api/defect-agent/defects/${id}/reopen`,
       verifyPass: (id: string) => `/api/defect-agent/defects/${id}/verify-pass`,
@@ -465,6 +461,20 @@ export const api = {
     },
     logs: {
       preview: () => '/api/defect-agent/logs/preview',
+    },
+    shares: {
+      list: () => '/api/defect-agent/shares',
+      byId: (id: string) => `/api/defect-agent/shares/${id}`,
+      reports: (shareId: string) => `/api/defect-agent/shares/${shareId}/reports`,
+      acceptItem: (reportId: string, defectId: string) =>
+        `/api/defect-agent/shares/reports/${reportId}/items/${defectId}/accept`,
+      rejectItem: (reportId: string, defectId: string) =>
+        `/api/defect-agent/shares/reports/${reportId}/items/${defectId}/reject`,
+      viewByToken: (token: string) => `/api/defect-agent/share/view/${token}`,
+      submitReport: (token: string) => `/api/defect-agent/share/view/${token}/report`,
+      batch: () => '/api/defect-agent/shares/batch',
+      scores: (shareId: string) => `/api/defect-agent/shares/${shareId}/scores`,
+      scoresStream: (shareId: string) => `/api/defect-agent/shares/${shareId}/scores/stream`,
     },
   },
 
@@ -707,7 +717,6 @@ export const api = {
     intent: {
       groupName: () => '/api/v1/intent/group-name',
     },
-    prompts: () => '/api/v1/prompts',
   },
 
   // ============ Workflow Agent 工作流引擎 ============

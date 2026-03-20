@@ -30,7 +30,7 @@ export default defineConfig({
     // 本地联调：通过同源 /api 反代到后端，彻底避免 CORS/OPTIONS 预检 403
     proxy: {
       '/api': {
-        target: 'http://localhost:5000',
+        target: 'http://localhost:5001',
         changeOrigin: true,
         // VLM 图片分析等长时间请求需要足够的超时时间（默认太短会导致代理层提前断开）
         timeout: 180_000,

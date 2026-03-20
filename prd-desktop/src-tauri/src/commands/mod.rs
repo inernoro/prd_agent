@@ -2,6 +2,7 @@ pub mod assets;
 pub mod attachment;
 pub mod auth;
 pub mod branding;
+pub mod client_config;
 pub mod config;
 pub mod defect;
 pub mod devtools;

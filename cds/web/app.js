@@ -57,9 +57,16 @@ let previewMode = localStorage.getItem('cds_preview_mode') || 'simple';
 // ── Mirror acceleration (npm/docker registry mirrors) ──
 let mirrorEnabled = false;
 
+// ── Theme (light/dark) ──
+// Theme is applied in <head> inline script to prevent FOUC (flash of unstyled content).
+let cdsTheme = localStorage.getItem('cds_theme') || 'dark';
+
 // ── Executor/Scheduler state ──
 let cdsMode = 'standalone';
 let executors = [];
+
+// ── Container capacity ──
+let containerCapacity = { maxContainers: 999, runningContainers: 0, totalMemGB: 0 };
 
 // ── Utilities ──
 
@@ -84,7 +91,7 @@ function showToast(msg, type = 'info', duration) {
 }
 
 function statusLabel(s) {
-  const map = { running: '运行中', starting: '启动中', building: '构建中', idle: '空闲', stopped: '已停止', error: '错误' };
+  const map = { running: '运行中', starting: '启动中', building: '构建中', stopping: '正在停止', idle: '空闲', stopped: '已停止', error: '错误' };
   return map[s] || s;
 }
 
@@ -142,6 +149,7 @@ let previewDomain = '';
 let workerPort = '';
 
 async function init() {
+  updateThemeUI();
   await Promise.all([loadBranches(), loadProfiles(), loadRoutingRules(), loadConfig(), loadEnvVars(), loadInfraServices(), loadMirrorState()]);
   refreshRemoteCandidates();
   updatePreviewModeUI();
@@ -157,99 +165,8 @@ async function loadConfig() {
     workerPort = data.workerPort || '';
     cdsMode = data.mode || 'standalone';
     executors = data.executors || [];
-    renderServiceStatusBar();
     renderExecutorPanel();
   } catch (e) { console.error('loadConfig:', e); }
-}
-
-// ── Service Status Bar ──
-
-function renderServiceStatusBar() {
-  const dot = document.getElementById('workerDot');
-  const label = document.getElementById('workerLabel');
-  if (!dot || !label) return;
-
-  // Collect all services across all branches
-  const allServices = [];
-  for (const b of branches) {
-    for (const [pid, svc] of Object.entries(b.services || {})) {
-      allServices.push({ branchId: b.id, branchName: b.branch, profileId: pid, ...svc });
-    }
-  }
-
-  const running = allServices.filter(s => s.status === 'running').length;
-  const starting = allServices.filter(s => s.status === 'starting').length;
-  const building = allServices.filter(s => s.status === 'building').length;
-  const errors = allServices.filter(s => s.status === 'error').length;
-
-  // Update dot status
-  dot.className = 'gateway-dot';
-  if (running > 0) dot.classList.add('active');
-  else if (starting > 0 || building > 0) dot.classList.add('starting');
-
-  // Build summary text
-  const parts = [];
-  if (running > 0) parts.push(`<span class="status-summary-badge running">${running} 运行中</span>`);
-  if (starting > 0) parts.push(`<span class="status-summary-badge starting">${starting} 启动中</span>`);
-  if (building > 0) parts.push(`<span class="status-summary-badge starting">${building} 构建中</span>`);
-  if (errors > 0) parts.push(`<span class="status-summary-badge error">${errors} 错误</span>`);
-
-  if (parts.length === 0) {
-    label.innerHTML = '无服务运行';
-    label.title = `Worker :${workerPort || '?'}`;
-  } else {
-    label.innerHTML = parts.join(' ');
-    label.title = `Worker :${workerPort || '?'} · ${allServices.length} 个服务`;
-  }
-
-  // Render expanded panel
-  const panel = document.getElementById('serviceStatusPanel');
-  if (!panel) return;
-
-  const activeServices = allServices.filter(s => s.status !== 'idle' && s.status !== 'stopped');
-  if (activeServices.length === 0) {
-    panel.innerHTML = '<span style="font-size:12px;color:var(--text-muted)">暂无活跃服务</span>';
-    return;
-  }
-
-  // Add infra services to the panel
-  const infraBadges = infraServices.filter(s => s.status === 'running').map(s => `
-    <div class="svc-status-item svc-status-infra" onclick="openInfraModal()" title="基础设施: ${esc(s.id)}">
-      <span class="svc-status-dot running"></span>
-      <span>${esc(s.id)}</span>
-      <span class="svc-status-port">:${s.port || ''}</span>
-    </div>
-  `).join('');
-
-  panel.innerHTML = activeServices.map(s => `
-    <div class="svc-status-item" onclick="scrollToBranch('${esc(s.branchId)}')" title="${esc(s.branchName)} / ${esc(s.profileId)}">
-      <span class="svc-status-dot ${s.status}"></span>
-      <span>${esc(s.profileId)}</span>
-      <span class="svc-status-port">:${s.hostPort}</span>
-    </div>
-  `).join('') + (infraBadges ? infraBadges : '');
-}
-
-function toggleServiceStatusExpand() {
-  const panel = document.getElementById('serviceStatusPanel');
-  const bar = document.getElementById('serviceStatusBar');
-  if (!panel) return;
-  panel.classList.toggle('hidden');
-  bar.classList.toggle('service-status-bar-expanded');
-}
-
-function scrollToBranch(branchId) {
-  const card = document.querySelector(`[data-branch-id="${branchId}"]`);
-  if (card) {
-    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    card.style.boxShadow = '0 0 0 2px var(--accent)';
-    setTimeout(() => { card.style.boxShadow = ''; }, 2000);
-  }
-  // Collapse panel after navigation
-  const panel = document.getElementById('serviceStatusPanel');
-  const bar = document.getElementById('serviceStatusBar');
-  if (panel) panel.classList.add('hidden');
-  if (bar) bar.classList.remove('service-status-bar-expanded');
 }
 
 // ── Executor Panel (scheduler mode) ──
@@ -437,6 +354,70 @@ function updateMirrorUI() {
   if (sw) sw.classList.toggle('on', mirrorEnabled);
 }
 
+// ── Theme toggle ──
+
+function setTheme(theme) {
+  cdsTheme = theme;
+  if (theme === 'dark') {
+    delete document.documentElement.dataset.theme;
+  } else {
+    document.documentElement.dataset.theme = theme;
+  }
+  localStorage.setItem('cds_theme', theme);
+  updateThemeUI();
+}
+
+function toggleTheme(event) {
+  const newTheme = cdsTheme === 'dark' ? 'light' : 'dark';
+
+  // Get origin point from button click
+  let x, y;
+  if (event) {
+    const btn = event.currentTarget || event.target;
+    const rect = btn.getBoundingClientRect();
+    x = rect.left + rect.width / 2;
+    y = rect.top + rect.height / 2;
+  } else {
+    x = window.innerWidth / 2;
+    y = 0;
+  }
+
+  // Calculate max radius to cover entire page
+  const maxRadius = Math.ceil(Math.sqrt(
+    Math.max(x, window.innerWidth - x) ** 2 +
+    Math.max(y, window.innerHeight - y) ** 2
+  ));
+
+  // Set CSS custom properties for clip-path animation origin
+  document.documentElement.style.setProperty('--ripple-x', `${x}px`);
+  document.documentElement.style.setProperty('--ripple-y', `${y}px`);
+  document.documentElement.style.setProperty('--ripple-radius', `${maxRadius}px`);
+
+  if (document.startViewTransition) {
+    // View Transition API: captures old state as snapshot, then reveals new state
+    // with clip-path circle animation (like clawhub.ai)
+    document.startViewTransition(() => {
+      setTheme(newTheme);
+    });
+  } else {
+    // Fallback: instant switch
+    setTheme(newTheme);
+  }
+}
+
+function updateThemeUI() {
+  const sw = document.querySelector('.settings-switch-theme');
+  if (sw) sw.classList.toggle('on', cdsTheme === 'light');
+  // Update header toggle icon
+  const headerBtn = document.getElementById('themeToggleBtn');
+  if (headerBtn) {
+    headerBtn.innerHTML = cdsTheme === 'light'
+      ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>'
+      : '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="4.22" x2="19.78" y2="5.64"/></svg>';
+    headerBtn.title = cdsTheme === 'light' ? '切换到暗色模式' : '切换到亮色模式';
+  }
+}
+
 // ── Data loading ──
 
 async function loadBranches() {
@@ -444,8 +425,13 @@ async function loadBranches() {
     const data = await api('GET', '/branches');
     branches = data.branches || [];
     defaultBranch = data.defaultBranch;
+    if (data.capacity) containerCapacity = data.capacity;
+    // Auto-select main/master as default when no default is set
+    if (!defaultBranch && branches.length > 0) {
+      const mainBranch = branches.find(b => b.id === 'main') || branches.find(b => b.id === 'master');
+      if (mainBranch) defaultBranch = mainBranch.id;
+    }
     renderBranches();
-    renderServiceStatusBar();
   } catch (e) { console.error('loadBranches:', e); }
 }
 
@@ -628,10 +614,168 @@ async function addBranch(name) {
   await loadBranches();
 }
 
+// ── Container capacity check ──
+
+function getNewContainerCount(branchId, profileId) {
+  const br = branches.find(b => b.id === branchId);
+  if (profileId) {
+    // Single service deploy: only adds 1 if not already running
+    const svc = br?.services?.[profileId];
+    return (!svc || svc.status === 'idle' || svc.status === 'stopped' || svc.status === 'error') ? 1 : 0;
+  }
+  // Full deploy: count services that are not already running
+  const alreadyRunning = br ? Object.values(br.services).filter(s =>
+    s.status === 'running' || s.status === 'building' || s.status === 'starting'
+  ).length : 0;
+  return Math.max(0, buildProfiles.length - alreadyRunning);
+}
+
+/**
+ * Find all running branches except excludeId, sorted by earliest started first.
+ * Uses lastAccessedAt (set on deploy) as the deploy timestamp.
+ */
+function findRunningBranches(excludeId) {
+  return branches
+    .filter(b => b.id !== excludeId && (b.status === 'running' || b.status === 'starting'))
+    .sort((a, b) => {
+      // Color-marked branches are deprioritized (sorted to end) — they won't be stopped first
+      const am = a.isColorMarked ? 1 : 0;
+      const bm = b.isColorMarked ? 1 : 0;
+      if (am !== bm) return am - bm;
+      return new Date(a.lastAccessedAt || a.createdAt || 0) - new Date(b.lastAccessedAt || b.createdAt || 0);
+    });
+}
+
+/**
+ * Count how many running containers a branch has.
+ */
+function countRunningServices(br) {
+  if (!br?.services) return 0;
+  return Object.values(br.services).filter(s =>
+    s.status === 'running' || s.status === 'building' || s.status === 'starting'
+  ).length;
+}
+
+/**
+ * Format a branch label for display in capacity modal.
+ * Shows: tagIcon tag branchName (or just branchName if no tags).
+ */
+function branchDisplayLabel(br) {
+  const tags = br.tags || [];
+  const tagStr = tags.length > 0 ? `${ICON.tag} ${esc(tags[0])} ` : '';
+  return `${tagStr}${esc(br.branch)}`;
+}
+
+function checkCapacityAndDeploy(id, profileId) {
+  const newCount = getNewContainerCount(id, profileId);
+  const afterDeploy = containerCapacity.runningContainers + newCount;
+  if (newCount === 0 || afterDeploy <= containerCapacity.maxContainers) {
+    // No new containers needed (redeploy) or within capacity — deploy directly
+    if (profileId) deploySingleServiceDirect(id, profileId);
+    else deployBranchDirect(id);
+    return;
+  }
+
+  const runningBranches = findRunningBranches(id);
+  const oldest = runningBranches[0];
+
+  // Check if the oldest branch has all services running (fully occupied).
+  // If so, stopping it frees exactly the containers we need — no partial warning needed.
+  // But if a branch is partially running (e.g., 1 of 2), warn the user.
+  const oldestServiceCount = oldest ? countRunningServices(oldest) : 0;
+  const needsPartialWarning = oldest && oldestServiceCount > 0 && oldestServiceCount < buildProfiles.length;
+
+  // Build dropdown list of all stoppable branches (oldest first)
+  const stopListHtml = runningBranches.map(br => {
+    const svcCount = countRunningServices(br);
+    const svcLabel = svcCount < buildProfiles.length ? `(${svcCount}/${buildProfiles.length} 运行中)` : '';
+    return `<div class="capacity-stop-item" onclick="capacityChoiceStopBranch('${esc(id)}', ${profileId ? `'${esc(profileId)}'` : 'null'}, '${esc(br.id)}')">
+      <span class="capacity-stop-label">${branchDisplayLabel(br)}</span>
+      ${svcLabel ? `<span class="capacity-stop-partial">${svcLabel}</span>` : ''}
+    </div>`;
+  }).join('');
+
+  // Show capacity warning modal
+  const html = `
+    <div class="capacity-warning">
+      <div class="capacity-warning-icon">⚠️</div>
+      <div class="capacity-warning-text">
+        <p>当前服务器内存 <strong>${containerCapacity.totalMemGB}GB</strong>，最多支持 <strong>${containerCapacity.maxContainers}</strong> 个容器。</p>
+        <p>目前已有 <strong>${containerCapacity.runningContainers}</strong> 个容器运行中，本次部署需新增 <strong>${newCount}</strong> 个。</p>
+        ${needsPartialWarning ? `<p style="color:var(--orange);margin-top:8px;">⚠ 最早的分支仅部分运行，停掉可能影响开发中的服务。</p>` : ''}
+      </div>
+      <div class="capacity-warning-actions">
+        <button class="primary sm" onclick="capacityChoiceForce('${esc(id)}', ${profileId ? `'${esc(profileId)}'` : 'null'})">我偏要</button>
+        ${oldest ? `
+          <div class="capacity-stop-split">
+            <button class="sm capacity-stop-btn" onclick="capacityChoiceStopBranch('${esc(id)}', ${profileId ? `'${esc(profileId)}'` : 'null'}, '${esc(oldest.id)}')">
+              停掉 ${branchDisplayLabel(oldest)}
+            </button>
+            ${runningBranches.length > 1 ? `
+              <button class="sm capacity-stop-toggle" onclick="toggleCapacityStopList(event)">
+                <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor"><path d="M1 1l4 4 4-4"/></svg>
+              </button>
+              <div class="capacity-stop-list hidden" id="capacityStopList">
+                <div class="capacity-stop-list-header">选择要停止的分支（最早启动排前）</div>
+                ${stopListHtml}
+              </div>
+            ` : ''}
+          </div>
+        ` : ''}
+        <button class="sm" onclick="closeConfigModal()">取消</button>
+      </div>
+    </div>
+  `;
+  openConfigModal('容器容量不足', html);
+}
+
+function toggleCapacityStopList(event) {
+  event.stopPropagation();
+  const list = document.getElementById('capacityStopList');
+  if (list) list.classList.toggle('hidden');
+}
+
+function capacityChoiceForce(id, profileId) {
+  closeConfigModal();
+  if (profileId) deploySingleServiceDirect(id, profileId);
+  else deployBranchDirect(id);
+}
+
+async function capacityChoiceStopBranch(id, profileId, stopId) {
+  closeConfigModal();
+  const stopBr = branches.find(b => b.id === stopId);
+  const stopName = stopBr ? stopBr.branch : stopId;
+  showToast(`正在停止分支 ${stopName}...`, 'info');
+  // Set stopping state for visual feedback
+  if (stopBr) {
+    stopBr.status = 'stopping';
+    for (const svc of Object.values(stopBr.services || {})) {
+      if (svc.status === 'running' || svc.status === 'starting') svc.status = 'stopping';
+    }
+    renderBranches();
+  }
+  try {
+    await api('POST', `/branches/${stopId}/stop`);
+    await loadBranches();
+    showToast(`已停止分支 ${stopName}`, 'success');
+    if (profileId) deploySingleServiceDirect(id, profileId);
+    else deployBranchDirect(id);
+  } catch (e) {
+    showToast(`停止失败: ${e.message}`, 'error');
+  }
+}
+
 async function deployBranch(id) {
+  checkCapacityAndDeploy(id, null);
+}
+
+async function deployBranchDirect(id) {
   if (busyBranches.has(id)) return;
   markTouched(id);
   busyBranches.add(id);
+  // Clear previous error message immediately on new deploy
+  const br = branches.find(b => b.id === id);
+  if (br) { br.errorMessage = undefined; br.status = 'building'; }
   inlineDeployLogs.set(id, { lines: [], status: 'building', expanded: false });
   renderBranches();
 
@@ -683,8 +827,8 @@ async function deployBranch(id) {
 
   busyBranches.delete(id);
   await loadBranches();
-  // Keep inline log visible for a moment, then clean up
-  setTimeout(() => { inlineDeployLogs.delete(id); renderBranches(); }, 5000);
+  inlineDeployLogs.delete(id);
+  renderBranches();
 }
 
 function updateInlineLog(id) {
@@ -693,21 +837,12 @@ function updateInlineLog(id) {
   const log = inlineDeployLogs.get(id);
   if (!log) return;
   const filtered = log.lines.filter(l => l.trim());
-  const maxLines = log.expanded ? filtered.length : 8;
+  const maxLines = log.expanded ? filtered.length : 20;
   const visibleLines = filtered.slice(-maxLines);
   el.textContent = visibleLines.join('\n');
   el.scrollTop = el.scrollHeight;
 }
 
-function toggleInlineLog(id, event) {
-  event.stopPropagation();
-  const log = inlineDeployLogs.get(id);
-  if (!log) return;
-  log.expanded = !log.expanded;
-  const wrapper = document.getElementById(`inline-log-wrapper-${CSS.escape(id)}`);
-  if (wrapper) wrapper.classList.toggle('expanded', log.expanded);
-  updateInlineLog(id);
-}
 
 function openFullDeployLog(id, event) {
   event.stopPropagation();
@@ -742,6 +877,16 @@ async function stopBranch(id) {
   markTouched(id);
   busyBranches.add(id);
   setLoading(id, 'stop');
+  // Immediately set stopping state for visual feedback
+  const br = branches.find(b => b.id === id);
+  if (br) {
+    br.status = 'stopping';
+    for (const svc of Object.values(br.services || {})) {
+      if (svc.status === 'running' || svc.status === 'starting') {
+        svc.status = 'stopping';
+      }
+    }
+  }
   renderBranches();
   try {
     await api('POST', `/branches/${id}/stop`);
@@ -851,11 +996,86 @@ async function toggleFavorite(id) {
   const branch = branches.find(b => b.id === id);
   if (!branch) return;
   const newVal = !branch.isFavorite;
+
+  // Optimistic UI: apply visual state immediately
+  branch.isFavorite = newVal;
+  const card = document.querySelector(`.branch-card[data-branch-id="${CSS.escape(id)}"]`);
+  if (card) {
+    card.classList.toggle('is-favorite', newVal);
+    const toggle = card.querySelector('.fav-toggle');
+    if (toggle) {
+      toggle.classList.toggle('active', newVal);
+      toggle.innerHTML = newVal ? ICON.star : ICON.starOutline;
+    }
+  }
+
   try {
     await api('PATCH', `/branches/${id}`, { isFavorite: newVal });
-    branch.isFavorite = newVal;
-    await loadBranches();
-  } catch (e) { showToast(e.message, 'error'); }
+  } catch (e) {
+    // Rollback
+    branch.isFavorite = !newVal;
+    if (card) {
+      card.classList.toggle('is-favorite', !newVal);
+      const toggle = card.querySelector('.fav-toggle');
+      if (toggle) {
+        toggle.classList.toggle('active', !newVal);
+        toggle.innerHTML = !newVal ? ICON.star : ICON.starOutline;
+      }
+    }
+    showToast(e.message, 'error');
+  }
+}
+
+async function toggleColorMark(id, event) {
+  event.stopPropagation();
+  const branch = branches.find(b => b.id === id);
+  if (!branch) return;
+  const newVal = !branch.isColorMarked;
+  const card = event.currentTarget.closest('.branch-card');
+  const btn = event.currentTarget;
+
+  // Optimistic UI: apply visual state immediately
+  branch.isColorMarked = newVal;
+  if (card) {
+    card.classList.toggle('is-color-marked', newVal);
+    btn.classList.toggle('active', newVal);
+  }
+
+  // Card-scoped ripple transition (cosmetic, non-blocking)
+  if (card) {
+    const cardRect = card.getBoundingClientRect();
+    const btnRect = btn.getBoundingClientRect();
+    const x = btnRect.left + btnRect.width / 2 - cardRect.left;
+    const y = btnRect.top + btnRect.height / 2 - cardRect.top;
+    const maxRadius = Math.ceil(Math.sqrt(
+      Math.max(x, cardRect.width - x) ** 2 +
+      Math.max(y, cardRect.height - y) ** 2
+    ));
+
+    const overlay = document.createElement('div');
+    overlay.className = 'color-mark-ripple';
+    overlay.style.setProperty('--cm-ripple-x', `${x}px`);
+    overlay.style.setProperty('--cm-ripple-y', `${y}px`);
+    overlay.style.setProperty('--cm-ripple-radius', `${maxRadius}px`);
+    overlay.classList.add(newVal ? 'ripple-marked' : 'ripple-normal');
+    card.appendChild(overlay);
+    overlay.offsetHeight;
+    overlay.classList.add('animate');
+    overlay.addEventListener('animationend', () => overlay.remove(), { once: true });
+  }
+
+  // Persist in background — rollback on failure
+  try {
+    await api('PATCH', `/branches/${id}`, { isColorMarked: newVal });
+  } catch (e) {
+    // Rollback optimistic state
+    branch.isColorMarked = !newVal;
+    if (card) {
+      card.classList.toggle('is-color-marked', !newVal);
+      btn.classList.toggle('active', !newVal);
+    }
+    showToast(e.message, 'error');
+  }
 }
 
 // ── Tag management ──
@@ -943,18 +1163,6 @@ function getPortIcon(profileId, profile) {
   return key ? ICON[key] : ICON.portDefault;
 }
 
-async function setDefaultBranch(id) {
-  if (!id) return;
-  if (isLoading(id, 'setDefault')) return;
-  setLoading(id, 'setDefault');
-  try {
-    await api('POST', `/branches/${id}/set-default`);
-    showToast(`默认分支已设为: ${id}`, 'success');
-  } catch (e) { showToast(e.message, 'error'); }
-  clearLoading(id, 'setDefault');
-  await loadBranches();
-}
-
 async function factoryReset() {
   if (!confirm('⚠️ 恢复出厂设置\n\n将清除所有：分支、构建配置、环境变量、基础设施服务、路由规则。\nDocker 数据卷（数据库文件等）会保留。\n\n确定继续？')) return;
   if (!confirm('二次确认：所有配置将被清空，此操作不可撤销。')) return;
@@ -984,6 +1192,124 @@ async function cleanupAll() {
   await loadBranches();
 }
 
+async function pruneStaleBranches() {
+  const html = `
+    <div class="capacity-warning">
+      <div class="capacity-warning-icon">🧹</div>
+      <div class="capacity-warning-text">
+        <p>删除本地 git 分支中不在 CDS 部署列表上的分支</p>
+        <p style="color:var(--text-muted);font-size:12px">保护分支（main/master/develop/当前分支）不会被删除</p>
+      </div>
+      <pre id="pruneLog" style="text-align:left;font-size:11px;color:var(--text-secondary);background:rgba(8,12,28,0.6);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;margin:12px 0;max-height:200px;overflow-y:auto;white-space:pre-wrap;font-family:var(--font-mono)">正在扫描本地分支...</pre>
+      <div class="capacity-warning-actions" id="pruneActions">
+        <button class="sm" disabled><span class="btn-spinner"></span>扫描中...</button>
+      </div>
+    </div>
+  `;
+  openConfigModal('清理非列表分支', html);
+
+  try {
+    const res = await fetch(`${API}/prune-stale-branches`, { method: 'POST' });
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    const logEl = document.getElementById('pruneLog');
+    let pruneCount = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.title && logEl) {
+              const prefix = data.status === 'error' ? '✗' : data.status === 'done' ? '✓' : data.status === 'info' ? 'ℹ' : '…';
+              logEl.textContent += `\n[${prefix}] ${data.title}`;
+              logEl.scrollTop = logEl.scrollHeight;
+            }
+            if (data.pruneCount !== undefined) pruneCount = data.pruneCount;
+          } catch {}
+        }
+      }
+    }
+
+    const actionsEl = document.getElementById('pruneActions');
+    if (actionsEl) {
+      actionsEl.innerHTML = `<button class="primary sm" onclick="closeConfigModal()">完成 (${pruneCount} 个已清理)</button>`;
+    }
+    showToast(pruneCount > 0 ? `已清理 ${pruneCount} 个非列表分支` : '没有需要清理的分支', pruneCount > 0 ? 'success' : 'info');
+  } catch (e) {
+    showToast('清理失败: ' + e.message, 'error');
+    const actionsEl = document.getElementById('pruneActions');
+    if (actionsEl) {
+      actionsEl.innerHTML = `<button class="sm" onclick="closeConfigModal()">关闭</button>`;
+    }
+  }
+}
+
+async function cleanupOrphans() {
+  // Show progress in a modal with SSE streaming
+  const html = `
+    <div class="capacity-warning">
+      <div class="capacity-warning-icon">🔍</div>
+      <div class="capacity-warning-text">
+        <p>正在拉取远程分支列表并检测孤儿分支...</p>
+        <p style="color:var(--text-muted);font-size:12px">孤儿分支 = 本地存在但远程已删除的分支</p>
+      </div>
+      <pre id="orphanCleanupLog" style="text-align:left;font-size:11px;color:var(--text-secondary);background:rgba(8,12,28,0.6);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;margin:12px 0;max-height:200px;overflow-y:auto;white-space:pre-wrap;font-family:var(--font-mono)">正在获取远程分支信息...</pre>
+      <div class="capacity-warning-actions" id="orphanCleanupActions">
+        <button class="sm" disabled><span class="btn-spinner"></span>检测中...</button>
+      </div>
+    </div>
+  `;
+  openConfigModal('清理孤儿分支', html);
+
+  try {
+    const res = await fetch(`${API}/cleanup-orphans`, { method: 'POST' });
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    const logEl = document.getElementById('orphanCleanupLog');
+    let orphanCount = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = JSON.parse(line.slice(6));
+          if (data.title && logEl) {
+            const prefix = data.status === 'error' ? '✗' : data.status === 'done' ? '✓' : data.status === 'info' ? 'ℹ' : '…';
+            logEl.textContent += `\n[${prefix}] ${data.title}`;
+            logEl.scrollTop = logEl.scrollHeight;
+          }
+          if (data.orphanCount !== undefined) orphanCount = data.orphanCount;
+        }
+      }
+    }
+
+    const actionsEl = document.getElementById('orphanCleanupActions');
+    if (actionsEl) {
+      actionsEl.innerHTML = `<button class="primary sm" onclick="closeConfigModal()">完成 (${orphanCount} 个已清理)</button>`;
+    }
+    showToast(orphanCount > 0 ? `已清理 ${orphanCount} 个孤儿分支` : '没有发现孤儿分支', orphanCount > 0 ? 'success' : 'info');
+    await loadBranches();
+  } catch (e) {
+    showToast('清理失败: ' + e.message, 'error');
+    const actionsEl = document.getElementById('orphanCleanupActions');
+    if (actionsEl) {
+      actionsEl.innerHTML = `<button class="sm" onclick="closeConfigModal()">关闭</button>`;
+    }
+  }
+}
+
 async function viewBranchLogs(id) {
   // Active inline deploy log — poll from inlineDeployLogs
   const inlineLog = inlineDeployLogs.get(id);
@@ -1004,6 +1330,7 @@ async function viewBranchLogs(id) {
       } else {
         const newPre = body.querySelector('.live-log-output');
         if (newPre) newPre.scrollTop = prevScrollTop;
+        checkLogErrors();
       }
     };
     openLogModal(`部署日志 — ${id}`, id);
@@ -1043,6 +1370,7 @@ async function viewBranchLogs(id) {
     } else {
       const newPre = body.querySelector('.live-log-output');
       if (newPre) newPre.scrollTop = prevScrollTop;
+      checkLogErrors();
     }
   };
   try {
@@ -1072,6 +1400,7 @@ async function viewContainerLogs(id, profileId) {
       // Restore scroll position on the NEW <pre>
       const newPre = body.querySelector('.live-log-output');
       if (newPre) newPre.scrollTop = prevScrollTop;
+      checkLogErrors();
     }
   };
   try {
@@ -1084,10 +1413,17 @@ async function viewContainerLogs(id, profileId) {
 
 // ── Single-service deploy ──
 
-async function deploySingleService(id, profileId) {
+function deploySingleService(id, profileId) {
+  checkCapacityAndDeploy(id, profileId);
+}
+
+async function deploySingleServiceDirect(id, profileId) {
   if (busyBranches.has(id)) return;
   busyBranches.add(id);
   closeDeployMenu(id);
+  // Clear previous error message immediately on new deploy
+  const br = branches.find(b => b.id === id);
+  if (br) { br.errorMessage = undefined; br.status = 'building'; }
   inlineDeployLogs.set(id, { lines: [], status: 'building', expanded: false });
   renderBranches();
 
@@ -1235,6 +1571,11 @@ function toggleSettingsMenu(event) {
       基础设施
       ${infraServices.some(s => s.status === 'running') ? '<span style="color:#3fb950;font-size:11px;margin-left:auto">● ' + infraServices.filter(s => s.status === 'running').length + ' 运行中</span>' : ''}
     </div>
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); openStartupSignalModal()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8.834.066C7.494-.087 6.5 1.048 6.5 2.25v.5c0 1.329-.647 2.124-1.318 2.614-.328.24-.66.403-.918.508A1.75 1.75 0 003 7.25v3.5c0 .785.52 1.449 1.235 1.666.186.06.404.145.639.263.461.232.838.49 1.126.756V14.5a.75.75 0 001.5 0v-.329c.247-.075.502-.186.759-.334.364-.21.726-.503 1.051-.886.35-.413.645-.94.822-1.598.114-.424.26-.722.458-.963.2-.245.466-.437.838-.597A1.75 1.75 0 0012 8.25V4.25A1.75 1.75 0 0010.264 2.5h-.129c-.382 0-.733-.074-1.008-.18A2.43 2.43 0 018.834.066z"/></svg>
+      启动成功标志
+      ${buildProfiles.some(p => p.startupSignal) ? '<span style="color:#3fb950;font-size:11px;margin-left:auto">● 已配置</span>' : ''}
+    </div>
     <div class="settings-menu-item" onclick="closeSettingsMenu(); openRoutingModal()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 0113 0h-2.1a8.3 8.3 0 00-.4-2.2 9 9 0 00-1-1.9A4.5 4.5 0 017 7.5H4.5A8.3 8.3 0 001.5 8zm5.5 5.5a6.5 6.5 0 01-5.4-3h2.3c.3 1.2.8 2.2 1.5 3H7zm1-5.5a7.8 7.8 0 014-3.8c.5.6.9 1.2 1.2 1.8H8zm0 1h5.4a8.3 8.3 0 01-.3 2H8.9 8V9zm0 3h3.8c-.6 1.3-1.5 2.4-2.8 3A6.5 6.5 0 018 9z"/></svg>
       路由规则
@@ -1246,6 +1587,14 @@ function toggleSettingsMenu(event) {
     <div class="settings-menu-item settings-menu-switch" onclick="toggleMirror()">
       <span class="settings-menu-switch-label">镜像加速</span>
       <span class="settings-switch settings-switch-mirror ${mirrorEnabled ? 'on' : ''}">
+        <span class="settings-switch-track">
+          <span class="settings-switch-thumb"></span>
+        </span>
+      </span>
+    </div>
+    <div class="settings-menu-item settings-menu-switch" onclick="toggleTheme(event)">
+      <span class="settings-menu-switch-label">白天模式</span>
+      <span class="settings-switch settings-switch-theme ${cdsTheme === 'light' ? 'on' : ''}">
         <span class="settings-switch-track">
           <span class="settings-switch-thumb"></span>
         </span>
@@ -1264,9 +1613,17 @@ function toggleSettingsMenu(event) {
       自动更新
     </div>
     <div class="settings-menu-divider"></div>
+    <div class="settings-menu-item danger" onclick="closeSettingsMenu(); pruneStaleBranches()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 3.25a2.25 2.25 0 113 2.122v5.256a2.251 2.251 0 11-1.5 0V5.372A2.25 2.25 0 011.5 3.25zm5.677-.177L9.573.677A.25.25 0 0110 .854V2.5h1A2.5 2.5 0 0113.5 5v5.628a2.251 2.251 0 11-1.5 0V5a1 1 0 00-1-1h-1v1.646a.25.25 0 01-.427.177L7.177 3.427a.25.25 0 010-.354z"/></svg>
+      清理非列表分支
+    </div>
+    <div class="settings-menu-item danger" onclick="closeSettingsMenu(); cleanupOrphans()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5 3.254V3.25a.75.75 0 01.75-.75h4.5a.75.75 0 01.75.75v.004a2.5 2.5 0 011.94 2.204l.089.713a.75.75 0 11-1.486.186l-.089-.714A1 1 0 0010.47 4.75H5.53a1 1 0 00-.984.893l-.089.714a.75.75 0 01-1.486-.186l.089-.714A2.5 2.5 0 015 3.254zM4.07 6.5l.7 5.95c.09.747.71 1.3 1.46 1.3h3.54c.75 0 1.37-.553 1.46-1.3l.7-5.95H4.07z"/></svg>
+      清理孤儿分支
+    </div>
     <div class="settings-menu-item danger" onclick="closeSettingsMenu(); cleanupAll()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM11 3V1.75A1.75 1.75 0 009.25 0h-2.5A1.75 1.75 0 005 1.75V3H2.75a.75.75 0 000 1.5h.3l.8 8.2A1.75 1.75 0 005.6 14.5h4.8a1.75 1.75 0 001.75-1.8l.8-8.2h.3a.75.75 0 000-1.5H11z"/></svg>
-      清理分支
+      清理全部分支
     </div>
     <div class="settings-menu-item danger" onclick="closeSettingsMenu(); factoryReset()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z"/></svg>
@@ -1317,11 +1674,6 @@ function renderBranches() {
   const modeLabel = cdsMode === 'scheduler' ? ' · 调度端' : cdsMode === 'executor' ? ' · 执行端' : '';
   count.textContent = `${branches.length} 个分支${modeLabel}`;
 
-  // Update default branch selector
-  const sel = document.getElementById('defaultBranch');
-  sel.innerHTML = '<option value="">无默认</option>' +
-    branches.map(b => `<option value="${esc(b.id)}" ${b.id === defaultBranch ? 'selected' : ''}>${esc(b.id)}</option>`).join('');
-
   if (branches.length === 0) {
     el.innerHTML = '<div class="empty-state">暂无分支，请在上方搜索并添加。</div>';
     window.scrollTo(0, scrollY);
@@ -1348,7 +1700,8 @@ function renderBranches() {
     const services = Object.entries(b.services || {});
     const hasError = b.status === 'error';
     const isRunning = b.status === 'running';
-    const isStopped = !isRunning && services.length > 0 && !hasError && b.status !== 'building';
+    const isStopping = b.status === 'stopping';
+    const isStopped = !isRunning && !isStopping && services.length > 0 && !hasError && b.status !== 'building';
     const hasMultipleProfiles = buildProfiles.length > 1;
     const hasUpdates = !!branchUpdates[b.id];
 
@@ -1368,7 +1721,7 @@ function renderBranches() {
     const portBadgesHtml = services.length > 0 ? services.map(([pid, svc]) => {
       const profile = buildProfiles.find(p => p.id === pid);
       const icon = getPortIcon(pid, profile);
-      const badgeClass = svc.status === 'running' ? 'run-port' : svc.status === 'starting' ? 'port-starting' : 'port-idle';
+      const badgeClass = svc.status === 'running' ? 'run-port' : svc.status === 'starting' ? 'port-starting' : svc.status === 'stopping' ? 'port-stopping' : svc.status === 'building' ? 'port-building' : svc.status === 'error' ? 'port-error' : 'port-idle';
       const portTitle = `${esc(pid)}: ${statusLabel(svc.status)}${b.lastAccessedAt ? '\n运行时间: ' + relativeTime(b.lastAccessedAt) : ''}`;
       return `<span class="port-badge ${badgeClass}"
                     onclick="event.stopPropagation(); viewContainerLogs('${esc(b.id)}', '${esc(pid)}')"
@@ -1396,7 +1749,12 @@ function renderBranches() {
     let actionsLeftHtml = '';
     let actionsRightHtml = '';
 
-    if (isRunning) {
+    if (isStopping) {
+      actionsLeftHtml = `
+        <button class="sm" disabled><span class="btn-spinner"></span>正在停止...</button>
+      `;
+      actionsRightHtml = '';
+    } else if (isRunning) {
       actionsLeftHtml = `
         <button class="preview sm" onclick="previewBranch('${esc(b.id)}')">${ICON.preview} 预览</button>
       `;
@@ -1408,6 +1766,7 @@ function renderBranches() {
           </button>
           <template id="deploy-menu-tpl-${esc(b.id)}">
             ${hasMultipleProfiles ? `<div class="deploy-menu-header">选择重部署的服务</div>${deployMenuItems}` : ''}
+            <div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); viewBranchLogs('${esc(b.id)}')"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:4px"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.5 0a.25.25 0 01.25-.25h10.5a.25.25 0 01.25.25v7.5a.25.25 0 01-.25.25h-4.5a.75.75 0 00-.75.75v2.19l-2.72-2.72a.75.75 0 00-.53-.22H2.75a.25.25 0 01-.25-.25v-7.5z"/></svg>部署日志</div>
             ${stopMenuItem}
             <div class="deploy-menu-divider"></div>
             <div class="deploy-menu-item deploy-menu-item-danger" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); removeBranch('${esc(b.id)}')">${ICON.trash} 删除分支</div>
@@ -1438,9 +1797,18 @@ function renderBranches() {
     const deployFailed = !!deployLog && deployLog.status === 'error';
     const isJustDeployed = justDeployed.has(b.id);
 
-    // Commit area in actions row (always show commit info)
+    // Commit area in actions row — replaced by compact deploy log during deployment
     let commitAreaHtml = '';
-    if (b.subject) {
+    if (isDeploying && deployLog) {
+      // During deploy: show compact log in the commit area
+      const compactLines = deployLog.lines.filter(l => l.trim()).slice(-2);
+      commitAreaHtml = `
+        <div class="branch-actions-deploy-status" title="部署中，点击查看完整日志" onclick="event.stopPropagation(); openFullDeployLog('${esc(b.id)}', event)">
+          <span class="live-dot"></span>
+          <pre class="deploy-status-log">${esc(compactLines.join('\n')) || '正在启动...'}</pre>
+        </div>
+      `;
+    } else if (b.subject) {
       commitAreaHtml = `
         <div class="branch-actions-commit" onclick="event.stopPropagation(); toggleCommitLog('${esc(b.id)}', this)" title="点击查看历史提交">
           ${commitIcon(b.subject)} ${esc(b.subject)}
@@ -1449,35 +1817,24 @@ function renderBranches() {
       `;
     }
 
-    // Inline deploy log (below actions row, at card bottom)
-    let inlineLogHtml = '';
-    if (deployLog) {
-      const logStatusClass = deployLog.status === 'error' ? 'deploy-log-error' : deployLog.status === 'done' ? 'deploy-log-done' : '';
-      const filteredLines = deployLog.lines.filter(l => l.trim());
-      const visibleLines = deployLog.expanded ? filteredLines : filteredLines.slice(-8);
-      inlineLogHtml = `
-        <div class="inline-deploy-log-wrapper ${deployLog.expanded ? 'expanded' : ''} ${logStatusClass}" id="inline-log-wrapper-${esc(b.id)}" onclick="toggleInlineLog('${esc(b.id)}', event)">
-          <div class="inline-deploy-log-header">
-            <span class="live-dot ${deployLog.status !== 'building' ? 'stopped' : ''}"></span>
-            <span>${deployLog.status === 'building' ? '部署中...' : deployLog.status === 'done' ? '部署完成' : '部署失败'}</span>
-            <span class="inline-log-expand-hint" onclick="openFullDeployLog('${esc(b.id)}', event)">查看完整日志</span>
-          </div>
-          <pre class="inline-deploy-log" id="inline-log-${esc(b.id)}">${esc(visibleLines.join('\n'))}</pre>
-          ${deployFailed && deployLog.errorMsg ? `<div class="inline-deploy-error">${esc(deployLog.errorMsg)}</div>` : ''}
-        </div>
-      `;
-    }
+    // Inline deploy log was removed (squeezes card layout).
+    // Deploy logs are accessible via the log button in toolbar.
 
     return `
-      <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} expanded ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''} ${previewMode === 'multi' && isRunning ? 'show-preview-border' : ''} ${isDeploying ? 'is-deploying' : ''}" data-branch-id="${esc(b.id)}">
+      <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} expanded ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''} ${previewMode === 'multi' && isRunning ? 'show-preview-border' : ''} ${isDeploying ? 'is-deploying' : ''} ${b.isColorMarked ? 'is-color-marked' : ''}" data-branch-id="${esc(b.id)}">
         ${isDeploying ? '<div class="deploy-progress-bar"><div class="deploy-progress-bar-fill"></div></div>' : ''}
         <div class="branch-card-toolbar">
           ${!isBusy ? `<span class="update-pull-group" onclick="event.stopPropagation(); pullBranch('${esc(b.id)}')" title="${hasUpdates ? branchUpdates[b.id].behind + ' 个新提交，点击拉取' : '点击拉取最新代码'}">
             ${hasUpdates ? `<span class="update-badge">↓${branchUpdates[b.id].behind}</span>` : ''}
             <svg class="update-pull-icon ${isLoading(b.id, 'pull') ? 'spinning' : ''}" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
           </span>` : ''}
-          <button class="icon-btn sm branch-log-btn" onclick="event.stopPropagation(); viewBranchLogs('${esc(b.id)}')" title="查看部署日志">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.5 0a.25.25 0 01.25-.25h10.5a.25.25 0 01.25.25v7.5a.25.25 0 01-.25.25h-4.5a.75.75 0 00-.75.75v2.19l-2.72-2.72a.75.75 0 00-.53-.22H2.75a.25.25 0 01-.25-.25v-7.5z"/></svg>
+          <button class="color-mark-btn ${b.isColorMarked ? 'active' : ''}" onclick="toggleColorMark('${esc(b.id)}', event)" title="${b.isColorMarked ? '取消调试标记' : '标记为调试中'}">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M7 1 A6 6 0 0 1 13 7 L7 7 Z" class="cm-q1"/>
+              <path d="M13 7 A6 6 0 0 1 7 13 L7 7 Z" class="cm-q2"/>
+              <path d="M7 13 A6 6 0 0 1 1 7 L7 7 Z" class="cm-q3"/>
+              <path d="M1 7 A6 6 0 0 1 7 1 L7 7 Z" class="cm-q4"/>
+            </svg>
           </button>
         </div>
         <div class="branch-card-header">
@@ -1487,7 +1844,7 @@ function renderBranches() {
             </span>
             <a class="branch-name" href="${githubRepoUrl ? githubRepoUrl.replace('github.com', 'github.dev') + '/tree/' + encodeURIComponent(b.branch) : '#'}" target="_blank" onclick="event.stopPropagation(); return confirmOpenGithub(event)" title="在 GitHub.dev 中浏览代码">${ICON.branch} ${esc(b.branch)}</a>
           </div>
-          ${b.date ? `<div class="branch-card-row2"><span class="branch-meta">${relativeTime(b.date)}更新</span></div>` : ''}
+          ${b.date ? `<div class="branch-card-row2"><span class="branch-meta">${relativeTime(b.date)}更新</span>${isStopping ? '<span class="branch-status-badge status-badge-stopping">正在停止...</span>' : b.status === 'starting' ? '<span class="branch-status-badge status-badge-starting">等待服务就绪...</span>' : b.status === 'building' && !isDeploying ? '<span class="branch-status-badge status-badge-building">构建中...</span>' : ''}</div>` : ''}
           ${portBadgesHtml ? `<div class="branch-card-ports">${portBadgesHtml}</div>` : ''}
           ${b.executorId ? `<span class="executor-tag" title="部署在执行器 ${esc(b.executorId)}">⚡ ${esc(b.executorId.replace(/^executor-/, '').slice(0, 20))}</span>` : ''}
         </div>
@@ -1503,7 +1860,6 @@ function renderBranches() {
               ${actionsRightHtml}
             </div>
           </div>
-          ${inlineLogHtml}
         </div>
       </div>
     `;
@@ -1891,7 +2247,7 @@ async function importAndInit() {
     <div id="initProgressContainer" style="min-height:300px">
       <div style="margin-bottom:12px;font-size:14px;font-weight:600">正在初始化项目...</div>
       <div id="initSteps" style="font-size:13px"></div>
-      <pre id="initLog" class="inline-deploy-log" style="margin-top:8px;max-height:200px;overflow-y:auto;font-size:11px;display:none"></pre>
+      <pre id="initLog" class="live-log-output" style="margin-top:8px;max-height:200px;overflow-y:auto;font-size:11px;display:none"></pre>
       <div id="initResult" style="margin-top:12px;display:none"></div>
     </div>
   `;
@@ -2055,19 +2411,31 @@ async function openSelfUpdate() {
   }
 
   const { current, branches } = data;
-  const options = branches.map(b =>
-    `<option value="${esc(b)}" ${b === current ? 'selected' : ''}>${esc(b)}${b === current ? ' (当前)' : ''}</option>`
+  const branchItems = branches.map(b =>
+    `<div class="combobox-item${b === current ? ' active' : ''}" data-value="${esc(b)}" onclick="selectComboItem(this)">
+      ${b === current ? '<span style="color:var(--green);margin-right:4px">✓</span>' : ''}${esc(b)}${b === current ? ' <span style="color:var(--fg-muted);font-size:11px">(当前)</span>' : ''}
+    </div>`
   ).join('');
 
   openConfigModal('自动更新', `
     <p class="config-panel-desc">
       切换 CDS 代码分支并重启。操作流程：<code>git fetch → git checkout → git pull → restart</code>
     </p>
-    <div class="form-row">
+    <div class="form-row" style="flex-direction:column;align-items:stretch">
       <label class="form-label">目标分支</label>
-      <select id="selfUpdateBranch" class="form-input" style="width:100%">
-        ${options}
-      </select>
+      <div class="combobox" id="selfUpdateCombobox">
+        <div class="combobox-input-wrap">
+          <input id="selfUpdateBranch" class="form-input" style="width:100%;padding-right:36px"
+            value="${esc(current)}" placeholder="输入或选择分支名" autocomplete="off"
+            onfocus="openComboDropdown()" oninput="filterComboItems(this.value)">
+          <button type="button" class="combobox-toggle" onclick="toggleComboDropdown()" tabindex="-1">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 6 8 10 12 6"/></svg>
+          </button>
+        </div>
+        <div class="combobox-dropdown" id="selfUpdateDropdown">
+          ${branchItems}
+        </div>
+      </div>
     </div>
     <div class="form-row" style="margin-top:4px;font-size:12px;color:var(--fg-muted)">
       当前分支：<code>${esc(current)}</code>
@@ -2076,16 +2444,79 @@ async function openSelfUpdate() {
       <div id="selfUpdateSteps" style="display:flex;flex-direction:column;gap:6px"></div>
       <div id="selfUpdateStatus" style="margin-top:8px;font-size:13px"></div>
     </div>
-    <div class="form-row" style="margin-top:12px;display:flex;gap:8px">
+    <div class="form-row" style="margin-top:12px;display:flex;gap:8px;align-items:center">
       <button class="sm" id="selfUpdateBtn" onclick="executeSelfUpdate()">更新并重启</button>
       <button class="sm ghost" onclick="closeConfigModal()">取消</button>
+      <span style="flex:1"></span>
+      <button class="sm ghost" style="color:var(--red);font-size:12px" onclick="closeConfigModal();pruneStaleBranches()">🧹 清理未托管分支</button>
     </div>
   `);
+
+  // Allow combobox dropdown to overflow the modal body
+  const modalBody = document.querySelector('.config-modal-dialog .modal-body');
+  if (modalBody) modalBody.style.overflow = 'visible';
+
+  // Close dropdown when clicking outside
+  document.addEventListener('click', _comboOutsideClick);
+}
+
+// ── Combobox helpers ──
+
+function _comboOutsideClick(e) {
+  const box = document.getElementById('selfUpdateCombobox');
+  if (box && !box.contains(e.target)) {
+    closeComboDropdown();
+  }
+}
+
+function openComboDropdown() {
+  const dd = document.getElementById('selfUpdateDropdown');
+  if (dd) dd.classList.add('open');
+}
+
+function closeComboDropdown() {
+  const dd = document.getElementById('selfUpdateDropdown');
+  if (dd) dd.classList.remove('open');
+  document.removeEventListener('click', _comboOutsideClick);
+}
+
+function toggleComboDropdown() {
+  const dd = document.getElementById('selfUpdateDropdown');
+  if (dd) {
+    if (dd.classList.contains('open')) {
+      closeComboDropdown();
+    } else {
+      // Reset filter to show all
+      filterComboItems('');
+      dd.classList.add('open');
+      document.getElementById('selfUpdateBranch')?.focus();
+    }
+  }
+}
+
+function filterComboItems(query) {
+  const dd = document.getElementById('selfUpdateDropdown');
+  if (!dd) return;
+  const q = query.toLowerCase();
+  let visible = 0;
+  for (const item of dd.querySelectorAll('.combobox-item')) {
+    const val = (item.dataset.value || '').toLowerCase();
+    const show = !q || val.includes(q);
+    item.style.display = show ? '' : 'none';
+    if (show) visible++;
+  }
+  if (visible > 0 && q) dd.classList.add('open');
+}
+
+function selectComboItem(el) {
+  const input = document.getElementById('selfUpdateBranch');
+  if (input) input.value = el.dataset.value;
+  closeComboDropdown();
 }
 
 function executeSelfUpdate() {
-  const select = document.getElementById('selfUpdateBranch');
-  const branch = select ? select.value : '';
+  const input = document.getElementById('selfUpdateBranch');
+  const branch = input ? input.value.trim() : '';
   const btn = document.getElementById('selfUpdateBtn');
   const progress = document.getElementById('selfUpdateProgress');
   const stepsEl = document.getElementById('selfUpdateSteps');
@@ -2624,6 +3055,70 @@ function toggleModalForm(id) {
   if (el) el.classList.toggle('hidden');
 }
 
+// ── Startup Signal configuration modal ──
+
+function openStartupSignalModal() {
+  if (buildProfiles.length === 0) {
+    showToast('请先添加构建配置', 'error');
+    return;
+  }
+
+  const signalExamples = {
+    api: 'Now listening on: http://0.0.0.0:5000',
+    admin: '➜  Network:',
+    web: '➜  Network:',
+    frontend: '➜  Network:',
+  };
+
+  const listHtml = buildProfiles.map(p => {
+    const currentSignal = p.startupSignal || '';
+    const placeholder = signalExamples[p.id] || '容器日志中的启动成功标志字符串';
+    return `
+      <div class="config-item" style="flex-direction:column;align-items:stretch;gap:8px;padding:12px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="opacity:0.7">${getPortIcon(p.id, p)}</span>
+          <strong>${esc(p.name)}</strong>
+          <code class="config-item-match" style="margin-left:auto">:${p.containerPort}</code>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input id="signal-${esc(p.id)}" class="form-input" value="${esc(currentSignal)}" placeholder="${esc(placeholder)}" style="flex:1;font-size:12px">
+          ${currentSignal ? '<span style="color:var(--green);font-size:11px;white-space:nowrap">● 已设置</span>' : '<span style="color:var(--text-muted);font-size:11px;white-space:nowrap">未设置</span>'}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  const html = `
+    <p class="config-panel-desc">
+      为每个服务配置启动成功标志。CDS 会监听容器日志，检测到该字符串后才标记服务为"运行中"。<br>
+      <span style="color:var(--text-muted);font-size:11px">未配置时，CDS 仅通过容器存活检查判断启动状态（可能容器活着但服务还没准备好）。</span>
+    </p>
+    <div id="signalProfileList">${listHtml}</div>
+    <div style="margin-top:12px;display:flex;gap:8px">
+      <button class="primary sm" onclick="saveStartupSignals()">保存</button>
+      <button class="sm" onclick="closeConfigModal()">取消</button>
+    </div>
+  `;
+  openConfigModal('启动成功标志', html);
+}
+
+async function saveStartupSignals() {
+  try {
+    for (const p of buildProfiles) {
+      const input = document.getElementById('signal-' + p.id);
+      if (!input) continue;
+      const newSignal = input.value.trim();
+      const oldSignal = p.startupSignal || '';
+      if (newSignal !== oldSignal) {
+        await api('PUT', '/build-profiles/' + encodeURIComponent(p.id), { startupSignal: newSignal || undefined });
+      }
+    }
+    showToast('启动成功标志已保存', 'success');
+    await loadProfiles();
+    closeConfigModal();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
 // ── Log modal (with tabs: logs / terminal) ──
 
 let _logPollTimer = null;
@@ -2644,6 +3139,9 @@ function openLogModal(title, branchId, profileId) {
   } else {
     tabsEl.classList.add('hidden');
   }
+  // Hide copy-error button initially
+  const copyBtn = document.getElementById('copyErrorBtn');
+  if (copyBtn) { copyBtn.classList.add('hidden'); copyBtn.classList.remove('copied'); }
   // Clear terminal state for new session
   document.getElementById('terminalOutput').innerHTML = '';
   document.getElementById('terminalInput').value = '';
@@ -2651,6 +3149,73 @@ function openLogModal(title, branchId, profileId) {
   _terminalHistoryIdx = -1;
   switchLogTab('logs');
   _scrollLogToBottom();
+}
+
+// Error patterns to detect in logs
+const _errorPatterns = /\berror\s+(CS|TS|NG)\d+\b|:\s*error\s+\w+\d+:|Build FAILED|FAILED|Exception:|Unhandled exception|fatal error|npm ERR!|Error:|Cannot find module|ENOENT|EACCES|Segmentation fault/i;
+
+function checkLogErrors() {
+  const body = document.getElementById('logModalBody');
+  const btn = document.getElementById('copyErrorBtn');
+  if (!body || !btn) return;
+  const text = body.textContent || '';
+  if (_errorPatterns.test(text)) {
+    btn.classList.remove('hidden');
+    btn.classList.remove('copied');
+  } else {
+    btn.classList.add('hidden');
+  }
+}
+
+function copyErrorForLLM() {
+  const body = document.getElementById('logModalBody');
+  const btn = document.getElementById('copyErrorBtn');
+  if (!body) return;
+  const logText = body.textContent || '';
+
+  // Extract error lines + some context
+  const lines = logText.split('\n');
+  const errorLines = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (_errorPatterns.test(lines[i])) {
+      // Include 2 lines before for context
+      for (let j = Math.max(0, i - 2); j <= Math.min(lines.length - 1, i + 1); j++) {
+        const line = lines[j].trim();
+        if (line && !errorLines.includes(line)) errorLines.push(line);
+      }
+    }
+  }
+
+  const title = document.getElementById('logModalTitle')?.textContent || '';
+  const ctx = _logModalContext;
+  const prompt = [
+    '我的项目部署出错了，请帮我分析错误原因并给出修复方案。',
+    '',
+    `服务: ${title}`,
+    ctx.branchId ? `分支: ${ctx.branchId}` : '',
+    ctx.profileId ? `配置: ${ctx.profileId}` : '',
+    '',
+    '错误日志:',
+    '```',
+    errorLines.length > 0 ? errorLines.join('\n') : logText.slice(-3000),
+    '```',
+  ].filter(l => l !== false).join('\n');
+
+  navigator.clipboard.writeText(prompt).then(() => {
+    if (btn) {
+      btn.classList.add('copied');
+      btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg> 已复制';
+      setTimeout(() => {
+        if (btn) {
+          btn.classList.remove('copied');
+          btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"/></svg> 一键复制错误给大模型排错';
+        }
+      }, 2000);
+    }
+    showToast('错误日志已复制到剪贴板，粘贴给 AI 即可排错', 'success');
+  }).catch(() => {
+    showToast('复制失败，请手动选择日志文本', 'error');
+  });
 }
 
 function closeLogModal() {
@@ -2753,6 +3318,7 @@ function _scrollLogToBottom() {
     const pre = body.querySelector('.live-log-output');
     const target = pre || body;
     target.scrollTop = target.scrollHeight;
+    checkLogErrors();
   });
 }
 

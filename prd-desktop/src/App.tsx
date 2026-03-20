@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { invoke, isTauri, listen } from './lib/tauri';
 import { useSessionStore } from './stores/sessionStore';
 import { useAuthStore } from './stores/authStore';
@@ -22,8 +22,11 @@ import { isSystemErrorCode } from './lib/systemError';
 import { useConnectionStore } from './stores/connectionStore';
 import { useDesktopBrandingStore } from './stores/desktopBrandingStore';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import type { ApiResponse, PromptsClientResponse, UserRole } from './types';
+import type { ApiResponse, UserRole } from './types';
 import { openGroupSessionAndSetStore } from './lib/openGroupSession';
+import { useClientConfigStore } from './stores/clientConfigStore';
+import { useUpdateStore } from './stores/updateStore';
+import UpdateNotification from './components/Feedback/UpdateNotification';
 
 const THEME_STORAGE_KEY = 'prd-desktop-theme';
 
@@ -61,7 +64,6 @@ function App() {
   const groupsLoading = useGroupListStore((s) => s.loading);
   const refreshBranding = useDesktopBrandingStore((s) => s.refresh);
   const windowTitle = useDesktopBrandingStore((s) => s.branding.windowTitle);
-  const [isThemeTransitioning, setIsThemeTransitioning] = useState(false);
   const [isDark, setIsDark] = useState(() => {
     const stored = readStoredTheme();
     if (stored) return stored === 'dark';
@@ -78,6 +80,35 @@ function App() {
     const skin = isDark ? 'dark' : 'white';
     void refreshBranding('app-start', skin);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 启动时从 GitHub Release 拉取远程客户端配置（预设服务器列表等）
+  useEffect(() => {
+    if (isTauri()) {
+      void useClientConfigStore.getState().fetchClientConfig();
+    }
+  }, []);
+
+  // 静默更新调度：启动 30s 后首次检查，之后每 2 小时检查一次
+  useEffect(() => {
+    if (!isTauri()) return;
+
+    const INITIAL_DELAY = 30 * 1000;           // 30 秒
+    const PERIODIC_INTERVAL = 2 * 60 * 60 * 1000; // 2 小时
+
+    const check = () => void useUpdateStore.getState().checkAndDownload();
+
+    const initialTimer = window.setTimeout(() => {
+      check();
+      periodicTimer = window.setInterval(check, PERIODIC_INTERVAL);
+    }, INITIAL_DELAY);
+
+    let periodicTimer: ReturnType<typeof setInterval> | undefined;
+
+    return () => {
+      window.clearTimeout(initialTimer);
+      if (periodicTimer) window.clearInterval(periodicTimer);
+    };
   }, []);
 
   // 将窗口标题与服务器下发配置对齐（若未下发则由 store 默认值兜底）
@@ -184,10 +215,7 @@ function App() {
     }
   };
 
-  const onToggleTheme = () => {
-    // 过渡进行中则忽略，避免连点造成状态错乱
-    if (isThemeTransitioning) return;
-
+  const onToggleTheme = (e?: React.MouseEvent) => {
     // 无动画偏好：直接切换
     try {
       const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -199,25 +227,31 @@ function App() {
       // ignore
     }
 
-    // 直接线性过渡到目标主题颜色：不使用遮罩，避免“白->黑->白”闪烁
-    const DURATION_MS = 520;
-    setIsThemeTransitioning(true);
-    try {
-      document.documentElement.classList.add('theme-transitioning');
-    } catch {
-      // ignore
+    // 计算按钮中心坐标作为水波纹原点
+    let x = window.innerWidth / 2, y = 0;
+    if (e) {
+      const btn = (e.currentTarget || e.target) as HTMLElement;
+      const rect = btn.getBoundingClientRect();
+      x = rect.left + rect.width / 2;
+      y = rect.top + rect.height / 2;
     }
 
-    applyTheme(!isDark);
+    // 计算覆盖全屏所需的最大半径
+    const maxRadius = Math.ceil(Math.sqrt(
+      Math.max(x, window.innerWidth - x) ** 2 +
+      Math.max(y, window.innerHeight - y) ** 2
+    ));
 
-    window.setTimeout(() => {
-      try {
-        document.documentElement.classList.remove('theme-transitioning');
-      } catch {
-        // ignore
-      }
-      setIsThemeTransitioning(false);
-    }, DURATION_MS);
+    document.documentElement.style.setProperty('--ripple-x', `${x}px`);
+    document.documentElement.style.setProperty('--ripple-y', `${y}px`);
+    document.documentElement.style.setProperty('--ripple-radius', `${maxRadius}px`);
+
+    // View Transition API 水波纹扩散，自动降级到瞬时切换
+    if (document.startViewTransition) {
+      document.startViewTransition(() => applyTheme(!isDark));
+    } else {
+      applyTheme(!isDark);
+    }
   };
 
   // 将持久化的 token 同步到 Rust（避免重启后 Rust 侧没有 token 导致请求 401）
@@ -278,49 +312,6 @@ function App() {
   useEffect(() => {
     if (!isAuthenticated) return;
     useGroupListStore.getState().loadGroups().catch(() => {});
-  }, [isAuthenticated]);
-
-  // 登录后拉取提示词列表（用于提示词按钮）
-  useEffect(() => {
-    if (!isAuthenticated) return;
-
-    let stopped = false;
-    let isLoading = false;
-    const fetchOnce = () => {
-      // 防止并发调用
-      if (isLoading) return Promise.resolve();
-      // 在函数内部检查连接状态，而不是作为依赖项
-      if (useConnectionStore.getState().status === 'disconnected') return Promise.resolve();
-      isLoading = true;
-      return invoke<ApiResponse<PromptsClientResponse>>('get_prompts')
-        .then((res) => {
-          if (stopped) return;
-          if (res?.success && res.data) {
-            useSessionStore.getState().setPrompts(res.data);
-          }
-        })
-        .catch(() => {
-          // 网络波动/断连不打扰用户；UI 会回落到本地硬编码
-        })
-        .finally(() => {
-          isLoading = false;
-        });
-    };
-
-    // 立刻拉一次
-    void fetchOnce();
-
-    // 后台配置变更后，Desktop 需要定期刷新（否则用户会误以为"保存没生效"）
-    // 频率：5 分钟（与后端 prompts cache TTL 对齐）
-    const timer = window.setInterval(() => void fetchOnce(), 5 * 60 * 1000);
-
-    // 移除 focus 事件监听，避免频繁切换窗口时重复请求
-    // 5分钟的轮询已经足够保持提示词列表的新鲜度
-
-    return () => {
-      stopped = true;
-      window.clearInterval(timer);
-    };
   }, [isAuthenticated]);
 
   // 监听 deep link：prdagent://join/{inviteCode}
@@ -427,6 +418,9 @@ function App() {
 
       {/* 设置模态框 */}
       <SettingsModal />
+
+      {/* 静默更新右下角通知 */}
+      <UpdateNotification />
 
       {/* 冷启动全局加载遮罩（唯一加载动画） */}
       <StartLoadOverlay open={showColdStartLoading} />

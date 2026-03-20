@@ -25,9 +25,9 @@ const READ_IDS_STORAGE_KEY = 'defect-read-ids';
 function loadViewMode(): ViewMode {
   try {
     const v = localStorage.getItem(VIEW_MODE_STORAGE_KEY);
-    if (v === 'list' || v === 'kanban' || v === 'stats') return v;
-    return 'card';
-  } catch { return 'card'; }
+    if (v === 'card' || v === 'kanban' || v === 'stats') return v;
+    return 'list';
+  } catch { return 'list'; }
 }
 
 function loadReadIds(): Set<string> {

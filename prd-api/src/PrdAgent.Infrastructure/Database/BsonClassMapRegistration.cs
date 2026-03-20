@@ -37,7 +37,6 @@ public static class BsonClassMapRegistration
             RegisterLLMPlatform();
             RegisterLLMModel();
             RegisterAppSettings();
-            RegisterPromptSettings();
             RegisterLlmRequestLog();
             RegisterApiRequestLog();
             RegisterInviteCode();
@@ -462,46 +461,6 @@ public static class BsonClassMapRegistration
                 .SetIdGenerator(GuidStringIdGenerator.Instance);
             cm.SetIgnoreExtraElements(true);
         });
-    }
-
-    private static void RegisterPromptSettings()
-    {
-        if (BsonClassMap.IsClassMapRegistered(typeof(PromptSettings))) return;
-
-        BsonClassMap.RegisterClassMap<PromptSettings>(cm =>
-        {
-            cm.AutoMap();
-            cm.MapIdMember(s => s.Id)
-                .SetSerializer(new StringOrObjectIdSerializer())
-                .SetIdGenerator(GuidStringIdGenerator.Instance);
-            // 强制字段名使用 camelCase，保证 raw 解析（BsonDocument）与旧数据兼容
-            cm.MapMember(s => s.Prompts).SetElementName("prompts");
-            cm.MapMember(s => s.UpdatedAt).SetElementName("updatedAt");
-            cm.SetIgnoreExtraElements(true);
-        });
-
-        // nested types：PromptEntry/RolePrompt 需要忽略旧结构字段（pm/dev/qa/step 等）
-        if (!BsonClassMap.IsClassMapRegistered(typeof(PromptEntry)))
-        {
-            BsonClassMap.RegisterClassMap<PromptEntry>(cm =>
-            {
-                cm.AutoMap();
-                cm.MapMember(x => x.PromptKey).SetElementName("promptKey");
-                cm.MapMember(x => x.Role).SetElementName("role");
-                cm.MapMember(x => x.Order).SetElementName("order");
-                cm.MapMember(x => x.Title).SetElementName("title");
-                cm.MapMember(x => x.PromptTemplate).SetElementName("promptTemplate");
-                cm.SetIgnoreExtraElements(true);
-            });
-        }
-        if (!BsonClassMap.IsClassMapRegistered(typeof(RolePrompt)))
-        {
-            BsonClassMap.RegisterClassMap<RolePrompt>(cm =>
-            {
-                cm.AutoMap();
-                cm.SetIgnoreExtraElements(true);
-            });
-        }
     }
 
     private static void RegisterAdminIdempotencyRecord()

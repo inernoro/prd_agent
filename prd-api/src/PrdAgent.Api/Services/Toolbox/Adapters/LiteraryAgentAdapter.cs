@@ -144,7 +144,8 @@ public class LiteraryAgentAdapter : IAgentAdapter
                 },
                 ["temperature"] = 0.7,
                 ["max_tokens"] = 4000
-            }
+            },
+            Context = new GatewayRequestContext { UserId = context.UserId }
         };
 
         var fullContent = new System.Text.StringBuilder();

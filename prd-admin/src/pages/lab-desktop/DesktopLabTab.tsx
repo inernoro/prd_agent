@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Select } from '@/components/design/Select';
+import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
 import { adminImpersonate, getUsers } from '@/services';
 import type { AdminUser, UserRole } from '@/types/admin';
 import type { ApiResponse } from '@/types/api';
-import { readSseStream } from '@/lib/sse';
+import { useSseStream } from '@/lib/useSseStream';
 import { toast } from '@/lib/toast';
 
 type Actor = {
@@ -113,11 +114,25 @@ export default function DesktopLabTab() {
   const [chatInput, setChatInput] = useState('');
   const [chatText, setChatText] = useState('');
   const [chatMeta, setChatMeta] = useState<string>('');
-  const chatAbortRef = useRef<AbortController | null>(null);
+
+  const chatSse = useSseStream({
+    url: '', // overridden at start() time
+    method: 'POST',
+    onTyping: useCallback((text: string) => setChatText((p) => p + text), []),
+    onDone: useCallback((data: unknown) => setChatMeta(JSON.stringify(data, null, 2)), []),
+    onError: useCallback((msg: string) => setChatMeta(msg), []),
+  });
 
   // Guide SSE
   const [guideLog, setGuideLog] = useState<string>('');
-  const guideAbortRef = useRef<AbortController | null>(null);
+
+  const guideSse = useSseStream({
+    url: '', // overridden at start() time
+    method: 'POST',
+    onTyping: useCallback((text: string) => setGuideLog((p) => (p ? `${p}\n` : '') + text), []),
+    onDone: useCallback((data: unknown) => setGuideLog((p) => (p ? `${p}\n` : '') + JSON.stringify(data)), []),
+    onError: useCallback((msg: string) => setGuideLog((p) => (p ? `${p}\n` : '') + msg), []),
+  });
 
   // Gaps
   const [gapsJson, setGapsJson] = useState<string>('');
@@ -273,11 +288,6 @@ export default function DesktopLabTab() {
     setSessionId(res.data.sessionId);
   };
 
-  const stopChat = () => {
-    chatAbortRef.current?.abort();
-    chatAbortRef.current = null;
-  };
-
   const sendChat = async () => {
     if (!activeActor) {
       toast.warning('请先选择一个演员');
@@ -289,54 +299,14 @@ export default function DesktopLabTab() {
     }
     if (!chatInput.trim()) return;
 
-    stopChat();
     setChatText('');
     setChatMeta('');
-    const ac = new AbortController();
-    chatAbortRef.current = ac;
 
-    const url = joinUrl(getApiBaseUrl(), `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages`);
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Accept: 'text/event-stream',
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${activeActor.token}`,
-      },
-      body: JSON.stringify({ content: chatInput, role: activeActor.role }),
-      signal: ac.signal,
+    await chatSse.start({
+      url: joinUrl(getApiBaseUrl(), `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages`),
+      body: { content: chatInput, role: activeActor.role },
+      headers: { Authorization: `Bearer ${activeActor.token}` },
     });
-
-    if (!res.ok) {
-      const t = await res.text();
-      setChatMeta(t || `HTTP ${res.status}`);
-      return;
-    }
-
-    await readSseStream(
-      res,
-      (evt) => {
-        if (!evt.data) return;
-        try {
-          const obj = JSON.parse(evt.data);
-          if (obj.type === 'delta' && typeof obj.content === 'string') {
-            setChatText((p) => p + obj.content);
-          } else if (obj.type === 'done') {
-            setChatMeta(JSON.stringify(obj, null, 2));
-          } else if (obj.type === 'error') {
-            setChatMeta(JSON.stringify(obj, null, 2));
-          }
-        } catch {
-          setChatMeta(evt.data);
-        }
-      },
-      ac.signal
-    );
-  };
-
-  const stopGuide = () => {
-    guideAbortRef.current?.abort();
-    guideAbortRef.current = null;
   };
 
   const startGuide = async () => {
@@ -349,37 +319,13 @@ export default function DesktopLabTab() {
       return;
     }
 
-    stopGuide();
     setGuideLog('');
-    const ac = new AbortController();
-    guideAbortRef.current = ac;
 
-    const url = joinUrl(getApiBaseUrl(), `/api/v1/sessions/${encodeURIComponent(sessionId)}/guide/start`);
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Accept: 'text/event-stream',
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${activeActor.token}`,
-      },
-      body: JSON.stringify({ role: activeActor.role }),
-      signal: ac.signal,
+    await guideSse.start({
+      url: joinUrl(getApiBaseUrl(), `/api/v1/sessions/${encodeURIComponent(sessionId)}/guide/start`),
+      body: { role: activeActor.role },
+      headers: { Authorization: `Bearer ${activeActor.token}` },
     });
-
-    if (!res.ok) {
-      const t = await res.text();
-      setGuideLog(t || `HTTP ${res.status}`);
-      return;
-    }
-
-    await readSseStream(
-      res,
-      (evt) => {
-        if (!evt.data) return;
-        setGuideLog((p) => (p ? `${p}\n` : '') + evt.data);
-      },
-      ac.signal
-    );
   };
 
   const loadGaps = async () => {
@@ -607,7 +553,7 @@ export default function DesktopLabTab() {
                 <Button variant="ghost" onClick={openSession} disabled={!activeActor || !groupId}>
                   打开会话
                 </Button>
-                <Button variant="ghost" onClick={() => { stopChat(); stopGuide(); }}>
+                <Button variant="ghost" onClick={() => { chatSse.abort(); guideSse.abort(); }}>
                   停止流
                 </Button>
               </div>
@@ -635,6 +581,9 @@ export default function DesktopLabTab() {
                 <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
                   Chat 输出
                 </div>
+                {chatSse.phase !== 'idle' && (
+                  <SsePhaseBar phase={chatSse.phase} message={chatSse.phaseMessage} />
+                )}
                 <pre className="text-xs whitespace-pre-wrap wrap-break-word" style={{ color: 'var(--text-primary)' }}>
                   {chatText || '（等待输出）'}
                 </pre>
@@ -654,6 +603,9 @@ export default function DesktopLabTab() {
                     启动
                   </Button>
                 </div>
+                {guideSse.phase !== 'idle' && (
+                  <SsePhaseBar phase={guideSse.phase} message={guideSse.phaseMessage} />
+                )}
                 <pre className="mt-2 text-xs whitespace-pre-wrap wrap-break-word" style={{ color: 'var(--text-primary)' }}>
                   {guideLog || '（等待输出）'}
                 </pre>

@@ -29,6 +29,12 @@ public class DefectMessage
     /// <summary>消息内容</summary>
     public string Content { get; set; } = string.Empty;
 
+    /// <summary>消息来源：human（默认）、ai</summary>
+    public string Source { get; set; } = DefectMessageSource.Human;
+
+    /// <summary>AI Agent 名称（Source=ai 时有值）</summary>
+    public string? AgentName { get; set; }
+
     /// <summary>本条消息携带的附件 ID 列表</summary>
     public List<string>? AttachmentIds { get; set; }
 
@@ -45,4 +51,15 @@ public static class DefectMessageRole
 {
     public const string User = "user";
     public const string Assistant = "assistant";
+}
+
+/// <summary>
+/// 消息来源常量
+/// </summary>
+public static class DefectMessageSource
+{
+    /// <summary>人类用户</summary>
+    public const string Human = "human";
+    /// <summary>外部 AI Agent</summary>
+    public const string Ai = "ai";
 }

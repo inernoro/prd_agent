@@ -717,6 +717,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                 style={{
                   background: 'var(--surface-glass)',
                   backdropFilter: 'blur(12px)',
+                  WebkitBackdropFilter: 'blur(12px)',
                   border: '1px solid var(--border-primary)',
                 }}
               >

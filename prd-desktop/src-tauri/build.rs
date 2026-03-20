@@ -5,10 +5,14 @@ fn main() {
     // The repo intentionally ignores `src-tauri/icons/` (generated assets), so CI checkouts
     // may miss these files and crash at compile time.
     ensure_bundle_icons_exist();
+    sync_dev_bundle_icon();
 
     // Re-run build script if config changes.
     println!("cargo:rerun-if-changed=tauri.conf.json");
     println!("cargo:rerun-if-changed=../icon.png");
+    println!("cargo:rerun-if-changed=icons/icon.icns");
+    println!("cargo:rerun-if-changed=icons/icon.ico");
+    println!("cargo:rerun-if-changed=icons/icon.png");
 
     tauri_build::build()
 }
@@ -56,6 +60,45 @@ fn ensure_bundle_icons_exist() {
         };
 
         let _ = fs::write(&icon_path, bytes);
+    }
+}
+
+fn sync_dev_bundle_icon() {
+    #[cfg(target_os = "macos")]
+    {
+        let manifest_dir = match env::var("CARGO_MANIFEST_DIR") {
+            Ok(v) => PathBuf::from(v),
+            Err(_) => return,
+        };
+
+        let profile = env::var("PROFILE").unwrap_or_else(|_| "debug".to_string());
+        let source = manifest_dir.join("icons/icon.icns");
+        let target = manifest_dir
+            .join("target")
+            .join(profile)
+            .join("Contents")
+            .join("Resources")
+            .join("icon.icns");
+
+        let source_bytes = match fs::read(&source) {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+
+        let should_copy = match fs::read(&target) {
+            Ok(existing) => existing != source_bytes,
+            Err(_) => true,
+        };
+
+        if !should_copy {
+            return;
+        }
+
+        if let Some(parent) = target.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+
+        let _ = fs::write(target, source_bytes);
     }
 }
 

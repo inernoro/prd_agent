@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -10,6 +11,8 @@ using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using System.Security.Claims;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -29,6 +32,9 @@ public class DefectAgentController : ControllerBase
     private readonly IAssetStorage _assetStorage;
     private readonly ICacheManager _cache;
     private readonly DefectWebhookService _webhookService;
+    private readonly IOpenPlatformService _openPlatformService;
+    private readonly ILLMRequestContextAccessor _llmRequestContext;
+    private readonly IConfiguration _config;
     private static readonly TimeSpan ClientBindingTtl = TimeSpan.FromDays(3);
 
     public DefectAgentController(
@@ -37,7 +43,10 @@ public class DefectAgentController : ControllerBase
         ILogger<DefectAgentController> logger,
         IAssetStorage assetStorage,
         ICacheManager cache,
-        DefectWebhookService webhookService)
+        DefectWebhookService webhookService,
+        IOpenPlatformService openPlatformService,
+        ILLMRequestContextAccessor llmRequestContext,
+        IConfiguration config)
     {
         _db = db;
         _gateway = gateway;
@@ -45,6 +54,9 @@ public class DefectAgentController : ControllerBase
         _assetStorage = assetStorage;
         _cache = cache;
         _webhookService = webhookService;
+        _openPlatformService = openPlatformService;
+        _llmRequestContext = llmRequestContext;
+        _config = config;
     }
 
     private string GetUserId()
@@ -55,6 +67,26 @@ public class DefectAgentController : ControllerBase
     private string? GetUsername()
         => User.FindFirst("name")?.Value
            ?? User.FindFirst(ClaimTypes.Name)?.Value;
+
+    /// <summary>
+    /// 解析真实的外部 BaseUrl：X-Forwarded-Host/Proto > Origin > Request.Host
+    /// Docker/反向代理场景下避免返回容器内部地址
+    /// </summary>
+    private string ResolveBaseUrl()
+    {
+        var forwardedHost = Request.Headers["X-Forwarded-Host"].FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(forwardedHost))
+        {
+            var scheme = Request.Headers["X-Forwarded-Proto"].FirstOrDefault() ?? "https";
+            return $"{scheme}://{forwardedHost.Split(',')[0].Trim()}";
+        }
+
+        var origin = Request.Headers.Origin.FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(origin))
+            return origin.TrimEnd('/');
+
+        return $"{Request.Scheme}://{Request.Host}";
+    }
 
     private bool HasManagePermission()
     {
@@ -528,6 +560,34 @@ public class DefectAgentController : ControllerBase
     }
 
     /// <summary>
+    /// 修改缺陷严重程度（报告人、受理人或管理员均可操作）
+    /// </summary>
+    [HttpPatch("defects/{id}/severity")]
+    public async Task<IActionResult> UpdateDefectSeverity(string id, [FromBody] UpdateSeverityRequest request, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var isAdmin = HasManagePermission();
+
+        var defect = await _db.DefectReports.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (defect == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "缺陷不存在"));
+
+        if (!isAdmin && defect.ReporterId != userId && defect.AssigneeId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限修改严重程度"));
+
+        var validSeverities = new[] { DefectSeverity.Blocker, DefectSeverity.Critical, DefectSeverity.Major, DefectSeverity.Minor, DefectSeverity.Suggestion };
+        if (string.IsNullOrWhiteSpace(request.Severity) || !validSeverities.Contains(request.Severity))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的严重程度"));
+
+        defect.Severity = request.Severity;
+        defect.UpdatedAt = DateTime.UtcNow;
+
+        await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new { defect }));
+    }
+
+    /// <summary>
     /// 删除缺陷（软删除，移入回收站）
     /// </summary>
     [HttpDelete("defects/{id}")]
@@ -660,6 +720,12 @@ public class DefectAgentController : ControllerBase
         // 永久删除关联的消息和缺陷
         await _db.DefectMessages.DeleteManyAsync(x => x.DefectId == id, ct);
         await _db.DefectReports.DeleteOneAsync(x => x.Id == id, ct);
+
+        // 数据审计：清理分享链接中对此缺陷的引用
+        await _db.DefectShareLinks.UpdateManyAsync(
+            x => x.DefectIds.Contains(id),
+            Builders<DefectShareLink>.Update.Pull(x => x.DefectIds, id),
+            cancellationToken: ct);
 
         _logger.LogInformation("[{AppKey}] Defect permanently deleted: {DefectNo} by {UserId}", AppKey, defect.DefectNo, userId);
 
@@ -941,8 +1007,12 @@ public class DefectAgentController : ControllerBase
         if (defect == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "缺陷不存在"));
 
-        // 允许任何可见用户拒绝
-        if (!isAdmin && defect.ReporterId != userId && defect.AssigneeId != userId)
+        // 报告人不能驳回自己提交的缺陷（应使用撤销操作）
+        if (defect.ReporterId == userId && !isAdmin)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不能驳回自己提交的缺陷，如需取消请使用关闭功能"));
+
+        // 允许受理人或管理员拒绝
+        if (!isAdmin && defect.AssigneeId != userId)
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限拒绝"));
 
         if (string.IsNullOrWhiteSpace(request.Reason))
@@ -1177,7 +1247,7 @@ public class DefectAgentController : ControllerBase
     /// </summary>
     [HttpPost("defects/{id}/attachments")]
     [RequestSizeLimit(MaxAttachmentBytes)]
-    public async Task<IActionResult> AddAttachment(string id, [FromForm] IFormFile file, CancellationToken ct)
+    public async Task<IActionResult> AddAttachment(string id, [FromForm] IFormFile file, [FromForm] string? description, CancellationToken ct)
     {
         var userId = GetUserId();
 
@@ -1214,6 +1284,7 @@ public class DefectAgentController : ControllerBase
             FileSize = file.Length,
             MimeType = mime,
             Url = stored.Url,
+            Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim(),
             UploadedAt = DateTime.UtcNow
         };
 
@@ -1768,6 +1839,1257 @@ public class DefectAgentController : ControllerBase
 
     #endregion
 
+    #region 分享管理
+
+    /// <summary>
+    /// 创建缺陷分享链接
+    /// </summary>
+    [HttpPost("shares")]
+    public async Task<IActionResult> CreateShare([FromBody] CreateDefectShareRequest request, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var userName = GetUsername();
+
+        // 验证 scope
+        if (request.ShareScope is not (DefectShareScopeType.Single or DefectShareScopeType.Project or DefectShareScopeType.Selected))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的分享范围"));
+
+        var shareLink = new DefectShareLink
+        {
+            ShareScope = request.ShareScope,
+            Title = request.Title?.Trim(),
+            CreatedBy = userId,
+            CreatedByName = userName,
+            ExpiresAt = DateTime.UtcNow.AddDays(Math.Clamp(request.ExpiresInDays, 1, 30)),
+        };
+
+        if (request.ShareScope == DefectShareScopeType.Project)
+        {
+            if (string.IsNullOrWhiteSpace(request.ProjectId))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "按项目分享时必须指定项目"));
+
+            var project = await _db.DefectProjects.Find(x => x.Id == request.ProjectId).FirstOrDefaultAsync(ct);
+            if (project == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "项目不存在"));
+
+            shareLink.ProjectId = project.Id;
+            shareLink.ProjectName = project.Name;
+            if (string.IsNullOrWhiteSpace(shareLink.Title))
+                shareLink.Title = $"项目「{project.Name}」的缺陷分享";
+        }
+        else
+        {
+            if (request.DefectIds == null || request.DefectIds.Count == 0)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "必须指定缺陷 ID"));
+
+            if (request.ShareScope == DefectShareScopeType.Single && request.DefectIds.Count != 1)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "单个缺陷分享只能指定一个缺陷"));
+
+            // 验证所有缺陷存在且用户有权限
+            var defects = await _db.DefectReports
+                .Find(x => request.DefectIds.Contains(x.Id) && !x.IsDeleted)
+                .ToListAsync(ct);
+
+            if (defects.Count != request.DefectIds.Count)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "部分缺陷不存在"));
+
+            var isAdmin = HasManagePermission();
+            if (!isAdmin && defects.Any(d => d.ReporterId != userId && d.AssigneeId != userId))
+                return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限分享部分缺陷"));
+
+            shareLink.DefectIds = request.DefectIds;
+            if (string.IsNullOrWhiteSpace(shareLink.Title) && defects.Count == 1)
+                shareLink.Title = $"缺陷「{defects[0].Title}」的分享";
+        }
+
+        await _db.DefectShareLinks.InsertOneAsync(shareLink, cancellationToken: ct);
+
+        _logger.LogInformation("[{AppKey}] Share link created: {Token} scope={Scope} by {UserId}",
+            AppKey, shareLink.Token, shareLink.ShareScope, userId);
+
+        var shareUrl = $"/api/defect-agent/share/view/{shareLink.Token}";
+        return Ok(ApiResponse<object>.Ok(new { shareLink, shareUrl }));
+    }
+
+    /// <summary>
+    /// 列出我的分享链接
+    /// </summary>
+    [HttpGet("shares")]
+    public async Task<IActionResult> ListShares(CancellationToken ct)
+    {
+        var userId = GetUserId();
+
+        var shares = await _db.DefectShareLinks
+            .Find(x => x.CreatedBy == userId && !x.IsRevoked)
+            .SortByDescending(x => x.CreatedAt)
+            .Limit(100)
+            .ToListAsync(ct);
+
+        // 附带每个分享的报告数量
+        var shareIds = shares.Select(s => s.Id).ToList();
+        var reportCounts = new Dictionary<string, long>();
+        if (shareIds.Count > 0)
+        {
+            var reports = await _db.DefectFixReports
+                .Find(x => shareIds.Contains(x.ShareLinkId))
+                .ToListAsync(ct);
+            foreach (var group in reports.GroupBy(r => r.ShareLinkId))
+                reportCounts[group.Key] = group.Count();
+        }
+
+        var items = shares.Select(s => new
+        {
+            s.Id, s.Token, s.ShareScope, s.DefectIds, s.ProjectId, s.ProjectName,
+            s.Title, s.ViewCount, s.LastViewedAt, s.CreatedAt, s.ExpiresAt, s.IsRevoked,
+            IsExpired = s.ExpiresAt < DateTime.UtcNow,
+            ReportCount = reportCounts.GetValueOrDefault(s.Id, 0),
+            s.AiScoreStatus,
+            AiScoreCount = s.AiScores?.Count ?? 0,
+        });
+
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>
+    /// 撤销分享链接
+    /// </summary>
+    [HttpDelete("shares/{shareId}")]
+    public async Task<IActionResult> RevokeShare(string shareId, CancellationToken ct)
+    {
+        var userId = GetUserId();
+
+        var share = await _db.DefectShareLinks.Find(x => x.Id == shareId).FirstOrDefaultAsync(ct);
+        if (share == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "分享链接不存在"));
+
+        if (share.CreatedBy != userId && !HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "只有创建者可以撤销"));
+
+        await _db.DefectShareLinks.UpdateOneAsync(
+            x => x.Id == shareId,
+            Builders<DefectShareLink>.Update.Set(x => x.IsRevoked, true),
+            cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new { revoked = true }));
+    }
+
+    /// <summary>
+    /// 查看分享链接的修复报告列表
+    /// </summary>
+    [HttpGet("shares/{shareId}/reports")]
+    public async Task<IActionResult> ListFixReports(string shareId, CancellationToken ct)
+    {
+        var userId = GetUserId();
+
+        var share = await _db.DefectShareLinks.Find(x => x.Id == shareId).FirstOrDefaultAsync(ct);
+        if (share == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "分享链接不存在"));
+
+        if (share.CreatedBy != userId && !HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "只有创建者可以查看报告"));
+
+        var reports = await _db.DefectFixReports
+            .Find(x => x.ShareLinkId == shareId)
+            .SortByDescending(x => x.CreatedAt)
+            .ToListAsync(ct);
+
+        return Ok(ApiResponse<object>.Ok(new { items = reports }));
+    }
+
+    /// <summary>
+    /// 接受修复报告中的某条分析
+    /// </summary>
+    [HttpPost("shares/reports/{reportId}/items/{defectId}/accept")]
+    public async Task<IActionResult> AcceptFixItem(string reportId, string defectId,
+        [FromBody] ReviewDefectFixItemRequest request, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var userName = GetUsername();
+
+        var report = await _db.DefectFixReports.Find(x => x.Id == reportId).FirstOrDefaultAsync(ct);
+        if (report == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "报告不存在"));
+
+        // 验证权限：仅分享创建者或管理员
+        var share = await _db.DefectShareLinks.Find(x => x.Id == report.ShareLinkId).FirstOrDefaultAsync(ct);
+        if (share == null || (share.CreatedBy != userId && !HasManagePermission()))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限操作"));
+
+        var item = report.Items.FirstOrDefault(i => i.DefectId == defectId);
+        if (item == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "报告中无此缺陷"));
+
+        // 更新 item 状态
+        item.AcceptStatus = DefectFixAcceptStatus.Accepted;
+        item.ReviewedBy = userId;
+        item.ReviewedByName = userName;
+        item.ReviewedAt = DateTime.UtcNow;
+        item.ReviewNote = request.ReviewNote?.Trim();
+
+        // 重算报告总状态
+        report.Status = ComputeReportStatus(report.Items);
+
+        await _db.DefectFixReports.ReplaceOneAsync(x => x.Id == reportId, report, cancellationToken: ct);
+
+        // 可选：标记缺陷为已解决
+        DefectReport? defect = null;
+        if (request.MarkResolved)
+        {
+            defect = await _db.DefectReports.Find(x => x.Id == defectId).FirstOrDefaultAsync(ct);
+            if (defect != null && defect.Status is not (DefectStatus.Closed or DefectStatus.Resolved))
+            {
+                defect.Status = DefectStatus.Resolved;
+                defect.Resolution = item.FixSuggestion;
+                defect.ResolvedById = userId;
+                defect.ResolvedByName = userName;
+                defect.ResolvedAt = DateTime.UtcNow;
+                defect.UpdatedAt = DateTime.UtcNow;
+                await _db.DefectReports.ReplaceOneAsync(x => x.Id == defectId, defect, cancellationToken: ct);
+
+                _ = _webhookService.NotifyAsync(defect, DefectEventType.Resolved);
+            }
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { item, defect }));
+    }
+
+    /// <summary>
+    /// 拒绝修复报告中的某条分析
+    /// </summary>
+    [HttpPost("shares/reports/{reportId}/items/{defectId}/reject")]
+    public async Task<IActionResult> RejectFixItem(string reportId, string defectId,
+        [FromBody] ReviewDefectFixItemRequest request, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var userName = GetUsername();
+
+        var report = await _db.DefectFixReports.Find(x => x.Id == reportId).FirstOrDefaultAsync(ct);
+        if (report == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "报告不存在"));
+
+        var share = await _db.DefectShareLinks.Find(x => x.Id == report.ShareLinkId).FirstOrDefaultAsync(ct);
+        if (share == null || (share.CreatedBy != userId && !HasManagePermission()))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限操作"));
+
+        var item = report.Items.FirstOrDefault(i => i.DefectId == defectId);
+        if (item == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "报告中无此缺陷"));
+
+        item.AcceptStatus = DefectFixAcceptStatus.Rejected;
+        item.ReviewedBy = userId;
+        item.ReviewedByName = userName;
+        item.ReviewedAt = DateTime.UtcNow;
+        item.ReviewNote = request.ReviewNote?.Trim();
+
+        report.Status = ComputeReportStatus(report.Items);
+
+        await _db.DefectFixReports.ReplaceOneAsync(x => x.Id == reportId, report, cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new { item }));
+    }
+
+    /// <summary>
+    /// [开放平台] 外部 Agent 读取缺陷列表
+    /// </summary>
+    [Authorize(AuthenticationSchemes = "ApiKey,AiAccessKey")]
+    [HttpGet("share/view/{token}")]
+    public async Task<IActionResult> ViewShare(string token)
+    {
+        var startedAt = DateTime.UtcNow;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var appId = User.FindFirst("appId")?.Value ?? "unknown";
+        var appName = User.FindFirst("appName")?.Value;
+        var boundUserId = User.FindFirst("boundUserId")?.Value;
+
+        var share = await _db.DefectShareLinks
+            .Find(x => x.Token == token && !x.IsRevoked)
+            .FirstOrDefaultAsync(CancellationToken.None);
+
+        if (share == null)
+        {
+            await LogOpenPlatformRequestAsync(appId, startedAt, sw.ElapsedMilliseconds, "GET", 404, "DOCUMENT_NOT_FOUND", boundUserId);
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "分享链接不存在或已撤销"));
+        }
+
+        if (share.ExpiresAt < DateTime.UtcNow)
+        {
+            await LogOpenPlatformRequestAsync(appId, startedAt, sw.ElapsedMilliseconds, "GET", 410, "SHARE_EXPIRED", boundUserId);
+            return StatusCode(410, ApiResponse<object>.Fail(ErrorCodes.SHARE_EXPIRED, "分享链接已过期"));
+        }
+
+        // 更新访问计数
+        await _db.DefectShareLinks.UpdateOneAsync(
+            x => x.Id == share.Id,
+            Builders<DefectShareLink>.Update
+                .Inc(x => x.ViewCount, 1)
+                .Set(x => x.LastViewedAt, DateTime.UtcNow),
+            cancellationToken: CancellationToken.None);
+
+        // 查询缺陷
+        List<DefectReport> defects;
+        if (share.ShareScope == DefectShareScopeType.Project)
+        {
+            defects = await _db.DefectReports
+                .Find(x => x.ProjectId == share.ProjectId && !x.IsDeleted)
+                .SortByDescending(x => x.CreatedAt)
+                .Limit(200)
+                .ToListAsync(CancellationToken.None);
+        }
+        else
+        {
+            defects = await _db.DefectReports
+                .Find(x => share.DefectIds.Contains(x.Id) && !x.IsDeleted)
+                .ToListAsync(CancellationToken.None);
+        }
+
+        // 查询同一报告人的历史缺陷
+        var reporterIds = defects.Select(d => d.ReporterId).Where(r => r != null).Distinct().ToList();
+        var sharedDefectIds = new HashSet<string>(defects.Select(d => d.Id));
+
+        var historicalDefects = reporterIds.Count > 0
+            ? await _db.DefectReports
+                .Find(x => reporterIds.Contains(x.ReporterId) && !sharedDefectIds.Contains(x.Id) && !x.IsDeleted)
+                .SortByDescending(x => x.CreatedAt)
+                .Limit(50)
+                .ToListAsync(CancellationToken.None)
+            : new List<DefectReport>();
+
+        var histByReporter = historicalDefects
+            .GroupBy(d => d.ReporterId)
+            .ToDictionary(g => g.Key, g => g.Take(10).ToList());
+
+        // 查询每个缺陷的消息（评论/对话历史）
+        var defectIds = defects.Select(d => d.Id).ToList();
+        var allMessages = await _db.DefectMessages
+            .Find(x => defectIds.Contains(x.DefectId))
+            .SortBy(x => x.Seq)
+            .ToListAsync(CancellationToken.None);
+        var msgByDefect = allMessages
+            .GroupBy(m => m.DefectId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        // 构建外部 Agent 友好的响应（按重要性排序：截图 > 日志 > 描述）
+        var defectItems = defects.Select(d =>
+        {
+            // 附件分类：截图、日志、普通文件
+            var screenshots = d.Attachments?
+                .Where(a => a.Type == DefectAttachmentType.Screenshot || (a.MimeType?.StartsWith("image/") ?? false))
+                .Select(a => new { a.FileName, a.Url, a.MimeType, a.Type, a.Description,
+                    hint = a.Description != null
+                        ? "已有 AI 图片分析描述，请结合描述和图片链接理解问题"
+                        : "此截图暂无 AI 描述，如有视觉能力请查看图片 URL" })
+                .ToList() ?? new();
+            var logs = d.Attachments?
+                .Where(a => a.Type == DefectAttachmentType.LogRequest || a.Type == DefectAttachmentType.LogError)
+                .Select(a => new { a.FileName, a.Url, a.MimeType, a.Type, a.Description,
+                    hint = "请下载并分析此日志文件，日志包含精确的错误信息" })
+                .ToList() ?? new();
+            var otherFiles = d.Attachments?
+                .Where(a => a.Type == DefectAttachmentType.File && !(a.MimeType?.StartsWith("image/") ?? false))
+                .Select(a => new { a.FileName, a.Url, a.MimeType, a.Type, a.Description, hint = (string?)null })
+                .ToList() ?? new();
+
+            // 消息历史
+            var messages = msgByDefect.GetValueOrDefault(d.Id)?
+                .Select(m => new { m.Role, m.UserName, m.Content, m.Source, m.AgentName, m.CreatedAt })
+                .ToList();
+
+            return new
+            {
+                d.Id, d.DefectNo, d.Title, d.RawContent, d.StructuredData,
+                d.Status, d.Severity, d.Priority,
+                d.ReporterName, d.ProjectName, d.TeamName,
+                // 按重要性分组的附件
+                screenshots,
+                logs,
+                otherFiles,
+                // 消息历史（用于了解上下文）
+                messages,
+                d.CreatedAt, d.UpdatedAt,
+                HistoricalDefectsFromReporter = histByReporter.GetValueOrDefault(d.ReporterId)?
+                    .Select(h => new { h.Id, h.DefectNo, h.Title, h.RawContent, h.Status, h.Severity, h.CreatedAt })
+                    ?? Enumerable.Empty<object>(),
+            };
+        });
+
+        await LogOpenPlatformRequestAsync(appId, startedAt, sw.ElapsedMilliseconds, "GET", 200, null, boundUserId);
+
+        var baseUrl = ResolveBaseUrl();
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            // 基本信息
+            shareInfo = new { share.Title, share.ShareScope, share.ExpiresAt, share.CreatedByName },
+            defects = defectItems,
+
+            // AI 评分（如果有）
+            aiScores = share.AiScores,
+            aiScoreStatus = share.AiScoreStatus,
+
+            // LLM Agent 操作指引
+            agentInstructions = new
+            {
+                description = "缺陷分享 API：读取缺陷、查看截图和日志、发表评论、提交报告、标记修复。",
+                importantNotes = new[]
+                {
+                    "【截图最重要】每个缺陷的 screenshots 数组包含截图 URL 和 AI 图片分析描述(description 字段)，description 是 AI Vision 对截图的解析结果，请仔细阅读。图片 URL 也可以直接访问查看",
+                    "【日志很重要】logs 数组包含请求日志和错误日志的 URL，请下载并分析日志中的精确错误信息和调用堆栈",
+                    "【描述辅助参考】rawContent 和 structuredData 是用户文字描述，结合截图描述和日志一起理解问题全貌",
+                    "【消息历史】messages 数组包含该缺陷的对话历史，可能包含补充说明、之前的讨论或其他 AI 的评论",
+                    "【分析优先级】截图描述 > 日志 > 对话历史 > 文字描述。请按此优先级分析缺陷",
+                },
+                endpoints = new
+                {
+                    postComment = new
+                    {
+                        method = "POST",
+                        url = $"{baseUrl}/api/defect-agent/share/view/{token}/comments",
+                        description = "在缺陷对话中发表评论（修复计划、进度、验收方式等），评论会自动标记为 AI 来源",
+                        bodySchema = new
+                        {
+                            agentName = "你的名称",
+                            items = new[]
+                            {
+                                new
+                                {
+                                    defectId = "缺陷ID",
+                                    content = "评论内容（支持 Markdown）",
+                                }
+                            },
+                        },
+                    },
+                    submitFixReport = new
+                    {
+                        method = "POST",
+                        url = $"{baseUrl}/api/defect-agent/share/view/{token}/report",
+                        description = "提交缺陷分析报告（根因分析和修复建议）",
+                        bodySchema = new
+                        {
+                            agentName = "你的名称",
+                            items = new[]
+                            {
+                                new
+                                {
+                                    defectId = "缺陷ID（从 defects 列表获取）",
+                                    confidenceScore = "可信度 0-100",
+                                    analysis = "根因分析",
+                                    fixSuggestion = "修复建议",
+                                }
+                            },
+                        },
+                    },
+                    updateFixStatus = new
+                    {
+                        method = "POST",
+                        url = $"{baseUrl}/api/defect-agent/share/view/{token}/fix-status",
+                        description = "修复完成后标记缺陷为已解决（自动标记为 AI 解决），会通知缺陷提交者",
+                        bodySchema = new
+                        {
+                            items = new[]
+                            {
+                                new
+                                {
+                                    defectId = "缺陷ID",
+                                    agentName = "你的名称",
+                                    resolution = "修复说明（必须包含验收方式）",
+                                }
+                            },
+                        },
+                    },
+                },
+                workflow = "必须按此顺序：1) 查看截图和日志（最重要） → 2) 列出修复清单（有争议的先和人确认） → 3) 发评论说明计划 → 4) 执行修复 → 5) 发评论说明验收方式 → 6) 标记完成",
+            },
+        }));
+    }
+
+    /// <summary>
+    /// [开放平台] 外部 Agent 提交修复报告
+    /// </summary>
+    [Authorize(AuthenticationSchemes = "ApiKey,AiAccessKey")]
+    [HttpPost("share/view/{token}/report")]
+    public async Task<IActionResult> SubmitFixReport(string token, [FromBody] SubmitDefectFixReportRequest request)
+    {
+        var startedAt = DateTime.UtcNow;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var appId = User.FindFirst("appId")?.Value ?? "unknown";
+        var appName = User.FindFirst("appName")?.Value;
+        var boundUserId = User.FindFirst("boundUserId")?.Value;
+
+        var share = await _db.DefectShareLinks
+            .Find(x => x.Token == token && !x.IsRevoked)
+            .FirstOrDefaultAsync(CancellationToken.None);
+
+        if (share == null)
+        {
+            await LogOpenPlatformRequestAsync(appId, startedAt, sw.ElapsedMilliseconds, "POST", 404, "DOCUMENT_NOT_FOUND", boundUserId);
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "分享链接不存在或已撤销"));
+        }
+
+        if (share.ExpiresAt < DateTime.UtcNow)
+        {
+            await LogOpenPlatformRequestAsync(appId, startedAt, sw.ElapsedMilliseconds, "POST", 410, "SHARE_EXPIRED", boundUserId);
+            return StatusCode(410, ApiResponse<object>.Fail(ErrorCodes.SHARE_EXPIRED, "分享链接已过期"));
+        }
+
+        if (request.Items == null || request.Items.Count == 0)
+        {
+            await LogOpenPlatformRequestAsync(appId, startedAt, sw.ElapsedMilliseconds, "POST", 400, "INVALID_FORMAT", boundUserId);
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "报告条目不能为空"));
+        }
+
+        // 获取分享范围内的有效缺陷 ID
+        HashSet<string> validDefectIds;
+        if (share.ShareScope == DefectShareScopeType.Project)
+        {
+            var projectDefects = await _db.DefectReports
+                .Find(x => x.ProjectId == share.ProjectId && !x.IsDeleted)
+                .Project(x => x.Id)
+                .ToListAsync(CancellationToken.None);
+            validDefectIds = new HashSet<string>(projectDefects);
+        }
+        else
+        {
+            validDefectIds = new HashSet<string>(share.DefectIds);
+        }
+
+        // 验证所有条目的缺陷 ID 在范围内
+        var invalidIds = request.Items.Where(i => !validDefectIds.Contains(i.DefectId)).Select(i => i.DefectId).ToList();
+        if (invalidIds.Count > 0)
+        {
+            await LogOpenPlatformRequestAsync(appId, startedAt, sw.ElapsedMilliseconds, "POST", 400, "INVALID_FORMAT", boundUserId);
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"以下缺陷 ID 不在分享范围内: {string.Join(", ", invalidIds)}"));
+        }
+
+        // 查询缺陷信息用于冗余
+        var defectIds = request.Items.Select(i => i.DefectId).ToList();
+        var defects = await _db.DefectReports
+            .Find(x => defectIds.Contains(x.Id))
+            .ToListAsync(CancellationToken.None);
+        var defectMap = defects.ToDictionary(d => d.Id);
+
+        var report = new DefectFixReport
+        {
+            ShareLinkId = share.Id,
+            ShareToken = share.Token,
+            AgentName = request.AgentName?.Trim() ?? appName,
+            AgentIdentifier = appId,
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString(),
+            UserAgent = Request.Headers.UserAgent.ToString(),
+            Items = request.Items.Select(i => new DefectFixReportItem
+            {
+                DefectId = i.DefectId,
+                DefectNo = defectMap.GetValueOrDefault(i.DefectId)?.DefectNo,
+                DefectTitle = defectMap.GetValueOrDefault(i.DefectId)?.Title,
+                ConfidenceScore = Math.Clamp(i.ConfidenceScore, 0, 100),
+                Analysis = i.Analysis?.Trim(),
+                FixSuggestion = i.FixSuggestion?.Trim(),
+            }).ToList(),
+        };
+
+        await _db.DefectFixReports.InsertOneAsync(report, cancellationToken: CancellationToken.None);
+
+        // 创建通知
+        var notification = new AdminNotification
+        {
+            Key = $"defect-fix-report:{report.Id}",
+            TargetUserId = share.CreatedBy,
+            Title = "收到缺陷分析报告",
+            Message = $"外部 Agent「{report.AgentName ?? "未知"}」提交了 {report.Items.Count} 个缺陷的分析报告",
+            Level = "info",
+            ActionLabel = "查看报告",
+            ActionUrl = $"/defect-agent?shareId={share.Id}",
+            ActionKind = "navigate",
+            Source = "defect-agent",
+            ExpiresAt = DateTime.UtcNow.AddDays(7),
+        };
+        await _db.AdminNotifications.InsertOneAsync(notification, cancellationToken: CancellationToken.None);
+
+        _logger.LogInformation("[{AppKey}] Fix report submitted: {ReportId} for share {Token}, {Count} items, appId={AppId}",
+            AppKey, report.Id, token, report.Items.Count, appId);
+
+        await LogOpenPlatformRequestAsync(appId, startedAt, sw.ElapsedMilliseconds, "POST", 200, null, boundUserId);
+
+        return Ok(ApiResponse<object>.Ok(new { reportId = report.Id, itemCount = report.Items.Count }));
+    }
+
+    private static string ComputeReportStatus(List<DefectFixReportItem> items)
+    {
+        if (items.All(i => i.AcceptStatus != DefectFixAcceptStatus.Pending))
+            return DefectFixReportStatus.Completed;
+        if (items.Any(i => i.AcceptStatus != DefectFixAcceptStatus.Pending))
+            return DefectFixReportStatus.Partial;
+        return DefectFixReportStatus.Pending;
+    }
+
+    /// <summary>
+    /// 记录开放平台请求日志（分享端点专用）
+    /// </summary>
+    private async Task LogOpenPlatformRequestAsync(
+        string appId, DateTime startedAt, long durationMs,
+        string method, int statusCode, string? errorCode, string? userId)
+    {
+        try
+        {
+            var path = Request.Path.Value ?? "";
+            var query = Request.QueryString.HasValue ? Request.QueryString.Value : null;
+            var log = new OpenPlatformRequestLog
+            {
+                AppId = appId,
+                RequestId = System.Diagnostics.Activity.Current?.Id ?? Guid.NewGuid().ToString("N")[..8],
+                StartedAt = startedAt,
+                EndedAt = DateTime.UtcNow,
+                DurationMs = durationMs,
+                Method = method,
+                Path = path,
+                Query = query,
+                AbsoluteUrl = $"{Request.ResolveServerUrl(_config)}{path}{query ?? ""}",
+                RequestBodyRedacted = "[redacted]",
+                StatusCode = statusCode,
+                ErrorCode = errorCode,
+                UserId = userId,
+                ClientIp = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                UserAgent = Request.Headers.UserAgent.ToString(),
+                ClientType = Request.Headers["X-Client"].ToString() is { Length: > 0 } ct ? ct : "agent",
+                ClientId = Request.Headers["X-Client-Id"].ToString() is { Length: > 0 } ci ? ci : null,
+            };
+            await _openPlatformService.LogRequestAsync(log);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to log open platform request for appId={AppId}", appId);
+        }
+    }
+
+    /// <summary>
+    /// 一键分享所有缺陷（批量分享，评分通过 SSE stream 获取）
+    /// </summary>
+    [HttpPost("shares/batch")]
+    public async Task<IActionResult> CreateBatchShareWithScoring([FromBody] CreateBatchShareRequest request, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var userName = GetUsername();
+
+        // 查询缺陷
+        List<DefectReport> defects;
+        string title;
+
+        if (!string.IsNullOrWhiteSpace(request.ProjectId))
+        {
+            var project = await _db.DefectProjects.Find(x => x.Id == request.ProjectId).FirstOrDefaultAsync(ct);
+            if (project == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "项目不存在"));
+
+            defects = await _db.DefectReports
+                .Find(x => x.ProjectId == request.ProjectId && !x.IsDeleted)
+                .SortByDescending(x => x.CreatedAt)
+                .Limit(200)
+                .ToListAsync(ct);
+
+            title = $"项目「{project.Name}」全部缺陷分享（AI 评分）";
+        }
+        else if (!string.IsNullOrWhiteSpace(request.FolderId))
+        {
+            defects = await _db.DefectReports
+                .Find(x => x.FolderId == request.FolderId && !x.IsDeleted)
+                .SortByDescending(x => x.CreatedAt)
+                .Limit(200)
+                .ToListAsync(ct);
+
+            title = request.Title?.Trim() ?? "缺陷批量分享（AI 评分）";
+        }
+        else
+        {
+            // 分享当前用户能看到的所有缺陷
+            var isAdmin = HasManagePermission();
+            var filter = isAdmin
+                ? Builders<DefectReport>.Filter.Where(x => !x.IsDeleted)
+                : Builders<DefectReport>.Filter.Where(x => !x.IsDeleted && (x.ReporterId == userId || x.AssigneeId == userId));
+
+            defects = await _db.DefectReports
+                .Find(filter)
+                .SortByDescending(x => x.CreatedAt)
+                .Limit(200)
+                .ToListAsync(ct);
+
+            title = request.Title?.Trim() ?? "全部缺陷分享（AI 评分）";
+        }
+
+        if (defects.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "没有可分享的缺陷"));
+
+        // 创建分享链接（评分状态为 pending，由 SSE stream 端点触发评分）
+        var shareLink = new DefectShareLink
+        {
+            ShareScope = DefectShareScopeType.Selected,
+            DefectIds = defects.Select(d => d.Id).ToList(),
+            ProjectId = request.ProjectId,
+            Title = title,
+            CreatedBy = userId,
+            CreatedByName = userName,
+            ExpiresAt = DateTime.UtcNow.AddDays(Math.Clamp(request.ExpiresInDays, 1, 30)),
+            AiScoreStatus = AiScoreStatusType.None,
+        };
+
+        await _db.DefectShareLinks.InsertOneAsync(shareLink, cancellationToken: ct);
+
+        _logger.LogInformation("[{AppKey}] Batch share created: {Token} with {Count} defects",
+            AppKey, shareLink.Token, defects.Count);
+
+        var shareUrl = $"/api/defect-agent/share/view/{shareLink.Token}";
+        return Ok(ApiResponse<object>.Ok(new { shareLink, shareUrl }));
+    }
+
+    /// <summary>
+    /// 获取分享的 AI 评分结果（非流式，已完成时用）
+    /// </summary>
+    [HttpGet("shares/{shareId}/scores")]
+    public async Task<IActionResult> GetShareScores(string shareId, CancellationToken ct)
+    {
+        var userId = GetUserId();
+
+        var share = await _db.DefectShareLinks.Find(x => x.Id == shareId).FirstOrDefaultAsync(ct);
+        if (share == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "分享链接不存在"));
+
+        if (share.CreatedBy != userId && !HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限查看"));
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            share.AiScoreStatus,
+            scores = share.AiScores ?? new List<DefectAiScoreItem>(),
+        }));
+    }
+
+    /// <summary>
+    /// AI 评分 SSE 流 — 实时推送评分过程和结果
+    /// </summary>
+    [HttpGet("shares/{shareId}/scores/stream")]
+    [Produces("text/event-stream")]
+    public async Task StreamScores(string shareId, CancellationToken cancellationToken)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers.Connection = "keep-alive";
+
+        var userId = GetUserId();
+
+        var share = await _db.DefectShareLinks.Find(x => x.Id == shareId).FirstOrDefaultAsync(CancellationToken.None);
+        if (share == null)
+        {
+            await WriteSseEventAsync("error", new { message = "分享链接不存在" });
+            return;
+        }
+
+        if (share.CreatedBy != userId && !HasManagePermission())
+        {
+            await WriteSseEventAsync("error", new { message = "无权限" });
+            return;
+        }
+
+        // 如果已完成，直接返回结果
+        if (share.AiScoreStatus == AiScoreStatusType.Completed && share.AiScores != null)
+        {
+            await WriteSseEventAsync("phase", new { phase = "completed", message = "评分已完成" });
+            foreach (var score in share.AiScores)
+                await WriteSseEventAsync("score", score);
+            await WriteSseEventAsync("done", new { total = share.AiScores.Count });
+            return;
+        }
+
+        // 标记为评分中
+        await _db.DefectShareLinks.UpdateOneAsync(
+            x => x.Id == shareId,
+            Builders<DefectShareLink>.Update.Set(x => x.AiScoreStatus, AiScoreStatusType.Scoring),
+            cancellationToken: CancellationToken.None);
+
+        // 查询缺陷
+        var defects = await _db.DefectReports
+            .Find(x => share.DefectIds.Contains(x.Id) && !x.IsDeleted)
+            .ToListAsync(CancellationToken.None);
+
+        await WriteSseEventAsync("phase", new { phase = "preparing", message = $"准备评分 {defects.Count} 个缺陷…" });
+
+        // 构建评分 prompt
+        var defectSummaries = defects.Select((d, i) => new
+        {
+            index = i + 1,
+            id = d.Id,
+            defectNo = d.DefectNo,
+            title = d.Title,
+            content = d.RawContent?.Length > 500 ? d.RawContent[..500] : d.RawContent,
+            severity = d.Severity,
+            priority = d.Priority,
+            status = d.Status,
+            hasAttachments = d.Attachments?.Count > 0,
+        });
+
+        var systemPrompt = """
+            你是缺陷评分专家。请对以下缺陷列表进行评分，每个缺陷需要从四个维度打分（1-10分）：
+            1. severityScore（严重程度）：缺陷对系统功能的影响程度
+            2. difficultyScore（修复难度）：预估修复所需工作量和技术复杂度
+            3. impactScore（影响范围）：受影响的用户数量和业务流程范围
+            4. overallScore（综合优先级）：综合以上因素的修复优先级
+
+            请严格返回 JSON 数组格式，每个元素包含：id, severityScore, difficultyScore, impactScore, overallScore, reason
+            不要返回任何其他文字，只返回 JSON 数组。
+            """;
+
+        var userMessage = JsonSerializer.Serialize(defectSummaries, new JsonSerializerOptions { WriteIndented = true });
+
+        var gatewayRequest = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.DefectAgent.Scoring.Chat,
+            ModelType = ModelTypes.Chat,
+            Stream = true,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                    new JsonObject { ["role"] = "user", ["content"] = userMessage }
+                },
+                ["temperature"] = 0.3,
+                ["max_tokens"] = 4000,
+            },
+        };
+
+        await WriteSseEventAsync("phase", new { phase = "scoring", message = "AI 正在分析缺陷…" });
+
+        var fullContent = new StringBuilder();
+        var defectMap = defects.ToDictionary(d => d.Id);
+        var emittedScores = new List<DefectAiScoreItem>();
+        var lastFlushLen = 0;
+
+        try
+        {
+            await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
+            {
+                if (cancellationToken.IsCancellationRequested)
+                    break; // 客户端断开，但继续处理（服务器权威）
+
+                if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    fullContent.Append(chunk.Content);
+
+                    // 推送打字效果
+                    try
+                    {
+                        await WriteSseEventAsync("typing", new { text = chunk.Content });
+                    }
+                    catch (ObjectDisposedException) { /* 客户端断开 */ }
+                    catch (OperationCanceledException) { /* 客户端断开 */ }
+
+                    // 尝试增量解析已完成的 JSON 对象
+                    var currentContent = fullContent.ToString();
+                    if (currentContent.Length - lastFlushLen > 50)
+                    {
+                        var newScores = TryParseIncrementalScores(currentContent, defectMap, emittedScores);
+                        if (newScores.Count > 0)
+                        {
+                            foreach (var score in newScores)
+                            {
+                                emittedScores.Add(score);
+                                try
+                                {
+                                    await WriteSseEventAsync("score", score);
+                                }
+                                catch (ObjectDisposedException) { }
+                                catch (OperationCanceledException) { }
+                            }
+                            lastFlushLen = currentContent.Length;
+                        }
+                    }
+                }
+                else if (chunk.Type == GatewayChunkType.Error)
+                {
+                    _logger.LogWarning("AI scoring stream error for share {ShareId}: {Error}", shareId, chunk.Content);
+                    try { await WriteSseEventAsync("error", new { message = "AI 评分出错", detail = chunk.Content }); }
+                    catch { /* ignore */ }
+                    await _db.DefectShareLinks.UpdateOneAsync(
+                        x => x.Id == shareId,
+                        Builders<DefectShareLink>.Update.Set(x => x.AiScoreStatus, AiScoreStatusType.Failed),
+                        cancellationToken: CancellationToken.None);
+                    return;
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "AI scoring stream exception for share {ShareId}", shareId);
+            try { await WriteSseEventAsync("error", new { message = "AI 评分失败", detail = ex.Message }); }
+            catch { /* ignore */ }
+            await _db.DefectShareLinks.UpdateOneAsync(
+                x => x.Id == shareId,
+                Builders<DefectShareLink>.Update.Set(x => x.AiScoreStatus, AiScoreStatusType.Failed),
+                cancellationToken: CancellationToken.None);
+            return;
+        }
+
+        // 最终解析：确保所有结果都被解析
+        var finalContent = fullContent.ToString().Trim();
+        if (finalContent.StartsWith("```"))
+        {
+            var firstNewLine = finalContent.IndexOf('\n');
+            var lastBacktick = finalContent.LastIndexOf("```");
+            if (firstNewLine > 0 && lastBacktick > firstNewLine)
+                finalContent = finalContent[(firstNewLine + 1)..lastBacktick].Trim();
+        }
+
+        try
+        {
+            var emittedIds = new HashSet<string>(emittedScores.Select(s => s.DefectId));
+            using var doc = JsonDocument.Parse(finalContent);
+            foreach (var item in doc.RootElement.EnumerateArray())
+            {
+                var id = item.GetProperty("id").GetString() ?? "";
+                if (!defectMap.TryGetValue(id, out var defect)) continue;
+                if (emittedIds.Contains(id)) continue;
+
+                var score = new DefectAiScoreItem
+                {
+                    DefectId = id,
+                    DefectNo = defect.DefectNo,
+                    DefectTitle = defect.Title,
+                    SeverityScore = item.TryGetProperty("severityScore", out var ss) ? ss.GetInt32() : 0,
+                    DifficultyScore = item.TryGetProperty("difficultyScore", out var ds) ? ds.GetInt32() : 0,
+                    ImpactScore = item.TryGetProperty("impactScore", out var isc) ? isc.GetInt32() : 0,
+                    OverallScore = item.TryGetProperty("overallScore", out var os) ? os.GetInt32() : 0,
+                    Reason = item.TryGetProperty("reason", out var r) ? r.GetString() : null,
+                };
+                emittedScores.Add(score);
+                try { await WriteSseEventAsync("score", score); }
+                catch { /* ignore */ }
+            }
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "Failed to parse final AI scoring response for share {ShareId}", shareId);
+        }
+
+        // 按综合评分排序并保存
+        var allScores = emittedScores.OrderByDescending(s => s.OverallScore).ToList();
+
+        await _db.DefectShareLinks.UpdateOneAsync(
+            x => x.Id == shareId,
+            Builders<DefectShareLink>.Update
+                .Set(x => x.AiScores, allScores)
+                .Set(x => x.AiScoreStatus, AiScoreStatusType.Completed),
+            cancellationToken: CancellationToken.None);
+
+        try
+        {
+            await WriteSseEventAsync("phase", new { phase = "completed", message = "评分完成" });
+            await WriteSseEventAsync("done", new { total = allScores.Count });
+        }
+        catch { /* 客户端可能已断开 */ }
+
+        _logger.LogInformation("[{AppKey}] AI scoring completed via SSE for share {ShareId}, {Count} defects scored",
+            AppKey, shareId, allScores.Count);
+    }
+
+    /// <summary>
+    /// 写入 SSE 事件
+    /// </summary>
+    private async Task WriteSseEventAsync(string eventType, object data)
+    {
+        var json = JsonSerializer.Serialize(data, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        });
+        await Response.WriteAsync($"event: {eventType}\ndata: {json}\n\n");
+        await Response.Body.FlushAsync();
+    }
+
+    /// <summary>
+    /// 增量解析流式 JSON 中已完成的评分对象
+    /// </summary>
+    private static List<DefectAiScoreItem> TryParseIncrementalScores(
+        string content, Dictionary<string, DefectReport> defectMap, List<DefectAiScoreItem> alreadyEmitted)
+    {
+        var results = new List<DefectAiScoreItem>();
+        var emittedIds = new HashSet<string>(alreadyEmitted.Select(s => s.DefectId));
+
+        // 寻找已完成的 JSON 对象（以 } 结束，后跟 , 或 ]）
+        var cleaned = content.Trim();
+        if (cleaned.StartsWith("```"))
+        {
+            var nl = cleaned.IndexOf('\n');
+            if (nl > 0) cleaned = cleaned[(nl + 1)..];
+        }
+        if (cleaned.StartsWith('[')) cleaned = cleaned[1..];
+
+        // 逐个提取 {...} 块
+        var depth = 0;
+        var objStart = -1;
+        for (var i = 0; i < cleaned.Length; i++)
+        {
+            if (cleaned[i] == '{') { if (depth == 0) objStart = i; depth++; }
+            else if (cleaned[i] == '}') { depth--; if (depth == 0 && objStart >= 0)
+            {
+                var objStr = cleaned[objStart..(i + 1)];
+                objStart = -1;
+                try
+                {
+                    using var doc = JsonDocument.Parse(objStr);
+                    var item = doc.RootElement;
+                    var id = item.TryGetProperty("id", out var idProp) ? idProp.GetString() ?? "" : "";
+                    if (!string.IsNullOrEmpty(id) && !emittedIds.Contains(id) && defectMap.TryGetValue(id, out var defect))
+                    {
+                        results.Add(new DefectAiScoreItem
+                        {
+                            DefectId = id,
+                            DefectNo = defect.DefectNo,
+                            DefectTitle = defect.Title,
+                            SeverityScore = item.TryGetProperty("severityScore", out var ss) ? ss.GetInt32() : 0,
+                            DifficultyScore = item.TryGetProperty("difficultyScore", out var ds) ? ds.GetInt32() : 0,
+                            ImpactScore = item.TryGetProperty("impactScore", out var isc) ? isc.GetInt32() : 0,
+                            OverallScore = item.TryGetProperty("overallScore", out var os) ? os.GetInt32() : 0,
+                            Reason = item.TryGetProperty("reason", out var r) ? r.GetString() : null,
+                        });
+                        emittedIds.Add(id);
+                    }
+                }
+                catch { /* 不完整的 JSON，跳过 */ }
+            }}
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// [开放平台] 外部 AI Agent 标记缺陷修复状态
+    /// </summary>
+    [Authorize(AuthenticationSchemes = "ApiKey,AiAccessKey")]
+    [HttpPost("share/view/{token}/fix-status")]
+    public async Task<IActionResult> UpdateFixStatus(string token, [FromBody] UpdateDefectFixStatusRequest request)
+    {
+        var startedAt = DateTime.UtcNow;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var appId = User.FindFirst("appId")?.Value ?? "unknown";
+        var appName = User.FindFirst("appName")?.Value;
+        var boundUserId = User.FindFirst("boundUserId")?.Value;
+
+        var share = await _db.DefectShareLinks
+            .Find(x => x.Token == token && !x.IsRevoked)
+            .FirstOrDefaultAsync(CancellationToken.None);
+
+        if (share == null)
+        {
+            await LogOpenPlatformRequestAsync(appId, startedAt, sw.ElapsedMilliseconds, "POST", 404, "DOCUMENT_NOT_FOUND", boundUserId);
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "分享链接不存在或已撤销"));
+        }
+
+        if (share.ExpiresAt < DateTime.UtcNow)
+        {
+            await LogOpenPlatformRequestAsync(appId, startedAt, sw.ElapsedMilliseconds, "POST", 410, "SHARE_EXPIRED", boundUserId);
+            return StatusCode(410, ApiResponse<object>.Fail(ErrorCodes.SHARE_EXPIRED, "分享链接已过期"));
+        }
+
+        if (request.Items == null || request.Items.Count == 0)
+        {
+            await LogOpenPlatformRequestAsync(appId, startedAt, sw.ElapsedMilliseconds, "POST", 400, "INVALID_FORMAT", boundUserId);
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "修复状态条目不能为空"));
+        }
+
+        // 验证缺陷在分享范围内
+        HashSet<string> validDefectIds;
+        if (share.ShareScope == DefectShareScopeType.Project)
+        {
+            var projectDefects = await _db.DefectReports
+                .Find(x => x.ProjectId == share.ProjectId && !x.IsDeleted)
+                .Project(x => x.Id)
+                .ToListAsync(CancellationToken.None);
+            validDefectIds = new HashSet<string>(projectDefects);
+        }
+        else
+        {
+            validDefectIds = new HashSet<string>(share.DefectIds);
+        }
+
+        var results = new List<object>();
+
+        foreach (var item in request.Items)
+        {
+            if (!validDefectIds.Contains(item.DefectId))
+            {
+                results.Add(new { item.DefectId, success = false, error = "缺陷不在分享范围内" });
+                continue;
+            }
+
+            var defect = await _db.DefectReports.Find(x => x.Id == item.DefectId).FirstOrDefaultAsync(CancellationToken.None);
+            if (defect == null)
+            {
+                results.Add(new { item.DefectId, success = false, error = "缺陷不存在" });
+                continue;
+            }
+
+            // 更新缺陷状态
+            var resolvedByAgent = item.AgentName?.Trim() ?? appName ?? "AI Agent";
+            var update = Builders<DefectReport>.Update
+                .Set(x => x.Status, DefectStatus.Resolved)
+                .Set(x => x.Resolution, item.Resolution?.Trim() ?? "AI Agent 自动修复")
+                .Set(x => x.ResolvedAt, DateTime.UtcNow)
+                .Set(x => x.IsAiResolved, true)
+                .Set(x => x.ResolvedByAgentName, resolvedByAgent)
+                .Set(x => x.ResolvedByName, resolvedByAgent)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+            await _db.DefectReports.UpdateOneAsync(
+                x => x.Id == item.DefectId,
+                update,
+                cancellationToken: CancellationToken.None);
+
+            // 通知缺陷报告人
+            var notification = new AdminNotification
+            {
+                Key = $"defect-ai-fixed:{item.DefectId}:{appId}",
+                TargetUserId = defect.ReporterId,
+                Title = "缺陷已由 AI 修复",
+                Message = $"缺陷「{defect.Title}」已由外部 AI Agent「{resolvedByAgent}」标记为已修复：{item.Resolution?.Trim() ?? "AI Agent 自动修复"}",
+                Level = "success",
+                ActionLabel = "查看缺陷",
+                ActionUrl = $"/defect-agent?defectId={item.DefectId}",
+                ActionKind = "navigate",
+                Source = "defect-agent",
+                ExpiresAt = DateTime.UtcNow.AddDays(7),
+            };
+            await _db.AdminNotifications.InsertOneAsync(notification, cancellationToken: CancellationToken.None);
+
+            // Webhook 通知
+            defect.Status = DefectStatus.Resolved;
+            defect.Resolution = item.Resolution?.Trim() ?? "AI Agent 自动修复";
+            _ = _webhookService.NotifyAsync(defect, DefectEventType.Resolved);
+
+            results.Add(new { item.DefectId, success = true });
+        }
+
+        _logger.LogInformation("[{AppKey}] Fix status updated via token {Token}, {Count} items, appId={AppId}",
+            AppKey, token, request.Items.Count, appId);
+
+        await LogOpenPlatformRequestAsync(appId, startedAt, sw.ElapsedMilliseconds, "POST", 200, null, boundUserId);
+
+        return Ok(ApiResponse<object>.Ok(new { results }));
+    }
+
+    // ScoreDefectsAsync 已被 SSE 流式端点 StreamScores 替代
+
+    /// <summary>
+    /// [开放平台] 外部 AI Agent 发表评论（在缺陷对话中留言）
+    /// </summary>
+    [Authorize(AuthenticationSchemes = "ApiKey,AiAccessKey")]
+    [HttpPost("share/view/{token}/comments")]
+    public async Task<IActionResult> AiComment(string token, [FromBody] AiCommentRequest request)
+    {
+        var startedAt = DateTime.UtcNow;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var appId = User.FindFirst("appId")?.Value ?? "unknown";
+        var boundUserId = User.FindFirst("boundUserId")?.Value;
+
+        var share = await _db.DefectShareLinks
+            .Find(x => x.Token == token && !x.IsRevoked)
+            .FirstOrDefaultAsync(CancellationToken.None);
+
+        if (share == null)
+        {
+            await LogOpenPlatformRequestAsync(appId, startedAt, sw.ElapsedMilliseconds, "POST", 404, "DOCUMENT_NOT_FOUND", boundUserId);
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "分享链接不存在或已撤销"));
+        }
+
+        if (share.ExpiresAt < DateTime.UtcNow)
+        {
+            await LogOpenPlatformRequestAsync(appId, startedAt, sw.ElapsedMilliseconds, "POST", 410, "SHARE_EXPIRED", boundUserId);
+            return StatusCode(410, ApiResponse<object>.Fail(ErrorCodes.SHARE_EXPIRED, "分享链接已过期"));
+        }
+
+        if (request.Items == null || request.Items.Count == 0)
+        {
+            await LogOpenPlatformRequestAsync(appId, startedAt, sw.ElapsedMilliseconds, "POST", 400, "INVALID_FORMAT", boundUserId);
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "评论条目不能为空"));
+        }
+
+        // 验证缺陷在分享范围内
+        HashSet<string> validDefectIds;
+        if (share.ShareScope == DefectShareScopeType.Project)
+        {
+            var projectDefects = await _db.DefectReports
+                .Find(x => x.ProjectId == share.ProjectId && !x.IsDeleted)
+                .Project(x => x.Id)
+                .ToListAsync(CancellationToken.None);
+            validDefectIds = new HashSet<string>(projectDefects);
+        }
+        else
+        {
+            validDefectIds = new HashSet<string>(share.DefectIds);
+        }
+
+        var agentName = request.AgentName?.Trim() ?? "AI Agent";
+        var results = new List<object>();
+
+        foreach (var item in request.Items)
+        {
+            if (string.IsNullOrWhiteSpace(item.Content))
+            {
+                results.Add(new { item.DefectId, success = false, error = "评论内容不能为空" });
+                continue;
+            }
+
+            if (!validDefectIds.Contains(item.DefectId))
+            {
+                results.Add(new { item.DefectId, success = false, error = "缺陷不在分享范围内" });
+                continue;
+            }
+
+            var defect = await _db.DefectReports.Find(x => x.Id == item.DefectId).FirstOrDefaultAsync(CancellationToken.None);
+            if (defect == null)
+            {
+                results.Add(new { item.DefectId, success = false, error = "缺陷不存在" });
+                continue;
+            }
+
+            // 获取当前最大 seq
+            var maxSeq = await _db.DefectMessages
+                .Find(x => x.DefectId == item.DefectId)
+                .SortByDescending(x => x.Seq)
+                .Project(x => x.Seq)
+                .FirstOrDefaultAsync(CancellationToken.None);
+
+            var message = new DefectMessage
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                DefectId = item.DefectId,
+                Seq = maxSeq + 1,
+                Role = DefectMessageRole.User,
+                UserName = agentName,
+                Content = item.Content.Trim(),
+                Source = DefectMessageSource.Ai,
+                AgentName = agentName,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            await _db.DefectMessages.InsertOneAsync(message, cancellationToken: CancellationToken.None);
+
+            // 标记报告人未读
+            await _db.DefectReports.UpdateOneAsync(
+                x => x.Id == item.DefectId,
+                Builders<DefectReport>.Update
+                    .Set(x => x.ReporterUnread, true)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: CancellationToken.None);
+
+            results.Add(new { item.DefectId, success = true, messageId = message.Id });
+        }
+
+        _logger.LogInformation("[{AppKey}] AI comment via token {Token}, agent={Agent}, {Count} items, appId={AppId}",
+            AppKey, token, agentName, request.Items.Count, appId);
+
+        await LogOpenPlatformRequestAsync(appId, startedAt, sw.ElapsedMilliseconds, "POST", 200, null, boundUserId);
+
+        return Ok(ApiResponse<object>.Ok(new { results }));
+    }
+
+    #endregion
+
     #region 辅助方法
 
     private async Task<string> GenerateDefectNo(CancellationToken ct)
@@ -2082,6 +3404,15 @@ public class DefectAgentController : ControllerBase
             }
 
             // 获取 LLM 客户端（使用注册的 AppCallerCode）
+            using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+                RequestId: Guid.NewGuid().ToString("N"),
+                GroupId: null, SessionId: null,
+                UserId: GetUserId(),
+                ViewRole: null, DocumentChars: null, DocumentHash: null,
+                SystemPromptRedacted: null,
+                RequestType: "chat",
+                AppCallerCode: AppCallerRegistry.DefectAgent.Polish.Chat,
+                ModelResolutionType: null));
             var client = _gateway.CreateClient(AppCallerRegistry.DefectAgent.Polish.Chat, "chat");
 
             // 构建用户消息（包含截图分析描述）
@@ -2163,6 +3494,15 @@ public class DefectAgentController : ControllerBase
 
 请用简洁准确的语言描述截图中展示的缺陷内容（2-5句话）。直接输出描述，不要添加前缀或解释。";
 
+            using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+                RequestId: Guid.NewGuid().ToString("N"),
+                GroupId: null, SessionId: null,
+                UserId: GetUserId(),
+                ViewRole: null, DocumentChars: null, DocumentHash: null,
+                SystemPromptRedacted: null,
+                RequestType: "vision",
+                AppCallerCode: AppCallerRegistry.DefectAgent.AnalyzeImage.Vision,
+                ModelResolutionType: null));
             var client = _gateway.CreateClient(AppCallerRegistry.DefectAgent.AnalyzeImage.Vision, "vision");
 
             var messages = new List<LLMMessage>
@@ -2490,6 +3830,11 @@ public class RejectDefectRequest
     public string Reason { get; set; } = string.Empty;
 }
 
+public class UpdateSeverityRequest
+{
+    public string Severity { get; set; } = string.Empty;
+}
+
 public class DefectSendMessageRequest
 {
     public string Content { get; set; } = string.Empty;
@@ -2566,6 +3911,70 @@ public class UpdateWebhookRequest
     public string? WebhookUrl { get; set; }
     public List<string>? TriggerEvents { get; set; }
     public bool? IsEnabled { get; set; }
+}
+
+public class CreateDefectShareRequest
+{
+    public string ShareScope { get; set; } = DefectShareScopeType.Single;
+    public List<string>? DefectIds { get; set; }
+    public string? ProjectId { get; set; }
+    public string? Title { get; set; }
+    public int ExpiresInDays { get; set; } = 3;
+}
+
+public class SubmitDefectFixReportRequest
+{
+    public string? AgentName { get; set; }
+    public List<DefectFixReportItemRequest> Items { get; set; } = new();
+}
+
+public class DefectFixReportItemRequest
+{
+    public string DefectId { get; set; } = string.Empty;
+    public int ConfidenceScore { get; set; }
+    public string? Analysis { get; set; }
+    public string? FixSuggestion { get; set; }
+}
+
+public class ReviewDefectFixItemRequest
+{
+    public string? ReviewNote { get; set; }
+    public bool MarkResolved { get; set; }
+}
+
+public class CreateBatchShareRequest
+{
+    public string? ProjectId { get; set; }
+    public string? FolderId { get; set; }
+    public string? Title { get; set; }
+    public int ExpiresInDays { get; set; } = 7;
+}
+
+public class UpdateDefectFixStatusRequest
+{
+    public List<DefectFixStatusItem> Items { get; set; } = new();
+}
+
+public class DefectFixStatusItem
+{
+    public string DefectId { get; set; } = string.Empty;
+    public string? Resolution { get; set; }
+    /// <summary>AI Agent 名称（用于标记 IsAiResolved）</summary>
+    public string? AgentName { get; set; }
+}
+
+public class AiCommentRequest
+{
+    /// <summary>AI Agent 名称（展示在消息中）</summary>
+    public string? AgentName { get; set; }
+    public List<AiCommentItem> Items { get; set; } = new();
+}
+
+public class AiCommentItem
+{
+    public string DefectId { get; set; } = string.Empty;
+    /// <summary>评论内容（支持 Markdown）</summary>
+    public string Content { get; set; } = string.Empty;
 }
 
 #endregion

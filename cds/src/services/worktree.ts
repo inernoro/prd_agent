@@ -1,5 +1,6 @@
 import type { IShellExecutor } from '../types.js';
 import { combinedOutput } from '../types.js';
+import { StateService } from './state.js';
 
 export class WorktreeService {
   private _repoRoot: string;
@@ -133,5 +134,25 @@ export class WorktreeService {
       return lower.endsWith(`/${lowerSuffix}`) || lower.endsWith(`-${lowerSuffix}`);
     });
     return suffixMatch || null;
+  }
+
+  /**
+   * Find a remote branch whose slugified name matches the given slug.
+   * This handles cases where the slug (e.g. "claude-fix-software-defects-dlxzp")
+   * was derived from a branch with "/" (e.g. "claude/fix-software-defects-dlxzp").
+   */
+  async findBranchBySlug(slug: string): Promise<string | null> {
+    const result = await this.shell.exec(
+      `git ls-remote --heads origin`,
+      { cwd: this.repoRoot },
+    );
+    if (result.exitCode !== 0) return null;
+
+    const branches = result.stdout.trim().split('\n')
+      .map(line => line.replace(/^.*refs\/heads\//, '').trim())
+      .filter(Boolean);
+
+    const lowerSlug = slug.toLowerCase();
+    return branches.find(b => StateService.slugify(b) === lowerSlug) || null;
   }
 }

@@ -134,7 +134,8 @@ public sealed class AuthzController : ControllerBase
                 Label = x.Label,
                 Description = x.Description,
                 Icon = x.Icon,
-                SortOrder = x.SortOrder
+                SortOrder = x.SortOrder,
+                Group = x.Group
             })
             .ToList();
 

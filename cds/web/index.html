@@ -8,7 +8,11 @@
   <meta http-equiv="Expires" content="0">
   <title>Cloud Development Suite</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
-  <script>document.write('<link rel="stylesheet" href="style.css?t='+Date.now()+'">');</script>
+  <script>
+    // Apply theme BEFORE CSS loads to prevent dark→light flash
+    (function(){var t=localStorage.getItem('cds_theme');if(t==='light')document.documentElement.dataset.theme='light';})();
+    document.write('<link rel="stylesheet" href="style.css?t='+Date.now()+'">');
+  </script>
 </head>
 <body>
   <div class="container">
@@ -22,28 +26,14 @@
           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
           <span class="icon-btn-label">刷新全部分支</span>
         </button>
+        <button id="themeToggleBtn" class="icon-btn" onclick="toggleTheme(event)" title="切换主题">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="4.22" x2="19.78" y2="5.64"/></svg>
+        </button>
         <button class="icon-btn" id="settingsBtn" onclick="toggleSettingsMenu(event)" title="设置">
           <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor"><path d="M7.429 1.525a3.5 3.5 0 011.142 0 .75.75 0 01.57.63l.185 1.29a.25.25 0 00.35.193l1.178-.592a.75.75 0 01.808.098 3.5 3.5 0 01.571.571.75.75 0 01.098.808l-.592 1.178a.25.25 0 00.193.35l1.29.185a.75.75 0 01.63.57 3.5 3.5 0 010 1.142.75.75 0 01-.63.57l-1.29.185a.25.25 0 00-.193.35l.592 1.178a.75.75 0 01-.098.808 3.5 3.5 0 01-.571.571.75.75 0 01-.808.098l-1.178-.592a.25.25 0 00-.35.193l-.185 1.29a.75.75 0 01-.57.63 3.5 3.5 0 01-1.142 0 .75.75 0 01-.57-.63l-.185-1.29a.25.25 0 00-.35-.193l-1.178.592a.75.75 0 01-.808-.098 3.5 3.5 0 01-.571-.571.75.75 0 01-.098-.808l.592-1.178a.25.25 0 00-.193-.35l-1.29-.185a.75.75 0 01-.63-.57 3.5 3.5 0 010-1.142.75.75 0 01.63-.57l1.29-.185a.25.25 0 00.193-.35l-.592-1.178a.75.75 0 01.098-.808 3.5 3.5 0 01.571-.571.75.75 0 01.808-.098l1.178.592a.25.25 0 00.35-.193l.185-1.29a.75.75 0 01.57-.63zM8 6a2 2 0 100 4 2 2 0 000-4z"/></svg>
         </button>
       </div>
     </header>
-
-    <!-- Service status bar -->
-    <div class="gateway-bar" id="serviceStatusBar">
-      <div class="gateway-left" id="serviceStatusSummary" onclick="toggleServiceStatusExpand()">
-        <span class="gateway-dot" id="workerDot"></span>
-        <span class="gateway-label" id="workerLabel">连接中...</span>
-        <svg class="status-chevron" id="statusChevron" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M12.78 5.22a.749.749 0 010 1.06l-4.25 4.25a.749.749 0 01-1.06 0L3.22 6.28a.749.749 0 111.06-1.06L8 8.939l3.72-3.719a.749.749 0 011.06 0z"/></svg>
-      </div>
-      <div class="gateway-right">
-        <svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 3.25a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6a1 1 0 00-1 1v1.128a2.251 2.251 0 11-1.5 0V5.372a2.25 2.25 0 111.5 0v1.836A2.493 2.493 0 016 7h4a1 1 0 001-1v-.628A2.25 2.25 0 019.5 3.25z"/></svg>
-        <select id="defaultBranch" onchange="setDefaultBranch(this.value)">
-          <option value="">无默认</option>
-        </select>
-      </div>
-    </div>
-    <!-- Expandable service list -->
-    <div class="service-status-panel hidden" id="serviceStatusPanel"></div>
 
     <!-- Quickstart banner (shown when no profiles) -->
     <div id="quickstartBanner" class="quickstart-banner hidden">
@@ -88,6 +78,10 @@
     <div class="modal-dialog">
       <div class="modal-header">
         <h2 id="logModalTitle">日志</h2>
+        <button id="copyErrorBtn" class="copy-error-btn hidden" onclick="copyErrorForLLM()" title="复制错误日志，粘贴给 AI 排错">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"/></svg>
+          一键复制错误给大模型排错
+        </button>
         <div id="logModalTabs" class="log-modal-tabs hidden">
           <button class="log-tab active" data-tab="logs" onclick="switchLogTab('logs')">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.5 0a.25.25 0 01.25-.25h10.5a.25.25 0 01.25.25v7.5a.25.25 0 01-.25.25h-4.5a.75.75 0 00-.75.75v2.19l-2.72-2.72a.75.75 0 00-.53-.22H2.75a.25.25 0 01-.25-.25v-7.5z"/></svg>

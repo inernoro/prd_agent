@@ -17,6 +17,7 @@ import type {
   ProcessDefectContract,
   ResolveDefectContract,
   RejectDefectContract,
+  UpdateDefectSeverityContract,
   CloseDefectContract,
   ReopenDefectContract,
   GetDefectMessagesContract,
@@ -64,6 +65,18 @@ import type {
   DefectWebhookConfig,
   UserStatItem,
   ApiLogPreviewItem,
+  DefectShareLink,
+  DefectFixReport,
+  DefectFixReportItem,
+  CreateDefectShareContract,
+  ListDefectSharesContract,
+  RevokeDefectShareContract,
+  ListDefectFixReportsContract,
+  AcceptDefectFixItemContract,
+  RejectDefectFixItemContract,
+  CreateBatchShareContract,
+  GetShareScoresContract,
+  DefectAiScoreItem,
 } from '../contracts/defectAgent';
 
 // ========== Templates ==========
@@ -197,6 +210,17 @@ export const rejectDefectReal: RejectDefectContract = async (input) => {
   );
 };
 
+export const updateDefectSeverityReal: UpdateDefectSeverityContract = async (input) => {
+  const { id, ...data } = input;
+  return await apiRequest<{ defect: DefectReport }>(
+    api.defectAgent.defects.severity(encodeURIComponent(id)),
+    {
+      method: 'PATCH',
+      body: data,
+    }
+  );
+};
+
 export const closeDefectReal: CloseDefectContract = async (input) => {
   return await apiRequest<{ defect: DefectReport }>(
     api.defectAgent.defects.close(encodeURIComponent(input.id)),
@@ -243,6 +267,7 @@ export const addDefectAttachmentReal: AddDefectAttachmentContract = async (input
 
   const fd = new FormData();
   fd.append('file', input.file);
+  if (input.description) fd.append('description', input.description);
 
   const rawBase = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').trim().replace(/\/+$/, '');
   const url = rawBase
@@ -512,6 +537,66 @@ export const deleteDefectWebhookReal: DeleteDefectWebhookContract = async (input
 export const previewApiLogsReal: PreviewApiLogsContract = async () => {
   return await apiRequest<{ totalCount: number; errorCount: number; items: ApiLogPreviewItem[] }>(
     api.defectAgent.logs.preview(),
+    { method: 'GET' }
+  );
+};
+
+// ========== 分享管理 ==========
+
+export const createDefectShareReal: CreateDefectShareContract = async (input) => {
+  return await apiRequest<{ shareLink: DefectShareLink; shareUrl: string }>(
+    api.defectAgent.shares.list(),
+    { method: 'POST', body: input }
+  );
+};
+
+export const listDefectSharesReal: ListDefectSharesContract = async () => {
+  return await apiRequest<{ items: DefectShareLink[] }>(
+    api.defectAgent.shares.list(),
+    { method: 'GET' }
+  );
+};
+
+export const revokeDefectShareReal: RevokeDefectShareContract = async (input) => {
+  return await apiRequest<{ revoked: boolean }>(
+    api.defectAgent.shares.byId(encodeURIComponent(input.id)),
+    { method: 'DELETE' }
+  );
+};
+
+export const listDefectFixReportsReal: ListDefectFixReportsContract = async (input) => {
+  return await apiRequest<{ items: DefectFixReport[] }>(
+    api.defectAgent.shares.reports(encodeURIComponent(input.shareId)),
+    { method: 'GET' }
+  );
+};
+
+export const acceptDefectFixItemReal: AcceptDefectFixItemContract = async (input) => {
+  const { reportId, defectId, ...body } = input;
+  return await apiRequest<{ item: DefectFixReportItem; defect?: DefectReport }>(
+    api.defectAgent.shares.acceptItem(encodeURIComponent(reportId), encodeURIComponent(defectId)),
+    { method: 'POST', body }
+  );
+};
+
+export const rejectDefectFixItemReal: RejectDefectFixItemContract = async (input) => {
+  const { reportId, defectId, ...body } = input;
+  return await apiRequest<{ item: DefectFixReportItem }>(
+    api.defectAgent.shares.rejectItem(encodeURIComponent(reportId), encodeURIComponent(defectId)),
+    { method: 'POST', body }
+  );
+};
+
+export const createBatchShareReal: CreateBatchShareContract = async (input) => {
+  return await apiRequest<{ shareLink: DefectShareLink; shareUrl: string }>(
+    api.defectAgent.shares.batch(),
+    { method: 'POST', body: input }
+  );
+};
+
+export const getShareScoresReal: GetShareScoresContract = async (input) => {
+  return await apiRequest<{ aiScoreStatus: string; scores: DefectAiScoreItem[] }>(
+    api.defectAgent.shares.scores(encodeURIComponent(input.shareId)),
     { method: 'GET' }
   );
 };

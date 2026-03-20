@@ -13,6 +13,8 @@ import { TemplateDialog } from './components/TemplateDialog';
 import { ProjectDialog } from './components/ProjectDialog';
 import { KanbanBoard } from './components/KanbanBoard';
 import { StatsPanel } from './components/StatsPanel';
+import { SharesListPanel } from './components/SharesListPanel';
+import { Share2 } from 'lucide-react';
 
 const NOTIFICATION_STORAGE_KEY = 'defect-agent-notified-ids';
 
@@ -40,6 +42,7 @@ export default function DefectAgentPage() {
   } = useDefectStore();
 
   const [showProjectDialog, setShowProjectDialog] = useState(false);
+  const [showSharesPanel, setShowSharesPanel] = useState(false);
   const notifiedRef = useRef(false);
 
   useEffect(() => {
@@ -87,8 +90,8 @@ export default function DefectAgentPage() {
   );
 
   const viewButtons: { key: typeof viewMode; icon: typeof LayoutGrid; title: string }[] = [
-    { key: 'card', icon: LayoutGrid, title: '卡片视图' },
     { key: 'list', icon: List, title: '列表视图' },
+    { key: 'card', icon: LayoutGrid, title: '卡片视图' },
     { key: 'kanban', icon: Columns3, title: '看板视图' },
     { key: 'stats', icon: BarChart3, title: '统计看板' },
   ];
@@ -164,6 +167,14 @@ export default function DefectAgentPage() {
                 </button>
               ))}
             </div>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setShowSharesPanel(true)}
+            >
+              <Share2 size={14} />
+              分享管理
+            </Button>
             <Button
               variant="secondary"
               size="sm"
@@ -254,6 +265,14 @@ export default function DefectAgentPage() {
 
       {/* Project Dialog */}
       {showProjectDialog && <ProjectDialog onClose={() => setShowProjectDialog(false)} />}
+
+      {/* Shares Panel */}
+      {showSharesPanel && (
+        <SharesListPanel
+          open={showSharesPanel}
+          onClose={() => setShowSharesPanel(false)}
+        />
+      )}
     </div>
   );
 }

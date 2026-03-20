@@ -76,7 +76,6 @@ import type {
   PurgeUsersContract,
 } from '@/services/contracts/data';
 import type { GetApiLogDetailContract, GetApiLogsContract, GetApiLogsMetaContract } from '@/services/contracts/apiLogs';
-import type { GetAdminPromptsContract, PutAdminPromptsContract, ResetAdminPromptsContract } from '@/services/contracts/prompts';
 import type {
   GetAdminSystemPromptsContract,
   PutAdminSystemPromptsContract,
@@ -189,6 +188,7 @@ import type {
   ProcessDefectContract,
   ResolveDefectContract,
   RejectDefectContract,
+  UpdateDefectSeverityContract,
   CloseDefectContract,
   ReopenDefectContract,
   GetDefectMessagesContract,
@@ -223,6 +223,14 @@ import type {
   UpdateDefectWebhookContract,
   DeleteDefectWebhookContract,
   AnalyzeDefectImageContract,
+  CreateDefectShareContract,
+  ListDefectSharesContract,
+  RevokeDefectShareContract,
+  ListDefectFixReportsContract,
+  AcceptDefectFixItemContract,
+  RejectDefectFixItemContract,
+  CreateBatchShareContract,
+  GetShareScoresContract,
 } from '@/services/contracts/defectAgent';
 import type { IOpenPlatformService } from '@/services/contracts/openPlatform';
 import type { IAutomationsService } from '@/services/contracts/automations';
@@ -373,7 +381,6 @@ import {
   purgeUsersReal,
 } from '@/services/real/data';
 import { getApiLogDetailReal, getApiLogsMetaReal, getApiLogsReal } from '@/services/real/apiLogs';
-import { getAdminPromptsReal, putAdminPromptsReal, resetAdminPromptsReal } from '@/services/real/prompts';
 import { getAdminSystemPromptsReal, putAdminSystemPromptsReal, resetAdminSystemPromptsReal } from '@/services/real/systemPrompts';
 import {
   deleteAdminImageGenPlanPromptOverrideReal,
@@ -460,6 +467,7 @@ import {
   processDefectReal,
   resolveDefectReal,
   rejectDefectReal,
+  updateDefectSeverityReal,
   closeDefectReal,
   reopenDefectReal,
   getDefectMessagesReal,
@@ -494,6 +502,14 @@ import {
   createDefectWebhookReal,
   updateDefectWebhookReal,
   deleteDefectWebhookReal,
+  createDefectShareReal,
+  listDefectSharesReal,
+  revokeDefectShareReal,
+  listDefectFixReportsReal,
+  acceptDefectFixItemReal,
+  createBatchShareReal,
+  getShareScoresReal,
+  rejectDefectFixItemReal,
 } from '@/services/real/defectAgent';
 import { OpenPlatformService } from '@/services/real/openPlatform';
 import { AutomationsService } from '@/services/real/automations';
@@ -784,9 +800,6 @@ export const getAdminDocumentContent: GetAdminDocumentContentContract = withAuth
 export const getApiLogs: GetApiLogsContract = withAuth(getApiLogsReal);
 export const getApiLogDetail: GetApiLogDetailContract = withAuth(getApiLogDetailReal);
 
-export const getAdminPrompts: GetAdminPromptsContract = withAuth(getAdminPromptsReal);
-export const putAdminPrompts: PutAdminPromptsContract = withAuth(putAdminPromptsReal);
-export const resetAdminPrompts: ResetAdminPromptsContract = withAuth(resetAdminPromptsReal);
 export const getAdminSystemPrompts: GetAdminSystemPromptsContract = withAuth(getAdminSystemPromptsReal);
 export const putAdminSystemPrompts: PutAdminSystemPromptsContract = withAuth(putAdminSystemPromptsReal);
 export const resetAdminSystemPrompts: ResetAdminSystemPromptsContract = withAuth(resetAdminSystemPromptsReal);
@@ -939,6 +952,7 @@ export const submitDefect: SubmitDefectContract = withAuth(submitDefectReal);
 export const processDefect: ProcessDefectContract = withAuth(processDefectReal);
 export const resolveDefect: ResolveDefectContract = withAuth(resolveDefectReal);
 export const rejectDefect: RejectDefectContract = withAuth(rejectDefectReal);
+export const updateDefectSeverity: UpdateDefectSeverityContract = withAuth(updateDefectSeverityReal);
 export const closeDefect: CloseDefectContract = withAuth(closeDefectReal);
 export const reopenDefect: ReopenDefectContract = withAuth(reopenDefectReal);
 export const getDefectMessages: GetDefectMessagesContract = withAuth(getDefectMessagesReal);
@@ -977,6 +991,15 @@ export const listDefectWebhooks: ListDefectWebhooksContract = withAuth(listDefec
 export const createDefectWebhook: CreateDefectWebhookContract = withAuth(createDefectWebhookReal);
 export const updateDefectWebhook: UpdateDefectWebhookContract = withAuth(updateDefectWebhookReal);
 export const deleteDefectWebhook: DeleteDefectWebhookContract = withAuth(deleteDefectWebhookReal);
+// Defect Shares
+export const createDefectShare: CreateDefectShareContract = withAuth(createDefectShareReal);
+export const listDefectShares: ListDefectSharesContract = withAuth(listDefectSharesReal);
+export const revokeDefectShare: RevokeDefectShareContract = withAuth(revokeDefectShareReal);
+export const listDefectFixReports: ListDefectFixReportsContract = withAuth(listDefectFixReportsReal);
+export const acceptDefectFixItem: AcceptDefectFixItemContract = withAuth(acceptDefectFixItemReal);
+export const rejectDefectFixItem: RejectDefectFixItemContract = withAuth(rejectDefectFixItemReal);
+export const createBatchShare: CreateBatchShareContract = withAuth(createBatchShareReal);
+export const getShareScores: GetShareScoresContract = withAuth(getShareScoresReal);
 
 // ─── Mobile Dashboard ───
 export const getMobileFeed: GetMobileFeedContract = withAuth(getMobileFeedReal);
@@ -1230,6 +1253,7 @@ export {
   subscribeToolboxRunEvents,
   streamDirectChat,
   streamCapabilityChat,
+  uploadAttachment,
   // Legacy API
   getToolboxRun,
   listToolboxRuns,
@@ -1238,6 +1262,7 @@ export type {
   ToolboxItem,
   ToolboxItemRun,
   AgentInfo,
+  UploadedAttachment,
   ToolboxRunEvent,
   DirectChatMessage,
   // Legacy types
