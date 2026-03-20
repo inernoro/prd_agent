@@ -757,7 +757,6 @@ button.text-btn:hover { color: var(--accent); }
   padding: 14px 20px;
   background: var(--bg-card);
   border: 1px solid var(--card-border);
-  border-left: 2px solid rgba(255, 255, 255, 0.10);
   border-radius: var(--radius);
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
@@ -768,29 +767,18 @@ button.text-btn:hover { color: var(--accent); }
   border-color: rgba(255, 255, 255, 0.18);
   background: var(--bg-card);
 }
-/* Status-based left border — subtle indicator, not attention-grabbing */
-.branch-card.status-running { border-left-color: var(--green-border); }
-.branch-card.status-running.show-preview-border { border-left-color: var(--yellow); }
-.branch-card.status-starting { border-left-color: var(--yellow); }
-.branch-card.status-building { border-left-color: var(--blue); }
-.branch-card.status-idle { border-left-color: rgba(255, 255, 255, 0.10); }
-.branch-card.status-stopped { border-left-color: rgba(255, 255, 255, 0.10); }
-.branch-card.status-error { border-left-color: var(--red); }
 /* Stopping state — flashing red glow around the entire card */
 .branch-card.status-stopping {
-  border-left-color: var(--red);
   animation: stopping-pulse 1.2s ease-in-out infinite;
 }
 @keyframes stopping-pulse {
   0%, 100% {
     box-shadow: 0 0 0 0 rgba(244, 63, 94, 0), 0 1px 3px rgba(0, 0, 0, 0.2);
     border-color: var(--card-border);
-    border-left-color: var(--red);
   }
   50% {
     box-shadow: 0 0 12px 2px rgba(244, 63, 94, 0.3), 0 0 24px 4px rgba(244, 63, 94, 0.1);
     border-color: rgba(244, 63, 94, 0.4);
-    border-left-color: var(--red);
   }
 }
 /* Web access activity — rotating rainbow border on card (stops after idle) */
@@ -883,12 +871,73 @@ button.text-btn:hover { color: var(--accent); }
   flex-shrink: 0;
 }
 
-.branch-card.active.show-preview-border {
-  border-left-color: var(--yellow);
+/* ── Status dot (replaces left border indicator) ── */
+.status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-muted);
+  opacity: 0.5;
 }
-.branch-card.has-error {
-  border-left-color: var(--red);
+.status-dot-running {
+  background: var(--green);
+  opacity: 1;
+  box-shadow: 0 0 6px var(--green);
+  animation: status-dot-blink 2s ease-in-out infinite;
 }
+@keyframes status-dot-blink {
+  0%, 100% { opacity: 1; box-shadow: 0 0 6px var(--green); }
+  50% { opacity: 0.4; box-shadow: 0 0 2px var(--green); }
+}
+.status-dot-error, .status-dot-stopped {
+  background: var(--red);
+  opacity: 1;
+}
+.status-dot-building, .status-dot-starting {
+  background: var(--blue);
+  opacity: 1;
+  animation: status-dot-blink-blue 1.2s ease-in-out infinite;
+}
+@keyframes status-dot-blink-blue {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.status-dot-stopping {
+  background: var(--red);
+  opacity: 1;
+  animation: status-dot-blink-red 0.8s ease-in-out infinite;
+}
+@keyframes status-dot-blink-red {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+/* Commit SHA badge */
+.commit-sha {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--bg-input);
+  padding: 1px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  margin-left: auto;
+  letter-spacing: 0.3px;
+}
+
+/* Commit message — truncated with ellipsis */
+.branch-commit-msg {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.branch-commit-msg svg.inline-icon { flex-shrink: 0; width: 12px; height: 12px; opacity: 0.6; }
 
 /* Status badges for transitional states */
 .branch-status-badge {
@@ -923,9 +972,10 @@ button.text-btn:hover { color: var(--accent); }
 .branch-card-row1 {
   display: flex; gap: 8px; align-items: center; min-width: 0;
 }
-/* Row 2: Status meta */
+/* Row 2: Commit message */
 .branch-card-row2 {
   display: flex; align-items: center; gap: 8px;
+  min-width: 0; overflow: hidden;
 }
 /* Row 3: Port badges — independent row */
 .branch-card-ports {
@@ -1044,7 +1094,7 @@ a.branch-name:hover { color: var(--accent); }
   background: transparent; border: none;
 }
 
-.branch-card.is-favorite { border-left-color: var(--yellow); }
+/* Favorites — subtle highlight without border */
 
 /* Card-level update indicator — blue glow so you instantly see which branches updated */
 .branch-card.has-updates {

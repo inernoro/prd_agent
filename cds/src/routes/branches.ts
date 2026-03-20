@@ -134,17 +134,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     stateService.save();
 
-    // Fetch latest commit subject for each branch (serves as "需求" info)
+    // Fetch latest commit subject + short SHA for each branch
     const branchesWithSubject = await Promise.all(
       branches.map(async (b) => {
         try {
           const result = await shell.exec(
-            'git log -1 --format=%s',
+            'git log -1 --format=%h%n%s',
             { cwd: b.worktreePath, timeout: 5000 },
           );
-          return { ...b, subject: result.stdout.trim() };
+          const lines = result.stdout.trim().split('\n');
+          return { ...b, commitSha: lines[0] || '', subject: lines[1] || '' };
         } catch {
-          return { ...b, subject: '' };
+          return { ...b, commitSha: '', subject: '' };
         }
       }),
     );

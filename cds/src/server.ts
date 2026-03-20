@@ -389,6 +389,31 @@ export function createServer(deps: ServerDeps): express.Express {
     _req.on('close', () => aiPairingClients.delete(res));
   });
 
+  // ── State stream SSE endpoint (server-authority push) ──
+  // Pushes full branch state on every save(), so frontend never needs to poll.
+  const stateClients = new Set<express.Response>();
+  let stateSeq = 0;
+
+  app.get('/api/state-stream', (_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    stateClients.add(res);
+    _req.on('close', () => stateClients.delete(res));
+  });
+
+  // When state changes, broadcast to all connected clients
+  deps.stateService.onSave(() => {
+    if (stateClients.size === 0) return;
+    const state = deps.stateService.getState();
+    const data = JSON.stringify({
+      seq: ++stateSeq,
+      branches: Object.values(state.branches),
+      defaultBranch: state.defaultBranch,
+    });
+    for (const client of stateClients) {
+      try { client.write(`data: ${data}\n\n`); } catch { stateClients.delete(client); }
+    }
+  });
+
   // ── Activity stream SSE endpoint ──
   app.get('/api/activity-stream', (req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
@@ -406,7 +431,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // ── API activity tracking middleware (before routes, after auth) ──
   app.use('/api', (req, res, next) => {
     // Skip SSE streams and static
-    if (req.path === '/activity-stream' || req.path === '/ai/pairing-stream') return next();
+    if (req.path === '/activity-stream' || req.path === '/ai/pairing-stream' || req.path === '/state-stream') return next();
     // Skip dashboard auto-poll requests (X-CDS-Poll: true) — they are noise
     const isPoll = req.headers['x-cds-poll'] === 'true';
     if (isPoll) return next();

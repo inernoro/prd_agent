@@ -100,12 +100,24 @@ export class StateService {
     if (changed) this.save();
   }
 
+  /** Listeners notified after every save() */
+  private onSaveListeners: Array<() => void> = [];
+
+  /** Register a callback that fires after each save() */
+  onSave(fn: () => void): void {
+    this.onSaveListeners.push(fn);
+  }
+
   save(): void {
     const dir = path.dirname(this.filePath);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
     fs.writeFileSync(this.filePath, JSON.stringify(this.state, null, 2));
+    // Notify listeners
+    for (const fn of this.onSaveListeners) {
+      try { fn(); } catch { /* ignore */ }
+    }
   }
 
   getState(): Readonly<CdsState> {

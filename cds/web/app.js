@@ -218,7 +218,47 @@ async function init() {
   await Promise.all([loadBranches(), loadProfiles(), loadRoutingRules(), loadConfig(), loadEnvVars(), loadInfraServices(), loadMirrorState()]);
   refreshRemoteCandidates();
   updatePreviewModeUI();
-  setInterval(() => loadBranches({ silent: true }), 30000); // 30s poll, silenced in activity monitor
+  initStateStream(); // Server-authority: listen for state changes via SSE (replaces polling)
+}
+
+// ── State stream: server pushes branch state changes (no polling needed) ──
+let stateEventSource = null;
+
+function initStateStream() {
+  stateEventSource = new EventSource(`${API}/state-stream`);
+  stateEventSource.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.branches) {
+        // Merge commit info: state-stream has no git data, so preserve existing subject/commitSha
+        // Only update status and service states from server push
+        const branchMap = new Map(branches.map(b => [b.id, b]));
+        for (const pushed of data.branches) {
+          const existing = branchMap.get(pushed.id);
+          if (existing) {
+            // Preserve git info, update status/services
+            Object.assign(existing, pushed, {
+              subject: existing.subject,
+              commitSha: existing.commitSha,
+            });
+          } else {
+            branches.push(pushed);
+          }
+        }
+        // Remove branches that no longer exist
+        const pushedIds = new Set(data.branches.map(b => b.id));
+        branches = branches.filter(b => pushedIds.has(b.id));
+        if (data.defaultBranch !== undefined) defaultBranch = data.defaultBranch;
+        renderBranches();
+      }
+    } catch {}
+  };
+  stateEventSource.onerror = () => {
+    setTimeout(() => {
+      if (stateEventSource) stateEventSource.close();
+      initStateStream();
+    }, 3000);
+  };
 }
 
 async function loadConfig() {
@@ -1915,22 +1955,14 @@ function renderBranches() {
     const deployFailed = !!deployLog && deployLog.status === 'error';
     const isJustDeployed = justDeployed.has(b.id);
 
-    // Commit area in actions row — replaced by compact deploy log during deployment
+    // Deploy status in actions row (only during deployment)
     let commitAreaHtml = '';
     if (isDeploying && deployLog) {
-      // During deploy: show compact log in the commit area
       const compactLines = deployLog.lines.filter(l => l.trim()).slice(-2);
       commitAreaHtml = `
         <div class="branch-actions-deploy-status" title="部署中，点击查看完整日志" onclick="event.stopPropagation(); openFullDeployLog('${esc(b.id)}', event)">
           <span class="live-dot"></span>
           <pre class="deploy-status-log">${esc(compactLines.join('\n')) || '正在启动...'}</pre>
-        </div>
-      `;
-    } else if (b.subject) {
-      commitAreaHtml = `
-        <div class="branch-actions-commit" onclick="event.stopPropagation(); toggleCommitLog('${esc(b.id)}', this)" title="点击查看历史提交">
-          ${commitIcon(b.subject)} ${esc(b.subject)}
-          <svg class="commit-chevron" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M4.427 5.427a.75.75 0 011.146 0L8 7.854l2.427-2.427a.75.75 0 111.146 1.146l-3 3a.75.75 0 01-1.146 0l-3-3a.75.75 0 010-1.146z"/></svg>
         </div>
       `;
     }
@@ -1939,7 +1971,7 @@ function renderBranches() {
     // Deploy logs are accessible via the log button in toolbar.
 
     return `
-      <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} expanded ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''} ${previewMode === 'multi' && isRunning ? 'show-preview-border' : ''} ${isDeploying ? 'is-deploying' : ''} ${b.isColorMarked ? 'is-color-marked' : ''} ${getAiOccupant(b.id) ? 'is-ai-occupied' : ''}" data-branch-id="${esc(b.id)}">
+      <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} expanded ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''} ${isDeploying ? 'is-deploying' : ''} ${b.isColorMarked ? 'is-color-marked' : ''} ${getAiOccupant(b.id) ? 'is-ai-occupied' : ''}" data-branch-id="${esc(b.id)}">
         ${isDeploying ? '<div class="deploy-progress-bar"><div class="deploy-progress-bar-fill"></div></div>' : ''}
         <div class="branch-card-toolbar">
           ${!isBusy ? `<span class="update-pull-group" onclick="event.stopPropagation(); pullBranch('${esc(b.id)}')" title="${hasUpdates ? branchUpdates[b.id].behind + ' 个新提交，点击拉取' : '点击拉取最新代码'}">
@@ -1975,12 +2007,14 @@ function renderBranches() {
         </div>
         <div class="branch-card-header">
           <div class="branch-card-row1">
+            <span class="status-dot status-dot-${b.status || 'idle'}" title="${statusLabel(b.status || 'idle')}"></span>
             <span class="fav-toggle ${b.isFavorite ? 'active' : ''}" onclick="event.stopPropagation(); toggleFavorite('${esc(b.id)}')" title="${b.isFavorite ? '取消收藏' : '收藏'}">
               ${b.isFavorite ? ICON.star : ICON.starOutline}
             </span>
             <a class="branch-name" href="${githubRepoUrl ? githubRepoUrl.replace('github.com', 'github.dev') + '/tree/' + encodeURIComponent(b.branch) : '#'}" target="_blank" onclick="event.stopPropagation(); return confirmOpenGithub(event)" title="在 GitHub.dev 中浏览代码">${ICON.branch} ${esc(b.branch)}</a>
+            ${b.commitSha ? `<span class="commit-sha" title="${esc(b.commitSha)}">${esc(b.commitSha)}</span>` : ''}
           </div>
-          ${b.date ? `<div class="branch-card-row2"><span class="branch-meta">${relativeTime(b.date)}更新</span>${isStopping ? '<span class="branch-status-badge status-badge-stopping">正在停止...</span>' : b.status === 'starting' ? '<span class="branch-status-badge status-badge-starting">等待服务就绪...</span>' : b.status === 'building' && !isDeploying ? '<span class="branch-status-badge status-badge-building">构建中...</span>' : ''}</div>` : ''}
+          ${b.subject ? `<div class="branch-card-row2"><span class="branch-commit-msg" title="${esc(b.subject)}">${commitIcon(b.subject)} ${esc(b.subject)}</span></div>` : ''}
           ${portBadgesHtml ? `<div class="branch-card-ports">${portBadgesHtml}</div>` : ''}
           ${b.executorId ? `<span class="executor-tag" title="部署在执行器 ${esc(b.executorId)}">⚡ ${esc(b.executorId.replace(/^executor-/, '').slice(0, 20))}</span>` : ''}
         </div>
