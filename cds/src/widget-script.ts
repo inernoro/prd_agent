@@ -41,7 +41,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     #cds-widget .cds-commit-msg{font-size:10px;color:#8b949e;margin-bottom:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
     #cds-widget button{display:flex;align-items:center;justify-content:center;padding:2px;border-radius:4px;border:none;background:transparent;color:inherit;cursor:pointer;opacity:0.6}
     #cds-widget button:hover{opacity:1}
-    #cds-widget .cds-panel{margin-bottom:4px;padding:10px 12px;border-radius:8px;background:rgba(22,27,34,0.95);backdrop-filter:blur(12px);border:1px solid rgba(63,185,80,0.3);box-shadow:0 4px 16px rgba(0,0,0,0.4);min-width:220px}
+    #cds-widget .cds-panel{margin-bottom:4px;padding:10px 12px;border-radius:8px;background:rgba(22,27,34,0.95);backdrop-filter:blur(12px);border:1px solid rgba(63,185,80,0.3);box-shadow:0 4px 16px rgba(0,0,0,0.4);width:260px;overflow:hidden}
     #cds-widget .cds-deploy-btn{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:6px;border:1px solid #30363d;background:#21262d;color:#c9d1d9;font-size:11px;cursor:pointer;width:100%;opacity:1}
     #cds-widget .cds-deploy-btn:hover{border-color:#58a6ff}
     #cds-widget .cds-deploy-btn:disabled{cursor:wait;opacity:0.5}
