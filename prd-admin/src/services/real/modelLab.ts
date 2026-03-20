@@ -53,7 +53,7 @@ function normalizeExperimentFromApi(exp: unknown): ModelLabExperiment {
 }
 
 function getApiBaseUrl() {
-  const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:5000';
+  const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
   return raw.trim().replace(/\/+$/, '');
 }
 
