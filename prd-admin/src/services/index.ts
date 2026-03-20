@@ -586,6 +586,16 @@ import type {
   GetTeamTrendsContract,
   MarkVacationContract,
   CancelVacationContract,
+  ListMyAiSourcesContract,
+  UpdateMyAiSourceContract,
+  GetMyAiReportPromptContract,
+  UpdateMyAiReportPromptContract,
+  ResetMyAiReportPromptContract,
+  GetTeamAiSummaryPromptContract,
+  UpdateTeamAiSummaryPromptContract,
+  ResetTeamAiSummaryPromptContract,
+  GetMyDailyLogTagsContract,
+  UpdateMyDailyLogTagsContract,
   ListPersonalSourcesContract,
   CreatePersonalSourceContract,
   UpdatePersonalSourceContract,
@@ -654,6 +664,16 @@ import {
   exportTeamSummaryMarkdownReal,
   markVacationReal,
   cancelVacationReal,
+  listMyAiSourcesReal,
+  updateMyAiSourceReal,
+  getMyAiReportPromptReal,
+  updateMyAiReportPromptReal,
+  resetMyAiReportPromptReal,
+  getTeamAiSummaryPromptReal,
+  updateTeamAiSummaryPromptReal,
+  resetTeamAiSummaryPromptReal,
+  getMyDailyLogTagsReal,
+  updateMyDailyLogTagsReal,
   listPersonalSourcesReal,
   createPersonalSourceReal,
   updatePersonalSourceReal,
@@ -1046,6 +1066,16 @@ export const exportTeamSummaryMarkdown = exportTeamSummaryMarkdownReal;
 export const markVacation: MarkVacationContract = withAuth(markVacationReal);
 export const cancelVacation: CancelVacationContract = withAuth(cancelVacationReal);
 // Report Agent Phase 5/6 v2.0: Personal Sources + Workflow + Identity Mappings
+export const listMyAiSources: ListMyAiSourcesContract = withAuth(listMyAiSourcesReal);
+export const updateMyAiSource: UpdateMyAiSourceContract = withAuth(updateMyAiSourceReal);
+export const getMyAiReportPrompt: GetMyAiReportPromptContract = withAuth(getMyAiReportPromptReal);
+export const updateMyAiReportPrompt: UpdateMyAiReportPromptContract = withAuth(updateMyAiReportPromptReal);
+export const resetMyAiReportPrompt: ResetMyAiReportPromptContract = withAuth(resetMyAiReportPromptReal);
+export const getTeamAiSummaryPrompt: GetTeamAiSummaryPromptContract = withAuth(getTeamAiSummaryPromptReal);
+export const updateTeamAiSummaryPrompt: UpdateTeamAiSummaryPromptContract = withAuth(updateTeamAiSummaryPromptReal);
+export const resetTeamAiSummaryPrompt: ResetTeamAiSummaryPromptContract = withAuth(resetTeamAiSummaryPromptReal);
+export const getMyDailyLogTags: GetMyDailyLogTagsContract = withAuth(getMyDailyLogTagsReal);
+export const updateMyDailyLogTags: UpdateMyDailyLogTagsContract = withAuth(updateMyDailyLogTagsReal);
 export const listPersonalSources: ListPersonalSourcesContract = withAuth(listPersonalSourcesReal);
 export const createPersonalSource: CreatePersonalSourceContract = withAuth(createPersonalSourceReal);
 export const updatePersonalSource: UpdatePersonalSourceContract = withAuth(updatePersonalSourceReal);
@@ -1137,7 +1167,7 @@ export const predictNextDispatch = async (groupId: string) => {
 };
 
 export const getAppCallers = async () => {
-  const response = await appCallersService.getAppCallers();
+  const response = await appCallersService.getAppCallers(1, 500);
   if (response.success && response.data) {
     return response.data.items;
   }

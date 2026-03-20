@@ -82,6 +82,14 @@ export default function ReportDetailPage() {
     }
   };
 
+  const openCommentInput = (sectionIndex: number, parentId?: string) => {
+    const isSameTarget = replyTo?.sectionIndex === sectionIndex && replyTo?.parentId === parentId;
+    if (!isSameTarget) {
+      setCommentText('');
+    }
+    setReplyTo({ sectionIndex, parentId });
+  };
+
   const handleReview = async () => {
     if (!reportId) return;
     const res = await reviewWeeklyReport({ id: reportId });
@@ -284,7 +292,7 @@ export default function ReportDetailPage() {
                               comment={comment}
                               isMine={comment.authorUserId === currentUserId}
                               onDelete={() => handleDeleteComment(comment.id)}
-                              onReply={() => setReplyTo({ sectionIndex: idx, parentId: comment.id })}
+                                onReply={() => openCommentInput(idx, comment.id)}
                             />
                             {replies.map((reply) => (
                               <div key={reply.id} className="ml-4 mt-1">
@@ -292,7 +300,7 @@ export default function ReportDetailPage() {
                                   comment={reply}
                                   isMine={reply.authorUserId === currentUserId}
                                   onDelete={() => handleDeleteComment(reply.id)}
-                                  onReply={() => setReplyTo({ sectionIndex: idx, parentId: comment.id })}
+                                    onReply={() => openCommentInput(idx, comment.id)}
                                   isReply
                                 />
                               </div>
@@ -306,39 +314,38 @@ export default function ReportDetailPage() {
                   <button
                     className="mt-1.5 ml-7 flex items-center gap-1 text-[11px] hover:opacity-80 transition-opacity"
                     style={{ color: 'var(--text-muted)' }}
-                    onClick={() => setReplyTo({ sectionIndex: idx })}
+                    onClick={() => openCommentInput(idx)}
                   >
                     <MessageSquare size={10} /> 评论
                   </button>
+
+                  {replyTo?.sectionIndex === idx && (
+                    <div className="mt-2 ml-7 p-3 rounded-xl" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)' }}>
+                      <div className="text-[11px] mb-1.5" style={{ color: 'var(--text-muted)' }}>
+                        {replyTo.parentId ? '回复评论' : `评论「${report.sections[replyTo.sectionIndex]?.templateSection?.title || ''}」`}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          className="flex-1 text-[12px] px-3 py-2 rounded-lg"
+                          style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
+                          placeholder="输入评论..."
+                          value={commentText}
+                          onChange={(e) => setCommentText(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleCreateComment()}
+                          autoFocus
+                        />
+                        <Button variant="primary" size="sm" onClick={handleCreateComment} disabled={submitting || !commentText.trim()}>
+                          <Send size={12} />
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => { setReplyTo(null); setCommentText(''); }}>
+                          <X size={12} />
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}
-
-            {/* Comment input */}
-            {replyTo && (
-              <div className="mt-3 p-3 rounded-xl" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)' }}>
-                <div className="text-[11px] mb-1.5" style={{ color: 'var(--text-muted)' }}>
-                  {replyTo.parentId ? '回复评论' : `评论「${report.sections[replyTo.sectionIndex]?.templateSection?.title || ''}」`}
-                </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    className="flex-1 text-[12px] px-3 py-2 rounded-lg"
-                    style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
-                    placeholder="输入评论..."
-                    value={commentText}
-                    onChange={(e) => setCommentText(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleCreateComment()}
-                    autoFocus
-                  />
-                  <Button variant="primary" size="sm" onClick={handleCreateComment} disabled={submitting || !commentText.trim()}>
-                    <Send size={12} />
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => { setReplyTo(null); setCommentText(''); }}>
-                    <X size={12} />
-                  </Button>
-                </div>
-              </div>
-            )}
           </GlassCard>
         )}
 

@@ -491,6 +491,8 @@ export const api = {
       summary: (id: string) => `/api/report-agent/teams/${id}/summary`,
       summaryView: (id: string) => `/api/report-agent/teams/${id}/summary/view`,
       summaryGenerate: (id: string) => `/api/report-agent/teams/${id}/summary/generate`,
+      aiSummaryPrompt: (id: string) => `/api/report-agent/teams/${id}/ai-summary-prompt`,
+      aiSummaryPromptReset: (id: string) => `/api/report-agent/teams/${id}/ai-summary-prompt/reset`,
     },
     templates: {
       list: () => '/api/report-agent/templates',
@@ -532,6 +534,19 @@ export const api = {
       byId: (id: string) => `/api/report-agent/my/sources/${id}`,
       test: (id: string) => `/api/report-agent/my/sources/${id}/test`,
       sync: (id: string) => `/api/report-agent/my/sources/${id}/sync`,
+    },
+    aiSources: {
+      list: () => '/api/report-agent/my/ai-sources',
+      byKey: (key: string) => `/api/report-agent/my/ai-sources/${key}`,
+    },
+    aiReportPrompt: {
+      get: () => '/api/report-agent/my/ai-report-prompt',
+      update: () => '/api/report-agent/my/ai-report-prompt',
+      reset: () => '/api/report-agent/my/ai-report-prompt/reset',
+    },
+    dailyLogTags: {
+      get: () => '/api/report-agent/my/daily-log-tags',
+      update: () => '/api/report-agent/my/daily-log-tags',
     },
     personalStats: () => '/api/report-agent/my/stats',
     teamWorkflow: (teamId: string) => `/api/report-agent/teams/${teamId}/workflow`,

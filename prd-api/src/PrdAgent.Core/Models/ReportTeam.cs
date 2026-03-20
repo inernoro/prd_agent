@@ -48,6 +48,11 @@ public class ReportTeam
     /// <summary>团队自定义每日打点标签（如 ["需求评审", "代码复查"]）</summary>
     public List<string> CustomDailyLogTags { get; set; } = new();
 
+    /// <summary>
+    /// 团队周报 AI 汇总的自定义 Prompt（为空时使用系统默认 Prompt）
+    /// </summary>
+    public string? TeamSummaryPrompt { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

@@ -234,21 +234,45 @@ restore_dotnet() {
 }
 
 install_frontend_deps() {
-  info "Installing prd-admin dependencies..."
-  cd "$PROJECT_ROOT/prd-admin"
-  pnpm install
-  cd "$PROJECT_ROOT"
+  if [ -d "$PROJECT_ROOT/prd-admin" ] && [ -f "$PROJECT_ROOT/prd-admin/package.json" ]; then
+    if [ -f "$PROJECT_ROOT/prd-admin/pnpm-lock.yaml" ]; then
+      info "Warming pnpm store for prd-admin..."
+      pnpm -C "$PROJECT_ROOT/prd-admin" fetch --frozen-lockfile || warn "pnpm fetch failed for prd-admin"
+    fi
 
-  info "Installing prd-desktop dependencies..."
-  cd "$PROJECT_ROOT/prd-desktop"
-  pnpm install
-  cd "$PROJECT_ROOT"
+    info "Installing prd-admin dependencies..."
+    pnpm -C "$PROJECT_ROOT/prd-admin" install --frozen-lockfile --prefer-offline
+  fi
 
-  if [ -d "$PROJECT_ROOT/prd-video" ]; then
+  if [ -d "$PROJECT_ROOT/prd-desktop" ] && [ -f "$PROJECT_ROOT/prd-desktop/package.json" ]; then
+    info "Installing prd-desktop dependencies..."
+    pnpm -C "$PROJECT_ROOT/prd-desktop" install --frozen-lockfile --prefer-offline
+  fi
+
+  if [ -d "$PROJECT_ROOT/prd-video" ] && [ -f "$PROJECT_ROOT/prd-video/package.json" ]; then
     info "Installing prd-video dependencies..."
-    cd "$PROJECT_ROOT/prd-video"
-    pnpm install || npm install
-    cd "$PROJECT_ROOT"
+    pnpm -C "$PROJECT_ROOT/prd-video" install --frozen-lockfile --prefer-offline
+  fi
+}
+
+verify_required_commands() {
+  info "Verifying required command: dotnet build prd-api"
+  cd "$PROJECT_ROOT"
+  if dotnet build prd-api >/tmp/prdapi-build.log 2>&1; then
+    info "dotnet build prd-api succeeded."
+  else
+    warn "dotnet build prd-api failed. Last 10 lines:"
+    tail -10 /tmp/prdapi-build.log || true
+  fi
+
+  if [ -d "$PROJECT_ROOT/prd-admin" ] && [ -f "$PROJECT_ROOT/prd-admin/package.json" ]; then
+    info "Verifying required command: pnpm -C prd-admin tsc --noEmit"
+    if pnpm -C "$PROJECT_ROOT/prd-admin" tsc --noEmit >/tmp/prdadmin-tsc.log 2>&1; then
+      info "pnpm -C prd-admin tsc --noEmit succeeded."
+    else
+      warn "pnpm -C prd-admin tsc --noEmit failed. Last 20 lines:"
+      tail -20 /tmp/prdadmin-tsc.log || true
+    fi
   fi
 }
 
@@ -321,6 +345,7 @@ main() {
   start_nuget_relay
   restore_dotnet
   install_frontend_deps
+  verify_required_commands
   print_summary
 }
 
