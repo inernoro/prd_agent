@@ -41,6 +41,8 @@ interface ActivityEvent {
   body?: string;
   /** Query string params */
   query?: string;
+  /** Branch ID extracted from path (for AI occupation tracking) */
+  branchId?: string;
 }
 
 /** Map API path patterns to Chinese labels */
@@ -401,6 +403,9 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use('/api', (req, res, next) => {
     // Skip SSE streams and static
     if (req.path === '/activity-stream' || req.path === '/ai/pairing-stream') return next();
+    // Skip dashboard auto-poll requests (X-CDS-Poll: true) — they are noise
+    const isPoll = req.headers['x-cds-poll'] === 'true';
+    if (isPoll) return next();
 
     const start = Date.now();
     const origEnd = res.end.bind(res);
@@ -413,6 +418,10 @@ export function createServer(deps: ServerDeps): express.Express {
     const reqQuery = Object.keys(req.query).length > 0
       ? new URLSearchParams(req.query as Record<string, string>).toString()
       : undefined;
+
+    // Extract branch ID from path for AI occupation tracking
+    const branchMatch = req.path.match(/^\/branches\/([^/]+)/);
+    const branchId = branchMatch ? branchMatch[1] : undefined;
 
     (res as any).end = function (...args: any[]) {
       const duration = Date.now() - start;
@@ -429,6 +438,7 @@ export function createServer(deps: ServerDeps): express.Express {
         label: resolveApiLabel(req.method, fullPath),
         body: reqBody,
         query: reqQuery,
+        branchId,
       };
       broadcastActivity(event);
       return origEnd(...args);

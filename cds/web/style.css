@@ -793,6 +793,65 @@ button.text-btn:hover { color: var(--accent); }
     border-left-color: var(--red);
   }
 }
+/* AI occupation — rotating gradient border */
+.branch-card.is-ai-occupied {
+  border-image: none;
+  border-color: transparent;
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+  background-image:
+    linear-gradient(var(--bg-card), var(--bg-card)),
+    conic-gradient(from var(--ai-border-angle, 0deg), var(--purple), rgba(96, 165, 250, 0.8), var(--purple), rgba(192, 132, 252, 0.6), var(--purple));
+  border: 2px solid transparent;
+  animation: ai-border-spin 3s linear infinite;
+}
+@keyframes ai-border-spin {
+  to { --ai-border-angle: 360deg; }
+}
+@property --ai-border-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+/* AI badge in branch card toolbar */
+.ai-occupy-badge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 18px;
+  cursor: default;
+}
+.ai-occupy-border {
+  position: absolute;
+  inset: 0;
+  border-radius: 4px;
+  background: conic-gradient(from var(--ai-border-angle, 0deg), var(--purple), rgba(96, 165, 250, 0.8), var(--purple));
+  animation: ai-border-spin 2s linear infinite;
+  opacity: 0.8;
+}
+.ai-occupy-border::after {
+  content: '';
+  position: absolute;
+  inset: 1.5px;
+  border-radius: 3px;
+  background: var(--bg-card);
+}
+.ai-occupy-text {
+  position: relative;
+  z-index: 1;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  background: linear-gradient(135deg, var(--purple), #60a5fa);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  text-shadow: none;
+}
+
 .branch-card.active.show-preview-border {
   border-left-color: var(--yellow);
 }

@@ -70,8 +70,9 @@ let containerCapacity = { maxContainers: 999, runningContainers: 0, totalMemGB: 
 
 // ── Utilities ──
 
-async function api(method, path, body) {
+async function api(method, path, body, { poll } = {}) {
   const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (poll) opts.headers['X-CDS-Poll'] = 'true';
   if (body) opts.body = JSON.stringify(body);
   const res = await fetch(`${API}${path}`, opts);
   if (res.status === 401) { location.href = '/login.html'; return; }
@@ -141,6 +142,33 @@ let defaultBranch = null;
 let customEnvVars = {};
 let infraServices = [];
 
+// ── AI Occupation Tracking ──
+// Maps branchId → { agent, lastSeen (timestamp) }
+const aiOccupation = new Map();
+const AI_OCCUPY_TTL = 30000; // 30s — if no AI activity, consider released
+
+function getAiOccupant(branchId) {
+  const entry = aiOccupation.get(branchId);
+  if (!entry) return null;
+  if (Date.now() - entry.lastSeen > AI_OCCUPY_TTL) {
+    aiOccupation.delete(branchId);
+    return null;
+  }
+  return entry.agent;
+}
+
+// Periodically expire stale AI occupations and refresh cards
+setInterval(() => {
+  let changed = false;
+  for (const [id, entry] of aiOccupation) {
+    if (Date.now() - entry.lastSeen > AI_OCCUPY_TTL) {
+      aiOccupation.delete(id);
+      changed = true;
+    }
+  }
+  if (changed) renderBranches();
+}, 10000);
+
 // ── Init ──
 
 let githubRepoUrl = '';
@@ -153,7 +181,7 @@ async function init() {
   await Promise.all([loadBranches(), loadProfiles(), loadRoutingRules(), loadConfig(), loadEnvVars(), loadInfraServices(), loadMirrorState()]);
   refreshRemoteCandidates();
   updatePreviewModeUI();
-  setInterval(loadBranches, 30000); // 30s — branches don't change that often
+  setInterval(() => loadBranches({ silent: true }), 30000); // 30s poll, silenced in activity monitor
 }
 
 async function loadConfig() {
@@ -430,9 +458,9 @@ function updateThemeUI() {
 
 // ── Data loading ──
 
-async function loadBranches() {
+async function loadBranches({ silent } = {}) {
   try {
-    const data = await api('GET', '/branches');
+    const data = await api('GET', '/branches', null, { poll: !!silent });
     branches = data.branches || [];
     defaultBranch = data.defaultBranch;
     if (data.capacity) containerCapacity = data.capacity;
@@ -1831,9 +1859,10 @@ function renderBranches() {
     // Deploy logs are accessible via the log button in toolbar.
 
     return `
-      <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} expanded ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''} ${previewMode === 'multi' && isRunning ? 'show-preview-border' : ''} ${isDeploying ? 'is-deploying' : ''} ${b.isColorMarked ? 'is-color-marked' : ''}" data-branch-id="${esc(b.id)}">
+      <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} expanded ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''} ${previewMode === 'multi' && isRunning ? 'show-preview-border' : ''} ${isDeploying ? 'is-deploying' : ''} ${b.isColorMarked ? 'is-color-marked' : ''} ${getAiOccupant(b.id) ? 'is-ai-occupied' : ''}" data-branch-id="${esc(b.id)}">
         ${isDeploying ? '<div class="deploy-progress-bar"><div class="deploy-progress-bar-fill"></div></div>' : ''}
         <div class="branch-card-toolbar">
+          ${(() => { const occupant = getAiOccupant(b.id); return occupant ? `<span class="ai-occupy-badge" title="AI 占用中: ${esc(occupant)}"><span class="ai-occupy-border"></span><span class="ai-occupy-text">AI</span></span>` : ''; })()}
           ${!isBusy ? `<span class="update-pull-group" onclick="event.stopPropagation(); pullBranch('${esc(b.id)}')" title="${hasUpdates ? branchUpdates[b.id].behind + ' 个新提交，点击拉取' : '点击拉取最新代码'}">
             ${hasUpdates ? `<span class="update-badge">↓${branchUpdates[b.id].behind}</span>` : ''}
             <svg class="update-pull-icon ${isLoading(b.id, 'pull') ? 'spinning' : ''}" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
@@ -3427,6 +3456,13 @@ function initActivityMonitor() {
       if (activityEvents.length > 200) activityEvents = activityEvents.slice(-200);
       renderActivityItem(event);
       document.getElementById('activityCount').textContent = activityEvents.length;
+      // Track AI occupation per branch
+      if (event.source === 'ai' && event.branchId) {
+        const prev = aiOccupation.get(event.branchId);
+        aiOccupation.set(event.branchId, { agent: event.agent || 'AI', lastSeen: Date.now() });
+        // If newly occupied, re-render to show badge
+        if (!prev) renderBranches();
+      }
     } catch {}
   };
   activityEventSource.onerror = () => {
