@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, memo } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
@@ -22,9 +22,13 @@ import {
   Brain, Cpu, Database, Globe, Image, Music, Video, BookOpen,
   GraduationCap, Briefcase, Heart, Star, Shield, Lock, Search, Layers,
   Swords, Paperclip, ImagePlus, X, File, Loader2,
-  Plus, MessageCircle, Share2, Globe2,
+  Plus, MessageCircle, Share2, Globe2, AlertCircle,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
+import { toast } from '@/lib/toast';
 
 // 图标组件映射
 const ICON_MAP: Record<string, LucideIcon> = {
@@ -221,8 +225,15 @@ export function ToolDetail() {
     for (const att of currentAttachments) {
       try {
         const result = await uploadAttachment(att.file);
-        if (result.success && result.data?.attachmentId) attachmentIds.push(result.data.attachmentId);
-      } catch { /* silent */ }
+        if (result.success && result.data?.attachmentId) {
+          attachmentIds.push(result.data.attachmentId);
+        } else {
+          const errMsg = result.error?.message || '上传失败';
+          toast.error(`文件 "${att.name}" 上传失败: ${errMsg}`);
+        }
+      } catch (err) {
+        toast.error(`文件 "${att.name}" 上传异常`);
+      }
     }
 
     // Persist user message to backend
@@ -466,21 +477,6 @@ export function ToolDetail() {
                 {messages.map(message => (
                   <MessageBubble key={message.id} message={message} accentHue={accentHue} />
                 ))}
-                {isLoading && messages[messages.length - 1]?.content === '' && (
-                  <div className="flex items-start gap-3">
-                    <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
-                      style={{
-                        background: `linear-gradient(135deg, hsla(${accentHue}, 70%, 60%, 0.15) 0%, hsla(${accentHue}, 70%, 40%, 0.08) 100%)`,
-                        border: `1px solid hsla(${accentHue}, 60%, 60%, 0.2)`,
-                      }}
-                    >
-                      <IconComponent size={16} style={{ color: `hsla(${accentHue}, 70%, 70%, 1)` }} />
-                    </div>
-                    <div className="px-3 py-2 rounded-xl rounded-tl-sm" style={{ background: 'rgba(255, 255, 255, 0.03)' }}>
-                      <Loader2 size={16} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
-                    </div>
-                  </div>
-                )}
                 <div ref={messagesEndRef} />
               </>
             )}
@@ -537,8 +533,46 @@ export function ToolDetail() {
   );
 }
 
+const AssistantMarkdown = memo(function AssistantMarkdown({ content }: { content: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      rehypePlugins={[rehypeRaw]}
+      components={{
+        // Render code blocks with styling
+        code({ className, children, ...props }) {
+          const isInline = !className;
+          return isInline ? (
+            <code className="px-1 py-0.5 rounded text-xs" style={{ background: 'rgba(255, 255, 255, 0.1)' }} {...props}>{children}</code>
+          ) : (
+            <code className={`block p-3 rounded-lg text-xs overflow-x-auto ${className || ''}`} style={{ background: 'rgba(0, 0, 0, 0.3)' }} {...props}>{children}</code>
+          );
+        },
+        p({ children }) { return <p className="mb-2 last:mb-0">{children}</p>; },
+        ul({ children }) { return <ul className="list-disc pl-4 mb-2">{children}</ul>; },
+        ol({ children }) { return <ol className="list-decimal pl-4 mb-2">{children}</ol>; },
+        li({ children }) { return <li className="mb-0.5">{children}</li>; },
+        h1({ children }) { return <h1 className="text-base font-bold mb-2">{children}</h1>; },
+        h2({ children }) { return <h2 className="text-sm font-bold mb-1.5">{children}</h2>; },
+        h3({ children }) { return <h3 className="text-sm font-semibold mb-1">{children}</h3>; },
+        blockquote({ children }) {
+          return <blockquote className="border-l-2 pl-3 my-2" style={{ borderColor: 'rgba(255,255,255,0.2)', color: 'var(--text-secondary)' }}>{children}</blockquote>;
+        },
+        table({ children }) {
+          return <div className="overflow-x-auto my-2"><table className="text-xs border-collapse w-full" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>{children}</table></div>;
+        },
+        th({ children }) { return <th className="border px-2 py-1 text-left font-semibold" style={{ borderColor: 'rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.05)' }}>{children}</th>; },
+        td({ children }) { return <td className="border px-2 py-1" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>{children}</td>; },
+      }}
+    >
+      {content}
+    </ReactMarkdown>
+  );
+});
+
 function MessageBubble({ message, accentHue }: { message: ChatMessage; accentHue: number }) {
   const isUser = message.role === 'user';
+  const isError = message.content?.startsWith('[错误]');
   return (
     <div className={`flex items-start gap-3 ${isUser ? 'flex-row-reverse' : ''}`}>
       <div
@@ -566,17 +600,26 @@ function MessageBubble({ message, accentHue }: { message: ChatMessage; accentHue
             ))}
           </div>
         )}
-        {message.content && (
-          <div
-            className={`px-3 py-2 rounded-xl text-sm leading-relaxed ${isUser ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
-            style={{
-              background: isUser ? 'linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(99, 102, 241, 0.08) 100%)' : 'rgba(255, 255, 255, 0.03)',
-              color: 'var(--text-primary)',
-            }}
-          >
-            {message.content}
-          </div>
-        )}
+        <div
+          className={`px-3 py-2 rounded-xl text-sm leading-relaxed ${isUser ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
+          style={{
+            background: isError
+              ? 'rgba(239, 68, 68, 0.1)'
+              : isUser
+                ? 'linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(99, 102, 241, 0.08) 100%)'
+                : 'rgba(255, 255, 255, 0.03)',
+            color: isError ? 'rgb(248, 113, 113)' : 'var(--text-primary)',
+            border: isError ? '1px solid rgba(239, 68, 68, 0.2)' : undefined,
+            minHeight: '1.5em',
+          }}
+        >
+          {isError && <AlertCircle size={14} className="inline mr-1 mb-0.5" />}
+          {message.content ? (
+            isUser ? message.content : <AssistantMarkdown content={message.content} />
+          ) : (
+            message.isStreaming && <Loader2 size={16} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
+          )}
+        </div>
         <span className="text-[10px] px-1" style={{ color: 'var(--text-muted)' }}>
           {message.timestamp.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
         </span>

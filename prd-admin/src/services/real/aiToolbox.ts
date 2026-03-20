@@ -18,6 +18,8 @@ export interface ToolboxItem {
   /** 定制版 Agent 的跳转路由，有此字段则为定制版 */
   routePath?: string;
   prompt?: string;
+  /** 后端返回的 systemPrompt 字段 */
+  systemPrompt?: string;
   modelId?: string;
   /** 启用的能力工具 */
   enabledTools?: string[];
@@ -29,6 +31,8 @@ export interface ToolboxItem {
   knowledgeBaseIds?: string[];
   welcomeMessage?: string;
   conversationStarters?: string[];
+  temperature?: number;
+  enableMemory?: boolean;
   createdBy?: string;
   createdByName?: string;
   usageCount: number;

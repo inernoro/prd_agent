@@ -124,19 +124,20 @@ interface FormState {
 export function ToolEditor() {
   const { view, editingItem, saveItem, backToGrid } = useToolboxStore();
 
+  const isEditing = view === 'edit' && !!editingItem?.id;
   const [form, setForm] = useState<FormState>({
     name: editingItem?.name || '',
     description: editingItem?.description || '',
     icon: editingItem?.icon || 'Bot',
-    prompt: editingItem?.prompt || '',
+    prompt: editingItem?.prompt || editingItem?.systemPrompt || '',
     tags: editingItem?.tags?.join(', ') || '',
-    welcomeMessage: '你好！我是你的 AI 助手，有什么可以帮你的吗？',
-    conversationStarters: ['帮我写一段文案', '分析一下这个数据'],
+    welcomeMessage: editingItem?.welcomeMessage ?? '你好！我是你的 AI 助手，有什么可以帮你的吗？',
+    conversationStarters: editingItem?.conversationStarters?.length ? [...editingItem.conversationStarters] : ['帮我写一段文案', '分析一下这个数据'],
     enabledTools: editingItem?.enabledTools ?? [],
     workflowId: editingItem?.workflowId ?? '',
-    knowledgeBase: [],
-    temperature: 0.7,
-    enableMemory: false,
+    knowledgeBase: editingItem?.knowledgeBaseIds ?? [],
+    temperature: editingItem?.temperature ?? 0.7,
+    enableMemory: editingItem?.enableMemory ?? false,
   });
 
   const [saving, setSaving] = useState(false);
@@ -207,6 +208,14 @@ export function ToolEditor() {
     if (!form.name.trim() || !form.prompt.trim()) return;
 
     setSaving(true);
+    const knowledgeBaseIds = knowledgeFiles
+      .filter(f => f.status === 'done' && f.attachmentId)
+      .map(f => f.attachmentId!);
+    // If editing and no new files were added, keep existing knowledgeBaseIds
+    const finalKnowledgeBaseIds = knowledgeBaseIds.length > 0
+      ? knowledgeBaseIds
+      : (isEditing ? form.knowledgeBase : []);
+
     const success = await saveItem({
       ...(editingItem?.id ? { id: editingItem.id } : {}),
       name: form.name.trim(),
@@ -216,6 +225,11 @@ export function ToolEditor() {
       tags: parsedTags,
       enabledTools: form.enabledTools,
       workflowId: form.enabledTools.includes('workflowTrigger') ? form.workflowId : undefined,
+      welcomeMessage: form.welcomeMessage.trim() || undefined,
+      conversationStarters: form.conversationStarters.filter(Boolean),
+      temperature: form.temperature,
+      enableMemory: form.enableMemory,
+      knowledgeBaseIds: finalKnowledgeBaseIds,
       type: 'custom',
       category: 'custom',
     });
