@@ -3764,7 +3764,16 @@ function renderWebActivityItem(event) {
   const ts = toUTC8Time(event.ts);
   const shortPath = event.path.length > 40 ? event.path.slice(0, 37) + '…' : event.path;
 
+  // Determine container type from profileId
+  const profileId = event.profileId || '';
+  const isApi = profileId.includes('api') || profileId.includes('backend') || event.path.startsWith('/api/');
+  const containerLabel = isApi ? 'api' : 'admin';
+  const containerColor = isApi ? 'var(--blue)' : 'var(--green)';
+  const containerBg = isApi ? 'rgba(56,139,253,0.12)' : 'rgba(63,185,80,0.12)';
+
   let html = '';
+  // Container badge (api / admin)
+  html += `<span class="web-container-badge" style="background:${containerBg};color:${containerColor}">${containerLabel}</span>`;
   if (event.branchId) {
     const branchShort = event.branchId.length > 16 ? event.branchId.slice(0, 13) + '…' : event.branchId;
     html += `<span class="activity-source" style="background:var(--accent-bg);color:var(--accent);font-size:9px;font-weight:600;padding:1px 4px;border-radius:3px" title="${escapeHtml(event.branchId)}">${escapeHtml(branchShort)}</span>`;

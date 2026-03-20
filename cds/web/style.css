@@ -873,7 +873,6 @@ button.text-btn:hover { color: var(--accent); }
   background: var(--green);
   opacity: 1;
   box-shadow: 0 0 6px var(--green);
-  animation: status-dot-blink 2s ease-in-out infinite;
 }
 @keyframes status-dot-blink {
   0%, 100% { opacity: 1; box-shadow: 0 0 6px var(--green); }
@@ -2249,6 +2248,16 @@ a.branch-name:hover { color: var(--accent); }
   padding: 1px 4px;
   border-radius: 3px;
   flex-shrink: 0;
+}
+
+.web-container-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
 }
 
 .activity-source.ai {

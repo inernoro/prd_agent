@@ -16,7 +16,7 @@ export class ProxyService {
   /** Callback: trigger auto-build for a branch that isn't running yet */
   private onAutoBuild: ((branchSlug: string, req: http.IncomingMessage, res: http.ServerResponse) => void) | null = null;
   /** Callback: notify dashboard of web access events */
-  private onAccess: ((branchId: string, method: string, path: string, status: number, duration: number) => void) | null = null;
+  private onAccess: ((branchId: string, method: string, path: string, status: number, duration: number, profileId?: string) => void) | null = null;
   /** Optional worktree service for remote branch lookups */
   private worktreeService: WorktreeService | null = null;
 
@@ -33,7 +33,7 @@ export class ProxyService {
     this.onAutoBuild = fn;
   }
 
-  setOnAccess(fn: (branchId: string, method: string, path: string, status: number, duration: number) => void): void {
+  setOnAccess(fn: (branchId: string, method: string, path: string, status: number, duration: number, profileId?: string) => void): void {
     this.onAccess = fn;
   }
 
@@ -299,7 +299,7 @@ export class ProxyService {
     }
 
     console.log(`[proxy] ${req.method} ${req.url} → ${upstream} (branch=${branchSlug}, profile=${profileId || 'default'})`);
-    this.proxyRequest(req, res, upstream, { branchId: branchSlug, branchName: branchRef, trackAccess: true });
+    this.proxyRequest(req, res, upstream, { branchId: branchSlug, branchName: branchRef, trackAccess: true, profileId });
   }
 
   /**
@@ -487,7 +487,7 @@ export class ProxyService {
     clientReq: http.IncomingMessage,
     clientRes: http.ServerResponse,
     upstream: string,
-    branchCtx?: { branchId: string; branchName: string; trackAccess?: boolean },
+    branchCtx?: { branchId: string; branchName: string; trackAccess?: boolean; profileId?: string },
   ): void {
     const proxyStart = Date.now();
     const url = new URL(upstream);
@@ -512,8 +512,9 @@ export class ProxyService {
       const method = clientReq.method || 'GET';
       const reqPath = clientReq.url || '/';
       const branchId = branchCtx.branchId;
+      const profileId = branchCtx.profileId;
       clientRes.on('finish', () => {
-        onAccessCb(branchId, method, reqPath, clientRes.statusCode, Date.now() - proxyStart);
+        onAccessCb(branchId, method, reqPath, clientRes.statusCode, Date.now() - proxyStart, profileId);
       });
     }
 

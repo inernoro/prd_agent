@@ -137,7 +137,7 @@ proxyService.setResolveUpstream((branchId, profileId) => {
 
 // ── Web access tracking (throttled: max 1 event per branch per 2s) ──
 const webAccessThrottle = new Map<string, number>();
-proxyService.setOnAccess((branchId, method, reqPath, status, duration) => {
+proxyService.setOnAccess((branchId, method, reqPath, status, duration, profileId) => {
   const now = Date.now();
   const lastSent = webAccessThrottle.get(branchId) || 0;
   if (now - lastSent < 2000) return; // throttle: 1 event per 2 seconds per branch
@@ -153,6 +153,7 @@ proxyService.setOnAccess((branchId, method, reqPath, status, duration) => {
     type: 'web',
     source: 'user',
     branchId,
+    profileId,
   };
   broadcastActivity(event);
 });

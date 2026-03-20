@@ -45,6 +45,8 @@ export interface ActivityEvent {
   query?: string;
   /** Branch ID extracted from path (for AI occupation tracking) */
   branchId?: string;
+  /** Build profile ID that handled the request (e.g. 'api', 'admin') */
+  profileId?: string;
 }
 
 /** Map API path patterns to Chinese labels */
