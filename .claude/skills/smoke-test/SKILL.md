@@ -29,13 +29,62 @@ description: 自动生成冒烟测试 curl 命令。扫描目标模块的 Contro
 |------|------|--------|
 | `AI_ACCESS_KEY` | API 认证密钥 | 无，必须设置 |
 | `SMOKE_TEST_HOST` | API 服务地址 | `http://localhost:5000` |
+| `CDS_HOST` | CDS 地址（CDS 模式时使用） | 无 |
+
+### 两种执行模式
+
+#### 模式 A：本地模式（默认）
+
+直接 curl 本地或远程 API：
+
+```bash
+-H "X-AI-Access-Key: $AI_ACCESS_KEY"
+-H "X-AI-Impersonate: {真实用户名}"   # ← 见下方"用户名发现"
+```
+
+#### 模式 B：CDS 远程模式
+
+通过 CDS `container-exec` 在容器内执行 curl，绕过 CDN/Proxy 干扰：
+
+```bash
+# 所有测试命令通过 container-exec 包裹
+curl -sf "$CDS/api/branches/$BRANCH_ID/container-exec" \
+  -H "X-AI-Access-Key: $AI_ACCESS_KEY" \
+  -X POST -H "Content-Type: application/json" \
+  -d '{"profileId":"api","command":"curl -s http://localhost:5000/api/..."}'
+```
+
+**何时使用 CDS 模式**：
+- 用户说 "在线冒烟" / "CDS 冒烟" / "线上验证"
+- `SMOKE_TEST_HOST` 是 CDS 预览域名（`*.miduo.org`）
+- 直接访问预览域名遇到 Cloudflare/CDN 干扰
+
+### X-AI-Impersonate 用户名发现（关键！）
+
+> ⚠️ **严禁硬编码 `admin` 或 `root`**。`admin` 通常不是真实数据库用户名，`root` 是破窗账户不在 users 集合中。
+
+**自动发现流程**（每次冒烟测试开始前必须执行）：
+
+```bash
+# 方法 1（推荐）：通过 root 登录 + JWT 查询用户列表
+TOKEN=$(curl -s "$HOST/api/v1/auth/login" -X POST \
+  -H "Content-Type: application/json" \
+  -d "{\"username\":\"root\",\"password\":\"$ROOT_ACCESS_PASSWORD\",\"clientType\":\"admin\"}" \
+  | python3 -c "import sys,json;print(json.load(sys.stdin)['data']['accessToken'])")
+IMPERSONATE=$(curl -s "$HOST/api/users?pageSize=1" \
+  -H "Authorization: Bearer $TOKEN" \
+  | python3 -c "import sys,json;print(json.load(sys.stdin)['data']['items'][0]['username'])")
+
+# 方法 2（如已有 AI_ACCESS_KEY 且知道一个用户名）：先用已知用户名获取完整列表
+# 方法 3（CDS 模式）：通过 container-exec 在容器内执行上述流程
+```
 
 ### 认证方式
 
 ```bash
-# 请求头
+# 请求头（使用自动发现的用户名）
 -H "X-AI-Access-Key: $AI_ACCESS_KEY"
--H "X-AI-Impersonate: admin"
+-H "X-AI-Impersonate: $IMPERSONATE"
 ```
 
 ## 执行流程
@@ -290,10 +339,80 @@ curl ... "$HOST/api/module/$ITEM_ID" ...
 - 每步都有 echo 输出，方便定位失败位置
 - 失败时用户将输出贴回对话，由 AI 分析原因
 
+## CDS 远程冒烟模式
+
+当用户说 "在线冒烟" / "CDS 冒烟" / "线上验证"，或目标是 CDS 预览环境时，采用以下模式。
+
+### CDS 模式执行流程
+
+```
+Step 0: 环境准备
+├─ 推导 BRANCH_ID（git branch → slugify）
+├─ 确认 CDS 认证（AI_ACCESS_KEY 或配对 token）
+├─ 确认分支状态为 running
+└─ 获取 CDS customEnv 中的 API AI_ACCESS_KEY
+
+Step 1: 用户名自动发现
+├─ container-exec: root 登录获取 JWT
+├─ container-exec: JWT 查询 /api/users → 提取第一个 username
+└─ 将 username 作为后续所有 X-AI-Impersonate 的值
+
+Step 2: 分层冒烟测试（全部通过 container-exec 执行）
+├─ Layer 1: 无认证端点（健康检查、版本等）
+├─ Layer 2: 认证端点-只读（用户列表、模型列表、会话等）
+└─ Layer 3: 认证端点-写入（创建+查询+删除，可选）
+```
+
+### CDS 模式脚本模板
+
+```bash
+#!/bin/bash
+# CDS 远程冒烟测试
+CDS="https://$CDS_HOST"
+BRANCH_ID="claude-xxx-yyy"  # 从分支名推导
+CDS_AUTH="-H 'X-AI-Access-Key: $AI_ACCESS_KEY'"
+
+cds_exec() {
+  local cmd="$1"
+  curl -sf "$CDS/api/branches/$BRANCH_ID/container-exec" \
+    $CDS_AUTH -X POST -H "Content-Type: application/json" \
+    -d "{\"profileId\":\"api\",\"command\":\"$cmd\"}" \
+    | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['stdout'])" 2>/dev/null
+}
+
+# Step 1: 自动发现用户名
+echo ">>> [0] 发现可用用户名..."
+IMPERSONATE=$(cds_exec "curl -s http://localhost:5000/api/v1/auth/login -X POST -H 'Content-Type: application/json' -d '{\"username\":\"root\",\"password\":\"$ROOT_ACCESS_PASSWORD\",\"clientType\":\"admin\"}' | python3 -c \"import sys,json;print(json.load(sys.stdin)['data']['accessToken'])\" | xargs -I{} curl -s http://localhost:5000/api/users?pageSize=1 -H 'Authorization: Bearer {}' | python3 -c \"import sys,json;print(json.load(sys.stdin)['data']['items'][0]['username'])\"")
+echo "使用用户: $IMPERSONATE"
+
+# Step 2: 冒烟测试
+API_AUTH="-H 'X-AI-Access-Key: \$AI_ACCESS_KEY' -H 'X-AI-Impersonate: $IMPERSONATE'"
+
+echo ">>> [1] 健康检查..."
+cds_exec "curl -s http://localhost:5000/api/prd-agent/health"
+
+echo ">>> [2] 用户列表..."
+cds_exec "curl -s 'http://localhost:5000/api/users?pageSize=3' $API_AUTH"
+# ... 更多端点
+```
+
+### CDS 模式 vs 本地模式对比
+
+| 维度 | 本地模式 | CDS 远程模式 |
+|------|---------|-------------|
+| 执行位置 | AI 沙箱直接 curl | container-exec 包裹 |
+| 网络 | 直连 API | 经 CDS proxy → 容器内 localhost |
+| 认证 | 单层（API key） | 双层（CDS key + API key） |
+| 用户名 | 需预知或自动发现 | 必须自动发现（容器内查询） |
+| CDN 影响 | 有（Cloudflare 可能干扰） | 无（容器内 localhost 直连） |
+| 适用场景 | 本地开发验证 | 灰度/预览环境验证 |
+
 ## 注意事项
 
 1. **不要硬编码密钥**：始终从 `$AI_ACCESS_KEY` 读取
-2. **清理测试数据**：脚本最后一步必须删除创建的资源
-3. **幂等设计**：脚本可重复执行，不会产生残留
-4. **最小权限**：只测试必要的端点，不做破坏性操作
-5. **生产环境警告**：如果 HOST 不是 localhost，输出警告提示
+2. **不要硬编码用户名**：严禁使用 `admin` 或 `root` 作为 `X-AI-Impersonate` 值，必须自动发现
+3. **清理测试数据**：脚本最后一步必须删除创建的资源
+4. **幂等设计**：脚本可重复执行，不会产生残留
+5. **最小权限**：只测试必要的端点，不做破坏性操作
+6. **生产环境警告**：如果 HOST 不是 localhost，输出警告提示
+7. **CDS 模式优先 container-exec**：远程测试优先使用容器内 curl，避免 CDN/Proxy 干扰
