@@ -8,3 +8,7 @@
 | feat | prd-admin | 百宝箱聊天新增停止生成按钮（流式响应时显示 Stop 按钮替代 Send） |
 | feat | prd-admin | 百宝箱助手消息新增一键复制按钮（hover 显示，复制后 2 秒绿色勾确认） |
 | feat | prd-admin | 百宝箱错误消息新增重试按钮（重新发送上一条用户消息） |
+| feat | prd-admin | 百宝箱助手消息新增重新生成按钮（hover 显示 RefreshCw，替换旧回复重新调用） |
+| feat | prd-admin | 百宝箱对话导出为 Markdown 文件（含角色、时间戳、分隔线） |
+| feat | prd-admin | 百宝箱新增清空当前会话按钮（确认后清空消息） |
+| feat | prd-admin | 输入区显示字符计数 + 快捷键提示（Enter 发送/Shift+Enter 换行） |

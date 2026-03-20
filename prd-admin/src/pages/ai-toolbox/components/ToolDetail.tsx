@@ -23,7 +23,7 @@ import {
   GraduationCap, Briefcase, Heart, Star, Shield, Lock, Search, Layers,
   Swords, Paperclip, ImagePlus, X, File, Loader2,
   Plus, MessageCircle, Share2, Globe2, AlertCircle,
-  Square, Copy, Check, RotateCcw,
+  Square, Copy, Check, RotateCcw, RefreshCw, Download, Eraser,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -316,6 +316,42 @@ export function ToolDetail() {
     setIsDeleting(false);
   };
 
+  const handleRegenerate = (assistantMsgId: string) => {
+    if (isLoading) return;
+    // Find the user message right before this assistant message
+    const idx = messages.findIndex(m => m.id === assistantMsgId);
+    if (idx < 1) return;
+    const prevUserMsg = [...messages].slice(0, idx).reverse().find(m => m.role === 'user');
+    if (!prevUserMsg) return;
+    // Remove the old assistant message and re-send
+    setMessages(prev => prev.filter(m => m.id !== assistantMsgId));
+    handleSend(prevUserMsg.content);
+  };
+
+  const handleExportChat = () => {
+    if (messages.length === 0) return;
+    const lines = messages.map(m => {
+      const time = m.timestamp.toLocaleString('zh-CN');
+      const role = m.role === 'user' ? '我' : selectedItem.name;
+      return `### ${role}  (${time})\n\n${m.content}\n`;
+    });
+    const md = `# ${selectedItem.name} — 对话记录\n\n${lines.join('\n---\n\n')}`;
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${selectedItem.name}_chat_${new Date().toISOString().slice(0, 10)}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success('对话已导出');
+  };
+
+  const handleClearChat = () => {
+    if (messages.length === 0) return;
+    if (!confirm('确定清空当前会话消息？')) return;
+    setMessages([]);
+  };
+
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
       {/* Header */}
@@ -438,6 +474,29 @@ export function ToolDetail() {
 
         {/* Right: Chat Interface */}
         <GlassCard animated className="flex-1 min-w-0 flex flex-col" padding="none" overflow="hidden">
+          {/* Chat toolbar */}
+          {messages.length > 0 && (
+            <div className="flex items-center justify-end gap-1 px-4 pt-2">
+              <button
+                onClick={handleExportChat}
+                className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] hover:bg-white/10 transition-colors"
+                style={{ color: 'var(--text-muted)' }}
+                title="导出对话"
+              >
+                <Download size={12} />
+                <span>导出</span>
+              </button>
+              <button
+                onClick={handleClearChat}
+                className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] hover:bg-white/10 transition-colors"
+                style={{ color: 'var(--text-muted)' }}
+                title="清空对话"
+              >
+                <Eraser size={12} />
+                <span>清空</span>
+              </button>
+            </div>
+          )}
           {/* Chat Messages */}
           <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
             {messages.length === 0 ? (
@@ -484,11 +543,12 @@ export function ToolDetail() {
                       navigator.clipboard.writeText(message.content);
                       toast.success('已复制到剪贴板');
                     } : undefined}
+                    onRegenerate={message.role === 'assistant' && !message.isStreaming && message.content && !isLoading ? () => {
+                      handleRegenerate(message.id);
+                    } : undefined}
                     onRetry={message.content?.startsWith('[错误]') && idx === messages.length - 1 ? () => {
-                      // Find last user message
                       const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
                       if (lastUserMsg) {
-                        // Remove the error message and re-send
                         setMessages(prev => prev.filter(m => m.id !== message.id));
                         handleSend(lastUserMsg.content);
                       }
@@ -548,6 +608,14 @@ export function ToolDetail() {
                 </Button>
               )}
             </div>
+            <div className="flex items-center justify-between mt-1 px-1">
+              <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                Enter 发送，Shift+Enter 换行
+              </span>
+              <span className="text-[10px]" style={{ color: input.length > 4000 ? 'var(--status-error)' : 'var(--text-muted)' }}>
+                {input.length > 0 && `${input.length} 字`}
+              </span>
+            </div>
             <input ref={fileInputRef} type="file" multiple className="hidden" accept=".pdf,.doc,.docx,.txt,.md,.json,.csv,.xlsx,.xls,.ppt,.pptx" onChange={(e) => handleFileSelect(e, 'file')} />
             <input ref={imageInputRef} type="file" multiple className="hidden" accept="image/*" onChange={(e) => handleFileSelect(e, 'image')} />
           </div>
@@ -594,7 +662,7 @@ const AssistantMarkdown = memo(function AssistantMarkdown({ content }: { content
   );
 });
 
-function MessageBubble({ message, accentHue, onCopy, onRetry }: { message: ChatMessage; accentHue: number; onCopy?: () => void; onRetry?: () => void }) {
+function MessageBubble({ message, accentHue, onCopy, onRegenerate, onRetry }: { message: ChatMessage; accentHue: number; onCopy?: () => void; onRegenerate?: () => void; onRetry?: () => void }) {
   const isUser = message.role === 'user';
   const isError = message.content?.startsWith('[错误]');
   const [copied, setCopied] = useState(false);
@@ -667,6 +735,15 @@ function MessageBubble({ message, accentHue, onCopy, onRetry }: { message: ChatM
               {copied
                 ? <Check size={12} style={{ color: 'rgb(74, 222, 128)' }} />
                 : <Copy size={12} style={{ color: 'var(--text-muted)' }} />}
+            </button>
+          )}
+          {onRegenerate && (
+            <button
+              onClick={onRegenerate}
+              className="opacity-0 group-hover/msg:opacity-100 p-0.5 rounded hover:bg-white/10 transition-all"
+              title="重新生成"
+            >
+              <RefreshCw size={12} style={{ color: 'var(--text-muted)' }} />
             </button>
           )}
           {onRetry && (
