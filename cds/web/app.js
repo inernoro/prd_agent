@@ -3737,6 +3737,7 @@ function renderActivityItem(event) {
   // Show Chinese label (golden glow) if available, path as tooltip
   if (label) {
     html += `<span class="activity-label" title="${escapeHtml(event.path)}">${escapeHtml(label)}</span>`;
+    html += `<span class="activity-path-suffix" title="${escapeHtml(event.path)}">${escapeHtml(shortPath)}</span>`;
   } else {
     html += `<span class="activity-path" title="${escapeHtml(event.path)}">${shortPath}</span>`;
   }
