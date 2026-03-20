@@ -74,7 +74,7 @@
       "containerPort": 8080,
       "icon": "api",
       "cacheMounts": [
-        { "hostPath": "/tmp/cds-cache/nuget", "containerPath": "/root/.nuget/packages" }
+        { "hostPath": "/var/cache/cds/nuget", "containerPath": "/root/.nuget/packages" }
       ]
     },
     {
@@ -87,7 +87,7 @@
       "containerPort": 5173,
       "icon": "web",
       "cacheMounts": [
-        { "hostPath": "/tmp/cds-cache/pnpm", "containerPath": "/root/.local/share/pnpm/store" }
+        { "hostPath": "/var/cache/cds/pnpm", "containerPath": "/root/.local/share/pnpm/store" }
       ]
     }
   ],
