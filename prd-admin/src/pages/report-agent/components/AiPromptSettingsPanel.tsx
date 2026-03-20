@@ -134,11 +134,13 @@ export function AiPromptSettingsPanel() {
         <textarea
           value={systemDefaultPrompt}
           readOnly
-          className="w-full min-h-[320px] px-3 py-2 rounded-xl text-[12px] leading-6 resize-y"
+          rows={14}
+          className="w-full px-3 py-2 rounded-xl text-[12px] leading-6 resize-y"
           style={{
             background: 'var(--bg-secondary)',
             color: 'var(--text-muted)',
             border: '1px solid var(--border-primary)',
+            minHeight: 360,
           }}
         />
       </GlassCard>
@@ -151,11 +153,13 @@ export function AiPromptSettingsPanel() {
           value={draftPrompt}
           onChange={(e) => setDraftPrompt(e.target.value)}
           placeholder="请输入你的周报生成 Prompt..."
-          className="w-full min-h-[210px] px-3 py-2 rounded-xl text-[12px] leading-6 resize-y transition-colors"
+          rows={12}
+          className="w-full px-3 py-2 rounded-xl text-[12px] leading-6 resize-y transition-colors"
           style={{
             background: 'var(--bg-secondary)',
             color: 'var(--text-primary)',
             border: '1px solid var(--border-primary)',
+            minHeight: 300,
           }}
         />
         <div className="mt-2 flex items-center justify-between text-[11px]" style={{ color: 'var(--text-muted)' }}>
