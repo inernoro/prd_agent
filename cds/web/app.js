@@ -1958,7 +1958,7 @@ function renderBranches() {
     const deployFailed = !!deployLog && deployLog.status === 'error';
     const isJustDeployed = justDeployed.has(b.id);
 
-    // Deploy status in actions row (only during deployment)
+    // Commit area in actions row — shows commit info or deploy log during deployment
     let commitAreaHtml = '';
     if (isDeploying && deployLog) {
       const compactLines = deployLog.lines.filter(l => l.trim()).slice(-2);
@@ -1966,6 +1966,13 @@ function renderBranches() {
         <div class="branch-actions-deploy-status" title="部署中，点击查看完整日志" onclick="event.stopPropagation(); openFullDeployLog('${esc(b.id)}', event)">
           <span class="live-dot"></span>
           <pre class="deploy-status-log">${esc(compactLines.join('\n')) || '正在启动...'}</pre>
+        </div>
+      `;
+    } else if (b.subject) {
+      commitAreaHtml = `
+        <div class="branch-actions-commit" onclick="event.stopPropagation(); toggleCommitLog('${esc(b.id)}', this)" title="点击查看历史提交">
+          ${commitIcon(b.subject)} ${esc(b.subject)}
+          <svg class="commit-chevron" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M4.427 5.427a.75.75 0 011.146 0L8 7.854l2.427-2.427a.75.75 0 111.146 1.146l-3 3a.75.75 0 01-1.146 0l-3-3a.75.75 0 010-1.146z"/></svg>
         </div>
       `;
     }
