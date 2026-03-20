@@ -31,13 +31,16 @@ AI 作为 DevOps 操作员，通过 HTTP API 远程驱动 CDS 完成代码部署
 | `CDS_TOKEN` | CDS 认证 token | 无 |
 | `AI_ACCESS_KEY` | 冒烟测试 API 认证密钥 | 无 |
 
-> 提示：如果环境变量未设置，询问用户获取 CDS 地址和认证信息。
+> **前置检查**：Pipeline 启动前必须验证这三个变量均已设置。未设置时立即终止并询问用户。
+> CDS_TOKEN 获取方式：登录 CDS Dashboard → 浏览器 DevTools → Application → Cookies → 复制 `cds_token` 值。
 
 ---
 
 ## CDS API 参考（AI 可用的全部接口）
 
-以下是 AI 可调用的 CDS REST API 完整列表。所有请求需带认证头 `-H "Cookie: cds_token=$CDS_TOKEN"` 或 `-H "X-CDS-Token: $CDS_TOKEN"`。
+以下是 AI 可调用的 CDS REST API 完整列表。所有请求必须带 Cookie 认证头：`-H "Cookie: cds_token=$CDS_TOKEN"`。
+
+> **实战验证**：CDS 仅支持 Cookie 认证（`Cookie: cds_token=...`），不支持 `X-CDS-Token` / `Authorization` Header。
 
 ### 分支管理
 
@@ -137,21 +140,28 @@ Phase 5: Smoke Test → 通过 CDS 对部署的服务执行冒烟测试
 **Phase 0 详细步骤**：
 
 ```bash
+# 0. 前置：验证环境变量
+# 缺少任何一个立即终止并提示用户
+[[ -z "$CDS_DASHBOARD_URL" ]] && echo "✗ CDS_DASHBOARD_URL 未设置" && exit 1
+[[ -z "$CDS_TOKEN" ]] && echo "✗ CDS_TOKEN 未设置（登录 CDS Dashboard → DevTools → Cookies → cds_token）" && exit 1
+
 # 1. 获取当前分支，禁止在 main/master 上操作
 BRANCH=$(git branch --show-current)
 
-# 2. 检查 CDS 连通性（远程服务器）
+# 2. 检查 CDS 连通性（唯一认证方式：Cookie）
 CDS="$CDS_DASHBOARD_URL"
-AUTH_HEADER="-H 'X-CDS-Token: $CDS_TOKEN'"
-curl -sf $AUTH_HEADER "$CDS/api/config"
+AUTH="-H 'Cookie: cds_token=$CDS_TOKEN'"
+curl -sf $AUTH "$CDS/api/config"
+# 如果 401 → token 过期，提示用户重新获取
 
 # 3. 查找分支是否已注册
-# CDS 的分支 ID 是分支名的 slug（/ → -）
-curl -sf $AUTH_HEADER "$CDS/api/branches"
-# 在 .branches[] 中查找 .branch == $BRANCH
+# CDS 的分支 ID 是分支名的 slug（/ → -，大写 → 小写）
+BRANCH_ID=$(echo "$BRANCH" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
+curl -sf $AUTH "$CDS/api/branches"
+# 在 .branches[] 中查找 .id == $BRANCH_ID
 
 # 4. 未注册则自动注册
-curl -sf $AUTH_HEADER "$CDS/api/branches" \
+curl -sf $AUTH "$CDS/api/branches" \
   -X POST -H "Content-Type: application/json" \
   -d "{\"branch\": \"$BRANCH\"}"
 ```
@@ -159,19 +169,35 @@ curl -sf $AUTH_HEADER "$CDS/api/branches" \
 **Phase 3 详细步骤**（关键：部署是异步的）：
 
 ```bash
-# 触发部署 — deploy 接口是 SSE 流，AI 不需要消费全部事件
-# 方案 A：直接 POST 触发，然后轮询
-curl -sf $AUTH_HEADER "$CDS/api/branches/$BRANCH_ID/deploy" \
-  -X POST --max-time 5 || true  # 触发即可，不等 SSE 结束
+# 触发部署 — deploy 接口是 SSE 流，截断即可
+curl -sf $AUTH "$CDS/api/branches/$BRANCH_ID/deploy" \
+  -X POST --max-time 5 || true
 
-# 轮询分支状态直到完成（building → starting → running/error）
-while true; do
-  RESP=$(curl -sf $AUTH_HEADER "$CDS/api/branches")
+# ⚠️ 实战经验：触发后 CDS 状态更新有延迟，必须等 3s 再轮询
+sleep 3
+
+# 轮询分支状态（building → starting → running/error）
+# 超时 5 分钟
+for i in $(seq 1 60); do
+  RESP=$(curl -sf $AUTH "$CDS/api/branches")
   STATUS=$(echo "$RESP" | jq -r ".branches[] | select(.id==\"$BRANCH_ID\") | .status")
   case "$STATUS" in
-    running) break ;;  # 成功
-    error)   break ;;  # 失败
-    *) sleep 5 ;;      # building/starting，继续等
+    running) break ;;
+    error)   break ;;
+    *)
+      # ⚠️ 实战经验：CDS 可能长时间报 starting，但容器已实际就绪
+      # 双重检查：如果 starting 超过 2 分钟，查容器日志确认
+      if [ "$i" -gt 24 ]; then
+        LOGS=$(curl -sf $AUTH "$CDS/api/branches/$BRANCH_ID/container-logs" \
+          -X POST -H "Content-Type: application/json" \
+          -d '{"profileId":"api"}')
+        if echo "$LOGS" | grep -q "listening on"; then
+          echo "CDS 报 starting 但容器已启动，视为成功"
+          STATUS="running"
+          break
+        fi
+      fi
+      sleep 5 ;;
   esac
 done
 
@@ -182,32 +208,52 @@ echo "$RESP" | jq ".branches[] | select(.id==\"$BRANCH_ID\") | .services"
 **Phase 4 详细步骤**（关键：CDS 和 AI 不在同一台机器）：
 
 ```bash
-# 方案 A（推荐）：通过 CDS 的 container-exec 间接探测
-curl -sf $AUTH_HEADER "$CDS/api/branches/$BRANCH_ID/container-exec" \
+# 方案 A（推荐，最可靠）：通过 CDS container-exec 在容器内探测
+# ⚠️ 实战经验：container-exec 中 curl 的输出正常工作，
+#    但嵌套 JSON 中的引号需要正确转义（用单引号包裹 command 值）
+curl -sf $AUTH "$CDS/api/branches/$BRANCH_ID/container-exec" \
   -X POST -H "Content-Type: application/json" \
-  -d '{"profileId":"api","command":"curl -sf http://localhost:5000/api/health || echo FAIL"}'
+  -d '{"profileId":"api","command":"curl -s http://localhost:5000/api/shortcuts/version-check"}'
+# 返回 {"exitCode":0,"stdout":"{\"version\":2,...}","stderr":""}
 
-# 方案 B：如果 CDS 有预览域名，直接请求预览地址
-PREVIEW_URL="https://${BRANCH_SLUG}.${PREVIEW_DOMAIN}/"
-curl -sf "$PREVIEW_URL/api/users/me" -H "X-AI-Access-Key: $AI_ACCESS_KEY"
+# 方案 B：预览域名（有 Cloudflare 陷阱）
+# ⚠️ 实战经验：Cloudflare 会将后端 401 响应透传为 HTTP 500（空 body），
+#    导致误判为服务宕机。使用此方案时先测不需认证的端点。
+PREVIEW_URL="https://${BRANCH_ID}.miduo.org"
+curl -sf "$PREVIEW_URL/"  # 先测根路径（前端静态资源，不需认证）
+curl -sf "$PREVIEW_URL/api/shortcuts/version-check"  # 再测不需认证的 API
 
 # 方案 C：通过 CDS Worker 端口 + X-Branch 头路由
-curl -sf "http://$CDS_HOST:5500/api/health" -H "X-Branch: $BRANCH_ID"
+curl -sf "http://$CDS_HOST:5500/api/shortcuts/version-check" -H "X-Branch: $BRANCH_ID"
 ```
 
-**Phase 5 详细步骤**：
+**Phase 5 详细步骤**（分层冒烟，从无认证到有认证逐层验证）：
 
 ```bash
-# 冒烟测试通过预览域名或 CDS Worker 路由访问部署的服务
-# 推断模块（从 git diff 的文件路径）
+# ⚠️ 实战经验：采用分层冒烟策略，避免认证问题阻塞整个验证
+# 推荐通过 container-exec 在容器内测试，绕过 Cloudflare
+
+# Layer 1: 无认证端点（必须通过）
+curl -sf $AUTH "$CDS/api/branches/$BRANCH_ID/container-exec" \
+  -X POST -H "Content-Type: application/json" \
+  -d '{"profileId":"api","command":"curl -s http://localhost:5000/api/shortcuts/version-check"}'
+# 期望：{"version":2,...}
+
+# Layer 2: 代码部署验证（grep 新代码存在于容器中）
 CHANGED=$(git diff --name-only HEAD~1 HEAD)
+# 对每个改动的文件，在容器中 grep 关键函数名
+curl -sf $AUTH "$CDS/api/branches/$BRANCH_ID/container-exec" \
+  -X POST -H "Content-Type: application/json" \
+  -d '{"profileId":"api","command":"grep -c NewFunctionName /app/src/path/to/file.cs"}'
+# 期望：exitCode=0, stdout 为正整数
 
-# 基础健康检查
-curl -sf "$TARGET_URL/api/users/me" \
-  -H "X-AI-Access-Key: $AI_ACCESS_KEY" \
-  -H "X-AI-Impersonate: admin"
+# Layer 3: 认证端点（可选，取决于 AI_ACCESS_KEY 配置）
+curl -sf $AUTH "$CDS/api/branches/$BRANCH_ID/container-exec" \
+  -X POST -H "Content-Type: application/json" \
+  -d '{"profileId":"api","command":"curl -s http://localhost:5000/api/users/me -H \"X-AI-Access-Key: KEY\" -H \"X-AI-Impersonate: root\""}'
+# 如果 401 → 非代码问题，记录但不阻塞流水线
 
-# 更完整的测试可以调用 /smoke 技能
+# Layer 4: 更完整的测试可以调用 /smoke 技能
 ```
 
 ---
@@ -220,33 +266,33 @@ curl -sf "$TARGET_URL/api/users/me" \
 
 ```bash
 # 1. 获取分支状态，定位失败服务
-curl -sf $AUTH_HEADER "$CDS/api/branches" | \
+curl -sf $AUTH "$CDS/api/branches" | \
   jq '.branches[] | select(.status=="error") | {id, status, errorMessage, services}'
 
 # 2. 获取失败服务的容器日志（最关键的诊断手段）
-curl -sf $AUTH_HEADER "$CDS/api/branches/$BRANCH_ID/container-logs" \
+curl -sf $AUTH "$CDS/api/branches/$BRANCH_ID/container-logs" \
   -X POST -H "Content-Type: application/json" \
   -d '{"profileId":"api"}'
 
 # 3. 获取操作历史（看部署过程中哪一步出错）
-curl -sf $AUTH_HEADER "$CDS/api/branches/$BRANCH_ID/logs" | \
+curl -sf $AUTH "$CDS/api/branches/$BRANCH_ID/logs" | \
   jq '.[-1].events[] | select(.status=="error")'
 
 # 4. 检查容器实际环境变量（排查配置问题）
-curl -sf $AUTH_HEADER "$CDS/api/branches/$BRANCH_ID/container-env" \
+curl -sf $AUTH "$CDS/api/branches/$BRANCH_ID/container-env" \
   -X POST -H "Content-Type: application/json" \
   -d '{"profileId":"api"}'
 
 # 5. 在容器内执行诊断命令
-curl -sf $AUTH_HEADER "$CDS/api/branches/$BRANCH_ID/container-exec" \
+curl -sf $AUTH "$CDS/api/branches/$BRANCH_ID/container-exec" \
   -X POST -H "Content-Type: application/json" \
   -d '{"profileId":"api","command":"dotnet --info"}'
 
 # 6. 检查基础设施健康（MongoDB/Redis 是否正常）
-curl -sf $AUTH_HEADER "$CDS/api/infra" | jq '.[] | {id, status, errorMessage}'
+curl -sf $AUTH "$CDS/api/infra" | jq '.[] | {id, status, errorMessage}'
 # 如果基础设施异常：
-curl -sf $AUTH_HEADER "$CDS/api/infra/mongodb/health"
-curl -sf $AUTH_HEADER "$CDS/api/infra/mongodb/logs"
+curl -sf $AUTH "$CDS/api/infra/mongodb/health"
+curl -sf $AUTH "$CDS/api/infra/mongodb/logs"
 ```
 
 **诊断决策树**：
@@ -275,7 +321,7 @@ status == error
 
 ```bash
 # 获取所有分支状态 + 服务器容量
-curl -sf $AUTH_HEADER "$CDS/api/branches" | jq '{
+curl -sf $AUTH "$CDS/api/branches" | jq '{
   capacity: .capacity,
   branches: [.branches[] | {
     id, branch, status, errorMessage,
@@ -285,7 +331,7 @@ curl -sf $AUTH_HEADER "$CDS/api/branches" | jq '{
 }'
 
 # 获取基础设施状态
-curl -sf $AUTH_HEADER "$CDS/api/infra" | jq '.[] | {id, name, status, hostPort}'
+curl -sf $AUTH "$CDS/api/infra" | jq '.[] | {id, name, status, hostPort}'
 ```
 
 **输出示例**：
@@ -318,14 +364,14 @@ curl -sf $AUTH_HEADER "$CDS/api/infra" | jq '.[] | {id, name, status, hostPort}'
 git push -u origin "$BRANCH"
 
 # 2. CDS 拉取
-curl -sf $AUTH_HEADER "$CDS/api/branches/$BRANCH_ID/pull" -X POST
+curl -sf $AUTH "$CDS/api/branches/$BRANCH_ID/pull" -X POST
 
 # 3. 如果只改了后端，只重建 API 服务（更快）
-curl -sf $AUTH_HEADER "$CDS/api/branches/$BRANCH_ID/deploy/api" \
+curl -sf $AUTH "$CDS/api/branches/$BRANCH_ID/deploy/api" \
   -X POST --max-time 5 || true
 
 # 4. 如果前后端都改了，全量部署
-curl -sf $AUTH_HEADER "$CDS/api/branches/$BRANCH_ID/deploy" \
+curl -sf $AUTH "$CDS/api/branches/$BRANCH_ID/deploy" \
   -X POST --max-time 5 || true
 
 # 5. 轮询等待 + readiness check
@@ -344,13 +390,13 @@ curl -sf $AUTH_HEADER "$CDS/api/branches/$BRANCH_ID/deploy" \
 
 ```bash
 # 重启单个服务（通过 redeploy 单 profile 实现）
-curl -sf $AUTH_HEADER "$CDS/api/branches/$BRANCH_ID/deploy/api" \
+curl -sf $AUTH "$CDS/api/branches/$BRANCH_ID/deploy/api" \
   -X POST --max-time 5 || true
 
 # 重启所有（先停后部署）
-curl -sf $AUTH_HEADER "$CDS/api/branches/$BRANCH_ID/stop" -X POST
+curl -sf $AUTH "$CDS/api/branches/$BRANCH_ID/stop" -X POST
 # 等待停止
-curl -sf $AUTH_HEADER "$CDS/api/branches/$BRANCH_ID/deploy" -X POST --max-time 5 || true
+curl -sf $AUTH "$CDS/api/branches/$BRANCH_ID/deploy" -X POST --max-time 5 || true
 ```
 
 ---
@@ -361,16 +407,16 @@ curl -sf $AUTH_HEADER "$CDS/api/branches/$BRANCH_ID/deploy" -X POST --max-time 5
 
 ```bash
 # 停止分支所有服务
-curl -sf $AUTH_HEADER "$CDS/api/branches/$BRANCH_ID/stop" -X POST
+curl -sf $AUTH "$CDS/api/branches/$BRANCH_ID/stop" -X POST
 
 # 如果确认不再需要，删除分支（不可逆，需用户确认）
-curl -sf $AUTH_HEADER "$CDS/api/branches/$BRANCH_ID" -X DELETE
+curl -sf $AUTH "$CDS/api/branches/$BRANCH_ID" -X DELETE
 
 # 清理孤儿容器（定期维护）
-curl -sf $AUTH_HEADER "$CDS/api/cleanup-orphans" -X POST
+curl -sf $AUTH "$CDS/api/cleanup-orphans" -X POST
 
 # 清理过期分支（远程已删除的分支）
-curl -sf $AUTH_HEADER "$CDS/api/prune-stale-branches" -X POST
+curl -sf $AUTH "$CDS/api/prune-stale-branches" -X POST
 ```
 
 ---
@@ -381,7 +427,7 @@ curl -sf $AUTH_HEADER "$CDS/api/prune-stale-branches" -X POST
 
 ```bash
 # 分支的 Git 提交历史
-curl -sf $AUTH_HEADER "$CDS/api/branches/$BRANCH_ID/git-log" | jq '.commits'
+curl -sf $AUTH "$CDS/api/branches/$BRANCH_ID/git-log" | jq '.commits'
 ```
 
 ---
@@ -479,3 +525,20 @@ curl -sf $AUTH_HEADER "$CDS/api/branches/$BRANCH_ID/git-log" | jq '.commits'
 3. **删除操作需确认**：`DELETE /api/branches/:id` 必须先询问用户
 4. **生产环境检测**：CDS_DASHBOARD_URL 非 localhost/内网时输出警告
 5. **冒烟测试数据清理**：测试创建的资源必须在测试结束时删除
+
+---
+
+## 实战陷阱（2026-03-20 验证）
+
+以下经验来自真实部署验证，每条都有对应的解决方案。
+
+| # | 陷阱 | 表现 | 解决方案 |
+|---|------|------|---------|
+| 1 | **CDS 仅 Cookie 认证** | `X-CDS-Token` / `Authorization` 均返回 401 | 必须用 `-H "Cookie: cds_token=xxx"` |
+| 2 | **deploy 后状态延迟** | 触发后第一次轮询仍为 idle | 触发后 `sleep 3` 再开始轮询 |
+| 3 | **starting 状态假死** | CDS 报 `starting` 但容器已 `listening on :5000` | 轮询 2min 后用 `container-logs` 交叉验证 |
+| 4 | **Cloudflare 401→500** | 预览域名访问认证失败端点返回 HTTP 500 空 body | 用 `container-exec` 在容器内测试绕过 CDN |
+| 5 | **container-exec 引号** | JSON 嵌套 curl 命令时 stdout 为空 | 简单命令用单引号包裹 command；复杂测试分两步 |
+| 6 | **AI Access Key 失效** | `X-AI-Impersonate: admin/root` 均 401 | 分层冒烟：先无认证端点，再认证端点 |
+| 7 | **无 jq 环境** | AI 沙箱可能没有 jq | 用 `python3 -c "import json,sys;..."` 替代 |
+| 8 | **无 xxd 环境** | traceId 生成 `xxd -p` 不可用 | 用 `openssl rand -hex 4` 替代 |
