@@ -134,17 +134,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     stateService.save();
 
-    // Fetch latest commit subject for each branch (serves as "需求" info)
+    // Fetch latest commit subject + short SHA for each branch
     const branchesWithSubject = await Promise.all(
       branches.map(async (b) => {
         try {
           const result = await shell.exec(
-            'git log -1 --format=%s',
+            'git log -1 --format=%h%n%s',
             { cwd: b.worktreePath, timeout: 5000 },
           );
-          return { ...b, subject: result.stdout.trim() };
+          const lines = result.stdout.trim().split('\n');
+          return { ...b, commitSha: lines[0] || '', subject: lines[1] || '' };
         } catch {
-          return { ...b, subject: '' };
+          return { ...b, commitSha: '', subject: '' };
         }
       }),
     );
@@ -756,6 +757,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  // ── Container log stream (SSE) — replaces polling ──
+
+  router.get('/branches/:id/container-logs-stream/:profileId', (req, res) => {
+    const { id, profileId } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) { res.status(404).json({ error: `分支 "${id}" 不存在` }); return; }
+
+    const svc = entry.services[profileId];
+    if (!svc) { res.status(404).json({ error: '未找到服务' }); return; }
+
+    initSSE(res);
+
+    const ac = containerService.streamLogs(
+      svc.containerName,
+      (chunk) => sendSSE(res, 'log', { chunk }),
+      () => { try { res.end(); } catch { /* already closed */ } },
+    );
+
+    // Client disconnect → stop docker logs -f
+    req.on('close', () => ac.abort());
+  });
+
   // ── Container env ──
 
   router.post('/branches/:id/container-env', async (req, res) => {
@@ -992,6 +1015,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return 'npm';
   }
 
+  // Cache base path: /data/cds/{projectSlug}/cache — isolated per project (1 project = 1 github repo = 1 cache)
+  const cacheBase = `/data/cds/${stateService.projectSlug}/cache`;
+
   /** Build command prefix and cache mount for a detected package manager */
   function nodeProfileCommands(pm: PackageManager) {
     switch (pm) {
@@ -999,19 +1025,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return {
           installPrefix: 'corepack enable && pnpm install --frozen-lockfile && ',
           runPrefix: 'corepack enable && pnpm exec ',
-          cacheMounts: [{ hostPath: '/tmp/cds-cache/pnpm', containerPath: '/root/.local/share/pnpm/store' }],
+          cacheMounts: [{ hostPath: `${cacheBase}/pnpm`, containerPath: '/pnpm/store' }],
         };
       case 'yarn':
         return {
           installPrefix: 'corepack enable && yarn install --frozen-lockfile && ',
           runPrefix: 'corepack enable && yarn exec ',
-          cacheMounts: [{ hostPath: '/tmp/cds-cache/yarn', containerPath: '/usr/local/share/.cache/yarn' }],
+          cacheMounts: [{ hostPath: `${cacheBase}/yarn`, containerPath: '/usr/local/share/.cache/yarn' }],
         };
       default:
         return {
           installPrefix: 'npm install && ',
           runPrefix: 'npx ',
-          cacheMounts: [{ hostPath: '/tmp/cds-cache/npm', containerPath: '/root/.npm' }],
+          cacheMounts: [{ hostPath: `${cacheBase}/npm`, containerPath: '/root/.npm' }],
         };
     }
   }
@@ -1066,7 +1092,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         command: 'dotnet restore && dotnet build --no-restore && dotnet run --no-build --project src/PrdAgent.Api/PrdAgent.Api.csproj --urls http://0.0.0.0:8080',
         containerPort: 8080,
         cacheMounts: [
-          { hostPath: '/tmp/cds-cache/nuget', containerPath: '/root/.nuget/packages' },
+          { hostPath: `${cacheBase}/nuget`, containerPath: '/root/.nuget/packages' },
         ],
       },
       {

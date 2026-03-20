@@ -14,6 +14,7 @@ AI 作为 DevOps 操作员，通过 HTTP API 远程驱动 CDS 完成代码部署
 - "灰度环境什么状态" / "看看部署情况"
 - "容器报错了" / "部署失败了" / "帮我排查"
 - "重启服务" / "更新灰度" / "清理环境"
+- "更新 CDS" / "CDS 自更新" / "self-update"
 
 ## 核心理念
 
@@ -27,12 +28,36 @@ AI 作为 DevOps 操作员，通过 HTTP API 远程驱动 CDS 完成代码部署
 
 | 变量 | 用途 | 默认值 |
 |------|------|--------|
-| `CDS_DASHBOARD_URL` | CDS Dashboard 地址（远程） | 必填 |
+| `CDS_HOST` | CDS 地址（如 `cds.miduo.org`） | 必填 |
 | `AI_ACCESS_KEY` | CDS 静态 AI 认证密钥（推荐配置在 `.bashrc`） | 无 |
 
-> **前置检查**：Pipeline 启动前必须验证 `CDS_DASHBOARD_URL` 已设置。未设置时立即终止并询问用户。
+> **前置检查**：Pipeline 启动前必须验证 `CDS_HOST` 已设置。未设置时立即终止并询问用户。
 
 ## AI 认证方式（三种，按优先级）
+
+> **交互要求**：认证失败时，AI **必须**向用户展示选项让用户选择，而不是静默失败。
+> 所有 AI 发起的 CDS 请求在监控浮窗中都会标记为 **金色标签 + 紫色 AI 标记**。
+
+### 认证流程（AI 必须遵循）
+
+```
+Phase 0 认证：
+1. 检查环境变量 AI_ACCESS_KEY 是否存在
+   ├─ 存在 → 方式 A（静态密钥），尝试 curl 验证
+   │   ├─ 成功 → 认证完成
+   │   └─ 失败 → 提示用户选择 ↓
+   └─ 不存在 → 提示用户选择 ↓
+
+2. 向用户展示选项（必须明确展示，不可跳过）：
+   ────────────────────────────────
+   CDS 认证方式，请选择：
+   (1) 我已在 CDS Dashboard 批准 → AI 发送配对请求，等待批准
+   (2) 输入 Access Key → 用户提供密钥，AI 直接使用
+   (3) 输入 Cookie Token → 用户提供 cds_token
+   ────────────────────────────────
+
+3. 用户选择后执行对应认证方式
+```
 
 ### 方式 A：静态密钥（推荐，零交互）
 
@@ -58,7 +83,10 @@ RESP=$(curl -sf "$CDS/api/ai/request-access" \
   -d '{"agentName":"Claude Code","purpose":"CDS 部署流水线"}')
 REQUEST_ID=$(echo "$RESP" | jq -r '.requestId')
 
-# Step 2: 等待用户在 CDS Dashboard 批准（轮询，最多 5 分钟）
+# Step 2: 提示用户去 CDS Dashboard 批准
+echo "⏳ 请在 CDS Dashboard 右上角点击闪烁的 AI 标识并批准连接..."
+
+# Step 3: 等待用户批准（轮询，最多 5 分钟）
 for i in $(seq 1 60); do
   STATUS=$(curl -sf "$CDS/api/ai/request-status/$REQUEST_ID" | jq -r '.status')
   case "$STATUS" in
@@ -70,7 +98,7 @@ for i in $(seq 1 60); do
   esac
 done
 
-# Step 3: 后续所有请求使用 AI token
+# Step 4: 后续所有请求使用 AI token
 AUTH="-H 'X-CDS-AI-Token: $AI_TOKEN'"
 curl -sf $AUTH "$CDS/api/branches"
 ```
@@ -84,6 +112,7 @@ AUTH="-H 'Cookie: cds_token=$CDS_TOKEN'"
 ```
 
 > **认证优先级**：AI 自动尝试 A → B → C。方式 A 配置后完全静默，方式 B 需要用户在 Dashboard 点一次批准。
+> **关键**：当方式 A 失败或未配置时，AI 必须向用户展示选项菜单，不可静默跳过。
 
 ## API 操作监控
 
@@ -179,6 +208,16 @@ CDS Dashboard **右下角**有实时操作监控浮窗，通过 SSE (`GET /api/a
 | POST | `/api/import-config` | 导入 CDS Compose YAML |
 | GET | `/api/remote-branches` | 列出远程 Git 分支 |
 
+### CDS 自更新
+
+| 方法 | 路径 | 用途 | 需认证 |
+|------|------|------|--------|
+| GET | `/api/self-branches` | 列出 CDS 自身可切换的分支（含当前分支） | 是 |
+| POST | `/api/self-update` | 切换分支 + 拉取 + 重编译 + 重启 CDS（SSE 流） | 是 |
+
+> `POST /api/self-update` body: `{ "branch": "feature/xxx" }`（可选，不传则在当前分支 pull）
+> 调用后 CDS 进程会重启，需等待 ~10s 后轮询 `/api/config` 确认恢复。
+
 ### 维护
 
 | 方法 | 路径 | 用途 |
@@ -213,13 +252,13 @@ Phase 5: Smoke Test → 通过 CDS 对部署的服务执行冒烟测试
 
 ```bash
 # 0. 前置：验证环境变量
-[[ -z "$CDS_DASHBOARD_URL" ]] && echo "✗ CDS_DASHBOARD_URL 未设置" && exit 1
+[[ -z "$CDS_HOST" ]] && echo "✗ CDS_HOST 未设置（格式: cds.miduo.org）" && exit 1
 
 # 1. 获取当前分支，禁止在 main/master 上操作
 BRANCH=$(git branch --show-current)
 
 # 2. 认证 CDS（三种方式自动尝试）
-CDS="$CDS_DASHBOARD_URL"
+CDS="https://$CDS_HOST"
 
 # 方式 A: 静态密钥（AI_ACCESS_KEY 环境变量，推荐配置在 .bashrc）
 if [[ -n "$AI_ACCESS_KEY" ]]; then
@@ -530,6 +569,70 @@ curl -sf $AUTH "$CDS/api/branches/$BRANCH_ID/git-log" | jq '.commits'
 
 ---
 
+### 场景 8：CDS 自身更新（改了 cds/ 目录的代码）
+
+**触发条件**（AI 自动判断）：当本次提交包含 `cds/` 目录下的文件变更时，部署流水线在 Phase 1（Git Push）后 **必须** 插入 CDS 自更新阶段。
+
+**判断逻辑**：
+```bash
+# 检查本次改动是否涉及 CDS 自身代码
+CDS_CHANGED=$(git diff --name-only HEAD~1 HEAD | grep -c "^cds/" || true)
+if [ "$CDS_CHANGED" -gt 0 ]; then
+  echo "检测到 CDS 代码变更，需要自更新"
+fi
+```
+
+**为什么需要**：CDS 运行在宿主机上（不在容器里），`POST /api/branches/:id/deploy` 只更新容器内的应用代码。如果改了 CDS 自身（如 `cds/src/`），必须通过 self-update 让宿主机上的 CDS 加载新代码。
+
+**操作步骤**：
+
+```bash
+# 1. 触发自更新（切换到功能分支 + pull + 重启）
+curl -sf $AUTH "$CDS/api/self-update" \
+  -X POST -H "Content-Type: application/json" \
+  -d "{\"branch\": \"$BRANCH\"}" \
+  --max-time 10 || true
+
+# 2. 等待 CDS 重启（进程会被 kill 并重启，约 10s）
+sleep 10
+
+# 3. 轮询确认 CDS 恢复（最多等 60s）
+for i in $(seq 1 12); do
+  if curl -sf $AUTH "$CDS/api/config" -o /dev/null --max-time 5; then
+    echo "✓ CDS 已恢复"
+    break
+  fi
+  sleep 5
+done
+
+# 4. 验证 CDS 运行在正确的分支上
+curl -sf $AUTH "$CDS/api/self-branches" | \
+  python3 -c "import json,sys;d=json.load(sys.stdin);print(f'当前分支: {d[\"current\"]}')"
+```
+
+**完整流水线（含 CDS 自更新）**：
+
+```
+Pipeline [trace:{traceId}]
+Phase 0: 环境预检
+Phase 1: Git Push
+Phase 1.5: CDS Self-Update ← 仅当 cds/ 有变更时插入
+  ├─ POST /api/self-update（切换分支 + pull + 重启）
+  ├─ 等待 CDS 恢复（轮询 /api/config）
+  └─ 验证分支正确
+Phase 2: CDS Pull（应用代码）
+Phase 3: CDS Deploy
+Phase 4: Readiness Check
+Phase 5: Smoke Test
+```
+
+**注意事项**：
+- self-update 会重启 CDS 进程，期间所有 API 不可用（~10s）
+- 重启后 CDS 会重新加载 state.json，迁移逻辑会自动执行
+- 如果 CDS 未恢复，检查宿主机上 `cds/cds.log` 或 `exec_cds.sh` 输出
+
+---
+
 ## 链路追踪规范
 
 ### traceId 生成
@@ -615,13 +718,14 @@ curl -sf $AUTH "$CDS/api/branches/$BRANCH_ID/git-log" | jq '.commits'
 | Readiness 超时 | 通过 container-exec 在容器内诊断 |
 | 冒烟测试失败 | 输出失败请求和响应，建议修复 |
 | 基础设施异常 | 检查 infra health，尝试重启 |
+| cds/ 代码变更未生效 | `POST /api/self-update` 切换分支并重启 CDS |
 
 ## 安全规则
 
 1. **不在 main/master 上操作**：检测到则终止并警告
 2. **密钥不硬编码**：CDS_TOKEN / AI_ACCESS_KEY 仅从环境变量读取
 3. **删除操作需确认**：`DELETE /api/branches/:id` 必须先询问用户
-4. **生产环境检测**：CDS_DASHBOARD_URL 非 localhost/内网时输出警告
+4. **生产环境检测**：`CDS_HOST` 非 localhost/内网时输出警告
 5. **冒烟测试数据清理**：测试创建的资源必须在测试结束时删除
 
 ---

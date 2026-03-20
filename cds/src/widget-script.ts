@@ -32,9 +32,16 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     #cds-widget .cds-badge:active{cursor:grabbing}
     #cds-widget .cds-branch{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     #cds-widget .cds-tag{font-size:10px;padding:1px 5px;border-radius:4px;background:rgba(255,255,255,0.15);margin-left:2px}
+    #cds-widget .cds-sha{font-size:9px;padding:1px 5px;border-radius:4px;background:rgba(255,255,255,0.1);color:rgba(255,255,255,0.6);font-family:ui-monospace,SFMono-Regular,monospace;letter-spacing:0.3px}
+    #cds-widget .cds-status-row{display:flex;align-items:center;gap:6px;margin-bottom:4px}
+    #cds-widget .cds-status-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+    #cds-widget .cds-status-dot.cds-status-blink{animation:cds-blink 1.5s ease-in-out infinite;box-shadow:0 0 6px currentColor}
+    @keyframes cds-blink{0%,100%{opacity:1}50%{opacity:0.3}}
+    #cds-widget .cds-commit-sha{font-size:9px;padding:1px 5px;border-radius:4px;background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5);font-family:ui-monospace,SFMono-Regular,monospace;margin-left:auto;flex-shrink:0}
+    #cds-widget .cds-commit-msg{font-size:10px;color:#8b949e;margin-bottom:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
     #cds-widget button{display:flex;align-items:center;justify-content:center;padding:2px;border-radius:4px;border:none;background:transparent;color:inherit;cursor:pointer;opacity:0.6}
     #cds-widget button:hover{opacity:1}
-    #cds-widget .cds-panel{margin-bottom:4px;padding:10px 12px;border-radius:8px;background:rgba(22,27,34,0.95);backdrop-filter:blur(12px);border:1px solid rgba(63,185,80,0.3);box-shadow:0 4px 16px rgba(0,0,0,0.4);min-width:220px}
+    #cds-widget .cds-panel{margin-bottom:4px;padding:10px 12px;border-radius:8px;background:rgba(22,27,34,0.95);backdrop-filter:blur(12px);border:1px solid rgba(63,185,80,0.3);box-shadow:0 4px 16px rgba(0,0,0,0.4);width:260px;overflow:hidden}
     #cds-widget .cds-deploy-btn{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:6px;border:1px solid #30363d;background:#21262d;color:#c9d1d9;font-size:11px;cursor:pointer;width:100%;opacity:1}
     #cds-widget .cds-deploy-btn:hover{border-color:#58a6ff}
     #cds-widget .cds-deploy-btn:disabled{cursor:wait;opacity:0.5}
@@ -60,6 +67,8 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   var deployProfileId=null;
   var profiles=[];
   var branchStatus='';
+  var commitSha='';
+  var commitMsg='';
   var steps=[];
   var resultMsg='';
   var resultOk=true;
@@ -100,7 +109,15 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
       }else if(!branchStatus){
         h+='<div style="color:#8b949e;font-size:11px;padding:4px 0">分支 "'+BRANCH_ID+'" 未在 CDS 中注册</div>';
       }else{
-        h+='<div style="font-size:11px;color:#8b949e;margin-bottom:6px">状态: <span style="color:'+(branchStatus==='running'?'#3fb950':'#f0883e')+'">'+branchStatus+'</span></div>';
+        var statusColor=branchStatus==='running'?'#3fb950':branchStatus==='error'||branchStatus==='stopped'?'#f85149':'#f0883e';
+        var statusBlink=branchStatus==='running'?' cds-status-blink':'';
+        h+='<div class="cds-status-row">';
+        h+='<span style="font-size:11px;color:#8b949e">状态: </span>';
+        h+='<span class="cds-status-dot'+statusBlink+'" style="background:'+statusColor+'"></span>';
+        h+='<span style="font-size:11px;color:'+statusColor+';font-style:italic;font-weight:600">'+branchStatus+'</span>';
+        if(commitSha)h+='<span class="cds-commit-sha">'+commitSha+'</span>';
+        h+='</div>';
+        if(commitMsg)h+='<div class="cds-commit-msg" title="'+commitMsg.replace(/"/g,'&quot;')+'">'+commitMsg+'</div>';
         h+='<div style="display:flex;flex-direction:column;gap:4px">';
         for(var i=0;i<profiles.length;i++){
           var p=profiles[i];
@@ -144,6 +161,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     h+='<div class="cds-badge" onmousedown="return false">';
     h+=ICON_BRANCH;
     h+='<span class="cds-branch">'+BRANCH_NAME+'</span>';
+    if(commitSha)h+='<span class="cds-sha" title="'+commitSha+'">'+commitSha+'</span>';
     h+='<span class="cds-tag">CDS</span>';
     h+='<button data-action="toggle" title="'+(expanded?'收起':'展开更新面板')+'">'+(expanded?ICON_DOWN:ICON_UP)+'</button>';
     h+='<button data-action="dismiss">'+ICON_X+'</button>';
@@ -188,6 +206,8 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
         if(branchList[i].id===BRANCH_ID){found=branchList[i];break;}
       }
       branchStatus=found?found.status:'';
+      commitSha=found&&found.commitSha?found.commitSha:'';
+      commitMsg=found&&found.subject?found.subject:'';
       profiles=(res[1]&&res[1].profiles)||[];
       render();
     }).catch(function(){
