@@ -103,6 +103,11 @@ public class ReportAgentPreferences
     /// 日常记录页的自定义快捷标签（用户级）
     /// </summary>
     public List<string>? DailyLogCustomTags { get; set; }
+
+    /// <summary>
+    /// AI 生成周报草稿的自定义 Prompt（为空时使用系统默认 Prompt）
+    /// </summary>
+    public string? WeeklyReportPrompt { get; set; }
 }
 
 /// <summary>

@@ -527,6 +527,11 @@ export const api = {
       list: () => '/api/report-agent/my/ai-sources',
       byKey: (key: string) => `/api/report-agent/my/ai-sources/${key}`,
     },
+    aiReportPrompt: {
+      get: () => '/api/report-agent/my/ai-report-prompt',
+      update: () => '/api/report-agent/my/ai-report-prompt',
+      reset: () => '/api/report-agent/my/ai-report-prompt/reset',
+    },
     dailyLogTags: {
       get: () => '/api/report-agent/my/daily-log-tags',
       update: () => '/api/report-agent/my/daily-log-tags',

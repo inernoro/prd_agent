@@ -572,6 +572,9 @@ import type {
   CancelVacationContract,
   ListMyAiSourcesContract,
   UpdateMyAiSourceContract,
+  GetMyAiReportPromptContract,
+  UpdateMyAiReportPromptContract,
+  ResetMyAiReportPromptContract,
   GetMyDailyLogTagsContract,
   UpdateMyDailyLogTagsContract,
   ListPersonalSourcesContract,
@@ -644,6 +647,9 @@ import {
   cancelVacationReal,
   listMyAiSourcesReal,
   updateMyAiSourceReal,
+  getMyAiReportPromptReal,
+  updateMyAiReportPromptReal,
+  resetMyAiReportPromptReal,
   getMyDailyLogTagsReal,
   updateMyDailyLogTagsReal,
   listPersonalSourcesReal,
@@ -1033,6 +1039,9 @@ export const cancelVacation: CancelVacationContract = withAuth(cancelVacationRea
 // Report Agent Phase 5/6 v2.0: Personal Sources + Workflow + Identity Mappings
 export const listMyAiSources: ListMyAiSourcesContract = withAuth(listMyAiSourcesReal);
 export const updateMyAiSource: UpdateMyAiSourceContract = withAuth(updateMyAiSourceReal);
+export const getMyAiReportPrompt: GetMyAiReportPromptContract = withAuth(getMyAiReportPromptReal);
+export const updateMyAiReportPrompt: UpdateMyAiReportPromptContract = withAuth(updateMyAiReportPromptReal);
+export const resetMyAiReportPrompt: ResetMyAiReportPromptContract = withAuth(resetMyAiReportPromptReal);
 export const getMyDailyLogTags: GetMyDailyLogTagsContract = withAuth(getMyDailyLogTagsReal);
 export const updateMyDailyLogTags: UpdateMyDailyLogTagsContract = withAuth(updateMyDailyLogTagsReal);
 export const listPersonalSources: ListPersonalSourcesContract = withAuth(listPersonalSourcesReal);

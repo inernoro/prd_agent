@@ -25,6 +25,7 @@ public class ReportAgentController : ControllerBase
     private const long MaxRichTextImageBytes = 5 * 1024 * 1024;
     private const int MaxDailyLogCustomTagCount = 20;
     private const int MaxDailyLogCustomTagLength = 16;
+    private const int MaxWeeklyReportPromptLength = ReportAgentPromptDefaults.MaxCustomPromptLength;
     private static readonly string[] EditableReportStatuses =
     {
         WeeklyReportStatus.Draft,
@@ -1768,6 +1769,94 @@ public class ReportAgentController : ControllerBase
 
     #endregion
 
+    #region My AI Report Prompt
+
+    /// <summary>
+    /// 获取我的 AI 生成周报 Prompt 设置
+    /// </summary>
+    [HttpGet("my/ai-report-prompt")]
+    public async Task<IActionResult> GetMyAiReportPrompt(CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var prefs = await _db.UserPreferences
+            .Find(x => x.UserId == userId)
+            .FirstOrDefaultAsync(ct);
+        var customPrompt = NormalizeMyAiReportPrompt(prefs?.ReportAgentPreferences?.WeeklyReportPrompt);
+
+        return Ok(ApiResponse<object>.Ok(BuildMyAiReportPromptPayload(customPrompt)));
+    }
+
+    /// <summary>
+    /// 更新我的 AI 生成周报 Prompt 设置
+    /// </summary>
+    [HttpPut("my/ai-report-prompt")]
+    public async Task<IActionResult> UpdateMyAiReportPrompt([FromBody] UpdateMyAiReportPromptRequest req, CancellationToken ct)
+    {
+        var customPrompt = NormalizeMyAiReportPrompt(req?.Prompt);
+        if (string.IsNullOrWhiteSpace(customPrompt))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "Prompt 不能为空"));
+        if (customPrompt.Length > MaxWeeklyReportPromptLength)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", $"Prompt 长度不能超过 {MaxWeeklyReportPromptLength} 字符"));
+
+        var userId = GetUserId();
+        var update = Builders<UserPreferences>.Update
+            .Set(x => x.ReportAgentPreferences!.WeeklyReportPrompt, customPrompt)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+        await _db.UserPreferences.UpdateOneAsync(
+            x => x.UserId == userId,
+            update,
+            new UpdateOptions { IsUpsert = true },
+            ct);
+
+        return Ok(ApiResponse<object>.Ok(BuildMyAiReportPromptPayload(customPrompt)));
+    }
+
+    /// <summary>
+    /// 重置我的 AI 生成周报 Prompt 到系统默认
+    /// </summary>
+    [HttpPost("my/ai-report-prompt/reset")]
+    public async Task<IActionResult> ResetMyAiReportPrompt(CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var update = Builders<UserPreferences>.Update
+            .Set(x => x.ReportAgentPreferences!.WeeklyReportPrompt, null)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+        await _db.UserPreferences.UpdateOneAsync(
+            x => x.UserId == userId,
+            update,
+            new UpdateOptions { IsUpsert = true },
+            ct);
+
+        return Ok(ApiResponse<object>.Ok(BuildMyAiReportPromptPayload(null)));
+    }
+
+    private static object BuildMyAiReportPromptPayload(string? customPrompt)
+    {
+        var normalizedCustomPrompt = NormalizeMyAiReportPrompt(customPrompt);
+        var systemDefaultPrompt = ReportAgentPromptDefaults.WeeklyReportSystemDefaultPrompt;
+
+        return new
+        {
+            systemDefaultPrompt,
+            customPrompt = normalizedCustomPrompt,
+            effectivePrompt = normalizedCustomPrompt ?? systemDefaultPrompt,
+            usingSystemDefault = normalizedCustomPrompt == null,
+            maxCustomPromptLength = ReportAgentPromptDefaults.MaxCustomPromptLength
+        };
+    }
+
+    private static string? NormalizeMyAiReportPrompt(string? prompt)
+    {
+        var normalized = (prompt ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+            return null;
+        return normalized;
+    }
+
+    #endregion
+
     #region My Daily Log Tags
 
     /// <summary>
@@ -3353,6 +3442,11 @@ public class UpdateMyAiSourceRequest
 public class UpdateMyDailyLogTagsRequest
 {
     public List<string>? Items { get; set; }
+}
+
+public class UpdateMyAiReportPromptRequest
+{
+    public string? Prompt { get; set; }
 }
 
 public class UpdatePersonalSourceRequest

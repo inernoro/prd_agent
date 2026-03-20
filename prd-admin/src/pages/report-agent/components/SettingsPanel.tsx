@@ -1,14 +1,13 @@
 import { useState } from 'react';
-import { Link2, FileBarChart, Building2, GitBranch, ChevronRight } from 'lucide-react';
+import { Link2, FileBarChart, Building2, Sparkles, ChevronRight } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { useAuthStore } from '@/stores/authStore';
 import { PersonalSourcesPanel } from './PersonalSourcesPanel';
+import { AiPromptSettingsPanel } from './AiPromptSettingsPanel';
 import { TemplateManager } from './TemplateManager';
 import { TeamManager } from './TeamManager';
-import { DataSourceManager } from './DataSourceManager';
-import { HistoryTrendsPanel } from './HistoryTrendsPanel';
 
-type SettingsSection = 'overview' | 'my-sources' | 'templates' | 'teams' | 'data-sources' | 'trends';
+type SettingsSection = 'overview' | 'my-sources' | 'ai-prompt' | 'templates' | 'teams';
 
 interface SectionDef {
   key: SettingsSection;
@@ -30,11 +29,11 @@ const SECTIONS: SectionDef[] = [
     isPersonal: true,
   },
   {
-    key: 'trends',
-    label: '数据统计',
-    desc: '查看个人和团队的周报趋势',
-    icon: GitBranch,
-    color: 'rgba(20, 184, 166, 0.85)',
+    key: 'ai-prompt',
+    label: 'AI生成周报Prompt',
+    desc: '配置 AI 生成周报时的系统默认与个人自定义 Prompt',
+    icon: Sparkles,
+    color: 'rgba(168, 85, 247, 0.85)',
     isPersonal: true,
   },
   {
@@ -52,14 +51,6 @@ const SECTIONS: SectionDef[] = [
     icon: Building2,
     color: 'rgba(249, 115, 22, 0.85)',
     requirePerm: 'report-agent.team.manage',
-  },
-  {
-    key: 'data-sources',
-    label: '团队数据源',
-    desc: '配置团队级 Git 仓库、分支过滤和用户映射',
-    icon: GitBranch,
-    color: 'rgba(34, 197, 94, 0.85)',
-    requirePerm: 'report-agent.datasource.manage',
   },
 ];
 
@@ -135,10 +126,9 @@ export function SettingsPanel() {
       </button>
       <div className="flex-1 min-h-0">
         {activeSection === 'my-sources' && <PersonalSourcesPanel />}
+        {activeSection === 'ai-prompt' && <AiPromptSettingsPanel />}
         {activeSection === 'templates' && <TemplateManager />}
         {activeSection === 'teams' && <TeamManager />}
-        {activeSection === 'data-sources' && <DataSourceManager />}
-        {activeSection === 'trends' && <HistoryTrendsPanel />}
       </div>
     </div>
   );

@@ -58,6 +58,9 @@ import type {
   CancelVacationContract,
   ListMyAiSourcesContract,
   UpdateMyAiSourceContract,
+  GetMyAiReportPromptContract,
+  UpdateMyAiReportPromptContract,
+  ResetMyAiReportPromptContract,
   GetMyDailyLogTagsContract,
   UpdateMyDailyLogTagsContract,
   ListPersonalSourcesContract,
@@ -73,6 +76,7 @@ import type {
   SeedSystemTemplatesContract,
   PersonalTrendItem,
   TeamTrendItem,
+  ReportAiPromptSettings,
   DailyLog,
   ReportDataSource,
   ReportCommit,
@@ -691,6 +695,21 @@ export const updateMyAiSourceReal: UpdateMyAiSourceContract = async (input) => {
     api.reportAgent.aiSources.byKey(encodeURIComponent(input.key)),
     { method: 'PUT', body: { enabled: input.enabled } }
   );
+};
+
+export const getMyAiReportPromptReal: GetMyAiReportPromptContract = async () => {
+  return await apiRequest<ReportAiPromptSettings>(api.reportAgent.aiReportPrompt.get(), { method: 'GET' });
+};
+
+export const updateMyAiReportPromptReal: UpdateMyAiReportPromptContract = async (input) => {
+  return await apiRequest<ReportAiPromptSettings>(api.reportAgent.aiReportPrompt.update(), {
+    method: 'PUT',
+    body: { prompt: input.prompt },
+  });
+};
+
+export const resetMyAiReportPromptReal: ResetMyAiReportPromptContract = async () => {
+  return await apiRequest<ReportAiPromptSettings>(api.reportAgent.aiReportPrompt.reset(), { method: 'POST' });
 };
 
 export const getMyDailyLogTagsReal: GetMyDailyLogTagsContract = async () => {
