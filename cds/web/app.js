@@ -3733,6 +3733,7 @@ function renderActivityItem(event) {
     const agentShort = (event.agent || 'AI').replace(/\s*\(static key\)/, '');
     html += `<span class="activity-source ai" title="${escapeHtml(event.agent || 'AI')}">${escapeHtml(agentShort)}</span>`;
   }
+  html += `<span class="activity-method ${event.method}">${event.method}</span>`;
   // Show Chinese label (golden glow) if available, path as tooltip
   if (label) {
     html += `<span class="activity-label" title="${escapeHtml(event.path)}">${escapeHtml(label)}</span>`;
@@ -3806,7 +3807,7 @@ function updateActivityRoller(event) {
   const dur = event.duration < 1000 ? `${event.duration}ms` : `${(event.duration / 1000).toFixed(1)}s`;
 
   const isWeb = event.type === 'web';
-  const html = `${isAi ? '<span class="roller-ai">AI</span>' : ''}${isWeb ? '<span class="roller-web">Web</span>' : ''}<span class="roller-label">${escapeHtml(label)}</span><span class="activity-status ${statusCls}">${event.status}</span><span class="roller-dur">${dur}</span>`;
+  const html = `${isAi ? '<span class="roller-ai">AI</span>' : ''}${isWeb ? '<span class="roller-web">Web</span>' : ''}<span class="activity-method ${event.method}">${event.method}</span><span class="roller-label">${escapeHtml(label)}</span><span class="activity-status ${statusCls}">${event.status}</span><span class="roller-dur">${dur}</span>`;
 
   // Single element replace — no overlap possible
   roller.innerHTML = `<div class="roller-line roller-flip">${html}</div>`;
