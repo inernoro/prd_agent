@@ -3438,6 +3438,13 @@ function initActivityMonitor() {
   };
 }
 
+function toUTC8Time(isoStr) {
+  // Convert ISO string to UTC+8 HH:MM:SS
+  const d = new Date(isoStr);
+  const utc8 = new Date(d.getTime() + 8 * 60 * 60 * 1000);
+  return utc8.toISOString().slice(11, 19);
+}
+
 function renderActivityItem(event) {
   const body = document.getElementById('activityBody');
   if (!body) return;
@@ -3448,9 +3455,9 @@ function renderActivityItem(event) {
   el.style.cursor = 'pointer';
   el.onclick = () => showActivityDetail(event);
 
-  const ts = event.ts.slice(11, 19);
   const statusClass = event.status < 400 ? 'ok' : 'err';
   const dur = event.duration < 1000 ? `${event.duration}ms` : `${(event.duration / 1000).toFixed(1)}s`;
+  const ts = toUTC8Time(event.ts);
 
   // Chinese label from server, or fallback to shortened path
   const label = event.label || '';
@@ -3464,9 +3471,8 @@ function renderActivityItem(event) {
     const agentShort = (event.agent || 'AI').replace(/\s*\(static key\)/, '');
     html += `<span class="activity-source ai" title="${escapeHtml(event.agent || 'AI')}">${escapeHtml(agentShort)}</span>`;
   }
-  html += `<span class="activity-ts">${ts}</span>`;
   html += `<span class="activity-method ${event.method}">${event.method}</span>`;
-  // Show Chinese label if available, path as tooltip
+  // Show Chinese label (golden glow) if available, path as tooltip
   if (label) {
     html += `<span class="activity-label" title="${escapeHtml(event.path)}">${escapeHtml(label)}</span>`;
   } else {
@@ -3474,6 +3480,8 @@ function renderActivityItem(event) {
   }
   html += `<span class="activity-status ${statusClass}">${event.status}</span>`;
   html += `<span class="activity-dur">${dur}</span>`;
+  // Time at the end
+  html += `<span class="activity-ts">${ts}</span>`;
 
   el.innerHTML = html;
   body.appendChild(el);
@@ -3484,7 +3492,9 @@ function renderActivityItem(event) {
 
 // ── Activity Detail Modal ──
 function showActivityDetail(event) {
-  const ts = new Date(event.ts).toLocaleString('zh-CN');
+  const d = new Date(event.ts);
+  const utc8 = new Date(d.getTime() + 8 * 60 * 60 * 1000);
+  const ts = utc8.toISOString().replace('T', ' ').slice(0, 19) + ' (UTC+8)';
   const statusClass = event.status < 400 ? 'color:var(--green)' : 'color:var(--red)';
   const isAi = event.source === 'ai';
 
