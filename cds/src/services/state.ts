@@ -20,9 +20,14 @@ function emptyState(): CdsState {
 export class StateService {
   private state: CdsState = emptyState();
   private readonly filePath: string;
+  /** Project slug derived from repoRoot directory name, used for cache isolation */
+  readonly projectSlug: string;
 
-  constructor(filePath: string) {
+  constructor(filePath: string, repoRoot?: string) {
     this.filePath = filePath;
+    // Derive project slug from repoRoot (e.g. /root/inernoro/prd_agent → prd-agent)
+    const dirName = path.basename(repoRoot || path.dirname(path.dirname(filePath)));
+    this.projectSlug = dirName.replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').toLowerCase() || 'default';
   }
 
   static slugify(branch: string): string {
@@ -46,9 +51,61 @@ export class StateService {
       if (!this.state.infraServices) this.state.infraServices = [];
       if (this.state.mirrorEnabled === undefined) this.state.mirrorEnabled = false;
       if (!this.state.executors) this.state.executors = {};
+      // Migrate: backfill cacheMounts for existing build profiles
+      this.migrateCacheMounts();
     } else {
       this.state = emptyState();
     }
+  }
+
+  /**
+   * Backfill cacheMounts for profiles that were created before cache support.
+   * Uses dockerImage to detect the correct cache type.
+   */
+  private migrateCacheMounts(): void {
+    const CACHE_BASE = `/data/cds/${this.projectSlug}/cache`;
+    const IMAGE_CACHE_MAP: Record<string, Array<{ hostPath: string; containerPath: string }>> = {
+      'dotnet': [{ hostPath: `${CACHE_BASE}/nuget`, containerPath: '/root/.nuget/packages' }],
+      'node': [{ hostPath: `${CACHE_BASE}/pnpm`, containerPath: '/pnpm/store' }],
+    };
+
+    let changed = false;
+    for (const profile of this.state.buildProfiles) {
+      // Migrate old paths (hostPath slug + containerPath for pnpm)
+      if (profile.cacheMounts) {
+        for (const cm of profile.cacheMounts) {
+          const updated = cm.hostPath.replace(/\/data\/cds\/[^/]+\/cache/, `${CACHE_BASE}`);
+          if (updated !== cm.hostPath) {
+            cm.hostPath = updated;
+            changed = true;
+          }
+          // Fix pnpm containerPath: CDS injects npm_config_store_dir=/pnpm/store,
+          // so the cache must mount there, not /root/.local/share/pnpm/store
+          if (cm.containerPath === '/root/.local/share/pnpm/store') {
+            cm.containerPath = '/pnpm/store';
+            changed = true;
+          }
+        }
+        if (profile.cacheMounts.length > 0) continue;
+      }
+      const image = profile.dockerImage || '';
+      for (const [key, mounts] of Object.entries(IMAGE_CACHE_MAP)) {
+        if (image.includes(key)) {
+          profile.cacheMounts = mounts;
+          changed = true;
+          break;
+        }
+      }
+    }
+    if (changed) this.save();
+  }
+
+  /** Listeners notified after every save() */
+  private onSaveListeners: Array<() => void> = [];
+
+  /** Register a callback that fires after each save() */
+  onSave(fn: () => void): void {
+    this.onSaveListeners.push(fn);
   }
 
   save(): void {
@@ -57,6 +114,10 @@ export class StateService {
       fs.mkdirSync(dir, { recursive: true });
     }
     fs.writeFileSync(this.filePath, JSON.stringify(this.state, null, 2));
+    // Notify listeners
+    for (const fn of this.onSaveListeners) {
+      try { fn(); } catch { /* ignore */ }
+    }
   }
 
   getState(): Readonly<CdsState> {

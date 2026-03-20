@@ -757,7 +757,6 @@ button.text-btn:hover { color: var(--accent); }
   padding: 14px 20px;
   background: var(--bg-card);
   border: 1px solid var(--card-border);
-  border-left: 2px solid rgba(255, 255, 255, 0.10);
   border-radius: var(--radius);
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
@@ -768,37 +767,166 @@ button.text-btn:hover { color: var(--accent); }
   border-color: rgba(255, 255, 255, 0.18);
   background: var(--bg-card);
 }
-/* Status-based left border — subtle indicator, not attention-grabbing */
-.branch-card.status-running { border-left-color: var(--green-border); }
-.branch-card.status-running.show-preview-border { border-left-color: var(--yellow); }
-.branch-card.status-starting { border-left-color: var(--yellow); }
-.branch-card.status-building { border-left-color: var(--blue); }
-.branch-card.status-idle { border-left-color: rgba(255, 255, 255, 0.10); }
-.branch-card.status-stopped { border-left-color: rgba(255, 255, 255, 0.10); }
-.branch-card.status-error { border-left-color: var(--red); }
 /* Stopping state — flashing red glow around the entire card */
 .branch-card.status-stopping {
-  border-left-color: var(--red);
   animation: stopping-pulse 1.2s ease-in-out infinite;
 }
 @keyframes stopping-pulse {
   0%, 100% {
     box-shadow: 0 0 0 0 rgba(244, 63, 94, 0), 0 1px 3px rgba(0, 0, 0, 0.2);
     border-color: var(--card-border);
-    border-left-color: var(--red);
   }
   50% {
     box-shadow: 0 0 12px 2px rgba(244, 63, 94, 0.3), 0 0 24px 4px rgba(244, 63, 94, 0.1);
     border-color: rgba(244, 63, 94, 0.4);
-    border-left-color: var(--red);
   }
 }
-.branch-card.active.show-preview-border {
-  border-left-color: var(--yellow);
+/* Human web access — blinking footprint icon in toolbar */
+.human-access-icon {
+  display: none;
+  width: 16px; height: 16px;
+  color: var(--green);
+  animation: human-access-blink 1.5s ease-in-out infinite;
+  flex-shrink: 0;
 }
-.branch-card.has-error {
-  border-left-color: var(--red);
+.branch-card.is-previewing .human-access-icon {
+  display: block;
 }
+@keyframes human-access-blink {
+  0%, 100% { opacity: 1; filter: drop-shadow(0 0 3px var(--green)); }
+  50% { opacity: 0.25; filter: none; }
+}
+
+/* AI occupation — rotating gradient border on card */
+.branch-card.is-ai-occupied {
+  border-image: none;
+  border-color: transparent;
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+  background-image:
+    linear-gradient(var(--bg-card), var(--bg-card)),
+    conic-gradient(from var(--ai-border-angle, 0deg), #a78bfa, #60a5fa, #c084fc, #818cf8, #a78bfa);
+  border: 2px solid transparent;
+  animation: ai-border-spin 3s linear infinite;
+}
+@keyframes ai-border-spin {
+  to { --ai-border-angle: 360deg; }
+}
+@property --ai-border-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+/* AI mark replaces color-mark button — spinning dashed circle with "AI" text */
+.color-mark-btn.ai-mark {
+  opacity: 1;
+  cursor: default;
+  pointer-events: none;
+}
+.ai-mark-spinner {
+  display: block;
+  animation: ai-icon-spin 4s linear infinite;
+}
+@keyframes ai-icon-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* AI branch activity feed — single-line roller in card */
+.ai-branch-feed {
+  height: 22px;
+  overflow: hidden;
+  position: relative;
+  padding: 0 8px;
+  margin: 4px 0;
+  background: linear-gradient(135deg, rgba(167, 139, 250, 0.06), rgba(96, 165, 250, 0.04));
+  border: 1px solid rgba(167, 139, 250, 0.12);
+  border-radius: 6px;
+}
+.ai-branch-feed .roller-line {
+  height: 22px;
+  font-size: 10px;
+}
+.ai-feed-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #a78bfa;
+  font-weight: 500;
+}
+.ai-feed-dur {
+  color: var(--text-muted);
+  font-size: 9px;
+  flex-shrink: 0;
+}
+
+/* ── Status dot (replaces left border indicator) ── */
+.status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-muted);
+  opacity: 0.5;
+}
+.status-dot-running {
+  background: var(--green);
+  opacity: 1;
+  box-shadow: 0 0 6px var(--green);
+}
+@keyframes status-dot-blink {
+  0%, 100% { opacity: 1; box-shadow: 0 0 6px var(--green); }
+  50% { opacity: 0.4; box-shadow: 0 0 2px var(--green); }
+}
+.status-dot-error, .status-dot-stopped {
+  background: var(--red);
+  opacity: 1;
+}
+.status-dot-building, .status-dot-starting {
+  background: var(--blue);
+  opacity: 1;
+  animation: status-dot-blink-blue 1.2s ease-in-out infinite;
+}
+@keyframes status-dot-blink-blue {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.status-dot-stopping {
+  background: var(--red);
+  opacity: 1;
+  animation: status-dot-blink-red 0.8s ease-in-out infinite;
+}
+@keyframes status-dot-blink-red {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+/* Commit SHA badge */
+.commit-sha {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--bg-input);
+  padding: 1px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  margin-left: auto;
+  letter-spacing: 0.3px;
+}
+
+/* Commit message — truncated with ellipsis */
+.branch-commit-msg {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.branch-commit-msg svg.inline-icon { flex-shrink: 0; width: 12px; height: 12px; opacity: 0.6; }
 
 /* Status badges for transitional states */
 .branch-status-badge {
@@ -833,9 +961,10 @@ button.text-btn:hover { color: var(--accent); }
 .branch-card-row1 {
   display: flex; gap: 8px; align-items: center; min-width: 0;
 }
-/* Row 2: Status meta */
+/* Row 2: Commit message */
 .branch-card-row2 {
   display: flex; align-items: center; gap: 8px;
+  min-width: 0; overflow: hidden;
 }
 /* Row 3: Port badges — independent row */
 .branch-card-ports {
@@ -922,9 +1051,10 @@ a.branch-name:hover { color: var(--accent); }
   justify-content: flex-end;
   font-size: 12px; color: var(--text-muted);
   cursor: pointer; overflow: hidden;
-  white-space: nowrap; padding: 0 8px;
+  white-space: nowrap; padding: 0 4px;
   border-radius: var(--radius-xs);
   transition: color var(--transition);
+  text-overflow: ellipsis;
 }
 .branch-actions-commit:hover { color: var(--text-primary); }
 .branch-actions-commit svg.inline-icon { flex-shrink: 0; width: 14px; height: 14px; }
@@ -953,7 +1083,7 @@ a.branch-name:hover { color: var(--accent); }
   background: transparent; border: none;
 }
 
-.branch-card.is-favorite { border-left-color: var(--yellow); }
+/* Favorites — subtle highlight without border */
 
 /* Card-level update indicator — blue glow so you instantly see which branches updated */
 .branch-card.has-updates {
@@ -1815,7 +1945,7 @@ a.branch-name:hover { color: var(--accent); }
   position: fixed;
   bottom: 16px;
   right: 16px;
-  width: 380px;
+  width: 480px;
   max-height: 420px;
   z-index: 9998;
   border-radius: var(--radius);
@@ -1907,6 +2037,85 @@ a.branch-name:hover { color: var(--accent); }
   color: var(--text-secondary);
 }
 
+/* ── Activity Roller (flip-clock ticker in collapsed header) ── */
+.activity-roller {
+  flex: 1;
+  height: 20px;
+  overflow: hidden;
+  position: relative;
+  margin: 0 8px;
+}
+
+.roller-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  height: 20px;
+  white-space: nowrap;
+}
+
+.roller-flip {
+  animation: roller-flip-in 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+@keyframes roller-flip-in {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.roller-ai {
+  font-size: 8px;
+  font-weight: 800;
+  padding: 0 3px;
+  border-radius: 2px;
+  background: linear-gradient(135deg, rgba(167, 139, 250, 0.25), rgba(96, 165, 250, 0.25));
+  color: #a78bfa;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+.roller-web {
+  font-size: 8px;
+  font-weight: 800;
+  padding: 0 3px;
+  border-radius: 2px;
+  background: var(--accent-bg);
+  color: var(--accent);
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+.roller-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+  color: var(--text-secondary);
+}
+.roller-line .activity-status {
+  flex-shrink: 0;
+  min-width: 24px;
+  text-align: right;
+}
+.roller-dur {
+  color: var(--text-muted);
+  font-size: 9px;
+  flex-shrink: 0;
+  min-width: 30px;
+  text-align: right;
+}
+
+/* Hide roller when expanded (full list visible) */
+.activity-monitor:not(.collapsed) .activity-roller {
+  display: none;
+}
+
 .activity-chevron {
   color: var(--text-muted);
   transition: transform 0.2s;
@@ -1914,6 +2123,49 @@ a.branch-name:hover { color: var(--accent); }
 
 .activity-monitor:not(.collapsed) .activity-chevron {
   transform: rotate(180deg);
+}
+
+/* ── Activity Monitor Tabs ── */
+.activity-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border-light);
+  flex-shrink: 0;
+  background: var(--bg-primary);
+}
+.activity-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border-bottom: 2px solid transparent;
+  position: relative;
+}
+.activity-tab:hover { color: var(--text-secondary); background: var(--bg-hover); }
+.activity-tab.active { color: var(--text-primary); border-bottom-color: var(--accent); }
+.activity-tab-count {
+  font-size: 9px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--text-muted);
+  font-weight: 700;
+  min-width: 16px;
+  text-align: center;
+}
+.activity-tab.active .activity-tab-count {
+  background: var(--accent-bg);
+  color: var(--accent);
 }
 
 .activity-body {
@@ -1948,7 +2200,8 @@ a.branch-name:hover { color: var(--accent); }
   color: var(--text-muted);
   font-size: 10px;
   flex-shrink: 0;
-  width: 52px;
+  min-width: 36px;
+  text-align: right;
 }
 
 .activity-method {
@@ -1975,6 +2228,16 @@ a.branch-name:hover { color: var(--accent); }
   flex: 1;
 }
 
+.activity-path-suffix {
+  color: var(--text-muted);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
 .activity-status {
   font-size: 10px;
   flex-shrink: 0;
@@ -1998,10 +2261,121 @@ a.branch-name:hover { color: var(--accent); }
   flex-shrink: 0;
 }
 
+.web-container-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
 .activity-source.ai {
-  background: linear-gradient(135deg, rgba(192, 132, 252, 0.2), rgba(96, 165, 250, 0.2));
-  color: var(--purple);
+  background: var(--purple);
+  color: #fff;
+  font-weight: 700;
+  min-width: 24px;
+  text-align: center;
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+
+/* Chinese label tag in activity items — golden glow */
+.activity-label {
+  color: #f0c060;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+  max-width: 50%;
+  font-size: 11px;
   font-weight: 600;
+  font-family: inherit;
+  text-shadow: 0 0 6px rgba(240, 192, 96, 0.4), 0 0 12px rgba(240, 192, 96, 0.15);
+}
+
+[data-theme="light"] .activity-label {
+  color: #b8860b;
+  text-shadow: 0 0 4px rgba(184, 134, 11, 0.2);
+}
+
+/* AI operation item highlight */
+.activity-item-ai {
+  background: linear-gradient(90deg, rgba(192, 132, 252, 0.06) 0%, transparent 60%);
+  border-left: 2px solid var(--purple);
+}
+
+.activity-item-ai:hover {
+  background: linear-gradient(90deg, rgba(192, 132, 252, 0.12) 0%, var(--bg-hover) 60%);
+}
+
+/* ── Activity Detail Panel (inside log modal) ── */
+.activity-detail {
+  padding: 4px 0;
+}
+
+.activity-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.activity-detail-label {
+  font-size: 16px;
+  font-weight: 600;
+  color: #f0c060;
+  text-shadow: 0 0 8px rgba(240, 192, 96, 0.5), 0 0 16px rgba(240, 192, 96, 0.2);
+}
+
+[data-theme="light"] .activity-detail-label {
+  color: #b8860b;
+  text-shadow: 0 0 4px rgba(184, 134, 11, 0.2);
+}
+
+.activity-detail-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.activity-detail-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.activity-detail-key {
+  flex-shrink: 0;
+  width: 56px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.activity-detail-section {
+  margin-top: 12px;
+}
+
+.activity-detail-code {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-primary);
+  overflow-x: auto;
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
 }
 
 /* ════════════════ AI Pairing Indicator ════════════════ */

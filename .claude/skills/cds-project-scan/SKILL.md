@@ -281,6 +281,8 @@ volumes:
 | Node.js 多分支 inotify ENOSPC | 自动注入 `PNPM_HOME=/pnpm`，将 store 移出 bind mount |
 | Vite HMR WebSocket | CDS 代理自动转发 WebSocket upgrade（含 Sec-WebSocket-Accept） |
 | `${CDS_*}` 环境变量模板 | 运行时自动解析为实际地址和端口 |
+| 包缓存跨分支共享 | 自动挂载 `/data/cds/{project-slug}/cache/{nuget,pnpm,...}`，restore/install 秒级完成 |
+| `/data/cds/` 目录不存在 | 容器启动时自动 `mkdir -p`，无需手动创建 |
 
 ## 异常处理
 
