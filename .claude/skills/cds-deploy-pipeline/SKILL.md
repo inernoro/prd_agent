@@ -28,19 +28,91 @@ AI 作为 DevOps 操作员，通过 HTTP API 远程驱动 CDS 完成代码部署
 | 变量 | 用途 | 默认值 |
 |------|------|--------|
 | `CDS_DASHBOARD_URL` | CDS Dashboard 地址（远程） | 必填 |
-| `CDS_TOKEN` | CDS 认证 token | 无 |
-| `AI_ACCESS_KEY` | 冒烟测试 API 认证密钥 | 无 |
+| `AI_ACCESS_KEY` | CDS 静态 AI 认证密钥（推荐配置在 `.bashrc`） | 无 |
 
-> **前置检查**：Pipeline 启动前必须验证这三个变量均已设置。未设置时立即终止并询问用户。
-> CDS_TOKEN 获取方式：登录 CDS Dashboard → 浏览器 DevTools → Application → Cookies → 复制 `cds_token` 值。
+> **前置检查**：Pipeline 启动前必须验证 `CDS_DASHBOARD_URL` 已设置。未设置时立即终止并询问用户。
+
+## AI 认证方式（三种，按优先级）
+
+### 方式 A：静态密钥（推荐，零交互）
+
+CDS 服务端配置 `AI_ACCESS_KEY` 环境变量，AI 请求时带 `X-AI-Access-Key` header：
+
+```bash
+# CDS 服务端 (.bashrc 或 docker env)
+export AI_ACCESS_KEY="your-shared-secret"
+
+# AI 请求时
+AUTH="-H 'X-AI-Access-Key: $AI_ACCESS_KEY'"
+curl -sf $AUTH "$CDS/api/branches"
+```
+
+### 方式 B：动态配对（类似路由器连接方式）
+
+AI 向 CDS 发送配对请求，用户在 Dashboard 右上角看到闪烁的 "AI" 标识，点击批准后 AI 获得 24h 有效 token：
+
+```bash
+# Step 1: AI 发送配对请求（无需认证）
+RESP=$(curl -sf "$CDS/api/ai/request-access" \
+  -X POST -H "Content-Type: application/json" \
+  -d '{"agentName":"Claude Code","purpose":"CDS 部署流水线"}')
+REQUEST_ID=$(echo "$RESP" | jq -r '.requestId')
+
+# Step 2: 等待用户在 CDS Dashboard 批准（轮询，最多 5 分钟）
+for i in $(seq 1 60); do
+  STATUS=$(curl -sf "$CDS/api/ai/request-status/$REQUEST_ID" | jq -r '.status')
+  case "$STATUS" in
+    approved)
+      AI_TOKEN=$(curl -sf "$CDS/api/ai/request-status/$REQUEST_ID" | jq -r '.token')
+      break ;;
+    pending) sleep 5 ;;
+    *) echo "配对被拒绝或超时"; exit 1 ;;
+  esac
+done
+
+# Step 3: 后续所有请求使用 AI token
+AUTH="-H 'X-CDS-AI-Token: $AI_TOKEN'"
+curl -sf $AUTH "$CDS/api/branches"
+```
+
+### 方式 C：Cookie（兜底，手动复制）
+
+登录 CDS Dashboard → 浏览器 DevTools → Application → Cookies → 复制 `cds_token` 值：
+
+```bash
+AUTH="-H 'Cookie: cds_token=$CDS_TOKEN'"
+```
+
+> **认证优先级**：AI 自动尝试 A → B → C。方式 A 配置后完全静默，方式 B 需要用户在 Dashboard 点一次批准。
+
+## API 操作监控
+
+CDS Dashboard **右下角**有实时操作监控浮窗，通过 SSE (`GET /api/activity-stream`) 推送所有 API 操作。
+当 AI 操作 CDS 时，每条操作会标记 **紫色 "AI" 标签**，用户可实时看到 AI 正在做什么。
 
 ---
 
 ## CDS API 参考（AI 可用的全部接口）
 
-以下是 AI 可调用的 CDS REST API 完整列表。所有请求必须带 Cookie 认证头：`-H "Cookie: cds_token=$CDS_TOKEN"`。
+以下是 AI 可调用的 CDS REST API 完整列表。认证方式见上文。
 
-> **实战验证**：CDS 仅支持 Cookie 认证（`Cookie: cds_token=...`），不支持 `X-CDS-Token` / `Authorization` Header。
+### AI 配对
+
+| 方法 | 路径 | 用途 | 需认证 |
+|------|------|------|--------|
+| POST | `/api/ai/request-access` | 发送配对请求 | 否 |
+| GET | `/api/ai/request-status/:id` | 查询配对状态 | 否 |
+| GET | `/api/ai/pending` | 列出待处理请求 | 是 |
+| POST | `/api/ai/approve/:id` | 批准配对 | 是 |
+| POST | `/api/ai/reject/:id` | 拒绝配对 | 是 |
+| GET | `/api/ai/sessions` | 列出活跃 AI 会话 | 是 |
+| DELETE | `/api/ai/sessions/:id` | 撤销 AI 会话 | 是 |
+
+### 活动流
+
+| 方法 | 路径 | 用途 | 需认证 |
+|------|------|------|--------|
+| GET | `/api/activity-stream` | SSE 实时 API 操作流 | 是 |
 
 ### 分支管理
 
@@ -141,24 +213,50 @@ Phase 5: Smoke Test → 通过 CDS 对部署的服务执行冒烟测试
 
 ```bash
 # 0. 前置：验证环境变量
-# 缺少任何一个立即终止并提示用户
 [[ -z "$CDS_DASHBOARD_URL" ]] && echo "✗ CDS_DASHBOARD_URL 未设置" && exit 1
-[[ -z "$CDS_TOKEN" ]] && echo "✗ CDS_TOKEN 未设置（登录 CDS Dashboard → DevTools → Cookies → cds_token）" && exit 1
 
 # 1. 获取当前分支，禁止在 main/master 上操作
 BRANCH=$(git branch --show-current)
 
-# 2. 检查 CDS 连通性（唯一认证方式：Cookie）
+# 2. 认证 CDS（三种方式自动尝试）
 CDS="$CDS_DASHBOARD_URL"
-AUTH="-H 'Cookie: cds_token=$CDS_TOKEN'"
-curl -sf $AUTH "$CDS/api/config"
-# 如果 401 → token 过期，提示用户重新获取
+
+# 方式 A: 静态密钥（AI_ACCESS_KEY 环境变量，推荐配置在 .bashrc）
+if [[ -n "$AI_ACCESS_KEY" ]]; then
+  AUTH="-H 'X-AI-Access-Key: $AI_ACCESS_KEY'"
+  curl -sf $AUTH "$CDS/api/config" && echo "✓ 静态密钥认证成功"
+fi
+
+# 方式 B: 动态配对（CDS Dashboard 右上角会出现闪烁的 AI 标识）
+if [[ -z "$AUTH" ]]; then
+  RESP=$(curl -sf "$CDS/api/ai/request-access" \
+    -X POST -H "Content-Type: application/json" \
+    -d '{"agentName":"Claude Code","purpose":"CDS 部署流水线"}')
+  REQUEST_ID=$(echo "$RESP" | jq -r '.requestId')
+  echo "⏳ 请在 CDS Dashboard 右上角点击闪烁的 AI 标识并批准连接..."
+  for i in $(seq 1 60); do
+    CHECK=$(curl -sf "$CDS/api/ai/request-status/$REQUEST_ID")
+    STATUS=$(echo "$CHECK" | jq -r '.status')
+    if [[ "$STATUS" == "approved" ]]; then
+      AI_TOKEN=$(echo "$CHECK" | jq -r '.token')
+      AUTH="-H 'X-CDS-AI-Token: $AI_TOKEN'"
+      echo "✓ 配对成功"
+      break
+    fi
+    sleep 5
+  done
+fi
+
+# 方式 C: Cookie 兜底（需手动设置 CDS_TOKEN）
+if [[ -z "$AUTH" && -n "$CDS_TOKEN" ]]; then
+  AUTH="-H 'Cookie: cds_token=$CDS_TOKEN'"
+fi
+
+[[ -z "$AUTH" ]] && echo "✗ 无法认证 CDS" && exit 1
 
 # 3. 查找分支是否已注册
-# CDS 的分支 ID 是分支名的 slug（/ → -，大写 → 小写）
 BRANCH_ID=$(echo "$BRANCH" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
 curl -sf $AUTH "$CDS/api/branches"
-# 在 .branches[] 中查找 .id == $BRANCH_ID
 
 # 4. 未注册则自动注册
 curl -sf $AUTH "$CDS/api/branches" \

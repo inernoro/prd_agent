@@ -1797,3 +1797,317 @@ a.branch-name:hover { color: var(--accent); }
     clip-path: circle(var(--ripple-radius, 150%) at var(--ripple-x, 50%) var(--ripple-y, 0));
   }
 }
+
+/* ════════════════ API Activity Monitor ════════════════ */
+
+.activity-monitor {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  width: 380px;
+  max-height: 420px;
+  z-index: 9998;
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(16px);
+  display: flex;
+  flex-direction: column;
+  transition: max-height 0.3s var(--transition), opacity 0.2s;
+  overflow: hidden;
+}
+
+.activity-monitor.collapsed {
+  max-height: 40px;
+}
+
+.activity-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  border-bottom: 1px solid var(--border-light);
+  flex-shrink: 0;
+}
+
+.activity-header:hover {
+  background: var(--bg-hover);
+}
+
+.activity-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+.activity-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 6px var(--green);
+  animation: activity-pulse 2s ease-in-out infinite;
+}
+
+@keyframes activity-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.activity-count {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-weight: 700;
+  min-width: 20px;
+  text-align: center;
+}
+
+.activity-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.activity-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+}
+
+.activity-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.activity-chevron {
+  color: var(--text-muted);
+  transition: transform 0.2s;
+}
+
+.activity-monitor:not(.collapsed) .activity-chevron {
+  transform: rotate(180deg);
+}
+
+.activity-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.activity-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--border-light);
+  animation: activity-slide-in 0.2s ease-out;
+}
+
+.activity-item:hover {
+  background: var(--bg-hover);
+}
+
+@keyframes activity-slide-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.activity-ts {
+  color: var(--text-muted);
+  font-size: 10px;
+  flex-shrink: 0;
+  width: 52px;
+}
+
+.activity-method {
+  font-weight: 700;
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  min-width: 36px;
+  text-align: center;
+}
+
+.activity-method.GET { background: var(--blue-bg); color: var(--blue); }
+.activity-method.POST { background: var(--green-bg); color: var(--green); }
+.activity-method.PUT, .activity-method.PATCH { background: var(--orange-bg); color: var(--orange); }
+.activity-method.DELETE { background: var(--red-bg); color: var(--red); }
+.activity-method.AI { background: var(--purple); color: #fff; }
+
+.activity-path {
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.activity-status {
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.activity-status.ok { color: var(--green); }
+.activity-status.err { color: var(--red); }
+
+.activity-dur {
+  color: var(--text-muted);
+  font-size: 10px;
+  flex-shrink: 0;
+  width: 38px;
+  text-align: right;
+}
+
+.activity-source {
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.activity-source.ai {
+  background: linear-gradient(135deg, rgba(192, 132, 252, 0.2), rgba(96, 165, 250, 0.2));
+  color: var(--purple);
+  font-weight: 600;
+}
+
+/* ════════════════ AI Pairing Indicator ════════════════ */
+
+.ai-pairing-indicator {
+  position: fixed;
+  top: 14px;
+  right: 70px;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(192, 132, 252, 0.15), rgba(96, 165, 250, 0.15));
+  border: 1px solid rgba(192, 132, 252, 0.3);
+  cursor: pointer;
+  animation: ai-glow 1.5s ease-in-out infinite;
+  transition: all 0.2s;
+}
+
+.ai-pairing-indicator:hover {
+  background: linear-gradient(135deg, rgba(192, 132, 252, 0.25), rgba(96, 165, 250, 0.25));
+  transform: scale(1.05);
+}
+
+.ai-pairing-indicator.hidden {
+  display: none;
+}
+
+@keyframes ai-glow {
+  0%, 100% {
+    box-shadow: 0 0 8px rgba(192, 132, 252, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(192, 132, 252, 0.6), 0 0 40px rgba(96, 165, 250, 0.2);
+  }
+}
+
+.ai-pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--purple);
+  animation: ai-pulse-dot 1.5s ease-in-out infinite;
+}
+
+@keyframes ai-pulse-dot {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.4); opacity: 0.6; }
+}
+
+.ai-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--purple);
+  font-family: var(--font-mono);
+  letter-spacing: 0.05em;
+}
+
+.ai-request-card {
+  padding: 14px;
+  margin-bottom: 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+}
+
+.ai-request-card .ai-agent-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.ai-request-card .ai-purpose {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.ai-request-card .ai-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+
+.ai-request-card .ai-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.ai-request-card .ai-actions button {
+  padding: 6px 16px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ai-request-card .ai-approve-btn {
+  background: var(--green);
+  color: #fff;
+  border-color: var(--green);
+}
+
+.ai-request-card .ai-approve-btn:hover {
+  opacity: 0.9;
+}
+
+.ai-request-card .ai-reject-btn {
+  background: transparent;
+  color: var(--red);
+  border-color: var(--red-border);
+}
+
+.ai-request-card .ai-reject-btn:hover {
+  background: var(--red-bg);
+}

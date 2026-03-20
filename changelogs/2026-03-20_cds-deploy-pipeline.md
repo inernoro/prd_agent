@@ -3,3 +3,6 @@
 | feat | prd-api | Shortcuts collect 端点自动从分享文本中分离 URL（抖音/快手/B站等） |
 | feat | prd-api | IntentDetector 新增 ParseUrl 意图识别（检测视频平台分享文本） |
 | fix | scripts | cds-deploy 技能实战修正：Cookie 认证、starting 假死双重检查、Cloudflare 陷阱、分层冒烟策略 |
+| feat | cds | Dashboard 右下角 API 操作监控浮窗（SSE 实时推送，AI 操作标紫色标签） |
+| feat | cds | AI 配对认证系统：路由器式动态审批（Dashboard 右上角闪烁 AI 标识）+ 静态 AI_ACCESS_KEY 环境变量 |
+| feat | cds | 活动流 SSE 端点 `/api/activity-stream`，200 条环形缓冲 + afterSeq 断线续传 |
