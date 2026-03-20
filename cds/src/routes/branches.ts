@@ -2396,9 +2396,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
       sendSSE(res, 'done', { message: 'CDS 即将重启，页面将在几秒后自动刷新...' });
       res.end();
 
-      // Give time for response to flush, then spawn detached restart
+      // Give time for response to flush, then spawn detached restart.
+      // Use SIGUSR2 to tell the current process to exit cleanly first,
+      // preventing tsx watch from respawning after git pull changed files.
       setTimeout(() => {
         const cdsDir = path.join(repoRoot, 'cds');
+        // Touch a sentinel file so exec_cds.sh knows this is a self-update restart
+        const fs = require('fs');
+        const sentinelPath = path.join(cdsDir, '.cds', '.self-update-restart');
+        try { fs.writeFileSync(sentinelPath, String(process.pid)); } catch {}
+
         const child = spawn('bash', ['./exec_cds.sh', '--background'], {
           cwd: cdsDir,
           detached: true,
@@ -2406,7 +2413,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
           env: { ...process.env },
         });
         child.unref();
-        // exec_cds.sh will kill the old process (us) via PID file + port detection
+
+        // Exit current process immediately to prevent tsx watch from
+        // detecting file changes (from git pull) and respawning — which
+        // races with exec_cds.sh's new instance for port 9900.
+        setTimeout(() => process.exit(0), 200);
       }, 500);
     } catch (err) {
       send('error', 'error', `更新失败: ${(err as Error).message}`);

@@ -396,8 +396,18 @@ function toggleTheme(event) {
   if (document.startViewTransition) {
     // View Transition API: captures old state as snapshot, then reveals new state
     // with clip-path circle animation (like clawhub.ai)
-    document.startViewTransition(() => {
+    const transition = document.startViewTransition(() => {
+      // Disable CSS transitions so the "new" snapshot captures final theme colors
+      // immediately, not mid-transition states (which cause cards to show wrong skin
+      // as the ripple sweeps over them).
+      document.documentElement.classList.add('vt-snapshotting');
       setTheme(newTheme);
+    });
+    // Re-enable CSS transitions after the view transition snapshots are captured
+    transition.ready.then(() => {
+      document.documentElement.classList.remove('vt-snapshotting');
+    }).catch(() => {
+      document.documentElement.classList.remove('vt-snapshotting');
     });
   } else {
     // Fallback: instant switch

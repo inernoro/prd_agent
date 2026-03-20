@@ -1777,6 +1777,17 @@ a.branch-name:hover { color: var(--accent); }
 
 /* ════════════════ View Transition (theme ripple) ════════════════ */
 
+/* Suppress CSS transitions during view-transition snapshot capture so that
+   the "new" state image shows final theme colors, not mid-transition values.
+   Without this, cards swept by the ripple briefly show the OLD theme skin
+   because their CSS transition hasn't completed when the snapshot is taken. */
+.vt-snapshotting,
+.vt-snapshotting *,
+.vt-snapshotting *::before,
+.vt-snapshotting *::after {
+  transition-duration: 0s !important;
+}
+
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation: none;
