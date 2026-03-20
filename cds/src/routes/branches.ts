@@ -756,6 +756,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  // ── Container log stream (SSE) — replaces polling ──
+
+  router.get('/branches/:id/container-logs-stream/:profileId', (req, res) => {
+    const { id, profileId } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) { res.status(404).json({ error: `分支 "${id}" 不存在` }); return; }
+
+    const svc = entry.services[profileId];
+    if (!svc) { res.status(404).json({ error: '未找到服务' }); return; }
+
+    initSSE(res);
+
+    const ac = containerService.streamLogs(
+      svc.containerName,
+      (chunk) => sendSSE(res, 'log', { chunk }),
+      () => { try { res.end(); } catch { /* already closed */ } },
+    );
+
+    // Client disconnect → stop docker logs -f
+    req.on('close', () => ac.abort());
+  });
+
   // ── Container env ──
 
   router.post('/branches/:id/container-env', async (req, res) => {
@@ -1002,7 +1024,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return {
           installPrefix: 'corepack enable && pnpm install --frozen-lockfile && ',
           runPrefix: 'corepack enable && pnpm exec ',
-          cacheMounts: [{ hostPath: `${cacheBase}/pnpm`, containerPath: '/root/.local/share/pnpm/store' }],
+          cacheMounts: [{ hostPath: `${cacheBase}/pnpm`, containerPath: '/pnpm/store' }],
         };
       case 'yarn':
         return {

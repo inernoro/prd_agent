@@ -1458,34 +1458,75 @@ async function viewBranchLogs(id) {
   } catch (e) { showToast('获取日志失败: ' + e.message, 'error'); }
 }
 
+let _logStreamController = null;
+
 async function viewContainerLogs(id, profileId) {
-  let isFirstLoad = true;
-  const fetchAndRender = async () => {
-    const data = await api('POST', `/branches/${id}/container-logs`, { profileId });
-    const body = document.getElementById('logModalBody');
-    // Read scroll state from the OLD <pre> before replacing
-    const oldPre = body.querySelector('.live-log-output');
-    const prevScrollTop = oldPre ? oldPre.scrollTop : 0;
-    const wasAtBottom = oldPre
-      ? (oldPre.scrollTop + oldPre.clientHeight >= oldPre.scrollHeight - 30)
-      : true;
-    body.innerHTML = `<pre class="live-log-output">${esc(data.logs || '暂无日志')}</pre>`;
-    if (isFirstLoad || wasAtBottom) {
-      _scrollLogToBottom();
-      isFirstLoad = false;
-    } else {
-      // Restore scroll position on the NEW <pre>
-      const newPre = body.querySelector('.live-log-output');
-      if (newPre) newPre.scrollTop = prevScrollTop;
-      checkLogErrors();
-    }
-  };
+  // Abort any previous log stream
+  if (_logStreamController) { _logStreamController.abort(); _logStreamController = null; }
+
   try {
     openLogModal(`日志: ${id}/${profileId || '默认'}`, id, profileId);
-    await fetchAndRender();
-    _scrollLogToBottom();
-    _startLogPoll(fetchAndRender, 3000);
-  } catch (e) { showToast(e.message, 'error'); }
+    const body = document.getElementById('logModalBody');
+    body.innerHTML = '<pre class="live-log-output"></pre>';
+
+    // Start SSE log stream
+    const ac = new AbortController();
+    _logStreamController = ac;
+    const res = await fetch(`/api/branches/${id}/container-logs-stream/${profileId}`, {
+      signal: ac.signal,
+    });
+    if (!res.ok) {
+      // Fallback: one-shot fetch if SSE not available
+      const data = await api('POST', `/branches/${id}/container-logs`, { profileId });
+      body.innerHTML = `<pre class="live-log-output">${esc(data.logs || '暂无日志')}</pre>`;
+      _scrollLogToBottom();
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    const processStream = async () => {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // Parse SSE lines
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const evt = JSON.parse(line.slice(6));
+            if (evt.chunk) {
+              const pre = body.querySelector('.live-log-output');
+              if (!pre) break;
+              const wasAtBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 30;
+              pre.textContent += evt.chunk;
+              if (wasAtBottom) _scrollLogToBottom();
+            }
+          } catch { /* skip malformed */ }
+        }
+      }
+    };
+
+    processStream().catch(() => { /* stream closed */ });
+
+    // Stop stream when modal closes
+    const observer = new MutationObserver(() => {
+      const modal = document.getElementById('logModal');
+      if (modal && modal.classList.contains('hidden')) {
+        ac.abort();
+        observer.disconnect();
+      }
+    });
+    observer.observe(document.getElementById('logModal'), { attributes: true, attributeFilter: ['class'] });
+
+  } catch (e) {
+    if (e.name !== 'AbortError') showToast(e.message, 'error');
+  }
 }
 
 // ── Single-service deploy ──
@@ -3321,6 +3362,7 @@ function copyErrorForLLM() {
 function closeLogModal() {
   document.getElementById('logModal').classList.add('hidden');
   if (_logPollTimer) { clearInterval(_logPollTimer); _logPollTimer = null; _logPollFn = null; }
+  if (_logStreamController) { _logStreamController.abort(); _logStreamController = null; }
   _logModalContext = { branchId: null, profileId: null };
 }
 

@@ -66,17 +66,23 @@ export class StateService {
     const CACHE_BASE = `/data/cds/${this.projectSlug}/cache`;
     const IMAGE_CACHE_MAP: Record<string, Array<{ hostPath: string; containerPath: string }>> = {
       'dotnet': [{ hostPath: `${CACHE_BASE}/nuget`, containerPath: '/root/.nuget/packages' }],
-      'node': [{ hostPath: `${CACHE_BASE}/pnpm`, containerPath: '/root/.local/share/pnpm/store' }],
+      'node': [{ hostPath: `${CACHE_BASE}/pnpm`, containerPath: '/pnpm/store' }],
     };
 
     let changed = false;
     for (const profile of this.state.buildProfiles) {
-      // Migrate old hardcoded paths (e.g. /data/cds/default/cache → /data/cds/prd-agent/cache)
+      // Migrate old paths (hostPath slug + containerPath for pnpm)
       if (profile.cacheMounts) {
         for (const cm of profile.cacheMounts) {
           const updated = cm.hostPath.replace(/\/data\/cds\/[^/]+\/cache/, `${CACHE_BASE}`);
           if (updated !== cm.hostPath) {
             cm.hostPath = updated;
+            changed = true;
+          }
+          // Fix pnpm containerPath: CDS injects npm_config_store_dir=/pnpm/store,
+          // so the cache must mount there, not /root/.local/share/pnpm/store
+          if (cm.containerPath === '/root/.local/share/pnpm/store') {
+            cm.containerPath = '/pnpm/store';
             changed = true;
           }
         }
