@@ -408,6 +408,55 @@ public enum ToolboxArtifactType
 }
 
 /// <summary>
+/// 百宝箱会话（自定义智能体的对话会话）
+/// </summary>
+public class ToolboxSession
+{
+    public string Id { get; set; } = string.Empty;
+
+    /// <summary>所属智能体 ID</summary>
+    public string ItemId { get; set; } = string.Empty;
+
+    /// <summary>所属用户 ID</summary>
+    public string UserId { get; set; } = string.Empty;
+
+    /// <summary>会话标题（自动取首条消息前 50 字）</summary>
+    public string Title { get; set; } = "新对话";
+
+    /// <summary>消息数量</summary>
+    public int MessageCount { get; set; }
+
+    /// <summary>创建时间</summary>
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>最后活跃时间</summary>
+    public DateTime LastActiveAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// 百宝箱会话消息
+/// </summary>
+public class ToolboxMessage
+{
+    public string Id { get; set; } = string.Empty;
+
+    /// <summary>所属会话 ID</summary>
+    public string SessionId { get; set; } = string.Empty;
+
+    /// <summary>角色：user / assistant</summary>
+    public string Role { get; set; } = "user";
+
+    /// <summary>消息内容</summary>
+    public string Content { get; set; } = string.Empty;
+
+    /// <summary>附件 ID 列表</summary>
+    public List<string> AttachmentIds { get; set; } = new();
+
+    /// <summary>创建时间</summary>
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
 /// 自定义工具/智能体
 /// </summary>
 public class ToolboxItem
@@ -446,6 +495,18 @@ public class ToolboxItem
 
     /// <summary>是否启用长期记忆</summary>
     public bool EnableMemory { get; set; }
+
+    /// <summary>知识库附件 ID 列表</summary>
+    public List<string> KnowledgeBaseIds { get; set; } = new();
+
+    /// <summary>是否公开（市场可见）</summary>
+    public bool IsPublic { get; set; }
+
+    /// <summary>被 Fork 次数</summary>
+    public int ForkCount { get; set; }
+
+    /// <summary>Fork 来源 ID（如果是从市场 Fork 来的）</summary>
+    public string? ForkedFromId { get; set; }
 
     /// <summary>使用次数</summary>
     public int UsageCount { get; set; }

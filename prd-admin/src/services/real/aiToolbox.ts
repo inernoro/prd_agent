@@ -24,6 +24,11 @@ export interface ToolboxItem {
   /** 绑定的工作流 ID（当 enabledTools 包含 workflowTrigger 时使用） */
   workflowId?: string;
   isPublic?: boolean;
+  forkCount?: number;
+  forkedFromId?: string;
+  knowledgeBaseIds?: string[];
+  welcomeMessage?: string;
+  conversationStarters?: string[];
   createdBy?: string;
   createdByName?: string;
   usageCount: number;
@@ -201,6 +206,119 @@ export async function listToolboxAgents(): Promise<ApiResponse<{ agents: AgentIn
     api.aiToolbox.agents(),
     { method: 'GET' }
   );
+}
+
+// ============ Session Management ============
+
+export interface ToolboxSessionInfo {
+  id: string;
+  itemId: string;
+  userId: string;
+  title: string;
+  messageCount: number;
+  createdAt: string;
+  lastActiveAt: string;
+}
+
+export interface ToolboxMessageInfo {
+  id: string;
+  sessionId: string;
+  role: 'user' | 'assistant';
+  content: string;
+  attachmentIds: string[];
+  createdAt: string;
+}
+
+/**
+ * 获取智能体的会话列表
+ */
+export async function listToolboxSessions(
+  itemId: string
+): Promise<ApiResponse<{ sessions: ToolboxSessionInfo[] }>> {
+  return await apiRequest(api.aiToolbox.sessions(itemId), { method: 'GET' });
+}
+
+/**
+ * 创建新会话
+ */
+export async function createToolboxSession(
+  itemId: string
+): Promise<ApiResponse<ToolboxSessionInfo>> {
+  return await apiRequest(api.aiToolbox.sessions(itemId), { method: 'POST' });
+}
+
+/**
+ * 删除会话
+ */
+export async function deleteToolboxSession(
+  sessionId: string
+): Promise<ApiResponse<void>> {
+  return await apiRequest(api.aiToolbox.session(sessionId), { method: 'DELETE' });
+}
+
+/**
+ * 获取会话消息历史
+ */
+export async function listToolboxMessages(
+  sessionId: string,
+  limit = 100
+): Promise<ApiResponse<{ messages: ToolboxMessageInfo[] }>> {
+  return await apiRequest(
+    `${api.aiToolbox.messages(sessionId)}?limit=${limit}`,
+    { method: 'GET' }
+  );
+}
+
+/**
+ * 向会话追加消息
+ */
+export async function appendToolboxMessage(
+  sessionId: string,
+  message: { role: string; content: string; attachmentIds?: string[] }
+): Promise<ApiResponse<ToolboxMessageInfo>> {
+  return await apiRequest(api.aiToolbox.messages(sessionId), {
+    method: 'POST',
+    body: message,
+  });
+}
+
+// ============ Marketplace ============
+
+/**
+ * 获取公开的智能体列表（市场）
+ */
+export async function listMarketplaceItems(
+  params?: { keyword?: string; page?: number; pageSize?: number }
+): Promise<ApiResponse<{ items: ToolboxItem[]; total: number }>> {
+  const query = new URLSearchParams();
+  if (params?.keyword) query.set('keyword', params.keyword);
+  if (params?.page) query.set('page', String(params.page));
+  if (params?.pageSize) query.set('pageSize', String(params.pageSize));
+  const queryStr = query.toString();
+  return await apiRequest(
+    `${api.aiToolbox.marketplace()}${queryStr ? `?${queryStr}` : ''}`,
+    { method: 'GET' }
+  );
+}
+
+/**
+ * Fork 公开的智能体
+ */
+export async function forkToolboxItem(id: string): Promise<ApiResponse<ToolboxItem>> {
+  return await apiRequest(api.aiToolbox.forkItem(id), { method: 'POST' });
+}
+
+/**
+ * 切换智能体的公开状态
+ */
+export async function toggleToolboxItemPublish(
+  id: string,
+  isPublic: boolean
+): Promise<ApiResponse<{ isPublic: boolean }>> {
+  return await apiRequest(api.aiToolbox.publishItem(id), {
+    method: 'PUT',
+    body: { isPublic },
+  });
 }
 
 // ============ Legacy API Functions (for backward compatibility) ============
@@ -385,6 +503,7 @@ export function streamDirectChat(
     message: string;
     agentKey?: string;
     itemId?: string;
+    sessionId?: string;
     history?: DirectChatMessage[];
     attachmentIds?: string[];
     onText: (content: string) => void;
@@ -413,6 +532,7 @@ export function streamDirectChat(
           message: options.message,
           agentKey: options.agentKey,
           itemId: options.itemId,
+          sessionId: options.sessionId,
           history: options.history,
           attachmentIds: options.attachmentIds,
         }),

@@ -1254,6 +1254,16 @@ export {
   streamDirectChat,
   streamCapabilityChat,
   uploadAttachment,
+  // Session & Messages
+  listToolboxSessions,
+  createToolboxSession,
+  deleteToolboxSession,
+  listToolboxMessages,
+  appendToolboxMessage,
+  // Marketplace
+  listMarketplaceItems,
+  forkToolboxItem,
+  toggleToolboxItemPublish,
   // Legacy API
   getToolboxRun,
   listToolboxRuns,
@@ -1265,6 +1275,8 @@ export type {
   UploadedAttachment,
   ToolboxRunEvent,
   DirectChatMessage,
+  ToolboxSessionInfo,
+  ToolboxMessageInfo,
   // Legacy types
   IntentResult,
   ToolboxArtifact,

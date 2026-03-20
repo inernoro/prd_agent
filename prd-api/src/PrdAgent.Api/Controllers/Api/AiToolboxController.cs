@@ -491,6 +491,8 @@ public class AiToolboxController : ControllerBase
             WorkflowId = request.WorkflowId,
             Temperature = Math.Clamp(request.Temperature ?? 0.7, 0, 1),
             EnableMemory = request.EnableMemory ?? false,
+            KnowledgeBaseIds = request.KnowledgeBaseIds ?? new List<string>(),
+            IsPublic = request.IsPublic ?? false,
             CreatedByUserId = userId,
             CreatedByName = GetUserName(),
         };
@@ -522,6 +524,8 @@ public class AiToolboxController : ControllerBase
             .Set(x => x.WorkflowId, request.WorkflowId ?? item.WorkflowId)
             .Set(x => x.Temperature, Math.Clamp(request.Temperature ?? item.Temperature, 0, 1))
             .Set(x => x.EnableMemory, request.EnableMemory ?? item.EnableMemory)
+            .Set(x => x.KnowledgeBaseIds, request.KnowledgeBaseIds ?? item.KnowledgeBaseIds)
+            .Set(x => x.IsPublic, request.IsPublic ?? item.IsPublic)
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
 
         await _db.ToolboxItems.UpdateOneAsync(x => x.Id == id, update, cancellationToken: ct);
@@ -541,6 +545,101 @@ public class AiToolboxController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "工具不存在"));
 
         return Ok(ApiResponse<object>.Ok(new { message = "已删除" }));
+    }
+
+    /// <summary>
+    /// 获取公开的智能体列表（市场）
+    /// </summary>
+    [HttpGet("marketplace")]
+    public async Task<IActionResult> ListPublicItems(
+        [FromQuery] string? keyword,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken ct = default)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 50);
+
+        var filterBuilder = Builders<ToolboxItem>.Filter;
+        var filter = filterBuilder.Eq(x => x.IsPublic, true);
+
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            filter &= filterBuilder.Or(
+                filterBuilder.Regex(x => x.Name, new MongoDB.Bson.BsonRegularExpression(keyword, "i")),
+                filterBuilder.Regex(x => x.Description, new MongoDB.Bson.BsonRegularExpression(keyword, "i"))
+            );
+        }
+
+        var total = await _db.ToolboxItems.CountDocumentsAsync(filter, cancellationToken: ct);
+        var items = await _db.ToolboxItems
+            .Find(filter)
+            .SortByDescending(x => x.ForkCount)
+            .Skip((page - 1) * pageSize)
+            .Limit(pageSize)
+            .ToListAsync(ct);
+
+        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
+    }
+
+    /// <summary>
+    /// Fork（复制）一个公开的智能体到自己的列表
+    /// </summary>
+    [HttpPost("items/{id}/fork")]
+    public async Task<IActionResult> ForkItem(string id, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var source = await _db.ToolboxItems.Find(x => x.Id == id && x.IsPublic).FirstOrDefaultAsync(ct);
+        if (source == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "智能体不存在或未公开"));
+
+        var fork = new ToolboxItem
+        {
+            Id = ObjectId.GenerateNewId().ToString(),
+            Name = source.Name,
+            Description = source.Description,
+            Icon = source.Icon,
+            Tags = new List<string>(source.Tags),
+            SystemPrompt = source.SystemPrompt,
+            WelcomeMessage = source.WelcomeMessage,
+            ConversationStarters = new List<string>(source.ConversationStarters),
+            EnabledTools = new List<string>(source.EnabledTools),
+            WorkflowId = null, // 不复制工作流绑定
+            Temperature = source.Temperature,
+            EnableMemory = source.EnableMemory,
+            KnowledgeBaseIds = new List<string>(), // 不复制知识库
+            ForkedFromId = source.Id,
+            CreatedByUserId = userId,
+            CreatedByName = GetUserName(),
+        };
+
+        await _db.ToolboxItems.InsertOneAsync(fork, cancellationToken: ct);
+
+        // 增加源智能体的 Fork 计数
+        await _db.ToolboxItems.UpdateOneAsync(
+            x => x.Id == id,
+            Builders<ToolboxItem>.Update.Inc(x => x.ForkCount, 1),
+            cancellationToken: ct);
+
+        return Ok(ApiResponse<ToolboxItem>.Ok(fork));
+    }
+
+    /// <summary>
+    /// 切换智能体的公开状态
+    /// </summary>
+    [HttpPut("items/{id}/publish")]
+    public async Task<IActionResult> TogglePublish(string id, [FromBody] TogglePublishRequest request, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var result = await _db.ToolboxItems.UpdateOneAsync(
+            x => x.Id == id && x.CreatedByUserId == userId,
+            Builders<ToolboxItem>.Update.Set(x => x.IsPublic, request.IsPublic),
+            cancellationToken: ct);
+
+        if (result.MatchedCount == 0)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "智能体不存在"));
+
+        return Ok(ApiResponse<object>.Ok(new { isPublic = request.IsPublic }));
     }
 
     /// <summary>
@@ -567,6 +666,139 @@ public class AiToolboxController : ControllerBase
             itemId = id,
             status = "use_direct_chat"
         }));
+    }
+
+    #endregion
+
+    #region Sessions & Messages
+
+    /// <summary>
+    /// 获取智能体的会话列表
+    /// </summary>
+    [HttpGet("items/{itemId}/sessions")]
+    public async Task<IActionResult> ListSessions(string itemId, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var sessions = await _db.ToolboxSessions
+            .Find(x => x.ItemId == itemId && x.UserId == userId)
+            .SortByDescending(x => x.LastActiveAt)
+            .Limit(50)
+            .ToListAsync(ct);
+
+        return Ok(ApiResponse<object>.Ok(new { sessions }));
+    }
+
+    /// <summary>
+    /// 创建新会话
+    /// </summary>
+    [HttpPost("items/{itemId}/sessions")]
+    public async Task<IActionResult> CreateSession(string itemId, CancellationToken ct)
+    {
+        var userId = GetUserId();
+
+        // 验证智能体存在
+        var item = await _db.ToolboxItems.Find(x => x.Id == itemId && x.CreatedByUserId == userId).FirstOrDefaultAsync(ct);
+        if (item == null)
+        {
+            // 也允许内置 Agent 创建会话（itemId 以 builtin- 开头）
+            if (!itemId.StartsWith("builtin-", StringComparison.Ordinal))
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "智能体不存在"));
+        }
+
+        var session = new ToolboxSession
+        {
+            Id = ObjectId.GenerateNewId().ToString(),
+            ItemId = itemId,
+            UserId = userId,
+        };
+
+        await _db.ToolboxSessions.InsertOneAsync(session, cancellationToken: ct);
+        return Ok(ApiResponse<ToolboxSession>.Ok(session));
+    }
+
+    /// <summary>
+    /// 删除会话（及其消息）
+    /// </summary>
+    [HttpDelete("sessions/{sessionId}")]
+    public async Task<IActionResult> DeleteSession(string sessionId, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var result = await _db.ToolboxSessions.DeleteOneAsync(x => x.Id == sessionId && x.UserId == userId, ct);
+        if (result.DeletedCount == 0)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "会话不存在"));
+
+        // 删除关联消息
+        await _db.ToolboxMessages.DeleteManyAsync(x => x.SessionId == sessionId, CancellationToken.None);
+        return Ok(ApiResponse<object>.Ok(new { message = "已删除" }));
+    }
+
+    /// <summary>
+    /// 获取会话的消息历史
+    /// </summary>
+    [HttpGet("sessions/{sessionId}/messages")]
+    public async Task<IActionResult> ListMessages(
+        string sessionId,
+        [FromQuery] int limit = 100,
+        CancellationToken ct = default)
+    {
+        var userId = GetUserId();
+
+        // 验证会话归属
+        var session = await _db.ToolboxSessions.Find(x => x.Id == sessionId && x.UserId == userId).FirstOrDefaultAsync(ct);
+        if (session == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "会话不存在"));
+
+        limit = Math.Clamp(limit, 1, 200);
+        var messages = await _db.ToolboxMessages
+            .Find(x => x.SessionId == sessionId)
+            .SortBy(x => x.CreatedAt)
+            .Limit(limit)
+            .ToListAsync(ct);
+
+        return Ok(ApiResponse<object>.Ok(new { messages }));
+    }
+
+    /// <summary>
+    /// 向会话追加消息（用于保存对话记录）
+    /// </summary>
+    [HttpPost("sessions/{sessionId}/messages")]
+    public async Task<IActionResult> AppendMessage(
+        string sessionId,
+        [FromBody] AppendMessageRequest request,
+        CancellationToken ct)
+    {
+        var userId = GetUserId();
+
+        var session = await _db.ToolboxSessions.Find(x => x.Id == sessionId && x.UserId == userId).FirstOrDefaultAsync(ct);
+        if (session == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "会话不存在"));
+
+        var msg = new ToolboxMessage
+        {
+            Id = ObjectId.GenerateNewId().ToString(),
+            SessionId = sessionId,
+            Role = request.Role ?? "user",
+            Content = (request.Content ?? string.Empty).Trim(),
+            AttachmentIds = request.AttachmentIds ?? new List<string>(),
+        };
+
+        await _db.ToolboxMessages.InsertOneAsync(msg, cancellationToken: ct);
+
+        // 更新会话元数据
+        var updateDef = Builders<ToolboxSession>.Update
+            .Inc(x => x.MessageCount, 1)
+            .Set(x => x.LastActiveAt, DateTime.UtcNow);
+
+        // 如果是首条消息，自动设置标题
+        if (session.MessageCount == 0 && msg.Role == "user" && !string.IsNullOrWhiteSpace(msg.Content))
+        {
+            var title = msg.Content.Length > 50 ? msg.Content[..50] + "..." : msg.Content;
+            updateDef = updateDef.Set(x => x.Title, title);
+        }
+
+        await _db.ToolboxSessions.UpdateOneAsync(x => x.Id == sessionId, updateDef, cancellationToken: ct);
+
+        return Ok(ApiResponse<ToolboxMessage>.Ok(msg));
     }
 
     #endregion
@@ -675,6 +907,27 @@ public class AiToolboxController : ControllerBase
             }
             systemPrompt = item.SystemPrompt;
             temperature = item.Temperature;
+
+            // 根据 EnabledTools 增强系统提示
+            systemPrompt = EnrichSystemPromptWithTools(systemPrompt, item.EnabledTools);
+
+            // 知识库：加载关联文档内容注入上下文
+            if (item.KnowledgeBaseIds is { Count: > 0 })
+            {
+                var kbFilter = Builders<Attachment>.Filter.In(a => a.AttachmentId, item.KnowledgeBaseIds);
+                var kbDocs = await _db.Attachments.Find(kbFilter).ToListAsync(CancellationToken.None);
+                var kbParts = new List<string>();
+                foreach (var doc in kbDocs)
+                {
+                    if (!string.IsNullOrWhiteSpace(doc.ExtractedText))
+                        kbParts.Add($"=== {doc.FileName} ===\n{doc.ExtractedText}");
+                }
+                if (kbParts.Count > 0)
+                {
+                    systemPrompt += "\n\n## 知识库参考资料\n以下是该智能体的知识库内容，请基于这些内容回答用户问题：\n\n"
+                                    + string.Join("\n\n", kbParts);
+                }
+            }
 
             // 增加使用次数
             await _db.ToolboxItems.UpdateOneAsync(
@@ -1001,6 +1254,37 @@ public class AiToolboxController : ControllerBase
         _ => (null!, string.Empty, string.Empty)
     };
 
+    /// <summary>
+    /// 根据 EnabledTools 为系统提示词增加能力说明
+    /// </summary>
+    private static string EnrichSystemPromptWithTools(string basePrompt, List<string>? enabledTools)
+    {
+        if (enabledTools == null || enabledTools.Count == 0)
+            return basePrompt;
+
+        var capabilities = new List<string>();
+
+        if (enabledTools.Contains("webSearch"))
+            capabilities.Add("- 你具备网页搜索能力。当用户需要实时信息或你不确定答案时，可以告知用户你正在搜索并提供基于搜索的回答。请在需要搜索时用 [搜索中...] 标记。");
+
+        if (enabledTools.Contains("imageGen"))
+            capabilities.Add("- 你具备图片生成能力。当用户需要生成图片时，请用详细的英文描述生成提示词，并用 [生成图片: prompt] 格式标记。");
+
+        if (enabledTools.Contains("codeInterpreter"))
+            capabilities.Add("- 你具备代码执行能力。可以编写并执行 Python 代码来处理数据分析、计算、图表生成等任务。请在需要执行代码时提供完整的可运行代码。");
+
+        if (enabledTools.Contains("fileReader"))
+            capabilities.Add("- 你具备文件阅读能力。可以解析用户上传的 PDF、Word、Excel 等文件内容并基于其回答问题。");
+
+        if (enabledTools.Contains("workflowTrigger"))
+            capabilities.Add("- 你具备工作流触发能力。当用户请求执行预定义的自动化流程时，可以触发绑定的工作流。");
+
+        if (capabilities.Count == 0)
+            return basePrompt;
+
+        return basePrompt + "\n\n## 你的能力\n" + string.Join("\n", capabilities);
+    }
+
     #endregion
 
     /// <summary>
@@ -1161,6 +1445,8 @@ public class CreateToolboxItemRequest
     public string? WorkflowId { get; set; }
     public double? Temperature { get; set; }
     public bool? EnableMemory { get; set; }
+    public List<string>? KnowledgeBaseIds { get; set; }
+    public bool? IsPublic { get; set; }
 }
 
 /// <summary>
@@ -1185,6 +1471,9 @@ public class DirectChatRequest
     /// <summary>自定义智能体 ID（优先于 AgentKey）</summary>
     public string? ItemId { get; set; }
 
+    /// <summary>会话 ID（用于持久化消息历史）</summary>
+    public string? SessionId { get; set; }
+
     /// <summary>对话历史</summary>
     public List<ChatHistoryMessage>? History { get; set; }
 
@@ -1199,6 +1488,24 @@ public class ChatHistoryMessage
 {
     public string Role { get; set; } = "user";
     public string Content { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// 发布/取消发布请求
+/// </summary>
+public class TogglePublishRequest
+{
+    public bool IsPublic { get; set; }
+}
+
+/// <summary>
+/// 追加消息请求
+/// </summary>
+public class AppendMessageRequest
+{
+    public string? Role { get; set; }
+    public string? Content { get; set; }
+    public List<string>? AttachmentIds { get; set; }
 }
 
 /// <summary>
