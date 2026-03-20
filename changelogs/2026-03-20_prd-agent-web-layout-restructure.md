@@ -3,3 +3,5 @@
 | feat | prd-admin | 新增 prdAgentStore 共享状态库，桥接 AiChatPage 与 Sidebar 的会话/角色状态 |
 | feat | prd-admin | AiChatPage 新增 Desktop 风格会话标题栏（标题 + 角色切换 + 功能按钮） |
 | refactor | prd-admin | AiChatPage 会话选择从内联下拉改为侧边栏驱动（CustomEvent 通信） |
+| fix | prd-admin | PrdAgentSidebar 像素级对齐 Desktop Sidebar（字号/按钮尺寸/hover 状态/SVG 图标/追加资料按钮） |
+| fix | prd-admin | AiChatPage 标题栏新增连接状态指示器（绿点 + 已连接）和"..."信息按钮，对标 Desktop ChatContainer |

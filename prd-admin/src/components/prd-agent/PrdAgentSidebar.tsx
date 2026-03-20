@@ -1,9 +1,8 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Eye, FileText, Plus, Bug } from 'lucide-react';
 import { usePrdAgentStore } from '@/stores/prdAgentStore';
 
 /**
- * PRD Agent 专属侧边栏 —— 对标 Desktop Sidebar.tsx 的布局与功能。
+ * PRD Agent 专属侧边栏 —— 1:1 对标 Desktop Sidebar.tsx 的布局与视觉。
  *
  * 三段结构：
  *   1. 会话列表（对标 Desktop 的"群组"列表）
@@ -21,7 +20,6 @@ const DOC_TYPE_LABELS: Record<string, string> = {
 function getSessionInitial(name: string): string {
   const s = (name || '').trim();
   if (!s) return 'P';
-  // 取首个中文字符或英文字母
   for (const ch of s) {
     if (/[\u4e00-\u9fa5]/.test(ch)) return ch;
     if (/[a-zA-Z]/.test(ch)) return ch.toUpperCase();
@@ -57,7 +55,7 @@ export default function PrdAgentSidebar({ onCreateSession, onSwitchSession, onOp
   const [isResizing, setIsResizing] = useState(false);
   const resizeStateRef = useRef<{ startX: number; startW: number } | null>(null);
 
-  const currentWidth = sidebarCollapsed ? 0 : expandedWidth;
+  const currentWidth = sidebarCollapsed ? 48 : expandedWidth;
 
   const onResizePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
@@ -95,209 +93,292 @@ export default function PrdAgentSidebar({ onCreateSession, onSwitchSession, onOp
     return [];
   }, [activeSession]);
 
-  if (sidebarCollapsed) {
-    return (
-      <aside className="shrink-0 border-r flex flex-col items-center py-3" style={{ width: 48, borderColor: 'var(--border-default)' }}>
-        <button
-          className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-white/5 transition-colors"
-          style={{ color: 'var(--text-secondary)' }}
-          onClick={toggleSidebar}
-          title="展开侧边栏"
-        >
-          <ChevronRight size={16} />
-        </button>
-      </aside>
-    );
-  }
-
   return (
     <aside
-      className="shrink-0 border-r flex flex-col relative"
-      style={{ width: currentWidth, borderColor: 'var(--border-default)', minWidth: 0 }}
+      className={`relative flex-shrink-0 border-r border-black/10 dark:border-white/10 ${isResizing ? '' : 'transition-[width] duration-150'}`}
+      style={{ width: `${currentWidth}px` }}
     >
-      {/* ── 头部：会话标题 + 操作 ── */}
-      <div className="p-3 border-b flex items-center justify-between" style={{ borderColor: 'var(--border-default)' }}>
-        <h2 className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>会话</h2>
-        <div className="flex items-center gap-1.5">
-          <button
-            className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-white/5 transition-colors"
-            style={{ color: 'var(--text-secondary)' }}
-            onClick={onCreateSession}
-            title="新建会话（上传 PRD）"
-          >
-            <Plus size={14} />
-          </button>
-          <button
-            className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-white/5 transition-colors"
-            style={{ color: 'var(--text-secondary)' }}
-            onClick={toggleSidebar}
-            title="折叠侧边栏"
-          >
-            <ChevronLeft size={14} />
-          </button>
-        </div>
-      </div>
-
-      {/* ── 会话列表（对标 Desktop GroupList） ── */}
-      <div className="flex-1 min-h-0 overflow-y-auto py-2 px-2 space-y-1">
-        {sessions.length === 0 ? (
-          <div className="px-3 py-8 text-center">
-            <div className="text-xs" style={{ color: 'var(--text-muted)' }}>暂无会话</div>
+      <div className="h-full flex flex-col">
+        {/* ── 头部：群组标题 + 操作按钮（对标 Desktop p-3 border-b） ── */}
+        <div className="p-3 border-b border-black/10 dark:border-white/10 flex items-center justify-between">
+          {!sidebarCollapsed && (
+            <>
+              <h2 className="text-sm font-medium text-text-secondary">群组</h2>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={toggleSidebar}
+                  title="折叠侧边栏"
+                  className="h-7 w-7 inline-flex items-center justify-center rounded-md text-text-secondary hover:text-primary-500 hover:bg-black/5 dark:hover:bg-white/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/25"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  onClick={onCreateSession}
+                  title="新建会话（上传 PRD）"
+                  className="h-7 w-7 inline-flex items-center justify-center rounded-md text-text-secondary hover:text-primary-500 hover:bg-black/5 dark:hover:bg-white/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/25"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                  </svg>
+                </button>
+              </div>
+            </>
+          )}
+          {sidebarCollapsed && (
             <button
-              className="mt-2 text-xs px-3 py-1.5 rounded-lg hover:bg-white/5 transition-colors"
-              style={{ color: 'var(--text-secondary)', border: '1px dashed var(--border-default)' }}
-              onClick={onCreateSession}
+              onClick={toggleSidebar}
+              className="mx-auto p-1 rounded hover:bg-black/5 dark:hover:bg-white/5"
+              title="展开侧边栏"
             >
-              上传 PRD 开始
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
             </button>
+          )}
+        </div>
+
+        {/* ── 会话列表（对标 Desktop GroupList） ── */}
+        {!sidebarCollapsed && (
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            {sessions.length === 0 ? (
+              <div className="px-3 py-8 text-center">
+                <div className="text-xs text-text-secondary">暂无会话</div>
+                <button
+                  className="mt-2 text-xs px-3 py-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-text-secondary"
+                  style={{ border: '1px dashed var(--border-default)' }}
+                  onClick={onCreateSession}
+                >
+                  上传 PRD 开始
+                </button>
+              </div>
+            ) : (
+              <div className="py-2 px-2 space-y-1">
+                {sessions.map((session) => {
+                  const isActive = session.sessionId === activeSessionId;
+                  return (
+                    <div
+                      key={session.sessionId}
+                      role="button"
+                      tabIndex={0}
+                      className={`group relative w-full px-3 h-12 rounded-lg flex items-center gap-2 cursor-pointer transition-colors ${
+                        isActive
+                          ? 'bg-primary-50/50 dark:bg-white/5'
+                          : 'hover:bg-black/5 dark:hover:bg-white/5'
+                      }`}
+                      onClick={() => {
+                        onSwitchSession(session.sessionId);
+                        if (mode !== 'chat') setMode('chat');
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          onSwitchSession(session.sessionId);
+                          if (mode !== 'chat') setMode('chat');
+                        }
+                      }}
+                    >
+                      {/* 激活指示条（对标 Desktop active indicator） */}
+                      {isActive && (
+                        <span
+                          className="absolute left-0 top-2 bottom-2 w-0.5 rounded-full bg-primary-500"
+                        />
+                      )}
+
+                      {/* 头像（对标 Desktop h-8 w-8 rounded-lg） */}
+                      <div
+                        className="h-8 w-8 shrink-0 rounded-lg flex items-center justify-center text-sm font-semibold text-white"
+                        style={{ background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.7), rgba(168, 85, 247, 0.7))' }}
+                      >
+                        {getSessionInitial(session.title || session.documentTitle)}
+                      </div>
+
+                      {/* 标题 */}
+                      <div className="min-w-0 flex-1">
+                        <div
+                          className="text-sm font-medium truncate text-text-primary"
+                          title={session.title || session.documentTitle}
+                        >
+                          {session.title || session.documentTitle || `会话 ${session.sessionId.slice(0, 8)}`}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
-        ) : (
-          sessions.map((session) => {
-            const isActive = session.sessionId === activeSessionId;
-            return (
-              <div
-                key={session.sessionId}
-                role="button"
-                tabIndex={0}
-                className="group relative w-full px-3 h-12 rounded-lg flex items-center gap-2 cursor-pointer transition-colors"
-                style={{
-                  background: isActive ? 'rgba(99, 102, 241, 0.08)' : 'transparent',
-                }}
+        )}
+
+        {/* ── 知识库（对标 Desktop 知识库区） ── */}
+        {!sidebarCollapsed && (
+          <div className="shrink-0 border-t border-black/10 dark:border-white/10">
+            <div className="px-3 py-2 flex items-center justify-between">
+              <div className="text-xs font-medium text-text-secondary">知识库</div>
+              <button
+                type="button"
                 onClick={() => {
-                  onSwitchSession(session.sessionId);
-                  if (mode !== 'chat') setMode('chat');
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    onSwitchSession(session.sessionId);
-                    if (mode !== 'chat') setMode('chat');
+                  if (activeDocuments.length > 0 && activeDocuments[0].documentId && activeSessionId) {
+                    onOpenPreview(activeDocuments[0].documentId, activeSessionId);
                   }
                 }}
+                className="h-7 w-7 inline-flex items-center justify-center rounded-md transition-colors text-text-secondary hover:text-primary-500 hover:bg-black/5 dark:hover:bg-white/5"
+                title="知识库管理"
+                aria-label="知识库管理"
               >
-                {/* 激活指示条 */}
-                {isActive && (
-                  <span
-                    className="absolute left-0 top-2 bottom-2 w-0.5 rounded-full"
-                    style={{ background: 'rgba(99, 102, 241, 0.8)' }}
+                {/* Settings gear icon (对标 Desktop) */}
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M11.983 13.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3z"
                   />
-                )}
-
-                {/* 头像 */}
-                <div
-                  className="h-8 w-8 shrink-0 rounded-lg flex items-center justify-center text-sm font-semibold text-white"
-                  style={{ background: 'rgba(99, 102, 241, 0.6)' }}
-                >
-                  {getSessionInitial(session.title || session.documentTitle)}
-                </div>
-
-                {/* 标题 */}
-                <div className="min-w-0 flex-1">
-                  <div
-                    className="text-sm font-medium truncate"
-                    style={{ color: 'var(--text-primary)' }}
-                    title={session.title || session.documentTitle}
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c0 .7.41 1.33 1.04 1.61.3.13.62.2.95.2H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"
+                  />
+                </svg>
+              </button>
+            </div>
+            <div className="px-2 pb-2 max-h-44 overflow-y-auto space-y-1">
+              {activeDocuments.length > 0 ? (
+                <>
+                  {activeDocuments.map((doc, i) => (
+                    <div
+                      key={doc.documentId}
+                      role="button"
+                      tabIndex={0}
+                      className="group w-full px-3 py-2 rounded-lg text-left text-sm transition-colors cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 text-text-secondary hover:text-primary-500"
+                      onClick={() => {
+                        if (doc.documentId && activeSessionId) {
+                          onOpenPreview(doc.documentId, activeSessionId);
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          if (doc.documentId && activeSessionId) {
+                            onOpenPreview(doc.documentId, activeSessionId);
+                          }
+                        }
+                      }}
+                      title={doc.documentTitle || `文档 ${i + 1}`}
+                    >
+                      <div className="flex items-center justify-between gap-2 min-w-0">
+                        <div className="flex items-center gap-2 min-w-0">
+                          {/* 主文档图标 w-4 h-4（对标 Desktop） */}
+                          <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6M7 20h10a2 2 0 002-2V6a2 2 0 00-2-2H9l-2 2H7a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                          </svg>
+                          <span className="truncate">{doc.documentTitle || `文档 ${i + 1}`}</span>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          {doc.documentType && DOC_TYPE_LABELS[doc.documentType] && (
+                            <span className="text-[9px] px-1 py-px rounded bg-black/5 dark:bg-white/10 text-text-secondary whitespace-nowrap">
+                              {DOC_TYPE_LABELS[doc.documentType]}
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            className="h-7 w-7 hidden group-hover:inline-flex items-center justify-center rounded-md text-text-secondary hover:text-primary-500 hover:bg-black/5 dark:hover:bg-white/5 transition-colors shrink-0"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (doc.documentId && activeSessionId) {
+                                onOpenPreview(doc.documentId, activeSessionId);
+                              }
+                            }}
+                            title="预览文档"
+                            aria-label="预览文档"
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {/* 追加资料按钮（对标 Desktop） */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      window.dispatchEvent(new CustomEvent('prdAgent:addDocument'));
+                    }}
+                    className="w-full px-3 py-1.5 rounded-lg text-left text-xs text-text-secondary hover:text-primary-500 hover:bg-black/5 dark:hover:bg-white/5 transition-colors flex items-center gap-2"
                   >
-                    {session.title || session.documentTitle || `会话 ${session.sessionId.slice(0, 8)}`}
-                  </div>
+                    <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                    <span>追加资料</span>
+                  </button>
+                </>
+              ) : (
+                <div className="px-3 py-2 text-xs text-text-secondary">
+                  {activeSessionId ? '当前会话无文档' : '请先选择会话'}
                 </div>
-              </div>
-            );
-          })
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── 缺陷管理入口（对标 Desktop 缺陷管理区） ── */}
+        {!sidebarCollapsed && (
+          <div className="shrink-0 border-t border-black/10 dark:border-white/10">
+            <div className="px-3 py-2 flex items-center justify-between">
+              <div className="text-xs font-medium text-text-secondary">缺陷管理</div>
+              <button
+                type="button"
+                onClick={() => {
+                  window.location.hash = '#/defect-agent';
+                }}
+                className="h-7 w-7 inline-flex items-center justify-center rounded-md transition-colors text-text-secondary hover:text-primary-500 hover:bg-black/5 dark:hover:bg-white/5"
+                title="缺陷管理"
+                aria-label="缺陷管理"
+              >
+                {/* Bug icon (对标 Desktop SVG) */}
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M8 2l1.88 1.88M14.12 3.88 16 2" />
+                  <path d="M9 7.13v-1a3 3 0 1 1 6 0v1" />
+                  <path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6" />
+                  <path d="M12 20v-9" />
+                  <path d="M6.53 9C4.6 8.8 3 7.1 3 5M6 13H2M3 21c0-2.1 1.7-3.9 3.8-4" />
+                  <path d="M20.97 5c0 2.1-1.6 3.8-3.5 4M22 13h-4M17.2 17c2.1.1 3.8 1.9 3.8 4" />
+                </svg>
+              </button>
+            </div>
+          </div>
         )}
       </div>
 
-      {/* ── 知识库（对标 Desktop 知识库区） ── */}
-      <div className="shrink-0 border-t" style={{ borderColor: 'var(--border-default)' }}>
-        <div className="px-3 py-2 flex items-center justify-between">
-          <div className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>知识库</div>
-        </div>
-        <div className="px-2 pb-2 max-h-44 overflow-y-auto space-y-1">
-          {activeDocuments.length > 0 ? (
-            activeDocuments.map((doc, i) => (
-              <div
-                key={doc.documentId}
-                className="group px-3 py-1.5 text-sm flex items-center gap-2 rounded-lg hover:bg-white/5 cursor-pointer transition-colors"
-                onClick={() => {
-                  if (doc.documentId && activeSessionId) {
-                    onOpenPreview(doc.documentId, activeSessionId);
-                  }
-                }}
-                title={doc.documentTitle || `文档 ${i + 1}`}
-              >
-                <FileText size={13} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-                <span className="truncate text-xs" style={{ color: 'var(--text-primary)' }}>
-                  {doc.documentTitle || `文档 ${i + 1}`}
-                </span>
-                {doc.documentType && DOC_TYPE_LABELS[doc.documentType] && (
-                  <span
-                    className="text-[9px] px-1 py-px rounded whitespace-nowrap shrink-0"
-                    style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)' }}
-                  >
-                    {DOC_TYPE_LABELS[doc.documentType]}
-                  </span>
-                )}
-                <button
-                  className="ml-auto opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
-                  style={{ color: 'var(--text-muted)' }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (doc.documentId && activeSessionId) {
-                      onOpenPreview(doc.documentId, activeSessionId);
-                    }
-                  }}
-                  title="预览文档"
-                >
-                  <Eye size={13} />
-                </button>
-              </div>
-            ))
-          ) : (
-            <div className="px-3 py-2 text-xs" style={{ color: 'var(--text-muted)' }}>
-              {activeSessionId ? '当前会话无文档' : '请先选择会话'}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* ── 缺陷管理入口（对标 Desktop 缺陷管理区） ── */}
-      <div className="shrink-0 border-t" style={{ borderColor: 'var(--border-default)' }}>
-        <div className="px-3 py-2 flex items-center justify-between">
-          <div className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>缺陷管理</div>
-          <button
-            className="w-6 h-6 rounded flex items-center justify-center hover:bg-white/5 transition-colors"
-            style={{ color: 'var(--text-muted)' }}
-            onClick={() => {
-              // 导航到缺陷管理页面（与 Desktop 一致的行为）
-              window.location.hash = '#/defect-agent';
-            }}
-            title="打开缺陷管理"
-          >
-            <Bug size={13} />
-          </button>
-        </div>
-      </div>
-
       {/* ── 拖拽调宽手柄（对标 Desktop resize handle） ── */}
-      <div
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="调整侧边栏宽度"
-        className="absolute top-0 right-0 h-full w-1 cursor-col-resize group/handle"
-        style={{ touchAction: 'none' }}
-        onPointerDown={onResizePointerDown}
-        onPointerMove={onResizePointerMove}
-        onPointerUp={endResize}
-        onPointerCancel={endResize}
-        onLostPointerCapture={endResize}
-      >
+      {!sidebarCollapsed && (
         <div
-          className="absolute inset-0 transition-colors"
-          style={{
-            background: isResizing ? 'rgba(99, 102, 241, 0.3)' : 'transparent',
-          }}
-        />
-      </div>
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="调整侧边栏宽度"
+          className="absolute top-0 right-0 h-full w-1 cursor-col-resize group/handle hover:bg-primary-500/10"
+          style={{ touchAction: 'none' }}
+          onPointerDown={onResizePointerDown}
+          onPointerMove={onResizePointerMove}
+          onPointerUp={endResize}
+          onPointerCancel={endResize}
+          onLostPointerCapture={endResize}
+        >
+          <div
+            className="absolute inset-0 transition-colors"
+            style={{
+              background: isResizing ? 'rgba(99, 102, 241, 0.3)' : 'transparent',
+            }}
+          />
+        </div>
+      )}
     </aside>
   );
 }

@@ -1295,19 +1295,18 @@ export default function AiChatPage() {
 
   const chatPanel = (
     <div className="h-full min-h-0 flex flex-col">
-      {/* ── 标题栏（对标 Desktop ChatContainer 的 group title bar） ── */}
-      <div
-        className="h-12 px-4 flex items-center justify-between border-b shrink-0"
-        style={{ borderColor: 'var(--border-default)' }}
-      >
+      {/* ── 标题栏（对标 Desktop ChatContainer h-12 px-4 border-b ui-glass-bar） ── */}
+      <div className="h-12 px-4 flex items-center justify-between border-b border-black/10 dark:border-white/10 shrink-0">
         <div className="min-w-0 flex items-center gap-3">
-          <span
-            className="text-sm font-semibold truncate"
-            style={{ color: 'var(--text-primary)', maxWidth: 320 }}
-            title={activeSession?.title || activeSession?.documentTitle || 'PRD Agent'}
+          <button
+            type="button"
+            className="text-sm font-semibold text-text-primary truncate text-left hover:text-primary-600 dark:hover:text-primary-300"
+            style={{ maxWidth: 320 }}
+            title="回到最新消息"
+            onClick={() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })}
           >
             {activeSession?.title || activeSession?.documentTitle || 'PRD Agent'}
-          </span>
+          </button>
         </div>
         <div className="flex items-center gap-3">
           {/* 角色切换 */}
@@ -1322,10 +1321,42 @@ export default function AiChatPage() {
             accentHue={240}
             size="sm"
           />
+          {/* 连接状态指示器（对标 Desktop ChatContainer） */}
+          <div className="flex items-center gap-1.5 text-xs select-none shrink-0" title={streamingAssistantMessageId ? '通信中' : '已连接'}>
+            {streamingAssistantMessageId ? (
+              <>
+                <div className="w-2 h-2 rounded-full bg-blue-500 dark:bg-blue-400 animate-pulse" />
+                <span className="text-blue-600 dark:text-blue-400">通信中</span>
+              </>
+            ) : (
+              <>
+                <div className="w-2 h-2 rounded-full bg-green-500 dark:bg-green-400" />
+                <span className="text-text-tertiary">已连接</span>
+              </>
+            )}
+          </div>
           {/* 功能按钮 */}
           <div className="flex items-center gap-2 shrink-0">
             {headerRightActions}
           </div>
+          {/* "..." 信息按钮（对标 Desktop h-9 w-9） */}
+          <button
+            type="button"
+            className="h-9 w-9 inline-flex items-center justify-center rounded-md text-text-secondary hover:text-primary-500 hover:bg-black/5 dark:hover:bg-white/5"
+            title="会话信息"
+            aria-label="会话信息"
+            onClick={() => {
+              if (activeSession?.documentId && activeSessionId) {
+                window.dispatchEvent(new CustomEvent('prdAgent:openPreview', {
+                  detail: { documentId: activeSession.documentId, sessionId: activeSessionId },
+                }));
+              }
+            }}
+          >
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 12h.01M19 12h.01M5 12h.01" />
+            </svg>
+          </button>
         </div>
       </div>
 
