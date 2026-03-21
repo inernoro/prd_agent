@@ -316,6 +316,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [articleWithImages, setArticleWithImages] = useState('');
   const [phase, setPhase] = useState<WorkflowPhase>(0); // 0=upload
   const [generating, setGenerating] = useState(false);
+  const [autoSubmitEnabled, setAutoSubmitEnabled] = useState(true);
   const [markerStreaming, setMarkerStreaming] = useState(false);
   const [thinkingContent, setThinkingContent] = useState('');
   const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
@@ -1544,8 +1545,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       if (anyError && !ac.signal.aborted) {
         toast.warning('部分配图生成失败：可在右侧逐条修改并重新生成');
       }
-      // 自动投稿：文学创作配图完成后提交到作品广场
-      createSubmission({ contentType: 'literary', workspaceId }).catch(() => {});
+      // 自动投稿：文学创作配图完成后提交到作品广场（受开关控制）
+      if (autoSubmitEnabled) {
+        createSubmission({ contentType: 'literary', workspaceId }).catch(() => {});
+      }
     } catch (error) {
       console.error('Batch generate error:', error);
       setGenerating(false);
@@ -2173,12 +2176,17 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               )}
               <button
                 type="button"
+                onClick={() => setAutoSubmitEnabled((v) => !v)}
                 className="h-7 px-2 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0 text-xs"
-                style={{ color: 'rgba(16, 185, 129, 0.8)' }}
-                title="你的作品会自动投稿到作品广场"
+                style={{
+                  color: autoSubmitEnabled ? 'rgba(16, 185, 129, 0.8)' : 'var(--text-muted)',
+                  background: autoSubmitEnabled ? 'rgba(16, 185, 129, 0.1)' : 'transparent',
+                  border: autoSubmitEnabled ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid transparent',
+                }}
+                title={autoSubmitEnabled ? '投稿已开启 — 生成的配图会自动投稿到作品广场，点击关闭' : '投稿已关闭 — 点击开启自动投稿'}
               >
                 <Share2 size={13} />
-                <span>投稿</span>
+                <span>{autoSubmitEnabled ? '投稿' : '投稿关'}</span>
               </button>
             </div>
           </div>

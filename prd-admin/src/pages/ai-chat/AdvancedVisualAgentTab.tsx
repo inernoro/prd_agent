@@ -2022,6 +2022,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [_busy, setBusy] = useState(false);
   const [error, setError] = useState<string>('');
   const [defectFlash, setDefectFlash] = useState(false);
+  const [autoSubmitEnabled, setAutoSubmitEnabled] = useState(true);
+  const autoSubmitEnabledRef = useRef(true);
+  useEffect(() => { autoSubmitEnabledRef.current = autoSubmitEnabled; }, [autoSubmitEnabled]);
   const [workspace, setWorkspace] = useState<VisualAgentWorkspace | null>(null);
   const [, setBooting] = useState(false);
   const initWorkspaceRef = useRef<{ workspaceId: string; started: boolean }>({ workspaceId: '', started: false });
@@ -3778,8 +3781,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             );
             const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
             pushMsg('Assistant', buildGenDoneContent({ src: u, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: modelPoolName, imageRefShas }));
-            // 自动投稿：生图完成后自动提交到作品广场
-            if (asset?.id) {
+            // 自动投稿：生图完成后自动提交到作品广场（受开关控制）
+            if (asset?.id && autoSubmitEnabledRef.current) {
               autoSubmitImages([asset.id]).catch(() => {});
             }
           } else if (t === 'imageError' || t === 'error') {
@@ -7434,10 +7437,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 </button>
                 <button
                   type="button"
+                  onClick={() => setAutoSubmitEnabled((v) => !v)}
                   className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0"
-                  style={{ color: 'rgba(16, 185, 129, 0.8)' }}
-                  aria-label="作品自动投稿中"
-                  title="你的作品会自动投稿到作品广场"
+                  style={{
+                    color: autoSubmitEnabled ? 'rgba(16, 185, 129, 0.8)' : 'var(--text-muted)',
+                    background: autoSubmitEnabled ? 'rgba(16, 185, 129, 0.1)' : 'transparent',
+                  }}
+                  aria-label={autoSubmitEnabled ? '投稿已开启（点击关闭）' : '投稿已关闭（点击开启）'}
+                  title={autoSubmitEnabled ? '投稿已开启 — 生成的图片会自动投稿到作品广场，点击关闭' : '投稿已关闭 — 点击开启自动投稿'}
                 >
                   <Share size={14} />
                 </button>
