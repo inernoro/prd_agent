@@ -47,6 +47,12 @@ export interface ActivityEvent {
   branchId?: string;
   /** Build profile ID that handled the request (e.g. 'api', 'admin') */
   profileId?: string;
+  /** Remote address of the client */
+  remoteAddr?: string;
+  /** User-Agent header */
+  userAgent?: string;
+  /** Referer header */
+  referer?: string;
 }
 
 /** Map API path patterns to Chinese labels */
@@ -388,7 +394,11 @@ export function createServer(deps: ServerDeps): express.Express {
     for (const req of pendingAiRequests.values()) {
       res.write(`event: new-request\ndata: ${JSON.stringify(req)}\n\n`);
     }
-    _req.on('close', () => aiPairingClients.delete(res));
+    // Keepalive heartbeat every 30s to prevent Cloudflare 524 timeout
+    const heartbeat = setInterval(() => {
+      try { res.write(': keepalive\n\n'); } catch { clearInterval(heartbeat); }
+    }, 30_000);
+    _req.on('close', () => { aiPairingClients.delete(res); clearInterval(heartbeat); });
   });
 
   // ── State stream SSE endpoint (server-authority push) ──
@@ -399,7 +409,10 @@ export function createServer(deps: ServerDeps): express.Express {
   app.get('/api/state-stream', (_req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
     stateClients.add(res);
-    _req.on('close', () => stateClients.delete(res));
+    const heartbeat = setInterval(() => {
+      try { res.write(': keepalive\n\n'); } catch { clearInterval(heartbeat); }
+    }, 30_000);
+    _req.on('close', () => { stateClients.delete(res); clearInterval(heartbeat); });
   });
 
   // When state changes, broadcast to all connected clients
@@ -427,7 +440,10 @@ export function createServer(deps: ServerDeps): express.Express {
         res.write(`data: ${JSON.stringify(event)}\n\n`);
       }
     }
-    req.on('close', () => activityClients.delete(res));
+    const heartbeat = setInterval(() => {
+      try { res.write(': keepalive\n\n'); } catch { clearInterval(heartbeat); }
+    }, 30_000);
+    req.on('close', () => { activityClients.delete(res); clearInterval(heartbeat); });
   });
 
   // ── API activity tracking middleware (before routes, after auth) ──
@@ -471,6 +487,9 @@ export function createServer(deps: ServerDeps): express.Express {
         body: reqBody,
         query: reqQuery,
         branchId,
+        remoteAddr: (req.headers['cf-connecting-ip'] as string) || (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || req.socket?.remoteAddress,
+        userAgent: req.headers['user-agent'],
+        referer: req.headers['referer'] || req.headers['origin'],
       };
       broadcastActivity(event);
       return origEnd(...args);
