@@ -317,6 +317,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [phase, setPhase] = useState<WorkflowPhase>(0); // 0=upload
   const [generating, setGenerating] = useState(false);
   const [autoSubmitEnabled, setAutoSubmitEnabled] = useState(true);
+  const autoSubmitEnabledRef = useRef(true);
+  useEffect(() => { autoSubmitEnabledRef.current = autoSubmitEnabled; }, [autoSubmitEnabled]);
   const [markerStreaming, setMarkerStreaming] = useState(false);
   const [thinkingContent, setThinkingContent] = useState('');
   const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
@@ -1545,8 +1547,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       if (anyError && !ac.signal.aborted) {
         toast.warning('部分配图生成失败：可在右侧逐条修改并重新生成');
       }
-      // 自动投稿：文学创作配图完成后提交到作品广场（受开关控制）
-      if (autoSubmitEnabled) {
+      // 自动投稿：文学创作配图完成后提交到作品广场（通过 ref 读取最新值，避免闭包陈旧）
+      if (autoSubmitEnabledRef.current) {
         createSubmission({ contentType: 'literary', workspaceId }).catch(() => {});
       }
     } catch (error) {

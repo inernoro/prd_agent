@@ -23,8 +23,10 @@ export function ShowcaseGallery() {
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const initialLoadDone = useRef(false);
+  const fetchIdRef = useRef(0); // 防止 tab 切换 race condition
 
   const fetchItems = useCallback(async (contentType: string, skip: number, append: boolean) => {
+    const myFetchId = ++fetchIdRef.current;
     if (append) setLoadingMore(true);
     else setLoading(true);
 
@@ -34,13 +36,17 @@ export function ShowcaseGallery() {
         skip,
         limit: PAGE_SIZE,
       });
+      // 丢弃过期请求的响应（用户已切换 tab）
+      if (fetchIdRef.current !== myFetchId) return;
       if (res.success) {
         setItems((prev) => (append ? [...prev, ...res.data.items] : res.data.items));
         setTotal(res.data.total);
       }
     } finally {
-      setLoading(false);
-      setLoadingMore(false);
+      if (fetchIdRef.current === myFetchId) {
+        setLoading(false);
+        setLoadingMore(false);
+      }
     }
   }, []);
 
@@ -58,23 +64,22 @@ export function ShowcaseGallery() {
   };
 
   const handleLoadMore = () => {
+    if (loadingMore) return;
     fetchItems(activeTab, items.length, true);
   };
 
   const handleLikeToggle = async (id: string, liked: boolean) => {
-    try {
-      const res = liked ? await likeSubmission(id) : await unlikeSubmission(id);
-      if (res.success) {
-        setItems((prev) =>
-          prev.map((item) =>
-            item.id === id
-              ? { ...item, likedByMe: res.data.likedByMe, likeCount: res.data.count }
-              : item,
-          ),
-        );
-      }
-    } catch {
-      // revert optimistic update handled by card itself
+    const res = liked ? await likeSubmission(id) : await unlikeSubmission(id);
+    if (res.success) {
+      setItems((prev) =>
+        prev.map((item) =>
+          item.id === id
+            ? { ...item, likedByMe: res.data.likedByMe, likeCount: res.data.count }
+            : item,
+        ),
+      );
+    } else {
+      throw new Error(res.error?.message || '操作失败');
     }
   };
 
@@ -92,11 +97,13 @@ export function ShowcaseGallery() {
         >
           作品广场
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1" role="tablist">
           {TABS.map((tab) => (
             <button
               key={tab.key}
               type="button"
+              role="tab"
+              aria-selected={activeTab === tab.key}
               onClick={() => handleTabChange(tab.key)}
               className="px-3 py-1 rounded-md text-xs transition-colors duration-150"
               style={{

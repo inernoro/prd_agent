@@ -338,6 +338,10 @@ public class SubmissionsController : ControllerBase
         if (request.ImageAssetIds == null || request.ImageAssetIds.Count == 0)
             return BadRequest(ApiResponse<object>.Fail("EMPTY", "imageAssetIds 不能为空"));
 
+        // 批量上限：防止单次提交过多 ID 导致大查询
+        if (request.ImageAssetIds.Count > 50)
+            request.ImageAssetIds = request.ImageAssetIds.Take(50).ToList();
+
         var assets = await _db.ImageAssets
             .Find(x => request.ImageAssetIds.Contains(x.Id) && x.OwnerUserId == userId)
             .ToListAsync();
@@ -389,20 +393,22 @@ public class SubmissionsController : ControllerBase
     [HttpGet("check")]
     public async Task<IActionResult> CheckSubmission([FromQuery] string? imageAssetId, [FromQuery] string? workspaceId)
     {
+        var userId = GetUserId();
+
         if (!string.IsNullOrWhiteSpace(imageAssetId))
         {
             var submission = await _db.Submissions
-                .Find(x => x.ImageAssetId == imageAssetId)
+                .Find(x => x.ImageAssetId == imageAssetId && x.OwnerUserId == userId)
                 .FirstOrDefaultAsync();
-            return Ok(ApiResponse<object>.Ok(new { submitted = submission != null, submission }));
+            return Ok(ApiResponse<object>.Ok(new { submitted = submission != null, submissionId = submission?.Id }));
         }
 
         if (!string.IsNullOrWhiteSpace(workspaceId))
         {
             var submission = await _db.Submissions
-                .Find(x => x.WorkspaceId == workspaceId && x.ContentType == "literary")
+                .Find(x => x.WorkspaceId == workspaceId && x.ContentType == "literary" && x.OwnerUserId == userId)
                 .FirstOrDefaultAsync();
-            return Ok(ApiResponse<object>.Ok(new { submitted = submission != null, submission }));
+            return Ok(ApiResponse<object>.Ok(new { submitted = submission != null, submissionId = submission?.Id }));
         }
 
         return BadRequest(ApiResponse<object>.Fail("MISSING_PARAM", "需要提供 imageAssetId 或 workspaceId"));

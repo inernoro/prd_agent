@@ -1,18 +1,23 @@
-import { useState } from 'react';
-import { Heart } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Heart, ImageOff } from 'lucide-react';
 import { resolveAvatarUrl, DEFAULT_AVATAR_FALLBACK } from '@/lib/avatar';
 import type { SubmissionItem } from '@/services/real/submissions';
 
 interface SubmissionCardProps {
   item: SubmissionItem;
-  onLikeToggle?: (id: string, liked: boolean) => void;
+  onLikeToggle?: (id: string, liked: boolean) => Promise<void>;
 }
 
 export function SubmissionCard({ item, onLikeToggle }: SubmissionCardProps) {
   const [imgLoaded, setImgLoaded] = useState(false);
+  const [imgError, setImgError] = useState(false);
   const [liked, setLiked] = useState(item.likedByMe);
   const [likeCount, setLikeCount] = useState(item.likeCount);
   const [liking, setLiking] = useState(false);
+
+  // 同步父组件 props 到本地状态（避免 useState 初始值陈旧）
+  useEffect(() => { setLiked(item.likedByMe); }, [item.likedByMe]);
+  useEffect(() => { setLikeCount(item.likeCount); }, [item.likeCount]);
 
   const avatarUrl = resolveAvatarUrl({ avatarFileName: item.ownerAvatarFileName });
 
@@ -21,10 +26,15 @@ export function SubmissionCard({ item, onLikeToggle }: SubmissionCardProps) {
     if (liking) return;
     setLiking(true);
     const newLiked = !liked;
+    // 乐观更新
     setLiked(newLiked);
     setLikeCount((c) => c + (newLiked ? 1 : -1));
     try {
-      onLikeToggle?.(item.id, newLiked);
+      await onLikeToggle?.(item.id, newLiked);
+    } catch {
+      // API 失败：回滚乐观更新
+      setLiked(!newLiked);
+      setLikeCount((c) => c + (newLiked ? -1 : 1));
     } finally {
       setLiking(false);
     }
@@ -41,7 +51,7 @@ export function SubmissionCard({ item, onLikeToggle }: SubmissionCardProps) {
     >
       {/* Cover image */}
       <div className="relative w-full overflow-hidden">
-        {!imgLoaded && (
+        {!imgLoaded && !imgError && (
           <div
             className="w-full animate-pulse"
             style={{
@@ -53,20 +63,34 @@ export function SubmissionCard({ item, onLikeToggle }: SubmissionCardProps) {
             }}
           />
         )}
-        <img
-          src={item.coverUrl}
-          alt={item.title}
-          className="w-full block transition-transform duration-500 group-hover:scale-105"
-          style={{
-            display: imgLoaded ? 'block' : 'none',
-          }}
-          loading="lazy"
-          onLoad={() => setImgLoaded(true)}
-          onError={(e) => {
-            (e.target as HTMLImageElement).style.display = 'none';
-            setImgLoaded(true);
-          }}
-        />
+        {imgError && (
+          <div
+            className="w-full flex items-center justify-center"
+            style={{
+              aspectRatio: '4/3',
+              background: 'rgba(255,255,255,0.03)',
+              minHeight: 120,
+            }}
+          >
+            <ImageOff size={24} style={{ color: 'var(--text-muted, rgba(255,255,255,0.15))' }} />
+          </div>
+        )}
+        {item.coverUrl && !imgError && (
+          <img
+            src={item.coverUrl}
+            alt={item.title}
+            className="w-full block transition-transform duration-500 group-hover:scale-105"
+            style={{
+              display: imgLoaded ? 'block' : 'none',
+            }}
+            loading="lazy"
+            onLoad={() => setImgLoaded(true)}
+            onError={() => {
+              setImgError(true);
+              setImgLoaded(true);
+            }}
+          />
+        )}
 
         {/* Hover overlay */}
         <div
@@ -108,6 +132,8 @@ export function SubmissionCard({ item, onLikeToggle }: SubmissionCardProps) {
           className="flex items-center gap-1 shrink-0 transition-colors duration-150"
           style={{ color: liked ? '#F43F5E' : 'var(--text-muted, rgba(255,255,255,0.35))' }}
           disabled={liking}
+          aria-label={liked ? '取消点赞' : '点赞'}
+          aria-pressed={liked}
         >
           <Heart
             size={14}
