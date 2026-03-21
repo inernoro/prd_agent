@@ -14,13 +14,13 @@ export interface DesktopUpdateCacheItem {
 }
 
 export async function getDesktopUpdateCaches() {
-  return apiRequest<DesktopUpdateCacheItem[]>('GET', '/api/desktop-update-cache');
+  return apiRequest<DesktopUpdateCacheItem[]>('/api/desktop-update-cache');
 }
 
 export async function triggerDesktopUpdateCache(target: string) {
-  return apiRequest<string>('POST', '/api/desktop-update-cache/trigger', { target });
+  return apiRequest<string>('/api/desktop-update-cache/trigger', { method: 'POST', body: { target } });
 }
 
 export async function deleteDesktopUpdateCache(id: string) {
-  return apiRequest<{ deleted: boolean }>('DELETE', `/api/desktop-update-cache/${id}`);
+  return apiRequest<{ deleted: boolean }>(`/api/desktop-update-cache/${id}`, { method: 'DELETE' });
 }

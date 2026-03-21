@@ -18,10 +18,15 @@ This skill should be used when:
 ## Configuration
 
 The API uses AI Access Key authentication:
-- **Environment Variable**: `AI_ACCESS_KEY` (configured on the server)
+- **Environment Variables**:
+  - `AI_ACCESS_KEY` - 通用 AI 认证密钥（CDS + MAP 平台 + 后端 API 共享）
+  - `MAP_AI_USER` - **X-AI-Impersonate 用户名**（优先级最高，强烈建议配置）
 - **Request Headers**:
   - `X-AI-Access-Key: {key}` - The configured access key
   - `X-AI-Impersonate: {username}` - A valid username to impersonate (must exist in database)
+
+> ⚠️ **严禁硬编码 `admin` 或 `root`**。`admin` 通常不是数据库真实用户名，`root` 是破窗账户不在 users 集合中。
+> **强烈建议**：从 `$MAP_AI_USER` 环境变量读取用户名，避免每次都通过 JWT 登录发现。
 
 ## Base URL
 
@@ -83,8 +88,8 @@ http://localhost:8000
 2. **Execute the query**: Use curl with the AI Access Key headers:
    ```bash
    curl -s "http://[::1]:5000/api/{endpoint}" \
-     -H "X-AI-Access-Key: 123" \
-     -H "X-AI-Impersonate: admin"
+     -H "X-AI-Access-Key: $AI_ACCESS_KEY" \
+     -H "X-AI-Impersonate: $MAP_AI_USER"
    ```
 
 3. **Parse the response**: The API returns JSON in this format:
@@ -103,7 +108,7 @@ http://localhost:8000
 When debugging LLM-related features, always check the LLM logs:
 
 ```powershell
-Invoke-RestMethod -Uri "http://localhost:8000/api/logs/llm?limit=10" -Headers @{"X-AI-Access-Key"="123"; "X-AI-Impersonate"="admin"} | ForEach-Object { $_.data.items } | ForEach-Object {
+Invoke-RestMethod -Uri "http://localhost:8000/api/logs/llm?limit=10" -Headers @{"X-AI-Access-Key"="$env:AI_ACCESS_KEY"; "X-AI-Impersonate"="$env:MAP_AI_USER"} | ForEach-Object { $_.data.items } | ForEach-Object {
     Write-Host "---"
     Write-Host "Model: $($_.model)"
     Write-Host "Purpose: $($_.requestPurpose)"
@@ -125,28 +130,28 @@ Key fields to check:
 ### Get all users
 ```bash
 curl -s "http://[::1]:5000/api/users" \
-  -H "X-AI-Access-Key: 123" \
-  -H "X-AI-Impersonate: admin" | jq
+  -H "X-AI-Access-Key: $AI_ACCESS_KEY" \
+  -H "X-AI-Impersonate: $MAP_AI_USER" | jq
 ```
 
 ### Get specific user
 ```bash
 curl -s "http://[::1]:5000/api/users/user1" \
-  -H "X-AI-Access-Key: 123" \
-  -H "X-AI-Impersonate: admin" | jq
+  -H "X-AI-Access-Key: $AI_ACCESS_KEY" \
+  -H "X-AI-Impersonate: $MAP_AI_USER" | jq
 ```
 
 ### List projects with pagination
 ```bash
 curl -s "http://[::1]:5000/api/prd/projects?page=1&pageSize=10" \
-  -H "X-AI-Access-Key: 123" \
-  -H "X-AI-Impersonate: admin" | jq
+  -H "X-AI-Access-Key: $AI_ACCESS_KEY" \
+  -H "X-AI-Impersonate: $MAP_AI_USER" | jq
 ```
 
 ## Error Handling
 
 - **401 Unauthorized**: Check that `AI_ACCESS_KEY` environment variable is set on the server
-- **401 User not found**: The username in `X-AI-Impersonate` must exist in the database
+- **401 User not found**: The username in `X-AI-Impersonate` must exist in the database (use `$MAP_AI_USER`, never hardcode `admin` or `root`)
 - **403 Forbidden**: Should not happen with AI Access Key (has super permissions)
 - **404 Not Found**: Check the endpoint path
 

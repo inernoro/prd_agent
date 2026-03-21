@@ -51,7 +51,7 @@ public class ClassifyEmailHandler : IEmailHandler
 
             // 创建 LLM 客户端
             var client = _llmGateway.CreateClient(
-                "channel-adapter.email::classify",
+                "channel-adapter.email.classify::chat",
                 "chat",
                 maxTokens: 1024,
                 temperature: 0.3);

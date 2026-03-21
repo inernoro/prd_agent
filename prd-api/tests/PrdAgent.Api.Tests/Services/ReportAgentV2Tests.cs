@@ -85,8 +85,9 @@ public class ReportAgentV2Tests
     public void PersonalSourceType_ShouldHaveAllTypes()
     {
         Assert.Contains("github", PersonalSourceType.All);
-        Assert.Contains("gitlab", PersonalSourceType.All);
         Assert.Contains("yuque", PersonalSourceType.All);
+        // gitlab 尚未实现 PersonalSource 连接器，待实现后再加入
+        Assert.Equal(2, PersonalSourceType.All.Length);
     }
 
     #endregion

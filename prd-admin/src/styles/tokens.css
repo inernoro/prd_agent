@@ -27,6 +27,12 @@
   --glass-border: rgba(255, 255, 255, 0.12);
   --glass-noise: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.5'/%3E%3C/svg%3E");
 
+  /* Glass 组件变量（与 prd-desktop 对齐） */
+  --glass-bg: rgba(15, 23, 42, 0.55);
+  --glass-bg-strong: rgba(15, 23, 42, 0.72);
+  --glass-ring: rgba(255, 255, 255, 0.10);
+  --glass-shadow: 0 18px 54px rgba(0, 0, 0, 0.55);
+
 
   --text-primary: #f7f7fb;
   --text-secondary: rgba(247, 247, 251, 0.80);
