@@ -343,54 +343,99 @@ public class SubmissionsController : ControllerBase
                     configModelId = snap.ConfigModelId,
                 };
             }
-            else
+            else if (!string.IsNullOrWhiteSpace(submission.WorkspaceId))
             {
-                // 兜底：动态查询（旧数据未回填时）
-                var assetId = submission.ImageAssetId;
-                if (!string.IsNullOrWhiteSpace(assetId))
+                // 兜底：动态查询（旧数据未回填 GenerationSnapshot 时）
+                var run = await _db.ImageGenRuns
+                    .Find(x => x.WorkspaceId == submission.WorkspaceId && x.Status == ImageGenRunStatus.Completed)
+                    .SortByDescending(x => x.CreatedAt)
+                    .FirstOrDefaultAsync();
+                if (run != null)
                 {
-                    var run = await _db.ImageGenRuns
-                        .Find(x => x.WorkspaceId == submission.WorkspaceId && x.Status == ImageGenRunStatus.Completed)
-                        .SortByDescending(x => x.CreatedAt)
-                        .FirstOrDefaultAsync();
-                    if (run != null)
+                    string? modelDisplayName = null;
+                    if (!string.IsNullOrWhiteSpace(run.ConfigModelId))
                     {
-                        string? modelDisplayName = null;
-                        if (!string.IsNullOrWhiteSpace(run.ConfigModelId))
-                        {
-                            var model = await _db.LLMModels
-                                .Find(x => x.Id == run.ConfigModelId)
-                                .FirstOrDefaultAsync();
-                            modelDisplayName = model?.Name ?? model?.ModelName ?? run.ModelId;
-                        }
-                        else
-                        {
-                            modelDisplayName = run.ModelId;
-                        }
-
-                        string? systemPromptName = null;
-                        var workspace = await _db.ImageMasterWorkspaces
-                            .Find(x => x.Id == submission.WorkspaceId)
+                        var model = await _db.LLMModels
+                            .Find(x => x.Id == run.ConfigModelId)
                             .FirstOrDefaultAsync();
-                        if (workspace?.SelectedPromptId != null)
-                        {
-                            var sp = await _db.LiteraryPrompts
-                                .Find(x => x.Id == workspace.SelectedPromptId)
-                                .FirstOrDefaultAsync();
-                            systemPromptName = sp?.Title;
-                        }
-
-                        generationInfo = new
-                        {
-                            modelName = modelDisplayName,
-                            size = run.Size,
-                            hasReferenceImage = !string.IsNullOrWhiteSpace(run.InitImageAssetSha256) || (run.ImageRefs?.Count > 0),
-                            hasInpainting = !string.IsNullOrWhiteSpace(run.MaskBase64),
-                            referenceImageCount = (run.ImageRefs?.Count ?? 0) + (!string.IsNullOrWhiteSpace(run.InitImageAssetSha256) ? 1 : 0),
-                            systemPromptName,
-                            stylePrompt = workspace?.StylePrompt,
-                        };
+                        modelDisplayName = model?.Name ?? model?.ModelName ?? run.ModelId;
                     }
+                    else
+                    {
+                        modelDisplayName = run.ModelId;
+                    }
+
+                    string? systemPromptName = null;
+                    string? systemPromptContent = null;
+                    var workspace = await _db.ImageMasterWorkspaces
+                        .Find(x => x.Id == submission.WorkspaceId)
+                        .FirstOrDefaultAsync();
+                    if (workspace?.SelectedPromptId != null)
+                    {
+                        var sp = await _db.LiteraryPrompts
+                            .Find(x => x.Id == workspace.SelectedPromptId)
+                            .FirstOrDefaultAsync();
+                        systemPromptName = sp?.Title;
+                        systemPromptContent = sp?.Content;
+                    }
+
+                    // 参考图
+                    var hasRefImage = !string.IsNullOrWhiteSpace(run.InitImageAssetSha256) || (run.ImageRefs?.Count > 0);
+                    var refCount = (run.ImageRefs?.Count ?? 0) + (!string.IsNullOrWhiteSpace(run.InitImageAssetSha256) ? 1 : 0);
+                    string? initImageUrl = null;
+                    if (!string.IsNullOrWhiteSpace(run.InitImageAssetSha256))
+                    {
+                        var initAsset = await _db.ImageAssets
+                            .Find(x => x.Sha256 == run.InitImageAssetSha256)
+                            .SortByDescending(x => x.CreatedAt)
+                            .FirstOrDefaultAsync();
+                        initImageUrl = initAsset?.OriginalUrl ?? initAsset?.Url;
+                    }
+                    List<ImageRefSnapshot>? imageRefSnapshots = null;
+                    if (run.ImageRefs?.Count > 0)
+                    {
+                        imageRefSnapshots = run.ImageRefs.Select(r => new ImageRefSnapshot
+                        {
+                            RefId = r.RefId, Url = r.Url, Label = r.Label, Role = r.Role,
+                        }).ToList();
+                    }
+
+                    // 水印
+                    string? wmId = null, wmName = null, wmText = null, wmFontKey = null;
+                    var appKey = run.AppKey;
+                    if (!string.IsNullOrWhiteSpace(appKey))
+                    {
+                        var wmConfig = await _db.WatermarkConfigs
+                            .Find(x => x.UserId == submission.OwnerUserId && x.AppKeys.Contains(appKey))
+                            .FirstOrDefaultAsync();
+                        if (wmConfig != null)
+                        {
+                            wmId = wmConfig.Id;
+                            wmName = wmConfig.Name;
+                            wmText = wmConfig.Text;
+                            wmFontKey = wmConfig.FontKey;
+                        }
+                    }
+
+                    generationInfo = new
+                    {
+                        modelName = modelDisplayName,
+                        size = run.Size,
+                        promptText = run.Items?.FirstOrDefault()?.Prompt,
+                        stylePrompt = workspace?.StylePrompt,
+                        systemPromptName,
+                        systemPromptContent,
+                        hasReferenceImage = hasRefImage,
+                        referenceImageCount = refCount,
+                        initImageUrl,
+                        imageRefs = imageRefSnapshots,
+                        hasInpainting = !string.IsNullOrWhiteSpace(run.MaskBase64),
+                        watermarkConfigId = wmId,
+                        watermarkName = wmName,
+                        watermarkText = wmText,
+                        watermarkFontKey = wmFontKey,
+                        appKey,
+                    };
                 }
             }
         }
