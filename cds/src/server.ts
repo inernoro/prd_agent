@@ -56,7 +56,7 @@ function resolveApiLabel(method: string, path: string): string {
 
   // Static exact matches
   const staticMap: Record<string, string> = {
-    'GET /branches': '获取分支列表',
+    'GET /branches': '获取系统状态信息',
     'POST /branches': '注册新分支',
     'GET /remote-branches': '获取远程分支',
     'GET /build-profiles': '获取构建配置',
