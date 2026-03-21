@@ -16,3 +16,9 @@
 | fix | prd-api | 多轮对话历史保留图片上下文（ChatHistoryMessage 新增 AttachmentIds，后端批量查询附件并构建 image_url 多模态消息） |
 | fix | prd-admin | 切换会话时还原 attachmentIds（历史消息重新发送时能带上图片） |
 | fix | prd-admin | 重新生成/重试时保留原消息附件（handleSend 支持 overrideAttachmentIds） |
+| fix | prd-admin | 修复重新生成闭包问题（handleSend 接受 messagesSnapshot 避免 React 批量更新导致历史包含已删除消息） |
+| feat | prd-admin | 代码块语法高亮（react-syntax-highlighter + oneDark 主题 + 语言标签 + 复制按钮） |
+| feat | prd-admin | LaTeX 数学公式渲染（remark-math + rehype-katex） |
+| fix | prd-admin | XSS 防护（rehype-sanitize 配合 rehype-raw 过滤危险 HTML 属性） |
+| feat | prd-admin | 助手消息反馈按钮（👍👎 点赞/踩，高亮切换） |
+| feat | prd-admin | 用户消息编辑功能（Pencil 图标触发，编辑后截断后续消息并重新发送） |

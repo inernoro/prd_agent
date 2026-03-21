@@ -24,11 +24,18 @@ import {
   Swords, Paperclip, ImagePlus, X, File, Loader2,
   Plus, MessageCircle, Share2, Globe2, AlertCircle,
   Square, Copy, Check, RotateCcw, RefreshCw, Download, Eraser,
+  ThumbsUp, ThumbsDown, Pencil,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
 import rehypeRaw from 'rehype-raw';
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
+import rehypeKatex from 'rehype-katex';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import 'katex/dist/katex.min.css';
 import { toast } from '@/lib/toast';
 
 // 图标组件映射
@@ -191,7 +198,7 @@ export function ToolDetail() {
   const welcomeMessage = selectedItem.welcomeMessage || getWelcomeText(selectedItem.agentKey);
   const conversationStarters: string[] = selectedItem.conversationStarters || [];
 
-  const handleSend = async (overrideMessage?: string, overrideAttachmentIds?: string[]) => {
+  const handleSend = async (overrideMessage?: string, overrideAttachmentIds?: string[], messagesSnapshot?: ChatMessage[]) => {
     const messageText = (overrideMessage || input).trim();
     if (!messageText && attachments.length === 0 && !overrideAttachmentIds?.length) return;
     if (!selectedItem) return;
@@ -255,7 +262,8 @@ export function ToolDetail() {
     }
 
     // Build history (include attachmentIds so backend can inject images for multi-turn context)
-    const history: DirectChatMessage[] = messages.map(m => ({
+    const historySource = messagesSnapshot ?? messages;
+    const history: DirectChatMessage[] = historySource.map(m => ({
       role: m.role,
       content: m.content,
       ...(m.attachmentIds?.length ? { attachmentIds: m.attachmentIds } : {}),
@@ -332,14 +340,16 @@ export function ToolDetail() {
 
   const handleRegenerate = (assistantMsgId: string) => {
     if (isLoading) return;
-    // Find the user message right before this assistant message
     const idx = messages.findIndex(m => m.id === assistantMsgId);
     if (idx < 1) return;
     const prevUserMsg = [...messages].slice(0, idx).reverse().find(m => m.role === 'user');
     if (!prevUserMsg) return;
-    // Remove the old assistant message and re-send (with original attachmentIds)
-    setMessages(prev => prev.filter(m => m.id !== assistantMsgId));
-    handleSend(prevUserMsg.content, prevUserMsg.attachmentIds);
+    // Remove the old assistant message — use functional update to ensure
+    // the state is committed before handleSend reads it via messagesRef
+    const filteredMessages = messages.filter(m => m.id !== assistantMsgId);
+    setMessages(filteredMessages);
+    // Pass filtered snapshot so handleSend builds correct history
+    handleSend(prevUserMsg.content, prevUserMsg.attachmentIds, filteredMessages);
   };
 
   const handleExportChat = () => {
@@ -567,6 +577,14 @@ export function ToolDetail() {
                         handleSend(lastUserMsg.content, lastUserMsg.attachmentIds);
                       }
                     } : undefined}
+                    onFeedback={message.role === 'assistant' && message.content && !message.isStreaming ? () => {} : undefined}
+                    onEditMessage={message.role === 'user' && !isLoading ? (newContent: string) => {
+                      // Remove this message and all subsequent messages, then resend
+                      const msgIdx = messages.findIndex(m => m.id === message.id);
+                      const truncated = messages.slice(0, msgIdx);
+                      setMessages(truncated);
+                      handleSend(newContent, message.attachmentIds, truncated);
+                    } : undefined}
                   />
                 ))}
                 <div ref={messagesEndRef} />
@@ -639,21 +657,55 @@ export function ToolDetail() {
   );
 }
 
+// Allow KaTeX class names and styles through sanitizer
+const sanitizeSchema = {
+  ...defaultSchema,
+  attributes: {
+    ...defaultSchema.attributes,
+    span: [...(defaultSchema.attributes?.span || []), 'className', 'style'],
+    div: [...(defaultSchema.attributes?.div || []), 'className', 'style'],
+    math: ['xmlns'],
+  },
+  tagNames: [...(defaultSchema.tagNames || []), 'math', 'semantics', 'mrow', 'mi', 'mo', 'mn', 'msup', 'msub', 'mfrac', 'msqrt', 'mover', 'munder', 'mtable', 'mtr', 'mtd', 'mtext', 'annotation'],
+};
+
 const AssistantMarkdown = memo(function AssistantMarkdown({ content }: { content: string }) {
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      rehypePlugins={[rehypeRaw]}
+      remarkPlugins={[remarkGfm, remarkMath]}
+      rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema], rehypeKatex]}
       components={{
-        // Render code blocks with styling
         code({ className, children, ...props }) {
-          const isInline = !className;
-          return isInline ? (
+          const match = /language-(\w+)/.exec(className || '');
+          const codeStr = String(children).replace(/\n$/, '');
+          if (match) {
+            return (
+              <div className="relative group/code my-2">
+                <div className="flex items-center justify-between px-3 py-1 rounded-t-lg text-[10px]" style={{ background: 'rgba(0, 0, 0, 0.5)', color: 'var(--text-muted)' }}>
+                  <span>{match[1]}</span>
+                  <button
+                    onClick={() => { navigator.clipboard.writeText(codeStr); toast.success('代码已复制'); }}
+                    className="opacity-0 group-hover/code:opacity-100 flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-white/10 transition-all"
+                  >
+                    <Copy size={10} /> 复制
+                  </button>
+                </div>
+                <SyntaxHighlighter
+                  style={oneDark}
+                  language={match[1]}
+                  PreTag="div"
+                  customStyle={{ margin: 0, borderTopLeftRadius: 0, borderTopRightRadius: 0, borderBottomLeftRadius: '0.5rem', borderBottomRightRadius: '0.5rem', fontSize: '0.75rem' }}
+                >
+                  {codeStr}
+                </SyntaxHighlighter>
+              </div>
+            );
+          }
+          return (
             <code className="px-1 py-0.5 rounded text-xs" style={{ background: 'rgba(255, 255, 255, 0.1)' }} {...props}>{children}</code>
-          ) : (
-            <code className={`block p-3 rounded-lg text-xs overflow-x-auto ${className || ''}`} style={{ background: 'rgba(0, 0, 0, 0.3)' }} {...props}>{children}</code>
           );
         },
+        pre({ children }) { return <>{children}</>; },
         p({ children }) { return <p className="mb-2 last:mb-0">{children}</p>; },
         ul({ children }) { return <ul className="list-disc pl-4 mb-2">{children}</ul>; },
         ol({ children }) { return <ol className="list-decimal pl-4 mb-2">{children}</ol>; },
@@ -676,16 +728,46 @@ const AssistantMarkdown = memo(function AssistantMarkdown({ content }: { content
   );
 });
 
-function MessageBubble({ message, accentHue, onCopy, onRegenerate, onRetry }: { message: ChatMessage; accentHue: number; onCopy?: () => void; onRegenerate?: () => void; onRetry?: () => void }) {
+function MessageBubble({ message, accentHue, onCopy, onRegenerate, onRetry, onFeedback, onEditMessage }: {
+  message: ChatMessage; accentHue: number;
+  onCopy?: () => void; onRegenerate?: () => void; onRetry?: () => void;
+  onFeedback?: (type: 'up' | 'down') => void;
+  onEditMessage?: (newContent: string) => void;
+}) {
   const isUser = message.role === 'user';
   const isError = message.content?.startsWith('[错误]');
   const [copied, setCopied] = useState(false);
+  const [feedback, setFeedback] = useState<'up' | 'down' | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editText, setEditText] = useState('');
 
   const handleCopy = () => {
     if (!onCopy) return;
     onCopy();
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleFeedback = (type: 'up' | 'down') => {
+    setFeedback(prev => prev === type ? null : type);
+    onFeedback?.(type);
+  };
+
+  const handleStartEdit = () => {
+    setEditText(message.content);
+    setIsEditing(true);
+  };
+
+  const handleConfirmEdit = () => {
+    const trimmed = editText.trim();
+    if (trimmed && trimmed !== message.content) {
+      onEditMessage?.(trimmed);
+    }
+    setIsEditing(false);
+  };
+
+  const handleCancelEdit = () => {
+    setIsEditing(false);
   };
 
   return (
@@ -729,49 +811,96 @@ function MessageBubble({ message, accentHue, onCopy, onRegenerate, onRetry }: { 
           }}
         >
           {isError && <AlertCircle size={14} className="inline mr-1 mb-0.5" />}
-          {message.content ? (
+          {isEditing ? (
+            <div className="flex flex-col gap-2">
+              <textarea
+                value={editText}
+                onChange={(e) => setEditText(e.target.value)}
+                className="w-full bg-transparent border rounded-lg p-2 text-sm outline-none resize-none"
+                style={{ borderColor: 'rgba(99, 102, 241, 0.3)', color: 'var(--text-primary)', minHeight: '60px' }}
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleConfirmEdit(); }
+                  if (e.key === 'Escape') handleCancelEdit();
+                }}
+              />
+              <div className="flex items-center gap-2 justify-end">
+                <button onClick={handleCancelEdit} className="text-xs px-2 py-1 rounded hover:bg-white/10 transition-colors" style={{ color: 'var(--text-muted)' }}>取消</button>
+                <button onClick={handleConfirmEdit} className="text-xs px-2 py-1 rounded transition-colors" style={{ background: 'rgba(99, 102, 241, 0.2)', color: 'rgb(129, 140, 248)' }}>发送</button>
+              </div>
+            </div>
+          ) : message.content ? (
             isUser ? message.content : <AssistantMarkdown content={message.content} />
           ) : (
             message.isStreaming && <Loader2 size={16} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
           )}
         </div>
         {/* Action buttons row */}
-        <div className="flex items-center gap-1 px-1">
-          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-            {message.timestamp.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
-          </span>
-          {onCopy && (
-            <button
-              onClick={handleCopy}
-              className="opacity-0 group-hover/msg:opacity-100 p-0.5 rounded hover:bg-white/10 transition-all"
-              title="复制内容"
-            >
-              {copied
-                ? <Check size={12} style={{ color: 'rgb(74, 222, 128)' }} />
-                : <Copy size={12} style={{ color: 'var(--text-muted)' }} />}
-            </button>
-          )}
-          {onRegenerate && (
-            <button
-              onClick={onRegenerate}
-              className="opacity-0 group-hover/msg:opacity-100 p-0.5 rounded hover:bg-white/10 transition-all"
-              title="重新生成"
-            >
-              <RefreshCw size={12} style={{ color: 'var(--text-muted)' }} />
-            </button>
-          )}
-          {onRetry && (
-            <button
-              onClick={onRetry}
-              className="opacity-0 group-hover/msg:opacity-100 flex items-center gap-0.5 px-1.5 py-0.5 rounded hover:bg-white/10 transition-all text-[10px]"
-              style={{ color: 'var(--status-error)' }}
-              title="重试"
-            >
-              <RotateCcw size={11} />
-              <span>重试</span>
-            </button>
-          )}
-        </div>
+        {!isEditing && (
+          <div className="flex items-center gap-1 px-1">
+            <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+              {message.timestamp.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+            </span>
+            {onCopy && (
+              <button
+                onClick={handleCopy}
+                className="opacity-0 group-hover/msg:opacity-100 p-0.5 rounded hover:bg-white/10 transition-all"
+                title="复制内容"
+              >
+                {copied
+                  ? <Check size={12} style={{ color: 'rgb(74, 222, 128)' }} />
+                  : <Copy size={12} style={{ color: 'var(--text-muted)' }} />}
+              </button>
+            )}
+            {onFeedback && (
+              <>
+                <button
+                  onClick={() => handleFeedback('up')}
+                  className="opacity-0 group-hover/msg:opacity-100 p-0.5 rounded hover:bg-white/10 transition-all"
+                  title="有帮助"
+                >
+                  <ThumbsUp size={12} style={{ color: feedback === 'up' ? 'rgb(74, 222, 128)' : 'var(--text-muted)' }} fill={feedback === 'up' ? 'rgb(74, 222, 128)' : 'none'} />
+                </button>
+                <button
+                  onClick={() => handleFeedback('down')}
+                  className="opacity-0 group-hover/msg:opacity-100 p-0.5 rounded hover:bg-white/10 transition-all"
+                  title="没有帮助"
+                >
+                  <ThumbsDown size={12} style={{ color: feedback === 'down' ? 'rgb(248, 113, 113)' : 'var(--text-muted)' }} fill={feedback === 'down' ? 'rgb(248, 113, 113)' : 'none'} />
+                </button>
+              </>
+            )}
+            {onRegenerate && (
+              <button
+                onClick={onRegenerate}
+                className="opacity-0 group-hover/msg:opacity-100 p-0.5 rounded hover:bg-white/10 transition-all"
+                title="重新生成"
+              >
+                <RefreshCw size={12} style={{ color: 'var(--text-muted)' }} />
+              </button>
+            )}
+            {onEditMessage && (
+              <button
+                onClick={handleStartEdit}
+                className="opacity-0 group-hover/msg:opacity-100 p-0.5 rounded hover:bg-white/10 transition-all"
+                title="编辑消息"
+              >
+                <Pencil size={12} style={{ color: 'var(--text-muted)' }} />
+              </button>
+            )}
+            {onRetry && (
+              <button
+                onClick={onRetry}
+                className="opacity-0 group-hover/msg:opacity-100 flex items-center gap-0.5 px-1.5 py-0.5 rounded hover:bg-white/10 transition-all text-[10px]"
+                style={{ color: 'var(--status-error)' }}
+                title="重试"
+              >
+                <RotateCcw size={11} />
+                <span>重试</span>
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
