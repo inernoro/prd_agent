@@ -961,13 +961,14 @@ public class SubmissionsController : ControllerBase
         }
 
         // 统计剩余未回填的数量
-        var remaining = await _db.Submissions.CountDocumentsAsync(filter) - updated;
+        // filter 已排除刚更新的（它们现在有快照了），所以 count 直接就是剩余量
+        var remaining = await _db.Submissions.CountDocumentsAsync(filter);
 
         return Ok(ApiResponse<object>.Ok(new
         {
             processed = submissions.Count,
             updated,
-            remaining = Math.Max(0, remaining),
+            remaining,
         }));
     }
 }
