@@ -559,12 +559,13 @@ export async function submitMessageFeedback(
 export async function createToolboxShareLink(
   messages: { role: string; content: string; createdAt?: string }[],
   title?: string,
+  sessionId?: string,
 ): Promise<ApiResponse<{ shareId: string; url: string }>> {
   return await apiRequest(
     api.aiToolbox.share(),
     {
       method: 'POST',
-      body: { messages, title },
+      body: { messages, title, sessionId },
     }
   );
 }

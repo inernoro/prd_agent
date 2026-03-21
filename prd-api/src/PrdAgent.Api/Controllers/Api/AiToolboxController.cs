@@ -870,6 +870,7 @@ public class AiToolboxController : ControllerBase
         {
             Id = ObjectId.GenerateNewId().ToString(),
             SessionId = sessionId,
+            UserId = userId,
             Role = request.Role ?? "user",
             Content = (request.Content ?? string.Empty).Trim(),
             AttachmentIds = request.AttachmentIds ?? new List<string>(),

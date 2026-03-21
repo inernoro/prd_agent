@@ -336,6 +336,7 @@ export function ToolDetail() {
           createdAt: m.timestamp.toISOString(),
         })),
         selectedItem?.name,
+        currentSessionId ?? undefined,
       );
       if (res.success && res.data?.url) {
         const fullUrl = `${window.location.origin}${res.data.url}`;
