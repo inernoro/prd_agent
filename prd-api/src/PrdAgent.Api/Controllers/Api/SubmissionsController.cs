@@ -194,21 +194,56 @@ public class SubmissionsController : ControllerBase
             .ToListAsync();
         var likedSet = new HashSet<string>(myLikes.Select(x => x.SubmissionId));
 
-        var result = items.Select(x => new
+        // 文学创作：动态获取 workspace 最新封面（新生成的图片自动出现）
+        var literaryWorkspaceIds = items
+            .Where(x => x.ContentType == "literary" && !string.IsNullOrWhiteSpace(x.WorkspaceId))
+            .Select(x => x.WorkspaceId!)
+            .Distinct()
+            .ToList();
+        var dynamicCovers = new Dictionary<string, (string url, int w, int h)>();
+        if (literaryWorkspaceIds.Count > 0)
         {
-            x.Id,
-            x.Title,
-            x.ContentType,
-            x.CoverUrl,
-            x.CoverWidth,
-            x.CoverHeight,
-            x.Prompt,
-            x.OwnerUserId,
-            x.OwnerUserName,
-            x.OwnerAvatarFileName,
-            x.LikeCount,
-            likedByMe = likedSet.Contains(x.Id),
-            x.CreatedAt,
+            // 每个 workspace 取最新一张图片作为封面
+            var coverAssets = await _db.ImageAssets
+                .Find(x => literaryWorkspaceIds.Contains(x.WorkspaceId!))
+                .SortByDescending(x => x.CreatedAt)
+                .ToListAsync();
+            foreach (var wsId in literaryWorkspaceIds)
+            {
+                var latest = coverAssets.FirstOrDefault(a => a.WorkspaceId == wsId);
+                if (latest != null && !string.IsNullOrWhiteSpace(latest.Url))
+                    dynamicCovers[wsId] = (latest.Url, latest.Width, latest.Height);
+            }
+        }
+
+        var result = items.Select(x =>
+        {
+            var coverUrl = x.CoverUrl;
+            var coverWidth = x.CoverWidth;
+            var coverHeight = x.CoverHeight;
+            // 文学创作：优先使用 workspace 最新资产作为封面
+            if (x.ContentType == "literary" && x.WorkspaceId != null && dynamicCovers.TryGetValue(x.WorkspaceId, out var dc))
+            {
+                coverUrl = dc.url;
+                coverWidth = dc.w;
+                coverHeight = dc.h;
+            }
+            return new
+            {
+                x.Id,
+                x.Title,
+                x.ContentType,
+                coverUrl,
+                coverWidth,
+                coverHeight,
+                x.Prompt,
+                x.OwnerUserId,
+                x.OwnerUserName,
+                x.OwnerAvatarFileName,
+                x.LikeCount,
+                likedByMe = likedSet.Contains(x.Id),
+                x.CreatedAt,
+            };
         });
 
         return Ok(ApiResponse<object>.Ok(new { total, items = result }));
@@ -527,6 +562,17 @@ public class SubmissionsController : ControllerBase
         };
 
         await _db.Submissions.InsertOneAsync(wsSubmission);
+
+        // 标记 workspace 为公开（文学投稿 = 公开 workspace）
+        if (!workspace.IsPublic)
+        {
+            await _db.ImageMasterWorkspaces.UpdateOneAsync(
+                x => x.Id == workspace.Id,
+                Builders<ImageMasterWorkspace>.Update
+                    .Set(x => x.IsPublic, true)
+                    .Set(x => x.PublishedAt, DateTime.UtcNow));
+        }
+
         return Ok(ApiResponse<object>.Ok(new { submission = wsSubmission, created = true }));
     }
 
@@ -549,6 +595,14 @@ public class SubmissionsController : ControllerBase
                 .Set(x => x.IsPublic, request.IsPublic)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow));
 
+        // 文学创作：同步 workspace 公开状态
+        if (submission.ContentType == "literary" && !string.IsNullOrWhiteSpace(submission.WorkspaceId))
+        {
+            await _db.ImageMasterWorkspaces.UpdateOneAsync(
+                x => x.Id == submission.WorkspaceId,
+                Builders<ImageMasterWorkspace>.Update.Set(x => x.IsPublic, request.IsPublic));
+        }
+
         return Ok(ApiResponse<object>.Ok(new { id, isPublic = request.IsPublic }));
     }
 
@@ -567,6 +621,14 @@ public class SubmissionsController : ControllerBase
 
         await _db.Submissions.DeleteOneAsync(x => x.Id == id);
         await _db.SubmissionLikes.DeleteManyAsync(x => x.SubmissionId == id);
+
+        // 文学创作：同步取消 workspace 公开状态
+        if (submission.ContentType == "literary" && !string.IsNullOrWhiteSpace(submission.WorkspaceId))
+        {
+            await _db.ImageMasterWorkspaces.UpdateOneAsync(
+                x => x.Id == submission.WorkspaceId,
+                Builders<ImageMasterWorkspace>.Update.Set(x => x.IsPublic, false));
+        }
 
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
@@ -726,10 +788,18 @@ public class SubmissionsController : ControllerBase
 
         if (!string.IsNullOrWhiteSpace(workspaceId))
         {
-            var submission = await _db.Submissions
-                .Find(x => x.WorkspaceId == workspaceId && x.ContentType == "literary" && x.OwnerUserId == userId)
+            // 优先检查 workspace 的 IsPublic 状态（文学投稿 = 公开 workspace）
+            var ws = await _db.ImageMasterWorkspaces
+                .Find(x => x.Id == workspaceId && x.OwnerUserId == userId)
                 .FirstOrDefaultAsync();
-            return Ok(ApiResponse<object>.Ok(new { submitted = submission != null, submissionId = submission?.Id }));
+            if (ws is { IsPublic: true })
+            {
+                var submission = await _db.Submissions
+                    .Find(x => x.WorkspaceId == workspaceId && x.ContentType == "literary")
+                    .FirstOrDefaultAsync();
+                return Ok(ApiResponse<object>.Ok(new { submitted = true, submissionId = submission?.Id }));
+            }
+            return Ok(ApiResponse<object>.Ok(new { submitted = false }));
         }
 
         return BadRequest(ApiResponse<object>.Fail("MISSING_PARAM", "需要提供 imageAssetId 或 workspaceId"));
