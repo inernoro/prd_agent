@@ -47,6 +47,12 @@ export interface ActivityEvent {
   branchId?: string;
   /** Build profile ID that handled the request (e.g. 'api', 'admin') */
   profileId?: string;
+  /** Remote address of the client */
+  remoteAddr?: string;
+  /** User-Agent header */
+  userAgent?: string;
+  /** Referer header */
+  referer?: string;
 }
 
 /** Map API path patterns to Chinese labels */
@@ -481,6 +487,9 @@ export function createServer(deps: ServerDeps): express.Express {
         body: reqBody,
         query: reqQuery,
         branchId,
+        remoteAddr: req.ip || req.socket?.remoteAddress,
+        userAgent: req.headers['user-agent'],
+        referer: req.headers['referer'] || req.headers['origin'],
       };
       broadcastActivity(event);
       return origEnd(...args);

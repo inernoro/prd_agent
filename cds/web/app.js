@@ -3852,6 +3852,15 @@ function showActivityDetail(event) {
   html += `<div class="activity-detail-row"><span class="activity-detail-key">状态码</span><span style="${statusClass};font-weight:600">${event.status}</span></div>`;
   html += `<div class="activity-detail-row"><span class="activity-detail-key">耗时</span><span>${event.duration < 1000 ? event.duration + 'ms' : (event.duration / 1000).toFixed(1) + 's'}</span></div>`;
   html += `<div class="activity-detail-row"><span class="activity-detail-key">来源</span><span>${isAi ? '🤖 AI (' + escapeHtml(event.agent || '未知') + ')' : '👤 用户'}</span></div>`;
+  if (event.remoteAddr) {
+    html += `<div class="activity-detail-row"><span class="activity-detail-key">IP</span><span style="font-family:var(--font-mono);font-size:12px">${escapeHtml(event.remoteAddr)}</span></div>`;
+  }
+  if (event.userAgent) {
+    html += `<div class="activity-detail-row"><span class="activity-detail-key">UA</span><span style="font-size:11px;word-break:break-all">${escapeHtml(event.userAgent)}</span></div>`;
+  }
+  if (event.referer) {
+    html += `<div class="activity-detail-row"><span class="activity-detail-key">Referer</span><span style="font-family:var(--font-mono);font-size:11px;word-break:break-all">${escapeHtml(event.referer)}</span></div>`;
+  }
   html += '</div>';
 
   // Request body
