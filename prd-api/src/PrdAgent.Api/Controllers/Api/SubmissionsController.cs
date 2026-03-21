@@ -310,7 +310,38 @@ public class SubmissionsController : ControllerBase
                 a.Prompt,
                 a.CreatedAt,
             }).ToList();
+        }
+        else if (submission.ContentType == "literary" && !string.IsNullOrWhiteSpace(submission.WorkspaceId))
+        {
+            // 文学创作：workspace 所有配图 + 文章内容
+            var workspace = await _db.ImageMasterWorkspaces
+                .Find(x => x.Id == submission.WorkspaceId)
+                .FirstOrDefaultAsync();
+            if (workspace != null)
+            {
+                articleContent = workspace.ArticleContent;
+            }
+            var assets = await _db.ImageAssets
+                .Find(x => x.WorkspaceId == submission.WorkspaceId)
+                .SortBy(x => x.ArticleInsertionIndex)
+                .ThenBy(x => x.CreatedAt)
+                .ToListAsync();
+            relatedAssets = assets.Select(a => (object)new
+            {
+                a.Id,
+                a.Url,
+                a.Width,
+                a.Height,
+                a.Prompt,
+                a.OriginalMarkerText,
+                a.ArticleInsertionIndex,
+                a.CreatedAt,
+            }).ToList();
+        }
 
+        // 生成参数（visual + literary 共用，只要有 workspaceId）
+        if (!string.IsNullOrWhiteSpace(submission.WorkspaceId))
+        {
             // 优先使用持久化快照
             if (submission.GenerationSnapshot != null)
             {
@@ -343,7 +374,7 @@ public class SubmissionsController : ControllerBase
                     configModelId = snap.ConfigModelId,
                 };
             }
-            else if (!string.IsNullOrWhiteSpace(submission.WorkspaceId))
+            else
             {
                 // 兜底：动态查询（旧数据未回填 GenerationSnapshot 时）
                 var run = await _db.ImageGenRuns
@@ -367,13 +398,13 @@ public class SubmissionsController : ControllerBase
 
                     string? systemPromptName = null;
                     string? systemPromptContent = null;
-                    var workspace = await _db.ImageMasterWorkspaces
+                    var fbWorkspace = await _db.ImageMasterWorkspaces
                         .Find(x => x.Id == submission.WorkspaceId)
                         .FirstOrDefaultAsync();
-                    if (workspace?.SelectedPromptId != null)
+                    if (fbWorkspace?.SelectedPromptId != null)
                     {
                         var sp = await _db.LiteraryPrompts
-                            .Find(x => x.Id == workspace.SelectedPromptId)
+                            .Find(x => x.Id == fbWorkspace.SelectedPromptId)
                             .FirstOrDefaultAsync();
                         systemPromptName = sp?.Title;
                         systemPromptContent = sp?.Content;
@@ -422,7 +453,7 @@ public class SubmissionsController : ControllerBase
                         modelName = modelDisplayName,
                         size = run.Size,
                         promptText = run.Items?.FirstOrDefault()?.Prompt,
-                        stylePrompt = workspace?.StylePrompt,
+                        stylePrompt = fbWorkspace?.StylePrompt,
                         systemPromptName,
                         systemPromptContent,
                         hasReferenceImage = hasRefImage,
@@ -438,33 +469,6 @@ public class SubmissionsController : ControllerBase
                     };
                 }
             }
-        }
-        else if (submission.ContentType == "literary" && !string.IsNullOrWhiteSpace(submission.WorkspaceId))
-        {
-            // 文学创作：workspace 所有配图 + 文章内容
-            var workspace = await _db.ImageMasterWorkspaces
-                .Find(x => x.Id == submission.WorkspaceId)
-                .FirstOrDefaultAsync();
-            if (workspace != null)
-            {
-                articleContent = workspace.ArticleContent;
-            }
-            var assets = await _db.ImageAssets
-                .Find(x => x.WorkspaceId == submission.WorkspaceId)
-                .SortBy(x => x.ArticleInsertionIndex)
-                .ThenBy(x => x.CreatedAt)
-                .ToListAsync();
-            relatedAssets = assets.Select(a => (object)new
-            {
-                a.Id,
-                a.Url,
-                a.Width,
-                a.Height,
-                a.Prompt,
-                a.OriginalMarkerText,
-                a.ArticleInsertionIndex,
-                a.CreatedAt,
-            }).ToList();
         }
 
         return Ok(ApiResponse<object>.Ok(new
@@ -592,6 +596,9 @@ public class SubmissionsController : ControllerBase
         var wsUser = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
         var wsDisplayName = ResolveDisplayName(wsUser, username, userId);
 
+        // 构建生成快照（literary 也有图片生成参数）
+        var literarySnapshot = await BuildVisualSnapshotAsync(workspace.Id, null, userId);
+
         var wsSubmission = new Submission
         {
             Title = request.Title ?? workspace.Title,
@@ -604,6 +611,7 @@ public class SubmissionsController : ControllerBase
             OwnerUserName = wsDisplayName,
             OwnerAvatarFileName = wsUser?.AvatarFileName,
             IsPublic = request.IsPublic ?? true,
+            GenerationSnapshot = literarySnapshot,
         };
 
         await _db.Submissions.InsertOneAsync(wsSubmission);
@@ -1039,7 +1047,7 @@ public class SubmissionsController : ControllerBase
     }
     /// <summary>
     /// 回填：为已有投稿补充生成快照（一次性操作）
-    /// 只处理 visual 类型且尚无 GenerationSnapshot 的投稿
+    /// 处理 visual + literary 类型中尚无 GenerationSnapshot 的投稿
     /// </summary>
     [HttpPost("backfill-snapshots")]
     [AllowAnonymous]
@@ -1049,9 +1057,9 @@ public class SubmissionsController : ControllerBase
     {
         batchSize = Math.Clamp(batchSize, 1, 500);
 
-        // 构建过滤器：visual 类型 + 无快照
+        // 构建过滤器：visual/literary 类型 + 无快照
         var filterBuilder = Builders<Submission>.Filter;
-        var filter = filterBuilder.Eq(x => x.ContentType, "visual")
+        var filter = (filterBuilder.Eq(x => x.ContentType, "visual") | filterBuilder.Eq(x => x.ContentType, "literary"))
             & filterBuilder.Eq(x => x.GenerationSnapshot, null);
 
         if (!string.IsNullOrWhiteSpace(username))
