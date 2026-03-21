@@ -766,7 +766,7 @@ public class AiToolboxController : ControllerBase
         var userId = GetUserId();
         var title = (request.Title ?? "").Trim();
         if (string.IsNullOrWhiteSpace(title) || title.Length > 100)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_PARAMETER, "标题长度需在 1-100 字之间"));
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "标题长度需在 1-100 字之间"));
 
         var result = await _db.ToolboxSessions.UpdateOneAsync(
             x => x.Id == sessionId && x.UserId == userId,
