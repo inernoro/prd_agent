@@ -12,3 +12,4 @@
 | feat | prd-admin | 百宝箱对话导出为 Markdown 文件（含角色、时间戳、分隔线） |
 | feat | prd-admin | 百宝箱新增清空当前会话按钮（确认后清空消息） |
 | feat | prd-admin | 输入区显示字符计数 + 快捷键提示（Enter 发送/Shift+Enter 换行） |
+| fix | prd-api | 百宝箱图片附件支持 Vision 多模态（image_url content parts + ModelTypes.Vision） |

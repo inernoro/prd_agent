@@ -967,6 +967,8 @@ public class AiToolboxController : ControllerBase
         }
 
         // 如果有附件，加载文件内容并注入上下文
+        var hasImageAttachments = false;
+        var imageUrls = new List<string>();
         if (request.AttachmentIds is { Count: > 0 })
         {
             var attachmentFilter = Builders<Attachment>.Filter.In(a => a.AttachmentId, request.AttachmentIds);
@@ -975,7 +977,12 @@ public class AiToolboxController : ControllerBase
             var fileParts = new List<string>();
             foreach (var att in attachments)
             {
-                if (!string.IsNullOrWhiteSpace(att.ExtractedText))
+                if (att.MimeType.StartsWith("image/") && !string.IsNullOrWhiteSpace(att.Url))
+                {
+                    imageUrls.Add(att.Url);
+                    hasImageAttachments = true;
+                }
+                else if (!string.IsNullOrWhiteSpace(att.ExtractedText))
                 {
                     fileParts.Add($"=== 文件: {att.FileName} ===\n{att.ExtractedText}");
                 }
@@ -988,14 +995,31 @@ public class AiToolboxController : ControllerBase
             }
         }
 
-        // 添加当前消息
-        messages.Add(new JsonObject { ["role"] = "user", ["content"] = message });
+        // 添加当前消息（支持图片 vision 多模态）
+        if (hasImageAttachments)
+        {
+            var contentParts = new JsonArray();
+            contentParts.Add(new JsonObject { ["type"] = "text", ["text"] = message });
+            foreach (var url in imageUrls)
+            {
+                contentParts.Add(new JsonObject
+                {
+                    ["type"] = "image_url",
+                    ["image_url"] = new JsonObject { ["url"] = url }
+                });
+            }
+            messages.Add(new JsonObject { ["role"] = "user", ["content"] = contentParts });
+        }
+        else
+        {
+            messages.Add(new JsonObject { ["role"] = "user", ["content"] = message });
+        }
 
         // 调用 LLM Gateway
         var gatewayRequest = new GatewayRequest
         {
             AppCallerCode = appCallerCode,
-            ModelType = ModelTypes.Chat,
+            ModelType = hasImageAttachments ? ModelTypes.Vision : ModelTypes.Chat,
             Stream = true,
             RequestBody = new JsonObject
             {
