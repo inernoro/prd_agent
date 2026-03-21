@@ -72,7 +72,7 @@ export function UpdateAccelerationSettings() {
     setLoading(true);
     try {
       const res = await getDesktopUpdateCaches();
-      if (res.ok && res.data) setItems(res.data);
+      if (res.success && res.data) setItems(res.data);
     } finally {
       setLoading(false);
     }

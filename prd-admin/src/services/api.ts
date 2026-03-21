@@ -353,6 +353,12 @@ export const api = {
     prompts: () => '/api/prd-agent/prompts',
     /** 系统提示词（只读，供 PRD Agent 页面展示系统提示词内容） */
     systemPrompts: () => '/api/prd-agent/prompts/system',
+    /** PRD 评论 */
+    comments: {
+      list: (documentId: string, groupId: string) => `/api/v1/prd-comments?documentId=${documentId}&groupId=${groupId}&limit=200`,
+      create: () => '/api/v1/prd-comments',
+      delete: (commentId: string) => `/api/v1/prd-comments/${commentId}`,
+    },
   },
 
   // ============ Literary Agent 文学创作 ============

@@ -136,7 +136,7 @@ public class TodoEmailHandler : IEmailHandler
                 """;
 
             var client = _llmGateway.CreateClient(
-                "channel-adapter.email::todo-extract",
+                "channel-adapter.email.todo-extract::chat",
                 "chat",
                 maxTokens: 1024,
                 temperature: 0.2);

@@ -27,15 +27,92 @@ description: 自动生成冒烟测试 curl 命令。扫描目标模块的 Contro
 
 | 变量 | 用途 | 默认值 |
 |------|------|--------|
-| `AI_ACCESS_KEY` | API 认证密钥 | 无，必须设置 |
+| `AI_ACCESS_KEY` | API 认证密钥（CDS 和 MAP 平台通用） | 无，必须设置 |
+| `MAP_AI_USER` | **X-AI-Impersonate 用户名**（优先级最高） | 无 |
 | `SMOKE_TEST_HOST` | API 服务地址 | `http://localhost:5000` |
+| `CDS_HOST` | CDS 地址（CDS 模式时使用） | 无 |
+
+> **`AI_ACCESS_KEY` 是通用密钥**：同一个 key 可用于 CDS 管理 API、MAP 平台 API、以及后端业务 API 的认证，无需为不同平台维护多个密钥。
+
+### 三种执行模式
+
+#### 模式 A：本地模式（默认）
+
+直接 curl 本地或远程 API：
+
+```bash
+-H "X-AI-Access-Key: $AI_ACCESS_KEY"
+-H "X-AI-Impersonate: ${MAP_AI_USER}"   # ← 优先从环境变量读取
+```
+
+#### 模式 B：MAP 平台直连模式（推荐远程测试）
+
+> **优先使用此模式**，减少 container-exec 调用。`AI_ACCESS_KEY` 是通用密钥，可直接认证 MAP 平台 API。
+
+通过预览域名直连 MAP 平台 API（无需 container-exec 中转）：
+
+```bash
+PREVIEW_URL="https://${BRANCH_ID}.miduo.org"
+IMPERSONATE="${MAP_AI_USER}"
+
+# 直接调用（AI_ACCESS_KEY 通用认证）
+curl -sf "$PREVIEW_URL/api/users?pageSize=3" \
+  -H "X-AI-Access-Key: $AI_ACCESS_KEY" \
+  -H "X-AI-Impersonate: $IMPERSONATE"
+```
+
+**何时使用 MAP 直连模式**：
+- 用户说 "在线冒烟" / "CDS 冒烟" / "线上验证"
+- `SMOKE_TEST_HOST` 是 CDS 预览域名（`*.miduo.org`）
+- `MAP_AI_USER` 已配置（省去用户名发现步骤）
+
+#### 模式 C：CDS container-exec 模式（兜底）
+
+仅当 MAP 直连失败（Cloudflare/CDN 干扰或端点特殊）时使用 container-exec：
+
+```bash
+# 仅在直连失败时才用 container-exec
+curl -sf "$CDS/api/branches/$BRANCH_ID/container-exec" \
+  -H "X-AI-Access-Key: $AI_ACCESS_KEY" \
+  -X POST -H "Content-Type: application/json" \
+  -d '{"profileId":"api","command":"curl -s http://localhost:5000/api/..."}'
+```
+
+> ⚠️ **减少 container-exec 使用**：container-exec 有嵌套 JSON 转义复杂、调试困难等问题。优先使用模式 B 直连。
+
+### X-AI-Impersonate 用户名发现（关键！）
+
+> ⚠️ **严禁硬编码 `admin` 或 `root`**。`admin` 通常不是真实数据库用户名，`root` 是破窗账户不在 users 集合中。
+
+**自动发现流程**（每次冒烟测试开始前必须执行，按优先级尝试）：
+
+```bash
+# 方法 1（最推荐，零网络请求）：读取环境变量 MAP_AI_USER
+IMPERSONATE="${MAP_AI_USER:-}"
+if [[ -n "$IMPERSONATE" ]]; then
+  echo "✓ 从 MAP_AI_USER 获取用户名: $IMPERSONATE"
+fi
+
+# 方法 2（兜底）：通过 root 登录 + JWT 查询用户列表
+if [[ -z "$IMPERSONATE" ]]; then
+  TOKEN=$(curl -s "$HOST/api/v1/auth/login" -X POST \
+    -H "Content-Type: application/json" \
+    -d "{\"username\":\"root\",\"password\":\"$ROOT_ACCESS_PASSWORD\",\"clientType\":\"admin\"}" \
+    | python3 -c "import sys,json;print(json.load(sys.stdin)['data']['accessToken'])")
+  IMPERSONATE=$(curl -s "$HOST/api/users?pageSize=1" \
+    -H "Authorization: Bearer $TOKEN" \
+    | python3 -c "import sys,json;print(json.load(sys.stdin)['data']['items'][0]['username'])")
+fi
+```
+
+> **强烈建议**：在 AI 运行环境中配置 `MAP_AI_USER` 环境变量，避免每次冒烟测试都通过 root JWT 登录来发现用户名。
 
 ### 认证方式
 
 ```bash
-# 请求头
+# 请求头（使用自动发现的用户名）
 -H "X-AI-Access-Key: $AI_ACCESS_KEY"
--H "X-AI-Impersonate: admin"
+-H "X-AI-Impersonate: $IMPERSONATE"
 ```
 
 ## 执行流程
@@ -290,10 +367,91 @@ curl ... "$HOST/api/module/$ITEM_ID" ...
 - 每步都有 echo 输出，方便定位失败位置
 - 失败时用户将输出贴回对话，由 AI 分析原因
 
+## CDS 远程冒烟模式
+
+当用户说 "在线冒烟" / "CDS 冒烟" / "线上验证"，或目标是 CDS 预览环境时，采用以下模式。
+
+### CDS 模式执行流程
+
+```
+Step 0: 环境准备
+├─ 推导 BRANCH_ID（git branch → slugify）
+├─ 确认 CDS 认证（AI_ACCESS_KEY 通用密钥）
+├─ 确认分支状态为 running
+└─ 读取 MAP_AI_USER 环境变量获取用户名
+
+Step 1: 用户名确认
+├─ 优先：读取 $MAP_AI_USER 环境变量（零网络请求）
+└─ 兜底：通过 root JWT 登录查询用户列表
+
+Step 2: 分层冒烟测试（优先直连预览域名，失败时才用 container-exec）
+├─ Layer 1: 无认证端点（健康检查、版本等）
+├─ Layer 2: 认证端点-只读（用户列表、模型列表、会话等）
+└─ Layer 3: 认证端点-写入（创建+查询+删除，可选）
+```
+
+### CDS 模式脚本模板（推荐：直连 MAP 平台）
+
+> **优先直连**：`AI_ACCESS_KEY` 是通用密钥，可直接认证 MAP 平台的后端 API。只在 Cloudflare 干扰时才回退到 container-exec。
+
+```bash
+#!/bin/bash
+# CDS 远程冒烟测试 — MAP 直连模式（推荐）
+BRANCH_ID="claude-xxx-yyy"  # 从分支名推导
+PREVIEW_URL="https://${BRANCH_ID}.miduo.org"
+IMPERSONATE="${MAP_AI_USER:?请设置环境变量 MAP_AI_USER}"
+
+AUTH=(-H "X-AI-Access-Key: $AI_ACCESS_KEY" -H "X-AI-Impersonate: $IMPERSONATE" -H "Content-Type: application/json")
+
+echo ">>> [1] 健康检查（直连 MAP 平台）..."
+curl -sf "$PREVIEW_URL/api/shortcuts/version-check"
+
+echo ">>> [2] 用户列表..."
+curl -sf "$PREVIEW_URL/api/users?pageSize=3" "${AUTH[@]}"
+# ... 更多端点
+```
+
+### 兜底：container-exec 模式
+
+仅当预览域名被 Cloudflare 干扰时使用：
+
+```bash
+#!/bin/bash
+# CDS 远程冒烟测试 — container-exec 兜底模式
+CDS="https://$CDS_HOST"
+BRANCH_ID="claude-xxx-yyy"
+
+cds_exec() {
+  local cmd="$1"
+  curl -sf "$CDS/api/branches/$BRANCH_ID/container-exec" \
+    -H "X-AI-Access-Key: $AI_ACCESS_KEY" -X POST -H "Content-Type: application/json" \
+    -d "{\"profileId\":\"api\",\"command\":\"$cmd\"}" \
+    | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['stdout'])" 2>/dev/null
+}
+
+# 仅在直连失败时使用
+cds_exec "curl -s http://localhost:5000/api/shortcuts/version-check"
+```
+
+### 三种模式对比
+
+| 维度 | 本地模式 | MAP 直连模式（推荐） | container-exec 兜底 |
+|------|---------|-------------------|-------------------|
+| 执行位置 | AI 沙箱直接 curl | AI 沙箱 → 预览域名 | AI 沙箱 → CDS API → 容器内 |
+| 网络 | 直连 localhost | 直连预览域名 | 经 CDS proxy → 容器 localhost |
+| 认证 | 单层（API key） | 单层（API key 通用） | 双层（CDS key + 容器 key） |
+| 用户名 | `$MAP_AI_USER` | `$MAP_AI_USER` | 需容器内发现或 `$MAP_AI_USER` |
+| CDN 影响 | 无 | 有（极少数端点） | 无 |
+| JSON 转义 | 简单 | 简单 | 复杂（嵌套转义） |
+| 适用场景 | 本地开发 | **远程验证首选** | 直连失败时兜底 |
+
 ## 注意事项
 
 1. **不要硬编码密钥**：始终从 `$AI_ACCESS_KEY` 读取
-2. **清理测试数据**：脚本最后一步必须删除创建的资源
-3. **幂等设计**：脚本可重复执行，不会产生残留
-4. **最小权限**：只测试必要的端点，不做破坏性操作
-5. **生产环境警告**：如果 HOST 不是 localhost，输出警告提示
+2. **不要硬编码用户名**：优先从 `$MAP_AI_USER` 读取，严禁使用 `admin` 或 `root`
+3. **优先直连 MAP 平台**：`AI_ACCESS_KEY` 是通用密钥，减少 container-exec 使用（嵌套 JSON 转义复杂易出错）
+4. **清理测试数据**：脚本最后一步必须删除创建的资源
+5. **幂等设计**：脚本可重复执行，不会产生残留
+6. **最小权限**：只测试必要的端点，不做破坏性操作
+7. **生产环境警告**：如果 HOST 不是 localhost，输出警告提示
+8. **container-exec 仅作兜底**：仅当预览域名直连被 CDN 干扰时才使用 container-exec

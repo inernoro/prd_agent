@@ -29,9 +29,12 @@ AI 作为 DevOps 操作员，通过 HTTP API 远程驱动 CDS 完成代码部署
 | 变量 | 用途 | 默认值 |
 |------|------|--------|
 | `CDS_HOST` | CDS 地址（如 `cds.miduo.org`） | 必填 |
-| `AI_ACCESS_KEY` | CDS 静态 AI 认证密钥（推荐配置在 `.bashrc`） | 无 |
+| `AI_ACCESS_KEY` | 通用 AI 认证密钥（CDS + MAP 平台 + 后端 API 共享） | 无 |
+| `MAP_AI_USER` | X-AI-Impersonate 用户名（优先级最高，避免 JWT 登录发现） | 无 |
 
 > **前置检查**：Pipeline 启动前必须验证 `CDS_HOST` 已设置。未设置时立即终止并询问用户。
+> **`AI_ACCESS_KEY` 是通用密钥**：同一个 key 可同时用于 CDS 管理 API 和 MAP 平台后端 API，无需区分。
+> **强烈建议配置 `MAP_AI_USER`**：省去复杂的 root JWT 登录 → 查 users 用户名发现流程。
 
 ## AI 认证方式（三种，按优先级）
 
@@ -345,20 +348,18 @@ echo "$RESP" | jq ".branches[] | select(.id==\"$BRANCH_ID\") | .services"
 **Phase 4 详细步骤**（关键：CDS 和 AI 不在同一台机器）：
 
 ```bash
-# 方案 A（推荐，最可靠）：通过 CDS container-exec 在容器内探测
-# ⚠️ 实战经验：container-exec 中 curl 的输出正常工作，
-#    但嵌套 JSON 中的引号需要正确转义（用单引号包裹 command 值）
-curl -sf $AUTH "$CDS/api/branches/$BRANCH_ID/container-exec" \
-  -X POST -H "Content-Type: application/json" \
-  -d '{"profileId":"api","command":"curl -s http://localhost:5000/api/shortcuts/version-check"}'
-# 返回 {"exitCode":0,"stdout":"{\"version\":2,...}","stderr":""}
-
-# 方案 B：预览域名（有 Cloudflare 陷阱）
-# ⚠️ 实战经验：Cloudflare 会将后端 401 响应透传为 HTTP 500（空 body），
-#    导致误判为服务宕机。使用此方案时先测不需认证的端点。
+# 方案 A（推荐，最简单）：直连 MAP 平台预览域名
+# AI_ACCESS_KEY 是通用密钥，可直接认证 MAP 平台 API，无需 container-exec 中转
 PREVIEW_URL="https://${BRANCH_ID}.miduo.org"
 curl -sf "$PREVIEW_URL/"  # 先测根路径（前端静态资源，不需认证）
 curl -sf "$PREVIEW_URL/api/shortcuts/version-check"  # 再测不需认证的 API
+
+# 方案 B（兜底）：通过 CDS container-exec 在容器内探测
+# ⚠️ 仅当方案 A 被 Cloudflare 干扰时使用
+# ⚠️ container-exec 嵌套 JSON 转义复杂，优先使用方案 A
+curl -sf $AUTH "$CDS/api/branches/$BRANCH_ID/container-exec" \
+  -X POST -H "Content-Type: application/json" \
+  -d '{"profileId":"api","command":"curl -s http://localhost:5000/api/shortcuts/version-check"}'
 
 # 方案 C：通过 CDS Worker 端口 + X-Branch 头路由
 curl -sf "http://$CDS_HOST:5500/api/shortcuts/version-check" -H "X-Branch: $BRANCH_ID"
@@ -368,27 +369,35 @@ curl -sf "http://$CDS_HOST:5500/api/shortcuts/version-check" -H "X-Branch: $BRAN
 
 ```bash
 # ⚠️ 实战经验：采用分层冒烟策略，避免认证问题阻塞整个验证
-# 推荐通过 container-exec 在容器内测试，绕过 Cloudflare
+# ⚠️ 优先直连 MAP 平台预览域名（AI_ACCESS_KEY 通用），减少 container-exec 使用
+PREVIEW_URL="https://${BRANCH_ID}.miduo.org"
 
-# Layer 1: 无认证端点（必须通过）
-curl -sf $AUTH "$CDS/api/branches/$BRANCH_ID/container-exec" \
-  -X POST -H "Content-Type: application/json" \
-  -d '{"profileId":"api","command":"curl -s http://localhost:5000/api/shortcuts/version-check"}'
+# Layer 1: 无认证端点（必须通过，直连预览域名）
+curl -sf "$PREVIEW_URL/api/shortcuts/version-check"
 # 期望：{"version":2,...}
 
-# Layer 2: 代码部署验证（grep 新代码存在于容器中）
+# Layer 2: 代码部署验证（仅此层需要 container-exec，因为要 grep 容器内文件）
 CHANGED=$(git diff --name-only HEAD~1 HEAD)
-# 对每个改动的文件，在容器中 grep 关键函数名
 curl -sf $AUTH "$CDS/api/branches/$BRANCH_ID/container-exec" \
   -X POST -H "Content-Type: application/json" \
   -d '{"profileId":"api","command":"grep -c NewFunctionName /app/src/path/to/file.cs"}'
-# 期望：exitCode=0, stdout 为正整数
 
-# Layer 3: 认证端点（可选，取决于 AI_ACCESS_KEY 配置）
-curl -sf $AUTH "$CDS/api/branches/$BRANCH_ID/container-exec" \
-  -X POST -H "Content-Type: application/json" \
-  -d '{"profileId":"api","command":"curl -s http://localhost:5000/api/users/me -H \"X-AI-Access-Key: KEY\" -H \"X-AI-Impersonate: root\""}'
-# 如果 401 → 非代码问题，记录但不阻塞流水线
+# Layer 3: 认证端点（直连 MAP 平台，使用 MAP_AI_USER 环境变量）
+# ⚠️ 关键：优先从 $MAP_AI_USER 读取用户名，不再需要复杂的 JWT 登录流程
+IMPERSONATE="${MAP_AI_USER}"
+
+# 如果 MAP_AI_USER 未设置，才兜底用 container-exec 发现用户名
+if [[ -z "$IMPERSONATE" ]]; then
+  # 兜底：通过 container-exec 发现（复杂，不推荐）
+  echo "⚠️ MAP_AI_USER 未设置，使用 JWT 登录发现用户名..."
+  # ... 复杂的 container-exec JWT 登录流程 ...
+fi
+
+# 直连 MAP 平台执行认证测试（简单，无嵌套 JSON 问题）
+curl -sf "$PREVIEW_URL/api/users?pageSize=3" \
+  -H "X-AI-Access-Key: $AI_ACCESS_KEY" \
+  -H "X-AI-Impersonate: $IMPERSONATE"
+# 如果 401 → 参考"后端 API 401 快速诊断"决策树
 
 # Layer 4: 更完整的测试可以调用 /smoke 技能
 ```
@@ -730,6 +739,75 @@ Phase 5: Smoke Test
 
 ---
 
+## 双层认证架构（关键！CDS 认证 ≠ 后端 API 认证）
+
+> **核心概念**：CDS 是代理层，后端 API 是业务层，两者有**独立的认证体系**。混淆二者是最常见的诊断弯路。
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  AI Agent（本机）                                              │
+│                                                                │
+│  Layer 1: CDS 认证（管理 CDS 自身功能）                         │
+│  ┌──────────────────────────────────────────┐                  │
+│  │ Header: X-AI-Access-Key: $AI_ACCESS_KEY  │                  │
+│  │ 或: X-CDS-AI-Token: $TOKEN              │                  │
+│  │ 读取: CDS master 进程的 env              │                  │
+│  │ 用途: 调 CDS API（部署/日志/exec）        │                  │
+│  │ 效果: Activity Monitor 显示 AI 标志 🤖    │                  │
+│  └─────────────────┬────────────────────────┘                  │
+│                    │                                            │
+│  Layer 2: 后端 API 认证（测试业务接口）                          │
+│  ┌─────────────────┴────────────────────────┐                  │
+│  │ Header: X-AI-Access-Key: $API_KEY        │                  │
+│  │ Header: X-AI-Impersonate: {真实用户名}    │ ← 必须是 DB 中的 │
+│  │ 读取: Docker 容器内的 env                 │   真实 username   │
+│  │ 用途: 调后端 API（用户/会话/模型等）       │                  │
+│  │ 测试方式: container-exec 容器内 curl       │                  │
+│  └──────────────────────────────────────────┘                  │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### 常见混淆
+
+| 错误操作 | 后果 | 正确做法 |
+|----------|------|---------|
+| 用 `X-Cds-Internal: 1` 调 CDS API | 功能正常但 Activity 无 AI 标志 | 用 `X-AI-Access-Key` 或配对 token |
+| 用 CDS 的 `AI_ACCESS_KEY` 调后端 API | 可能碰巧相同也可能不同 | 检查容器内 `printenv AI_ACCESS_KEY` |
+| `X-AI-Impersonate: admin` | 401（数据库无 "admin" 用户） | 先查 `/api/users` 获取真实用户名 |
+| `X-AI-Impersonate: root` | 401（root 是破窗账户，不在 users 集合中） | 用数据库中的真实用户名 |
+
+### 后端 API 401 快速诊断（必须按顺序）
+
+```
+收到后端 API 401 响应
+│
+├─ Step 1: 确认 env 存在（1 条命令排除）
+│   POST container-exec: printenv AI_ACCESS_KEY
+│   ├─ 空 → env 未注入，检查 CDS customEnv + redeploy
+│   └─ 有值 → 继续 Step 2
+│
+├─ Step 2: 确认 impersonate 用户存在（1 条命令排除）
+│   POST container-exec: curl localhost:5000/api/users
+│   ├─ 找到用户列表 → 用真实 username 重试
+│   └─ 也 401 → 继续 Step 3
+│
+├─ Step 3: 区分错误类型
+│   POST container-exec: curl -v localhost:5000/api/xxx
+│   检查响应体的 error.message：
+│   ├─ "AI Access Key authentication not configured" → env 未被 .NET 读取
+│   ├─ "Invalid AI Access Key" → key 值不匹配
+│   ├─ "User 'xxx' not found" → 用户名错误
+│   ├─ "User 'xxx' is disabled" → 用户被禁用
+│   └─ "未授权"（中文） → AdminPermissionMiddleware 拦截，检查 endpoint 是否存在
+│
+└─ Step 4: 路径不存在的特殊情况
+    如果 endpoint 返回 401（AI key）但 JWT 返回 404：
+    → endpoint 不存在，AdminPermissionMiddleware 路径匹配器拦截了请求
+    → 检查 Controller 的 [Route] 属性确认正确路径
+```
+
+---
+
 ## 实战陷阱（2026-03-20 验证）
 
 以下经验来自真实部署验证，每条都有对应的解决方案。
@@ -741,6 +819,10 @@ Phase 5: Smoke Test
 | 3 | **starting 状态假死** | CDS 报 `starting` 但容器已 `listening on :5000` | 轮询 2min 后用 `container-logs` 交叉验证 |
 | 4 | **Cloudflare 401→500** | 预览域名访问认证失败端点返回 HTTP 500 空 body | 用 `container-exec` 在容器内测试绕过 CDN |
 | 5 | **container-exec 引号** | JSON 嵌套 curl 命令时 stdout 为空 | 简单命令用单引号包裹 command；复杂测试分两步 |
-| 6 | **AI Access Key 失效** | `X-AI-Impersonate: admin/root` 均 401 | 分层冒烟：先无认证端点，再认证端点 |
+| 6 | **X-AI-Impersonate 用户名** | `admin` / `root` 均 401，数据库无此用户 | **必须先查 `/api/users` 获取真实用户名** |
 | 7 | **无 jq 环境** | AI 沙箱可能没有 jq | 用 `python3 -c "import json,sys;..."` 替代 |
 | 8 | **无 xxd 环境** | traceId 生成 `xxd -p` 不可用 | 用 `openssl rand -hex 4` 替代 |
+| 9 | **双层 AI_ACCESS_KEY 混淆** | CDS env 和容器 env 是两个独立变量 | 分清 CDS master env vs Docker container env |
+| 10 | **AdminPermissionMiddleware 拦截幽灵 404** | 不存在的路径用 AI key 返回 401 而非 404 | 先用 JWT 验证路径存在，再排查 AI key 问题 |
+| 11 | **过度使用 container-exec** | 嵌套 JSON 转义复杂导致命令静默失败 | **优先直连 MAP 平台预览域名**（`AI_ACCESS_KEY` 通用），仅在 CDN 干扰时才用 container-exec |
+| 12 | **用户名发现太复杂** | root JWT 登录 + 查 users 多步骤易出错 | **配置 `MAP_AI_USER` 环境变量**，零网络请求直接获取用户名 |

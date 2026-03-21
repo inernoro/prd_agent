@@ -1472,6 +1472,7 @@ a.branch-name:hover { color: var(--accent); }
 }
 .copy-error-btn:hover { background: rgba(239, 83, 80, 0.2); }
 .copy-error-btn svg { flex-shrink: 0; }
+.copy-error-btn.hidden { display: none; }
 .copy-error-btn.copied {
   animation: none; color: var(--green); background: var(--green-bg);
   border-color: var(--green-border);
