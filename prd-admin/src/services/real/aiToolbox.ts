@@ -252,6 +252,19 @@ export async function createToolboxSession(
 }
 
 /**
+ * 重命名会话
+ */
+export async function renameToolboxSession(
+  sessionId: string,
+  title: string
+): Promise<ApiResponse<{ title: string }>> {
+  return await apiRequest(api.aiToolbox.session(sessionId), {
+    method: 'PATCH',
+    body: { title },
+  });
+}
+
+/**
  * 删除会话
  */
 export async function deleteToolboxSession(

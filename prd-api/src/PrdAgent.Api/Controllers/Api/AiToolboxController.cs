@@ -733,6 +733,28 @@ public class AiToolboxController : ControllerBase
     }
 
     /// <summary>
+    /// 重命名会话
+    /// </summary>
+    [HttpPatch("sessions/{sessionId}")]
+    public async Task<IActionResult> RenameSession(string sessionId, [FromBody] RenameSessionRequest request, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var title = (request.Title ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(title) || title.Length > 100)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_PARAMETER, "标题长度需在 1-100 字之间"));
+
+        var result = await _db.ToolboxSessions.UpdateOneAsync(
+            x => x.Id == sessionId && x.UserId == userId,
+            Builders<ToolboxSession>.Update.Set(x => x.Title, title),
+            cancellationToken: ct);
+
+        if (result.MatchedCount == 0)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "会话不存在"));
+
+        return Ok(ApiResponse<object>.Ok(new { title }));
+    }
+
+    /// <summary>
     /// 获取会话的消息历史
     /// </summary>
     [HttpGet("sessions/{sessionId}/messages")]
@@ -1586,6 +1608,14 @@ public class AppendMessageRequest
     public string? Role { get; set; }
     public string? Content { get; set; }
     public List<string>? AttachmentIds { get; set; }
+}
+
+/// <summary>
+/// 重命名会话请求
+/// </summary>
+public class RenameSessionRequest
+{
+    public string? Title { get; set; }
 }
 
 /// <summary>

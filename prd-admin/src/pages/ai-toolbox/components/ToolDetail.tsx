@@ -11,6 +11,7 @@ import {
   listToolboxSessions,
   createToolboxSession,
   deleteToolboxSession,
+  renameToolboxSession,
   listToolboxMessages,
   appendToolboxMessage,
   toggleToolboxItemPublish,
@@ -100,6 +101,10 @@ export function ToolDetail() {
 
   // Current model info (from SSE start event)
   const [currentModel, setCurrentModel] = useState<string | null>(null);
+
+  // Session rename
+  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -227,6 +232,18 @@ export function ToolDetail() {
     } catch { /* silent */ }
   };
 
+  const handleRenameSession = async (sessionId: string) => {
+    const title = renameValue.trim();
+    if (!title) { setRenamingSessionId(null); return; }
+    try {
+      const res = await renameToolboxSession(sessionId, title);
+      if (res.success) {
+        setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, title } : s));
+      }
+    } catch { /* silent */ }
+    setRenamingSessionId(null);
+  };
+
   const handleTogglePublish = async () => {
     if (!selectedItem) return;
     const newValue = !isPublic;
@@ -342,6 +359,19 @@ export function ToolDetail() {
       if (sessionId) {
         appendToolboxMessage(sessionId, {
           role: 'user', content: messageText, attachmentIds: overrideAttachmentIds ?? [],
+        }).then(() => {
+          // Backend auto-sets title from first message — sync locally
+          const currentSession = sessions.find(s => s.id === sessionId);
+          if (currentSession && currentSession.messageCount === 0) {
+            const title = messageText.length > 50 ? messageText.slice(0, 50) + '...' : messageText;
+            setSessions(prev => prev.map(s =>
+              s.id === sessionId ? { ...s, title, messageCount: s.messageCount + 1 } : s
+            ));
+          } else {
+            setSessions(prev => prev.map(s =>
+              s.id === sessionId ? { ...s, messageCount: s.messageCount + 1 } : s
+            ));
+          }
         }).catch(() => {});
       }
     }
@@ -384,7 +414,11 @@ export function ToolDetail() {
         abortRef.current = null;
         // Persist assistant message
         if (sessionId && fullContent) {
-          appendToolboxMessage(sessionId, { role: 'assistant', content: fullContent }).catch(() => {});
+          appendToolboxMessage(sessionId, { role: 'assistant', content: fullContent }).then(() => {
+            setSessions(prev => prev.map(s =>
+              s.id === sessionId ? { ...s, messageCount: s.messageCount + 1 } : s
+            ));
+          }).catch(() => {});
         }
       },
     });
@@ -475,7 +509,7 @@ export function ToolDetail() {
               <ArrowLeft size={14} />
               返回
             </Button>
-            {isCustom && (
+            {isCustom ? (
               <>
                 <Button variant="secondary" size="sm" onClick={handleTogglePublish} title={isPublic ? '取消发布' : '发布到市场'}>
                   {isPublic ? <Globe2 size={14} /> : <Share2 size={14} />}
@@ -490,6 +524,21 @@ export function ToolDetail() {
                   删除
                 </Button>
               </>
+            ) : !selectedItem.routePath && (
+              <Button variant="secondary" size="sm" onClick={() => {
+                // Fork built-in agent into a custom copy for editing
+                startEdit({
+                  ...selectedItem,
+                  id: '', // no id = create new
+                  name: `${selectedItem.name}（自定义）`,
+                  category: 'custom',
+                  type: 'custom',
+                  prompt: selectedItem.systemPrompt,
+                } as any);
+              }}>
+                <Copy size={14} />
+                自定义副本
+              </Button>
             )}
           </div>
         }
@@ -563,10 +612,31 @@ export function ToolDetail() {
                     background: s.id === currentSessionId ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
                   }}
                   onClick={() => switchToSession(s.id)}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    setRenamingSessionId(s.id);
+                    setRenameValue(s.title);
+                  }}
                 >
                   <MessageCircle size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
                   <div className="flex-1 min-w-0">
-                    <div className="text-[11px] truncate" style={{ color: 'var(--text-primary)' }}>{s.title}</div>
+                    {renamingSessionId === s.id ? (
+                      <input
+                        autoFocus
+                        className="text-[11px] w-full bg-transparent border-b outline-none"
+                        style={{ color: 'var(--text-primary)', borderColor: 'var(--accent-primary)' }}
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        onBlur={() => handleRenameSession(s.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleRenameSession(s.id);
+                          if (e.key === 'Escape') setRenamingSessionId(null);
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    ) : (
+                      <div className="text-[11px] truncate" style={{ color: 'var(--text-primary)' }}>{s.title}</div>
+                    )}
                     <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{s.messageCount} 条消息</div>
                   </div>
                   <button
