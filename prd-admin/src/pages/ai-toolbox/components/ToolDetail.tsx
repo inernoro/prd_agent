@@ -241,7 +241,12 @@ export function ToolDetail() {
   const welcomeMessage = selectedItem.welcomeMessage || getWelcomeText(selectedItem.agentKey);
   const conversationStarters: string[] = selectedItem.conversationStarters || [];
 
-  const handleSend = async (overrideMessage?: string, overrideAttachmentIds?: string[], messagesSnapshot?: ChatMessage[]) => {
+  const handleSend = async (
+    overrideMessage?: string,
+    overrideAttachmentIds?: string[],
+    messagesSnapshot?: ChatMessage[],
+    regenerateOnly?: boolean, // true = don't re-add user message, just regenerate assistant
+  ) => {
     const messageText = (overrideMessage || input).trim();
     if (!messageText && attachments.length === 0 && !overrideAttachmentIds?.length) return;
     if (!selectedItem) return;
@@ -259,80 +264,87 @@ export function ToolDetail() {
       } catch { /* continue without session */ }
     }
 
-    const userMessage: ChatMessage = {
-      id: Date.now().toString(),
-      role: 'user',
-      content: messageText,
-      attachments: attachments.map(a => ({ id: a.id, name: a.name, type: a.type, url: a.preview, size: a.file.size })),
-      attachmentIds: [], // will be filled after upload
-      timestamp: new Date(),
-    };
-
-    const currentAttachments = [...attachments];
-    const hasNewAttachments = !overrideAttachmentIds && currentAttachments.length > 0;
-
-    // Show user message + assistant placeholder IMMEDIATELY (2s feedback rule)
     const assistantId = (Date.now() + 1).toString();
-    setMessages(prev => [
-      ...prev,
-      userMessage,
-      {
-        id: assistantId,
-        role: 'assistant',
-        content: '',
+
+    if (regenerateOnly) {
+      // Regenerate mode: only add assistant placeholder, user message already exists
+      setMessages(prev => [
+        ...prev,
+        { id: assistantId, role: 'assistant', content: '', timestamp: new Date(), isStreaming: true },
+      ]);
+      setIsLoading(true);
+    } else {
+      // Normal send: create user message + assistant placeholder
+      const userMessage: ChatMessage = {
+        id: Date.now().toString(),
+        role: 'user',
+        content: messageText,
+        attachments: attachments.map(a => ({ id: a.id, name: a.name, type: a.type, url: a.preview, size: a.file.size })),
+        attachmentIds: [], // will be filled after upload
         timestamp: new Date(),
-        isStreaming: true,
-      },
-    ]);
-    setInput('');
-    setAttachments([]);
-    setIsLoading(true);
+      };
 
-    // Upload new attachments in parallel, or reuse existing IDs (for regenerate)
-    const attachmentIds: string[] = overrideAttachmentIds ? [...overrideAttachmentIds] : [];
-    if (hasNewAttachments) {
-      // Show uploading hint in assistant bubble
-      setMessages(prev => prev.map(m =>
-        m.id === assistantId ? { ...m, content: `正在上传 ${currentAttachments.length} 个文件…` } : m
-      ));
-      const results = await Promise.allSettled(
-        currentAttachments.map(att => uploadAttachment(att.file))
-      );
-      results.forEach((r, i) => {
-        if (r.status === 'fulfilled' && r.value.success && r.value.data?.attachmentId) {
-          attachmentIds.push(r.value.data.attachmentId);
-        } else {
-          const errMsg = r.status === 'fulfilled' ? (r.value.error?.message || '上传失败') : '上传异常';
-          toast.error(`文件 "${currentAttachments[i].name}" 上传失败: ${errMsg}`);
-        }
-      });
-      // If ALL uploads failed, abort — don't send a confusing text-only message
-      if (attachmentIds.length === 0) {
+      const currentAttachments = [...attachments];
+      const hasNewAttachments = !overrideAttachmentIds && currentAttachments.length > 0;
+
+      setMessages(prev => [
+        ...prev,
+        userMessage,
+        { id: assistantId, role: 'assistant', content: '', timestamp: new Date(), isStreaming: true },
+      ]);
+      setInput('');
+      setAttachments([]);
+      setIsLoading(true);
+
+      // Handle file uploads for new messages
+      const uploadedIds: string[] = [];
+      if (hasNewAttachments) {
         setMessages(prev => prev.map(m =>
-          m.id === assistantId ? { ...m, content: '所有文件上传失败，请重试。', isStreaming: false } : m
+          m.id === assistantId ? { ...m, content: `正在上传 ${currentAttachments.length} 个文件…` } : m
         ));
-        setIsLoading(false);
-        return;
+        const results = await Promise.allSettled(
+          currentAttachments.map(att => uploadAttachment(att.file))
+        );
+        results.forEach((r, i) => {
+          if (r.status === 'fulfilled' && r.value.success && r.value.data?.attachmentId) {
+            uploadedIds.push(r.value.data.attachmentId);
+          } else {
+            const errMsg = r.status === 'fulfilled' ? (r.value.error?.message || '上传失败') : '上传异常';
+            toast.error(`文件 "${currentAttachments[i].name}" 上传失败: ${errMsg}`);
+          }
+        });
+        if (uploadedIds.length === 0) {
+          setMessages(prev => prev.map(m =>
+            m.id === assistantId ? { ...m, content: '所有文件上传失败，请重试。', isStreaming: false } : m
+          ));
+          setIsLoading(false);
+          return;
+        }
+        setMessages(prev => prev.map(m =>
+          m.id === assistantId ? { ...m, content: '' } : m
+        ));
       }
-      // Clear uploading hint — streaming will start writing content
-      setMessages(prev => prev.map(m =>
-        m.id === assistantId ? { ...m, content: '' } : m
-      ));
-    }
 
-    // Store attachmentIds on the user message for history tracking
-    if (attachmentIds.length > 0) {
-      setMessages(prev => prev.map(m => m.id === userMessage.id ? { ...m, attachmentIds } : m));
-    }
+      // Merge uploaded IDs with override IDs
+      if (!overrideAttachmentIds) {
+        overrideAttachmentIds = uploadedIds.length > 0 ? uploadedIds : undefined;
+      }
 
-    // Persist user message to backend
-    if (sessionId) {
-      appendToolboxMessage(sessionId, {
-        role: 'user', content: messageText, attachmentIds,
-      }).catch(() => {});
+      // Store attachmentIds on the user message
+      if (overrideAttachmentIds && overrideAttachmentIds.length > 0) {
+        setMessages(prev => prev.map(m => m.id === userMessage.id ? { ...m, attachmentIds: overrideAttachmentIds! } : m));
+      }
+
+      // Persist user message to backend
+      if (sessionId) {
+        appendToolboxMessage(sessionId, {
+          role: 'user', content: messageText, attachmentIds: overrideAttachmentIds ?? [],
+        }).catch(() => {});
+      }
     }
 
     // Build history (include attachmentIds so backend can inject images for multi-turn context)
+    const attachmentIds: string[] = overrideAttachmentIds ? [...overrideAttachmentIds] : [];
     const historySource = messagesSnapshot ?? messages;
     const history: DirectChatMessage[] = historySource.map(m => ({
       role: m.role,
@@ -411,12 +423,11 @@ export function ToolDetail() {
     if (idx < 1) return;
     const prevUserMsg = [...messages].slice(0, idx).reverse().find(m => m.role === 'user');
     if (!prevUserMsg) return;
-    // Remove the old assistant message — use functional update to ensure
-    // the state is committed before handleSend reads it via messagesRef
+    // Remove the old assistant message, keep user message intact (with attachments)
     const filteredMessages = messages.filter(m => m.id !== assistantMsgId);
     setMessages(filteredMessages);
-    // Pass filtered snapshot so handleSend builds correct history
-    handleSend(prevUserMsg.content, prevUserMsg.attachmentIds, filteredMessages);
+    // Regenerate only: don't duplicate user message, just create new assistant response
+    handleSend(prevUserMsg.content, prevUserMsg.attachmentIds, filteredMessages, true);
   };
 
   const handleExportChat = () => {
@@ -640,8 +651,9 @@ export function ToolDetail() {
                     onRetry={message.content?.startsWith('[错误]') && idx === messages.length - 1 ? () => {
                       const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
                       if (lastUserMsg) {
-                        setMessages(prev => prev.filter(m => m.id !== message.id));
-                        handleSend(lastUserMsg.content, lastUserMsg.attachmentIds);
+                        const filtered = messages.filter(m => m.id !== message.id);
+                        setMessages(filtered);
+                        handleSend(lastUserMsg.content, lastUserMsg.attachmentIds, filtered, true);
                       }
                     } : undefined}
                     onFeedback={message.role === 'assistant' && message.content && !message.isStreaming ? () => {} : undefined}
