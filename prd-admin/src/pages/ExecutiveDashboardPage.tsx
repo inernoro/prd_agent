@@ -28,6 +28,7 @@ import type {
 } from '@/services/contracts/executive';
 import type { EChartsOption } from 'echarts';
 import { resolveAvatarUrl } from '@/lib/avatar';
+import { getRoleMeta } from '@/lib/roleConfig';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { Tooltip } from '@/components/ui/Tooltip';
 
@@ -299,9 +300,10 @@ function InfoTip({ tip }: { tip: string }) {
   );
 }
 
-const ROLE_COLORS: Record<string, string> = {
-  PM: AI.blue, DEV: AI.emerald, QA: AI.rose, ADMIN: AI.amber,
-};
+/** 从 ROLE_META 提取主色调，供排行榜使用 */
+const ROLE_COLORS: Record<string, string> = new Proxy({} as Record<string, string>, {
+  get: (_, key: string) => getRoleMeta(key).color,
+});
 
 // ─── Tab: Overview ──────────────────────────────────────────────────
 
@@ -485,7 +487,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                 )}
                 <div className="min-w-0 flex-1">
                   <div className="text-[12px] font-bold truncate" style={{ color: D.text1 }}>{u.displayName}</div>
-                  <div className="text-[9px] font-medium" style={{ color: roleColor }}>{u.role}</div>
+                  <div className="text-[9px] font-medium" style={{ color: roleColor }}>{getRoleMeta(u.role).label}</div>
                 </div>
                 <span className="text-[15px] font-black tabular-nums flex-shrink-0" style={{ color: mc.color }}>{Math.round(u.totalScore)}</span>
               </div>
@@ -559,7 +561,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                         )}
                         <div>
                           <div className="text-[12px] font-medium" style={{ color: D.text1 }}>{user.displayName}</div>
-                          <div className="text-[9px] font-medium" style={{ color: roleColor }}>{user.role}</div>
+                          <div className="text-[9px] font-medium" style={{ color: roleColor }}>{getRoleMeta(user.role).label}</div>
                         </div>
                       </div>
                     </td>
@@ -651,7 +653,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                         )}
                         <div className="w-12 flex-shrink-0">
                           <div className="text-[11px] font-medium truncate" style={{ color: D.text1 }}>{u.displayName}</div>
-                          <div className="text-[8px] font-medium" style={{ color: roleColor }}>{u.role}</div>
+                          <div className="text-[8px] font-medium" style={{ color: roleColor }}>{getRoleMeta(u.role).label}</div>
                         </div>
                         <div className="flex-1 flex flex-col items-center gap-0.5">
                           <span className="text-[11px] font-bold tabular-nums" style={{ color: D.text1 }}>
