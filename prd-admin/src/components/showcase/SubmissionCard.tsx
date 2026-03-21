@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Heart, ImageOff } from 'lucide-react';
+import { Heart, Eye, ImageOff } from 'lucide-react';
 import { resolveAvatarUrl, DEFAULT_AVATAR_FALLBACK } from '@/lib/avatar';
 import type { SubmissionItem } from '@/services/real/submissions';
 
@@ -16,7 +16,6 @@ export function SubmissionCard({ item, onLikeToggle, onClick }: SubmissionCardPr
   const [likeCount, setLikeCount] = useState(item.likeCount);
   const [liking, setLiking] = useState(false);
 
-  // 同步父组件 props 到本地状态（避免 useState 初始值陈旧）
   useEffect(() => { setLiked(item.likedByMe); }, [item.likedByMe]);
   useEffect(() => { setLikeCount(item.likeCount); }, [item.likeCount]);
 
@@ -27,13 +26,11 @@ export function SubmissionCard({ item, onLikeToggle, onClick }: SubmissionCardPr
     if (liking) return;
     setLiking(true);
     const newLiked = !liked;
-    // 乐观更新
     setLiked(newLiked);
     setLikeCount((c) => c + (newLiked ? 1 : -1));
     try {
       await onLikeToggle?.(item.id, newLiked);
     } catch {
-      // API 失败：回滚乐观更新
       setLiked(!newLiked);
       setLikeCount((c) => c + (newLiked ? -1 : 1));
     } finally {
@@ -43,50 +40,50 @@ export function SubmissionCard({ item, onLikeToggle, onClick }: SubmissionCardPr
 
   return (
     <div
-      className="group relative rounded-xl overflow-hidden transition-all duration-300 hover:-translate-y-1 cursor-pointer"
-      style={{
-        background: 'var(--bg-elevated, rgba(255,255,255,0.03))',
-        border: '1px solid rgba(255,255,255,0.06)',
-        breakInside: 'avoid',
-      }}
+      className="group cursor-pointer"
+      style={{ breakInside: 'avoid' }}
       onClick={onClick}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick?.(); } }}
     >
-      {/* Cover image */}
-      <div className="relative w-full overflow-hidden">
+      {/* Image container — rounded, no card border */}
+      <div className="relative w-full overflow-hidden rounded-2xl transition-all duration-300 group-hover:shadow-lg group-hover:shadow-black/20">
         {!imgLoaded && !imgError && (
           <div
-            className="w-full animate-pulse"
+            className="w-full animate-pulse rounded-2xl"
             style={{
               aspectRatio: item.coverWidth && item.coverHeight
                 ? `${item.coverWidth}/${item.coverHeight}`
-                : '1/1',
+                : '3/4',
               background: 'rgba(255,255,255,0.04)',
-              minHeight: 120,
+              minHeight: 160,
             }}
           />
         )}
         {imgError && (
           <div
-            className="w-full flex items-center justify-center"
+            className="w-full flex items-center justify-center rounded-2xl"
             style={{
-              aspectRatio: '4/3',
+              aspectRatio: '3/4',
               background: 'rgba(255,255,255,0.03)',
-              minHeight: 120,
+              minHeight: 160,
             }}
           >
-            <ImageOff size={24} style={{ color: 'var(--text-muted, rgba(255,255,255,0.15))' }} />
+            <ImageOff size={28} style={{ color: 'var(--text-muted, rgba(255,255,255,0.12))' }} />
           </div>
         )}
         {item.coverUrl && !imgError && (
           <img
             src={item.coverUrl}
             alt={item.title}
-            className="w-full block transition-transform duration-500 group-hover:scale-105"
+            className="w-full block rounded-2xl transition-transform duration-500 group-hover:scale-[1.03]"
             style={{
-              display: imgLoaded ? 'block' : 'none',
+              opacity: imgLoaded ? 1 : 0,
+              transition: 'opacity 0.4s ease',
+              position: imgLoaded ? 'relative' : 'absolute',
+              top: 0,
+              left: 0,
             }}
             loading="lazy"
             onLoad={() => setImgLoaded(true)}
@@ -97,56 +94,60 @@ export function SubmissionCard({ item, onLikeToggle, onClick }: SubmissionCardPr
           />
         )}
 
-        {/* Hover overlay */}
+        {/* Hover gradient overlay */}
         <div
-          className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
+          className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
           style={{
-            background: 'linear-gradient(180deg, transparent 50%, rgba(0,0,0,0.6) 100%)',
+            background: 'linear-gradient(180deg, transparent 40%, rgba(0,0,0,0.5) 100%)',
           }}
-        />
-
-        {/* Hover border glow */}
-        <div
-          className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
-          style={{ boxShadow: 'inset 0 0 0 1px rgba(99,102,241,0.3)' }}
         />
       </div>
 
-      {/* Footer: avatar + username on left, heart + count on right */}
-      <div className="flex items-center justify-between px-3 py-2.5">
-        <div className="flex items-center gap-2 min-w-0">
-          <img
-            src={avatarUrl}
-            alt={item.ownerUserName}
-            className="w-6 h-6 rounded-full shrink-0 object-cover"
-            onError={(e) => {
-              (e.target as HTMLImageElement).src = DEFAULT_AVATAR_FALLBACK;
-            }}
-          />
-          <span
-            className="text-xs truncate"
-            style={{ color: 'var(--text-muted, rgba(255,255,255,0.5))' }}
-          >
-            {item.ownerUserName}
-          </span>
-        </div>
-
-        <button
-          type="button"
-          onClick={handleLike}
-          className="flex items-center gap-1 shrink-0 transition-colors duration-150"
-          style={{ color: liked ? '#F43F5E' : 'var(--text-muted, rgba(255,255,255,0.35))' }}
-          disabled={liking}
-          aria-label={liked ? '取消点赞' : '点赞'}
-          aria-pressed={liked}
+      {/* Info below image — more organic, like Lovart */}
+      <div className="flex items-center gap-2 mt-2.5 mb-1 px-0.5">
+        <img
+          src={avatarUrl}
+          alt={item.ownerUserName}
+          className="w-7 h-7 rounded-full shrink-0 object-cover ring-1 ring-white/10"
+          onError={(e) => {
+            (e.target as HTMLImageElement).src = DEFAULT_AVATAR_FALLBACK;
+          }}
+        />
+        <span
+          className="text-[13px] font-medium truncate flex-1"
+          style={{ color: 'var(--text-secondary, rgba(255,255,255,0.7))' }}
         >
-          <Heart
-            size={14}
-            fill={liked ? '#F43F5E' : 'none'}
-            className="transition-transform duration-200 hover:scale-110"
-          />
-          <span className="text-xs">{likeCount > 0 ? likeCount : ''}</span>
-        </button>
+          {item.ownerUserName}
+        </span>
+
+        {/* Stats: view count + like */}
+        <div className="flex items-center gap-2.5 shrink-0">
+          {(item as any).viewCount > 0 && (
+            <span
+              className="flex items-center gap-1 text-[11px]"
+              style={{ color: 'var(--text-muted, rgba(255,255,255,0.3))' }}
+            >
+              <Eye size={12} />
+              {(item as any).viewCount}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={handleLike}
+            className="flex items-center gap-1 transition-all duration-200"
+            style={{ color: liked ? '#F43F5E' : 'var(--text-muted, rgba(255,255,255,0.3))' }}
+            disabled={liking}
+            aria-label={liked ? '取消点赞' : '点赞'}
+            aria-pressed={liked}
+          >
+            <Heart
+              size={14}
+              fill={liked ? '#F43F5E' : 'none'}
+              className="transition-transform duration-200 hover:scale-125"
+            />
+            {likeCount > 0 && <span className="text-[11px]">{likeCount}</span>}
+          </button>
+        </div>
       </div>
     </div>
   );

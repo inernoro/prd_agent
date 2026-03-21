@@ -25,7 +25,7 @@ export function ShowcaseGallery() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const initialLoadDone = useRef(false);
-  const fetchIdRef = useRef(0); // 防止 tab 切换 race condition
+  const fetchIdRef = useRef(0);
 
   const fetchItems = useCallback(async (contentType: string, skip: number, append: boolean) => {
     const myFetchId = ++fetchIdRef.current;
@@ -38,7 +38,6 @@ export function ShowcaseGallery() {
         skip,
         limit: PAGE_SIZE,
       });
-      // 丢弃过期请求的响应（用户已切换 tab）
       if (fetchIdRef.current !== myFetchId) return;
       if (res.success) {
         setItems((prev) => (append ? [...prev, ...res.data.items] : res.data.items));
@@ -93,19 +92,20 @@ export function ShowcaseGallery() {
 
   const hasMore = items.length < total;
 
-  if (!loading && items.length === 0 && initialLoadDone.current) return null;
+  // 只在初始加载（全部tab）没有数据时隐藏整个区域
+  if (!loading && items.length === 0 && initialLoadDone.current && !activeTab) return null;
 
   return (
-    <section className="mt-8">
+    <section className="mt-10">
       {/* Section header with tabs */}
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-6">
         <div
-          className="text-[11px] font-medium tracking-widest uppercase"
-          style={{ color: 'var(--text-muted, rgba(255,255,255,0.35))' }}
+          className="text-sm font-medium"
+          style={{ color: 'var(--text-secondary, rgba(255,255,255,0.6))' }}
         >
           作品广场
         </div>
-        <div className="flex items-center gap-1" role="tablist">
+        <div className="flex items-center gap-1.5" role="tablist">
           {TABS.map((tab) => (
             <button
               key={tab.key}
@@ -113,7 +113,7 @@ export function ShowcaseGallery() {
               role="tab"
               aria-selected={activeTab === tab.key}
               onClick={() => handleTabChange(tab.key)}
-              className="px-3 py-1 rounded-md text-xs transition-colors duration-150"
+              className="px-3.5 py-1.5 rounded-full text-xs font-medium transition-all duration-200"
               style={{
                 background:
                   activeTab === tab.key ? 'rgba(99,102,241,0.15)' : 'transparent',
@@ -123,7 +123,7 @@ export function ShowcaseGallery() {
                     : 'var(--text-muted, rgba(255,255,255,0.4))',
                 border:
                   activeTab === tab.key
-                    ? '1px solid rgba(99,102,241,0.3)'
+                    ? '1px solid rgba(99,102,241,0.25)'
                     : '1px solid transparent',
               }}
             >
@@ -133,28 +133,40 @@ export function ShowcaseGallery() {
         </div>
       </div>
 
-      {/* Loading state */}
+      {/* Loading skeleton */}
       {loading && (
-        <div className="flex items-center justify-center h-40">
-          <Loader2
-            size={24}
-            className="animate-spin"
-            style={{ color: 'var(--accent-primary)' }}
-          />
+        <div
+          style={{
+            columns: '4 260px',
+            columnGap: 16,
+          }}
+        >
+          {Array.from({ length: 12 }).map((_, i) => (
+            <div
+              key={i}
+              className="animate-pulse rounded-2xl mb-4"
+              style={{
+                // 随机高度模拟瀑布流视觉
+                height: [220, 280, 340, 200, 300, 260][i % 6],
+                background: 'rgba(255,255,255,0.03)',
+                breakInside: 'avoid',
+              }}
+            />
+          ))}
         </div>
       )}
 
-      {/* Masonry grid */}
+      {/* Masonry waterfall grid */}
       {!loading && items.length > 0 && (
         <>
           <div
             style={{
-              columns: 'auto 220px',
-              columnGap: 12,
+              columns: '4 260px',
+              columnGap: 16,
             }}
           >
             {items.map((item) => (
-              <div key={item.id} style={{ marginBottom: 12 }}>
+              <div key={item.id} style={{ marginBottom: 20, breakInside: 'avoid' }}>
                 <SubmissionCard item={item} onLikeToggle={handleLikeToggle} onClick={() => setSelectedId(item.id)} />
               </div>
             ))}
@@ -162,12 +174,12 @@ export function ShowcaseGallery() {
 
           {/* Load more */}
           {hasMore && (
-            <div className="flex justify-center mt-4">
+            <div className="flex justify-center mt-8 mb-4">
               <button
                 type="button"
                 onClick={handleLoadMore}
                 disabled={loadingMore}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs transition-colors duration-150"
+                className="flex items-center gap-2 px-6 py-2.5 rounded-full text-xs font-medium transition-all duration-200 hover:scale-[1.02]"
                 style={{
                   background: 'rgba(255,255,255,0.04)',
                   border: '1px solid rgba(255,255,255,0.08)',
@@ -186,10 +198,10 @@ export function ShowcaseGallery() {
         </>
       )}
 
-      {/* Empty state (only after tab switch, not initial) */}
+      {/* Empty state */}
       {!loading && items.length === 0 && activeTab && (
         <div
-          className="flex flex-col items-center justify-center h-32 gap-2"
+          className="flex flex-col items-center justify-center h-40 gap-2"
           style={{ color: 'var(--text-muted, rgba(255,255,255,0.3))' }}
         >
           <span className="text-sm">暂无作品</span>
