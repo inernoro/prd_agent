@@ -42,14 +42,38 @@ export interface RelatedAsset {
   createdAt: string;
 }
 
+export interface ImageRefSnapshot {
+  refId?: string;
+  url?: string;
+  label?: string;
+  role?: string;
+}
+
 export interface GenerationInfo {
   modelName?: string;
   size?: string;
+  promptText?: string;
+  stylePrompt?: string;
+  // 提示词
+  systemPromptId?: string;
+  systemPromptName?: string;
+  systemPromptContent?: string;
+  // 参考图
   hasReferenceImage?: boolean;
   hasInpainting?: boolean;
   referenceImageCount?: number;
-  systemPromptName?: string;
-  stylePrompt?: string;
+  initImageUrl?: string;
+  imageRefs?: ImageRefSnapshot[];
+  referenceImageConfigId?: string;
+  referenceImageConfigName?: string;
+  // 水印
+  watermarkConfigId?: string;
+  watermarkName?: string;
+  watermarkText?: string;
+  watermarkFontKey?: string;
+  // 溯源
+  appKey?: string;
+  configModelId?: string;
 }
 
 export interface SubmissionDetail {

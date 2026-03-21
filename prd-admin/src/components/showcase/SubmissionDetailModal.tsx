@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   X, Heart, Eye, ChevronLeft, ChevronRight, FileText, Wand2,
   ImageIcon, Loader2, Palette, Brush, Layers, Sparkles, Maximize,
+  Droplets, ImagePlus,
 } from 'lucide-react';
 import { glassPanel } from '@/lib/glassStyles';
 import { resolveAvatarUrl, DEFAULT_AVATAR_FALLBACK } from '@/lib/avatar';
@@ -32,7 +33,7 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
     if (!submissionId) { setDetail(null); return; }
     setLoading(true);
     setSelectedAssetIndex(0);
-    setRightTab('article');
+    setRightTab('prompts'); // 默认打开提示词 tab（最常看）
     getSubmissionDetail(submissionId).then((res) => {
       if (res.success) {
         setDetail(res.data);
@@ -276,155 +277,281 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                 </div>
               </div>
 
-              {/* 内容区域 */}
+              {/* 内容区域：右上角 = 输入物 tabs + 右下角 = 输出物 */}
               <div className="flex-1 min-h-0 flex flex-col">
-                {isLiterary ? (
-                  <>
-                    <div className="shrink-0 px-5 pt-3 pb-1">
-                      <Tabs
-                        items={[
-                          { key: 'article', label: '正文', icon: <FileText size={12} /> },
-                          { key: 'prompts', label: '提示词', icon: <Wand2 size={12} /> },
-                        ]}
-                        activeKey={rightTab}
-                        onChange={setRightTab}
-                      />
+                {/* ── 右上角：输入配方 Tabs（正文 | 提示词 | 参考图 | 水印） ── */}
+                <div className="shrink-0 px-5 pt-3 pb-1">
+                  <Tabs
+                    items={[
+                      ...(isLiterary ? [{ key: 'article', label: '正文', icon: <FileText size={12} /> }] : []),
+                      { key: 'prompts', label: '提示词', icon: <Wand2 size={12} /> },
+                      { key: 'refImage', label: '参考图', icon: <ImagePlus size={12} /> },
+                      { key: 'watermark', label: '水印', icon: <Droplets size={12} /> },
+                    ]}
+                    activeKey={rightTab}
+                    onChange={setRightTab}
+                  />
+                </div>
+
+                <div className="flex-1 min-h-0 overflow-y-auto px-5 py-3" style={{ scrollbarWidth: 'none' }}>
+                  {/* ── 正文 Tab（仅文学创作） ── */}
+                  {rightTab === 'article' && isLiterary && (
+                    <div className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.7))' }}>
+                      {detail.articleContent || '暂无文章内容'}
                     </div>
-                    <div className="flex-1 min-h-0 overflow-y-auto px-5 py-3" style={{ scrollbarWidth: 'none' }}>
-                      {rightTab === 'article' && (
-                        <div className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.7))' }}>
-                          {detail.articleContent || '暂无文章内容'}
+                  )}
+
+                  {/* ── 提示词 Tab ── */}
+                  {rightTab === 'prompts' && (
+                    <div className="space-y-4">
+                      {/* 当前图片的提示词 */}
+                      <div>
+                        <div className="text-xs font-medium mb-2 flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
+                          <Wand2 size={12} />
+                          提示词
+                        </div>
+                        <div
+                          className="text-sm leading-relaxed rounded-xl p-3.5"
+                          style={{
+                            color: 'var(--text-secondary, rgba(255,255,255,0.7))',
+                            background: 'rgba(255,255,255,0.03)',
+                            border: '1px solid rgba(255,255,255,0.04)',
+                          }}
+                        >
+                          {selectedAsset?.prompt || genInfo?.promptText || sub?.prompt || '无提示词'}
+                        </div>
+                      </div>
+
+                      {/* 风格提示词 */}
+                      {genInfo?.stylePrompt && (
+                        <div>
+                          <div className="text-xs font-medium mb-2 flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
+                            <Palette size={12} />
+                            风格提示词
+                          </div>
+                          <div
+                            className="text-sm leading-relaxed rounded-xl p-3.5"
+                            style={{
+                              color: 'var(--text-secondary, rgba(255,255,255,0.7))',
+                              background: 'rgba(99,102,241,0.06)',
+                              border: '1px solid rgba(99,102,241,0.15)',
+                            }}
+                          >
+                            {genInfo.stylePrompt}
+                          </div>
                         </div>
                       )}
-                      {rightTab === 'prompts' && (
-                        <div className="space-y-3">
-                          {assets.map((asset, i) => (
-                            <div
-                              key={asset.id}
-                              className="rounded-xl p-3 cursor-pointer transition-all duration-200"
-                              style={{
-                                background: i === selectedAssetIndex ? 'rgba(99,102,241,0.1)' : 'rgba(255,255,255,0.03)',
-                                border: i === selectedAssetIndex ? '1px solid rgba(99,102,241,0.3)' : '1px solid rgba(255,255,255,0.04)',
-                              }}
-                              onClick={() => setSelectedAssetIndex(i)}
-                            >
-                              <div className="flex items-start gap-2">
-                                <img
-                                  src={asset.url}
-                                  alt=""
-                                  className="w-10 h-10 rounded-md object-cover shrink-0"
-                                />
-                                <div className="min-w-0 flex-1">
-                                  {asset.originalMarkerText && (
-                                    <div className="text-xs font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
-                                      {asset.originalMarkerText}
-                                    </div>
-                                  )}
-                                  <div className="text-xs line-clamp-2" style={{ color: 'var(--text-muted)' }}>
-                                    {asset.prompt || '无提示词'}
+
+                      {/* 系统提示词 */}
+                      {genInfo?.systemPromptName && (
+                        <div>
+                          <div className="text-xs font-medium mb-2 flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
+                            <FileText size={12} />
+                            系统提示词
+                          </div>
+                          <div
+                            className="rounded-xl p-3.5"
+                            style={{
+                              background: 'rgba(255,255,255,0.03)',
+                              border: '1px solid rgba(255,255,255,0.04)',
+                            }}
+                          >
+                            <div className="text-xs font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
+                              {genInfo.systemPromptName}
+                            </div>
+                            {genInfo.systemPromptContent && (
+                              <div className="text-xs leading-relaxed line-clamp-6" style={{ color: 'var(--text-muted)' }}>
+                                {genInfo.systemPromptContent}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 生成参数标签 */}
+                      {genInfo && (genInfo.modelName || genInfo.size) && (
+                        <div>
+                          <div className="text-xs font-medium mb-2 flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
+                            <Sparkles size={12} />
+                            生成参数
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {genInfo.modelName && (
+                              <InfoBadge icon={<Palette size={11} />} label={genInfo.modelName} />
+                            )}
+                            {genInfo.size && (
+                              <InfoBadge icon={<Maximize size={11} />} label={genInfo.size} />
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 文学创作：每张图的提示词列表 */}
+                      {isLiterary && assets.length > 0 && (
+                        <div>
+                          <div className="text-xs font-medium mb-2" style={{ color: 'var(--text-muted)' }}>
+                            各配图提示词
+                          </div>
+                          <div className="space-y-2">
+                            {assets.map((asset, i) => (
+                              <div
+                                key={asset.id}
+                                className="rounded-xl p-3 cursor-pointer transition-all duration-200"
+                                style={{
+                                  background: i === selectedAssetIndex ? 'rgba(99,102,241,0.1)' : 'rgba(255,255,255,0.03)',
+                                  border: i === selectedAssetIndex ? '1px solid rgba(99,102,241,0.3)' : '1px solid rgba(255,255,255,0.04)',
+                                }}
+                                onClick={() => setSelectedAssetIndex(i)}
+                              >
+                                <div className="flex items-start gap-2">
+                                  <img src={asset.url} alt="" className="w-10 h-10 rounded-md object-cover shrink-0" />
+                                  <div className="min-w-0 flex-1">
+                                    {asset.originalMarkerText && (
+                                      <div className="text-xs font-medium mb-1" style={{ color: 'var(--text-primary)' }}>{asset.originalMarkerText}</div>
+                                    )}
+                                    <div className="text-xs line-clamp-2" style={{ color: 'var(--text-muted)' }}>{asset.prompt || '无提示词'}</div>
                                   </div>
                                 </div>
                               </div>
-                            </div>
-                          ))}
+                            ))}
+                          </div>
                         </div>
                       )}
                     </div>
-                  </>
-                ) : (
-                  /* ── 视觉创作：提示词 + 生成参数 + 同项目 ── */
-                  <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4" style={{ scrollbarWidth: 'none' }}>
-                    {/* 当前图片的提示词 */}
-                    <div className="mb-4">
-                      <div className="text-xs font-medium mb-2 flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
-                        <Wand2 size={12} />
-                        提示词
-                      </div>
-                      <div
-                        className="text-sm leading-relaxed rounded-xl p-3.5"
-                        style={{
-                          color: 'var(--text-secondary, rgba(255,255,255,0.7))',
-                          background: 'rgba(255,255,255,0.03)',
-                          border: '1px solid rgba(255,255,255,0.04)',
-                        }}
-                      >
-                        {selectedAsset?.prompt || sub?.prompt || '无提示词'}
-                      </div>
-                    </div>
+                  )}
 
-                    {/* 生成参数标签 */}
-                    {genInfo && (
-                      <div className="mb-4">
-                        <div className="text-xs font-medium mb-2 flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
-                          <Sparkles size={12} />
-                          生成参数
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          {genInfo.modelName && (
-                            <InfoBadge icon={<Palette size={11} />} label={genInfo.modelName} />
-                          )}
-                          {genInfo.size && (
-                            <InfoBadge icon={<Maximize size={11} />} label={genInfo.size} />
-                          )}
-                          {genInfo.hasReferenceImage && (
+                  {/* ── 参考图 Tab ── */}
+                  {rightTab === 'refImage' && (
+                    <div className="space-y-4">
+                      {genInfo?.hasReferenceImage ? (
+                        <>
+                          <div className="flex flex-wrap gap-2 mb-3">
                             <InfoBadge
                               icon={<Layers size={11} />}
                               label={`图生图${genInfo.referenceImageCount && genInfo.referenceImageCount > 1 ? ` (${genInfo.referenceImageCount}张)` : ''}`}
                               accent
                             />
-                          )}
-                          {genInfo.hasInpainting && (
-                            <InfoBadge icon={<Brush size={11} />} label="涂抹重绘" accent />
-                          )}
-                          {genInfo.systemPromptName && (
-                            <InfoBadge icon={<FileText size={11} />} label={`提示词: ${genInfo.systemPromptName}`} />
-                          )}
-                          {genInfo.stylePrompt && (
-                            <InfoBadge icon={<Palette size={11} />} label="风格统一" />
-                          )}
-                        </div>
-                        {genInfo.stylePrompt && (
-                          <div
-                            className="mt-2 text-xs leading-relaxed rounded-lg p-2.5"
-                            style={{
-                              color: 'var(--text-muted)',
-                              background: 'rgba(255,255,255,0.02)',
-                              border: '1px solid rgba(255,255,255,0.03)',
-                            }}
-                          >
-                            <span style={{ color: 'var(--text-secondary)' }}>风格: </span>
-                            {genInfo.stylePrompt}
+                            {genInfo.hasInpainting && (
+                              <InfoBadge icon={<Brush size={11} />} label="涂抹重绘" accent />
+                            )}
+                            {genInfo.referenceImageConfigName && (
+                              <InfoBadge icon={<FileText size={11} />} label={genInfo.referenceImageConfigName} />
+                            )}
                           </div>
-                        )}
-                      </div>
-                    )}
 
-                    {/* 同 workspace 其他图片 */}
-                    {assets.length > 1 && (
-                      <div>
-                        <div className="text-xs font-medium mb-2" style={{ color: 'var(--text-muted)' }}>
-                          同项目作品 ({assets.length})
+                          {/* 单图初始化 */}
+                          {genInfo.initImageUrl && (
+                            <div>
+                              <div className="text-xs font-medium mb-2" style={{ color: 'var(--text-muted)' }}>初始参考图</div>
+                              <img
+                                src={genInfo.initImageUrl}
+                                alt="参考图"
+                                className="w-full rounded-xl object-contain"
+                                style={{ maxHeight: 200, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}
+                              />
+                            </div>
+                          )}
+
+                          {/* 多图引用 */}
+                          {genInfo.imageRefs && genInfo.imageRefs.length > 0 && (
+                            <div>
+                              <div className="text-xs font-medium mb-2" style={{ color: 'var(--text-muted)' }}>参考图列表</div>
+                              <div className="grid grid-cols-2 gap-2">
+                                {genInfo.imageRefs.map((ref, i) => (
+                                  <div key={ref.refId || i} className="rounded-xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.06)' }}>
+                                    {ref.url && (
+                                      <img src={ref.url} alt={ref.label || ''} className="w-full aspect-square object-cover" />
+                                    )}
+                                    {(ref.label || ref.role) && (
+                                      <div className="px-2 py-1.5 text-[11px]" style={{ color: 'var(--text-muted)', background: 'rgba(255,255,255,0.02)' }}>
+                                        {ref.label || ref.role}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <div className="flex flex-col items-center justify-center py-8 gap-2" style={{ color: 'var(--text-muted, rgba(255,255,255,0.3))' }}>
+                          <ImagePlus size={32} style={{ opacity: 0.3 }} />
+                          <span className="text-xs">未使用参考图</span>
                         </div>
-                        <div className="grid grid-cols-3 gap-2">
-                          {assets.map((asset, i) => (
-                            <button
-                              key={asset.id}
-                              type="button"
-                              onClick={() => setSelectedAssetIndex(i)}
-                              className="rounded-lg overflow-hidden transition-all duration-200 aspect-square"
-                              style={{
-                                border: i === selectedAssetIndex
-                                  ? '2px solid var(--accent-primary, #818CF8)'
-                                  : '2px solid transparent',
-                                opacity: i === selectedAssetIndex ? 1 : 0.7,
-                              }}
-                            >
-                              <img src={asset.url} alt="" className="w-full h-full object-cover" loading="lazy" />
-                            </button>
-                          ))}
+                      )}
+                    </div>
+                  )}
+
+                  {/* ── 水印 Tab ── */}
+                  {rightTab === 'watermark' && (
+                    <div className="space-y-4">
+                      {genInfo?.watermarkConfigId ? (
+                        <>
+                          {genInfo.watermarkName && (
+                            <div>
+                              <div className="text-xs font-medium mb-2" style={{ color: 'var(--text-muted)' }}>水印配置</div>
+                              <InfoBadge icon={<Droplets size={11} />} label={genInfo.watermarkName} accent />
+                            </div>
+                          )}
+                          {genInfo.watermarkText && (
+                            <div>
+                              <div className="text-xs font-medium mb-2" style={{ color: 'var(--text-muted)' }}>水印文字</div>
+                              <div
+                                className="text-sm rounded-xl p-3.5"
+                                style={{
+                                  color: 'var(--text-secondary, rgba(255,255,255,0.7))',
+                                  background: 'rgba(255,255,255,0.03)',
+                                  border: '1px solid rgba(255,255,255,0.04)',
+                                }}
+                              >
+                                {genInfo.watermarkText}
+                              </div>
+                            </div>
+                          )}
+                          {genInfo.watermarkFontKey && (
+                            <div>
+                              <div className="text-xs font-medium mb-2" style={{ color: 'var(--text-muted)' }}>字体</div>
+                              <InfoBadge icon={<FileText size={11} />} label={genInfo.watermarkFontKey} />
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <div className="flex flex-col items-center justify-center py-8 gap-2" style={{ color: 'var(--text-muted, rgba(255,255,255,0.3))' }}>
+                          <Droplets size={32} style={{ opacity: 0.3 }} />
+                          <span className="text-xs">未使用水印</span>
                         </div>
-                      </div>
-                    )}
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* ── 右下角：输出物（同项目作品扇形列表） ── */}
+                {assets.length > 1 && (
+                  <div className="shrink-0 px-5 pb-4 pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                    <div className="text-xs font-medium mb-2" style={{ color: 'var(--text-muted)' }}>
+                      同项目作品 ({assets.length})
+                    </div>
+                    <div className="flex gap-1.5 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
+                      {assets.map((asset, i) => (
+                        <button
+                          key={asset.id}
+                          type="button"
+                          onClick={() => setSelectedAssetIndex(i)}
+                          className="shrink-0 rounded-lg overflow-hidden transition-all duration-200"
+                          style={{
+                            width: 48,
+                            height: 48,
+                            border: i === selectedAssetIndex
+                              ? '2px solid var(--accent-primary, #818CF8)'
+                              : '2px solid transparent',
+                            opacity: i === selectedAssetIndex ? 1 : 0.6,
+                            transform: i === selectedAssetIndex ? 'translateY(-2px)' : 'none',
+                          }}
+                        >
+                          <img src={asset.url} alt="" className="w-full h-full object-cover" loading="lazy" />
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>

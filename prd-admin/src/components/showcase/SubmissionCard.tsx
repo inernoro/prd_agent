@@ -41,7 +41,7 @@ export function SubmissionCard({ item, onLikeToggle, onClick }: SubmissionCardPr
   return (
     <div
       className="group cursor-pointer"
-      style={{ breakInside: 'avoid' }}
+      style={{  }}
       onClick={onClick}
       role="button"
       tabIndex={0}

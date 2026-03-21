@@ -135,40 +135,26 @@ export function ShowcaseGallery() {
 
       {/* Loading skeleton */}
       {loading && (
-        <div
-          style={{
-            columns: '4 260px',
-            columnGap: 16,
-          }}
-        >
+        <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>
           {Array.from({ length: 12 }).map((_, i) => (
             <div
               key={i}
-              className="animate-pulse rounded-2xl mb-4"
+              className="animate-pulse rounded-2xl"
               style={{
-                // 随机高度模拟瀑布流视觉
                 height: [220, 280, 340, 200, 300, 260][i % 6],
                 background: 'rgba(255,255,255,0.03)',
-                breakInside: 'avoid',
               }}
             />
           ))}
         </div>
       )}
 
-      {/* Masonry waterfall grid */}
+      {/* Grid — 按行排列，保持 API 返回顺序（LikeCount DESC → CreatedAt DESC） */}
       {!loading && items.length > 0 && (
         <>
-          <div
-            style={{
-              columns: '4 260px',
-              columnGap: 16,
-            }}
-          >
+          <div className="grid gap-5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>
             {items.map((item) => (
-              <div key={item.id} style={{ marginBottom: 20, breakInside: 'avoid' }}>
-                <SubmissionCard item={item} onLikeToggle={handleLikeToggle} onClick={() => setSelectedId(item.id)} />
-              </div>
+              <SubmissionCard key={item.id} item={item} onLikeToggle={handleLikeToggle} onClick={() => setSelectedId(item.id)} />
             ))}
           </div>
 
