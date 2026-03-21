@@ -24,6 +24,122 @@ public class SubmissionsController : ControllerBase
         _db = db;
     }
 
+    /// <summary>
+    /// 为视觉创作投稿构建生成快照（完整输入配方）
+    /// </summary>
+    private async Task<GenerationSnapshot?> BuildVisualSnapshotAsync(string? workspaceId, string? imageAssetId, string ownerUserId)
+    {
+        if (string.IsNullOrWhiteSpace(workspaceId)) return null;
+
+        // 1. 查找最近完成的 ImageGenRun
+        var run = await _db.ImageGenRuns
+            .Find(x => x.WorkspaceId == workspaceId && x.Status == ImageGenRunStatus.Completed)
+            .SortByDescending(x => x.CreatedAt)
+            .FirstOrDefaultAsync();
+        if (run == null) return null;
+
+        // 2. 查找 Workspace（系统提示词 + 风格提示词）
+        var workspace = await _db.ImageMasterWorkspaces
+            .Find(x => x.Id == workspaceId)
+            .FirstOrDefaultAsync();
+
+        // 3. 解析模型显示名
+        string? modelName = run.ModelId;
+        if (!string.IsNullOrWhiteSpace(run.ConfigModelId))
+        {
+            var model = await _db.LLMModels
+                .Find(x => x.Id == run.ConfigModelId)
+                .FirstOrDefaultAsync();
+            modelName = model?.Name ?? model?.ModelName ?? run.ModelId;
+        }
+
+        // 4. 解析系统提示词
+        string? spId = null, spTitle = null, spContent = null;
+        if (workspace?.SelectedPromptId != null)
+        {
+            var sp = await _db.LiteraryPrompts
+                .Find(x => x.Id == workspace.SelectedPromptId)
+                .FirstOrDefaultAsync();
+            if (sp != null)
+            {
+                spId = sp.Id;
+                spTitle = sp.Title;
+                spContent = sp.Content;
+            }
+        }
+
+        // 5. 解析参考图
+        var hasRefImage = !string.IsNullOrWhiteSpace(run.InitImageAssetSha256) || (run.ImageRefs?.Count > 0);
+        var refCount = (run.ImageRefs?.Count ?? 0) + (!string.IsNullOrWhiteSpace(run.InitImageAssetSha256) ? 1 : 0);
+
+        // 单图初始化：通过 SHA256 查找 URL
+        string? initImageUrl = null;
+        if (!string.IsNullOrWhiteSpace(run.InitImageAssetSha256))
+        {
+            var initAsset = await _db.ImageAssets
+                .Find(x => x.Sha256 == run.InitImageAssetSha256)
+                .SortByDescending(x => x.CreatedAt)
+                .FirstOrDefaultAsync();
+            initImageUrl = initAsset?.OriginalUrl ?? initAsset?.Url;
+        }
+
+        // 多图引用
+        List<ImageRefSnapshot>? imageRefSnapshots = null;
+        if (run.ImageRefs?.Count > 0)
+        {
+            imageRefSnapshots = run.ImageRefs.Select(r => new ImageRefSnapshot
+            {
+                RefId = r.RefId,
+                Url = r.Url,
+                Label = r.Label,
+                Role = r.Role,
+            }).ToList();
+        }
+
+        // 6. 解析水印（通过 appKey + userId 查找当时的配置）
+        string? wmId = null, wmName = null, wmText = null, wmFontKey = null;
+        var appKey = run.AppKey;
+        if (!string.IsNullOrWhiteSpace(appKey))
+        {
+            var wmConfig = await _db.WatermarkConfigs
+                .Find(x => x.UserId == ownerUserId && x.AppKeys.Contains(appKey))
+                .FirstOrDefaultAsync();
+            if (wmConfig != null)
+            {
+                wmId = wmConfig.Id;
+                wmName = wmConfig.Name;
+                wmText = wmConfig.Text;
+                wmFontKey = wmConfig.FontKey;
+            }
+        }
+
+        // 7. 解析参考图配置（如有 — 暂无直接关联，留空待未来扩展）
+
+        return new GenerationSnapshot
+        {
+            ConfigModelId = run.ConfigModelId,
+            ModelName = modelName,
+            Size = run.Size,
+            PromptText = run.Items?.FirstOrDefault()?.Prompt,
+            StylePrompt = workspace?.StylePrompt,
+            SystemPromptId = spId,
+            SystemPromptTitle = spTitle,
+            SystemPromptContent = spContent,
+            HasReferenceImage = hasRefImage,
+            ReferenceImageCount = refCount,
+            InitImageUrl = initImageUrl,
+            ImageRefs = imageRefSnapshots,
+            HasInpainting = !string.IsNullOrWhiteSpace(run.MaskBase64),
+            WatermarkConfigId = wmId,
+            WatermarkName = wmName,
+            WatermarkText = wmText,
+            WatermarkFontKey = wmFontKey,
+            ImageGenRunId = run.Id,
+            AppKey = appKey,
+            SnapshotAt = DateTime.UtcNow,
+        };
+    }
+
     private string GetUserId()
         => User.FindFirst("sub")?.Value
            ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
@@ -139,7 +255,7 @@ public class SubmissionsController : ControllerBase
         // 获取关联资产
         var relatedAssets = new List<object>();
         string? articleContent = null;
-        // 生成参数信息
+        // 生成参数信息（优先用快照，兜底动态查询）
         object? generationInfo = null;
 
         if (submission.ContentType == "visual" && !string.IsNullOrWhiteSpace(submission.WorkspaceId))
@@ -160,54 +276,86 @@ public class SubmissionsController : ControllerBase
                 a.CreatedAt,
             }).ToList();
 
-            // 查询 ImageGenRun 获取模型、图生图、涂抹等信息
-            var assetId = submission.ImageAssetId;
-            if (!string.IsNullOrWhiteSpace(assetId))
+            // 优先使用持久化快照
+            if (submission.GenerationSnapshot != null)
             {
-                // 通过 ImageAsset 找到对应的 run（同 workspace，包含该 prompt）
-                var run = await _db.ImageGenRuns
-                    .Find(x => x.WorkspaceId == submission.WorkspaceId && x.Status == ImageGenRunStatus.Completed)
-                    .SortByDescending(x => x.CreatedAt)
-                    .FirstOrDefaultAsync();
-                if (run != null)
+                var snap = submission.GenerationSnapshot;
+                generationInfo = new
                 {
-                    // 查找模型显示名称
-                    string? modelDisplayName = null;
-                    if (!string.IsNullOrWhiteSpace(run.ConfigModelId))
-                    {
-                        var model = await _db.LLMModels
-                            .Find(x => x.Id == run.ConfigModelId)
-                            .FirstOrDefaultAsync();
-                        modelDisplayName = model?.Name ?? model?.ModelName ?? run.ModelId;
-                    }
-                    else
-                    {
-                        modelDisplayName = run.ModelId;
-                    }
-
-                    // 获取系统提示词（如果 workspace 绑定了）
-                    string? systemPromptName = null;
-                    var workspace = await _db.ImageMasterWorkspaces
-                        .Find(x => x.Id == submission.WorkspaceId)
+                    modelName = snap.ModelName,
+                    size = snap.Size,
+                    promptText = snap.PromptText,
+                    stylePrompt = snap.StylePrompt,
+                    // 提示词 Tab
+                    systemPromptId = snap.SystemPromptId,
+                    systemPromptName = snap.SystemPromptTitle,
+                    systemPromptContent = snap.SystemPromptContent,
+                    // 参考图 Tab
+                    hasReferenceImage = snap.HasReferenceImage,
+                    referenceImageCount = snap.ReferenceImageCount,
+                    initImageUrl = snap.InitImageUrl,
+                    imageRefs = snap.ImageRefs,
+                    hasInpainting = snap.HasInpainting,
+                    referenceImageConfigId = snap.ReferenceImageConfigId,
+                    referenceImageConfigName = snap.ReferenceImageConfigName,
+                    // 水印 Tab
+                    watermarkConfigId = snap.WatermarkConfigId,
+                    watermarkName = snap.WatermarkName,
+                    watermarkText = snap.WatermarkText,
+                    watermarkFontKey = snap.WatermarkFontKey,
+                    // 溯源
+                    appKey = snap.AppKey,
+                    configModelId = snap.ConfigModelId,
+                };
+            }
+            else
+            {
+                // 兜底：动态查询（旧数据未回填时）
+                var assetId = submission.ImageAssetId;
+                if (!string.IsNullOrWhiteSpace(assetId))
+                {
+                    var run = await _db.ImageGenRuns
+                        .Find(x => x.WorkspaceId == submission.WorkspaceId && x.Status == ImageGenRunStatus.Completed)
+                        .SortByDescending(x => x.CreatedAt)
                         .FirstOrDefaultAsync();
-                    if (workspace?.SelectedPromptId != null)
+                    if (run != null)
                     {
-                        var sp = await _db.LiteraryPrompts
-                            .Find(x => x.Id == workspace.SelectedPromptId)
-                            .FirstOrDefaultAsync();
-                        systemPromptName = sp?.Title;
-                    }
+                        string? modelDisplayName = null;
+                        if (!string.IsNullOrWhiteSpace(run.ConfigModelId))
+                        {
+                            var model = await _db.LLMModels
+                                .Find(x => x.Id == run.ConfigModelId)
+                                .FirstOrDefaultAsync();
+                            modelDisplayName = model?.Name ?? model?.ModelName ?? run.ModelId;
+                        }
+                        else
+                        {
+                            modelDisplayName = run.ModelId;
+                        }
 
-                    generationInfo = new
-                    {
-                        modelName = modelDisplayName,
-                        size = run.Size,
-                        hasReferenceImage = !string.IsNullOrWhiteSpace(run.InitImageAssetSha256) || (run.ImageRefs?.Count > 0),
-                        hasInpainting = !string.IsNullOrWhiteSpace(run.MaskBase64),
-                        referenceImageCount = (run.ImageRefs?.Count ?? 0) + (!string.IsNullOrWhiteSpace(run.InitImageAssetSha256) ? 1 : 0),
-                        systemPromptName,
-                        stylePrompt = workspace?.StylePrompt,
-                    };
+                        string? systemPromptName = null;
+                        var workspace = await _db.ImageMasterWorkspaces
+                            .Find(x => x.Id == submission.WorkspaceId)
+                            .FirstOrDefaultAsync();
+                        if (workspace?.SelectedPromptId != null)
+                        {
+                            var sp = await _db.LiteraryPrompts
+                                .Find(x => x.Id == workspace.SelectedPromptId)
+                                .FirstOrDefaultAsync();
+                            systemPromptName = sp?.Title;
+                        }
+
+                        generationInfo = new
+                        {
+                            modelName = modelDisplayName,
+                            size = run.Size,
+                            hasReferenceImage = !string.IsNullOrWhiteSpace(run.InitImageAssetSha256) || (run.ImageRefs?.Count > 0),
+                            hasInpainting = !string.IsNullOrWhiteSpace(run.MaskBase64),
+                            referenceImageCount = (run.ImageRefs?.Count ?? 0) + (!string.IsNullOrWhiteSpace(run.InitImageAssetSha256) ? 1 : 0),
+                            systemPromptName,
+                            stylePrompt = workspace?.StylePrompt,
+                        };
+                    }
                 }
             }
         }
@@ -301,6 +449,9 @@ public class SubmissionsController : ControllerBase
             var currentUser = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
             var displayName = ResolveDisplayName(currentUser, username, userId);
 
+            // 构建生成快照（完整输入配方）
+            var snapshot = await BuildVisualSnapshotAsync(asset.WorkspaceId, asset.Id, userId);
+
             var submission = new Submission
             {
                 Title = request.Title ?? asset.Prompt?.Substring(0, Math.Min(asset.Prompt.Length, 50)) ?? "未命名作品",
@@ -315,6 +466,7 @@ public class SubmissionsController : ControllerBase
                 OwnerUserName = displayName,
                 OwnerAvatarFileName = currentUser?.AvatarFileName,
                 IsPublic = request.IsPublic ?? true,
+                GenerationSnapshot = snapshot,
             };
 
             await _db.Submissions.InsertOneAsync(submission);
@@ -516,9 +668,21 @@ public class SubmissionsController : ControllerBase
             .ToHashSet();
 
         var newSubmissions = new List<Submission>();
+        // 按 WorkspaceId 分组构建快照，避免重复查询
+        var snapshotCache = new Dictionary<string, GenerationSnapshot?>();
         foreach (var asset in assets)
         {
             if (existingAssetIds.Contains(asset.Id)) continue;
+
+            GenerationSnapshot? snapshot = null;
+            if (!string.IsNullOrWhiteSpace(asset.WorkspaceId))
+            {
+                if (!snapshotCache.TryGetValue(asset.WorkspaceId, out snapshot))
+                {
+                    snapshot = await BuildVisualSnapshotAsync(asset.WorkspaceId, asset.Id, userId);
+                    snapshotCache[asset.WorkspaceId] = snapshot;
+                }
+            }
 
             newSubmissions.Add(new Submission
             {
@@ -534,6 +698,7 @@ public class SubmissionsController : ControllerBase
                 OwnerUserName = displayName,
                 OwnerAvatarFileName = currentUser?.AvatarFileName,
                 IsPublic = true,
+                GenerationSnapshot = snapshot,
             });
         }
 
@@ -600,10 +765,21 @@ public class SubmissionsController : ControllerBase
             .ToHashSet();
 
         var newSubmissions = new List<Submission>();
+        var migrateSnapshotCache = new Dictionary<string, GenerationSnapshot?>();
         foreach (var asset in assets)
         {
             if (existingAssetIds.Contains(asset.Id)) continue;
             if (string.IsNullOrWhiteSpace(asset.Url)) continue;
+
+            GenerationSnapshot? snapshot = null;
+            if (!string.IsNullOrWhiteSpace(asset.WorkspaceId))
+            {
+                if (!migrateSnapshotCache.TryGetValue(asset.WorkspaceId, out snapshot))
+                {
+                    snapshot = await BuildVisualSnapshotAsync(asset.WorkspaceId, asset.Id, userId);
+                    migrateSnapshotCache[asset.WorkspaceId] = snapshot;
+                }
+            }
 
             newSubmissions.Add(new Submission
             {
@@ -619,7 +795,8 @@ public class SubmissionsController : ControllerBase
                 OwnerUserName = displayName,
                 OwnerAvatarFileName = user.AvatarFileName,
                 IsPublic = true,
-                CreatedAt = asset.CreatedAt, // 保留原始创建时间
+                CreatedAt = asset.CreatedAt,
+                GenerationSnapshot = snapshot,
             });
         }
 
@@ -730,6 +907,67 @@ public class SubmissionsController : ControllerBase
             totalWorkspaces = workspaces.Count,
             alreadySubmitted = existingWsIds.Count,
             newlySubmitted = newSubmissions.Count,
+        }));
+    }
+    /// <summary>
+    /// 回填：为已有投稿补充生成快照（一次性操作）
+    /// 只处理 visual 类型且尚无 GenerationSnapshot 的投稿
+    /// </summary>
+    [HttpPost("backfill-snapshots")]
+    [AllowAnonymous]
+    public async Task<IActionResult> BackfillSnapshots(
+        [FromQuery] string? username = null,
+        [FromQuery] int batchSize = 100)
+    {
+        batchSize = Math.Clamp(batchSize, 1, 500);
+
+        // 构建过滤器：visual 类型 + 无快照
+        var filterBuilder = Builders<Submission>.Filter;
+        var filter = filterBuilder.Eq(x => x.ContentType, "visual")
+            & filterBuilder.Eq(x => x.GenerationSnapshot, null);
+
+        if (!string.IsNullOrWhiteSpace(username))
+        {
+            var user = await _db.Users.Find(u => u.Username == username).FirstOrDefaultAsync();
+            if (user == null)
+                return NotFound(ApiResponse<object>.Fail("USER_NOT_FOUND", $"用户 {username} 不存在"));
+            filter &= filterBuilder.Eq(x => x.OwnerUserId, user.UserId);
+        }
+
+        var submissions = await _db.Submissions
+            .Find(filter)
+            .Limit(batchSize)
+            .ToListAsync();
+
+        var updated = 0;
+        var snapshotCache = new Dictionary<string, GenerationSnapshot?>();
+
+        foreach (var sub in submissions)
+        {
+            if (string.IsNullOrWhiteSpace(sub.WorkspaceId)) continue;
+
+            if (!snapshotCache.TryGetValue(sub.WorkspaceId, out var snapshot))
+            {
+                snapshot = await BuildVisualSnapshotAsync(sub.WorkspaceId, sub.ImageAssetId, sub.OwnerUserId);
+                snapshotCache[sub.WorkspaceId] = snapshot;
+            }
+
+            if (snapshot == null) continue;
+
+            await _db.Submissions.UpdateOneAsync(
+                x => x.Id == sub.Id,
+                Builders<Submission>.Update.Set(x => x.GenerationSnapshot, snapshot));
+            updated++;
+        }
+
+        // 统计剩余未回填的数量
+        var remaining = await _db.Submissions.CountDocumentsAsync(filter) - updated;
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            processed = submissions.Count,
+            updated,
+            remaining = Math.Max(0, remaining),
         }));
     }
 }

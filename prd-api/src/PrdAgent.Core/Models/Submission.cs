@@ -37,6 +37,9 @@ public class Submission
     /// <summary>生成提示词（可选展示）</summary>
     public string? Prompt { get; set; }
 
+    /// <summary>生成快照（完整输入配方：模型、提示词、参考图、水印等）</summary>
+    public GenerationSnapshot? GenerationSnapshot { get; set; }
+
     /// <summary>作者用户 ID</summary>
     public string OwnerUserId { get; set; } = string.Empty;
 
@@ -58,6 +61,84 @@ public class Submission
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// 作品点赞记录（一个用户对同一作品最多一条）
+/// </summary>
+[AppOwnership(AppNames.System, AppNames.SystemDisplay)]
+/// <summary>
+/// 生成快照 — 投稿创建时一次性采集的完整"配方"，用于详情展示和"做同款"复刻。
+/// 设计原则：存储所有可能变或被删的输入源快照，不存二进制大数据。
+/// </summary>
+public class GenerationSnapshot
+{
+    // ── 模型 & 尺寸 ──
+    /// <summary>LLM 配置模型 ID（内部，用于做同款时定位模型）</summary>
+    public string? ConfigModelId { get; set; }
+    /// <summary>模型显示名快照（如 "Nano Banana Pro"）</summary>
+    public string? ModelName { get; set; }
+    /// <summary>生成尺寸（如 "1024x1024"）</summary>
+    public string? Size { get; set; }
+
+    // ── 正文 Tab：提示词 ──
+    /// <summary>用户输入的 prompt 文本</summary>
+    public string? PromptText { get; set; }
+    /// <summary>风格统一提示词（Workspace.StylePrompt）</summary>
+    public string? StylePrompt { get; set; }
+
+    // ── 提示词 Tab：系统提示词配置 ──
+    /// <summary>系统提示词 ID（LiteraryPrompt.Id）</summary>
+    public string? SystemPromptId { get; set; }
+    /// <summary>系统提示词标题快照</summary>
+    public string? SystemPromptTitle { get; set; }
+    /// <summary>系统提示词内容快照（完整文本）</summary>
+    public string? SystemPromptContent { get; set; }
+
+    // ── 参考图 Tab ──
+    /// <summary>是否使用了图生图（单图初始化）</summary>
+    public bool HasReferenceImage { get; set; }
+    /// <summary>参考图数量（含单图 + 多图）</summary>
+    public int ReferenceImageCount { get; set; }
+    /// <summary>单图初始化的参考图 URL</summary>
+    public string? InitImageUrl { get; set; }
+    /// <summary>多图参考列表（RefId, Url, Label, Role）</summary>
+    public List<ImageRefSnapshot>? ImageRefs { get; set; }
+    /// <summary>是否使用了涂抹（Inpainting）</summary>
+    public bool HasInpainting { get; set; }
+    /// <summary>参考图配置 ID（ReferenceImageConfig.Id）</summary>
+    public string? ReferenceImageConfigId { get; set; }
+    /// <summary>参考图配置名称快照</summary>
+    public string? ReferenceImageConfigName { get; set; }
+
+    // ── 水印 Tab ──
+    /// <summary>水印配置 ID</summary>
+    public string? WatermarkConfigId { get; set; }
+    /// <summary>水印配置名称快照</summary>
+    public string? WatermarkName { get; set; }
+    /// <summary>水印文本快照</summary>
+    public string? WatermarkText { get; set; }
+    /// <summary>水印字体快照</summary>
+    public string? WatermarkFontKey { get; set; }
+
+    // ── 溯源 ──
+    /// <summary>源 ImageGenRun.Id（内部追踪，不对外展示）</summary>
+    public string? ImageGenRunId { get; set; }
+    /// <summary>应用标识（如 visual-agent）</summary>
+    public string? AppKey { get; set; }
+    /// <summary>快照采集时间</summary>
+    public DateTime? SnapshotAt { get; set; }
+}
+
+/// <summary>
+/// 多图参考快照（从 ImageRefInput 提取的展示字段）
+/// </summary>
+public class ImageRefSnapshot
+{
+    public int RefId { get; set; }
+    public string? Url { get; set; }
+    public string? Label { get; set; }
+    public string? Role { get; set; }
 }
 
 /// <summary>
