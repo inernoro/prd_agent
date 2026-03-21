@@ -15,6 +15,8 @@ import {
   listToolboxMessages,
   appendToolboxMessage,
   toggleToolboxItemPublish,
+  toggleSessionArchive,
+  toggleSessionPin,
 } from '@/services/real/aiToolbox';
 import type { DirectChatMessage, ToolboxSessionInfo } from '@/services/real/aiToolbox';
 import {
@@ -26,7 +28,7 @@ import {
   Swords, Paperclip, ImagePlus, X, File, Loader2,
   Plus, MessageCircle, Share2, Globe2, AlertCircle,
   Square, Copy, Check, RotateCcw, RefreshCw, Download, Eraser,
-  ThumbsUp, ThumbsDown, Pencil,
+  ThumbsUp, ThumbsDown, Pencil, Archive, Pin, ChevronDown,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -96,6 +98,14 @@ export function ToolDetail() {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [sessionsLoading, setSessionsLoading] = useState(false);
 
+  // Session search/sort/filter
+  const [sessionSearch, setSessionSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [sessionSortBy, setSessionSortBy] = useState('lastActive');
+  const [showArchived, setShowArchived] = useState(false);
+  const [showSortDropdown, setShowSortDropdown] = useState(false);
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Publish state
   const [isPublic, setIsPublic] = useState(false);
 
@@ -127,6 +137,17 @@ export function ToolDetail() {
     return () => { abortRef.current?.(); };
   }, []);
 
+  // Debounce session search
+  useEffect(() => {
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    searchTimerRef.current = setTimeout(() => {
+      setDebouncedSearch(sessionSearch);
+    }, 300);
+    return () => {
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    };
+  }, [sessionSearch]);
+
   // Load sessions when item changes
   useEffect(() => {
     if (!selectedItem) return;
@@ -134,21 +155,30 @@ export function ToolDetail() {
     loadSessions();
   }, [selectedItem?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Reload sessions when search/sort/archive changes
+  useEffect(() => {
+    loadSessions();
+  }, [debouncedSearch, sessionSortBy, showArchived]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const loadSessions = useCallback(async () => {
     if (!selectedItem) return;
     setSessionsLoading(true);
     try {
-      const res = await listToolboxSessions(selectedItem.id);
+      const res = await listToolboxSessions(selectedItem.id, {
+        search: debouncedSearch || undefined,
+        sortBy: sessionSortBy,
+        includeArchived: showArchived,
+      });
       if (res.success && res.data) {
         setSessions(res.data.sessions);
-        // Auto-select the most recent session, or none
-        if (res.data.sessions.length > 0) {
+        // Auto-select the most recent session if none selected, or none
+        if (!currentSessionId && res.data.sessions.length > 0) {
           await switchToSession(res.data.sessions[0].id);
         }
       }
     } catch { /* silent */ }
     finally { setSessionsLoading(false); }
-  }, [selectedItem?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedItem?.id, debouncedSearch, sessionSortBy, showArchived]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const switchToSession = async (sessionId: string) => {
     setCurrentSessionId(sessionId);
@@ -242,6 +272,38 @@ export function ToolDetail() {
       }
     } catch { /* silent */ }
     setRenamingSessionId(null);
+  };
+
+  const handleToggleArchive = async (sessionId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      const res = await toggleSessionArchive(sessionId);
+      if (res.success) {
+        setSessions(prev => prev.map(s =>
+          s.id === sessionId ? { ...s, isArchived: res.data!.isArchived } : s
+        ));
+        // If not showing archived and session was just archived, remove from list
+        if (!showArchived && res.data?.isArchived) {
+          setSessions(prev => prev.filter(s => s.id !== sessionId));
+          if (currentSessionId === sessionId) {
+            setCurrentSessionId(null);
+            setMessages([]);
+          }
+        }
+      }
+    } catch { /* silent */ }
+  };
+
+  const handleTogglePin = async (sessionId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      const res = await toggleSessionPin(sessionId);
+      if (res.success) {
+        setSessions(prev => prev.map(s =>
+          s.id === sessionId ? { ...s, isPinned: res.data!.isPinned } : s
+        ));
+      }
+    } catch { /* silent */ }
   };
 
   const handleTogglePublish = async () => {
@@ -592,24 +654,91 @@ export function ToolDetail() {
           </GlassCard>
 
           {/* Sessions List */}
-          <GlassCard animated className="p-3 flex-1 min-h-0 flex flex-col" variant="subtle">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>会话列表</span>
-              <button onClick={handleNewSession} className="p-1 rounded-lg hover:bg-white/10 transition-colors" title="新建会话">
-                <Plus size={14} style={{ color: 'var(--text-muted)' }} />
-              </button>
+          <GlassCard animated className="flex-1 min-h-0 flex flex-col" padding="none" overflow="hidden" variant="subtle">
+            {/* Session header with sort & new */}
+            <div className="p-2 border-b" style={{ borderColor: 'rgba(255, 255, 255, 0.06)' }}>
+              <div className="flex items-center justify-between mb-1.5 px-1">
+                <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>会话列表</span>
+                <div className="flex items-center gap-1">
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowSortDropdown(!showSortDropdown)}
+                      className="flex items-center gap-0.5 px-1 py-0.5 rounded hover:bg-white/10 transition-colors text-[10px]"
+                      style={{ color: 'var(--text-muted)' }}
+                    >
+                      {{ lastActive: '最近活跃', created: '创建时间', messageCount: '消息数', title: '标题' }[sessionSortBy]}
+                      <ChevronDown size={10} />
+                    </button>
+                    {showSortDropdown && (
+                      <div
+                        className="absolute right-0 top-full mt-1 py-1 rounded-lg shadow-lg z-10 min-w-[90px]"
+                        style={{ background: 'var(--bg-elevated)', border: '1px solid rgba(255, 255, 255, 0.1)' }}
+                      >
+                        {([['lastActive', '最近活跃'], ['created', '创建时间'], ['messageCount', '消息数'], ['title', '标题']] as const).map(([val, label]) => (
+                          <button
+                            key={val}
+                            onClick={() => { setSessionSortBy(val); setShowSortDropdown(false); }}
+                            className="w-full text-left px-3 py-1 text-[11px] hover:bg-white/10 transition-colors"
+                            style={{ color: val === sessionSortBy ? 'var(--text-primary)' : 'var(--text-secondary)' }}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <button onClick={handleNewSession} className="p-1 rounded-lg hover:bg-white/10 transition-colors" title="新建会话">
+                    <Plus size={14} style={{ color: 'var(--text-muted)' }} />
+                  </button>
+                </div>
+              </div>
+              {/* Search */}
+              <div
+                className="flex items-center gap-1.5 px-2 py-1 rounded-lg"
+                style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.08)' }}
+              >
+                <Search size={12} style={{ color: 'var(--text-muted)' }} />
+                <input
+                  type="text"
+                  value={sessionSearch}
+                  onChange={e => setSessionSearch(e.target.value)}
+                  placeholder="搜索会话..."
+                  className="flex-1 bg-transparent border-none outline-none text-[11px]"
+                  style={{ color: 'var(--text-primary)' }}
+                />
+                {sessionSearch && (
+                  <button onClick={() => setSessionSearch('')} className="hover:bg-white/10 rounded p-0.5 transition-colors">
+                    <X size={10} style={{ color: 'var(--text-muted)' }} />
+                  </button>
+                )}
+              </div>
+              {/* Show archived toggle */}
+              <label className="flex items-center gap-1.5 mt-1.5 px-1 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showArchived}
+                  onChange={e => setShowArchived(e.target.checked)}
+                  className="w-3 h-3 rounded accent-current"
+                />
+                <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>显示已归档</span>
+              </label>
             </div>
-            <div className="flex-1 min-h-0 overflow-y-auto space-y-1">
+
+            {/* Session items */}
+            <div className="flex-1 min-h-0 overflow-y-auto py-1">
               {sessionsLoading && <div className="text-[11px] text-center py-2" style={{ color: 'var(--text-muted)' }}>加载中...</div>}
               {!sessionsLoading && sessions.length === 0 && (
-                <div className="text-[11px] text-center py-4" style={{ color: 'var(--text-muted)' }}>暂无会话，发送消息自动创建</div>
+                <div className="text-[11px] text-center py-4 px-3" style={{ color: 'var(--text-muted)' }}>
+                  {debouncedSearch ? '未找到匹配的会话' : '暂无会话，发送消息自动创建'}
+                </div>
               )}
               {sessions.map(s => (
                 <div
                   key={s.id}
-                  className="group flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors"
+                  className="group relative flex items-center gap-2 px-3 py-1.5 mx-1 rounded-lg cursor-pointer transition-colors"
                   style={{
                     background: s.id === currentSessionId ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
+                    opacity: s.isArchived ? 0.5 : 1,
                   }}
                   onClick={() => switchToSession(s.id)}
                   onDoubleClick={(e) => {
@@ -618,7 +747,11 @@ export function ToolDetail() {
                     setRenameValue(s.title);
                   }}
                 >
-                  <MessageCircle size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                  {s.isPinned ? (
+                    <Pin size={12} style={{ color: 'var(--accent-primary, #818cf8)', flexShrink: 0 }} />
+                  ) : (
+                    <MessageCircle size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                  )}
                   <div className="flex-1 min-w-0">
                     {renamingSessionId === s.id ? (
                       <input
@@ -639,12 +772,29 @@ export function ToolDetail() {
                     )}
                     <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{s.messageCount} 条消息</div>
                   </div>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleDeleteSession(s.id); }}
-                    className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-white/10 transition-all"
-                  >
-                    <X size={10} style={{ color: 'var(--text-muted)' }} />
-                  </button>
+                  {/* Hover actions */}
+                  <div className="absolute right-1 top-1 hidden group-hover:flex items-center gap-0.5">
+                    <button
+                      onClick={(e) => handleTogglePin(s.id, e)}
+                      className="p-0.5 rounded hover:bg-white/10 transition-colors"
+                      title={s.isPinned ? '取消置顶' : '置顶'}
+                    >
+                      <Pin size={10} style={{ color: s.isPinned ? 'var(--accent-primary, #818cf8)' : 'var(--text-muted)' }} />
+                    </button>
+                    <button
+                      onClick={(e) => handleToggleArchive(s.id, e)}
+                      className="p-0.5 rounded hover:bg-white/10 transition-colors"
+                      title={s.isArchived ? '取消归档' : '归档'}
+                    >
+                      <Archive size={10} style={{ color: 'var(--text-muted)' }} />
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleDeleteSession(s.id); }}
+                      className="p-0.5 rounded hover:bg-white/10 transition-colors"
+                    >
+                      <X size={10} style={{ color: 'var(--text-muted)' }} />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

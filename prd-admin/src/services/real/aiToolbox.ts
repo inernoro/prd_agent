@@ -220,6 +220,8 @@ export interface ToolboxSessionInfo {
   userId: string;
   title: string;
   messageCount: number;
+  isArchived: boolean;
+  isPinned: boolean;
   createdAt: string;
   lastActiveAt: string;
 }
@@ -237,9 +239,18 @@ export interface ToolboxMessageInfo {
  * 获取智能体的会话列表
  */
 export async function listToolboxSessions(
-  itemId: string
+  itemId: string,
+  params?: { search?: string; sortBy?: string; includeArchived?: boolean }
 ): Promise<ApiResponse<{ sessions: ToolboxSessionInfo[] }>> {
-  return await apiRequest(api.aiToolbox.sessions(itemId), { method: 'GET' });
+  const query = new URLSearchParams();
+  if (params?.search) query.set('search', params.search);
+  if (params?.sortBy) query.set('sortBy', params.sortBy);
+  if (params?.includeArchived) query.set('includeArchived', 'true');
+  const queryStr = query.toString();
+  return await apiRequest(
+    `${api.aiToolbox.sessions(itemId)}${queryStr ? `?${queryStr}` : ''}`,
+    { method: 'GET' }
+  );
 }
 
 /**
@@ -271,6 +282,24 @@ export async function deleteToolboxSession(
   sessionId: string
 ): Promise<ApiResponse<void>> {
   return await apiRequest(api.aiToolbox.session(sessionId), { method: 'DELETE' });
+}
+
+/**
+ * 切换会话归档状态
+ */
+export async function toggleSessionArchive(
+  sessionId: string
+): Promise<ApiResponse<{ isArchived: boolean }>> {
+  return await apiRequest(api.aiToolbox.sessionArchive(sessionId), { method: 'PATCH' });
+}
+
+/**
+ * 切换会话置顶状态
+ */
+export async function toggleSessionPin(
+  sessionId: string
+): Promise<ApiResponse<{ isPinned: boolean }>> {
+  return await apiRequest(api.aiToolbox.sessionPin(sessionId), { method: 'PATCH' });
 }
 
 /**

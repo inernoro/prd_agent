@@ -676,14 +676,39 @@ public class AiToolboxController : ControllerBase
     /// 获取智能体的会话列表
     /// </summary>
     [HttpGet("items/{itemId}/sessions")]
-    public async Task<IActionResult> ListSessions(string itemId, CancellationToken ct)
+    public async Task<IActionResult> ListSessions(
+        string itemId,
+        [FromQuery] string? search,
+        [FromQuery] string? sortBy,
+        [FromQuery] bool includeArchived = false,
+        CancellationToken ct = default)
     {
         var userId = GetUserId();
-        var sessions = await _db.ToolboxSessions
-            .Find(x => x.ItemId == itemId && x.UserId == userId)
-            .SortByDescending(x => x.LastActiveAt)
-            .Limit(50)
-            .ToListAsync(ct);
+        var filterBuilder = Builders<ToolboxSession>.Filter;
+        var filter = filterBuilder.Eq(x => x.UserId, userId) & filterBuilder.Eq(x => x.ItemId, itemId);
+
+        if (!includeArchived)
+        {
+            filter &= filterBuilder.Eq(x => x.IsArchived, false);
+        }
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            filter &= filterBuilder.Regex(x => x.Title, new BsonRegularExpression(search, "i"));
+        }
+
+        var query = _db.ToolboxSessions.Find(filter);
+
+        // 置顶的会话排在前面，然后按指定排序
+        query = (sortBy?.ToLowerInvariant()) switch
+        {
+            "created" => query.SortByDescending(x => x.IsPinned).ThenByDescending(x => x.CreatedAt),
+            "title" => query.SortByDescending(x => x.IsPinned).ThenBy(x => x.Title),
+            "messagecount" => query.SortByDescending(x => x.IsPinned).ThenByDescending(x => x.MessageCount),
+            _ => query.SortByDescending(x => x.IsPinned).ThenByDescending(x => x.LastActiveAt), // lastActive (default)
+        };
+
+        var sessions = await query.Limit(200).ToListAsync(ct);
 
         return Ok(ApiResponse<object>.Ok(new { sessions }));
     }
@@ -752,6 +777,52 @@ public class AiToolboxController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "会话不存在"));
 
         return Ok(ApiResponse<object>.Ok(new { title }));
+    }
+
+    /// <summary>
+    /// 切换会话归档状态
+    /// </summary>
+    [HttpPatch("sessions/{sessionId}/archive")]
+    public async Task<IActionResult> ToggleArchive(string sessionId, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var session = await _db.ToolboxSessions
+            .Find(x => x.Id == sessionId && x.UserId == userId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+
+        if (session == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "会话不存在"));
+
+        var newValue = !session.IsArchived;
+        await _db.ToolboxSessions.UpdateOneAsync(
+            x => x.Id == sessionId,
+            Builders<ToolboxSession>.Update.Set(x => x.IsArchived, newValue),
+            cancellationToken: CancellationToken.None);
+
+        return Ok(ApiResponse<object>.Ok(new { isArchived = newValue }));
+    }
+
+    /// <summary>
+    /// 切换会话置顶状态
+    /// </summary>
+    [HttpPatch("sessions/{sessionId}/pin")]
+    public async Task<IActionResult> TogglePin(string sessionId, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var session = await _db.ToolboxSessions
+            .Find(x => x.Id == sessionId && x.UserId == userId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+
+        if (session == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "会话不存在"));
+
+        var newValue = !session.IsPinned;
+        await _db.ToolboxSessions.UpdateOneAsync(
+            x => x.Id == sessionId,
+            Builders<ToolboxSession>.Update.Set(x => x.IsPinned, newValue),
+            cancellationToken: CancellationToken.None);
+
+        return Ok(ApiResponse<object>.Ok(new { isPinned = newValue }));
     }
 
     /// <summary>

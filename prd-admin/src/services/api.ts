@@ -676,6 +676,8 @@ export const api = {
     // 会话管理
     sessions: (itemId: string) => `/api/ai-toolbox/items/${itemId}/sessions`,
     session: (sessionId: string) => `/api/ai-toolbox/sessions/${sessionId}`,
+    sessionArchive: (sessionId: string) => `/api/ai-toolbox/sessions/${sessionId}/archive`,
+    sessionPin: (sessionId: string) => `/api/ai-toolbox/sessions/${sessionId}/pin`,
     messages: (sessionId: string) => `/api/ai-toolbox/sessions/${sessionId}/messages`,
     // 市场
     marketplace: () => '/api/ai-toolbox/marketplace',

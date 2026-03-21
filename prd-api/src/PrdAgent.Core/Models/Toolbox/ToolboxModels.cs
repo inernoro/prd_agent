@@ -426,6 +426,12 @@ public class ToolboxSession
     /// <summary>消息数量</summary>
     public int MessageCount { get; set; }
 
+    /// <summary>是否已归档</summary>
+    public bool IsArchived { get; set; }
+
+    /// <summary>是否置顶</summary>
+    public bool IsPinned { get; set; }
+
     /// <summary>创建时间</summary>
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
