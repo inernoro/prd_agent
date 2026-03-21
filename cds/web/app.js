@@ -3728,7 +3728,14 @@ function renderActivityItem(event) {
   });
 
   let html = '';
-  // AI badge first if applicable
+  // Branch ID first (last segment after '-') to identify which preview is making requests
+  if (event.branchId) {
+    const lastDash = event.branchId.lastIndexOf('-');
+    const branchTail = lastDash >= 0 ? event.branchId.slice(lastDash + 1) : event.branchId;
+    const branchShort = branchTail.length > 16 ? branchTail.slice(0, 13) + '…' : branchTail;
+    html += `<span class="activity-source" style="background:var(--accent-bg);color:var(--accent);font-size:9px;font-weight:600;padding:1px 4px;border-radius:3px" title="${escapeHtml(event.branchId)}">${escapeHtml(branchShort)}</span>`;
+  }
+  // AI badge if applicable
   if (isAi) {
     const agentShort = (event.agent || 'AI').replace(/\s*\(static key\)/, '');
     html += `<span class="activity-source ai" title="${escapeHtml(event.agent || 'AI')}">${escapeHtml(agentShort)}</span>`;
