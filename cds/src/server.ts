@@ -487,7 +487,7 @@ export function createServer(deps: ServerDeps): express.Express {
         body: reqBody,
         query: reqQuery,
         branchId,
-        remoteAddr: req.ip || req.socket?.remoteAddress,
+        remoteAddr: (req.headers['cf-connecting-ip'] as string) || (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || req.socket?.remoteAddress,
         userAgent: req.headers['user-agent'],
         referer: req.headers['referer'] || req.headers['origin'],
       };
