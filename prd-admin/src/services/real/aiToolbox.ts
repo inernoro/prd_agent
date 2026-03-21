@@ -496,6 +496,7 @@ export async function uploadAttachment(file: File): Promise<ApiResponse<Uploaded
 export interface DirectChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  attachmentIds?: string[];
 }
 
 /**

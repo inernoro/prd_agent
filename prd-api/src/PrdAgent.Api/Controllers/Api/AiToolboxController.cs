@@ -953,21 +953,66 @@ public class AiToolboxController : ControllerBase
             new JsonObject { ["role"] = "system", ["content"] = systemPrompt }
         };
 
-        // 添加历史消息
+        var hasImageAttachments = false;
+
+        // 添加历史消息（含图片附件的多模态处理）
         if (request.History != null)
         {
+            // 收集历史中所有附件 ID 以批量查询
+            var historyAttIds = request.History
+                .Where(h => h.AttachmentIds is { Count: > 0 })
+                .SelectMany(h => h.AttachmentIds!)
+                .Distinct()
+                .ToList();
+
+            var historyAttMap = new Dictionary<string, Attachment>();
+            if (historyAttIds.Count > 0)
+            {
+                var attFilter = Builders<Attachment>.Filter.In(a => a.AttachmentId, historyAttIds);
+                var atts = await _db.Attachments.Find(attFilter).ToListAsync(CancellationToken.None);
+                historyAttMap = atts.ToDictionary(a => a.AttachmentId);
+            }
+
             foreach (var h in request.History.TakeLast(20))
             {
-                messages.Add(new JsonObject
+                // 检查此历史消息是否有图片附件
+                var histImageUrls = new List<string>();
+                if (h.AttachmentIds is { Count: > 0 })
                 {
-                    ["role"] = h.Role,
-                    ["content"] = h.Content
-                });
+                    foreach (var attId in h.AttachmentIds)
+                    {
+                        if (historyAttMap.TryGetValue(attId, out var att)
+                            && att.MimeType.StartsWith("image/")
+                            && !string.IsNullOrWhiteSpace(att.Url))
+                        {
+                            histImageUrls.Add(att.Url);
+                            hasImageAttachments = true;
+                        }
+                    }
+                }
+
+                if (histImageUrls.Count > 0)
+                {
+                    var parts = new JsonArray();
+                    parts.Add(new JsonObject { ["type"] = "text", ["text"] = h.Content });
+                    foreach (var url in histImageUrls)
+                    {
+                        parts.Add(new JsonObject
+                        {
+                            ["type"] = "image_url",
+                            ["image_url"] = new JsonObject { ["url"] = url }
+                        });
+                    }
+                    messages.Add(new JsonObject { ["role"] = h.Role, ["content"] = parts });
+                }
+                else
+                {
+                    messages.Add(new JsonObject { ["role"] = h.Role, ["content"] = h.Content });
+                }
             }
         }
 
         // 如果有附件，加载文件内容并注入上下文
-        var hasImageAttachments = false;
         var imageUrls = new List<string>();
         if (request.AttachmentIds is { Count: > 0 })
         {
@@ -1512,6 +1557,7 @@ public class ChatHistoryMessage
 {
     public string Role { get; set; } = "user";
     public string Content { get; set; } = string.Empty;
+    public List<string>? AttachmentIds { get; set; }
 }
 
 /// <summary>

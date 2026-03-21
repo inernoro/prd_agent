@@ -13,3 +13,6 @@
 | feat | prd-admin | 百宝箱新增清空当前会话按钮（确认后清空消息） |
 | feat | prd-admin | 输入区显示字符计数 + 快捷键提示（Enter 发送/Shift+Enter 换行） |
 | fix | prd-api | 百宝箱图片附件支持 Vision 多模态（image_url content parts + ModelTypes.Vision） |
+| fix | prd-api | 多轮对话历史保留图片上下文（ChatHistoryMessage 新增 AttachmentIds，后端批量查询附件并构建 image_url 多模态消息） |
+| fix | prd-admin | 切换会话时还原 attachmentIds（历史消息重新发送时能带上图片） |
+| fix | prd-admin | 重新生成/重试时保留原消息附件（handleSend 支持 overrideAttachmentIds） |

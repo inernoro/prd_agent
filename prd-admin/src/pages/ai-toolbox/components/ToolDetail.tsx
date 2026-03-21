@@ -61,6 +61,7 @@ interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   attachments?: Array<{ id: string; name: string; type: 'file' | 'image'; url?: string; size?: number }>;
+  attachmentIds?: string[];
   timestamp: Date;
   isStreaming?: boolean;
 }
@@ -143,6 +144,7 @@ export function ToolDetail() {
           id: m.id,
           role: m.role,
           content: m.content,
+          attachmentIds: m.attachmentIds?.length ? m.attachmentIds : undefined,
           timestamp: new Date(m.createdAt),
         })));
       }
@@ -189,9 +191,9 @@ export function ToolDetail() {
   const welcomeMessage = selectedItem.welcomeMessage || getWelcomeText(selectedItem.agentKey);
   const conversationStarters: string[] = selectedItem.conversationStarters || [];
 
-  const handleSend = async (overrideMessage?: string) => {
+  const handleSend = async (overrideMessage?: string, overrideAttachmentIds?: string[]) => {
     const messageText = (overrideMessage || input).trim();
-    if (!messageText && attachments.length === 0) return;
+    if (!messageText && attachments.length === 0 && !overrideAttachmentIds?.length) return;
     if (!selectedItem) return;
 
     // Ensure we have a session
@@ -212,6 +214,7 @@ export function ToolDetail() {
       role: 'user',
       content: messageText,
       attachments: attachments.map(a => ({ id: a.id, name: a.name, type: a.type, url: a.preview, size: a.file.size })),
+      attachmentIds: [], // will be filled after upload
       timestamp: new Date(),
     };
 
@@ -221,20 +224,27 @@ export function ToolDetail() {
     setAttachments([]);
     setIsLoading(true);
 
-    // Upload attachments
-    const attachmentIds: string[] = [];
-    for (const att of currentAttachments) {
-      try {
-        const result = await uploadAttachment(att.file);
-        if (result.success && result.data?.attachmentId) {
-          attachmentIds.push(result.data.attachmentId);
-        } else {
-          const errMsg = result.error?.message || '上传失败';
-          toast.error(`文件 "${att.name}" 上传失败: ${errMsg}`);
+    // Upload new attachments, or reuse existing IDs (for regenerate)
+    const attachmentIds: string[] = overrideAttachmentIds ? [...overrideAttachmentIds] : [];
+    if (!overrideAttachmentIds) {
+      for (const att of currentAttachments) {
+        try {
+          const result = await uploadAttachment(att.file);
+          if (result.success && result.data?.attachmentId) {
+            attachmentIds.push(result.data.attachmentId);
+          } else {
+            const errMsg = result.error?.message || '上传失败';
+            toast.error(`文件 "${att.name}" 上传失败: ${errMsg}`);
+          }
+        } catch (err) {
+          toast.error(`文件 "${att.name}" 上传异常`);
         }
-      } catch (err) {
-        toast.error(`文件 "${att.name}" 上传异常`);
       }
+    }
+
+    // Store attachmentIds on the user message for history tracking
+    if (attachmentIds.length > 0) {
+      setMessages(prev => prev.map(m => m.id === userMessage.id ? { ...m, attachmentIds } : m));
     }
 
     // Persist user message to backend
@@ -244,8 +254,12 @@ export function ToolDetail() {
       }).catch(() => {});
     }
 
-    // Build history
-    const history: DirectChatMessage[] = messages.map(m => ({ role: m.role, content: m.content }));
+    // Build history (include attachmentIds so backend can inject images for multi-turn context)
+    const history: DirectChatMessage[] = messages.map(m => ({
+      role: m.role,
+      content: m.content,
+      ...(m.attachmentIds?.length ? { attachmentIds: m.attachmentIds } : {}),
+    }));
 
     // Create streaming assistant placeholder
     const assistantId = (Date.now() + 1).toString();
@@ -323,9 +337,9 @@ export function ToolDetail() {
     if (idx < 1) return;
     const prevUserMsg = [...messages].slice(0, idx).reverse().find(m => m.role === 'user');
     if (!prevUserMsg) return;
-    // Remove the old assistant message and re-send
+    // Remove the old assistant message and re-send (with original attachmentIds)
     setMessages(prev => prev.filter(m => m.id !== assistantMsgId));
-    handleSend(prevUserMsg.content);
+    handleSend(prevUserMsg.content, prevUserMsg.attachmentIds);
   };
 
   const handleExportChat = () => {
@@ -550,7 +564,7 @@ export function ToolDetail() {
                       const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
                       if (lastUserMsg) {
                         setMessages(prev => prev.filter(m => m.id !== message.id));
-                        handleSend(lastUserMsg.content);
+                        handleSend(lastUserMsg.content, lastUserMsg.attachmentIds);
                       }
                     } : undefined}
                   />
