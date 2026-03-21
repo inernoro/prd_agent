@@ -141,6 +141,7 @@ public class MongoDbContext
     public IMongoCollection<ToolboxItem> ToolboxItems => _database.GetCollection<ToolboxItem>("toolbox_items");
     public IMongoCollection<ToolboxSession> ToolboxSessions => _database.GetCollection<ToolboxSession>("toolbox_sessions");
     public IMongoCollection<ToolboxMessage> ToolboxMessages => _database.GetCollection<ToolboxMessage>("toolbox_messages");
+    public IMongoCollection<ToolboxShareLink> ToolboxShareLinks => _database.GetCollection<ToolboxShareLink>("toolbox_share_links");
 
     // 统一技能集合
     public IMongoCollection<Skill> Skills => _database.GetCollection<Skill>("skills");

@@ -533,12 +533,70 @@ export async function uploadAttachment(file: File): Promise<ApiResponse<Uploaded
   }
 }
 
+// ============ Message Feedback ============
+
+/**
+ * 提交消息反馈（点赞/踩）
+ */
+export async function submitMessageFeedback(
+  messageId: string,
+  feedback: 'up' | 'down' | null
+): Promise<ApiResponse<{ messageId: string; feedback: string | null }>> {
+  return await apiRequest(
+    api.aiToolbox.messageFeedback(messageId),
+    {
+      method: 'POST',
+      body: { feedback },
+    }
+  );
+}
+
+// ============ Share ============
+
+/**
+ * 创建对话分享链接
+ */
+export async function createToolboxShareLink(
+  messages: { role: string; content: string; createdAt?: string }[],
+  title?: string,
+): Promise<ApiResponse<{ shareId: string; url: string }>> {
+  return await apiRequest(
+    api.aiToolbox.share(),
+    {
+      method: 'POST',
+      body: { messages, title },
+    }
+  );
+}
+
+/**
+ * 获取分享对话（公开访问）
+ */
+export async function getToolboxSharedConversation(
+  shareId: string
+): Promise<ApiResponse<{
+  title: string;
+  messages: { role: string; content: string; createdAt: string }[];
+  createdAt: string;
+}>> {
+  return await apiRequest(
+    api.aiToolbox.sharedConversation(shareId),
+    { method: 'GET' }
+  );
+}
+
 // ============ Direct Chat (SSE Streaming) ============
 
 export interface DirectChatMessage {
   role: 'user' | 'assistant';
   content: string;
   attachmentIds?: string[];
+}
+
+export interface TokenInfo {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
 }
 
 /**
@@ -556,7 +614,7 @@ export function streamDirectChat(
     onText: (content: string) => void;
     onStart?: (info: { model?: string; platform?: string }) => void;
     onError?: (error: string) => void;
-    onDone?: () => void;
+    onDone?: (tokenInfo?: TokenInfo) => void;
   }
 ): () => void {
   const token = useAuthStore.getState().token;
@@ -625,7 +683,15 @@ export function streamDirectChat(
                 options.onError?.(data.message || '调用失败');
                 return;
               } else if (currentEvent === 'done') {
-                options.onDone?.();
+                const tokenInfo: TokenInfo | undefined =
+                  data.totalTokens != null
+                    ? {
+                        promptTokens: data.promptTokens,
+                        completionTokens: data.completionTokens,
+                        totalTokens: data.totalTokens,
+                      }
+                    : undefined;
+                options.onDone?.(tokenInfo);
                 return;
               }
             } catch (e) {

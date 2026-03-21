@@ -449,6 +449,9 @@ public class ToolboxMessage
     /// <summary>所属会话 ID</summary>
     public string SessionId { get; set; } = string.Empty;
 
+    /// <summary>所属用户 ID</summary>
+    public string UserId { get; set; } = string.Empty;
+
     /// <summary>角色：user / assistant</summary>
     public string Role { get; set; } = "user";
 
@@ -458,8 +461,43 @@ public class ToolboxMessage
     /// <summary>附件 ID 列表</summary>
     public List<string> AttachmentIds { get; set; } = new();
 
+    /// <summary>反馈：up / down / null</summary>
+    public string? Feedback { get; set; }
+
+    /// <summary>Token 用量</summary>
+    public int? TokenCount { get; set; }
+
     /// <summary>创建时间</summary>
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>更新时间</summary>
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// 百宝箱对话分享链接
+/// </summary>
+public class ToolboxShareLink
+{
+    public string Id { get; set; } = string.Empty;
+    public string SessionId { get; set; } = string.Empty;
+    public string UserId { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    /// <summary>分享时的消息快照</summary>
+    public List<ToolboxShareMessage> Messages { get; set; } = new();
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    /// <summary>过期时间（null 永不过期）</summary>
+    public DateTime? ExpiresAt { get; set; }
+}
+
+/// <summary>
+/// 分享消息快照
+/// </summary>
+public class ToolboxShareMessage
+{
+    public string Role { get; set; } = string.Empty;
+    public string Content { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; }
 }
 
 /// <summary>

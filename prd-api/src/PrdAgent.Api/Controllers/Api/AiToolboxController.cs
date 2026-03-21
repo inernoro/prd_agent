@@ -896,6 +896,122 @@ public class AiToolboxController : ControllerBase
 
     #endregion
 
+    #region Message Feedback
+
+    /// <summary>
+    /// 提交消息反馈（点赞/踩）
+    /// </summary>
+    [HttpPost("messages/{messageId}/feedback")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> SubmitMessageFeedback(string messageId, [FromBody] SubmitFeedbackRequest request)
+    {
+        var userId = GetUserId();
+
+        if (string.IsNullOrWhiteSpace(messageId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "消息 ID 不能为空"));
+
+        // 验证 feedback 值
+        if (request.Feedback != null && request.Feedback != "up" && request.Feedback != "down")
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "feedback 值必须为 up、down 或 null"));
+
+        // Upsert：创建或更新反馈
+        var filter = Builders<ToolboxMessage>.Filter.Eq(x => x.Id, messageId)
+            & Builders<ToolboxMessage>.Filter.Eq(x => x.UserId, userId);
+
+        var update = Builders<ToolboxMessage>.Update
+            .Set(x => x.Feedback, request.Feedback)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow)
+            .SetOnInsert(x => x.Id, messageId)
+            .SetOnInsert(x => x.UserId, userId)
+            .SetOnInsert(x => x.CreatedAt, DateTime.UtcNow);
+
+        await _db.ToolboxMessages.UpdateOneAsync(filter, update,
+            new UpdateOptions { IsUpsert = true }, CancellationToken.None);
+
+        return Ok(ApiResponse<object>.Ok(new { messageId, feedback = request.Feedback }));
+    }
+
+    #endregion
+
+    #region Share
+
+    /// <summary>
+    /// 创建对话分享链接（消息快照）
+    /// </summary>
+    [HttpPost("share")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> CreateShareLink([FromBody] CreateToolboxShareRequest request)
+    {
+        var userId = GetUserId();
+
+        if (request.Messages == null || request.Messages.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "消息列表不能为空"));
+
+        var shareLink = new ToolboxShareLink
+        {
+            Id = ObjectId.GenerateNewId().ToString(),
+            SessionId = request.SessionId ?? string.Empty,
+            UserId = userId,
+            Title = string.IsNullOrWhiteSpace(request.Title)
+                ? TruncateTitle(request.Messages.FirstOrDefault(m => m.Role == "user")?.Content) ?? "百宝箱对话"
+                : request.Title.Trim(),
+            Messages = request.Messages.Select(m => new ToolboxShareMessage
+            {
+                Role = m.Role,
+                Content = m.Content,
+                CreatedAt = m.CreatedAt ?? DateTime.UtcNow,
+            }).ToList(),
+            ExpiresAt = request.ExpiresInDays > 0
+                ? DateTime.UtcNow.AddDays(request.ExpiresInDays.Value)
+                : null,
+        };
+
+        await _db.ToolboxShareLinks.InsertOneAsync(shareLink, cancellationToken: CancellationToken.None);
+
+        _logger.LogInformation("百宝箱分享链接已创建: ShareId={ShareId}, UserId={UserId}, Messages={Count}",
+            shareLink.Id, userId, shareLink.Messages.Count);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            shareId = shareLink.Id,
+            url = $"/shared/toolbox/{shareLink.Id}",
+        }));
+    }
+
+    /// <summary>
+    /// 查看分享对话（公开访问，无需登录）
+    /// </summary>
+    [HttpGet("shared/{shareId}")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetSharedConversation(string shareId, CancellationToken ct)
+    {
+        var shareLink = await _db.ToolboxShareLinks
+            .Find(x => x.Id == shareId)
+            .FirstOrDefaultAsync(ct);
+
+        if (shareLink == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接不存在"));
+
+        if (shareLink.ExpiresAt.HasValue && shareLink.ExpiresAt.Value < DateTime.UtcNow)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接已过期"));
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            title = shareLink.Title,
+            messages = shareLink.Messages.Select(m => new
+            {
+                role = m.Role,
+                content = m.Content,
+                createdAt = m.CreatedAt,
+            }),
+            createdAt = shareLink.CreatedAt,
+        }));
+    }
+
+    #endregion
+
     #region Workflow Trigger
 
     /// <summary>
@@ -1180,6 +1296,8 @@ public class AiToolboxController : ControllerBase
 
         try
         {
+            GatewayTokenUsage? tokenUsage = null;
+
             await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
             {
                 if (chunk.Type == GatewayChunkType.Start)
@@ -1200,6 +1318,10 @@ public class AiToolboxController : ControllerBase
                     catch (OperationCanceledException) { /* 客户端断开 */ }
                     catch (ObjectDisposedException) { /* 连接关闭 */ }
                 }
+                else if (chunk.Type == GatewayChunkType.Done)
+                {
+                    tokenUsage = chunk.TokenUsage;
+                }
                 else if (chunk.Type == GatewayChunkType.Error)
                 {
                     await WriteSseEventAsync("error", new { message = chunk.Error ?? "LLM 调用失败" });
@@ -1207,7 +1329,13 @@ public class AiToolboxController : ControllerBase
                 }
             }
 
-            await WriteSseEventAsync("done", new { timestamp = DateTime.UtcNow });
+            await WriteSseEventAsync("done", new
+            {
+                timestamp = DateTime.UtcNow,
+                promptTokens = tokenUsage?.InputTokens,
+                completionTokens = tokenUsage?.OutputTokens,
+                totalTokens = tokenUsage?.TotalTokens
+            });
         }
         catch (Exception ex)
         {
@@ -1425,6 +1553,13 @@ public class AiToolboxController : ControllerBase
         ),
         _ => (null!, string.Empty, string.Empty)
     };
+
+    private static string? TruncateTitle(string? text, int maxLength = 50)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        text = text.Trim();
+        return text.Length <= maxLength ? text : text[..maxLength] + "\u2026";
+    }
 
     /// <summary>
     /// 根据 EnabledTools 为系统提示词增加能力说明
@@ -1699,6 +1834,43 @@ public class TriggerWorkflowRequest
 
     /// <summary>附加变量</summary>
     public Dictionary<string, string>? Variables { get; set; }
+}
+
+/// <summary>
+/// 提交反馈请求
+/// </summary>
+public class SubmitFeedbackRequest
+{
+    /// <summary>反馈值：up / down / null</summary>
+    public string? Feedback { get; set; }
+}
+
+/// <summary>
+/// 创建分享链接请求
+/// </summary>
+public class CreateToolboxShareRequest
+{
+    /// <summary>会话 ID（可选）</summary>
+    public string? SessionId { get; set; }
+
+    /// <summary>分享标题（留空自动取首条用户消息）</summary>
+    public string? Title { get; set; }
+
+    /// <summary>消息快照</summary>
+    public List<ShareMessageInput> Messages { get; set; } = new();
+
+    /// <summary>过期天数（null 永不过期）</summary>
+    public int? ExpiresInDays { get; set; }
+}
+
+/// <summary>
+/// 分享消息输入
+/// </summary>
+public class ShareMessageInput
+{
+    public string Role { get; set; } = string.Empty;
+    public string Content { get; set; } = string.Empty;
+    public DateTime? CreatedAt { get; set; }
 }
 
 #endregion

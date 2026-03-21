@@ -683,6 +683,11 @@ export const api = {
     marketplace: () => '/api/ai-toolbox/marketplace',
     forkItem: (id: string) => `/api/ai-toolbox/items/${id}/fork`,
     publishItem: (id: string) => `/api/ai-toolbox/items/${id}/publish`,
+    // 消息反馈
+    messageFeedback: (messageId: string) => `/api/ai-toolbox/messages/${messageId}/feedback`,
+    // 分享
+    share: () => '/api/ai-toolbox/share',
+    sharedConversation: (shareId: string) => `/api/ai-toolbox/shared/${shareId}`,
     // 直接对话 (SSE)
     directChat: () => '/api/ai-toolbox/direct-chat',
     capabilityChat: (key: string) => `/api/ai-toolbox/capabilities/${key}/chat`,

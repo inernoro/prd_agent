@@ -17,8 +17,10 @@ import {
   toggleToolboxItemPublish,
   toggleSessionArchive,
   toggleSessionPin,
+  submitMessageFeedback,
+  createToolboxShareLink,
 } from '@/services/real/aiToolbox';
-import type { DirectChatMessage, ToolboxSessionInfo } from '@/services/real/aiToolbox';
+import type { DirectChatMessage, ToolboxSessionInfo, TokenInfo } from '@/services/real/aiToolbox';
 import {
   ArrowLeft, Edit, Trash2, Zap, Tag, Calendar, User, Send,
   FileText, Palette, PenTool, Bug, Code2, Languages, FileSearch, BarChart3,
@@ -29,6 +31,7 @@ import {
   Plus, MessageCircle, Share2, Globe2, AlertCircle,
   Square, Copy, Check, RotateCcw, RefreshCw, Download, Eraser,
   ThumbsUp, ThumbsDown, Pencil, Archive, Pin, ChevronDown,
+  Eye, ChevronRight,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -75,6 +78,8 @@ interface ChatMessage {
   attachmentIds?: string[];
   timestamp: Date;
   isStreaming?: boolean;
+  feedback?: 'up' | 'down' | null;
+  totalTokens?: number;
 }
 
 interface Attachment {
@@ -115,6 +120,12 @@ export function ToolDetail() {
   // Session rename
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+
+  // Prompt visibility (Agent D)
+  const [promptExpanded, setPromptExpanded] = useState(false);
+
+  // Share state (Agent C)
+  const [isSharing, setIsSharing] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -313,6 +324,33 @@ export function ToolDetail() {
     if (res.success) setIsPublic(newValue);
   };
 
+  // Share conversation (Agent C)
+  const handleShare = async () => {
+    if (messages.length === 0) return;
+    setIsSharing(true);
+    try {
+      const res = await createToolboxShareLink(
+        messages.map(m => ({
+          role: m.role,
+          content: m.content,
+          createdAt: m.timestamp.toISOString(),
+        })),
+        selectedItem?.name,
+      );
+      if (res.success && res.data?.url) {
+        const fullUrl = `${window.location.origin}${res.data.url}`;
+        await navigator.clipboard.writeText(fullUrl);
+        toast.success('分享链接已复制');
+      } else {
+        toast.error('创建分享链接失败', res.error?.message);
+      }
+    } catch {
+      toast.error('创建分享链接失败');
+    } finally {
+      setIsSharing(false);
+    }
+  };
+
   if (!selectedItem) return null;
 
   const IconComponent = getIconComponent(selectedItem.icon);
@@ -470,8 +508,8 @@ export function ToolDetail() {
         setIsLoading(false);
         abortRef.current = null;
       },
-      onDone: () => {
-        setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, isStreaming: false } : m));
+      onDone: (tokenInfo?: TokenInfo) => {
+        setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, isStreaming: false, totalTokens: tokenInfo?.totalTokens } : m));
         setIsLoading(false);
         abortRef.current = null;
         // Persist assistant message
@@ -556,6 +594,29 @@ export function ToolDetail() {
     setMessages([]);
   };
 
+  // Keyboard shortcuts (Agent D)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+
+      if (mod && e.shiftKey && e.key === 'N') {
+        e.preventDefault();
+        handleNewSession();
+      } else if (mod && e.shiftKey && e.key === 'Backspace') {
+        e.preventDefault();
+        handleClearChat();
+      } else if (mod && e.shiftKey && e.key === 'E') {
+        e.preventDefault();
+        handleExportChat();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        abortRef.current?.();
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
       {/* Header */}
@@ -571,6 +632,12 @@ export function ToolDetail() {
               <ArrowLeft size={14} />
               返回
             </Button>
+            {messages.length > 0 && (
+              <Button variant="secondary" size="sm" onClick={handleShare} disabled={isSharing}>
+                <Share2 size={14} />
+                分享
+              </Button>
+            )}
             {isCustom ? (
               <>
                 <Button variant="secondary" size="sm" onClick={handleTogglePublish} title={isPublic ? '取消发布' : '发布到市场'}>
@@ -649,6 +716,43 @@ export function ToolDetail() {
                     <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(255, 255, 255, 0.05)', color: 'var(--text-secondary)' }}>{tag}</span>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {/* System Prompt Visibility (Agent D) */}
+            {(selectedItem.systemPrompt || selectedItem.prompt) && (
+              <div className="mt-3 pt-3 border-t" style={{ borderColor: 'rgba(255, 255, 255, 0.06)' }}>
+                <button
+                  onClick={() => setPromptExpanded(!promptExpanded)}
+                  className="flex items-center gap-1 text-[10px] mb-1.5 w-full hover:opacity-80 transition-opacity"
+                  style={{ color: 'var(--text-muted)', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+                >
+                  <Eye size={10} />
+                  <span>系统提示词</span>
+                  {promptExpanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                </button>
+                {!promptExpanded ? (
+                  <div
+                    className="text-[11px] leading-relaxed truncate"
+                    style={{ color: 'var(--text-muted)', fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace' }}
+                  >
+                    {(selectedItem.systemPrompt || selectedItem.prompt || '').slice(0, 80)}...
+                  </div>
+                ) : (
+                  <div
+                    className="text-[11px] leading-relaxed overflow-y-auto whitespace-pre-wrap"
+                    style={{
+                      color: 'var(--text-muted)',
+                      fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace',
+                      maxHeight: '200px',
+                      background: 'rgba(0, 0, 0, 0.15)',
+                      borderRadius: '6px',
+                      padding: '8px',
+                    }}
+                  >
+                    {selectedItem.systemPrompt || selectedItem.prompt}
+                  </div>
+                )}
               </div>
             )}
           </GlassCard>
@@ -948,7 +1052,7 @@ export function ToolDetail() {
             </div>
             <div className="flex items-center justify-between mt-1 px-1">
               <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                Enter 发送，Shift+Enter 换行
+                Enter 发送 · Shift+Enter 换行 · Ctrl+Shift+N 新对话 · Esc 停止
               </span>
               <span className="text-[10px]" style={{ color: input.length > 4000 ? 'var(--status-error)' : 'var(--text-muted)' }}>
                 {input.length > 0 && `${input.length} 字`}
@@ -1043,7 +1147,7 @@ function MessageBubble({ message, accentHue, onCopy, onRegenerate, onRetry, onFe
   const isUser = message.role === 'user';
   const isError = message.content?.startsWith('[错误]');
   const [copied, setCopied] = useState(false);
-  const [feedback, setFeedback] = useState<'up' | 'down' | null>(null);
+  const [feedback, setFeedback] = useState<'up' | 'down' | null>(message.feedback ?? null);
   const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState('');
 
@@ -1054,9 +1158,16 @@ function MessageBubble({ message, accentHue, onCopy, onRegenerate, onRetry, onFe
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleFeedback = (type: 'up' | 'down') => {
-    setFeedback(prev => prev === type ? null : type);
+  const handleFeedback = async (type: 'up' | 'down') => {
+    const newFeedback = feedback === type ? null : type;
+    setFeedback(newFeedback);
     onFeedback?.(type);
+    try {
+      await submitMessageFeedback(message.id, newFeedback);
+    } catch {
+      // Revert on error
+      setFeedback(feedback);
+    }
   };
 
   const handleStartEdit = () => {
@@ -1146,6 +1257,9 @@ function MessageBubble({ message, accentHue, onCopy, onRegenerate, onRetry, onFe
           <div className="flex items-center gap-1 px-1">
             <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
               {message.timestamp.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+              {!isUser && message.totalTokens != null && (
+                <span className="ml-1.5">{message.totalTokens} tokens</span>
+              )}
             </span>
             {onCopy && (
               <button
