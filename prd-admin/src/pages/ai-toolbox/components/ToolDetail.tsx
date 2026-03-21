@@ -44,6 +44,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import 'katex/dist/katex.min.css';
 import { toast } from '@/lib/toast';
+import { SseTypingBlock } from '@/components/sse/SseTypingBlock';
 
 // 图标组件映射
 const ICON_MAP: Record<string, LucideIcon> = {
@@ -80,6 +81,7 @@ interface ChatMessage {
   isStreaming?: boolean;
   feedback?: 'up' | 'down' | null;
   totalTokens?: number;
+  thinkingContent?: string;
 }
 
 interface Attachment {
@@ -88,6 +90,32 @@ interface Attachment {
   name: string;
   type: 'file' | 'image';
   preview?: string;
+  uploadStatus?: 'pending' | 'uploading' | 'done' | 'error';
+  uploadError?: string;
+}
+
+// File validation
+const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB (matches backend)
+const SUPPORTED_EXTENSIONS = new Set([
+  '.pdf', '.doc', '.docx', '.txt', '.md', '.json', '.csv', '.xlsx', '.xls', '.ppt', '.pptx',
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp',
+]);
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+function validateFile(file: File): string | null {
+  if (file.size > MAX_FILE_SIZE) {
+    return `文件过大 (${formatFileSize(file.size)})，上限 ${MAX_FILE_SIZE / 1024 / 1024}MB`;
+  }
+  const ext = '.' + file.name.split('.').pop()?.toLowerCase();
+  if (!SUPPORTED_EXTENSIONS.has(ext)) {
+    return `不支持的文件类型 (${ext})`;
+  }
+  return null;
 }
 
 export function ToolDetail() {
@@ -417,29 +445,38 @@ export function ToolDetail() {
       setAttachments([]);
       setIsLoading(true);
 
-      // Handle file uploads for new messages
+      // Handle file uploads for new messages — sequential with per-file progress
       const uploadedIds: string[] = [];
       if (hasNewAttachments) {
-        setMessages(prev => prev.map(m =>
-          m.id === assistantId ? { ...m, content: `正在上传 ${currentAttachments.length} 个文件…` } : m
-        ));
-        const results = await Promise.allSettled(
-          currentAttachments.map(att => uploadAttachment(att.file))
-        );
-        results.forEach((r, i) => {
-          if (r.status === 'fulfilled' && r.value.success && r.value.data?.attachmentId) {
-            uploadedIds.push(r.value.data.attachmentId);
-          } else {
-            const errMsg = r.status === 'fulfilled' ? (r.value.error?.message || '上传失败') : '上传异常';
-            toast.error(`文件 "${currentAttachments[i].name}" 上传失败: ${errMsg}`);
+        const total = currentAttachments.length;
+        for (let i = 0; i < total; i++) {
+          const att = currentAttachments[i];
+          setMessages(prev => prev.map(m =>
+            m.id === assistantId
+              ? { ...m, content: `⬆ 正在上传 (${i + 1}/${total})：${att.name}  [${formatFileSize(att.file.size)}]` }
+              : m
+          ));
+          try {
+            const res = await uploadAttachment(att.file);
+            if (res.success && res.data?.attachmentId) {
+              uploadedIds.push(res.data.attachmentId);
+            } else {
+              toast.error(`"${att.name}" 上传失败`, res.error?.message || '未知错误');
+            }
+          } catch {
+            toast.error(`"${att.name}" 上传异常`);
           }
-        });
+        }
         if (uploadedIds.length === 0) {
           setMessages(prev => prev.map(m =>
             m.id === assistantId ? { ...m, content: '所有文件上传失败，请重试。', isStreaming: false } : m
           ));
           setIsLoading(false);
           return;
+        }
+        const failCount = total - uploadedIds.length;
+        if (failCount > 0) {
+          toast.warning(`${failCount} 个文件上传失败，已跳过`);
         }
         setMessages(prev => prev.map(m =>
           m.id === assistantId ? { ...m, content: '' } : m
@@ -498,6 +535,13 @@ export function ToolDetail() {
       onStart: (info) => {
         if (info.model) setCurrentModel(info.model);
       },
+      onThinking: (content) => {
+        setMessages(prev => prev.map(m =>
+          m.id === assistantId
+            ? { ...m, thinkingContent: (m.thinkingContent || '') + content }
+            : m
+        ));
+      },
       onText: (content) => {
         fullContent += content;
         setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: m.content + content } : m));
@@ -534,12 +578,24 @@ export function ToolDetail() {
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>, type: 'file' | 'image') => {
     const files = e.target.files;
     if (!files) return;
-    const newAttachments: Attachment[] = Array.from(files).map(file => {
-      const att: Attachment = { id: Math.random().toString(36).substr(2, 9), file, name: file.name, type };
+    const valid: Attachment[] = [];
+    Array.from(files).forEach(file => {
+      const error = validateFile(file);
+      if (error) {
+        toast.error(`"${file.name}" 无法上传`, error);
+        return;
+      }
+      const att: Attachment = {
+        id: Math.random().toString(36).substr(2, 9),
+        file,
+        name: file.name,
+        type,
+        uploadStatus: 'pending',
+      };
       if (type === 'image' && file.type.startsWith('image/')) att.preview = URL.createObjectURL(file);
-      return att;
+      valid.push(att);
     });
-    setAttachments(prev => [...prev, ...newAttachments]);
+    if (valid.length > 0) setAttachments(prev => [...prev, ...valid]);
     e.target.value = '';
   };
 
@@ -1007,12 +1063,22 @@ export function ToolDetail() {
           {attachments.length > 0 && (
             <div className="px-4 py-2 border-t flex flex-wrap gap-2" style={{ borderColor: 'rgba(255, 255, 255, 0.06)' }}>
               {attachments.map(attachment => (
-                <div key={attachment.id} className="relative group flex items-center gap-2 px-2 py-1.5 rounded-lg" style={{ background: 'rgba(255, 255, 255, 0.05)' }}>
+                <div
+                  key={attachment.id}
+                  className="relative group flex items-center gap-2 px-2.5 py-2 rounded-lg transition-all"
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    border: '1px solid rgba(255, 255, 255, 0.06)',
+                  }}
+                >
                   {attachment.type === 'image' && attachment.preview
-                    ? <img src={attachment.preview} alt="" className="w-8 h-8 rounded object-cover" />
-                    : <File size={16} style={{ color: 'var(--text-muted)' }} />}
-                  <span className="text-xs truncate max-w-[120px]" style={{ color: 'var(--text-secondary)' }}>{attachment.name}</span>
-                  <button onClick={() => removeAttachment(attachment.id)} className="p-0.5 rounded hover:bg-white/10 transition-colors">
+                    ? <img src={attachment.preview} alt="" className="w-10 h-10 rounded object-cover flex-shrink-0" />
+                    : <File size={18} className="flex-shrink-0" style={{ color: 'var(--text-muted)' }} />}
+                  <div className="min-w-0">
+                    <span className="text-xs truncate block max-w-[140px]" style={{ color: 'var(--text-secondary)' }}>{attachment.name}</span>
+                    <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{formatFileSize(attachment.file.size)}</span>
+                  </div>
+                  <button onClick={() => removeAttachment(attachment.id)} className="p-0.5 rounded hover:bg-white/10 transition-colors flex-shrink-0">
                     <X size={12} style={{ color: 'var(--text-muted)' }} />
                   </button>
                 </div>
@@ -1151,6 +1217,11 @@ function MessageBubble({ message, accentHue, onCopy, onRegenerate, onRetry, onFe
   const [feedback, setFeedback] = useState<'up' | 'down' | null>(message.feedback ?? null);
   const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState('');
+  const [thinkingExpanded, setThinkingExpanded] = useState(false);
+  // Auto-expand thinking while streaming (no content yet), collapse when content arrives
+  const hasContent = !!message.content;
+  const isThinking = !isUser && !!message.thinkingContent;
+  const showThinkingExpanded = isThinking && (thinkingExpanded || (message.isStreaming && !hasContent));
 
   const handleCopy = () => {
     if (!onCopy) return;
@@ -1213,6 +1284,29 @@ function MessageBubble({ message, accentHue, onCopy, onRegenerate, onRetry, onFe
                   : <><File size={14} style={{ color: 'var(--text-muted)' }} /><span className="text-xs" style={{ color: 'var(--text-secondary)' }}>{att.name}</span></>}
               </div>
             ))}
+          </div>
+        )}
+        {/* Thinking process (collapsible) */}
+        {isThinking && (
+          <div className="w-full mb-1">
+            <button
+              onClick={() => setThinkingExpanded(!thinkingExpanded)}
+              className="flex items-center gap-1 text-[10px] mb-0.5 hover:opacity-80 transition-opacity"
+              style={{ color: 'rgba(168, 130, 255, 0.8)', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+            >
+              <Brain size={10} />
+              <span>{message.isStreaming && !hasContent ? '思考中…' : '思考过程'}</span>
+              {showThinkingExpanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+            </button>
+            {showThinkingExpanded && (
+              <SseTypingBlock
+                text={message.thinkingContent!}
+                label=""
+                maxHeight={160}
+                showCursor={message.isStreaming && !hasContent}
+                tailChars={800}
+              />
+            )}
           </div>
         )}
         <div

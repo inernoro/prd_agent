@@ -613,6 +613,7 @@ export function streamDirectChat(
     history?: DirectChatMessage[];
     attachmentIds?: string[];
     onText: (content: string) => void;
+    onThinking?: (content: string) => void;
     onStart?: (info: { model?: string; platform?: string }) => void;
     onError?: (error: string) => void;
     onDone?: (tokenInfo?: TokenInfo) => void;
@@ -678,6 +679,8 @@ export function streamDirectChat(
               const data = JSON.parse(currentData);
               if (currentEvent === 'start') {
                 options.onStart?.({ model: data.model, platform: data.platform });
+              } else if (currentEvent === 'thinking' && data.content) {
+                options.onThinking?.(data.content);
               } else if (currentEvent === 'text' && data.content) {
                 options.onText(data.content);
               } else if (currentEvent === 'error') {

@@ -1279,6 +1279,7 @@ public class AiToolboxController : ControllerBase
             AppCallerCode = effectiveAppCallerCode,
             ModelType = hasImageAttachments ? ModelTypes.Vision : ModelTypes.Chat,
             Stream = true,
+            IncludeThinking = true,
             RequestBody = new JsonObject
             {
                 ["messages"] = messages,
@@ -1309,6 +1310,15 @@ public class AiToolboxController : ControllerBase
                         model = chunk.Resolution?.ActualModel,
                         platform = chunk.Resolution?.ActualPlatformName,
                     });
+                }
+                else if (chunk.Type == GatewayChunkType.Thinking && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    try
+                    {
+                        await WriteSseEventAsync("thinking", new { content = chunk.Content });
+                    }
+                    catch (OperationCanceledException) { /* 客户端断开 */ }
+                    catch (ObjectDisposedException) { /* 连接关闭 */ }
                 }
                 else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
                 {
