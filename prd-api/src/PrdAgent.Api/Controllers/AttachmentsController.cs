@@ -84,6 +84,35 @@ public class AttachmentsController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail("FILE_TOO_LARGE", $"文件大小不能超过 {MaxUploadBytes / 1024 / 1024}MB"));
 
         var mime = file.ContentType?.ToLowerInvariant() ?? "application/octet-stream";
+
+        // 浏览器有时发送 application/octet-stream，根据文件扩展名推断真实 MIME 类型
+        if (mime == "application/octet-stream" && !string.IsNullOrWhiteSpace(file.FileName))
+        {
+            var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+            mime = ext switch
+            {
+                ".png" => "image/png",
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".gif" => "image/gif",
+                ".webp" => "image/webp",
+                ".svg" => "image/svg+xml",
+                ".pdf" => "application/pdf",
+                ".txt" => "text/plain",
+                ".md" => "text/markdown",
+                ".csv" => "text/csv",
+                ".json" => "application/json",
+                ".xml" => "application/xml",
+                ".html" or ".htm" => "text/html",
+                ".doc" => "application/msword",
+                ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ".xls" => "application/vnd.ms-excel",
+                ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                ".ppt" => "application/vnd.ms-powerpoint",
+                ".pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                _ => mime,
+            };
+        }
+
         if (!AllowedMimeTypes.Contains(mime))
             return BadRequest(ApiResponse<object>.Fail("UNSUPPORTED_TYPE", $"不支持的文件类型: {mime}"));
 

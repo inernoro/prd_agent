@@ -679,6 +679,21 @@ export const api = {
     runItem: (itemId: string) => `/api/ai-toolbox/items/${itemId}/run`,
     triggerWorkflow: (itemId: string) => `/api/ai-toolbox/items/${itemId}/trigger-workflow`,
     agents: () => '/api/ai-toolbox/agents',
+    // 会话管理
+    sessions: (itemId: string) => `/api/ai-toolbox/items/${itemId}/sessions`,
+    session: (sessionId: string) => `/api/ai-toolbox/sessions/${sessionId}`,
+    sessionArchive: (sessionId: string) => `/api/ai-toolbox/sessions/${sessionId}/archive`,
+    sessionPin: (sessionId: string) => `/api/ai-toolbox/sessions/${sessionId}/pin`,
+    messages: (sessionId: string) => `/api/ai-toolbox/sessions/${sessionId}/messages`,
+    // 市场
+    marketplace: () => '/api/ai-toolbox/marketplace',
+    forkItem: (id: string) => `/api/ai-toolbox/items/${id}/fork`,
+    publishItem: (id: string) => `/api/ai-toolbox/items/${id}/publish`,
+    // 消息反馈
+    messageFeedback: (messageId: string) => `/api/ai-toolbox/messages/${messageId}/feedback`,
+    // 分享
+    share: () => '/api/ai-toolbox/share',
+    sharedConversation: (shareId: string) => `/api/ai-toolbox/shared/${shareId}`,
     // 直接对话 (SSE)
     directChat: () => '/api/ai-toolbox/direct-chat',
     capabilityChat: (key: string) => `/api/ai-toolbox/capabilities/${key}/chat`,
