@@ -27,6 +27,7 @@ import { useToolboxStore } from '@/stores/toolboxStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import type { ToolboxItem } from '@/services';
+import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
 
 // ── Icon & Color mapping (self-contained, doesn't touch ToolCard) ──
 
@@ -614,6 +615,9 @@ export default function AgentLauncherPage() {
                   </div>
                 </section>
               )}
+
+              {/* Showcase Gallery — 作品广场 */}
+              <ShowcaseGallery />
             </>
           )}
         </div>

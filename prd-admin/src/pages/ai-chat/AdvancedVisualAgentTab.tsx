@@ -112,6 +112,7 @@ import { MessageContentRenderer } from './components/MessageContentRenderer';
 import { ChatMessageItem } from './components/ChatMessageItem';
 import { LlmLogsPanel } from '@/pages/LlmLogsPage';
 import { getVisualAgentLogsReal, getVisualAgentLogsMetaReal, getVisualAgentLogDetailReal } from '@/services/real/visualAgent';
+import { autoSubmitImages } from '@/services/real/submissions';
 
 type CanvasImageItem = {
   key: string;
@@ -3777,6 +3778,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             );
             const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
             pushMsg('Assistant', buildGenDoneContent({ src: u, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: modelPoolName, imageRefShas }));
+            // 自动投稿：生图完成后自动提交到作品广场
+            if (asset?.id) {
+              autoSubmitImages([asset.id]).catch(() => {});
+            }
           } else if (t === 'imageError' || t === 'error') {
             const msg = String(o.errorMessage ?? '生成失败');
             setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
@@ -7426,6 +7431,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   title="提交缺陷"
                 >
                   <Bug size={14} className={defectFlash ? 'defect-submit-flash' : ''} />
+                </button>
+                <button
+                  type="button"
+                  className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0"
+                  style={{ color: 'rgba(16, 185, 129, 0.8)' }}
+                  aria-label="作品自动投稿中"
+                  title="你的作品会自动投稿到作品广场"
+                >
+                  <Share size={14} />
                 </button>
                 {/* 移动端：关闭聊天面板按钮 */}
                 {isMobile && (

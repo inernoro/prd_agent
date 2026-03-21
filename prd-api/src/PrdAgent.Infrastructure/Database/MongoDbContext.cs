@@ -179,6 +179,10 @@ public class MongoDbContext
     // Video Agent 视频转文档
     public IMongoCollection<VideoToDocRun> VideoToDocRuns => _database.GetCollection<VideoToDocRun>("video_to_doc_runs");
 
+    // 作品投稿展示
+    public IMongoCollection<Submission> Submissions => _database.GetCollection<Submission>("submissions");
+    public IMongoCollection<SubmissionLike> SubmissionLikes => _database.GetCollection<SubmissionLike>("submission_likes");
+
     // Tutorial Email 教程邮件
     public IMongoCollection<TutorialEmailSequence> TutorialEmailSequences => _database.GetCollection<TutorialEmailSequence>("tutorial_email_sequences");
     public IMongoCollection<TutorialEmailTemplate> TutorialEmailTemplates => _database.GetCollection<TutorialEmailTemplate>("tutorial_email_templates");
@@ -1260,5 +1264,49 @@ public class MongoDbContext
         DesktopUpdateCaches.Indexes.CreateOne(new CreateIndexModel<DesktopUpdateCache>(
             Builders<DesktopUpdateCache>.IndexKeys.Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_desktop_update_caches_created" }));
+
+        // ========== 作品投稿展示索引 ==========
+
+        // Submissions：公开作品列表（按类型 + 时间排序）
+        Submissions.Indexes.CreateOne(new CreateIndexModel<Submission>(
+            Builders<Submission>.IndexKeys
+                .Ascending(x => x.IsPublic)
+                .Ascending(x => x.ContentType)
+                .Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_submissions_public_type_created" }));
+
+        // Submissions：按 OwnerUserId 查询
+        Submissions.Indexes.CreateOne(new CreateIndexModel<Submission>(
+            Builders<Submission>.IndexKeys.Ascending(x => x.OwnerUserId),
+            new CreateIndexOptions { Name = "idx_submissions_owner" }));
+
+        // Submissions：按 ImageAssetId 唯一（防重复投稿同一图片）
+        try
+        {
+            Submissions.Indexes.CreateOne(new CreateIndexModel<Submission>(
+                Builders<Submission>.IndexKeys.Ascending(x => x.ImageAssetId),
+                new CreateIndexOptions<Submission>
+                {
+                    Name = "uniq_submissions_image_asset",
+                    Unique = true,
+                    PartialFilterExpression = new MongoDB.Bson.BsonDocument("ImageAssetId", new MongoDB.Bson.BsonDocument("$type", "string"))
+                }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+
+        // SubmissionLikes：(SubmissionId + UserId) 唯一
+        try
+        {
+            SubmissionLikes.Indexes.CreateOne(new CreateIndexModel<SubmissionLike>(
+                Builders<SubmissionLike>.IndexKeys.Ascending(x => x.SubmissionId).Ascending(x => x.UserId),
+                new CreateIndexOptions { Name = "uniq_submission_likes_sid_uid", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
     }
 }

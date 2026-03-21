@@ -62,6 +62,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { extractMarkers, type ArticleMarker } from '@/lib/articleMarkerExtractor';
 import { useDebounce } from '@/hooks/useDebounce';
+import { createSubmission } from '@/services/real/submissions';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
 import { systemDialog } from '@/lib/systemDialog';
@@ -1543,6 +1544,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       if (anyError && !ac.signal.aborted) {
         toast.warning('部分配图生成失败：可在右侧逐条修改并重新生成');
       }
+      // 自动投稿：文学创作配图完成后提交到作品广场
+      createSubmission({ contentType: 'literary', workspaceId }).catch(() => {});
     } catch (error) {
       console.error('Batch generate error:', error);
       setGenerating(false);
@@ -2168,6 +2171,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   进入预览
                 </Button>
               )}
+              <button
+                type="button"
+                className="h-7 px-2 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0 text-xs"
+                style={{ color: 'rgba(16, 185, 129, 0.8)' }}
+                title="你的作品会自动投稿到作品广场"
+              >
+                <Share2 size={13} />
+                <span>投稿</span>
+              </button>
             </div>
           </div>
 
