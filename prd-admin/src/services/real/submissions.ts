@@ -31,6 +31,27 @@ export async function listPublicSubmissions(params?: {
   return apiRequest<{ total: number; items: SubmissionItem[] }>(url);
 }
 
+export interface RelatedAsset {
+  id: string;
+  url: string;
+  width: number;
+  height: number;
+  prompt?: string;
+  originalMarkerText?: string;
+  articleInsertionIndex?: number;
+  createdAt: string;
+}
+
+export interface SubmissionDetail {
+  submission: SubmissionItem & { viewCount: number; workspaceId?: string; imageAssetId?: string };
+  relatedAssets: RelatedAsset[];
+  articleContent?: string;
+}
+
+export async function getSubmissionDetail(id: string) {
+  return apiRequest<SubmissionDetail>(api.submissions.detail(id));
+}
+
 export async function createSubmission(body: {
   contentType: string;
   title?: string;

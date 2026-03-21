@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, ChevronDown } from 'lucide-react';
 import { SubmissionCard } from './SubmissionCard';
+import { SubmissionDetailModal } from './SubmissionDetailModal';
 import {
   listPublicSubmissions,
   likeSubmission,
@@ -22,6 +23,7 @@ export function ShowcaseGallery() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const initialLoadDone = useRef(false);
   const fetchIdRef = useRef(0); // 防止 tab 切换 race condition
 
@@ -81,6 +83,12 @@ export function ShowcaseGallery() {
     } else {
       throw new Error(res.error?.message || '操作失败');
     }
+  };
+
+  const handleDetailLikeChanged = (id: string, likedByMe: boolean, count: number) => {
+    setItems((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, likedByMe, likeCount: count } : item)),
+    );
   };
 
   const hasMore = items.length < total;
@@ -147,7 +155,7 @@ export function ShowcaseGallery() {
           >
             {items.map((item) => (
               <div key={item.id} style={{ marginBottom: 12 }}>
-                <SubmissionCard item={item} onLikeToggle={handleLikeToggle} />
+                <SubmissionCard item={item} onLikeToggle={handleLikeToggle} onClick={() => setSelectedId(item.id)} />
               </div>
             ))}
           </div>
@@ -187,6 +195,13 @@ export function ShowcaseGallery() {
           <span className="text-sm">暂无作品</span>
         </div>
       )}
+
+      {/* Detail modal */}
+      <SubmissionDetailModal
+        submissionId={selectedId}
+        onClose={() => setSelectedId(null)}
+        onLikeChanged={handleDetailLikeChanged}
+      />
     </section>
   );
 }

@@ -864,6 +864,7 @@ export const api = {
     create: () => '/api/submissions',
     check: () => '/api/submissions/check',
     autoSubmit: () => '/api/submissions/auto-submit',
+    detail: (id: string) => `/api/submissions/${id}`,
     visibility: (id: string) => `/api/submissions/${id}/visibility`,
     delete: (id: string) => `/api/submissions/${id}`,
     like: (id: string) => `/api/submissions/${id}/likes`,

@@ -49,6 +49,9 @@ public class Submission
     /// <summary>点赞数（冗余计数，避免每次聚合查询）</summary>
     public int LikeCount { get; set; }
 
+    /// <summary>浏览数</summary>
+    public int ViewCount { get; set; }
+
     /// <summary>是否公开（用户可随时关闭）</summary>
     public bool IsPublic { get; set; } = true;
 

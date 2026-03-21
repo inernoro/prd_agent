@@ -111,6 +111,105 @@ public class SubmissionsController : ControllerBase
     }
 
     /// <summary>
+    /// 获取投稿详情（含关联的 workspace 资产列表）
+    /// </summary>
+    [HttpGet("{id}")]
+    public async Task<IActionResult> GetSubmissionDetail(string id)
+    {
+        var userId = GetUserId();
+        var submission = await _db.Submissions.Find(x => x.Id == id).FirstOrDefaultAsync();
+        if (submission == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "投稿不存在"));
+        if (!submission.IsPublic && submission.OwnerUserId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "该投稿未公开"));
+
+        // 增加浏览计数（非阻塞）
+        _ = _db.Submissions.UpdateOneAsync(
+            x => x.Id == id,
+            Builders<Submission>.Update.Inc(x => x.ViewCount, 1));
+
+        // 查询点赞状态
+        var likedByMe = await _db.SubmissionLikes
+            .Find(x => x.SubmissionId == id && x.UserId == userId)
+            .AnyAsync();
+
+        // 获取关联资产
+        var relatedAssets = new List<object>();
+        string? articleContent = null;
+
+        if (submission.ContentType == "visual" && !string.IsNullOrWhiteSpace(submission.WorkspaceId))
+        {
+            // 视觉创作：同 workspace 的其他图片
+            var assets = await _db.ImageAssets
+                .Find(x => x.WorkspaceId == submission.WorkspaceId)
+                .SortByDescending(x => x.CreatedAt)
+                .Limit(50)
+                .ToListAsync();
+            relatedAssets = assets.Select(a => (object)new
+            {
+                a.Id,
+                a.Url,
+                a.Width,
+                a.Height,
+                a.Prompt,
+                a.CreatedAt,
+            }).ToList();
+        }
+        else if (submission.ContentType == "literary" && !string.IsNullOrWhiteSpace(submission.WorkspaceId))
+        {
+            // 文学创作：workspace 所有配图 + 文章内容
+            var workspace = await _db.ImageMasterWorkspaces
+                .Find(x => x.Id == submission.WorkspaceId)
+                .FirstOrDefaultAsync();
+            if (workspace != null)
+            {
+                articleContent = workspace.ArticleContent;
+            }
+            var assets = await _db.ImageAssets
+                .Find(x => x.WorkspaceId == submission.WorkspaceId)
+                .SortBy(x => x.ArticleInsertionIndex)
+                .ThenBy(x => x.CreatedAt)
+                .ToListAsync();
+            relatedAssets = assets.Select(a => (object)new
+            {
+                a.Id,
+                a.Url,
+                a.Width,
+                a.Height,
+                a.Prompt,
+                a.OriginalMarkerText,
+                a.ArticleInsertionIndex,
+                a.CreatedAt,
+            }).ToList();
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            submission = new
+            {
+                submission.Id,
+                submission.Title,
+                submission.ContentType,
+                submission.CoverUrl,
+                submission.CoverWidth,
+                submission.CoverHeight,
+                submission.Prompt,
+                submission.WorkspaceId,
+                submission.ImageAssetId,
+                submission.OwnerUserId,
+                submission.OwnerUserName,
+                submission.OwnerAvatarFileName,
+                submission.LikeCount,
+                submission.ViewCount,
+                likedByMe,
+                submission.CreatedAt,
+            },
+            relatedAssets,
+            articleContent,
+        }));
+    }
+
+    /// <summary>
     /// 创建投稿（视觉创作场景：从 ImageAsset 投稿）
     /// </summary>
     [HttpPost]
@@ -412,6 +511,71 @@ public class SubmissionsController : ControllerBase
         }
 
         return BadRequest(ApiResponse<object>.Fail("MISSING_PARAM", "需要提供 imageAssetId 或 workspaceId"));
+    }
+
+    /// <summary>
+    /// 迁移：为指定用户名的已有图片批量创建投稿（一次性操作）
+    /// </summary>
+    [HttpPost("migrate")]
+    public async Task<IActionResult> MigrateUserSubmissions([FromQuery] string username = "admin")
+    {
+        // 查找用户
+        var user = await _db.Users.Find(u => u.Username == username).FirstOrDefaultAsync();
+        if (user == null)
+            return NotFound(ApiResponse<object>.Fail("USER_NOT_FOUND", $"用户 {username} 不存在"));
+
+        var userId = user.UserId;
+        var displayName = ResolveDisplayName(user, null, userId);
+
+        // 获取该用户的所有图片
+        var assets = await _db.ImageAssets
+            .Find(x => x.OwnerUserId == userId)
+            .SortByDescending(x => x.CreatedAt)
+            .ToListAsync();
+
+        // 获取已有投稿的 ImageAssetId 集合
+        var existingAssetIds = (await _db.Submissions
+            .Find(x => x.OwnerUserId == userId && x.ContentType == "visual")
+            .Project(x => x.ImageAssetId)
+            .ToListAsync())
+            .Where(x => x != null)
+            .ToHashSet();
+
+        var newSubmissions = new List<Submission>();
+        foreach (var asset in assets)
+        {
+            if (existingAssetIds.Contains(asset.Id)) continue;
+            if (string.IsNullOrWhiteSpace(asset.Url)) continue;
+
+            newSubmissions.Add(new Submission
+            {
+                Title = asset.Prompt?.Substring(0, Math.Min(asset.Prompt.Length, 50)) ?? "未命名作品",
+                ContentType = "visual",
+                CoverUrl = asset.Url,
+                CoverWidth = asset.Width,
+                CoverHeight = asset.Height,
+                WorkspaceId = asset.WorkspaceId,
+                ImageAssetId = asset.Id,
+                Prompt = asset.Prompt,
+                OwnerUserId = userId,
+                OwnerUserName = displayName,
+                OwnerAvatarFileName = user.AvatarFileName,
+                IsPublic = true,
+                CreatedAt = asset.CreatedAt, // 保留原始创建时间
+            });
+        }
+
+        if (newSubmissions.Count > 0)
+            await _db.Submissions.InsertManyAsync(newSubmissions);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            username,
+            userId,
+            totalAssets = assets.Count,
+            alreadySubmitted = existingAssetIds.Count,
+            newlySubmitted = newSubmissions.Count,
+        }));
     }
 }
 

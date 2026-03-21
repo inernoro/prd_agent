@@ -6,9 +6,10 @@ import type { SubmissionItem } from '@/services/real/submissions';
 interface SubmissionCardProps {
   item: SubmissionItem;
   onLikeToggle?: (id: string, liked: boolean) => Promise<void>;
+  onClick?: () => void;
 }
 
-export function SubmissionCard({ item, onLikeToggle }: SubmissionCardProps) {
+export function SubmissionCard({ item, onLikeToggle, onClick }: SubmissionCardProps) {
   const [imgLoaded, setImgLoaded] = useState(false);
   const [imgError, setImgError] = useState(false);
   const [liked, setLiked] = useState(item.likedByMe);
@@ -42,12 +43,16 @@ export function SubmissionCard({ item, onLikeToggle }: SubmissionCardProps) {
 
   return (
     <div
-      className="group relative rounded-xl overflow-hidden transition-all duration-300 hover:-translate-y-1"
+      className="group relative rounded-xl overflow-hidden transition-all duration-300 hover:-translate-y-1 cursor-pointer"
       style={{
         background: 'var(--bg-elevated, rgba(255,255,255,0.03))',
         border: '1px solid rgba(255,255,255,0.06)',
         breakInside: 'avoid',
       }}
+      onClick={onClick}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick?.(); } }}
     >
       {/* Cover image */}
       <div className="relative w-full overflow-hidden">
