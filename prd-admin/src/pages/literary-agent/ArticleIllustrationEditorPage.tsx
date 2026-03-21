@@ -62,7 +62,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { extractMarkers, type ArticleMarker } from '@/lib/articleMarkerExtractor';
 import { useDebounce } from '@/hooks/useDebounce';
-import { createSubmission } from '@/services/real/submissions';
+import { createSubmission, checkSubmission, deleteSubmission } from '@/services/real/submissions';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
 import { systemDialog } from '@/lib/systemDialog';
@@ -316,9 +316,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [articleWithImages, setArticleWithImages] = useState('');
   const [phase, setPhase] = useState<WorkflowPhase>(0); // 0=upload
   const [generating, setGenerating] = useState(false);
-  const [autoSubmitEnabled, setAutoSubmitEnabled] = useState(true);
+  const [autoSubmitEnabled] = useState(true);
   const autoSubmitEnabledRef = useRef(true);
   useEffect(() => { autoSubmitEnabledRef.current = autoSubmitEnabled; }, [autoSubmitEnabled]);
+  const [submissionState, setSubmissionState] = useState<{ submitted: boolean; submissionId?: string; loading: boolean }>({ submitted: false, loading: false });
   const [markerStreaming, setMarkerStreaming] = useState(false);
   const [thinkingContent, setThinkingContent] = useState('');
   const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
@@ -329,6 +330,40 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const handleWatermarkStatusChange = useCallback((status: { hasActiveConfig: boolean; activeId?: string; activeName?: string }) => {
     setWatermarkStatus({ enabled: status.hasActiveConfig, name: status.activeName ?? null });
   }, []);
+  // 检查当前 workspace 是否已投稿
+  useEffect(() => {
+    checkSubmission({ workspaceId }).then((res) => {
+      if (res.success) {
+        setSubmissionState({ submitted: res.data.submitted, submissionId: (res.data as any).submissionId, loading: false });
+      }
+    }).catch(() => {});
+  }, [workspaceId]);
+
+  // 手动投稿/撤回
+  const handleToggleSubmission = async () => {
+    if (submissionState.loading) return;
+    setSubmissionState((s) => ({ ...s, loading: true }));
+    try {
+      if (submissionState.submitted && submissionState.submissionId) {
+        await deleteSubmission(submissionState.submissionId);
+        setSubmissionState({ submitted: false, loading: false });
+        toast.success('已从作品广场撤回');
+      } else {
+        const res = await createSubmission({ contentType: 'literary', workspaceId });
+        if (res.success) {
+          setSubmissionState({ submitted: true, submissionId: res.data.submission?.id, loading: false });
+          toast.success('已投稿到作品广场');
+        } else {
+          setSubmissionState((s) => ({ ...s, loading: false }));
+          toast.error(res.error?.message || '投稿失败');
+        }
+      }
+    } catch {
+      setSubmissionState((s) => ({ ...s, loading: false }));
+      toast.error('操作失败');
+    }
+  };
+
   // 配置弹窗内的水印面板 ref（唯一实例，避免状态不同步）
   const watermarkPanelRef = useRef<WatermarkSettingsPanelHandle | null>(null);
 
@@ -1548,8 +1583,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         toast.warning('部分配图生成失败：可在右侧逐条修改并重新生成');
       }
       // 自动投稿：文学创作配图完成后提交到作品广场（通过 ref 读取最新值，避免闭包陈旧）
-      if (autoSubmitEnabledRef.current) {
-        createSubmission({ contentType: 'literary', workspaceId }).catch(() => {});
+      if (autoSubmitEnabledRef.current && !submissionState.submitted) {
+        createSubmission({ contentType: 'literary', workspaceId })
+          .then((res) => {
+            if (res.success) {
+              setSubmissionState({ submitted: true, submissionId: res.data.submission?.id, loading: false });
+              toast.success('已自动投稿到作品广场');
+            }
+          })
+          .catch(() => {});
       }
     } catch (error) {
       console.error('Batch generate error:', error);
@@ -2178,17 +2220,19 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               )}
               <button
                 type="button"
-                onClick={() => setAutoSubmitEnabled((v) => !v)}
+                onClick={handleToggleSubmission}
+                disabled={submissionState.loading}
                 className="h-7 px-2 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0 text-xs"
                 style={{
-                  color: autoSubmitEnabled ? 'rgba(16, 185, 129, 0.8)' : 'var(--text-muted)',
-                  background: autoSubmitEnabled ? 'rgba(16, 185, 129, 0.1)' : 'transparent',
-                  border: autoSubmitEnabled ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid transparent',
+                  color: submissionState.submitted ? 'rgba(16, 185, 129, 0.8)' : 'var(--text-muted)',
+                  background: submissionState.submitted ? 'rgba(16, 185, 129, 0.1)' : 'transparent',
+                  border: submissionState.submitted ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid transparent',
+                  opacity: submissionState.loading ? 0.5 : 1,
                 }}
-                title={autoSubmitEnabled ? '投稿已开启 — 生成的配图会自动投稿到作品广场，点击关闭' : '投稿已关闭 — 点击开启自动投稿'}
+                title={submissionState.submitted ? '已投稿到作品广场，点击撤回' : '点击投稿到作品广场'}
               >
                 <Share2 size={13} />
-                <span>{autoSubmitEnabled ? '投稿' : '投稿关'}</span>
+                <span>{submissionState.loading ? '...' : submissionState.submitted ? '已投稿' : '投稿'}</span>
               </button>
             </div>
           </div>
