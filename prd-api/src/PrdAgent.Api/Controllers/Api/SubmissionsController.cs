@@ -788,18 +788,31 @@ public class SubmissionsController : ControllerBase
 
         if (!string.IsNullOrWhiteSpace(workspaceId))
         {
-            // 优先检查 workspace 的 IsPublic 状态（文学投稿 = 公开 workspace）
-            var ws = await _db.ImageMasterWorkspaces
-                .Find(x => x.Id == workspaceId && x.OwnerUserId == userId)
+            // 同时检查 workspace IsPublic 和 Submission 记录（兼容旧数据）
+            var submission = await _db.Submissions
+                .Find(x => x.WorkspaceId == workspaceId && x.ContentType == "literary" && x.OwnerUserId == userId)
                 .FirstOrDefaultAsync();
-            if (ws is { IsPublic: true })
+            if (submission != null)
             {
-                var submission = await _db.Submissions
-                    .Find(x => x.WorkspaceId == workspaceId && x.ContentType == "literary")
+                // 旧数据兼容：有 Submission 但 workspace 未标记 IsPublic，补标记
+                var ws = await _db.ImageMasterWorkspaces
+                    .Find(x => x.Id == workspaceId)
                     .FirstOrDefaultAsync();
-                return Ok(ApiResponse<object>.Ok(new { submitted = true, submissionId = submission?.Id }));
+                if (ws != null && !ws.IsPublic)
+                {
+                    await _db.ImageMasterWorkspaces.UpdateOneAsync(
+                        x => x.Id == workspaceId,
+                        Builders<ImageMasterWorkspace>.Update
+                            .Set(x => x.IsPublic, true)
+                            .Set(x => x.PublishedAt, submission.CreatedAt));
+                }
+                return Ok(ApiResponse<object>.Ok(new { submitted = submission.IsPublic, submissionId = submission.Id }));
             }
-            return Ok(ApiResponse<object>.Ok(new { submitted = false }));
+            // 无 Submission 记录，检查 workspace IsPublic（新流程创建的可能先标记了 workspace）
+            var wsCheck = await _db.ImageMasterWorkspaces
+                .Find(x => x.Id == workspaceId && x.OwnerUserId == userId && x.IsPublic == true)
+                .AnyAsync();
+            return Ok(ApiResponse<object>.Ok(new { submitted = wsCheck }));
         }
 
         return BadRequest(ApiResponse<object>.Fail("MISSING_PARAM", "需要提供 imageAssetId 或 workspaceId"));
