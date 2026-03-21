@@ -1060,10 +1060,13 @@ public class AiToolboxController : ControllerBase
             messages.Add(new JsonObject { ["role"] = "user", ["content"] = message });
         }
 
-        // 调用 LLM Gateway
+        // 调用 LLM Gateway（有图片时切换为 Vision AppCallerCode + ModelType）
+        var effectiveAppCallerCode = hasImageAttachments
+            ? AppCallerRegistry.AiToolbox.Orchestration.Vision
+            : appCallerCode;
         var gatewayRequest = new GatewayRequest
         {
-            AppCallerCode = appCallerCode,
+            AppCallerCode = effectiveAppCallerCode,
             ModelType = hasImageAttachments ? ModelTypes.Vision : ModelTypes.Chat,
             Stream = true,
             RequestBody = new JsonObject

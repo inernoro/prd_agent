@@ -3,6 +3,7 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
 import { useToolboxStore } from '@/stores/toolboxStore';
+import { useAuthStore } from '@/stores/authStore';
 import { formatDistanceToNow } from '@/lib/dateUtils';
 import {
   streamDirectChat,
@@ -147,13 +148,52 @@ export function ToolDetail() {
     try {
       const res = await listToolboxMessages(sessionId);
       if (res.success && res.data) {
-        setMessages(res.data.messages.map(m => ({
-          id: m.id,
-          role: m.role,
-          content: m.content,
-          attachmentIds: m.attachmentIds?.length ? m.attachmentIds : undefined,
-          timestamp: new Date(m.createdAt),
-        })));
+        // Collect all unique attachmentIds to batch-fetch their URLs
+        const allAttIds = res.data.messages
+          .flatMap(m => m.attachmentIds ?? [])
+          .filter((v, i, a) => a.indexOf(v) === i);
+
+        // Fetch attachment details in parallel
+        const attMap = new Map<string, { url: string; fileName: string; mimeType: string }>();
+        if (allAttIds.length > 0) {
+          const results = await Promise.allSettled(
+            allAttIds.map(id =>
+              fetch(`/api/v1/attachments/${id}`, {
+                headers: { Authorization: `Bearer ${useAuthStore.getState().token ?? ''}` },
+              }).then(r => r.json())
+            )
+          );
+          results.forEach((r, i) => {
+            if (r.status === 'fulfilled' && r.value?.data) {
+              const d = r.value.data;
+              attMap.set(allAttIds[i], { url: d.url, fileName: d.fileName, mimeType: d.mimeType });
+            }
+          });
+        }
+
+        setMessages(res.data.messages.map(m => {
+          const ids = m.attachmentIds?.length ? m.attachmentIds : undefined;
+          // Build attachments array with real URLs for rendering
+          const attachments = ids?.map(id => {
+            const info = attMap.get(id);
+            if (!info) return { id, name: id, type: 'file' as const };
+            const isImage = info.mimeType?.startsWith('image/');
+            return {
+              id,
+              name: info.fileName,
+              type: (isImage ? 'image' : 'file') as 'image' | 'file',
+              url: info.url,
+            };
+          });
+          return {
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            attachmentIds: ids,
+            attachments,
+            timestamp: new Date(m.createdAt),
+          };
+        }));
       }
     } catch { /* silent */ }
   };
@@ -225,28 +265,48 @@ export function ToolDetail() {
       timestamp: new Date(),
     };
 
-    setMessages(prev => [...prev, userMessage]);
     const currentAttachments = [...attachments];
+    const hasNewAttachments = !overrideAttachmentIds && currentAttachments.length > 0;
+
+    // Show user message + assistant placeholder IMMEDIATELY (2s feedback rule)
+    const assistantId = (Date.now() + 1).toString();
+    setMessages(prev => [
+      ...prev,
+      userMessage,
+      {
+        id: assistantId,
+        role: 'assistant',
+        content: hasNewAttachments ? '' : '',
+        timestamp: new Date(),
+        isStreaming: true,
+      },
+    ]);
     setInput('');
     setAttachments([]);
     setIsLoading(true);
 
-    // Upload new attachments, or reuse existing IDs (for regenerate)
+    // Upload new attachments in parallel, or reuse existing IDs (for regenerate)
     const attachmentIds: string[] = overrideAttachmentIds ? [...overrideAttachmentIds] : [];
-    if (!overrideAttachmentIds) {
-      for (const att of currentAttachments) {
-        try {
-          const result = await uploadAttachment(att.file);
-          if (result.success && result.data?.attachmentId) {
-            attachmentIds.push(result.data.attachmentId);
-          } else {
-            const errMsg = result.error?.message || '上传失败';
-            toast.error(`文件 "${att.name}" 上传失败: ${errMsg}`);
-          }
-        } catch (err) {
-          toast.error(`文件 "${att.name}" 上传异常`);
+    if (hasNewAttachments) {
+      // Show uploading hint in assistant bubble
+      setMessages(prev => prev.map(m =>
+        m.id === assistantId ? { ...m, content: `正在上传 ${currentAttachments.length} 个文件…` } : m
+      ));
+      const results = await Promise.allSettled(
+        currentAttachments.map(att => uploadAttachment(att.file))
+      );
+      results.forEach((r, i) => {
+        if (r.status === 'fulfilled' && r.value.success && r.value.data?.attachmentId) {
+          attachmentIds.push(r.value.data.attachmentId);
+        } else {
+          const errMsg = r.status === 'fulfilled' ? (r.value.error?.message || '上传失败') : '上传异常';
+          toast.error(`文件 "${currentAttachments[i].name}" 上传失败: ${errMsg}`);
         }
-      }
+      });
+      // Clear uploading hint — streaming will start writing content
+      setMessages(prev => prev.map(m =>
+        m.id === assistantId ? { ...m, content: '' } : m
+      ));
     }
 
     // Store attachmentIds on the user message for history tracking
@@ -268,10 +328,6 @@ export function ToolDetail() {
       content: m.content,
       ...(m.attachmentIds?.length ? { attachmentIds: m.attachmentIds } : {}),
     }));
-
-    // Create streaming assistant placeholder
-    const assistantId = (Date.now() + 1).toString();
-    setMessages(prev => [...prev, { id: assistantId, role: 'assistant', content: '', timestamp: new Date(), isStreaming: true }]);
 
     let fullContent = '';
 

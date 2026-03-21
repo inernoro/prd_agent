@@ -489,6 +489,14 @@ public static class AiToolbox
             Category = "Orchestration"
         )]
         public const string Chat = "ai-toolbox.orchestration::chat";
+
+        [AppCallerMetadata(
+            "视觉理解",
+            "百宝箱图片理解与视觉分析",
+            ModelTypes = new[] { ModelTypes.Vision },
+            Category = "Orchestration"
+        )]
+        public const string Vision = "ai-toolbox.orchestration::vision";
     }
 
     public static class Agent

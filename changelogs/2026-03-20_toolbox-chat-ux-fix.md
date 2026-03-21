@@ -22,3 +22,6 @@
 | fix | prd-admin | XSS 防护（rehype-sanitize 配合 rehype-raw 过滤危险 HTML 属性） |
 | feat | prd-admin | 助手消息反馈按钮（👍👎 点赞/踩，高亮切换） |
 | feat | prd-admin | 用户消息编辑功能（Pencil 图标触发，编辑后截断后续消息并重新发送） |
+| fix | prd-api | 修复图片对话 APP_CALLER_INVALID 错误（新增 Vision AppCallerCode，Vision 请求使用独立的 ai-toolbox.orchestration::vision） |
+| fix | prd-admin | 修复历史图片不显示（切换会话时批量获取附件 URL 并渲染缩略图） |
+| fix | prd-admin | 发送消息立即显示助手占位（附件上传改为并行，上传期间显示进度提示，符合 2 秒反馈原则） |
