@@ -61,9 +61,12 @@ public class SubmissionsController : ControllerBase
             filter &= Builders<Submission>.Filter.Eq(x => x.ContentType, contentType);
 
         var total = await _db.Submissions.CountDocumentsAsync(filter);
+        var sort = Builders<Submission>.Sort
+            .Descending(x => x.LikeCount)
+            .Descending(x => x.CreatedAt);
         var items = await _db.Submissions
             .Find(filter)
-            .SortByDescending(x => x.CreatedAt)
+            .Sort(sort)
             .Skip(skip)
             .Limit(limit)
             .ToListAsync();
@@ -136,6 +139,8 @@ public class SubmissionsController : ControllerBase
         // 获取关联资产
         var relatedAssets = new List<object>();
         string? articleContent = null;
+        // 生成参数信息
+        object? generationInfo = null;
 
         if (submission.ContentType == "visual" && !string.IsNullOrWhiteSpace(submission.WorkspaceId))
         {
@@ -154,6 +159,57 @@ public class SubmissionsController : ControllerBase
                 a.Prompt,
                 a.CreatedAt,
             }).ToList();
+
+            // 查询 ImageGenRun 获取模型、图生图、涂抹等信息
+            var assetId = submission.ImageAssetId;
+            if (!string.IsNullOrWhiteSpace(assetId))
+            {
+                // 通过 ImageAsset 找到对应的 run（同 workspace，包含该 prompt）
+                var run = await _db.ImageGenRuns
+                    .Find(x => x.WorkspaceId == submission.WorkspaceId && x.Status == ImageGenRunStatus.Completed)
+                    .SortByDescending(x => x.CreatedAt)
+                    .FirstOrDefaultAsync();
+                if (run != null)
+                {
+                    // 查找模型显示名称
+                    string? modelDisplayName = null;
+                    if (!string.IsNullOrWhiteSpace(run.ConfigModelId))
+                    {
+                        var model = await _db.LLMModels
+                            .Find(x => x.Id == run.ConfigModelId)
+                            .FirstOrDefaultAsync();
+                        modelDisplayName = model?.Name ?? model?.ModelName ?? run.ModelId;
+                    }
+                    else
+                    {
+                        modelDisplayName = run.ModelId;
+                    }
+
+                    // 获取系统提示词（如果 workspace 绑定了）
+                    string? systemPromptName = null;
+                    var workspace = await _db.ImageMasterWorkspaces
+                        .Find(x => x.Id == submission.WorkspaceId)
+                        .FirstOrDefaultAsync();
+                    if (workspace?.SelectedPromptId != null)
+                    {
+                        var sp = await _db.LiteraryPrompts
+                            .Find(x => x.Id == workspace.SelectedPromptId)
+                            .FirstOrDefaultAsync();
+                        systemPromptName = sp?.Title;
+                    }
+
+                    generationInfo = new
+                    {
+                        modelName = modelDisplayName,
+                        size = run.Size,
+                        hasReferenceImage = !string.IsNullOrWhiteSpace(run.InitImageAssetSha256) || (run.ImageRefs?.Count > 0),
+                        hasInpainting = !string.IsNullOrWhiteSpace(run.MaskBase64),
+                        referenceImageCount = (run.ImageRefs?.Count ?? 0) + (!string.IsNullOrWhiteSpace(run.InitImageAssetSha256) ? 1 : 0),
+                        systemPromptName,
+                        stylePrompt = workspace?.StylePrompt,
+                    };
+                }
+            }
         }
         else if (submission.ContentType == "literary" && !string.IsNullOrWhiteSpace(submission.WorkspaceId))
         {
@@ -206,6 +262,7 @@ public class SubmissionsController : ControllerBase
             },
             relatedAssets,
             articleContent,
+            generationInfo,
         }));
     }
 
@@ -574,6 +631,102 @@ public class SubmissionsController : ControllerBase
             userId,
             totalAssets = assets.Count,
             alreadySubmitted = existingAssetIds.Count,
+            newlySubmitted = newSubmissions.Count,
+        }));
+    }
+
+    /// <summary>
+    /// 迁移：为指定用户名的文学创作 workspace 批量创建投稿（一次性操作）
+    /// </summary>
+    [HttpPost("migrate-literary")]
+    public async Task<IActionResult> MigrateLiterarySubmissions([FromQuery] string username = "admin")
+    {
+        var user = await _db.Users.Find(u => u.Username == username).FirstOrDefaultAsync();
+        if (user == null)
+            return NotFound(ApiResponse<object>.Fail("USER_NOT_FOUND", $"用户 {username} 不存在"));
+
+        var userId = user.UserId;
+        var displayName = ResolveDisplayName(user, null, userId);
+
+        // 获取用户的文学创作 workspace（article-illustration 场景）
+        var workspaces = await _db.ImageMasterWorkspaces
+            .Find(x => x.OwnerUserId == userId && x.ScenarioType == "article-illustration")
+            .SortByDescending(x => x.CreatedAt)
+            .ToListAsync();
+
+        // 过滤已投稿的
+        var workspaceIds = workspaces.Select(x => x.Id).ToList();
+        var existingWsIds = (await _db.Submissions
+            .Find(x => x.OwnerUserId == userId && x.ContentType == "literary" && workspaceIds.Contains(x.WorkspaceId!))
+            .Project(x => x.WorkspaceId)
+            .ToListAsync())
+            .Where(x => x != null)
+            .ToHashSet();
+
+        var newSubmissions = new List<Submission>();
+        foreach (var ws in workspaces)
+        {
+            if (existingWsIds.Contains(ws.Id)) continue;
+
+            // 获取封面图
+            var coverUrl = "";
+            var coverWidth = 0;
+            var coverHeight = 0;
+
+            // 尝试获取 workspace 的配图
+            var firstAsset = await _db.ImageAssets
+                .Find(x => x.WorkspaceId == ws.Id)
+                .SortBy(x => x.ArticleInsertionIndex)
+                .ThenBy(x => x.CreatedAt)
+                .FirstOrDefaultAsync();
+            if (firstAsset != null)
+            {
+                coverUrl = firstAsset.Url;
+                coverWidth = firstAsset.Width;
+                coverHeight = firstAsset.Height;
+            }
+            else if (ws.CoverAssetIds.Count > 0)
+            {
+                var coverAsset = await _db.ImageAssets
+                    .Find(x => x.Id == ws.CoverAssetIds[0])
+                    .FirstOrDefaultAsync();
+                if (coverAsset != null)
+                {
+                    coverUrl = coverAsset.Url;
+                    coverWidth = coverAsset.Width;
+                    coverHeight = coverAsset.Height;
+                }
+            }
+
+            // 跳过没有封面的
+            if (string.IsNullOrWhiteSpace(coverUrl)) continue;
+
+            newSubmissions.Add(new Submission
+            {
+                Title = ws.Title ?? "未命名作品",
+                ContentType = "literary",
+                CoverUrl = coverUrl,
+                CoverWidth = coverWidth,
+                CoverHeight = coverHeight,
+                WorkspaceId = ws.Id,
+                Prompt = ws.ArticleContent?.Substring(0, Math.Min(ws.ArticleContent.Length, 200)),
+                OwnerUserId = userId,
+                OwnerUserName = displayName,
+                OwnerAvatarFileName = user.AvatarFileName,
+                IsPublic = true,
+                CreatedAt = ws.CreatedAt,
+            });
+        }
+
+        if (newSubmissions.Count > 0)
+            await _db.Submissions.InsertManyAsync(newSubmissions);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            username,
+            userId,
+            totalWorkspaces = workspaces.Count,
+            alreadySubmitted = existingWsIds.Count,
             newlySubmitted = newSubmissions.Count,
         }));
     }

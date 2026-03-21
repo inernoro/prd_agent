@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   X, Heart, Eye, ChevronLeft, ChevronRight, FileText, Wand2,
-  ImageIcon, Loader2,
+  ImageIcon, Loader2, Palette, Brush, Layers, Sparkles, Maximize,
 } from 'lucide-react';
 import { glassPanel } from '@/lib/glassStyles';
 import { resolveAvatarUrl, DEFAULT_AVATAR_FALLBACK } from '@/lib/avatar';
@@ -11,13 +11,11 @@ import {
   likeSubmission,
   unlikeSubmission,
   type SubmissionDetail,
-  type RelatedAsset,
 } from '@/services/real/submissions';
 
 interface SubmissionDetailModalProps {
   submissionId: string | null;
   onClose: () => void;
-  /** 通知父组件点赞状态变化 */
   onLikeChanged?: (id: string, likedByMe: boolean, count: number) => void;
 }
 
@@ -30,7 +28,6 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
   const [liking, setLiking] = useState(false);
   const [rightTab, setRightTab] = useState('article');
 
-  // 加载详情
   useEffect(() => {
     if (!submissionId) { setDetail(null); return; }
     setLoading(true);
@@ -45,7 +42,6 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
     }).finally(() => setLoading(false));
   }, [submissionId]);
 
-  // 键盘
   useEffect(() => {
     if (!submissionId) return;
     const handleKey = (e: KeyboardEvent) => {
@@ -85,16 +81,14 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
   const assets = detail?.relatedAssets ?? [];
   const selectedAsset = assets[selectedAssetIndex] ?? null;
   const isLiterary = sub?.contentType === 'literary';
-
-  // 当前大图 URL：优先选中的资产，否则用封面
+  const genInfo = detail?.generationInfo;
   const mainImageUrl = selectedAsset?.url || sub?.coverUrl || '';
-
   const avatarUrl = sub ? resolveAvatarUrl({ avatarFileName: sub.ownerAvatarFileName }) : '';
 
   return (
     <div
       className="fixed inset-0 z-[200] flex items-center justify-center"
-      style={{ background: 'rgba(0, 0, 0, 0.88)' }}
+      style={{ background: 'rgba(0, 0, 0, 0.88)', backdropFilter: 'blur(8px)' }}
       onClick={onClose}
     >
       {/* 关闭按钮 */}
@@ -108,11 +102,11 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
 
       {/* 主内容 */}
       <div
-        className="relative w-[94vw] max-w-[1280px] rounded-2xl overflow-hidden flex flex-col"
+        className="relative w-[96vw] max-w-[1400px] rounded-2xl overflow-hidden flex flex-col"
         style={{
           ...glassPanel,
-          height: 'min(88vh, 780px)',
-          maxHeight: 'calc(100vh - 48px)',
+          height: 'min(90vh, 820px)',
+          maxHeight: 'calc(100vh - 32px)',
         }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -123,40 +117,62 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
         ) : detail ? (
           <div className="flex h-full min-h-0">
 
-            {/* ═══ 左侧缩略图列表 ═══ */}
+            {/* ═══ 左侧缩略图列表 — 更宽 + 上下阴影渐隐 ═══ */}
             {assets.length > 1 && (
               <div
-                className="shrink-0 overflow-y-auto py-3 px-2 flex flex-col gap-2"
+                className="shrink-0 relative"
                 style={{
-                  width: 88,
+                  width: 120,
                   borderRight: '1px solid rgba(255,255,255,0.06)',
-                  background: 'rgba(0,0,0,0.2)',
+                  background: 'rgba(0,0,0,0.25)',
                 }}
               >
-                {assets.map((asset, i) => (
-                  <button
-                    key={asset.id}
-                    type="button"
-                    onClick={() => setSelectedAssetIndex(i)}
-                    className="shrink-0 rounded-lg overflow-hidden transition-all duration-200"
-                    style={{
-                      width: 72,
-                      height: 72,
-                      border: i === selectedAssetIndex
-                        ? '2px solid var(--accent-primary, #818CF8)'
-                        : '2px solid transparent',
-                      opacity: i === selectedAssetIndex ? 1 : 0.6,
-                      boxShadow: i === selectedAssetIndex ? '0 0 12px rgba(99,102,241,0.3)' : 'none',
-                    }}
-                  >
-                    <img
-                      src={asset.url}
-                      alt=""
-                      className="w-full h-full object-cover"
-                      loading="lazy"
-                    />
-                  </button>
-                ))}
+                {/* 顶部阴影渐隐 */}
+                <div
+                  className="absolute top-0 left-0 right-0 z-10 pointer-events-none"
+                  style={{
+                    height: 40,
+                    background: 'linear-gradient(to bottom, rgba(0,0,0,0.6), transparent)',
+                  }}
+                />
+                {/* 底部阴影渐隐 */}
+                <div
+                  className="absolute bottom-0 left-0 right-0 z-10 pointer-events-none"
+                  style={{
+                    height: 40,
+                    background: 'linear-gradient(to top, rgba(0,0,0,0.6), transparent)',
+                  }}
+                />
+                <div
+                  className="h-full overflow-y-auto py-4 px-3 flex flex-col gap-2.5"
+                  style={{ scrollbarWidth: 'none' }}
+                >
+                  {assets.map((asset, i) => (
+                    <button
+                      key={asset.id}
+                      type="button"
+                      onClick={() => setSelectedAssetIndex(i)}
+                      className="shrink-0 rounded-xl overflow-hidden transition-all duration-200"
+                      style={{
+                        width: 94,
+                        height: 94,
+                        border: i === selectedAssetIndex
+                          ? '2.5px solid var(--accent-primary, #818CF8)'
+                          : '2px solid rgba(255,255,255,0.08)',
+                        opacity: i === selectedAssetIndex ? 1 : 0.55,
+                        boxShadow: i === selectedAssetIndex ? '0 0 16px rgba(99,102,241,0.35)' : 'none',
+                        transform: i === selectedAssetIndex ? 'scale(1.04)' : 'scale(1)',
+                      }}
+                    >
+                      <img
+                        src={asset.url}
+                        alt=""
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                      />
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -164,7 +180,6 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
             <div className="flex-1 min-w-0 flex flex-col relative"
               style={{ background: 'rgba(0,0,0,0.3)' }}
             >
-              {/* 大图 */}
               <div className="flex-1 min-h-0 flex items-center justify-center p-6">
                 {mainImageUrl ? (
                   <img
@@ -186,7 +201,7 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                 )}
               </div>
 
-              {/* 底部导航箭头（多图时） */}
+              {/* 导航箭头 */}
               {assets.length > 1 && (
                 <>
                   <button
@@ -205,7 +220,6 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                   >
                     <ChevronRight size={20} style={{ color: 'white', opacity: selectedAssetIndex === assets.length - 1 ? 0.3 : 1 }} />
                   </button>
-                  {/* 计数器 */}
                   <div
                     className="absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full text-xs font-medium"
                     style={{ ...glassPanel, color: 'white' }}
@@ -220,7 +234,7 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
             <div
               className="shrink-0 flex flex-col overflow-hidden"
               style={{
-                width: 360,
+                width: 380,
                 borderLeft: '1px solid rgba(255,255,255,0.06)',
               }}
             >
@@ -231,7 +245,7 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                     <img
                       src={avatarUrl}
                       alt={sub?.ownerUserName || ''}
-                      className="w-9 h-9 rounded-full object-cover shrink-0"
+                      className="w-10 h-10 rounded-full object-cover shrink-0 ring-1 ring-white/10"
                       onError={(e) => { (e.target as HTMLImageElement).src = DEFAULT_AVATAR_FALLBACK; }}
                     />
                     <div className="min-w-0">
@@ -262,10 +276,9 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                 </div>
               </div>
 
-              {/* 内容区域（tab 切换） */}
+              {/* 内容区域 */}
               <div className="flex-1 min-h-0 flex flex-col">
                 {isLiterary ? (
-                  /* ── 文学创作：tabs（正文 / 提示词） ── */
                   <>
                     <div className="shrink-0 px-5 pt-3 pb-1">
                       <Tabs
@@ -277,7 +290,7 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                         onChange={setRightTab}
                       />
                     </div>
-                    <div className="flex-1 min-h-0 overflow-y-auto px-5 py-3">
+                    <div className="flex-1 min-h-0 overflow-y-auto px-5 py-3" style={{ scrollbarWidth: 'none' }}>
                       {rightTab === 'article' && (
                         <div className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.7))' }}>
                           {detail.articleContent || '暂无文章内容'}
@@ -319,8 +332,8 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                     </div>
                   </>
                 ) : (
-                  /* ── 视觉创作：显示提示词 + 模型信息 ── */
-                  <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4">
+                  /* ── 视觉创作：提示词 + 生成参数 + 同项目 ── */
+                  <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4" style={{ scrollbarWidth: 'none' }}>
                     {/* 当前图片的提示词 */}
                     <div className="mb-4">
                       <div className="text-xs font-medium mb-2 flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
@@ -328,7 +341,7 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                         提示词
                       </div>
                       <div
-                        className="text-sm leading-relaxed rounded-xl p-3"
+                        className="text-sm leading-relaxed rounded-xl p-3.5"
                         style={{
                           color: 'var(--text-secondary, rgba(255,255,255,0.7))',
                           background: 'rgba(255,255,255,0.03)',
@@ -338,6 +351,53 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                         {selectedAsset?.prompt || sub?.prompt || '无提示词'}
                       </div>
                     </div>
+
+                    {/* 生成参数标签 */}
+                    {genInfo && (
+                      <div className="mb-4">
+                        <div className="text-xs font-medium mb-2 flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
+                          <Sparkles size={12} />
+                          生成参数
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {genInfo.modelName && (
+                            <InfoBadge icon={<Palette size={11} />} label={genInfo.modelName} />
+                          )}
+                          {genInfo.size && (
+                            <InfoBadge icon={<Maximize size={11} />} label={genInfo.size} />
+                          )}
+                          {genInfo.hasReferenceImage && (
+                            <InfoBadge
+                              icon={<Layers size={11} />}
+                              label={`图生图${genInfo.referenceImageCount && genInfo.referenceImageCount > 1 ? ` (${genInfo.referenceImageCount}张)` : ''}`}
+                              accent
+                            />
+                          )}
+                          {genInfo.hasInpainting && (
+                            <InfoBadge icon={<Brush size={11} />} label="涂抹重绘" accent />
+                          )}
+                          {genInfo.systemPromptName && (
+                            <InfoBadge icon={<FileText size={11} />} label={`提示词: ${genInfo.systemPromptName}`} />
+                          )}
+                          {genInfo.stylePrompt && (
+                            <InfoBadge icon={<Palette size={11} />} label="风格统一" />
+                          )}
+                        </div>
+                        {genInfo.stylePrompt && (
+                          <div
+                            className="mt-2 text-xs leading-relaxed rounded-lg p-2.5"
+                            style={{
+                              color: 'var(--text-muted)',
+                              background: 'rgba(255,255,255,0.02)',
+                              border: '1px solid rgba(255,255,255,0.03)',
+                            }}
+                          >
+                            <span style={{ color: 'var(--text-secondary)' }}>风格: </span>
+                            {genInfo.stylePrompt}
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     {/* 同 workspace 其他图片 */}
                     {assets.length > 1 && (
@@ -377,5 +437,22 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
         )}
       </div>
     </div>
+  );
+}
+
+/** 参数小标签 */
+function InfoBadge({ icon, label, accent }: { icon: React.ReactNode; label: string; accent?: boolean }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium"
+      style={{
+        background: accent ? 'rgba(99,102,241,0.12)' : 'rgba(255,255,255,0.04)',
+        border: accent ? '1px solid rgba(99,102,241,0.25)' : '1px solid rgba(255,255,255,0.06)',
+        color: accent ? 'var(--accent-primary, #818CF8)' : 'var(--text-secondary, rgba(255,255,255,0.6))',
+      }}
+    >
+      {icon}
+      {label}
+    </span>
   );
 }

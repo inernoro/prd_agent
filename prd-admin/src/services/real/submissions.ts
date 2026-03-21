@@ -42,10 +42,21 @@ export interface RelatedAsset {
   createdAt: string;
 }
 
+export interface GenerationInfo {
+  modelName?: string;
+  size?: string;
+  hasReferenceImage?: boolean;
+  hasInpainting?: boolean;
+  referenceImageCount?: number;
+  systemPromptName?: string;
+  stylePrompt?: string;
+}
+
 export interface SubmissionDetail {
   submission: SubmissionItem & { viewCount: number; workspaceId?: string; imageAssetId?: string };
   relatedAssets: RelatedAsset[];
   articleContent?: string;
+  generationInfo?: GenerationInfo;
 }
 
 export async function getSubmissionDetail(id: string) {
