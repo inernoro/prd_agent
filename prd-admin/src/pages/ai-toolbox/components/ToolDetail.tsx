@@ -98,6 +98,9 @@ export function ToolDetail() {
   // Publish state
   const [isPublic, setIsPublic] = useState(false);
 
+  // Current model info (from SSE start event)
+  const [currentModel, setCurrentModel] = useState<string | null>(null);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -361,6 +364,9 @@ export function ToolDetail() {
       sessionId: sessionId ?? undefined,
       history,
       attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+      onStart: (info) => {
+        if (info.model) setCurrentModel(info.model);
+      },
       onText: (content) => {
         fullContent += content;
         setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: m.content + content } : m));
@@ -519,6 +525,7 @@ export function ToolDetail() {
             </div>
             <div className="text-xs mb-3 leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{selectedItem.description}</div>
             <div className="space-y-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              {currentModel && <div className="flex items-center gap-1.5"><Cpu size={11} /><span>{currentModel}</span></div>}
               {selectedItem.usageCount > 0 && <div className="flex items-center gap-1.5"><Zap size={11} /><span>已使用 {selectedItem.usageCount} 次</span></div>}
               {selectedItem.createdByName && <div className="flex items-center gap-1.5"><User size={11} /><span>{selectedItem.createdByName}</span></div>}
               <div className="flex items-center gap-1.5"><Calendar size={11} /><span>{formatDistanceToNow(new Date(selectedItem.createdAt))}</span></div>

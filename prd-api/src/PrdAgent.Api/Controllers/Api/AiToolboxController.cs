@@ -1087,11 +1087,18 @@ public class AiToolboxController : ControllerBase
 
         try
         {
-            await WriteSseEventAsync("start", new { timestamp = DateTime.UtcNow });
-
             await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
             {
-                if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                if (chunk.Type == GatewayChunkType.Start)
+                {
+                    await WriteSseEventAsync("start", new
+                    {
+                        timestamp = DateTime.UtcNow,
+                        model = chunk.Resolution?.ActualModel,
+                        platform = chunk.Resolution?.ActualPlatformName,
+                    });
+                }
+                else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
                 {
                     try
                     {

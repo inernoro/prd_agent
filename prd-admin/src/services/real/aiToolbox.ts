@@ -512,6 +512,7 @@ export function streamDirectChat(
     history?: DirectChatMessage[];
     attachmentIds?: string[];
     onText: (content: string) => void;
+    onStart?: (info: { model?: string; platform?: string }) => void;
     onError?: (error: string) => void;
     onDone?: () => void;
   }
@@ -574,7 +575,9 @@ export function streamDirectChat(
           } else if (line === '' && currentEvent && currentData) {
             try {
               const data = JSON.parse(currentData);
-              if (currentEvent === 'text' && data.content) {
+              if (currentEvent === 'start') {
+                options.onStart?.({ model: data.model, platform: data.platform });
+              } else if (currentEvent === 'text' && data.content) {
                 options.onText(data.content);
               } else if (currentEvent === 'error') {
                 options.onError?.(data.message || '调用失败');
