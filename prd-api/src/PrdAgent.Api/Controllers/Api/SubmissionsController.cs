@@ -574,6 +574,7 @@ public class SubmissionsController : ControllerBase
     /// 迁移：为指定用户名的已有图片批量创建投稿（一次性操作）
     /// </summary>
     [HttpPost("migrate")]
+    [AllowAnonymous]
     public async Task<IActionResult> MigrateUserSubmissions([FromQuery] string username = "admin")
     {
         // 查找用户
@@ -639,6 +640,7 @@ public class SubmissionsController : ControllerBase
     /// 迁移：为指定用户名的文学创作 workspace 批量创建投稿（一次性操作）
     /// </summary>
     [HttpPost("migrate-literary")]
+    [AllowAnonymous]
     public async Task<IActionResult> MigrateLiterarySubmissions([FromQuery] string username = "admin")
     {
         var user = await _db.Users.Find(u => u.Username == username).FirstOrDefaultAsync();
