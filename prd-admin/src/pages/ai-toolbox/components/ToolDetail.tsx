@@ -160,7 +160,10 @@ export function ToolDetail() {
             allAttIds.map(id =>
               fetch(`/api/v1/attachments/${id}`, {
                 headers: { Authorization: `Bearer ${useAuthStore.getState().token ?? ''}` },
-              }).then(r => r.json())
+              }).then(r => {
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                return r.json();
+              })
             )
           );
           results.forEach((r, i) => {
@@ -176,7 +179,7 @@ export function ToolDetail() {
           // Build attachments array with real URLs for rendering
           const attachments = ids?.map(id => {
             const info = attMap.get(id);
-            if (!info) return { id, name: id, type: 'file' as const };
+            if (!info) return { id, name: '附件不可用', type: 'file' as const };
             const isImage = info.mimeType?.startsWith('image/');
             return {
               id,
@@ -276,7 +279,7 @@ export function ToolDetail() {
       {
         id: assistantId,
         role: 'assistant',
-        content: hasNewAttachments ? '' : '',
+        content: '',
         timestamp: new Date(),
         isStreaming: true,
       },
@@ -303,6 +306,14 @@ export function ToolDetail() {
           toast.error(`文件 "${currentAttachments[i].name}" 上传失败: ${errMsg}`);
         }
       });
+      // If ALL uploads failed, abort — don't send a confusing text-only message
+      if (attachmentIds.length === 0) {
+        setMessages(prev => prev.map(m =>
+          m.id === assistantId ? { ...m, content: '所有文件上传失败，请重试。', isStreaming: false } : m
+        ));
+        setIsLoading(false);
+        return;
+      }
       // Clear uploading hint — streaming will start writing content
       setMessages(prev => prev.map(m =>
         m.id === assistantId ? { ...m, content: '' } : m
