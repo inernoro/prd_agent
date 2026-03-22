@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 using System.Security.Claims;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -18,10 +19,12 @@ namespace PrdAgent.Api.Controllers.Api;
 public class SubmissionsController : ControllerBase
 {
     private readonly MongoDbContext _db;
+    private readonly IAssetStorage _assetStorage;
 
-    public SubmissionsController(MongoDbContext db)
+    public SubmissionsController(MongoDbContext db, IAssetStorage assetStorage)
     {
         _db = db;
+        _assetStorage = assetStorage;
     }
 
     /// <summary>
@@ -151,7 +154,7 @@ public class SubmissionsController : ControllerBase
             WatermarkBorderEnabled = wmConfig?.BorderEnabled,
             WatermarkBackgroundEnabled = wmConfig?.BackgroundEnabled,
             WatermarkRoundedBackgroundEnabled = wmConfig?.RoundedBackgroundEnabled,
-            WatermarkPreviewUrl = wmConfig?.PreviewUrl,
+            WatermarkPreviewUrl = BuildWatermarkPreviewUrl(wmConfig?.Id),
             WatermarkForkCount = wmConfig?.ForkCount ?? 0,
             WatermarkOwnerUserName = wmOwnerName,
             WatermarkOwnerAvatarFileName = wmOwnerAvatar,
@@ -159,6 +162,18 @@ public class SubmissionsController : ControllerBase
             AppKey = appKey,
             SnapshotAt = DateTime.UtcNow,
         };
+    }
+
+    /// <summary>
+    /// 构建水印预览图 URL（与 WatermarkController.BuildPreviewUrl 保持一致）
+    /// COS 环境返回公网 URL，本地环境返回 API 代理路径
+    /// </summary>
+    private string? BuildWatermarkPreviewUrl(string? watermarkId)
+    {
+        if (string.IsNullOrWhiteSpace(watermarkId)) return null;
+        var fileName = $"preview.{watermarkId}.png";
+        var key = $"{AppDomainPaths.NormDomain(AppDomainPaths.DomainWatermark)}/{AppDomainPaths.NormType(AppDomainPaths.TypeImg)}/{fileName}";
+        return _assetStorage.BuildUrlForKey(key);
     }
 
     private string GetUserId()
@@ -429,7 +444,7 @@ public class SubmissionsController : ControllerBase
                     watermarkBorderEnabled = snap.WatermarkBorderEnabled,
                     watermarkBackgroundEnabled = snap.WatermarkBackgroundEnabled,
                     watermarkRoundedBackgroundEnabled = snap.WatermarkRoundedBackgroundEnabled,
-                    watermarkPreviewUrl = snap.WatermarkPreviewUrl,
+                    watermarkPreviewUrl = snap.WatermarkPreviewUrl ?? BuildWatermarkPreviewUrl(snap.WatermarkConfigId),
                     watermarkForkCount = snap.WatermarkForkCount,
                     watermarkOwnerUserName = !string.IsNullOrEmpty(snap.WatermarkOwnerUserName)
                         ? snap.WatermarkOwnerUserName : submission.OwnerUserName,
@@ -549,7 +564,7 @@ public class SubmissionsController : ControllerBase
                         watermarkBorderEnabled = fbWmConfig?.BorderEnabled,
                         watermarkBackgroundEnabled = fbWmConfig?.BackgroundEnabled,
                         watermarkRoundedBackgroundEnabled = fbWmConfig?.RoundedBackgroundEnabled,
-                        watermarkPreviewUrl = fbWmConfig?.PreviewUrl,
+                        watermarkPreviewUrl = BuildWatermarkPreviewUrl(fbWmConfig?.Id),
                         watermarkForkCount = fbWmConfig?.ForkCount ?? 0,
                         watermarkOwnerUserName = fbWmOwnerName,
                         watermarkOwnerAvatarFileName = fbWmOwnerAvatar,

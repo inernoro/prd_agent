@@ -891,6 +891,16 @@ public class GroupsController : ControllerBase
                 ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "您不是该群组成员"));
         }
 
+        // 检查群组上下文重置标记（清理上下文后，不再返回重置时间之前的消息）
+        DateTime? groupResetAtUtc = null;
+        {
+            var ticks = await _cache.GetAsync<long?>(CacheKeys.ForGroupContextReset(groupId));
+            if (ticks.HasValue && ticks.Value > 0)
+            {
+                try { groupResetAtUtc = new DateTime(ticks.Value, DateTimeKind.Utc); } catch { /* ignore */ }
+            }
+        }
+
         // 优先级：afterSeq > beforeSeq > before（timestamp）
         // - afterSeq：增量同步（拉取新消息）
         // - beforeSeq：历史分页（向前加载）
@@ -907,6 +917,12 @@ public class GroupsController : ControllerBase
         else
         {
             messages = await _messageRepository.FindByGroupAsync(groupId, before, limit);
+        }
+
+        // 应用上下文重置标记过滤（清理上下文后隐藏旧消息）
+        if (groupResetAtUtc.HasValue)
+        {
+            messages = messages.Where(m => m.Timestamp > groupResetAtUtc.Value).ToList();
         }
 
         // 批量补齐 sender 信息（包括用户和机器人，避免 N+1）

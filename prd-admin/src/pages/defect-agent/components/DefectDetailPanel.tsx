@@ -1126,7 +1126,11 @@ export function DefectDetailPanel() {
                           {/* 渲染内容，支持 [IMG] */}
                           {msgSegments.map((seg, idx) =>
                             seg.type === 'text' ? (
-                              <span key={idx} style={{ whiteSpace: 'pre-wrap' }}>{seg.content}</span>
+                              <div key={idx} className="defect-md text-[12px]">
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                  {seg.content}
+                                </ReactMarkdown>
+                              </div>
                             ) : (
                               <button
                                 key={idx}

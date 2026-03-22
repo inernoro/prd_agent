@@ -130,6 +130,7 @@ builder.Services.AddSingleton<LlmRequestLogBackground>();
 builder.Services.AddSingleton<ILlmRequestLogWriter, LlmRequestLogWriter>();
 builder.Services.AddHostedService<LlmRequestLogWatchdog>();
 builder.Services.AddHostedService<PrdAgent.Api.Middleware.ApiRequestLogWatchdog>();
+builder.Services.AddHostedService<PrdAgent.Api.Middleware.AiScoreWatchdog>();
 
 // 应用设置服务（带缓存）
 builder.Services.AddMemoryCache();

@@ -48,6 +48,9 @@ public class DefectShareLink
     /// <summary>AI 评分状态：none | scoring | completed | failed</summary>
     public string AiScoreStatus { get; set; } = AiScoreStatusType.None;
 
+    /// <summary>AI 评分开始时间（用于超时检测）</summary>
+    public DateTime? AiScoreStartedAt { get; set; }
+
     private static string GenerateToken()
         => Convert.ToBase64String(RandomNumberGenerator.GetBytes(9))
             .Replace("+", "-").Replace("/", "_").TrimEnd('=');
