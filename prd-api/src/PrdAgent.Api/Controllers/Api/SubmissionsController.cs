@@ -151,7 +151,7 @@ public class SubmissionsController : ControllerBase
             WatermarkBorderEnabled = wmConfig?.BorderEnabled,
             WatermarkBackgroundEnabled = wmConfig?.BackgroundEnabled,
             WatermarkRoundedBackgroundEnabled = wmConfig?.RoundedBackgroundEnabled,
-            WatermarkPreviewUrl = wmConfig?.PreviewUrl,
+            WatermarkPreviewUrl = BuildWatermarkPreviewUrl(wmConfig?.Id),
             WatermarkForkCount = wmConfig?.ForkCount ?? 0,
             WatermarkOwnerUserName = wmOwnerName,
             WatermarkOwnerAvatarFileName = wmOwnerAvatar,
@@ -159,6 +159,16 @@ public class SubmissionsController : ControllerBase
             AppKey = appKey,
             SnapshotAt = DateTime.UtcNow,
         };
+    }
+
+    /// <summary>
+    /// 构建水印预览图的相对 URL（与 WatermarkController.BuildPreviewUrl 保持一致）
+    /// </summary>
+    private static string? BuildWatermarkPreviewUrl(string? watermarkId)
+    {
+        if (string.IsNullOrWhiteSpace(watermarkId)) return null;
+        var escapedId = Uri.EscapeDataString(watermarkId);
+        return $"/api/watermark/preview/{escapedId}.png";
     }
 
     private string GetUserId()
@@ -429,7 +439,7 @@ public class SubmissionsController : ControllerBase
                     watermarkBorderEnabled = snap.WatermarkBorderEnabled,
                     watermarkBackgroundEnabled = snap.WatermarkBackgroundEnabled,
                     watermarkRoundedBackgroundEnabled = snap.WatermarkRoundedBackgroundEnabled,
-                    watermarkPreviewUrl = snap.WatermarkPreviewUrl,
+                    watermarkPreviewUrl = snap.WatermarkPreviewUrl ?? BuildWatermarkPreviewUrl(snap.WatermarkConfigId),
                     watermarkForkCount = snap.WatermarkForkCount,
                     watermarkOwnerUserName = !string.IsNullOrEmpty(snap.WatermarkOwnerUserName)
                         ? snap.WatermarkOwnerUserName : submission.OwnerUserName,
@@ -549,7 +559,7 @@ public class SubmissionsController : ControllerBase
                         watermarkBorderEnabled = fbWmConfig?.BorderEnabled,
                         watermarkBackgroundEnabled = fbWmConfig?.BackgroundEnabled,
                         watermarkRoundedBackgroundEnabled = fbWmConfig?.RoundedBackgroundEnabled,
-                        watermarkPreviewUrl = fbWmConfig?.PreviewUrl,
+                        watermarkPreviewUrl = BuildWatermarkPreviewUrl(fbWmConfig?.Id),
                         watermarkForkCount = fbWmConfig?.ForkCount ?? 0,
                         watermarkOwnerUserName = fbWmOwnerName,
                         watermarkOwnerAvatarFileName = fbWmOwnerAvatar,
