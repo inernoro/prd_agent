@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Search,
@@ -27,6 +27,7 @@ import { useToolboxStore } from '@/stores/toolboxStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import type { ToolboxItem } from '@/services';
+import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
 
 // ── Icon & Color mapping (self-contained, doesn't touch ToolCard) ──
 
@@ -45,6 +46,19 @@ const AGENT_COVERS: Record<string, string> = {
   'arena': 'icon/backups/agent/arena.png',
   'shortcuts-agent': 'icon/backups/agent/shortcuts-agent.png',
   'workflow-agent': 'icon/backups/agent/workflow-agent.png',
+};
+
+/** Agent 封面视频 CDN 路径 */
+const AGENT_VIDEOS: Record<string, string> = {
+  'prd-agent': 'icon/backups/agent/prd-agent.mp4',
+  'visual-agent': 'icon/backups/agent/visual-agent.mp4',
+  'literary-agent': 'icon/backups/agent/literary-agent.mp4',
+  'defect-agent': 'icon/backups/agent/defect-agent.mp4',
+  'video-agent': 'icon/backups/agent/video-agent.mp4',
+  'report-agent': 'icon/backups/agent/report-agent.mp4',
+  'arena': 'icon/backups/agent/arena.mp4',
+  'shortcuts-agent': 'icon/backups/agent/shortcuts-agent.mp4',
+  'workflow-agent': 'icon/backups/agent/workflow-agent.mp4',
 };
 
 /** 每个图标对应的主题色 */
@@ -72,6 +86,14 @@ function getAccent(icon: string) {
 function getCoverUrl(agentKey?: string): string | null {
   if (!agentKey) return null;
   const path = AGENT_COVERS[agentKey];
+  if (!path) return null;
+  const base = (useAuthStore.getState().cdnBaseUrl ?? '').replace(/\/+$/, '');
+  return base ? `${base}/${path}` : `/${path}`;
+}
+
+function getVideoUrl(agentKey?: string): string | null {
+  if (!agentKey) return null;
+  const path = AGENT_VIDEOS[agentKey];
   if (!path) return null;
   const base = (useAuthStore.getState().cdnBaseUrl ?? '').replace(/\/+$/, '');
   return base ? `${base}/${path}` : `/${path}`;
@@ -107,13 +129,34 @@ const QUICK_LINKS = [
 function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => void }) {
   const accent = getAccent(item.icon);
   const coverUrl = getCoverUrl(item.agentKey);
+  const videoUrl = getVideoUrl(item.agentKey);
   const [coverFailed, setCoverFailed] = useState(false);
+  const [videoReady, setVideoReady] = useState(false);
+  const [hovering, setHovering] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const Icon = getIcon(item.icon);
+
+  const handleMouseEnter = () => {
+    setHovering(true);
+    if (videoRef.current && videoReady) {
+      videoRef.current.currentTime = 0;
+      videoRef.current.play().catch(() => {});
+    }
+  };
+
+  const handleMouseLeave = () => {
+    setHovering(false);
+    if (videoRef.current) {
+      videoRef.current.pause();
+    }
+  };
 
   return (
     <button
       type="button"
       onClick={onClick}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
       className="group relative w-full text-left rounded-2xl overflow-hidden transition-all duration-300 hover:-translate-y-1"
       style={{
         background: 'var(--bg-elevated, rgba(255,255,255,0.03))',
@@ -123,13 +166,28 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
     >
       {/* Cover image or gradient background */}
       {coverUrl && !coverFailed ? (
-        <img
-          src={coverUrl}
-          alt=""
-          className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-          draggable={false}
-          onError={() => setCoverFailed(true)}
-        />
+        <>
+          <img
+            src={coverUrl}
+            alt=""
+            className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+            draggable={false}
+            onError={() => setCoverFailed(true)}
+          />
+          {videoUrl && (
+            <video
+              ref={videoRef}
+              src={videoUrl}
+              muted
+              loop
+              playsInline
+              preload="metadata"
+              onCanPlayThrough={() => setVideoReady(true)}
+              className="absolute inset-0 w-full h-full object-cover transition-opacity duration-500"
+              style={{ opacity: hovering && videoReady ? 1 : 0 }}
+            />
+          )}
+        </>
       ) : (
         <div
           className="absolute inset-0"
@@ -557,6 +615,9 @@ export default function AgentLauncherPage() {
                   </div>
                 </section>
               )}
+
+              {/* Showcase Gallery — 作品广场 */}
+              <ShowcaseGallery />
             </>
           )}
         </div>

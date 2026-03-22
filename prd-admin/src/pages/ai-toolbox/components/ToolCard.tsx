@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { ToolboxItem } from '@/services';
 import { useToolboxStore } from '@/stores/toolboxStore';
 import { useNavigate } from 'react-router-dom';
@@ -38,7 +38,6 @@ import {
   Search,
   Layers,
   Swords,
-  Users,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -102,9 +101,30 @@ const AGENT_COVER_PATHS: Record<string, string> = {
   'workflow-agent': 'icon/backups/agent/workflow-agent.png',
 };
 
+/** Agent 封面视频 CDN 路径映射 */
+const AGENT_VIDEO_PATHS: Record<string, string> = {
+  'prd-agent': 'icon/backups/agent/prd-agent.mp4',
+  'visual-agent': 'icon/backups/agent/visual-agent.mp4',
+  'literary-agent': 'icon/backups/agent/literary-agent.mp4',
+  'defect-agent': 'icon/backups/agent/defect-agent.mp4',
+  'video-agent': 'icon/backups/agent/video-agent.mp4',
+  'report-agent': 'icon/backups/agent/report-agent.mp4',
+  'arena': 'icon/backups/agent/arena.mp4',
+  'shortcuts-agent': 'icon/backups/agent/shortcuts-agent.mp4',
+  'workflow-agent': 'icon/backups/agent/workflow-agent.mp4',
+};
+
 function getCoverImageUrl(agentKey?: string): string | null {
   if (!agentKey) return null;
   const path = AGENT_COVER_PATHS[agentKey];
+  if (!path) return null;
+  const base = (useAuthStore.getState().cdnBaseUrl ?? '').replace(/\/+$/, '');
+  return base ? `${base}/${path}` : `/${path}`;
+}
+
+function getCoverVideoUrl(agentKey?: string): string | null {
+  if (!agentKey) return null;
+  const path = AGENT_VIDEO_PATHS[agentKey];
   if (!path) return null;
   const base = (useAuthStore.getState().cdnBaseUrl ?? '').replace(/\/+$/, '');
   return base ? `${base}/${path}` : `/${path}`;
@@ -128,7 +148,11 @@ export function ToolCard({ item }: ToolCardProps) {
   const isCustomized = !!item.routePath;
   const favorited = isFavorite(item.id);
   const coverUrl = getCoverImageUrl(item.agentKey);
+  const videoUrl = getCoverVideoUrl(item.agentKey);
   const [coverFailed, setCoverFailed] = useState(false);
+  const [videoReady, setVideoReady] = useState(false);
+  const [hovering, setHovering] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   const handleClick = () => {
     if (isCustomized && item.routePath) {
@@ -143,10 +167,27 @@ export function ToolCard({ item }: ToolCardProps) {
     toggleFavorite(item.id);
   };
 
+  const handleMouseEnter = () => {
+    setHovering(true);
+    if (videoRef.current && videoReady) {
+      videoRef.current.currentTime = 0;
+      videoRef.current.play().catch(() => {});
+    }
+  };
+
+  const handleMouseLeave = () => {
+    setHovering(false);
+    if (videoRef.current) {
+      videoRef.current.pause();
+    }
+  };
+
   return (
     <SpotlightEffect
       spotlightColor={`${palette.from}33`} // 20% opacity of the main color
       onClick={handleClick}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
       className="group relative rounded-xl overflow-hidden cursor-pointer transition-all duration-500 hover:-translate-y-1"
       style={{
         background: 'rgba(15, 23, 42, 0.4)',
@@ -158,19 +199,34 @@ export function ToolCard({ item }: ToolCardProps) {
       }}
     >
       {/* 噪点纹理涂层 */}
-      <div 
-        className="absolute inset-0 z-0 opacity-[0.03] mix-blend-overlay pointer-events-none" 
-        style={{ backgroundImage: 'var(--glass-noise)' }} 
+      <div
+        className="absolute inset-0 z-0 opacity-[0.03] mix-blend-overlay pointer-events-none"
+        style={{ backgroundImage: 'var(--glass-noise)' }}
       />
       {/* Cover visual — CDN 图片 or 渐变 + 大图标 */}
       {coverUrl && !coverFailed ? (
-        <img
-          src={coverUrl}
-          alt={item.name}
-          className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-110 z-0"
-          draggable={false}
-          onError={() => setCoverFailed(true)}
-        />
+        <>
+          <img
+            src={coverUrl}
+            alt={item.name}
+            className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-110 z-0"
+            draggable={false}
+            onError={() => setCoverFailed(true)}
+          />
+          {videoUrl && (
+            <video
+              ref={videoRef}
+              src={videoUrl}
+              muted
+              loop
+              playsInline
+              preload="metadata"
+              onCanPlayThrough={() => setVideoReady(true)}
+              className="absolute inset-0 w-full h-full object-cover z-[1] transition-opacity duration-500"
+              style={{ opacity: hovering && videoReady ? 1 : 0 }}
+            />
+          )}
+        </>
       ) : (
         <div
           className="absolute inset-0 z-0"

@@ -47,8 +47,8 @@ export const WatermarkDescriptionGrid: React.FC<WatermarkDescriptionGridProps> =
   const fontDisplay = data.fontLabel || data.fontKey || 'Default';
 
   // 格式化偏移值：pixel 模式显示整数，ratio 模式显示 2 位小数
-  const formatOffset = (x?: number, y?: number, mode?: 'pixel' | 'ratio') => {
-    if (x === undefined || y === undefined) return '-';
+  const formatOffset = (x?: number | null, y?: number | null, mode?: 'pixel' | 'ratio' | null) => {
+    if (x == null || y == null) return '-';
     if (mode === 'ratio') {
       return `${x.toFixed(2)},${y.toFixed(2)}`;
     }
@@ -67,14 +67,14 @@ export const WatermarkDescriptionGrid: React.FC<WatermarkDescriptionGridProps> =
       <div className="text-[10px] grid grid-cols-2 gap-x-2 gap-y-0 p-1.5" style={{ color: 'var(--text-muted)' }}>
         <InfoRow label="文本" value={data.text || '无'} />
         <InfoRow label="字体" value={fontDisplay} />
-        <InfoRow label="大小" value={data.fontSizePx !== undefined ? `${data.fontSizePx}px` : '-'} />
-        <InfoRow label="透明度" value={data.opacity !== undefined ? `${Math.round(data.opacity * 100)}%` : '-'} />
+        <InfoRow label="大小" value={data.fontSizePx != null ? `${data.fontSizePx}px` : '-'} />
+        <InfoRow label="透明度" value={data.opacity != null ? `${Math.round(data.opacity * 100)}%` : '-'} />
         <InfoRow label="位置" value={data.anchor ? (anchorLabelMap[data.anchor] || data.anchor) : '-'} />
         <InfoRow label="偏移" value={formatOffset(data.offsetX, data.offsetY, data.positionMode)} />
-        <InfoRow label="图标" value={data.iconEnabled !== undefined ? (data.iconEnabled ? '启用' : '禁用') : '-'} />
-        <InfoRow label="边框" value={data.borderEnabled !== undefined ? (data.borderEnabled ? '启用' : '禁用') : '-'} />
-        <InfoRow label="背景" value={data.backgroundEnabled !== undefined ? (data.backgroundEnabled ? '启用' : '禁用') : '-'} />
-        <InfoRow label="圆角" value={data.roundedBackgroundEnabled !== undefined ? (data.roundedBackgroundEnabled ? '启用' : '禁用') : '-'} />
+        <InfoRow label="图标" value={data.iconEnabled != null ? (data.iconEnabled ? '启用' : '禁用') : '-'} />
+        <InfoRow label="边框" value={data.borderEnabled != null ? (data.borderEnabled ? '启用' : '禁用') : '-'} />
+        <InfoRow label="背景" value={data.backgroundEnabled != null ? (data.backgroundEnabled ? '启用' : '禁用') : '-'} />
+        <InfoRow label="圆角" value={data.roundedBackgroundEnabled != null ? (data.roundedBackgroundEnabled ? '启用' : '禁用') : '-'} />
       </div>
     </div>
   );

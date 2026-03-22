@@ -154,6 +154,26 @@ public class IntentDetectorService
             return;
         }
 
+        // 视频平台分享文本（抖音/快手/B站/小红书等口令）
+        if (ContainsAny(lowerContent,
+            "douyin.com", "v.douyin.com", "复制打开抖音",
+            "tiktok.com", "vm.tiktok.com",
+            "kuaishou.com", "v.kuaishou.com", "复制打开快手",
+            "bilibili.com", "b23.tv",
+            "xiaohongshu.com", "xhslink.com",
+            "ixigua.com"))
+        {
+            result.Intent = ChannelTaskIntent.ParseUrl;
+            result.TargetAgent = "workflow-agent";
+            result.Confidence = 0.9;
+            // 提取视频 URL
+            var urlMatch = Regex.Match(result.CleanContent, @"https?://[^\s""'<>\]）》]+",
+                RegexOptions.IgnoreCase);
+            if (urlMatch.Success)
+                result.Parameters["videoUrl"] = urlMatch.Value.TrimEnd('.', ',', ')');
+            return;
+        }
+
         // 未能识别
         result.Intent = ChannelTaskIntent.Unknown;
         result.Confidence = 0.0;

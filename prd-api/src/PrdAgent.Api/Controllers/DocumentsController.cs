@@ -190,45 +190,72 @@ public class DocumentsController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status403Forbidden)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> GetDocumentContent(string documentId, [FromQuery] string groupId)
+    public async Task<IActionResult> GetDocumentContent(
+        string documentId,
+        [FromQuery] string? groupId = null,
+        [FromQuery] string? sessionId = null)
     {
-        if (string.IsNullOrWhiteSpace(groupId))
-        {
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "groupId 不能为空"));
-        }
-
         var userId = GetUserId(User);
         if (string.IsNullOrEmpty(userId))
         {
             return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
         }
 
-        var group = await _groupService.GetByIdAsync(groupId);
-        if (group == null)
+        // 路径 1：通过 groupId 鉴权（桌面端群组模式）
+        if (!string.IsNullOrWhiteSpace(groupId))
         {
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.GROUP_NOT_FOUND, "群组不存在"));
-        }
+            var group = await _groupService.GetByIdAsync(groupId);
+            if (group == null)
+            {
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.GROUP_NOT_FOUND, "群组不存在"));
+            }
 
-        // 必须是群组成员且该文档必须是群组当前绑定的 PRD，避免通过 hash 猜测 documentId 越权读取
-        var isMember = await _groupService.IsMemberAsync(groupId, userId);
-        if (!isMember)
-        {
-            return StatusCode(StatusCodes.Status403Forbidden,
-                ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "您不是该群组成员"));
-        }
+            var isMember = await _groupService.IsMemberAsync(groupId, userId);
+            if (!isMember)
+            {
+                return StatusCode(StatusCodes.Status403Forbidden,
+                    ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "您不是该群组成员"));
+            }
 
-        // 绑定校验：文档必须是群组主文档 OR 群组会话的辅助文档
-        var isGroupPrimary = string.Equals(group.PrdDocumentId, documentId, StringComparison.OrdinalIgnoreCase);
-        if (!isGroupPrimary)
+            var isGroupPrimary = string.Equals(group.PrdDocumentId, documentId, StringComparison.OrdinalIgnoreCase);
+            if (!isGroupPrimary)
+            {
+                var session = await _sessionService.GetByGroupIdAsync(groupId);
+                var isSessionDoc = session?.GetAllDocumentIds().Contains(documentId, StringComparer.OrdinalIgnoreCase) == true;
+                if (!isSessionDoc)
+                {
+                    return StatusCode(StatusCodes.Status403Forbidden,
+                        ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "该文档未绑定到当前群组"));
+                }
+            }
+        }
+        // 路径 2：通过 sessionId 鉴权（Web 端个人会话模式）
+        else if (!string.IsNullOrWhiteSpace(sessionId))
         {
-            // 检查辅助文档：群组 session 的 DocumentIds 是否包含该文档
-            var session = await _sessionService.GetByGroupIdAsync(groupId);
-            var isSessionDoc = session?.GetAllDocumentIds().Contains(documentId, StringComparer.OrdinalIgnoreCase) == true;
+            var session = await _sessionService.GetByIdAsync(sessionId);
+            if (session == null)
+            {
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.SESSION_NOT_FOUND, "会话不存在"));
+            }
+
+            // 仅会话拥有者可读取其文档
+            if (!string.Equals(session.OwnerUserId, userId, StringComparison.OrdinalIgnoreCase))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden,
+                    ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "您不是该会话的拥有者"));
+            }
+
+            // 文档必须属于该会话
+            var isSessionDoc = session.GetAllDocumentIds().Contains(documentId, StringComparer.OrdinalIgnoreCase);
             if (!isSessionDoc)
             {
                 return StatusCode(StatusCodes.Status403Forbidden,
-                    ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "该文档未绑定到当前群组"));
+                    ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "该文档未绑定到当前会话"));
             }
+        }
+        else
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "groupId 或 sessionId 不能同时为空"));
         }
 
         var document = await _documentService.GetByIdAsync(documentId);

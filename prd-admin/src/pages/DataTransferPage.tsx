@@ -3,7 +3,8 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { Badge } from '@/components/design/Badge';
 import { TabBar } from '@/components/design/TabBar';
 import { Dialog } from '@/components/ui/Dialog';
-import { UserSearchSelect, ROLE_COLORS } from '@/components/UserSearchSelect';
+import { UserSearchSelect } from '@/components/UserSearchSelect';
+import { getRoleMeta } from '@/lib/roleConfig';
 import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
 import { BlurText, DecryptedText, ShinyText, SplitText } from '@/components/reactbits';
 import {
@@ -890,16 +891,18 @@ function CreateTransferDialog({
                       <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
                         @{selectedReceiver.username}
                       </span>
-                      <span
-                        className="text-[9px] font-bold px-1 py-px rounded-[3px]"
-                        style={{
-                          background: (ROLE_COLORS[selectedReceiver.role] || ROLE_COLORS.DEV).bg,
-                          border: `1px solid ${(ROLE_COLORS[selectedReceiver.role] || ROLE_COLORS.DEV).border}`,
-                          color: (ROLE_COLORS[selectedReceiver.role] || ROLE_COLORS.DEV).text,
-                        }}
-                      >
-                        {selectedReceiver.role}
-                      </span>
+                      {(() => {
+                        const rm = getRoleMeta(selectedReceiver.role);
+                        return (
+                          <span
+                            className="inline-flex items-center gap-0.5 text-[9px] font-bold px-1 py-px rounded-[3px]"
+                            style={{ background: rm.bg, border: `1px solid ${rm.border}`, color: rm.color }}
+                          >
+                            <rm.icon size={9} />
+                            {rm.label}
+                          </span>
+                        );
+                      })()}
                     </div>
                     <div className="text-[11px] mt-0.5" style={{ color: 'rgba(34,197,94,0.8)' }}>
                       将发送系统通知给此用户

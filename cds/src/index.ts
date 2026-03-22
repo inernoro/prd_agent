@@ -3,7 +3,8 @@ import express from 'express';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { loadConfig } from './config.js';
-import { createServer } from './server.js';
+import { createServer, broadcastActivity, nextActivitySeq } from './server.js';
+import type { ActivityEvent } from './server.js';
 import { ShellExecutor } from './services/shell-executor.js';
 import { StateService } from './services/state.js';
 import { WorktreeService } from './services/worktree.js';
@@ -21,7 +22,7 @@ const shell = new ShellExecutor();
 
 // ── State ──
 const stateFile = path.join(config.repoRoot, '.cds', 'state.json');
-const stateService = new StateService(stateFile);
+const stateService = new StateService(stateFile, config.repoRoot);
 stateService.load();
 
 // ── Apply custom env overrides to config ──
@@ -132,6 +133,29 @@ proxyService.setResolveUpstream((branchId, profileId) => {
     if (svc.status === 'running') return `http://127.0.0.1:${svc.hostPort}`;
   }
   return null;
+});
+
+// ── Web access tracking (throttled: max 1 event per branch per 2s) ──
+const webAccessThrottle = new Map<string, number>();
+proxyService.setOnAccess((branchId, method, reqPath, status, duration, profileId) => {
+  const now = Date.now();
+  const lastSent = webAccessThrottle.get(branchId) || 0;
+  if (now - lastSent < 2000) return; // throttle: 1 event per 2 seconds per branch
+  webAccessThrottle.set(branchId, now);
+
+  const event: ActivityEvent = {
+    id: nextActivitySeq(),
+    ts: new Date().toISOString(),
+    method,
+    path: reqPath,
+    status,
+    duration,
+    type: 'web',
+    source: 'user',
+    branchId,
+    profileId,
+  };
+  broadcastActivity(event);
 });
 
 // ── Build lock for race conditions ──
@@ -516,11 +540,25 @@ function tryKillOnPort(port: number, force: boolean): boolean {
       const cmd = execSync(`ps -p ${pid} -o comm= 2>/dev/null || true`, { encoding: 'utf-8' }).trim();
       if (force || ['node', 'tsx', 'ts-node', 'npx'].includes(cmd)) {
         console.log(`  Stopping process on port ${port} (PID: ${pid}, cmd: ${cmd})`);
-        execSync(`kill -9 ${pid} 2>/dev/null || true`);
+        // Kill the entire process group to prevent tsx watch from respawning
+        try {
+          const pgid = execSync(`ps -p ${pid} -o pgid= 2>/dev/null || true`, { encoding: 'utf-8' }).trim();
+          if (pgid && pgid !== String(process.pid)) {
+            execSync(`kill -9 -- -${pgid} 2>/dev/null || true`);
+          } else {
+            execSync(`kill -9 ${pid} 2>/dev/null || true`);
+          }
+        } catch {
+          execSync(`kill -9 ${pid} 2>/dev/null || true`);
+        }
         killed = true;
       } else {
         console.log(`  [WARN] Port ${port} held by non-CDS process (PID: ${pid}, cmd: ${cmd}) — not killing`);
       }
+    }
+    if (killed) {
+      // Wait briefly for kernel to release the socket
+      execSync('sleep 0.5');
     }
     return killed;
   } catch {
@@ -537,14 +575,17 @@ function listenWithRetry(
   onSuccess: () => void,
   opts: { force?: boolean; optional?: boolean } = {},
 ) {
+  const MAX_ATTEMPTS = 5;
   const doListen = (attempt: number) => {
     const s = server.listen(port, onSuccess);
     s.on('error', (err: Error & { code?: string }) => {
-      if (err.code === 'EADDRINUSE' && attempt < 2) {
-        console.log(`  [WARN] Port ${port} in use, attempting to reclaim (${label})...`);
+      if (err.code === 'EADDRINUSE' && attempt < MAX_ATTEMPTS) {
+        console.log(`  [WARN] Port ${port} in use, attempting to reclaim (${label}, attempt ${attempt + 1}/${MAX_ATTEMPTS})...`);
         const killed = tryKillOnPort(port, !!opts.force);
         if (killed) {
-          setTimeout(() => doListen(attempt + 1), 1500);
+          // Exponential backoff: 1.5s, 2s, 3s, 4s, 5s
+          const delay = 1500 + attempt * 500;
+          setTimeout(() => doListen(attempt + 1), delay);
         } else if (opts.optional) {
           console.log(`  [INFO] Port ${port} occupied by another service — ${label} skipped (non-essential)`);
         } else {

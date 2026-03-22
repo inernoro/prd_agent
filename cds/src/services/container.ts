@@ -257,6 +257,31 @@ export class ContainerService {
     return combinedOutput(result);
   }
 
+  /**
+   * Stream container logs via `docker logs -f`. Returns an AbortController
+   * to stop the stream. Calls onData with each chunk, onClose when done.
+   */
+  streamLogs(
+    containerName: string,
+    onData: (chunk: string) => void,
+    onClose: () => void,
+    tail = 200,
+  ): AbortController {
+    const ac = new AbortController();
+    const child = spawn('docker', ['logs', '-f', '--tail', String(tail), containerName], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const forward = (data: Buffer) => {
+      if (!ac.signal.aborted) onData(data.toString());
+    };
+    child.stdout.on('data', forward);
+    child.stderr.on('data', forward);
+    child.on('close', () => { if (!ac.signal.aborted) onClose(); });
+    child.on('error', () => onClose());
+    ac.signal.addEventListener('abort', () => { child.kill(); });
+    return ac;
+  }
+
   async getEnv(containerName: string): Promise<string> {
     // Use docker inspect instead of docker exec to support stopped containers
     const result = await this.shell.exec(

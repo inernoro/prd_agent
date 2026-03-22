@@ -745,7 +745,7 @@ export default function AppShell() {
             )}
           >
             <img
-              src="/favicon.jpg"
+              src="/favicon.png"
               alt="Logo"
               className={cn('transition-all duration-200', collapsed ? 'w-7 h-7' : 'w-8 h-8')}
               draggable={false}

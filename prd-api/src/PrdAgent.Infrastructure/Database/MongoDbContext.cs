@@ -139,6 +139,9 @@ public class MongoDbContext
     // AI Toolbox 百宝箱
     public IMongoCollection<ToolboxRun> ToolboxRuns => _database.GetCollection<ToolboxRun>("toolbox_runs");
     public IMongoCollection<ToolboxItem> ToolboxItems => _database.GetCollection<ToolboxItem>("toolbox_items");
+    public IMongoCollection<ToolboxSession> ToolboxSessions => _database.GetCollection<ToolboxSession>("toolbox_sessions");
+    public IMongoCollection<ToolboxMessage> ToolboxMessages => _database.GetCollection<ToolboxMessage>("toolbox_messages");
+    public IMongoCollection<ToolboxShareLink> ToolboxShareLinks => _database.GetCollection<ToolboxShareLink>("toolbox_share_links");
 
     // 统一技能集合
     public IMongoCollection<Skill> Skills => _database.GetCollection<Skill>("skills");
@@ -178,6 +181,10 @@ public class MongoDbContext
 
     // Video Agent 视频转文档
     public IMongoCollection<VideoToDocRun> VideoToDocRuns => _database.GetCollection<VideoToDocRun>("video_to_doc_runs");
+
+    // 作品投稿展示
+    public IMongoCollection<Submission> Submissions => _database.GetCollection<Submission>("submissions");
+    public IMongoCollection<SubmissionLike> SubmissionLikes => _database.GetCollection<SubmissionLike>("submission_likes");
 
     // Tutorial Email 教程邮件
     public IMongoCollection<TutorialEmailSequence> TutorialEmailSequences => _database.GetCollection<TutorialEmailSequence>("tutorial_email_sequences");
@@ -926,6 +933,18 @@ public class MongoDbContext
         ToolboxItems.Indexes.CreateOne(new CreateIndexModel<ToolboxItem>(
             Builders<ToolboxItem>.IndexKeys.Ascending(x => x.CreatedByUserId).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_toolbox_items_user_created" }));
+        // ToolboxItems：市场公开列表
+        ToolboxItems.Indexes.CreateOne(new CreateIndexModel<ToolboxItem>(
+            Builders<ToolboxItem>.IndexKeys.Ascending(x => x.IsPublic).Descending(x => x.ForkCount),
+            new CreateIndexOptions { Name = "idx_toolbox_items_public_forkcount" }));
+        // ToolboxSessions：按 (userId, itemId, lastActiveAt) 查询
+        ToolboxSessions.Indexes.CreateOne(new CreateIndexModel<ToolboxSession>(
+            Builders<ToolboxSession>.IndexKeys.Ascending(x => x.UserId).Ascending(x => x.ItemId).Descending(x => x.LastActiveAt),
+            new CreateIndexOptions { Name = "idx_toolbox_sessions_user_item_active" }));
+        // ToolboxMessages：按 sessionId + createdAt 查询
+        ToolboxMessages.Indexes.CreateOne(new CreateIndexModel<ToolboxMessage>(
+            Builders<ToolboxMessage>.IndexKeys.Ascending(x => x.SessionId).Ascending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_toolbox_messages_session_created" }));
 
         // ========== Workflow Agent 工作流引擎索引 ==========
 
@@ -1260,5 +1279,49 @@ public class MongoDbContext
         DesktopUpdateCaches.Indexes.CreateOne(new CreateIndexModel<DesktopUpdateCache>(
             Builders<DesktopUpdateCache>.IndexKeys.Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_desktop_update_caches_created" }));
+
+        // ========== 作品投稿展示索引 ==========
+
+        // Submissions：公开作品列表（按类型 + 时间排序）
+        Submissions.Indexes.CreateOne(new CreateIndexModel<Submission>(
+            Builders<Submission>.IndexKeys
+                .Ascending(x => x.IsPublic)
+                .Ascending(x => x.ContentType)
+                .Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_submissions_public_type_created" }));
+
+        // Submissions：按 OwnerUserId 查询
+        Submissions.Indexes.CreateOne(new CreateIndexModel<Submission>(
+            Builders<Submission>.IndexKeys.Ascending(x => x.OwnerUserId),
+            new CreateIndexOptions { Name = "idx_submissions_owner" }));
+
+        // Submissions：按 ImageAssetId 唯一（防重复投稿同一图片）
+        try
+        {
+            Submissions.Indexes.CreateOne(new CreateIndexModel<Submission>(
+                Builders<Submission>.IndexKeys.Ascending(x => x.ImageAssetId),
+                new CreateIndexOptions<Submission>
+                {
+                    Name = "uniq_submissions_image_asset",
+                    Unique = true,
+                    PartialFilterExpression = new MongoDB.Bson.BsonDocument("ImageAssetId", new MongoDB.Bson.BsonDocument("$type", "string"))
+                }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+
+        // SubmissionLikes：(SubmissionId + UserId) 唯一
+        try
+        {
+            SubmissionLikes.Indexes.CreateOne(new CreateIndexModel<SubmissionLike>(
+                Builders<SubmissionLike>.IndexKeys.Ascending(x => x.SubmissionId).Ascending(x => x.UserId),
+                new CreateIndexOptions { Name = "uniq_submission_likes_sid_uid", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
     }
 }

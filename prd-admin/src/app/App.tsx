@@ -33,6 +33,7 @@ const WorkflowEditorPage = lazy(() => import('@/pages/workflow-agent').then(m =>
 const WorkflowCanvasPage = lazy(() => import('@/pages/workflow-agent').then(m => ({ default: m.WorkflowCanvasPage })));
 const MarketplacePage = lazy(() => import('@/pages/marketplace').then(m => ({ default: m.MarketplacePage })));
 const AiToolboxPage = lazy(() => import('@/pages/ai-toolbox').then(m => ({ default: m.AiToolboxPage })));
+const SharedConversation = lazy(() => import('@/pages/ai-toolbox/SharedConversation').then(m => ({ default: m.SharedConversation })));
 const ArenaPage = lazy(() => import('@/pages/arena/ArenaPage').then(m => ({ default: m.ArenaPage })));
 const LandingPage = lazy(() => import('@/pages/home').then(m => ({ default: m.LandingPage })));
 const OpenPlatformTabsPage = lazy(() => import('@/pages/OpenPlatformTabsPage'));
@@ -208,6 +209,7 @@ export default function App() {
         {/* 公开分享页面 - 无需登录 */}
         <Route path="/s/wp/:token" element={<ShareViewPage />} />
         <Route path="/s/shortcut/:id" element={<ShortcutInstallPage />} />
+        <Route path="/shared/toolbox/:shareId" element={<SharedConversation />} />
 
         {/* 开发试验场 - 无需权限 */}
         <Route path="/_dev/rich-composer-lab" element={<RichComposerLab />} />

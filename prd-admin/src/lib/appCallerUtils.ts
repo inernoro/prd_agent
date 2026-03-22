@@ -228,6 +228,12 @@ function getAppDisplayName(app: string): string {
     'literary-agent': 'Literary Agent 文学创作',
     'open-platform': 'Open Platform 开放平台',
     'open-platform-agent': 'Open Platform 开放平台',
+    'defect-agent': 'Defect Agent 缺陷管理',
+    'tutorial-email': 'Tutorial Email 教程邮件',
+    'ai-toolbox': 'AI Toolbox 百宝箱',
+    'workflow-agent': 'Workflow Agent 工作流',
+    'video-agent': 'Video Agent 视频生成',
+    'report-agent': 'Report Agent 周报管理',
     admin: 'Admin 管理后台',
     'prd-agent-web': 'Admin 管理后台',
   };

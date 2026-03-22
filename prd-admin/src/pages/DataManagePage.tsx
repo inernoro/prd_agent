@@ -5,6 +5,7 @@ import { TabBar } from '@/components/design/TabBar';
 import { Dialog } from '@/components/ui/Dialog';
 import { ConfirmTip } from '@/components/ui/ConfirmTip';
 import { Tooltip } from '@/components/ui/Tooltip';
+import { getRoleMeta } from '@/lib/roleConfig';
 import {
   getDataSummary,
   previewUsersPurge,
@@ -439,7 +440,7 @@ export default function DataManagePage() {
     <div className="grid gap-2 rounded-[10px] px-3 py-2.5 surface-row" style={{ gridTemplateColumns: '1.2fr 1fr 0.6fr 0.6fr 1fr' }}>
       <div className="min-w-0"><div className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{u.username || '-'}</div><div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{u.displayName || '-'}</div></div>
       <div className="min-w-0 text-xs font-mono self-center truncate" style={{ color: 'var(--text-secondary)' }}>{u.userId?.slice(0, 8) || '-'}...</div>
-      <div className="text-xs self-center" style={{ color: 'var(--text-secondary)' }}>{u.role}</div>
+      <div className="text-xs self-center" style={{ color: 'var(--text-secondary)' }}>{getRoleMeta(u.role).label}</div>
       <div className="text-xs self-center" style={{ color: 'var(--text-secondary)' }}>{u.status}</div>
       <div className="text-xs self-center" style={{ color: 'var(--text-muted)' }}>{fmtDate(u.createdAt)}</div>
     </div>

@@ -1,14 +1,14 @@
 import { useState } from 'react';
-import { Link2, FileBarChart, Building2, GitBranch, ChevronRight } from 'lucide-react';
+import { Link2, FileBarChart, Building2, Sparkles, ChevronRight } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { useAuthStore } from '@/stores/authStore';
 import { PersonalSourcesPanel } from './PersonalSourcesPanel';
+import { AiPromptSettingsPanel } from './AiPromptSettingsPanel';
+import { TeamAiPromptSettingsPanel } from './TeamAiPromptSettingsPanel';
 import { TemplateManager } from './TemplateManager';
 import { TeamManager } from './TeamManager';
-import { DataSourceManager } from './DataSourceManager';
-import { HistoryTrendsPanel } from './HistoryTrendsPanel';
 
-type SettingsSection = 'overview' | 'my-sources' | 'templates' | 'teams' | 'data-sources' | 'trends';
+type SettingsSection = 'overview' | 'my-sources' | 'ai-prompt' | 'team-ai-prompt' | 'templates' | 'teams';
 
 interface SectionDef {
   key: SettingsSection;
@@ -24,17 +24,17 @@ const SECTIONS: SectionDef[] = [
   {
     key: 'my-sources',
     label: '我的数据源',
-    desc: '绑定 GitHub / GitLab / 语雀，自动采集提交和文档',
+    desc: '管理 AI 周报的数据源开关与个人扩展数据源',
     icon: Link2,
     color: 'rgba(59, 130, 246, 0.85)',
     isPersonal: true,
   },
   {
-    key: 'trends',
-    label: '数据统计',
-    desc: '查看个人和团队的周报趋势',
-    icon: GitBranch,
-    color: 'rgba(20, 184, 166, 0.85)',
+    key: 'ai-prompt',
+    label: 'AI生成周报Prompt',
+    desc: '配置 AI 生成周报时的系统默认与个人自定义 Prompt',
+    icon: Sparkles,
+    color: 'rgba(168, 85, 247, 0.85)',
     isPersonal: true,
   },
   {
@@ -46,20 +46,20 @@ const SECTIONS: SectionDef[] = [
     requirePerm: 'report-agent.template.manage',
   },
   {
+    key: 'team-ai-prompt',
+    label: '团队周报AI分析Prompt',
+    desc: '配置团队周报AI分析汇总使用的系统默认与团队自定义 Prompt',
+    icon: Sparkles,
+    color: 'rgba(14, 165, 233, 0.9)',
+    requirePerm: 'report-agent.team.manage',
+  },
+  {
     key: 'teams',
     label: '团队管理',
     desc: '管理团队成员、角色和身份映射',
     icon: Building2,
     color: 'rgba(249, 115, 22, 0.85)',
     requirePerm: 'report-agent.team.manage',
-  },
-  {
-    key: 'data-sources',
-    label: '团队数据源',
-    desc: '配置团队级 Git 仓库、分支过滤和用户映射',
-    icon: GitBranch,
-    color: 'rgba(34, 197, 94, 0.85)',
-    requirePerm: 'report-agent.datasource.manage',
   },
 ];
 
@@ -84,7 +84,7 @@ export function SettingsPanel() {
             个人设置
           </span>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {visibleSections.filter((s) => s.isPersonal).map((section) => (
             <SettingSectionCard
               key={section.key}
@@ -135,10 +135,10 @@ export function SettingsPanel() {
       </button>
       <div className="flex-1 min-h-0">
         {activeSection === 'my-sources' && <PersonalSourcesPanel />}
+        {activeSection === 'ai-prompt' && <AiPromptSettingsPanel />}
+        {activeSection === 'team-ai-prompt' && <TeamAiPromptSettingsPanel />}
         {activeSection === 'templates' && <TemplateManager />}
         {activeSection === 'teams' && <TeamManager />}
-        {activeSection === 'data-sources' && <DataSourceManager />}
-        {activeSection === 'trends' && <HistoryTrendsPanel />}
       </div>
     </div>
   );

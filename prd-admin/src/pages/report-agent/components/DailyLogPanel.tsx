@@ -12,6 +12,8 @@ import {
   getDailyLog,
   deleteDailyLog,
   listDailyLogs,
+  getMyDailyLogTags,
+  updateMyDailyLogTags,
   listPersonalSources,
   listDataSourceCommits,
 } from '@/services';
@@ -19,7 +21,6 @@ import {
   DailyLogCategory,
 } from '@/services/contracts/reportAgent';
 import type { DailyLog, DailyLogItem, ReportCommit, PersonalSource } from '@/services/contracts/reportAgent';
-import { useReportAgentStore } from '@/stores/reportAgentStore';
 
 // ── Helpers ────────────────────────────────────────────
 
@@ -73,12 +74,41 @@ const CATEGORY_CONFIG: Record<string, { label: string; color: string; bg: string
   other:         { label: '其他', color: 'rgba(148, 163, 184, 0.95)', bg: 'rgba(148, 163, 184, 0.12)', icon: MoreHorizontal },
 };
 
+const MAX_CUSTOM_TAG_COUNT = 20;
+const MAX_CUSTOM_TAG_LENGTH = 16;
+const SYSTEM_TAG_ORDER = [
+  DailyLogCategory.Development,
+  DailyLogCategory.Meeting,
+  DailyLogCategory.Communication,
+  DailyLogCategory.Documentation,
+  DailyLogCategory.Testing,
+  DailyLogCategory.Other,
+] as const;
+
+function normalizeCustomTag(tag: string): string {
+  return tag.trim().replace(/\s+/g, ' ');
+}
+
 interface LogItemInput {
   content: string;
   category: string;
   tags?: string[];
   durationMinutes: number | undefined;
   createdAt?: string;
+}
+
+function dedupePreserveOrder(tags: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const raw of tags) {
+    const tag = raw.trim();
+    if (!tag) continue;
+    const key = tag.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(tag);
+  }
+  return result;
 }
 
 // ── Main Component ─────────────────────────────────────
@@ -93,26 +123,21 @@ export function DailyLogPanel() {
 
   // Quick input state
   const [quickInput, setQuickInput] = useState('');
-  const [quickCategory, setQuickCategory] = useState<string>(DailyLogCategory.Development);
-  const [quickTags, setQuickTags] = useState<string[]>([]);
+  const [selectedSystemTags, setSelectedSystemTags] = useState<string[]>([DailyLogCategory.Development]);
+  const [selectedCustomTags, setSelectedCustomTags] = useState<string[]>([]);
+  const [customTags, setCustomTags] = useState<string[]>([]);
+  const [showTagManager, setShowTagManager] = useState(false);
+  const [tagDraft, setTagDraft] = useState('');
+  const [savingTags, setSavingTags] = useState(false);
+  const [editingTagIdx, setEditingTagIdx] = useState<number | null>(null);
+  const [editingTagDraft, setEditingTagDraft] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
-
-  // Team custom tags
-  const teams = useReportAgentStore((s) => s.teams);
-  const teamCustomTags = useMemo(() => {
-    const allTags = new Set<string>();
-    for (const t of teams) {
-      if (t.customDailyLogTags) {
-        for (const tag of t.customDailyLogTags) allTags.add(tag);
-      }
-    }
-    return Array.from(allTags);
-  }, [teams]);
 
   // Editing state
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [editContent, setEditContent] = useState('');
-  const [editCategory, setEditCategory] = useState('');
+  const [editSystemTags, setEditSystemTags] = useState<string[]>([]);
+  const [editCustomTags, setEditCustomTags] = useState<string[]>([]);
   const [editDuration, setEditDuration] = useState<number | undefined>(undefined);
 
   // Data source commits
@@ -162,12 +187,31 @@ export function DailyLogPanel() {
     setLoaded(true);
   }, [selectedDate]);
 
-  // Load personal data sources once
+  const saveCustomTags = useCallback(async (nextTags: string[], successMessage?: string) => {
+    setSavingTags(true);
+    const res = await updateMyDailyLogTags({ items: nextTags });
+    setSavingTags(false);
+    if (res.success && res.data) {
+      setCustomTags(res.data.items);
+      if (successMessage) toast.success(successMessage);
+      return true;
+    }
+    toast.error(res.error?.message || '标签保存失败');
+    return false;
+  }, []);
+
+  // Load personal data sources + custom tags once
   useEffect(() => {
     void (async () => {
-      const res = await listPersonalSources();
-      if (res.success && res.data) {
-        setDataSources(res.data.items.filter((s) => s.enabled));
+      const [sourceRes, tagRes] = await Promise.all([
+        listPersonalSources(),
+        getMyDailyLogTags(),
+      ]);
+      if (sourceRes.success && sourceRes.data) {
+        setDataSources(sourceRes.data.items.filter((s) => s.enabled));
+      }
+      if (tagRes.success && tagRes.data) {
+        setCustomTags(tagRes.data.items);
       }
     })();
   }, []);
@@ -245,14 +289,27 @@ export function DailyLogPanel() {
   const handleQuickAdd = async () => {
     const text = quickInput.trim();
     if (!text) return;
+
+    const totalSelectedTagCount = selectedSystemTags.length + selectedCustomTags.length;
+    if (totalSelectedTagCount === 0) {
+      toast.error('请至少选择一个标签');
+      return;
+    }
+
+    const orderedSystemTags = SYSTEM_TAG_ORDER.filter((key) => selectedSystemTags.includes(key));
+    const primaryCategory = orderedSystemTags.find((key) => key !== DailyLogCategory.Other) ?? DailyLogCategory.Other;
+    const tags = dedupePreserveOrder([...orderedSystemTags, ...selectedCustomTags]);
+
     const newItem: LogItemInput = {
-      content: text, category: quickCategory, durationMinutes: undefined,
-      tags: quickTags.length > 0 ? [...quickTags] : undefined,
+      content: text,
+      category: primaryCategory,
+      durationMinutes: undefined,
+      tags: tags.length > 0 ? tags : undefined,
     };
     const newItems = [...items, newItem];
     setItems(newItems);
     setQuickInput('');
-    setQuickTags([]);
+    setSelectedCustomTags([]);
     inputRef.current?.focus();
     await doSave(newItems);
   };
@@ -264,19 +321,137 @@ export function DailyLogPanel() {
     }
   };
 
-  const handleQuickCategoryClick = (cat: string) => {
-    const text = quickInput.trim();
-    if (text) {
-      const newItem: LogItemInput = { content: text, category: cat, durationMinutes: undefined };
-      const newItems = [...items, newItem];
-      setItems(newItems);
-      setQuickInput('');
-      setQuickCategory(cat);
-      inputRef.current?.focus();
-      void doSave(newItems);
-    } else {
-      setQuickCategory(cat);
-      inputRef.current?.focus();
+  const handleSystemTagToggle = (tag: string) => {
+    setSelectedSystemTags((prev) => (
+      prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]
+    ));
+    inputRef.current?.focus();
+  };
+
+  const handleCustomTagToggle = (tag: string) => {
+    setSelectedCustomTags((prev) => (
+      prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]
+    ));
+    inputRef.current?.focus();
+  };
+
+  const splitItemTagsForEdit = useCallback((item: LogItemInput) => {
+    const rawTags = item.tags ?? [];
+    const normalized = dedupePreserveOrder(rawTags);
+    const systemTags = normalized.filter((tag) => SYSTEM_TAG_ORDER.includes(tag as typeof SYSTEM_TAG_ORDER[number]));
+    const custom = normalized.filter((tag) => !SYSTEM_TAG_ORDER.includes(tag as typeof SYSTEM_TAG_ORDER[number]));
+
+    if (systemTags.length > 0 || custom.length > 0) {
+      return { systemTags, customTags: custom };
+    }
+
+    // 兼容历史数据：无 tags 时回退到 category
+    const fallbackSystem = SYSTEM_TAG_ORDER.includes(item.category as typeof SYSTEM_TAG_ORDER[number])
+      ? [item.category]
+      : [DailyLogCategory.Other];
+    return { systemTags: fallbackSystem, customTags: [] as string[] };
+  }, []);
+
+  const handleEditSystemTagToggle = (tag: string) => {
+    setEditSystemTags((prev) => (
+      prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]
+    ));
+  };
+
+  const handleEditCustomTagToggle = (tag: string) => {
+    setEditCustomTags((prev) => (
+      prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]
+    ));
+  };
+
+  const handleAddCustomTag = async () => {
+    const nextTag = normalizeCustomTag(tagDraft);
+    if (!nextTag) return;
+    if (nextTag.length > MAX_CUSTOM_TAG_LENGTH) {
+      toast.error(`标签最多 ${MAX_CUSTOM_TAG_LENGTH} 个字符`);
+      return;
+    }
+    const exists = customTags.some((tag) => tag.toLowerCase() === nextTag.toLowerCase());
+    if (exists) {
+      toast.error('标签已存在');
+      return;
+    }
+    if (customTags.length >= MAX_CUSTOM_TAG_COUNT) {
+      toast.error(`最多添加 ${MAX_CUSTOM_TAG_COUNT} 个标签`);
+      return;
+    }
+
+    const prevTags = customTags;
+    const updatedTags = [...customTags, nextTag];
+    setCustomTags(updatedTags);
+    setTagDraft('');
+
+    const ok = await saveCustomTags(updatedTags, '标签已添加');
+    if (!ok) {
+      setCustomTags(prevTags);
+      setTagDraft(nextTag);
+    }
+  };
+
+  const handleDeleteCustomTag = async (idx: number) => {
+    const removedTag = customTags[idx];
+    if (!removedTag) return;
+    const prevTags = customTags;
+    const prevSelectedCustomTags = selectedCustomTags;
+    const updatedTags = customTags.filter((_, i) => i !== idx);
+    setCustomTags(updatedTags);
+    setSelectedCustomTags((prev) => prev.filter((x) => x.toLowerCase() !== removedTag.toLowerCase()));
+    if (editingTagIdx === idx) {
+      setEditingTagIdx(null);
+      setEditingTagDraft('');
+    }
+
+    const ok = await saveCustomTags(updatedTags, '标签已删除');
+    if (!ok) {
+      setCustomTags(prevTags);
+      setSelectedCustomTags(prevSelectedCustomTags);
+    }
+  };
+
+  const handleConfirmEditCustomTag = async () => {
+    if (editingTagIdx === null) return;
+    const target = customTags[editingTagIdx];
+    if (!target) {
+      setEditingTagIdx(null);
+      setEditingTagDraft('');
+      return;
+    }
+
+    const nextTag = normalizeCustomTag(editingTagDraft);
+    if (!nextTag) {
+      toast.error('标签不能为空');
+      return;
+    }
+    if (nextTag.length > MAX_CUSTOM_TAG_LENGTH) {
+      toast.error(`标签最多 ${MAX_CUSTOM_TAG_LENGTH} 个字符`);
+      return;
+    }
+
+    const duplicated = customTags.some(
+      (tag, idx) => idx !== editingTagIdx && tag.toLowerCase() === nextTag.toLowerCase()
+    );
+    if (duplicated) {
+      toast.error('标签已存在');
+      return;
+    }
+
+    const prevTags = customTags;
+    const prevSelectedCustomTags = selectedCustomTags;
+    const updatedTags = customTags.map((tag, idx) => (idx === editingTagIdx ? nextTag : tag));
+    setCustomTags(updatedTags);
+    setSelectedCustomTags((prev) => prev.map((x) => (x.toLowerCase() === target.toLowerCase() ? nextTag : x)));
+    setEditingTagIdx(null);
+    setEditingTagDraft('');
+
+    const ok = await saveCustomTags(updatedTags, '标签已更新');
+    if (!ok) {
+      setCustomTags(prevTags);
+      setSelectedCustomTags(prevSelectedCustomTags);
     }
   };
 
@@ -313,21 +488,37 @@ export function DailyLogPanel() {
   const startEdit = (idx: number) => {
     setEditingIdx(idx);
     setEditContent(items[idx].content);
-    setEditCategory(items[idx].category);
+    const selection = splitItemTagsForEdit(items[idx]);
+    setEditSystemTags(selection.systemTags);
+    setEditCustomTags(selection.customTags);
     setEditDuration(items[idx].durationMinutes);
   };
 
   const cancelEdit = () => {
     setEditingIdx(null);
+    setEditSystemTags([]);
+    setEditCustomTags([]);
   };
 
   const confirmEdit = async () => {
     if (editingIdx === null) return;
+    const editSelectedCount = editSystemTags.length + editCustomTags.length;
+    if (editSelectedCount === 0) {
+      toast.error('请至少选择一个标签');
+      return;
+    }
+
+    const orderedSystemTags = SYSTEM_TAG_ORDER.filter((key) => editSystemTags.includes(key));
+    const primaryCategory = orderedSystemTags.find((key) => key !== DailyLogCategory.Other) ?? DailyLogCategory.Other;
+    const tags = dedupePreserveOrder([...orderedSystemTags, ...editCustomTags]);
+
     const newItems = items.map((item, i) =>
-      i === editingIdx ? { content: editContent, category: editCategory, durationMinutes: editDuration } : item
+      i === editingIdx ? { content: editContent, category: primaryCategory, tags, durationMinutes: editDuration } : item
     );
     setItems(newItems);
     setEditingIdx(null);
+    setEditSystemTags([]);
+    setEditCustomTags([]);
     await doSave(newItems);
   };
 
@@ -363,8 +554,21 @@ export function DailyLogPanel() {
 
   // ── Computed ──
 
+  const normalizedTagDraft = normalizeCustomTag(tagDraft);
+  const tagDraftTooLong = normalizedTagDraft.length > MAX_CUSTOM_TAG_LENGTH;
+  const tagLimitReached = customTags.length >= MAX_CUSTOM_TAG_COUNT;
+  const canSubmitTagDraft = normalizedTagDraft.length > 0 && !tagDraftTooLong && !tagLimitReached;
+  const totalSelectedTagCount = selectedSystemTags.length + selectedCustomTags.length;
+  const systemCategoryKeys = useMemo(
+    () => SYSTEM_TAG_ORDER.filter((key) => key !== DailyLogCategory.Other),
+    []
+  );
+
   const todayMinutes = items.reduce((sum, i) => sum + (i.durationMinutes || 0), 0);
-  const loggedDates = new Set(weekLogs.map((l) => l.date.substring(0, 10)));
+  const loggedDates = useMemo(
+    () => new Set(weekLogs.map((l) => l.date.substring(0, 10))),
+    [weekLogs]
+  );
 
   // Week days array
   const weekDays = useMemo(() => {
@@ -512,16 +716,18 @@ export function DailyLogPanel() {
                   variant="primary"
                   size="sm"
                   onClick={handleQuickAdd}
-                  disabled={!quickInput.trim() || saving}
+                  disabled={!quickInput.trim() || saving || totalSelectedTagCount === 0}
                   style={{ borderRadius: 12 }}
                 >
                   <Send size={13} />
                 </Button>
               </div>
               {/* Category quick-pick tags */}
-              <div className="flex items-center gap-1.5 flex-wrap">
-                {Object.entries(CATEGORY_CONFIG).map(([key, cfg]) => {
-                  const isActive = quickCategory === key;
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                {systemCategoryKeys.map((key) => {
+                  const cfg = CATEGORY_CONFIG[key];
+                  const isActive = selectedSystemTags.includes(key);
                   const Icon = cfg.icon;
                   return (
                     <button
@@ -532,16 +738,15 @@ export function DailyLogPanel() {
                         color: isActive ? cfg.color : 'var(--text-muted)',
                         border: `1px solid ${isActive ? cfg.color.replace('0.95', '0.3') : 'transparent'}`,
                       }}
-                      onClick={() => handleQuickCategoryClick(key)}
+                      onClick={() => handleSystemTagToggle(key)}
                     >
                       <Icon size={11} />
                       {cfg.label}
                     </button>
                   );
                 })}
-                {/* Custom tags from team settings */}
-                {teamCustomTags.map((tag) => {
-                  const isActive = quickTags.includes(tag);
+                {customTags.map((tag) => {
+                  const isActive = selectedCustomTags.includes(tag);
                   return (
                     <button
                       key={`tag-${tag}`}
@@ -551,18 +756,198 @@ export function DailyLogPanel() {
                         color: isActive ? 'rgba(20, 184, 166, 0.95)' : 'var(--text-muted)',
                         border: `1px solid ${isActive ? 'rgba(20, 184, 166, 0.3)' : 'transparent'}`,
                       }}
-                      onClick={() => {
-                        setQuickTags(isActive
-                          ? quickTags.filter((t) => t !== tag)
-                          : [...quickTags, tag]);
-                      }}
+                      onClick={() => handleCustomTagToggle(tag)}
                     >
                       <Tag size={10} />
                       {tag}
                     </button>
                   );
                 })}
+                {(() => {
+                  const key = DailyLogCategory.Other;
+                  const cfg = CATEGORY_CONFIG[key];
+                  const isActive = selectedSystemTags.includes(key);
+                  const Icon = cfg.icon;
+                  return (
+                    <button
+                      key={key}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all duration-150"
+                      style={{
+                        background: isActive ? cfg.bg : 'transparent',
+                        color: isActive ? cfg.color : 'var(--text-muted)',
+                        border: `1px solid ${isActive ? cfg.color.replace('0.95', '0.3') : 'transparent'}`,
+                      }}
+                      onClick={() => handleSystemTagToggle(key)}
+                    >
+                      <Icon size={11} />
+                      {cfg.label}
+                    </button>
+                  );
+                })()}
+                </div>
+                <div className="h-4 w-px" style={{ background: 'var(--border-primary)' }} />
+                <div className="flex items-center">
+                <button
+                  className="px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all duration-150 whitespace-nowrap"
+                  style={{
+                    background: showTagManager ? 'rgba(148, 163, 184, 0.1)' : 'transparent',
+                    color: showTagManager ? 'var(--text-secondary)' : 'var(--text-muted)',
+                    border: `1px solid ${showTagManager ? 'rgba(148, 163, 184, 0.28)' : 'rgba(148, 163, 184, 0.14)'}`,
+                  }}
+                  onClick={() => setShowTagManager((v) => !v)}
+                >
+                  管理标签
+                </button>
+                </div>
               </div>
+              <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                已选标签 {totalSelectedTagCount} 个，提交前至少选择 1 个
+              </div>
+              {showTagManager && (
+                <div
+                  className="mt-1 rounded-xl px-3 py-2.5 flex flex-col gap-2"
+                  style={{
+                    border: '1px solid rgba(148, 163, 184, 0.2)',
+                    background: 'linear-gradient(180deg, rgba(148,163,184,0.06) 0%, rgba(148,163,184,0.03) 100%)',
+                  }}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>自定义标签</span>
+                    <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                      {customTags.length}/{MAX_CUSTOM_TAG_COUNT}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      className="flex-1 px-3 py-1.5 rounded-lg text-[12px] outline-none transition-colors duration-150"
+                      style={{
+                        background: 'var(--bg-secondary)',
+                        color: 'var(--text-primary)',
+                        border: `1px solid ${tagDraftTooLong ? 'rgba(239, 68, 68, 0.45)' : 'rgba(148, 163, 184, 0.28)'}`,
+                      }}
+                      placeholder={`新增标签（最多 ${MAX_CUSTOM_TAG_COUNT} 个）`}
+                      value={tagDraft}
+                      onChange={(e) => setTagDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          void handleAddCustomTag();
+                        }
+                      }}
+                      disabled={savingTags}
+                    />
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => void handleAddCustomTag()}
+                      disabled={!canSubmitTagDraft || savingTags}
+                    >
+                      添加
+                    </Button>
+                  </div>
+                  <div className="flex items-center justify-between min-h-[16px]">
+                    <span
+                      className="text-[10px]"
+                      style={{ color: tagDraftTooLong ? 'rgba(239, 68, 68, 0.9)' : 'var(--text-muted)' }}
+                    >
+                      {tagDraftTooLong ? `超出 ${normalizedTagDraft.length - MAX_CUSTOM_TAG_LENGTH} 个字符` : '回车可快速添加'}
+                    </span>
+                    <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                      {normalizedTagDraft.length}/{MAX_CUSTOM_TAG_LENGTH}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap gap-1.5">
+                    {customTags.length === 0 ? (
+                      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                        暂无自定义标签
+                      </span>
+                    ) : (
+                      customTags.map((tag, idx) => {
+                        const isEditing = editingTagIdx === idx;
+                        return (
+                          <span
+                            key={`custom-tag-${tag}-${idx}`}
+                            className="group inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] transition-colors duration-150"
+                            style={{
+                              background: isEditing ? 'rgba(59, 130, 246, 0.08)' : 'rgba(20, 184, 166, 0.09)',
+                              color: isEditing ? 'rgba(59, 130, 246, 0.92)' : 'rgba(20, 184, 166, 0.9)',
+                              border: `1px solid ${isEditing ? 'rgba(59, 130, 246, 0.25)' : 'rgba(20, 184, 166, 0.18)'}`,
+                            }}
+                          >
+                            {isEditing ? (
+                              <>
+                                <input
+                                  className="w-20 bg-transparent outline-none text-[11px]"
+                                  value={editingTagDraft}
+                                  onChange={(e) => setEditingTagDraft(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      void handleConfirmEditCustomTag();
+                                    }
+                                    if (e.key === 'Escape') {
+                                      setEditingTagIdx(null);
+                                      setEditingTagDraft('');
+                                    }
+                                  }}
+                                  autoFocus
+                                />
+                                <button
+                                  className="inline-flex items-center justify-center w-4 h-4 rounded transition-colors duration-150 hover:bg-[rgba(59,130,246,0.12)]"
+                                  onClick={() => void handleConfirmEditCustomTag()}
+                                  title="确认修改"
+                                  aria-label="确认修改标签"
+                                >
+                                  <Check size={9} />
+                                </button>
+                                <button
+                                  className="inline-flex items-center justify-center w-4 h-4 rounded transition-colors duration-150 hover:bg-[rgba(148,163,184,0.14)]"
+                                  onClick={() => {
+                                    setEditingTagIdx(null);
+                                    setEditingTagDraft('');
+                                  }}
+                                  title="取消"
+                                  aria-label="取消修改标签"
+                                >
+                                  <X size={9} />
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <Tag size={9} />
+                                {tag}
+                                <button
+                                  className="inline-flex items-center justify-center w-4 h-4 rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-all duration-150 hover:bg-[rgba(148,163,184,0.14)]"
+                                  onClick={() => {
+                                    setEditingTagIdx(idx);
+                                    setEditingTagDraft(tag);
+                                  }}
+                                  title="修改"
+                                  aria-label="修改标签"
+                                >
+                                  <Pencil size={9} />
+                                </button>
+                                <button
+                                  className="inline-flex items-center justify-center w-4 h-4 rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-all duration-150 hover:bg-[rgba(239,68,68,0.12)]"
+                                  onClick={() => void handleDeleteCustomTag(idx)}
+                                  title="删除"
+                                  aria-label="删除标签"
+                                >
+                                  <Trash2 size={9} />
+                                </button>
+                              </>
+                            )}
+                          </span>
+                        );
+                      })
+                    )}
+                  </div>
+                  <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                    自定义标签仅影响你的日常记录快捷标签，不会改变系统默认分类。
+                  </div>
+                </div>
+              )}
             </div>
           </GlassCard>
 
@@ -607,7 +992,7 @@ export function DailyLogPanel() {
                       }}
                       onClick={() => {
                         setQuickInput(text);
-                        setQuickCategory(cat);
+                        setSelectedSystemTags([cat]);
                         inputRef.current?.focus();
                       }}
                     >
@@ -642,16 +1027,20 @@ export function DailyLogPanel() {
                     return (
                       <div key={idx} className="group flex items-start gap-3 py-2 px-3 rounded-xl transition-colors duration-150 hover:bg-[var(--bg-tertiary)]">
                         {/* Colored dot + timestamp */}
-                        <div className="flex flex-col items-center gap-1 flex-shrink-0 mt-1">
+                        <div className="flex flex-col items-center gap-1 flex-shrink-0 mt-1 w-10">
                           <div
                             className="w-3 h-3 rounded-full"
                             style={{ background: cfg.color }}
                           />
-                          {item.createdAt && (
-                            <span className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
-                              {formatTime(item.createdAt)}
-                            </span>
-                          )}
+                          <span
+                            className="text-[10px] font-mono leading-none"
+                            style={{
+                              color: item.createdAt ? 'var(--text-muted)' : 'transparent',
+                              minHeight: 12,
+                            }}
+                          >
+                            {item.createdAt ? formatTime(item.createdAt) : '--:--'}
+                          </span>
                         </div>
 
                         {/* Content */}
@@ -675,24 +1064,66 @@ export function DailyLogPanel() {
                                 autoFocus
                               />
                               <div className="flex items-center gap-2 flex-wrap">
-                                <div className="flex gap-1">
-                                  {Object.entries(CATEGORY_CONFIG).map(([key, c]) => {
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  {systemCategoryKeys.map((key) => {
+                                    const c = CATEGORY_CONFIG[key];
                                     const CIcon = c.icon;
+                                    const isActive = editSystemTags.includes(key);
                                     return (
                                       <button
-                                        key={key}
+                                        key={`edit-system-${key}`}
                                         className="px-2 py-0.5 rounded text-[10px] transition-colors"
                                         style={{
-                                          background: editCategory === key ? c.bg : 'transparent',
-                                          color: editCategory === key ? c.color : 'var(--text-muted)',
+                                          background: isActive ? c.bg : 'transparent',
+                                          color: isActive ? c.color : 'var(--text-muted)',
+                                          border: `1px solid ${isActive ? c.color.replace('0.95', '0.3') : 'transparent'}`,
                                         }}
-                                        onClick={() => setEditCategory(key)}
+                                        onClick={() => handleEditSystemTagToggle(key)}
                                       >
                                         <CIcon size={10} className="inline mr-0.5" />
                                         {c.label}
                                       </button>
                                     );
                                   })}
+                                  {customTags.map((tag) => {
+                                    const isActive = editCustomTags.includes(tag);
+                                    return (
+                                      <button
+                                        key={`edit-custom-${tag}`}
+                                        className="px-2 py-0.5 rounded text-[10px] transition-colors"
+                                        style={{
+                                          background: isActive ? 'rgba(20, 184, 166, 0.12)' : 'transparent',
+                                          color: isActive ? 'rgba(20, 184, 166, 0.95)' : 'var(--text-muted)',
+                                          border: `1px solid ${isActive ? 'rgba(20, 184, 166, 0.3)' : 'transparent'}`,
+                                        }}
+                                        onClick={() => handleEditCustomTagToggle(tag)}
+                                      >
+                                        <Tag size={8} className="inline mr-0.5" />
+                                        {tag}
+                                      </button>
+                                    );
+                                  })}
+                                  {(() => {
+                                    const key = DailyLogCategory.Other;
+                                    const c = CATEGORY_CONFIG[key];
+                                    const CIcon = c.icon;
+                                    const isActive = editSystemTags.includes(key);
+                                    return (
+                                      <button
+                                        key="edit-system-other"
+                                        className="px-2 py-0.5 rounded text-[10px] transition-colors"
+                                        style={{
+                                          background: isActive ? c.bg : 'transparent',
+                                          color: isActive ? c.color : 'var(--text-muted)',
+                                          border: `1px solid ${isActive ? c.color.replace('0.95', '0.3') : 'transparent'}`,
+                                        }}
+                                        onClick={() => handleEditSystemTagToggle(key)}
+                                      >
+                                        <CIcon size={10} className="inline mr-0.5" />
+                                        {c.label}
+                                      </button>
+                                    );
+                                  })()}
                                 </div>
                                 <div className="flex items-center gap-1 ml-2">
                                   <Clock size={11} style={{ color: 'var(--text-muted)' }} />
@@ -726,21 +1157,37 @@ export function DailyLogPanel() {
                                 {item.content}
                               </div>
                               <div className="flex items-center gap-2 mt-1 flex-wrap">
-                                <span
-                                  className="text-[10px] px-1.5 py-0.5 rounded"
-                                  style={{ background: cfg.bg, color: cfg.color }}
-                                >
-                                  {cfg.label}
-                                </span>
-                                {item.tags && item.tags.map((tag, ti) => (
+                                {item.tags && item.tags.length > 0 ? item.tags.map((tag, ti) => {
+                                  const sysCfg = CATEGORY_CONFIG[tag];
+                                  if (sysCfg) {
+                                    const Icon = sysCfg.icon;
+                                    return (
+                                      <span
+                                        key={ti}
+                                        className="text-[10px] px-1.5 py-0.5 rounded flex items-center gap-0.5"
+                                        style={{ background: sysCfg.bg, color: sysCfg.color }}
+                                      >
+                                        <Icon size={8} /> {sysCfg.label}
+                                      </span>
+                                    );
+                                  }
+                                  return (
+                                    <span
+                                      key={ti}
+                                      className="text-[10px] px-1.5 py-0.5 rounded flex items-center gap-0.5"
+                                      style={{ background: 'rgba(20, 184, 166, 0.1)', color: 'rgba(20, 184, 166, 0.85)' }}
+                                    >
+                                      <Tag size={8} /> {tag}
+                                    </span>
+                                  );
+                                }) : (
                                   <span
-                                    key={ti}
-                                    className="text-[10px] px-1.5 py-0.5 rounded flex items-center gap-0.5"
-                                    style={{ background: 'rgba(20, 184, 166, 0.1)', color: 'rgba(20, 184, 166, 0.85)' }}
+                                    className="text-[10px] px-1.5 py-0.5 rounded"
+                                    style={{ background: cfg.bg, color: cfg.color }}
                                   >
-                                    <Tag size={8} /> {tag}
+                                    {cfg.label}
                                   </span>
-                                ))}
+                                )}
                                 {item.durationMinutes != null && item.durationMinutes > 0 && (
                                   <span className="text-[10px] flex items-center gap-0.5" style={{ color: 'var(--text-muted)' }}>
                                     <Clock size={9} />

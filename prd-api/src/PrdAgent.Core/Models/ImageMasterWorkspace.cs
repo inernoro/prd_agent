@@ -90,6 +90,12 @@ public class ImageMasterWorkspace
 
     /// <summary>风格统一提示词：若设置，生图时自动拼接到用户 prompt 后面，确保 workspace 内风格一致</summary>
     public string? StylePrompt { get; set; }
+
+    /// <summary>是否公开到作品广场（文学创作投稿 = 公开 workspace）</summary>
+    public bool IsPublic { get; set; }
+
+    /// <summary>首次公开时间</summary>
+    public DateTime? PublishedAt { get; set; }
 }
 
 

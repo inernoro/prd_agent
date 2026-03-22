@@ -190,12 +190,12 @@ public class PersonalYuqueConnector : IPersonalSourceConnector
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
 
     private readonly string _token;
-    private readonly string? _spaceId;
+    private readonly string? _spaceSelector;
 
     public PersonalYuqueConnector(string token, string? spaceId)
     {
         _token = token;
-        _spaceId = spaceId;
+        _spaceSelector = NormalizeSpaceSelector(spaceId);
     }
 
     public async Task<bool> TestConnectionAsync(CancellationToken ct)
@@ -232,13 +232,17 @@ public class PersonalYuqueConnector : IPersonalSourceConnector
 
         int articlesPublished = 0, docsUpdated = 0;
 
-        foreach (var repoId in repos)
+        foreach (var repo in repos)
         {
             // 如果指定了 spaceId，只采集该空间
-            if (!string.IsNullOrEmpty(_spaceId) && repoId != _spaceId)
+            if (!string.IsNullOrEmpty(_spaceSelector) && !IsRepoMatch(repo, _spaceSelector))
                 continue;
 
-            var docs = await GetRecentDocsAsync(repoId, from, to, ct);
+            var repoKey = !string.IsNullOrWhiteSpace(repo.Id) ? repo.Id : repo.Namespace;
+            if (string.IsNullOrWhiteSpace(repoKey))
+                continue;
+
+            var docs = await GetRecentDocsAsync(repoKey, from, to, ct);
             foreach (var doc in docs)
             {
                 if (doc.CreatedAt >= from && doc.CreatedAt <= to)
@@ -292,9 +296,9 @@ public class PersonalYuqueConnector : IPersonalSourceConnector
             : null;
     }
 
-    private async Task<List<string>> GetReposAsync(string userLogin, CancellationToken ct)
+    private async Task<List<YuqueRepoInfo>> GetReposAsync(string userLogin, CancellationToken ct)
     {
-        var repos = new List<string>();
+        var repos = new List<YuqueRepoInfo>();
         var request = new HttpRequestMessage(HttpMethod.Get, $"https://www.yuque.com/api/v2/users/{userLogin}/repos");
         request.Headers.Add("X-Auth-Token", _token);
         request.Headers.UserAgent.ParseAdd("PrdAgent/2.0");
@@ -309,8 +313,24 @@ public class PersonalYuqueConnector : IPersonalSourceConnector
         {
             foreach (var repo in data.EnumerateArray())
             {
-                if (repo.TryGetProperty("id", out var id))
-                    repos.Add(id.GetRawText());
+                var id = ReadJsonScalarAsString(repo, "id");
+                var repoNamespace = ReadJsonScalarAsString(repo, "namespace");
+                var slug = ReadJsonScalarAsString(repo, "slug");
+                var name = ReadJsonScalarAsString(repo, "name");
+
+                if (!string.IsNullOrWhiteSpace(repoNamespace) && string.IsNullOrWhiteSpace(slug))
+                    slug = repoNamespace.Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
+
+                if (string.IsNullOrWhiteSpace(id) && string.IsNullOrWhiteSpace(repoNamespace))
+                    continue;
+
+                repos.Add(new YuqueRepoInfo
+                {
+                    Id = id ?? string.Empty,
+                    Namespace = repoNamespace ?? string.Empty,
+                    Slug = slug ?? string.Empty,
+                    Name = name ?? string.Empty
+                });
             }
         }
 
@@ -360,5 +380,79 @@ public class PersonalYuqueConnector : IPersonalSourceConnector
         public string Title { get; set; } = "";
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
+    }
+
+    private class YuqueRepoInfo
+    {
+        public string Id { get; set; } = "";
+        public string Namespace { get; set; } = "";
+        public string Slug { get; set; } = "";
+        public string Name { get; set; } = "";
+    }
+
+    private static string? ReadJsonScalarAsString(JsonElement obj, string propertyName)
+    {
+        if (!obj.TryGetProperty(propertyName, out var value))
+            return null;
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString(),
+            JsonValueKind.Number => value.GetRawText(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            _ => null
+        };
+    }
+
+    private static string? NormalizeSpaceSelector(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        var trimmed = raw.Trim();
+        if (Uri.TryCreate(trimmed, UriKind.Absolute, out var uri) &&
+            uri.Host.Contains("yuque.com", StringComparison.OrdinalIgnoreCase))
+        {
+            var segments = uri.AbsolutePath
+                .Split('/', StringSplitOptions.RemoveEmptyEntries)
+                .Select(s => s.Trim())
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .ToArray();
+
+            if (segments.Length >= 2)
+                return $"{segments[0]}/{segments[1]}";
+            if (segments.Length == 1)
+                return segments[0];
+        }
+
+        return trimmed.Trim('/');
+    }
+
+    private static bool IsRepoMatch(YuqueRepoInfo repo, string selector)
+    {
+        if (string.IsNullOrWhiteSpace(selector))
+            return true;
+
+        var normalized = selector.Trim().Trim('/');
+        if (string.IsNullOrWhiteSpace(normalized))
+            return true;
+
+        if (string.Equals(repo.Id, normalized, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (!string.IsNullOrWhiteSpace(repo.Namespace) &&
+            string.Equals(repo.Namespace, normalized, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (!string.IsNullOrWhiteSpace(repo.Slug) &&
+            string.Equals(repo.Slug, normalized, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        var lastSegment = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
+        if (!string.IsNullOrWhiteSpace(lastSegment) &&
+            !string.IsNullOrWhiteSpace(repo.Slug) &&
+            string.Equals(repo.Slug, lastSegment, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return false;
     }
 }
