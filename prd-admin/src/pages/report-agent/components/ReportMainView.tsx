@@ -2,11 +2,10 @@ import { useState, useMemo, useCallback } from 'react';
 import {
   Plus, Calendar, FileText,
   CheckCircle2, Clock, AlertCircle, Send, Pencil,
-  CalendarCheck, ArrowRight, Users, Settings, ClipboardList, Sparkles, ChevronDown, ChevronUp,
+  CalendarCheck, ArrowRight,
 } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
-import { SegmentedTabs } from '@/components/design/SegmentedTabs';
 import { useReportAgentStore } from '@/stores/reportAgentStore';
 import type { WeeklyReport } from '@/services/contracts/reportAgent';
 import { WeeklyReportStatus } from '@/services/contracts/reportAgent';
@@ -62,15 +61,11 @@ const statusConfig: Record<string, { label: string; color: string; bg: string; b
 
 // ────── component ──────
 
-export function ReportMainView(props: {
-  showUsageGuide: boolean;
-  onShowUsageGuideChange: (next: boolean) => void;
-}) {
-  const { showUsageGuide, onShowUsageGuideChange } = props;
+export function ReportMainView() {
   const {
     reports, teams, templates,
     showReportEditor, setShowReportEditor,
-    setSelectedReportId, loadReports, setActiveTab,
+    setSelectedReportId, loadReports,
   } = useReportAgentStore();
 
   const now = useMemo(() => getISOWeek(new Date()), []);
@@ -79,7 +74,6 @@ export function ReportMainView(props: {
   const [selectedWeekKey, setSelectedWeekKey] = useState(getWeekKey(now));
   const [editingReportId, setEditingReportId] = useState<string | null>(null);
   const [showDailyLog, setShowDailyLog] = useState(false);
-  const [guideRole, setGuideRole] = useState<'manager' | 'member'>('member');
 
   const hasTeam = teams.length > 0;
   const hasTemplate = templates.length > 0;
@@ -140,62 +134,6 @@ export function ReportMainView(props: {
     setShowReportEditor(true);
   }, [setSelectedReportId, setShowReportEditor]);
 
-  const managerGuideItems = useMemo(() => ([
-    {
-      key: 'team-settings',
-      title: '团队与成员管理',
-      desc: '创建团队、调整成员角色与协作范围。',
-      actionLabel: '去设置',
-      action: () => setActiveTab('settings'),
-      icon: Users,
-    },
-    {
-      key: 'template-settings',
-      title: '模板与数据源配置',
-      desc: '配置周报模板章节与团队数据来源。',
-      actionLabel: '去设置',
-      action: () => setActiveTab('settings'),
-      icon: Settings,
-    },
-    {
-      key: 'team-dashboard',
-      title: '团队周报查看与跟进',
-      desc: '查看团队提交进度并进行跟进反馈。',
-      actionLabel: '去团队',
-      action: () => setActiveTab('team'),
-      icon: ClipboardList,
-    },
-  ]), [setActiveTab]);
-
-  const memberGuideItems = useMemo(() => ([
-    {
-      key: 'daily-log',
-      title: '日常记录',
-      desc: '随手记录工作事项，沉淀周报素材。',
-      actionLabel: '去日常记录',
-      action: () => setShowDailyLog(true),
-      icon: CalendarCheck,
-    },
-    {
-      key: 'write-report',
-      title: '写周报',
-      desc: '按模板快速生成并完善本周内容。',
-      actionLabel: '去写周报',
-      action: handleCreateReport,
-      icon: FileText,
-    },
-    {
-      key: 'report-list',
-      title: '提交与修订',
-      desc: '查看列表状态并根据退回意见继续修改。',
-      actionLabel: '查看周报',
-      action: () => setWeekFilterMode('all'),
-      icon: Sparkles,
-    },
-  ]), [handleCreateReport]);
-
-  const activeGuideItems = guideRole === 'manager' ? managerGuideItems : memberGuideItems;
-
   // ── Editor view ──
   if (showReportEditor) {
     return (
@@ -222,94 +160,6 @@ export function ReportMainView(props: {
   // ── Main workspace ──
   return (
     <div className="flex flex-col gap-4 h-full overflow-y-auto pb-6" style={{ scrollbarWidth: 'thin' }}>
-      {showUsageGuide && (
-        <GlassCard variant="subtle" className="px-5 py-4">
-          <div className="flex items-start justify-between gap-3 flex-wrap">
-            <div>
-              <div className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                周报 Agent 使用指引
-              </div>
-              <div className="text-[12px] mt-1" style={{ color: 'var(--text-muted)' }}>
-                切换不同角色视角，按推荐流程快速上手核心功能。
-              </div>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => onShowUsageGuideChange(false)}
-              className="whitespace-nowrap"
-            >
-              <ChevronUp size={13} /> 收起
-            </Button>
-          </div>
-
-          <div className="mt-3">
-            <SegmentedTabs
-              items={[
-                { key: 'manager', label: '团队管理员' },
-                { key: 'member', label: '团队成员' },
-              ]}
-              value={guideRole}
-              onChange={setGuideRole}
-              ariaLabel="角色视角切换"
-            />
-          </div>
-
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
-            {activeGuideItems.map((item) => {
-              const Icon = item.icon;
-              return (
-                <div
-                  key={item.key}
-                  className="rounded-xl p-3 border"
-                  style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border-primary)' }}
-                >
-                  <div className="flex items-center gap-2 mb-2">
-                    <Icon size={14} style={{ color: 'var(--text-secondary)' }} />
-                    <div className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
-                      {item.title}
-                    </div>
-                  </div>
-                  <div className="text-[12px] mb-3 min-h-[36px]" style={{ color: 'var(--text-muted)' }}>
-                    {item.desc}
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    className="whitespace-nowrap"
-                    onClick={item.action}
-                  >
-                    {item.actionLabel}
-                  </Button>
-                </div>
-              );
-            })}
-          </div>
-
-          <div
-            className="mt-3 text-[12px] rounded-lg px-3 py-2"
-            style={{ background: 'var(--bg-secondary)', color: 'var(--text-secondary)' }}
-          >
-            {guideRole === 'manager'
-              ? '推荐流程：设置团队与模板 -> 成员填写周报 -> 团队查看与跟进'
-              : '推荐流程：日常记录 -> 写周报 -> 提交 -> 根据反馈修订'}
-          </div>
-        </GlassCard>
-      )}
-
-      {!showUsageGuide && (
-        <div className="flex justify-end">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => onShowUsageGuideChange(true)}
-            className="whitespace-nowrap"
-          >
-            <ChevronDown size={13} /> 展开使用指引
-          </Button>
-        </div>
-      )}
-
       <GlassCard variant="subtle" className="px-5 py-4">
         <div className="flex items-start justify-between flex-wrap gap-3">
           <div className="flex flex-col gap-3">
