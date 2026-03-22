@@ -395,7 +395,15 @@ export function DailyLogPanel() {
 
   const handleSystemTagToggle = (tag: string) => {
     setSelectedSystemTags((prev) => {
-      const next = prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag];
+      const isSelected = prev.includes(tag);
+      let next: string[];
+      if (isSelected) {
+        next = prev.filter((x) => x !== tag);
+      } else if (tag === DailyLogCategory.Todo) {
+        next = [DailyLogCategory.Todo];
+      } else {
+        next = [...prev.filter((x) => x !== DailyLogCategory.Todo), tag];
+      }
       if (next.includes(DailyLogCategory.Todo) && !prev.includes(DailyLogCategory.Todo)) {
         setSelectedTodoPlanTarget('next');
       }
@@ -429,9 +437,17 @@ export function DailyLogPanel() {
   }, []);
 
   const handleEditSystemTagToggle = (tag: string) => {
-    setEditSystemTags((prev) => (
-      prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]
-    ));
+    setEditSystemTags((prev) => {
+      const isSelected = prev.includes(tag);
+      if (isSelected) {
+        return prev.filter((x) => x !== tag);
+      }
+      if (tag === DailyLogCategory.Todo) {
+        setEditTodoPlanTarget('next');
+        return [DailyLogCategory.Todo];
+      }
+      return [...prev.filter((x) => x !== DailyLogCategory.Todo), tag];
+    });
   };
 
   const handleEditCustomTagToggle = (tag: string) => {

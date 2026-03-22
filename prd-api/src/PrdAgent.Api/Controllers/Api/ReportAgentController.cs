@@ -26,6 +26,7 @@ public class ReportAgentController : ControllerBase
     private const int MaxDailyLogCustomTagCount = 20;
     private const int MaxDailyLogCustomTagLength = 16;
     private const string DailyLogTodoPlanWeekInvalidMessage = "Todo 标签必须提供有效的 ISO 周（planWeekYear + planWeekNumber）";
+    private const string DailyLogTodoExclusiveInvalidMessage = "Todo 标签不能与其它系统标签同时存在";
     private const int MaxWeeklyReportPromptLength = ReportAgentPromptDefaults.MaxCustomPromptLength;
     private static readonly string[] EditableReportStatuses =
     {
@@ -1689,8 +1690,19 @@ public class ReportAgentController : ControllerBase
         {
             var normalizedCategory = DailyLogCategory.All.Contains(i.Category ?? "") ? i.Category! : DailyLogCategory.Other;
             var normalizedTags = NormalizeDailyLogTags(i.Tags);
-            var isTodo = string.Equals(normalizedCategory, DailyLogCategory.Todo, StringComparison.OrdinalIgnoreCase)
-                         || normalizedTags.Any(tag => string.Equals(tag, DailyLogCategory.Todo, StringComparison.OrdinalIgnoreCase));
+            var systemSelections = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (DailyLogCategory.All.Any(category => string.Equals(category, i.Category ?? string.Empty, StringComparison.OrdinalIgnoreCase)))
+                systemSelections.Add(normalizedCategory);
+            foreach (var tag in normalizedTags)
+            {
+                if (IsSystemDailyLogTag(tag))
+                    systemSelections.Add(tag);
+            }
+
+            var isTodo = systemSelections.Any(tag => string.Equals(tag, DailyLogCategory.Todo, StringComparison.OrdinalIgnoreCase));
+            var hasNonTodoSystemTag = systemSelections.Any(tag => !string.Equals(tag, DailyLogCategory.Todo, StringComparison.OrdinalIgnoreCase));
+            if (isTodo && hasNonTodoSystemTag)
+                return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", DailyLogTodoExclusiveInvalidMessage));
             int? planWeekYear = null;
             int? planWeekNumber = null;
 
@@ -1762,6 +1774,9 @@ public class ReportAgentController : ControllerBase
         }
         return result;
     }
+
+    private static bool IsSystemDailyLogTag(string tag)
+        => DailyLogCategory.All.Any(category => string.Equals(category, tag, StringComparison.OrdinalIgnoreCase));
 
     private static bool TryNormalizeIsoWeek(int? year, int? weekNumber, out int normalizedYear, out int normalizedWeekNumber)
     {
