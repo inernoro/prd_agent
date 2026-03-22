@@ -79,8 +79,9 @@ public class DefectAgentTests
         Assert.Contains(DefectSeverity.Critical, DefectSeverity.All);
         Assert.Contains(DefectSeverity.Major, DefectSeverity.All);
         Assert.Contains(DefectSeverity.Minor, DefectSeverity.All);
+        Assert.Contains(DefectSeverity.Trivial, DefectSeverity.All);
         Assert.Contains(DefectSeverity.Suggestion, DefectSeverity.All);
-        Assert.Equal(5, DefectSeverity.All.Length);
+        Assert.Equal(6, DefectSeverity.All.Length);
     }
 
     #endregion
@@ -115,7 +116,7 @@ public class DefectAgentTests
             {
                 new() { Key = "title", Label = "问题标题", Type = "text", Required = true },
                 new() { Key = "severity", Label = "严重程度", Type = "select", Required = true,
-                    Options = new List<string> { "blocker", "critical", "major", "minor", "suggestion" } }
+                    Options = new List<string> { "blocker", "critical", "major", "minor", "trivial", "suggestion" } }
             }
         };
 
