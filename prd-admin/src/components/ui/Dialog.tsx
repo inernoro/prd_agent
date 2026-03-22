@@ -14,6 +14,7 @@ export function Dialog({
   contentStyle,
   titleAction,
   titleCenter,
+  zIndex,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
