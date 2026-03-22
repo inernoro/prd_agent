@@ -335,7 +335,7 @@ public class SubmissionsController : ControllerBase
         }
         else if (submission.ContentType == "literary" && !string.IsNullOrWhiteSpace(submission.WorkspaceId))
         {
-            // 文学创作：workspace 所有配图 + 文章内容
+            // 文学创作：仅展示当前版本配图 + 文章内容
             var workspace = await _db.ImageMasterWorkspaces
                 .Find(x => x.Id == submission.WorkspaceId)
                 .FirstOrDefaultAsync();
@@ -343,11 +343,39 @@ public class SubmissionsController : ControllerBase
             {
                 articleContent = workspace.ArticleContent;
             }
-            var assets = await _db.ImageAssets
-                .Find(x => x.WorkspaceId == submission.WorkspaceId)
-                .SortBy(x => x.ArticleInsertionIndex)
-                .ThenBy(x => x.CreatedAt)
-                .ToListAsync();
+
+            // 优先用 ArticleWorkflow.AssetIdByMarkerIndex 过滤出当前版本的图片，
+            // 避免重新生成后的旧版本图片出现在"同项目作品"列表中
+            var currentAssetIds = workspace?.ArticleWorkflow?.AssetIdByMarkerIndex?.Values
+                .Where(v => !string.IsNullOrWhiteSpace(v))
+                .Distinct()
+                .ToHashSet(StringComparer.Ordinal);
+
+            List<ImageAsset> assets;
+            if (currentAssetIds != null && currentAssetIds.Count > 0)
+            {
+                // 有工作流记录：只查当前版本的图片
+                assets = await _db.ImageAssets
+                    .Find(x => x.WorkspaceId == submission.WorkspaceId && currentAssetIds.Contains(x.Id))
+                    .SortBy(x => x.ArticleInsertionIndex)
+                    .ThenBy(x => x.CreatedAt)
+                    .ToListAsync();
+            }
+            else
+            {
+                // 兜底：旧数据无工作流记录，按 ArticleInsertionIndex 分组取最新
+                var allAssets = await _db.ImageAssets
+                    .Find(x => x.WorkspaceId == submission.WorkspaceId)
+                    .SortBy(x => x.ArticleInsertionIndex)
+                    .ThenByDescending(x => x.CreatedAt)
+                    .ToListAsync();
+                assets = allAssets
+                    .GroupBy(a => a.ArticleInsertionIndex ?? -1)
+                    .Select(g => g.First())
+                    .OrderBy(a => a.ArticleInsertionIndex)
+                    .ToList();
+            }
+
             relatedAssets = assets.Select(a => (object)new
             {
                 a.Id,
