@@ -22,8 +22,7 @@ export function SubmissionCard({ item, onLikeToggle, onClick }: SubmissionCardPr
 
   const avatarUrl = resolveAvatarUrl({ avatarFileName: item.ownerAvatarFileName });
 
-  const handleLike = async (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleLike = async () => {
     if (liking) return;
     setLiking(true);
     const newLiked = !liked;
@@ -140,13 +139,14 @@ export function SubmissionCard({ item, onLikeToggle, onClick }: SubmissionCardPr
           <div
             className="flex items-center gap-0.5"
             style={{ color: liked ? '#F43F5E' : 'var(--text-muted, rgba(255,255,255,0.3))' }}
-            onClick={handleLike}
+            onClick={(e) => e.stopPropagation()}
           >
             <HeartLikeButton
               size={24}
               liked={liked}
               heartColor="#F43F5E"
               disabled={liking}
+              onClick={handleLike}
             />
             {likeCount > 0 && <span className="text-[11px]">{likeCount}</span>}
           </div>
