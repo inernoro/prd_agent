@@ -1,6 +1,6 @@
 # MAP 平台文档索引
 
-> 最后更新：2026-03-20
+> 最后更新：2026-03-23
 >
 > 本文件是 `doc/` 目录的结构化索引，供外部同步工具（语雀、Confluence 等）消费。
 > 元数据定义见 `doc/index.yml`，命名规范见 `doc/rule.doc-naming.md`。
@@ -158,6 +158,9 @@
 - [模型池故障转移与自动探活设计](design.model-pool-failover) `design.model-pool-failover`
   > 模型池健康检查与故障自动恢复的设计方案
 
+- [生成快照设计](design.generation-snapshot) `design.generation-snapshot`
+  > 投稿 GenerationSnapshot 完整输入配方的持久化设计
+
 ### 三、指南
 
 - [文档索引目录页](guide.list.directory) `guide.list.directory`
@@ -177,6 +180,9 @@
 
 - [PRD Agent 使用教程](guide.prd-agent) `guide.prd-agent`
   > PRD 对话与群组管理的完整操作流程
+
+- [PRD Agent 全平台操作手册](guide.prd-agent-operations) `guide.prd-agent-operations`
+  > PRD Agent 全平台（Web + Desktop）操作手册
 
 - [视觉创作 Agent 使用教程](guide.visual-agent) `guide.visual-agent`
   > 三栏式工作区的图像生成与编辑教程
@@ -213,6 +219,12 @@
 
 - [CDS 环境变量配置指南](guide.cds-env) `guide.cds-env`
   > CDS 环境变量的配置与使用说明
+
+- [CDS + 后端 API 双层认证诊断指南](guide.cds-ai-auth) `guide.cds-ai-auth`
+  > CDS 与后端 API 双层认证的诊断与排查指南
+
+- [AI 技能工作流指南](guide.skill-workflow) `guide.skill-workflow`
+  > 从需求到上线的完整技能链工作流指南
 
 - [疑难杂症排查手册](guide.troubleshooting) `guide.troubleshooting`
   > 常见问题的诊断与解决方案（ReactFlow 路由冲突等）
@@ -326,7 +338,7 @@
 ### 六、周报
 
 - [周报 2026-W12 (03-16 ~ 03-22)](report.2026-W12) `report.2026-W12`
-  > 2026 年第 12 周（周报 Agent 专项）工作总结
+  > 2026 年第 12 周工作总结（503 commits / 68 PRs，项目历史峰值）
 
 - [周报 2026-W11 (03-09 ~ 03-15)](report.2026-W11) `report.2026-W11`
   > 2026 年第 11 周工作总结
@@ -342,6 +354,9 @@
 
 - [周报 2026-W06 (02-03 ~ 02-08)](report.2026-W06) `report.2026-W06`
   > 2026 年第 6 周工作总结
+
+- [PRD Agent Web 端同步开发报告](report.prd-agent-web-sync) `report.prd-agent-web-sync`
+  > PRD Agent Web 端与桌面端同步开发的完整报告
 
 - [文档技能评测报告](report.skill-doc-evaluation) `report.skill-doc-evaluation`
   > 三种文档技能 vs 已有文档的评测对比报告
@@ -366,6 +381,12 @@
 | 2026-03-20 | 🟢 新增 | `guide.weekly-report` | 周报功能完整操作指南 |
 | 2026-03-20 | 🟢 新增 | `design.model-pool-failover` | 模型池故障转移与自动探活设计 |
 | 2026-03-20 | 🟢 新增 | `report.skill-doc-evaluation` | 文档技能评测报告 |
+| 2026-03-23 | 🟢 新增 | `design.generation-snapshot` | 生成快照设计 |
+| 2026-03-23 | 🟢 新增 | `guide.cds-ai-auth` | CDS + 后端 API 双层认证诊断指南 |
+| 2026-03-23 | 🟢 新增 | `guide.prd-agent-operations` | PRD Agent 全平台操作手册 |
+| 2026-03-23 | 🟢 新增 | `guide.skill-workflow` | AI 技能工作流指南 |
+| 2026-03-23 | 🟢 新增 | `report.prd-agent-web-sync` | PRD Agent Web 端同步开发报告 |
+| 2026-03-23 | 🔄 更新 | `report.2026-W12` | 周报 2026-W12 (全量重写) |
 | 2026-03-20 | 新增 | `report.2026-W12` | 周报 2026-W12 (03-16 ~ 03-22) |
 | 2026-03-15 | 🟢 新增 | `report.2026-W11` | 周报 2026-W11 (03-09 ~ 03-15) |
 | 2026-03-15 | 🟢 新增 | `spec.cds` | CDS 功能需求说明书 |

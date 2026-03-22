@@ -8,6 +8,114 @@
 
 ## [未发布]
 
+### 2026-03-22
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | prd-admin | 缺陷评论区支持 Markdown 渲染，修复加粗/列表等格式显示为原始标记的问题 |
+| fix | prd-api | 修复作品广场水印预览图始终显示"无预览"，PreviewUrl 为运行时计算字段未持久化 |
+| fix | prd-api | 已驳回的缺陷不再出现在驳回人（指派人）的列表中，只对提交人可见 |
+| fix | prd-admin | 修复缺陷详情面板严重程度下拉菜单被对话框 overflow-hidden 遮挡的问题 |
+| fix | prd-admin | 综合排行榜 report-agent 列显示为中文"周报" |
+| fix | prd-admin | 维度排行榜长条改为以最高值为100%的相对比例渲染 |
+| feat | cds | 分支搜索无匹配时自动在线刷新远程分支，显示搜索中状态 |
+| fix | prd-admin | 综合排行榜进度条分母上限封顶30天 |
+| refactor | prd-api, prd-admin | 排行榜移除冗余维度(消息/会话/群组/开放/对话)，新增图片生成/工作流/竞技场/周报Agent/视频Agent |
+| feat | prd-admin | 维度排行榜卡片按使用人数倒序排列 |
+| fix | prd-api | 修复 DefectSeverity 枚举不匹配：后端新增 Trivial 常量，更新 validSeverities 使用 All 数组（DEF-2026-0037） |
+| fix | prd-api | 修复清理上下文后消息仍显示：GetGroupMessages 端点新增 reset marker 过滤（DEF-2026-0049） |
+| fix | prd-api | 新增 AiScoreWatchdog 后台服务，自动检测并标记超时的 AI 评分任务为失败（DEF-2026-0018） |
+| fix | prd-api | 修复水印预览不显示：移除预览端点所有权限制 + 新增自愈重新渲染机制（DEF-2026-0062） |
+| fix | prd-api | 修复新用户无模板：ListTemplates 接口在用户无模板时补充内置默认模板（DEF-2026-0020） |
+| fix | prd-admin | 修复 AuthUser.role 类型与 UserRole 枚举不一致的 TS 编译错误 |
+| fix | prd-admin | 新增 tutorialData.ts 模块，修复 TutorialDetailPage 缺失模块导入错误 |
+| fix | prd-admin | 清理 TutorialDetailPage 未使用的导入和变量 |
+| fix | prd-admin | 未登录访问根路径默认跳转公开首页(/home)而非登录页，退出登录显式跳转到登录页(/login) |
+| fix | prd-admin | 修复下载弹窗卡片内文件名文字重叠 |
+| fix | prd-admin | 修复缺陷管理图片预览关闭后残留幽灵遮罩层（灯箱缺少z-index） |
+| fix | prd-admin | 修复系统弹窗（驳回/完成缺陷等）被缺陷详情面板盖住的根因，Dialog组件新增zIndex prop |
+| feat | prd-api | 新增 POST /api/users/force-expire-all 接口，一键过期所有用户令牌 |
+| feat | prd-admin | 用户管理页新增"一键过期"按钮，强制全员重新登录 |
+| fix | prd-admin | 修复缺陷管理图片预览弹窗无法关闭且层级错误，改用独立 Radix Dialog 嵌套 |
+| fix | prd-admin | 修复切换用户登录后侧边栏头像显示为默认头像（impersonate 未传递 avatarFileName） |
+| feat | prd-admin | 首页和 AI 百宝箱智能助手卡片点击后弹窗引导下载桌面端（含缓存+直接下载） |
+| fix | prd-admin | 修复 SubmissionCard 中 HeartLikeButton 点赞动效未触发的问题 |
+| fix | prd-api | 文学创作投稿详情和工作区详情仅展示当前版本配图，隐藏重新生成的旧版本 |
+| feat | prd-admin | 新增作品广场独立全屏页面，替换首页缺陷管理快捷入口 |
+| feat | prd-admin | 投稿水印 Tab 复用海鲜市场 MarketplaceWatermarkCard 组件，支持"拿来吧"Fork |
+| feat | prd-api | 新增 POST /api/submissions/{id}/fork-watermark 从快照 Fork 水印（不要求原配置公开） |
+| feat | prd-api | 投稿详情水印数据补充 forkCount、创建者名称/头像、预览图 URL |
+| fix | prd-api | 水印创建者名称兜底：空字符串 → 投稿者名称；旧快照 → submission.OwnerUserName |
+| fix | prd-api | fork-watermark 端点 nullable double → non-nullable 类型默认值 |
+| feat | prd-admin | 新增 HeartLikeButton 心型点赞特效组件（心跳+粒子+波纹），注册到特效专区 |
+| feat | prd-api | 投稿列表接口补充 viewCount 字段 |
+| feat | prd-admin | SubmissionCard 观看数圆角胶囊样式，万级自动缩写 |
+| feat | prd-admin | SubmissionDetailModal 点赞按钮替换为 HeartLikeButton 特效 |
+| feat | prd-api | 水印快照存储完整配置（大小/透明度/位置/偏移/图标/边框/背景/圆角） |
+| feat | prd-admin | 投稿详情水印 Tab 使用 WatermarkDescriptionGrid 组件展示完整配置 |
+
+### 2026-03-21
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | cds | SSE 端点添加 30s keepalive 心跳，修复 Cloudflare 524 超时导致 pairing-stream 反复断连 |
+| feat | cds | CDS Activity 面板每条记录前显示来源分支 ID（截取最后一段），方便定位请求来源 |
+| feat | prd-api | 扩展 UserRole 枚举，新增行政/财务/研发/测试/文案/客成经理/客服/销售 8 个业务角色 |
+| feat | prd-admin | 新建 roleConfig.ts 统一角色元数据（中文标签、专属图标、颜色），全站角色显示中文化 |
+| refactor | prd-admin | 消除角色颜色定义散落（UserSearchSelect/UsersPage/ExecutiveDashboard），统一引用 ROLE_META |
+| fix | prd-admin | 广场排序：CSS columns 改 CSS grid，修复 API 返回顺序被打乱的问题 |
+| fix | prd-admin | 详情页增加「参考图」「水印」tab，提示词 tab 包含风格词和系统提示词 |
+| fix | prd-admin | 详情页右下角增加同项目作品扇形输出列表 |
+| feat | prd-api | 投稿新增 GenerationSnapshot 快照：创建时采集完整输入配方（模型、提示词、参考图、水印），详情 API 返回 4 Tab 完整数据 |
+| feat | prd-api | 新增 backfill-snapshots 回填端点，为已有投稿补充生成快照 |
+| fix | prd-api | 修复文学配图对技术文档类文章拒绝生成的问题，增加不可拒绝约束和技术文档风格推断 |
+| fix | prd-admin | 文学创作单张生成也触发自动投稿（之前只有批量一键导出才触发） |
+| fix | prd-api | COS 上传超时从默认 45s 提升到 120s，解决大图上传超时问题 |
+| feat | prd-api | 文学投稿改为公开 workspace 模式：广场封面动态取最新资产，新图自动出现 |
+| fix | prd-admin | 修复作品广场图片不显示问题(display:none+lazy loading冲突) |
+| fix | prd-admin | 修复文学创作tab切换后整个面板消失 |
+| feat | prd-admin | 作品广场瀑布流布局重构为Lovart风格有机布局 |
+| feat | prd-api | 作品广场排序改为点赞数+时间双降序 |
+| feat | prd-api | 作品详情API返回生成参数(模型/图生图/涂抹/系统提示词) |
+| feat | prd-admin | 详情弹窗左侧加宽+阴影渐隐，右侧新增生成参数标签 |
+| feat | prd-api | 新增文学创作workspace批量迁移投稿端点 |
+| feat | prd-api | 新增作品投稿系统：Submission + SubmissionLike 模型、SubmissionsController（公开列表/创建/点赞/取消点赞/自动投稿） |
+| feat | prd-admin | 首页新增作品广场瀑布流展示区（ShowcaseGallery），支持分类筛选和分页加载 |
+| feat | prd-admin | 视觉创作生图完成后自动投稿到作品广场 |
+| feat | prd-admin | 文学创作配图完成后自动投稿到作品广场 |
+| feat | prd-admin | 投稿卡片展示：头像+用户名（左下）、爱心+点赞数（右下） |
+| feat | prd-admin | 作品详情弹窗：视觉创作（大图+提示词+同项目作品）、文学创作（缩略图列表+大图+正文/提示词tab） |
+| feat | prd-api | 作品详情 API（GET /api/submissions/{id}）：含关联资产、文章内容、浏览计数 |
+| feat | prd-api | admin 用户历史图片迁移接口（POST /api/submissions/migrate） |
+| feat | prd-api | Submission 模型新增 ViewCount 浏览计数字段 |
+| feat | prd-api | 百宝箱消息反馈（点赞/踩）API 端点 |
+| feat | prd-api | 百宝箱对话分享链接 API（创建+查看） |
+| feat | prd-api | 直接对话 SSE 流返回 token 用量 |
+| feat | prd-admin | 消息反馈持久化（thumbs up/down） |
+| feat | prd-admin | 对话分享功能（生成公开链接） |
+| feat | prd-admin | 键盘快捷键（Ctrl+Shift+N/E/Backspace, Esc） |
+| feat | prd-admin | 系统提示词可视化（左侧面板折叠展示） |
+| feat | prd-admin | 助手消息显示 token 用量 |
+| fix | prd-admin | 修复工具箱重发功能：不再重复用户消息，正确携带原始图片附件 |
+| feat | prd-admin | 工具箱会话标题自动从首条消息生成，前端实时同步 |
+| feat | prd-admin | 内置 Agent 支持"自定义副本"，一键 fork 为可编辑的自定义智能体 |
+| feat | prd-admin, prd-api | 会话支持双击重命名（新增 PATCH sessions/{id} 端点） |
+| feat | prd-admin, prd-api | 聊天面板展示当前使用的模型名称 |
+| feat | prd-admin | 内置 Agent 注册系统提示词，便于 fork 时预填 |
+| feat | prd-api | 百宝箱会话搜索：支持按标题模糊匹配 (MongoDB regex) |
+| feat | prd-api | 百宝箱会话排序：支持 lastActive/created/messageCount/title |
+| feat | prd-api | 百宝箱会话归档：切换归档状态，默认排除已归档 |
+| feat | prd-api | 百宝箱会话置顶：切换置顶状态，置顶始终排在最前 |
+| feat | prd-admin | 会话列表搜索输入框，防抖300ms |
+| feat | prd-admin | 会话排序下拉菜单 (最近活跃/创建时间/消息数/标题) |
+| feat | prd-admin | 会话归档按钮 + "显示已归档"开关，归档会话降低透明度 |
+| feat | prd-admin | 会话置顶按钮，置顶会话显示 Pin 图标 |
+| feat | prd-api | 百宝箱 DirectChat 启用 IncludeThinking 并透传 thinking SSE 事件 |
+| feat | prd-admin | 百宝箱对话展示大模型思考过程（可折叠，复用 SseTypingBlock） |
+| feat | prd-admin | 文件上传预验证（类型+大小 20MB 限制），拒绝不支持的文件 |
+| feat | prd-admin | 上传进度改为逐文件显示文件名和大小，增强附件预览样式 |
+
+
 ### 2026-03-20
 
 | 类型 | 模块 | 描述 |
