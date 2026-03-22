@@ -62,7 +62,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { extractMarkers, type ArticleMarker } from '@/lib/articleMarkerExtractor';
 import { useDebounce } from '@/hooks/useDebounce';
-import { createSubmission, checkSubmission } from '@/services/real/submissions';
+import { createSubmission, checkSubmission, autoSubmitImages } from '@/services/real/submissions';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
 import { systemDialog } from '@/lib/systemDialog';
@@ -356,18 +356,37 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   const [manualSubmitting, setManualSubmitting] = useState(false);
 
-  // 手动投稿：将当前文学创作内容投稿到作品广场
+  // 手动投稿：将当前文学创作的所有配图投稿到作品广场
   const handleManualSubmit = useCallback(async () => {
-    if (submissionStateRef.current.submitted) {
-      toast.info('该作品已投稿过');
-      return;
-    }
     setManualSubmitting(true);
     try {
-      const res = await createSubmission({ contentType: 'literary', workspaceId });
-      if (res.success) {
-        setSubmissionState({ submitted: true, submissionId: res.data.submission?.id });
-        toast.success('已投稿到作品广场');
+      // 1. 获取 workspace 下所有 asset ID
+      const wsRes = await getVisualAgentWorkspaceDetail({ id: workspaceId });
+      const assets: { id: string }[] = wsRes.success ? (wsRes.data?.assets ?? []) : [];
+      const assetIds = assets.map((a) => a.id).filter(Boolean);
+
+      if (assetIds.length === 0) {
+        toast.warning('当前文章没有已生成的配图');
+        setManualSubmitting(false);
+        return;
+      }
+
+      // 2. 批量投稿所有配图（幂等，已投稿的自动跳过）
+      const submitRes = await autoSubmitImages(assetIds);
+      const count = submitRes.success ? submitRes.data.submitted : 0;
+
+      // 3. 同时创建 workspace 级别的文学投稿（如果还没有）
+      if (!submissionStateRef.current.submitted) {
+        const litRes = await createSubmission({ contentType: 'literary', workspaceId });
+        if (litRes.success) {
+          setSubmissionState({ submitted: true, submissionId: litRes.data.submission?.id });
+        }
+      }
+
+      if (count > 0) {
+        toast.success(`已投稿 ${count} 张配图到作品广场`);
+      } else {
+        toast.info('所有配图均已投稿过');
       }
     } catch {
       toast.error('投稿失败，请重试');
