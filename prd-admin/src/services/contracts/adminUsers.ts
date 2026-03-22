@@ -115,3 +115,6 @@ export type BulkDeleteUsersResponse = {
 };
 
 export type BulkDeleteUsersContract = (userIds: string[]) => Promise<ApiResponse<BulkDeleteUsersResponse>>;
+
+export type ForceExpireAllResponse = { expiredCount: number };
+export type ForceExpireAllContract = () => Promise<ApiResponse<ForceExpireAllResponse>>;

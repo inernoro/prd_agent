@@ -1,8 +1,10 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
+using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -16,10 +18,12 @@ namespace PrdAgent.Api.Controllers.Api;
 public class AuthOpsController : ControllerBase
 {
     private readonly IAuthSessionService _authSessionService;
+    private readonly MongoDbContext _db;
 
-    public AuthOpsController(IAuthSessionService authSessionService)
+    public AuthOpsController(IAuthSessionService authSessionService, MongoDbContext db)
     {
         _authSessionService = authSessionService;
+        _db = db;
     }
 
     /// <summary>
@@ -60,6 +64,42 @@ public class AuthOpsController : ControllerBase
             Targets = targets
         }));
     }
+    /// <summary>
+    /// 一键过期所有用户的令牌（强制全员重新登录）
+    /// </summary>
+    [HttpPost("force-expire-all")]
+    [ProducesResponseType(typeof(ApiResponse<ForceExpireAllResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> ForceExpireAll()
+    {
+        var clientTypes = new[] { "admin", "desktop" };
+
+        // 获取所有用户 ID
+        var userIds = await _db.Users
+            .Find(FilterDefinition<User>.Empty)
+            .Project(u => u.UserId)
+            .ToListAsync();
+
+        var count = 0;
+        foreach (var uid in userIds)
+        {
+            foreach (var ct in clientTypes)
+            {
+                await _authSessionService.RemoveAllRefreshSessionsAsync(uid, ct);
+                await _authSessionService.BumpTokenVersionAsync(uid, ct);
+            }
+            count++;
+        }
+
+        return Ok(ApiResponse<ForceExpireAllResponse>.Ok(new ForceExpireAllResponse
+        {
+            ExpiredCount = count,
+        }));
+    }
+}
+
+public class ForceExpireAllResponse
+{
+    public int ExpiredCount { get; set; }
 }
 
 public class ForceExpireRequest

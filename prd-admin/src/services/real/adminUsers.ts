@@ -14,6 +14,8 @@ import type {
   UnlockUserContract,
   ForceExpireUserContract,
   ForceExpireTargets,
+  ForceExpireAllContract,
+  ForceExpireAllResponse,
   GetUsersParams,
   CreateAdminUserInput,
   CreateAdminUserResponse,
@@ -185,6 +187,13 @@ export const bulkCreateUsersReal: BulkCreateAdminUsersContract = async (
 
 export const getUserProfileReal: GetUserProfileContract = async (userId: string): Promise<ApiResponse<UserProfileResponse>> => {
   const res = await apiRequest<UserProfileResponse>(api.users.profile(userId));
+  return res;
+};
+
+export const forceExpireAllReal: ForceExpireAllContract = async (): Promise<ApiResponse<ForceExpireAllResponse>> => {
+  const res = await apiRequest<ForceExpireAllResponse>(api.users.forceExpireAll(), {
+    method: 'POST',
+  });
   return res;
 };
 

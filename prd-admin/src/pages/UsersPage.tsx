@@ -5,7 +5,7 @@ import { TabBar } from '@/components/design/TabBar';
 import { Select } from '@/components/design/Select';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { Dialog } from '@/components/ui/Dialog';
-import { getUsers, createUser, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, updateUserAvatar, updateUserDisplayName, initializeUsers, adminImpersonate, getSystemRoles, getUserAuthz, updateUserAuthz, getAdminPermissionCatalog, getUserRateLimit, updateUserRateLimit, bulkDeleteUsers } from '@/services';
+import { getUsers, createUser, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, forceExpireAll, updateUserAvatar, updateUserDisplayName, initializeUsers, adminImpersonate, getSystemRoles, getUserAuthz, updateUserAuthz, getAdminPermissionCatalog, getUserRateLimit, updateUserRateLimit, bulkDeleteUsers } from '@/services';
 import { MoreVertical, Pencil, Search, UserCog, Users, Gauge, Trash2, FolderOpen, Image, Bug, Zap } from 'lucide-react';
 import { getRoleMeta, ALL_ROLES } from '@/lib/roleConfig';
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
@@ -125,7 +125,7 @@ export default function UsersPage() {
   const [nameError, setNameError] = useState<string | null>(null);
 
   const [switchingUserId, setSwitchingUserId] = useState<string | null>(null);
-  const { login: authLogin, setPermissionsLoaded, setMenuCatalogLoaded } = useAuthStore();
+  const { login: authLogin, logout, setPermissionsLoaded, setMenuCatalogLoaded } = useAuthStore();
   const loadThemeFromServer = useThemeStore((s) => s.loadFromServer);
   const loadNavOrderFromServer = useNavOrderStore((s) => s.loadFromServer);
   const canAuthzManage = useAuthStore((s) => Array.isArray(s.permissions) && s.permissions.includes('authz.manage'));
@@ -666,6 +666,33 @@ export default function UsersPage() {
     }
   };
 
+  const handleForceExpireAll = async () => {
+    const confirmed = await systemDialog.confirm({
+      title: '一键过期所有令牌',
+      message: '此操作将强制所有用户（包括您自己）重新登录。所有已签发的访问令牌和刷新令牌将立即失效。\n\n确定继续吗？',
+      confirmText: '确定过期',
+      cancelText: '取消',
+      tone: 'danger',
+    });
+    if (!confirmed) return;
+
+    try {
+      const res = await forceExpireAll();
+      if (!res.success) {
+        toast.error('操作失败', res.error?.message || '一键过期失败');
+        return;
+      }
+      toast.success('已过期所有令牌', `共 ${res.data.expiredCount} 个用户的令牌已失效，3 秒后将退出登录...`);
+      // 请求已成功发送，等待 toast 显示后再退出
+      setTimeout(() => {
+        logout();
+      }, 3000);
+    } catch (error) {
+      console.error('Force expire all error:', error);
+      toast.error('操作失败', '一键过期时发生错误');
+    }
+  };
+
   const toggleUserSelection = (userId: string) => {
     setSelectedUserIds((prev) => {
       const next = new Set(prev);
@@ -791,6 +818,10 @@ export default function UsersPage() {
           <div className={`${isMobile ? '' : 'ml-auto'} flex items-center gap-2 shrink-0 flex-wrap justify-end`}>
             <Button variant="secondary" size="xs" onClick={openCreateUser}>
               创建用户
+            </Button>
+            <div className="mx-0.5 h-6 w-px bg-white/8" aria-hidden />
+            <Button variant="danger" size="xs" onClick={handleForceExpireAll}>
+              一键过期
             </Button>
             <div className="mx-0.5 h-6 w-px bg-white/8" aria-hidden />
             <Button variant="danger" size="xs" onClick={handleInitializeUsers}>
