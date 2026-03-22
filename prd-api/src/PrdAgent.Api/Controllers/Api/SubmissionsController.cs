@@ -106,7 +106,17 @@ public class SubmissionsController : ControllerBase
                 .FirstOrDefaultAsync();
         }
 
-        // 7. 解析参考图配置（如有 — 暂无直接关联，留空待未来扩展）
+        // 7. 解析水印配置创建者信息
+        string? wmOwnerName = null;
+        string? wmOwnerAvatar = null;
+        if (wmConfig != null)
+        {
+            var wmOwner = await _db.Users
+                .Find(u => u.UserId == wmConfig.UserId)
+                .FirstOrDefaultAsync();
+            wmOwnerName = wmOwner?.DisplayName ?? wmOwner?.Username;
+            wmOwnerAvatar = wmOwner?.AvatarFileName;
+        }
 
         return new GenerationSnapshot
         {
@@ -138,6 +148,9 @@ public class SubmissionsController : ControllerBase
             WatermarkBackgroundEnabled = wmConfig?.BackgroundEnabled,
             WatermarkRoundedBackgroundEnabled = wmConfig?.RoundedBackgroundEnabled,
             WatermarkPreviewUrl = wmConfig?.PreviewUrl,
+            WatermarkForkCount = wmConfig?.ForkCount ?? 0,
+            WatermarkOwnerUserName = wmOwnerName,
+            WatermarkOwnerAvatarFileName = wmOwnerAvatar,
             ImageGenRunId = run.Id,
             AppKey = appKey,
             SnapshotAt = DateTime.UtcNow,
@@ -384,6 +397,9 @@ public class SubmissionsController : ControllerBase
                     watermarkBackgroundEnabled = snap.WatermarkBackgroundEnabled,
                     watermarkRoundedBackgroundEnabled = snap.WatermarkRoundedBackgroundEnabled,
                     watermarkPreviewUrl = snap.WatermarkPreviewUrl,
+                    watermarkForkCount = snap.WatermarkForkCount,
+                    watermarkOwnerUserName = snap.WatermarkOwnerUserName,
+                    watermarkOwnerAvatarFileName = snap.WatermarkOwnerAvatarFileName,
                     // 溯源
                     appKey = snap.AppKey,
                     configModelId = snap.ConfigModelId,
@@ -455,6 +471,17 @@ public class SubmissionsController : ControllerBase
                             .Find(x => x.UserId == submission.OwnerUserId && x.AppKeys.Contains(appKey))
                             .FirstOrDefaultAsync();
                     }
+                    // 水印配置创建者信息
+                    string? fbWmOwnerName = null;
+                    string? fbWmOwnerAvatar = null;
+                    if (fbWmConfig != null)
+                    {
+                        var fbWmOwner = await _db.Users
+                            .Find(u => u.UserId == fbWmConfig.UserId)
+                            .FirstOrDefaultAsync();
+                        fbWmOwnerName = fbWmOwner?.DisplayName ?? fbWmOwner?.Username;
+                        fbWmOwnerAvatar = fbWmOwner?.AvatarFileName;
+                    }
 
                     generationInfo = new
                     {
@@ -484,6 +511,9 @@ public class SubmissionsController : ControllerBase
                         watermarkBackgroundEnabled = fbWmConfig?.BackgroundEnabled,
                         watermarkRoundedBackgroundEnabled = fbWmConfig?.RoundedBackgroundEnabled,
                         watermarkPreviewUrl = fbWmConfig?.PreviewUrl,
+                        watermarkForkCount = fbWmConfig?.ForkCount ?? 0,
+                        watermarkOwnerUserName = fbWmOwnerName,
+                        watermarkOwnerAvatarFileName = fbWmOwnerAvatar,
                         appKey,
                     };
                 }
@@ -1125,6 +1155,146 @@ public class SubmissionsController : ControllerBase
             updated,
             remaining,
         }));
+    }
+
+    /// <summary>
+    /// 从投稿快照 Fork 水印配置（不要求原配置公开）
+    /// </summary>
+    [HttpPost("{id}/fork-watermark")]
+    public async Task<IActionResult> ForkWatermarkFromSnapshot(string id, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var submission = await _db.Submissions.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (submission == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "投稿不存在"));
+        if (!submission.IsPublic && submission.OwnerUserId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "该投稿未公开"));
+
+        // 获取水印快照数据（优先快照，兜底动态查询）
+        string? wmName = null, wmText = null, wmFontKey = null, wmAnchor = null, wmPositionMode = null;
+        double? wmFontSizePx = null, wmOpacity = null, wmOffsetX = null, wmOffsetY = null;
+        bool? wmIconEnabled = null, wmBorderEnabled = null, wmBackgroundEnabled = null, wmRoundedBgEnabled = null;
+        string? sourceConfigId = null;
+
+        if (submission.GenerationSnapshot != null)
+        {
+            var snap = submission.GenerationSnapshot;
+            sourceConfigId = snap.WatermarkConfigId;
+            wmName = snap.WatermarkName;
+            wmText = snap.WatermarkText;
+            wmFontKey = snap.WatermarkFontKey;
+            wmFontSizePx = snap.WatermarkFontSizePx;
+            wmOpacity = snap.WatermarkOpacity;
+            wmAnchor = snap.WatermarkAnchor;
+            wmOffsetX = snap.WatermarkOffsetX;
+            wmOffsetY = snap.WatermarkOffsetY;
+            wmPositionMode = snap.WatermarkPositionMode;
+            wmIconEnabled = snap.WatermarkIconEnabled;
+            wmBorderEnabled = snap.WatermarkBorderEnabled;
+            wmBackgroundEnabled = snap.WatermarkBackgroundEnabled;
+            wmRoundedBgEnabled = snap.WatermarkRoundedBackgroundEnabled;
+        }
+        else if (!string.IsNullOrWhiteSpace(submission.WorkspaceId))
+        {
+            var run = await _db.ImageGenRuns
+                .Find(x => x.WorkspaceId == submission.WorkspaceId && x.Status == ImageGenRunStatus.Completed)
+                .SortByDescending(x => x.CreatedAt)
+                .FirstOrDefaultAsync(ct);
+            if (run != null && !string.IsNullOrWhiteSpace(run.AppKey))
+            {
+                var wmConfig = await _db.WatermarkConfigs
+                    .Find(x => x.UserId == submission.OwnerUserId && x.AppKeys.Contains(run.AppKey))
+                    .FirstOrDefaultAsync(ct);
+                if (wmConfig != null)
+                {
+                    sourceConfigId = wmConfig.Id;
+                    wmName = wmConfig.Name;
+                    wmText = wmConfig.Text;
+                    wmFontKey = wmConfig.FontKey;
+                    wmFontSizePx = wmConfig.FontSizePx;
+                    wmOpacity = wmConfig.Opacity;
+                    wmAnchor = wmConfig.Anchor;
+                    wmOffsetX = wmConfig.OffsetX;
+                    wmOffsetY = wmConfig.OffsetY;
+                    wmPositionMode = wmConfig.PositionMode;
+                    wmIconEnabled = wmConfig.IconEnabled;
+                    wmBorderEnabled = wmConfig.BorderEnabled;
+                    wmBackgroundEnabled = wmConfig.BackgroundEnabled;
+                    wmRoundedBgEnabled = wmConfig.RoundedBackgroundEnabled;
+                }
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(wmName))
+            return BadRequest(ApiResponse<object>.Fail("NO_WATERMARK", "该投稿未使用水印"));
+
+        // 获取原作者信息
+        var sourceOwner = await _db.Users
+            .Find(u => u.UserId == submission.OwnerUserId)
+            .FirstOrDefaultAsync(ct);
+        var sourceOwnerName = sourceOwner?.DisplayName ?? sourceOwner?.Username ?? "未知用户";
+        var sourceOwnerAvatar = sourceOwner?.AvatarFileName;
+
+        var forked = new WatermarkConfig
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            UserId = userId,
+            Name = wmName,
+            AppKeys = new List<string>(),
+            Text = wmText ?? "",
+            FontKey = wmFontKey ?? "default",
+            FontSizePx = wmFontSizePx,
+            Opacity = wmOpacity,
+            Anchor = wmAnchor,
+            OffsetX = wmOffsetX,
+            OffsetY = wmOffsetY,
+            PositionMode = wmPositionMode,
+            IconEnabled = wmIconEnabled ?? false,
+            BorderEnabled = wmBorderEnabled ?? false,
+            BackgroundEnabled = wmBackgroundEnabled ?? false,
+            RoundedBackgroundEnabled = wmRoundedBgEnabled ?? false,
+            IsPublic = false,
+            ForkCount = 0,
+            ForkedFromId = sourceConfigId,
+            ForkedFromUserId = submission.OwnerUserId,
+            ForkedFromUserName = sourceOwnerName,
+            ForkedFromUserAvatar = sourceOwnerAvatar,
+            IsModifiedAfterFork = false,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        };
+
+        await _db.WatermarkConfigs.InsertOneAsync(forked, cancellationToken: ct);
+
+        // 如果有原配置 ID，更新 ForkCount
+        if (!string.IsNullOrWhiteSpace(sourceConfigId))
+        {
+            await _db.WatermarkConfigs.UpdateOneAsync(
+                x => x.Id == sourceConfigId,
+                Builders<WatermarkConfig>.Update.Inc(x => x.ForkCount, 1),
+                cancellationToken: ct);
+        }
+
+        // 记录下载日志
+        var currentUser = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(ct);
+        var forkLog = new MarketplaceForkLog
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            UserId = userId,
+            UserName = currentUser?.DisplayName ?? currentUser?.Username,
+            UserAvatarFileName = currentUser?.AvatarFileName,
+            ConfigType = "watermark",
+            SourceConfigId = sourceConfigId ?? id,
+            SourceConfigName = wmName,
+            ForkedConfigId = forked.Id,
+            ForkedConfigName = wmName,
+            SourceOwnerUserId = submission.OwnerUserId,
+            SourceOwnerName = sourceOwnerName,
+            CreatedAt = DateTime.UtcNow,
+        };
+        await _db.MarketplaceForkLogs.InsertOneAsync(forkLog, cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new { id = forked.Id, name = forked.Name }));
     }
 }
 

@@ -11,11 +11,11 @@ import {
   getSubmissionDetail,
   likeSubmission,
   unlikeSubmission,
+  forkWatermarkFromSubmission,
   type SubmissionDetail,
 } from '@/services/real/submissions';
 import { MarketplaceWatermarkCard } from '@/components/config-management/MarketplaceWatermarkCard';
 import type { MarketplaceCardContext } from '@/components/config-management/ConfigManagementDialogBase';
-import { forkWatermark } from '@/services';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -519,15 +519,18 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                             backgroundEnabled: genInfo.watermarkBackgroundEnabled,
                             roundedBackgroundEnabled: genInfo.watermarkRoundedBackgroundEnabled,
                             previewUrl: genInfo.watermarkPreviewUrl,
-                            forkCount: 0,
+                            forkCount: genInfo.watermarkForkCount ?? 0,
                             createdAt: sub?.createdAt || '',
                             ownerUserId: sub?.ownerUserId || '',
-                            ownerUserName: sub?.ownerUserName || '',
-                            ownerUserAvatar: avatarUrl,
+                            ownerUserName: genInfo.watermarkOwnerUserName || sub?.ownerUserName || '',
+                            ownerUserAvatar: genInfo.watermarkOwnerAvatarFileName
+                              ? resolveAvatarUrl({ avatarFileName: genInfo.watermarkOwnerAvatarFileName })
+                              : avatarUrl,
                           }}
                           ctx={watermarkForkCtx}
                           onFork={async () => {
-                            const res = await forkWatermark({ id: genInfo.watermarkConfigId! });
+                            if (!submissionId) return false;
+                            const res = await forkWatermarkFromSubmission(submissionId);
                             return res.success;
                           }}
                         />

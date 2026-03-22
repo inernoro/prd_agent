@@ -142,6 +142,12 @@ public class GenerationSnapshot
     public bool? WatermarkRoundedBackgroundEnabled { get; set; }
     /// <summary>水印预览图 URL</summary>
     public string? WatermarkPreviewUrl { get; set; }
+    /// <summary>水印配置下载次数</summary>
+    public int WatermarkForkCount { get; set; }
+    /// <summary>水印配置创建者用户名</summary>
+    public string? WatermarkOwnerUserName { get; set; }
+    /// <summary>水印配置创建者头像</summary>
+    public string? WatermarkOwnerAvatarFileName { get; set; }
 
     // ── 溯源 ──
     /// <summary>源 ImageGenRun.Id（内部追踪，不对外展示）</summary>

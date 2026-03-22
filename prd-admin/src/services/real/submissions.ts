@@ -82,6 +82,9 @@ export interface GenerationInfo {
   watermarkBackgroundEnabled?: boolean;
   watermarkRoundedBackgroundEnabled?: boolean;
   watermarkPreviewUrl?: string | null;
+  watermarkForkCount?: number;
+  watermarkOwnerUserName?: string;
+  watermarkOwnerAvatarFileName?: string;
   // 溯源
   appKey?: string;
   configModelId?: string;
@@ -122,6 +125,13 @@ export async function toggleSubmissionVisibility(id: string, isPublic: boolean) 
   return apiRequest<{ id: string; isPublic: boolean }>(
     api.submissions.visibility(id),
     { method: 'PATCH', body: { isPublic } },
+  );
+}
+
+export async function forkWatermarkFromSubmission(submissionId: string) {
+  return apiRequest<{ id: string; name: string }>(
+    `${api.submissions.detail(submissionId)}/fork-watermark`,
+    { method: 'POST' },
   );
 }
 
