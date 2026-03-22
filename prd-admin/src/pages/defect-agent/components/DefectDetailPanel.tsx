@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect, useCallback, useRef, type DragEvent, type ClipboardEvent } from 'react';
+import { createPortal } from 'react-dom';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -1310,51 +1311,53 @@ export function DefectDetailPanel() {
         )}
       </DialogPrimitive.Content>
 
-      {/* Image Lightbox - 独立 Portal 保证在最顶层 */}
-      {lightboxImage && (
-        <div
-          className="fixed inset-0 z-[300] flex items-center justify-center p-8"
-          style={{ background: 'rgba(0,0,0,0.9)' }}
-          onClick={() => setLightboxImage(null)}
-        >
-          <div className="absolute top-4 right-4 flex items-center gap-2">
-            <button
-              className="p-2 rounded-lg hover:bg-white/10 transition-colors"
-              title="复制图片"
-              onClick={async (e) => {
-                e.stopPropagation();
-                try {
-                  const res = await fetch(lightboxImage);
-                  const blob = await res.blob();
-                  await navigator.clipboard.write([
-                    new ClipboardItem({ [blob.type]: blob }),
-                  ]);
-                  toast.success('已复制图片');
-                } catch {
-                  toast.error('复制失败');
-                }
-              }}
-            >
-              <Copy size={20} style={{ color: '#fff' }} />
-            </button>
-            <button
-              className="p-2 rounded-lg hover:bg-white/10 transition-colors"
-              onClick={() => setLightboxImage(null)}
-            >
-              <X size={24} style={{ color: '#fff' }} />
-            </button>
-          </div>
-          <img
-            src={lightboxImage}
-            alt="放大图片"
-            className="max-w-full max-h-full object-contain rounded-lg"
-            style={{ boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}
-            onClick={(e) => e.stopPropagation()}
-          />
-        </div>
-      )}
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
+
+    {/* Image Lightbox - createPortal 到 body，DOM 顺序保证在最顶层 */}
+    {lightboxImage && createPortal(
+      <div
+        className="fixed inset-0 flex items-center justify-center p-8"
+        style={{ background: 'rgba(0,0,0,0.9)' }}
+        onClick={() => setLightboxImage(null)}
+      >
+        <div className="absolute top-4 right-4 flex items-center gap-2">
+          <button
+            className="p-2 rounded-lg hover:bg-white/10 transition-colors"
+            title="复制图片"
+            onClick={async (e) => {
+              e.stopPropagation();
+              try {
+                const res = await fetch(lightboxImage);
+                const blob = await res.blob();
+                await navigator.clipboard.write([
+                  new ClipboardItem({ [blob.type]: blob }),
+                ]);
+                toast.success('已复制图片');
+              } catch {
+                toast.error('复制失败');
+              }
+            }}
+          >
+            <Copy size={20} style={{ color: '#fff' }} />
+          </button>
+          <button
+            className="p-2 rounded-lg hover:bg-white/10 transition-colors"
+            onClick={() => setLightboxImage(null)}
+          >
+            <X size={24} style={{ color: '#fff' }} />
+          </button>
+        </div>
+        <img
+          src={lightboxImage}
+          alt="放大图片"
+          className="max-w-full max-h-full object-contain rounded-lg"
+          style={{ boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}
+          onClick={(e) => e.stopPropagation()}
+        />
+      </div>,
+      document.body
+    )}
 
     {showShareDialog && (
       <ShareDefectDialog

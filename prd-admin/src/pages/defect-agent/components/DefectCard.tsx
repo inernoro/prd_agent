@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { glassBadge } from '@/lib/glassStyles';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
@@ -690,10 +691,10 @@ export function DefectCard({ defect }: DefectCardProps) {
         </div>
       </GlassCard>
 
-      {/* Image Lightbox */}
-      {lightboxImage && (
+      {/* Image Lightbox - createPortal 到 body，DOM 顺序保证在最顶层 */}
+      {lightboxImage && createPortal(
         <div
-          className="fixed inset-0 z-[100] flex items-center justify-center p-8"
+          className="fixed inset-0 flex items-center justify-center p-8"
           style={{ background: 'rgba(0,0,0,0.85)' }}
           onClick={() => setLightboxImage(null)}
         >
@@ -710,7 +711,8 @@ export function DefectCard({ defect }: DefectCardProps) {
             style={{ boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}
             onClick={(e) => e.stopPropagation()}
           />
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );
