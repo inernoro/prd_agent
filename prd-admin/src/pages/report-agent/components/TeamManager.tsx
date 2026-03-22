@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Pencil, Trash2, Users, UserPlus, Link2, X, Tag } from 'lucide-react';
+import { Plus, Pencil, Trash2, Users, UserPlus, Link2 } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
@@ -35,8 +35,6 @@ export function TeamManager() {
   const [leaderUserId, setLeaderUserId] = useState('');
   const [reportVisibility, setReportVisibility] = useState<string>(ReportVisibilityMode.AllMembers);
   const [autoSubmitSchedule, setAutoSubmitSchedule] = useState('');
-  const [customTags, setCustomTags] = useState<string[]>([]);
-  const [tagInput, setTagInput] = useState('');
 
   // Member form
   const [memberUserId, setMemberUserId] = useState('');
@@ -62,8 +60,6 @@ export function TeamManager() {
     setLeaderUserId('');
     setReportVisibility(ReportVisibilityMode.AllMembers);
     setAutoSubmitSchedule('');
-    setCustomTags([]);
-    setTagInput('');
     setShowTeamDialog(true);
   };
 
@@ -76,8 +72,6 @@ export function TeamManager() {
     setLeaderUserId(t.leaderUserId);
     setReportVisibility(t.reportVisibility || ReportVisibilityMode.AllMembers);
     setAutoSubmitSchedule(t.autoSubmitSchedule || '');
-    setCustomTags(t.customDailyLogTags || []);
-    setTagInput('');
     setShowTeamDialog(true);
   };
 
@@ -91,7 +85,6 @@ export function TeamManager() {
       description: teamDesc.trim() || undefined,
       reportVisibility,
       autoSubmitSchedule: autoSubmitSchedule || undefined,
-      customDailyLogTags: customTags.length > 0 ? customTags : undefined,
     };
     const res = editingTeamId
       ? await updateReportTeam({ id: editingTeamId, ...teamPayload })
@@ -336,48 +329,6 @@ export function TeamManager() {
                 </div>
               </div>
 
-              {/* Custom daily log tags */}
-              <div>
-                <div className="text-[11px] mb-1.5 font-medium" style={{ color: 'var(--text-secondary)' }}>自定义打点标签</div>
-                <div className="flex flex-wrap gap-1.5 mb-2">
-                  {customTags.map((tag, i) => (
-                    <span
-                      key={i}
-                      className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-lg"
-                      style={{ background: 'rgba(59, 130, 246, 0.08)', color: 'rgba(59, 130, 246, 0.9)', border: '1px solid rgba(59, 130, 246, 0.15)' }}
-                    >
-                      <Tag size={9} /> {tag}
-                      <button
-                        className="ml-0.5 hover:opacity-70"
-                        onClick={() => setCustomTags(customTags.filter((_, j) => j !== i))}
-                      >
-                        <X size={9} />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    className="flex-1 px-3 py-1.5 rounded-lg text-[12px]"
-                    style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
-                    placeholder="输入标签名，回车添加"
-                    value={tagInput}
-                    onChange={(e) => setTagInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && tagInput.trim()) {
-                        e.preventDefault();
-                        if (!customTags.includes(tagInput.trim())) {
-                          setCustomTags([...customTags, tagInput.trim()]);
-                        }
-                        setTagInput('');
-                      }
-                    }}
-                  />
-                </div>
-                <div className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
-                  团队成员的每日打点可使用这些自定义标签
-                </div>
-              </div>
             </div>
             <div className="flex items-center justify-end gap-2 px-4 py-3" style={{ borderTop: '1px solid var(--border-primary)' }}>
               <Button variant="secondary" size="sm" onClick={() => setShowTeamDialog(false)}>取消</Button>

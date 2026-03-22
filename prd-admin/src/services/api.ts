@@ -353,6 +353,12 @@ export const api = {
     prompts: () => '/api/prd-agent/prompts',
     /** 系统提示词（只读，供 PRD Agent 页面展示系统提示词内容） */
     systemPrompts: () => '/api/prd-agent/prompts/system',
+    /** PRD 评论 */
+    comments: {
+      list: (documentId: string, groupId: string) => `/api/v1/prd-comments?documentId=${documentId}&groupId=${groupId}&limit=200`,
+      create: () => '/api/v1/prd-comments',
+      delete: (commentId: string) => `/api/v1/prd-comments/${commentId}`,
+    },
   },
 
   // ============ Literary Agent 文学创作 ============
@@ -491,6 +497,8 @@ export const api = {
       summary: (id: string) => `/api/report-agent/teams/${id}/summary`,
       summaryView: (id: string) => `/api/report-agent/teams/${id}/summary/view`,
       summaryGenerate: (id: string) => `/api/report-agent/teams/${id}/summary/generate`,
+      aiSummaryPrompt: (id: string) => `/api/report-agent/teams/${id}/ai-summary-prompt`,
+      aiSummaryPromptReset: (id: string) => `/api/report-agent/teams/${id}/ai-summary-prompt/reset`,
     },
     templates: {
       list: () => '/api/report-agent/templates',
@@ -532,6 +540,19 @@ export const api = {
       byId: (id: string) => `/api/report-agent/my/sources/${id}`,
       test: (id: string) => `/api/report-agent/my/sources/${id}/test`,
       sync: (id: string) => `/api/report-agent/my/sources/${id}/sync`,
+    },
+    aiSources: {
+      list: () => '/api/report-agent/my/ai-sources',
+      byKey: (key: string) => `/api/report-agent/my/ai-sources/${key}`,
+    },
+    aiReportPrompt: {
+      get: () => '/api/report-agent/my/ai-report-prompt',
+      update: () => '/api/report-agent/my/ai-report-prompt',
+      reset: () => '/api/report-agent/my/ai-report-prompt/reset',
+    },
+    dailyLogTags: {
+      get: () => '/api/report-agent/my/daily-log-tags',
+      update: () => '/api/report-agent/my/daily-log-tags',
     },
     personalStats: () => '/api/report-agent/my/stats',
     teamWorkflow: (teamId: string) => `/api/report-agent/teams/${teamId}/workflow`,
@@ -658,6 +679,21 @@ export const api = {
     runItem: (itemId: string) => `/api/ai-toolbox/items/${itemId}/run`,
     triggerWorkflow: (itemId: string) => `/api/ai-toolbox/items/${itemId}/trigger-workflow`,
     agents: () => '/api/ai-toolbox/agents',
+    // 会话管理
+    sessions: (itemId: string) => `/api/ai-toolbox/items/${itemId}/sessions`,
+    session: (sessionId: string) => `/api/ai-toolbox/sessions/${sessionId}`,
+    sessionArchive: (sessionId: string) => `/api/ai-toolbox/sessions/${sessionId}/archive`,
+    sessionPin: (sessionId: string) => `/api/ai-toolbox/sessions/${sessionId}/pin`,
+    messages: (sessionId: string) => `/api/ai-toolbox/sessions/${sessionId}/messages`,
+    // 市场
+    marketplace: () => '/api/ai-toolbox/marketplace',
+    forkItem: (id: string) => `/api/ai-toolbox/items/${id}/fork`,
+    publishItem: (id: string) => `/api/ai-toolbox/items/${id}/publish`,
+    // 消息反馈
+    messageFeedback: (messageId: string) => `/api/ai-toolbox/messages/${messageId}/feedback`,
+    // 分享
+    share: () => '/api/ai-toolbox/share',
+    sharedConversation: (shareId: string) => `/api/ai-toolbox/shared/${shareId}`,
     // 直接对话 (SSE)
     directChat: () => '/api/ai-toolbox/direct-chat',
     capabilityChat: (key: string) => `/api/ai-toolbox/capabilities/${key}/chat`,

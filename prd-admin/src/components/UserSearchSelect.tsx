@@ -1,4 +1,5 @@
 import { resolveAvatarUrl } from '@/lib/avatar';
+import { getRoleMeta } from '@/lib/roleConfig';
 import { getUsers } from '@/services';
 import type { AdminUser } from '@/types/admin';
 import { Check, ChevronDown, Search, User, Users } from 'lucide-react';
@@ -23,12 +24,7 @@ function fmtRelative(v?: string | null) {
   return '';
 }
 
-export const ROLE_COLORS: Record<string, { bg: string; border: string; text: string }> = {
-  PM: { bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.25)', text: 'rgba(59,130,246,0.95)' },
-  DEV: { bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.25)', text: 'rgba(34,197,94,0.95)' },
-  QA: { bg: 'rgba(168,85,247,0.12)', border: 'rgba(168,85,247,0.25)', text: 'rgba(168,85,247,0.95)' },
-  ADMIN: { bg: 'rgba(99,102,241,0.12)', border: 'rgba(99,102,241,0.25)', text: 'var(--accent-gold)' },
-};
+export { ROLE_COLORS } from '@/lib/roleConfig';
 
 export interface UserSearchSelectProps {
   /** 当前选中的 userId（空字符串表示未选中） */
@@ -235,7 +231,8 @@ export function UserSearchSelect({
           filtered.map((u) => {
             const ava = resolveAvatarUrl({ username: u.username, userType: u.userType, botKind: u.botKind, avatarFileName: u.avatarFileName });
             const isSelected = u.userId === value;
-            const rc = ROLE_COLORS[u.role] || ROLE_COLORS.DEV;
+            const rm = getRoleMeta(u.role);
+            const RoleIcon = rm.icon;
             const isBot = String(u.userType ?? '').toLowerCase() === 'bot';
             const activeText = fmtRelative(u.lastActiveAt);
             const loginText = fmtRelative(u.lastLoginAt);
@@ -257,10 +254,11 @@ export function UserSearchSelect({
                       {u.displayName}
                     </span>
                     <span
-                      className="shrink-0 text-[9px] font-bold px-1 py-px rounded-[3px] leading-tight"
-                      style={{ background: rc.bg, border: `1px solid ${rc.border}`, color: rc.text }}
+                      className="shrink-0 inline-flex items-center gap-0.5 text-[9px] font-bold px-1 py-px rounded-[3px] leading-tight"
+                      style={{ background: rm.bg, border: `1px solid ${rm.border}`, color: rm.color }}
                     >
-                      {u.role}
+                      <RoleIcon size={9} />
+                      {rm.label}
                     </span>
                     {isBot && (
                       <span className="shrink-0 text-[9px] px-1 py-px rounded-[3px] leading-tight" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.25)', color: 'rgba(34,197,94,0.9)' }}>

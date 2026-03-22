@@ -17,29 +17,10 @@ public class TeamSummaryService
     private readonly ILlmGateway _gateway;
     private readonly ILogger<TeamSummaryService> _logger;
 
-    private const string SystemPrompt = """
-        你是一位专业的团队周报汇总助手。你的任务是将多位团队成员的个人周报汇总为一份管理摘要。
-
-        规则：
-        1. 按主题归类（而非按人员罗列），突出团队整体成果
-        2. 关键指标用数字说话（完成任务数、代码提交量、缺陷处理量等）
-        3. 风险和阻塞项要标注相关人员
-        4. 进行中任务标注进度和预计完成时间
-        5. 下周重点要具体可执行
-        6. 每条不超过 50 字
-        7. 严格按照指定的 5 个板块输出
-        8. 输出必须是合法的 JSON 格式，不要包含 markdown 代码块标记
-
-        输出格式:
-        {
-          "sections": [
-            { "title": "本周亮点", "items": ["..."] },
-            { "title": "关键指标", "items": ["..."] },
-            { "title": "进行中任务", "items": ["..."] },
-            { "title": "风险与阻塞", "items": ["..."] },
-            { "title": "下周重点", "items": ["..."] }
-          ]
-        }
+    private const string GatewaySystemPrompt = """
+        你是严谨的企业团队周报分析助手。
+        你会接收“团队成员周报原始内容”和“团队汇总Prompt”。
+        请严格遵守输入中给出的 Prompt 与输出约束，只输出最终 JSON。
         """;
 
     public TeamSummaryService(MongoDbContext db, ILlmGateway gateway, ILogger<TeamSummaryService> logger)
@@ -74,7 +55,10 @@ public class TeamSummaryService
             throw new InvalidOperationException("没有已提交的周报可用于汇总");
 
         // 构建 UserPrompt
-        var userPrompt = BuildUserPrompt(reports, weekYear, weekNumber);
+        var customPrompt = NormalizeCustomPrompt(team.TeamSummaryPrompt);
+        var effectivePrompt = customPrompt ?? ReportAgentPromptDefaults.TeamSummarySystemDefaultPrompt;
+
+        var userPrompt = BuildUserPrompt(reports, weekYear, weekNumber, effectivePrompt);
 
         // 调用 LLM（CancellationToken.None — 服务器权威性）
         var request = new GatewayRequest
@@ -85,7 +69,7 @@ public class TeamSummaryService
             {
                 ["messages"] = new JsonArray
                 {
-                    new JsonObject { ["role"] = "system", ["content"] = SystemPrompt },
+                    new JsonObject { ["role"] = "system", ["content"] = GatewaySystemPrompt },
                     new JsonObject { ["role"] = "user", ["content"] = userPrompt }
                 },
                 ["temperature"] = 0.3,
@@ -165,11 +149,14 @@ public class TeamSummaryService
         return summary;
     }
 
-    private static string BuildUserPrompt(List<WeeklyReport> reports, int weekYear, int weekNumber)
+    private static string BuildUserPrompt(List<WeeklyReport> reports, int weekYear, int weekNumber, string effectivePrompt)
     {
         var sb = new System.Text.StringBuilder();
         sb.AppendLine($"## 团队周报汇总 — {weekYear} 年第 {weekNumber} 周");
         sb.AppendLine($"共 {reports.Count} 位成员提交了周报。");
+        sb.AppendLine();
+        sb.AppendLine("## 团队汇总 Prompt");
+        sb.AppendLine(effectivePrompt);
         sb.AppendLine();
 
         foreach (var report in reports)
@@ -187,7 +174,19 @@ public class TeamSummaryService
         }
 
         sb.AppendLine("请将以上内容汇总为团队管理摘要。");
+        sb.AppendLine("输出约束：必须输出合法 JSON，结构为 {\"sections\":[{\"title\":\"...\",\"items\":[\"...\"]}]}。");
+        sb.AppendLine("sections 必须包含且仅包含 5 个标题：本周亮点、关键指标、进行中任务、风险与阻塞、下周重点。");
         return sb.ToString();
+    }
+
+    private static string? NormalizeCustomPrompt(string? prompt)
+    {
+        var trimmed = (prompt ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+            return null;
+        if (trimmed.Length > ReportAgentPromptDefaults.MaxCustomPromptLength)
+            return trimmed[..ReportAgentPromptDefaults.MaxCustomPromptLength];
+        return trimmed;
     }
 
     private List<TeamSummarySection> ParseSections(string content)

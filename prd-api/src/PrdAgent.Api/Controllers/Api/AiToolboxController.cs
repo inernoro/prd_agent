@@ -491,6 +491,8 @@ public class AiToolboxController : ControllerBase
             WorkflowId = request.WorkflowId,
             Temperature = Math.Clamp(request.Temperature ?? 0.7, 0, 1),
             EnableMemory = request.EnableMemory ?? false,
+            KnowledgeBaseIds = request.KnowledgeBaseIds ?? new List<string>(),
+            IsPublic = request.IsPublic ?? false,
             CreatedByUserId = userId,
             CreatedByName = GetUserName(),
         };
@@ -522,6 +524,8 @@ public class AiToolboxController : ControllerBase
             .Set(x => x.WorkflowId, request.WorkflowId ?? item.WorkflowId)
             .Set(x => x.Temperature, Math.Clamp(request.Temperature ?? item.Temperature, 0, 1))
             .Set(x => x.EnableMemory, request.EnableMemory ?? item.EnableMemory)
+            .Set(x => x.KnowledgeBaseIds, request.KnowledgeBaseIds ?? item.KnowledgeBaseIds)
+            .Set(x => x.IsPublic, request.IsPublic ?? item.IsPublic)
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
 
         await _db.ToolboxItems.UpdateOneAsync(x => x.Id == id, update, cancellationToken: ct);
@@ -541,6 +545,101 @@ public class AiToolboxController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "工具不存在"));
 
         return Ok(ApiResponse<object>.Ok(new { message = "已删除" }));
+    }
+
+    /// <summary>
+    /// 获取公开的智能体列表（市场）
+    /// </summary>
+    [HttpGet("marketplace")]
+    public async Task<IActionResult> ListPublicItems(
+        [FromQuery] string? keyword,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken ct = default)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 50);
+
+        var filterBuilder = Builders<ToolboxItem>.Filter;
+        var filter = filterBuilder.Eq(x => x.IsPublic, true);
+
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            filter &= filterBuilder.Or(
+                filterBuilder.Regex(x => x.Name, new MongoDB.Bson.BsonRegularExpression(keyword, "i")),
+                filterBuilder.Regex(x => x.Description, new MongoDB.Bson.BsonRegularExpression(keyword, "i"))
+            );
+        }
+
+        var total = await _db.ToolboxItems.CountDocumentsAsync(filter, cancellationToken: ct);
+        var items = await _db.ToolboxItems
+            .Find(filter)
+            .SortByDescending(x => x.ForkCount)
+            .Skip((page - 1) * pageSize)
+            .Limit(pageSize)
+            .ToListAsync(ct);
+
+        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
+    }
+
+    /// <summary>
+    /// Fork（复制）一个公开的智能体到自己的列表
+    /// </summary>
+    [HttpPost("items/{id}/fork")]
+    public async Task<IActionResult> ForkItem(string id, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var source = await _db.ToolboxItems.Find(x => x.Id == id && x.IsPublic).FirstOrDefaultAsync(ct);
+        if (source == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "智能体不存在或未公开"));
+
+        var fork = new ToolboxItem
+        {
+            Id = ObjectId.GenerateNewId().ToString(),
+            Name = source.Name,
+            Description = source.Description,
+            Icon = source.Icon,
+            Tags = new List<string>(source.Tags),
+            SystemPrompt = source.SystemPrompt,
+            WelcomeMessage = source.WelcomeMessage,
+            ConversationStarters = new List<string>(source.ConversationStarters),
+            EnabledTools = new List<string>(source.EnabledTools),
+            WorkflowId = null, // 不复制工作流绑定
+            Temperature = source.Temperature,
+            EnableMemory = source.EnableMemory,
+            KnowledgeBaseIds = new List<string>(), // 不复制知识库
+            ForkedFromId = source.Id,
+            CreatedByUserId = userId,
+            CreatedByName = GetUserName(),
+        };
+
+        await _db.ToolboxItems.InsertOneAsync(fork, cancellationToken: ct);
+
+        // 增加源智能体的 Fork 计数
+        await _db.ToolboxItems.UpdateOneAsync(
+            x => x.Id == id,
+            Builders<ToolboxItem>.Update.Inc(x => x.ForkCount, 1),
+            cancellationToken: ct);
+
+        return Ok(ApiResponse<ToolboxItem>.Ok(fork));
+    }
+
+    /// <summary>
+    /// 切换智能体的公开状态
+    /// </summary>
+    [HttpPut("items/{id}/publish")]
+    public async Task<IActionResult> TogglePublish(string id, [FromBody] TogglePublishRequest request, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var result = await _db.ToolboxItems.UpdateOneAsync(
+            x => x.Id == id && x.CreatedByUserId == userId,
+            Builders<ToolboxItem>.Update.Set(x => x.IsPublic, request.IsPublic),
+            cancellationToken: ct);
+
+        if (result.MatchedCount == 0)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "智能体不存在"));
+
+        return Ok(ApiResponse<object>.Ok(new { isPublic = request.IsPublic }));
     }
 
     /// <summary>
@@ -566,6 +665,349 @@ public class AiToolboxController : ControllerBase
             runId = ObjectId.GenerateNewId().ToString(),
             itemId = id,
             status = "use_direct_chat"
+        }));
+    }
+
+    #endregion
+
+    #region Sessions & Messages
+
+    /// <summary>
+    /// 获取智能体的会话列表
+    /// </summary>
+    [HttpGet("items/{itemId}/sessions")]
+    public async Task<IActionResult> ListSessions(
+        string itemId,
+        [FromQuery] string? search,
+        [FromQuery] string? sortBy,
+        [FromQuery] bool includeArchived = false,
+        CancellationToken ct = default)
+    {
+        var userId = GetUserId();
+        var filterBuilder = Builders<ToolboxSession>.Filter;
+        var filter = filterBuilder.Eq(x => x.UserId, userId) & filterBuilder.Eq(x => x.ItemId, itemId);
+
+        if (!includeArchived)
+        {
+            filter &= filterBuilder.Eq(x => x.IsArchived, false);
+        }
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            filter &= filterBuilder.Regex(x => x.Title, new BsonRegularExpression(search, "i"));
+        }
+
+        var query = _db.ToolboxSessions.Find(filter);
+
+        // 置顶的会话排在前面，然后按指定排序
+        query = (sortBy?.ToLowerInvariant()) switch
+        {
+            "created" => query.SortByDescending(x => x.IsPinned).ThenByDescending(x => x.CreatedAt),
+            "title" => query.SortByDescending(x => x.IsPinned).ThenBy(x => x.Title),
+            "messagecount" => query.SortByDescending(x => x.IsPinned).ThenByDescending(x => x.MessageCount),
+            _ => query.SortByDescending(x => x.IsPinned).ThenByDescending(x => x.LastActiveAt), // lastActive (default)
+        };
+
+        var sessions = await query.Limit(200).ToListAsync(ct);
+
+        return Ok(ApiResponse<object>.Ok(new { sessions }));
+    }
+
+    /// <summary>
+    /// 创建新会话
+    /// </summary>
+    [HttpPost("items/{itemId}/sessions")]
+    public async Task<IActionResult> CreateSession(string itemId, CancellationToken ct)
+    {
+        var userId = GetUserId();
+
+        // 验证智能体存在
+        var item = await _db.ToolboxItems.Find(x => x.Id == itemId && x.CreatedByUserId == userId).FirstOrDefaultAsync(ct);
+        if (item == null)
+        {
+            // 也允许内置 Agent 创建会话（itemId 以 builtin- 开头）
+            if (!itemId.StartsWith("builtin-", StringComparison.Ordinal))
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "智能体不存在"));
+        }
+
+        var session = new ToolboxSession
+        {
+            Id = ObjectId.GenerateNewId().ToString(),
+            ItemId = itemId,
+            UserId = userId,
+        };
+
+        await _db.ToolboxSessions.InsertOneAsync(session, cancellationToken: ct);
+        return Ok(ApiResponse<ToolboxSession>.Ok(session));
+    }
+
+    /// <summary>
+    /// 删除会话（及其消息）
+    /// </summary>
+    [HttpDelete("sessions/{sessionId}")]
+    public async Task<IActionResult> DeleteSession(string sessionId, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var result = await _db.ToolboxSessions.DeleteOneAsync(x => x.Id == sessionId && x.UserId == userId, ct);
+        if (result.DeletedCount == 0)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "会话不存在"));
+
+        // 删除关联消息
+        await _db.ToolboxMessages.DeleteManyAsync(x => x.SessionId == sessionId, CancellationToken.None);
+        return Ok(ApiResponse<object>.Ok(new { message = "已删除" }));
+    }
+
+    /// <summary>
+    /// 重命名会话
+    /// </summary>
+    [HttpPatch("sessions/{sessionId}")]
+    public async Task<IActionResult> RenameSession(string sessionId, [FromBody] RenameSessionRequest request, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var title = (request.Title ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(title) || title.Length > 100)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "标题长度需在 1-100 字之间"));
+
+        var result = await _db.ToolboxSessions.UpdateOneAsync(
+            x => x.Id == sessionId && x.UserId == userId,
+            Builders<ToolboxSession>.Update.Set(x => x.Title, title),
+            cancellationToken: ct);
+
+        if (result.MatchedCount == 0)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "会话不存在"));
+
+        return Ok(ApiResponse<object>.Ok(new { title }));
+    }
+
+    /// <summary>
+    /// 切换会话归档状态
+    /// </summary>
+    [HttpPatch("sessions/{sessionId}/archive")]
+    public async Task<IActionResult> ToggleArchive(string sessionId, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var session = await _db.ToolboxSessions
+            .Find(x => x.Id == sessionId && x.UserId == userId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+
+        if (session == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "会话不存在"));
+
+        var newValue = !session.IsArchived;
+        await _db.ToolboxSessions.UpdateOneAsync(
+            x => x.Id == sessionId,
+            Builders<ToolboxSession>.Update.Set(x => x.IsArchived, newValue),
+            cancellationToken: CancellationToken.None);
+
+        return Ok(ApiResponse<object>.Ok(new { isArchived = newValue }));
+    }
+
+    /// <summary>
+    /// 切换会话置顶状态
+    /// </summary>
+    [HttpPatch("sessions/{sessionId}/pin")]
+    public async Task<IActionResult> TogglePin(string sessionId, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var session = await _db.ToolboxSessions
+            .Find(x => x.Id == sessionId && x.UserId == userId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+
+        if (session == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "会话不存在"));
+
+        var newValue = !session.IsPinned;
+        await _db.ToolboxSessions.UpdateOneAsync(
+            x => x.Id == sessionId,
+            Builders<ToolboxSession>.Update.Set(x => x.IsPinned, newValue),
+            cancellationToken: CancellationToken.None);
+
+        return Ok(ApiResponse<object>.Ok(new { isPinned = newValue }));
+    }
+
+    /// <summary>
+    /// 获取会话的消息历史
+    /// </summary>
+    [HttpGet("sessions/{sessionId}/messages")]
+    public async Task<IActionResult> ListMessages(
+        string sessionId,
+        [FromQuery] int limit = 100,
+        CancellationToken ct = default)
+    {
+        var userId = GetUserId();
+
+        // 验证会话归属
+        var session = await _db.ToolboxSessions.Find(x => x.Id == sessionId && x.UserId == userId).FirstOrDefaultAsync(ct);
+        if (session == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "会话不存在"));
+
+        limit = Math.Clamp(limit, 1, 200);
+        var messages = await _db.ToolboxMessages
+            .Find(x => x.SessionId == sessionId)
+            .SortBy(x => x.CreatedAt)
+            .Limit(limit)
+            .ToListAsync(ct);
+
+        return Ok(ApiResponse<object>.Ok(new { messages }));
+    }
+
+    /// <summary>
+    /// 向会话追加消息（用于保存对话记录）
+    /// </summary>
+    [HttpPost("sessions/{sessionId}/messages")]
+    public async Task<IActionResult> AppendMessage(
+        string sessionId,
+        [FromBody] AppendMessageRequest request,
+        CancellationToken ct)
+    {
+        var userId = GetUserId();
+
+        var session = await _db.ToolboxSessions.Find(x => x.Id == sessionId && x.UserId == userId).FirstOrDefaultAsync(ct);
+        if (session == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "会话不存在"));
+
+        var msg = new ToolboxMessage
+        {
+            Id = ObjectId.GenerateNewId().ToString(),
+            SessionId = sessionId,
+            UserId = userId,
+            Role = request.Role ?? "user",
+            Content = (request.Content ?? string.Empty).Trim(),
+            AttachmentIds = request.AttachmentIds ?? new List<string>(),
+        };
+
+        await _db.ToolboxMessages.InsertOneAsync(msg, cancellationToken: ct);
+
+        // 更新会话元数据
+        var updateDef = Builders<ToolboxSession>.Update
+            .Inc(x => x.MessageCount, 1)
+            .Set(x => x.LastActiveAt, DateTime.UtcNow);
+
+        // 如果是首条消息，自动设置标题
+        if (session.MessageCount == 0 && msg.Role == "user" && !string.IsNullOrWhiteSpace(msg.Content))
+        {
+            var title = msg.Content.Length > 50 ? msg.Content[..50] + "..." : msg.Content;
+            updateDef = updateDef.Set(x => x.Title, title);
+        }
+
+        await _db.ToolboxSessions.UpdateOneAsync(x => x.Id == sessionId, updateDef, cancellationToken: ct);
+
+        return Ok(ApiResponse<ToolboxMessage>.Ok(msg));
+    }
+
+    #endregion
+
+    #region Message Feedback
+
+    /// <summary>
+    /// 提交消息反馈（点赞/踩）
+    /// </summary>
+    [HttpPost("messages/{messageId}/feedback")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> SubmitMessageFeedback(string messageId, [FromBody] SubmitFeedbackRequest request)
+    {
+        var userId = GetUserId();
+
+        if (string.IsNullOrWhiteSpace(messageId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "消息 ID 不能为空"));
+
+        // 验证 feedback 值
+        if (request.Feedback != null && request.Feedback != "up" && request.Feedback != "down")
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "feedback 值必须为 up、down 或 null"));
+
+        // Upsert：创建或更新反馈
+        var filter = Builders<ToolboxMessage>.Filter.Eq(x => x.Id, messageId)
+            & Builders<ToolboxMessage>.Filter.Eq(x => x.UserId, userId);
+
+        var update = Builders<ToolboxMessage>.Update
+            .Set(x => x.Feedback, request.Feedback)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow)
+            .SetOnInsert(x => x.Id, messageId)
+            .SetOnInsert(x => x.UserId, userId)
+            .SetOnInsert(x => x.CreatedAt, DateTime.UtcNow);
+
+        await _db.ToolboxMessages.UpdateOneAsync(filter, update,
+            new UpdateOptions { IsUpsert = true }, CancellationToken.None);
+
+        return Ok(ApiResponse<object>.Ok(new { messageId, feedback = request.Feedback }));
+    }
+
+    #endregion
+
+    #region Share
+
+    /// <summary>
+    /// 创建对话分享链接（消息快照）
+    /// </summary>
+    [HttpPost("share")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> CreateShareLink([FromBody] CreateToolboxShareRequest request)
+    {
+        var userId = GetUserId();
+
+        if (request.Messages == null || request.Messages.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "消息列表不能为空"));
+
+        var shareLink = new ToolboxShareLink
+        {
+            Id = ObjectId.GenerateNewId().ToString(),
+            SessionId = request.SessionId ?? string.Empty,
+            UserId = userId,
+            Title = string.IsNullOrWhiteSpace(request.Title)
+                ? TruncateTitle(request.Messages.FirstOrDefault(m => m.Role == "user")?.Content) ?? "百宝箱对话"
+                : request.Title.Trim(),
+            Messages = request.Messages.Select(m => new ToolboxShareMessage
+            {
+                Role = m.Role,
+                Content = m.Content,
+                CreatedAt = m.CreatedAt ?? DateTime.UtcNow,
+            }).ToList(),
+            ExpiresAt = request.ExpiresInDays > 0
+                ? DateTime.UtcNow.AddDays(request.ExpiresInDays.Value)
+                : null,
+        };
+
+        await _db.ToolboxShareLinks.InsertOneAsync(shareLink, cancellationToken: CancellationToken.None);
+
+        _logger.LogInformation("百宝箱分享链接已创建: ShareId={ShareId}, UserId={UserId}, Messages={Count}",
+            shareLink.Id, userId, shareLink.Messages.Count);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            shareId = shareLink.Id,
+            url = $"/shared/toolbox/{shareLink.Id}",
+        }));
+    }
+
+    /// <summary>
+    /// 查看分享对话（公开访问，无需登录）
+    /// </summary>
+    [HttpGet("shared/{shareId}")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetSharedConversation(string shareId, CancellationToken ct)
+    {
+        var shareLink = await _db.ToolboxShareLinks
+            .Find(x => x.Id == shareId)
+            .FirstOrDefaultAsync(ct);
+
+        if (shareLink == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接不存在"));
+
+        if (shareLink.ExpiresAt.HasValue && shareLink.ExpiresAt.Value < DateTime.UtcNow)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接已过期"));
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            title = shareLink.Title,
+            messages = shareLink.Messages.Select(m => new
+            {
+                role = m.Role,
+                content = m.Content,
+                createdAt = m.CreatedAt,
+            }),
+            createdAt = shareLink.CreatedAt,
         }));
     }
 
@@ -676,6 +1118,27 @@ public class AiToolboxController : ControllerBase
             systemPrompt = item.SystemPrompt;
             temperature = item.Temperature;
 
+            // 根据 EnabledTools 增强系统提示
+            systemPrompt = EnrichSystemPromptWithTools(systemPrompt, item.EnabledTools);
+
+            // 知识库：加载关联文档内容注入上下文
+            if (item.KnowledgeBaseIds is { Count: > 0 })
+            {
+                var kbFilter = Builders<Attachment>.Filter.In(a => a.AttachmentId, item.KnowledgeBaseIds);
+                var kbDocs = await _db.Attachments.Find(kbFilter).ToListAsync(CancellationToken.None);
+                var kbParts = new List<string>();
+                foreach (var doc in kbDocs)
+                {
+                    if (!string.IsNullOrWhiteSpace(doc.ExtractedText))
+                        kbParts.Add($"=== {doc.FileName} ===\n{doc.ExtractedText}");
+                }
+                if (kbParts.Count > 0)
+                {
+                    systemPrompt += "\n\n## 知识库参考资料\n以下是该智能体的知识库内容，请基于这些内容回答用户问题：\n\n"
+                                    + string.Join("\n\n", kbParts);
+                }
+            }
+
             // 增加使用次数
             await _db.ToolboxItems.UpdateOneAsync(
                 x => x.Id == request.ItemId,
@@ -700,20 +1163,67 @@ public class AiToolboxController : ControllerBase
             new JsonObject { ["role"] = "system", ["content"] = systemPrompt }
         };
 
-        // 添加历史消息
+        var hasImageAttachments = false;
+
+        // 添加历史消息（含图片附件的多模态处理）
         if (request.History != null)
         {
+            // 收集历史中所有附件 ID 以批量查询
+            var historyAttIds = request.History
+                .Where(h => h.AttachmentIds is { Count: > 0 })
+                .SelectMany(h => h.AttachmentIds!)
+                .Distinct()
+                .ToList();
+
+            var historyAttMap = new Dictionary<string, Attachment>();
+            if (historyAttIds.Count > 0)
+            {
+                var attFilter = Builders<Attachment>.Filter.In(a => a.AttachmentId, historyAttIds);
+                var atts = await _db.Attachments.Find(attFilter).ToListAsync(CancellationToken.None);
+                historyAttMap = atts.ToDictionary(a => a.AttachmentId);
+            }
+
             foreach (var h in request.History.TakeLast(20))
             {
-                messages.Add(new JsonObject
+                // 检查此历史消息是否有图片附件
+                var histImageUrls = new List<string>();
+                if (h.AttachmentIds is { Count: > 0 })
                 {
-                    ["role"] = h.Role,
-                    ["content"] = h.Content
-                });
+                    foreach (var attId in h.AttachmentIds)
+                    {
+                        if (historyAttMap.TryGetValue(attId, out var att)
+                            && att.MimeType.StartsWith("image/")
+                            && !string.IsNullOrWhiteSpace(att.Url))
+                        {
+                            histImageUrls.Add(att.Url);
+                            hasImageAttachments = true;
+                        }
+                    }
+                }
+
+                if (histImageUrls.Count > 0)
+                {
+                    var parts = new JsonArray();
+                    parts.Add(new JsonObject { ["type"] = "text", ["text"] = h.Content });
+                    foreach (var url in histImageUrls)
+                    {
+                        parts.Add(new JsonObject
+                        {
+                            ["type"] = "image_url",
+                            ["image_url"] = new JsonObject { ["url"] = url }
+                        });
+                    }
+                    messages.Add(new JsonObject { ["role"] = h.Role, ["content"] = parts });
+                }
+                else
+                {
+                    messages.Add(new JsonObject { ["role"] = h.Role, ["content"] = h.Content });
+                }
             }
         }
 
         // 如果有附件，加载文件内容并注入上下文
+        var imageUrls = new List<string>();
         if (request.AttachmentIds is { Count: > 0 })
         {
             var attachmentFilter = Builders<Attachment>.Filter.In(a => a.AttachmentId, request.AttachmentIds);
@@ -722,7 +1232,12 @@ public class AiToolboxController : ControllerBase
             var fileParts = new List<string>();
             foreach (var att in attachments)
             {
-                if (!string.IsNullOrWhiteSpace(att.ExtractedText))
+                if (att.MimeType.StartsWith("image/") && !string.IsNullOrWhiteSpace(att.Url))
+                {
+                    imageUrls.Add(att.Url);
+                    hasImageAttachments = true;
+                }
+                else if (!string.IsNullOrWhiteSpace(att.ExtractedText))
                 {
                     fileParts.Add($"=== 文件: {att.FileName} ===\n{att.ExtractedText}");
                 }
@@ -735,15 +1250,36 @@ public class AiToolboxController : ControllerBase
             }
         }
 
-        // 添加当前消息
-        messages.Add(new JsonObject { ["role"] = "user", ["content"] = message });
+        // 添加当前消息（支持图片 vision 多模态）
+        if (hasImageAttachments)
+        {
+            var contentParts = new JsonArray();
+            contentParts.Add(new JsonObject { ["type"] = "text", ["text"] = message });
+            foreach (var url in imageUrls)
+            {
+                contentParts.Add(new JsonObject
+                {
+                    ["type"] = "image_url",
+                    ["image_url"] = new JsonObject { ["url"] = url }
+                });
+            }
+            messages.Add(new JsonObject { ["role"] = "user", ["content"] = contentParts });
+        }
+        else
+        {
+            messages.Add(new JsonObject { ["role"] = "user", ["content"] = message });
+        }
 
-        // 调用 LLM Gateway
+        // 调用 LLM Gateway（有图片时切换为 Vision AppCallerCode + ModelType）
+        var effectiveAppCallerCode = hasImageAttachments
+            ? AppCallerRegistry.AiToolbox.Orchestration.Vision
+            : appCallerCode;
         var gatewayRequest = new GatewayRequest
         {
-            AppCallerCode = appCallerCode,
-            ModelType = ModelTypes.Chat,
+            AppCallerCode = effectiveAppCallerCode,
+            ModelType = hasImageAttachments ? ModelTypes.Vision : ModelTypes.Chat,
             Stream = true,
+            IncludeThinking = true,
             RequestBody = new JsonObject
             {
                 ["messages"] = messages,
@@ -762,11 +1298,29 @@ public class AiToolboxController : ControllerBase
 
         try
         {
-            await WriteSseEventAsync("start", new { timestamp = DateTime.UtcNow });
+            GatewayTokenUsage? tokenUsage = null;
 
             await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
             {
-                if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                if (chunk.Type == GatewayChunkType.Start)
+                {
+                    await WriteSseEventAsync("start", new
+                    {
+                        timestamp = DateTime.UtcNow,
+                        model = chunk.Resolution?.ActualModel,
+                        platform = chunk.Resolution?.ActualPlatformName,
+                    });
+                }
+                else if (chunk.Type == GatewayChunkType.Thinking && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    try
+                    {
+                        await WriteSseEventAsync("thinking", new { content = chunk.Content });
+                    }
+                    catch (OperationCanceledException) { /* 客户端断开 */ }
+                    catch (ObjectDisposedException) { /* 连接关闭 */ }
+                }
+                else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
                 {
                     try
                     {
@@ -775,6 +1329,10 @@ public class AiToolboxController : ControllerBase
                     catch (OperationCanceledException) { /* 客户端断开 */ }
                     catch (ObjectDisposedException) { /* 连接关闭 */ }
                 }
+                else if (chunk.Type == GatewayChunkType.Done)
+                {
+                    tokenUsage = chunk.TokenUsage;
+                }
                 else if (chunk.Type == GatewayChunkType.Error)
                 {
                     await WriteSseEventAsync("error", new { message = chunk.Error ?? "LLM 调用失败" });
@@ -782,7 +1340,13 @@ public class AiToolboxController : ControllerBase
                 }
             }
 
-            await WriteSseEventAsync("done", new { timestamp = DateTime.UtcNow });
+            await WriteSseEventAsync("done", new
+            {
+                timestamp = DateTime.UtcNow,
+                promptTokens = tokenUsage?.InputTokens,
+                completionTokens = tokenUsage?.OutputTokens,
+                totalTokens = tokenUsage?.TotalTokens
+            });
         }
         catch (Exception ex)
         {
@@ -1001,6 +1565,44 @@ public class AiToolboxController : ControllerBase
         _ => (null!, string.Empty, string.Empty)
     };
 
+    private static string? TruncateTitle(string? text, int maxLength = 50)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        text = text.Trim();
+        return text.Length <= maxLength ? text : text[..maxLength] + "\u2026";
+    }
+
+    /// <summary>
+    /// 根据 EnabledTools 为系统提示词增加能力说明
+    /// </summary>
+    private static string EnrichSystemPromptWithTools(string basePrompt, List<string>? enabledTools)
+    {
+        if (enabledTools == null || enabledTools.Count == 0)
+            return basePrompt;
+
+        var capabilities = new List<string>();
+
+        if (enabledTools.Contains("webSearch"))
+            capabilities.Add("- 你具备网页搜索能力。当用户需要实时信息或你不确定答案时，可以告知用户你正在搜索并提供基于搜索的回答。请在需要搜索时用 [搜索中...] 标记。");
+
+        if (enabledTools.Contains("imageGen"))
+            capabilities.Add("- 你具备图片生成能力。当用户需要生成图片时，请用详细的英文描述生成提示词，并用 [生成图片: prompt] 格式标记。");
+
+        if (enabledTools.Contains("codeInterpreter"))
+            capabilities.Add("- 你具备代码执行能力。可以编写并执行 Python 代码来处理数据分析、计算、图表生成等任务。请在需要执行代码时提供完整的可运行代码。");
+
+        if (enabledTools.Contains("fileReader"))
+            capabilities.Add("- 你具备文件阅读能力。可以解析用户上传的 PDF、Word、Excel 等文件内容并基于其回答问题。");
+
+        if (enabledTools.Contains("workflowTrigger"))
+            capabilities.Add("- 你具备工作流触发能力。当用户请求执行预定义的自动化流程时，可以触发绑定的工作流。");
+
+        if (capabilities.Count == 0)
+            return basePrompt;
+
+        return basePrompt + "\n\n## 你的能力\n" + string.Join("\n", capabilities);
+    }
+
     #endregion
 
     /// <summary>
@@ -1161,6 +1763,8 @@ public class CreateToolboxItemRequest
     public string? WorkflowId { get; set; }
     public double? Temperature { get; set; }
     public bool? EnableMemory { get; set; }
+    public List<string>? KnowledgeBaseIds { get; set; }
+    public bool? IsPublic { get; set; }
 }
 
 /// <summary>
@@ -1185,6 +1789,9 @@ public class DirectChatRequest
     /// <summary>自定义智能体 ID（优先于 AgentKey）</summary>
     public string? ItemId { get; set; }
 
+    /// <summary>会话 ID（用于持久化消息历史）</summary>
+    public string? SessionId { get; set; }
+
     /// <summary>对话历史</summary>
     public List<ChatHistoryMessage>? History { get; set; }
 
@@ -1199,6 +1806,33 @@ public class ChatHistoryMessage
 {
     public string Role { get; set; } = "user";
     public string Content { get; set; } = string.Empty;
+    public List<string>? AttachmentIds { get; set; }
+}
+
+/// <summary>
+/// 发布/取消发布请求
+/// </summary>
+public class TogglePublishRequest
+{
+    public bool IsPublic { get; set; }
+}
+
+/// <summary>
+/// 追加消息请求
+/// </summary>
+public class AppendMessageRequest
+{
+    public string? Role { get; set; }
+    public string? Content { get; set; }
+    public List<string>? AttachmentIds { get; set; }
+}
+
+/// <summary>
+/// 重命名会话请求
+/// </summary>
+public class RenameSessionRequest
+{
+    public string? Title { get; set; }
 }
 
 /// <summary>
@@ -1211,6 +1845,43 @@ public class TriggerWorkflowRequest
 
     /// <summary>附加变量</summary>
     public Dictionary<string, string>? Variables { get; set; }
+}
+
+/// <summary>
+/// 提交反馈请求
+/// </summary>
+public class SubmitFeedbackRequest
+{
+    /// <summary>反馈值：up / down / null</summary>
+    public string? Feedback { get; set; }
+}
+
+/// <summary>
+/// 创建分享链接请求
+/// </summary>
+public class CreateToolboxShareRequest
+{
+    /// <summary>会话 ID（可选）</summary>
+    public string? SessionId { get; set; }
+
+    /// <summary>分享标题（留空自动取首条用户消息）</summary>
+    public string? Title { get; set; }
+
+    /// <summary>消息快照</summary>
+    public List<ShareMessageInput> Messages { get; set; } = new();
+
+    /// <summary>过期天数（null 永不过期）</summary>
+    public int? ExpiresInDays { get; set; }
+}
+
+/// <summary>
+/// 分享消息输入
+/// </summary>
+public class ShareMessageInput
+{
+    public string Role { get; set; } = string.Empty;
+    public string Content { get; set; } = string.Empty;
+    public DateTime? CreatedAt { get; set; }
 }
 
 #endregion

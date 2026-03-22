@@ -1,7 +1,7 @@
 namespace PrdAgent.Core.Models;
 
 /// <summary>
-/// 用户角色
+/// 用户角色（业务展示标签，与权限无关）
 /// </summary>
 public enum UserRole
 {
@@ -12,7 +12,23 @@ public enum UserRole
     /// <summary>测试工程师</summary>
     QA,
     /// <summary>超级管理员</summary>
-    ADMIN
+    ADMIN,
+    /// <summary>行政</summary>
+    HR,
+    /// <summary>财务</summary>
+    FINANCE,
+    /// <summary>研发</summary>
+    RD,
+    /// <summary>测试</summary>
+    TEST,
+    /// <summary>文案</summary>
+    COPYWRITER,
+    /// <summary>客成经理</summary>
+    CSM,
+    /// <summary>客服</summary>
+    SUPPORT,
+    /// <summary>销售</summary>
+    SALES
 }
 
 /// <summary>

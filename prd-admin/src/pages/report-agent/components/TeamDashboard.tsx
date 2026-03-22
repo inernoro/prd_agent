@@ -154,6 +154,7 @@ export function TeamDashboard() {
   const canLeaveSelectedTeam = !!selectedTeam?.canLeave;
 
   const canManageMembers = !!reportsView?.canManageMembers;
+  const canAccessTeamAiSummary = teamScope === 'managed' && !!reportsView?.canGenerateSummary;
 
   const loadReportsView = useCallback(async () => {
     if (!selectedTeamId) {
@@ -223,10 +224,16 @@ export function TeamDashboard() {
   }, [loadReportsView]);
 
   useEffect(() => {
-    if (viewMode === 'ai_summary') {
+    if (viewMode === 'ai_summary' && canAccessTeamAiSummary) {
       void loadSummaryView();
     }
-  }, [loadSummaryView, viewMode]);
+  }, [canAccessTeamAiSummary, loadSummaryView, viewMode]);
+
+  useEffect(() => {
+    if (viewMode === 'ai_summary' && !canAccessTeamAiSummary) {
+      setViewMode('report_list');
+    }
+  }, [canAccessTeamAiSummary, viewMode]);
 
   useEffect(() => {
     return () => {
@@ -279,6 +286,10 @@ export function TeamDashboard() {
   };
 
   const handleEnterSummary = async () => {
+    if (!canAccessTeamAiSummary) {
+      toast.warning('当前视角不支持团队周报AI分析');
+      return;
+    }
     setViewMode('ai_summary');
     await loadSummaryView();
   };
@@ -577,10 +588,12 @@ export function TeamDashboard() {
                 </span>
               </div>
             </div>
-            <Button variant="secondary" size="sm" onClick={handleEnterSummary}>
-              <Sparkles size={13} />
-              团队周报AI分析
-            </Button>
+            {canAccessTeamAiSummary && (
+              <Button variant="secondary" size="sm" onClick={handleEnterSummary}>
+                <Sparkles size={13} />
+                团队周报AI分析
+              </Button>
+            )}
           </div>
           <div className="px-5 py-4 max-h-[540px] overflow-auto">
             {reportsLoading ? (
@@ -632,7 +645,7 @@ export function TeamDashboard() {
         </GlassCard>
       )}
 
-      {hasScopedTeams && selectedTeamId && viewMode === 'ai_summary' && (
+      {hasScopedTeams && selectedTeamId && viewMode === 'ai_summary' && canAccessTeamAiSummary && (
         <GlassCard variant="subtle" className="surface-raised p-0 overflow-hidden">
           <div className="px-5 py-4 flex items-center justify-between gap-3" style={{ borderBottom: '1px solid var(--border-primary)' }}>
             <div className="min-w-0">

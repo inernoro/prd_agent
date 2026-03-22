@@ -352,7 +352,7 @@ public class AppCallersController : ControllerBase
         // 并行解析所有模型
         var tasks = request.Items.Select(async item =>
         {
-            var key = $"{item.AppCallerCode}::{item.ModelType}";
+            var key = item.AppCallerCode;
             var result = await _gateway.ResolveModelAsync(item.AppCallerCode, item.ModelType, null, ct);
             var dto = MapToResolvedModelInfo(result);
             return (key, dto);

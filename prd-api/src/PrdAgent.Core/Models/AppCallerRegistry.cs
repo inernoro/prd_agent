@@ -489,6 +489,14 @@ public static class AiToolbox
             Category = "Orchestration"
         )]
         public const string Chat = "ai-toolbox.orchestration::chat";
+
+        [AppCallerMetadata(
+            "视觉理解",
+            "百宝箱图片理解与视觉分析",
+            ModelTypes = new[] { ModelTypes.Vision },
+            Category = "Orchestration"
+        )]
+        public const string Vision = "ai-toolbox.orchestration::vision";
     }
 
     public static class Agent
@@ -891,7 +899,7 @@ public static class ChannelAdapter
             ModelTypes = new[] { ModelTypes.Chat },
             Category = "Channel"
         )]
-        public const string Classify = "channel-adapter.email::classify";
+        public const string Classify = "channel-adapter.email.classify::chat";
 
         [AppCallerMetadata(
             "邮件待办提取",
@@ -899,7 +907,7 @@ public static class ChannelAdapter
             ModelTypes = new[] { ModelTypes.Chat },
             Category = "Channel"
         )]
-        public const string TodoExtract = "channel-adapter.email::todo-extract";
+        public const string TodoExtract = "channel-adapter.email.todo-extract::chat";
     }
 }
 

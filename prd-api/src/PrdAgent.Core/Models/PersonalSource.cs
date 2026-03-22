@@ -3,7 +3,7 @@ using PrdAgent.Core.Attributes;
 namespace PrdAgent.Core.Models;
 
 /// <summary>
-/// 个人数据源绑定（v2.0 — GitHub/GitLab/语雀等个人维度的数据采集配置）
+/// 个人数据源绑定（v2.0 — GitHub/语雀等个人维度的数据采集配置）
 /// </summary>
 [AppOwnership(AppNames.ReportAgent, AppNames.ReportAgentDisplay)]
 public class PersonalSource
@@ -14,7 +14,7 @@ public class PersonalSource
     /// <summary>用户 ID</summary>
     public string UserId { get; set; } = string.Empty;
 
-    /// <summary>数据源类型：github / gitlab / yuque</summary>
+    /// <summary>数据源类型：github / yuque</summary>
     public string SourceType { get; set; } = PersonalSourceType.GitHub;
 
     /// <summary>显示名称（如 "我的 GitHub"）</summary>
@@ -67,10 +67,9 @@ public class PersonalSourceConfig
 public static class PersonalSourceType
 {
     public const string GitHub = "github";
-    public const string GitLab = "gitlab";
     public const string Yuque = "yuque";
 
-    public static readonly string[] All = { GitHub, GitLab, Yuque };
+    public static readonly string[] All = { GitHub, Yuque };
 }
 
 /// <summary>

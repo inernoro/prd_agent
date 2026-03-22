@@ -546,6 +546,17 @@ public class ShortcutsController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Url) && string.IsNullOrWhiteSpace(request.Text))
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "url 和 text 不能同时为空"));
 
+        // 从分享文本中自动提取 URL（如抖音口令 "4.84 复制打开抖音...https://v.douyin.com/xxx/"）
+        if (string.IsNullOrWhiteSpace(request.Url) && !string.IsNullOrWhiteSpace(request.Text))
+        {
+            var extractedUrl = ExtractUrlFromText(request.Text);
+            if (!string.IsNullOrWhiteSpace(extractedUrl))
+            {
+                request.Url = extractedUrl;
+                _logger.LogInformation("Auto-extracted URL from share text: {Url}", extractedUrl);
+            }
+        }
+
         // 创建收藏
         var collection = new UserCollection
         {
@@ -906,6 +917,37 @@ public class ShortcutsController : ControllerBase
         var date = DateTime.UtcNow.ToString("yyyyMMdd");
         var seq = Guid.NewGuid().ToString("N")[..6].ToUpper();
         return $"TASK-{date}-{seq}";
+    }
+
+    /// <summary>
+    /// 从分享文本中提取第一个视频平台 URL。
+    /// 支持抖音、TikTok、快手、B站、小红书等分享口令。
+    /// </summary>
+    private static string? ExtractUrlFromText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+
+        var matches = System.Text.RegularExpressions.Regex.Matches(text,
+            @"https?://[^\s""'<>\]）》]+",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        string[] videoDomains =
+        [
+            "douyin.com", "tiktok.com", "kuaishou.com", "gifshow.com",
+            "bilibili.com", "b23.tv", "xiaohongshu.com", "xhslink.com",
+            "weibo.com", "weibo.cn", "youtube.com", "youtu.be", "ixigua.com"
+        ];
+
+        foreach (System.Text.RegularExpressions.Match m in matches)
+        {
+            var url = m.Value.TrimEnd('.', ',', ')', '>', '）', '》', ';');
+            var lower = url.ToLowerInvariant();
+            if (Array.Exists(videoDomains, d => lower.Contains(d)))
+                return url;
+        }
+
+        // 没有匹配到视频平台，返回第一个 http 链接
+        return matches.Count > 0 ? matches[0].Value.TrimEnd('.', ',', ')') : null;
     }
 
     #endregion

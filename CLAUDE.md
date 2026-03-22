@@ -111,6 +111,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | `server-authority.md` | `prd-api/src/**/*.cs` | CancellationToken.None + Run/Worker + SSE 心跳 |
 | `doc-types.md` | `doc/**/*.md` | 6 种文档前缀（spec/design/plan/rule/guide/report） |
 | `marketplace.md` | 市场相关文件 | CONFIG_TYPE_REGISTRY + IForkable 白名单复制 |
+| `enum-ripple-audit.md` | `Enums/**/*.cs`, `types/**/*.ts` | 枚举/常量扩展时全栈 6 层涟漪审计 |
 | `codebase-snapshot.md` | 无 glob (手动维护) | 项目快照：架构模式、功能注册表、98 个 MongoDB 集合 |
 
 ---
@@ -118,7 +119,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 ## 质量保障技能链
 
 ```
-需求 → /validate → 设计 → /risk → /trace → 实现 → /verify → /smoke → /preview → /handoff → /weekly
+需求 → /validate → 设计 → /risk → /trace → 实现 → /verify → /cds-deploy → /preview → /handoff → /weekly
 ```
 
 | 技能 | 触发词 | 用途 |
@@ -136,7 +137,9 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | **doc-sync** | `/doc-sync` | 文档索引同步 |
 | **code-hygiene** | `/hygiene` | 9 维度代码卫生审计 |
 | **create-skill-file** | `/create-skill` | 技能创建 & 质量评分 |
+| **cn-brief-summary** | `200字总结` | 最终回复末尾追加200字内通俗总结 |
 | **cds-project-scan** | `/cds-scan` | CDS compose YAML 生成 |
+| **cds-deploy-pipeline** | `/cds-deploy` | 跨服务器灰度环境生命周期：部署/观测/诊断/操作/验证/清理 |
 | **llm-visibility** | `/visibility` | LLM 交互可视化审计 + 组件指南 |
 | **theme-transition** | `/theme-transition` | 主题切换圆形过渡动效 (View Transition API) |
 
@@ -144,7 +147,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 1. **新需求提出时** → `/validate` 验证需求质量和价值（中大型功能必跑）
 3. **方案评审时** → 先 `/risk` 评估风险，再 `/trace` 追踪关键链路
-4. **开发完成后** → 先 `/verify` 交叉验证，再 `/smoke-test` 跑端到端
+4. **开发完成后** → 先 `/verify` 交叉验证，再 `/cds-deploy` 一键部署+冒烟测试
 5. **需人工验收时** → `/preview` 生成预览地址，用户直接打开验收
 6. **提 PR 前** → `/resolve` 预合并主分支，AI 代替人类解决冲突
 7. **准备上线时** → `/handoff` 生成交接清单（涉及 3+ 文件时自动触发）
