@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import type { ToolboxItem } from '@/services';
 import { useToolboxStore } from '@/stores/toolboxStore';
 import { useNavigate } from 'react-router-dom';
+import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
 import { useAuthStore } from '@/stores/authStore';
 import {
   ArrowUpRight,
@@ -152,14 +153,12 @@ export function ToolCard({ item }: ToolCardProps) {
   const [coverFailed, setCoverFailed] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
   const [hovering, setHovering] = useState(false);
+  const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const handleClick = () => {
-    if (isCustomized && item.routePath) {
-      navigate(item.routePath);
-    } else {
-      selectItem(item);
-    }
+    // Web 版不完善，点击智能助手弹窗引导下载桌面端
+    setDownloadDialogOpen(true);
   };
 
   const handleToggleFavorite = (e: React.MouseEvent) => {
@@ -183,6 +182,7 @@ export function ToolCard({ item }: ToolCardProps) {
   };
 
   return (
+    <>
     <SpotlightEffect
       spotlightColor={`${palette.from}33`} // 20% opacity of the main color
       onClick={handleClick}
@@ -444,5 +444,8 @@ export function ToolCard({ item }: ToolCardProps) {
         }}
       />
     </SpotlightEffect>
+
+    <DesktopDownloadDialog open={downloadDialogOpen} onOpenChange={setDownloadDialogOpen} />
+    </>
   );
 }

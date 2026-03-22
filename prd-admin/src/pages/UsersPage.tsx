@@ -6,7 +6,7 @@ import { Select } from '@/components/design/Select';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { Dialog } from '@/components/ui/Dialog';
 import { getUsers, createUser, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, updateUserAvatar, updateUserDisplayName, initializeUsers, adminImpersonate, getSystemRoles, getUserAuthz, updateUserAuthz, getAdminPermissionCatalog, getUserRateLimit, updateUserRateLimit, bulkDeleteUsers } from '@/services';
-import { MoreVertical, Pencil, Search, UserCog, Users, Gauge, Trash2, FolderOpen, Image, Bug, Zap, LogOut, Download, Monitor, Apple, Terminal } from 'lucide-react';
+import { MoreVertical, Pencil, Search, UserCog, Users, Gauge, Trash2, FolderOpen, Image, Bug, Zap } from 'lucide-react';
 import { getRoleMeta, ALL_ROLES } from '@/lib/roleConfig';
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { UserProfilePopover } from '@/components/ui/UserProfilePopover';
@@ -157,9 +157,6 @@ export default function UsersPage() {
   const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const currentUserId = useAuthStore((s) => s.user?.userId);
-
-  // 下载桌面端引导弹窗
-  const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
 
   const createUsernameOk = useMemo(() => {
     const u = (createUsername ?? '').trim();
@@ -352,13 +349,17 @@ export default function UsersPage() {
         return;
       }
       
-      // 更新认证状态
+      // 更新认证状态（补充 avatar 信息，API 未返回但 UserRow 中有）
       authLogin(
         {
           userId: res.data.user.userId,
           username: res.data.user.username,
           displayName: res.data.user.displayName,
           role: res.data.user.role,
+          avatarFileName: u.avatarFileName ?? null,
+          avatarUrl: u.avatarUrl ?? null,
+          userType: u.userType,
+          botKind: u.botKind,
         },
         res.data.accessToken
       );
@@ -788,10 +789,6 @@ export default function UsersPage() {
           </div>
 
           <div className={`${isMobile ? '' : 'ml-auto'} flex items-center gap-2 shrink-0 flex-wrap justify-end`}>
-            <Button variant="secondary" size="xs" onClick={() => setDownloadDialogOpen(true)}>
-              <LogOut size={12} className="mr-1" />
-              一键过期
-            </Button>
             <Button variant="secondary" size="xs" onClick={openCreateUser}>
               创建用户
             </Button>
@@ -1847,55 +1844,6 @@ export default function UsersPage() {
         }
       />
 
-      {/* 下载桌面端引导弹窗 */}
-      <Dialog
-        open={downloadDialogOpen}
-        onOpenChange={setDownloadDialogOpen}
-        title="功能升级中"
-        content={
-          <div className="space-y-5">
-            <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-              一键过期功能正在完善中，建议使用 <strong style={{ color: 'var(--text-primary)' }}>PRD Agent 桌面版</strong> 获得更完整的管理体验。
-            </div>
-
-            <div className="grid grid-cols-3 gap-3">
-              {[
-                { label: 'Windows', desc: 'Windows 10+', icon: <Monitor size={24} /> },
-                { label: 'macOS', desc: 'macOS 11+', icon: <Apple size={24} /> },
-                { label: 'Linux', desc: 'Ubuntu / Debian', icon: <Terminal size={24} /> },
-              ].map((p) => (
-                <a
-                  key={p.label}
-                  href="https://github.com/inernoro/prd_agent/releases/latest"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex flex-col items-center gap-2 p-4 rounded-xl border border-white/10 hover:border-indigo-400/40 hover:bg-white/5 transition-all cursor-pointer no-underline"
-                >
-                  <span style={{ color: 'var(--text-secondary)' }}>{p.icon}</span>
-                  <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{p.label}</span>
-                  <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{p.desc}</span>
-                </a>
-              ))}
-            </div>
-
-            <div className="flex items-center justify-between">
-              <a
-                href="https://github.com/inernoro/prd_agent/releases/latest"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-xs hover:underline"
-                style={{ color: 'var(--accent-primary)' }}
-              >
-                <Download size={12} />
-                查看所有版本
-              </a>
-              <Button variant="secondary" size="sm" onClick={() => setDownloadDialogOpen(false)}>
-                关闭
-              </Button>
-            </div>
-          </div>
-        }
-      />
     </div>
   );
 }

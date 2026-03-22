@@ -28,6 +28,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import type { ToolboxItem } from '@/services';
 import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
+import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
 
 // ── Icon & Color mapping (self-contained, doesn't touch ToolCard) ──
 
@@ -339,6 +340,7 @@ const AUTO_GRID_COMPACT: React.CSSProperties = {
 
 export default function AgentLauncherPage() {
   const [searchQuery, setSearchQuery] = useState('');
+  const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
   const { items, itemsLoading, loadItems } = useToolboxStore();
   const { isMobile } = useBreakpoint();
   const navigate = useNavigate();
@@ -370,13 +372,8 @@ export default function AgentLauncherPage() {
   }, [items, searchQuery]);
 
   const handleClick = (item: ToolboxItem) => {
-    if (item.routePath) {
-      navigate(item.routePath);
-    } else {
-      // Navigate to toolbox and select this item
-      useToolboxStore.getState().selectItem(item);
-      navigate('/ai-toolbox');
-    }
+    // Web 版不完善，点击智能助手弹窗引导下载桌面端
+    setDownloadDialogOpen(true);
   };
 
   const greeting = getGreeting();
@@ -622,6 +619,8 @@ export default function AgentLauncherPage() {
           )}
         </div>
       </div>
+
+      <DesktopDownloadDialog open={downloadDialogOpen} onOpenChange={setDownloadDialogOpen} />
     </div>
   );
 }

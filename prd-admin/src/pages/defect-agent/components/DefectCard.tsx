@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { createPortal } from 'react-dom';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { glassBadge } from '@/lib/glassStyles';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
@@ -691,29 +691,33 @@ export function DefectCard({ defect }: DefectCardProps) {
         </div>
       </GlassCard>
 
-      {/* Image Lightbox - createPortal 到 body，DOM 顺序保证在最顶层 */}
-      {lightboxImage && createPortal(
-        <div
-          className="fixed inset-0 flex items-center justify-center p-8"
-          style={{ background: 'rgba(0,0,0,0.85)' }}
-          onClick={() => setLightboxImage(null)}
-        >
-          <button
-            className="absolute top-4 right-4 p-2 rounded-lg hover:bg-white/10 transition-colors"
+      {/* Image Lightbox - 独立 Radix Dialog，Portal 追加到 body 末尾，自然在上层 */}
+      <DialogPrimitive.Root open={!!lightboxImage} onOpenChange={(v) => { if (!v) setLightboxImage(null); }}>
+        <DialogPrimitive.Portal>
+          <DialogPrimitive.Overlay className="fixed inset-0" style={{ background: 'rgba(0,0,0,0.85)' }} />
+          <DialogPrimitive.Content
+            aria-describedby={undefined}
+            aria-label="图片预览"
+            className="fixed inset-0 flex items-center justify-center p-8 outline-none"
+            style={{ background: 'transparent' }}
             onClick={() => setLightboxImage(null)}
           >
-            <X size={24} style={{ color: '#fff' }} />
-          </button>
-          <img
-            src={lightboxImage}
-            alt="放大图片"
-            className="max-w-full max-h-full object-contain rounded-lg"
-            style={{ boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}
-            onClick={(e) => e.stopPropagation()}
-          />
-        </div>,
-        document.body
-      )}
+            <DialogPrimitive.Title className="sr-only">图片预览</DialogPrimitive.Title>
+            <DialogPrimitive.Close className="absolute top-4 right-4 p-2 rounded-lg hover:bg-white/10 transition-colors">
+              <X size={24} style={{ color: '#fff' }} />
+            </DialogPrimitive.Close>
+            {lightboxImage && (
+              <img
+                src={lightboxImage}
+                alt="放大图片"
+                className="max-w-full max-h-full object-contain rounded-lg"
+                style={{ boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}
+                onClick={(e) => e.stopPropagation()}
+              />
+            )}
+          </DialogPrimitive.Content>
+        </DialogPrimitive.Portal>
+      </DialogPrimitive.Root>
     </>
   );
 }
