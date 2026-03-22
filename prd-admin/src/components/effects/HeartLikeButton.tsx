@@ -3,7 +3,7 @@
  * 点击时有心跳缩放、粒子爆发、波纹扩散三重动效
  */
 
-import { useCallback, useRef } from 'react';
+import { useCallback, useState } from 'react';
 
 const PARTICLE_COLORS = ['#7642F0', '#AFD27F', '#DE8F4F', '#D0516B', '#5686F2', '#D53EF3'];
 
@@ -29,20 +29,13 @@ export function HeartLikeButton({
   className = '',
   disabled = false,
 }: HeartLikeButtonProps) {
-  const btnRef = useRef<HTMLButtonElement>(null);
-  const animKey = useRef(0);
+  // 用 React state 管理动画，避免 classList 与 React className 冲突
+  const [animKey, setAnimKey] = useState(0);
 
   const handleClick = useCallback(() => {
     if (disabled) return;
-    // 触发动画：通过递增 key 强制重新渲染动画
-    animKey.current += 1;
-    const btn = btnRef.current;
-    if (btn) {
-      btn.classList.remove('hlb-animate');
-      // force reflow
-      void btn.offsetWidth;
-      btn.classList.add('hlb-animate');
-    }
+    // 递增 key 触发 wrapper 重新挂载，从而重启所有 CSS 动画
+    setAnimKey((k) => k + 1);
     onClick?.();
   }, [disabled, onClick]);
 
@@ -52,15 +45,15 @@ export function HeartLikeButton({
     <>
       <style>{heartLikeStyles(heartColor)}</style>
       <button
-        ref={btnRef}
         type="button"
-        className={`hlb-button ${liked ? 'hlb-liked' : ''} ${className}`}
+        className={`hlb-button ${liked ? 'hlb-liked' : ''} ${animKey > 0 ? 'hlb-animate' : ''} ${className}`}
         style={{ fontSize: `${size}px` }}
         onClick={handleClick}
         disabled={disabled}
         aria-label={liked ? '取消点赞' : '点赞'}
       >
-        <div className="hlb-wrapper">
+        {/* key 变化时 React 重新挂载 wrapper，CSS 动画自动重新播放 */}
+        <div className="hlb-wrapper" key={animKey}>
           <div className="hlb-ripple" />
           <svg className="hlb-heart" width="24" height="24" viewBox="0 0 24 24">
             <path d="M12,21.35L10.55,20.03C5.4,15.36 2,12.27 2,8.5C2,5.41 4.42,3 7.5,3C9.24,3 10.91,3.81 12,5.08C13.09,3.81 14.76,3 16.5,3C19.58,3 22,5.41 22,8.5C22,12.27 18.6,15.36 13.45,20.03L12,21.35Z" />
@@ -141,7 +134,6 @@ function heartLikeStyles(heartColor: string) {
     .hlb-animate .hlb-heart {
       animation: hlb-heart-bounce var(--duration) var(--easing);
     }
-    .hlb-animate.hlb-liked .hlb-heart > path,
     .hlb-animate .hlb-heart > path {
       fill: var(--color-heart);
     }
