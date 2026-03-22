@@ -1139,7 +1139,7 @@ export function DailyLogPanel() {
                   className="text-[11px] px-4 py-2 rounded-lg"
                   style={{ color: 'var(--text-muted)', background: 'var(--bg-tertiary)' }}
                 >
-                  💡 每日打点会在生成周报时被 AI 自动汇总归纳
+                  💡 每日记录会在生成周报时被 AI 自动汇总归纳
                 </div>
               </div>
             </div>
