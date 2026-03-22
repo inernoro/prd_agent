@@ -369,10 +369,9 @@ public class MongoDbContext
         LlmRequestLogs.Indexes.CreateOne(new CreateIndexModel<LlmRequestLog>(
             Builders<LlmRequestLog>.IndexKeys.Ascending(l => l.Provider).Ascending(l => l.Model)));
 
-        // TTL（默认保留 7 天）：基于 EndedAt
+        // EndedAt 普通索引（仅用于查询，不自动删除数据）
         LlmRequestLogs.Indexes.CreateOne(new CreateIndexModel<LlmRequestLog>(
-            Builders<LlmRequestLog>.IndexKeys.Ascending(l => l.EndedAt),
-            new CreateIndexOptions { ExpireAfter = TimeSpan.FromDays(7) }));
+            Builders<LlmRequestLog>.IndexKeys.Ascending(l => l.EndedAt)));
 
         // ApiRequestLogs 索引（系统请求日志）
         ApiRequestLogs.Indexes.CreateOne(new CreateIndexModel<ApiRequestLog>(
@@ -388,10 +387,9 @@ public class MongoDbContext
         ApiRequestLogs.Indexes.CreateOne(new CreateIndexModel<ApiRequestLog>(
             Builders<ApiRequestLog>.IndexKeys.Ascending(x => x.ClientType).Ascending(x => x.ClientId)));
 
-        // TTL（默认保留 7 天）：基于 EndedAt
+        // EndedAt 普通索引（仅用于查询，不自动删除数据）
         ApiRequestLogs.Indexes.CreateOne(new CreateIndexModel<ApiRequestLog>(
-            Builders<ApiRequestLog>.IndexKeys.Ascending(x => x.EndedAt),
-            new CreateIndexOptions { ExpireAfter = TimeSpan.FromDays(7) }));
+            Builders<ApiRequestLog>.IndexKeys.Ascending(x => x.EndedAt)));
 
         // ModelLabExperiments 索引
         ModelLabExperiments.Indexes.CreateOne(new CreateIndexModel<ModelLabExperiment>(
@@ -683,10 +681,9 @@ public class MongoDbContext
             Builders<OpenPlatformRequestLog>.IndexKeys.Ascending(x => x.AppId).Ascending(x => x.StatusCode)));
         OpenPlatformRequestLogs.Indexes.CreateOne(new CreateIndexModel<OpenPlatformRequestLog>(
             Builders<OpenPlatformRequestLog>.IndexKeys.Descending(x => x.StartedAt)));
-        // TTL（默认保留 30 天）：基于 EndedAt
+        // EndedAt 普通索引（仅用于查询，不自动删除数据）
         OpenPlatformRequestLogs.Indexes.CreateOne(new CreateIndexModel<OpenPlatformRequestLog>(
-            Builders<OpenPlatformRequestLog>.IndexKeys.Ascending(x => x.EndedAt),
-            new CreateIndexOptions { ExpireAfter = TimeSpan.FromDays(30) }));
+            Builders<OpenPlatformRequestLog>.IndexKeys.Ascending(x => x.EndedAt)));
 
         // ModelGroups：按 modelType + isDefaultForType 查询默认分组
         ModelGroups.Indexes.CreateOne(new CreateIndexModel<ModelGroup>(
@@ -856,10 +853,10 @@ public class MongoDbContext
         ChannelTasks.Indexes.CreateOne(new CreateIndexModel<ChannelTask>(
             Builders<ChannelTask>.IndexKeys.Ascending(x => x.MappedUserId).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_channel_tasks_user_created" }));
-        // TTL（默认保留 30 天）
+        // CreatedAt 普通索引（仅用于查询，不自动删除数据）
         ChannelTasks.Indexes.CreateOne(new CreateIndexModel<ChannelTask>(
             Builders<ChannelTask>.IndexKeys.Ascending(x => x.CreatedAt),
-            new CreateIndexOptions { Name = "ttl_channel_tasks", ExpireAfter = TimeSpan.FromDays(30) }));
+            new CreateIndexOptions { Name = "idx_channel_tasks_created" }));
 
         // ChannelRequestLogs：按 channelType + createdAt 查询；按 mappedUserId + createdAt 查询
         ChannelRequestLogs.Indexes.CreateOne(new CreateIndexModel<ChannelRequestLog>(
@@ -871,10 +868,10 @@ public class MongoDbContext
         ChannelRequestLogs.Indexes.CreateOne(new CreateIndexModel<ChannelRequestLog>(
             Builders<ChannelRequestLog>.IndexKeys.Ascending(x => x.TaskId),
             new CreateIndexOptions { Name = "idx_channel_request_logs_task" }));
-        // TTL（默认保留 30 天）
+        // EndedAt 普通索引（仅用于查询，不自动删除数据）
         ChannelRequestLogs.Indexes.CreateOne(new CreateIndexModel<ChannelRequestLog>(
             Builders<ChannelRequestLog>.IndexKeys.Ascending(x => x.EndedAt),
-            new CreateIndexOptions { Name = "ttl_channel_request_logs", ExpireAfter = TimeSpan.FromDays(30) }));
+            new CreateIndexOptions { Name = "idx_channel_request_logs_ended" }));
         // ========== Apple Shortcuts 快捷指令索引 ==========
 
         // UserShortcuts：按 tokenHash 唯一索引（token 校验）；按 userId 查询
@@ -916,10 +913,10 @@ public class MongoDbContext
         WebhookDeliveryLogs.Indexes.CreateOne(new CreateIndexModel<WebhookDeliveryLog>(
             Builders<WebhookDeliveryLog>.IndexKeys.Ascending(x => x.AppId).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_webhook_delivery_logs_app_created" }));
-        // TTL（默认保留 30 天）
+        // CreatedAt 普通索引（仅用于查询，不自动删除数据）
         WebhookDeliveryLogs.Indexes.CreateOne(new CreateIndexModel<WebhookDeliveryLog>(
             Builders<WebhookDeliveryLog>.IndexKeys.Ascending(x => x.CreatedAt),
-            new CreateIndexOptions { Name = "ttl_webhook_delivery_logs", ExpireAfter = TimeSpan.FromDays(30) }));
+            new CreateIndexOptions { Name = "idx_webhook_delivery_logs_created" }));
 
         // AutomationRules: 按事件类型 + 启用状态索引
         AutomationRules.Indexes.CreateOne(new CreateIndexModel<AutomationRule>(

@@ -783,21 +783,57 @@ function AgentUsageTab({ agents, team, loading }: { agents: ExecutiveAgentStat[]
 
 // ─── Tab: Cost Center (Models) ──────────────────────────────────────
 
+function formatCost(v: number): string {
+  if (v === 0) return '-';
+  if (v >= 10000) return `¥${(v / 10000).toFixed(1)}万`;
+  if (v >= 1) return `¥${v.toFixed(2)}`;
+  if (v >= 0.01) return `¥${v.toFixed(2)}`;
+  return `¥${v.toFixed(4)}`;
+}
+
 function CostCenterTab({ models, loading }: { models: ExecutiveModelStat[]; loading: boolean }) {
   if (loading && models.length === 0) return <LoadingSkeleton rows={4} />;
   if (models.length === 0) return <EmptyHint text="暂无模型使用数据" />;
 
   const totalCalls = models.reduce((s, m) => s + m.calls, 0);
   const totalTokens = models.reduce((s, m) => s + m.totalTokens, 0);
+  const totalImages = models.reduce((s, m) => s + m.imageCount, 0);
+  const totalTokenCost = models.reduce((s, m) => s + m.tokenCost, 0);
+  const totalCallCost = models.reduce((s, m) => s + m.callCost, 0);
+  const totalCost = models.reduce((s, m) => s + m.totalCost, 0);
+  const pricedModels = models.filter(m => m.hasPricing).length;
 
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <DashKpi title="预估总成本" value={formatCost(totalCost)} icon={<DollarSign size={13} />} animated info={`Token 成本 ${formatCost(totalTokenCost)} + 调用成本 ${formatCost(totalCallCost)}（${pricedModels}/${models.length} 个模型已配置定价）`} />
         <DashKpi title="总调用次数" value={totalCalls} icon={<Cpu size={13} />} animated info="所有模型的 LLM Gateway 请求总次数" />
         <DashKpi title="总 Token" value={formatTokens(totalTokens)} icon={<Zap size={13} />} animated info="所有模型的 Input + Output Token 合计" />
-        <DashKpi title="模型种类" value={models.length} icon={<Bot size={13} />} animated info="在所选时间范围内被调用过的不同模型数" />
-        <DashKpi title="平均响应" value={models.length > 0 ? `${(models.reduce((s, m) => s + m.avgDurationMs, 0) / models.length / 1000).toFixed(1)}s` : '-'} icon={<Activity size={13} />} animated info="各模型平均响应时间的均值（排除未完成请求）" />
+        <DashKpi title="生成图片" value={totalImages > 0 ? totalImages : models.length} icon={totalImages > 0 ? <Image size={13} /> : <Bot size={13} />} animated info={totalImages > 0 ? '所有模型成功生成的图片总数' : '在所选时间范围内被调用过的不同模型数'} />
       </div>
+
+      {/* 成本构成 */}
+      {totalCost > 0 && (
+        <DashCard>
+          <SectionTitle>成本构成</SectionTitle>
+          <div className="grid grid-cols-2 gap-4 py-2">
+            <div className="flex items-center gap-3">
+              <div className="w-3 h-3 rounded-sm" style={{ background: D.primary }} />
+              <div>
+                <div className="text-xs" style={{ color: D.text3 }}>Token 成本</div>
+                <div className="text-sm font-semibold tabular-nums" style={{ color: D.text1 }}>{formatCost(totalTokenCost)}</div>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="w-3 h-3 rounded-sm" style={{ background: hexAlpha(D.primary, 0.5) }} />
+              <div>
+                <div className="text-xs" style={{ color: D.text3 }}>调用成本（图片等）</div>
+                <div className="text-sm font-semibold tabular-nums" style={{ color: D.text1 }}>{formatCost(totalCallCost)}</div>
+              </div>
+            </div>
+          </div>
+        </DashCard>
+      )}
 
       <DashCard>
         <SectionTitle>按模型调用量</SectionTitle>
@@ -823,6 +859,12 @@ function CostCenterTab({ models, loading }: { models: ExecutiveModelStat[]; load
                   <span className="inline-flex items-center gap-1 justify-end">输出 Token <InfoTip tip="该模型生成的 Completion Token 总量" /></span>
                 </th>
                 <th className="text-right py-2 font-medium" style={{ color: D.text3 }}>
+                  <span className="inline-flex items-center gap-1 justify-end">图片 <InfoTip tip="该模型成功生成的图片数量" /></span>
+                </th>
+                <th className="text-right py-2 font-medium" style={{ color: D.text3 }}>
+                  <span className="inline-flex items-center gap-1 justify-end">预估成本 <InfoTip tip="Token 成本 + 按次调用成本（需在模型池中配置定价）" /></span>
+                </th>
+                <th className="text-right py-2 font-medium" style={{ color: D.text3 }}>
                   <span className="inline-flex items-center gap-1 justify-end">平均响应 <InfoTip tip="该模型所有已完成请求的平均耗时（排除未完成请求）" /></span>
                 </th>
               </tr>
@@ -839,6 +881,10 @@ function CostCenterTab({ models, loading }: { models: ExecutiveModelStat[]; load
                   <td className="py-2.5 text-right tabular-nums font-medium" style={{ color: D.text1 }}>{m.calls.toLocaleString()}</td>
                   <td className="py-2.5 text-right tabular-nums" style={{ color: D.text2 }}>{formatTokens(m.inputTokens)}</td>
                   <td className="py-2.5 text-right tabular-nums" style={{ color: D.text2 }}>{formatTokens(m.outputTokens)}</td>
+                  <td className="py-2.5 text-right tabular-nums" style={{ color: D.text2 }}>{m.imageCount > 0 ? m.imageCount.toLocaleString() : '-'}</td>
+                  <td className="py-2.5 text-right tabular-nums font-medium" style={{ color: m.hasPricing ? D.primary : D.text3 }}>
+                    {m.hasPricing ? formatCost(m.totalCost) : <span className="text-[10px] opacity-60">未配置</span>}
+                  </td>
                   <td className="py-2.5 text-right tabular-nums font-medium" style={{ color: D.primary }}>{(m.avgDurationMs / 1000).toFixed(1)}s</td>
                 </tr>
               ))}

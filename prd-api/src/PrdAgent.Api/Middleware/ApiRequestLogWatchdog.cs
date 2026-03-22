@@ -12,7 +12,7 @@ namespace PrdAgent.Api.Middleware;
 /// 当服务器重启/部署时，长生命周期的 SSE 连接（如 messages/stream）会被强制断开，
 /// middleware 的 finally 块来不及执行，导致 api_request_logs 中的 Status 永远停留在 "running"。
 /// 此 Watchdog 定期扫描超时的 "running" 日志，将其标记为 "timeout" 并设置 EndedAt，
-/// 使 TTL 索引能正常清理这些记录。
+/// 确保超时记录有正确的 EndedAt 时间戳。
 /// </summary>
 public sealed class ApiRequestLogWatchdog : BackgroundService
 {

@@ -55,6 +55,11 @@ export type ExecutiveModelStat = {
   outputTokens: number;
   totalTokens: number;
   avgDurationMs: number;
+  imageCount: number;
+  tokenCost: number;
+  callCost: number;
+  totalCost: number;
+  hasPricing: boolean;
 };
 
 export type LeaderboardUser = {
