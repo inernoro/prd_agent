@@ -97,20 +97,13 @@ public class SubmissionsController : ControllerBase
         }
 
         // 6. 解析水印（通过 appKey + userId 查找当时的配置）
-        string? wmId = null, wmName = null, wmText = null, wmFontKey = null;
+        WatermarkConfig? wmConfig = null;
         var appKey = run.AppKey;
         if (!string.IsNullOrWhiteSpace(appKey))
         {
-            var wmConfig = await _db.WatermarkConfigs
+            wmConfig = await _db.WatermarkConfigs
                 .Find(x => x.UserId == ownerUserId && x.AppKeys.Contains(appKey))
                 .FirstOrDefaultAsync();
-            if (wmConfig != null)
-            {
-                wmId = wmConfig.Id;
-                wmName = wmConfig.Name;
-                wmText = wmConfig.Text;
-                wmFontKey = wmConfig.FontKey;
-            }
         }
 
         // 7. 解析参考图配置（如有 — 暂无直接关联，留空待未来扩展）
@@ -130,10 +123,20 @@ public class SubmissionsController : ControllerBase
             InitImageUrl = initImageUrl,
             ImageRefs = imageRefSnapshots,
             HasInpainting = !string.IsNullOrWhiteSpace(run.MaskBase64),
-            WatermarkConfigId = wmId,
-            WatermarkName = wmName,
-            WatermarkText = wmText,
-            WatermarkFontKey = wmFontKey,
+            WatermarkConfigId = wmConfig?.Id,
+            WatermarkName = wmConfig?.Name,
+            WatermarkText = wmConfig?.Text,
+            WatermarkFontKey = wmConfig?.FontKey,
+            WatermarkFontSizePx = wmConfig?.FontSizePx,
+            WatermarkOpacity = wmConfig?.Opacity,
+            WatermarkAnchor = wmConfig?.Anchor,
+            WatermarkOffsetX = wmConfig?.OffsetX,
+            WatermarkOffsetY = wmConfig?.OffsetY,
+            WatermarkPositionMode = wmConfig?.PositionMode,
+            WatermarkIconEnabled = wmConfig?.IconEnabled,
+            WatermarkBorderEnabled = wmConfig?.BorderEnabled,
+            WatermarkBackgroundEnabled = wmConfig?.BackgroundEnabled,
+            WatermarkRoundedBackgroundEnabled = wmConfig?.RoundedBackgroundEnabled,
             ImageGenRunId = run.Id,
             AppKey = appKey,
             SnapshotAt = DateTime.UtcNow,
@@ -369,6 +372,16 @@ public class SubmissionsController : ControllerBase
                     watermarkName = snap.WatermarkName,
                     watermarkText = snap.WatermarkText,
                     watermarkFontKey = snap.WatermarkFontKey,
+                    watermarkFontSizePx = snap.WatermarkFontSizePx,
+                    watermarkOpacity = snap.WatermarkOpacity,
+                    watermarkAnchor = snap.WatermarkAnchor,
+                    watermarkOffsetX = snap.WatermarkOffsetX,
+                    watermarkOffsetY = snap.WatermarkOffsetY,
+                    watermarkPositionMode = snap.WatermarkPositionMode,
+                    watermarkIconEnabled = snap.WatermarkIconEnabled,
+                    watermarkBorderEnabled = snap.WatermarkBorderEnabled,
+                    watermarkBackgroundEnabled = snap.WatermarkBackgroundEnabled,
+                    watermarkRoundedBackgroundEnabled = snap.WatermarkRoundedBackgroundEnabled,
                     // 溯源
                     appKey = snap.AppKey,
                     configModelId = snap.ConfigModelId,
@@ -432,20 +445,13 @@ public class SubmissionsController : ControllerBase
                     }
 
                     // 水印
-                    string? wmId = null, wmName = null, wmText = null, wmFontKey = null;
+                    WatermarkConfig? fbWmConfig = null;
                     var appKey = run.AppKey;
                     if (!string.IsNullOrWhiteSpace(appKey))
                     {
-                        var wmConfig = await _db.WatermarkConfigs
+                        fbWmConfig = await _db.WatermarkConfigs
                             .Find(x => x.UserId == submission.OwnerUserId && x.AppKeys.Contains(appKey))
                             .FirstOrDefaultAsync();
-                        if (wmConfig != null)
-                        {
-                            wmId = wmConfig.Id;
-                            wmName = wmConfig.Name;
-                            wmText = wmConfig.Text;
-                            wmFontKey = wmConfig.FontKey;
-                        }
                     }
 
                     generationInfo = new
@@ -461,10 +467,20 @@ public class SubmissionsController : ControllerBase
                         initImageUrl,
                         imageRefs = imageRefSnapshots,
                         hasInpainting = !string.IsNullOrWhiteSpace(run.MaskBase64),
-                        watermarkConfigId = wmId,
-                        watermarkName = wmName,
-                        watermarkText = wmText,
-                        watermarkFontKey = wmFontKey,
+                        watermarkConfigId = fbWmConfig?.Id,
+                        watermarkName = fbWmConfig?.Name,
+                        watermarkText = fbWmConfig?.Text,
+                        watermarkFontKey = fbWmConfig?.FontKey,
+                        watermarkFontSizePx = fbWmConfig?.FontSizePx,
+                        watermarkOpacity = fbWmConfig?.Opacity,
+                        watermarkAnchor = fbWmConfig?.Anchor,
+                        watermarkOffsetX = fbWmConfig?.OffsetX,
+                        watermarkOffsetY = fbWmConfig?.OffsetY,
+                        watermarkPositionMode = fbWmConfig?.PositionMode,
+                        watermarkIconEnabled = fbWmConfig?.IconEnabled,
+                        watermarkBorderEnabled = fbWmConfig?.BorderEnabled,
+                        watermarkBackgroundEnabled = fbWmConfig?.BackgroundEnabled,
+                        watermarkRoundedBackgroundEnabled = fbWmConfig?.RoundedBackgroundEnabled,
                         appKey,
                     };
                 }

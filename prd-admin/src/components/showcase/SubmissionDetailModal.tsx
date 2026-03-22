@@ -13,6 +13,7 @@ import {
   unlikeSubmission,
   type SubmissionDetail,
 } from '@/services/real/submissions';
+import { WatermarkDescriptionGrid } from '@/components/watermark/WatermarkDescriptionGrid';
 
 interface SubmissionDetailModalProps {
   submissionId: string | null;
@@ -493,27 +494,22 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                               <InfoBadge icon={<Droplets size={11} />} label={genInfo.watermarkName} accent />
                             </div>
                           )}
-                          {genInfo.watermarkText && (
-                            <div>
-                              <div className="text-xs font-medium mb-2" style={{ color: 'var(--text-muted)' }}>水印文字</div>
-                              <div
-                                className="text-sm rounded-xl p-3.5"
-                                style={{
-                                  color: 'var(--text-secondary, rgba(255,255,255,0.7))',
-                                  background: 'rgba(255,255,255,0.03)',
-                                  border: '1px solid rgba(255,255,255,0.04)',
-                                }}
-                              >
-                                {genInfo.watermarkText}
-                              </div>
-                            </div>
-                          )}
-                          {genInfo.watermarkFontKey && (
-                            <div>
-                              <div className="text-xs font-medium mb-2" style={{ color: 'var(--text-muted)' }}>字体</div>
-                              <InfoBadge icon={<FileText size={11} />} label={genInfo.watermarkFontKey} />
-                            </div>
-                          )}
+                          <WatermarkDescriptionGrid
+                            data={{
+                              text: genInfo.watermarkText,
+                              fontKey: genInfo.watermarkFontKey,
+                              fontSizePx: genInfo.watermarkFontSizePx,
+                              opacity: genInfo.watermarkOpacity,
+                              anchor: genInfo.watermarkAnchor,
+                              offsetX: genInfo.watermarkOffsetX,
+                              offsetY: genInfo.watermarkOffsetY,
+                              positionMode: genInfo.watermarkPositionMode,
+                              iconEnabled: genInfo.watermarkIconEnabled,
+                              borderEnabled: genInfo.watermarkBorderEnabled,
+                              backgroundEnabled: genInfo.watermarkBackgroundEnabled,
+                              roundedBackgroundEnabled: genInfo.watermarkRoundedBackgroundEnabled,
+                            }}
+                          />
                         </>
                       ) : (
                         <div className="flex flex-col items-center justify-center py-8 gap-2" style={{ color: 'var(--text-muted, rgba(255,255,255,0.3))' }}>

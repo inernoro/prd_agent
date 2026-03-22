@@ -120,6 +120,26 @@ public class GenerationSnapshot
     public string? WatermarkText { get; set; }
     /// <summary>水印字体快照</summary>
     public string? WatermarkFontKey { get; set; }
+    /// <summary>字体大小 (px)</summary>
+    public double? WatermarkFontSizePx { get; set; }
+    /// <summary>透明度 (0~1)</summary>
+    public double? WatermarkOpacity { get; set; }
+    /// <summary>锚点位置 (top-left / top-right / bottom-left / bottom-right)</summary>
+    public string? WatermarkAnchor { get; set; }
+    /// <summary>X 偏移</summary>
+    public double? WatermarkOffsetX { get; set; }
+    /// <summary>Y 偏移</summary>
+    public double? WatermarkOffsetY { get; set; }
+    /// <summary>定位模式 (pixel / ratio)</summary>
+    public string? WatermarkPositionMode { get; set; }
+    /// <summary>是否启用图标</summary>
+    public bool? WatermarkIconEnabled { get; set; }
+    /// <summary>是否启用边框</summary>
+    public bool? WatermarkBorderEnabled { get; set; }
+    /// <summary>是否启用背景</summary>
+    public bool? WatermarkBackgroundEnabled { get; set; }
+    /// <summary>是否启用圆角背景</summary>
+    public bool? WatermarkRoundedBackgroundEnabled { get; set; }
 
     // ── 溯源 ──
     /// <summary>源 ImageGenRun.Id（内部追踪，不对外展示）</summary>

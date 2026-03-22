@@ -71,6 +71,16 @@ export interface GenerationInfo {
   watermarkName?: string;
   watermarkText?: string;
   watermarkFontKey?: string;
+  watermarkFontSizePx?: number;
+  watermarkOpacity?: number;
+  watermarkAnchor?: string;
+  watermarkOffsetX?: number;
+  watermarkOffsetY?: number;
+  watermarkPositionMode?: 'pixel' | 'ratio';
+  watermarkIconEnabled?: boolean;
+  watermarkBorderEnabled?: boolean;
+  watermarkBackgroundEnabled?: boolean;
+  watermarkRoundedBackgroundEnabled?: boolean;
   // 溯源
   appKey?: string;
   configModelId?: string;
