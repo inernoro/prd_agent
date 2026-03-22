@@ -88,6 +88,24 @@ public class ModelGroupItem
     /// - null: 使用服务端默认值（当前为 4096）
     /// </summary>
     public int? MaxTokens { get; set; }
+
+    /// <summary>
+    /// 输入 Token 单价（元/百万 Token）
+    /// - null: 未配置，成本中心不计算该模型的 Token 成本
+    /// </summary>
+    public decimal? InputPricePerMillion { get; set; }
+
+    /// <summary>
+    /// 输出 Token 单价（元/百万 Token）
+    /// - null: 未配置，成本中心不计算该模型的 Token 成本
+    /// </summary>
+    public decimal? OutputPricePerMillion { get; set; }
+
+    /// <summary>
+    /// 每次调用固定费用（元/次），适用于图片生成等按次计费的模型
+    /// - null: 不按次计费
+    /// </summary>
+    public decimal? PricePerCall { get; set; }
 }
 
 /// <summary>

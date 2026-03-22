@@ -334,7 +334,7 @@ public class ExecutiveController : ControllerBase
     }
 
     /// <summary>
-    /// 模型使用统计
+    /// 模型使用统计（含成本估算）
     /// </summary>
     [HttpGet("models")]
     public async Task<IActionResult> GetModels([FromQuery] int days = 0)
@@ -342,24 +342,68 @@ public class ExecutiveController : ControllerBase
         if (days < 0) days = 0;
         var periodStart = days > 0 ? DateTime.UtcNow.Date.AddDays(-days + 1) : DateTime.MinValue;
 
+        // 1) 查日志（增加 ImageSuccessCount 用于图片成本计算）
         var logs = await _db.LlmRequestLogs
             .Find(l => l.StartedAt >= periodStart && l.Model != null)
-            .Project(l => new { l.Model, l.InputTokens, l.OutputTokens, l.DurationMs })
+            .Project(l => new { l.Model, l.InputTokens, l.OutputTokens, l.DurationMs, l.ImageSuccessCount })
             .ToListAsync();
 
+        // 2) 构建模型→定价查找表（从 ModelGroup 中读取已配置的价格）
+        var allGroups = await _db.ModelGroups.Find(_ => true).ToListAsync();
+        var pricingLookup = new Dictionary<string, (decimal? inputPricePerM, decimal? outputPricePerM, decimal? pricePerCall)>();
+        foreach (var mg in allGroups)
+        {
+            foreach (var item in mg.Models)
+            {
+                if (!string.IsNullOrEmpty(item.ModelId) && !pricingLookup.ContainsKey(item.ModelId))
+                {
+                    if (item.InputPricePerMillion.HasValue || item.OutputPricePerMillion.HasValue || item.PricePerCall.HasValue)
+                    {
+                        pricingLookup[item.ModelId] = (item.InputPricePerMillion, item.OutputPricePerMillion, item.PricePerCall);
+                    }
+                }
+            }
+        }
+
+        // 3) 分组聚合 + 成本计算
         var modelGroups = logs
             .GroupBy(l => l.Model ?? "unknown")
             .Select(g =>
             {
                 var withDuration = g.Where(l => l.DurationMs.HasValue).ToList();
+                var inputTokens = g.Sum(l => (long)(l.InputTokens ?? 0));
+                var outputTokens = g.Sum(l => (long)(l.OutputTokens ?? 0));
+                var imageCount = g.Sum(l => l.ImageSuccessCount ?? 0);
+                var calls = g.Count();
+
+                // 成本计算：Token 成本 + 调用成本
+                decimal tokenCost = 0;
+                decimal callCost = 0;
+                bool hasPricing = pricingLookup.TryGetValue(g.Key, out var pricing);
+
+                if (hasPricing)
+                {
+                    if (pricing.inputPricePerM.HasValue)
+                        tokenCost += (decimal)inputTokens / 1_000_000m * pricing.inputPricePerM.Value;
+                    if (pricing.outputPricePerM.HasValue)
+                        tokenCost += (decimal)outputTokens / 1_000_000m * pricing.outputPricePerM.Value;
+                    if (pricing.pricePerCall.HasValue)
+                        callCost = calls * pricing.pricePerCall.Value;
+                }
+
                 return new
                 {
                     model = g.Key,
-                    calls = g.Count(),
-                    inputTokens = g.Sum(l => (long)(l.InputTokens ?? 0)),
-                    outputTokens = g.Sum(l => (long)(l.OutputTokens ?? 0)),
-                    totalTokens = g.Sum(l => (long)(l.InputTokens ?? 0) + (l.OutputTokens ?? 0)),
+                    calls,
+                    inputTokens,
+                    outputTokens,
+                    totalTokens = inputTokens + outputTokens,
                     avgDurationMs = withDuration.Count > 0 ? Math.Round(withDuration.Average(l => l.DurationMs!.Value), 1) : 0,
+                    imageCount,
+                    tokenCost = Math.Round(tokenCost, 4),
+                    callCost = Math.Round(callCost, 4),
+                    totalCost = Math.Round(tokenCost + callCost, 4),
+                    hasPricing,
                 };
             })
             .OrderByDescending(m => m.calls)
