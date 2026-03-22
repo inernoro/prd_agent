@@ -14,6 +14,7 @@ export function Dialog({
   contentStyle,
   titleAction,
   titleCenter,
+  zIndex,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -30,13 +31,15 @@ export function Dialog({
   titleAction?: React.ReactNode;
   /** 标题栏居中的内容（如标签切换） */
   titleCenter?: React.ReactNode;
+  /** 覆盖 Overlay 的 z-index 层级（默认 z-100）；需要在更高层弹窗上方时使用 */
+  zIndex?: number;
 }) {
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay
-          className="fixed inset-0 z-100 flex items-center justify-center prd-dialog-overlay"
-          style={{ background: 'rgba(0,0,0,0.72)' }}
+          className="fixed inset-0 flex items-center justify-center prd-dialog-overlay"
+          style={{ background: 'rgba(0,0,0,0.72)', zIndex: zIndex ?? 100 }}
         >
         <DialogPrimitive.Content
           {...(description ? {} : ({ 'aria-describedby': undefined } as const))}

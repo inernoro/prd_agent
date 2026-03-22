@@ -1310,19 +1310,28 @@ export function DefectDetailPanel() {
         )}
       </DialogPrimitive.Content>
 
-      {/* Image Lightbox - 独立 Portal 保证在最顶层 */}
-      {lightboxImage && (
-        <div
-          className="fixed inset-0 z-[300] flex items-center justify-center p-8"
-          style={{ background: 'rgba(0,0,0,0.9)' }}
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
+
+    {/* Image Lightbox - 独立 Radix Dialog，Portal 自动追加到 body 末尾，DOM 顺序在父 Dialog 之后 */}
+    <DialogPrimitive.Root open={!!lightboxImage} onOpenChange={(v) => { if (!v) setLightboxImage(null); }}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="fixed inset-0 z-[200]" style={{ background: 'rgba(0,0,0,0.9)' }} />
+        <DialogPrimitive.Content
+          aria-describedby={undefined}
+          aria-label="图片预览"
+          className="fixed inset-0 z-[200] flex items-center justify-center p-8 outline-none"
+          style={{ background: 'transparent' }}
           onClick={() => setLightboxImage(null)}
         >
+          <DialogPrimitive.Title className="sr-only">图片预览</DialogPrimitive.Title>
           <div className="absolute top-4 right-4 flex items-center gap-2">
             <button
               className="p-2 rounded-lg hover:bg-white/10 transition-colors"
               title="复制图片"
               onClick={async (e) => {
                 e.stopPropagation();
+                if (!lightboxImage) return;
                 try {
                   const res = await fetch(lightboxImage);
                   const blob = await res.blob();
@@ -1337,22 +1346,20 @@ export function DefectDetailPanel() {
             >
               <Copy size={20} style={{ color: '#fff' }} />
             </button>
-            <button
-              className="p-2 rounded-lg hover:bg-white/10 transition-colors"
-              onClick={() => setLightboxImage(null)}
-            >
+            <DialogPrimitive.Close className="p-2 rounded-lg hover:bg-white/10 transition-colors">
               <X size={24} style={{ color: '#fff' }} />
-            </button>
+            </DialogPrimitive.Close>
           </div>
-          <img
-            src={lightboxImage}
-            alt="放大图片"
-            className="max-w-full max-h-full object-contain rounded-lg"
-            style={{ boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}
-            onClick={(e) => e.stopPropagation()}
-          />
-        </div>
-      )}
+          {lightboxImage && (
+            <img
+              src={lightboxImage}
+              alt="放大图片"
+              className="max-w-full max-h-full object-contain rounded-lg"
+              style={{ boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}
+              onClick={(e) => e.stopPropagation()}
+            />
+          )}
+        </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
 
