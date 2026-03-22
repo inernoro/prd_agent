@@ -380,15 +380,13 @@ const DIMENSION_META: Record<string, { icon: typeof Bot; color: string; barColor
   'literary-agent':   { icon: MessageSquare, color: D.primary,  barColor: hexAlpha(D.primary, 0.4),   short: '文学' },
   'defect-agent':     { icon: Bug,           color: D.primary,  barColor: hexAlpha(D.primary, 0.5),   short: '缺陷' },
   'ai-toolbox':       { icon: Zap,           color: D.primary,  barColor: hexAlpha(D.primary, 0.4),   short: '工具箱' },
-  'chat':             { icon: MessageSquare, color: D.text3,    barColor: 'rgba(255,255,255,0.12)',    short: '对话' },
-  'open-platform':    { icon: Link2,         color: D.primary,  barColor: hexAlpha(D.primary, 0.35),  short: '开放' },
-  'messages':         { icon: MessageSquare, color: D.primary,  barColor: hexAlpha(D.primary, 0.5),   short: '消息' },
-  'sessions':         { icon: Activity,      color: D.primary,  barColor: hexAlpha(D.primary, 0.45),  short: '会话' },
+  'report-agent':     { icon: FileText,      color: D.primary,  barColor: hexAlpha(D.primary, 0.4),   short: '周报' },
+  'video-agent':      { icon: Activity,      color: D.primary,  barColor: hexAlpha(D.primary, 0.4),   short: '视频' },
   'defects-created':  { icon: Bug,           color: D.danger,   barColor: hexAlpha(D.danger, 0.35),   short: '提缺陷' },
   'defects-resolved': { icon: Bug,           color: D.success,  barColor: hexAlpha(D.success, 0.35),  short: '解缺陷' },
   'images':           { icon: Image,         color: D.primary,  barColor: hexAlpha(D.primary, 0.4),   short: '图片' },
-  'groups':           { icon: Users,         color: D.text3,    barColor: 'rgba(255,255,255,0.1)',     short: '群组' },
-  'report-agent':     { icon: FileText,      color: D.primary,  barColor: hexAlpha(D.primary, 0.4),   short: '周报' },
+  'workflows':        { icon: Zap,           color: D.primary,  barColor: hexAlpha(D.primary, 0.35),  short: '工作流' },
+  'arena':            { icon: Users,         color: D.primary,  barColor: hexAlpha(D.primary, 0.35),  short: '竞技场' },
 };
 
 
@@ -610,7 +608,13 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
 
       {/* Per-dimension Leaderboard Cards */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-        {allDims.map(dim => {
+        {[...allDims]
+          .map(dim => ({
+            dim,
+            participantCount: scored.filter(u => (u.dimScores[dim.key] ?? 0) > 0).length,
+          }))
+          .sort((a, b) => b.participantCount - a.participantCount)
+          .map(({ dim }) => {
           const meta = DIMENSION_META[dim.key] ?? { icon: Bot, color: D.text3, barColor: 'rgba(255,255,255,0.1)', short: dim.name };
           const DimIcon = meta.icon;
           const sortedEntries = scored
