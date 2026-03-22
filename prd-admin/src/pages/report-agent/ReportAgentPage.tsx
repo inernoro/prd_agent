@@ -1,5 +1,5 @@
-import { useEffect, useMemo } from 'react';
-import { FileText, Users, Settings, RefreshCw } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { FileText, Users, Settings, RefreshCw, HelpCircle } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
@@ -31,6 +31,7 @@ export default function ReportAgentPage() {
   } = useReportAgentStore();
 
   const userId = useAuthStore((s) => s.user?.userId);
+  const [showUsageGuide, setShowUsageGuide] = useState(false);
 
   const hasTeamWorkspace = useMemo(() => {
     if (!userId) return false;
@@ -79,6 +80,20 @@ export default function ReportAgentPage() {
     return items;
   }, [hasTeamWorkspace]);
 
+  const usageGuideActions = (
+    <Button
+      variant="secondary"
+      size="sm"
+      onClick={() => {
+        setShowUsageGuide((prev) => !prev);
+      }}
+      className="whitespace-nowrap"
+    >
+      <HelpCircle size={13} />
+      使用指引
+    </Button>
+  );
+
   // Resolve current tab — default to 'report' if current tab not in items
   const currentTab = tabItems.find((t) => t.key === activeTab) ? activeTab : 'report';
 
@@ -90,6 +105,7 @@ export default function ReportAgentPage() {
         onChange={(key) => {
           setActiveTab(key as typeof activeTab);
         }}
+        actions={currentTab === 'report' ? usageGuideActions : undefined}
       />
 
       {error && (
@@ -113,7 +129,12 @@ export default function ReportAgentPage() {
       )}
 
       <div className="flex-1 min-h-0">
-        {currentTab === 'report' && <ReportMainView />}
+        {currentTab === 'report' && (
+          <ReportMainView
+            showUsageGuide={showUsageGuide}
+            onShowUsageGuideChange={setShowUsageGuide}
+          />
+        )}
         {currentTab === 'team' && <TeamDashboard />}
         {currentTab === 'settings' && <SettingsPanel />}
       </div>
