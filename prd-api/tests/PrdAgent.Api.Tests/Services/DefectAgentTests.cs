@@ -126,7 +126,7 @@ public class DefectAgentTests
         Assert.Equal(2, template.RequiredFields.Count);
         Assert.Equal("title", template.RequiredFields[0].Key);
         Assert.Equal("select", template.RequiredFields[1].Type);
-        Assert.Equal(5, template.RequiredFields[1].Options?.Count);
+        Assert.Equal(6, template.RequiredFields[1].Options?.Count);
     }
 
     [Fact]
