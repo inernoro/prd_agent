@@ -25,6 +25,7 @@ public class ReportAgentController : ControllerBase
     private const long MaxRichTextImageBytes = 5 * 1024 * 1024;
     private const int MaxDailyLogCustomTagCount = 20;
     private const int MaxDailyLogCustomTagLength = 16;
+    private const string DailyLogTodoPlanWeekInvalidMessage = "Todo 标签必须提供有效的 ISO 周（planWeekYear + planWeekNumber）";
     private const int MaxWeeklyReportPromptLength = ReportAgentPromptDefaults.MaxCustomPromptLength;
     private static readonly string[] EditableReportStatuses =
     {
@@ -1630,6 +1631,10 @@ public class ReportAgentController : ControllerBase
         /// <summary>自定义标签列表</summary>
         public List<string>? Tags { get; set; }
         public int? DurationMinutes { get; set; }
+        /// <summary>计划目标 ISO 周所属年份（仅 Todo 有效）</summary>
+        public int? PlanWeekYear { get; set; }
+        /// <summary>计划目标 ISO 周（1-53，仅 Todo 有效）</summary>
+        public int? PlanWeekNumber { get; set; }
         public DateTime? CreatedAt { get; set; }
     }
 
@@ -1679,14 +1684,37 @@ public class ReportAgentController : ControllerBase
         var userId = GetUserId();
 
         var now = DateTime.UtcNow;
-        var items = request.Items.Select(i => new DailyLogItem
+        var items = new List<DailyLogItem>();
+        foreach (var i in request.Items)
         {
-            Content = i.Content ?? string.Empty,
-            Category = DailyLogCategory.All.Contains(i.Category ?? "") ? i.Category! : DailyLogCategory.Other,
-            Tags = NormalizeDailyLogTags(i.Tags),
-            DurationMinutes = i.DurationMinutes,
-            CreatedAt = i.CreatedAt ?? now
-        }).Where(i => !string.IsNullOrWhiteSpace(i.Content)).ToList();
+            var normalizedCategory = DailyLogCategory.All.Contains(i.Category ?? "") ? i.Category! : DailyLogCategory.Other;
+            var normalizedTags = NormalizeDailyLogTags(i.Tags);
+            var isTodo = string.Equals(normalizedCategory, DailyLogCategory.Todo, StringComparison.OrdinalIgnoreCase)
+                         || normalizedTags.Any(tag => string.Equals(tag, DailyLogCategory.Todo, StringComparison.OrdinalIgnoreCase));
+            int? planWeekYear = null;
+            int? planWeekNumber = null;
+
+            if (isTodo)
+            {
+                if (!TryNormalizeIsoWeek(i.PlanWeekYear, i.PlanWeekNumber, out var year, out var week))
+                    return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", DailyLogTodoPlanWeekInvalidMessage));
+                planWeekYear = year;
+                planWeekNumber = week;
+            }
+
+            items.Add(new DailyLogItem
+            {
+                Content = i.Content ?? string.Empty,
+                Category = normalizedCategory,
+                Tags = normalizedTags,
+                DurationMinutes = i.DurationMinutes,
+                PlanWeekYear = planWeekYear,
+                PlanWeekNumber = planWeekNumber,
+                CreatedAt = i.CreatedAt ?? now
+            });
+        }
+
+        items = items.Where(i => !string.IsNullOrWhiteSpace(i.Content)).ToList();
 
         if (items.Count == 0)
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "至少需要一条有效工作项"));
@@ -1733,6 +1761,22 @@ public class ReportAgentController : ControllerBase
                 result.Add(tag);
         }
         return result;
+    }
+
+    private static bool TryNormalizeIsoWeek(int? year, int? weekNumber, out int normalizedYear, out int normalizedWeekNumber)
+    {
+        normalizedYear = 0;
+        normalizedWeekNumber = 0;
+        if (!year.HasValue || !weekNumber.HasValue)
+            return false;
+        if (year.Value < 1 || year.Value > 9999)
+            return false;
+        var maxWeek = ISOWeek.GetWeeksInYear(year.Value);
+        if (weekNumber.Value < 1 || weekNumber.Value > maxWeek)
+            return false;
+        normalizedYear = year.Value;
+        normalizedWeekNumber = weekNumber.Value;
+        return true;
     }
 
     /// <summary>

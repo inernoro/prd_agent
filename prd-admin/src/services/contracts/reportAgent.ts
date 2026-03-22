@@ -179,6 +179,10 @@ export interface DailyLogItem {
   /** 自定义标签列表 */
   tags?: string[];
   durationMinutes?: number;
+  /** 计划目标 ISO 周所属年份（仅 Todo 有效） */
+  planWeekYear?: number;
+  /** 计划目标 ISO 周（1-53，仅 Todo 有效） */
+  planWeekNumber?: number;
   createdAt?: string;
 }
 
@@ -188,6 +192,7 @@ export const DailyLogCategory = {
   Communication: 'communication',
   Documentation: 'documentation',
   Testing: 'testing',
+  Todo: 'todo',
   Other: 'other',
 } as const;
 
@@ -197,6 +202,7 @@ export const DailyLogCategoryLabels: Record<string, string> = {
   communication: '沟通',
   documentation: '文档',
   testing: '测试',
+  todo: 'Todo',
   other: '其他',
 };
 
@@ -462,7 +468,15 @@ export type GetTeamDashboardContract = (input: {
 // --- Daily Logs ---
 export type SaveDailyLogContract = (input: {
   date: string;
-  items: { content: string; category: string; tags?: string[]; durationMinutes?: number; createdAt?: string }[];
+  items: {
+    content: string;
+    category: string;
+    tags?: string[];
+    durationMinutes?: number;
+    planWeekYear?: number;
+    planWeekNumber?: number;
+    createdAt?: string;
+  }[];
 }) => Promise<ApiResponse<DailyLog>>;
 
 export type ListDailyLogsContract = (input?: {

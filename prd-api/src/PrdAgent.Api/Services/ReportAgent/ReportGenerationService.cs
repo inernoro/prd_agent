@@ -134,7 +134,7 @@ public class ReportGenerationService
 
         if (generatedSections == null)
         {
-            var fallbackSections = BuildRuleBasedSections(template, activity, sourcePrefs);
+            var fallbackSections = BuildRuleBasedSections(template, activity, sourcePrefs, weekYear, weekNumber);
             if (fallbackSections != null && CountGeneratedItems(fallbackSections) > 0)
             {
                 generatedSections = fallbackSections;
@@ -229,6 +229,8 @@ public class ReportGenerationService
         GenerationSourcePrefs sourcePrefs,
         string effectivePrompt)
     {
+        var (targetPlanWeekYear, targetPlanWeekNumber) = GetNextIsoWeek(weekYear, weekNumber);
+        var todoPlanItems = BuildTodoPlanItemsForTargetWeek(activity, targetPlanWeekYear, targetPlanWeekNumber);
         var sb = new System.Text.StringBuilder();
         sb.AppendLine($"## 周报周期: {weekYear} 年第 {weekNumber} 周");
         sb.AppendLine();
@@ -286,6 +288,16 @@ public class ReportGenerationService
                     var dur = item.DurationMinutes.HasValue ? $" ({item.DurationMinutes}min)" : "";
                     sb.AppendLine($"- [{item.Category}] {item.Content}{dur}");
                 }
+            }
+            sb.AppendLine();
+        }
+
+        if (sourcePrefs.DailyLogEnabled && todoPlanItems.Count > 0)
+        {
+            sb.AppendLine($"### Todo 计划池（目标：{targetPlanWeekYear} 年第 {targetPlanWeekNumber} 周）");
+            foreach (var item in todoPlanItems)
+            {
+                sb.AppendLine($"- {item.Content}");
             }
             sb.AppendLine();
         }
@@ -578,8 +590,12 @@ public class ReportGenerationService
     private static List<WeeklyReportSection>? BuildRuleBasedSections(
         ReportTemplate template,
         CollectedActivity activity,
-        GenerationSourcePrefs sourcePrefs)
+        GenerationSourcePrefs sourcePrefs,
+        int weekYear,
+        int weekNumber)
     {
+        var (targetPlanWeekYear, targetPlanWeekNumber) = GetNextIsoWeek(weekYear, weekNumber);
+        var todoPlanItems = BuildTodoPlanItemsForTargetWeek(activity, targetPlanWeekYear, targetPlanWeekNumber);
         var completionPool = BuildCompletionPool(activity, sourcePrefs);
         var hasStats = HasAnyActivity(activity, sourcePrefs);
         if (completionPool.Count == 0 && !hasStats)
@@ -615,7 +631,7 @@ public class ReportGenerationService
                 || normalizedKey.Contains("下周", StringComparison.Ordinal)
                 || normalizedKey.Contains("待办", StringComparison.Ordinal))
             {
-                items.AddRange(BuildPlanItems(completionPool, maxItems));
+                items.AddRange(BuildPlanItems(todoPlanItems, completionPool, maxItems));
             }
             else if (normalizedKey.Contains("总结", StringComparison.Ordinal)
                 || normalizedKey.Contains("复盘", StringComparison.Ordinal)
@@ -722,8 +738,14 @@ public class ReportGenerationService
         return items.Take(maxItems).ToList();
     }
 
-    private static List<WeeklyReportItem> BuildPlanItems(List<WeeklyReportItem> completionPool, int maxItems)
+    private static List<WeeklyReportItem> BuildPlanItems(
+        List<WeeklyReportItem> todoPlanItems,
+        List<WeeklyReportItem> completionPool,
+        int maxItems)
     {
+        if (todoPlanItems.Count > 0)
+            return todoPlanItems.Take(maxItems).ToList();
+
         var seed = completionPool
             .Where(x => !string.IsNullOrWhiteSpace(x.Content))
             .Take(maxItems)
@@ -744,6 +766,45 @@ public class ReportGenerationService
         }
 
         return seed;
+    }
+
+    private static List<WeeklyReportItem> BuildTodoPlanItemsForTargetWeek(
+        CollectedActivity activity,
+        int targetWeekYear,
+        int targetWeekNumber)
+    {
+        var result = new List<WeeklyReportItem>();
+        foreach (var log in activity.DailyLogs.OrderBy(x => x.Date))
+        {
+            foreach (var item in log.Items.Where(i => !string.IsNullOrWhiteSpace(i.Content)))
+            {
+                if (!IsTodoItem(item))
+                    continue;
+                if (item.PlanWeekYear != targetWeekYear || item.PlanWeekNumber != targetWeekNumber)
+                    continue;
+                var content = item.Content.Trim();
+                result.Add(new WeeklyReportItem
+                {
+                    Content = content.StartsWith("继续推进：", StringComparison.Ordinal) ? content : $"继续推进：{content}",
+                    Source = "daily-log"
+                });
+            }
+        }
+        return result;
+    }
+
+    private static bool IsTodoItem(DailyLogItem item)
+    {
+        if (string.Equals(item.Category, DailyLogCategory.Todo, StringComparison.OrdinalIgnoreCase))
+            return true;
+        return item.Tags.Any(tag => string.Equals(tag, DailyLogCategory.Todo, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static (int weekYear, int weekNumber) GetNextIsoWeek(int weekYear, int weekNumber)
+    {
+        var monday = ISOWeek.ToDateTime(weekYear, weekNumber, DayOfWeek.Monday);
+        var targetDate = monday.AddDays(7);
+        return (ISOWeek.GetYear(targetDate), ISOWeek.GetWeekOfYear(targetDate));
     }
 
     private static List<WeeklyReportItem> BuildSummaryItems(CollectedActivity activity, GenerationSourcePrefs sourcePrefs, int maxItems)
