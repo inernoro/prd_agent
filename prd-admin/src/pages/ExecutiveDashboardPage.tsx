@@ -403,7 +403,7 @@ type ScoredUser = {
  */
 function computeScores(data: ExecutiveLeaderboard): ScoredUser[] {
   const { users, dimensions, totalDays } = data;
-  const capPerDim = Math.max(1, totalDays); // 每天1次 = 满分
+  const capPerDim = Math.max(1, Math.min(totalDays, 30)); // 每天1次 = 满分，上限30天
   return users.map(u => {
     const dimScores: Record<string, number> = {};
     const normalizedScores: Record<string, number> = {};
@@ -583,7 +583,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                     {allDims.map((dim, dimIdx) => {
                       const raw = user.dimScores[dim.key] ?? 0;
                       const meta = DIMENSION_META[dim.key];
-                      const totalDays = data?.totalDays ?? 1;
+                      const totalDays = Math.min(data?.totalDays ?? 1, 30);
                       const pct = Math.min((raw / Math.max(1, totalDays)) * 100, 100);
                       const isLastCol = dimIdx === allDims.length - 1;
 
