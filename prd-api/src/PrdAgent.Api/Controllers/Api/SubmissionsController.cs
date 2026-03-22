@@ -137,6 +137,7 @@ public class SubmissionsController : ControllerBase
             WatermarkBorderEnabled = wmConfig?.BorderEnabled,
             WatermarkBackgroundEnabled = wmConfig?.BackgroundEnabled,
             WatermarkRoundedBackgroundEnabled = wmConfig?.RoundedBackgroundEnabled,
+            WatermarkPreviewUrl = wmConfig?.PreviewUrl,
             ImageGenRunId = run.Id,
             AppKey = appKey,
             SnapshotAt = DateTime.UtcNow,
@@ -382,6 +383,7 @@ public class SubmissionsController : ControllerBase
                     watermarkBorderEnabled = snap.WatermarkBorderEnabled,
                     watermarkBackgroundEnabled = snap.WatermarkBackgroundEnabled,
                     watermarkRoundedBackgroundEnabled = snap.WatermarkRoundedBackgroundEnabled,
+                    watermarkPreviewUrl = snap.WatermarkPreviewUrl,
                     // 溯源
                     appKey = snap.AppKey,
                     configModelId = snap.ConfigModelId,
@@ -481,6 +483,7 @@ public class SubmissionsController : ControllerBase
                         watermarkBorderEnabled = fbWmConfig?.BorderEnabled,
                         watermarkBackgroundEnabled = fbWmConfig?.BackgroundEnabled,
                         watermarkRoundedBackgroundEnabled = fbWmConfig?.RoundedBackgroundEnabled,
+                        watermarkPreviewUrl = fbWmConfig?.PreviewUrl,
                         appKey,
                     };
                 }

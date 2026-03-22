@@ -81,6 +81,7 @@ export interface GenerationInfo {
   watermarkBorderEnabled?: boolean;
   watermarkBackgroundEnabled?: boolean;
   watermarkRoundedBackgroundEnabled?: boolean;
+  watermarkPreviewUrl?: string | null;
   // 溯源
   appKey?: string;
   configModelId?: string;

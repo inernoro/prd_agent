@@ -140,6 +140,8 @@ public class GenerationSnapshot
     public bool? WatermarkBackgroundEnabled { get; set; }
     /// <summary>是否启用圆角背景</summary>
     public bool? WatermarkRoundedBackgroundEnabled { get; set; }
+    /// <summary>水印预览图 URL</summary>
+    public string? WatermarkPreviewUrl { get; set; }
 
     // ── 溯源 ──
     /// <summary>源 ImageGenRun.Id（内部追踪，不对外展示）</summary>

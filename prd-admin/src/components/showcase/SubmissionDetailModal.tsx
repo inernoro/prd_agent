@@ -13,7 +13,9 @@ import {
   unlikeSubmission,
   type SubmissionDetail,
 } from '@/services/real/submissions';
-import { WatermarkDescriptionGrid } from '@/components/watermark/WatermarkDescriptionGrid';
+import { MarketplaceWatermarkCard } from '@/components/config-management/MarketplaceWatermarkCard';
+import type { MarketplaceCardContext } from '@/components/config-management/ConfigManagementDialogBase';
+import { forkWatermark } from '@/services';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -31,6 +33,15 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
   const [likeCount, setLikeCount] = useState(0);
   const [liking, setLiking] = useState(false);
   const [rightTab, setRightTab] = useState('article');
+  const [wmForkingId, setWmForkingId] = useState<string | null>(null);
+  const watermarkForkCtx: MarketplaceCardContext = {
+    saving: false,
+    forkingId: wmForkingId,
+    onFork: async (id, forkFn) => {
+      setWmForkingId(id);
+      try { await forkFn(); } finally { setWmForkingId(null); }
+    },
+  };
 
   useEffect(() => {
     if (!submissionId) { setDetail(null); return; }
@@ -489,32 +500,37 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
 
                   {/* ── 水印 Tab ── */}
                   {rightTab === 'watermark' && (
-                    <div className="space-y-4">
+                    <div>
                       {genInfo?.watermarkConfigId ? (
-                        <>
-                          {genInfo.watermarkName && (
-                            <div>
-                              <div className="text-xs font-medium mb-2" style={{ color: 'var(--text-muted)' }}>水印配置</div>
-                              <InfoBadge icon={<Droplets size={11} />} label={genInfo.watermarkName} accent />
-                            </div>
-                          )}
-                          <WatermarkDescriptionGrid
-                            data={{
-                              text: genInfo.watermarkText,
-                              fontKey: genInfo.watermarkFontKey,
-                              fontSizePx: genInfo.watermarkFontSizePx,
-                              opacity: genInfo.watermarkOpacity,
-                              anchor: genInfo.watermarkAnchor,
-                              offsetX: genInfo.watermarkOffsetX,
-                              offsetY: genInfo.watermarkOffsetY,
-                              positionMode: genInfo.watermarkPositionMode,
-                              iconEnabled: genInfo.watermarkIconEnabled,
-                              borderEnabled: genInfo.watermarkBorderEnabled,
-                              backgroundEnabled: genInfo.watermarkBackgroundEnabled,
-                              roundedBackgroundEnabled: genInfo.watermarkRoundedBackgroundEnabled,
-                            }}
-                          />
-                        </>
+                        <MarketplaceWatermarkCard
+                          config={{
+                            id: genInfo.watermarkConfigId,
+                            name: genInfo.watermarkName || '水印配置',
+                            text: genInfo.watermarkText || '',
+                            fontKey: genInfo.watermarkFontKey || 'default',
+                            fontSizePx: genInfo.watermarkFontSizePx ?? 0,
+                            opacity: genInfo.watermarkOpacity,
+                            anchor: genInfo.watermarkAnchor,
+                            offsetX: genInfo.watermarkOffsetX,
+                            offsetY: genInfo.watermarkOffsetY,
+                            positionMode: genInfo.watermarkPositionMode,
+                            iconEnabled: genInfo.watermarkIconEnabled,
+                            borderEnabled: genInfo.watermarkBorderEnabled,
+                            backgroundEnabled: genInfo.watermarkBackgroundEnabled,
+                            roundedBackgroundEnabled: genInfo.watermarkRoundedBackgroundEnabled,
+                            previewUrl: genInfo.watermarkPreviewUrl,
+                            forkCount: 0,
+                            createdAt: sub?.createdAt || '',
+                            ownerUserId: sub?.ownerUserId || '',
+                            ownerUserName: sub?.ownerUserName || '',
+                            ownerUserAvatar: avatarUrl,
+                          }}
+                          ctx={watermarkForkCtx}
+                          onFork={async () => {
+                            const res = await forkWatermark({ id: genInfo.watermarkConfigId! });
+                            return res.success;
+                          }}
+                        />
                       ) : (
                         <div className="flex flex-col items-center justify-center py-8 gap-2" style={{ color: 'var(--text-muted, rgba(255,255,255,0.3))' }}>
                           <Droplets size={32} style={{ opacity: 0.3 }} />
