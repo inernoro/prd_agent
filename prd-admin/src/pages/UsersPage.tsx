@@ -1350,31 +1350,29 @@ export default function UsersPage() {
               <div className="flex flex-col">
                 <div className="text-sm font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>角色</div>
                 <div
-                  className="rounded-[10px] p-2 space-y-1 flex-1"
+                  className="rounded-[10px] p-2 space-y-1 flex-1 overflow-y-auto max-h-[260px]"
                   style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}
                 >
-                  {([
-                    { key: 'PM', label: 'PM', desc: '产品经理' },
-                    { key: 'DEV', label: 'DEV', desc: '开发' },
-                    { key: 'QA', label: 'QA', desc: '测试' },
-                    { key: 'ADMIN', label: 'ADMIN', desc: '管理员' },
-                  ] as const).map((r) => (
-                    <label
-                      key={r.key}
-                      className="flex items-center gap-2 px-2 py-1.5 rounded-[6px] cursor-pointer transition-colors hover:bg-white/5"
-                    >
-                      <input
-                        type="radio"
-                        name="createRole"
-                        value={r.key}
-                        checked={createRole === r.key}
-                        onChange={() => setCreateRole(r.key)}
-                        className="accent-[var(--accent-gold)]"
-                      />
-                      <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>{r.label}</span>
-                      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{r.desc}</span>
-                    </label>
-                  ))}
+                  {ALL_ROLES.map((key) => {
+                    const meta = getRoleMeta(key);
+                    return (
+                      <label
+                        key={key}
+                        className="flex items-center gap-2 px-2 py-1.5 rounded-[6px] cursor-pointer transition-colors hover:bg-white/5"
+                      >
+                        <input
+                          type="radio"
+                          name="createRole"
+                          value={key}
+                          checked={createRole === key}
+                          onChange={() => setCreateRole(key)}
+                          className="accent-[var(--accent-gold)]"
+                        />
+                        <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>{key}</span>
+                        <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{meta.label}</span>
+                      </label>
+                    );
+                  })}
                 </div>
               </div>
 
