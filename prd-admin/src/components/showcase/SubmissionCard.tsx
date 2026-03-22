@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Heart, Eye, ImageOff } from 'lucide-react';
+import { Eye, ImageOff } from 'lucide-react';
 import { resolveAvatarUrl, DEFAULT_AVATAR_FALLBACK } from '@/lib/avatar';
+import { HeartLikeButton } from '@/components/effects/HeartLikeButton';
 import type { SubmissionItem } from '@/services/real/submissions';
 
 interface SubmissionCardProps {
@@ -136,22 +137,19 @@ export function SubmissionCard({ item, onLikeToggle, onClick }: SubmissionCardPr
                 : item.viewCount}
             </span>
           )}
-          <button
-            type="button"
-            onClick={handleLike}
-            className="flex items-center gap-1 transition-all duration-200"
+          <div
+            className="flex items-center gap-0.5"
             style={{ color: liked ? '#F43F5E' : 'var(--text-muted, rgba(255,255,255,0.3))' }}
-            disabled={liking}
-            aria-label={liked ? '取消点赞' : '点赞'}
-            aria-pressed={liked}
+            onClick={handleLike}
           >
-            <Heart
-              size={14}
-              fill={liked ? '#F43F5E' : 'none'}
-              className="transition-transform duration-200 hover:scale-125"
+            <HeartLikeButton
+              size={24}
+              liked={liked}
+              heartColor="#F43F5E"
+              disabled={liking}
             />
             {likeCount > 0 && <span className="text-[11px]">{likeCount}</span>}
-          </button>
+          </div>
         </div>
       </div>
     </div>
