@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 using System.Security.Claims;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -18,10 +19,12 @@ namespace PrdAgent.Api.Controllers.Api;
 public class SubmissionsController : ControllerBase
 {
     private readonly MongoDbContext _db;
+    private readonly IAssetStorage _assetStorage;
 
-    public SubmissionsController(MongoDbContext db)
+    public SubmissionsController(MongoDbContext db, IAssetStorage assetStorage)
     {
         _db = db;
+        _assetStorage = assetStorage;
     }
 
     /// <summary>
@@ -162,13 +165,15 @@ public class SubmissionsController : ControllerBase
     }
 
     /// <summary>
-    /// 构建水印预览图的相对 URL（与 WatermarkController.BuildPreviewUrl 保持一致）
+    /// 构建水印预览图 URL（与 WatermarkController.BuildPreviewUrl 保持一致）
+    /// COS 环境返回公网 URL，本地环境返回 API 代理路径
     /// </summary>
-    private static string? BuildWatermarkPreviewUrl(string? watermarkId)
+    private string? BuildWatermarkPreviewUrl(string? watermarkId)
     {
         if (string.IsNullOrWhiteSpace(watermarkId)) return null;
-        var escapedId = Uri.EscapeDataString(watermarkId);
-        return $"/api/watermark/preview/{escapedId}.png";
+        var fileName = $"preview.{watermarkId}.png";
+        var key = $"{AppDomainPaths.NormDomain(AppDomainPaths.DomainWatermark)}/{AppDomainPaths.NormType(AppDomainPaths.TypeImg)}/{fileName}";
+        return _assetStorage.BuildUrlForKey(key);
     }
 
     private string GetUserId()

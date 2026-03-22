@@ -331,19 +331,26 @@ public class DefectAgentController : ControllerBase
         filters.Add(filterBuilder.Eq(x => x.IsDeleted, false));
 
         // 非管理员只能看到自己提交的或分配给自己的
+        // 已驳回的缺陷只对提交人可见（驳回人=指派人不再需要看到）
         if (!isAdmin)
         {
             filters.Add(filterBuilder.Or(
                 filterBuilder.Eq(x => x.ReporterId, userId),
-                filterBuilder.Eq(x => x.AssigneeId, userId)
+                filterBuilder.And(
+                    filterBuilder.Eq(x => x.AssigneeId, userId),
+                    filterBuilder.Ne(x => x.Status, DefectStatus.Rejected)
+                )
             ));
         }
         else if (mine == true)
         {
-            // 管理员也可以筛选自己的
+            // 管理员筛选"我的"时同样排除我驳回的
             filters.Add(filterBuilder.Or(
                 filterBuilder.Eq(x => x.ReporterId, userId),
-                filterBuilder.Eq(x => x.AssigneeId, userId)
+                filterBuilder.And(
+                    filterBuilder.Eq(x => x.AssigneeId, userId),
+                    filterBuilder.Ne(x => x.Status, DefectStatus.Rejected)
+                )
             ));
         }
 
