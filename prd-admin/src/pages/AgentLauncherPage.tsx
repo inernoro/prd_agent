@@ -372,8 +372,16 @@ export default function AgentLauncherPage() {
   }, [items, searchQuery]);
 
   const handleClick = (item: ToolboxItem) => {
-    // Web 版不完善，点击智能助手弹窗引导下载桌面端
-    setDownloadDialogOpen(true);
+    if (item.agentKey === 'prd-agent') {
+      setDownloadDialogOpen(true);
+      return;
+    }
+    if (item.routePath) {
+      navigate(item.routePath);
+    } else {
+      useToolboxStore.getState().selectItem(item);
+      navigate('/ai-toolbox');
+    }
   };
 
   const greeting = getGreeting();
