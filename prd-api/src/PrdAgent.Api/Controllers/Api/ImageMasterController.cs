@@ -766,11 +766,29 @@ public class ImageMasterController : ControllerBase
         rawMessages.Reverse(); // 返回升序
         var messages = rawMessages;
 
-        var assets = await _db.ImageAssets
-            .Find(x => x.WorkspaceId == wid)
-            .SortByDescending(x => x.CreatedAt)
-            .Limit(assetLimit)
-            .ToListAsync(ct);
+        // 文章配图场景：只返回当前版本的图片，隐藏重新生成的旧版本
+        List<ImageAsset> assets;
+        var currentAssetIds = ws.ArticleWorkflow?.AssetIdByMarkerIndex?.Values
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Distinct()
+            .ToHashSet(StringComparer.Ordinal);
+
+        if (ws.ScenarioType == "article-illustration" && currentAssetIds != null && currentAssetIds.Count > 0)
+        {
+            assets = await _db.ImageAssets
+                .Find(x => x.WorkspaceId == wid && currentAssetIds.Contains(x.Id))
+                .SortBy(x => x.ArticleInsertionIndex)
+                .ThenBy(x => x.CreatedAt)
+                .ToListAsync(ct);
+        }
+        else
+        {
+            assets = await _db.ImageAssets
+                .Find(x => x.WorkspaceId == wid)
+                .SortByDescending(x => x.CreatedAt)
+                .Limit(assetLimit)
+                .ToListAsync(ct);
+        }
 
         var canvas = await _db.ImageMasterCanvases
             .Find(x => x.WorkspaceId == wid)
