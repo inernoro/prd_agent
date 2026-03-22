@@ -1,12 +1,13 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { AdminMenuItem } from '@/services/contracts/authz';
+import type { UserRole } from '@/types/admin';
 
 export type AuthUser = {
   userId: string;
   username: string;
   displayName: string;
-  role: 'PM' | 'DEV' | 'QA' | 'ADMIN';
+  role: UserRole;
   userType?: 'Human' | 'Bot' | string;
   botKind?: 'PM' | 'DEV' | 'QA' | string;
   avatarFileName?: string | null;
