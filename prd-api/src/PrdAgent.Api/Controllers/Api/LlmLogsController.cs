@@ -693,7 +693,7 @@ public class LlmLogsController : ControllerBase
 
     /// <summary>
     /// 按模型聚合的近 N 天统计（用于模型管理页展示"请求次数/平均耗时/首字延迟/token"等）
-    /// 说明：LLMRequestLogs 默认 TTL 为 7 天，因此该接口也主要用于近 7 天。
+    /// 说明：LLMRequestLogs 已取消 TTL，保留全部历史数据。
     /// </summary>
     [HttpGet("model-stats")]
     public async Task<IActionResult> ModelStats(

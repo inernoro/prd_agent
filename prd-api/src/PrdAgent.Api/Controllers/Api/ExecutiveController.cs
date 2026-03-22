@@ -71,7 +71,7 @@ public class ExecutiveController : ControllerBase
             .ToListAsync();
         var prevTokens = prevTokenItems.Sum(t => (long)t.input + t.output);
 
-        // LLM 调用数 (from llm_request_logs, TTL aware)
+        // LLM 调用数 (from llm_request_logs)
         var llmCalls = await _db.LlmRequestLogs.CountDocumentsAsync(l => l.StartedAt >= periodStart);
 
         // 缺陷统计
