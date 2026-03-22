@@ -872,6 +872,18 @@ export const api = {
     deleteCollection: (id: string) => `/api/shortcuts/collections/${id}`,
     templates: () => '/api/shortcuts/templates',
   },
+  // ============ 作品投稿展示 ============
+  submissions: {
+    public: () => '/api/submissions/public',
+    mine: () => '/api/submissions/mine',
+    create: () => '/api/submissions',
+    check: () => '/api/submissions/check',
+    autoSubmit: () => '/api/submissions/auto-submit',
+    detail: (id: string) => `/api/submissions/${id}`,
+    visibility: (id: string) => `/api/submissions/${id}/visibility`,
+    delete: (id: string) => `/api/submissions/${id}`,
+    like: (id: string) => `/api/submissions/${id}/likes`,
+  },
 } as const;
 
 export default api;

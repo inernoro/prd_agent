@@ -1,0 +1,36 @@
+---
+globs: ["prd-api/src/**/Controllers/**/*.cs", "prd-api/src/**/Services/**/*.cs"]
+---
+
+# 快照反规范化兜底规则
+
+为性能或离线展示而引入快照（Snapshot / Denormalization）字段时，必须同步维护一条**等价覆盖**的兜底（Fallback）查询路径，供无快照的历史数据使用。
+
+> **根因案例**：`GenerationSnapshot` 快照在投稿时写入，但旧投稿没有快照。Fallback 路径存在两处缺陷：
+> 1. 入口条件过严（`imageAssetId != null`），导致无 imageAssetId 但有 workspaceId 的旧数据被跳过，整个 generationInfo 返回 null
+> 2. Fallback 查询字段不全（缺水印配置、参考图 URL、系统提示词内容），导致前端显示"未使用水印"
+
+## 强制规则
+
+1. **字段对齐**：Fallback 返回的字段集合必须与快照 Builder 生成的字段集合**完全一致**，禁止 Fallback 只返回子集
+2. **入口条件宽松**：Fallback 的进入条件必须覆盖所有"有快照就能展示"的场景，不得依赖快照创建后才补充的字段（如 `imageAssetId`）
+3. **回归自测**：新增快照字段时，必须同步更新 Fallback 路径，并用无快照的旧数据验证展示完整性
+4. **考虑回填**：大量历史数据缺快照时，评估是否需要一次性回填脚本，而非永远依赖 Fallback
+
+## 审计清单
+
+引入或修改 Snapshot 时：
+
+- [ ] Snapshot Builder 的每个字段，Fallback 是否都有对应查询？
+- [ ] Fallback 入口条件是否足够宽松，能覆盖所有历史数据？
+- [ ] 用无快照的真实旧数据调用 API，返回值与有快照的新数据是否一致？
+- [ ] 前端对 null 字段的渲染是否合理（"未使用" vs 隐藏 vs 查询中）？
+
+## 典型触发场景
+
+| 变更类型 | 审计动作 |
+|----------|----------|
+| 新增 Snapshot 字段 | Fallback 同步补全该字段的动态查询 |
+| 修改 Snapshot Builder 逻辑 | 检查 Fallback 是否需同步调整 |
+| 修改 Fallback 入口条件 | 用历史数据验证不会被跳过 |
+| 新增实体引用到 Snapshot | 检查 Fallback 的关联查询覆盖 |

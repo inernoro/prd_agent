@@ -36,6 +36,7 @@ import { GlowingCard } from '@/components/effects/GlowingCard';
 import { NeonButtonGroup } from '@/components/effects/NeonButton';
 import { OrbitLoader } from '@/components/effects/OrbitLoader';
 import { ParticleVortex } from '@/components/effects/ParticleVortex';
+import { HeartLikeButton } from '@/components/effects/HeartLikeButton';
 
 // 预设尺寸
 const PRESET_SIZES = [
@@ -285,6 +286,26 @@ const EFFECT_CONFIGS: EffectConfig[] = [
   },
 
   // ============ 按钮特效 ============
+  {
+    id: 'heart-like',
+    label: '心型点赞',
+    functionName: 'HeartLikeButton',
+    category: 'button',
+    status: 'ready',
+    sourceRef: '心型动画.html',
+    params: [
+      { name: 'size', type: 'number', default: '48', description: '按钮尺寸 (px)' },
+      { name: 'heartColor', type: 'string', default: "'#EA442B'", description: '心型颜色' },
+      { name: 'particleCount', type: 'number', default: '6', description: '粒子数量' },
+      { name: 'liked', type: 'boolean', default: 'false', description: '已点赞状态' },
+    ],
+    performance: { animationDuration: '0.5s', renderer: 'CSS' },
+    render: () => (
+      <div className="flex items-center justify-center h-full" style={{ background: '#1a1a2e' }}>
+        <HeartLikeButton size={80} />
+      </div>
+    ),
+  },
   {
     id: 'success-confetti',
     label: '完结撒花',

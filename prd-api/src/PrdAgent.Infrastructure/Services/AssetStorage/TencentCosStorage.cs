@@ -58,6 +58,8 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         var config = new CosXmlConfig.Builder()
             .IsHttps(true)
             .SetRegion(_region)
+            .SetConnectionTimeoutMs(60_000)   // 连接超时 60s（默认 45s）
+            .SetReadWriteTimeoutMs(120_000)    // 读写超时 120s（默认 45s），避免大图上传超时
             .Build();
 
         // 这里使用长期密钥（非 STS 临时密钥）；durationSecond 对签名有效期参数意义不大，给一个合理值即可。
