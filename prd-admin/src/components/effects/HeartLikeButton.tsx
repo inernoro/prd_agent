@@ -1,6 +1,6 @@
 /**
  * 心型点赞按钮特效 - 基于 thirdparty/ref/心型动画.html
- * 点击时有心跳缩放、粒子爆发、波纹扩散三重动效
+ * 点赞时有心跳缩放、粒子爆发、波纹扩散三重动效；取消赞无特效
  */
 
 import { useCallback, useState } from 'react';
@@ -29,30 +29,35 @@ export function HeartLikeButton({
   className = '',
   disabled = false,
 }: HeartLikeButtonProps) {
-  // 用 React state 管理动画，避免 classList 与 React className 冲突
+  // animKey > 0 且为正数时播放点赞动画；0 或负数不播放
   const [animKey, setAnimKey] = useState(0);
 
   const handleClick = useCallback(() => {
     if (disabled) return;
-    // 递增 key 触发 wrapper 重新挂载，从而重启所有 CSS 动画
-    setAnimKey((k) => k + 1);
+    if (!liked) {
+      // 点赞：递增 key 触发动画
+      setAnimKey((k) => Math.abs(k) + 1);
+    } else {
+      // 取消赞：设为负数，不触发动画
+      setAnimKey((k) => -(Math.abs(k) + 1));
+    }
     onClick?.();
-  }, [disabled, onClick]);
+  }, [disabled, liked, onClick]);
 
   const particles = Array.from({ length: particleCount }, (_, i) => i + 1);
+  const showAnim = animKey > 0;
 
   return (
     <>
       <style>{heartLikeStyles(heartColor)}</style>
       <button
         type="button"
-        className={`hlb-button ${liked ? 'hlb-liked' : ''} ${animKey > 0 ? 'hlb-animate' : ''} ${className}`}
+        className={`hlb-button ${liked ? 'hlb-liked' : ''} ${showAnim ? 'hlb-animate' : ''} ${className}`}
         style={{ fontSize: `${size}px` }}
         onClick={handleClick}
         disabled={disabled}
         aria-label={liked ? '取消点赞' : '点赞'}
       >
-        {/* key 变化时 React 重新挂载 wrapper，CSS 动画自动重新播放 */}
         <div className="hlb-wrapper" key={animKey}>
           <div className="hlb-ripple" />
           <svg className="hlb-heart" width="24" height="24" viewBox="0 0 24 24">
@@ -130,7 +135,7 @@ function heartLikeStyles(heartColor: string) {
       fill: var(--color-heart);
     }
 
-    /* Animate on click */
+    /* Animate on like (not unlike) */
     .hlb-animate .hlb-heart {
       animation: hlb-heart-bounce var(--duration) var(--easing);
     }
