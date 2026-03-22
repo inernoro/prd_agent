@@ -52,7 +52,7 @@ import type { LiteraryAgentModelPool, LiteraryAgentAllModelsResponse } from '@/s
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
 import { BatchSizePicker } from '@/components/ui/BatchSizePicker';
 import { ASPECT_OPTIONS, type SizesByResolution } from '@/lib/imageAspectOptions';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2, Loader2, ArrowLeft } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, Loader2, ArrowLeft } from 'lucide-react';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -62,7 +62,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { extractMarkers, type ArticleMarker } from '@/lib/articleMarkerExtractor';
 import { useDebounce } from '@/hooks/useDebounce';
-import { createSubmission, checkSubmission } from '@/services/real/submissions';
+import { createSubmission, checkSubmission, autoSubmitImages } from '@/services/real/submissions';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
 import { systemDialog } from '@/lib/systemDialog';
@@ -352,6 +352,47 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         }
       })
       .catch(() => {});
+  }, [workspaceId]);
+
+  const [manualSubmitting, setManualSubmitting] = useState(false);
+
+  // 手动投稿：将当前文学创作的所有配图投稿到作品广场
+  const handleManualSubmit = useCallback(async () => {
+    setManualSubmitting(true);
+    try {
+      // 1. 获取 workspace 下所有 asset ID
+      const wsRes = await getVisualAgentWorkspaceDetail({ id: workspaceId });
+      const assets: { id: string }[] = wsRes.success ? (wsRes.data?.assets ?? []) : [];
+      const assetIds = assets.map((a) => a.id).filter(Boolean);
+
+      if (assetIds.length === 0) {
+        toast.warning('当前文章没有已生成的配图');
+        setManualSubmitting(false);
+        return;
+      }
+
+      // 2. 批量投稿所有配图（幂等，已投稿的自动跳过）
+      const submitRes = await autoSubmitImages(assetIds);
+      const count = submitRes.success ? submitRes.data.submitted : 0;
+
+      // 3. 同时创建 workspace 级别的文学投稿（如果还没有）
+      if (!submissionStateRef.current.submitted) {
+        const litRes = await createSubmission({ contentType: 'literary', workspaceId });
+        if (litRes.success) {
+          setSubmissionState({ submitted: true, submissionId: litRes.data.submission?.id });
+        }
+      }
+
+      if (count > 0) {
+        toast.success(`已投稿 ${count} 张配图到作品广场`);
+      } else {
+        toast.info('所有配图均已投稿过');
+      }
+    } catch {
+      toast.error('投稿失败，请重试');
+    } finally {
+      setManualSubmitting(false);
+    }
   }, [workspaceId]);
 
   // 配置弹窗内的水印面板 ref（唯一实例，避免状态不同步）
@@ -2210,9 +2251,27 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 }}
                 title={submissionState.submitted ? '已投稿到作品广场' : autoSubmitEnabled ? '自动投稿已开启，生成配图后自动投稿到作品广场' : '自动投稿已关闭，点击开启'}
               >
-                <Share2 size={13} />
+                <Send size={13} />
                 <span>{submissionState.submitted ? '已投稿' : autoSubmitEnabled ? '投稿' : '投稿关'}</span>
               </button>
+              {!submissionState.submitted && (
+                <button
+                  type="button"
+                  onClick={handleManualSubmit}
+                  disabled={manualSubmitting}
+                  className="h-7 px-2 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0 text-xs"
+                  style={{
+                    color: 'rgba(59, 130, 246, 0.8)',
+                    background: 'rgba(59, 130, 246, 0.08)',
+                    border: '1px solid rgba(59, 130, 246, 0.15)',
+                    opacity: manualSubmitting ? 0.5 : 1,
+                  }}
+                  title="手动将当前作品投稿到作品广场"
+                >
+                  <Send size={13} />
+                  <span>{manualSubmitting ? '投稿中…' : '投稿当前'}</span>
+                </button>
+              )}
             </div>
           </div>
 
