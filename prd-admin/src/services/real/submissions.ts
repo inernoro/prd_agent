@@ -13,6 +13,7 @@ export interface SubmissionItem {
   ownerUserName: string;
   ownerAvatarFileName?: string;
   likeCount: number;
+  viewCount: number;
   likedByMe: boolean;
   createdAt: string;
 }

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  X, Heart, Eye, ChevronLeft, ChevronRight, FileText, Wand2,
+  X, Eye, ChevronLeft, ChevronRight, FileText, Wand2,
   ImageIcon, Loader2, Palette, Brush, Layers, Sparkles, Maximize,
   Droplets, ImagePlus,
 } from 'lucide-react';
+import { HeartLikeButton } from '@/components/effects/HeartLikeButton';
 import { glassPanel } from '@/lib/glassStyles';
 import { resolveAvatarUrl, DEFAULT_AVATAR_FALLBACK } from '@/lib/avatar';
 import { Tabs } from '@/components/ui/Tabs';
@@ -277,16 +278,21 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                       <Eye size={13} />
                       {sub?.viewCount ?? 0}
                     </span>
-                    <button
-                      type="button"
-                      onClick={handleLike}
-                      disabled={liking}
-                      className="flex items-center gap-1 transition-colors duration-150"
-                      style={{ color: liked ? '#F43F5E' : 'var(--text-muted)' }}
-                    >
-                      <Heart size={15} fill={liked ? '#F43F5E' : 'none'} />
-                      <span className="text-xs">{likeCount}</span>
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <HeartLikeButton
+                        size={36}
+                        liked={liked}
+                        heartColor="#F43F5E"
+                        onClick={handleLike}
+                        disabled={liking}
+                      />
+                      <span
+                        className="text-xs"
+                        style={{ color: liked ? '#F43F5E' : 'var(--text-muted)' }}
+                      >
+                        {likeCount}
+                      </span>
+                    </div>
                   </div>
                 </div>
               </div>

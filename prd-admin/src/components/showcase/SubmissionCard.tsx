@@ -122,13 +122,18 @@ export function SubmissionCard({ item, onLikeToggle, onClick }: SubmissionCardPr
 
         {/* Stats: view count + like */}
         <div className="flex items-center gap-2.5 shrink-0">
-          {(item as any).viewCount > 0 && (
+          {item.viewCount > 0 && (
             <span
-              className="flex items-center gap-1 text-[11px]"
-              style={{ color: 'var(--text-muted, rgba(255,255,255,0.3))' }}
+              className="flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full"
+              style={{
+                color: 'rgba(255,255,255,0.65)',
+                background: 'rgba(255,255,255,0.08)',
+              }}
             >
-              <Eye size={12} />
-              {(item as any).viewCount}
+              <Eye size={11} />
+              {item.viewCount >= 10000
+                ? `${(item.viewCount / 10000).toFixed(1)}万`
+                : item.viewCount}
             </span>
           )}
           <button

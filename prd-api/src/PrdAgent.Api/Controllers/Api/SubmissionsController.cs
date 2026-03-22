@@ -262,6 +262,7 @@ public class SubmissionsController : ControllerBase
                 x.OwnerUserName,
                 x.OwnerAvatarFileName,
                 x.LikeCount,
+                x.ViewCount,
                 likedByMe = likedSet.Contains(x.Id),
                 x.CreatedAt,
             };
