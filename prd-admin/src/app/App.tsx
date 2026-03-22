@@ -52,6 +52,7 @@ const MobileAssetsPage = lazy(() => import('@/pages/MobileAssetsPage'));
 const DesktopAssetsPage = lazy(() => import('@/pages/DesktopAssetsPage'));
 const MobileProfilePage = lazy(() => import('@/pages/MobileProfilePage'));
 const MobileNotificationsPage = lazy(() => import('@/pages/MobileNotificationsPage'));
+const PortfolioShowcasePage = lazy(() => import('@/pages/PortfolioShowcasePage'));
 const RichComposerLab = lazy(() => import('@/pages/_dev/RichComposerLab'));
 const MobileAuditPage = lazy(() => import('@/pages/_dev/MobileAuditPage'));
 
@@ -263,6 +264,18 @@ export default function App() {
           }
         />
 
+
+        {/* 作品广场 - 独立全屏页面 */}
+        <Route
+          path="/showcase"
+          element={
+            <RequireAuth>
+              <RequirePermission perm="access">
+                <PortfolioShowcasePage />
+              </RequirePermission>
+            </RequireAuth>
+          }
+        />
 
         {/* 工作流画布 - 独立全屏页面（ReactFlow 的 zustand 会干扰 AppShell 的 Outlet 路由更新） */}
         <Route
