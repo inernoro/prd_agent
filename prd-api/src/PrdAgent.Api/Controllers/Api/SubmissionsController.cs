@@ -402,8 +402,10 @@ public class SubmissionsController : ControllerBase
                     watermarkRoundedBackgroundEnabled = snap.WatermarkRoundedBackgroundEnabled,
                     watermarkPreviewUrl = snap.WatermarkPreviewUrl,
                     watermarkForkCount = snap.WatermarkForkCount,
-                    watermarkOwnerUserName = snap.WatermarkOwnerUserName,
-                    watermarkOwnerAvatarFileName = snap.WatermarkOwnerAvatarFileName,
+                    watermarkOwnerUserName = !string.IsNullOrEmpty(snap.WatermarkOwnerUserName)
+                        ? snap.WatermarkOwnerUserName : submission.OwnerUserName,
+                    watermarkOwnerAvatarFileName = snap.WatermarkOwnerAvatarFileName
+                        ?? submission.OwnerAvatarFileName,
                     // 溯源
                     appKey = snap.AppKey,
                     configModelId = snap.ConfigModelId,
