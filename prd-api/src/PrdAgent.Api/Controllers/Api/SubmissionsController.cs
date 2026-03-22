@@ -114,7 +114,11 @@ public class SubmissionsController : ControllerBase
             var wmOwner = await _db.Users
                 .Find(u => u.UserId == wmConfig.UserId)
                 .FirstOrDefaultAsync();
-            wmOwnerName = wmOwner?.DisplayName ?? wmOwner?.Username ?? wmConfig.UserId;
+            var dn = wmOwner?.DisplayName?.Trim();
+            var un = wmOwner?.Username?.Trim();
+            wmOwnerName = !string.IsNullOrEmpty(dn) ? dn
+                : !string.IsNullOrEmpty(un) ? un
+                : wmConfig.UserId;
             wmOwnerAvatar = wmOwner?.AvatarFileName;
         }
 
@@ -479,7 +483,11 @@ public class SubmissionsController : ControllerBase
                         var fbWmOwner = await _db.Users
                             .Find(u => u.UserId == fbWmConfig.UserId)
                             .FirstOrDefaultAsync();
-                        fbWmOwnerName = fbWmOwner?.DisplayName ?? fbWmOwner?.Username ?? submission.OwnerUserName;
+                        var dn = fbWmOwner?.DisplayName?.Trim();
+                        var un = fbWmOwner?.Username?.Trim();
+                        fbWmOwnerName = !string.IsNullOrEmpty(dn) ? dn
+                            : !string.IsNullOrEmpty(un) ? un
+                            : submission.OwnerUserName;
                         fbWmOwnerAvatar = fbWmOwner?.AvatarFileName ?? submission.OwnerAvatarFileName;
                     }
 
