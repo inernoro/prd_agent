@@ -694,7 +694,7 @@ export default function AppShell() {
             </button>
             <button
               type="button"
-              onClick={() => { logout(); setMobileDrawerOpen(false); }}
+              onClick={() => { logout(); setMobileDrawerOpen(false); navigate('/login', { replace: true }); }}
               className="flex items-center gap-3 px-3 py-2.5 rounded-xl min-h-[44px]"
               style={{ color: 'var(--text-secondary)' }}
             >
@@ -1089,7 +1089,7 @@ export default function AppShell() {
                 <DropdownMenu.Item
                   className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
                   style={{ color: 'var(--text-secondary)' }}
-                  onSelect={() => logout()}
+                  onSelect={() => { logout(); navigate('/login', { replace: true }); }}
                 >
                   <LogOut size={16} className="shrink-0" />
                   <span className="text-[13px]">退出登录</span>
