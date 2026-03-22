@@ -14,6 +14,8 @@ import {
   type SubmissionDetail,
 } from '@/services/real/submissions';
 import { WatermarkDescriptionGrid } from '@/components/watermark/WatermarkDescriptionGrid';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 interface SubmissionDetailModalProps {
   submissionId: string | null;
@@ -297,8 +299,10 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                 <div className="flex-1 min-h-0 overflow-y-auto px-5 py-3" style={{ scrollbarWidth: 'none' }}>
                   {/* ── 正文 Tab（仅文学创作） ── */}
                   {rightTab === 'article' && isLiterary && (
-                    <div className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.7))' }}>
-                      {detail.articleContent || '暂无文章内容'}
+                    <div className="text-sm leading-relaxed arena-markdown" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.7))' }}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {detail.articleContent || '暂无文章内容'}
+                      </ReactMarkdown>
                     </div>
                   )}
 
