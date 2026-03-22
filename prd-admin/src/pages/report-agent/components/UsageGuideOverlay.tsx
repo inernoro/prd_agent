@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   CalendarCheck,
@@ -52,6 +52,7 @@ export function UsageGuideOverlay(props: UsageGuideOverlayProps) {
     onOpenDailyLog,
     onCreateReport,
   } = props;
+  const [leftOffset, setLeftOffset] = useState(16);
 
   useEffect(() => {
     if (!open) return;
@@ -65,6 +66,25 @@ export function UsageGuideOverlay(props: UsageGuideOverlayProps) {
       window.removeEventListener('keydown', onKeyDown);
     };
   }, [open, onClose]);
+
+  useEffect(() => {
+    if (!open) return;
+    const updateLeftOffset = () => {
+      const aside = document.querySelector('aside');
+      if (!(aside instanceof HTMLElement)) {
+        setLeftOffset(16);
+        return;
+      }
+      const rect = aside.getBoundingClientRect();
+      const isVisible = rect.width > 0 && rect.right > 0 && rect.left < window.innerWidth;
+      setLeftOffset(isVisible ? Math.max(16, Math.round(rect.right + 12)) : 16);
+    };
+    updateLeftOffset();
+    window.addEventListener('resize', updateLeftOffset);
+    return () => {
+      window.removeEventListener('resize', updateLeftOffset);
+    };
+  }, [open]);
 
   const items = useMemo<GuideActionItem[]>(() => {
     if (moduleKey === 'report') {
@@ -259,29 +279,33 @@ export function UsageGuideOverlay(props: UsageGuideOverlayProps) {
   }
 
   return createPortal(
-    <div className="fixed inset-x-0 bottom-0 z-[1200]" style={{ top: 62 }}>
+    <div className="fixed right-0 bottom-0 z-[1200]" style={{ top: 58, left: leftOffset }}>
       <button
         type="button"
         aria-label="关闭使用指引"
         className="absolute inset-0"
-        style={{ background: 'rgba(8, 12, 22, 0.38)', backdropFilter: 'blur(2px)' }}
+        style={{ background: 'rgba(8, 12, 22, 0.24)', backdropFilter: 'blur(1px)' }}
         onClick={onClose}
       />
 
-      <div className="absolute top-3 left-4 right-4 md:left-6 md:right-6">
-        <GlassCard variant="subtle" className="mx-auto max-w-[1240px] px-5 py-4 border" style={{ borderColor: 'rgba(99, 102, 241, 0.35)' }}>
+      <div className="absolute top-2 left-3 right-3 md:left-4 md:right-4">
+        <GlassCard
+          variant="subtle"
+          className="mx-auto max-w-[1240px] px-4 py-3 border"
+          style={{ borderColor: 'rgba(99, 102, 241, 0.26)', boxShadow: '0 10px 36px rgba(0, 0, 0, 0.24)' }}
+        >
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div>
-              <div className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              <div className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                 指引模式 · {MODULE_LABELS[moduleKey]}
               </div>
-              <div className="text-[12px] mt-1" style={{ color: 'var(--text-muted)' }}>
+              <div className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>
                 这是辅助引导层，不影响正式功能页面；再次点击右上角“使用指引”可收起。
               </div>
             </div>
           </div>
 
-          <div className="mt-3">
+          <div className="mt-2.5">
             <SegmentedTabs
               items={[
                 { key: 'manager', label: '团队管理员' },
@@ -293,26 +317,26 @@ export function UsageGuideOverlay(props: UsageGuideOverlayProps) {
             />
           </div>
 
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2.5">
             {items.map((item) => {
               const Icon = item.icon;
               return (
                 <div
                   key={item.key}
-                  className="rounded-xl p-3 border"
-                  style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border-primary)' }}
+                  className="rounded-xl p-2.5 border"
+                  style={{ background: 'rgba(255, 255, 255, 0.03)', borderColor: 'var(--border-primary)' }}
                 >
-                  <div className="flex items-center gap-2 mb-2">
-                    <Icon size={14} style={{ color: 'var(--text-secondary)' }} />
-                    <div className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <Icon size={13} style={{ color: 'var(--text-secondary)' }} />
+                    <div className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>
                       {item.title}
                     </div>
                   </div>
-                  <div className="text-[12px] mb-3 min-h-[36px]" style={{ color: 'var(--text-muted)' }}>
+                  <div className="text-[11px] mb-2.5 min-h-[32px]" style={{ color: 'var(--text-muted)' }}>
                     {item.desc}
                   </div>
                   <Button
-                    size="sm"
+                    size="xs"
                     variant="secondary"
                     className="whitespace-nowrap"
                     onClick={() => {
@@ -328,8 +352,8 @@ export function UsageGuideOverlay(props: UsageGuideOverlayProps) {
           </div>
 
           <div
-            className="mt-3 text-[12px] rounded-lg px-3 py-2"
-            style={{ background: 'var(--bg-secondary)', color: 'var(--text-secondary)' }}
+            className="mt-2.5 text-[11px] rounded-lg px-3 py-1.5"
+            style={{ background: 'rgba(255, 255, 255, 0.03)', color: 'var(--text-secondary)' }}
           >
             {flowText}
           </div>

@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   Plus, Calendar, FileText,
   CheckCircle2, Clock, AlertCircle, Send, Pencil,
@@ -133,6 +133,16 @@ export function ReportMainView() {
     setSelectedReportId(id);
     setShowReportEditor(true);
   }, [setSelectedReportId, setShowReportEditor]);
+
+  useEffect(() => {
+    const onOpenDailyLog = () => {
+      setShowDailyLog(true);
+    };
+    window.addEventListener('report-agent:open-daily-log', onOpenDailyLog);
+    return () => {
+      window.removeEventListener('report-agent:open-daily-log', onOpenDailyLog);
+    };
+  }, []);
 
   // ── Editor view ──
   if (showReportEditor) {
