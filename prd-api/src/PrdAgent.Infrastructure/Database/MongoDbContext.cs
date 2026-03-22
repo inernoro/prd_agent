@@ -369,10 +369,9 @@ public class MongoDbContext
         LlmRequestLogs.Indexes.CreateOne(new CreateIndexModel<LlmRequestLog>(
             Builders<LlmRequestLog>.IndexKeys.Ascending(l => l.Provider).Ascending(l => l.Model)));
 
-        // TTL（保留 90 天）：基于 EndedAt（支持成本中心 30 天时间筛选）
+        // EndedAt 普通索引（仅用于查询，不自动删除数据）
         LlmRequestLogs.Indexes.CreateOne(new CreateIndexModel<LlmRequestLog>(
-            Builders<LlmRequestLog>.IndexKeys.Ascending(l => l.EndedAt),
-            new CreateIndexOptions { ExpireAfter = TimeSpan.FromDays(90) }));
+            Builders<LlmRequestLog>.IndexKeys.Ascending(l => l.EndedAt)));
 
         // ApiRequestLogs 索引（系统请求日志）
         ApiRequestLogs.Indexes.CreateOne(new CreateIndexModel<ApiRequestLog>(
@@ -388,10 +387,9 @@ public class MongoDbContext
         ApiRequestLogs.Indexes.CreateOne(new CreateIndexModel<ApiRequestLog>(
             Builders<ApiRequestLog>.IndexKeys.Ascending(x => x.ClientType).Ascending(x => x.ClientId)));
 
-        // TTL（保留 90 天）：基于 EndedAt（支持总裁面板时间筛选）
+        // EndedAt 普通索引（仅用于查询，不自动删除数据）
         ApiRequestLogs.Indexes.CreateOne(new CreateIndexModel<ApiRequestLog>(
-            Builders<ApiRequestLog>.IndexKeys.Ascending(x => x.EndedAt),
-            new CreateIndexOptions { ExpireAfter = TimeSpan.FromDays(90) }));
+            Builders<ApiRequestLog>.IndexKeys.Ascending(x => x.EndedAt)));
 
         // ModelLabExperiments 索引
         ModelLabExperiments.Indexes.CreateOne(new CreateIndexModel<ModelLabExperiment>(
