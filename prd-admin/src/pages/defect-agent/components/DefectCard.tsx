@@ -694,11 +694,11 @@ export function DefectCard({ defect }: DefectCardProps) {
       {/* Image Lightbox - 独立 Radix Dialog，Portal 追加到 body 末尾，自然在上层 */}
       <DialogPrimitive.Root open={!!lightboxImage} onOpenChange={(v) => { if (!v) setLightboxImage(null); }}>
         <DialogPrimitive.Portal>
-          <DialogPrimitive.Overlay className="fixed inset-0" style={{ background: 'rgba(0,0,0,0.85)' }} />
+          <DialogPrimitive.Overlay className="fixed inset-0 z-[200]" style={{ background: 'rgba(0,0,0,0.85)' }} />
           <DialogPrimitive.Content
             aria-describedby={undefined}
             aria-label="图片预览"
-            className="fixed inset-0 flex items-center justify-center p-8 outline-none"
+            className="fixed inset-0 z-[200] flex items-center justify-center p-8 outline-none"
             style={{ background: 'transparent' }}
             onClick={() => setLightboxImage(null)}
           >

@@ -193,8 +193,8 @@ export function DesktopDownloadDialog({ open, onOpenChange }: DesktopDownloadDia
                       <span style={{ color: isDetected ? 'rgb(129, 140, 248)' : 'var(--text-secondary)' }}>{p.icon}</span>
                       <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{p.label}</span>
                       <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{p.desc}</span>
-                      <span className="flex items-center gap-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                        <Download size={10} />
+                      <span className="flex items-center gap-1 text-[10px] text-center break-all leading-tight" style={{ color: 'var(--text-muted)' }}>
+                        <Download size={10} className="shrink-0" />
                         {asset ? asset.name : '下载安装包'}
                       </span>
                     </a>

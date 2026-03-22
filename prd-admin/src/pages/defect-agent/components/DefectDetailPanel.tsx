@@ -1316,11 +1316,11 @@ export function DefectDetailPanel() {
     {/* Image Lightbox - 独立 Radix Dialog，Portal 自动追加到 body 末尾，DOM 顺序在父 Dialog 之后 */}
     <DialogPrimitive.Root open={!!lightboxImage} onOpenChange={(v) => { if (!v) setLightboxImage(null); }}>
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="fixed inset-0" style={{ background: 'rgba(0,0,0,0.9)' }} />
+        <DialogPrimitive.Overlay className="fixed inset-0 z-[200]" style={{ background: 'rgba(0,0,0,0.9)' }} />
         <DialogPrimitive.Content
           aria-describedby={undefined}
           aria-label="图片预览"
-          className="fixed inset-0 flex items-center justify-center p-8 outline-none"
+          className="fixed inset-0 z-[200] flex items-center justify-center p-8 outline-none"
           style={{ background: 'transparent' }}
           onClick={() => setLightboxImage(null)}
         >
