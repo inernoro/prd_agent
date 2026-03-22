@@ -618,7 +618,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
             .filter(u => u.val > 0)
             .sort((a, b) => b.val - a.val);
           const total = sortedEntries.reduce((s, e) => s + e.val, 0);
-          const totalDays = data?.totalDays ?? 1;
+          const maxVal = sortedEntries.length > 0 ? sortedEntries[0].val : 1;
 
           return (
             <DashCard key={dim.key} className="!p-3">
@@ -640,7 +640,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                   {sortedEntries.map((u, idx) => {
                     const mc = idx < 3 ? MEDAL_STYLES[idx] : null;
                     const roleColor = ROLE_COLORS[u.role] ?? D.text3;
-                    const pct = Math.min((u.val / Math.max(1, totalDays)) * 100, 100);
+                    const pct = (u.val / Math.max(1, maxVal)) * 100;
                     return (
                       <div key={u.userId} className="flex items-center gap-2 py-0.5">
                         <span className="w-5 text-center flex-shrink-0">
