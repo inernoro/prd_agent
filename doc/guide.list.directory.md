@@ -155,6 +155,9 @@
 - [CDS 部署架构与冲突分析](design.exec-bt-deployment) `design.exec-bt-deployment`
   > 部署脚本的架构设计与冲突处理策略
 
+- [模型池故障转移与自动探活设计](design.model-pool-failover) `design.model-pool-failover`
+  > 模型池健康检查与故障自动恢复的设计方案
+
 ### 三、指南
 
 - [文档索引目录页](guide.list.directory) `guide.list.directory`
@@ -171,6 +174,42 @@
 
 - [初始化策略实现总结](guide.init-strategy) `guide.init-strategy`
   > 系统初始化与启动策略的实现说明
+
+- [PRD Agent 使用教程](guide.prd-agent) `guide.prd-agent`
+  > PRD 对话与群组管理的完整操作流程
+
+- [视觉创作 Agent 使用教程](guide.visual-agent) `guide.visual-agent`
+  > 三栏式工作区的图像生成与编辑教程
+
+- [文学创作 Agent 使用教程](guide.literary-agent) `guide.literary-agent`
+  > 文章配图、风格选择与批量生成的操作指南
+
+- [缺陷管理 Agent 使用教程](guide.defect-agent) `guide.defect-agent`
+  > 缺陷提交、四种视图、AI 分析与分享协作
+
+- [视频创作 Agent 使用教程](guide.video-agent) `guide.video-agent`
+  > 文章转视频的分镜生成与导出全流程
+
+- [周报管理 Agent 使用教程](guide.report-agent) `guide.report-agent`
+  > 日志记录、Git 集成、AI 周报生成与团队汇总
+
+- [AI 竞技场使用教程](guide.arena) `guide.arena`
+  > 多模型盲测对比、评判揭晓与对战历史
+
+- [工作流引擎使用教程](guide.workflow-agent) `guide.workflow-agent`
+  > 画布编辑器、5 种胶囊节点与执行日志
+
+- [快捷指令使用教程](guide.shortcuts-agent) `guide.shortcuts-agent`
+  > iOS 快捷指令创建、扫码安装与 Siri 触发
+
+- [海鲜市场（配置市场）使用教程](guide.marketplace) `guide.marketplace`
+  > 配置浏览、筛选、Fork 与发布的完整流程
+
+- [工作流画布操作手册](guide.workflow-canvas) `guide.workflow-canvas`
+  > 工作流画布的详细操作参考
+
+- [周报功能完整操作指南](guide.weekly-report) `guide.weekly-report`
+  > 周报功能端到端操作指南
 
 - [CDS 环境变量配置指南](guide.cds-env) `guide.cds-env`
   > CDS 环境变量的配置与使用说明
@@ -304,12 +343,29 @@
 - [周报 2026-W06 (02-03 ~ 02-08)](report.2026-W06) `report.2026-W06`
   > 2026 年第 6 周工作总结
 
+- [文档技能评测报告](report.skill-doc-evaluation) `report.skill-doc-evaluation`
+  > 三种文档技能 vs 已有文档的评测对比报告
+
 ---
 
 ## 变更历史
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-03-20 | 🟢 新增 | `guide.prd-agent` | PRD Agent 使用教程 |
+| 2026-03-20 | 🟢 新增 | `guide.visual-agent` | 视觉创作 Agent 使用教程 |
+| 2026-03-20 | 🟢 新增 | `guide.literary-agent` | 文学创作 Agent 使用教程 |
+| 2026-03-20 | 🟢 新增 | `guide.defect-agent` | 缺陷管理 Agent 使用教程 |
+| 2026-03-20 | 🟢 新增 | `guide.video-agent` | 视频创作 Agent 使用教程 |
+| 2026-03-20 | 🟢 新增 | `guide.report-agent` | 周报管理 Agent 使用教程 |
+| 2026-03-20 | 🟢 新增 | `guide.arena` | AI 竞技场使用教程 |
+| 2026-03-20 | 🟢 新增 | `guide.workflow-agent` | 工作流引擎使用教程 |
+| 2026-03-20 | 🟢 新增 | `guide.shortcuts-agent` | 快捷指令使用教程 |
+| 2026-03-20 | 🟢 新增 | `guide.marketplace` | 海鲜市场（配置市场）使用教程 |
+| 2026-03-20 | 🟢 新增 | `guide.workflow-canvas` | 工作流画布操作手册 |
+| 2026-03-20 | 🟢 新增 | `guide.weekly-report` | 周报功能完整操作指南 |
+| 2026-03-20 | 🟢 新增 | `design.model-pool-failover` | 模型池故障转移与自动探活设计 |
+| 2026-03-20 | 🟢 新增 | `report.skill-doc-evaluation` | 文档技能评测报告 |
 | 2026-03-20 | 新增 | `report.2026-W12` | 周报 2026-W12 (03-16 ~ 03-22) |
 | 2026-03-15 | 🟢 新增 | `report.2026-W11` | 周报 2026-W11 (03-09 ~ 03-15) |
 | 2026-03-15 | 🟢 新增 | `spec.cds` | CDS 功能需求说明书 |

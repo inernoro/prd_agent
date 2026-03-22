@@ -71,14 +71,27 @@ docs:
   design.cds-onboarding: CDS 极简上手设计：一键配置 + 项目扫描技能
   design.ai-report-systems: AI 周报系统市场调研报告
   design.exec-bt-deployment: CDS 部署架构与冲突分析
+  design.model-pool-failover: 模型池故障转移与自动探活设计
 
   # ── 三、指南 ──
-  # 先看全貌索引，再看部署/开发，最后是专题指南
+  # 先看全貌索引，再看部署/开发，然后是 Agent 使用教程，最后是专题指南
   guide.list.directory: 文档索引目录页
   guide.quickstart: PRD Agent 快速部署指南
   guide.development-guide: PRD Agent 开发文档
   guide.cloud-dev-tutorial: Claude Code 云开发教程
   guide.init-strategy: 初始化策略实现总结
+  guide.prd-agent: PRD Agent 使用教程
+  guide.visual-agent: 视觉创作 Agent 使用教程
+  guide.literary-agent: 文学创作 Agent 使用教程
+  guide.defect-agent: 缺陷管理 Agent 使用教程
+  guide.video-agent: 视频创作 Agent 使用教程
+  guide.report-agent: 周报管理 Agent 使用教程
+  guide.arena: AI 竞技场使用教程
+  guide.workflow-agent: 工作流引擎使用教程
+  guide.shortcuts-agent: 快捷指令使用教程
+  guide.marketplace: 海鲜市场（配置市场）使用教程
+  guide.workflow-canvas: 工作流画布操作手册
+  guide.weekly-report: 周报功能完整操作指南
   guide.ai-toolbox-ops: AI 百宝箱运维指南
   guide.cds-env: CDS 环境变量配置指南
   guide.troubleshooting: 疑难杂症排查手册
@@ -128,3 +141,4 @@ docs:
   report.2026-W09: 周报 2026-W09 (02-23 ~ 03-01)
   report.2026-W07: 周报 2026-W07 (02-09 ~ 02-15)
   report.2026-W06: 周报 2026-W06 (02-03 ~ 02-08)
+  report.skill-doc-evaluation: 文档技能评测报告：三技能 vs 已有文档

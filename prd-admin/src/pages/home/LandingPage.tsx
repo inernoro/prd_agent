@@ -6,6 +6,7 @@ import { FeatureBento } from './sections/FeatureBento';
 import { SocialProof } from './sections/SocialProof';
 import { CtaFooter } from './sections/CtaFooter';
 import { DownloadSection } from './sections/DownloadSection';
+import { TutorialSection } from './sections/TutorialSection';
 import { StarfieldBackground } from './components/StarfieldBackground';
 
 // MAP Logo component using official favicon
@@ -115,6 +116,9 @@ export default function LandingPage() {
               <a href="#agent-showcase" className="text-sm text-white/65 hover:text-white transition-colors">
                 产品
               </a>
+              <a href="#tutorials" className="text-sm text-white/65 hover:text-white transition-colors">
+                教程
+              </a>
               <a href="#features" className="text-sm text-white/65 hover:text-white transition-colors">
                 功能
               </a>
@@ -191,6 +195,7 @@ export default function LandingPage() {
             <nav className="px-6 pb-6 space-y-1">
               {[
                 { label: '产品', href: '#agent-showcase' },
+                { label: '教程', href: '#tutorials' },
                 { label: '功能', href: '#features' },
                 { label: '案例', href: '#testimonials' },
                 { label: '下载', href: '#download' },
@@ -236,6 +241,11 @@ export default function LandingPage() {
           activeIndex={activeAgentIndex}
           onIndexChange={setActiveAgentIndex}
         />
+      </div>
+
+      {/* Tutorial center */}
+      <div id="tutorials">
+        <TutorialSection />
       </div>
 
       {/* Feature bento grid */}
