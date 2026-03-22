@@ -35,7 +35,7 @@ const QUICK_AGENTS: QuickAgent[] = [
   { key: 'prd',      label: 'PRD',    icon: MessageSquare, path: '/prd-agent',      color: '#818CF8', bg: 'rgba(129,140,248,0.15)' },
   { key: 'visual',   label: '视觉',   icon: Image,         path: '/visual-agent',   color: '#FB923C', bg: 'rgba(251,146,60,0.15)' },
   { key: 'literary', label: '文学',   icon: PenLine,       path: '/literary-agent', color: '#34D399', bg: 'rgba(52,211,153,0.15)' },
-  { key: 'defect',   label: '缺陷',   icon: Bug,           path: '/defect-agent',   color: '#F87171', bg: 'rgba(248,113,113,0.15)' },
+  { key: 'showcase', label: '广场',   icon: Sparkles,      path: '/showcase',       color: '#A78BFA', bg: 'rgba(167,139,250,0.15)' },
 ];
 
 /* ── Feed 项类型图标 ── */
