@@ -5,6 +5,7 @@ import { Badge } from '@/components/design/Badge';
 import { TabBar } from '@/components/design/TabBar';
 import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
+import { getRoleMeta } from '@/lib/roleConfig';
 import {
   deleteAdminGroup,
   deleteAdminGroupMessages,
@@ -732,7 +733,7 @@ export default function GroupsPage() {
                             </div>
                             <div className="text-xs" style={{ color: 'var(--text-muted)' }}>{m.displayName}</div>
                           </td>
-                          <td className="px-4 py-3" style={{ color: 'var(--text-secondary)' }}>{m.role}</td>
+                          <td className="px-4 py-3" style={{ color: 'var(--text-secondary)' }}>{getRoleMeta(m.role).label}</td>
                           <td className="px-4 py-3" style={{ color: 'var(--text-secondary)' }}>{fmtDate(m.joinedAt)}</td>
                           <td className="px-4 py-3 text-right">
                             <Button
@@ -817,7 +818,7 @@ export default function GroupsPage() {
                           <td className="px-4 py-3">
                             <div className="font-semibold" style={{ color: 'var(--text-primary)' }}>{g.question}</div>
                             <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                              {g.askedBy ? `${g.askedBy.displayName}(${g.askedBy.role})` : '-'} · {fmtDate(g.askedAt)}
+                              {g.askedBy ? `${g.askedBy.displayName}(${getRoleMeta(g.askedBy.role).label})` : '-'} · {fmtDate(g.askedAt)}
                             </div>
                           </td>
                           <td className="px-4 py-3" style={{ color: 'var(--text-secondary)' }}>{g.gapType}</td>

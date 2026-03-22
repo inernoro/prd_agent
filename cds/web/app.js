@@ -3728,7 +3728,14 @@ function renderActivityItem(event) {
   });
 
   let html = '';
-  // AI badge first if applicable
+  // Branch ID first (last segment after '-') to identify which preview is making requests
+  if (event.branchId) {
+    const lastDash = event.branchId.lastIndexOf('-');
+    const branchTail = lastDash >= 0 ? event.branchId.slice(lastDash + 1) : event.branchId;
+    const branchShort = branchTail.length > 16 ? branchTail.slice(0, 13) + '…' : branchTail;
+    html += `<span class="activity-source" style="background:var(--accent-bg);color:var(--accent);font-size:9px;font-weight:600;padding:1px 4px;border-radius:3px" title="${escapeHtml(event.branchId)}">${escapeHtml(branchShort)}</span>`;
+  }
+  // AI badge if applicable
   if (isAi) {
     const agentShort = (event.agent || 'AI').replace(/\s*\(static key\)/, '');
     html += `<span class="activity-source ai" title="${escapeHtml(event.agent || 'AI')}">${escapeHtml(agentShort)}</span>`;
@@ -3845,6 +3852,15 @@ function showActivityDetail(event) {
   html += `<div class="activity-detail-row"><span class="activity-detail-key">状态码</span><span style="${statusClass};font-weight:600">${event.status}</span></div>`;
   html += `<div class="activity-detail-row"><span class="activity-detail-key">耗时</span><span>${event.duration < 1000 ? event.duration + 'ms' : (event.duration / 1000).toFixed(1) + 's'}</span></div>`;
   html += `<div class="activity-detail-row"><span class="activity-detail-key">来源</span><span>${isAi ? '🤖 AI (' + escapeHtml(event.agent || '未知') + ')' : '👤 用户'}</span></div>`;
+  if (event.remoteAddr) {
+    html += `<div class="activity-detail-row"><span class="activity-detail-key">IP</span><span style="font-family:var(--font-mono);font-size:12px">${escapeHtml(event.remoteAddr)}</span></div>`;
+  }
+  if (event.userAgent) {
+    html += `<div class="activity-detail-row"><span class="activity-detail-key">UA</span><span style="font-size:11px;word-break:break-all">${escapeHtml(event.userAgent)}</span></div>`;
+  }
+  if (event.referer) {
+    html += `<div class="activity-detail-row"><span class="activity-detail-key">Referer</span><span style="font-family:var(--font-mono);font-size:11px;word-break:break-all">${escapeHtml(event.referer)}</span></div>`;
+  }
   html += '</div>';
 
   // Request body

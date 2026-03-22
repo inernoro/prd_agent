@@ -139,6 +139,9 @@ public class MongoDbContext
     // AI Toolbox 百宝箱
     public IMongoCollection<ToolboxRun> ToolboxRuns => _database.GetCollection<ToolboxRun>("toolbox_runs");
     public IMongoCollection<ToolboxItem> ToolboxItems => _database.GetCollection<ToolboxItem>("toolbox_items");
+    public IMongoCollection<ToolboxSession> ToolboxSessions => _database.GetCollection<ToolboxSession>("toolbox_sessions");
+    public IMongoCollection<ToolboxMessage> ToolboxMessages => _database.GetCollection<ToolboxMessage>("toolbox_messages");
+    public IMongoCollection<ToolboxShareLink> ToolboxShareLinks => _database.GetCollection<ToolboxShareLink>("toolbox_share_links");
 
     // 统一技能集合
     public IMongoCollection<Skill> Skills => _database.GetCollection<Skill>("skills");
@@ -930,6 +933,18 @@ public class MongoDbContext
         ToolboxItems.Indexes.CreateOne(new CreateIndexModel<ToolboxItem>(
             Builders<ToolboxItem>.IndexKeys.Ascending(x => x.CreatedByUserId).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_toolbox_items_user_created" }));
+        // ToolboxItems：市场公开列表
+        ToolboxItems.Indexes.CreateOne(new CreateIndexModel<ToolboxItem>(
+            Builders<ToolboxItem>.IndexKeys.Ascending(x => x.IsPublic).Descending(x => x.ForkCount),
+            new CreateIndexOptions { Name = "idx_toolbox_items_public_forkcount" }));
+        // ToolboxSessions：按 (userId, itemId, lastActiveAt) 查询
+        ToolboxSessions.Indexes.CreateOne(new CreateIndexModel<ToolboxSession>(
+            Builders<ToolboxSession>.IndexKeys.Ascending(x => x.UserId).Ascending(x => x.ItemId).Descending(x => x.LastActiveAt),
+            new CreateIndexOptions { Name = "idx_toolbox_sessions_user_item_active" }));
+        // ToolboxMessages：按 sessionId + createdAt 查询
+        ToolboxMessages.Indexes.CreateOne(new CreateIndexModel<ToolboxMessage>(
+            Builders<ToolboxMessage>.IndexKeys.Ascending(x => x.SessionId).Ascending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_toolbox_messages_session_created" }));
 
         // ========== Workflow Agent 工作流引擎索引 ==========
 

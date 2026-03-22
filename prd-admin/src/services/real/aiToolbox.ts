@@ -18,12 +18,21 @@ export interface ToolboxItem {
   /** 定制版 Agent 的跳转路由，有此字段则为定制版 */
   routePath?: string;
   prompt?: string;
+  /** 后端返回的 systemPrompt 字段 */
+  systemPrompt?: string;
   modelId?: string;
   /** 启用的能力工具 */
   enabledTools?: string[];
   /** 绑定的工作流 ID（当 enabledTools 包含 workflowTrigger 时使用） */
   workflowId?: string;
   isPublic?: boolean;
+  forkCount?: number;
+  forkedFromId?: string;
+  knowledgeBaseIds?: string[];
+  welcomeMessage?: string;
+  conversationStarters?: string[];
+  temperature?: number;
+  enableMemory?: boolean;
   createdBy?: string;
   createdByName?: string;
   usageCount: number;
@@ -203,6 +212,161 @@ export async function listToolboxAgents(): Promise<ApiResponse<{ agents: AgentIn
   );
 }
 
+// ============ Session Management ============
+
+export interface ToolboxSessionInfo {
+  id: string;
+  itemId: string;
+  userId: string;
+  title: string;
+  messageCount: number;
+  isArchived: boolean;
+  isPinned: boolean;
+  createdAt: string;
+  lastActiveAt: string;
+}
+
+export interface ToolboxMessageInfo {
+  id: string;
+  sessionId: string;
+  role: 'user' | 'assistant';
+  content: string;
+  attachmentIds: string[];
+  createdAt: string;
+}
+
+/**
+ * 获取智能体的会话列表
+ */
+export async function listToolboxSessions(
+  itemId: string,
+  params?: { search?: string; sortBy?: string; includeArchived?: boolean }
+): Promise<ApiResponse<{ sessions: ToolboxSessionInfo[] }>> {
+  const query = new URLSearchParams();
+  if (params?.search) query.set('search', params.search);
+  if (params?.sortBy) query.set('sortBy', params.sortBy);
+  if (params?.includeArchived) query.set('includeArchived', 'true');
+  const queryStr = query.toString();
+  return await apiRequest(
+    `${api.aiToolbox.sessions(itemId)}${queryStr ? `?${queryStr}` : ''}`,
+    { method: 'GET' }
+  );
+}
+
+/**
+ * 创建新会话
+ */
+export async function createToolboxSession(
+  itemId: string
+): Promise<ApiResponse<ToolboxSessionInfo>> {
+  return await apiRequest(api.aiToolbox.sessions(itemId), { method: 'POST' });
+}
+
+/**
+ * 重命名会话
+ */
+export async function renameToolboxSession(
+  sessionId: string,
+  title: string
+): Promise<ApiResponse<{ title: string }>> {
+  return await apiRequest(api.aiToolbox.session(sessionId), {
+    method: 'PATCH',
+    body: { title },
+  });
+}
+
+/**
+ * 删除会话
+ */
+export async function deleteToolboxSession(
+  sessionId: string
+): Promise<ApiResponse<void>> {
+  return await apiRequest(api.aiToolbox.session(sessionId), { method: 'DELETE' });
+}
+
+/**
+ * 切换会话归档状态
+ */
+export async function toggleSessionArchive(
+  sessionId: string
+): Promise<ApiResponse<{ isArchived: boolean }>> {
+  return await apiRequest(api.aiToolbox.sessionArchive(sessionId), { method: 'PATCH' });
+}
+
+/**
+ * 切换会话置顶状态
+ */
+export async function toggleSessionPin(
+  sessionId: string
+): Promise<ApiResponse<{ isPinned: boolean }>> {
+  return await apiRequest(api.aiToolbox.sessionPin(sessionId), { method: 'PATCH' });
+}
+
+/**
+ * 获取会话消息历史
+ */
+export async function listToolboxMessages(
+  sessionId: string,
+  limit = 100
+): Promise<ApiResponse<{ messages: ToolboxMessageInfo[] }>> {
+  return await apiRequest(
+    `${api.aiToolbox.messages(sessionId)}?limit=${limit}`,
+    { method: 'GET' }
+  );
+}
+
+/**
+ * 向会话追加消息
+ */
+export async function appendToolboxMessage(
+  sessionId: string,
+  message: { role: string; content: string; attachmentIds?: string[] }
+): Promise<ApiResponse<ToolboxMessageInfo>> {
+  return await apiRequest(api.aiToolbox.messages(sessionId), {
+    method: 'POST',
+    body: message,
+  });
+}
+
+// ============ Marketplace ============
+
+/**
+ * 获取公开的智能体列表（市场）
+ */
+export async function listMarketplaceItems(
+  params?: { keyword?: string; page?: number; pageSize?: number }
+): Promise<ApiResponse<{ items: ToolboxItem[]; total: number }>> {
+  const query = new URLSearchParams();
+  if (params?.keyword) query.set('keyword', params.keyword);
+  if (params?.page) query.set('page', String(params.page));
+  if (params?.pageSize) query.set('pageSize', String(params.pageSize));
+  const queryStr = query.toString();
+  return await apiRequest(
+    `${api.aiToolbox.marketplace()}${queryStr ? `?${queryStr}` : ''}`,
+    { method: 'GET' }
+  );
+}
+
+/**
+ * Fork 公开的智能体
+ */
+export async function forkToolboxItem(id: string): Promise<ApiResponse<ToolboxItem>> {
+  return await apiRequest(api.aiToolbox.forkItem(id), { method: 'POST' });
+}
+
+/**
+ * 切换智能体的公开状态
+ */
+export async function toggleToolboxItemPublish(
+  id: string,
+  isPublic: boolean
+): Promise<ApiResponse<{ isPublic: boolean }>> {
+  return await apiRequest(api.aiToolbox.publishItem(id), {
+    method: 'PUT',
+    body: { isPublic },
+  });
+}
+
 // ============ Legacy API Functions (for backward compatibility) ============
 
 /**
@@ -369,11 +533,71 @@ export async function uploadAttachment(file: File): Promise<ApiResponse<Uploaded
   }
 }
 
+// ============ Message Feedback ============
+
+/**
+ * 提交消息反馈（点赞/踩）
+ */
+export async function submitMessageFeedback(
+  messageId: string,
+  feedback: 'up' | 'down' | null
+): Promise<ApiResponse<{ messageId: string; feedback: string | null }>> {
+  return await apiRequest(
+    api.aiToolbox.messageFeedback(messageId),
+    {
+      method: 'POST',
+      body: { feedback },
+    }
+  );
+}
+
+// ============ Share ============
+
+/**
+ * 创建对话分享链接
+ */
+export async function createToolboxShareLink(
+  messages: { role: string; content: string; createdAt?: string }[],
+  title?: string,
+  sessionId?: string,
+): Promise<ApiResponse<{ shareId: string; url: string }>> {
+  return await apiRequest(
+    api.aiToolbox.share(),
+    {
+      method: 'POST',
+      body: { messages, title, sessionId },
+    }
+  );
+}
+
+/**
+ * 获取分享对话（公开访问）
+ */
+export async function getToolboxSharedConversation(
+  shareId: string
+): Promise<ApiResponse<{
+  title: string;
+  messages: { role: string; content: string; createdAt: string }[];
+  createdAt: string;
+}>> {
+  return await apiRequest(
+    api.aiToolbox.sharedConversation(shareId),
+    { method: 'GET' }
+  );
+}
+
 // ============ Direct Chat (SSE Streaming) ============
 
 export interface DirectChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  attachmentIds?: string[];
+}
+
+export interface TokenInfo {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
 }
 
 /**
@@ -385,11 +609,14 @@ export function streamDirectChat(
     message: string;
     agentKey?: string;
     itemId?: string;
+    sessionId?: string;
     history?: DirectChatMessage[];
     attachmentIds?: string[];
     onText: (content: string) => void;
+    onThinking?: (content: string) => void;
+    onStart?: (info: { model?: string; platform?: string }) => void;
     onError?: (error: string) => void;
-    onDone?: () => void;
+    onDone?: (tokenInfo?: TokenInfo) => void;
   }
 ): () => void {
   const token = useAuthStore.getState().token;
@@ -413,6 +640,7 @@ export function streamDirectChat(
           message: options.message,
           agentKey: options.agentKey,
           itemId: options.itemId,
+          sessionId: options.sessionId,
           history: options.history,
           attachmentIds: options.attachmentIds,
         }),
@@ -449,13 +677,25 @@ export function streamDirectChat(
           } else if (line === '' && currentEvent && currentData) {
             try {
               const data = JSON.parse(currentData);
-              if (currentEvent === 'text' && data.content) {
+              if (currentEvent === 'start') {
+                options.onStart?.({ model: data.model, platform: data.platform });
+              } else if (currentEvent === 'thinking' && data.content) {
+                options.onThinking?.(data.content);
+              } else if (currentEvent === 'text' && data.content) {
                 options.onText(data.content);
               } else if (currentEvent === 'error') {
                 options.onError?.(data.message || '调用失败');
                 return;
               } else if (currentEvent === 'done') {
-                options.onDone?.();
+                const tokenInfo: TokenInfo | undefined =
+                  data.totalTokens != null
+                    ? {
+                        promptTokens: data.promptTokens,
+                        completionTokens: data.completionTokens,
+                        totalTokens: data.totalTokens,
+                      }
+                    : undefined;
+                options.onDone?.(tokenInfo);
                 return;
               }
             } catch (e) {

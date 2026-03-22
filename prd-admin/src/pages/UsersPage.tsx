@@ -7,6 +7,7 @@ import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { Dialog } from '@/components/ui/Dialog';
 import { getUsers, createUser, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, updateUserAvatar, updateUserDisplayName, initializeUsers, adminImpersonate, getSystemRoles, getUserAuthz, updateUserAuthz, getAdminPermissionCatalog, getUserRateLimit, updateUserRateLimit, bulkDeleteUsers } from '@/services';
 import { MoreVertical, Pencil, Search, UserCog, Users, Gauge, Trash2, FolderOpen, Image, Bug, Zap } from 'lucide-react';
+import { getRoleMeta, ALL_ROLES } from '@/lib/roleConfig';
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { UserProfilePopover } from '@/components/ui/UserProfilePopover';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
@@ -24,7 +25,7 @@ type UserRow = {
   userId: string;
   username: string;
   displayName: string;
-  role: 'PM' | 'DEV' | 'QA' | 'ADMIN';
+  role: import('@/types/admin').UserRole;
   status: 'Active' | 'Disabled';
   userType?: 'Human' | 'Bot' | string;
   botKind?: 'PM' | 'DEV' | 'QA' | string;
@@ -532,13 +533,7 @@ export default function UsersPage() {
     return ok2;
   };
 
-  const roleLabel = (r: UserRow['role']) => {
-    if (r === 'PM') return 'PM';
-    if (r === 'DEV') return 'DEV';
-    if (r === 'QA') return 'QA';
-    if (r === 'ADMIN') return 'ADMIN';
-    return String(r);
-  };
+  const roleLabel = (r: UserRow['role']) => getRoleMeta(r).label;
 
   const onToggleStatus = async (u: UserRow) => {
     if (!u?.userId) return;
@@ -769,10 +764,9 @@ export default function UsersPage() {
               className="min-w-[72px] font-medium"
             >
               <option value="">角色</option>
-              <option value="PM">PM</option>
-              <option value="DEV">DEV</option>
-              <option value="QA">QA</option>
-              <option value="ADMIN">ADMIN</option>
+              {ALL_ROLES.map((r) => (
+                <option key={r} value={r}>{getRoleMeta(r).label}</option>
+              ))}
             </Select>
 
             <Select
@@ -893,13 +887,7 @@ export default function UsersPage() {
                   {items.map((u) => {
                     const displayName = (u.displayName || u.username).trim();
                     const isBot = String(u.userType ?? '').toLowerCase() === 'bot';
-                    const roleColors: Record<string, { bg: string; border: string; text: string }> = {
-                      PM: { bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.25)', text: 'rgba(59,130,246,0.95)' },
-                      DEV: { bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.25)', text: 'rgba(34,197,94,0.95)' },
-                      QA: { bg: 'rgba(168,85,247,0.12)', border: 'rgba(168,85,247,0.25)', text: 'rgba(168,85,247,0.95)' },
-                      ADMIN: { bg: 'rgba(99,102,241,0.12)', border: 'rgba(99,102,241,0.25)', text: 'var(--accent-gold)' },
-                    };
-                    const rc = roleColors[u.role] || roleColors.DEV;
+                    const rm = getRoleMeta(u.role);
                     return (
                       <tr
                         key={u.userId}
@@ -977,10 +965,11 @@ export default function UsersPage() {
                         {/* 角色 */}
                         <td className="py-2 px-2 text-center">
                           <span
-                            className="inline-block text-[10px] font-bold px-1.5 py-0.5 rounded-[4px]"
-                            style={{ background: rc.bg, border: `1px solid ${rc.border}`, color: rc.text }}
+                            className="inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-[4px]"
+                            style={{ background: rm.bg, border: `1px solid ${rm.border}`, color: rm.color }}
                           >
-                            {u.role}
+                            <rm.icon size={10} />
+                            {rm.label}
                           </span>
                         </td>
 
@@ -1074,19 +1063,24 @@ export default function UsersPage() {
                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6" /></svg>
                                   </DropdownMenu.SubTrigger>
                                   <DropdownMenu.Portal>
-                                    <DropdownMenu.SubContent sideOffset={4} className="rounded-[10px] p-1 min-w-[100px]" style={{ zIndex: 91, ...glassPanel }}>
-                                      {(['PM', 'DEV', 'QA', 'ADMIN'] as const).map((r) => (
-                                        <DropdownMenu.Item
-                                          key={r}
-                                          className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
-                                          style={{ color: u.role === r ? roleColors[r].text : 'var(--text-primary)' }}
-                                          disabled={roleUpdatingUserId === u.userId || u.role === r}
-                                          onSelect={(e) => { e.preventDefault(); onSetRole(u, r); }}
-                                        >
-                                          {u.role === r && <span className="w-1.5 h-1.5 rounded-full" style={{ background: roleColors[r].text }} />}
-                                          {r}
-                                        </DropdownMenu.Item>
-                                      ))}
+                                    <DropdownMenu.SubContent sideOffset={4} className="rounded-[10px] p-1 min-w-[120px] max-h-[320px] overflow-auto" style={{ zIndex: 91, ...glassPanel }}>
+                                      {ALL_ROLES.map((r) => {
+                                        const meta = getRoleMeta(r);
+                                        const Icon = meta.icon;
+                                        return (
+                                          <DropdownMenu.Item
+                                            key={r}
+                                            className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
+                                            style={{ color: u.role === r ? meta.color : 'var(--text-primary)' }}
+                                            disabled={roleUpdatingUserId === u.userId || u.role === r}
+                                            onSelect={(e) => { e.preventDefault(); onSetRole(u, r); }}
+                                          >
+                                            <Icon size={13} style={{ color: meta.color, flexShrink: 0 }} />
+                                            {meta.label}
+                                            {u.role === r && <span className="w-1.5 h-1.5 rounded-full ml-auto" style={{ background: meta.color }} />}
+                                          </DropdownMenu.Item>
+                                        );
+                                      })}
                                     </DropdownMenu.SubContent>
                                   </DropdownMenu.Portal>
                                 </DropdownMenu.Sub>
