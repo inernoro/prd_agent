@@ -4,7 +4,7 @@ import {
   MessageSquare, Image, Bug, Zap, Activity,
   BarChart3, RefreshCw, Loader2,
   ArrowUpDown, ChevronUp, ChevronDown, Info,
-  Cpu, Sparkles,
+  Cpu, Sparkles, FileText,
 } from 'lucide-react';
 import { TabBar } from '@/components/design/TabBar';
 import CountUp from '@/components/reactbits/CountUp';
@@ -388,6 +388,7 @@ const DIMENSION_META: Record<string, { icon: typeof Bot; color: string; barColor
   'defects-resolved': { icon: Bug,           color: D.success,  barColor: hexAlpha(D.success, 0.35),  short: '解缺陷' },
   'images':           { icon: Image,         color: D.primary,  barColor: hexAlpha(D.primary, 0.4),   short: '图片' },
   'groups':           { icon: Users,         color: D.text3,    barColor: 'rgba(255,255,255,0.1)',     short: '群组' },
+  'report-agent':     { icon: FileText,      color: D.primary,  barColor: hexAlpha(D.primary, 0.4),   short: '周报' },
 };
 
 
