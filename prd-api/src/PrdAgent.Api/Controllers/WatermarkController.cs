@@ -371,8 +371,9 @@ public class WatermarkController : ControllerBase
             return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
         }
 
+        // 允许查看任何用户的水印预览（预览图片不含敏感信息，且市场功能需要跨用户查看）
         var config = await _db.WatermarkConfigs
-            .Find(x => x.Id == watermarkId && x.UserId == userId)
+            .Find(x => x.Id == watermarkId)
             .FirstOrDefaultAsync(ct);
 
         if (config == null)
@@ -382,6 +383,21 @@ public class WatermarkController : ControllerBase
 
         var fileName = BuildPreviewFileName(watermarkId);
         var (bytes, mime) = await TryReadPreviewAsync(fileName, ct);
+
+        // 自愈：如果预览文件不存在，尝试重新生成
+        if (bytes == null || bytes.Length == 0)
+        {
+            try
+            {
+                await RenderAndSavePreviewAsync(config, ct);
+                (bytes, mime) = await TryReadPreviewAsync(fileName, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to regenerate watermark preview for {Id}", watermarkId);
+            }
+        }
+
         if (bytes == null || bytes.Length == 0)
         {
             return NotFound();
