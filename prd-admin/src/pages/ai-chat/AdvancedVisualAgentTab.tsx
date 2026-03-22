@@ -2025,6 +2025,35 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [autoSubmitEnabled, setAutoSubmitEnabled] = useState(true);
   const autoSubmitEnabledRef = useRef(true);
   useEffect(() => { autoSubmitEnabledRef.current = autoSubmitEnabled; }, [autoSubmitEnabled]);
+  const [manualSubmitting, setManualSubmitting] = useState(false);
+
+  // 手动投稿：将当前画布上所有已生成的图片一次性投稿到作品广场
+  const handleManualSubmit = useCallback(async () => {
+    const assetIds = canvasRef.current
+      .filter((it) => (it.kind ?? 'image') === 'image' && it.status === 'done' && it.assetId)
+      .map((it) => it.assetId!);
+    if (assetIds.length === 0) {
+      toast.warning('当前画布上没有已生成的图片');
+      return;
+    }
+    setManualSubmitting(true);
+    try {
+      const res = await autoSubmitImages(assetIds);
+      if (res.success) {
+        const count = res.data.submitted;
+        if (count > 0) {
+          toast.success(`已投稿 ${count} 张图片到作品广场`);
+        } else {
+          toast.info('所有图片均已投稿过');
+        }
+      }
+    } catch {
+      toast.error('投稿失败，请重试');
+    } finally {
+      setManualSubmitting(false);
+    }
+  }, []);
+
   const [workspace, setWorkspace] = useState<VisualAgentWorkspace | null>(null);
   const [, setBooting] = useState(false);
   const initWorkspaceRef = useRef<{ workspaceId: string; started: boolean }>({ workspaceId: '', started: false });
@@ -7446,7 +7475,22 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   aria-label={autoSubmitEnabled ? '投稿已开启（点击关闭）' : '投稿已关闭（点击开启）'}
                   title={autoSubmitEnabled ? '投稿已开启 — 生成的图片会自动投稿到作品广场，点击关闭' : '投稿已关闭 — 点击开启自动投稿'}
                 >
-                  <Share size={14} />
+                  <Send size={14} />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleManualSubmit}
+                  disabled={manualSubmitting}
+                  className="h-6 px-1.5 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0 text-[11px]"
+                  style={{
+                    color: 'rgba(59, 130, 246, 0.8)',
+                    background: 'rgba(59, 130, 246, 0.08)',
+                    opacity: manualSubmitting ? 0.5 : 1,
+                  }}
+                  title="将当前画布上所有已生成的图片投稿到作品广场"
+                >
+                  <Send size={11} />
+                  <span>{manualSubmitting ? '投稿中…' : '投稿当前'}</span>
                 </button>
                 {/* 移动端：关闭聊天面板按钮 */}
                 {isMobile && (

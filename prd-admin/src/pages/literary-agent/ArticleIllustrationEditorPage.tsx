@@ -52,7 +52,7 @@ import type { LiteraryAgentModelPool, LiteraryAgentAllModelsResponse } from '@/s
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
 import { BatchSizePicker } from '@/components/ui/BatchSizePicker';
 import { ASPECT_OPTIONS, type SizesByResolution } from '@/lib/imageAspectOptions';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Share2, Loader2, ArrowLeft } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, Loader2, ArrowLeft } from 'lucide-react';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -352,6 +352,28 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         }
       })
       .catch(() => {});
+  }, [workspaceId]);
+
+  const [manualSubmitting, setManualSubmitting] = useState(false);
+
+  // 手动投稿：将当前文学创作内容投稿到作品广场
+  const handleManualSubmit = useCallback(async () => {
+    if (submissionStateRef.current.submitted) {
+      toast.info('该作品已投稿过');
+      return;
+    }
+    setManualSubmitting(true);
+    try {
+      const res = await createSubmission({ contentType: 'literary', workspaceId });
+      if (res.success) {
+        setSubmissionState({ submitted: true, submissionId: res.data.submission?.id });
+        toast.success('已投稿到作品广场');
+      }
+    } catch {
+      toast.error('投稿失败，请重试');
+    } finally {
+      setManualSubmitting(false);
+    }
   }, [workspaceId]);
 
   // 配置弹窗内的水印面板 ref（唯一实例，避免状态不同步）
@@ -2210,9 +2232,27 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 }}
                 title={submissionState.submitted ? '已投稿到作品广场' : autoSubmitEnabled ? '自动投稿已开启，生成配图后自动投稿到作品广场' : '自动投稿已关闭，点击开启'}
               >
-                <Share2 size={13} />
+                <Send size={13} />
                 <span>{submissionState.submitted ? '已投稿' : autoSubmitEnabled ? '投稿' : '投稿关'}</span>
               </button>
+              {!submissionState.submitted && (
+                <button
+                  type="button"
+                  onClick={handleManualSubmit}
+                  disabled={manualSubmitting}
+                  className="h-7 px-2 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0 text-xs"
+                  style={{
+                    color: 'rgba(59, 130, 246, 0.8)',
+                    background: 'rgba(59, 130, 246, 0.08)',
+                    border: '1px solid rgba(59, 130, 246, 0.15)',
+                    opacity: manualSubmitting ? 0.5 : 1,
+                  }}
+                  title="手动将当前作品投稿到作品广场"
+                >
+                  <Send size={13} />
+                  <span>{manualSubmitting ? '投稿中…' : '投稿当前'}</span>
+                </button>
+              )}
             </div>
           </div>
 

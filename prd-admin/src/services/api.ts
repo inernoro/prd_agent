@@ -884,6 +884,8 @@ export const api = {
     visibility: (id: string) => `/api/submissions/${id}/visibility`,
     delete: (id: string) => `/api/submissions/${id}`,
     like: (id: string) => `/api/submissions/${id}/likes`,
+    migrate: () => '/api/submissions/migrate',
+    migrateLiterary: () => '/api/submissions/migrate-literary',
   },
 } as const;
 
