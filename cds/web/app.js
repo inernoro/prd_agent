@@ -573,6 +573,7 @@ async function loadRoutingRules() {
 async function refreshRemoteCandidates() {
   const btn = document.getElementById('refreshRemoteBtn');
   btn.disabled = true;
+  _lastRemoteRefreshQuery = '';
   try {
     const data = await api('GET', '/remote-branches');
     remoteCandidates = data.branches || [];
@@ -595,6 +596,9 @@ document.addEventListener('click', (e) => {
   if (!e.target.closest('.branch-picker')) dropdown.classList.add('hidden');
 });
 
+let _branchSearchTimer = null;
+let _lastRemoteRefreshQuery = '';
+
 function filterBranches() {
   const q = searchInput.value.trim().toLowerCase();
 
@@ -610,8 +614,27 @@ function filterBranches() {
   ).slice(0, 15);
 
   if (matchedLocal.length === 0 && matchedRemote.length === 0) {
+    if (q && _lastRemoteRefreshQuery !== q) {
+      // Show "searching online" then auto-refresh remote branches
+      dropdown.innerHTML = '<div class="branch-dropdown-empty"><span class="branch-search-spinner"></span>正在在线搜索…</div>';
+      dropdown.classList.remove('hidden');
+      clearTimeout(_branchSearchTimer);
+      _branchSearchTimer = setTimeout(async () => {
+        _lastRemoteRefreshQuery = q;
+        try {
+          const data = await api('GET', '/remote-branches');
+          remoteCandidates = data.branches || [];
+        } catch (_) { /* ignore */ }
+        // Re-filter with updated remote candidates
+        if (searchInput.value.trim().toLowerCase() === q) {
+          filterBranches();
+        }
+      }, 400);
+      return;
+    }
     dropdown.innerHTML = '<div class="branch-dropdown-empty">没有匹配的分支</div>';
   } else {
+    _lastRemoteRefreshQuery = ''; // Reset so future searches can trigger refresh
     let html = '';
 
     // ── Already added section ──

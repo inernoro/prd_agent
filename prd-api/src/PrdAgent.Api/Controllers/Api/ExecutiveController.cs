@@ -394,7 +394,8 @@ public class ExecutiveController : ControllerBase
             { "/api/literary-agent/", "literary-agent" },
             { "/api/defect-agent/", "defect-agent" },
             { "/api/ai-toolbox/", "ai-toolbox" },
-            { "/api/open-platform/", "open-platform" },
+            { "/api/report-agent/", "report-agent" },
+            { "/api/video-agent/", "video-agent" },
         };
 
         // LLM 维度
@@ -455,38 +456,6 @@ public class ExecutiveController : ControllerBase
             agentUserCounts[appKey] = merged;
         }
 
-        // --- 消息数 (合并 PRD 对话 + 缺陷消息 + 视觉创作消息) ---
-        var prdMsgItems = await _db.Messages
-            .Find(m => m.Timestamp >= periodStart)
-            .Project(m => new { m.SenderId })
-            .ToListAsync();
-        var defectMsgItems = await _db.DefectMessages
-            .Find(m => m.CreatedAt >= periodStart)
-            .Project(m => new { UserId = m.UserId })
-            .ToListAsync();
-        var visualMsgItems = await _db.ImageMasterMessages
-            .Find(m => m.CreatedAt >= periodStart)
-            .Project(m => new { UserId = m.OwnerUserId })
-            .ToListAsync();
-
-        var allMsgSenders = prdMsgItems.Select(m => m.SenderId)
-            .Concat(defectMsgItems.Select(m => m.UserId))
-            .Concat(visualMsgItems.Select(m => m.UserId));
-        var msgByUser = allMsgSenders
-            .Where(uid => uid != null && userIds.Contains(uid))
-            .GroupBy(uid => uid!)
-            .ToDictionary(g => g.Key, g => g.Count());
-
-        // --- 会话数 ---
-        var sessionItems = await _db.Sessions
-            .Find(s => s.CreatedAt >= periodStart)
-            .Project(s => new { s.OwnerUserId })
-            .ToListAsync();
-        var sessionByUser = sessionItems
-            .Where(s => s.OwnerUserId != null && userIds.Contains(s.OwnerUserId))
-            .GroupBy(s => s.OwnerUserId!)
-            .ToDictionary(g => g.Key, g => g.Count());
-
         // --- 缺陷提交 ---
         var dcItems = await _db.DefectReports
             .Find(d => d.CreatedAt >= periodStart)
@@ -508,23 +477,33 @@ public class ExecutiveController : ControllerBase
             .ToDictionary(g => g.Key, g => g.Count());
 
         // --- 图片生成 ---
-        var imgItems = await _db.ImageGenRuns
+        var imgItems = await _db.ImageAssets
             .Find(r => r.CreatedAt >= periodStart)
-            .Project(r => new { r.OwnerAdminId })
+            .Project(r => new { r.OwnerUserId })
             .ToListAsync();
         var imageByUser = imgItems
-            .Where(r => r.OwnerAdminId != null && userIds.Contains(r.OwnerAdminId))
-            .GroupBy(r => r.OwnerAdminId!)
+            .Where(r => !string.IsNullOrEmpty(r.OwnerUserId) && userIds.Contains(r.OwnerUserId))
+            .GroupBy(r => r.OwnerUserId)
             .ToDictionary(g => g.Key, g => g.Count());
 
-        // --- 加入群组数 (总量, 不受时间范围限制) ---
-        var gmItems = await _db.GroupMembers
-            .Find(_ => true)
-            .Project(gm => new { gm.UserId })
+        // --- 工作流执行 ---
+        var wfItems = await _db.WorkflowExecutions
+            .Find(w => w.CreatedAt >= periodStart)
+            .Project(w => new { w.TriggeredBy })
             .ToListAsync();
-        var groupsByUser = gmItems
-            .Where(gm => userIds.Contains(gm.UserId))
-            .GroupBy(gm => gm.UserId)
+        var workflowByUser = wfItems
+            .Where(w => !string.IsNullOrEmpty(w.TriggeredBy) && userIds.Contains(w.TriggeredBy))
+            .GroupBy(w => w.TriggeredBy!)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        // --- 竞技场对战 ---
+        var arenaItems = await _db.ArenaBattles
+            .Find(a => a.CreatedAt >= periodStart)
+            .Project(a => new { a.UserId })
+            .ToListAsync();
+        var arenaByUser = arenaItems
+            .Where(a => !string.IsNullOrEmpty(a.UserId) && userIds.Contains(a.UserId))
+            .GroupBy(a => a.UserId)
             .ToDictionary(g => g.Key, g => g.Count());
 
         // 用户列表 (按活跃度排序)
@@ -543,7 +522,7 @@ public class ExecutiveController : ControllerBase
             .ToList();
 
         // 构建维度
-        var knownAgents = new[] { "prd-agent", "visual-agent", "literary-agent", "defect-agent", "ai-toolbox", "chat", "open-platform" };
+        var knownAgents = new[] { "prd-agent", "visual-agent", "literary-agent", "defect-agent", "ai-toolbox", "report-agent", "video-agent" };
         var dimensions = new List<object>();
 
         foreach (var appKey in knownAgents)
@@ -556,12 +535,11 @@ public class ExecutiveController : ControllerBase
             dimensions.Add(new { key = kv.Key, name = ResolveAgentName(kv.Key), category = "agent", values = kv.Value });
         }
 
-        dimensions.Add(new { key = "messages", name = "对话消息", category = "activity", values = msgByUser });
-        dimensions.Add(new { key = "sessions", name = "会话数", category = "activity", values = sessionByUser });
         dimensions.Add(new { key = "defects-created", name = "缺陷提交", category = "activity", values = defectsCreatedByUser });
         dimensions.Add(new { key = "defects-resolved", name = "缺陷解决", category = "activity", values = defectsResolvedByUser });
         dimensions.Add(new { key = "images", name = "图片生成", category = "activity", values = imageByUser });
-        dimensions.Add(new { key = "groups", name = "加入群组", category = "activity", values = groupsByUser });
+        dimensions.Add(new { key = "workflows", name = "工作流执行", category = "activity", values = workflowByUser });
+        dimensions.Add(new { key = "arena", name = "竞技场对战", category = "activity", values = arenaByUser });
 
         // 计算实际天数: days>0 时等于 days; days=0 时从最早的 LLM 日志到今天
         int totalDays;
@@ -590,9 +568,9 @@ public class ExecutiveController : ControllerBase
         "literary-agent" => "文学创作 Agent",
         "defect-agent" => "缺陷管理 Agent",
         "ai-toolbox" => "AI 百宝箱",
-        "open-platform" => "开放平台",
+        "report-agent" => "周报 Agent",
+        "video-agent" => "视频 Agent",
         "admin" => "管理操作",
-        "chat" => "对话",
         _ => appKey,
     };
 }
