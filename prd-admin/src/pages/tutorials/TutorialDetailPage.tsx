@@ -1,8 +1,8 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, ChevronRight, Lightbulb, AlertTriangle, HelpCircle,
-  Play, ExternalLink, type LucideIcon,
+  Play, type LucideIcon,
   FileText, Palette, PenTool, Bug, Video, FileBarChart, Swords, Workflow, Zap,
 } from 'lucide-react';
 import { tutorialContents, type TutorialContent } from './tutorialData';
@@ -10,7 +10,7 @@ import { tutorialContents, type TutorialContent } from './tutorialData';
 // ── Reusable section components ──
 
 /** Table-of-contents sidebar item */
-function TocItem({ id, label, active, onClick }: { id: string; label: string; active: boolean; onClick: () => void }) {
+function TocItem({ label, active, onClick }: { id: string; label: string; active: boolean; onClick: () => void }) {
   return (
     <button
       type="button"
@@ -155,12 +155,6 @@ export default function TutorialDetailPage() {
     if (!tutorial) return;
     const sectionIds = tutorial.sections.map(s => s.id);
     const handleScroll = () => {
-      const scrollY = window.scrollY || document.documentElement.scrollTop;
-      // Find the container - it's the scrollable div
-      const container = document.getElementById('tutorial-scroll-container');
-      if (!container) return;
-      const containerTop = container.scrollTop;
-
       let current = sectionIds[0] || '';
       for (const sid of sectionIds) {
         const el = document.getElementById(sid);
