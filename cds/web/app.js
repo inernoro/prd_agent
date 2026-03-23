@@ -2093,6 +2093,14 @@ function renderBranches() {
     const card = document.querySelector(`.branch-card[data-branch-id="${branchId}"]`);
     if (card) card.classList.add('is-previewing');
   }
+
+  // Update page title with branch tags for tab identification
+  const allTags = [...new Set(branches.flatMap(b => b.tags || []))];
+  if (allTags.length) {
+    document.title = `[${allTags.join(' · ')}] Cloud Dev Suite`;
+  } else {
+    document.title = 'Cloud Development Suite';
+  }
 }
 
 // ── Build profiles (data only) ──
