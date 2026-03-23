@@ -991,7 +991,8 @@ public class ImageGenRunWorker : BackgroundService
             Prompt = (prompt ?? string.Empty).Trim(),
             CreatedAt = DateTime.UtcNow,
             OriginalUrl = assetUrl,
-            OriginalSha256 = assetSha256
+            OriginalSha256 = assetSha256,
+            ArticleInsertionIndex = run.ArticleMarkerIndex,
         };
         if (asset.Prompt != null && asset.Prompt.Length > 300) asset.Prompt = asset.Prompt[..300].Trim();
 
@@ -1003,6 +1004,55 @@ public class ImageGenRunWorker : BackgroundService
         }
 
         await _db.ImageAssets.InsertOneAsync(asset, cancellationToken: ct);
+
+        // 文学创作：更新 ArticleWorkflow.AssetIdByMarkerIndex（投稿详情依赖此字段查询配图）
+        // 使用 MongoDB 原子 $set 避免并发生图时 read-modify-write 丢失更新
+        if (run.ArticleMarkerIndex.HasValue)
+        {
+            var idx = run.ArticleMarkerIndex.Value;
+            var idxKey = idx.ToString();
+
+            // 1) 原子写入单个字典 key（无需读取整个文档，不受并发影响）
+            var atomicFilter = Builders<ImageMasterWorkspace>.Filter.Eq(x => x.Id, wid)
+                & Builders<ImageMasterWorkspace>.Filter.Ne(x => x.ArticleWorkflow, null);
+            var atomicUpdate = Builders<ImageMasterWorkspace>.Update
+                .Set($"ArticleWorkflow.AssetIdByMarkerIndex.{idxKey}", asset.Id)
+                .Set("ArticleWorkflow.UpdatedAt", DateTime.UtcNow);
+
+            var atomicRes = await _db.ImageMasterWorkspaces.UpdateOneAsync(atomicFilter, atomicUpdate, cancellationToken: ct);
+
+            if (atomicRes.MatchedCount == 0)
+            {
+                // ArticleWorkflow 尚未初始化（极少见）：整体写入
+                var ws = await _db.ImageMasterWorkspaces.Find(x => x.Id == wid).FirstOrDefaultAsync(ct);
+                if (ws != null)
+                {
+                    var wf = new ArticleIllustrationWorkflow();
+                    wf.AssetIdByMarkerIndex[idxKey] = asset.Id;
+                    wf.DoneImageCount = 1;
+                    wf.UpdatedAt = DateTime.UtcNow;
+                    await _db.ImageMasterWorkspaces.UpdateOneAsync(
+                        x => x.Id == wid,
+                        Builders<ImageMasterWorkspace>.Update.Set(x => x.ArticleWorkflow, wf),
+                        cancellationToken: ct);
+                }
+            }
+
+            // 2) 重新计算 DoneImageCount（读取最新字典，允许瞬间偏差但最终一致）
+            var latest = await _db.ImageMasterWorkspaces.Find(x => x.Id == wid).FirstOrDefaultAsync(ct);
+            if (latest?.ArticleWorkflow?.AssetIdByMarkerIndex != null)
+            {
+                var doneCount = latest.ArticleWorkflow.AssetIdByMarkerIndex.Values
+                    .Where(v => !string.IsNullOrWhiteSpace(v))
+                    .Distinct()
+                    .Count();
+                await _db.ImageMasterWorkspaces.UpdateOneAsync(
+                    Builders<ImageMasterWorkspace>.Filter.Eq(x => x.Id, wid),
+                    Builders<ImageMasterWorkspace>.Update
+                        .Set(x => x.ArticleWorkflow!.DoneImageCount, doneCount),
+                    cancellationToken: ct);
+            }
+        }
 
         await TryPatchWorkspaceCanvasAsync(run, asset, ct);
         return asset;

@@ -556,26 +556,34 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                     <div className="text-xs font-medium mb-2" style={{ color: 'var(--text-muted)' }}>
                       同项目作品 ({assets.length})
                     </div>
-                    <div className="flex gap-1.5 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
-                      {assets.map((asset, i) => (
-                        <button
-                          key={asset.id}
-                          type="button"
-                          onClick={() => setSelectedAssetIndex(i)}
-                          className="shrink-0 rounded-lg overflow-hidden transition-all duration-200"
-                          style={{
-                            width: 48,
-                            height: 48,
-                            border: i === selectedAssetIndex
-                              ? '2px solid var(--accent-primary, #818CF8)'
-                              : '2px solid transparent',
-                            opacity: i === selectedAssetIndex ? 1 : 0.6,
-                            transform: i === selectedAssetIndex ? 'translateY(-2px)' : 'none',
-                          }}
-                        >
-                          <img src={asset.url} alt="" className="w-full h-full object-cover" loading="lazy" />
-                        </button>
-                      ))}
+                    <div
+                      className="relative"
+                      style={{
+                        maskImage: 'linear-gradient(to right, #000 calc(100% - 32px), transparent)',
+                        WebkitMaskImage: 'linear-gradient(to right, #000 calc(100% - 32px), transparent)',
+                      }}
+                    >
+                      <div className="flex gap-1.5 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
+                        {assets.map((asset, i) => (
+                          <button
+                            key={asset.id}
+                            type="button"
+                            onClick={() => setSelectedAssetIndex(i)}
+                            className="shrink-0 rounded-lg overflow-hidden transition-all duration-200"
+                            style={{
+                              width: 48,
+                              height: 48,
+                              border: i === selectedAssetIndex
+                                ? '2px solid var(--accent-primary, #818CF8)'
+                                : '2px solid transparent',
+                              opacity: i === selectedAssetIndex ? 1 : 0.6,
+                              transform: i === selectedAssetIndex ? 'translateY(-2px)' : 'none',
+                            }}
+                          >
+                            <img src={asset.url} alt="" className="w-full h-full object-cover" loading="lazy" />
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 )}

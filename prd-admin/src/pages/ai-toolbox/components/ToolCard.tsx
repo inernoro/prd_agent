@@ -216,7 +216,7 @@ export function ToolCard({ item }: ToolCardProps) {
           <img
             src={coverUrl}
             alt={item.name}
-            className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-110 z-0"
+            className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-[1.04] z-0"
             draggable={false}
             onError={() => setCoverFailed(true)}
           />

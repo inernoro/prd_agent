@@ -6,9 +6,12 @@ import {
   listPublicSubmissions,
   likeSubmission,
   unlikeSubmission,
+  adminWithdrawSubmission,
   type SubmissionItem,
 } from '@/services/real/submissions';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { useAuthStore } from '@/stores/authStore';
+import { toast } from '@/lib/toast';
 
 const TABS = [
   { key: '', label: '全部' },
@@ -20,6 +23,8 @@ const PAGE_SIZE = 20;
 
 export function ShowcaseGallery() {
   const { isMobile } = useBreakpoint();
+  const user = useAuthStore((s) => s.user);
+  const isAdmin = user?.role === 'ADMIN';
   const [activeTab, setActiveTab] = useState('');
   const [items, setItems] = useState<SubmissionItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -83,6 +88,27 @@ export function ShowcaseGallery() {
       );
     } else {
       throw new Error(res.error?.message || '操作失败');
+    }
+  };
+
+  const handleAdminWithdraw = async (id: string) => {
+    const target = items.find((x) => x.id === id);
+    const confirmMsg = target
+      ? `确定撤稿「${target.title}」（${target.ownerUserName}）？`
+      : '确定撤稿？';
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      const res = await adminWithdrawSubmission(id);
+      if (res.success) {
+        setItems((prev) => prev.filter((x) => x.id !== id));
+        setTotal((t) => t - 1);
+        toast.success('已撤稿');
+      } else {
+        toast.error(res.error?.message || '撤稿失败');
+      }
+    } catch {
+      toast.error('撤稿失败');
     }
   };
 
@@ -157,7 +183,13 @@ export function ShowcaseGallery() {
           <div style={{ columnCount: isMobile ? 2 : 4, columnGap: isMobile ? 12 : 20 }}>
             {items.map((item) => (
               <div key={item.id} className="break-inside-avoid mb-5">
-                <SubmissionCard item={item} onLikeToggle={handleLikeToggle} onClick={() => setSelectedId(item.id)} />
+                <SubmissionCard
+                  item={item}
+                  onLikeToggle={handleLikeToggle}
+                  onClick={() => setSelectedId(item.id)}
+                  isAdmin={isAdmin}
+                  onAdminWithdraw={handleAdminWithdraw}
+                />
               </div>
             ))}
           </div>

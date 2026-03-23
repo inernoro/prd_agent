@@ -62,7 +62,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { extractMarkers, type ArticleMarker } from '@/lib/articleMarkerExtractor';
 import { useDebounce } from '@/hooks/useDebounce';
-import { createSubmission, checkSubmission, autoSubmitImages } from '@/services/real/submissions';
+import { createSubmission, checkSubmission } from '@/services/real/submissions';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
 import { systemDialog } from '@/lib/systemDialog';
@@ -322,6 +322,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [submissionState, setSubmissionState] = useState<{ submitted: boolean; submissionId?: string }>({ submitted: false });
   const submissionStateRef = useRef(submissionState);
   useEffect(() => { submissionStateRef.current = submissionState; }, [submissionState]);
+  const hasGeneratedImagesRef = useRef(false); // synced from markerRunItems later
   const [markerStreaming, setMarkerStreaming] = useState(false);
   const [thinkingContent, setThinkingContent] = useState('');
   const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
@@ -356,37 +357,26 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   const [manualSubmitting, setManualSubmitting] = useState(false);
 
-  // 手动投稿：将当前文学创作的所有配图投稿到作品广场
+  // 手动投稿：将当前文学创作作为一个 Space 投稿到作品广场
+  // 文学创作按 Workspace 粒度投稿（1 个 Space = 1 个卡片），不创建单图投稿
   const handleManualSubmit = useCallback(async () => {
     setManualSubmitting(true);
     try {
-      // 1. 获取 workspace 下所有 asset ID
-      const wsRes = await getVisualAgentWorkspaceDetail({ id: workspaceId });
-      const assets: { id: string }[] = wsRes.success ? (wsRes.data?.assets ?? []) : [];
-      const assetIds = assets.map((a) => a.id).filter(Boolean);
-
-      if (assetIds.length === 0) {
-        toast.warning('当前文章没有已生成的配图');
-        setManualSubmitting(false);
+      if (submissionStateRef.current.submitted) {
+        toast.info('该文章已投稿到作品广场');
         return;
       }
 
-      // 2. 批量投稿所有配图（幂等，已投稿的自动跳过）
-      const submitRes = await autoSubmitImages(assetIds);
-      const count = submitRes.success ? submitRes.data.submitted : 0;
-
-      // 3. 同时创建 workspace 级别的文学投稿（如果还没有）
-      if (!submissionStateRef.current.submitted) {
-        const litRes = await createSubmission({ contentType: 'literary', workspaceId });
-        if (litRes.success) {
-          setSubmissionState({ submitted: true, submissionId: litRes.data.submission?.id });
-        }
+      // 检查是否至少有一张已完成的配图（通过 ref 读取，避免声明顺序问题）
+      if (!hasGeneratedImagesRef.current) {
+        toast.warning('请先生成至少一张配图后再投稿');
+        return;
       }
 
-      if (count > 0) {
-        toast.success(`已投稿 ${count} 张配图到作品广场`);
-      } else {
-        toast.info('所有配图均已投稿过');
+      const litRes = await createSubmission({ contentType: 'literary', workspaceId });
+      if (litRes.success) {
+        setSubmissionState({ submitted: true, submissionId: litRes.data.submission?.id });
+        toast.success('已投稿到作品广场');
       }
     } catch {
       toast.error('投稿失败，请重试');
@@ -1198,6 +1188,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const markerRunItemsRef = useRef<MarkerRunItem[]>([]);
   useEffect(() => {
     markerRunItemsRef.current = markerRunItems;
+    hasGeneratedImagesRef.current = markerRunItems.some((x) => x.status === 'done');
   }, [markerRunItems]);
 
   const buildPreviewMarkdownWithImages = useCallback(

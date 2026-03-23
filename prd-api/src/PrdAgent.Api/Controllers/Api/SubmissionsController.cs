@@ -359,37 +359,31 @@ public class SubmissionsController : ControllerBase
                 articleContent = workspace.ArticleContent;
             }
 
-            // 优先用 ArticleWorkflow.AssetIdByMarkerIndex 过滤出当前版本的图片，
-            // 避免重新生成后的旧版本图片出现在"同项目作品"列表中
-            var currentAssetIds = workspace?.ArticleWorkflow?.AssetIdByMarkerIndex?.Values
-                .Where(v => !string.IsNullOrWhiteSpace(v))
-                .Distinct()
-                .ToHashSet(StringComparer.Ordinal);
+            // 文学创作 = Space 整体投递，每个插入位取最新一张图
+            var allAssets = await _db.ImageAssets
+                .Find(x => x.WorkspaceId == submission.WorkspaceId)
+                .SortByDescending(x => x.CreatedAt)
+                .ToListAsync();
 
-            List<ImageAsset> assets;
-            if (currentAssetIds != null && currentAssetIds.Count > 0)
-            {
-                // 有工作流记录：只查当前版本的图片
-                assets = await _db.ImageAssets
-                    .Find(x => x.WorkspaceId == submission.WorkspaceId && currentAssetIds.Contains(x.Id))
-                    .SortBy(x => x.ArticleInsertionIndex)
-                    .ThenBy(x => x.CreatedAt)
-                    .ToListAsync();
-            }
-            else
-            {
-                // 兜底：旧数据无工作流记录，按 ArticleInsertionIndex 分组取最新
-                var allAssets = await _db.ImageAssets
-                    .Find(x => x.WorkspaceId == submission.WorkspaceId)
-                    .SortBy(x => x.ArticleInsertionIndex)
-                    .ThenByDescending(x => x.CreatedAt)
-                    .ToListAsync();
-                assets = allAssets
-                    .GroupBy(a => a.ArticleInsertionIndex ?? -1)
+            // 有 index 的按 index 分组取最新（同一位置重新生成时去重）
+            var withIndex = allAssets.Where(a => a.ArticleInsertionIndex.HasValue).ToList();
+            var deduped = withIndex.Count > 0
+                ? withIndex
+                    .GroupBy(a => a.ArticleInsertionIndex!.Value)
                     .Select(g => g.First())
-                    .OrderBy(a => a.ArticleInsertionIndex)
-                    .ToList();
-            }
+                    .ToList()
+                : new List<ImageAsset>();
+
+            // 无 index 的图（历史数据/部署过渡期）也保留，不遗漏
+            var dedupedIds = deduped.Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
+            var withoutIndex = allAssets
+                .Where(a => !a.ArticleInsertionIndex.HasValue && !dedupedIds.Contains(a.Id))
+                .ToList();
+
+            var assets = deduped.Concat(withoutIndex)
+                .OrderBy(a => a.ArticleInsertionIndex ?? int.MaxValue)
+                .ThenBy(a => a.CreatedAt)
+                .ToList();
 
             relatedAssets = assets.Select(a => (object)new
             {
@@ -1148,6 +1142,77 @@ public class SubmissionsController : ControllerBase
             newlySubmitted = newSubmissions.Count,
         }));
     }
+    /// <summary>
+    /// 清理：删除从文学创作 workspace 误创建的 visual 类型投稿（历史数据问题）
+    /// 文学创作应该只有 literary 投稿，不应该有单图 visual 投稿
+    /// </summary>
+    [HttpPost("cleanup-literary-visual")]
+    [AllowAnonymous]
+    public async Task<IActionResult> CleanupLiteraryVisualSubmissions([FromQuery] string? username = null)
+    {
+        // 1. 找到所有文学创作 workspace（article-illustration 场景）
+        var wsFilter = Builders<ImageMasterWorkspace>.Filter.Eq(x => x.ScenarioType, "article-illustration");
+        if (!string.IsNullOrWhiteSpace(username))
+        {
+            var user = await _db.Users.Find(u => u.Username == username).FirstOrDefaultAsync();
+            if (user == null)
+                return NotFound(ApiResponse<object>.Fail("USER_NOT_FOUND", $"用户 {username} 不存在"));
+            wsFilter &= Builders<ImageMasterWorkspace>.Filter.Eq(x => x.OwnerUserId, user.UserId);
+        }
+
+        var literaryWsIds = await _db.ImageMasterWorkspaces
+            .Find(wsFilter)
+            .Project(x => x.Id)
+            .ToListAsync();
+
+        if (literaryWsIds.Count == 0)
+            return Ok(ApiResponse<object>.Ok(new { deleted = 0, literaryWorkspaceCount = 0 }));
+
+        // 2. 删除这些 workspace 下的 visual 类型投稿（它们不应存在）
+        var deleteFilter = Builders<Submission>.Filter.Eq(x => x.ContentType, "visual")
+            & Builders<Submission>.Filter.In(x => x.WorkspaceId, literaryWsIds);
+
+        var result = await _db.Submissions.DeleteManyAsync(deleteFilter);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            deleted = result.DeletedCount,
+            literaryWorkspaceCount = literaryWsIds.Count,
+        }));
+    }
+
+    /// <summary>
+    /// 管理员撤稿：管理员可以删除任何人的公开投稿
+    /// </summary>
+    [HttpDelete("{id}/admin-withdraw")]
+    public async Task<IActionResult> AdminWithdraw(string id)
+    {
+        var userId = GetUserId();
+
+        // 检查是否为管理员
+        var currentUser = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
+        if (currentUser?.Role != UserRole.ADMIN)
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "仅管理员可执行撤稿操作"));
+
+        var submission = await _db.Submissions.Find(x => x.Id == id).FirstOrDefaultAsync();
+        if (submission == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "投稿不存在"));
+
+        // 如果是文学投稿，同步取消 workspace 的公开状态
+        if (submission.ContentType == "literary" && !string.IsNullOrWhiteSpace(submission.WorkspaceId))
+        {
+            await _db.ImageMasterWorkspaces.UpdateOneAsync(
+                x => x.Id == submission.WorkspaceId,
+                Builders<ImageMasterWorkspace>.Update
+                    .Set(x => x.IsPublic, false)
+                    .Set(x => x.PublishedAt, null));
+        }
+
+        await _db.Submissions.DeleteOneAsync(x => x.Id == id);
+
+        return Ok(ApiResponse<object>.Ok(new { deleted = true, submissionId = id }));
+    }
+
     /// <summary>
     /// 回填：为已有投稿补充生成快照（一次性操作）
     /// 处理 visual + literary 类型中尚无 GenerationSnapshot 的投稿
