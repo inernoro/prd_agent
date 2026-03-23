@@ -3,6 +3,29 @@ import { persist } from 'zustand/middleware';
 import type { AdminMenuItem } from '@/services/contracts/authz';
 import type { UserRole } from '@/types/admin';
 
+declare const __BUILD_HASH__: string;
+
+/**
+ * 构建哈希（每次部署变更）。
+ * Zustand persist 的 version 字段基于此值：版本不匹配时自动清空 store，
+ * 强制用户重新登录，彻底解决部署后 localStorage 残留导致的 token 串数据问题。
+ */
+const BUILD_HASH = typeof __BUILD_HASH__ === 'string' ? __BUILD_HASH__ : 'dev';
+
+/**
+ * 将构建哈希转为数字版本号（Zustand persist version 只接受 number）。
+ * 每次部署产生不同的 hash → 不同的 version → 触发 migrate → 清空旧状态。
+ */
+function hashToVersion(hash: string): number {
+  let n = 0;
+  for (let i = 0; i < hash.length; i++) {
+    n = ((n << 5) - n + hash.charCodeAt(i)) | 0;
+  }
+  return Math.abs(n);
+}
+
+const STORE_VERSION = hashToVersion(BUILD_HASH);
+
 export type AuthUser = {
   userId: string;
   username: string;
@@ -46,21 +69,25 @@ type AuthState = {
   logout: () => void;
 };
 
+const INITIAL_STATE = {
+  isAuthenticated: false,
+  user: null,
+  token: null,
+  refreshToken: null,
+  sessionKey: null,
+  permissions: [] as string[],
+  permissionsLoaded: false,
+  isRoot: false,
+  menuCatalog: [] as AdminMenuItem[],
+  menuCatalogLoaded: false,
+  cdnBaseUrl: '',
+  permFingerprint: '',
+};
+
 export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
-      isAuthenticated: false,
-      user: null,
-      token: null,
-      refreshToken: null,
-      sessionKey: null,
-      permissions: [],
-      permissionsLoaded: false,
-      isRoot: false,
-      menuCatalog: [],
-      menuCatalogLoaded: false,
-      cdnBaseUrl: '',
-      permFingerprint: '',
+      ...INITIAL_STATE,
       login: (user, token) => set({ isAuthenticated: true, user, token }),
       setTokens: (token, refreshToken, sessionKey) => set({ token, refreshToken, sessionKey }),
       setPermissions: (permissions) => set({ permissions: Array.isArray(permissions) ? permissions : [] }),
@@ -77,22 +104,17 @@ export const useAuthStore = create<AuthState>()(
         localStorage.clear();
         sessionStorage.clear();
         // 重置 store 状态
-        set({
-          isAuthenticated: false,
-          user: null,
-          token: null,
-          refreshToken: null,
-          sessionKey: null,
-          permissions: [],
-          permissionsLoaded: false,
-          isRoot: false,
-          menuCatalog: [],
-          menuCatalogLoaded: false,
-          cdnBaseUrl: '',
-          permFingerprint: '',
-        });
+        set({ ...INITIAL_STATE });
       },
     }),
-    { name: 'prd-admin-auth' }
+    {
+      name: 'prd-admin-auth',
+      version: STORE_VERSION,
+      migrate: () => {
+        // 版本不匹配（新部署）→ 返回干净的初始状态，强制重新登录
+        // 这会丢弃旧的 token/refreshToken/permissions 等所有缓存数据
+        return { ...INITIAL_STATE };
+      },
+    }
   )
 );
