@@ -854,9 +854,9 @@ button.text-btn:hover { color: var(--accent); }
 @keyframes ai-icon-spin {
   to { transform: rotate(360deg); }
 }
-/* During deploy, AI spinner blinks instead of rotating */
+/* During deploy, hide AI spinner entirely */
 .branch-card.is-deploying .ai-mark-spinner {
-  animation: hammer-blink 1.2s ease-in-out infinite;
+  display: none;
 }
 /* During deploy, AI card border stops spinning — use deploy glow instead */
 .branch-card.is-ai-occupied.is-deploying {
