@@ -198,6 +198,71 @@ public class MongoDbContext
         static bool IsIndexConflict(MongoCommandException ex)
             => ex.CodeName is "IndexOptionsConflict" or "IndexKeySpecsConflict" or "IndexAlreadyExists";
 
+        void EnsureTtlIndex<TDocument>(
+            IMongoCollection<TDocument> collection,
+            string collectionName,
+            string fieldName,
+            TimeSpan expireAfter,
+            string? indexName = null)
+        {
+            var options = new CreateIndexOptions
+            {
+                ExpireAfter = expireAfter
+            };
+            if (!string.IsNullOrWhiteSpace(indexName))
+            {
+                options.Name = indexName;
+            }
+
+            try
+            {
+                collection.Indexes.CreateOne(new CreateIndexModel<TDocument>(
+                    Builders<TDocument>.IndexKeys.Ascending(fieldName),
+                    options));
+            }
+            catch (MongoCommandException ex) when (IsIndexConflict(ex))
+            {
+                // 兼容历史环境：旧索引可能已存在（同 key 但非 TTL），此时 createIndexes 会因选项冲突失败并导致进程启动中断。
+                // 优先按 name 执行 collMod 升级 TTL，若名称不匹配则回退到 keyPattern 升级。
+                var ttlSeconds = (long)Math.Floor(expireAfter.TotalSeconds);
+                try
+                {
+                    var collModByName = new BsonDocument
+                    {
+                        { "collMod", collectionName },
+                        { "index", new BsonDocument
+                            {
+                                { "name", indexName ?? $"{fieldName}_1" },
+                                { "expireAfterSeconds", ttlSeconds }
+                            }
+                        }
+                    };
+                    _database.RunCommand<BsonDocument>(collModByName);
+                }
+                catch (MongoCommandException)
+                {
+                    try
+                    {
+                        var collModByPattern = new BsonDocument
+                        {
+                            { "collMod", collectionName },
+                            { "index", new BsonDocument
+                                {
+                                    { "keyPattern", new BsonDocument(fieldName, 1) },
+                                    { "expireAfterSeconds", ttlSeconds }
+                                }
+                            }
+                        };
+                        _database.RunCommand<BsonDocument>(collModByPattern);
+                    }
+                    catch (MongoCommandException ex2) when (IsIndexConflict(ex2))
+                    {
+                        // ignore
+                    }
+                }
+            }
+        }
+
         // Users索引
         try
         {
@@ -370,10 +435,12 @@ public class MongoDbContext
         LlmRequestLogs.Indexes.CreateOne(new CreateIndexModel<LlmRequestLog>(
             Builders<LlmRequestLog>.IndexKeys.Ascending(l => l.Provider).Ascending(l => l.Model)));
 
-        // TTL（默认保留 7 天）：基于 EndedAt
-        LlmRequestLogs.Indexes.CreateOne(new CreateIndexModel<LlmRequestLog>(
-            Builders<LlmRequestLog>.IndexKeys.Ascending(l => l.EndedAt),
-            new CreateIndexOptions { ExpireAfter = TimeSpan.FromDays(7) }));
+        // TTL（默认保留 7 天）：基于 EndedAt（兼容历史普通索引自动升级）
+        EnsureTtlIndex(
+            LlmRequestLogs,
+            "llmrequestlogs",
+            nameof(LlmRequestLog.EndedAt),
+            TimeSpan.FromDays(7));
 
         // ApiRequestLogs 索引（系统请求日志）
         ApiRequestLogs.Indexes.CreateOne(new CreateIndexModel<ApiRequestLog>(
@@ -389,10 +456,12 @@ public class MongoDbContext
         ApiRequestLogs.Indexes.CreateOne(new CreateIndexModel<ApiRequestLog>(
             Builders<ApiRequestLog>.IndexKeys.Ascending(x => x.ClientType).Ascending(x => x.ClientId)));
 
-        // TTL（默认保留 7 天）：基于 EndedAt
-        ApiRequestLogs.Indexes.CreateOne(new CreateIndexModel<ApiRequestLog>(
-            Builders<ApiRequestLog>.IndexKeys.Ascending(x => x.EndedAt),
-            new CreateIndexOptions { ExpireAfter = TimeSpan.FromDays(7) }));
+        // TTL（默认保留 7 天）：基于 EndedAt（兼容历史普通索引自动升级）
+        EnsureTtlIndex(
+            ApiRequestLogs,
+            "apirequestlogs",
+            nameof(ApiRequestLog.EndedAt),
+            TimeSpan.FromDays(7));
 
         // ModelLabExperiments 索引
         ModelLabExperiments.Indexes.CreateOne(new CreateIndexModel<ModelLabExperiment>(
@@ -684,10 +753,12 @@ public class MongoDbContext
             Builders<OpenPlatformRequestLog>.IndexKeys.Ascending(x => x.AppId).Ascending(x => x.StatusCode)));
         OpenPlatformRequestLogs.Indexes.CreateOne(new CreateIndexModel<OpenPlatformRequestLog>(
             Builders<OpenPlatformRequestLog>.IndexKeys.Descending(x => x.StartedAt)));
-        // TTL（默认保留 30 天）：基于 EndedAt
-        OpenPlatformRequestLogs.Indexes.CreateOne(new CreateIndexModel<OpenPlatformRequestLog>(
-            Builders<OpenPlatformRequestLog>.IndexKeys.Ascending(x => x.EndedAt),
-            new CreateIndexOptions { ExpireAfter = TimeSpan.FromDays(30) }));
+        // TTL（默认保留 30 天）：基于 EndedAt（兼容历史普通索引自动升级）
+        EnsureTtlIndex(
+            OpenPlatformRequestLogs,
+            "openplatformrequestlogs",
+            nameof(OpenPlatformRequestLog.EndedAt),
+            TimeSpan.FromDays(30));
 
         // ModelGroups：按 modelType + isDefaultForType 查询默认分组
         ModelGroups.Indexes.CreateOne(new CreateIndexModel<ModelGroup>(
@@ -872,10 +943,13 @@ public class MongoDbContext
         ChannelRequestLogs.Indexes.CreateOne(new CreateIndexModel<ChannelRequestLog>(
             Builders<ChannelRequestLog>.IndexKeys.Ascending(x => x.TaskId),
             new CreateIndexOptions { Name = "idx_channel_request_logs_task" }));
-        // TTL（默认保留 30 天）
-        ChannelRequestLogs.Indexes.CreateOne(new CreateIndexModel<ChannelRequestLog>(
-            Builders<ChannelRequestLog>.IndexKeys.Ascending(x => x.EndedAt),
-            new CreateIndexOptions { Name = "ttl_channel_request_logs", ExpireAfter = TimeSpan.FromDays(30) }));
+        // TTL（默认保留 30 天）：基于 EndedAt（兼容历史普通索引自动升级）
+        EnsureTtlIndex(
+            ChannelRequestLogs,
+            "channel_request_logs",
+            nameof(ChannelRequestLog.EndedAt),
+            TimeSpan.FromDays(30),
+            "ttl_channel_request_logs");
         // ========== Apple Shortcuts 快捷指令索引 ==========
 
         // UserShortcuts：按 tokenHash 唯一索引（token 校验）；按 userId 查询
@@ -918,9 +992,12 @@ public class MongoDbContext
             Builders<WebhookDeliveryLog>.IndexKeys.Ascending(x => x.AppId).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_webhook_delivery_logs_app_created" }));
         // TTL（默认保留 30 天）
-        WebhookDeliveryLogs.Indexes.CreateOne(new CreateIndexModel<WebhookDeliveryLog>(
-            Builders<WebhookDeliveryLog>.IndexKeys.Ascending(x => x.CreatedAt),
-            new CreateIndexOptions { Name = "ttl_webhook_delivery_logs", ExpireAfter = TimeSpan.FromDays(30) }));
+        EnsureTtlIndex(
+            WebhookDeliveryLogs,
+            "webhook_delivery_logs",
+            nameof(WebhookDeliveryLog.CreatedAt),
+            TimeSpan.FromDays(30),
+            "ttl_webhook_delivery_logs");
 
         // AutomationRules: 按事件类型 + 启用状态索引
         AutomationRules.Indexes.CreateOne(new CreateIndexModel<AutomationRule>(
