@@ -2022,7 +2022,7 @@ function renderBranches() {
     // Deploy logs are accessible via the log button in toolbar.
 
     return `
-      <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} expanded ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''} ${isDeploying ? 'is-deploying' : ''} ${b.isColorMarked ? 'is-color-marked' : ''} ${getAiOccupant(b.id) ? 'is-ai-occupied' : ''}" data-branch-id="${esc(b.id)}">
+      <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} expanded ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''} ${isDeploying ? 'is-deploying' : ''} ${b.isColorMarked ? 'is-color-marked' : ''} ${getAiOccupant(b.id) ? 'is-ai-occupied' : ''} ${b.pinnedCommit ? 'is-pinned' : ''}" data-branch-id="${esc(b.id)}">
         ${isDeploying ? '<div class="deploy-progress-bar"><div class="deploy-progress-bar-fill"></div></div>' : ''}
         <div class="branch-card-toolbar">
           ${!isBusy ? `<span class="update-pull-group" onclick="event.stopPropagation(); pullBranch('${esc(b.id)}')" title="${hasUpdates ? branchUpdates[b.id].behind + ' 个新提交，点击拉取' : '点击拉取最新代码'}">
@@ -2060,7 +2060,10 @@ function renderBranches() {
             </span>
             <a class="branch-name" href="${githubRepoUrl ? githubRepoUrl.replace('github.com', 'github.dev') + '/tree/' + encodeURIComponent(b.branch) : '#'}" target="_blank" onclick="event.stopPropagation(); return confirmOpenGithub(event)" title="在 GitHub.dev 中浏览代码">${ICON.branch} ${esc(b.branch)}</a>
           </div>
-          ${b.subject ? `<div class="branch-card-row2"><span class="branch-commit-msg" title="${esc(b.subject)}">${commitIcon(b.subject)} ${esc(b.subject)}</span></div>` : ''}
+          ${b.subject ? `<div class="branch-card-row2">
+            ${b.pinnedCommit ? `<span class="pinned-commit-badge" onclick="event.stopPropagation(); checkoutCommit('${esc(b.id)}', '', true, '')" title="已固定到历史提交 ${esc(b.pinnedCommit)}，点击恢复最新">📌 ${esc(b.pinnedCommit)}</span>` : ''}
+            <span class="branch-commit-msg" title="${esc(b.subject)}">${commitIcon(b.subject)} ${esc(b.subject)}</span>
+          </div>` : ''}
           ${portBadgesHtml ? `<div class="branch-card-ports">${portBadgesHtml}</div>` : ''}
           ${b.executorId ? `<span class="executor-tag" title="部署在执行器 ${esc(b.executorId)}">⚡ ${esc(b.executorId.replace(/^executor-/, '').slice(0, 20))}</span>` : ''}
         </div>
@@ -3588,15 +3591,57 @@ async function toggleCommitLog(id, triggerEl) {
       el.innerHTML = '<div class="commit-log-empty">暂无提交记录</div>';
       return;
     }
-    el.innerHTML = commits.map((c, i) => `
-      <div class="commit-log-item ${i === 0 ? 'latest' : ''}">
-        ${commitIcon(c.subject)}<code class="commit-hash">${esc(c.hash)}</code>
+    const branch = branches.find(br => br.id === id);
+    const isPinned = branch?.pinnedCommit;
+    el.innerHTML = commits.map((c, i) => {
+      const isCurrent = isPinned ? c.hash === isPinned : i === 0;
+      const isLatest = i === 0;
+      return `
+      <div class="commit-log-item ${isLatest ? 'latest' : ''} ${isCurrent ? 'current' : ''}" onclick="event.stopPropagation(); checkoutCommit('${esc(id)}', '${esc(c.hash)}', ${isLatest}, ${JSON.stringify(esc(c.subject))})" title="点击切换到此提交进行构建">
+        ${isCurrent ? '<span class="commit-current-dot"></span>' : ''}${commitIcon(c.subject)}<code class="commit-hash">${esc(c.hash)}</code>
         <span class="commit-subject">${esc(c.subject)}</span>
         <span class="commit-meta">${esc(c.author)} · ${esc(c.date)}</span>
       </div>
-    `).join('');
+    `;
+    }).join('');
   } catch (e) {
     el.innerHTML = `<div class="commit-log-empty" style="color:var(--red)">${esc(e.message)}</div>`;
+  }
+}
+
+async function checkoutCommit(branchId, hash, isLatest, subject) {
+  closeCommitLog();
+  const branch = branches.find(b => b.id === branchId);
+  if (!branch) return;
+
+  // If clicking on the latest commit and currently pinned, unpin
+  if (isLatest && branch.pinnedCommit) {
+    if (!confirm(`恢复到分支最新提交？\n\n当前固定在: ${branch.pinnedCommit}`)) return;
+    try {
+      await api('POST', `/branches/${encodeURIComponent(branchId)}/unpin`);
+      branch.pinnedCommit = undefined;
+      showToast('已恢复到分支最新提交', 'success');
+      renderBranches();
+    } catch (e) {
+      showToast(`恢复失败: ${e.message}`, 'error');
+    }
+    return;
+  }
+
+  // If clicking on the latest commit and not pinned, nothing to do
+  if (isLatest && !branch.pinnedCommit) return;
+
+  // Confirm checkout to historical commit
+  const msg = `切换到历史提交进行构建？\n\n${hash}  ${subject}\n\n⚠️ 切换后卡片将显示警示状态\n点击「部署」会自动恢复到分支最新`;
+  if (!confirm(msg)) return;
+
+  try {
+    const data = await api('POST', `/branches/${encodeURIComponent(branchId)}/checkout/${encodeURIComponent(hash)}`);
+    branch.pinnedCommit = data.pinnedCommit || hash;
+    showToast(`已切换到提交 ${hash}`, 'success');
+    renderBranches();
+  } catch (e) {
+    showToast(`切换失败: ${e.message}`, 'error');
   }
 }
 

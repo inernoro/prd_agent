@@ -112,6 +112,8 @@ export interface BranchEntry {
   tags?: string[];
   /** Color marker — marks branch as actively debugging, prevents priority stop */
   isColorMarked?: boolean;
+  /** Pinned to a specific commit hash (detached HEAD). Cleared on next deploy. */
+  pinnedCommit?: string;
   /** ID of the executor this branch is deployed on (scheduler mode) */
   executorId?: string;
 }

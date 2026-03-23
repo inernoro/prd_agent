@@ -310,6 +310,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const pullResult = await worktreeService.pull(entry.branch, entry.worktreePath);
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
 
+      // Clear pinned commit — deploy always restores to branch HEAD
+      if (entry.pinnedCommit) {
+        entry.pinnedCommit = undefined;
+        logEvent({ step: 'pull', status: 'done', title: '已取消固定提交，恢复到分支最新', timestamp: new Date().toISOString() });
+      }
       stateService.save();
 
       // ── Compute startup layers (topological sort by dependsOn) ──
@@ -563,6 +568,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       logEvent({ step: 'pull', status: 'running', title: '正在拉取最新代码...', timestamp: new Date().toISOString() });
       const pullResult = await worktreeService.pull(entry.branch, entry.worktreePath);
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
+
+      // Clear pinned commit — deploy always restores to branch HEAD
+      if (entry.pinnedCommit) {
+        entry.pinnedCommit = undefined;
+        logEvent({ step: 'pull', status: 'done', title: '已取消固定提交，恢复到分支最新', timestamp: new Date().toISOString() });
+        stateService.save();
+      }
 
       // Build & run the single profile
       logEvent({ step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}...`, timestamp: new Date().toISOString() });
@@ -867,6 +879,93 @@ export function createBranchRouter(deps: RouterDeps): Router {
           return { hash, subject, author, date };
         });
       res.json({ commits });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ── Checkout specific commit (pin to historical commit) ──
+
+  router.post('/branches/:id/checkout/:hash', async (req, res) => {
+    const { id, hash } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    if (entry.status === 'building' || entry.status === 'starting') {
+      res.status(409).json({ error: '分支正在构建/启动中，无法切换提交' });
+      return;
+    }
+
+    try {
+      // Validate the commit hash exists
+      const verify = await shell.exec(
+        `git cat-file -t ${hash}`,
+        { cwd: entry.worktreePath, timeout: 5_000 },
+      );
+      if (verify.exitCode !== 0 || verify.stdout.trim() !== 'commit') {
+        res.status(400).json({ error: `无效的提交: ${hash}` });
+        return;
+      }
+
+      // Checkout the specific commit (detached HEAD)
+      const result = await shell.exec(
+        `git checkout ${hash}`,
+        { cwd: entry.worktreePath, timeout: 10_000 },
+      );
+      if (result.exitCode !== 0) {
+        throw new Error(combinedOutput(result));
+      }
+
+      // Get full short hash + subject for display
+      const logResult = await shell.exec(
+        'git log --oneline -1',
+        { cwd: entry.worktreePath, timeout: 5_000 },
+      );
+      const [pinnedHash, ...subjectParts] = logResult.stdout.trim().split(' ');
+      const pinnedSubject = subjectParts.join(' ');
+
+      entry.pinnedCommit = pinnedHash || hash;
+      stateService.save();
+
+      res.json({
+        message: `已切换到提交 ${pinnedHash}`,
+        pinnedCommit: entry.pinnedCommit,
+        subject: pinnedSubject,
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ── Unpin commit (restore to branch HEAD) ──
+
+  router.post('/branches/:id/unpin', async (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+
+    try {
+      const result = await shell.exec(
+        `git checkout ${entry.branch}`,
+        { cwd: entry.worktreePath, timeout: 10_000 },
+      );
+      if (result.exitCode !== 0) {
+        // Worktree may not have local branch, reset to origin
+        const reset = await shell.exec(
+          `git checkout -B ${entry.branch} origin/${entry.branch}`,
+          { cwd: entry.worktreePath, timeout: 10_000 },
+        );
+        if (reset.exitCode !== 0) throw new Error(combinedOutput(reset));
+      }
+
+      entry.pinnedCommit = undefined;
+      stateService.save();
+      res.json({ message: '已恢复到分支最新提交' });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }

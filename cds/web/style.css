@@ -1289,10 +1289,18 @@ a.branch-name:hover { color: var(--accent); }
   padding: 7px 12px; font-size: 12px;
   border-bottom: 1px solid var(--border);
   transition: background var(--transition);
+  cursor: pointer; position: relative;
 }
 .commit-log-item:last-child { border-bottom: none; }
 .commit-log-item:hover { background: var(--bg-hover); }
 .commit-log-item.latest { background: rgba(163, 230, 53, 0.04); }
+.commit-log-item.current { background: rgba(251, 191, 36, 0.08); }
+.commit-log-item.current .commit-hash { color: var(--yellow); }
+.commit-current-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--yellow); flex-shrink: 0;
+  align-self: center;
+}
 .commit-hash {
   color: var(--accent); font-family: var(--font-mono);
   font-size: 11px; flex-shrink: 0; letter-spacing: 0.01em;
@@ -1428,6 +1436,46 @@ a.branch-name:hover { color: var(--accent); }
 /* During deploy, hide the busy spinner — hammer blink + progress bar are enough */
 .branch-card.is-deploying.is-busy::after {
   display: none;
+}
+
+/* ════════════════ Pinned Commit State ════════════════ */
+
+.branch-card.is-pinned {
+  border: 2px solid rgba(251, 146, 60, 0.5);
+  box-shadow:
+    0 0 0 1px rgba(251, 146, 60, 0.15),
+    0 0 12px 1px rgba(251, 146, 60, 0.08),
+    0 2px 8px rgba(0,0,0,0.2);
+}
+.branch-card.is-pinned .branch-card-row2 {
+  background: rgba(251, 146, 60, 0.06);
+  border-radius: 4px;
+  padding: 2px 6px;
+  margin: -2px -6px;
+}
+.pinned-commit-badge {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 11px; font-family: var(--font-mono);
+  color: var(--yellow); background: rgba(251, 191, 36, 0.12);
+  padding: 1px 8px; border-radius: 10px;
+  cursor: pointer; flex-shrink: 0;
+  border: 1px solid rgba(251, 191, 36, 0.2);
+  transition: background var(--transition), border-color var(--transition);
+}
+.pinned-commit-badge:hover {
+  background: rgba(251, 191, 36, 0.2);
+  border-color: rgba(251, 191, 36, 0.4);
+}
+[data-theme="light"] .branch-card.is-pinned {
+  border-color: rgba(234, 118, 22, 0.5);
+  box-shadow:
+    0 0 0 1px rgba(234, 118, 22, 0.15),
+    0 0 12px 1px rgba(234, 118, 22, 0.06),
+    0 2px 8px rgba(0,0,0,0.08);
+}
+[data-theme="light"] .pinned-commit-badge {
+  color: #b45309; background: rgba(234, 118, 22, 0.1);
+  border-color: rgba(234, 118, 22, 0.25);
 }
 
 /* ════════════════ Toast ════════════════ */
