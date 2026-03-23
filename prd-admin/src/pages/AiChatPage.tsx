@@ -111,7 +111,7 @@ const AssistantMarkdown = memo(function AssistantMarkdown({ content }: { content
 });
 
 const MAX_MESSAGE_CHARS = 16 * 1024;
-const ALLOWED_TEXT_EXTS = ['.md', '.mdc', '.txt', '.log', '.json', '.csv'];
+const ALLOWED_TEXT_EXTS = ['.md', '.mdc', '.txt', '.log', '.json', '.csv', '.xml', '.html', '.htm'];
 
 function normalizeFileName(name: string) {
   return (name ?? '').trim();
@@ -1282,11 +1282,12 @@ export default function AiChatPage() {
       <input
         ref={addDocFileRef}
         type="file"
-        accept=".md,.mdc,.txt"
+        accept=".md,.mdc,.txt,.csv,.json,.xml,.html,.htm,.log"
+        multiple
         className="hidden"
         onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) handleAddDocument(f);
+          const files = Array.from(e.target.files ?? []);
+          for (const f of files) handleAddDocument(f);
           e.target.value = '';
         }}
       />

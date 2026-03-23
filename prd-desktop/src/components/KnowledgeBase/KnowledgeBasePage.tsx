@@ -1,7 +1,8 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { invoke } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
 import { useGroupListStore } from '../../stores/groupListStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { usePrdCitationPreviewStore } from '../../stores/prdCitationPreviewStore';
@@ -10,6 +11,9 @@ import { DOCUMENT_TYPE_LABELS } from '../../types';
 
 const DOC_TYPES: DocumentType[] = ['product', 'technical', 'design', 'reference'];
 
+/** 二进制格式（需通过文件上传接口，服务端提取文本） */
+const BINARY_EXTENSIONS = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx'];
+
 export default function KnowledgeBasePage() {
   const { activeGroupId, documentLoaded, document, documents, sessionId, setDocuments } = useSessionStore();
   const { groups } = useGroupListStore();
@@ -17,8 +21,6 @@ export default function KnowledgeBasePage() {
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
   const group = groups.find((g) => g.groupId === activeGroupId) ?? null;
 
   // 更新文档类型
@@ -49,37 +51,17 @@ export default function KnowledgeBasePage() {
     }
   }, [sessionId, documents, setDocuments]);
 
-  // 添加资料文件
-  const handleAddDocument = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const input = e.currentTarget;
-    const file = input.files?.[0] ?? null;
-    input.value = '';
-    if (!file || !sessionId) return;
-
-    const ext = file.name.toLowerCase();
-    if (!ext.endsWith('.md') && !ext.endsWith('.mdc') && !ext.endsWith('.txt')) {
-      setError('仅支持 .md、.mdc、.txt 格式文件');
-      return;
-    }
-
+  // 刷新文档列表
+  const refreshDocuments = useCallback(async () => {
+    if (!sessionId) return;
     try {
-      setBusy(true);
-      setError('');
-      const content = await file.text();
-
-      const resp = await invoke<ApiResponse<{ sessionId: string; documentId: string; documentIds: string[]; documentMetas: Array<{ documentId: string; documentType: string }> }>>(
-        'add_document_to_session',
-        { sessionId, content }
+      // 重新获取会话信息以获取最新的 documentIds
+      const sessionResp = await invoke<ApiResponse<{ documentIds: string[]; documentMetas: Array<{ documentId: string; documentType: string }> }>>(
+        'get_session',
+        { groupId: activeGroupId }
       );
-
-      if (!resp.success) {
-        setError(resp.error?.message || '添加资料失败');
-        return;
-      }
-
-      // 重新获取所有文档元信息
-      const newDocIds: string[] = resp.data?.documentIds ?? [];
-      const metaMap = new Map((resp.data?.documentMetas ?? []).map(m => [m.documentId, m.documentType as DocumentType]));
+      const newDocIds: string[] = sessionResp.data?.documentIds ?? [];
+      const metaMap = new Map((sessionResp.data?.documentMetas ?? []).map(m => [m.documentId, m.documentType as DocumentType]));
       const newDocs: Document[] = [];
       for (const did of newDocIds) {
         try {
@@ -90,14 +72,74 @@ export default function KnowledgeBasePage() {
           }
         } catch { /* skip */ }
       }
-      setDocuments(newDocs);
+      if (newDocs.length > 0) setDocuments(newDocs);
+    } catch { /* skip */ }
+  }, [sessionId, activeGroupId, setDocuments]);
+
+  // 使用 Tauri 原生文件选择器添加资料（支持多文件 + 二进制格式）
+  const handleAddDocumentNative = useCallback(async () => {
+    if (!sessionId) return;
+
+    try {
+      const selected = await open({
+        multiple: true,
+        filters: [{
+          name: '文档',
+          extensions: ['md', 'mdc', 'txt', 'csv', 'json', 'xml', 'html', 'htm', 'log',
+                       'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'],
+        }],
+      });
+
+      if (!selected) return; // user cancelled
+      const paths = Array.isArray(selected) ? selected : [selected];
+      if (paths.length === 0) return;
+
+      setBusy(true);
+      setError('');
+      const errors: string[] = [];
+
+      for (const filePath of paths) {
+        try {
+          const ext = filePath.toLowerCase().slice(filePath.lastIndexOf('.'));
+          if (BINARY_EXTENSIONS.includes(ext)) {
+            // 二进制文件：通过文件上传接口
+            const resp = await invoke<ApiResponse<{ sessionId: string; documentId: string; documentIds: string[]; documentMetas: Array<{ documentId: string; documentType: string }> }>>(
+              'upload_file_to_session',
+              { sessionId, filePath }
+            );
+            if (!resp.success) {
+              errors.push(resp.error?.message || `上传失败: ${filePath}`);
+            }
+          } else {
+            // 文本文件：读取内容后通过文本接口
+            const content = await invoke<string>('read_text_file', { filePath });
+            const resp = await invoke<ApiResponse<{ sessionId: string; documentId: string; documentIds: string[]; documentMetas: Array<{ documentId: string; documentType: string }> }>>(
+              'add_document_to_session',
+              { sessionId, content }
+            );
+            if (!resp.success) {
+              errors.push(resp.error?.message || `添加失败: ${filePath}`);
+            }
+          }
+        } catch (err) {
+          errors.push(`处理失败: ${filePath}`);
+          console.error(err);
+        }
+      }
+
+      if (errors.length > 0) {
+        setError(errors.join('\n'));
+      }
+
+      // 刷新文档列表
+      await refreshDocuments();
     } catch (err) {
       setError('添加资料失败');
       console.error(err);
     } finally {
       setBusy(false);
     }
-  }, [sessionId, setDocuments]);
+  }, [sessionId, refreshDocuments]);
 
   // 移除资料文件
   const handleRemoveDocument = useCallback(async (documentId: string) => {
@@ -188,18 +230,11 @@ export default function KnowledgeBasePage() {
               <div className="text-lg font-semibold">资料文件 ({docList.length})</div>
               <button
                 disabled={busy}
-                onClick={() => fileInputRef.current?.click()}
+                onClick={handleAddDocumentNative}
                 className="px-3 py-1.5 rounded-lg ui-control text-sm hover:opacity-80 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {busy ? '处理中...' : '+ 追加资料'}
               </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".md,.mdc,.txt"
-                className="hidden"
-                onChange={handleAddDocument}
-              />
             </div>
 
             {error && (
@@ -276,7 +311,7 @@ export default function KnowledgeBasePage() {
             <div className="text-lg font-semibold mb-2">说明</div>
             <div className="prose prose-sm dark:prose-invert max-w-none">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {`- **主文档**：对话的焦点，AI 回答围绕主文档展开，默认为产品文档类型。\n- **文档类型**：可为每个文档设置类型（产品文档、技术文档、设计文档、参考资料），AI 会根据类型调整引用权重。\n- **多文档支持**：追加的资料文件会作为 AI 对话时的参考上下文，与主文档一同被引用。\n- **未绑定 PRD 的群组**：不允许进行任何基于 PRD 的问答/讲解。`}
+                {`- **主文档**：对话的焦点，AI 回答围绕主文档展开，默认为产品文档类型。\n- **文档类型**：可为每个文档设置类型（产品文档、技术文档、设计文档、参考资料），AI 会根据类型调整引用权重。\n- **多文档支持**：追加的资料文件会作为 AI 对话时的参考上下文，与主文档一同被引用。支持一次选择多个文件。\n- **支持格式**：.md / .txt / .pdf / .docx / .xlsx / .pptx / .csv / .json / .xml / .html 等。二进制文件（PDF/Office）会自动提取文本内容。\n- **未绑定 PRD 的群组**：不允许进行任何基于 PRD 的问答/讲解。`}
               </ReactMarkdown>
             </div>
           </div>
