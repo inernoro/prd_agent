@@ -166,6 +166,14 @@ export async function checkSubmission(params: { imageAssetId?: string; workspace
   );
 }
 
+/** 管理员撤稿 */
+export async function adminWithdrawSubmission(id: string) {
+  return apiRequest<{ deleted: boolean; submissionId: string }>(
+    api.submissions.adminWithdraw(id),
+    { method: 'DELETE' },
+  );
+}
+
 /** 迁移：批量将指定用户的视觉创作素材投稿 */
 export async function migrateVisualSubmissions(username = 'admin') {
   return apiRequest<{

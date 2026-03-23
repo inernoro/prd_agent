@@ -886,6 +886,7 @@ export const api = {
     like: (id: string) => `/api/submissions/${id}/likes`,
     migrate: () => '/api/submissions/migrate',
     migrateLiterary: () => '/api/submissions/migrate-literary',
+    adminWithdraw: (id: string) => `/api/submissions/${id}/admin-withdraw`,
   },
 } as const;
 

@@ -322,6 +322,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [submissionState, setSubmissionState] = useState<{ submitted: boolean; submissionId?: string }>({ submitted: false });
   const submissionStateRef = useRef(submissionState);
   useEffect(() => { submissionStateRef.current = submissionState; }, [submissionState]);
+  const hasGeneratedImagesRef = useRef(false); // synced from markerRunItems later
   const [markerStreaming, setMarkerStreaming] = useState(false);
   const [thinkingContent, setThinkingContent] = useState('');
   const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
@@ -363,6 +364,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     try {
       if (submissionStateRef.current.submitted) {
         toast.info('该文章已投稿到作品广场');
+        return;
+      }
+
+      // 检查是否至少有一张已完成的配图（通过 ref 读取，避免声明顺序问题）
+      if (!hasGeneratedImagesRef.current) {
+        toast.warning('请先生成至少一张配图后再投稿');
         return;
       }
 
@@ -1181,6 +1188,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const markerRunItemsRef = useRef<MarkerRunItem[]>([]);
   useEffect(() => {
     markerRunItemsRef.current = markerRunItems;
+    hasGeneratedImagesRef.current = markerRunItems.some((x) => x.status === 'done');
   }, [markerRunItems]);
 
   const buildPreviewMarkdownWithImages = useCallback(
