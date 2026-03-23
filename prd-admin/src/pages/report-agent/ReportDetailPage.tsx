@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, MessageSquare, CornerDownRight, Trash2, Send, GitCompare, X, CheckCircle2 } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -12,7 +12,7 @@ import { PlanComparisonPanel } from './components/PlanComparisonPanel';
 import { RichTextMarkdownContent } from './components/RichTextMarkdownContent';
 import { ReportLikeBar } from './components/ReportLikeBar';
 
-type TabKey = 'content' | 'plan-comparison';
+type TabKey = 'content' | 'plan-comparison' | 'viewers';
 
 const sectionColors = [
   'rgba(59, 130, 246, 0.9)',
@@ -33,8 +33,6 @@ export default function ReportDetailPage() {
   const [commentText, setCommentText] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [viewSummary, setViewSummary] = useState<ReportViewSummary>({ count: 0, totalViewCount: 0, users: [] });
-  const [showViewPopover, setShowViewPopover] = useState(false);
-  const viewPopoverRef = useRef<HTMLDivElement | null>(null);
   const currentUserId = useAuthStore((s) => s.user?.userId);
 
   // Return dialog state
@@ -146,17 +144,6 @@ export default function ReportDetailPage() {
     return map;
   }, [comments]);
 
-  useEffect(() => {
-    if (!showViewPopover) return;
-    const onMouseDown = (event: MouseEvent) => {
-      if (!viewPopoverRef.current?.contains(event.target as Node)) {
-        setShowViewPopover(false);
-      }
-    };
-    window.addEventListener('mousedown', onMouseDown);
-    return () => window.removeEventListener('mousedown', onMouseDown);
-  }, [showViewPopover]);
-
   if (!report) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -168,6 +155,7 @@ export default function ReportDetailPage() {
   const tabs: { key: TabKey; label: string }[] = [
     { key: 'content', label: '内容' },
     { key: 'plan-comparison', label: '计划比对' },
+    { key: 'viewers', label: '查看的人' },
   ];
 
   return (
@@ -209,76 +197,7 @@ export default function ReportDetailPage() {
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2 relative" ref={viewPopoverRef}>
-            <button
-              className="text-[11px] px-2.5 py-1 rounded-full transition-opacity hover:opacity-85"
-              style={{
-                color: 'rgba(220, 38, 38, 0.88)',
-                background: 'rgba(220, 38, 38, 0.08)',
-                border: '1px solid rgba(220, 38, 38, 0.2)',
-              }}
-              onClick={() => setShowViewPopover((prev) => !prev)}
-              title="查看浏览记录"
-            >
-              已阅 {viewSummary.count}
-            </button>
-            {showViewPopover && (
-              <div
-                className="absolute top-[38px] right-0 z-30 w-[320px] rounded-xl p-3"
-                style={{
-                  background: 'var(--bg-primary)',
-                  border: '1px solid var(--border-primary)',
-                  boxShadow: '0 10px 28px rgba(0, 0, 0, 0.16)',
-                }}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>浏览记录</span>
-                  <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                    去重 {viewSummary.count} · 总计 {viewSummary.totalViewCount}
-                  </span>
-                </div>
-                {viewSummary.users.length === 0 ? (
-                  <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>暂无浏览记录</div>
-                ) : (
-                  <div className="max-h-[280px] overflow-auto space-y-1.5 pr-1">
-                    {viewSummary.users.map((user) => (
-                      <div
-                        key={user.userId}
-                        className="flex items-center justify-between rounded-lg px-2.5 py-1.5"
-                        style={{ background: 'var(--bg-secondary)' }}
-                      >
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-[12px] truncate" style={{ color: 'var(--text-primary)' }}>{user.userName}</span>
-                            {user.isFrequent && (
-                              <span
-                                className="text-[10px] px-1.5 py-0.5 rounded-md"
-                                style={{ color: 'rgba(16, 185, 129, 0.9)', background: 'rgba(16, 185, 129, 0.1)' }}
-                              >
-                                常来
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                            {new Date(user.lastViewedAt).toLocaleString('zh-CN', {
-                              year: 'numeric',
-                              month: '2-digit',
-                              day: '2-digit',
-                              hour: '2-digit',
-                              minute: '2-digit',
-                              second: '2-digit',
-                            })}
-                          </div>
-                        </div>
-                        <span className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>
-                          {user.viewCount} 次
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
+          <div className="flex items-center gap-2">
             {(report.status === WeeklyReportStatus.Submitted || report.status === WeeklyReportStatus.Reviewed) && (
               <>
                 <Button variant="secondary" size="sm" onClick={() => setShowReturnDialog(true)}>退回</Button>
@@ -309,7 +228,7 @@ export default function ReportDetailPage() {
         {tabs.map((tab) => (
           <button
             key={tab.key}
-            className="px-4 py-2.5 text-[13px] rounded-t-lg transition-all duration-200"
+            className="px-4 py-2.5 text-[13px] rounded-t-lg transition-all duration-200 whitespace-nowrap"
             style={{
               color: activeTab === tab.key ? 'var(--text-primary)' : 'var(--text-muted)',
               background: activeTab === tab.key ? 'var(--bg-secondary)' : 'transparent',
@@ -326,6 +245,14 @@ export default function ReportDetailPage() {
                 style={{ background: 'rgba(59, 130, 246, 0.08)', color: 'rgba(59, 130, 246, 0.9)' }}
               >
                 {comments.length}
+              </span>
+            )}
+            {tab.key === 'viewers' && viewSummary.count > 0 && (
+              <span
+                className="ml-2 text-[10px] px-2 py-0.5 rounded-full font-medium"
+                style={{ background: 'rgba(220, 38, 38, 0.08)', color: 'rgba(220, 38, 38, 0.88)' }}
+              >
+                {viewSummary.count}
               </span>
             )}
           </button>
@@ -390,7 +317,7 @@ export default function ReportDetailPage() {
                               comment={comment}
                               isMine={comment.authorUserId === currentUserId}
                               onDelete={() => handleDeleteComment(comment.id)}
-                                onReply={() => openCommentInput(idx, comment.id)}
+                              onReply={() => openCommentInput(idx, comment.id)}
                             />
                             {replies.map((reply) => (
                               <div key={reply.id} className="ml-4 mt-1">
@@ -398,7 +325,7 @@ export default function ReportDetailPage() {
                                   comment={reply}
                                   isMine={reply.authorUserId === currentUserId}
                                   onDelete={() => handleDeleteComment(reply.id)}
-                                    onReply={() => openCommentInput(idx, comment.id)}
+                                  onReply={() => openCommentInput(idx, comment.id)}
                                   isReply
                                 />
                               </div>
@@ -450,6 +377,77 @@ export default function ReportDetailPage() {
         {activeTab === 'plan-comparison' && reportId && (
           <GlassCard variant="subtle" className="p-6">
             <PlanComparisonPanel reportId={reportId} />
+          </GlassCard>
+        )}
+
+        {activeTab === 'viewers' && (
+          <GlassCard variant="subtle" className="p-6">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div>
+                <div className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>查看记录</div>
+                <div className="text-[12px] mt-1" style={{ color: 'var(--text-muted)' }}>
+                  展示最近查看该周报的人员与查看次数
+                </div>
+              </div>
+              <div
+                className="px-3 py-2 rounded-xl text-right shrink-0"
+                style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)' }}
+              >
+                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>总浏览次数</div>
+                <div className="text-[18px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  {viewSummary.totalViewCount}
+                </div>
+              </div>
+            </div>
+
+            {viewSummary.users.length === 0 ? (
+              <div
+                className="rounded-xl px-4 py-8 text-center text-[12px]"
+                style={{ color: 'var(--text-muted)', background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)' }}
+              >
+                暂无查看记录
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {viewSummary.users.map((user) => (
+                  <div
+                    key={user.userId}
+                    className="flex items-center justify-between gap-3 rounded-xl px-4 py-3"
+                    style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)' }}
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[13px] truncate font-medium" style={{ color: 'var(--text-primary)' }}>{user.userName}</span>
+                        {user.isFrequent && (
+                          <span
+                            className="text-[10px] px-1.5 py-0.5 rounded-md"
+                            style={{ color: 'rgba(16, 185, 129, 0.9)', background: 'rgba(16, 185, 129, 0.1)' }}
+                          >
+                            常来
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>
+                        最近查看：{new Date(user.lastViewedAt).toLocaleString('zh-CN', {
+                          year: 'numeric',
+                          month: '2-digit',
+                          day: '2-digit',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          second: '2-digit',
+                        })}
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>查看次数</div>
+                      <div className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                        {user.viewCount} 次
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </GlassCard>
         )}
       </div>
