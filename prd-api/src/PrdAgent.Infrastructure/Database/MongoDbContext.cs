@@ -928,10 +928,13 @@ public class MongoDbContext
         ChannelTasks.Indexes.CreateOne(new CreateIndexModel<ChannelTask>(
             Builders<ChannelTask>.IndexKeys.Ascending(x => x.MappedUserId).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_channel_tasks_user_created" }));
-        // TTL（默认保留 30 天）
-        ChannelTasks.Indexes.CreateOne(new CreateIndexModel<ChannelTask>(
-            Builders<ChannelTask>.IndexKeys.Ascending(x => x.CreatedAt),
-            new CreateIndexOptions { Name = "ttl_channel_tasks", ExpireAfter = TimeSpan.FromDays(30) }));
+        // TTL（默认保留 30 天）：基于 CreatedAt（兼容历史普通索引自动升级）
+        EnsureTtlIndex(
+            ChannelTasks,
+            "channel_tasks",
+            nameof(ChannelTask.CreatedAt),
+            TimeSpan.FromDays(30),
+            "ttl_channel_tasks");
 
         // ChannelRequestLogs：按 channelType + createdAt 查询；按 mappedUserId + createdAt 查询
         ChannelRequestLogs.Indexes.CreateOne(new CreateIndexModel<ChannelRequestLog>(
