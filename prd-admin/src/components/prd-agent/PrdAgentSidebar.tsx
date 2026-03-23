@@ -44,7 +44,7 @@ export default function PrdAgentSidebar({ onCreateSession, onSwitchSession, onOp
   // ── 侧边栏拖拽调宽 ──
   const [expandedWidth, setExpandedWidth] = useState(() => {
     try {
-      const saved = localStorage.getItem('prdAgent.sidebarWidth');
+      const saved = sessionStorage.getItem('prdAgent.sidebarWidth');
       if (saved) {
         const n = parseInt(saved, 10);
         if (n >= 180 && n <= 420) return n;
@@ -76,7 +76,7 @@ export default function PrdAgentSidebar({ onCreateSession, onSwitchSession, onOp
     if (!resizeStateRef.current) return;
     resizeStateRef.current = null;
     setIsResizing(false);
-    try { localStorage.setItem('prdAgent.sidebarWidth', String(expandedWidth)); } catch { /* ignore */ }
+    try { sessionStorage.setItem('prdAgent.sidebarWidth', String(expandedWidth)); } catch { /* ignore */ }
   }, [expandedWidth]);
 
   // 当前活跃会话

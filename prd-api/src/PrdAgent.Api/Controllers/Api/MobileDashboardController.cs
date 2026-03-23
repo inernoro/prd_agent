@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -35,10 +36,7 @@ public class MobileDashboardController : ControllerBase
         _assetProviders = assetProviders;
     }
 
-    private string GetUserId() =>
-        User.FindFirst("sub")?.Value
-        ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-        ?? "unknown";
+    private string GetUserId() => this.GetRequiredUserId();
 
     // ─────────────────────────────────────────
     //  GET /api/mobile/feed — 最近活动 Feed 流

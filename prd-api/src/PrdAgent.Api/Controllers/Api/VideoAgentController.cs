@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 using MongoDB.Driver;
 using PrdAgent.Infrastructure.Database;
@@ -41,10 +42,7 @@ public class VideoAgentController : ControllerBase
         _logger = logger;
     }
 
-    private string GetAdminId() =>
-        User.FindFirst("sub")?.Value
-        ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-        ?? "unknown";
+    private string GetAdminId() => this.GetRequiredUserId();
 
     /// <summary>
     /// 创建视频生成任务（仅保存输入，Worker 自动开始分镜生成）

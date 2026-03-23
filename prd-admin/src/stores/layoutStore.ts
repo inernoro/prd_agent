@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
 
 type LayoutState = {
   navCollapsed: boolean;
@@ -25,6 +25,7 @@ export const useLayoutStore = create<LayoutState>()(
     }),
     {
       name: 'prd-admin-layout',
+      storage: createJSONStorage(() => sessionStorage),
       // 只持久化侧边栏折叠状态；fullBleed / mobileDrawerOpen 属于临时态
       partialize: (s) => ({ navCollapsed: s.navCollapsed }),
     }

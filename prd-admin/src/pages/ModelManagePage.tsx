@@ -57,7 +57,7 @@ type PlatformForm = {
   apiUrl: string;
   apiKey: string;
   enabled: boolean;
-  // 仅前端本地配置（localStorage）：用于成本估算，不写入后端
+  // 仅前端本地配置（sessionStorage）：用于成本估算，不写入后端
   pricingCurrency: string;
   pricingInPer1k: string;
   pricingOutPer1k: string;
@@ -148,7 +148,7 @@ const PRICING_LS_KEY = 'prd_admin_platform_pricing_v1';
 
 function readPricingMap(): Record<string, PlatformPricing> {
   try {
-    const raw = localStorage.getItem(PRICING_LS_KEY);
+    const raw = sessionStorage.getItem(PRICING_LS_KEY);
     if (!raw) return {};
     const obj = JSON.parse(raw) as any;
     if (!obj || typeof obj !== 'object') return {};
@@ -160,7 +160,7 @@ function readPricingMap(): Record<string, PlatformPricing> {
 
 function writePricingMap(map: Record<string, PlatformPricing>) {
   try {
-    localStorage.setItem(PRICING_LS_KEY, JSON.stringify(map));
+    sessionStorage.setItem(PRICING_LS_KEY, JSON.stringify(map));
   } catch {
     // ignore
   }

@@ -24,7 +24,7 @@ const READ_IDS_STORAGE_KEY = 'defect-read-ids';
 
 function loadViewMode(): ViewMode {
   try {
-    const v = localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+    const v = sessionStorage.getItem(VIEW_MODE_STORAGE_KEY);
     if (v === 'card' || v === 'kanban' || v === 'stats') return v;
     return 'list';
   } catch { return 'list'; }
@@ -32,14 +32,14 @@ function loadViewMode(): ViewMode {
 
 function loadReadIds(): Set<string> {
   try {
-    const raw = localStorage.getItem(READ_IDS_STORAGE_KEY);
+    const raw = sessionStorage.getItem(READ_IDS_STORAGE_KEY);
     return raw ? new Set(JSON.parse(raw)) : new Set();
   } catch { return new Set(); }
 }
 
 function saveReadIds(ids: Set<string>) {
   try {
-    localStorage.setItem(READ_IDS_STORAGE_KEY, JSON.stringify([...ids]));
+    sessionStorage.setItem(READ_IDS_STORAGE_KEY, JSON.stringify([...ids]));
   } catch { /* ignore */ }
 }
 
@@ -244,7 +244,7 @@ export const useDefectStore = create<DefectState>((set, get) => ({
   setShowTemplateDialog: (show) => set({ showTemplateDialog: show }),
   setViewMode: (mode) => {
     set({ viewMode: mode });
-    try { localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode); } catch { /* ignore */ }
+    try { sessionStorage.setItem(VIEW_MODE_STORAGE_KEY, mode); } catch { /* ignore */ }
   },
   markAsRead: (id) => {
     const { readIds } = get();

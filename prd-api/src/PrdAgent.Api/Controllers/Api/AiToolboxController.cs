@@ -9,6 +9,7 @@ using PrdAgent.Api.Services.Toolbox;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Models.Toolbox;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
@@ -54,10 +55,7 @@ public class AiToolboxController : ControllerBase
         _logger = logger;
     }
 
-    private string GetUserId() =>
-        User.FindFirst("sub")?.Value
-        ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-        ?? "unknown";
+    private string GetUserId() => this.GetRequiredUserId();
 
     private string? GetUserName() =>
         User.FindFirst("name")?.Value;

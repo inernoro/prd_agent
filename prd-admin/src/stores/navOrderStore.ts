@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import { getUserPreferences, updateNavOrder } from '@/services';
 
 type NavOrderState = {
@@ -87,6 +87,7 @@ export const useNavOrderStore = create<NavOrderState>()(
     }),
     {
       name: 'prd-admin-nav-order',
+      storage: createJSONStorage(() => sessionStorage),
       // 本地缓存顺序，避免每次刷新都等后端
       partialize: (s) => ({ navOrder: s.navOrder }),
     }

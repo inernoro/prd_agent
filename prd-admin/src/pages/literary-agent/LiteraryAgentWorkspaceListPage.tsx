@@ -11,7 +11,7 @@ import {
   deleteLiteraryAgentWorkspaceReal as deleteLiteraryAgentWorkspace,
 } from '@/services/real/literaryAgentConfig';
 import type { VisualAgentWorkspace } from '@/services/contracts/visualAgent';
-import { Plus, Pencil, Trash2, FileText, SquarePen, FolderOpen, ChevronDown, ChevronRight, FolderPlus, MoveRight, BookOpen } from 'lucide-react';
+import { Plus, Pencil, Trash2, FileText, SquarePen, FolderOpen, ChevronDown, ChevronRight, FolderPlus, MoveRight, BookOpen, Calendar } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -20,12 +20,48 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 
+// ── Helpers ──
+
 function formatDate(iso: string | null | undefined) {
   const s = String(iso ?? '').trim();
   if (!s) return '';
   const d = new Date(s);
   if (Number.isNaN(d.getTime())) return '';
   return d.toLocaleDateString();
+}
+
+/** 将 ISO 日期转为 YYYY-MM-DD 格式的日期 key */
+function toDateKey(iso: string | null | undefined): string {
+  const s = String(iso ?? '').trim();
+  if (!s) return '未知日期';
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return '未知日期';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** 将日期 key 格式化为友好显示 */
+function formatDateLabel(dateKey: string): string {
+  if (dateKey === '未知日期') return dateKey;
+  const today = new Date();
+  const todayKey = toDateKey(today.toISOString());
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayKey = toDateKey(yesterday.toISOString());
+
+  if (dateKey === todayKey) return '今天';
+  if (dateKey === yesterdayKey) return '昨天';
+
+  const d = new Date(dateKey);
+  if (Number.isNaN(d.getTime())) return dateKey;
+
+  const thisYear = today.getFullYear();
+  const month = d.getMonth() + 1;
+  const day = d.getDate();
+
+  if (d.getFullYear() === thisYear) {
+    return `${month}月${day}日`;
+  }
+  return `${d.getFullYear()}年${month}月${day}日`;
 }
 
 function getArticlePreviewText(ws: VisualAgentWorkspace, maxChars = 200) {
@@ -39,6 +75,8 @@ function getArticlePreviewText(ws: VisualAgentWorkspace, maxChars = 200) {
   if (s.length <= softLimit) return s;
   return s.slice(0, softLimit);
 }
+
+// ── Article Preview ──
 
 function ArticlePreview({ markdown }: { markdown: string }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -93,10 +131,19 @@ function ArticlePreview({ markdown }: { markdown: string }) {
   );
 }
 
+// ── Types ──
+
 type FolderGroup = {
   folderName: string | null;
   items: VisualAgentWorkspace[];
 };
+
+type DayGroup = {
+  dateKey: string;
+  items: VisualAgentWorkspace[];
+};
+
+// ── Page ──
 
 export default function LiteraryAgentWorkspaceListPage() {
   const navigate = useNavigate();
@@ -138,19 +185,16 @@ export default function LiteraryAgentWorkspaceListPage() {
       map.get(key)!.push(ws);
     }
     const result: FolderGroup[] = [];
-    // 有文件夹的先显示，按名称排序
     const folderNames = [...map.keys()].filter((k) => k !== null).sort() as string[];
     for (const fn of folderNames) {
       result.push({ folderName: fn, items: map.get(fn)! });
     }
-    // 未分类的最后显示
     if (map.has(null)) {
       result.push({ folderName: null, items: map.get(null)! });
     }
     return result;
   }, [items]);
 
-  // 获取所有文件夹名称
   const allFolderNames = useMemo(() => {
     const set = new Set<string>();
     for (const ws of items) {
@@ -158,6 +202,8 @@ export default function LiteraryAgentWorkspaceListPage() {
     }
     return [...set].sort();
   }, [items]);
+
+  // ── CRUD handlers ──
 
   const onCreate = async (folderName?: string | null) => {
     const title = await systemDialog.prompt({
@@ -177,7 +223,6 @@ export default function LiteraryAgentWorkspaceListPage() {
       toast.error('创建失败', res.error?.message || '未知错误');
       return;
     }
-    // 如果指定了文件夹，设置 folderName
     if (folderName && res.data?.workspace?.id) {
       await updateLiteraryAgentWorkspace({
         id: res.data.workspace.id,
@@ -200,7 +245,6 @@ export default function LiteraryAgentWorkspaceListPage() {
       cancelText: '取消',
     });
     if (!name) return;
-    // 创建一个新文章并设置 folderName
     const res = await createLiteraryAgentWorkspace({
       title: '未命名',
       scenarioType: 'article-illustration',
@@ -226,7 +270,6 @@ export default function LiteraryAgentWorkspaceListPage() {
       cancelText: '取消',
     });
     if (!newName || newName === oldName) return;
-    // 批量更新所有同名文章的 folderName
     const toUpdate = items.filter((ws) => ws.folderName === oldName);
     for (const ws of toUpdate) {
       await updateLiteraryAgentWorkspace({
@@ -312,7 +355,8 @@ export default function LiteraryAgentWorkspaceListPage() {
     });
   };
 
-  // 右键菜单：空白区
+  // ── Context menus ──
+
   const handleContainerContextMenu = (e: React.MouseEvent) => {
     contextMenu.show(e, [
       { key: 'new-article', label: '新建文章', icon: <Plus size={12} />, onClick: () => void onCreate() },
@@ -320,7 +364,6 @@ export default function LiteraryAgentWorkspaceListPage() {
     ]);
   };
 
-  // 右键菜单：文件夹
   const handleFolderContextMenu = (e: React.MouseEvent, folderName: string) => {
     e.stopPropagation();
     contextMenu.show(e, [
@@ -331,7 +374,6 @@ export default function LiteraryAgentWorkspaceListPage() {
     ]);
   };
 
-  // 右键菜单：文章卡片
   const handleCardContextMenu = (e: React.MouseEvent, ws: VisualAgentWorkspace) => {
     e.stopPropagation();
     const moveItems: ContextMenuItem[] = allFolderNames
@@ -350,22 +392,23 @@ export default function LiteraryAgentWorkspaceListPage() {
       });
     }
 
-    const items: ContextMenuItem[] = [
+    const menuItems: ContextMenuItem[] = [
       { key: 'edit', label: '编辑', icon: <SquarePen size={12} />, onClick: () => navigate(`/literary-agent/${ws.id}`) },
       { key: 'rename', label: '重命名', icon: <Pencil size={12} />, onClick: () => void onRename(ws) },
     ];
     if (moveItems.length > 0) {
-      items.push({ key: 'divider1', label: '', divider: true });
-      items.push({ key: 'move-header', label: '移动到...', icon: <MoveRight size={12} />, disabled: true });
-      items.push(...moveItems);
+      menuItems.push({ key: 'divider1', label: '', divider: true });
+      menuItems.push({ key: 'move-header', label: '移动到...', icon: <MoveRight size={12} />, disabled: true });
+      menuItems.push(...moveItems);
     }
-    items.push({ key: 'divider2', label: '', divider: true });
-    items.push({ key: 'delete', label: '删除', icon: <Trash2 size={12} />, danger: true, onClick: () => void onDelete(ws) });
+    menuItems.push({ key: 'divider2', label: '', divider: true });
+    menuItems.push({ key: 'delete', label: '删除', icon: <Trash2 size={12} />, danger: true, onClick: () => void onDelete(ws) });
 
-    contextMenu.show(e, items);
+    contextMenu.show(e, menuItems);
   };
 
-  // 拖拽处理
+  // ── Drag & drop ──
+
   const handleDragStart = (e: React.DragEvent, ws: VisualAgentWorkspace) => {
     e.dataTransfer.setData('text/plain', ws.id);
     e.dataTransfer.effectAllowed = 'move';
@@ -391,56 +434,86 @@ export default function LiteraryAgentWorkspaceListPage() {
     await onMoveToFolder(ws, targetFolder);
   };
 
-  const renderCard = (ws: VisualAgentWorkspace) => (
-    <GlassCard animated glow key={ws.id} className="p-0 overflow-hidden">
-      <div
-        role="button"
-        tabIndex={0}
-        title={ws.title || ws.id}
-        draggable
-        onDragStart={(e) => handleDragStart(e, ws)}
-        onContextMenu={(e) => handleCardContextMenu(e, ws)}
-        className={[
-          'group relative cursor-pointer select-none',
-          'transition-colors',
-          'focus:outline-none focus-visible:ring-2 focus-visible:ring-white/15',
-          'flex flex-col h-full',
-        ].join(' ')}
-        onClick={() => navigate(`/literary-agent/${ws.id}`)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            navigate(`/literary-agent/${ws.id}`);
-          }
-        }}
-      >
-        <div className="p-2 pb-1 flex-shrink-0">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <FileText size={12} style={{ color: 'var(--accent-primary)', flexShrink: 0 }} />
-            <div className="font-medium text-[12px] truncate" style={{ color: 'var(--text-primary)' }}>
-              {ws.title}
-            </div>
-          </div>
-        </div>
-        <div className="px-2 pb-2 flex-1 min-h-0 overflow-hidden">
+  // ── 将文章列表按日期分组（时间线） ──
+
+  function groupByDay(workspaces: VisualAgentWorkspace[]): DayGroup[] {
+    const map = new Map<string, VisualAgentWorkspace[]>();
+    // 按 updatedAt 降序排列
+    const sorted = [...workspaces].sort((a, b) => {
+      const ta = new Date(a.updatedAt).getTime() || 0;
+      const tb = new Date(b.updatedAt).getTime() || 0;
+      return tb - ta;
+    });
+    for (const ws of sorted) {
+      const key = toDateKey(ws.updatedAt);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(ws);
+    }
+    // 保持日期降序
+    return [...map.entries()].map(([dateKey, dayItems]) => ({ dateKey, items: dayItems }));
+  }
+
+  // ── Render: Timeline card ──
+
+  const renderTimelineCard = (ws: VisualAgentWorkspace, isLast: boolean) => (
+    <div key={ws.id} className="relative flex gap-3">
+      {/* 时间线连线 */}
+      <div className="flex flex-col items-center shrink-0" style={{ width: 20 }}>
+        <div
+          className="w-2 h-2 rounded-full shrink-0 mt-2.5"
+          style={{ background: 'var(--accent-primary, #818CF8)', boxShadow: '0 0 6px rgba(129,140,248,0.4)' }}
+        />
+        {!isLast && (
+          <div className="flex-1 w-px" style={{ background: 'rgba(99,102,241,0.15)' }} />
+        )}
+      </div>
+
+      {/* 卡片内容 */}
+      <div className="flex-1 min-w-0 pb-3">
+        <GlassCard animated glow className="p-0 overflow-hidden">
           <div
-            className="h-full overflow-hidden border rounded-[5px] text-[12px] md:text-[10px] flex flex-col"
-            style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
+            role="button"
+            tabIndex={0}
+            title={ws.title || ws.id}
+            draggable
+            onDragStart={(e) => handleDragStart(e, ws)}
+            onContextMenu={(e) => handleCardContextMenu(e, ws)}
+            className="group relative cursor-pointer select-none transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-white/15"
+            onClick={() => navigate(`/literary-agent/${ws.id}`)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                navigate(`/literary-agent/${ws.id}`);
+              }
+            }}
           >
-            <div className="p-1.5 flex-1 overflow-hidden">
-              <ArticlePreview markdown={getArticlePreviewText(ws)} />
+            <div className="flex gap-3 p-3">
+              {/* 左侧：文章内容 */}
+              <div className="flex-1 min-w-0 flex flex-col gap-1.5">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <FileText size={13} style={{ color: 'var(--accent-primary)', flexShrink: 0 }} />
+                  <div className="font-semibold text-[13px] truncate" style={{ color: 'var(--text-primary)' }}>
+                    {ws.title}
+                  </div>
+                </div>
+                <div className="overflow-hidden rounded-md" style={{ maxHeight: 80 }}>
+                  <ArticlePreview markdown={getArticlePreviewText(ws)} />
+                </div>
+              </div>
             </div>
+
+            {/* 底栏：操作按钮 + 时间 */}
             <div
-              className="px-1.5 py-1 text-[9px] border-t flex items-center"
+              className="px-3 py-1.5 text-[10px] border-t flex items-center"
               style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
             >
               <div
-                className={[
+                className={cn(
                   'flex items-center gap-0.5',
                   'opacity-0 pointer-events-none transition-opacity duration-100',
                   'group-hover:opacity-100 group-hover:pointer-events-auto',
                   'mobile-show-actions',
-                ].join(' ')}
+                )}
               >
                 <Button
                   size="xs"
@@ -473,10 +546,36 @@ export default function LiteraryAgentWorkspaceListPage() {
               <div className="flex-1 text-right truncate">{formatDate(ws.updatedAt)}</div>
             </div>
           </div>
-        </div>
+        </GlassCard>
       </div>
-    </GlassCard>
+    </div>
   );
+
+  // ── Render: Day group (时间线分组) ──
+
+  const renderDayGroup = (dayGroup: DayGroup) => (
+    <div key={dayGroup.dateKey} className="mb-2">
+      {/* 日期标题 */}
+      <div className="flex items-center gap-2 mb-2 pl-0.5">
+        <Calendar size={12} style={{ color: 'var(--text-muted)' }} />
+        <span className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+          {formatDateLabel(dayGroup.dateKey)}
+        </span>
+        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+          {dayGroup.dateKey}
+        </span>
+        <div className="flex-1 h-px ml-2" style={{ background: 'rgba(255,255,255,0.06)' }} />
+      </div>
+      {/* 该日的文章列表 — 时间线形式 */}
+      <div className={isMobile ? '' : 'pl-4'}>
+        {dayGroup.items.map((ws, idx) =>
+          renderTimelineCard(ws, idx === dayGroup.items.length - 1)
+        )}
+      </div>
+    </div>
+  );
+
+  // ── Render: Folder group ──
 
   const renderFolderGroup = (group: FolderGroup) => {
     const { folderName, items: groupItems } = group;
@@ -484,14 +583,17 @@ export default function LiteraryAgentWorkspaceListPage() {
     const isDragOver = dragOverFolder === (folderName ?? '__uncategorized__');
     const displayName = folderName || '未分类';
 
+    // 在文件夹内按日期分组
+    const dayGroups = groupByDay(groupItems);
+
     return (
-      <div key={folderName ?? '__uncategorized__'} className="mb-4">
+      <div key={folderName ?? '__uncategorized__'} className="mb-6">
         {/* 文件夹标题栏 */}
         <div
-          className={[
-            'flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer select-none mb-2 transition-colors',
+          className={cn(
+            'flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer select-none mb-3 transition-colors',
             isDragOver ? 'bg-white/10 ring-1 ring-white/20' : 'hover:bg-white/5',
-          ].join(' ')}
+          )}
           onClick={() => folderName && toggleFolder(folderName)}
           onContextMenu={(e) => folderName && handleFolderContextMenu(e, folderName)}
           onDragOver={(e) => handleDragOver(e, folderName ?? '__uncategorized__')}
@@ -504,17 +606,17 @@ export default function LiteraryAgentWorkspaceListPage() {
             <div className="w-[14px]" />
           )}
           <FolderOpen size={14} style={{ color: folderName ? 'var(--accent-primary)' : 'var(--text-muted)' }} />
-          <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>
+          <span className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
             {displayName}
           </span>
-          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
             ({groupItems.length})
           </span>
         </div>
-        {/* 文章网格 */}
+        {/* 时间线内容 */}
         {!isCollapsed && (
-          <div className={cn("grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2", isMobile ? '' : 'pl-6')}>
-            {groupItems.map(renderCard)}
+          <div className={isMobile ? '' : 'pl-6'}>
+            {dayGroups.map(renderDayGroup)}
           </div>
         )}
       </div>
@@ -565,7 +667,7 @@ export default function LiteraryAgentWorkspaceListPage() {
             </div>
           </GlassCard>
         ) : (
-          <div className="max-w-[1680px]">
+          <div className="max-w-[960px]">
             {groups.map(renderFolderGroup)}
           </div>
         )}

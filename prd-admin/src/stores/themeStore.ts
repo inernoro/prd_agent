@@ -4,7 +4,7 @@
  */
 
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import { getUserPreferences, updateThemeConfig } from '@/services';
 import type { ThemeConfig, ColorDepthLevel, OpacityLevel, SidebarGlassMode, PerformanceMode } from '@/types/theme';
 import { DEFAULT_THEME_CONFIG } from '@/types/theme';
@@ -132,6 +132,7 @@ export const useThemeStore = create<ThemeState>()(
     }),
     {
       name: 'prd-admin-theme',
+      storage: createJSONStorage(() => sessionStorage),
       // 本地缓存配置，避免每次刷新都等后端
       partialize: (s) => ({ config: s.config }),
     }

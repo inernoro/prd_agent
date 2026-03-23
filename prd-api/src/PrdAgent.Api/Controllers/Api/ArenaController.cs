@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 
@@ -31,8 +32,7 @@ public sealed class ArenaController : ControllerBase
         _runQueue = runQueue;
     }
 
-    private string GetUserId() =>
-        User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "unknown";
+    private string GetUserId() => this.GetRequiredUserId();
 
     // ─────────────────────────── Groups CRUD ───────────────────────────
 

@@ -23,7 +23,7 @@ const FAVORITES_STORAGE_KEY = 'toolbox-favorites';
 
 function loadFavoritesFromStorage(): Set<string> {
   try {
-    const raw = localStorage.getItem(FAVORITES_STORAGE_KEY);
+    const raw = sessionStorage.getItem(FAVORITES_STORAGE_KEY);
     if (raw) return new Set(JSON.parse(raw) as string[]);
   } catch { /* ignore */ }
   return new Set();
@@ -31,7 +31,7 @@ function loadFavoritesFromStorage(): Set<string> {
 
 function saveFavoritesToStorage(ids: Set<string>) {
   try {
-    localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify([...ids]));
+    sessionStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify([...ids]));
   } catch { /* ignore */ }
 }
 
