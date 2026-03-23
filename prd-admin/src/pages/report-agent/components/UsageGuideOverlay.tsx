@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
+  ArrowRight,
   CalendarCheck,
   ClipboardList,
   FileText,
   Settings,
   Sparkles,
   Users,
+  X,
 } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
@@ -35,10 +37,41 @@ interface GuideActionItem {
   action: () => void;
 }
 
+interface GuideFlowStep {
+  key: string;
+  label: string;
+}
+
 const MODULE_LABELS: Record<UsageGuideModule, string> = {
   report: '周报',
   team: '团队',
   settings: '设置',
+};
+
+const MODULE_VISUALS: Record<UsageGuideModule, {
+  accent: string;
+  accentSoft: string;
+  border: string;
+  badge: string;
+}> = {
+  report: {
+    accent: 'rgba(129, 140, 248, 0.92)',
+    accentSoft: 'rgba(129, 140, 248, 0.2)',
+    border: 'rgba(129, 140, 248, 0.28)',
+    badge: '聚焦周报闭环',
+  },
+  team: {
+    accent: 'rgba(45, 212, 191, 0.92)',
+    accentSoft: 'rgba(45, 212, 191, 0.18)',
+    border: 'rgba(45, 212, 191, 0.24)',
+    badge: '聚焦团队协作',
+  },
+  settings: {
+    accent: 'rgba(251, 191, 36, 0.92)',
+    accentSoft: 'rgba(251, 191, 36, 0.18)',
+    border: 'rgba(251, 191, 36, 0.24)',
+    badge: '聚焦基础配置',
+  },
 };
 
 export function UsageGuideOverlay(props: UsageGuideOverlayProps) {
@@ -66,6 +99,15 @@ export function UsageGuideOverlay(props: UsageGuideOverlayProps) {
       window.removeEventListener('keydown', onKeyDown);
     };
   }, [open, onClose]);
+
+  useEffect(() => {
+    if (!open || typeof document === 'undefined') return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -258,21 +300,51 @@ export function UsageGuideOverlay(props: UsageGuideOverlayProps) {
     ];
   }, [moduleKey, role, onCreateReport, onOpenDailyLog, onSwitchTab]);
 
-  const flowText = useMemo(() => {
+  const flowSteps = useMemo<GuideFlowStep[]>(() => {
     if (moduleKey === 'report') {
       return role === 'manager'
-        ? '推荐流程：团队配置 -> 成员填写周报 -> 团队查看与跟进'
-        : '推荐流程：日常记录 -> 写周报 -> 提交 -> 根据反馈修订';
+        ? [
+            { key: 'team-config', label: '团队配置' },
+            { key: 'member-write', label: '成员填写周报' },
+            { key: 'team-follow', label: '查看与跟进' },
+          ]
+        : [
+            { key: 'daily-log', label: '日常记录' },
+            { key: 'write-report', label: '写周报' },
+            { key: 'revise-report', label: '根据反馈修订' },
+          ];
     }
     if (moduleKey === 'team') {
       return role === 'manager'
-        ? '推荐流程：选择周次 -> 查看提交状态 -> AI 汇总 -> 团队跟进'
-        : '推荐流程：查看团队状态 -> 响应反馈 -> 回周报修订';
+        ? [
+            { key: 'choose-week', label: '选择周次' },
+            { key: 'check-status', label: '查看提交状态' },
+            { key: 'team-summary', label: '汇总与跟进' },
+          ]
+        : [
+            { key: 'team-status', label: '查看团队状态' },
+            { key: 'respond-feedback', label: '响应反馈' },
+            { key: 'revise-from-team', label: '回周报修订' },
+          ];
     }
     return role === 'manager'
-      ? '推荐流程：团队管理 -> 模板管理 -> 数据源与 Prompt 配置'
-      : '推荐流程：个人数据源配置 -> Prompt 调整 -> 开始写周报';
+      ? [
+          { key: 'team-manage', label: '团队管理' },
+          { key: 'template-manage', label: '模板管理' },
+          { key: 'data-source', label: '数据源与 Prompt 配置' },
+        ]
+      : [
+          { key: 'personal-source', label: '个人数据源配置' },
+          { key: 'prompt-tune', label: 'Prompt 调整' },
+          { key: 'start-write', label: '开始写周报' },
+        ];
   }, [moduleKey, role]);
+
+  const roleSummary = role === 'manager'
+    ? '以管理者视角聚焦配置、推进与团队跟进。'
+    : '以成员视角聚焦记录、填写与反馈闭环。';
+
+  const visual = MODULE_VISUALS[moduleKey];
 
   if (!open || typeof document === 'undefined') {
     return null;
@@ -280,84 +352,256 @@ export function UsageGuideOverlay(props: UsageGuideOverlayProps) {
 
   return createPortal(
     <div className="fixed right-0 bottom-0 z-[1200]" style={{ top: 58, left: leftOffset }}>
-      <button
-        type="button"
-        aria-label="关闭使用指引"
+      <div
         className="absolute inset-0"
-        style={{ background: 'rgba(8, 12, 22, 0.24)', backdropFilter: 'blur(1px)' }}
+        aria-hidden="true"
+        style={{
+          background: `
+            radial-gradient(circle at 50% 12%, ${visual.accentSoft} 0%, transparent 36%),
+            linear-gradient(180deg, rgba(4, 7, 16, 0.76) 0%, rgba(7, 10, 18, 0.7) 28%, rgba(8, 11, 19, 0.82) 100%)
+          `,
+          backdropFilter: 'blur(10px) saturate(115%)',
+          WebkitBackdropFilter: 'blur(10px) saturate(115%)',
+        }}
         onClick={onClose}
       />
+      <div
+        className="pointer-events-none absolute inset-0"
+        aria-hidden="true"
+        style={{
+          background: `
+            radial-gradient(circle at 50% 18%, rgba(255, 255, 255, 0.06) 0%, transparent 24%),
+            radial-gradient(circle at 50% 100%, rgba(0, 0, 0, 0.34) 0%, transparent 46%)
+          `,
+        }}
+      />
 
-      <div className="absolute top-2 left-3 right-3 md:left-4 md:right-4">
-        <GlassCard
-          variant="subtle"
-          className="mx-auto max-w-[1240px] px-4 py-3 border"
-          style={{ borderColor: 'rgba(99, 102, 241, 0.26)', boxShadow: '0 10px 36px rgba(0, 0, 0, 0.24)' }}
-        >
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <div>
-              <div className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                指引模式 · {MODULE_LABELS[moduleKey]}
-              </div>
-              <div className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>
-                这是辅助引导层，不影响正式功能页面；再次点击右上角“使用指引”可收起。
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-2.5">
-            <SegmentedTabs
-              items={[
-                { key: 'manager', label: '团队管理员' },
-                { key: 'member', label: '团队成员' },
-              ]}
-              value={role}
-              onChange={onRoleChange}
-              ariaLabel="使用指引角色切换"
+      <div className="relative z-10 h-full overflow-y-auto px-4 py-6 md:px-6 md:py-8">
+        <div className="mx-auto w-full max-w-[1100px]" onClick={(e) => e.stopPropagation()}>
+          <GlassCard
+            variant="subtle"
+            glow
+            overflow="hidden"
+            className="border prd-dialog-content"
+            style={{
+              borderColor: visual.border,
+              background: `
+                radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.08) 0%, transparent 34%),
+                linear-gradient(180deg, rgba(22, 25, 39, 0.94) 0%, rgba(14, 17, 29, 0.94) 100%)
+              `,
+              boxShadow: `0 28px 80px rgba(0, 0, 0, 0.42), 0 0 0 1px ${visual.border} inset, 0 10px 40px ${visual.accentSoft}`,
+            }}
+          >
+            <div
+              className="pointer-events-none absolute inset-0"
+              aria-hidden="true"
+              style={{
+                background: `
+                  radial-gradient(circle at 18% 10%, ${visual.accentSoft} 0%, transparent 28%),
+                  radial-gradient(circle at 85% 14%, rgba(255, 255, 255, 0.06) 0%, transparent 24%)
+                `,
+              }}
             />
-          </div>
 
-          <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2.5">
-            {items.map((item) => {
-              const Icon = item.icon;
-              return (
-                <div
-                  key={item.key}
-                  className="rounded-xl p-2.5 border"
-                  style={{ background: 'rgba(255, 255, 255, 0.03)', borderColor: 'var(--border-primary)' }}
-                >
-                  <div className="flex items-center gap-2 mb-1.5">
-                    <Icon size={13} style={{ color: 'var(--text-secondary)' }} />
-                    <div className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>
-                      {item.title}
+            <div className="relative">
+              <div
+                className="flex items-start justify-between gap-4 px-5 py-5 md:px-6 md:py-6"
+                style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.08)' }}
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <div
+                      className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-medium"
+                      style={{
+                        color: 'rgba(255, 255, 255, 0.9)',
+                        background: 'rgba(255, 255, 255, 0.06)',
+                        border: '1px solid rgba(255, 255, 255, 0.08)',
+                      }}
+                    >
+                      <Sparkles size={12} style={{ color: visual.accent }} />
+                      指引模式
+                    </div>
+                    <div
+                      className="inline-flex items-center rounded-full px-3 py-1 text-[11px] font-medium"
+                      style={{
+                        color: visual.accent,
+                        background: visual.accentSoft,
+                        border: `1px solid ${visual.border}`,
+                      }}
+                    >
+                      {visual.badge}
                     </div>
                   </div>
-                  <div className="text-[11px] mb-2.5 min-h-[32px]" style={{ color: 'var(--text-muted)' }}>
-                    {item.desc}
+                  <div className="mt-3 text-[20px] md:text-[22px] font-semibold tracking-[0.01em]" style={{ color: 'var(--text-primary)' }}>
+                    指引模式 · {MODULE_LABELS[moduleKey]}
                   </div>
-                  <Button
-                    size="xs"
-                    variant="secondary"
-                    className="whitespace-nowrap"
-                    onClick={() => {
-                      item.action();
-                      onClose();
+                  <div className="mt-2 max-w-[760px] text-[12px] leading-6" style={{ color: 'var(--text-muted)' }}>
+                    已为当前模块切换到聚焦态，面板外内容会被暗幕遮罩压低存在感。你可以直接按当前角色视角查看推荐动作，并通过卡片一键跳转到正式功能。
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <div
+                    className="hidden lg:flex max-w-[240px] rounded-2xl px-3 py-2 text-[11px] leading-5"
+                    style={{
+                      color: 'var(--text-secondary)',
+                      background: 'rgba(255, 255, 255, 0.04)',
+                      border: '1px solid rgba(255, 255, 255, 0.08)',
                     }}
                   >
-                    {item.actionLabel}
-                  </Button>
+                    {roleSummary}
+                  </div>
+                  <button
+                    type="button"
+                    aria-label="关闭使用指引"
+                    className="w-10 h-10 rounded-2xl flex items-center justify-center transition-transform duration-200 hover:scale-[1.02]"
+                    style={{
+                      color: 'var(--text-secondary)',
+                      background: 'rgba(255, 255, 255, 0.05)',
+                      border: '1px solid rgba(255, 255, 255, 0.08)',
+                    }}
+                    onClick={onClose}
+                  >
+                    <X size={16} />
+                  </button>
                 </div>
-              );
-            })}
-          </div>
+              </div>
 
-          <div
-            className="mt-2.5 text-[11px] rounded-lg px-3 py-1.5"
-            style={{ background: 'rgba(255, 255, 255, 0.03)', color: 'var(--text-secondary)' }}
-          >
-            {flowText}
-          </div>
-        </GlassCard>
+              <div className="px-5 pt-4 md:px-6">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div>
+                    <div className="text-[11px] font-medium tracking-[0.08em]" style={{ color: 'var(--text-muted)' }}>
+                      角色视角
+                    </div>
+                    <div className="mt-1 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+                      切换后会同步更新当前模块的推荐动作与路径。
+                    </div>
+                  </div>
+                  <SegmentedTabs
+                    items={[
+                      { key: 'manager', label: '团队管理员' },
+                      { key: 'member', label: '团队成员' },
+                    ]}
+                    value={role}
+                    onChange={onRoleChange}
+                    ariaLabel="使用指引角色切换"
+                  />
+                </div>
+              </div>
+
+              <div className="px-5 py-5 md:px-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {items.map((item, index) => {
+                    const Icon = item.icon;
+                    return (
+                      <div
+                        key={item.key}
+                        className="group rounded-[20px] p-4 border transition-all duration-200"
+                        style={{
+                          background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.055) 0%, rgba(255, 255, 255, 0.025) 100%)',
+                          borderColor: 'rgba(255, 255, 255, 0.1)',
+                          boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.05), 0 10px 24px rgba(0,0,0,0.12)',
+                        }}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div
+                            className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0"
+                            style={{
+                              background: visual.accentSoft,
+                              border: `1px solid ${visual.border}`,
+                              boxShadow: `0 10px 24px ${visual.accentSoft}`,
+                            }}
+                          >
+                            <Icon size={16} style={{ color: visual.accent }} />
+                          </div>
+                          <div
+                            className="inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-medium shrink-0"
+                            style={{
+                              color: 'rgba(255,255,255,0.76)',
+                              background: 'rgba(255,255,255,0.05)',
+                              border: '1px solid rgba(255,255,255,0.08)',
+                            }}
+                          >
+                            步骤 {index + 1}
+                          </div>
+                        </div>
+
+                        <div className="mt-4 text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                          {item.title}
+                        </div>
+                        <div className="mt-2 min-h-[42px] text-[12px] leading-6" style={{ color: 'var(--text-muted)' }}>
+                          {item.desc}
+                        </div>
+
+                        <div className="mt-5 flex items-center justify-between gap-3">
+                          <div className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+                            推荐优先处理
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            className="whitespace-nowrap"
+                            onClick={() => {
+                              item.action();
+                              onClose();
+                            }}
+                          >
+                            {item.actionLabel}
+                            <ArrowRight size={13} />
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div
+                  className="mt-5 rounded-[20px] px-4 py-4 border"
+                  style={{
+                    background: 'linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.025) 100%)',
+                    borderColor: 'rgba(255,255,255,0.08)',
+                  }}
+                >
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div>
+                      <div className="text-[11px] font-medium tracking-[0.08em]" style={{ color: 'var(--text-muted)' }}>
+                        推荐流程
+                      </div>
+                      <div className="mt-1 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+                        先按下面路径理解模块，再进入正式功能操作。
+                      </div>
+                    </div>
+                    <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      点击暗幕或按 Esc 可关闭
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap items-center gap-2.5">
+                    {flowSteps.map((step, index) => (
+                      <div key={step.key} className="flex items-center gap-2.5">
+                        <div
+                          className="inline-flex items-center rounded-full px-3 py-1.5 text-[12px] font-medium"
+                          style={{
+                            color: 'var(--text-primary)',
+                            background: index === 0 ? visual.accentSoft : 'rgba(255,255,255,0.05)',
+                            border: `1px solid ${index === 0 ? visual.border : 'rgba(255,255,255,0.08)'}`,
+                          }}
+                        >
+                          {step.label}
+                        </div>
+                        {index < flowSteps.length - 1 && (
+                          <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                            →
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </GlassCard>
+        </div>
       </div>
     </div>,
     document.body
