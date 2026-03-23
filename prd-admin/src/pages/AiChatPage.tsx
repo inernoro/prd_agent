@@ -1060,6 +1060,10 @@ export default function AiChatPage() {
 
   const pickAttachment = async (file: File | null) => {
     if (!file) return;
+    if (file.size > 20 * 1024 * 1024) {
+      toast.warning('文件大小不能超过 20MB');
+      return;
+    }
     const fileName = normalizeFileName(file.name || '');
     const ext = getLowerExt(fileName);
 
@@ -1243,6 +1247,10 @@ export default function AiChatPage() {
 
   const handleAddDocument = useCallback(async (file: File) => {
     if (!activeSessionId || !userId) return;
+    if (file.size > 20 * 1024 * 1024) {
+      toast.warning('文件大小不能超过 20MB');
+      return;
+    }
     const ext = getLowerExt(file.name || '');
 
     // Phase 1：已知拒绝

@@ -26,7 +26,7 @@
 | `users` | `User` | 用户账号 | `username` 唯一 |
 | `groups` | `Group` | 群组 | `inviteCode` 唯一 |
 | `groupmembers` | `GroupMember` | 群成员关系 | `(groupId, userId)` 唯一 |
-| `documents` | `ParsedPrd` | PRD 文档（原文 + 解析结构），`documentId` 为内容 hash | `createdAt` 逆序索引 |
+| `documents` | `ParsedPrd` | PRD/知识库文档（原文 + 解析结构），`documentId` 为内容 hash。支持 Markdown/代码/配置等文本格式直接存储，PDF/Office 由 `FileContentExtractor` 提取文本后存储 | `createdAt` 逆序索引 |
 | `messages` | `Message` | 会话/群消息（SSE 有序） | `groupId`；`sessionId`；`(groupId, groupSeq)` 唯一（仅对存在 long 的 `GroupSeq` 生效的 partial unique）；`(sessionId, timestamp desc)` |
 | `group_message_counters` | `GroupMessageCounter` | 群消息序号计数器（生成 `groupSeq`） | （未显式创建额外索引） |
 | `contentgaps` | `ContentGap` | PRD 缺失点检测结果 | `groupId` |
@@ -58,7 +58,7 @@
 | `upload_artifacts` | `UploadArtifact` | 上传产物引用（用于追踪大内容落地） | `(requestId, createdAt desc)`；`(requestId, kind, createdAt desc)`；`(sha256, createdAt desc)` |
 | `admin_prompt_overrides` | `AdminPromptOverride` | 管理端覆盖 system prompt | `(ownerAdminId, key)` 唯一 |
 | `admin_idempotency` | `AdminIdempotencyRecord` | 管理端写接口幂等记录（替代 Redis） | `(ownerAdminId, scope, idempotencyKey)` 唯一（partial：`idempotencyKey` 为 string）；`createdAt desc` |
-| `sessions` | `Session` | 会话元数据（IM形态，持久化） | `userId`；`groupId`；`updatedAt desc` |
+| `sessions` | `Session` | 会话元数据（IM形态，持久化）。含 `DocumentIds: string[]` 多文档引用、`DocumentMetas: [{DocumentId, DocumentType}]` 文档类型元数据 | `userId`；`groupId`；`updatedAt desc` |
 | `admin_notifications` | `AdminNotification` | 管理端通知 | `(targetAdminId, createdAt desc)` |
 | `desktop_asset_skins` | `DesktopAssetSkin` | Desktop 皮肤定义 | `name` 唯一 |
 | `desktop_asset_keys` | `DesktopAssetKey` | Desktop 资源 Key 定义 | `key` 唯一 |
