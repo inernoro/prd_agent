@@ -345,37 +345,36 @@ export function UsageGuideOverlay(props: UsageGuideOverlayProps) {
             />
 
             <div className="relative">
-              <button
-                type="button"
-                aria-label="关闭使用指引"
-                className="absolute top-5 right-5 z-10 w-10 h-10 rounded-2xl flex items-center justify-center transition-transform duration-200 hover:scale-[1.02] md:top-6 md:right-6"
-                style={{
-                  color: 'var(--text-secondary)',
-                  background: 'rgba(255, 255, 255, 0.05)',
-                  border: '1px solid rgba(255, 255, 255, 0.08)',
-                }}
-                onClick={onClose}
-              >
-                <X size={16} />
-              </button>
-
               <div className="px-5 pt-5 md:px-6 md:pt-6">
-                <div className="flex items-center justify-between gap-4 pr-14 md:pr-16 flex-wrap">
-                  <div className="min-w-0">
-                    <div className="inline-flex items-center gap-2 text-[11px] font-medium tracking-[0.08em]" style={{ color: 'var(--text-muted)' }}>
-                      <Sparkles size={12} style={{ color: visual.accent }} />
-                      角色视角
-                    </div>
+                <div className="flex items-center justify-between gap-4">
+                  <div className="min-w-0 flex items-center gap-2 text-[11px] font-medium tracking-[0.08em]" style={{ color: 'var(--text-muted)' }}>
+                    <Sparkles size={12} style={{ color: visual.accent }} />
+                    角色视角
                   </div>
-                  <SegmentedTabs
-                    items={[
-                      { key: 'manager', label: '团队管理员' },
-                      { key: 'member', label: '团队成员' },
-                    ]}
-                    value={role}
-                    onChange={onRoleChange}
-                    ariaLabel="使用指引角色切换"
-                  />
+                  <div className="flex items-center gap-3 shrink-0">
+                    <SegmentedTabs
+                      items={[
+                        { key: 'manager', label: '团队管理员' },
+                        { key: 'member', label: '团队成员' },
+                      ]}
+                      value={role}
+                      onChange={onRoleChange}
+                      ariaLabel="使用指引角色切换"
+                    />
+                    <button
+                      type="button"
+                      aria-label="关闭使用指引"
+                      className="w-10 h-10 rounded-2xl flex items-center justify-center transition-transform duration-200 hover:scale-[1.02] shrink-0"
+                      style={{
+                        color: 'var(--text-secondary)',
+                        background: 'rgba(255, 255, 255, 0.05)',
+                        border: '1px solid rgba(255, 255, 255, 0.08)',
+                      }}
+                      onClick={onClose}
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
                 </div>
               </div>
 
