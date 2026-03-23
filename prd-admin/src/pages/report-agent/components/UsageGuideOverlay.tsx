@@ -42,35 +42,25 @@ interface GuideFlowStep {
   label: string;
 }
 
-const MODULE_LABELS: Record<UsageGuideModule, string> = {
-  report: '周报',
-  team: '团队',
-  settings: '设置',
-};
-
 const MODULE_VISUALS: Record<UsageGuideModule, {
   accent: string;
   accentSoft: string;
   border: string;
-  badge: string;
 }> = {
   report: {
     accent: 'rgba(129, 140, 248, 0.92)',
     accentSoft: 'rgba(129, 140, 248, 0.2)',
     border: 'rgba(129, 140, 248, 0.28)',
-    badge: '聚焦周报闭环',
   },
   team: {
     accent: 'rgba(45, 212, 191, 0.92)',
     accentSoft: 'rgba(45, 212, 191, 0.18)',
     border: 'rgba(45, 212, 191, 0.24)',
-    badge: '聚焦团队协作',
   },
   settings: {
     accent: 'rgba(251, 191, 36, 0.92)',
     accentSoft: 'rgba(251, 191, 36, 0.18)',
     border: 'rgba(251, 191, 36, 0.24)',
-    badge: '聚焦基础配置',
   },
 };
 
@@ -340,10 +330,6 @@ export function UsageGuideOverlay(props: UsageGuideOverlayProps) {
         ];
   }, [moduleKey, role]);
 
-  const roleSummary = role === 'manager'
-    ? '以管理者视角聚焦配置、推进与团队跟进。'
-    : '以成员视角聚焦记录、填写与反馈闭环。';
-
   const visual = MODULE_VISUALS[moduleKey];
 
   if (!open || typeof document === 'undefined') {
@@ -404,73 +390,25 @@ export function UsageGuideOverlay(props: UsageGuideOverlayProps) {
             />
 
             <div className="relative">
-              <div
-                className="flex items-start justify-between gap-4 px-5 py-5 md:px-6 md:py-6"
-                style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.08)' }}
+              <button
+                type="button"
+                aria-label="关闭使用指引"
+                className="absolute top-4 right-4 z-10 w-10 h-10 rounded-2xl flex items-center justify-center transition-transform duration-200 hover:scale-[1.02]"
+                style={{
+                  color: 'var(--text-secondary)',
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                }}
+                onClick={onClose}
               >
-                <div className="min-w-0">
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <div
-                      className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-medium"
-                      style={{
-                        color: 'rgba(255, 255, 255, 0.9)',
-                        background: 'rgba(255, 255, 255, 0.06)',
-                        border: '1px solid rgba(255, 255, 255, 0.08)',
-                      }}
-                    >
-                      <Sparkles size={12} style={{ color: visual.accent }} />
-                      指引模式
-                    </div>
-                    <div
-                      className="inline-flex items-center rounded-full px-3 py-1 text-[11px] font-medium"
-                      style={{
-                        color: visual.accent,
-                        background: visual.accentSoft,
-                        border: `1px solid ${visual.border}`,
-                      }}
-                    >
-                      {visual.badge}
-                    </div>
-                  </div>
-                  <div className="mt-3 text-[20px] md:text-[22px] font-semibold tracking-[0.01em]" style={{ color: 'var(--text-primary)' }}>
-                    指引模式 · {MODULE_LABELS[moduleKey]}
-                  </div>
-                  <div className="mt-2 max-w-[760px] text-[12px] leading-6" style={{ color: 'var(--text-muted)' }}>
-                    已为当前模块切换到聚焦态，面板外内容会被暗幕遮罩压低存在感。你可以直接按当前角色视角查看推荐动作，并通过卡片一键跳转到正式功能。
-                  </div>
-                </div>
+                <X size={16} />
+              </button>
 
-                <div className="flex items-center gap-2 shrink-0">
-                  <div
-                    className="hidden lg:flex max-w-[240px] rounded-2xl px-3 py-2 text-[11px] leading-5"
-                    style={{
-                      color: 'var(--text-secondary)',
-                      background: 'rgba(255, 255, 255, 0.04)',
-                      border: '1px solid rgba(255, 255, 255, 0.08)',
-                    }}
-                  >
-                    {roleSummary}
-                  </div>
-                  <button
-                    type="button"
-                    aria-label="关闭使用指引"
-                    className="w-10 h-10 rounded-2xl flex items-center justify-center transition-transform duration-200 hover:scale-[1.02]"
-                    style={{
-                      color: 'var(--text-secondary)',
-                      background: 'rgba(255, 255, 255, 0.05)',
-                      border: '1px solid rgba(255, 255, 255, 0.08)',
-                    }}
-                    onClick={onClose}
-                  >
-                    <X size={16} />
-                  </button>
-                </div>
-              </div>
-
-              <div className="px-5 pt-4 md:px-6">
+              <div className="px-5 pt-5 md:px-6 md:pt-6">
                 <div className="flex items-center justify-between gap-3 flex-wrap">
                   <div>
-                    <div className="text-[11px] font-medium tracking-[0.08em]" style={{ color: 'var(--text-muted)' }}>
+                    <div className="inline-flex items-center gap-2 text-[11px] font-medium tracking-[0.08em]" style={{ color: 'var(--text-muted)' }}>
+                      <Sparkles size={12} style={{ color: visual.accent }} />
                       角色视角
                     </div>
                     <div className="mt-1 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
