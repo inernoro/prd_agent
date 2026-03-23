@@ -6,7 +6,7 @@ use commands::session::StreamCancelState;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
 use tauri::Emitter;
 use tauri::Manager;
-use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_updater::UpdaterExt;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -143,8 +143,7 @@ pub fn run() {
                                     ))
                                     .title("检查更新")
                                     .kind(MessageDialogKind::Info)
-                                    .ok_button_label("立即更新")
-                                    .cancel_button_label("稍后")
+                                    .buttons(MessageDialogButtons::OkCancelCustom("立即更新".into(), "稍后".into()))
                                     .blocking_show();
                                 if confirmed {
                                     // 用户确认更新，开始下载安装
