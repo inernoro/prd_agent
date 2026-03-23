@@ -854,6 +854,16 @@ button.text-btn:hover { color: var(--accent); }
 @keyframes ai-icon-spin {
   to { transform: rotate(360deg); }
 }
+/* During deploy, AI spinner blinks instead of rotating */
+.branch-card.is-deploying .ai-mark-spinner {
+  animation: hammer-blink 1.2s ease-in-out infinite;
+}
+/* During deploy, AI card border stops spinning — use deploy glow instead */
+.branch-card.is-ai-occupied.is-deploying {
+  background-image: none;
+  border: 1px solid var(--accent-border);
+  animation: deploying-glow 2s ease-in-out infinite;
+}
 
 /* AI branch activity feed — single-line roller in card */
 .ai-branch-feed {
