@@ -86,6 +86,8 @@ export type VisualAgentWorkspace = {
   folderName?: string | null;
   /** 风格统一提示词（设置后生图时自动拼接） */
   stylePrompt?: string | null;
+  /** 最新生成的配图 URL（列表接口返回，用于卡片封面） */
+  latestIllustrationUrl?: string | null;
 };
 
 export type VisualAgentViewport = {
