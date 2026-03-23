@@ -529,7 +529,8 @@ public class MessagesController : ControllerBase
                 ResendOfMessageId = m.ResendOfMessageId,
                 ViewRole = m.ViewRole,
                 Timestamp = m.Timestamp,
-                TokenUsage = m.TokenUsage
+                TokenUsage = m.TokenUsage,
+                SuggestedQuestions = m.SuggestedQuestions
             };
         }).ToList();
 
@@ -559,6 +560,8 @@ public class MessageResponse
     public UserRole? ViewRole { get; set; }
     public DateTime Timestamp { get; set; }
     public TokenUsage? TokenUsage { get; set; }
+    /// <summary>推荐追问列表（仅 Assistant 消息）</summary>
+    public List<SuggestedQuestion>? SuggestedQuestions { get; set; }
 }
 
 

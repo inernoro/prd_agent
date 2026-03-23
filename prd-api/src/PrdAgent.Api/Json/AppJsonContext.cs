@@ -135,6 +135,9 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(DocCitation))]
 // 列表类型（引用）
 [JsonSerializable(typeof(List<DocCitation>))]
+// 推荐追问
+[JsonSerializable(typeof(SuggestedQuestion))]
+[JsonSerializable(typeof(List<SuggestedQuestion>))]
 // 列表类型
 [JsonSerializable(typeof(List<MessageResponse>))]
 [JsonSerializable(typeof(List<int>))]
