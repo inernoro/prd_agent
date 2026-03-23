@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { invoke } from '../../lib/tauri';
+import { invoke, isTauri } from '../../lib/tauri';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useGroupListStore } from '../../stores/groupListStore';
@@ -43,9 +43,15 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
   const loginIconUrl = useDesktopBrandingStore((s) => s.branding.loginIconUrl);
 
   const [logoSrc, setLogoSrc] = useState<string>('');
+  const [appVersion, setAppVersion] = useState<string>('');
   useEffect(() => {
     setLogoSrc(loginIconUrl || '');
   }, [loginIconUrl]);
+  useEffect(() => {
+    if (isTauri()) {
+      import('@tauri-apps/api/app').then((m) => m.getVersion()).then(setAppVersion).catch(() => {});
+    }
+  }, []);
   const isMac = useMemo(() => {
     try {
       return /Mac|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -145,7 +151,17 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
               </div>
             )}
           </div>
-          <h1 className="text-lg font-semibold text-slate-800 dark:text-slate-100">{desktopName || 'PRD Agent'}</h1>
+          <div className="flex items-baseline gap-2">
+            <h1 className="text-lg font-semibold text-slate-800 dark:text-slate-100">{desktopName || 'PRD Agent'}</h1>
+            {appVersion && (
+              <span
+                className="text-[10px] leading-none font-mono tracking-wide text-slate-400/70 dark:text-white/30 select-none translate-y-[2px]"
+                title={`Version ${appVersion}`}
+              >
+                v{appVersion}
+              </span>
+            )}
+          </div>
         </div>
 
         <div className="flex items-center gap-4">
