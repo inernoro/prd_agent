@@ -23,7 +23,7 @@ interface CookieHistoryEntry {
 
 function loadCookieHistory(): CookieHistoryEntry[] {
   try {
-    const raw = localStorage.getItem(COOKIE_HISTORY_KEY);
+    const raw = sessionStorage.getItem(COOKIE_HISTORY_KEY);
     return raw ? JSON.parse(raw) : [];
   } catch {
     return [];
@@ -37,13 +37,13 @@ function saveCookieToHistory(cookie: string, userName?: string) {
   const label = cookie.length > 40 ? cookie.slice(0, 40) + '…' : cookie;
   filtered.unshift({ cookie, label, userName, savedAt: new Date().toISOString() });
   // 保留最近 N 条
-  localStorage.setItem(COOKIE_HISTORY_KEY, JSON.stringify(filtered.slice(0, MAX_COOKIE_HISTORY)));
+  sessionStorage.setItem(COOKIE_HISTORY_KEY, JSON.stringify(filtered.slice(0, MAX_COOKIE_HISTORY)));
 }
 
 function removeCookieFromHistory(cookie: string) {
   const history = loadCookieHistory();
   const filtered = history.filter(h => h.cookie !== cookie);
-  localStorage.setItem(COOKIE_HISTORY_KEY, JSON.stringify(filtered));
+  sessionStorage.setItem(COOKIE_HISTORY_KEY, JSON.stringify(filtered));
 }
 
 // ── 工作空间历史管理 ──────────────────────────────────────────
@@ -58,7 +58,7 @@ interface WorkspaceHistoryEntry {
 
 function loadWorkspaceHistory(): WorkspaceHistoryEntry[] {
   try {
-    const raw = localStorage.getItem(WORKSPACE_HISTORY_KEY);
+    const raw = sessionStorage.getItem(WORKSPACE_HISTORY_KEY);
     return raw ? JSON.parse(raw) : [];
   } catch {
     return [];
@@ -69,7 +69,7 @@ function saveWorkspaceToHistory(id: string, name: string) {
   const history = loadWorkspaceHistory();
   const filtered = history.filter(h => h.id !== id);
   filtered.unshift({ id, name, savedAt: new Date().toISOString() });
-  localStorage.setItem(WORKSPACE_HISTORY_KEY, JSON.stringify(filtered.slice(0, 20)));
+  sessionStorage.setItem(WORKSPACE_HISTORY_KEY, JSON.stringify(filtered.slice(0, 20)));
 }
 
 // ═══════════════════════════════════════════════════════════════

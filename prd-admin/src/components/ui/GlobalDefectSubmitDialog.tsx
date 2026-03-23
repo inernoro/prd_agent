@@ -101,10 +101,10 @@ export function GlobalDefectSubmitDialog() {
 
   // 表单状态
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(() => {
-    return localStorage.getItem(STORAGE_KEY_TEMPLATE) || '';
+    return sessionStorage.getItem(STORAGE_KEY_TEMPLATE) || '';
   });
   const [assigneeUserId, setAssigneeUserId] = useState<string>(() => {
-    return localStorage.getItem(STORAGE_KEY_ASSIGNEE) || '';
+    return sessionStorage.getItem(STORAGE_KEY_ASSIGNEE) || '';
   });
   const [content, setContent] = useState('');
   const [severity, setSeverity] = useState<DefectSeverityValue>(DefectSeverity.Trivial);
@@ -169,16 +169,16 @@ export function GlobalDefectSubmitDialog() {
     void loadLogPreview();
   }, [showDialog]);
 
-  // 保存选择到 localStorage
+  // 保存选择到 sessionStorage
   useEffect(() => {
     if (assigneeUserId) {
-      localStorage.setItem(STORAGE_KEY_ASSIGNEE, assigneeUserId);
+      sessionStorage.setItem(STORAGE_KEY_ASSIGNEE, assigneeUserId);
     }
   }, [assigneeUserId]);
 
   useEffect(() => {
     if (selectedTemplateId) {
-      localStorage.setItem(STORAGE_KEY_TEMPLATE, selectedTemplateId);
+      sessionStorage.setItem(STORAGE_KEY_TEMPLATE, selectedTemplateId);
     }
   }, [selectedTemplateId]);
 

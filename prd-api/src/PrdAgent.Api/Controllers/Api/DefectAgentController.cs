@@ -59,10 +59,7 @@ public class DefectAgentController : ControllerBase
         _config = config;
     }
 
-    private string GetUserId()
-        => User.FindFirst("sub")?.Value
-           ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-           ?? "unknown";
+    private string GetUserId() => this.GetRequiredUserId();
 
     private string? GetUsername()
         => User.FindFirst("name")?.Value

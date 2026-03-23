@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -26,10 +27,7 @@ public class UploadArtifactsController : ControllerBase
         _db = db;
     }
 
-    private string GetAdminId()
-        => User.FindFirst("sub")?.Value
-           ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-           ?? "unknown";
+    private string GetAdminId() => this.GetRequiredUserId();
 
     [HttpGet]
     public async Task<IActionResult> List([FromQuery] string requestId, [FromQuery] int limit = 50, CancellationToken ct = default)

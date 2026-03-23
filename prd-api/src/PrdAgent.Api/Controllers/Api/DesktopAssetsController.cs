@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Models.Requests;
 using PrdAgent.Api.Models.Responses;
 using PrdAgent.Core.Models;
@@ -37,10 +38,7 @@ public class DesktopAssetsController : ControllerBase
         _assetStorage = assetStorage;
     }
 
-    private string GetAdminId()
-        => User.FindFirst("sub")?.Value
-           ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-           ?? "unknown";
+    private string GetAdminId() => this.GetRequiredUserId();
 
     private static (bool ok, string? error, string normalized) NormalizeSkinName(string name)
     {

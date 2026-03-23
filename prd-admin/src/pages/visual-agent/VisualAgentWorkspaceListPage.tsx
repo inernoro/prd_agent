@@ -1137,11 +1137,11 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   const [inputLoading, setInputLoading] = useState(false);
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [selectedImage, setSelectedImage] = useState<{ file: File; previewUrl: string } | null>(null);
-  // 默认尺寸：从 localStorage 读取用户偏好，与编辑器共享同一 key
+  // 默认尺寸：从 sessionStorage 读取用户偏好，与编辑器共享同一 key
   const defaultSizeKey = userId ? `prdAdmin.visualAgent.defaultSize.${userId}` : '';
   const [selectedSize, setSelectedSize] = useState<string>(() => {
     if (!defaultSizeKey) return '1024x1024';
-    try { return localStorage.getItem(defaultSizeKey) || '1024x1024'; } catch { return '1024x1024'; }
+    try { return sessionStorage.getItem(defaultSizeKey) || '1024x1024'; } catch { return '1024x1024'; }
   });
 
   // 共享对话框状态
@@ -1354,7 +1354,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
 
   const onSelectedSizeChange = (size: string) => {
     setSelectedSize(size);
-    if (defaultSizeKey) { try { localStorage.setItem(defaultSizeKey, size); } catch { /* ignore */ } }
+    if (defaultSizeKey) { try { sessionStorage.setItem(defaultSizeKey, size); } catch { /* ignore */ } }
   };
 
   // 新建文件夹（目前作为占位功能，后续可接入后端）

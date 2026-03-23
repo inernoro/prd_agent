@@ -5,6 +5,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using System.Security.Claims;
+using PrdAgent.Api.Extensions;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -176,10 +177,7 @@ public class SubmissionsController : ControllerBase
         return _assetStorage.BuildUrlForKey(key);
     }
 
-    private string GetUserId()
-        => User.FindFirst("sub")?.Value
-           ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-           ?? "unknown";
+    private string GetUserId() => this.GetRequiredUserId();
 
     private string? GetUsername()
         => User.FindFirst("name")?.Value

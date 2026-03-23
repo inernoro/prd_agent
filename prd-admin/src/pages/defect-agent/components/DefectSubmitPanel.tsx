@@ -77,12 +77,12 @@ export function DefectSubmitPanel() {
     loadStats,
   } = useDefectStore();
 
-  // 从 localStorage 读取上次选择
+  // 从 sessionStorage 读取上次选择
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(() => {
-    return localStorage.getItem(STORAGE_KEY_TEMPLATE) || '';
+    return sessionStorage.getItem(STORAGE_KEY_TEMPLATE) || '';
   });
   const [assigneeUserId, setAssigneeUserId] = useState<string>(() => {
-    return localStorage.getItem(STORAGE_KEY_ASSIGNEE) || '';
+    return sessionStorage.getItem(STORAGE_KEY_ASSIGNEE) || '';
   });
   const [projectId, setProjectId] = useState<string>('');
   const [content, setContent] = useState('');
@@ -94,16 +94,16 @@ export function DefectSubmitPanel() {
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [showExample, setShowExample] = useState(false);
 
-  // 当用户/模板选择变化时保存到 localStorage
+  // 当用户/模板选择变化时保存到 sessionStorage
   useEffect(() => {
     if (assigneeUserId) {
-      localStorage.setItem(STORAGE_KEY_ASSIGNEE, assigneeUserId);
+      sessionStorage.setItem(STORAGE_KEY_ASSIGNEE, assigneeUserId);
     }
   }, [assigneeUserId]);
 
   useEffect(() => {
     if (selectedTemplateId) {
-      localStorage.setItem(STORAGE_KEY_TEMPLATE, selectedTemplateId);
+      sessionStorage.setItem(STORAGE_KEY_TEMPLATE, selectedTemplateId);
     }
   }, [selectedTemplateId]);
 

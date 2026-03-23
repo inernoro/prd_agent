@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Models;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 
@@ -62,7 +63,7 @@ public class DesktopUpdateCacheController : ControllerBase
         if (string.IsNullOrWhiteSpace(request?.Target))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "target 不能为空"));
 
-        var adminId = User.FindFirst("sub")?.Value ?? "unknown";
+        var adminId = this.GetRequiredUserId();
         _logger.LogWarning("Admin {AdminId} triggered update cache for {Target}", adminId, request.Target);
 
         var msg = await _accelerator.TriggerCacheAsync(request.Target, ct);
@@ -74,7 +75,7 @@ public class DesktopUpdateCacheController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
     public async Task<IActionResult> Delete(string id, CancellationToken ct)
     {
-        var adminId = User.FindFirst("sub")?.Value ?? "unknown";
+        var adminId = this.GetRequiredUserId();
         _logger.LogWarning("Admin {AdminId} deleted update cache {Id}", adminId, id);
 
         await _db.DesktopUpdateCaches.DeleteOneAsync(x => x.Id == id, ct);

@@ -1062,15 +1062,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }, [allImageGenModels]);
 
   const userId = useAuthStore((s) => s.user?.userId ?? '');
-  // 默认尺寸：从 localStorage 读取用户偏好，fallback 到 1K 方形
+  // 默认尺寸：从 sessionStorage 读取用户偏好，fallback 到 1K 方形
   const defaultSizeKey = userId ? `prdAdmin.visualAgent.defaultSize.${userId}` : '';
   const [savedDefaultSize, _setSavedDefaultSize] = useState<string>(() => {
     if (!defaultSizeKey) return '1024x1024';
-    try { return localStorage.getItem(defaultSizeKey) || '1024x1024'; } catch { return '1024x1024'; }
+    try { return sessionStorage.getItem(defaultSizeKey) || '1024x1024'; } catch { return '1024x1024'; }
   });
   const setSavedDefaultSize = useCallback((size: string) => {
     _setSavedDefaultSize(size);
-    if (defaultSizeKey) { try { localStorage.setItem(defaultSizeKey, size); } catch { /* ignore */ } }
+    if (defaultSizeKey) { try { sessionStorage.setItem(defaultSizeKey, size); } catch { /* ignore */ } }
   }, [defaultSizeKey]);
   const imageGenSize = savedDefaultSize;
   const setFullBleedMain = useLayoutStore((s) => s.setFullBleedMain);
@@ -2340,11 +2340,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     try {
       setDirectPromptReady(false);
       // 需求变更：直连应始终开启（避免解析接口不稳定/误关导致体验抖动）。
-      // 历史上用户可能关闭过（localStorage 存了 0），这里统一纠正为开启，并写回。
+      // 历史上用户可能关闭过（sessionStorage 存了 0），这里统一纠正为开启，并写回。
       setDirectPrompt(true);
       setDirectPromptReady(true);
       try {
-        localStorage.setItem(directPromptKey, '1');
+        sessionStorage.setItem(directPromptKey, '1');
       } catch {
         // ignore
       }
@@ -2361,7 +2361,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     // 重要：必须先读完本地偏好，避免初始值覆盖用户历史配置
     if (!directPromptReady) return;
     try {
-      localStorage.setItem(directPromptKey, directPrompt ? '1' : '0');
+      sessionStorage.setItem(directPromptKey, directPrompt ? '1' : '0');
     } catch {
       // ignore
     }
@@ -2622,7 +2622,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     };
   }, [canvas, pushMsg, workspaceId]);
 
-  // 初始化右侧宽度：localStorage 优先，否则默认 20%
+  // 初始化右侧宽度：sessionStorage 优先，否则默认 20%
   useEffect(() => {
     const el = containerRef.current;
     const cw = el?.clientWidth ?? 0;
@@ -2630,7 +2630,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const def = Math.max(SPLIT_MIN, Math.min(SPLIT_MAX, fallback));
     let next = def;
     if (splitKey) {
-      const raw = localStorage.getItem(splitKey);
+      const raw = sessionStorage.getItem(splitKey);
       const n = raw ? Number(raw) : NaN;
       if (Number.isFinite(n) && n > 0) next = Math.max(SPLIT_MIN, Math.min(SPLIT_MAX, Math.round(n)));
     }
@@ -2703,7 +2703,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       dragRef.current = { dragging: false, startX: 0, startRight: 0 };
       if (splitKey) {
         try {
-          localStorage.setItem(splitKey, String(rightWidth));
+          sessionStorage.setItem(splitKey, String(rightWidth));
         } catch {
           // ignore
         }

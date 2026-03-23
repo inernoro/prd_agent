@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.Database;
@@ -1149,10 +1150,7 @@ public class WorkflowAgentController : ControllerBase
     // Helpers
     // ─────────────────────────────────────────────────────────
 
-    private string GetUserId()
-        => User.FindFirst("sub")?.Value
-           ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-           ?? "unknown";
+    private string GetUserId() => this.GetRequiredUserId();
 
     private string? GetUserIdOrNull()
         => User?.FindFirst("sub")?.Value

@@ -1054,7 +1054,7 @@ export default function LlmLabTab() {
     imageGenPlanSystemPromptLoadedRef.current = false;
     imageGenPlanSystemPromptBaselineRef.current = '';
     try {
-      const raw = localStorage.getItem(labCacheKey);
+      const raw = sessionStorage.getItem(labCacheKey);
       if (!raw) {
         hydratedRef.current = true;
         return;
@@ -1118,7 +1118,7 @@ export default function LlmLabTab() {
     void loadImageGenPlanSystemPrompt();
   }, [cacheUserId, loadImageGenPlanSystemPrompt, shouldShowImageGenPlanPromptSplit]);
 
-  // 持久化：保存 UI 选择与结果到 localStorage（图片内容单独进 IndexedDB）
+  // 持久化：保存 UI 选择与结果到 sessionStorage（图片内容单独进 IndexedDB）
   useEffect(() => {
     if (!hydratedRef.current) return;
     if (cacheSaveTimerRef.current) window.clearTimeout(cacheSaveTimerRef.current);
@@ -1167,7 +1167,7 @@ export default function LlmLabTab() {
           visionRunItems: Object.values(visionRunItems ?? {}),
         };
 
-        localStorage.setItem(labCacheKey, JSON.stringify(cache));
+        sessionStorage.setItem(labCacheKey, JSON.stringify(cache));
       } catch {
         // ignore
       }
@@ -1562,9 +1562,9 @@ export default function LlmLabTab() {
     setBatchActiveModelLabel('');
     setDisabledModelKeys({});
 
-    // 清理本地持久化（localStorage + IndexedDB），并释放 blob URL
+    // 清理本地持久化（sessionStorage + IndexedDB），并释放 blob URL
     try {
-      localStorage.removeItem(labCacheKey);
+      sessionStorage.removeItem(labCacheKey);
     } catch {
       // ignore
     }

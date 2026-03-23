@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -25,10 +26,7 @@ public class WebPagesController : ControllerBase
         _siteService = siteService;
     }
 
-    private string GetUserId()
-        => User.FindFirst("sub")?.Value
-           ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-           ?? "unknown";
+    private string GetUserId() => this.GetRequiredUserId();
 
     private string GetDisplayName()
         => User.FindFirst("name")?.Value

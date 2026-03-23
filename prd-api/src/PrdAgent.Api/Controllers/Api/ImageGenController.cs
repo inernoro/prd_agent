@@ -15,6 +15,7 @@ using PrdAgent.Infrastructure.Prompts.Templates;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Infrastructure.Services.VisualAgent;
 using System.Text.RegularExpressions;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 using static PrdAgent.Core.Models.AppCallerRegistry;
 
@@ -80,10 +81,7 @@ public class ImageGenController : ControllerBase
         _composeService = composeService;
     }
 
-    private string GetAdminId() =>
-        User.FindFirst("sub")?.Value
-        ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-        ?? "unknown";
+    private string GetAdminId() => this.GetRequiredUserId();
 
     private static bool IsRegisteredImageGenAppCaller(string? appCallerCode)
     {

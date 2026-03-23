@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authorization;
+using PrdAgent.Api.Extensions;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
@@ -31,10 +32,7 @@ public class LiteraryPromptsController : ControllerBase
         _llmRequestContext = llmRequestContext;
     }
 
-    private string GetAdminId()
-        => User.FindFirst("sub")?.Value
-           ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-           ?? "unknown";
+    private string GetAdminId() => this.GetRequiredUserId();
 
     /// <summary>
     /// 获取当前用户信息（用于海鲜市场展示）

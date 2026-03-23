@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import type { AdminMenuItem } from '@/services/contracts/authz';
 import type { UserRole } from '@/types/admin';
 
@@ -46,21 +46,25 @@ type AuthState = {
   logout: () => void;
 };
 
+const INITIAL_STATE = {
+  isAuthenticated: false,
+  user: null,
+  token: null,
+  refreshToken: null,
+  sessionKey: null,
+  permissions: [] as string[],
+  permissionsLoaded: false,
+  isRoot: false,
+  menuCatalog: [] as AdminMenuItem[],
+  menuCatalogLoaded: false,
+  cdnBaseUrl: '',
+  permFingerprint: '',
+};
+
 export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
-      isAuthenticated: false,
-      user: null,
-      token: null,
-      refreshToken: null,
-      sessionKey: null,
-      permissions: [],
-      permissionsLoaded: false,
-      isRoot: false,
-      menuCatalog: [],
-      menuCatalogLoaded: false,
-      cdnBaseUrl: '',
-      permFingerprint: '',
+      ...INITIAL_STATE,
       login: (user, token) => set({ isAuthenticated: true, user, token }),
       setTokens: (token, refreshToken, sessionKey) => set({ token, refreshToken, sessionKey }),
       setPermissions: (permissions) => set({ permissions: Array.isArray(permissions) ? permissions : [] }),
@@ -73,26 +77,13 @@ export const useAuthStore = create<AuthState>()(
       patchUser: (patch) =>
         set((s) => (s.user ? { user: { ...s.user, ...patch } } : ({} as Partial<AuthState>))),
       logout: () => {
-        // 清空所有本地存储，避免垃圾数据
-        localStorage.clear();
         sessionStorage.clear();
-        // 重置 store 状态
-        set({
-          isAuthenticated: false,
-          user: null,
-          token: null,
-          refreshToken: null,
-          sessionKey: null,
-          permissions: [],
-          permissionsLoaded: false,
-          isRoot: false,
-          menuCatalog: [],
-          menuCatalogLoaded: false,
-          cdnBaseUrl: '',
-          permFingerprint: '',
-        });
+        set({ ...INITIAL_STATE });
       },
     }),
-    { name: 'prd-admin-auth' }
+    {
+      name: 'prd-admin-auth',
+      storage: createJSONStorage(() => sessionStorage),
+    }
   )
 );

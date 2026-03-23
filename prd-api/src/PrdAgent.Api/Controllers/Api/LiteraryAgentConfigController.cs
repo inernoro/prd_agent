@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authorization;
+using PrdAgent.Api.Extensions;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
@@ -55,10 +56,7 @@ public class LiteraryAgentConfigController : ControllerBase
         public const string Img2Img = "literary-agent.illustration.img2img::generation";
     }
 
-    private string GetAdminId()
-        => User.FindFirst("sub")?.Value
-           ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-           ?? "unknown";
+    private string GetAdminId() => this.GetRequiredUserId();
 
     /// <summary>
     /// 获取当前用户信息（用于海鲜市场展示）

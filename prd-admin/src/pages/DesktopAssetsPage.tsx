@@ -600,7 +600,7 @@ export default function DesktopAssetsPage() {
   const [sortDesc, setSortDesc] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
     try {
-      const v = localStorage.getItem('prd-admin-assets-view');
+      const v = sessionStorage.getItem('prd-admin-assets-view');
       if (v === 'list') return 'list';
     } catch { /* ignore */ }
     return 'grid';
@@ -714,7 +714,7 @@ export default function DesktopAssetsPage() {
   const handleViewMode = (m: ViewMode) => {
     setViewMode(m);
     try {
-      localStorage.setItem('prd-admin-assets-view', m);
+      sessionStorage.setItem('prd-admin-assets-view', m);
     } catch { /* ignore */ }
   };
 

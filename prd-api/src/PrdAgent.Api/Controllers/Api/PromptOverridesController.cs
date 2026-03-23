@@ -9,6 +9,7 @@ using System.Security.Claims;
 using System.Text.Json;
 using System.Security.Cryptography;
 using System.Text;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -33,10 +34,7 @@ public class PromptOverridesController : ControllerBase
         _db = db;
     }
 
-    private string GetAdminId()
-        => User.FindFirst("sub")?.Value
-           ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-           ?? "unknown";
+    private string GetAdminId() => this.GetRequiredUserId();
 
     private static string BuildDefaultImageGenPlanPrompt()
         => ImageGenPlanPrompt.Build(ImageGenPlanDefaultMaxItems);

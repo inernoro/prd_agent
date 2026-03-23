@@ -267,7 +267,7 @@ function storageKeyMessages(userId: string, sessionId: string) {
 }
 
 function loadSessions(userId: string): LocalSession[] {
-  const list = safeJsonParse<LocalSession[]>(localStorage.getItem(storageKeySessions(userId)));
+  const list = safeJsonParse<LocalSession[]>(sessionStorage.getItem(storageKeySessions(userId)));
   if (!Array.isArray(list)) return [];
   return list
     .filter((x) => x && typeof x.sessionId === 'string' && x.sessionId.trim())
@@ -282,11 +282,11 @@ function loadSessions(userId: string): LocalSession[] {
 }
 
 function saveSessions(userId: string, sessions: LocalSession[]) {
-  localStorage.setItem(storageKeySessions(userId), JSON.stringify(sessions ?? []));
+  sessionStorage.setItem(storageKeySessions(userId), JSON.stringify(sessions ?? []));
 }
 
 function loadMessages(userId: string, sessionId: string): UiMessage[] {
-  const list = safeJsonParse<UiMessage[]>(localStorage.getItem(storageKeyMessages(userId, sessionId)));
+  const list = safeJsonParse<UiMessage[]>(sessionStorage.getItem(storageKeyMessages(userId, sessionId)));
   if (!Array.isArray(list)) return [];
   return list
     .filter((x) => x && typeof x.id === 'string' && x.id.trim())
@@ -300,7 +300,7 @@ function loadMessages(userId: string, sessionId: string): UiMessage[] {
 }
 
 function saveMessages(userId: string, sessionId: string, messages: UiMessage[]) {
-  localStorage.setItem(storageKeyMessages(userId, sessionId), JSON.stringify(messages ?? []));
+  sessionStorage.setItem(storageKeyMessages(userId, sessionId), JSON.stringify(messages ?? []));
 }
 
 function getApiBaseUrl() {
