@@ -309,8 +309,12 @@ export default function PortfolioShowcasePage() {
 
   const hasMore = items.length < total;
 
-  // Column count based on viewport
-  const columnCount = isMobile ? 2 : 4;
+  // Responsive columns: auto-fit based on viewport width
+  const columnStyle = {
+    columnCount: 'auto' as unknown as number,
+    columnWidth: isMobile ? '150px' : '220px',
+    columnGap: isMobile ? 12 : 20,
+  };
 
   const heroOpacity = Math.max(0, 1 - scrollY / 300);
   const heroScale = 1 + scrollY * 0.0003;
@@ -569,10 +573,7 @@ export default function PortfolioShowcasePage() {
           {/* Loading skeleton */}
           {loading && (
             <div
-              style={{
-                columnCount,
-                columnGap: isMobile ? 12 : 20,
-              }}
+              style={columnStyle}
             >
               <SkeletonGrid />
             </div>

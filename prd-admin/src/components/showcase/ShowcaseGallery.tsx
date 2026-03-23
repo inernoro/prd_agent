@@ -164,13 +164,20 @@ export function ShowcaseGallery() {
 
       {/* Loading skeleton */}
       {loading && (
-        <div style={{ columnCount: isMobile ? 2 : 4, columnGap: isMobile ? 12 : 20 }}>
+        <div
+          className="grid gap-5"
+          style={{
+            gridTemplateColumns: isMobile
+              ? 'repeat(auto-fill, minmax(150px, 1fr))'
+              : 'repeat(auto-fill, minmax(220px, 1fr))',
+          }}
+        >
           {Array.from({ length: 12 }).map((_, i) => (
             <div
               key={i}
-              className="animate-pulse rounded-2xl break-inside-avoid mb-5"
+              className="animate-pulse rounded-2xl"
               style={{
-                height: [220, 280, 340, 200, 300, 260][i % 6],
+                aspectRatio: [4, 3, 5, 3, 4, 3][i % 6] + '/' + [5, 4, 6, 4, 5, 4][i % 6],
                 background: 'rgba(255,255,255,0.03)',
               }}
             />
@@ -178,10 +185,16 @@ export function ShowcaseGallery() {
         </div>
       )}
 
-      {/* Masonry — CSS columns 瀑布流，自动填充空隙 */}
+      {/* Masonry — CSS columns 瀑布流，自动填充空隙，列宽自适应视窗 */}
       {!loading && items.length > 0 && (
         <>
-          <div style={{ columnCount: isMobile ? 2 : 4, columnGap: isMobile ? 12 : 20 }}>
+          <div
+            style={{
+              columnCount: 'auto' as unknown as number,
+              columnWidth: isMobile ? '150px' : '220px',
+              columnGap: isMobile ? 12 : 20,
+            }}
+          >
             {items.map((item) => (
               <div key={item.id} className="break-inside-avoid mb-5">
                 {item.contentType === 'literary' ? (
