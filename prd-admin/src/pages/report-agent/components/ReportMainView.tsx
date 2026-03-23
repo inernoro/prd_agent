@@ -384,7 +384,10 @@ export function ReportMainView() {
               {searchExpanded ? (
                 <div
                   className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg"
-                  style={{ background: 'var(--bg-secondary)', border: '1px solid rgba(59, 130, 246, 0.24)' }}
+                  style={{
+                    background: 'var(--bg-secondary)',
+                    boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.04), 0 0 0 1px rgba(59, 130, 246, 0.12)',
+                  }}
                 >
                   <Search size={13} style={{ color: 'var(--text-muted)' }} />
                   <input
