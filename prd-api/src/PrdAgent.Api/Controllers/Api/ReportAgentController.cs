@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Services.ReportAgent;
 using PrdAgent.Core.Helpers;
@@ -10,6 +11,7 @@ using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using System.Globalization;
 using System.Security.Claims;
+using System.Text.RegularExpressions;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -1003,14 +1005,20 @@ public class ReportAgentController : ControllerBase
         [FromQuery] string scope = "my",
         [FromQuery] string? teamId = null,
         [FromQuery] int? weekYear = null,
-        [FromQuery] int? weekNumber = null)
+        [FromQuery] int? weekNumber = null,
+        [FromQuery] string? keyword = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 100)
     {
         var userId = GetUserId();
         var now = DateTime.UtcNow;
         var currentWeek = GetWeekInfo(now);
+        page = Math.Max(page, 1);
+        pageSize = Math.Clamp(pageSize, 1, 100);
 
         var wy = weekYear ?? currentWeek.weekYear;
         var wn = weekNumber ?? currentWeek.weekNumber;
+        var normalizedKeyword = string.IsNullOrWhiteSpace(keyword) ? null : keyword.Trim();
 
         FilterDefinition<WeeklyReport> filter;
 
@@ -1021,27 +1029,63 @@ public class ReportAgentController : ControllerBase
             if (!isLeader && !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
                 return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权查看该团队周报"));
 
-            filter = Builders<WeeklyReport>.Filter.Eq(r => r.TeamId, teamId)
-                   & Builders<WeeklyReport>.Filter.Eq(r => r.WeekYear, wy)
-                   & Builders<WeeklyReport>.Filter.Eq(r => r.WeekNumber, wn);
+            filter = Builders<WeeklyReport>.Filter.Eq(r => r.TeamId, teamId);
+            if (normalizedKeyword == null)
+            {
+                filter &= Builders<WeeklyReport>.Filter.Eq(r => r.WeekYear, wy)
+                       & Builders<WeeklyReport>.Filter.Eq(r => r.WeekNumber, wn);
+            }
         }
         else
         {
             // 我的周报
             filter = Builders<WeeklyReport>.Filter.Eq(r => r.UserId, userId);
-            if (weekYear.HasValue && weekNumber.HasValue)
+            if (weekYear.HasValue && weekNumber.HasValue && normalizedKeyword == null)
             {
                 filter &= Builders<WeeklyReport>.Filter.Eq(r => r.WeekYear, wy)
                         & Builders<WeeklyReport>.Filter.Eq(r => r.WeekNumber, wn);
             }
         }
 
+        if (normalizedKeyword != null)
+        {
+            var escapedKeyword = Regex.Escape(normalizedKeyword);
+            var regex = new BsonRegularExpression(escapedKeyword, "i");
+            var keywordFilter = Builders<WeeklyReport>.Filter.Or(
+                Builders<WeeklyReport>.Filter.Regex(r => r.TeamName, regex),
+                Builders<WeeklyReport>.Filter.Regex(r => r.UserName, regex),
+                Builders<WeeklyReport>.Filter.Regex(r => r.ReturnReason, regex),
+                Builders<WeeklyReport>.Filter.ElemMatch(
+                    r => r.Sections,
+                    Builders<WeeklyReportSection>.Filter.Or(
+                        Builders<WeeklyReportSection>.Filter.Regex(x => x.TemplateSection.Title, regex),
+                        Builders<WeeklyReportSection>.Filter.ElemMatch(
+                            x => x.Items,
+                            Builders<WeeklyReportItem>.Filter.Regex(i => i.Content, regex)
+                        )
+                    )
+                )
+            );
+            filter &= keywordFilter;
+        }
+
+        var total = await _db.WeeklyReports.CountDocumentsAsync(filter);
         var reports = await _db.WeeklyReports.Find(filter)
             .SortByDescending(r => r.PeriodEnd)
-            .Limit(100)
+            .ThenByDescending(r => r.UpdatedAt)
+            .Skip((page - 1) * pageSize)
+            .Limit(pageSize)
             .ToListAsync();
 
-        return Ok(ApiResponse<object>.Ok(new { items = reports }));
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            items = reports,
+            total,
+            page,
+            pageSize,
+            hasMore = page * pageSize < total,
+            keyword = normalizedKeyword
+        }));
     }
 
     /// <summary>

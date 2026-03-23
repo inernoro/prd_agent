@@ -406,12 +406,24 @@ export type UpdateReportTemplateContract = (input: {
 export type DeleteReportTemplateContract = (input: { id: string }) => Promise<ApiResponse<object>>;
 
 // --- Reports ---
+export interface PagedWeeklyReportsResponse {
+  items: WeeklyReport[];
+  total: number;
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+  keyword?: string;
+}
+
 export type ListWeeklyReportsContract = (input?: {
   scope?: 'my' | 'team';
   teamId?: string;
   weekYear?: number;
   weekNumber?: number;
-}) => Promise<ApiResponse<{ items: WeeklyReport[] }>>;
+  keyword?: string;
+  page?: number;
+  pageSize?: number;
+}) => Promise<ApiResponse<PagedWeeklyReportsResponse>>;
 
 export type GetWeeklyReportContract = (input: { id: string }) => Promise<
   ApiResponse<{ report: WeeklyReport }>

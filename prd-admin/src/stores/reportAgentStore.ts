@@ -11,6 +11,7 @@ import type {
   ReportTeam,
   ReportTeamMember,
   ReportTemplate,
+  PagedWeeklyReportsResponse,
   WeeklyReport,
   ReportUser,
   TeamDashboardData,
@@ -26,6 +27,11 @@ interface ReportAgentState {
   currentTeamMembers: ReportTeamMember[];
   templates: ReportTemplate[];
   reports: WeeklyReport[];
+  reportsTotal: number;
+  reportsPage: number;
+  reportsPageSize: number;
+  reportsHasMore: boolean;
+  reportsKeyword: string;
   users: ReportUser[];
   dashboard: TeamDashboardData | null;
 
@@ -43,7 +49,16 @@ interface ReportAgentState {
   loadTeams: () => Promise<void>;
   loadTeamDetail: (id: string) => Promise<void>;
   loadTemplates: () => Promise<void>;
-  loadReports: (params?: { scope?: 'my' | 'team'; teamId?: string; weekYear?: number; weekNumber?: number }) => Promise<void>;
+  loadReports: (params?: {
+    scope?: 'my' | 'team';
+    teamId?: string;
+    weekYear?: number;
+    weekNumber?: number;
+    keyword?: string;
+    page?: number;
+    pageSize?: number;
+    append?: boolean;
+  }) => Promise<void>;
   loadUsers: () => Promise<void>;
   loadDashboard: (teamId: string, weekYear?: number, weekNumber?: number) => Promise<void>;
   loadAll: () => Promise<void>;
@@ -70,6 +85,11 @@ const initialState = {
   currentTeamMembers: [] as ReportTeamMember[],
   templates: [] as ReportTemplate[],
   reports: [] as WeeklyReport[],
+  reportsTotal: 0,
+  reportsPage: 1,
+  reportsPageSize: 20,
+  reportsHasMore: false,
+  reportsKeyword: '',
   users: [] as ReportUser[],
   dashboard: null as TeamDashboardData | null,
   loading: false,
@@ -126,7 +146,16 @@ export const useReportAgentStore = create<ReportAgentState>((set, get) => ({
     try {
       const res = await listWeeklyReports(params);
       if (res.success && res.data) {
-        set({ reports: res.data.items, loading: false });
+        const data: PagedWeeklyReportsResponse = res.data;
+        set({
+          reports: params?.append ? [...get().reports, ...data.items] : data.items,
+          reportsTotal: data.total,
+          reportsPage: data.page,
+          reportsPageSize: data.pageSize,
+          reportsHasMore: data.hasMore,
+          reportsKeyword: data.keyword || '',
+          loading: false,
+        });
       } else {
         set({ error: res.error?.message || '加载失败', loading: false });
       }

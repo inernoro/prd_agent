@@ -18,6 +18,7 @@ import type {
   CreateReportTemplateContract,
   UpdateReportTemplateContract,
   DeleteReportTemplateContract,
+  PagedWeeklyReportsResponse,
   ListWeeklyReportsContract,
   GetWeeklyReportContract,
   CreateWeeklyReportContract,
@@ -277,8 +278,11 @@ export const listWeeklyReportsReal: ListWeeklyReportsContract = async (input) =>
   if (input?.teamId) qs.set('teamId', input.teamId);
   if (input?.weekYear != null) qs.set('weekYear', String(input.weekYear));
   if (input?.weekNumber != null) qs.set('weekNumber', String(input.weekNumber));
+  if (input?.keyword) qs.set('keyword', input.keyword);
+  if (input?.page != null) qs.set('page', String(input.page));
+  if (input?.pageSize != null) qs.set('pageSize', String(input.pageSize));
   const q = qs.toString();
-  return await apiRequest<{ items: WeeklyReport[] }>(
+  return await apiRequest<PagedWeeklyReportsResponse>(
     `${api.reportAgent.reports.list()}${q ? `?${q}` : ''}`,
     { method: 'GET' }
   );

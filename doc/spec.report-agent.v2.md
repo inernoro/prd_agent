@@ -720,7 +720,7 @@ Draft  --->  Submitted  --->  Viewed
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
-| `/api/report-agent/reports` | GET | 我的周报列表 |
+| `/api/report-agent/reports` | GET | 我的周报列表（支持 weekYear/weekNumber/keyword/page/pageSize） |
 | `/api/report-agent/reports/current` | GET | 当前周周报 |
 | `/api/report-agent/reports/generate` | POST | 生成/刷新当前周周报 |
 | `/api/report-agent/reports/{id}` | GET | 周报详情 |

@@ -1,8 +1,8 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import {
   Plus, Calendar, FileText,
   CheckCircle2, Clock, AlertCircle, Send, Pencil,
-  CalendarCheck, ArrowRight,
+  CalendarCheck, ArrowRight, Search, X,
 } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
@@ -63,7 +63,7 @@ const statusConfig: Record<string, { label: string; color: string; bg: string; b
 
 export function ReportMainView() {
   const {
-    reports, teams, templates,
+    reports, reportsTotal, reportsPage, reportsPageSize, reportsHasMore, teams, templates,
     showReportEditor, setShowReportEditor,
     setSelectedReportId, loadReports,
   } = useReportAgentStore();
@@ -74,6 +74,15 @@ export function ReportMainView() {
   const [selectedWeekKey, setSelectedWeekKey] = useState(getWeekKey(now));
   const [editingReportId, setEditingReportId] = useState<string | null>(null);
   const [showDailyLog, setShowDailyLog] = useState(false);
+  const [searchExpanded, setSearchExpanded] = useState(false);
+  const [searchDraft, setSearchDraft] = useState('');
+  const [activeKeyword, setActiveKeyword] = useState('');
+  const [isLoadingMoreSearch, setIsLoadingMoreSearch] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const browseContextRef = useRef<{ mode: 'all' | 'specific'; weekKey: string }>({
+    mode: weekFilterMode,
+    weekKey: selectedWeekKey,
+  });
 
   const hasTeam = teams.length > 0;
   const hasTemplate = templates.length > 0;
@@ -96,6 +105,13 @@ export function ReportMainView() {
   }, [reports, now, prevWeek]);
 
   const filteredReports = useMemo(() => {
+    if (activeKeyword) {
+      return [...reports].sort((a, b) => {
+        if (a.weekYear !== b.weekYear) return b.weekYear - a.weekYear;
+        if (a.weekNumber !== b.weekNumber) return b.weekNumber - a.weekNumber;
+        return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+      });
+    }
     const sorted = [...reports].sort((a, b) => {
       if (a.weekYear !== b.weekYear) return b.weekYear - a.weekYear;
       if (a.weekNumber !== b.weekNumber) return b.weekNumber - a.weekNumber;
@@ -104,7 +120,7 @@ export function ReportMainView() {
     if (weekFilterMode === 'all') return sorted;
     const selectedWeek = parseWeekKey(selectedWeekKey);
     return sorted.filter((r) => r.weekYear === selectedWeek.weekYear && r.weekNumber === selectedWeek.weekNumber);
-  }, [reports, weekFilterMode, selectedWeekKey]);
+  }, [reports, weekFilterMode, selectedWeekKey, activeKeyword]);
 
   const groupedReports = useMemo(() => {
     const map = new Map<string, { week: WeekRef; items: WeeklyReport[] }>();
@@ -122,6 +138,19 @@ export function ReportMainView() {
   }, [filteredReports]);
 
   const hasReports = filteredReports.length > 0;
+  const selectedWeek = useMemo(() => parseWeekKey(selectedWeekKey), [selectedWeekKey]);
+
+  const loadBrowseReports = useCallback(async (mode = weekFilterMode, weekKey = selectedWeekKey) => {
+    if (mode === 'all') {
+      await loadReports();
+      return;
+    }
+    const browseWeek = parseWeekKey(weekKey);
+    await loadReports({
+      weekYear: browseWeek.weekYear,
+      weekNumber: browseWeek.weekNumber,
+    });
+  }, [loadReports, selectedWeekKey, weekFilterMode]);
 
   const handleCreateReport = useCallback(() => {
     setEditingReportId(null);
@@ -144,6 +173,56 @@ export function ReportMainView() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!searchExpanded) return;
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  }, [searchExpanded]);
+
+  useEffect(() => {
+    if (activeKeyword) return;
+    browseContextRef.current = { mode: weekFilterMode, weekKey: selectedWeekKey };
+  }, [activeKeyword, selectedWeekKey, weekFilterMode]);
+
+  const handleSearchSubmit = useCallback(async () => {
+    const nextKeyword = searchDraft.trim();
+    if (!nextKeyword) {
+      setSearchExpanded(false);
+      return;
+    }
+    browseContextRef.current = { mode: weekFilterMode, weekKey: selectedWeekKey };
+    setActiveKeyword(nextKeyword);
+    setSearchExpanded(false);
+    await loadReports({
+      keyword: nextKeyword,
+      page: 1,
+      pageSize: 20,
+    });
+  }, [loadReports, searchDraft, selectedWeekKey, weekFilterMode]);
+
+  const handleClearSearch = useCallback(async () => {
+    setSearchDraft('');
+    setActiveKeyword('');
+    setSearchExpanded(false);
+    setIsLoadingMoreSearch(false);
+    await loadBrowseReports(browseContextRef.current.mode, browseContextRef.current.weekKey);
+  }, [loadBrowseReports]);
+
+  const handleLoadMoreSearch = useCallback(async () => {
+    if (!activeKeyword || !reportsHasMore || isLoadingMoreSearch) return;
+    setIsLoadingMoreSearch(true);
+    try {
+      await loadReports({
+        keyword: activeKeyword,
+        page: reportsPage + 1,
+        pageSize: reportsPageSize,
+        append: true,
+      });
+    } finally {
+      setIsLoadingMoreSearch(false);
+    }
+  }, [activeKeyword, isLoadingMoreSearch, loadReports, reportsHasMore, reportsPage, reportsPageSize]);
+
   // ── Editor view ──
   if (showReportEditor) {
     return (
@@ -154,7 +233,15 @@ export function ReportMainView() {
         onClose={() => {
           setShowReportEditor(false);
           setEditingReportId(null);
-          void loadReports();
+          if (activeKeyword) {
+            void loadReports({
+              keyword: activeKeyword,
+              page: 1,
+              pageSize: reportsPageSize,
+            });
+          } else {
+            void loadBrowseReports(browseContextRef.current.mode, browseContextRef.current.weekKey);
+          }
         }}
       />
     );
@@ -178,7 +265,7 @@ export function ReportMainView() {
                 我的周报
               </div>
               <div className="text-[12px] mt-1" style={{ color: 'var(--text-muted)' }}>
-                共 {reports.length} 份 · 默认展示全部周报
+                共 {reportsTotal} 份 · {activeKeyword ? `搜索关键词：${activeKeyword}` : '默认展示全部周报'}
               </div>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
@@ -190,6 +277,7 @@ export function ReportMainView() {
                   border: `1px solid ${weekFilterMode === 'all' ? 'rgba(59, 130, 246, 0.2)' : 'var(--border-primary)'}`,
                 }}
                 onClick={() => setWeekFilterMode('all')}
+                disabled={!!activeKeyword}
               >
                 全部
               </button>
@@ -210,9 +298,11 @@ export function ReportMainView() {
                       : '1px solid var(--border-primary)',
                 }}
                 onClick={() => {
+                  if (activeKeyword) return;
                   setWeekFilterMode('specific');
                   setSelectedWeekKey(getWeekKey(now));
                 }}
+                disabled={!!activeKeyword}
               >
                 本周
               </button>
@@ -233,9 +323,11 @@ export function ReportMainView() {
                       : '1px solid var(--border-primary)',
                 }}
                 onClick={() => {
+                  if (activeKeyword) return;
                   setWeekFilterMode('specific');
                   setSelectedWeekKey(getWeekKey(prevWeek));
                 }}
+                disabled={!!activeKeyword}
               >
                 上周
               </button>
@@ -248,7 +340,9 @@ export function ReportMainView() {
                   className="text-[12px] bg-transparent outline-none"
                   style={{ color: 'var(--text-primary)' }}
                   value={selectedWeekKey}
+                  disabled={!!activeKeyword}
                   onChange={(e) => {
+                    if (activeKeyword) return;
                     setWeekFilterMode('specific');
                     setSelectedWeekKey(e.target.value);
                   }}
@@ -260,6 +354,76 @@ export function ReportMainView() {
                   ))}
                 </select>
               </div>
+              {activeKeyword && (
+                <button
+                  className="whitespace-nowrap inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-[12px] font-medium transition-colors"
+                  style={{
+                    color: 'rgba(59, 130, 246, 0.95)',
+                    background: 'rgba(59, 130, 246, 0.1)',
+                    border: '1px solid rgba(59, 130, 246, 0.2)',
+                  }}
+                  onClick={() => {
+                    setSearchDraft(activeKeyword);
+                    setSearchExpanded(true);
+                  }}
+                >
+                  <Search size={13} />
+                  搜索：{activeKeyword}
+                  <span
+                    className="inline-flex items-center justify-center rounded-full w-4 h-4"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void handleClearSearch();
+                    }}
+                    style={{ background: 'rgba(255,255,255,0.18)' }}
+                  >
+                    <X size={11} />
+                  </span>
+                </button>
+              )}
+              {searchExpanded ? (
+                <div
+                  className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg"
+                  style={{ background: 'var(--bg-secondary)', border: '1px solid rgba(59, 130, 246, 0.24)' }}
+                >
+                  <Search size={13} style={{ color: 'var(--text-muted)' }} />
+                  <input
+                    ref={searchInputRef}
+                    className="w-[180px] text-[12px] bg-transparent outline-none"
+                    style={{ color: 'var(--text-primary)' }}
+                    value={searchDraft}
+                    placeholder="搜索周报关键词"
+                    onChange={(e) => setSearchDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        void handleSearchSubmit();
+                      }
+                      if (e.key === 'Escape') {
+                        setSearchExpanded(false);
+                      }
+                    }}
+                    onBlur={() => {
+                      if (!searchDraft.trim()) {
+                        setSearchExpanded(false);
+                      }
+                    }}
+                  />
+                </div>
+              ) : !activeKeyword ? (
+                <button
+                  className="w-8 h-8 rounded-lg inline-flex items-center justify-center transition-colors"
+                  style={{
+                    color: 'var(--text-secondary)',
+                    background: 'var(--bg-secondary)',
+                    border: '1px solid var(--border-primary)',
+                  }}
+                  onClick={() => setSearchExpanded(true)}
+                  title="搜索周报"
+                  aria-label="搜索周报"
+                >
+                  <Search size={14} />
+                </button>
+              ) : null}
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -286,6 +450,21 @@ export function ReportMainView() {
 
       {hasReports ? (
         <div className="flex flex-col gap-5">
+          {activeKeyword && (
+            <div className="px-1 flex items-center justify-between gap-3 flex-wrap">
+              <div className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+                搜索结果：共找到 <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{reportsTotal}</span> 份匹配周报
+              </div>
+              <button
+                className="text-[12px] inline-flex items-center gap-1.5 transition-opacity hover:opacity-80"
+                style={{ color: 'var(--text-muted)' }}
+                onClick={() => void handleClearSearch()}
+              >
+                <X size={12} />
+                清空搜索
+              </button>
+            </div>
+          )}
           {groupedReports.map((group) => (
             <div key={getWeekKey(group.week)} className="flex flex-col gap-3">
               <div className="flex items-center justify-between px-1">
@@ -307,6 +486,19 @@ export function ReportMainView() {
               </div>
             </div>
           ))}
+          {activeKeyword && reportsHasMore && (
+            <div className="flex justify-center pt-1">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void handleLoadMoreSearch()}
+                disabled={isLoadingMoreSearch}
+                className="whitespace-nowrap"
+              >
+                {isLoadingMoreSearch ? '加载中...' : '加载更多结果'}
+              </Button>
+            </div>
+          )}
         </div>
       ) : hasTeam && hasTemplate ? (
         <div className="flex-1 flex items-center justify-center" style={{ minHeight: 240 }}>
@@ -319,15 +511,17 @@ export function ReportMainView() {
             </div>
             <div>
               <div className="text-[15px] font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
-                暂无周报
+                {activeKeyword ? '没有找到匹配的周报' : '暂无周报'}
               </div>
               <div className="text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-                {weekFilterMode === 'all'
+                {activeKeyword
+                  ? `没有搜索到包含“${activeKeyword}”的周报内容`
+                  : weekFilterMode === 'all'
                   ? '还没有任何周报，点击右上角开始创建'
-                  : `${formatWeekLabel(parseWeekKey(selectedWeekKey))} 暂无周报`}
+                  : `${formatWeekLabel(selectedWeek)} 暂无周报`}
               </div>
             </div>
-            {hasTeam && hasTemplate && (
+            {!activeKeyword && hasTeam && hasTemplate && (
               <Button variant="primary" onClick={handleCreateReport}>
                 <Plus size={14} /> 写周报
               </Button>

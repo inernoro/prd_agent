@@ -2126,7 +2126,7 @@ sequenceDiagram
 **数据模型**：`WeeklyReport`、`WeeklyReportSection`、`WeeklyReportItem`、`ReportLike`、`ReportViewEvent`（集合：`report_weekly_reports`、`report_likes`、`report_view_events`）
 
 **API 端点**：
-- `GET/POST /api/report-agent/reports` — 周报列表/创建
+- `GET/POST /api/report-agent/reports` — 周报列表/创建（列表支持关键词搜索、分页与 hasMore 返回）
 - `GET/PUT/DELETE /api/report-agent/reports/{id}` — 周报详情/更新/删除
 - `POST /api/report-agent/reports/{id}/rich-text/images` — 富文本图片上传（粘贴图片）
 - `POST /api/report-agent/reports/{id}/submit` — 提交
