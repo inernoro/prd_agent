@@ -4,6 +4,7 @@ using MongoDB.Driver;
 using PrdAgent.Api.Services.ReportAgent;
 using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Models;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.AssetStorage;
@@ -72,10 +73,7 @@ public class ReportAgentController : ControllerBase
 
     #region Helpers
 
-    private string GetUserId()
-        => User.FindFirst("sub")?.Value
-           ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-           ?? "unknown";
+    private string GetUserId() => this.GetRequiredUserId();
 
     private string? GetUsername()
         => User.FindFirst("name")?.Value

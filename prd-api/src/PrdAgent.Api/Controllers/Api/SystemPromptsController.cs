@@ -7,6 +7,7 @@ using PrdAgent.Api.Models.Requests;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -30,10 +31,7 @@ public class SystemPromptsController : ControllerBase
         _systemPromptService = systemPromptService;
     }
 
-    private string GetAdminId()
-        => User.FindFirst("sub")?.Value
-           ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-           ?? "unknown";
+    private string GetAdminId() => this.GetRequiredUserId();
 
     [HttpGet]
     public async Task<IActionResult> Get(CancellationToken ct)

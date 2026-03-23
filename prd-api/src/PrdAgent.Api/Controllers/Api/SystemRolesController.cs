@@ -6,6 +6,7 @@ using MongoDB.Driver;
 using PrdAgent.Api.Models.Responses;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 
@@ -26,8 +27,7 @@ public sealed class SystemRolesController : ControllerBase
         _roleCache = roleCache;
     }
 
-    private string GetOperatorId()
-        => User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value ?? "unknown";
+    private string GetOperatorId() => this.GetRequiredUserId();
 
     /// <summary>
     /// 获取所有角色（内置 + 自定义）

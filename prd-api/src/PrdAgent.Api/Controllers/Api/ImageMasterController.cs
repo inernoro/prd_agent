@@ -14,6 +14,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Infrastructure.Services.VisualAgent;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Models.Requests;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
@@ -83,10 +84,7 @@ public class ImageMasterController : ControllerBase
         _imageDescriptionService = imageDescriptionService;
     }
 
-    private string GetAdminId() =>
-        User.FindFirst("sub")?.Value
-        ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-        ?? "unknown";
+    private string GetAdminId() => this.GetRequiredUserId();
 
     private async Task<ImageMasterWorkspace?> GetWorkspaceIfAllowedAsync(string workspaceId, string adminId, CancellationToken ct)
     {

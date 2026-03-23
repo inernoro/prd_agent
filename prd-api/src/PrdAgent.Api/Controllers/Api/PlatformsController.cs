@@ -4,6 +4,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
@@ -66,7 +67,7 @@ public class PlatformsController : ControllerBase
         _idGenerator = idGenerator;
     }
 
-    private string GetAdminId() => User.FindFirst("sub")?.Value ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "unknown";
+    private string GetAdminId() => this.GetRequiredUserId();
 
     /// <summary>
     /// 获取所有平台

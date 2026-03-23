@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Attributes;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -34,10 +35,7 @@ public class DataMigrationController : ControllerBase
         _logger = logger;
     }
 
-    private string GetAdminId()
-        => User.FindFirst("sub")?.Value
-           ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-           ?? "unknown";
+    private string GetAdminId() => this.GetRequiredUserId();
 
     /// <summary>
     /// 获取实体与集合的完整映射关系

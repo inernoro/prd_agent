@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using static PrdAgent.Core.Models.AppCallerRegistry;
@@ -38,10 +39,7 @@ public class LiteraryAgentImageGenController : ControllerBase
         _logger = logger;
     }
 
-    private string GetAdminId() =>
-        User.FindFirst("sub")?.Value
-        ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-        ?? "unknown";
+    private string GetAdminId() => this.GetRequiredUserId();
 
     private static bool IsRegisteredImageGenAppCaller(string? appCallerCode)
     {

@@ -7,6 +7,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
@@ -52,7 +53,7 @@ public class ModelLabController : ControllerBase
         _claudeLogger = claudeLogger;
     }
 
-    private string GetAdminId() => User.FindFirst("sub")?.Value ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "unknown";
+    private string GetAdminId() => this.GetRequiredUserId();
 
     [HttpGet("experiments")]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]

@@ -5,6 +5,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -68,7 +69,7 @@ public class LabController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "userId 不能为空"));
         }
 
-        var adminId = User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value ?? User.FindFirst("sub")?.Value ?? "unknown";
+        var adminId = this.GetRequiredUserId();
 
         var user = await _db.Users.Find(u => u.UserId == request.UserId.Trim()).FirstOrDefaultAsync();
         if (user == null)
@@ -127,7 +128,7 @@ public class LabController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "content 不能为空"));
         }
 
-        var adminId = User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value ?? User.FindFirst("sub")?.Value ?? "unknown";
+        var adminId = this.GetRequiredUserId();
 
         // 查找群组
         var group = await _db.Groups.Find(g => g.GroupId == request.GroupId.Trim()).FirstOrDefaultAsync();
@@ -223,7 +224,7 @@ public class LabController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "groupId 不能为空"));
         }
 
-        var adminId = User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value ?? User.FindFirst("sub")?.Value ?? "unknown";
+        var adminId = this.GetRequiredUserId();
 
         // 查找群组
         var group = await _db.Groups.Find(g => g.GroupId == request.GroupId.Trim()).FirstOrDefaultAsync();

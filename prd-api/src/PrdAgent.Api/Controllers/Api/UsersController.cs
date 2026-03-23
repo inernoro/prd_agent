@@ -11,6 +11,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.AssetStorage;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -49,10 +50,7 @@ public class UsersController : ControllerBase
         _idGenerator = idGenerator;
     }
 
-    private string GetAdminId()
-        => User.FindFirst("sub")?.Value
-           ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-           ?? "unknown";
+    private string GetAdminId() => this.GetRequiredUserId();
 
     private static (bool ok, string? error) ValidateUsername(string username)
     {
