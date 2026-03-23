@@ -111,7 +111,13 @@ const AssistantMarkdown = memo(function AssistantMarkdown({ content }: { content
 });
 
 const MAX_MESSAGE_CHARS = 16 * 1024;
-const ALLOWED_TEXT_EXTS = ['.md', '.mdc', '.txt', '.log', '.json', '.csv', '.xml', '.html', '.htm'];
+/** 明确排除的非文本格式（图片、音视频、可执行文件等） */
+const REJECTED_BINARY_EXTS = [
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.ico', '.tiff',
+  '.mp3', '.mp4', '.avi', '.mov', '.wav', '.flac', '.ogg', '.webm',
+  '.exe', '.dll', '.so', '.dylib', '.bin', '.dmg', '.iso',
+  '.zip', '.tar', '.gz', '.rar', '.7z',
+];
 
 function normalizeFileName(name: string) {
   return (name ?? '').trim();
@@ -1028,8 +1034,8 @@ export default function AiChatPage() {
     if (!file) return;
     const fileName = normalizeFileName(file.name || '');
     const ext = getLowerExt(fileName);
-    if (ext && !ALLOWED_TEXT_EXTS.includes(ext)) {
-      toast.warning(`暂仅支持文本附件：${ALLOWED_TEXT_EXTS.join(', ')}`);
+    if (ext && REJECTED_BINARY_EXTS.includes(ext)) {
+      toast.warning('不支持图片、音视频、压缩包等二进制文件，请上传文档或代码文件');
       return;
     }
 
@@ -1195,8 +1201,8 @@ export default function AiChatPage() {
   const handleAddDocument = useCallback(async (file: File) => {
     if (!activeSessionId || !userId) return;
     const ext = getLowerExt(file.name || '');
-    if (ext && !ALLOWED_TEXT_EXTS.includes(ext)) {
-      toast.warning(`暂仅支持文本文件：${ALLOWED_TEXT_EXTS.join(', ')}`);
+    if (ext && REJECTED_BINARY_EXTS.includes(ext)) {
+      toast.warning('不支持图片、音视频、压缩包等二进制文件，请上传文档或代码文件');
       return;
     }
     try {
@@ -1282,7 +1288,6 @@ export default function AiChatPage() {
       <input
         ref={addDocFileRef}
         type="file"
-        accept=".md,.mdc,.txt,.csv,.json,.xml,.html,.htm,.log"
         multiple
         className="hidden"
         onChange={(e) => {

@@ -26,22 +26,16 @@ public class SessionsController : ControllerBase
     private readonly ILogger<SessionsController> _logger;
     private readonly IFileContentExtractor _fileContentExtractor;
 
-    /// <summary>文件上传允许的文档 MIME 类型（不含图片）</summary>
-    private static readonly HashSet<string> AllowedDocumentMimeTypes = new(StringComparer.OrdinalIgnoreCase)
+    /// <summary>图片 MIME（不支持作为文档上传）</summary>
+    private static readonly HashSet<string> ImageMimeTypes = new(StringComparer.OrdinalIgnoreCase)
     {
-        "text/plain", "text/markdown", "text/csv", "text/html", "text/xml",
-        "application/pdf", "application/json", "application/xml",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/msword",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel",
-        "application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/vnd.ms-powerpoint",
+        "image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml", "image/bmp", "image/tiff",
     };
 
-    /// <summary>扩展名→MIME 推断（浏览器可能发送 octet-stream）</summary>
+    /// <summary>扩展名→MIME 推断（浏览器/客户端可能发送 octet-stream）</summary>
     private static readonly Dictionary<string, string> ExtensionToMime = new(StringComparer.OrdinalIgnoreCase)
     {
-        [".md"] = "text/markdown", [".mdc"] = "text/markdown", [".txt"] = "text/plain",
-        [".csv"] = "text/csv", [".json"] = "application/json", [".xml"] = "application/xml",
-        [".html"] = "text/html", [".htm"] = "text/html",
+        // 已知二进制文档格式
         [".pdf"] = "application/pdf",
         [".doc"] = "application/msword",
         [".docx"] = "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -70,6 +64,44 @@ public class SessionsController : ControllerBase
 
     private static string? GetUserId(ClaimsPrincipal user)
         => user.FindFirst("sub")?.Value ?? user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+    /// <summary>
+    /// 尝试将字节内容解读为 UTF-8 文本。
+    /// 通过检测 null 字节和 UTF-8 有效性判断是否为文本文件。
+    /// </summary>
+    private static string? TryReadAsUtf8Text(byte[] bytes)
+    {
+        if (bytes.Length == 0) return null;
+
+        // 检查前 8KB 是否包含 null 字节（二进制文件的典型特征）
+        var checkLen = Math.Min(bytes.Length, 8192);
+        for (var i = 0; i < checkLen; i++)
+        {
+            if (bytes[i] == 0x00) return null;
+        }
+
+        // 尝试 UTF-8 解码
+        try
+        {
+            var text = System.Text.Encoding.UTF8.GetString(bytes);
+            // 检查是否包含过多不可打印字符（允许 \t \r \n）
+            var nonPrintable = 0;
+            var sampleLen = Math.Min(text.Length, 4096);
+            for (var i = 0; i < sampleLen; i++)
+            {
+                var c = text[i];
+                if (c != '\t' && c != '\r' && c != '\n' && char.IsControl(c))
+                    nonPrintable++;
+            }
+            // 如果超过 5% 是不可打印字符，认为是二进制
+            if (sampleLen > 0 && (double)nonPrintable / sampleLen > 0.05) return null;
+            return text;
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
     private async Task<bool> IsAdminAsync(string userId, CancellationToken ct = default)
     {
@@ -431,7 +463,7 @@ public class SessionsController : ControllerBase
         if (file.Length > MaxUploadBytes)
             return BadRequest(ApiResponse<object>.Fail("FILE_TOO_LARGE", $"文件大小不能超过 {MaxUploadBytes / 1024 / 1024}MB"));
 
-        // MIME 推断（浏览器可能发送 octet-stream）
+        // MIME 推断（浏览器/客户端可能发送 octet-stream）
         var mime = file.ContentType?.ToLowerInvariant() ?? "application/octet-stream";
         if (mime == "application/octet-stream" && file.FileName != null)
         {
@@ -440,8 +472,13 @@ public class SessionsController : ControllerBase
                 mime = inferred;
         }
 
-        if (!AllowedDocumentMimeTypes.Contains(mime))
-            return BadRequest(ApiResponse<object>.Fail("UNSUPPORTED_TYPE", $"不支持的文件类型: {mime}"));
+        // 拒绝图片文件（图片无法提取有意义的文本）
+        if (ImageMimeTypes.Contains(mime) || mime.StartsWith("image/"))
+            return BadRequest(ApiResponse<object>.Fail("UNSUPPORTED_TYPE", "不支持图片文件，请上传文档或代码文件"));
+
+        // 拒绝音视频等明确不适合的类型
+        if (mime.StartsWith("audio/") || mime.StartsWith("video/"))
+            return BadRequest(ApiResponse<object>.Fail("UNSUPPORTED_TYPE", "不支持音视频文件"));
 
         var session = await _sessionService.GetByIdAsync(sessionId);
         if (session == null)
@@ -452,7 +489,7 @@ public class SessionsController : ControllerBase
             return StatusCode(StatusCodes.Status403Forbidden,
                 ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
 
-        // 读取文件字节并提取文本
+        // 读取文件字节
         byte[] bytes;
         using (var ms = new MemoryStream())
         {
@@ -460,18 +497,22 @@ public class SessionsController : ControllerBase
             bytes = ms.ToArray();
         }
 
+        // 提取文本内容：已知二进制格式用提取器，其他尝试 UTF-8 解码
         string? content;
         if (_fileContentExtractor.IsSupported(mime))
         {
+            // PDF / Word / Excel / PPT 等已知二进制格式
             content = _fileContentExtractor.Extract(bytes, mime, file.FileName);
         }
         else
         {
-            content = System.Text.Encoding.UTF8.GetString(bytes);
+            // 尝试作为 UTF-8 文本读取（覆盖所有代码/配置/文档格式）
+            content = TryReadAsUtf8Text(bytes);
         }
 
         if (string.IsNullOrWhiteSpace(content))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无法从文件中提取文本内容"));
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                "无法从文件中提取文本内容，请确认文件不是二进制可执行文件或空文件"));
 
         // 内容验证
         var validationResult = DocumentValidator.Validate(content);

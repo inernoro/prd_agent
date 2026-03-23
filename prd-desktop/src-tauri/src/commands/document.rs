@@ -85,13 +85,7 @@ pub async fn remove_document_from_session(
         .await
 }
 
-/// 读取文本文件内容（UTF-8）
-#[command]
-pub async fn read_text_file(file_path: String) -> Result<String, String> {
-    std::fs::read_to_string(&file_path).map_err(|e| format!("读取文件失败: {}", e))
-}
-
-/// 上传文件到会话（支持 PDF/Word/Excel/PPT 等二进制格式）
+/// 上传文件到会话（所有格式统一上传，后端自动判断文本/二进制并提取内容）
 #[command]
 pub async fn upload_file_to_session(
     session_id: String,
@@ -106,7 +100,7 @@ pub async fn upload_file_to_session(
         .to_string_lossy()
         .to_string();
 
-    // 推断 MIME type
+    // 推断 MIME type（已知格式精确推断，其他交给后端自动检测）
     let mime = match path
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
@@ -125,13 +119,7 @@ pub async fn upload_file_to_session(
         Some("pptx") => {
             "application/vnd.openxmlformats-officedocument.presentationml.presentation"
         }
-        Some("md") | Some("mdc") => "text/markdown",
-        Some("txt") | Some("log") => "text/plain",
-        Some("csv") => "text/csv",
-        Some("json") => "application/json",
-        Some("xml") => "application/xml",
-        Some("html") | Some("htm") => "text/html",
-        _ => "application/octet-stream",
+        _ => "application/octet-stream", // 其他格式交给后端自动检测文本/二进制
     };
 
     let client = ApiClient::new();

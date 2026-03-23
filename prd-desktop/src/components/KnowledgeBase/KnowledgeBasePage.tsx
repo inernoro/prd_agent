@@ -11,9 +11,6 @@ import { DOCUMENT_TYPE_LABELS } from '../../types';
 
 const DOC_TYPES: DocumentType[] = ['product', 'technical', 'design', 'reference'];
 
-/** 二进制格式（需通过文件上传接口，服务端提取文本） */
-const BINARY_EXTENSIONS = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx'];
-
 export default function KnowledgeBasePage() {
   const { activeGroupId, documentLoaded, document, documents, sessionId, setDocuments } = useSessionStore();
   const { groups } = useGroupListStore();
@@ -76,21 +73,17 @@ export default function KnowledgeBasePage() {
     } catch { /* skip */ }
   }, [sessionId, activeGroupId, setDocuments]);
 
-  // 使用 Tauri 原生文件选择器添加资料（支持多文件 + 二进制格式）
+  // 使用 Tauri 原生文件选择器添加资料（支持多文件，后端自动检测文本/二进制）
   const handleAddDocumentNative = useCallback(async () => {
     if (!sessionId) return;
 
     try {
       const selected = await open({
         multiple: true,
-        filters: [{
-          name: '文档',
-          extensions: ['md', 'mdc', 'txt', 'csv', 'json', 'xml', 'html', 'htm', 'log',
-                       'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'],
-        }],
+        title: '选择资料文件（文档、代码、配置等均可）',
       });
 
-      if (!selected) return; // user cancelled
+      if (!selected) return;
       const paths = Array.isArray(selected) ? selected : [selected];
       if (paths.length === 0) return;
 
@@ -100,29 +93,17 @@ export default function KnowledgeBasePage() {
 
       for (const filePath of paths) {
         try {
-          const ext = filePath.toLowerCase().slice(filePath.lastIndexOf('.'));
-          if (BINARY_EXTENSIONS.includes(ext)) {
-            // 二进制文件：通过文件上传接口
-            const resp = await invoke<ApiResponse<{ sessionId: string; documentId: string; documentIds: string[]; documentMetas: Array<{ documentId: string; documentType: string }> }>>(
-              'upload_file_to_session',
-              { sessionId, filePath }
-            );
-            if (!resp.success) {
-              errors.push(resp.error?.message || `上传失败: ${filePath}`);
-            }
-          } else {
-            // 文本文件：读取内容后通过文本接口
-            const content = await invoke<string>('read_text_file', { filePath });
-            const resp = await invoke<ApiResponse<{ sessionId: string; documentId: string; documentIds: string[]; documentMetas: Array<{ documentId: string; documentType: string }> }>>(
-              'add_document_to_session',
-              { sessionId, content }
-            );
-            if (!resp.success) {
-              errors.push(resp.error?.message || `添加失败: ${filePath}`);
-            }
+          const resp = await invoke<ApiResponse<{ sessionId: string; documentId: string; documentIds: string[]; documentMetas: Array<{ documentId: string; documentType: string }> }>>(
+            'upload_file_to_session',
+            { sessionId, filePath }
+          );
+          if (!resp.success) {
+            const fileName = filePath.split(/[/\\]/).pop() || filePath;
+            errors.push(`${fileName}: ${resp.error?.message || '上传失败'}`);
           }
         } catch (err) {
-          errors.push(`处理失败: ${filePath}`);
+          const fileName = filePath.split(/[/\\]/).pop() || filePath;
+          errors.push(`${fileName}: 处理失败`);
           console.error(err);
         }
       }
@@ -131,7 +112,6 @@ export default function KnowledgeBasePage() {
         setError(errors.join('\n'));
       }
 
-      // 刷新文档列表
       await refreshDocuments();
     } catch (err) {
       setError('添加资料失败');
@@ -311,7 +291,7 @@ export default function KnowledgeBasePage() {
             <div className="text-lg font-semibold mb-2">说明</div>
             <div className="prose prose-sm dark:prose-invert max-w-none">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {`- **主文档**：对话的焦点，AI 回答围绕主文档展开，默认为产品文档类型。\n- **文档类型**：可为每个文档设置类型（产品文档、技术文档、设计文档、参考资料），AI 会根据类型调整引用权重。\n- **多文档支持**：追加的资料文件会作为 AI 对话时的参考上下文，与主文档一同被引用。支持一次选择多个文件。\n- **支持格式**：.md / .txt / .pdf / .docx / .xlsx / .pptx / .csv / .json / .xml / .html 等。二进制文件（PDF/Office）会自动提取文本内容。\n- **未绑定 PRD 的群组**：不允许进行任何基于 PRD 的问答/讲解。`}
+                {`- **主文档**：对话的焦点，AI 回答围绕主文档展开，默认为产品文档类型。\n- **文档类型**：可为每个文档设置类型（产品文档、技术文档、设计文档、参考资料），AI 会根据类型调整引用权重。\n- **多文档支持**：追加的资料文件会作为 AI 对话时的参考上下文，与主文档一同被引用。支持一次选择多个文件。\n- **支持格式**：支持所有文本格式（代码、配置、文档等）和 PDF / Word / Excel / PPT。系统自动识别文件类型并提取文本内容。\n- **未绑定 PRD 的群组**：不允许进行任何基于 PRD 的问答/讲解。`}
               </ReactMarkdown>
             </div>
           </div>
