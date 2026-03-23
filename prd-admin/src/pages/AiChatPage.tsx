@@ -123,17 +123,21 @@ const REJECTED_BINARY_EXTS = new Set([
 
 /** 明确支持的文本格式 — 直接放行 */
 const KNOWN_GOOD_EXTS = new Set([
+  // 文档
   '.md', '.mdc', '.txt', '.csv', '.json', '.xml', '.html', '.htm', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf', '.log', '.rst', '.adoc', '.tex',
+  // 代码
   '.js', '.jsx', '.ts', '.tsx', '.vue', '.svelte', '.css', '.scss', '.less', '.sass',
-  '.py', '.rb', '.go', '.rs', '.java', '.kt', '.scala', '.swift', '.c', '.cpp', '.h', '.hpp', '.cs', '.fs',
+  '.py', '.rb', '.go', '.rs', '.java', '.kt', '.kts', '.scala', '.swift', '.c', '.cpp', '.h', '.hpp', '.cs', '.fs',
   '.sh', '.bash', '.zsh', '.ps1', '.bat', '.cmd',
   '.sql', '.graphql', '.gql', '.proto',
-  '.r', '.R', '.lua', '.dart', '.php', '.pl', '.ex', '.exs', '.erl', '.hs', '.clj', '.lisp', '.zig',
-  '.env', '.properties', '.gradle', '.lock', '.editorconfig', '.gitignore', '.dockerignore',
+  '.r', '.lua', '.dart', '.php', '.pl', '.pm', '.ex', '.exs', '.erl', '.hs', '.clj', '.lisp', '.ml', '.zig',
+  // 数据/配置
+  '.env', '.properties', '.gradle', '.pom', '.lock', '.editorconfig', '.gitignore', '.dockerignore',
 ]);
 
 /** 客户端快速文本检测：读取前 8KB，检查 null 字节 */
 async function isLikelyTextFile(file: File): Promise<boolean> {
+  if (file.size === 0) return false;
   const slice = file.slice(0, 8192);
   const buf = await slice.arrayBuffer();
   const bytes = new Uint8Array(buf);

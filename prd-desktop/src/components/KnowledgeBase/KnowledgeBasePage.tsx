@@ -20,7 +20,7 @@ const KNOWN_GOOD_EXTS = new Set([
   '.py', '.rb', '.go', '.rs', '.java', '.kt', '.kts', '.scala', '.swift', '.c', '.cpp', '.h', '.hpp', '.cs', '.fs',
   '.sh', '.bash', '.zsh', '.ps1', '.bat', '.cmd',
   '.sql', '.graphql', '.gql', '.proto',
-  '.r', '.R', '.lua', '.dart', '.php', '.pl', '.pm', '.ex', '.exs', '.erl', '.hs', '.clj', '.lisp', '.ml', '.zig',
+  '.r', '.lua', '.dart', '.php', '.pl', '.pm', '.ex', '.exs', '.erl', '.hs', '.clj', '.lisp', '.ml', '.zig',
   // 数据/配置
   '.env', '.properties', '.gradle', '.pom', '.lock', '.editorconfig', '.gitignore', '.dockerignore',
   // 二进制文档（已知有提取器）
@@ -178,9 +178,9 @@ export default function KnowledgeBasePage() {
 
       await refreshDocuments();
 
-      // 3 秒后清除成功的任务，只保留有问题的
+      // 3 秒后清除已完结的任务（成功 + 拒绝），只保留失败项供用户排查
       setTimeout(() => {
-        fileTasksRef.current = fileTasksRef.current.filter(t => t.phase !== 'success');
+        fileTasksRef.current = fileTasksRef.current.filter(t => t.phase === 'failed');
         setFileTasks([...fileTasksRef.current]);
       }, 3000);
     } catch (err) {
