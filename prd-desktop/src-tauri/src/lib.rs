@@ -134,13 +134,40 @@ pub fn run() {
                                 let body = update
                                     .body
                                     .clone()
-                                    .unwrap_or_else(|| "请前往下载更新".to_string());
-                                app_handle
+                                    .unwrap_or_else(|| "".to_string());
+                                let confirmed = app_handle
                                     .dialog()
-                                    .message(format!("发现新版本 {}\n\n{}", version, body))
+                                    .message(format!(
+                                        "发现新版本 {} (当前 {})\n\n{}",
+                                        version, current_version, body
+                                    ))
                                     .title("检查更新")
                                     .kind(MessageDialogKind::Info)
+                                    .ok_button_label("立即更新")
+                                    .cancel_button_label("稍后")
                                     .blocking_show();
+                                if confirmed {
+                                    // 用户确认更新，开始下载安装
+                                    match update.download_and_install(|_, _| {}, || {}).await {
+                                        Ok(_) => {
+                                            // 正常情况下会自动重启，macOS 可能不会
+                                            app_handle
+                                                .dialog()
+                                                .message("更新已安装完成，请退出并重新打开应用以使用新版本。")
+                                                .title("更新完成")
+                                                .kind(MessageDialogKind::Info)
+                                                .blocking_show();
+                                        }
+                                        Err(e) => {
+                                            app_handle
+                                                .dialog()
+                                                .message(format!("更新安装失败: {}", e))
+                                                .title("更新失败")
+                                                .kind(MessageDialogKind::Error)
+                                                .blocking_show();
+                                        }
+                                    }
+                                }
                             }
                             Ok(None) => {
                                 app_handle
