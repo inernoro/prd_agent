@@ -108,6 +108,10 @@ export default function SettingsModal() {
   
   // 网络诊断模态框
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
+  // 服务器下拉菜单
+  const [isServerDropdownOpen, setIsServerDropdownOpen] = useState(false);
+  // macOS 更新后重启提示
+  const [macRestartPrompt, setMacRestartPrompt] = useState(false);
 
   // 缓存 checkUpdate 返回的 update 对象，避免 downloadAndInstall 时重复请求
   const pendingUpdateRef = useRef<any>(null);
@@ -120,6 +124,7 @@ export default function SettingsModal() {
       setClearConfirmStep(0);
       setCacheBytes(null);
       setCacheNote('');
+      setIsServerDropdownOpen(false);
 
       // 若自动更新已发现可用版本，直接填充到手动更新 UI，避免用户重复点击"检查更新"
       const autoUpdate = useUpdateStore.getState();
@@ -418,11 +423,18 @@ export default function SettingsModal() {
         throw new Error('Updater API 不支持 downloadAndInstall');
       }
 
-      // 大多数情况下 updater 会自动重启；这里提供兜底提示
+      // 大多数情况下 Windows updater 会自动重启
+      // macOS 不会自动重启，需要提示用户手动退出并重新打开
       pendingUpdateRef.current = null;
       setUpdateStatus('idle');
       setUpdateInfo(null);
-      alert('更新已完成。如未自动重启，请手动关闭并重新打开应用。');
+
+      const isMacOS = /Mac|iPhone|iPad|iPod/i.test(navigator.userAgent);
+      if (isMacOS) {
+        setMacRestartPrompt(true);
+      } else {
+        alert('更新已完成。如未自动重启，请手动关闭并重新打开应用。');
+      }
     } catch (e) {
       setUpdateStatus('error');
       const raw = String(e);
@@ -637,7 +649,13 @@ export default function SettingsModal() {
                     <button
                       onClick={handleDownloadAndInstall}
                       disabled={updateStatus === 'installing'}
-                      className={`px-3 py-1.5 text-xs font-medium text-white rounded-lg transition-colors disabled:opacity-50 ${updateSource === 'accelerated' ? 'bg-amber-500/30 hover:bg-amber-500/40' : 'bg-cyan-500/30 hover:bg-cyan-500/40'}`}
+                      className={`px-4 py-2 text-xs font-semibold text-white rounded-lg transition-all disabled:opacity-50 shadow-lg ${
+                        updateStatus === 'installing'
+                          ? 'bg-gray-500/50'
+                          : updateSource === 'accelerated'
+                            ? 'bg-amber-500 hover:bg-amber-400 shadow-amber-500/30 hover:shadow-amber-500/50'
+                            : 'bg-cyan-500 hover:bg-cyan-400 shadow-cyan-500/30 hover:shadow-cyan-500/50'
+                      }`}
                     >
                       {updateStatus === 'installing' ? '安装中...' : '下载并安装'}
                     </button>
@@ -702,23 +720,52 @@ export default function SettingsModal() {
                 </button>
               </div>
               {!isDeveloper && (
-                <select
-                  value={effectivePresets.some((s) => s.url === apiUrl.trim()) ? apiUrl.trim() : '__custom__'}
-                  onChange={(e) => {
-                    if (e.target.value !== '__custom__') {
-                      setApiUrl(e.target.value);
-                      setTestResult(null);
-                    }
-                  }}
-                  className="w-full px-4 py-3 ui-control transition-colors"
-                >
-                  {effectivePresets.map((s) => (
-                    <option key={s.url} value={s.url}>{s.label}</option>
-                  ))}
-                  {!effectivePresets.some((s) => s.url === apiUrl.trim()) && (
-                    <option value="__custom__">自定义: {apiUrl.trim()}</option>
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setIsServerDropdownOpen(!isServerDropdownOpen)}
+                    className="w-full px-4 py-3 ui-control transition-colors text-left flex items-center justify-between gap-2"
+                  >
+                    <span className="truncate text-sm">
+                      {effectivePresets.find((s) => s.url === apiUrl.trim())?.label || `自定义: ${apiUrl.trim()}`}
+                    </span>
+                    <svg className={`w-4 h-4 flex-shrink-0 text-text-secondary transition-transform ${isServerDropdownOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  {isServerDropdownOpen && (
+                    <div className="absolute z-20 mt-1 w-full rounded-xl ui-glass-panel border border-white/10 shadow-xl overflow-hidden">
+                      {effectivePresets.map((s) => (
+                        <button
+                          key={s.url}
+                          type="button"
+                          onClick={() => {
+                            setApiUrl(s.url);
+                            setTestResult(null);
+                            setIsServerDropdownOpen(false);
+                          }}
+                          className={`w-full px-4 py-2.5 text-left text-sm transition-colors flex items-center justify-between ${
+                            s.url === apiUrl.trim()
+                              ? 'bg-cyan-500/15 text-cyan-300'
+                              : 'text-text-primary hover:bg-white/5'
+                          }`}
+                        >
+                          <span>{s.label}</span>
+                          {s.url === apiUrl.trim() && (
+                            <svg className="w-4 h-4 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                            </svg>
+                          )}
+                        </button>
+                      ))}
+                      {!effectivePresets.some((s) => s.url === apiUrl.trim()) && (
+                        <div className="px-4 py-2.5 text-left text-sm text-text-secondary border-t border-white/5">
+                          自定义: {apiUrl.trim()}
+                        </div>
+                      )}
+                    </div>
                   )}
-                </select>
+                </div>
               )}
               <input
                 type="url"
@@ -942,6 +989,46 @@ export default function SettingsModal() {
         onClose={() => setIsDiagnosticsOpen(false)}
         apiUrl={apiUrl || getDefaultApiUrl(isDeveloper, effectiveDefaultUrl)}
       />
+
+      {/* macOS 更新完成后的重启提示 */}
+      {macRestartPrompt && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+          <div className="relative w-full max-w-sm mx-4 ui-glass-modal p-6 text-center space-y-4">
+            <div className="w-14 h-14 mx-auto rounded-2xl bg-green-500/20 flex items-center justify-center">
+              <svg className="w-8 h-8 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <h3 className="text-lg font-semibold text-text-primary">更新已下载完成</h3>
+            <p className="text-sm text-text-secondary leading-relaxed">
+              请退出应用并重新打开，即可使用新版本。
+            </p>
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={() => setMacRestartPrompt(false)}
+                className="flex-1 px-4 py-2.5 text-sm font-medium text-text-secondary bg-black/5 dark:bg-white/10 hover:bg-black/10 dark:hover:bg-white/15 rounded-xl transition-colors"
+              >
+                稍后退出
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+                    await getCurrentWindow().close();
+                  } catch {
+                    setMacRestartPrompt(false);
+                    alert('请手动退出应用并重新打开。');
+                  }
+                }}
+                className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-cyan-500 hover:bg-cyan-400 rounded-xl transition-colors shadow-lg shadow-cyan-500/30"
+              >
+                立即退出
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

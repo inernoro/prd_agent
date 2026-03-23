@@ -66,8 +66,15 @@ export default function UpdateNotification() {
         {/* 安装按钮 */}
         <button
           onClick={installUpdate}
-          className={`mt-3 w-full py-2 px-3 text-xs font-medium rounded-lg text-white transition-colors flex items-center justify-center gap-1.5 ${isAccelerated ? 'bg-amber-500/80 hover:bg-amber-500' : 'bg-cyan-500/80 hover:bg-cyan-500'}`}
+          className={`mt-3 w-full py-2.5 px-3 text-sm font-semibold rounded-lg text-white transition-all flex items-center justify-center gap-1.5 shadow-lg ${
+            isAccelerated
+              ? 'bg-amber-500 hover:bg-amber-400 shadow-amber-500/30 hover:shadow-amber-500/50'
+              : 'bg-cyan-500 hover:bg-cyan-400 shadow-cyan-500/30 hover:shadow-cyan-500/50'
+          }`}
         >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+            <path fillRule="evenodd" d="M10 17a.75.75 0 01-.75-.75V5.612L5.29 9.77a.75.75 0 01-1.08-1.04l5.25-5.5a.75.75 0 011.08 0l5.25 5.5a.75.75 0 11-1.08 1.04l-3.96-4.158V16.25A.75.75 0 0110 17z" clipRule="evenodd" />
+          </svg>
           安装并重启
         </button>
       </div>
