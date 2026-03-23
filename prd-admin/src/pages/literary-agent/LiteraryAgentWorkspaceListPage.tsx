@@ -132,7 +132,8 @@ function WorkspaceCard({
 }) {
   const preview = getPlainPreviewText(ws, 100);
   const dateStr = formatDate(ws.updatedAt);
-  const coverUrl = ws.coverAssets?.[0]?.url;
+  // Use latest illustration (newest generated image), fallback to coverAssets for legacy
+  const coverUrl = ws.latestIllustrationUrl || ws.coverAssets?.[0]?.url;
   const [imgLoaded, setImgLoaded] = useState(false);
   const [imgError, setImgError] = useState(false);
   const hasCover = !!coverUrl && !imgError;

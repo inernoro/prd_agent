@@ -108,6 +108,22 @@ public class LiteraryAgentWorkspaceController : ControllerBase
                 if (!string.IsNullOrWhiteSpace(a.Id)) coverMap[a.Id] = a;
         }
 
+        // Batch query: latest illustration per workspace (for card covers)
+        var wsIds = items.Select(w => w.Id).ToList();
+        var latestIllustrationMap = new Dictionary<string, ImageAsset>(StringComparer.Ordinal);
+        if (wsIds.Count > 0)
+        {
+            var allAssets = await _db.ImageAssets
+                .Find(x => x.WorkspaceId != null && wsIds.Contains(x.WorkspaceId))
+                .SortByDescending(x => x.CreatedAt)
+                .ToListAsync(ct);
+            foreach (var a in allAssets)
+            {
+                if (a.WorkspaceId != null && !latestIllustrationMap.ContainsKey(a.WorkspaceId))
+                    latestIllustrationMap[a.WorkspaceId] = a;
+            }
+        }
+
         var dto = items.Select(ws =>
         {
             var coverAssets = new List<object>();
@@ -130,6 +146,9 @@ public class LiteraryAgentWorkspaceController : ControllerBase
             var coverHash = (ws.CoverHash ?? string.Empty).Trim();
             var coverStale = !string.IsNullOrWhiteSpace(contentHash) && !string.Equals(contentHash, coverHash, StringComparison.Ordinal);
 
+            // Latest illustration URL for card cover (newest generated image)
+            var latestUrl = latestIllustrationMap.TryGetValue(ws.Id, out var latestAsset) ? latestAsset.Url : null;
+
             return new
             {
                 id = ws.Id, ownerUserId = ws.OwnerUserId, title = ws.Title,
@@ -144,7 +163,8 @@ public class LiteraryAgentWorkspaceController : ControllerBase
                 articleContent = ws.ArticleContent,
                 articleContentWithMarkers = ws.ArticleContentWithMarkers,
                 articleWorkflow = ws.ArticleWorkflow,
-                folderName = ws.FolderName
+                folderName = ws.FolderName,
+                latestIllustrationUrl = latestUrl
             };
         }).ToList();
 
