@@ -180,6 +180,7 @@ public class ChatRunsController : ControllerBase
                 Role = MessageRole.User,
                 Content = request.Content ?? "",
                 ViewRole = effectiveAnswerRole,
+                AttachmentIds = request.AttachmentIds ?? new List<string>(),
                 Timestamp = DateTime.UtcNow
             };
             await _messageRepository.InsertManyAsync(new[] { userMessage });
@@ -248,6 +249,7 @@ public class ChatRunsController : ControllerBase
                 Role = MessageRole.User,
                 Content = request.Content ?? "",
                 ViewRole = effectiveAnswerRole,
+                AttachmentIds = request.AttachmentIds ?? new List<string>(),
                 Timestamp = DateTime.UtcNow
             };
             await _messageRepository.InsertManyAsync(new[] { userMessage });

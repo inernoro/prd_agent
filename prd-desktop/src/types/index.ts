@@ -96,6 +96,9 @@ export interface Message {
   senderRole?: UserRole;
   senderAvatarUrl?: string;  // 新增：发送者头像 URL
   senderTags?: GroupMemberTag[];  // 新增：发送者标签（如机器人标识）
+  // 附件信息（图片/文件）
+  attachmentIds?: string[];
+  attachments?: AttachmentInfo[];
 }
 
 export type MessageBlockKind = 'paragraph' | 'heading' | 'listItem' | 'codeBlock';

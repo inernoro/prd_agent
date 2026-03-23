@@ -204,6 +204,8 @@ pub struct MessageHistoryItem {
     pub view_role: Option<String>,
     pub timestamp: String,
     pub token_usage: Option<TokenUsage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attachment_ids: Option<Vec<String>>,
 }
 
 #[allow(dead_code)]

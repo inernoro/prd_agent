@@ -253,6 +253,7 @@ function ChatContainerInner() {
         groupSeq: Number.isFinite(seq) && seq > 0 ? seq : undefined,
         replyToMessageId: m.replyToMessageId ? String(m.replyToMessageId) : undefined,
         resendOfMessageId: m.resendOfMessageId ? String(m.resendOfMessageId) : undefined,
+        attachmentIds: Array.isArray((m as any).attachmentIds) ? (m as any).attachmentIds : undefined,
       };
 
       // 处理 messageUpdated 事件（AI 流式输出完成）

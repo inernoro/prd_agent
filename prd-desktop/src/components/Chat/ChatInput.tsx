@@ -175,6 +175,9 @@ export default function ChatInput() {
   const handleSend = async () => {
     if (!content.trim() || !sessionId || isStreaming || isSubmitting || isDisconnected) return;
 
+    const currentAttachments = [...attachments];
+    const attachmentIds = currentAttachments.length ? currentAttachments.map((a) => a.attachmentId) : undefined;
+
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'User',
@@ -185,13 +188,13 @@ export default function ChatInput() {
       senderName: user?.displayName ?? undefined,
       senderRole: user?.role ?? undefined,
       senderAvatarUrl: user?.avatarUrl ?? undefined,
+      attachmentIds,
+      attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
     };
 
     setIsSubmitting(true);
     addUserMessageWithPendingAssistant({ userMessage });
     setContent('');
-
-    const attachmentIds = attachments.length ? attachments.map((a) => a.attachmentId) : undefined;
     setAttachments([]);
 
     try {

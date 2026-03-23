@@ -53,6 +53,7 @@ public class GroupMessageStreamMessageDto
     public UserRole? ViewRole { get; set; }
     public DateTime Timestamp { get; set; }
     public TokenUsage? TokenUsage { get; set; }
+    public List<string>? AttachmentIds { get; set; }
 }
 
 public class DocCitationDto
