@@ -1908,15 +1908,17 @@ a.branch-name:hover { color: var(--accent); }
   inset: 0;
   clip-path: circle(0% at var(--cm-ripple-x, 50%) var(--cm-ripple-y, 50%));
 }
-/* Ripple in: reveal marked gradient bg */
+/* Ripple in: opaque card bg + subtle gradient tint (masks the old state) */
 .color-mark-ripple.ripple-marked::after {
-  background: linear-gradient(135deg,
-    rgba(244,63,94,0.08),
-    rgba(56,189,248,0.08),
-    rgba(251,191,36,0.08),
-    rgba(16,185,129,0.08));
+  background:
+    linear-gradient(135deg,
+      rgba(244,63,94,0.10),
+      rgba(56,189,248,0.10),
+      rgba(251,191,36,0.10),
+      rgba(16,185,129,0.10)),
+    var(--bg-card);
 }
-/* Ripple out: reveal normal bg */
+/* Ripple out: normal card bg (masks the marked state) */
 .color-mark-ripple.ripple-normal::after {
   background: var(--bg-card);
 }

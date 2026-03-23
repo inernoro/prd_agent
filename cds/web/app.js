@@ -1177,14 +1177,12 @@ async function toggleColorMark(id, event) {
   const card = event.currentTarget.closest('.branch-card');
   const btn = event.currentTarget;
 
-  // Optimistic UI: apply visual state immediately
+  // Update data model immediately
   branch.isColorMarked = newVal;
-  if (card) {
-    card.classList.toggle('is-color-marked', newVal);
-    btn.classList.toggle('active', newVal);
-  }
+  // Toggle button state immediately for visual feedback
+  btn.classList.toggle('active', newVal);
 
-  // Card-scoped ripple transition (cosmetic, non-blocking)
+  // Card-scoped ripple transition: delay class toggle until ripple completes
   if (card) {
     const cardRect = card.getBoundingClientRect();
     const btnRect = btn.getBoundingClientRect();
@@ -1204,7 +1202,14 @@ async function toggleColorMark(id, event) {
     card.appendChild(overlay);
     overlay.offsetHeight;
     overlay.classList.add('animate');
-    overlay.addEventListener('animationend', () => overlay.remove(), { once: true });
+    overlay.addEventListener('animationend', () => {
+      // Apply the actual class change after the ripple covers the card
+      card.classList.toggle('is-color-marked', newVal);
+      overlay.remove();
+    }, { once: true });
+  } else {
+    // No card element — apply immediately
+    card?.classList.toggle('is-color-marked', newVal);
   }
 
   // Persist in background — rollback on failure
