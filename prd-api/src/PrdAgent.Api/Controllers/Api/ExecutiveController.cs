@@ -18,6 +18,39 @@ public class ExecutiveController : ControllerBase
 {
     private readonly MongoDbContext _db;
 
+    /// <summary>
+    /// AppCallerCode 前缀归一化：将 LLM 日志中的别名映射到标准 appKey
+    /// </summary>
+    private static readonly Dictionary<string, string> AppKeyAliases = new(StringComparer.OrdinalIgnoreCase)
+    {
+        { "prd-agent-desktop", "prd-agent" },
+        { "prd-agent-web", "prd-agent" },
+        { "open-platform-agent", "open-platform" },
+        { "workflow-agent", "ai-toolbox" },
+        { "tutorial-email", "ai-toolbox" },
+    };
+
+    /// <summary>
+    /// 已知的合法 Agent appKey（用于过滤脏数据，不在此列表中的归入 "admin"）
+    /// </summary>
+    private static readonly HashSet<string> KnownAgentKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "prd-agent", "visual-agent", "literary-agent", "defect-agent",
+        "ai-toolbox", "open-platform", "report-agent", "video-agent",
+    };
+
+    /// <summary>
+    /// 从原始 AppCallerCode 前缀提取并归一化 appKey
+    /// </summary>
+    private static string NormalizeAppKey(string appCallerCode, bool fallbackToAdmin = true)
+    {
+        var dotIndex = appCallerCode.IndexOf('.');
+        var key = dotIndex > 0 ? appCallerCode[..dotIndex] : appCallerCode;
+        if (AppKeyAliases.TryGetValue(key, out var normalized)) key = normalized;
+        if (fallbackToAdmin && !KnownAgentKeys.Contains(key)) key = "admin";
+        return key;
+    }
+
     public ExecutiveController(MongoDbContext db)
     {
         _db = db;
@@ -224,25 +257,8 @@ public class ExecutiveController : ControllerBase
             { "/api/ai-toolbox/", "ai-toolbox" },
             { "/api/open-platform/", "open-platform" },
             { "/api/v1/open-platform/", "open-platform" }, // 开放平台 Chat API (OpenPlatformChatController)
-        };
-
-        // AppCallerCode 前缀归一化：将 LLM 日志中的 appCallerCode 前缀映射到标准 appKey
-        // AppCallerCode 格式为 "{prefix}.{feature}::{modelType}"，提取第一个 . 之前的部分作为 key
-        // 但很多 prefix 与标准 appKey 不一致，需要归一化
-        var appKeyAliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-        {
-            { "prd-agent-desktop", "prd-agent" },   // 桌面客户端 → PRD Agent
-            { "prd-agent-web", "prd-agent" },        // Web 管理端 → PRD Agent
-            { "open-platform-agent", "open-platform" }, // 开放平台代理
-            { "workflow-agent", "ai-toolbox" },       // 工作流代理归入 AI 百宝箱
-            { "tutorial-email", "ai-toolbox" },       // 教程邮件归入 AI 百宝箱
-        };
-
-        // 已知的合法 Agent appKey（用于过滤脏数据）
-        var knownAgentKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "prd-agent", "visual-agent", "literary-agent", "defect-agent",
-            "ai-toolbox", "open-platform",
+            { "/api/report-agent/", "report-agent" },
+            { "/api/video-agent/", "video-agent" },
         };
 
         // ── 1. LLM 调用统计 (llm_request_logs) ──
@@ -259,16 +275,7 @@ public class ExecutiveController : ControllerBase
             .ToListAsync();
 
         var llmByAgent = llmLogs
-            .GroupBy(l =>
-            {
-                var rp = l.AppCallerCode ?? "";
-                var dotIndex = rp.IndexOf('.');
-                var key = dotIndex > 0 ? rp[..dotIndex] : rp;
-                // 归一化别名
-                if (appKeyAliases.TryGetValue(key, out var normalized)) key = normalized;
-                // 非已知 Agent 的统一归入 "admin"（管理操作）
-                return knownAgentKeys.Contains(key) ? key : "admin";
-            })
+            .GroupBy(l => NormalizeAppKey(l.AppCallerCode ?? ""))
             .Where(g => !string.IsNullOrEmpty(g.Key))
             .ToDictionary(g => g.Key, g =>
             {
@@ -450,12 +457,7 @@ public class ExecutiveController : ControllerBase
 
         var llmAgentUserCounts = logs
             .Where(l => l.UserId != null && userIds.Contains(l.UserId))
-            .GroupBy(l =>
-            {
-                var rp = l.AppCallerCode ?? "";
-                var dotIndex = rp.IndexOf('.');
-                return dotIndex > 0 ? rp[..dotIndex] : rp;
-            })
+            .GroupBy(l => NormalizeAppKey(l.AppCallerCode ?? ""))
             .Where(g => !string.IsNullOrEmpty(g.Key))
             .ToDictionary(
                 g => g.Key,
@@ -614,6 +616,7 @@ public class ExecutiveController : ControllerBase
         "ai-toolbox" => "AI 百宝箱",
         "report-agent" => "周报 Agent",
         "video-agent" => "视频 Agent",
+        "open-platform" => "开放平台",
         "admin" => "管理操作",
         _ => appKey,
     };
