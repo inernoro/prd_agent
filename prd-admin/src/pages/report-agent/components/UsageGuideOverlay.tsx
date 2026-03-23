@@ -37,11 +37,6 @@ interface GuideActionItem {
   action: () => void;
 }
 
-interface GuideFlowStep {
-  key: string;
-  label: string;
-}
-
 const MODULE_VISUALS: Record<UsageGuideModule, {
   accent: string;
   accentSoft: string;
@@ -290,46 +285,6 @@ export function UsageGuideOverlay(props: UsageGuideOverlayProps) {
     ];
   }, [moduleKey, role, onCreateReport, onOpenDailyLog, onSwitchTab]);
 
-  const flowSteps = useMemo<GuideFlowStep[]>(() => {
-    if (moduleKey === 'report') {
-      return role === 'manager'
-        ? [
-            { key: 'team-config', label: '团队配置' },
-            { key: 'member-write', label: '成员填写周报' },
-            { key: 'team-follow', label: '查看与跟进' },
-          ]
-        : [
-            { key: 'daily-log', label: '日常记录' },
-            { key: 'write-report', label: '写周报' },
-            { key: 'revise-report', label: '根据反馈修订' },
-          ];
-    }
-    if (moduleKey === 'team') {
-      return role === 'manager'
-        ? [
-            { key: 'choose-week', label: '选择周次' },
-            { key: 'check-status', label: '查看提交状态' },
-            { key: 'team-summary', label: '汇总与跟进' },
-          ]
-        : [
-            { key: 'team-status', label: '查看团队状态' },
-            { key: 'respond-feedback', label: '响应反馈' },
-            { key: 'revise-from-team', label: '回周报修订' },
-          ];
-    }
-    return role === 'manager'
-      ? [
-          { key: 'team-manage', label: '团队管理' },
-          { key: 'template-manage', label: '模板管理' },
-          { key: 'data-source', label: '数据源与 Prompt 配置' },
-        ]
-      : [
-          { key: 'personal-source', label: '个人数据源配置' },
-          { key: 'prompt-tune', label: 'Prompt 调整' },
-          { key: 'start-write', label: '开始写周报' },
-        ];
-  }, [moduleKey, role]);
-
   const visual = MODULE_VISUALS[moduleKey];
 
   if (!open || typeof document === 'undefined') {
@@ -393,7 +348,7 @@ export function UsageGuideOverlay(props: UsageGuideOverlayProps) {
               <button
                 type="button"
                 aria-label="关闭使用指引"
-                className="absolute top-4 right-4 z-10 w-10 h-10 rounded-2xl flex items-center justify-center transition-transform duration-200 hover:scale-[1.02]"
+                className="absolute top-5 right-5 z-10 w-10 h-10 rounded-2xl flex items-center justify-center transition-transform duration-200 hover:scale-[1.02] md:top-6 md:right-6"
                 style={{
                   color: 'var(--text-secondary)',
                   background: 'rgba(255, 255, 255, 0.05)',
@@ -405,14 +360,11 @@ export function UsageGuideOverlay(props: UsageGuideOverlayProps) {
               </button>
 
               <div className="px-5 pt-5 md:px-6 md:pt-6">
-                <div className="flex items-center justify-between gap-3 flex-wrap">
-                  <div>
+                <div className="flex items-center justify-between gap-4 pr-14 md:pr-16 flex-wrap">
+                  <div className="min-w-0">
                     <div className="inline-flex items-center gap-2 text-[11px] font-medium tracking-[0.08em]" style={{ color: 'var(--text-muted)' }}>
                       <Sparkles size={12} style={{ color: visual.accent }} />
                       角色视角
-                    </div>
-                    <div className="mt-1 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                      切换后会同步更新当前模块的推荐动作与路径。
                     </div>
                   </div>
                   <SegmentedTabs
@@ -471,10 +423,7 @@ export function UsageGuideOverlay(props: UsageGuideOverlayProps) {
                           {item.desc}
                         </div>
 
-                        <div className="mt-5 flex items-center justify-between gap-3">
-                          <div className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>
-                            推荐优先处理
-                          </div>
+                        <div className="mt-5 flex justify-end">
                           <Button
                             size="sm"
                             variant="secondary"
@@ -493,49 +442,6 @@ export function UsageGuideOverlay(props: UsageGuideOverlayProps) {
                   })}
                 </div>
 
-                <div
-                  className="mt-5 rounded-[20px] px-4 py-4 border"
-                  style={{
-                    background: 'linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.025) 100%)',
-                    borderColor: 'rgba(255,255,255,0.08)',
-                  }}
-                >
-                  <div className="flex items-center justify-between gap-3 flex-wrap">
-                    <div>
-                      <div className="text-[11px] font-medium tracking-[0.08em]" style={{ color: 'var(--text-muted)' }}>
-                        推荐流程
-                      </div>
-                      <div className="mt-1 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                        先按下面路径理解模块，再进入正式功能操作。
-                      </div>
-                    </div>
-                    <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                      点击暗幕或按 Esc 可关闭
-                    </div>
-                  </div>
-
-                  <div className="mt-4 flex flex-wrap items-center gap-2.5">
-                    {flowSteps.map((step, index) => (
-                      <div key={step.key} className="flex items-center gap-2.5">
-                        <div
-                          className="inline-flex items-center rounded-full px-3 py-1.5 text-[12px] font-medium"
-                          style={{
-                            color: 'var(--text-primary)',
-                            background: index === 0 ? visual.accentSoft : 'rgba(255,255,255,0.05)',
-                            border: `1px solid ${index === 0 ? visual.border : 'rgba(255,255,255,0.08)'}`,
-                          }}
-                        >
-                          {step.label}
-                        </div>
-                        {index < flowSteps.length - 1 && (
-                          <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                            →
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
               </div>
             </div>
           </GlassCard>
