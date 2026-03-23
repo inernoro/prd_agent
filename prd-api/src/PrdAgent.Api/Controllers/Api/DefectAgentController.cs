@@ -153,7 +153,7 @@ public class DefectAgentController : ControllerBase
     #region 模板管理
 
     /// <summary>
-    /// 获取模板列表（个人模板 + 收到的分享）
+    /// 获取模板列表（个人模板 + 收到的分享 + 内置默认模板兜底）
     /// </summary>
     [HttpGet("templates")]
     public async Task<IActionResult> ListTemplates(CancellationToken ct)
@@ -166,6 +166,12 @@ public class DefectAgentController : ControllerBase
             .SortByDescending(x => x.IsDefault)
             .ThenByDescending(x => x.CreatedAt)
             .ToListAsync(ct);
+
+        // 如果用户没有任何模板，补充内置默认模板，避免"无模板"的空白体验
+        if (items.Count == 0)
+        {
+            items.Add(CreateBuiltInTemplate());
+        }
 
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
@@ -325,19 +331,26 @@ public class DefectAgentController : ControllerBase
         filters.Add(filterBuilder.Eq(x => x.IsDeleted, false));
 
         // 非管理员只能看到自己提交的或分配给自己的
+        // 已驳回的缺陷只对提交人可见（驳回人=指派人不再需要看到）
         if (!isAdmin)
         {
             filters.Add(filterBuilder.Or(
                 filterBuilder.Eq(x => x.ReporterId, userId),
-                filterBuilder.Eq(x => x.AssigneeId, userId)
+                filterBuilder.And(
+                    filterBuilder.Eq(x => x.AssigneeId, userId),
+                    filterBuilder.Ne(x => x.Status, DefectStatus.Rejected)
+                )
             ));
         }
         else if (mine == true)
         {
-            // 管理员也可以筛选自己的
+            // 管理员筛选"我的"时同样排除我驳回的
             filters.Add(filterBuilder.Or(
                 filterBuilder.Eq(x => x.ReporterId, userId),
-                filterBuilder.Eq(x => x.AssigneeId, userId)
+                filterBuilder.And(
+                    filterBuilder.Eq(x => x.AssigneeId, userId),
+                    filterBuilder.Ne(x => x.Status, DefectStatus.Rejected)
+                )
             ));
         }
 
@@ -575,7 +588,7 @@ public class DefectAgentController : ControllerBase
         if (!isAdmin && defect.ReporterId != userId && defect.AssigneeId != userId)
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限修改严重程度"));
 
-        var validSeverities = new[] { DefectSeverity.Blocker, DefectSeverity.Critical, DefectSeverity.Major, DefectSeverity.Minor, DefectSeverity.Suggestion };
+        var validSeverities = DefectSeverity.All;
         if (string.IsNullOrWhiteSpace(request.Severity) || !validSeverities.Contains(request.Severity))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的严重程度"));
 
@@ -2600,7 +2613,9 @@ public class DefectAgentController : ControllerBase
         // 标记为评分中
         await _db.DefectShareLinks.UpdateOneAsync(
             x => x.Id == shareId,
-            Builders<DefectShareLink>.Update.Set(x => x.AiScoreStatus, AiScoreStatusType.Scoring),
+            Builders<DefectShareLink>.Update
+                .Set(x => x.AiScoreStatus, AiScoreStatusType.Scoring)
+                .Set(x => x.AiScoreStartedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
 
         // 查询缺陷
@@ -3128,7 +3143,7 @@ public class DefectAgentController : ControllerBase
             new()
             {
                 Key = "severity", Label = "严重程度", Type = "select", Required = true,
-                Options = new List<string> { "blocker", "critical", "major", "minor", "suggestion" },
+                Options = new List<string> { "blocker", "critical", "major", "minor", "trivial", "suggestion" },
                 AiPrompt = "请选择问题的严重程度"
             }
         };

@@ -48,7 +48,13 @@
       "Bash(git add prd-admin/src/pages/DesktopAssetsPage.tsx prd-admin/src/services/contracts/mobile.ts prd-admin/src/services/real/mobile.ts prd-api/src/PrdAgent.Api/Controllers/Api/MobileDashboardController.cs)",
       "Bash(git commit:*)",
       "Bash(git push -u origin claude/desktop-asset-features-MrHFd)",
-      "Bash(powershell:*)"
+      "Bash(powershell:*)",
+      "Bash(else echo:*)",
+      "Bash(for f:*)",
+      "Bash(do)",
+      "Read(//d/project/prd_agent/prd_agent/doc/**)",
+      "Bash(done)",
+      "Bash(bash scripts/assemble-changelog.sh)"
     ]
   }
 }

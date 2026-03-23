@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect } from 'react';
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
 import { initializeTheme } from '@/stores/themeStore';
 import AppShell from '@/layouts/AppShell';
@@ -52,6 +52,7 @@ const MobileAssetsPage = lazy(() => import('@/pages/MobileAssetsPage'));
 const DesktopAssetsPage = lazy(() => import('@/pages/DesktopAssetsPage'));
 const MobileProfilePage = lazy(() => import('@/pages/MobileProfilePage'));
 const MobileNotificationsPage = lazy(() => import('@/pages/MobileNotificationsPage'));
+const PortfolioShowcasePage = lazy(() => import('@/pages/PortfolioShowcasePage'));
 const RichComposerLab = lazy(() => import('@/pages/_dev/RichComposerLab'));
 const MobileAuditPage = lazy(() => import('@/pages/_dev/MobileAuditPage'));
 
@@ -59,6 +60,10 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const location = useLocation();
   if (!isAuthenticated) {
+    // 根路径未登录 → 展示公开首页；其他受保护路由 → 跳转登录页
+    if (location.pathname === '/') {
+      return <Navigate to="/home" replace />;
+    }
     const returnUrl = location.pathname + location.search;
     return <Navigate to={`/login?returnUrl=${encodeURIComponent(returnUrl)}`} replace />;
   }
@@ -69,6 +74,7 @@ function RequirePermission({ perm, children }: { perm: string; children: React.R
   const perms = useAuthStore((s) => s.permissions);
   const loaded = useAuthStore((s) => s.permissionsLoaded);
   const logout = useAuthStore((s) => s.logout);
+  const navigate = useNavigate();
 
   if (!loaded) {
     return (
@@ -97,7 +103,7 @@ function RequirePermission({ perm, children }: { perm: string; children: React.R
             缺少权限：{perm}
           </div>
           <button
-            onClick={() => logout()}
+            onClick={() => { logout(); navigate('/login', { replace: true }); }}
             className="mt-4 px-4 py-2 text-sm rounded-md transition-colors"
             style={{
               background: 'var(--bg-elevated)',
@@ -258,6 +264,18 @@ export default function App() {
           }
         />
 
+
+        {/* 作品广场 - 独立全屏页面 */}
+        <Route
+          path="/showcase"
+          element={
+            <RequireAuth>
+              <RequirePermission perm="access">
+                <PortfolioShowcasePage />
+              </RequirePermission>
+            </RequireAuth>
+          }
+        />
 
         {/* 工作流画布 - 独立全屏页面（ReactFlow 的 zustand 会干扰 AppShell 的 Outlet 路由更新） */}
         <Route

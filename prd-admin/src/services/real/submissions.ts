@@ -165,3 +165,39 @@ export async function checkSubmission(params: { imageAssetId?: string; workspace
     api.submissions.check() + `?${query.toString()}`,
   );
 }
+
+/** 管理员撤稿 */
+export async function adminWithdrawSubmission(id: string) {
+  return apiRequest<{ deleted: boolean; submissionId: string }>(
+    api.submissions.adminWithdraw(id),
+    { method: 'DELETE' },
+  );
+}
+
+/** 迁移：批量将指定用户的视觉创作素材投稿 */
+export async function migrateVisualSubmissions(username = 'admin') {
+  return apiRequest<{
+    username: string;
+    userId: string;
+    totalAssets: number;
+    alreadySubmitted: number;
+    newlySubmitted: number;
+  }>(
+    api.submissions.migrate() + `?username=${encodeURIComponent(username)}`,
+    { method: 'POST' },
+  );
+}
+
+/** 迁移：批量将指定用户的文学创作 workspace 投稿 */
+export async function migrateLiterarySubmissions(username = 'admin') {
+  return apiRequest<{
+    username: string;
+    userId: string;
+    totalWorkspaces: number;
+    alreadySubmitted: number;
+    newlySubmitted: number;
+  }>(
+    api.submissions.migrateLiterary() + `?username=${encodeURIComponent(username)}`,
+    { method: 'POST' },
+  );
+}

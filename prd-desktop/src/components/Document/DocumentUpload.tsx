@@ -130,6 +130,8 @@ export default function DocumentUpload() {
     }
   };
 
+  const TEXT_EXTS = ['.md', '.mdc', '.txt', '.csv', '.json', '.xml', '.html', '.htm', '.log'];
+
   const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
@@ -138,11 +140,13 @@ export default function DocumentUpload() {
     if (files.length > 0) {
       const file = files[0];
       const ext = file.name.toLowerCase();
-      if (ext.endsWith('.md') || ext.endsWith('.mdc') || ext.endsWith('.txt')) {
+      const dotIdx = ext.lastIndexOf('.');
+      const fileExt = dotIdx >= 0 ? ext.slice(dotIdx) : '';
+      if (TEXT_EXTS.includes(fileExt)) {
         const content = await file.text();
         handleUpload(content, file.name);
       } else {
-        setError('仅支持 .md、.mdc、.txt 格式文件');
+        setError('主文档仅支持文本格式（.md / .txt / .csv / .json 等），PDF/Office 文件请在创建后通过"追加资料"添加');
       }
     }
   }, []);
@@ -200,7 +204,7 @@ export default function DocumentUpload() {
             
             <h2 className="text-xl font-semibold mb-2">上传PRD文档</h2>
             <p className="text-text-secondary mb-6">
-              拖拽文档文件到此处，或点击选择文件（支持 .md / .mdc / .txt）
+              拖拽文档文件到此处，或点击选择文件（支持 .md / .txt / .csv / .json 等文本格式）
             </p>
 
             <label className="inline-flex items-center gap-2 px-6 py-3 bg-primary-500 text-white rounded-lg cursor-pointer hover:bg-primary-600 transition-colors">
@@ -210,7 +214,7 @@ export default function DocumentUpload() {
               选择文件
               <input 
                 type="file" 
-                accept=".md,.mdc,.txt"
+                accept=".md,.mdc,.txt,.csv,.json,.xml,.html,.htm,.log"
                 className="hidden" 
                 onChange={handleFileSelect}
               />

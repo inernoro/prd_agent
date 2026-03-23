@@ -6,8 +6,12 @@ import {
   listPublicSubmissions,
   likeSubmission,
   unlikeSubmission,
+  adminWithdrawSubmission,
   type SubmissionItem,
 } from '@/services/real/submissions';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { useAuthStore } from '@/stores/authStore';
+import { toast } from '@/lib/toast';
 
 const TABS = [
   { key: '', label: '全部' },
@@ -18,6 +22,9 @@ const TABS = [
 const PAGE_SIZE = 20;
 
 export function ShowcaseGallery() {
+  const { isMobile } = useBreakpoint();
+  const user = useAuthStore((s) => s.user);
+  const isAdmin = user?.role === 'ADMIN';
   const [activeTab, setActiveTab] = useState('');
   const [items, setItems] = useState<SubmissionItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -84,6 +91,27 @@ export function ShowcaseGallery() {
     }
   };
 
+  const handleAdminWithdraw = async (id: string) => {
+    const target = items.find((x) => x.id === id);
+    const confirmMsg = target
+      ? `确定撤稿「${target.title}」（${target.ownerUserName}）？`
+      : '确定撤稿？';
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      const res = await adminWithdrawSubmission(id);
+      if (res.success) {
+        setItems((prev) => prev.filter((x) => x.id !== id));
+        setTotal((t) => t - 1);
+        toast.success('已撤稿');
+      } else {
+        toast.error(res.error?.message || '撤稿失败');
+      }
+    } catch {
+      toast.error('撤稿失败');
+    }
+  };
+
   const handleDetailLikeChanged = (id: string, likedByMe: boolean, count: number) => {
     setItems((prev) =>
       prev.map((item) => (item.id === id ? { ...item, likedByMe, likeCount: count } : item)),
@@ -135,11 +163,11 @@ export function ShowcaseGallery() {
 
       {/* Loading skeleton */}
       {loading && (
-        <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>
+        <div style={{ columnCount: isMobile ? 2 : 4, columnGap: isMobile ? 12 : 20 }}>
           {Array.from({ length: 12 }).map((_, i) => (
             <div
               key={i}
-              className="animate-pulse rounded-2xl"
+              className="animate-pulse rounded-2xl break-inside-avoid mb-5"
               style={{
                 height: [220, 280, 340, 200, 300, 260][i % 6],
                 background: 'rgba(255,255,255,0.03)',
@@ -149,12 +177,20 @@ export function ShowcaseGallery() {
         </div>
       )}
 
-      {/* Grid — 按行排列，保持 API 返回顺序（LikeCount DESC → CreatedAt DESC） */}
+      {/* Masonry — CSS columns 瀑布流，自动填充空隙 */}
       {!loading && items.length > 0 && (
         <>
-          <div className="grid gap-5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>
+          <div style={{ columnCount: isMobile ? 2 : 4, columnGap: isMobile ? 12 : 20 }}>
             {items.map((item) => (
-              <SubmissionCard key={item.id} item={item} onLikeToggle={handleLikeToggle} onClick={() => setSelectedId(item.id)} />
+              <div key={item.id} className="break-inside-avoid mb-5">
+                <SubmissionCard
+                  item={item}
+                  onLikeToggle={handleLikeToggle}
+                  onClick={() => setSelectedId(item.id)}
+                  isAdmin={isAdmin}
+                  onAdminWithdraw={handleAdminWithdraw}
+                />
+              </div>
             ))}
           </div>
 

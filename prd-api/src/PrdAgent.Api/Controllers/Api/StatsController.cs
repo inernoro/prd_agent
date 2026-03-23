@@ -100,7 +100,7 @@ public class StatsController : ControllerBase
             .Project(m => new { m.Timestamp, input = m.TokenUsage!.Input, output = m.TokenUsage!.Output })
             .ToListAsync();
 
-        // 2) 系统级用量补全：来自 llmrequestlogs（用于覆盖非 chat 的 LLM 调用；注意该集合默认 TTL=7天）
+        // 2) 系统级用量补全：来自 llmrequestlogs（用于覆盖非 chat 的 LLM 调用）
         //    为避免 chat 调用被重复计入，排除 AppCallerCode 以 "chat." 开头的日志。
         var logFilter = Builders<LlmRequestLog>.Filter.Gte(x => x.StartedAt, startDate) &
                         Builders<LlmRequestLog>.Filter.Ne(x => x.InputTokens, null) &

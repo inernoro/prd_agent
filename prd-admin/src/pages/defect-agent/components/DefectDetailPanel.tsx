@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect, useCallback, useRef, type DragEvent, type ClipboardEvent } from 'react';
+import { createPortal } from 'react-dom';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -139,6 +140,7 @@ export function DefectDetailPanel() {
   const [attachmentCache, setAttachmentCache] = useState<Record<string, DefectAttachment>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const severityBtnRef = useRef<HTMLButtonElement>(null);
 
   const defect = useMemo(
     () => defects.find((d) => d.id === selectedDefectId),
@@ -800,11 +802,12 @@ export function DefectDetailPanel() {
             <div className={`flex items-center gap-3 ${isMobile ? 'flex-wrap' : ''}`}>
               {/* 严重程度（可点击修改） */}
               <div
-                className="flex items-center gap-2 text-[12px] relative"
+                className="flex items-center gap-2 text-[12px]"
                 style={{ color: 'var(--text-muted)' }}
               >
                 <span>严重程度</span>
                 <button
+                  ref={severityBtnRef}
                   className="px-2.5 py-1 rounded text-[12px] cursor-pointer hover:opacity-80 transition-opacity"
                   style={{ background: `${severityColor}20`, color: severityColor, border: 'none' }}
                   title="点击修改严重程度"
@@ -812,10 +815,19 @@ export function DefectDetailPanel() {
                 >
                   {severityLabel}
                 </button>
-                {severityMenuOpen && (
+                {severityMenuOpen && createPortal(
                   <div
-                    className="absolute top-full left-0 mt-1 rounded-lg overflow-hidden z-50"
+                    className="fixed rounded-lg overflow-hidden"
                     style={{
+                      zIndex: 9999,
+                      top: (() => {
+                        const rect = severityBtnRef.current?.getBoundingClientRect();
+                        return rect ? `${rect.bottom + 4}px` : '0px';
+                      })(),
+                      left: (() => {
+                        const rect = severityBtnRef.current?.getBoundingClientRect();
+                        return rect ? `${rect.left}px` : '0px';
+                      })(),
                       background: 'var(--bg-elevated)',
                       border: '1px solid var(--border-default)',
                       boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
@@ -851,7 +863,8 @@ export function DefectDetailPanel() {
                         {item.label}
                       </button>
                     ))}
-                  </div>
+                  </div>,
+                  document.body
                 )}
               </div>
               <span
@@ -1126,7 +1139,11 @@ export function DefectDetailPanel() {
                           {/* 渲染内容，支持 [IMG] */}
                           {msgSegments.map((seg, idx) =>
                             seg.type === 'text' ? (
-                              <span key={idx} style={{ whiteSpace: 'pre-wrap' }}>{seg.content}</span>
+                              <div key={idx} className="defect-md text-[12px]">
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                  {seg.content}
+                                </ReactMarkdown>
+                              </div>
                             ) : (
                               <button
                                 key={idx}
@@ -1310,19 +1327,28 @@ export function DefectDetailPanel() {
         )}
       </DialogPrimitive.Content>
 
-      {/* Image Lightbox - 独立 Portal 保证在最顶层 */}
-      {lightboxImage && (
-        <div
-          className="fixed inset-0 z-[300] flex items-center justify-center p-8"
-          style={{ background: 'rgba(0,0,0,0.9)' }}
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
+
+    {/* Image Lightbox - 独立 Radix Dialog，Portal 自动追加到 body 末尾，DOM 顺序在父 Dialog 之后 */}
+    <DialogPrimitive.Root open={!!lightboxImage} onOpenChange={(v) => { if (!v) setLightboxImage(null); }}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="fixed inset-0 z-[200]" style={{ background: 'rgba(0,0,0,0.9)' }} />
+        <DialogPrimitive.Content
+          aria-describedby={undefined}
+          aria-label="图片预览"
+          className="fixed inset-0 z-[200] flex items-center justify-center p-8 outline-none"
+          style={{ background: 'transparent' }}
           onClick={() => setLightboxImage(null)}
         >
+          <DialogPrimitive.Title className="sr-only">图片预览</DialogPrimitive.Title>
           <div className="absolute top-4 right-4 flex items-center gap-2">
             <button
               className="p-2 rounded-lg hover:bg-white/10 transition-colors"
               title="复制图片"
               onClick={async (e) => {
                 e.stopPropagation();
+                if (!lightboxImage) return;
                 try {
                   const res = await fetch(lightboxImage);
                   const blob = await res.blob();
@@ -1337,22 +1363,20 @@ export function DefectDetailPanel() {
             >
               <Copy size={20} style={{ color: '#fff' }} />
             </button>
-            <button
-              className="p-2 rounded-lg hover:bg-white/10 transition-colors"
-              onClick={() => setLightboxImage(null)}
-            >
+            <DialogPrimitive.Close className="p-2 rounded-lg hover:bg-white/10 transition-colors">
               <X size={24} style={{ color: '#fff' }} />
-            </button>
+            </DialogPrimitive.Close>
           </div>
-          <img
-            src={lightboxImage}
-            alt="放大图片"
-            className="max-w-full max-h-full object-contain rounded-lg"
-            style={{ boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}
-            onClick={(e) => e.stopPropagation()}
-          />
-        </div>
-      )}
+          {lightboxImage && (
+            <img
+              src={lightboxImage}
+              alt="放大图片"
+              className="max-w-full max-h-full object-contain rounded-lg"
+              style={{ boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}
+              onClick={(e) => e.stopPropagation()}
+            />
+          )}
+        </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
 

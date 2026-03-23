@@ -18,7 +18,7 @@ import {
   Bot,
   Store,
   GraduationCap,
-  ClipboardList,
+  Sparkles,
   Workflow,
   Zap,
   type LucideIcon,
@@ -28,6 +28,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import type { ToolboxItem } from '@/services';
 import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
+import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
 
 // ── Icon & Color mapping (self-contained, doesn't touch ToolCard) ──
 
@@ -121,7 +122,7 @@ function getGreeting(): string {
 const QUICK_LINKS = [
   { icon: Store, label: '海鲜市场', desc: '发现和 Fork 优质提示词与配置', path: '/marketplace', accent: '#F59E0B', gradient: 'linear-gradient(135deg, #F59E0B, #F97316)' },
   { icon: GraduationCap, label: '使用教程', desc: '从入门到进阶的操作指南', path: '/tutorials', accent: '#3B82F6', gradient: 'linear-gradient(135deg, #3B82F6, #6366F1)' },
-  { icon: ClipboardList, label: '缺陷管理', desc: '快速提交和跟踪缺陷报告', path: '/defect', accent: '#F43F5E', gradient: 'linear-gradient(135deg, #F43F5E, #A855F7)' },
+  { icon: Sparkles, label: '作品广场', desc: '探索 AI 驱动的创意作品与灵感', path: '/showcase', accent: '#A855F7', gradient: 'linear-gradient(135deg, #A855F7, #6366F1)' },
 ] as const;
 
 // ── Featured Agent Card (large, with cover image) ──
@@ -339,6 +340,7 @@ const AUTO_GRID_COMPACT: React.CSSProperties = {
 
 export default function AgentLauncherPage() {
   const [searchQuery, setSearchQuery] = useState('');
+  const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
   const { items, itemsLoading, loadItems } = useToolboxStore();
   const { isMobile } = useBreakpoint();
   const navigate = useNavigate();
@@ -370,10 +372,13 @@ export default function AgentLauncherPage() {
   }, [items, searchQuery]);
 
   const handleClick = (item: ToolboxItem) => {
+    if (item.agentKey === 'prd-agent') {
+      setDownloadDialogOpen(true);
+      return;
+    }
     if (item.routePath) {
       navigate(item.routePath);
     } else {
-      // Navigate to toolbox and select this item
       useToolboxStore.getState().selectItem(item);
       navigate('/ai-toolbox');
     }
@@ -622,6 +627,8 @@ export default function AgentLauncherPage() {
           )}
         </div>
       </div>
+
+      <DesktopDownloadDialog open={downloadDialogOpen} onOpenChange={setDownloadDialogOpen} />
     </div>
   );
 }

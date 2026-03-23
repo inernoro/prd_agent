@@ -4,10 +4,11 @@ import LlmLabTab from '@/pages/lab-llm/LlmLabTab';
 import WorkshopLabTab from '@/pages/lab-workshop/WorkshopLabTab';
 import ShowcaseLabTab from '@/pages/lab-showcase/ShowcaseLabTab';
 import ArenaConfigTab from '@/pages/lab-arena/ArenaConfigTab';
-import { Monitor, Sparkles, FlaskConical, Wand2, Swords } from 'lucide-react';
+import ToolsLabTab from '@/pages/lab-tools/ToolsLabTab';
+import { Monitor, Sparkles, FlaskConical, Wand2, Swords, Wrench } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 
-type LabTab = 'workshop' | 'llm' | 'desktop' | 'showcase' | 'arena';
+type LabTab = 'workshop' | 'llm' | 'desktop' | 'showcase' | 'arena' | 'tools';
 
 export default function LabPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -28,6 +29,7 @@ export default function LabPage() {
           { key: 'desktop', label: '桌面实验室', icon: <Monitor size={14} /> },
           { key: 'showcase', label: '特效展示', icon: <Wand2 size={14} /> },
           { key: 'arena', label: 'AI 竞技场', icon: <Swords size={14} /> },
+          { key: 'tools', label: '工具箱', icon: <Wrench size={14} /> },
         ]}
         activeKey={tab}
         onChange={(key) => setTab(key as LabTab)}
@@ -39,9 +41,8 @@ export default function LabPage() {
         {tab === 'desktop' && <DesktopLabTab />}
         {tab === 'showcase' && <ShowcaseLabTab />}
         {tab === 'arena' && <ArenaConfigTab />}
+        {tab === 'tools' && <ToolsLabTab />}
       </div>
     </div>
   );
 }
-
-

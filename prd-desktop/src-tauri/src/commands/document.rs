@@ -85,6 +85,57 @@ pub async fn remove_document_from_session(
         .await
 }
 
+/// 上传文件到会话（所有格式统一上传，后端自动判断文本/二进制并提取内容）
+#[command]
+pub async fn upload_file_to_session(
+    session_id: String,
+    file_path: String,
+    document_type: Option<String>,
+) -> Result<ApiResponse<SessionInfo>, String> {
+    let path = std::path::Path::new(&file_path);
+    let bytes = std::fs::read(path).map_err(|e| format!("读取文件失败: {}", e))?;
+    let file_name = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+
+    // 推断 MIME type（已知格式精确推断，其他交给后端自动检测）
+    let mime = match path
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .as_deref()
+    {
+        Some("pdf") => "application/pdf",
+        Some("doc") => "application/msword",
+        Some("docx") => {
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        }
+        Some("xls") => "application/vnd.ms-excel",
+        Some("xlsx") => {
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        }
+        Some("ppt") => "application/vnd.ms-powerpoint",
+        Some("pptx") => {
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        }
+        _ => "application/octet-stream", // 其他格式交给后端自动检测文本/二进制
+    };
+
+    let client = ApiClient::new();
+    let api_path = if let Some(ref dt) = document_type {
+        format!(
+            "/sessions/{}/documents/upload?documentType={}",
+            session_id, dt
+        )
+    } else {
+        format!("/sessions/{}/documents/upload", session_id)
+    };
+    client
+        .post_file(&api_path, bytes, file_name, mime.to_string())
+        .await
+}
+
 #[command]
 pub async fn update_document_type(
     session_id: String,

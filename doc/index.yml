@@ -72,6 +72,7 @@ docs:
   design.ai-report-systems: AI 周报系统市场调研报告
   design.exec-bt-deployment: CDS 部署架构与冲突分析
   design.model-pool-failover: 模型池故障转移与自动探活设计
+  design.generation-snapshot: 生成快照设计
 
   # ── 三、指南 ──
   # 先看全貌索引，再看部署/开发，然后是 Agent 使用教程，最后是专题指南
@@ -95,6 +96,9 @@ docs:
   guide.ai-toolbox-ops: AI 百宝箱运维指南
   guide.cds-env: CDS 环境变量配置指南
   guide.troubleshooting: 疑难杂症排查手册
+  guide.prd-agent-operations: PRD Agent 全平台操作手册
+  guide.cds-ai-auth: CDS + 后端 API 双层认证诊断指南
+  guide.skill-workflow: AI 技能工作流指南
   guide.multi-image-compose-test: 多图组合功能测试备忘录
 
   # ── 四、规范与规则 ──
@@ -141,4 +145,5 @@ docs:
   report.2026-W09: 周报 2026-W09 (02-23 ~ 03-01)
   report.2026-W07: 周报 2026-W07 (02-09 ~ 02-15)
   report.2026-W06: 周报 2026-W06 (02-03 ~ 02-08)
+  report.prd-agent-web-sync: PRD Agent Web 端同步开发报告
   report.skill-doc-evaluation: 文档技能评测报告：三技能 vs 已有文档

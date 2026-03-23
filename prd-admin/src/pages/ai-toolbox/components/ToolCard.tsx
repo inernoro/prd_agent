@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import type { ToolboxItem } from '@/services';
 import { useToolboxStore } from '@/stores/toolboxStore';
 import { useNavigate } from 'react-router-dom';
+import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
 import { useAuthStore } from '@/stores/authStore';
 import {
   ArrowUpRight,
@@ -152,9 +153,14 @@ export function ToolCard({ item }: ToolCardProps) {
   const [coverFailed, setCoverFailed] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
   const [hovering, setHovering] = useState(false);
+  const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const handleClick = () => {
+    if (item.agentKey === 'prd-agent') {
+      setDownloadDialogOpen(true);
+      return;
+    }
     if (isCustomized && item.routePath) {
       navigate(item.routePath);
     } else {
@@ -183,6 +189,7 @@ export function ToolCard({ item }: ToolCardProps) {
   };
 
   return (
+    <>
     <SpotlightEffect
       spotlightColor={`${palette.from}33`} // 20% opacity of the main color
       onClick={handleClick}
@@ -209,7 +216,7 @@ export function ToolCard({ item }: ToolCardProps) {
           <img
             src={coverUrl}
             alt={item.name}
-            className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-110 z-0"
+            className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-[1.04] z-0"
             draggable={false}
             onError={() => setCoverFailed(true)}
           />
@@ -444,5 +451,8 @@ export function ToolCard({ item }: ToolCardProps) {
         }}
       />
     </SpotlightEffect>
+
+    <DesktopDownloadDialog open={downloadDialogOpen} onOpenChange={setDownloadDialogOpen} />
+    </>
   );
 }

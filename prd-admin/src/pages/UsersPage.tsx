@@ -5,7 +5,7 @@ import { TabBar } from '@/components/design/TabBar';
 import { Select } from '@/components/design/Select';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { Dialog } from '@/components/ui/Dialog';
-import { getUsers, createUser, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, updateUserAvatar, updateUserDisplayName, initializeUsers, adminImpersonate, getSystemRoles, getUserAuthz, updateUserAuthz, getAdminPermissionCatalog, getUserRateLimit, updateUserRateLimit, bulkDeleteUsers } from '@/services';
+import { getUsers, createUser, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, forceExpireAll, updateUserAvatar, updateUserDisplayName, initializeUsers, adminImpersonate, getSystemRoles, getUserAuthz, updateUserAuthz, getAdminPermissionCatalog, getUserRateLimit, updateUserRateLimit, bulkDeleteUsers } from '@/services';
 import { MoreVertical, Pencil, Search, UserCog, Users, Gauge, Trash2, FolderOpen, Image, Bug, Zap } from 'lucide-react';
 import { getRoleMeta, ALL_ROLES } from '@/lib/roleConfig';
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
@@ -125,7 +125,7 @@ export default function UsersPage() {
   const [nameError, setNameError] = useState<string | null>(null);
 
   const [switchingUserId, setSwitchingUserId] = useState<string | null>(null);
-  const { login: authLogin, setPermissionsLoaded, setMenuCatalogLoaded } = useAuthStore();
+  const { login: authLogin, logout, setPermissionsLoaded, setMenuCatalogLoaded } = useAuthStore();
   const loadThemeFromServer = useThemeStore((s) => s.loadFromServer);
   const loadNavOrderFromServer = useNavOrderStore((s) => s.loadFromServer);
   const canAuthzManage = useAuthStore((s) => Array.isArray(s.permissions) && s.permissions.includes('authz.manage'));
@@ -349,13 +349,17 @@ export default function UsersPage() {
         return;
       }
       
-      // 更新认证状态
+      // 更新认证状态（补充 avatar 信息，API 未返回但 UserRow 中有）
       authLogin(
         {
           userId: res.data.user.userId,
           username: res.data.user.username,
           displayName: res.data.user.displayName,
           role: res.data.user.role,
+          avatarFileName: u.avatarFileName ?? null,
+          avatarUrl: u.avatarUrl ?? null,
+          userType: u.userType,
+          botKind: u.botKind,
         },
         res.data.accessToken
       );
@@ -662,6 +666,33 @@ export default function UsersPage() {
     }
   };
 
+  const handleForceExpireAll = async () => {
+    const confirmed = await systemDialog.confirm({
+      title: '一键过期所有令牌',
+      message: '此操作将强制所有用户（包括您自己）重新登录。所有已签发的访问令牌和刷新令牌将立即失效。\n\n确定继续吗？',
+      confirmText: '确定过期',
+      cancelText: '取消',
+      tone: 'danger',
+    });
+    if (!confirmed) return;
+
+    try {
+      const res = await forceExpireAll();
+      if (!res.success) {
+        toast.error('操作失败', res.error?.message || '一键过期失败');
+        return;
+      }
+      toast.success('已过期所有令牌', `共 ${res.data.expiredCount} 个用户的令牌已失效，3 秒后将退出登录...`);
+      // 请求已成功发送，等待 toast 显示后再退出
+      setTimeout(() => {
+        logout();
+      }, 3000);
+    } catch (error) {
+      console.error('Force expire all error:', error);
+      toast.error('操作失败', '一键过期时发生错误');
+    }
+  };
+
   const toggleUserSelection = (userId: string) => {
     setSelectedUserIds((prev) => {
       const next = new Set(prev);
@@ -787,6 +818,10 @@ export default function UsersPage() {
           <div className={`${isMobile ? '' : 'ml-auto'} flex items-center gap-2 shrink-0 flex-wrap justify-end`}>
             <Button variant="secondary" size="xs" onClick={openCreateUser}>
               创建用户
+            </Button>
+            <div className="mx-0.5 h-6 w-px bg-white/8" aria-hidden />
+            <Button variant="danger" size="xs" onClick={handleForceExpireAll}>
+              一键过期
             </Button>
             <div className="mx-0.5 h-6 w-px bg-white/8" aria-hidden />
             <Button variant="danger" size="xs" onClick={handleInitializeUsers}>
@@ -1315,31 +1350,29 @@ export default function UsersPage() {
               <div className="flex flex-col">
                 <div className="text-sm font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>角色</div>
                 <div
-                  className="rounded-[10px] p-2 space-y-1 flex-1"
+                  className="rounded-[10px] p-2 space-y-1 flex-1 overflow-y-auto max-h-[260px]"
                   style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}
                 >
-                  {([
-                    { key: 'PM', label: 'PM', desc: '产品经理' },
-                    { key: 'DEV', label: 'DEV', desc: '开发' },
-                    { key: 'QA', label: 'QA', desc: '测试' },
-                    { key: 'ADMIN', label: 'ADMIN', desc: '管理员' },
-                  ] as const).map((r) => (
-                    <label
-                      key={r.key}
-                      className="flex items-center gap-2 px-2 py-1.5 rounded-[6px] cursor-pointer transition-colors hover:bg-white/5"
-                    >
-                      <input
-                        type="radio"
-                        name="createRole"
-                        value={r.key}
-                        checked={createRole === r.key}
-                        onChange={() => setCreateRole(r.key)}
-                        className="accent-[var(--accent-gold)]"
-                      />
-                      <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>{r.label}</span>
-                      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{r.desc}</span>
-                    </label>
-                  ))}
+                  {ALL_ROLES.map((key) => {
+                    const meta = getRoleMeta(key);
+                    return (
+                      <label
+                        key={key}
+                        className="flex items-center gap-2 px-2 py-1.5 rounded-[6px] cursor-pointer transition-colors hover:bg-white/5"
+                      >
+                        <input
+                          type="radio"
+                          name="createRole"
+                          value={key}
+                          checked={createRole === key}
+                          onChange={() => setCreateRole(key)}
+                          className="accent-[var(--accent-gold)]"
+                        />
+                        <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>{key}</span>
+                        <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{meta.label}</span>
+                      </label>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -1839,6 +1872,7 @@ export default function UsersPage() {
           </div>
         }
       />
+
     </div>
   );
 }

@@ -573,6 +573,7 @@ async function loadRoutingRules() {
 async function refreshRemoteCandidates() {
   const btn = document.getElementById('refreshRemoteBtn');
   btn.disabled = true;
+  _lastRemoteRefreshQuery = '';
   try {
     const data = await api('GET', '/remote-branches');
     remoteCandidates = data.branches || [];
@@ -595,6 +596,9 @@ document.addEventListener('click', (e) => {
   if (!e.target.closest('.branch-picker')) dropdown.classList.add('hidden');
 });
 
+let _branchSearchTimer = null;
+let _lastRemoteRefreshQuery = '';
+
 function filterBranches() {
   const q = searchInput.value.trim().toLowerCase();
 
@@ -610,8 +614,27 @@ function filterBranches() {
   ).slice(0, 15);
 
   if (matchedLocal.length === 0 && matchedRemote.length === 0) {
+    if (q && _lastRemoteRefreshQuery !== q) {
+      // Show "searching online" then auto-refresh remote branches
+      dropdown.innerHTML = '<div class="branch-dropdown-empty"><span class="branch-search-spinner"></span>正在在线搜索…</div>';
+      dropdown.classList.remove('hidden');
+      clearTimeout(_branchSearchTimer);
+      _branchSearchTimer = setTimeout(async () => {
+        _lastRemoteRefreshQuery = q;
+        try {
+          const data = await api('GET', '/remote-branches');
+          remoteCandidates = data.branches || [];
+        } catch (_) { /* ignore */ }
+        // Re-filter with updated remote candidates
+        if (searchInput.value.trim().toLowerCase() === q) {
+          filterBranches();
+        }
+      }, 400);
+      return;
+    }
     dropdown.innerHTML = '<div class="branch-dropdown-empty">没有匹配的分支</div>';
   } else {
+    _lastRemoteRefreshQuery = ''; // Reset so future searches can trigger refresh
     let html = '';
 
     // ── Already added section ──
@@ -1154,14 +1177,12 @@ async function toggleColorMark(id, event) {
   const card = event.currentTarget.closest('.branch-card');
   const btn = event.currentTarget;
 
-  // Optimistic UI: apply visual state immediately
+  // Update data model immediately
   branch.isColorMarked = newVal;
-  if (card) {
-    card.classList.toggle('is-color-marked', newVal);
-    btn.classList.toggle('active', newVal);
-  }
+  // Toggle button state immediately for visual feedback
+  btn.classList.toggle('active', newVal);
 
-  // Card-scoped ripple transition (cosmetic, non-blocking)
+  // Card-scoped ripple transition: delay class toggle until ripple completes
   if (card) {
     const cardRect = card.getBoundingClientRect();
     const btnRect = btn.getBoundingClientRect();
@@ -1181,7 +1202,14 @@ async function toggleColorMark(id, event) {
     card.appendChild(overlay);
     overlay.offsetHeight;
     overlay.classList.add('animate');
-    overlay.addEventListener('animationend', () => overlay.remove(), { once: true });
+    overlay.addEventListener('animationend', () => {
+      // Apply the actual class change after the ripple covers the card
+      card.classList.toggle('is-color-marked', newVal);
+      overlay.remove();
+    }, { once: true });
+  } else {
+    // No card element — apply immediately
+    card?.classList.toggle('is-color-marked', newVal);
   }
 
   // Persist in background — rollback on failure

@@ -1,4 +1,4 @@
-export type UserRole = 'PM' | 'DEV' | 'QA' | 'ADMIN';
+export type UserRole = 'PM' | 'DEV' | 'QA' | 'ADMIN' | 'HR' | 'FINANCE' | 'RD' | 'TEST' | 'COPYWRITER' | 'CSM' | 'SUPPORT' | 'SALES';
 export type InteractionMode = 'QA' | 'Knowledge' | 'PrdPreview' | 'AssetsDiag' | 'Defect';
 export type MessageRole = 'User' | 'Assistant' | 'System';
 

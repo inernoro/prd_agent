@@ -311,9 +311,10 @@ public static class DefectSeverity
     public const string Critical = "critical";
     public const string Major = "major";
     public const string Minor = "minor";
+    public const string Trivial = "trivial";
     public const string Suggestion = "suggestion";
 
-    public static readonly string[] All = { Blocker, Critical, Major, Minor, Suggestion };
+    public static readonly string[] All = { Blocker, Critical, Major, Minor, Trivial, Suggestion };
 }
 
 /// <summary>

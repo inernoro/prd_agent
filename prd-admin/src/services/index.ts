@@ -31,6 +31,7 @@ import type {
   GetUserProfileContract,
   UnlockUserContract,
   ForceExpireUserContract,
+  ForceExpireAllContract,
   BulkDeleteUsersContract,
 } from '@/services/contracts/adminUsers';
 import type { GetActiveGroupsContract, GetGapStatsContract, GetMessageTrendContract, GetOverviewStatsContract, GetTokenUsageContract } from '@/services/contracts/adminStats';
@@ -285,6 +286,7 @@ import {
   updateUserStatusReal,
   unlockUserReal,
   forceExpireUserReal,
+  forceExpireAllReal,
   initializeUsersReal,
   bulkDeleteUsersReal,
 } from '@/services/real/adminUsers';
@@ -729,6 +731,7 @@ export const updateUserDisplayName: UpdateUserDisplayNameContract = withAuth(upd
 export const unlockUser: UnlockUserContract = withAuth(unlockUserReal);
 export const generateInviteCodes: GenerateInviteCodesContract = withAuth(generateInviteCodesReal);
 export const forceExpireUser: ForceExpireUserContract = withAuth(forceExpireUserReal);
+export const forceExpireAll: ForceExpireAllContract = withAuth(forceExpireAllReal);
 export const initializeUsers = withAuth(initializeUsersReal);
 export const getUserProfile: GetUserProfileContract = withAuth(getUserProfileReal);
 export const bulkDeleteUsers: BulkDeleteUsersContract = withAuth(bulkDeleteUsersReal);

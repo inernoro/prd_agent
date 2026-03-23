@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Eye, ImageOff } from 'lucide-react';
+import { Eye, ImageOff, X } from 'lucide-react';
 import { resolveAvatarUrl, DEFAULT_AVATAR_FALLBACK } from '@/lib/avatar';
 import { HeartLikeButton } from '@/components/effects/HeartLikeButton';
 import type { SubmissionItem } from '@/services/real/submissions';
@@ -8,9 +8,11 @@ interface SubmissionCardProps {
   item: SubmissionItem;
   onLikeToggle?: (id: string, liked: boolean) => Promise<void>;
   onClick?: () => void;
+  isAdmin?: boolean;
+  onAdminWithdraw?: (id: string) => void;
 }
 
-export function SubmissionCard({ item, onLikeToggle, onClick }: SubmissionCardProps) {
+export function SubmissionCard({ item, onLikeToggle, onClick, isAdmin, onAdminWithdraw }: SubmissionCardProps) {
   const [imgLoaded, setImgLoaded] = useState(false);
   const [imgError, setImgError] = useState(false);
   const [liked, setLiked] = useState(item.likedByMe);
@@ -101,6 +103,27 @@ export function SubmissionCard({ item, onLikeToggle, onClick }: SubmissionCardPr
             background: 'linear-gradient(180deg, transparent 40%, rgba(0,0,0,0.5) 100%)',
           }}
         />
+
+        {/* Admin withdraw button — hover to show */}
+        {isAdmin && (
+          <button
+            type="button"
+            className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10 flex items-center justify-center w-7 h-7 rounded-full"
+            style={{
+              background: 'rgba(239, 68, 68, 0.85)',
+              backdropFilter: 'blur(8px)',
+              color: '#fff',
+              border: '1px solid rgba(255,255,255,0.2)',
+            }}
+            title="管理员撤稿"
+            onClick={(e) => {
+              e.stopPropagation();
+              onAdminWithdraw?.(item.id);
+            }}
+          >
+            <X size={14} />
+          </button>
+        )}
       </div>
 
       {/* Info below image — more organic, like Lovart */}

@@ -1,7 +1,8 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useState, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { invoke } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
 import { useGroupListStore } from '../../stores/groupListStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { usePrdCitationPreviewStore } from '../../stores/prdCitationPreviewStore';
@@ -10,6 +11,40 @@ import { DOCUMENT_TYPE_LABELS } from '../../types';
 
 const DOC_TYPES: DocumentType[] = ['product', 'technical', 'design', 'reference'];
 
+/** 明确支持的格式 — 直接放行，不需要探测 */
+const KNOWN_GOOD_EXTS = new Set([
+  // 文档
+  '.md', '.mdc', '.txt', '.csv', '.json', '.xml', '.html', '.htm', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf', '.log', '.rst', '.adoc', '.tex',
+  // 代码
+  '.js', '.jsx', '.ts', '.tsx', '.vue', '.svelte', '.css', '.scss', '.less', '.sass',
+  '.py', '.rb', '.go', '.rs', '.java', '.kt', '.kts', '.scala', '.swift', '.c', '.cpp', '.h', '.hpp', '.cs', '.fs',
+  '.sh', '.bash', '.zsh', '.ps1', '.bat', '.cmd',
+  '.sql', '.graphql', '.gql', '.proto',
+  '.r', '.lua', '.dart', '.php', '.pl', '.pm', '.ex', '.exs', '.erl', '.hs', '.clj', '.lisp', '.ml', '.zig',
+  // 数据/配置
+  '.env', '.properties', '.gradle', '.pom', '.lock', '.editorconfig', '.gitignore', '.dockerignore',
+  // 二进制文档（已知有提取器）
+  '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+]);
+
+/** 明确不支持的格式 — 立即拒绝，不浪费时间 */
+const KNOWN_BAD_EXTS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.ico', '.tiff', '.tif', '.psd', '.ai', '.raw',
+  '.mp3', '.mp4', '.avi', '.mov', '.wav', '.flac', '.ogg', '.webm', '.mkv', '.wmv', '.aac', '.m4a',
+  '.exe', '.dll', '.so', '.dylib', '.bin', '.dmg', '.iso', '.msi', '.app', '.deb', '.rpm',
+  '.zip', '.tar', '.gz', '.rar', '.7z', '.bz2', '.xz', '.zst',
+  '.woff', '.woff2', '.ttf', '.otf', '.eot',
+  '.sqlite', '.db',
+]);
+
+type FilePhase = 'queued' | 'rejected' | 'detecting' | 'uploading' | 'success' | 'failed';
+interface FileTask {
+  name: string;
+  path: string;
+  phase: FilePhase;
+  message?: string;
+}
+
 export default function KnowledgeBasePage() {
   const { activeGroupId, documentLoaded, document, documents, sessionId, setDocuments } = useSessionStore();
   const { groups } = useGroupListStore();
@@ -17,9 +52,15 @@ export default function KnowledgeBasePage() {
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
+  const [fileTasks, setFileTasks] = useState<FileTask[]>([]);
+  const fileTasksRef = useRef<FileTask[]>([]);
   const group = groups.find((g) => g.groupId === activeGroupId) ?? null;
+
+  // 辅助：更新单个文件任务状态
+  const updateTask = useCallback((idx: number, patch: Partial<FileTask>) => {
+    fileTasksRef.current = fileTasksRef.current.map((t, i) => i === idx ? { ...t, ...patch } : t);
+    setFileTasks([...fileTasksRef.current]);
+  }, []);
 
   // 更新文档类型
   const handleChangeDocumentType = useCallback(async (documentId: string, newType: DocumentType) => {
@@ -49,37 +90,17 @@ export default function KnowledgeBasePage() {
     }
   }, [sessionId, documents, setDocuments]);
 
-  // 添加资料文件
-  const handleAddDocument = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const input = e.currentTarget;
-    const file = input.files?.[0] ?? null;
-    input.value = '';
-    if (!file || !sessionId) return;
-
-    const ext = file.name.toLowerCase();
-    if (!ext.endsWith('.md') && !ext.endsWith('.mdc') && !ext.endsWith('.txt')) {
-      setError('仅支持 .md、.mdc、.txt 格式文件');
-      return;
-    }
-
+  // 刷新文档列表
+  const refreshDocuments = useCallback(async () => {
+    if (!sessionId) return;
     try {
-      setBusy(true);
-      setError('');
-      const content = await file.text();
-
-      const resp = await invoke<ApiResponse<{ sessionId: string; documentId: string; documentIds: string[]; documentMetas: Array<{ documentId: string; documentType: string }> }>>(
-        'add_document_to_session',
-        { sessionId, content }
+      // 重新获取会话信息以获取最新的 documentIds
+      const sessionResp = await invoke<ApiResponse<{ documentIds: string[]; documentMetas: Array<{ documentId: string; documentType: string }> }>>(
+        'get_session',
+        { groupId: activeGroupId }
       );
-
-      if (!resp.success) {
-        setError(resp.error?.message || '添加资料失败');
-        return;
-      }
-
-      // 重新获取所有文档元信息
-      const newDocIds: string[] = resp.data?.documentIds ?? [];
-      const metaMap = new Map((resp.data?.documentMetas ?? []).map(m => [m.documentId, m.documentType as DocumentType]));
+      const newDocIds: string[] = sessionResp.data?.documentIds ?? [];
+      const metaMap = new Map((sessionResp.data?.documentMetas ?? []).map(m => [m.documentId, m.documentType as DocumentType]));
       const newDocs: Document[] = [];
       for (const did of newDocIds) {
         try {
@@ -90,14 +111,85 @@ export default function KnowledgeBasePage() {
           }
         } catch { /* skip */ }
       }
-      setDocuments(newDocs);
+      if (newDocs.length > 0) setDocuments(newDocs);
+    } catch { /* skip */ }
+  }, [sessionId, activeGroupId, setDocuments]);
+
+  // 三阶段文件上传：已知放行 → 已知拒绝 → 未知探测
+  const handleAddDocumentNative = useCallback(async () => {
+    if (!sessionId) return;
+
+    try {
+      const selected = await open({
+        multiple: true,
+        title: '选择资料文件（文档、代码、配置等均可）',
+      });
+
+      if (!selected) return;
+      const paths = Array.isArray(selected) ? selected : [selected];
+      if (paths.length === 0) return;
+
+      setBusy(true);
+      setError('');
+
+      // Phase 1：分类 — 已知放行 / 已知拒绝 / 未知待探测
+      const tasks: FileTask[] = paths.map(filePath => {
+        const name = filePath.split(/[/\\]/).pop() || filePath;
+        const dotIdx = name.lastIndexOf('.');
+        const ext = dotIdx >= 0 ? name.slice(dotIdx).toLowerCase() : '';
+
+        if (KNOWN_BAD_EXTS.has(ext)) {
+          return { name, path: filePath, phase: 'rejected' as const, message: '不支持的文件类型（图片/音视频/压缩包/可执行文件）' };
+        }
+        if (KNOWN_GOOD_EXTS.has(ext) || ext === '') {
+          return { name, path: filePath, phase: 'queued' as const };
+        }
+        // 未知格式 → 需要探测
+        return { name, path: filePath, phase: 'detecting' as const, message: '正在检测文件格式…' };
+      });
+
+      fileTasksRef.current = tasks;
+      setFileTasks([...tasks]);
+
+      // Phase 2 & 3：逐个上传（已知放行直接上传，未知格式标记"探测中"后上传）
+      for (let i = 0; i < tasks.length; i++) {
+        const task = tasks[i];
+        if (task.phase === 'rejected') continue;
+
+        // 标记上传中
+        const uploadMsg = task.phase === 'detecting' ? '格式未知，尝试上传并由服务端检测…' : '上传中…';
+        updateTask(i, { phase: 'uploading', message: uploadMsg });
+
+        try {
+          const resp = await invoke<ApiResponse<{ sessionId: string; documentId: string; documentIds: string[]; documentMetas: Array<{ documentId: string; documentType: string }> }>>(
+            'upload_file_to_session',
+            { sessionId, filePath: task.path }
+          );
+          if (resp.success) {
+            updateTask(i, { phase: 'success', message: '已添加' });
+          } else {
+            updateTask(i, { phase: 'failed', message: resp.error?.message || '上传失败' });
+          }
+        } catch (err) {
+          updateTask(i, { phase: 'failed', message: '处理失败' });
+          console.error(err);
+        }
+      }
+
+      await refreshDocuments();
+
+      // 3 秒后清除已完结的任务（成功 + 拒绝），只保留失败项供用户排查
+      setTimeout(() => {
+        fileTasksRef.current = fileTasksRef.current.filter(t => t.phase === 'failed');
+        setFileTasks([...fileTasksRef.current]);
+      }, 3000);
     } catch (err) {
       setError('添加资料失败');
       console.error(err);
     } finally {
       setBusy(false);
     }
-  }, [sessionId, setDocuments]);
+  }, [sessionId, refreshDocuments, updateTask]);
 
   // 移除资料文件
   const handleRemoveDocument = useCallback(async (documentId: string) => {
@@ -188,22 +280,50 @@ export default function KnowledgeBasePage() {
               <div className="text-lg font-semibold">资料文件 ({docList.length})</div>
               <button
                 disabled={busy}
-                onClick={() => fileInputRef.current?.click()}
+                onClick={handleAddDocumentNative}
                 className="px-3 py-1.5 rounded-lg ui-control text-sm hover:opacity-80 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {busy ? '处理中...' : '+ 追加资料'}
               </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".md,.mdc,.txt"
-                className="hidden"
-                onChange={handleAddDocument}
-              />
             </div>
 
             {error && (
               <div className="text-sm text-red-500 mb-3">{error}</div>
+            )}
+
+            {/* 逐文件上传进度 */}
+            {fileTasks.length > 0 && (
+              <div className="space-y-1.5 mb-3">
+                {fileTasks.map((task, idx) => (
+                  <div
+                    key={`${task.name}-${idx}`}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs ${
+                      task.phase === 'success' ? 'bg-green-500/10 text-green-600 dark:text-green-400' :
+                      task.phase === 'failed' || task.phase === 'rejected' ? 'bg-red-500/10 text-red-500' :
+                      task.phase === 'detecting' ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400' :
+                      'bg-blue-500/10 text-blue-500'
+                    }`}
+                  >
+                    {/* 状态图标 */}
+                    {task.phase === 'uploading' || task.phase === 'detecting' ? (
+                      <svg className="w-3.5 h-3.5 animate-spin shrink-0" viewBox="0 0 24 24" fill="none">
+                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.25" />
+                        <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                      </svg>
+                    ) : task.phase === 'success' ? (
+                      <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                    ) : (
+                      <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                      </svg>
+                    )}
+                    <span className="font-medium truncate">{task.name}</span>
+                    {task.message && <span className="opacity-70 truncate">{task.message}</span>}
+                  </div>
+                ))}
+              </div>
             )}
 
             <div className="space-y-2">
@@ -276,7 +396,7 @@ export default function KnowledgeBasePage() {
             <div className="text-lg font-semibold mb-2">说明</div>
             <div className="prose prose-sm dark:prose-invert max-w-none">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {`- **主文档**：对话的焦点，AI 回答围绕主文档展开，默认为产品文档类型。\n- **文档类型**：可为每个文档设置类型（产品文档、技术文档、设计文档、参考资料），AI 会根据类型调整引用权重。\n- **多文档支持**：追加的资料文件会作为 AI 对话时的参考上下文，与主文档一同被引用。\n- **未绑定 PRD 的群组**：不允许进行任何基于 PRD 的问答/讲解。`}
+                {`- **主文档**：对话的焦点，AI 回答围绕主文档展开，默认为产品文档类型。\n- **文档类型**：可为每个文档设置类型（产品文档、技术文档、设计文档、参考资料），AI 会根据类型调整引用权重。\n- **多文档支持**：追加的资料文件会作为 AI 对话时的参考上下文，与主文档一同被引用。支持一次选择多个文件。\n- **支持格式**：支持所有文本格式（代码、配置、文档等）和 PDF / Word / Excel / PPT。系统自动识别文件类型并提取文本内容。\n- **未绑定 PRD 的群组**：不允许进行任何基于 PRD 的问答/讲解。`}
               </ReactMarkdown>
             </div>
           </div>

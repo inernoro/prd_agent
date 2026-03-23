@@ -46,6 +46,7 @@ export const api = {
     displayName: (userId: string) => `/api/users/${userId}/display-name`,
     unlock: (userId: string) => `/api/users/${userId}/unlock`,
     forceExpire: (userId: string) => `/api/users/${userId}/force-expire`,
+    forceExpireAll: () => '/api/users/force-expire-all',
     inviteCodes: () => '/api/users/invite-codes',
     initialize: () => '/api/users/initialize',
     bulk: () => '/api/users/bulk',
@@ -885,6 +886,9 @@ export const api = {
     visibility: (id: string) => `/api/submissions/${id}/visibility`,
     delete: (id: string) => `/api/submissions/${id}`,
     like: (id: string) => `/api/submissions/${id}/likes`,
+    migrate: () => '/api/submissions/migrate',
+    migrateLiterary: () => '/api/submissions/migrate-literary',
+    adminWithdraw: (id: string) => `/api/submissions/${id}/admin-withdraw`,
   },
 } as const;
 

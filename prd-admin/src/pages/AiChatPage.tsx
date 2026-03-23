@@ -111,7 +111,41 @@ const AssistantMarkdown = memo(function AssistantMarkdown({ content }: { content
 });
 
 const MAX_MESSAGE_CHARS = 16 * 1024;
-const ALLOWED_TEXT_EXTS = ['.md', '.mdc', '.txt', '.log', '.json', '.csv'];
+/** 明确排除的非文本格式 — 立即拒绝 */
+const REJECTED_BINARY_EXTS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.ico', '.tiff', '.tif', '.psd', '.ai', '.raw',
+  '.mp3', '.mp4', '.avi', '.mov', '.wav', '.flac', '.ogg', '.webm', '.mkv', '.wmv', '.aac', '.m4a',
+  '.exe', '.dll', '.so', '.dylib', '.bin', '.dmg', '.iso', '.msi', '.app', '.deb', '.rpm',
+  '.zip', '.tar', '.gz', '.rar', '.7z', '.bz2', '.xz', '.zst',
+  '.woff', '.woff2', '.ttf', '.otf', '.eot',
+  '.sqlite', '.db',
+]);
+
+/** 明确支持的文本格式 — 直接放行 */
+const KNOWN_GOOD_EXTS = new Set([
+  // 文档
+  '.md', '.mdc', '.txt', '.csv', '.json', '.xml', '.html', '.htm', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf', '.log', '.rst', '.adoc', '.tex',
+  // 代码
+  '.js', '.jsx', '.ts', '.tsx', '.vue', '.svelte', '.css', '.scss', '.less', '.sass',
+  '.py', '.rb', '.go', '.rs', '.java', '.kt', '.kts', '.scala', '.swift', '.c', '.cpp', '.h', '.hpp', '.cs', '.fs',
+  '.sh', '.bash', '.zsh', '.ps1', '.bat', '.cmd',
+  '.sql', '.graphql', '.gql', '.proto',
+  '.r', '.lua', '.dart', '.php', '.pl', '.pm', '.ex', '.exs', '.erl', '.hs', '.clj', '.lisp', '.ml', '.zig',
+  // 数据/配置
+  '.env', '.properties', '.gradle', '.pom', '.lock', '.editorconfig', '.gitignore', '.dockerignore',
+]);
+
+/** 客户端快速文本检测：读取前 8KB，检查 null 字节 */
+async function isLikelyTextFile(file: File): Promise<boolean> {
+  if (file.size === 0) return false;
+  const slice = file.slice(0, 8192);
+  const buf = await slice.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  for (let i = 0; i < bytes.length; i++) {
+    if (bytes[i] === 0x00) return false;
+  }
+  return true;
+}
 
 function normalizeFileName(name: string) {
   return (name ?? '').trim();
@@ -1026,13 +1060,32 @@ export default function AiChatPage() {
 
   const pickAttachment = async (file: File | null) => {
     if (!file) return;
+    if (file.size > 20 * 1024 * 1024) {
+      toast.warning('文件大小不能超过 20MB');
+      return;
+    }
     const fileName = normalizeFileName(file.name || '');
     const ext = getLowerExt(fileName);
-    if (ext && !ALLOWED_TEXT_EXTS.includes(ext)) {
-      toast.warning(`暂仅支持文本附件：${ALLOWED_TEXT_EXTS.join(', ')}`);
+
+    // Phase 1：已知拒绝
+    if (ext && REJECTED_BINARY_EXTS.has(ext)) {
+      toast.warning('不支持图片、音视频、压缩包等二进制文件，请上传文档或代码文件');
       return;
     }
 
+    // Phase 2：未知格式 → 客户端快速探测
+    if (ext && !KNOWN_GOOD_EXTS.has(ext)) {
+      const toastId = toast.loading(`正在检测 ${fileName} 的文件格式…`);
+      const isText = await isLikelyTextFile(file);
+      toast.dismiss(toastId);
+      if (!isText) {
+        toast.warning(`${fileName} 似乎是二进制文件，无法作为文本附件使用`);
+        return;
+      }
+      toast.success(`${fileName} 检测为文本文件`);
+    }
+
+    // Phase 3：读取文本内容
     let text = '';
     try {
       text = await file.text();
@@ -1194,11 +1247,27 @@ export default function AiChatPage() {
 
   const handleAddDocument = useCallback(async (file: File) => {
     if (!activeSessionId || !userId) return;
-    const ext = getLowerExt(file.name || '');
-    if (ext && !ALLOWED_TEXT_EXTS.includes(ext)) {
-      toast.warning(`暂仅支持文本文件：${ALLOWED_TEXT_EXTS.join(', ')}`);
+    if (file.size > 20 * 1024 * 1024) {
+      toast.warning('文件大小不能超过 20MB');
       return;
     }
+    const ext = getLowerExt(file.name || '');
+
+    // Phase 1：已知拒绝
+    if (ext && REJECTED_BINARY_EXTS.has(ext)) {
+      toast.warning('不支持图片、音视频、压缩包等二进制文件，请上传文档或代码文件');
+      return;
+    }
+
+    // Phase 2：未知格式 → 客户端快速探测
+    if (ext && !KNOWN_GOOD_EXTS.has(ext)) {
+      const isText = await isLikelyTextFile(file);
+      if (!isText) {
+        toast.warning(`${file.name} 似乎是二进制文件，无法追加`);
+        return;
+      }
+    }
+
     try {
       const content = await file.text();
       if (!content.trim()) {
@@ -1282,11 +1351,11 @@ export default function AiChatPage() {
       <input
         ref={addDocFileRef}
         type="file"
-        accept=".md,.mdc,.txt"
+        multiple
         className="hidden"
         onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) handleAddDocument(f);
+          const files = Array.from(e.target.files ?? []);
+          for (const f of files) handleAddDocument(f);
           e.target.value = '';
         }}
       />

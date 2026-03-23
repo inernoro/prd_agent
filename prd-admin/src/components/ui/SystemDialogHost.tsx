@@ -30,6 +30,7 @@ export function SystemDialogHost() {
   return (
     <Dialog
       open={open}
+      zIndex={500}
       onOpenChange={(nextOpen) => {
         // 统一：用户点 X / Esc / 点遮罩关闭时，视为取消
         if (nextOpen) return;
