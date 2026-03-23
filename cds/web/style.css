@@ -1425,6 +1425,10 @@ a.branch-name:hover { color: var(--accent); }
   border-top-color: var(--yellow); border-radius: 50%;
   animation: spin 0.7s linear infinite;
 }
+/* During deploy, hide the busy spinner — hammer blink + progress bar are enough */
+.branch-card.is-deploying.is-busy::after {
+  display: none;
+}
 
 /* ════════════════ Toast ════════════════ */
 
@@ -1848,8 +1852,6 @@ a.branch-name:hover { color: var(--accent); }
   opacity: 0.35;
   flex-shrink: 0;
 }
-/* Hide color-mark button during deploy */
-.branch-card.is-deploying .color-mark-btn { display: none; }
 .color-mark-btn svg { display: block; }
 .color-mark-btn .cm-q1,
 .color-mark-btn .cm-q2,
