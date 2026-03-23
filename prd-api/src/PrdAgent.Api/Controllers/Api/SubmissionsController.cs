@@ -359,75 +359,25 @@ public class SubmissionsController : ControllerBase
                 articleContent = workspace.ArticleContent;
             }
 
-            // 优先用 ArticleWorkflow.AssetIdByMarkerIndex 过滤出当前版本的图片，
-            // 避免重新生成后的旧版本图片出现在"同项目作品"列表中
-            var currentAssetIds = workspace?.ArticleWorkflow?.AssetIdByMarkerIndex?.Values
-                .Where(v => !string.IsNullOrWhiteSpace(v))
-                .Distinct()
-                .ToHashSet(StringComparer.Ordinal);
+            // 文学创作 = Space 整体投递，每个插入位取最新一张图
+            var allAssets = await _db.ImageAssets
+                .Find(x => x.WorkspaceId == submission.WorkspaceId)
+                .SortByDescending(x => x.CreatedAt)
+                .ToListAsync();
 
             List<ImageAsset> assets;
-            if (currentAssetIds != null && currentAssetIds.Count > 0)
+            var withIndex = allAssets.Where(a => a.ArticleInsertionIndex.HasValue).ToList();
+            if (withIndex.Count > 0)
             {
-                // 有工作流记录：只查当前版本的图片
-                assets = await _db.ImageAssets
-                    .Find(x => x.WorkspaceId == submission.WorkspaceId && currentAssetIds.Contains(x.Id))
-                    .SortBy(x => x.ArticleInsertionIndex)
-                    .ThenBy(x => x.CreatedAt)
-                    .ToListAsync();
-
-                // 自愈：并发生图时 AssetIdByMarkerIndex 可能因竞争丢失部分条目，
-                // 对缺失的 ArticleInsertionIndex 补查最新图片
-                var expected = workspace?.ArticleWorkflow?.ExpectedImageCount ?? 0;
-                if (expected > 0 && assets.Count < expected)
-                {
-                    var coveredIndices = assets
-                        .Where(a => a.ArticleInsertionIndex.HasValue)
-                        .Select(a => a.ArticleInsertionIndex!.Value)
-                        .ToHashSet();
-                    var supplementary = await _db.ImageAssets
-                        .Find(x => x.WorkspaceId == submission.WorkspaceId
-                            && x.ArticleInsertionIndex.HasValue
-                            && !currentAssetIds.Contains(x.Id))
-                        .SortByDescending(x => x.CreatedAt)
-                        .ToListAsync();
-                    var extras = supplementary
-                        .Where(a => !coveredIndices.Contains(a.ArticleInsertionIndex!.Value))
-                        .GroupBy(a => a.ArticleInsertionIndex!.Value)
-                        .Select(g => g.First())
-                        .ToList();
-                    if (extras.Count > 0)
-                    {
-                        assets = assets.Concat(extras)
-                            .OrderBy(a => a.ArticleInsertionIndex)
-                            .ThenBy(a => a.CreatedAt)
-                            .ToList();
-                    }
-                }
+                assets = withIndex
+                    .GroupBy(a => a.ArticleInsertionIndex!.Value)
+                    .Select(g => g.First())
+                    .OrderBy(a => a.ArticleInsertionIndex)
+                    .ToList();
             }
             else
             {
-                // 兜底：旧数据无工作流记录
-                // 有 ArticleInsertionIndex 的按索引分组取最新；无索引的全部保留
-                var allAssets = await _db.ImageAssets
-                    .Find(x => x.WorkspaceId == submission.WorkspaceId)
-                    .SortBy(x => x.ArticleInsertionIndex)
-                    .ThenByDescending(x => x.CreatedAt)
-                    .ToListAsync();
-                var withIndex = allAssets.Where(a => a.ArticleInsertionIndex.HasValue).ToList();
-                if (withIndex.Count > 0)
-                {
-                    assets = withIndex
-                        .GroupBy(a => a.ArticleInsertionIndex!.Value)
-                        .Select(g => g.First())
-                        .OrderBy(a => a.ArticleInsertionIndex)
-                        .ToList();
-                }
-                else
-                {
-                    // 完全无索引（极旧数据）：返回所有图片，按时间排序
-                    assets = allAssets;
-                }
+                assets = allAssets;
             }
 
             relatedAssets = assets.Select(a => (object)new
