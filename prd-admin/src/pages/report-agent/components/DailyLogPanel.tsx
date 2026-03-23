@@ -54,6 +54,33 @@ function getDateDisplayLabel(dateStr: string): string {
   return `${d.getMonth() + 1}月${d.getDate()}日 周${getWeekDayLabel(d)}`;
 }
 
+function getIsoWeekInfo(date: Date): { weekYear: number; weekNumber: number } {
+  const utcDate = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const day = utcDate.getUTCDay() || 7;
+  utcDate.setUTCDate(utcDate.getUTCDate() + 4 - day);
+  const weekYear = utcDate.getUTCFullYear();
+  const yearStart = new Date(Date.UTC(weekYear, 0, 1));
+  const weekNumber = Math.ceil((((utcDate.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  return { weekYear, weekNumber };
+}
+
+function getTodoPlanWeekOptions(baseDateStr: string): { key: 'next' | 'afterNext'; label: string; weekYear: number; weekNumber: number }[] {
+  const baseDate = parseDate(baseDateStr);
+  const day = baseDate.getDay() || 7;
+  const monday = new Date(baseDate);
+  monday.setDate(baseDate.getDate() - day + 1);
+  const nextWeekMonday = new Date(monday);
+  nextWeekMonday.setDate(monday.getDate() + 7);
+  const afterNextWeekMonday = new Date(monday);
+  afterNextWeekMonday.setDate(monday.getDate() + 14);
+  const nextInfo = getIsoWeekInfo(nextWeekMonday);
+  const afterNextInfo = getIsoWeekInfo(afterNextWeekMonday);
+  return [
+    { key: 'next', label: '下周', weekYear: nextInfo.weekYear, weekNumber: nextInfo.weekNumber },
+    { key: 'afterNext', label: '下下周', weekYear: afterNextInfo.weekYear, weekNumber: afterNextInfo.weekNumber },
+  ];
+}
+
 function formatTime(dateStr: string): string {
   const d = new Date(dateStr);
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -71,6 +98,7 @@ const CATEGORY_CONFIG: Record<string, { label: string; color: string; bg: string
   communication: { label: '沟通', color: 'rgba(249, 115, 22, 0.95)',  bg: 'rgba(249, 115, 22, 0.12)',  icon: MessageCircle },
   documentation: { label: '文档', color: 'rgba(34, 197, 94, 0.95)',   bg: 'rgba(34, 197, 94, 0.12)',   icon: FileText },
   testing:       { label: '测试', color: 'rgba(236, 72, 153, 0.95)',  bg: 'rgba(236, 72, 153, 0.12)',  icon: TestTube },
+  todo:          { label: 'Todo', color: 'rgba(16, 185, 129, 0.95)',  bg: 'rgba(16, 185, 129, 0.12)',  icon: Check },
   other:         { label: '其他', color: 'rgba(148, 163, 184, 0.95)', bg: 'rgba(148, 163, 184, 0.12)', icon: MoreHorizontal },
 };
 
@@ -82,8 +110,11 @@ const SYSTEM_TAG_ORDER = [
   DailyLogCategory.Communication,
   DailyLogCategory.Documentation,
   DailyLogCategory.Testing,
+  DailyLogCategory.Todo,
   DailyLogCategory.Other,
 ] as const;
+
+type TodoPlanTargetKey = 'next' | 'afterNext';
 
 function normalizeCustomTag(tag: string): string {
   return tag.trim().replace(/\s+/g, ' ');
@@ -94,6 +125,8 @@ interface LogItemInput {
   category: string;
   tags?: string[];
   durationMinutes: number | undefined;
+  planWeekYear?: number;
+  planWeekNumber?: number;
   createdAt?: string;
 }
 
@@ -139,6 +172,8 @@ export function DailyLogPanel() {
   const [editSystemTags, setEditSystemTags] = useState<string[]>([]);
   const [editCustomTags, setEditCustomTags] = useState<string[]>([]);
   const [editDuration, setEditDuration] = useState<number | undefined>(undefined);
+  const [selectedTodoPlanTarget, setSelectedTodoPlanTarget] = useState<TodoPlanTargetKey>('next');
+  const [editTodoPlanTarget, setEditTodoPlanTarget] = useState<TodoPlanTargetKey>('next');
 
   // Data source commits
   const [dataSources, setDataSources] = useState<PersonalSource[]>([]);
@@ -146,6 +181,16 @@ export function DailyLogPanel() {
   const [commitsLoading, setCommitsLoading] = useState(false);
 
   const isToday = selectedDate === formatDate(new Date());
+  const todoPlanOptions = useMemo(() => getTodoPlanWeekOptions(selectedDate), [selectedDate]);
+  const selectedTodoPlanOption = useMemo(
+    () => todoPlanOptions.find((opt) => opt.key === selectedTodoPlanTarget) ?? null,
+    [todoPlanOptions, selectedTodoPlanTarget]
+  );
+  const hasTodoSelected = selectedSystemTags.includes(DailyLogCategory.Todo);
+  const hasEditTodoSelected = editSystemTags.includes(DailyLogCategory.Todo);
+  const quickInputPlaceholder = hasTodoSelected
+    ? '计划做些什么？'
+    : (isToday ? '💬 今天做了什么...' : `💬 ${getDateDisplayLabel(selectedDate)} 做了什么...`);
 
   // ── Data Loading ──
 
@@ -177,6 +222,8 @@ export function DailyLogPanel() {
           category: i.category,
           tags: i.tags,
           durationMinutes: i.durationMinutes,
+          planWeekYear: i.planWeekYear,
+          planWeekNumber: i.planWeekNumber,
           createdAt: i.createdAt,
         }))
       );
@@ -262,6 +309,10 @@ export function DailyLogPanel() {
 
   // ── Actions ──
 
+  const resolveTodoPlanWeek = (targetKey: TodoPlanTargetKey) => (
+    todoPlanOptions.find((opt) => opt.key === targetKey) ?? null
+  );
+
   const doSave = async (newItems: LogItemInput[]) => {
     const validItems = newItems.filter((i) => i.content.trim());
     if (validItems.length === 0) return;
@@ -273,6 +324,8 @@ export function DailyLogPanel() {
         category: i.category,
         tags: i.tags && i.tags.length > 0 ? i.tags : undefined,
         durationMinutes: i.durationMinutes,
+        planWeekYear: i.planWeekYear,
+        planWeekNumber: i.planWeekNumber,
         createdAt: i.createdAt,
       })),
     });
@@ -286,13 +339,30 @@ export function DailyLogPanel() {
     }
   };
 
+  const ensureTodoPlanWeek = (targetKey: TodoPlanTargetKey): { weekYear: number; weekNumber: number } | null => {
+    const option = resolveTodoPlanWeek(targetKey);
+    if (!option) return null;
+    return { weekYear: option.weekYear, weekNumber: option.weekNumber };
+  };
+
   const handleQuickAdd = async () => {
     const text = quickInput.trim();
     if (!text) return;
 
+    const isTodoSelected = selectedSystemTags.includes(DailyLogCategory.Todo);
     const totalSelectedTagCount = selectedSystemTags.length + selectedCustomTags.length;
     if (totalSelectedTagCount === 0) {
       toast.error('请至少选择一个标签');
+      return;
+    }
+    if (isTodoSelected && !selectedTodoPlanOption) {
+      toast.error('请选择计划周次');
+      return;
+    }
+
+    const todoPlanWeek = isTodoSelected ? ensureTodoPlanWeek(selectedTodoPlanTarget) : null;
+    if (isTodoSelected && !todoPlanWeek) {
+      toast.error('请选择计划周次');
       return;
     }
 
@@ -305,6 +375,8 @@ export function DailyLogPanel() {
       category: primaryCategory,
       durationMinutes: undefined,
       tags: tags.length > 0 ? tags : undefined,
+      planWeekYear: todoPlanWeek?.weekYear,
+      planWeekNumber: todoPlanWeek?.weekNumber,
     };
     const newItems = [...items, newItem];
     setItems(newItems);
@@ -322,9 +394,21 @@ export function DailyLogPanel() {
   };
 
   const handleSystemTagToggle = (tag: string) => {
-    setSelectedSystemTags((prev) => (
-      prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]
-    ));
+    setSelectedSystemTags((prev) => {
+      const isSelected = prev.includes(tag);
+      let next: string[];
+      if (isSelected) {
+        next = prev.filter((x) => x !== tag);
+      } else if (tag === DailyLogCategory.Todo) {
+        next = [DailyLogCategory.Todo];
+      } else {
+        next = [...prev.filter((x) => x !== DailyLogCategory.Todo), tag];
+      }
+      if (next.includes(DailyLogCategory.Todo) && !prev.includes(DailyLogCategory.Todo)) {
+        setSelectedTodoPlanTarget('next');
+      }
+      return next;
+    });
     inputRef.current?.focus();
   };
 
@@ -353,9 +437,17 @@ export function DailyLogPanel() {
   }, []);
 
   const handleEditSystemTagToggle = (tag: string) => {
-    setEditSystemTags((prev) => (
-      prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]
-    ));
+    setEditSystemTags((prev) => {
+      const isSelected = prev.includes(tag);
+      if (isSelected) {
+        return prev.filter((x) => x !== tag);
+      }
+      if (tag === DailyLogCategory.Todo) {
+        setEditTodoPlanTarget('next');
+        return [DailyLogCategory.Todo];
+      }
+      return [...prev.filter((x) => x !== DailyLogCategory.Todo), tag];
+    });
   };
 
   const handleEditCustomTagToggle = (tag: string) => {
@@ -492,6 +584,11 @@ export function DailyLogPanel() {
     setEditSystemTags(selection.systemTags);
     setEditCustomTags(selection.customTags);
     setEditDuration(items[idx].durationMinutes);
+    const current = items[idx];
+    const option = todoPlanOptions.find(
+      (opt) => opt.weekYear === current.planWeekYear && opt.weekNumber === current.planWeekNumber
+    );
+    setEditTodoPlanTarget(option?.key ?? 'next');
   };
 
   const cancelEdit = () => {
@@ -508,12 +605,28 @@ export function DailyLogPanel() {
       return;
     }
 
+    const isEditTodo = editSystemTags.includes(DailyLogCategory.Todo);
+    const editTodoPlanWeek = isEditTodo ? ensureTodoPlanWeek(editTodoPlanTarget) : null;
+    if (isEditTodo && !editTodoPlanWeek) {
+      toast.error('请选择计划周次');
+      return;
+    }
+
     const orderedSystemTags = SYSTEM_TAG_ORDER.filter((key) => editSystemTags.includes(key));
     const primaryCategory = orderedSystemTags.find((key) => key !== DailyLogCategory.Other) ?? DailyLogCategory.Other;
     const tags = dedupePreserveOrder([...orderedSystemTags, ...editCustomTags]);
 
     const newItems = items.map((item, i) =>
-      i === editingIdx ? { content: editContent, category: primaryCategory, tags, durationMinutes: editDuration } : item
+      i === editingIdx
+        ? {
+            content: editContent,
+            category: primaryCategory,
+            tags,
+            durationMinutes: editDuration,
+            planWeekYear: editTodoPlanWeek?.weekYear,
+            planWeekNumber: editTodoPlanWeek?.weekNumber,
+          }
+        : item
     );
     setItems(newItems);
     setEditingIdx(null);
@@ -706,7 +819,7 @@ export function DailyLogPanel() {
                     color: 'var(--text-primary)',
                     border: '1px solid var(--border-primary)',
                   }}
-                  placeholder={isToday ? '💬 今天做了什么...' : `💬 ${getDateDisplayLabel(selectedDate)} 做了什么...`}
+                  placeholder={quickInputPlaceholder}
                   value={quickInput}
                   onChange={(e) => setQuickInput(e.target.value)}
                   onKeyDown={handleQuickKeyDown}
@@ -803,6 +916,28 @@ export function DailyLogPanel() {
               <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
                 已选标签 {totalSelectedTagCount} 个，提交前至少选择 1 个
               </div>
+              {hasTodoSelected && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>计划周次</span>
+                  {todoPlanOptions.map((opt) => {
+                    const isActive = opt.key === selectedTodoPlanTarget;
+                    return (
+                      <button
+                        key={`todo-plan-${opt.key}`}
+                        className="px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all duration-150"
+                        style={{
+                          background: isActive ? 'rgba(16, 185, 129, 0.12)' : 'transparent',
+                          color: isActive ? 'rgba(16, 185, 129, 0.95)' : 'var(--text-muted)',
+                          border: `1px solid ${isActive ? 'rgba(16, 185, 129, 0.3)' : 'rgba(148, 163, 184, 0.18)'}`,
+                        }}
+                        onClick={() => setSelectedTodoPlanTarget(opt.key)}
+                      >
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
               {showTagManager && (
                 <div
                   className="mt-1 rounded-xl px-3 py-2.5 flex flex-col gap-2"
@@ -1004,7 +1139,7 @@ export function DailyLogPanel() {
                   className="text-[11px] px-4 py-2 rounded-lg"
                   style={{ color: 'var(--text-muted)', background: 'var(--bg-tertiary)' }}
                 >
-                  💡 每日打点会在生成周报时被 AI 自动汇总归纳
+                  💡 每日记录会在生成周报时被 AI 自动汇总归纳
                 </div>
               </div>
             </div>
@@ -1125,6 +1260,28 @@ export function DailyLogPanel() {
                                     );
                                   })()}
                                 </div>
+                                {hasEditTodoSelected && (
+                                  <div className="flex items-center gap-1 ml-2">
+                                    {todoPlanOptions.map((opt) => {
+                                      const active = editTodoPlanTarget === opt.key;
+                                      return (
+                                        <button
+                                          key={`edit-plan-${opt.key}`}
+                                          type="button"
+                                          className="px-2 py-0.5 rounded text-[10px] transition-colors"
+                                          style={{
+                                            background: active ? 'rgba(16, 185, 129, 0.12)' : 'transparent',
+                                            color: active ? 'rgba(16, 185, 129, 0.95)' : 'var(--text-muted)',
+                                            border: `1px solid ${active ? 'rgba(16, 185, 129, 0.3)' : 'transparent'}`,
+                                          }}
+                                          onClick={() => setEditTodoPlanTarget(opt.key)}
+                                        >
+                                          {opt.label}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                )}
                                 <div className="flex items-center gap-1 ml-2">
                                   <Clock size={11} style={{ color: 'var(--text-muted)' }} />
                                   <input
@@ -1187,6 +1344,16 @@ export function DailyLogPanel() {
                                   >
                                     {cfg.label}
                                   </span>
+                                )}
+                                {item.category === DailyLogCategory.Todo
+                                  && item.planWeekYear != null
+                                  && item.planWeekNumber != null && (
+                                    <span
+                                      className="text-[10px] px-1.5 py-0.5 rounded"
+                                      style={{ background: 'rgba(16, 185, 129, 0.1)', color: 'rgba(16, 185, 129, 0.9)' }}
+                                    >
+                                      计划周：{item.planWeekYear}-W{item.planWeekNumber}
+                                    </span>
                                 )}
                                 {item.durationMinutes != null && item.durationMinutes > 0 && (
                                   <span className="text-[10px] flex items-center gap-0.5" style={{ color: 'var(--text-muted)' }}>

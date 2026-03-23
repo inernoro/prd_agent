@@ -47,6 +47,8 @@ import type {
   ListReportLikesContract,
   LikeReportContract,
   UnlikeReportContract,
+  RecordReportViewContract,
+  GetReportViewsSummaryContract,
   GetPlanComparisonContract,
   GenerateTeamSummaryContract,
   GetTeamSummaryContract,
@@ -93,6 +95,7 @@ import type {
   TeamDashboardData,
   ReportComment,
   ReportLikeSummary,
+  ReportViewSummary,
   PlanComparison,
   TeamSummary,
   TeamSummaryViewData,
@@ -559,6 +562,20 @@ export const unlikeReportReal: UnlikeReportContract = async (input) => {
   return await apiRequest<ReportLikeSummary>(
     api.reportAgent.reports.likes(encodeURIComponent(input.reportId)),
     { method: 'DELETE' }
+  );
+};
+
+export const recordReportViewReal: RecordReportViewContract = async (input) => {
+  return await apiRequest<{ viewedAt: string }>(
+    api.reportAgent.reports.views(encodeURIComponent(input.reportId)),
+    { method: 'POST' }
+  );
+};
+
+export const getReportViewsSummaryReal: GetReportViewsSummaryContract = async (input) => {
+  return await apiRequest<ReportViewSummary>(
+    api.reportAgent.reports.viewsSummary(encodeURIComponent(input.reportId)),
+    { method: 'GET' }
   );
 };
 

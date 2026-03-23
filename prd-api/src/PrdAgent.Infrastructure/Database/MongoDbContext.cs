@@ -113,6 +113,7 @@ public class MongoDbContext
     public IMongoCollection<ReportCommit> ReportCommits => _database.GetCollection<ReportCommit>("report_commits");
     public IMongoCollection<ReportComment> ReportComments => _database.GetCollection<ReportComment>("report_comments");
     public IMongoCollection<ReportLike> ReportLikes => _database.GetCollection<ReportLike>("report_likes");
+    public IMongoCollection<ReportViewEvent> ReportViewEvents => _database.GetCollection<ReportViewEvent>("report_view_events");
     public IMongoCollection<TeamSummary> ReportTeamSummaries => _database.GetCollection<TeamSummary>("report_team_summaries");
     public IMongoCollection<PersonalSource> PersonalSources => _database.GetCollection<PersonalSource>("report_personal_sources");
 
@@ -195,7 +196,92 @@ public class MongoDbContext
     private void CreateIndexes()
     {
         static bool IsIndexConflict(MongoCommandException ex)
-            => ex.CodeName is "IndexOptionsConflict" or "IndexKeySpecsConflict" or "IndexAlreadyExists";
+        {
+            // 兼容不同 MongoDB 版本/代理层返回差异：
+            // - 有些环境会返回 CodeName
+            // - 有些环境只返回 Code 或 message（CodeName 为空）
+            if (ex.CodeName is "IndexOptionsConflict" or "IndexKeySpecsConflict" or "IndexAlreadyExists")
+            {
+                return true;
+            }
+
+            if (ex.Code is 85 or 86 or 68)
+            {
+                return true;
+            }
+
+            var message = ex.Message ?? string.Empty;
+            return message.Contains("equivalent index already exists", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("already exists with a different name and options", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("IndexOptionsConflict", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("IndexKeySpecsConflict", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("IndexAlreadyExists", StringComparison.OrdinalIgnoreCase);
+        }
+
+        void EnsureTtlIndex<TDocument>(
+            IMongoCollection<TDocument> collection,
+            string collectionName,
+            string fieldName,
+            TimeSpan expireAfter,
+            string? indexName = null)
+        {
+            var options = new CreateIndexOptions
+            {
+                ExpireAfter = expireAfter
+            };
+            if (!string.IsNullOrWhiteSpace(indexName))
+            {
+                options.Name = indexName;
+            }
+
+            try
+            {
+                collection.Indexes.CreateOne(new CreateIndexModel<TDocument>(
+                    Builders<TDocument>.IndexKeys.Ascending(fieldName),
+                    options));
+            }
+            catch (MongoCommandException ex) when (IsIndexConflict(ex))
+            {
+                // 兼容历史环境：旧索引可能已存在（同 key 但非 TTL），此时 createIndexes 会因选项冲突失败并导致进程启动中断。
+                // 优先按 name 执行 collMod 升级 TTL，若名称不匹配则回退到 keyPattern 升级。
+                var ttlSeconds = (long)Math.Floor(expireAfter.TotalSeconds);
+                try
+                {
+                    var collModByName = new BsonDocument
+                    {
+                        { "collMod", collectionName },
+                        { "index", new BsonDocument
+                            {
+                                { "name", indexName ?? $"{fieldName}_1" },
+                                { "expireAfterSeconds", ttlSeconds }
+                            }
+                        }
+                    };
+                    _database.RunCommand<BsonDocument>(collModByName);
+                }
+                catch (MongoCommandException)
+                {
+                    try
+                    {
+                        var collModByPattern = new BsonDocument
+                        {
+                            { "collMod", collectionName },
+                            { "index", new BsonDocument
+                                {
+                                    { "keyPattern", new BsonDocument(fieldName, 1) },
+                                    { "expireAfterSeconds", ttlSeconds }
+                                }
+                            }
+                        };
+                        _database.RunCommand<BsonDocument>(collModByPattern);
+                    }
+                    catch (MongoCommandException ex2) when (IsIndexConflict(ex2))
+                    {
+                        // ignore
+                    }
+                }
+            }
+        }
 
         // Users索引
         try
@@ -1183,6 +1269,18 @@ public class MongoDbContext
         ReportLikes.Indexes.CreateOne(new CreateIndexModel<ReportLike>(
             Builders<ReportLike>.IndexKeys.Ascending(x => x.ReportId).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_report_likes_report_created" }));
+
+        // ReportViewEvents：按 ReportId + ViewedAt 查询浏览轨迹
+        ReportViewEvents.Indexes.CreateOne(new CreateIndexModel<ReportViewEvent>(
+            Builders<ReportViewEvent>.IndexKeys.Ascending(x => x.ReportId).Descending(x => x.ViewedAt),
+            new CreateIndexOptions { Name = "idx_report_views_report_viewed" }));
+        // ReportViewEvents：按 ReportId + UserId + ViewedAt 统计单用户浏览次数
+        ReportViewEvents.Indexes.CreateOne(new CreateIndexModel<ReportViewEvent>(
+            Builders<ReportViewEvent>.IndexKeys
+                .Ascending(x => x.ReportId)
+                .Ascending(x => x.UserId)
+                .Descending(x => x.ViewedAt),
+            new CreateIndexOptions { Name = "idx_report_views_report_user_viewed" }));
 
         // ReportTeamSummaries：(TeamId, WeekYear, WeekNumber) 唯一
         try

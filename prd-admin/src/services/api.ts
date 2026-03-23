@@ -516,6 +516,8 @@ export const api = {
       comments: (id: string) => `/api/report-agent/reports/${id}/comments`,
       comment: (id: string, commentId: string) => `/api/report-agent/reports/${id}/comments/${commentId}`,
       likes: (id: string) => `/api/report-agent/reports/${id}/likes`,
+      views: (id: string) => `/api/report-agent/reports/${id}/views`,
+      viewsSummary: (id: string) => `/api/report-agent/reports/${id}/views-summary`,
       planComparison: (id: string) => `/api/report-agent/reports/${id}/plan-comparison`,
     },
     dailyLogs: {

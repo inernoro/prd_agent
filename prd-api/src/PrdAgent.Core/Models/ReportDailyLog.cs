@@ -45,6 +45,12 @@ public class DailyLogItem
     /// <summary>耗时（分钟，选填）</summary>
     public int? DurationMinutes { get; set; }
 
+    /// <summary>计划目标 ISO 周所属年份（仅 Todo 有效）</summary>
+    public int? PlanWeekYear { get; set; }
+
+    /// <summary>计划目标 ISO 周（1-53，仅 Todo 有效）</summary>
+    public int? PlanWeekNumber { get; set; }
+
     /// <summary>条目创建时间（UTC）</summary>
     public DateTime? CreatedAt { get; set; }
 }
@@ -59,7 +65,8 @@ public static class DailyLogCategory
     public const string Communication = "communication";
     public const string Documentation = "documentation";
     public const string Testing = "testing";
+    public const string Todo = "todo";
     public const string Other = "other";
 
-    public static readonly string[] All = { Development, Meeting, Communication, Documentation, Testing, Other };
+    public static readonly string[] All = { Development, Meeting, Communication, Documentation, Testing, Todo, Other };
 }

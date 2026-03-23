@@ -1,12 +1,12 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, MessageSquare, CornerDownRight, Trash2, Send, GitCompare, X, CheckCircle2 } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
-import { getWeeklyReport, listComments, createComment, deleteComment, reviewWeeklyReport, returnWeeklyReport } from '@/services';
+import { getWeeklyReport, listComments, createComment, deleteComment, reviewWeeklyReport, returnWeeklyReport, recordReportView, getReportViewsSummary } from '@/services';
 import { useAuthStore } from '@/stores/authStore';
-import type { WeeklyReport, ReportComment } from '@/services/contracts/reportAgent';
+import type { WeeklyReport, ReportComment, ReportViewSummary } from '@/services/contracts/reportAgent';
 import { WeeklyReportStatus, ReportInputType } from '@/services/contracts/reportAgent';
 import { PlanComparisonPanel } from './components/PlanComparisonPanel';
 import { RichTextMarkdownContent } from './components/RichTextMarkdownContent';
@@ -32,11 +32,34 @@ export default function ReportDetailPage() {
   const [replyTo, setReplyTo] = useState<{ sectionIndex: number; parentId?: string } | null>(null);
   const [commentText, setCommentText] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [viewSummary, setViewSummary] = useState<ReportViewSummary>({ count: 0, totalViewCount: 0, users: [] });
+  const [showViewPopover, setShowViewPopover] = useState(false);
+  const viewPopoverRef = useRef<HTMLDivElement | null>(null);
   const currentUserId = useAuthStore((s) => s.user?.userId);
 
   // Return dialog state
   const [showReturnDialog, setShowReturnDialog] = useState(false);
   const [returnReason, setReturnReason] = useState('');
+
+  const loadComments = useCallback(async () => {
+    if (!reportId) return;
+    const res = await listComments({ reportId });
+    if (res.success && res.data) setComments(res.data.items);
+  }, [reportId]);
+
+  const loadViewSummary = useCallback(async () => {
+    if (!reportId) return;
+    const res = await getReportViewsSummary({ reportId });
+    if (res.success && res.data) {
+      setViewSummary(res.data);
+    }
+  }, [reportId]);
+
+  const loadViewSummaryAndTrack = useCallback(async () => {
+    if (!reportId) return;
+    await recordReportView({ reportId });
+    await loadViewSummary();
+  }, [reportId, loadViewSummary]);
 
   useEffect(() => {
     if (!reportId) return;
@@ -44,14 +67,9 @@ export default function ReportDetailPage() {
       const res = await getWeeklyReport({ id: reportId });
       if (res.success && res.data) setReport(res.data.report);
     })();
-    loadComments();
-  }, [reportId]);
-
-  const loadComments = async () => {
-    if (!reportId) return;
-    const res = await listComments({ reportId });
-    if (res.success && res.data) setComments(res.data.items);
-  };
+    void loadComments();
+    void loadViewSummaryAndTrack();
+  }, [reportId, loadComments, loadViewSummaryAndTrack]);
 
   const handleCreateComment = async () => {
     if (!replyTo || !commentText.trim() || !reportId) return;
@@ -128,6 +146,17 @@ export default function ReportDetailPage() {
     return map;
   }, [comments]);
 
+  useEffect(() => {
+    if (!showViewPopover) return;
+    const onMouseDown = (event: MouseEvent) => {
+      if (!viewPopoverRef.current?.contains(event.target as Node)) {
+        setShowViewPopover(false);
+      }
+    };
+    window.addEventListener('mousedown', onMouseDown);
+    return () => window.removeEventListener('mousedown', onMouseDown);
+  }, [showViewPopover]);
+
   if (!report) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -180,7 +209,76 @@ export default function ReportDetailPage() {
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 relative" ref={viewPopoverRef}>
+            <button
+              className="text-[11px] px-2.5 py-1 rounded-full transition-opacity hover:opacity-85"
+              style={{
+                color: 'rgba(220, 38, 38, 0.88)',
+                background: 'rgba(220, 38, 38, 0.08)',
+                border: '1px solid rgba(220, 38, 38, 0.2)',
+              }}
+              onClick={() => setShowViewPopover((prev) => !prev)}
+              title="查看浏览记录"
+            >
+              已阅 {viewSummary.count}
+            </button>
+            {showViewPopover && (
+              <div
+                className="absolute top-[38px] right-0 z-30 w-[320px] rounded-xl p-3"
+                style={{
+                  background: 'var(--bg-primary)',
+                  border: '1px solid var(--border-primary)',
+                  boxShadow: '0 10px 28px rgba(0, 0, 0, 0.16)',
+                }}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>浏览记录</span>
+                  <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    去重 {viewSummary.count} · 总计 {viewSummary.totalViewCount}
+                  </span>
+                </div>
+                {viewSummary.users.length === 0 ? (
+                  <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>暂无浏览记录</div>
+                ) : (
+                  <div className="max-h-[280px] overflow-auto space-y-1.5 pr-1">
+                    {viewSummary.users.map((user) => (
+                      <div
+                        key={user.userId}
+                        className="flex items-center justify-between rounded-lg px-2.5 py-1.5"
+                        style={{ background: 'var(--bg-secondary)' }}
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[12px] truncate" style={{ color: 'var(--text-primary)' }}>{user.userName}</span>
+                            {user.isFrequent && (
+                              <span
+                                className="text-[10px] px-1.5 py-0.5 rounded-md"
+                                style={{ color: 'rgba(16, 185, 129, 0.9)', background: 'rgba(16, 185, 129, 0.1)' }}
+                              >
+                                常来
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                            {new Date(user.lastViewedAt).toLocaleString('zh-CN', {
+                              year: 'numeric',
+                              month: '2-digit',
+                              day: '2-digit',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              second: '2-digit',
+                            })}
+                          </div>
+                        </div>
+                        <span className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+                          {user.viewCount} 次
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             {(report.status === WeeklyReportStatus.Submitted || report.status === WeeklyReportStatus.Reviewed) && (
               <>
                 <Button variant="secondary" size="sm" onClick={() => setShowReturnDialog(true)}>退回</Button>

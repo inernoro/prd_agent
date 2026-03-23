@@ -167,7 +167,7 @@ const ENHANCE_GUIDES = [
   {
     key: 'daily-log' as const,
     icon: BookOpen,
-    title: '每日打点',
+    title: '每日记录',
     desc: '2 分钟记录每天',
   },
 ];

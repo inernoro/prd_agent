@@ -25,6 +25,8 @@ public class ReportAgentController : ControllerBase
     private const long MaxRichTextImageBytes = 5 * 1024 * 1024;
     private const int MaxDailyLogCustomTagCount = 20;
     private const int MaxDailyLogCustomTagLength = 16;
+    private const string DailyLogTodoPlanWeekInvalidMessage = "Todo 标签必须提供有效的 ISO 周（planWeekYear + planWeekNumber）";
+    private const string DailyLogTodoExclusiveInvalidMessage = "Todo 标签不能与其它系统标签同时存在";
     private const int MaxWeeklyReportPromptLength = ReportAgentPromptDefaults.MaxCustomPromptLength;
     private static readonly string[] EditableReportStatuses =
     {
@@ -150,6 +152,71 @@ public class ReportAgentController : ControllerBase
                 avatarFileName = x.AvatarFileName,
                 likedAt = x.CreatedAt
             }).ToList()
+        };
+    }
+
+    private async Task<object> BuildReportViewSummaryPayloadAsync(string reportId, string reportOwnerUserId)
+    {
+        var events = await _db.ReportViewEvents
+            .Find(x => x.ReportId == reportId)
+            .SortByDescending(x => x.ViewedAt)
+            .ToListAsync();
+
+        var viewerIds = events
+            .Select(x => x.UserId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct()
+            .ToList();
+
+        Dictionary<string, User> userMap = new(StringComparer.Ordinal);
+        if (viewerIds.Count > 0)
+        {
+            var users = await _db.Users.Find(u => viewerIds.Contains(u.UserId)).ToListAsync();
+            userMap = users.ToDictionary(u => u.UserId, u => u);
+        }
+
+        foreach (var viewEvent in events)
+        {
+            userMap.TryGetValue(viewEvent.UserId, out var user);
+            if (string.IsNullOrWhiteSpace(viewEvent.UserName))
+            {
+                viewEvent.UserName = ResolveUserDisplayName(user, null, viewEvent.UserId);
+            }
+            if (string.IsNullOrWhiteSpace(viewEvent.AvatarFileName) && !string.IsNullOrWhiteSpace(user?.AvatarFileName))
+            {
+                viewEvent.AvatarFileName = user!.AvatarFileName;
+            }
+        }
+
+        var groupedByUser = events
+            .GroupBy(x => x.UserId)
+            .Select(g =>
+            {
+                var latest = g.OrderByDescending(x => x.ViewedAt).First();
+                var userId = latest.UserId;
+                var displayName = !string.IsNullOrWhiteSpace(latest.UserName) ? latest.UserName : userId;
+                var isFrequent = g.Count() > 5;
+                var isOwner = !string.IsNullOrWhiteSpace(reportOwnerUserId) && userId == reportOwnerUserId;
+                return new
+                {
+                    userId,
+                    userName = displayName,
+                    avatarFileName = latest.AvatarFileName,
+                    viewCount = g.Count(),
+                    lastViewedAt = latest.ViewedAt,
+                    isFrequent,
+                    isOwner
+                };
+            })
+            .OrderBy(x => x.isOwner)
+            .ThenByDescending(x => x.lastViewedAt)
+            .ToList();
+
+        return new
+        {
+            count = groupedByUser.Count,
+            totalViewCount = events.Count,
+            users = groupedByUser
         };
     }
 
@@ -1630,6 +1697,10 @@ public class ReportAgentController : ControllerBase
         /// <summary>自定义标签列表</summary>
         public List<string>? Tags { get; set; }
         public int? DurationMinutes { get; set; }
+        /// <summary>计划目标 ISO 周所属年份（仅 Todo 有效）</summary>
+        public int? PlanWeekYear { get; set; }
+        /// <summary>计划目标 ISO 周（1-53，仅 Todo 有效）</summary>
+        public int? PlanWeekNumber { get; set; }
         public DateTime? CreatedAt { get; set; }
     }
 
@@ -1679,14 +1750,48 @@ public class ReportAgentController : ControllerBase
         var userId = GetUserId();
 
         var now = DateTime.UtcNow;
-        var items = request.Items.Select(i => new DailyLogItem
+        var items = new List<DailyLogItem>();
+        foreach (var i in request.Items)
         {
-            Content = i.Content ?? string.Empty,
-            Category = DailyLogCategory.All.Contains(i.Category ?? "") ? i.Category! : DailyLogCategory.Other,
-            Tags = NormalizeDailyLogTags(i.Tags),
-            DurationMinutes = i.DurationMinutes,
-            CreatedAt = i.CreatedAt ?? now
-        }).Where(i => !string.IsNullOrWhiteSpace(i.Content)).ToList();
+            var normalizedCategory = DailyLogCategory.All.Contains(i.Category ?? "") ? i.Category! : DailyLogCategory.Other;
+            var normalizedTags = NormalizeDailyLogTags(i.Tags);
+            var systemSelections = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (DailyLogCategory.All.Any(category => string.Equals(category, i.Category ?? string.Empty, StringComparison.OrdinalIgnoreCase)))
+                systemSelections.Add(normalizedCategory);
+            foreach (var tag in normalizedTags)
+            {
+                if (IsSystemDailyLogTag(tag))
+                    systemSelections.Add(tag);
+            }
+
+            var isTodo = systemSelections.Any(tag => string.Equals(tag, DailyLogCategory.Todo, StringComparison.OrdinalIgnoreCase));
+            var hasNonTodoSystemTag = systemSelections.Any(tag => !string.Equals(tag, DailyLogCategory.Todo, StringComparison.OrdinalIgnoreCase));
+            if (isTodo && hasNonTodoSystemTag)
+                return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", DailyLogTodoExclusiveInvalidMessage));
+            int? planWeekYear = null;
+            int? planWeekNumber = null;
+
+            if (isTodo)
+            {
+                if (!TryNormalizeIsoWeek(i.PlanWeekYear, i.PlanWeekNumber, out var year, out var week))
+                    return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", DailyLogTodoPlanWeekInvalidMessage));
+                planWeekYear = year;
+                planWeekNumber = week;
+            }
+
+            items.Add(new DailyLogItem
+            {
+                Content = i.Content ?? string.Empty,
+                Category = normalizedCategory,
+                Tags = normalizedTags,
+                DurationMinutes = i.DurationMinutes,
+                PlanWeekYear = planWeekYear,
+                PlanWeekNumber = planWeekNumber,
+                CreatedAt = i.CreatedAt ?? now
+            });
+        }
+
+        items = items.Where(i => !string.IsNullOrWhiteSpace(i.Content)).ToList();
 
         if (items.Count == 0)
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "至少需要一条有效工作项"));
@@ -1733,6 +1838,25 @@ public class ReportAgentController : ControllerBase
                 result.Add(tag);
         }
         return result;
+    }
+
+    private static bool IsSystemDailyLogTag(string tag)
+        => DailyLogCategory.All.Any(category => string.Equals(category, tag, StringComparison.OrdinalIgnoreCase));
+
+    private static bool TryNormalizeIsoWeek(int? year, int? weekNumber, out int normalizedYear, out int normalizedWeekNumber)
+    {
+        normalizedYear = 0;
+        normalizedWeekNumber = 0;
+        if (!year.HasValue || !weekNumber.HasValue)
+            return false;
+        if (year.Value < 1 || year.Value > 9999)
+            return false;
+        var maxWeek = ISOWeek.GetWeeksInYear(year.Value);
+        if (weekNumber.Value < 1 || weekNumber.Value > maxWeek)
+            return false;
+        normalizedYear = year.Value;
+        normalizedWeekNumber = weekNumber.Value;
+        return true;
     }
 
     /// <summary>
@@ -2714,6 +2838,58 @@ public class ReportAgentController : ControllerBase
         await _db.ReportLikes.DeleteOneAsync(x => x.ReportId == id && x.UserId == userId);
 
         var payload = await BuildReportLikeSummaryPayloadAsync(id, userId);
+        return Ok(ApiResponse<object>.Ok(payload));
+    }
+
+    #endregion
+
+    #region Views
+
+    /// <summary>
+    /// 记录周报浏览（每次打开/刷新都记录）
+    /// </summary>
+    [HttpPost("reports/{id}/views")]
+    public async Task<IActionResult> RecordReportView(string id)
+    {
+        var userId = GetUserId();
+        var username = GetUsername();
+        var report = await _db.WeeklyReports.Find(r => r.Id == id).FirstOrDefaultAsync();
+        if (report == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "周报不存在"));
+
+        if (!await CanAccessReportAsync(report, userId))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权查看该周报"));
+
+        var currentUser = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
+        var userDisplayName = ResolveUserDisplayName(currentUser, username, userId);
+        var viewEvent = new ReportViewEvent
+        {
+            ReportId = id,
+            UserId = userId,
+            UserName = userDisplayName,
+            AvatarFileName = currentUser?.AvatarFileName,
+            ViewedAt = DateTime.UtcNow
+        };
+
+        await _db.ReportViewEvents.InsertOneAsync(viewEvent);
+        return Ok(ApiResponse<object>.Ok(new { viewedAt = viewEvent.ViewedAt }));
+    }
+
+    /// <summary>
+    /// 获取周报浏览汇总（去重人数 + 浏览明细）
+    /// </summary>
+    [HttpGet("reports/{id}/views-summary")]
+    public async Task<IActionResult> GetReportViewsSummary(string id)
+    {
+        var userId = GetUserId();
+        var report = await _db.WeeklyReports.Find(r => r.Id == id).FirstOrDefaultAsync();
+        if (report == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "周报不存在"));
+
+        if (!await CanAccessReportAsync(report, userId))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权查看该周报浏览记录"));
+
+        var payload = await BuildReportViewSummaryPayloadAsync(id, report.UserId);
         return Ok(ApiResponse<object>.Ok(payload));
     }
 

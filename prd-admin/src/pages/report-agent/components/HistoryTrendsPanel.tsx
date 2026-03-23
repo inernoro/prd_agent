@@ -202,7 +202,7 @@ export function HistoryTrendsPanel() {
               />
               <MetricCard
                 icon={<CalendarCheck size={15} />}
-                label="打点天数"
+                label="记录天数"
                 value={String(personalStats.totalLogDays)}
                 color="rgba(249, 115, 22, 0.9)"
                 bg="rgba(249, 115, 22, 0.08)"
@@ -266,7 +266,7 @@ export function HistoryTrendsPanel() {
                 </div>
                 <div className="flex items-center gap-1.5">
                   <span className="text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>Nd</span>
-                  <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>打点天数</span>
+                  <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>记录天数</span>
                 </div>
               </div>
             )}

@@ -1,5 +1,5 @@
-import { useEffect, useMemo } from 'react';
-import { FileText, Users, Settings, RefreshCw } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { FileText, Users, Settings, RefreshCw, HelpCircle } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
@@ -8,6 +8,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { ReportMainView } from './components/ReportMainView';
 import { TeamDashboard } from './components/TeamDashboard';
 import { SettingsPanel } from './components/SettingsPanel';
+import { UsageGuideOverlay } from './components/UsageGuideOverlay';
 
 /**
  * v3.0 周报系统 — 奥卡姆剃刀重设计
@@ -31,6 +32,12 @@ export default function ReportAgentPage() {
   } = useReportAgentStore();
 
   const userId = useAuthStore((s) => s.user?.userId);
+  const [showUsageGuide, setShowUsageGuide] = useState(false);
+  const [guideRole, setGuideRole] = useState<'manager' | 'member'>(() => {
+    if (typeof window === 'undefined') return 'member';
+    const cached = window.localStorage.getItem('report-agent.guide-role');
+    return cached === 'manager' ? 'manager' : 'member';
+  });
 
   const hasTeamWorkspace = useMemo(() => {
     if (!userId) return false;
@@ -43,6 +50,11 @@ export default function ReportAgentPage() {
   useEffect(() => {
     void loadAll();
   }, [loadAll]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('report-agent.guide-role', guideRole);
+  }, [guideRole]);
 
   // 兼容旧 tab key —— 如果用户通过外部导航到旧 tab, 映射到新 tab
   useEffect(() => {
@@ -79,6 +91,20 @@ export default function ReportAgentPage() {
     return items;
   }, [hasTeamWorkspace]);
 
+  const usageGuideActions = (
+    <Button
+      variant="secondary"
+      size="sm"
+      onClick={() => {
+        setShowUsageGuide((prev) => !prev);
+      }}
+      className="whitespace-nowrap"
+    >
+      <HelpCircle size={13} />
+      使用指引
+    </Button>
+  );
+
   // Resolve current tab — default to 'report' if current tab not in items
   const currentTab = tabItems.find((t) => t.key === activeTab) ? activeTab : 'report';
 
@@ -90,6 +116,7 @@ export default function ReportAgentPage() {
         onChange={(key) => {
           setActiveTab(key as typeof activeTab);
         }}
+        actions={usageGuideActions}
       />
 
       {error && (
@@ -117,6 +144,23 @@ export default function ReportAgentPage() {
         {currentTab === 'team' && <TeamDashboard />}
         {currentTab === 'settings' && <SettingsPanel />}
       </div>
+      <UsageGuideOverlay
+        open={showUsageGuide}
+        moduleKey={currentTab as 'report' | 'team' | 'settings'}
+        role={guideRole}
+        onRoleChange={setGuideRole}
+        onClose={() => setShowUsageGuide(false)}
+        onSwitchTab={(tab) => setActiveTab(tab)}
+        onOpenDailyLog={() => {
+          setActiveTab('report');
+          window.dispatchEvent(new CustomEvent('report-agent:open-daily-log'));
+        }}
+        onCreateReport={() => {
+          setActiveTab('report');
+          setSelectedReportId(null);
+          setShowReportEditor(true);
+        }}
+      />
     </div>
   );
 }
