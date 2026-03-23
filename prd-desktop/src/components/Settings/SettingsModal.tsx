@@ -76,7 +76,6 @@ export default function SettingsModal() {
   const clearGroups = useGroupListStore((s) => s.clear);
   const clearMessages = useMessageStore((s) => s.clearMessages);
   const refreshBranding = useDesktopBrandingStore((s) => s.refresh);
-  const resetBranding = useDesktopBrandingStore((s) => s.resetToLocal);
   const remotePresetServers = useClientConfigStore((s) => s.presetServers);
   const remoteDefaultApiUrl = useClientConfigStore((s) => s.defaultApiUrl);
 
@@ -108,8 +107,8 @@ export default function SettingsModal() {
   
   // 网络诊断模态框
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
-  // 服务器下拉菜单
-  const [isServerDropdownOpen, setIsServerDropdownOpen] = useState(false);
+  // 自定义服务器模式
+  const [isCustomServer, setIsCustomServer] = useState(false);
   // macOS 更新后重启提示
   const [macRestartPrompt, setMacRestartPrompt] = useState(false);
 
@@ -124,7 +123,6 @@ export default function SettingsModal() {
       setClearConfirmStep(0);
       setCacheBytes(null);
       setCacheNote('');
-      setIsServerDropdownOpen(false);
 
       // 若自动更新已发现可用版本，直接填充到手动更新 UI，避免用户重复点击"检查更新"
       const autoUpdate = useUpdateStore.getState();
@@ -177,9 +175,13 @@ export default function SettingsModal() {
       const dev = import.meta.env.DEV ? Boolean(config.isDeveloper) : false;
       setIsDeveloper(dev);
       const cfgApi = String(config.apiBaseUrl || '').trim();
-      setApiUrl(cfgApi || getDefaultApiUrl(dev));
+      const url = cfgApi || getDefaultApiUrl(dev);
+      setApiUrl(url);
+      // 判断当前地址是否在预设列表中
+      const presets = remotePresetServers ?? PRESET_SERVERS;
+      setIsCustomServer(!presets.some((s) => s.url === url));
     }
-  }, [config]);
+  }, [config, remotePresetServers]);
 
   const handleSave = async () => {
     setError('');
@@ -206,28 +208,6 @@ export default function SettingsModal() {
       closeModal();
     } catch (err) {
       setError(String(err));
-    }
-  };
-
-  const handleDeveloperChange = (checked: boolean) => {
-    setIsDeveloper(checked);
-    // 仅影响"默认值"，输入框始终可编辑：
-    // - 切到开发者：若当前还是线上默认（或空），则切到 localhost:*
-    // - 退出开发者：若当前是 localhost:*，则切回线上默认
-    const trimmed = apiUrl.trim();
-    if (checked) {
-      if (!trimmed || trimmed === DEFAULT_API_URL_NON_DEV) setApiUrl(DEFAULT_API_URL_DEV);
-    } else {
-      if (trimmed === DEFAULT_API_URL_DEV) setApiUrl(DEFAULT_API_URL_NON_DEV);
-    }
-    setTestResult(null);
-    // 切换“本地/在线”后触发一次品牌配置刷新：
-    // - 本地：回到内置品牌
-    // - 在线：拉一次服务端配置
-    if (checked) {
-      resetBranding();
-    } else {
-      void refreshBranding('toggle');
     }
   };
 
@@ -676,97 +656,86 @@ export default function SettingsModal() {
             </div>
           </div>
 
-          {/* 开发者选项：常开，不受构建模式限制 */}
+          {/* API 服务器选择（三卡片） */}
           <div className="space-y-3">
             <label className="block text-sm font-medium text-text-secondary">
-              开发者选项
+              选择服务器
             </label>
 
-            <label className="flex items-center gap-3 cursor-pointer">
-              <div className="relative">
-                <input
-                  type="checkbox"
-                  checked={isDeveloper}
-                  onChange={(e) => handleDeveloperChange(e.target.checked)}
-                  className="sr-only"
-                />
-                <div className={`w-10 h-6 rounded-full transition-colors ${isDeveloper ? 'bg-cyan-500' : 'bg-black/10 dark:bg-white/20'}`}>
-                  <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${isDeveloper ? 'translate-x-4' : ''}`} />
-                </div>
-              </div>
-              <span className="text-sm text-text-secondary">我是开发者（默认地址切换到本地）</span>
-            </label>
-          </div>
-
-          {/* API 地址配置 */}
-          <div className="space-y-3">
-            <label className="block text-sm font-medium text-text-secondary">
-              API 服务地址
-            </label>
-
-            {/* 预设服务器选择 + 自定义输入 */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-3">
-                <label className="block text-xs text-text-secondary">选择服务器</label>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setApiUrl(getDefaultApiUrl(isDeveloper, effectiveDefaultUrl));
-                    setTestResult(null);
-                  }}
-                  className="px-2.5 py-1 text-xs font-medium bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-100 rounded-lg transition-colors"
-                >
-                  恢复默认
-                </button>
-              </div>
-              {!isDeveloper && (
-                <div className="relative">
+            <div className="grid grid-cols-3 gap-2">
+              {effectivePresets.map((s, idx) => {
+                const isSelected = !isCustomServer && s.url === apiUrl.trim();
+                const labels = ['主站', '测试站', '备用'];
+                return (
                   <button
+                    key={s.url}
                     type="button"
-                    onClick={() => setIsServerDropdownOpen(!isServerDropdownOpen)}
-                    className="w-full px-4 py-3 ui-control transition-colors text-left flex items-center justify-between gap-2"
+                    onClick={() => {
+                      setApiUrl(s.url);
+                      setIsCustomServer(false);
+                      setTestResult(null);
+                    }}
+                    className={`relative flex flex-col items-center gap-1.5 px-2 py-3 rounded-xl border transition-all ${
+                      isSelected
+                        ? 'border-cyan-500/50 bg-cyan-500/10 shadow-sm shadow-cyan-500/10'
+                        : 'border-white/10 dark:border-white/10 bg-black/3 dark:bg-white/5 hover:border-white/20 hover:bg-black/5 dark:hover:bg-white/8'
+                    }`}
                   >
-                    <span className="truncate text-sm">
-                      {effectivePresets.find((s) => s.url === apiUrl.trim())?.label || `自定义: ${apiUrl.trim()}`}
-                    </span>
-                    <svg className={`w-4 h-4 flex-shrink-0 text-text-secondary transition-transform ${isServerDropdownOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    {/* 服务器图标 */}
+                    <svg className={`w-5 h-5 ${isSelected ? 'text-cyan-400' : 'text-text-secondary/60'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
                     </svg>
+                    <span className={`text-xs font-medium ${isSelected ? 'text-cyan-300' : 'text-text-primary'}`}>
+                      {labels[idx] ?? s.label}
+                    </span>
+                    <span className="text-[10px] text-text-secondary/60 truncate w-full text-center">
+                      {s.label}
+                    </span>
+                    {/* 选中指示 */}
+                    {isSelected && (
+                      <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-cyan-500 flex items-center justify-center">
+                        <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                      </div>
+                    )}
                   </button>
-                  {isServerDropdownOpen && (
-                    <div className="absolute z-20 mt-1 w-full rounded-xl ui-glass-panel border border-white/10 shadow-xl overflow-hidden">
-                      {effectivePresets.map((s) => (
-                        <button
-                          key={s.url}
-                          type="button"
-                          onClick={() => {
-                            setApiUrl(s.url);
-                            setTestResult(null);
-                            setIsServerDropdownOpen(false);
-                          }}
-                          className={`w-full px-4 py-2.5 text-left text-sm transition-colors flex items-center justify-between ${
-                            s.url === apiUrl.trim()
-                              ? 'bg-cyan-500/15 text-cyan-300'
-                              : 'text-text-primary hover:bg-white/5'
-                          }`}
-                        >
-                          <span>{s.label}</span>
-                          {s.url === apiUrl.trim() && (
-                            <svg className="w-4 h-4 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                            </svg>
-                          )}
-                        </button>
-                      ))}
-                      {!effectivePresets.some((s) => s.url === apiUrl.trim()) && (
-                        <div className="px-4 py-2.5 text-left text-sm text-text-secondary border-t border-white/5">
-                          自定义: {apiUrl.trim()}
-                        </div>
-                      )}
-                    </div>
-                  )}
+                );
+              })}
+            </div>
+
+            {/* 其他（自定义）卡片 */}
+            <button
+              type="button"
+              onClick={() => {
+                setIsCustomServer(true);
+                if (effectivePresets.some((s) => s.url === apiUrl.trim())) {
+                  setApiUrl('');
+                }
+              }}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all ${
+                isCustomServer
+                  ? 'border-cyan-500/50 bg-cyan-500/10'
+                  : 'border-white/10 bg-black/3 dark:bg-white/5 hover:border-white/20'
+              }`}
+            >
+              <svg className={`w-4 h-4 flex-shrink-0 ${isCustomServer ? 'text-cyan-400' : 'text-text-secondary/60'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4v16m8-8H4" />
+              </svg>
+              <span className={`text-xs font-medium ${isCustomServer ? 'text-cyan-300' : 'text-text-secondary'}`}>
+                其他服务器
+              </span>
+              {isCustomServer && (
+                <div className="ml-auto w-4 h-4 rounded-full bg-cyan-500 flex items-center justify-center flex-shrink-0">
+                  <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
                 </div>
               )}
+            </button>
+
+            {/* 自定义地址输入框 */}
+            {isCustomServer && (
               <input
                 type="url"
                 value={apiUrl}
@@ -774,11 +743,11 @@ export default function SettingsModal() {
                   setApiUrl(e.target.value);
                   setTestResult(null);
                 }}
-                placeholder={getDefaultApiUrl(isDeveloper, effectiveDefaultUrl)}
-                className="w-full px-4 py-3 ui-control transition-colors"
-                style={!isDeveloper && effectivePresets.some((s) => s.url === apiUrl.trim()) ? { display: 'none' } : undefined}
+                placeholder="https://your-server.com"
+                className="w-full px-4 py-3 ui-control transition-colors text-sm"
+                autoFocus
               />
-            </div>
+            )}
           </div>
 
           {/* API 连接测试 */}
