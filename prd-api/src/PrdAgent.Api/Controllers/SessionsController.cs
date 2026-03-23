@@ -73,6 +73,27 @@ public class SessionsController : ControllerBase
     {
         if (bytes.Length == 0) return null;
 
+        // 检测 UTF-32 BOM（必须在 UTF-16 之前，因为 UTF-32 LE BOM 以 FF FE 开头）
+        if (bytes.Length >= 4 && bytes[0] == 0xFF && bytes[1] == 0xFE && bytes[2] == 0x00 && bytes[3] == 0x00)
+        {
+            try { return System.Text.Encoding.UTF32.GetString(bytes); }
+            catch { return null; }
+        }
+
+        // 检测 UTF-16 LE BOM (FF FE)
+        if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE)
+        {
+            try { return System.Text.Encoding.Unicode.GetString(bytes); }
+            catch { return null; }
+        }
+
+        // 检测 UTF-16 BE BOM (FE FF)
+        if (bytes.Length >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF)
+        {
+            try { return System.Text.Encoding.BigEndianUnicode.GetString(bytes); }
+            catch { return null; }
+        }
+
         // 检查前 8KB 是否包含 null 字节（二进制文件的典型特征）
         var checkLen = Math.Min(bytes.Length, 8192);
         for (var i = 0; i < checkLen; i++)

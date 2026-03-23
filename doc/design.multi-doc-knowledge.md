@@ -1,8 +1,8 @@
 # 多文档知识库与文档类型系统 — 设计文档
 
-> **版本**: v2.0
-> **日期**: 2026-03-05
-> **状态**: 已实现（含渐进式披露 Phase 2）
+> **版本**: v3.0
+> **日期**: 2026-03-23
+> **状态**: 已实现（含渐进式披露 Phase 2 + 文件上传与三阶段格式检测）
 > **涉及端**: 后端 / 桌面端 / 管理后台
 
 ---
@@ -341,6 +341,110 @@ EstimateTokens(text) = ceil(text.Length / 3.0)
 
 ---
 
+## 3.5 文件上传与三阶段格式检测
+
+### 3.5.1 设计目标
+
+用户应该能上传**任意文本格式的文件**（代码、配置、文档等）作为知识库资料，而不是被白名单限制。同时，上传体验必须做到**即时反馈**——不能让用户上传完才被告知"格式不支持"。
+
+### 3.5.2 三阶段检测架构
+
+```
+用户选择文件
+    │
+    ├── Phase 1：已知放行（KNOWN_GOOD_EXTS, 100+ 种）
+    │   .ts/.py/.md/.json/.pdf/.docx/... → 直接上传，零延迟
+    │
+    ├── Phase 2：已知拒绝（KNOWN_BAD_EXTS）
+    │   .png/.mp4/.zip/.exe/... → 立即拒绝 + UI 显示原因
+    │
+    └── Phase 3：未知格式 → 探测
+        │
+        ├── 桌面端：标记"正在检测" → 上传到后端 → 后端文本检测
+        └── 管理后台：读前 8KB 检查 null 字节 → 通过才继续
+```
+
+**设计原则**：
+
+| 原则 | 说明 |
+|------|------|
+| **黑名单 > 白名单** | 白名单需要不断扩展维护，黑名单更稳定（新格式默认允许尝试） |
+| **前端预筛 + 后端兜底** | 前端按扩展名快速分类，后端按文件内容做最终判断 |
+| **逐文件反馈** | 多文件上传时每个文件独立显示状态，不因一个失败阻塞全部 |
+| **乐观探测** | 未知格式不直接拒绝，而是"试一下"再告知结果 |
+
+### 3.5.3 后端文本检测算法（TryReadAsUtf8Text）
+
+```
+输入：byte[] 文件字节
+
+Step 1：BOM 检测（UTF-16/UTF-32 支持）
+  FF FE 00 00 → UTF-32 LE，用对应编码解码后返回
+  FF FE       → UTF-16 LE，用 Encoding.Unicode 解码后返回
+  FE FF       → UTF-16 BE，用 Encoding.BigEndianUnicode 解码后返回
+
+Step 2：空文件检查
+  bytes.Length == 0 → return null
+
+Step 3：Null 字节检测（前 8KB）
+  遍历前 8192 字节，发现 0x00 → return null（二进制文件特征）
+
+Step 4：UTF-8 解码 + 控制字符比例检查
+  Encoding.UTF8.GetString(bytes)
+  检查前 4096 字符中不可打印字符（排除 \t \r \n）的比例
+  超过 5% → return null（二进制）
+  通过 → 返回文本内容
+```
+
+**已知限制**：只采样前 8KB/4096 字符。极端情况下（文件前部正常、中部变为二进制）可能误判，但实际概率极低。
+
+### 3.5.4 前端文件状态机（桌面端）
+
+```
+FilePhase 状态：
+  queued    → 已知好格式，等待上传
+  rejected  → 已知坏格式，立即拒绝
+  detecting → 未知格式，标记"正在检测"
+  uploading → 上传中（含探测中的"格式未知，尝试上传…"）
+  success   → 上传成功
+  failed    → 上传失败或后端拒绝
+```
+
+| 颜色 | 状态 | 图标 |
+|------|------|------|
+| 蓝色 | queued / uploading | spinner |
+| 琥珀色 | detecting | spinner |
+| 绿色 | success | ✓（3 秒后自动消失） |
+| 红色 | rejected / failed | ✗（rejected 3 秒后消失，failed 保留供排查） |
+
+### 3.5.5 关键文件路径
+
+| 层级 | 文件 | 职责 |
+|------|------|------|
+| **后端 Controller** | `SessionsController.cs:72-104` | `TryReadAsUtf8Text` — BOM 检测 + null 字节 + 控制字符比例 |
+| **后端 Controller** | `SessionsController.cs:450-541` | `UploadDocument` — MIME 推断 + 图片/音视频拒绝 + 文本检测 |
+| **Rust Command** | `document.rs:88-140` | `upload_file_to_session` — 读取字节 + MIME 推断 + POST multipart |
+| **桌面端 UI** | `KnowledgeBasePage.tsx:15-38` | `KNOWN_GOOD_EXTS` / `KNOWN_BAD_EXTS` 集合定义 |
+| **桌面端 UI** | `KnowledgeBasePage.tsx:118-192` | `handleAddDocumentNative` — 三阶段分类 + 逐文件进度 |
+| **管理后台** | `AiChatPage.tsx:114-144` | `REJECTED_BINARY_EXTS` / `KNOWN_GOOD_EXTS` / `isLikelyTextFile` |
+| **管理后台** | `AiChatPage.tsx:1057-1078` | `pickAttachment` — 三阶段检测（附件） |
+| **管理后台** | `AiChatPage.tsx:1240-1269` | `handleAddDocument` — 三阶段检测（追加文档） |
+
+### 3.5.6 格式分类清单
+
+**KNOWN_GOOD_EXTS（100+ 种，直接放行）**：
+
+| 分类 | 扩展名 |
+|------|--------|
+| 文档 | `.md` `.mdc` `.txt` `.csv` `.json` `.xml` `.html` `.htm` `.yaml` `.yml` `.toml` `.ini` `.cfg` `.conf` `.log` `.rst` `.adoc` `.tex` |
+| 代码 | `.js` `.jsx` `.ts` `.tsx` `.vue` `.svelte` `.css` `.scss` `.less` `.sass` `.py` `.rb` `.go` `.rs` `.java` `.kt` `.kts` `.scala` `.swift` `.c` `.cpp` `.h` `.hpp` `.cs` `.fs` `.sh` `.bash` `.zsh` `.ps1` `.bat` `.cmd` `.sql` `.graphql` `.gql` `.proto` `.r` `.lua` `.dart` `.php` `.pl` `.pm` `.ex` `.exs` `.erl` `.hs` `.clj` `.lisp` `.ml` `.zig` |
+| 数据/配置 | `.env` `.properties` `.gradle` `.pom` `.lock` `.editorconfig` `.gitignore` `.dockerignore` |
+| 二进制文档 | `.pdf` `.doc` `.docx` `.xls` `.xlsx` `.ppt` `.pptx`（有 FileContentExtractor 提取器） |
+
+**KNOWN_BAD_EXTS（立即拒绝）**：图片、音视频、可执行文件、压缩包、字体、数据库文件。
+
+---
+
 ## 4. 风险比对矩阵
 
 ### 4.1 单文档 vs 多文档
@@ -373,6 +477,9 @@ EstimateTokens(text) = ceil(text.Length / 3.0)
 | 引用来源混淆 | 高（多文档时） | 中（用户看到引用但不知来自哪个文档） | DocCitationExtractor 扩展为多文档提取 |
 | 旧数据迁移 | 低 | 低 | GetDocumentType() 有完整 fallback 逻辑 |
 | 并发修改 | 低 | 中 | DocumentMetas 的 add/remove 操作已在 service 层做原子操作 |
+| UTF-16 文件误拒 | 低 | 低 | ✅ 已修复：TryReadAsUtf8Text 检测 BOM 头后用对应编码解码 |
+| 未知格式探测失败 | 低 | 低 | 后端返回明确错误信息，前端标记 failed 并保留供排查 |
+| 大文件上传浪费带宽 | 低 | 低 | ✅ 管理后台已加 20MB 前端检查；桌面端由后端 RequestSizeLimit 兜底 |
 
 ---
 
@@ -421,17 +528,17 @@ EstimateTokens(text) = ceil(text.Length / 3.0)
 | **Request DTO** | `PrdAgent.Api/Models/Requests/DocumentRequests.cs` | `AddDocumentToSessionRequest.DocumentType` + `UpdateDocumentTypeRequest` | L30-51 |
 | **Response DTO** | `PrdAgent.Api/Models/Responses/SessionResponses.cs` | `SessionDocumentMetaDto` | L44-48 |
 | **Response DTO** | `PrdAgent.Api/Models/Responses/GroupResponses.cs` | `OpenGroupSessionResponse.DocumentMetas` | L68 |
-| **Controller** | `PrdAgent.Api/Controllers/SessionsController.cs` | PATCH endpoint + BuildDocumentMetas() | L416-460 |
+| **Controller** | `PrdAgent.Api/Controllers/SessionsController.cs` | PATCH type + Upload + TryReadAsUtf8Text | L72-104, L416-541 |
 | **Controller** | `PrdAgent.Api/Controllers/GroupsController.cs` | 补充 DocumentMetas 到 OpenGroupSession | L289-298 |
 | **Rust Model** | `src-tauri/src/models/mod.rs` | `SessionDocumentMeta` + SessionInfo/OpenGroupSessionResponse 扩展 | L54-74, L137-146 |
-| **Rust Command** | `src-tauri/src/commands/document.rs` | `update_document_type` + `add_document_to_session` 扩展 | L62-97 |
+| **Rust Command** | `src-tauri/src/commands/document.rs` | `update_document_type` + `add_document_to_session` + `upload_file_to_session` | L62-140 |
 | **Rust Client** | `src-tauri/src/services/api_client.rs` | `patch()` 方法 | L584-665 |
 | **Rust Registry** | `src-tauri/src/lib.rs` | 注册 `update_document_type` | L181 |
 | **TS Types** | `prd-desktop/src/types/index.ts` | `DocumentType` + `DocumentMeta` + `DOCUMENT_TYPE_LABELS` | L48-68 |
 | **TS Lib** | `prd-desktop/src/lib/openGroupSession.ts` | 从 response 提取 metas 合并到 Document | L30, L43-53 |
 | **Desktop UI** | `prd-desktop/src/components/Layout/Sidebar.tsx` | 补充文档预览眼睛 + 类型标签 | L738-772 |
-| **Desktop UI** | `prd-desktop/src/components/KnowledgeBase/KnowledgeBasePage.tsx` | 预览 + 类型选择器 | 全文重写 |
-| **Admin UI** | `prd-admin/src/pages/AiChatPage.tsx` | 类型标签 + metas 映射 | L22-30, L438, L1260 |
+| **Desktop UI** | `prd-desktop/src/components/KnowledgeBase/KnowledgeBasePage.tsx` | 预览 + 类型选择器 + 三阶段文件上传 + 逐文件进度 | 全文重写 |
+| **Admin UI** | `prd-admin/src/pages/AiChatPage.tsx` | 类型标签 + metas 映射 + 三阶段格式检测（附件/追加文档） | L114-144, L1057-1078, L1240-1269 |
 | **Admin API** | `prd-admin/src/services/real/aiChat.ts` | `updateDocumentType()` | L36-42 |
 
 ---
@@ -508,7 +615,26 @@ Content-Type: application/json
 Response: SessionResponse (含更新后的 documentMetas)
 ```
 
-### 7.2 修改的端点
+### 7.2 文件上传端点（v3.0 新增）
+
+```http
+POST /api/v1/sessions/{sessionId}/documents/upload
+Content-Type: multipart/form-data
+
+file: <binary>                           // 必填，文件二进制内容
+documentType: "reference"                // 可选查询参数，默认 "reference"
+
+Response: SessionResponse (含 documentMetas)
+
+错误码:
+  UNSUPPORTED_TYPE  — 图片/音视频等不支持的格式
+  INVALID_FORMAT    — 无法提取文本内容（二进制可执行文件或空文件）
+  FILE_TOO_LARGE    — 超过 20MB 限制
+```
+
+**格式支持策略**: 不使用 MIME 白名单，而是自动检测。已知二进制文档（PDF/Office）用 `FileContentExtractor` 提取文本，其他格式尝试 UTF-8 解码，通过 null 字节和控制字符比例判断是否为文本。仅拒绝图片（`image/*`）和音视频（`audio/*`/`video/*`）。
+
+### 7.3 修改的端点
 
 ```http
 POST /api/v1/sessions/{sessionId}/documents
