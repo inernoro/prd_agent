@@ -119,17 +119,26 @@ type DayGroup = {
 
 function WorkspaceCard({
   ws,
+  viewMode,
   onClick,
   onContextMenu,
   onDragStart,
 }: {
   ws: VisualAgentWorkspace;
+  viewMode: ViewMode;
   onClick: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
   onDragStart: (e: React.DragEvent) => void;
 }) {
   const preview = getPlainPreviewText(ws, 100);
   const dateStr = formatDate(ws.updatedAt);
+  const coverUrl = ws.coverAssets?.[0]?.url;
+  const [imgLoaded, setImgLoaded] = useState(false);
+  const [imgError, setImgError] = useState(false);
+  const hasCover = !!coverUrl && !imgError;
+
+  // Badge: show folder name in time mode, hide in folder mode
+  const badgeLabel = viewMode === 'time' && ws.folderName ? ws.folderName : null;
 
   return (
     <div
@@ -148,43 +157,64 @@ function WorkspaceCard({
         className="relative w-full overflow-hidden rounded-2xl transition-all duration-300 group-hover:shadow-xl group-hover:shadow-black/30 group-hover:scale-[1.02]"
         style={{
           aspectRatio: '3/2',
-          background: getCardGradient(ws.id),
+          background: hasCover ? '#0a0a0f' : getCardGradient(ws.id),
         }}
       >
-        {/* Subtle decorative element */}
-        <div className="absolute inset-0 pointer-events-none select-none">
-          <span
-            className="absolute -right-4 -top-4 text-[140px] font-serif leading-none"
-            style={{ color: 'rgba(255,255,255,0.03)' }}
-          >
-            "
-          </span>
-        </div>
+        {/* Cover image — full bleed */}
+        {coverUrl && !imgError && (
+          <img
+            src={coverUrl}
+            alt={ws.title}
+            className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-[1.06]"
+            style={{ opacity: imgLoaded ? 1 : 0, transition: 'opacity 0.5s ease' }}
+            loading="lazy"
+            onLoad={() => setImgLoaded(true)}
+            onError={() => setImgError(true)}
+          />
+        )}
+
+        {/* Subtle decorative element — only when no cover */}
+        {!hasCover && (
+          <div className="absolute inset-0 pointer-events-none select-none">
+            <span
+              className="absolute -right-4 -top-4 text-[140px] font-serif leading-none"
+              style={{ color: 'rgba(255,255,255,0.03)' }}
+            >
+              "
+            </span>
+          </div>
+        )}
 
         {/* Bottom gradient for text readability */}
         <div
           className="absolute inset-0 pointer-events-none"
           style={{
-            background: 'linear-gradient(180deg, transparent 20%, rgba(0,0,0,0.35) 100%)',
+            background: hasCover
+              ? 'linear-gradient(180deg, rgba(0,0,0,0.05) 0%, rgba(0,0,0,0.15) 30%, rgba(0,0,0,0.7) 100%)'
+              : 'linear-gradient(180deg, transparent 20%, rgba(0,0,0,0.35) 100%)',
           }}
         />
 
         {/* Content overlay */}
         <div className="absolute inset-0 z-10 flex flex-col justify-between p-4">
-          {/* Top: source badge + date */}
+          {/* Top: folder badge + date */}
           <div className="flex items-center justify-between">
-            <div
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full backdrop-blur-md"
-              style={{
-                background: 'rgba(0,0,0,0.3)',
-                border: '1px solid rgba(255,255,255,0.08)',
-              }}
-            >
-              <BookOpen size={11} style={{ color: 'rgba(165,180,252,0.9)' }} />
-              <span className="text-[10px] font-medium" style={{ color: 'rgba(255,255,255,0.75)' }}>
-                文学创作
-              </span>
-            </div>
+            {badgeLabel ? (
+              <div
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full backdrop-blur-md"
+                style={{
+                  background: 'rgba(0,0,0,0.3)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                }}
+              >
+                <FolderOpen size={11} style={{ color: 'rgba(165,180,252,0.9)' }} />
+                <span className="text-[10px] font-medium truncate max-w-[120px]" style={{ color: 'rgba(255,255,255,0.75)' }}>
+                  {badgeLabel}
+                </span>
+              </div>
+            ) : (
+              <div />
+            )}
             <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.4)' }}>
               {dateStr}
             </span>
@@ -229,7 +259,10 @@ export default function LiteraryAgentWorkspaceListPage() {
   const [items, setItems] = useState<VisualAgentWorkspace[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
-  const [viewMode, setViewMode] = useState<ViewMode>('time');
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    const saved = sessionStorage.getItem('literary-view-mode');
+    return saved === 'folder' ? 'folder' : 'time';
+  });
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
   const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
   const contextMenu = useContextMenu();
@@ -545,6 +578,7 @@ export default function LiteraryAgentWorkspaceListPage() {
         <WorkspaceCard
           key={ws.id}
           ws={ws}
+          viewMode={viewMode}
           onClick={() => navigate(`/literary-agent/${ws.id}`)}
           onContextMenu={(e) => handleCardContextMenu(e, ws)}
           onDragStart={(e) => handleDragStart(e, ws)}
@@ -644,7 +678,7 @@ export default function LiteraryAgentWorkspaceListPage() {
           background: viewMode === 'time' ? 'rgba(99,102,241,0.15)' : 'transparent',
           color: viewMode === 'time' ? 'var(--accent-primary, #818CF8)' : 'var(--text-muted)',
         }}
-        onClick={() => setViewMode('time')}
+        onClick={() => { setViewMode('time'); sessionStorage.setItem('literary-view-mode', 'time'); }}
       >
         <Clock size={12} />
         按时间
@@ -658,7 +692,7 @@ export default function LiteraryAgentWorkspaceListPage() {
           background: viewMode === 'folder' ? 'rgba(99,102,241,0.15)' : 'transparent',
           color: viewMode === 'folder' ? 'var(--accent-primary, #818CF8)' : 'var(--text-muted)',
         }}
-        onClick={() => setViewMode('folder')}
+        onClick={() => { setViewMode('folder'); sessionStorage.setItem('literary-view-mode', 'folder'); }}
       >
         <Folder size={12} />
         按文件夹
