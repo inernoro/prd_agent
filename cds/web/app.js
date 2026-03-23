@@ -20,7 +20,7 @@ const ICON = {
   pr: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5.45 5.154A4.25 4.25 0 009.25 7.5h1.378a2.251 2.251 0 110 1.5H9.25A5.734 5.734 0 015 7.123v3.505a2.25 2.25 0 11-1.5 0V5.372a2.25 2.25 0 111.95-.218zM4.25 13.5a.75.75 0 100-1.5.75.75 0 000 1.5zm8.5-4.5a.75.75 0 100-1.5.75.75 0 000 1.5zM5 3.25a.75.75 0 10-1.5 0 .75.75 0 001.5 0z"/></svg>',
   pull: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.004a.75.75 0 01.75.75v5.689l1.97-1.97a.749.749 0 111.06 1.06l-3.25 3.25a.749.749 0 01-1.06 0L4.22 7.533a.749.749 0 111.06-1.06l1.97 1.97V2.754a.75.75 0 01.75-.75zM2.75 12.5h10.5a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5z"/></svg>',
   preview: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 8s3-5.5 8-5.5S16 8 16 8s-3 5.5-8 5.5S0 8 0 8zm8 3.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7zm0-1.5a2 2 0 110-4 2 2 0 010 4z"/></svg>',
-  deploy: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 12-8.373 8.373a1 1 0 1 1-3-3L12 9"/><path d="m18 15 4-4"/><path d="m21.5 11.5c.7-1 .5-2.4-.3-3.2L17 4.2c-.8-.8-2.2-1-3.2-.3L12 5.5l6.5 6.5z"/></svg>',
+  deploy: '<svg class="inline-icon deploy-hammer-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 12-8.373 8.373a1 1 0 1 1-3-3L12 9"/><path d="m18 15 4-4"/><path d="m21.5 11.5c.7-1 .5-2.4-.3-3.2L17 4.2c-.8-.8-2.2-1-3.2-.3L12 5.5l6.5 6.5z"/></svg>',
   trash: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM11 3V1.75A1.75 1.75 0 009.25 0h-2.5A1.75 1.75 0 005 1.75V3H2.75a.75.75 0 000 1.5h.3l.8 8.2A1.75 1.75 0 005.6 14.5h4.8a1.75 1.75 0 001.75-1.8l.8-8.2h.3a.75.75 0 000-1.5H11z"/></svg>',
   reset: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5z"/></svg>',
   star: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg>',
@@ -1949,7 +1949,7 @@ function renderBranches() {
       `;
       actionsRightHtml = `
         <div class="split-btn">
-          <button class="sm split-btn-main" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="重新部署">${ICON.deploy} 部署</button>
+          <button class="sm split-btn-main deploy-glow-btn" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="重新部署">${ICON.deploy} 部署</button>
           <button class="sm split-btn-toggle" onclick="toggleDeployMenu('${esc(b.id)}', event)" ${isBusy ? 'disabled' : ''}>
             <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor"><path d="M1 1l4 4 4-4"/></svg>
           </button>
@@ -1965,7 +1965,7 @@ function renderBranches() {
     } else if (isStopped) {
       // Container exists but stopped — neutral deploy, not primary
       actionsLeftHtml = `
-        <button class="sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="部署">${ICON.deploy} 部署</button>
+        <button class="sm deploy-glow-btn" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="部署">${ICON.deploy} 部署</button>
       `;
       actionsRightHtml = `
         <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.trash}</button>
@@ -1973,7 +1973,7 @@ function renderBranches() {
     } else {
       // Idle (never deployed) or building — neutral deploy button
       actionsLeftHtml = `
-        <button class="sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="部署">${ICON.deploy} 部署</button>
+        <button class="sm deploy-glow-btn" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="部署">${ICON.deploy} 部署</button>
       `;
       actionsRightHtml = `
         ${hasError ? `<button class="sm" onclick="resetBranch('${esc(b.id)}')" ${btnDisabled('reset')}>${btnLabel('reset', ICON.reset + ' 重置')}</button>` : ''}
@@ -1982,18 +1982,31 @@ function renderBranches() {
     }
 
     const deployLog = inlineDeployLogs.get(b.id);
-    const isDeploying = !!deployLog && deployLog.status === 'building';
+    const localDeploying = !!deployLog && deployLog.status === 'building';
+    // Server-authority: also treat server-pushed 'building'/'starting' as deploying
+    const serverDeploying = !localDeploying && (b.status === 'building' || b.status === 'starting');
+    const isDeploying = localDeploying || serverDeploying;
     const deployFailed = !!deployLog && deployLog.status === 'error';
     const isJustDeployed = justDeployed.has(b.id);
 
     // Commit area in actions row — shows commit info or deploy log during deployment
     let commitAreaHtml = '';
-    if (isDeploying && deployLog) {
+    if (localDeploying && deployLog) {
+      // Local deploy — show live log lines
       const compactLines = deployLog.lines.filter(l => l.trim()).slice(-2);
       commitAreaHtml = `
         <div class="branch-actions-deploy-status" title="部署中，点击查看完整日志" onclick="event.stopPropagation(); openFullDeployLog('${esc(b.id)}', event)">
           <span class="live-dot"></span>
           <pre class="deploy-status-log">${esc(compactLines.join('\n')) || '正在启动...'}</pre>
+        </div>
+      `;
+    } else if (serverDeploying) {
+      // Server-driven deploy (triggered externally) — simplified indicator
+      const statusLabel = b.status === 'building' ? '构建中...' : '启动中...';
+      commitAreaHtml = `
+        <div class="branch-actions-deploy-status">
+          <span class="live-dot"></span>
+          <pre class="deploy-status-log">${statusLabel}</pre>
         </div>
       `;
     } else if (b.subject) {
