@@ -378,17 +378,27 @@ public class SubmissionsController : ControllerBase
             }
             else
             {
-                // 兜底：旧数据无工作流记录，按 ArticleInsertionIndex 分组取最新
+                // 兜底：旧数据无工作流记录
+                // 有 ArticleInsertionIndex 的按索引分组取最新；无索引的全部保留
                 var allAssets = await _db.ImageAssets
                     .Find(x => x.WorkspaceId == submission.WorkspaceId)
                     .SortBy(x => x.ArticleInsertionIndex)
                     .ThenByDescending(x => x.CreatedAt)
                     .ToListAsync();
-                assets = allAssets
-                    .GroupBy(a => a.ArticleInsertionIndex ?? -1)
-                    .Select(g => g.First())
-                    .OrderBy(a => a.ArticleInsertionIndex)
-                    .ToList();
+                var withIndex = allAssets.Where(a => a.ArticleInsertionIndex.HasValue).ToList();
+                if (withIndex.Count > 0)
+                {
+                    assets = withIndex
+                        .GroupBy(a => a.ArticleInsertionIndex!.Value)
+                        .Select(g => g.First())
+                        .OrderBy(a => a.ArticleInsertionIndex)
+                        .ToList();
+                }
+                else
+                {
+                    // 完全无索引（极旧数据）：返回所有图片，按时间排序
+                    assets = allAssets;
+                }
             }
 
             relatedAssets = assets.Select(a => (object)new

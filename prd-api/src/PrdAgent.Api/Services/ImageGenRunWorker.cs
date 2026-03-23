@@ -991,7 +991,8 @@ public class ImageGenRunWorker : BackgroundService
             Prompt = (prompt ?? string.Empty).Trim(),
             CreatedAt = DateTime.UtcNow,
             OriginalUrl = assetUrl,
-            OriginalSha256 = assetSha256
+            OriginalSha256 = assetSha256,
+            ArticleInsertionIndex = run.ArticleMarkerIndex,
         };
         if (asset.Prompt != null && asset.Prompt.Length > 300) asset.Prompt = asset.Prompt[..300].Trim();
 
@@ -1003,6 +1004,34 @@ public class ImageGenRunWorker : BackgroundService
         }
 
         await _db.ImageAssets.InsertOneAsync(asset, cancellationToken: ct);
+
+        // 文学创作：更新 ArticleWorkflow.AssetIdByMarkerIndex（投稿详情依赖此字段查询配图）
+        if (run.ArticleMarkerIndex.HasValue)
+        {
+            var idx = run.ArticleMarkerIndex.Value;
+            for (var attempt = 0; attempt < 5; attempt++)
+            {
+                var ws = await _db.ImageMasterWorkspaces.Find(x => x.Id == wid).FirstOrDefaultAsync(ct);
+                if (ws == null) break;
+
+                var wf = ws.ArticleWorkflow ?? new ArticleIllustrationWorkflow();
+                wf.AssetIdByMarkerIndex ??= new Dictionary<string, string>(StringComparer.Ordinal);
+                wf.AssetIdByMarkerIndex[idx.ToString()] = asset.Id;
+                wf.DoneImageCount = wf.AssetIdByMarkerIndex.Values
+                    .Where(v => !string.IsNullOrWhiteSpace(v))
+                    .Distinct()
+                    .Count();
+                wf.UpdatedAt = DateTime.UtcNow;
+
+                var res = await _db.ImageMasterWorkspaces.UpdateOneAsync(
+                    x => x.Id == wid && x.UpdatedAt == ws.UpdatedAt,
+                    Builders<ImageMasterWorkspace>.Update.Set(x => x.ArticleWorkflow, wf),
+                    cancellationToken: ct);
+
+                if (res.ModifiedCount > 0) break;
+                await Task.Delay(50, ct); // 乐观锁冲突重试
+            }
+        }
 
         await TryPatchWorkspaceCanvasAsync(run, asset, ct);
         return asset;
