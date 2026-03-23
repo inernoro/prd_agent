@@ -804,7 +804,7 @@ button.text-btn:hover { color: var(--accent); }
   50% { opacity: 0.25; filter: none; }
 }
 
-/* AI occupation — rotating gradient border on card */
+/* AI occupation — rotating gradient border + breathing glow on card */
 .branch-card.is-ai-occupied {
   border-image: none;
   border-color: transparent;
@@ -814,10 +814,26 @@ button.text-btn:hover { color: var(--accent); }
     linear-gradient(var(--bg-card), var(--bg-card)),
     conic-gradient(from var(--ai-border-angle, 0deg), #a78bfa, #60a5fa, #c084fc, #818cf8, #a78bfa);
   border: 2px solid transparent;
-  animation: ai-border-spin 3s linear infinite;
+  animation: ai-border-spin 3s linear infinite, ai-border-glow 2s ease-in-out infinite;
 }
 @keyframes ai-border-spin {
   to { --ai-border-angle: 360deg; }
+}
+@keyframes ai-border-glow {
+  0%, 100% {
+    box-shadow:
+      0 0 8px rgba(167, 139, 250, 0.4),
+      0 0 20px rgba(96, 165, 250, 0.2),
+      inset 0 0 8px rgba(167, 139, 250, 0.05);
+    filter: brightness(1);
+  }
+  50% {
+    box-shadow:
+      0 0 16px rgba(167, 139, 250, 0.7),
+      0 0 40px rgba(96, 165, 250, 0.35),
+      inset 0 0 16px rgba(167, 139, 250, 0.1);
+    filter: brightness(1.05);
+  }
 }
 @property --ai-border-angle {
   syntax: '<angle>';
