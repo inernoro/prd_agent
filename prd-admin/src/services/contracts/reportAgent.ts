@@ -570,6 +570,24 @@ export interface ReportLikeSummary {
   users: ReportLikeUser[];
 }
 
+export interface ReportViewUser {
+  userId: string;
+  userName: string;
+  avatarFileName?: string;
+  viewCount: number;
+  lastViewedAt: string;
+  isFrequent: boolean;
+  isOwner: boolean;
+}
+
+export interface ReportViewSummary {
+  /** 去重浏览人数 */
+  count: number;
+  /** 总浏览次数（含刷新） */
+  totalViewCount: number;
+  users: ReportViewUser[];
+}
+
 export type ListCommentsContract = (input: {
   reportId: string;
   sectionIndex?: number;
@@ -598,6 +616,14 @@ export type LikeReportContract = (input: {
 export type UnlikeReportContract = (input: {
   reportId: string;
 }) => Promise<ApiResponse<ReportLikeSummary>>;
+
+export type RecordReportViewContract = (input: {
+  reportId: string;
+}) => Promise<ApiResponse<{ viewedAt: string }>>;
+
+export type GetReportViewsSummaryContract = (input: {
+  reportId: string;
+}) => Promise<ApiResponse<ReportViewSummary>>;
 
 // ========== Phase 3: Plan Comparison ==========
 

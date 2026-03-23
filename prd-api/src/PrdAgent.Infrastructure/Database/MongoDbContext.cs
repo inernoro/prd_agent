@@ -113,6 +113,7 @@ public class MongoDbContext
     public IMongoCollection<ReportCommit> ReportCommits => _database.GetCollection<ReportCommit>("report_commits");
     public IMongoCollection<ReportComment> ReportComments => _database.GetCollection<ReportComment>("report_comments");
     public IMongoCollection<ReportLike> ReportLikes => _database.GetCollection<ReportLike>("report_likes");
+    public IMongoCollection<ReportViewEvent> ReportViewEvents => _database.GetCollection<ReportViewEvent>("report_view_events");
     public IMongoCollection<TeamSummary> ReportTeamSummaries => _database.GetCollection<TeamSummary>("report_team_summaries");
     public IMongoCollection<PersonalSource> PersonalSources => _database.GetCollection<PersonalSource>("report_personal_sources");
 
@@ -1186,6 +1187,18 @@ public class MongoDbContext
         ReportLikes.Indexes.CreateOne(new CreateIndexModel<ReportLike>(
             Builders<ReportLike>.IndexKeys.Ascending(x => x.ReportId).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_report_likes_report_created" }));
+
+        // ReportViewEvents：按 ReportId + ViewedAt 查询浏览轨迹
+        ReportViewEvents.Indexes.CreateOne(new CreateIndexModel<ReportViewEvent>(
+            Builders<ReportViewEvent>.IndexKeys.Ascending(x => x.ReportId).Descending(x => x.ViewedAt),
+            new CreateIndexOptions { Name = "idx_report_views_report_viewed" }));
+        // ReportViewEvents：按 ReportId + UserId + ViewedAt 统计单用户浏览次数
+        ReportViewEvents.Indexes.CreateOne(new CreateIndexModel<ReportViewEvent>(
+            Builders<ReportViewEvent>.IndexKeys
+                .Ascending(x => x.ReportId)
+                .Ascending(x => x.UserId)
+                .Descending(x => x.ViewedAt),
+            new CreateIndexOptions { Name = "idx_report_views_report_user_viewed" }));
 
         // ReportTeamSummaries：(TeamId, WeekYear, WeekNumber) 唯一
         try

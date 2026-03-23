@@ -2123,7 +2123,7 @@ sequenceDiagram
 6. 分析可见性：`all_members` 团队成员可见完整团队分析；`leaders_only` 普通成员仅可见本人已提交周报分析
 7. RichText 板块支持直接粘贴图片：前端在上传前自动压缩（目标 ≤ 5MB），后端按“作者 + 可编辑状态”校验并返回可嵌入 URL
 
-**数据模型**：`WeeklyReport`、`WeeklyReportSection`、`WeeklyReportItem`、`ReportLike`（集合：`report_weekly_reports`、`report_likes`）
+**数据模型**：`WeeklyReport`、`WeeklyReportSection`、`WeeklyReportItem`、`ReportLike`、`ReportViewEvent`（集合：`report_weekly_reports`、`report_likes`、`report_view_events`）
 
 **API 端点**：
 - `GET/POST /api/report-agent/reports` — 周报列表/创建
@@ -2135,6 +2135,8 @@ sequenceDiagram
 - `GET /api/report-agent/reports/{id}/likes` — 点赞列表（含是否已点赞、点赞用户）
 - `POST /api/report-agent/reports/{id}/likes` — 点赞（幂等）
 - `DELETE /api/report-agent/reports/{id}/likes` — 取消点赞（幂等）
+- `POST /api/report-agent/reports/{id}/views` — 记录浏览事件（每次打开/刷新均记录，精确到秒）
+- `GET /api/report-agent/reports/{id}/views-summary` — 浏览汇总（去重人数、总浏览次数、最近浏览时间、单人浏览次数、常来标记）
 - `GET /api/report-agent/teams/{id}/dashboard` — 团队面板
 - `GET /api/report-agent/teams/{id}/reports/view` — 团队周报列表视图（按权限返回 full_team / self_only）
 - `GET /api/report-agent/teams/{id}/summary/view` — 团队周报AI分析视图（按权限返回 full_team / self_only）

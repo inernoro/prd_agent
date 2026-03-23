@@ -155,6 +155,71 @@ public class ReportAgentController : ControllerBase
         };
     }
 
+    private async Task<object> BuildReportViewSummaryPayloadAsync(string reportId, string reportOwnerUserId)
+    {
+        var events = await _db.ReportViewEvents
+            .Find(x => x.ReportId == reportId)
+            .SortByDescending(x => x.ViewedAt)
+            .ToListAsync();
+
+        var viewerIds = events
+            .Select(x => x.UserId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct()
+            .ToList();
+
+        Dictionary<string, User> userMap = new(StringComparer.Ordinal);
+        if (viewerIds.Count > 0)
+        {
+            var users = await _db.Users.Find(u => viewerIds.Contains(u.UserId)).ToListAsync();
+            userMap = users.ToDictionary(u => u.UserId, u => u);
+        }
+
+        foreach (var viewEvent in events)
+        {
+            userMap.TryGetValue(viewEvent.UserId, out var user);
+            if (string.IsNullOrWhiteSpace(viewEvent.UserName))
+            {
+                viewEvent.UserName = ResolveUserDisplayName(user, null, viewEvent.UserId);
+            }
+            if (string.IsNullOrWhiteSpace(viewEvent.AvatarFileName) && !string.IsNullOrWhiteSpace(user?.AvatarFileName))
+            {
+                viewEvent.AvatarFileName = user!.AvatarFileName;
+            }
+        }
+
+        var groupedByUser = events
+            .GroupBy(x => x.UserId)
+            .Select(g =>
+            {
+                var latest = g.OrderByDescending(x => x.ViewedAt).First();
+                var userId = latest.UserId;
+                var displayName = !string.IsNullOrWhiteSpace(latest.UserName) ? latest.UserName : userId;
+                var isFrequent = g.Count() > 5;
+                var isOwner = !string.IsNullOrWhiteSpace(reportOwnerUserId) && userId == reportOwnerUserId;
+                return new
+                {
+                    userId,
+                    userName = displayName,
+                    avatarFileName = latest.AvatarFileName,
+                    viewCount = g.Count(),
+                    lastViewedAt = latest.ViewedAt,
+                    isFrequent,
+                    isOwner
+                };
+            })
+            .OrderBy(x => x.isOwner)
+            .ThenByDescending(x => x.lastViewedAt)
+            .ToList();
+
+        return new
+        {
+            count = groupedByUser.Count,
+            totalViewCount = events.Count,
+            users = groupedByUser
+        };
+    }
+
     private bool HasPermission(string perm)
     {
         var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
@@ -2773,6 +2838,58 @@ public class ReportAgentController : ControllerBase
         await _db.ReportLikes.DeleteOneAsync(x => x.ReportId == id && x.UserId == userId);
 
         var payload = await BuildReportLikeSummaryPayloadAsync(id, userId);
+        return Ok(ApiResponse<object>.Ok(payload));
+    }
+
+    #endregion
+
+    #region Views
+
+    /// <summary>
+    /// 记录周报浏览（每次打开/刷新都记录）
+    /// </summary>
+    [HttpPost("reports/{id}/views")]
+    public async Task<IActionResult> RecordReportView(string id)
+    {
+        var userId = GetUserId();
+        var username = GetUsername();
+        var report = await _db.WeeklyReports.Find(r => r.Id == id).FirstOrDefaultAsync();
+        if (report == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "周报不存在"));
+
+        if (!await CanAccessReportAsync(report, userId))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权查看该周报"));
+
+        var currentUser = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
+        var userDisplayName = ResolveUserDisplayName(currentUser, username, userId);
+        var viewEvent = new ReportViewEvent
+        {
+            ReportId = id,
+            UserId = userId,
+            UserName = userDisplayName,
+            AvatarFileName = currentUser?.AvatarFileName,
+            ViewedAt = DateTime.UtcNow
+        };
+
+        await _db.ReportViewEvents.InsertOneAsync(viewEvent);
+        return Ok(ApiResponse<object>.Ok(new { viewedAt = viewEvent.ViewedAt }));
+    }
+
+    /// <summary>
+    /// 获取周报浏览汇总（去重人数 + 浏览明细）
+    /// </summary>
+    [HttpGet("reports/{id}/views-summary")]
+    public async Task<IActionResult> GetReportViewsSummary(string id)
+    {
+        var userId = GetUserId();
+        var report = await _db.WeeklyReports.Find(r => r.Id == id).FirstOrDefaultAsync();
+        if (report == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "周报不存在"));
+
+        if (!await CanAccessReportAsync(report, userId))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权查看该周报浏览记录"));
+
+        var payload = await BuildReportViewSummaryPayloadAsync(id, report.UserId);
         return Ok(ApiResponse<object>.Ok(payload));
     }
 

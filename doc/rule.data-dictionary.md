@@ -83,6 +83,7 @@
 | `report_commits` | `ReportCommit` | 缓存的代码提交 | `(dataSourceId, commitHash)` 唯一；`(mappedUserId, committedAt)` |
 | `report_comments` | `ReportComment` | 周报段落级评论（支持线程回复） | `(reportId, sectionIndex)`；`(parentCommentId)` |
 | `report_likes` | `ReportLike` | 周报点赞记录 | `(reportId, userId)` 唯一；`(reportId, createdAt desc)` |
+| `report_view_events` | `ReportViewEvent` | 周报浏览事件记录（用于“谁看过”与“常来”统计） | `(reportId, viewedAt desc)`；`(reportId, userId, viewedAt desc)` |
 | `report_team_summaries` | `TeamSummary` | AI 团队周报汇总（按周去重） | `(teamId, weekYear, weekNumber)` 唯一 |
 | `defect_templates` | `DefectTemplate` | 缺陷报告模板 | （未显式创建额外索引） |
 | `defect_reports` | `DefectReport` | 缺陷报告主体（含状态机：draft→submitted→assigned→processing→verifying→closed） | `projectId`；`teamId`；`assigneeId`；`reporterId`；`status`；`createdAt` |

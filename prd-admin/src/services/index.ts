@@ -577,6 +577,8 @@ import type {
   ListReportLikesContract,
   LikeReportContract,
   UnlikeReportContract,
+  RecordReportViewContract,
+  GetReportViewsSummaryContract,
   GetPlanComparisonContract,
   GenerateTeamSummaryContract,
   GetTeamSummaryContract,
@@ -653,6 +655,8 @@ import {
   listReportLikesReal,
   likeReportReal,
   unlikeReportReal,
+  recordReportViewReal,
+  getReportViewsSummaryReal,
   getPlanComparisonReal,
   generateTeamSummaryReal,
   getTeamSummaryReal,
@@ -1053,6 +1057,8 @@ export const deleteComment: DeleteCommentContract = withAuth(deleteCommentReal);
 export const listReportLikes: ListReportLikesContract = withAuth(listReportLikesReal);
 export const likeReport: LikeReportContract = withAuth(likeReportReal);
 export const unlikeReport: UnlikeReportContract = withAuth(unlikeReportReal);
+export const recordReportView: RecordReportViewContract = withAuth(recordReportViewReal);
+export const getReportViewsSummary: GetReportViewsSummaryContract = withAuth(getReportViewsSummaryReal);
 export const getPlanComparison: GetPlanComparisonContract = withAuth(getPlanComparisonReal);
 export const generateTeamSummary: GenerateTeamSummaryContract = withAuth(generateTeamSummaryReal);
 export const getTeamSummary: GetTeamSummaryContract = withAuth(getTeamSummaryReal);
