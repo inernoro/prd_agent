@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useState, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { invoke } from '@tauri-apps/api/core';
@@ -11,6 +11,40 @@ import { DOCUMENT_TYPE_LABELS } from '../../types';
 
 const DOC_TYPES: DocumentType[] = ['product', 'technical', 'design', 'reference'];
 
+/** 明确支持的格式 — 直接放行，不需要探测 */
+const KNOWN_GOOD_EXTS = new Set([
+  // 文档
+  '.md', '.mdc', '.txt', '.csv', '.json', '.xml', '.html', '.htm', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf', '.log', '.rst', '.adoc', '.tex',
+  // 代码
+  '.js', '.jsx', '.ts', '.tsx', '.vue', '.svelte', '.css', '.scss', '.less', '.sass',
+  '.py', '.rb', '.go', '.rs', '.java', '.kt', '.kts', '.scala', '.swift', '.c', '.cpp', '.h', '.hpp', '.cs', '.fs',
+  '.sh', '.bash', '.zsh', '.ps1', '.bat', '.cmd',
+  '.sql', '.graphql', '.gql', '.proto',
+  '.r', '.R', '.lua', '.dart', '.php', '.pl', '.pm', '.ex', '.exs', '.erl', '.hs', '.clj', '.lisp', '.ml', '.zig',
+  // 数据/配置
+  '.env', '.properties', '.gradle', '.pom', '.lock', '.editorconfig', '.gitignore', '.dockerignore',
+  // 二进制文档（已知有提取器）
+  '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+]);
+
+/** 明确不支持的格式 — 立即拒绝，不浪费时间 */
+const KNOWN_BAD_EXTS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.ico', '.tiff', '.tif', '.psd', '.ai', '.raw',
+  '.mp3', '.mp4', '.avi', '.mov', '.wav', '.flac', '.ogg', '.webm', '.mkv', '.wmv', '.aac', '.m4a',
+  '.exe', '.dll', '.so', '.dylib', '.bin', '.dmg', '.iso', '.msi', '.app', '.deb', '.rpm',
+  '.zip', '.tar', '.gz', '.rar', '.7z', '.bz2', '.xz', '.zst',
+  '.woff', '.woff2', '.ttf', '.otf', '.eot',
+  '.sqlite', '.db',
+]);
+
+type FilePhase = 'queued' | 'rejected' | 'detecting' | 'uploading' | 'success' | 'failed';
+interface FileTask {
+  name: string;
+  path: string;
+  phase: FilePhase;
+  message?: string;
+}
+
 export default function KnowledgeBasePage() {
   const { activeGroupId, documentLoaded, document, documents, sessionId, setDocuments } = useSessionStore();
   const { groups } = useGroupListStore();
@@ -18,7 +52,15 @@ export default function KnowledgeBasePage() {
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [fileTasks, setFileTasks] = useState<FileTask[]>([]);
+  const fileTasksRef = useRef<FileTask[]>([]);
   const group = groups.find((g) => g.groupId === activeGroupId) ?? null;
+
+  // 辅助：更新单个文件任务状态
+  const updateTask = useCallback((idx: number, patch: Partial<FileTask>) => {
+    fileTasksRef.current = fileTasksRef.current.map((t, i) => i === idx ? { ...t, ...patch } : t);
+    setFileTasks([...fileTasksRef.current]);
+  }, []);
 
   // 更新文档类型
   const handleChangeDocumentType = useCallback(async (documentId: string, newType: DocumentType) => {
@@ -73,7 +115,7 @@ export default function KnowledgeBasePage() {
     } catch { /* skip */ }
   }, [sessionId, activeGroupId, setDocuments]);
 
-  // 使用 Tauri 原生文件选择器添加资料（支持多文件，后端自动检测文本/二进制）
+  // 三阶段文件上传：已知放行 → 已知拒绝 → 未知探测
   const handleAddDocumentNative = useCallback(async () => {
     if (!sessionId) return;
 
@@ -89,37 +131,65 @@ export default function KnowledgeBasePage() {
 
       setBusy(true);
       setError('');
-      const errors: string[] = [];
 
-      for (const filePath of paths) {
+      // Phase 1：分类 — 已知放行 / 已知拒绝 / 未知待探测
+      const tasks: FileTask[] = paths.map(filePath => {
+        const name = filePath.split(/[/\\]/).pop() || filePath;
+        const dotIdx = name.lastIndexOf('.');
+        const ext = dotIdx >= 0 ? name.slice(dotIdx).toLowerCase() : '';
+
+        if (KNOWN_BAD_EXTS.has(ext)) {
+          return { name, path: filePath, phase: 'rejected' as const, message: '不支持的文件类型（图片/音视频/压缩包/可执行文件）' };
+        }
+        if (KNOWN_GOOD_EXTS.has(ext) || ext === '') {
+          return { name, path: filePath, phase: 'queued' as const };
+        }
+        // 未知格式 → 需要探测
+        return { name, path: filePath, phase: 'detecting' as const, message: '正在检测文件格式…' };
+      });
+
+      fileTasksRef.current = tasks;
+      setFileTasks([...tasks]);
+
+      // Phase 2 & 3：逐个上传（已知放行直接上传，未知格式标记"探测中"后上传）
+      for (let i = 0; i < tasks.length; i++) {
+        const task = tasks[i];
+        if (task.phase === 'rejected') continue;
+
+        // 标记上传中
+        const uploadMsg = task.phase === 'detecting' ? '格式未知，尝试上传并由服务端检测…' : '上传中…';
+        updateTask(i, { phase: 'uploading', message: uploadMsg });
+
         try {
           const resp = await invoke<ApiResponse<{ sessionId: string; documentId: string; documentIds: string[]; documentMetas: Array<{ documentId: string; documentType: string }> }>>(
             'upload_file_to_session',
-            { sessionId, filePath }
+            { sessionId, filePath: task.path }
           );
-          if (!resp.success) {
-            const fileName = filePath.split(/[/\\]/).pop() || filePath;
-            errors.push(`${fileName}: ${resp.error?.message || '上传失败'}`);
+          if (resp.success) {
+            updateTask(i, { phase: 'success', message: '已添加' });
+          } else {
+            updateTask(i, { phase: 'failed', message: resp.error?.message || '上传失败' });
           }
         } catch (err) {
-          const fileName = filePath.split(/[/\\]/).pop() || filePath;
-          errors.push(`${fileName}: 处理失败`);
+          updateTask(i, { phase: 'failed', message: '处理失败' });
           console.error(err);
         }
       }
 
-      if (errors.length > 0) {
-        setError(errors.join('\n'));
-      }
-
       await refreshDocuments();
+
+      // 3 秒后清除成功的任务，只保留有问题的
+      setTimeout(() => {
+        fileTasksRef.current = fileTasksRef.current.filter(t => t.phase !== 'success');
+        setFileTasks([...fileTasksRef.current]);
+      }, 3000);
     } catch (err) {
       setError('添加资料失败');
       console.error(err);
     } finally {
       setBusy(false);
     }
-  }, [sessionId, refreshDocuments]);
+  }, [sessionId, refreshDocuments, updateTask]);
 
   // 移除资料文件
   const handleRemoveDocument = useCallback(async (documentId: string) => {
@@ -219,6 +289,41 @@ export default function KnowledgeBasePage() {
 
             {error && (
               <div className="text-sm text-red-500 mb-3">{error}</div>
+            )}
+
+            {/* 逐文件上传进度 */}
+            {fileTasks.length > 0 && (
+              <div className="space-y-1.5 mb-3">
+                {fileTasks.map((task, idx) => (
+                  <div
+                    key={`${task.name}-${idx}`}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs ${
+                      task.phase === 'success' ? 'bg-green-500/10 text-green-600 dark:text-green-400' :
+                      task.phase === 'failed' || task.phase === 'rejected' ? 'bg-red-500/10 text-red-500' :
+                      task.phase === 'detecting' ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400' :
+                      'bg-blue-500/10 text-blue-500'
+                    }`}
+                  >
+                    {/* 状态图标 */}
+                    {task.phase === 'uploading' || task.phase === 'detecting' ? (
+                      <svg className="w-3.5 h-3.5 animate-spin shrink-0" viewBox="0 0 24 24" fill="none">
+                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.25" />
+                        <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                      </svg>
+                    ) : task.phase === 'success' ? (
+                      <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                    ) : (
+                      <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                      </svg>
+                    )}
+                    <span className="font-medium truncate">{task.name}</span>
+                    {task.message && <span className="opacity-70 truncate">{task.message}</span>}
+                  </div>
+                ))}
+              </div>
             )}
 
             <div className="space-y-2">
