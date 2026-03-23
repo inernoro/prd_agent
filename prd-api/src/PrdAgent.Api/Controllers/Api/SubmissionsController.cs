@@ -365,20 +365,25 @@ public class SubmissionsController : ControllerBase
                 .SortByDescending(x => x.CreatedAt)
                 .ToListAsync();
 
-            List<ImageAsset> assets;
+            // 有 index 的按 index 分组取最新（同一位置重新生成时去重）
             var withIndex = allAssets.Where(a => a.ArticleInsertionIndex.HasValue).ToList();
-            if (withIndex.Count > 0)
-            {
-                assets = withIndex
+            var deduped = withIndex.Count > 0
+                ? withIndex
                     .GroupBy(a => a.ArticleInsertionIndex!.Value)
                     .Select(g => g.First())
-                    .OrderBy(a => a.ArticleInsertionIndex)
-                    .ToList();
-            }
-            else
-            {
-                assets = allAssets;
-            }
+                    .ToList()
+                : new List<ImageAsset>();
+
+            // 无 index 的图（历史数据/部署过渡期）也保留，不遗漏
+            var dedupedIds = deduped.Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
+            var withoutIndex = allAssets
+                .Where(a => !a.ArticleInsertionIndex.HasValue && !dedupedIds.Contains(a.Id))
+                .ToList();
+
+            var assets = deduped.Concat(withoutIndex)
+                .OrderBy(a => a.ArticleInsertionIndex ?? int.MaxValue)
+                .ThenBy(a => a.CreatedAt)
+                .ToList();
 
             relatedAssets = assets.Select(a => (object)new
             {
