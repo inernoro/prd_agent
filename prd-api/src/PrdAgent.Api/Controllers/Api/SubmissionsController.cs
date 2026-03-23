@@ -375,6 +375,35 @@ public class SubmissionsController : ControllerBase
                     .SortBy(x => x.ArticleInsertionIndex)
                     .ThenBy(x => x.CreatedAt)
                     .ToListAsync();
+
+                // 自愈：并发生图时 AssetIdByMarkerIndex 可能因竞争丢失部分条目，
+                // 对缺失的 ArticleInsertionIndex 补查最新图片
+                var expected = workspace?.ArticleWorkflow?.ExpectedImageCount ?? 0;
+                if (expected > 0 && assets.Count < expected)
+                {
+                    var coveredIndices = assets
+                        .Where(a => a.ArticleInsertionIndex.HasValue)
+                        .Select(a => a.ArticleInsertionIndex!.Value)
+                        .ToHashSet();
+                    var supplementary = await _db.ImageAssets
+                        .Find(x => x.WorkspaceId == submission.WorkspaceId
+                            && x.ArticleInsertionIndex.HasValue
+                            && !currentAssetIds.Contains(x.Id))
+                        .SortByDescending(x => x.CreatedAt)
+                        .ToListAsync();
+                    var extras = supplementary
+                        .Where(a => !coveredIndices.Contains(a.ArticleInsertionIndex!.Value))
+                        .GroupBy(a => a.ArticleInsertionIndex!.Value)
+                        .Select(g => g.First())
+                        .ToList();
+                    if (extras.Count > 0)
+                    {
+                        assets = assets.Concat(extras)
+                            .OrderBy(a => a.ArticleInsertionIndex)
+                            .ThenBy(a => a.CreatedAt)
+                            .ToList();
+                    }
+                }
             }
             else
             {
