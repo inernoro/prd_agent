@@ -25,8 +25,9 @@ public class MongoDbContext
         var client = new MongoClient(connectionString);
         _database = client.GetDatabase(databaseName);
         
-        // 创建索引
-        CreateIndexes();
+        // 索引由 DBA 手动创建，禁止应用启动时自动创建
+        // 索引定义文档：doc/guide.mongodb-indexes.md
+        // CreateIndexes();
     }
 
     public IMongoCollection<User> Users => _database.GetCollection<User>("users");

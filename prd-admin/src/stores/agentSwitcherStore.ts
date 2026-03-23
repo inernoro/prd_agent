@@ -7,7 +7,7 @@
  */
 
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
 
 /** Agent 定义 */
 export interface AgentDefinition {
@@ -207,6 +207,7 @@ export const useAgentSwitcherStore = create<AgentSwitcherState>()(
     }),
     {
       name: 'prd-admin-agent-switcher',
+      storage: createJSONStorage(() => sessionStorage),
       // 只持久化最近访问记录
       partialize: (state) => ({ recentVisits: state.recentVisits }),
     }

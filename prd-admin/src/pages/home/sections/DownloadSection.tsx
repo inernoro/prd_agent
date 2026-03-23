@@ -35,11 +35,11 @@ function detectPlatform(): Platform {
 
 function getCachedRelease(): ReleaseInfo | null {
   try {
-    const raw = localStorage.getItem(CACHE_KEY);
+    const raw = sessionStorage.getItem(CACHE_KEY);
     if (!raw) return null;
     const cached: CachedRelease = JSON.parse(raw);
     if (Date.now() - cached.timestamp > CACHE_TTL) {
-      localStorage.removeItem(CACHE_KEY);
+      sessionStorage.removeItem(CACHE_KEY);
       return null;
     }
     return cached.data;
@@ -51,7 +51,7 @@ function getCachedRelease(): ReleaseInfo | null {
 function setCachedRelease(data: ReleaseInfo): void {
   try {
     const cached: CachedRelease = { data, timestamp: Date.now() };
-    localStorage.setItem(CACHE_KEY, JSON.stringify(cached));
+    sessionStorage.setItem(CACHE_KEY, JSON.stringify(cached));
   } catch { /* quota exceeded — ignore */ }
 }
 

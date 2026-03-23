@@ -642,7 +642,7 @@ export const getTeamTrendsReal: GetTeamTrendsContract = async (input) => {
 // ========== Phase 4: Export ==========
 
 export const exportReportMarkdownReal = async (input: { id: string }): Promise<Blob> => {
-  const token = localStorage.getItem('accessToken');
+  const token = sessionStorage.getItem('accessToken');
   const res = await fetch(`${api.reportAgent.reports.byId(encodeURIComponent(input.id))}/export/markdown`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
@@ -657,7 +657,7 @@ export const exportTeamSummaryMarkdownReal = async (input: {
   if (input.weekYear != null) qs.set('weekYear', String(input.weekYear));
   if (input.weekNumber != null) qs.set('weekNumber', String(input.weekNumber));
   const q = qs.toString();
-  const token = localStorage.getItem('accessToken');
+  const token = sessionStorage.getItem('accessToken');
   const res = await fetch(
     `${api.reportAgent.teams.summary(encodeURIComponent(input.teamId))}/export/markdown${q ? `?${q}` : ''}`,
     { headers: token ? { Authorization: `Bearer ${token}` } : {} }

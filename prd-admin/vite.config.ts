@@ -12,19 +12,10 @@ function getGitBranch(): string {
   }
 }
 
-function getGitHash(): string {
-  try {
-    return execSync('git rev-parse --short HEAD', { encoding: 'utf-8' }).trim();
-  } catch {
-    return Date.now().toString(36);
-  }
-}
-
 export default defineConfig({
   plugins: [tailwindcss(), react()],
   define: {
     __GIT_BRANCH__: JSON.stringify(process.env.VITE_GIT_BRANCH || getGitBranch()),
-    __BUILD_HASH__: JSON.stringify(getGitHash()),
   },
   // 默认 Vite 只暴露 VITE_ 前缀；这里额外暴露 TENCENT_ 前缀，便于前端拼接 COS 公网资源地址（如头像）
   envPrefix: ['VITE_', 'TENCENT_'],
