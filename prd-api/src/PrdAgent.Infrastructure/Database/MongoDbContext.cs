@@ -196,7 +196,27 @@ public class MongoDbContext
     private void CreateIndexes()
     {
         static bool IsIndexConflict(MongoCommandException ex)
-            => ex.CodeName is "IndexOptionsConflict" or "IndexKeySpecsConflict" or "IndexAlreadyExists";
+        {
+            // 兼容不同 MongoDB 版本/代理层返回差异：
+            // - 有些环境会返回 CodeName
+            // - 有些环境只返回 Code 或 message（CodeName 为空）
+            if (ex.CodeName is "IndexOptionsConflict" or "IndexKeySpecsConflict" or "IndexAlreadyExists")
+            {
+                return true;
+            }
+
+            if (ex.Code is 85 or 86 or 68)
+            {
+                return true;
+            }
+
+            var message = ex.Message ?? string.Empty;
+            return message.Contains("equivalent index already exists", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("already exists with a different name and options", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("IndexOptionsConflict", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("IndexKeySpecsConflict", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("IndexAlreadyExists", StringComparison.OrdinalIgnoreCase);
+        }
 
         void EnsureTtlIndex<TDocument>(
             IMongoCollection<TDocument> collection,
