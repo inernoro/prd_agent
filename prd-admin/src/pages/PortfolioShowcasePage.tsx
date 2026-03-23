@@ -19,6 +19,7 @@ import {
   type SubmissionItem,
 } from '@/services/real/submissions';
 import { SubmissionDetailModal } from '@/components/showcase/SubmissionDetailModal';
+import { LiteraryCard } from '@/components/showcase/LiteraryCard';
 import { HeartLikeButton } from '@/components/effects/HeartLikeButton';
 import { resolveAvatarUrl, DEFAULT_AVATAR_FALLBACK } from '@/lib/avatar';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -587,12 +588,22 @@ export default function PortfolioShowcasePage() {
                 }}
               >
                 {items.map((item) => (
-                  <MasonryCard
-                    key={item.id}
-                    item={item}
-                    onLikeToggle={handleLikeToggle}
-                    onClick={() => setSelectedId(item.id)}
-                  />
+                  item.contentType === 'literary' ? (
+                    <div key={item.id} className="break-inside-avoid mb-5">
+                      <LiteraryCard
+                        item={item}
+                        onLikeToggle={handleLikeToggle}
+                        onClick={() => setSelectedId(item.id)}
+                      />
+                    </div>
+                  ) : (
+                    <MasonryCard
+                      key={item.id}
+                      item={item}
+                      onLikeToggle={handleLikeToggle}
+                      onClick={() => setSelectedId(item.id)}
+                    />
+                  )
                 ))}
               </div>
 

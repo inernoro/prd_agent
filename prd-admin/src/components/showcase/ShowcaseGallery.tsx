@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, ChevronDown } from 'lucide-react';
 import { SubmissionCard } from './SubmissionCard';
+import { LiteraryCard } from './LiteraryCard';
 import { SubmissionDetailModal } from './SubmissionDetailModal';
 import {
   listPublicSubmissions,
@@ -183,13 +184,21 @@ export function ShowcaseGallery() {
           <div style={{ columnCount: isMobile ? 2 : 4, columnGap: isMobile ? 12 : 20 }}>
             {items.map((item) => (
               <div key={item.id} className="break-inside-avoid mb-5">
-                <SubmissionCard
-                  item={item}
-                  onLikeToggle={handleLikeToggle}
-                  onClick={() => setSelectedId(item.id)}
-                  isAdmin={isAdmin}
-                  onAdminWithdraw={handleAdminWithdraw}
-                />
+                {item.contentType === 'literary' ? (
+                  <LiteraryCard
+                    item={item}
+                    onLikeToggle={handleLikeToggle}
+                    onClick={() => setSelectedId(item.id)}
+                  />
+                ) : (
+                  <SubmissionCard
+                    item={item}
+                    onLikeToggle={handleLikeToggle}
+                    onClick={() => setSelectedId(item.id)}
+                    isAdmin={isAdmin}
+                    onAdminWithdraw={handleAdminWithdraw}
+                  />
+                )}
               </div>
             ))}
           </div>

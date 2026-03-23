@@ -34,10 +34,14 @@ public class LiteraryAgentWorkspaceController : ControllerBase
         _assetStorage = assetStorage;
     }
 
-    private string GetAdminId() =>
-        User.FindFirst("sub")?.Value
-        ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-        ?? "unknown";
+    private string GetAdminId()
+    {
+        var id = User.FindFirst("sub")?.Value
+            ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrWhiteSpace(id))
+            throw new UnauthorizedAccessException("Missing user identity claims");
+        return id;
+    }
 
     private async Task<ImageMasterWorkspace?> GetWorkspaceIfAllowedAsync(string workspaceId, string adminId, CancellationToken ct)
     {
