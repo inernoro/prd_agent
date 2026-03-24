@@ -7,10 +7,11 @@ import { Switch } from '@/components/design/Switch';
 import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
 import {
-  Mail, Server, AlertTriangle, CheckCircle, Loader2, RefreshCw, Eye, EyeOff,
+  Mail, Server, AlertTriangle, CheckCircle, RefreshCw, Eye, EyeOff,
   Play, Plus, Trash2, MoreVertical, Pencil, UserCheck,
 } from 'lucide-react';
 import { channelService, appCallersService, getUsers } from '@/services';
+import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import type {
@@ -97,10 +98,10 @@ export default function EmailChannelPanel({ onActionsReady }: EmailChannelPanelP
     onActionsReady?.(
       <div className="flex gap-2">
         <Button variant="secondary" size="sm" onClick={handleTest} disabled={testing || !form.imapHost}>
-          {testing && <Loader2 className="animate-spin mr-1" size={14} />}测试连接
+          {testing && <MapSpinner size={14} className="mr-1" />}测试连接
         </Button>
         <Button variant="primary" size="sm" onClick={handleSave} disabled={saving}>
-          {saving && <Loader2 className="animate-spin mr-1" size={14} />}保存配置
+          {saving && <MapSpinner size={14} className="mr-1" />}保存配置
         </Button>
       </div>
     );
@@ -224,7 +225,7 @@ export default function EmailChannelPanel({ onActionsReady }: EmailChannelPanelP
     } catch (err) { toast.error('删除失败', String(err)); }
   };
 
-  if (loading) return <div className="h-full flex items-center justify-center"><Loader2 className="animate-spin" size={24} /></div>;
+  if (loading) return <div className="h-full flex items-center justify-center"><MapSectionLoader /></div>;
 
   const emailDomain = settings?.imapUsername?.split('@')[1] || null;
   const inputCls = "w-full px-2.5 py-1.5 rounded bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none text-sm";
@@ -458,7 +459,7 @@ export default function EmailChannelPanel({ onActionsReady }: EmailChannelPanelP
                     上次轮询：{settings?.lastPollAt ? new Date(settings.lastPollAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '从未'}
                   </span>
                   <Button variant="ghost" size="sm" onClick={handlePoll} disabled={polling || !settings?.isEnabled} className="h-6 px-2">
-                    {polling ? <Loader2 className="animate-spin" size={12} /> : <RefreshCw size={12} />}
+                    {polling ? <MapSpinner size={12} /> : <RefreshCw size={12} />}
                   </Button>
                 </div>
               </section>

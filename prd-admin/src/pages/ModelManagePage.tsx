@@ -35,7 +35,8 @@ import type { ModelAdapterInfoBrief } from '@/services/contracts/models';
 import type { Model, Platform } from '@/types/admin';
 import { ModelHealthStatus } from '@/types/modelGroup';
 import type { ModelGroupItem } from '@/types/modelGroup';
-import { Activity, Check, ChevronLeft, ChevronRight, Clock, Database, DatabaseZap, Eye, EyeOff, ImagePlus, LayoutGrid, Link2, Loader2, Minus, MoreVertical, Pencil, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Trash2 } from 'lucide-react';
+import { Activity, Check, ChevronLeft, ChevronRight, Clock, Database, DatabaseZap, Eye, EyeOff, ImagePlus, LayoutGrid, Link2, Minus, MoreVertical, Pencil, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Trash2 } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { glassPanel } from '@/lib/glassStyles';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -1320,7 +1321,7 @@ export default function ModelManagePage() {
                 disabled={stubCreating}
                 title="点击添加平台，长按 3 秒添加桩"
               >
-                {stubCreating ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
+                {stubCreating ? <MapSpinner size={16} /> : <Plus size={16} />}
                 {stubCreating ? '创建中...' : '添加平台'}
               </Button>
               {/* 长按进度指示器 */}
@@ -2455,7 +2456,7 @@ export default function ModelManagePage() {
                   取消
                 </Button>
                 <Button variant="primary" size="sm" onClick={handleSaveModelPool} disabled={addToPoolSaving}>
-                  {addToPoolSaving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
+                  {addToPoolSaving ? <MapSpinner size={16} /> : <Check size={16} />}
                   创建模型池
                 </Button>
               </div>

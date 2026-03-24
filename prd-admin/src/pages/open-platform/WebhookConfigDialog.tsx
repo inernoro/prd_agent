@@ -9,13 +9,13 @@ import {
   Eye,
   EyeOff,
   Send,
-  Loader2,
   Check,
   X,
   AlertTriangle,
   Info,
   Clock,
 } from 'lucide-react';
+import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import type {
   OpenPlatformApp,
   WebhookConfigResponse,
@@ -199,7 +199,7 @@ export function WebhookConfigDialog({ open, onClose, app }: WebhookConfigDialogP
       content={
         loading ? (
           <div className="flex items-center justify-center py-12">
-            <Loader2 size={20} className="animate-spin text-muted-foreground" />
+            <MapSectionLoader />
           </div>
         ) : (
           <div className="space-y-5">
@@ -458,13 +458,13 @@ export function WebhookConfigDialog({ open, onClose, app }: WebhookConfigDialogP
                 onClick={handleTest}
                 disabled={testing || !webhookUrl}
               >
-                {testing ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                {testing ? <MapSpinner size={14} /> : <Send size={14} />}
                 测试连通性
               </Button>
               <div className="flex items-center gap-2">
                 <Button variant="secondary" size="sm" onClick={onClose}>取消</Button>
                 <Button size="sm" onClick={handleSave} disabled={saving}>
-                  {saving ? <Loader2 size={14} className="animate-spin" /> : null}
+                  {saving ? <MapSpinner size={14} /> : null}
                   保存
                 </Button>
               </div>

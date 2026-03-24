@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
   Search,
-  Loader2,
   ChevronDown,
   Sparkles,
   Eye,
@@ -23,6 +22,7 @@ import { LiteraryCard } from '@/components/showcase/LiteraryCard';
 import { HeartLikeButton } from '@/components/effects/HeartLikeButton';
 import { resolveAvatarUrl, DEFAULT_AVATAR_FALLBACK } from '@/lib/avatar';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 
 // ── Constants ──
 
@@ -580,7 +580,7 @@ export default function PortfolioShowcasePage() {
                     }}
                   >
                     {loadingMore ? (
-                      <Loader2 size={14} className="animate-spin" />
+                      <MapSpinner size={14} />
                     ) : (
                       <ChevronDown size={14} className="transition-transform duration-300 group-hover:translate-y-0.5" />
                     )}

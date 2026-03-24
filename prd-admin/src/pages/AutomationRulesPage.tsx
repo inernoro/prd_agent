@@ -12,10 +12,10 @@ import {
   selectItemClass,
 } from '@/components/design/selectStyles';
 import { automationsService, listWorkflows } from '@/services';
+import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import {
   Plus,
-  Loader2,
   Trash2,
   Play,
   Bell,
@@ -562,7 +562,7 @@ export default function AutomationRulesPage() {
             {/* 列表内容 */}
             {loading ? (
               <div className="flex-1 flex items-center justify-center">
-                <Loader2 size={18} className="animate-spin text-muted-foreground" />
+                <MapSectionLoader />
               </div>
             ) : rules.length === 0 ? (
               <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground gap-2 px-4">
@@ -759,7 +759,7 @@ export default function AutomationRulesPage() {
                 {/* 底部操作栏 */}
                 <div className="flex flex-wrap items-center gap-2 px-5 py-3" style={{ borderTop: '1px solid var(--nested-block-border)' }}>
                   <Button size="sm" onClick={handleSave} disabled={saving}>
-                    {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                    {saving ? <MapSpinner size={14} /> : <Save size={14} />}
                     {edit.id ? '保存' : '创建'}
                   </Button>
                   {edit.id && (
@@ -795,7 +795,7 @@ export default function AutomationRulesPage() {
             <div className="flex justify-end gap-2">
               <Button variant="secondary" size="sm" onClick={() => setTriggerRuleId(null)}>取消</Button>
               <Button size="sm" onClick={handleTrigger} disabled={triggering}>
-                {triggering ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />} 触发
+                {triggering ? <MapSpinner size={14} /> : <Play size={14} />} 触发
               </Button>
             </div>
           </div>

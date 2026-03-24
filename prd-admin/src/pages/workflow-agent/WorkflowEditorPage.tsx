@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
-  Play, Loader2, CheckCircle2, AlertCircle,
+  Play, CheckCircle2, AlertCircle,
   Download, FileText, ArrowLeft, Save, Plus,
   ChevronDown, ChevronRight, Settings2, XCircle,
   Zap, FlaskConical, Trash2, Wand2, Terminal, Eye, Copy, Check, CirclePause, Sparkles,
@@ -13,6 +13,7 @@ import {
   listCapsuleTypes, testRunCapsule,
 } from '@/services';
 import { replayNode } from '@/services/real/workflowAgent';
+import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import type {
   Workflow, WorkflowNode, WorkflowExecution, ExecutionArtifact,
   NodeExecution, CapsuleTypeMeta, CapsuleCategoryInfo,
@@ -164,7 +165,7 @@ function StepStatusBadge({ status, durationMs }: { status: string; durationMs?: 
     </Badge>
   );
   if (status === 'running') return (
-    <Badge variant="featured" size="sm" icon={<Loader2 className="w-3 h-3 animate-spin" />}>
+    <Badge variant="featured" size="sm" icon={<MapSpinner size={12} />}>
       执行中
     </Badge>
   );
@@ -1023,7 +1024,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
                   }}
                   disabled={isRunning || isTestRunning || (hasRequiredInput && !testInput.trim())}
                 >
-                  {isTestRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <FlaskConical className="w-3 h-3" />}
+                  {isTestRunning ? <MapSpinner size={12} /> : <FlaskConical className="w-3 h-3" />}
                   {isTestRunning ? '执行中...' : '▶ 单舱测试'}
                 </Button>
               )}
@@ -1937,8 +1938,7 @@ export function WorkflowEditorPage() {
   if (pageLoading) {
     return (
       <div className="h-full flex items-center justify-center">
-        <Loader2 className="w-5 h-5 animate-spin" style={{ color: 'var(--text-muted)' }} />
-        <span className="ml-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>加载工作流...</span>
+        <MapSectionLoader text="加载工作流..." />
       </div>
     );
   }
@@ -2013,7 +2013,7 @@ export function WorkflowEditorPage() {
                 style={{ background: 'rgba(0,0,0,0.5)', transition: 'opacity 0.2s' }}
               >
                 {avatarUploading
-                  ? <Loader2 size={12} className="animate-spin" style={{ color: 'white' }} />
+                  ? <MapSpinner size={12} color="white" />
                   : <Camera size={12} style={{ color: 'white' }} />
                 }
               </div>
@@ -2024,7 +2024,7 @@ export function WorkflowEditorPage() {
           <div className="flex items-center gap-2">
             {isRunning ? (
               <>
-                <Badge variant="featured" size="sm" icon={<Loader2 className="w-3 h-3 animate-spin" />}>
+                <Badge variant="featured" size="sm" icon={<MapSpinner size={12} />}>
                   执行中 {completedCount}/{totalNodes}
                 </Badge>
                 <Button variant="danger" size="xs" onClick={handleCancel}>
@@ -2040,7 +2040,7 @@ export function WorkflowEditorPage() {
                 disabled={isExecuting || workflow.nodes.length === 0}
               >
                 {isExecuting
-                  ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />提交中...</>
+                  ? <><MapSpinner size={14} />提交中...</>
                   : <><Play className="w-3.5 h-3.5" />{latestExec ? '重新执行' : '执行'}</>
                 }
               </Button>
@@ -2051,7 +2051,7 @@ export function WorkflowEditorPage() {
               onClick={handleSave}
               disabled={saving || !dirty}
             >
-              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+              {saving ? <MapSpinner size={14} /> : <Save className="w-3.5 h-3.5" />}
               {dirty ? '保存*' : '已保存'}
             </Button>
             <Button

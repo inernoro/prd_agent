@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Loader2, ShieldCheck, ShieldAlert, Copy, Check, ChevronDown, Clock, Trash2 } from 'lucide-react';
+import { ShieldCheck, ShieldAlert, Copy, Check, ChevronDown, Clock, Trash2 } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { WORKFLOW_TEMPLATES, type WorkflowTemplate, type TemplateInput } from './workflowTemplates';
@@ -608,7 +609,7 @@ function CookieFieldInput({
               opacity: !value.trim() ? 0.5 : 1,
             }}
           >
-            {validating ? <Loader2 size={12} className="animate-spin" /> : <ShieldCheck size={12} />}
+            {validating ? <MapSpinner size={12} /> : <ShieldCheck size={12} />}
             {validating ? '验证中...' : '验证 Cookie'}
           </button>
           {validation?.debugCurls && validation.debugCurls.length > 0 && (

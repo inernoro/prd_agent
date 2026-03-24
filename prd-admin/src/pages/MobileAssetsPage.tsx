@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
-import { Image, FileText, Paperclip, FolderOpen, Globe, Loader2 } from 'lucide-react';
+import { Image, FileText, Paperclip, FolderOpen, Globe } from 'lucide-react';
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { getMobileAssets } from '@/services';
 import type { MobileAssetItem } from '@/services/contracts/mobile';
 
@@ -73,9 +74,7 @@ export default function MobileAssetsPage() {
       {/* ── 内容区 ── */}
       <div className="flex-1 min-h-0 overflow-auto px-4 pb-28">
         {loading ? (
-          <div className="flex items-center justify-center h-40">
-            <Loader2 size={24} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
-          </div>
+          <MapSectionLoader />
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-40 gap-2">
             <FolderOpen size={32} style={{ color: 'rgba(255,255,255,0.15)' }} />

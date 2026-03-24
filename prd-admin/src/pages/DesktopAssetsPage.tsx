@@ -5,7 +5,6 @@ import {
   FileText,
   Paperclip,
   Globe,
-  Loader2,
   Search,
   LayoutGrid,
   List,
@@ -26,6 +25,7 @@ import {
   Database,
 } from 'lucide-react';
 import { getMobileAssets } from '@/services';
+import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import type { MobileAssetItem } from '@/services/contracts/mobile';
 
 /* ── Types ── */
@@ -884,7 +884,7 @@ export default function DesktopAssetsPage() {
         <div ref={scrollRef} className="flex-1 overflow-y-auto p-4">
           {loading && assets.length === 0 ? (
             <div className="flex items-center justify-center py-24">
-              <Loader2 size={28} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
+              <MapSectionLoader />
             </div>
           ) : error ? (
             <div className="flex flex-col items-center justify-center py-24 gap-3">
@@ -944,7 +944,7 @@ export default function DesktopAssetsPage() {
           {/* Loading more */}
           {loadingMore && (
             <div className="flex justify-center py-4">
-              <Loader2 size={20} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
+              <MapSpinner size={20} color="var(--text-muted)" />
             </div>
           )}
         </div>

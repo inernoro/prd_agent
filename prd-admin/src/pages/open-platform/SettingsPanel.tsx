@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
-import { Mail, Server, AlertTriangle, CheckCircle, Loader2, RefreshCw, Eye, EyeOff, Zap, Shield, Play } from 'lucide-react';
+import { Mail, Server, AlertTriangle, CheckCircle, RefreshCw, Eye, EyeOff, Zap, Shield, Play } from 'lucide-react';
+import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { channelService } from '@/services';
 import { toast } from '@/lib/toast';
 import type { ChannelStatsResponse, ChannelSettings, UpdateSettingsRequest } from '@/services/contracts/channels';
@@ -61,10 +62,10 @@ export default function SettingsPanel({ onActionsReady }: SettingsPanelProps) {
     onActionsReady?.(
       <div className="flex gap-2">
         <Button variant="secondary" size="sm" onClick={handleTest} disabled={testing || !form.imapHost}>
-          {testing && <Loader2 className="animate-spin mr-1" size={14} />}测试连接
+          {testing && <MapSpinner size={14} className="mr-1" />}测试连接
         </Button>
         <Button variant="primary" size="sm" onClick={handleSave} disabled={saving}>
-          {saving && <Loader2 className="animate-spin mr-1" size={14} />}保存配置
+          {saving && <MapSpinner size={14} className="mr-1" />}保存配置
         </Button>
       </div>
     );
@@ -114,7 +115,7 @@ export default function SettingsPanel({ onActionsReady }: SettingsPanelProps) {
     toast.success(`已应用 ${p.name}`);
   };
 
-  if (loading) return <div className="h-full flex items-center justify-center"><Loader2 className="animate-spin" size={24} /></div>;
+  if (loading) return <div className="h-full flex items-center justify-center"><MapSectionLoader /></div>;
 
   const steps = [
     { done: !!settings?.imapHost, label: 'IMAP' },
@@ -313,7 +314,7 @@ export default function SettingsPanel({ onActionsReady }: SettingsPanelProps) {
                   上次轮询：{settings?.lastPollAt ? new Date(settings.lastPollAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '从未'}
                 </span>
                 <Button variant="ghost" size="sm" onClick={handlePoll} disabled={polling || !settings?.isEnabled} className="h-6 px-2">
-                  {polling ? <Loader2 className="animate-spin" size={12} /> : <RefreshCw size={12} />}
+                  {polling ? <MapSpinner size={12} /> : <RefreshCw size={12} />}
                 </Button>
               </div>
             </section>

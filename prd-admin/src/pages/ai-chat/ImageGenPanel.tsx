@@ -4,7 +4,8 @@ import { Dialog } from '@/components/ui/Dialog';
 import { cancelImageGenRun, createImageGenRun, generateImageGen, getVisualAgentImageGenModels, planImageGen, streamImageGenRunWithRetry } from '@/services';
 import type { ImageGenPlanResponse } from '@/services/contracts/imageGen';
 import type { ModelGroupForApp } from '@/types/modelGroup';
-import { Copy, Download, Loader2, Maximize2, Square, Wand2 } from 'lucide-react';
+import { Copy, Download, Maximize2, Square, Wand2 } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from '@/lib/toast';
 
@@ -647,11 +648,11 @@ export default function ImageGenPanel() {
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <Button variant="primary" onClick={runSingle} disabled={!activeModel || singleLoading || batchRunning || !prompt.trim()}>
-            {singleLoading ? <Loader2 size={16} className="animate-spin" /> : <Wand2 size={16} />}
+            {singleLoading ? <MapSpinner size={16} /> : <Wand2 size={16} />}
             单次生成
           </Button>
           <Button variant="secondary" onClick={buildPlan} disabled={planLoading || batchRunning || !prompt.trim()}>
-            {planLoading ? <Loader2 size={16} className="animate-spin" /> : null}
+            {planLoading ? <MapSpinner size={16} /> : null}
             生成批量计划
           </Button>
           <Button variant="secondary" onClick={startBatch} disabled={!activeModel || batchRunning || !planResult}>

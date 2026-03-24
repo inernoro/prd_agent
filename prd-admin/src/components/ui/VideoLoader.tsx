@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react';
 
 /**
- * MAP 品牌过渡动画 — 用于页面懒加载等待期间。
- * #141418 底色 + MAP 字母依次浮现 + 底部扫光条。
+ * MAP 统一加载组件体系
  *
- * 两种模式：
- * - fullscreen（默认）：position:fixed 覆盖整个视口，用于首次加载 / 登录前
- * - inline：填满父容器，用于 AppShell 内页面切换（不遮挡侧边栏）
+ * 三个层级，视觉语言统一（扫光条 + 品牌色）：
+ *
+ * | 组件                    | 场景                        | 尺寸        |
+ * |-------------------------|-----------------------------|-------------|
+ * | `PageTransitionLoader`  | Suspense / 页面级过渡        | 全屏 / 内联 |
+ * | `MapSectionLoader`      | 区块居中加载（替代居中 Loader2）| 自适应父容器 |
+ * | `MapSpinner`            | 行内 / 按钮 loading 态       | 14-32px     |
  */
 
 const ANIM_ID = 'map-transition-keyframes';
@@ -34,9 +37,15 @@ function injectKeyframes() {
   0%, 100% { opacity: 0; }
   50%      { opacity: 0.12; }
 }
+@keyframes map-spin-scan {
+  0%   { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
   `;
   document.head.appendChild(style);
 }
+
+// ─── 页面级：Suspense / 路由过渡 ───────────────────────────
 
 export function PageTransitionLoader({
   className,
@@ -66,6 +75,8 @@ export function PageTransitionLoader({
   return (
     <div
       className={className}
+      role="status"
+      aria-label="加载中"
       style={{
         position: isFullscreen ? 'fixed' : 'absolute',
         inset: 0,
@@ -137,16 +148,177 @@ export function PageTransitionLoader({
   );
 }
 
+// ─── 区块级：内容区域居中加载 ──────────────────────────────
+
 /**
- * Suspense fallback — 全屏 MAP 品牌过渡（首次加载/登录前/全屏路由）。
+ * 区块级加载指示器 — 居中 MAP 字母（小号）+ 扫光条 + 可选提示文字。
+ * 替代各处手写的 `<div className="flex items-center justify-center"><Loader2 className="animate-spin" /></div>`
+ *
+ * @example
+ * ```tsx
+ * {loading ? <MapSectionLoader text="正在加载数据…" /> : <Content />}
+ * ```
  */
+export function MapSectionLoader({
+  text,
+  className,
+  style,
+}: {
+  text?: string;
+  className?: string;
+  style?: React.CSSProperties;
+}) {
+  useEffect(() => { injectKeyframes(); }, []);
+
+  const letters = [
+    { char: 'M', delay: '0ms',   color: '#c0c0cc' },
+    { char: 'A', delay: '80ms',  color: '#8e8e9e' },
+    { char: 'P', delay: '160ms', color: '#6a6a7a' },
+  ];
+
+  return (
+    <div
+      className={className}
+      role="status"
+      aria-label={text || '加载中'}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 16,
+        padding: '48px 0',
+        userSelect: 'none',
+        ...style,
+      }}
+    >
+      <div style={{ display: 'flex', gap: 4, position: 'relative' }}>
+        {letters.map(({ char, delay, color }) => (
+          <span
+            key={char}
+            style={{
+              fontSize: 28,
+              fontWeight: 700,
+              fontFamily: "'Inter', 'SF Pro Display', -apple-system, system-ui, sans-serif",
+              letterSpacing: '0.08em',
+              color,
+              opacity: 0,
+              background: `linear-gradient(90deg, ${color} 40%, rgba(255,255,255,0.5) 50%, ${color} 60%)`,
+              backgroundSize: '200% 100%',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+              backgroundClip: 'text',
+              animationName: 'map-letter-in, map-shimmer',
+              animationDuration: '500ms, 2.4s',
+              animationTimingFunction: 'cubic-bezier(0.16, 1, 0.3, 1), linear',
+              animationDelay: `${delay}, 600ms`,
+              animationIterationCount: '1, infinite',
+              animationFillMode: 'forwards, none',
+            }}
+          >
+            {char}
+          </span>
+        ))}
+      </div>
+
+      <div
+        style={{
+          width: 64,
+          height: 1.5,
+          borderRadius: 1,
+          background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent)',
+          transformOrigin: 'center',
+          animation: 'map-bar-scan 2s ease-in-out 300ms infinite',
+        }}
+      />
+
+      {text && (
+        <span style={{ fontSize: 13, color: 'var(--text-muted, #666)', marginTop: 4 }}>
+          {text}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ─── 行内级：按钮 / 小区域 spinner ─────────────────────────
+
+/**
+ * 行内加载指示器 — 品牌风格的小型 spinner，替代 `<Loader2 className="animate-spin" />`。
+ * 一条弧形扫光线旋转，视觉与扫光条统一。
+ *
+ * @example
+ * ```tsx
+ * <button disabled={saving}>
+ *   {saving ? <MapSpinner size={16} /> : <Save size={16} />}
+ *   保存
+ * </button>
+ * ```
+ */
+export function MapSpinner({
+  size = 18,
+  color,
+  className,
+  style,
+}: {
+  size?: number;
+  color?: string;
+  className?: string;
+  style?: React.CSSProperties;
+}) {
+  useEffect(() => { injectKeyframes(); }, []);
+
+  const stroke = color || 'var(--text-muted, rgba(255,255,255,0.45))';
+  const thickness = size <= 16 ? 1.5 : 2;
+  const r = (size - thickness * 2) / 2;
+
+  return (
+    <svg
+      className={className}
+      role="status"
+      aria-label="加载中"
+      width={size}
+      height={size}
+      viewBox={`0 0 ${size} ${size}`}
+      fill="none"
+      style={{
+        animation: 'map-spin-scan 1s linear infinite',
+        flexShrink: 0,
+        ...style,
+      }}
+    >
+      {/* 底圈（极淡） */}
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={r}
+        stroke={stroke}
+        strokeWidth={thickness}
+        opacity={0.15}
+      />
+      {/* 扫光弧 */}
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={r}
+        stroke={stroke}
+        strokeWidth={thickness}
+        strokeLinecap="round"
+        strokeDasharray={`${r * 1.8} ${r * 4.5}`}
+        opacity={0.9}
+      />
+    </svg>
+  );
+}
+
+// ─── 便捷导出 ──────────────────────────────────────────────
+
+/** Suspense fallback — 全屏 MAP 品牌过渡（首次加载 / 登录前 / 全屏路由） */
 export function SuspenseVideoLoader() {
   return <PageTransitionLoader mode="fullscreen" />;
 }
 
-/**
- * Suspense fallback — 内联 MAP 过渡（AppShell 内容区，不遮挡侧边栏）。
- */
+/** Suspense fallback — 内联 MAP 过渡（AppShell 内容区，不遮挡侧边栏） */
 export function InlinePageLoader() {
   return <PageTransitionLoader mode="inline" />;
 }

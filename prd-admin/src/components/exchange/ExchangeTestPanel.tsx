@@ -8,7 +8,6 @@ import {
   Code,
   ImagePlus,
   Link,
-  Loader2,
   Play,
   Eye,
   Upload,
@@ -16,6 +15,7 @@ import {
   Clock,
 } from 'lucide-react';
 import { useRef, useState } from 'react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 
 /** 转换器是否为 fal.ai 图片类型 */
 function isFalImageType(type: string) {
@@ -239,7 +239,7 @@ export function ExchangeTestPanel({
             <Eye size={13} className="mr-1" /> 仅预览转换
           </Button>
           <Button size="sm" onClick={() => handleTest(false)} disabled={loading}>
-            {loading ? <Loader2 size={13} className="mr-1 animate-spin" /> : <Play size={13} className="mr-1" />}
+            {loading ? <MapSpinner size={13} className="mr-1" /> : <Play size={13} className="mr-1" />}
             发送测试
           </Button>
         </div>
@@ -344,7 +344,7 @@ export function ExchangeTestPanel({
                     />
                     {uploading ? (
                       <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <Loader2 size={13} className="animate-spin" /> 转换中...
+                        <MapSpinner size={13} /> 转换中...
                       </span>
                     ) : (
                       <span className="flex items-center gap-1.5 text-xs text-muted-foreground">

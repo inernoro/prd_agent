@@ -5,6 +5,7 @@ import { Button } from '@/components/design/Button';
 import { streamCapabilityChat } from '@/services/real/aiToolbox';
 import type { DirectChatMessage } from '@/services/real/aiToolbox';
 import type { LucideIcon } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import {
   Package,
   Wrench,
@@ -18,7 +19,6 @@ import {
   Settings,
   Send,
   ChevronRight,
-  Loader2,
   Paperclip,
   X,
   ImageIcon,
@@ -631,7 +631,7 @@ export function BasicCapabilities() {
                         border: `1px solid hsla(${selectedCap.hue}, 60%, 60%, 0.25)`,
                       }}
                     >
-                      <Loader2 size={14} className="animate-spin" style={{ color: `hsla(${selectedCap.hue}, 70%, 70%, 1)` }} />
+                      <MapSpinner size={14} color={`hsla(${selectedCap.hue}, 70%, 70%, 1)`} />
                     </div>
                     <div
                       className="px-3 py-2 rounded-xl text-[12px]"
@@ -756,7 +756,7 @@ export function BasicCapabilities() {
                     className="px-3"
                   >
                     {isGenerating ? (
-                      <Loader2 size={14} className="animate-spin" />
+                      <MapSpinner size={14} />
                     ) : (
                       <Send size={14} />
                     )}

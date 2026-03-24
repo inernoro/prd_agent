@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   X, Eye, ChevronLeft, ChevronRight, FileText, Wand2,
-  ImageIcon, Loader2, Palette, Brush, Layers, Sparkles, Maximize,
+  ImageIcon, Palette, Brush, Layers, Sparkles, Maximize,
   Droplets, ImagePlus,
 } from 'lucide-react';
 import { HeartLikeButton } from '@/components/effects/HeartLikeButton';
@@ -18,6 +18,7 @@ import {
 import { MarketplaceWatermarkCard } from '@/components/config-management/MarketplaceWatermarkCard';
 import type { MarketplaceCardContext } from '@/components/config-management/ConfigManagementDialogBase';
 import ReactMarkdown from 'react-markdown';
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import remarkGfm from 'remark-gfm';
 
 interface SubmissionDetailModalProps {
@@ -128,7 +129,7 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
       >
         {loading ? (
           <div className="flex-1 flex items-center justify-center">
-            <Loader2 size={32} className="animate-spin" style={{ color: 'var(--accent-primary)' }} />
+            <MapSectionLoader />
           </div>
         ) : detail ? (
           <div className="flex h-full min-h-0">

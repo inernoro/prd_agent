@@ -5,10 +5,10 @@ import { useToolboxStore } from '@/stores/toolboxStore';
 import { listWorkflows } from '@/services';
 import type { Workflow } from '@/services/contracts/workflowAgent';
 import type { LucideIcon } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import {
   ArrowLeft,
   Save,
-  Loader2,
   Sparkles,
   ChevronDown,
   Plus,
@@ -485,7 +485,7 @@ export function ToolEditor() {
           </div>
           {workflowsLoading ? (
             <div className="flex items-center gap-2 p-3" style={{ color: 'rgba(255, 255, 255, 0.5)' }}>
-              <Loader2 size={14} className="animate-spin" />
+              <MapSpinner size={14} />
               <span className="text-[12px]">加载工作流列表...</span>
             </div>
           ) : (
@@ -663,7 +663,7 @@ export function ToolEditor() {
                   {(file.size / 1024).toFixed(0)} KB
                 </span>
                 {file.status === 'uploading' && (
-                  <Loader2 size={12} className="animate-spin flex-shrink-0" style={{ color: 'rgba(255, 255, 255, 0.4)' }} />
+                  <MapSpinner size={12} color="rgba(255, 255, 255, 0.4)" className="flex-shrink-0" />
                 )}
                 {file.status === 'error' && (
                   <span className="text-[10px] flex-shrink-0" style={{ color: 'rgb(239, 68, 68)' }}>失败</span>
@@ -929,7 +929,7 @@ export function ToolEditor() {
                 onClick={handleSave}
                 disabled={saving || !form.name.trim() || !form.prompt.trim()}
               >
-                {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+                {saving ? <MapSpinner size={13} /> : <Save size={13} />}
                 保存
               </Button>
             </div>

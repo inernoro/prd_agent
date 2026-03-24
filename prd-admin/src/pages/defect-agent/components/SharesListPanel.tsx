@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
-import { Copy, Eye, Trash2, FileText, Zap, BarChart3, Loader2 } from 'lucide-react';
+import { Copy, Eye, Trash2, FileText, Zap, BarChart3 } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { listDefectShares, revokeDefectShare, createBatchShare, getShareScores } from '@/services';
 import { api } from '@/services/api';
 import { useSseStream } from '@/lib/useSseStream';
@@ -299,7 +300,7 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
               disabled={batchLoading}
               className="w-full"
             >
-              {batchLoading ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
+              {batchLoading ? <MapSpinner size={14} /> : <Zap size={14} />}
               {batchLoading ? '创建中...' : '一键分享所有缺陷（AI 评分）'}
             </Button>
 
