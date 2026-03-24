@@ -2145,13 +2145,8 @@ function renderBranches() {
     if (card) card.classList.add('is-previewing');
   }
 
-  // Update page title with branch tags for tab identification
-  const allTags = [...new Set(branches.flatMap(b => b.tags || []))];
-  if (allTags.length) {
-    document.title = `[${allTags.join(' · ')}] Cloud Dev Suite`;
-  } else {
-    document.title = 'Cloud Development Suite';
-  }
+  // Dashboard title stays constant — tag-based titles are for proxied preview pages only (widget-script.ts)
+  document.title = 'Cloud Dev Suite';
 }
 
 // ── Build profiles (data only) ──
