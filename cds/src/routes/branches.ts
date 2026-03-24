@@ -1225,7 +1225,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // ── Custom environment variables ──
 
   router.get('/env', (_req, res) => {
-    res.json({ env: maskSecrets(stateService.getCustomEnv()) });
+    res.json({ env: stateService.getCustomEnv() });
   });
 
   // Helper: sync CDS-relevant env vars into runtime config
@@ -1251,7 +1251,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     stateService.setCustomEnv(env);
     stateService.save();
     syncCdsConfig();
-    res.json({ message: '环境变量已更新', env: maskSecrets(env) });
+    res.json({ message: '环境变量已更新', env });
   });
 
   router.put('/env/:key', (req, res) => {
