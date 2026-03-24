@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link2, FileBarChart, Building2, Sparkles, ChevronRight } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { useAuthStore } from '@/stores/authStore';
+import { useReportAgentStore } from '@/stores/reportAgentStore';
 import { PersonalSourcesPanel } from './PersonalSourcesPanel';
 import { AiPromptSettingsPanel } from './AiPromptSettingsPanel';
 import { TeamAiPromptSettingsPanel } from './TeamAiPromptSettingsPanel';
@@ -66,16 +67,25 @@ const SECTIONS: SectionDef[] = [
 export function SettingsPanel() {
   const [activeSection, setActiveSection] = useState<SettingsSection>('overview');
   const permissions = useAuthStore((s) => s.permissions);
+  const teams = useReportAgentStore((s) => s.teams);
   const isSuper = permissions.includes('super');
+  const canSeeTeamAiPrompt = isSuper
+    || permissions.includes('report-agent.team.manage')
+    || teams.some((team) => team.canManageMembers || team.myRole === 'leader' || team.myRole === 'deputy');
 
   const visibleSections = SECTIONS.filter((s) => {
     if (s.isPersonal) return true;
+    if (s.key === 'team-ai-prompt') return canSeeTeamAiPrompt;
     if (!s.requirePerm) return true;
     return isSuper || permissions.includes(s.requirePerm);
   });
 
+  const safeActiveSection = activeSection === 'team-ai-prompt' && !canSeeTeamAiPrompt
+    ? 'overview'
+    : activeSection;
+
   // Overview — section cards
-  if (activeSection === 'overview') {
+  if (safeActiveSection === 'overview') {
     return (
       <div className="flex flex-col gap-4">
         {/* Personal section */}
@@ -118,7 +128,7 @@ export function SettingsPanel() {
   }
 
   // Sub-page with back navigation
-  const currentSection = SECTIONS.find((s) => s.key === activeSection);
+  const currentSection = SECTIONS.find((s) => s.key === safeActiveSection);
 
   return (
     <div className="flex flex-col gap-3 h-full">
@@ -134,11 +144,11 @@ export function SettingsPanel() {
         )}
       </button>
       <div className="flex-1 min-h-0">
-        {activeSection === 'my-sources' && <PersonalSourcesPanel />}
-        {activeSection === 'ai-prompt' && <AiPromptSettingsPanel />}
-        {activeSection === 'team-ai-prompt' && <TeamAiPromptSettingsPanel />}
-        {activeSection === 'templates' && <TemplateManager />}
-        {activeSection === 'teams' && <TeamManager />}
+        {safeActiveSection === 'my-sources' && <PersonalSourcesPanel />}
+        {safeActiveSection === 'ai-prompt' && <AiPromptSettingsPanel />}
+        {safeActiveSection === 'team-ai-prompt' && <TeamAiPromptSettingsPanel />}
+        {safeActiveSection === 'templates' && <TemplateManager />}
+        {safeActiveSection === 'teams' && <TeamManager />}
       </div>
     </div>
   );

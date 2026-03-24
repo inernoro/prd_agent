@@ -19,7 +19,7 @@ function pickManageableTeams(items: ReportTeam[]): ReportTeam[] {
     || team.myRole === 'leader'
     || team.myRole === 'deputy'
   );
-  return manageable.length > 0 ? manageable : items;
+  return manageable;
 }
 
 export function TeamAiPromptSettingsPanel() {

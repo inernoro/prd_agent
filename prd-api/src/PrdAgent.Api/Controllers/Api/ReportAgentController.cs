@@ -496,9 +496,8 @@ public class ReportAgentController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "团队不存在"));
 
         var hasTeamManagePermission = HasPermission(AdminPermissionCatalog.ReportAgentTeamManage);
-        var hasViewAll = HasPermission(AdminPermissionCatalog.ReportAgentViewAll);
         var isLeaderOrDeputy = team.LeaderUserId == userId || await IsTeamLeaderOrDeputy(id, userId);
-        if (!hasTeamManagePermission && !hasViewAll && !isLeaderOrDeputy)
+        if (!hasTeamManagePermission && !isLeaderOrDeputy)
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "缺少团队管理权限"));
 
         var customPrompt = NormalizeTeamAiSummaryPrompt(team.TeamSummaryPrompt);
@@ -517,9 +516,8 @@ public class ReportAgentController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "团队不存在"));
 
         var hasTeamManagePermission = HasPermission(AdminPermissionCatalog.ReportAgentTeamManage);
-        var hasViewAll = HasPermission(AdminPermissionCatalog.ReportAgentViewAll);
         var isLeaderOrDeputy = team.LeaderUserId == userId || await IsTeamLeaderOrDeputy(id, userId);
-        if (!hasTeamManagePermission && !hasViewAll && !isLeaderOrDeputy)
+        if (!hasTeamManagePermission && !isLeaderOrDeputy)
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "缺少团队管理权限"));
 
         var customPrompt = NormalizeTeamAiSummaryPrompt(req?.Prompt);
@@ -548,9 +546,8 @@ public class ReportAgentController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "团队不存在"));
 
         var hasTeamManagePermission = HasPermission(AdminPermissionCatalog.ReportAgentTeamManage);
-        var hasViewAll = HasPermission(AdminPermissionCatalog.ReportAgentViewAll);
         var isLeaderOrDeputy = team.LeaderUserId == userId || await IsTeamLeaderOrDeputy(id, userId);
-        if (!hasTeamManagePermission && !hasViewAll && !isLeaderOrDeputy)
+        if (!hasTeamManagePermission && !isLeaderOrDeputy)
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "缺少团队管理权限"));
 
         var update = Builders<ReportTeam>.Update
