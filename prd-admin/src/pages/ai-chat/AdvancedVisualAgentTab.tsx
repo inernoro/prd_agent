@@ -33,7 +33,6 @@ import {
   listWatermarksMarketplace,
   forkWatermark,
   clarifyImageGenPrompt,
-  planImageGen,
   refreshVisualAgentWorkspaceCover,
   saveVisualAgentWorkspaceCanvas,
   updateVisualAgentPreferences,
@@ -67,7 +66,6 @@ import { resolveImageRefs, buildRequestText } from '@/lib/imageRefResolver';
 import type { CanvasImageItem as ContractCanvasItem, ChipRef } from '@/lib/imageRefContract';
 import { moveUp, moveDown, bringToFront, sendToBack } from '@/lib/canvasLayerUtils';
 import { assignMissingRefIds, getMaxRefId } from '@/lib/visualAgentCanvasPersist';
-import type { ImageGenPlanResponse } from '@/services/contracts/imageGen';
 import type { ImageAsset, VisualAgentCanvas, VisualAgentWorkspace } from '@/services/contracts/visualAgent';
 import type { Model } from '@/types/admin';
 import {
@@ -1137,8 +1135,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   // 局部重绘（Inpainting）状态
   const [inpaintTarget, setInpaintTarget] = useState<CanvasImageItem | null>(null);
   // 提示词模式：按账号持久化（不写 DB）
-  // - 关闭：先调用 planImageGen 解析/改写成候选提示词，再生图
-  // - 开启：跳过解析，直接把输入原样作为 prompt 发给生图模型
+  // - 开启（智能优化）：调用 clarify API 将用户输入改写为英文生图提示词，再生图
+  // - 关闭（直连模式）：跳过 AI 处理，直接把输入原样作为 prompt 发给生图模型
   const directPromptKey = userId ? `prdAdmin.visualAgent.directPrompt.${userId}` : '';
   // 需求：直连作为默认值（首次进入默认开启）；若本地已有值则以本地为准
   const [directPrompt, setDirectPrompt] = useState(true);
@@ -3468,7 +3466,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       .map((img) => img.originalSha256 || img.sha256 || '')
       .filter((sha) => sha.length === 64);
 
-    let items: Array<{ prompt: string }> = [];
     let firstPrompt = '';
     if (directPrompt) {
       firstPrompt = stripModelMention(reqText) || stripModelMention(display) || '';
@@ -3490,24 +3487,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         // 澄清失败不阻断生图流程，静默降级使用原始 prompt
       }
     } else {
-      let plan: ImageGenPlanResponse | null = null;
-      try {
-        const pres = await planImageGen({ text: reqText, maxItems: 8 });
-        if (!pres.success) {
-          const msg = pres.error?.message || '解析失败';
-          pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: reqText || undefined, imageRefShas }));
-          return;
-        }
-        plan = pres.data ?? null;
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : '网络错误';
-        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: reqText || undefined, imageRefShas }));
+      // 直连模式：跳过 AI 处理，直接使用用户原始输入作为 prompt
+      firstPrompt = stripModelMention(reqText) || stripModelMention(display) || '';
+      if (!firstPrompt) {
+        const msg = '内容为空';
+        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: display || reqText || undefined, imageRefShas }));
         return;
       }
-
-      items = Array.isArray(plan?.items) ? (plan!.items as Array<{ prompt: string }>) : [];
-      const fallbackPrompt = stripModelMention(reqText) || reqText;
-      firstPrompt = String(items[0]?.prompt ?? '').trim() || fallbackPrompt;
     }
 
     const refDim =
@@ -8030,12 +8016,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             <div className="mt-0.5 text-[12px]" style={{ color: 'var(--text-muted)' }}>
                               {directPrompt
                                 ? '智能优化：自动将输入改写为明确的英文生图提示词'
-                                : '解析模式：通过意图模型从文本中提取图片清单'}
+                                : '直连模式：跳过 AI 处理，直接将原始输入发给生图模型'}
                             </div>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
                             <span className="text-[12px] font-semibold" style={{ color: directPrompt ? 'var(--color-success, #22c55e)' : 'var(--text-secondary)' }}>
-                              {directPrompt ? '智能优化' : '解析'}
+                              {directPrompt ? '智能优化' : '直连'}
                             </span>
                             <Switch
                               checked={directPrompt}
