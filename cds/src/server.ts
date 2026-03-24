@@ -472,7 +472,7 @@ export function createServer(deps: ServerDeps): express.Express {
     const branchMatch = req.path.match(/^\/branches\/([^/]+)/);
     const branchId = branchMatch ? branchMatch[1] : undefined;
     // Resolve branch tags for activity display (avoids frontend timing issues)
-    const branchTags = branchId ? (stateService.getBranch(branchId)?.tags ?? []) : [];
+    const branchTags = branchId ? (deps.stateService.getBranch(branchId)?.tags ?? []) : [];
 
     (res as any).end = function (...args: any[]) {
       const duration = Date.now() - start;
