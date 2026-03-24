@@ -1042,12 +1042,11 @@ button.text-btn:hover { color: var(--accent); }
   transition: color var(--transition);
 }
 a.branch-name:hover { color: var(--accent); }
-/* Quick actions (copy + jump) — visible on row hover */
+/* Quick actions (copy + jump) — visible on row hover, hidden otherwise to not steal branch name space */
 .branch-quick-actions {
-  display: inline-flex; gap: 2px; align-items: center;
-  opacity: 0; transition: opacity 0.15s ease; flex-shrink: 0;
+  display: none; gap: 2px; align-items: center; flex-shrink: 0;
 }
-.branch-card-row1:hover .branch-quick-actions { opacity: 1; }
+.branch-card-row1:hover .branch-quick-actions { display: inline-flex; }
 .branch-quick-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 22px; height: 22px; border: none; border-radius: 4px;
