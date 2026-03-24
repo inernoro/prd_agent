@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  Play, History, Loader2, CheckCircle2, AlertCircle,
+  Play, History, CheckCircle2, AlertCircle,
   ArrowDown, Download, ChevronDown, ChevronRight, FileText,
   ExternalLink, Settings2, XCircle, RefreshCw, HelpCircle, Zap,
   FlaskConical, Box, PenLine, Eye, Terminal, Trash2,
 } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useWorkflowStore } from '@/stores/workflowStore';
 import {
   createWorkflow, executeWorkflow, getExecution, getNodeLogs,
@@ -218,7 +219,7 @@ function StepStatusBadge({ status, durationMs }: { status: string; durationMs?: 
     </Badge>
   );
   if (status === 'running') return (
-    <Badge variant="featured" size="sm" icon={<Loader2 className="w-3 h-3 animate-spin" />}>
+    <Badge variant="featured" size="sm" icon={<MapSpinner size={12} />}>
       执行中
     </Badge>
   );
@@ -761,7 +762,7 @@ function CapsuleCatalogPanel({ onBack }: { onBack: () => void }) {
 
         {catalogLoading && (
           <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-5 h-5 animate-spin" style={{ color: 'var(--text-muted)' }} />
+            <MapSpinner size={20} color="var(--text-muted)" />
             <span className="ml-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>加载舱类型...</span>
           </div>
         )}
@@ -816,7 +817,7 @@ function CapsuleCatalogPanel({ onBack }: { onBack: () => void }) {
                               }}
                             >
                               {testingType === meta.typeKey
-                                ? <><Loader2 className="w-3 h-3 animate-spin" />测试中...</>
+                                ? <><MapSpinner size={12} />测试中...</>
                                 : <><FlaskConical className="w-3 h-3" />单舱测试</>
                               }
                             </button>
@@ -1318,7 +1319,7 @@ export function WorkflowAgentPage() {
         {/* ──── 加载中 ──── */}
         {pageLoading && (
           <div className="flex items-center justify-center py-16">
-            <Loader2 className="w-5 h-5 animate-spin" style={{ color: 'var(--text-muted)' }} />
+            <MapSpinner size={20} color="var(--text-muted)" />
             <span className="ml-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>加载中...</span>
           </div>
         )}
@@ -1358,7 +1359,7 @@ export function WorkflowAgentPage() {
                 <>
                   <GlassCard animated padding="none" className="flex-1" accentHue={234} glow>
                     <div className="flex items-center gap-3 px-4 py-3">
-                      <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" style={{ color: 'var(--accent-gold)' }} />
+                      <MapSpinner size={16} color="var(--accent-gold)" />
                       <span className="text-[12px] font-medium" style={{ color: 'var(--accent-gold)' }}>
                         执行中 — {completedCount}/{STEPS.length}
                         {runningNode ? ` ${runningNode.nodeName}...` : ''}
@@ -1379,7 +1380,7 @@ export function WorkflowAgentPage() {
                   disabled={isExecuting}
                 >
                   {isExecuting
-                    ? <><Loader2 className="w-4 h-4 animate-spin" />提交中...</>
+                    ? <><MapSpinner size={16} />提交中...</>
                     : <><Play className="w-4 h-4" />{latestExec ? '重新执行' : '开始执行'}</>
                   }
                 </Button>

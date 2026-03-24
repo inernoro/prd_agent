@@ -1,3 +1,4 @@
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useEffect, useState } from 'react';
 import { ArrowLeft, Play, RefreshCw, XCircle, Eye } from 'lucide-react';
 import { useWorkflowStore } from '@/stores/workflowStore';
@@ -105,7 +106,7 @@ export function ExecutionListPanel() {
       </div>
 
       {/* Loading */}
-      {loading && <div className="text-center py-8 text-muted-foreground text-sm">加载中...</div>}
+      {loading && <MapSectionLoader />}
 
       {/* Empty */}
       {!loading && executions.length === 0 && (

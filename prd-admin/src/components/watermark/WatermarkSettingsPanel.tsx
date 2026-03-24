@@ -1,3 +1,4 @@
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import {
   forwardRef,
   useCallback,
@@ -690,11 +691,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
   }), [handleAddConfig, activeConfig]);
 
   if (loading) {
-    return (
-      <div className="p-4 min-h-[260px] flex items-center justify-center rounded-[16px]" style={{ background: 'var(--bg-card)' }}>
-        <div className="text-sm" style={{ color: 'var(--text-muted)' }}>加载中...</div>
-      </div>
-    );
+    return <MapSectionLoader style={{ minHeight: 260 }} />;
   }
 
   return (

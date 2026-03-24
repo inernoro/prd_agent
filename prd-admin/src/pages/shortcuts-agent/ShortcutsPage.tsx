@@ -1,3 +1,4 @@
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useState, useEffect, useCallback } from 'react';
 import {
   Plus,
@@ -94,7 +95,7 @@ export default function ShortcutsPage() {
 
       {/* List */}
       {loading ? (
-        <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: 40 }}>加载中...</p>
+        <MapSectionLoader />
       ) : shortcuts.length === 0 ? (
         <div style={{
           textAlign: 'center', padding: '60px 20px',

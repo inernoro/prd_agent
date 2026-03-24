@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, ChevronDown, Eye, BookOpen, X } from 'lucide-react';
+import { ChevronDown, Eye, BookOpen, X } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { SubmissionDetailModal } from './SubmissionDetailModal';
 import {
   listPublicSubmissions,
@@ -417,7 +418,7 @@ export function ShowcaseGallery() {
                 }}
               >
                 {loadingMore ? (
-                  <Loader2 size={14} className="animate-spin" />
+                  <MapSpinner size={14} />
                 ) : (
                   <ChevronDown size={14} />
                 )}

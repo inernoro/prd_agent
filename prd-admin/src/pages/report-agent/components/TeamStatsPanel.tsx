@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { BarChart3, RefreshCw, Users, FileText, Sparkles } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { getTeamDashboard } from '@/services';
@@ -41,7 +42,7 @@ export function TeamStatsPanel({ teamId, weekYear, weekNumber }: TeamStatsPanelP
     return loading ? (
       <GlassCard className="p-3">
         <div className="flex items-center gap-2 text-[12px]" style={{ color: 'var(--text-tertiary)' }}>
-          <RefreshCw size={12} className="animate-spin" /> 加载团队数据...
+          <MapSpinner size={12} /> 加载团队数据...
         </div>
       </GlassCard>
     ) : null;
@@ -63,7 +64,7 @@ export function TeamStatsPanel({ teamId, weekYear, weekNumber }: TeamStatsPanelP
             </span>
           </div>
           <Button variant="secondary" size="sm" onClick={() => load()} disabled={loading}>
-            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+            {loading ? <MapSpinner size={12} /> : <RefreshCw size={12} />}
           </Button>
         </div>
 

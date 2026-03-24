@@ -1,4 +1,5 @@
-import { Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { CheckCircle2, AlertCircle } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import type { SsePhase } from '@/lib/useSseStream';
 
 interface SsePhaseBarProps {
@@ -32,7 +33,7 @@ export function SsePhaseBar({ phase, message, extra }: SsePhaseBarProps) {
       style={{ background: config.bg, border: `1px solid ${config.border}` }}
     >
       {phase === 'connecting' || phase === 'streaming' ? (
-        <Loader2 size={14} className="animate-spin flex-shrink-0" style={{ color: config.color }} />
+        <MapSpinner size={14} color={config.color} className="flex-shrink-0" />
       ) : phase === 'done' ? (
         <CheckCircle2 size={14} className="flex-shrink-0" style={{ color: config.color }} />
       ) : phase === 'error' ? (

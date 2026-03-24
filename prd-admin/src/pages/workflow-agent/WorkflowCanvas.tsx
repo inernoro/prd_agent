@@ -20,7 +20,7 @@ import '@xyflow/react/dist/style.css';
 import './workflow-canvas.css';
 
 import {
-  ArrowLeft, Save, Loader2, GripVertical,
+  ArrowLeft, Save, GripVertical,
   Plus, Trash2, X,
   Undo2, Redo2, LayoutGrid, Keyboard,
   ZoomIn, ZoomOut, Maximize2,
@@ -31,6 +31,7 @@ import {
 import { CapsuleNode, type CapsuleNodeData } from './CapsuleNode';
 import { FlowEdge } from './FlowEdge';
 import { getIconForCapsule, getEmojiForCapsule, getCategoryEmoji } from './capsuleRegistry';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { Button } from '@/components/design/Button';
 import { TabBar } from '@/components/design/TabBar';
 import { listCapsuleTypes, updateWorkflow, executeWorkflow, getExecution, cancelExecution, testRunCapsule } from '@/services';
@@ -996,7 +997,7 @@ function CanvasInner({
             )}
             {isRunning ? (
               <>
-                <Badge variant="featured" size="sm" icon={<Loader2 className="w-3 h-3 animate-spin" />}>
+                <Badge variant="featured" size="sm" icon={<MapSpinner size={12} />}>
                   执行中 {completedCount}/{totalNodes}
                 </Badge>
                 <Button variant="danger" size="xs" onClick={handleCancel}>
@@ -1012,7 +1013,7 @@ function CanvasInner({
                 disabled={isExecuting || nodes.length === 0}
               >
                 {isExecuting
-                  ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />提交中...</>
+                  ? <><MapSpinner size={14} />提交中...</>
                   : <><Play className="w-3.5 h-3.5" />{latestExec ? '重新执行' : '执行'}</>
                 }
               </Button>
@@ -1039,7 +1040,7 @@ function CanvasInner({
               onClick={handleSave}
               disabled={saving || !dirty}
             >
-              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+              {saving ? <MapSpinner size={14} /> : <Save className="w-3.5 h-3.5" />}
               {dirty ? '保存*' : '已保存'}
             </Button>
             <Button variant="ghost" size="xs" onClick={onBack}>
@@ -1942,7 +1943,7 @@ function NodeEditPanel({
                   onClick={onTestRun}
                   disabled={testRunning}
                 >
-                  {testRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <FlaskConical className="w-3 h-3" />}
+                  {testRunning ? <MapSpinner size={12} /> : <FlaskConical className="w-3 h-3" />}
                   单舱测试
                 </Button>
               )}
@@ -1953,7 +1954,7 @@ function NodeEditPanel({
                   onClick={onReplay}
                   disabled={testRunning}
                 >
-                  {testRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
+                  {testRunning ? <MapSpinner size={12} /> : <RotateCcw className="w-3 h-3" />}
                   回放
                 </Button>
               )}
@@ -1971,7 +1972,7 @@ function NodeEditPanel({
                 <div className="flex items-center gap-2">
                   {nodeExecution.status === 'completed' && <CheckCircle2 className="w-3.5 h-3.5" style={{ color: 'rgba(34,197,94,0.8)' }} />}
                   {nodeExecution.status === 'failed' && <AlertCircle className="w-3.5 h-3.5" style={{ color: 'rgba(239,68,68,0.8)' }} />}
-                  {nodeExecution.status === 'running' && <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: 'rgba(99,102,241,0.8)' }} />}
+                  {nodeExecution.status === 'running' && <MapSpinner size={14} color="rgba(99,102,241,0.8)" />}
                   <span className="text-[11px] font-medium" style={{ color: 'var(--text-primary, #e8e6e3)' }}>
                     {nodeExecution.status === 'completed' ? '执行完成' : nodeExecution.status === 'failed' ? '执行失败' : nodeExecution.status === 'running' ? '执行中...' : nodeExecution.status}
                   </span>

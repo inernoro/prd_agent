@@ -52,7 +52,8 @@ import type { LiteraryAgentModelPool, LiteraryAgentAllModelsResponse } from '@/s
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
 import { BatchSizePicker } from '@/components/ui/BatchSizePicker';
 import { ASPECT_OPTIONS, type SizesByResolution } from '@/lib/imageAspectOptions';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, Loader2, ArrowLeft } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -2485,7 +2486,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 {!thinkingContent && !rawMarkerOutput && (
                   <div className="h-full flex items-center justify-center">
                     <div className="flex flex-col items-center gap-3">
-                      <Loader2 size={28} className="animate-spin" style={{ color: 'rgba(168, 85, 247, 0.6)' }} />
+                      <MapSpinner size={28} color="rgba(168, 85, 247, 0.6)" />
                       <span className="text-xs" style={{ color: 'var(--text-muted)' }}>等待 AI 响应…</span>
                     </div>
                   </div>
@@ -2846,7 +2847,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     animation: 'pulse 2s ease-in-out infinite',
                   }}
                 >
-                  <Loader2 size={14} className="animate-spin" />
+                  <MapSpinner size={14} />
                   <span>AI 正在分析文章并生成配图标记…已识别 {markerRunItems.length} 个位置</span>
                 </div>
               )}
@@ -2925,7 +2926,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
                           {it.status === 'parsing' ? (
                             <>
-                              <Loader2 size={28} className="animate-spin" style={{ color: 'rgba(250, 204, 21, 0.7)' }} />
+                              <MapSpinner size={28} color="rgba(250, 204, 21, 0.7)" />
                               <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.5)' }}>解析尺寸…</span>
                             </>
                           ) : (

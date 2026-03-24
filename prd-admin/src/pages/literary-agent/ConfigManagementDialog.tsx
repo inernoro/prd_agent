@@ -1,3 +1,4 @@
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useState, useRef, useCallback, forwardRef, useImperativeHandle } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -396,11 +397,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
         ),
         renderMineContent: () => {
           if (loading.prompts) {
-            return (
-              <div className="flex-1 flex items-center justify-center">
-                <div className="text-sm" style={{ color: 'var(--text-muted)' }}>加载中...</div>
-              </div>
-            );
+            return <MapSectionLoader />;
           }
           if (myPrompts.length === 0) {
             return (
@@ -575,11 +572,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
         ),
         renderMineContent: () => {
           if (loading.refImages) {
-            return (
-              <div className="flex-1 flex items-center justify-center">
-                <div className="text-sm" style={{ color: 'var(--text-muted)' }}>加载中...</div>
-              </div>
-            );
+            return <MapSectionLoader />;
           }
           if (myReferenceImages.length === 0) {
             return (

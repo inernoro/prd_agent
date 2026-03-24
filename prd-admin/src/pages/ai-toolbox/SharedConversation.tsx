@@ -1,3 +1,4 @@
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
@@ -43,7 +44,7 @@ export function SharedConversation() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--bg-base, #0a0a0f)' }}>
-        <div className="text-sm" style={{ color: 'var(--text-muted, #888)' }}>加载中...</div>
+        <MapSectionLoader />
       </div>
     );
   }

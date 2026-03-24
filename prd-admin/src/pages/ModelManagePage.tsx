@@ -1,3 +1,4 @@
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { Badge } from '@/components/design/Badge';
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -35,7 +36,8 @@ import type { ModelAdapterInfoBrief } from '@/services/contracts/models';
 import type { Model, Platform } from '@/types/admin';
 import { ModelHealthStatus } from '@/types/modelGroup';
 import type { ModelGroupItem } from '@/types/modelGroup';
-import { Activity, Check, ChevronLeft, ChevronRight, Clock, Database, DatabaseZap, Eye, EyeOff, ImagePlus, LayoutGrid, Link2, Loader2, Minus, MoreVertical, Pencil, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Trash2 } from 'lucide-react';
+import { Activity, Check, ChevronLeft, ChevronRight, Clock, Database, DatabaseZap, Eye, EyeOff, ImagePlus, LayoutGrid, Link2, Minus, MoreVertical, Pencil, Plus, ScanEye, Search, Sparkles, Star, Trash2 } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { glassPanel } from '@/lib/glassStyles';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -1320,7 +1322,7 @@ export default function ModelManagePage() {
                 disabled={stubCreating}
                 title="点击添加平台，长按 3 秒添加桩"
               >
-                {stubCreating ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
+                {stubCreating ? <MapSpinner size={16} /> : <Plus size={16} />}
                 {stubCreating ? '创建中...' : '添加平台'}
               </Button>
               {/* 长按进度指示器 */}
@@ -1534,7 +1536,7 @@ export default function ModelManagePage() {
 
           <div className="flex-1 overflow-auto">
             {loading ? (
-              <div className="py-16 text-center" style={{ color: 'var(--text-muted)' }}>加载中...</div>
+              <MapSectionLoader />
             ) : selectedPlatform || isAll ? (
               <div className="p-4 space-y-6">
                 {selectedPlatform && (
@@ -1841,7 +1843,7 @@ export default function ModelManagePage() {
                                       title={testResult?.modelId === m.id && !testResult.ok ? testResult.msg : `测试：${m.name}`}
                                     >
                                       {testingModelId === m.id ? (
-                                        <RefreshCw size={16} className="animate-spin" />
+                                        <MapSpinner size={16} />
                                       ) : testResult?.modelId === m.id ? (
                                         testResult.ok ? <Check size={16} /> : <Minus size={16} />
                                       ) : (
@@ -2455,7 +2457,7 @@ export default function ModelManagePage() {
                   取消
                 </Button>
                 <Button variant="primary" size="sm" onClick={handleSaveModelPool} disabled={addToPoolSaving}>
-                  {addToPoolSaving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
+                  {addToPoolSaving ? <MapSpinner size={16} /> : <Check size={16} />}
                   创建模型池
                 </Button>
               </div>

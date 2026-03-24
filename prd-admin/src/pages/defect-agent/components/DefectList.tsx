@@ -1,3 +1,4 @@
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useMemo, useState } from 'react';
 import { useDefectStore } from '@/stores/defectStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -36,13 +37,7 @@ export function DefectList() {
   }, [filteredDefects]);
 
   if (loading) {
-    return (
-      <div className="h-full flex items-center justify-center">
-        <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
-          加载中...
-        </div>
-      </div>
-    );
+    return <MapSectionLoader />;
   }
 
   if (filteredDefects.length === 0) {

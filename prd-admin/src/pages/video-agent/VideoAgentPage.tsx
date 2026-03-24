@@ -14,7 +14,6 @@ import {
   Download,
   DownloadCloud,
   Video,
-  Loader2,
   Play,
   X,
   ImageIcon,
@@ -23,6 +22,7 @@ import {
   Bug,
 } from 'lucide-react';
 import { toast } from '@/lib/toast';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import {
   createVideoGenRunReal,
   listVideoGenRunsReal,
@@ -674,7 +674,7 @@ export const VideoAgentPage: React.FC = () => {
                 <div className="h-full flex flex-col">
                   {/* Header bar */}
                   <div className="flex items-center gap-2 mb-2 flex-shrink-0">
-                    <Loader2 size={14} className="animate-spin" style={{ color: 'rgba(236, 72, 153, 0.7)' }} />
+                    <MapSpinner size={14} color="rgba(236, 72, 153, 0.7)" />
                     <span className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>
                       {streamingText
                         ? 'AI 正在输出分镜脚本...'
@@ -722,7 +722,7 @@ export const VideoAgentPage: React.FC = () => {
                     )}
                     {!streamingThinking && !streamingText && (
                       <div className="flex flex-col items-center justify-center h-32 gap-2">
-                        <Loader2 size={24} className="animate-spin" style={{ color: 'rgba(236, 72, 153, 0.4)' }} />
+                        <MapSpinner size={24} color="rgba(236, 72, 153, 0.4)" />
                         <span className="text-xs" style={{ color: 'var(--text-muted)' }}>等待模型响应...</span>
                       </div>
                     )}
@@ -768,7 +768,7 @@ export const VideoAgentPage: React.FC = () => {
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-1.5 min-w-0">
                           {ACTIVE_STATUSES.includes(run.status) && (
-                            <Loader2 size={12} className="animate-spin flex-shrink-0" style={{ color: 'rgba(236, 72, 153, 0.7)' }} />
+                            <MapSpinner size={12} color="rgba(236, 72, 153, 0.7)" className="flex-shrink-0" />
                           )}
                           <span className="font-medium truncate" style={{ color: 'var(--text-primary)' }}>
                             {run.articleTitle || `任务 ${run.id.slice(0, 8)}`}
@@ -920,7 +920,7 @@ export const VideoAgentPage: React.FC = () => {
                   </span>
                   {selectedRun?.status === 'Scripting' && (
                     <span className="flex items-center gap-1 text-[10px]" style={{ color: 'rgba(236, 72, 153, 0.8)' }}>
-                      <Loader2 size={10} className="animate-spin" />
+                      <MapSpinner size={10} />
                       生成中...
                     </span>
                   )}
@@ -1056,7 +1056,7 @@ export const VideoAgentPage: React.FC = () => {
                       >
                         {showPlaceholder ? (
                           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-                            <Loader2 size={28} className="animate-spin" style={{ color: 'rgba(236, 72, 153, 0.7)' }} />
+                            <MapSpinner size={28} color="rgba(236, 72, 153, 0.7)" />
                             <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.5)' }}>渲染中…</span>
                           </div>
                         ) : canShow ? (
@@ -1117,7 +1117,7 @@ export const VideoAgentPage: React.FC = () => {
                       <div className="mt-1.5 flex items-center gap-2">
                         {scene.backgroundImageStatus === 'running' ? (
                           <div className="flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                            <Loader2 size={12} className="animate-spin" style={{ color: 'rgba(147, 197, 253, 0.7)' }} />
+                            <MapSpinner size={12} color="rgba(147, 197, 253, 0.7)" />
                             <span>背景图生成中...</span>
                           </div>
                         ) : scene.backgroundImageStatus === 'done' && scene.backgroundImageUrl ? (
@@ -1226,7 +1226,7 @@ export const VideoAgentPage: React.FC = () => {
             <PanelCard>
               <div className="space-y-3">
                 <div className="flex items-center gap-2">
-                  <Loader2 size={16} className="animate-spin" style={{ color: 'rgba(236, 72, 153, 0.7)' }} />
+                  <MapSpinner size={16} color="rgba(236, 72, 153, 0.7)" />
                   <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
                     渲染视频中...
                   </span>

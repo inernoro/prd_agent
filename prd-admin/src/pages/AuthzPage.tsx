@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Shield, Plus, RefreshCw, ChevronDown, User, X, UserCog, ShieldCheck } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { TabBar } from '@/components/design/TabBar';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
@@ -299,7 +300,7 @@ export default function AuthzPage() {
           color: 'var(--text-secondary)',
         }}
       >
-        <RefreshCw size={12} className={resetSubmitting ? 'animate-spin' : ''} />
+        {resetSubmitting ? <MapSpinner size={12} /> : <RefreshCw size={12} />}
       </button>
     </div>
   );

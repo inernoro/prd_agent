@@ -45,6 +45,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 
 function safeIdempotencyKey() {
   const c = typeof globalThis !== 'undefined' ? globalThis.crypto : undefined;
@@ -167,11 +168,11 @@ function CollectionDataViewerDialog({ open, onOpenChange, collectionName }: { op
             <Button variant={viewMode === 'table' ? 'primary' : 'secondary'} size="xs" onClick={() => setViewMode('table')}><Table size={13} />表格</Button>
             <Button variant={viewMode === 'json' ? 'primary' : 'secondary'} size="xs" onClick={() => setViewMode('json')}><Code size={13} />JSON</Button>
           </div>
-          <Button variant="secondary" size="xs" onClick={loadData} disabled={loading}><RefreshCw size={13} className={loading ? 'animate-spin' : ''} />刷新</Button>
+          <Button variant="secondary" size="xs" onClick={loadData} disabled={loading}>{loading ? <MapSpinner size={13} /> : <RefreshCw size={13} />}刷新</Button>
         </div>
         <div className="flex-1 overflow-auto rounded-[12px]" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--nested-block-border)' }}>
           {loading ? (
-            <div className="flex items-center justify-center h-full" style={{ color: 'var(--text-muted)' }}><RefreshCw size={20} className="animate-spin mr-2" />加载中...</div>
+            <div className="flex items-center justify-center h-full" style={{ color: 'var(--text-muted)' }}><MapSpinner size={20} /><span className="ml-2">加载中...</span></div>
           ) : viewMode === 'table' ? (
             <div className="overflow-auto">
               <table className="w-full text-sm">
@@ -267,7 +268,7 @@ function CollectionValidationDialog({ open, onOpenChange, collectionName, onRefr
         </div>
         <div className="flex-1 overflow-auto rounded-[12px]" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--nested-block-border)' }}>
           {loading ? (
-            <div className="flex items-center justify-center h-full" style={{ color: 'var(--text-muted)' }}><RefreshCw size={20} className="animate-spin mr-2" />扫描中...</div>
+            <div className="flex items-center justify-center h-full" style={{ color: 'var(--text-muted)' }}><MapSpinner size={20} /><span className="ml-2">扫描中...</span></div>
           ) : !data?.hasEntity ? (
             <div className="flex items-center justify-center h-full" style={{ color: 'var(--text-muted)' }}>该集合没有对应的实体类，无法进行字段匹配验证</div>
           ) : data.invalidItems.length === 0 ? (
@@ -292,7 +293,7 @@ function CollectionValidationDialog({ open, onOpenChange, collectionName, onRefr
           )}
         </div>
         <div className="flex items-center justify-end gap-2 pt-2" style={{ borderTop: '1px solid var(--nested-block-border)' }}>
-          <Button variant="secondary" size="sm" onClick={loadData} disabled={loading}><RefreshCw size={14} className={loading ? 'animate-spin' : ''} />重新扫描</Button>
+          <Button variant="secondary" size="sm" onClick={loadData} disabled={loading}>{loading ? <MapSpinner size={14} /> : <RefreshCw size={14} />}重新扫描</Button>
         </div>
       </div>
     } />
@@ -449,7 +450,7 @@ export default function DataManagePage() {
   return (
     <div className={`h-full min-h-0 flex flex-col overflow-x-hidden overflow-y-auto ${isMobile ? 'gap-4' : 'gap-5'}`}>
       <TabBar title="数据管理" icon={<Database size={16} />} actions={<>
-        <Button variant="secondary" size="sm" onClick={() => { void loadSummary(); void loadMappings(); }} disabled={loading || mappingsLoading}><RefreshCw size={14} className={loading || mappingsLoading ? 'animate-spin' : ''} />刷新</Button>
+        <Button variant="secondary" size="sm" onClick={() => { void loadSummary(); void loadMappings(); }} disabled={loading || mappingsLoading}>{loading || mappingsLoading ? <MapSpinner size={14} /> : <RefreshCw size={14} />}刷新</Button>
         <Button variant="primary" size="sm" onClick={() => setTransferOpen(true)}><Database size={14} />配置导入/导出</Button>
       </>} />
 
@@ -503,7 +504,7 @@ export default function DataManagePage() {
         </div>
         <div className="space-y-1.5 max-h-[400px] overflow-y-auto">
           {mappingsLoading ? (
-            <div className="flex items-center justify-center py-8" style={{ color: 'var(--text-muted)' }}><RefreshCw size={18} className="animate-spin mr-2" />扫描中...</div>
+            <div className="flex items-center justify-center py-8" style={{ color: 'var(--text-muted)' }}><MapSpinner size={18} /><span className="ml-2">扫描中...</span></div>
           ) : filteredMappings.length === 0 ? (
             <div className="text-center py-8 text-sm" style={{ color: 'var(--text-muted)' }}>无匹配结果</div>
           ) : (
@@ -533,7 +534,7 @@ export default function DataManagePage() {
         <div className="min-h-0 flex flex-col gap-4">
           {usersPurgeStep === 1 ? (<>
             <div className="rounded-[12px] p-4" style={{ background: 'linear-gradient(135deg, var(--bg-input) 0%, rgba(0,0,0,0.08) 100%)', border: '1px solid var(--border-subtle)' }}>
-              {usersPreviewLoading ? (<div className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-muted)' }}><RefreshCw size={14} className="animate-spin" />加载预览中...</div>) : usersPreview ? (
+              {usersPreviewLoading ? (<div className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-muted)' }}><MapSpinner size={14} />加载预览中...</div>) : usersPreview ? (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div><div className="text-xs" style={{ color: 'var(--text-muted)' }}>总用户</div><div className="text-xl font-bold mt-1" style={{ color: 'var(--text-primary)' }}>{fmtNum(usersPreview.totalUsers)}</div></div>
                   <div><div className="text-xs" style={{ color: 'var(--text-muted)' }}>管理员</div><div className="text-xl font-bold mt-1" style={{ color: 'rgba(34,197,94,0.95)' }}>{fmtNum(usersPreview.adminUsers)}</div></div>

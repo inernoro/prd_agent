@@ -10,7 +10,8 @@ import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { getAdminDocumentContent, getLlmLogDetail, getLlmLogs, getLlmLogsMeta, listUploadArtifacts, getReplayCurl } from '@/services';
 import type { LlmLogsMetaAppCallerCode } from '@/services/contracts/llmLogs';
 import type { LlmRequestLog, LlmRequestLogListItem, UploadArtifact } from '@/types/admin';
-import { CheckCircle, ChevronDown, Clock, Copy, Database, Eraser, Hash, HelpCircle, ImagePlus, Layers, Loader2, RefreshCw, Reply, ScanEye, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
+import { CheckCircle, ChevronDown, Clock, Copy, Database, Eraser, Hash, HelpCircle, ImagePlus, Layers, RefreshCw, Reply, ScanEye, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
+import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { AppCallerKeyIcon, getModelTypeIcon } from '@/lib/appCallerUtils';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { UserAvatar } from '@/components/ui/UserAvatar';
@@ -1225,7 +1226,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
     const v = (s || '').toLowerCase();
     if (v === 'succeeded') return <Badge variant="success" size="sm" icon={<CheckCircle size={10} />}>成功</Badge>;
     if (v === 'failed') return <Badge variant="danger" size="sm" icon={<XCircle size={10} />}>失败</Badge>;
-    if (v === 'running') return <Badge variant="featured" size="sm" icon={<Loader2 size={10} className="animate-spin" />}>进行中</Badge>;
+    if (v === 'running') return <Badge variant="featured" size="sm" icon={<MapSpinner size={10} />}>进行中</Badge>;
     if (v === 'cancelled') return <Badge variant="warning" size="sm" icon={<StopCircle size={10} />}>已取消</Badge>;
     return <Badge variant="subtle" size="sm">{s || '-'}</Badge>;
   };
@@ -1319,7 +1320,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                 onClick={() => load()}
                 disabled={loading}
               >
-                <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+                {loading ? <MapSpinner size={16} /> : <RefreshCw size={16} />}
                 刷新
               </Button>
             </div>
@@ -1416,7 +1417,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
         <div className="flex-1 min-h-0 overflow-auto">
           <div className="divide-y divide-white/10">
           {loading ? (
-            <div className="py-12 text-center" style={{ color: 'var(--text-muted)' }}>加载中...</div>
+            <MapSectionLoader />
           ) : items.length === 0 ? (
             <div className="py-12 text-center" style={{ color: 'var(--text-muted)' }}>暂无日志</div>
           ) : (
@@ -2108,7 +2109,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                     />
                     {autoRefreshing ? (
                       <div className="flex items-center gap-1.5">
-                        <Loader2 size={12} className="animate-spin" style={{ color: 'rgba(34,197,94,0.95)' }} />
+                        <MapSpinner size={12} color="rgba(34,197,94,0.95)" />
                         <span className="text-[11px] font-semibold" style={{ color: 'rgba(34,197,94,0.95)' }}>
                           自动刷新中
                         </span>
@@ -2319,7 +2320,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                               <div className="rounded-[12px] flex items-center justify-center" style={{ border: '1px solid var(--border-default)', background: 'rgba(0,0,0,0.18)', flex: 1, minHeight: 120 }}>
                                 {detail?.status === 'running' ? (
                                   <div className="flex flex-col items-center gap-2">
-                                    <Loader2 size={24} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
+                                    <MapSpinner size={24} color="var(--text-muted)" />
                                     <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>生成中…</div>
                                   </div>
                                 ) : detail?.status === 'failed' || detail?.status === 'cancelled' ? (

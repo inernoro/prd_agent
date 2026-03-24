@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
-import { RefreshCw, Trash2, Zap, CheckCircle2, Clock, AlertCircle, Download } from 'lucide-react';
+import { Trash2, Zap, CheckCircle2, Clock, AlertCircle, Download } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import {
   getDesktopUpdateCaches,
   triggerDesktopUpdateCache,
@@ -119,7 +120,7 @@ export function UpdateAccelerationSettings() {
       {/* 操作按钮 */}
       <div className="flex items-center gap-2 flex-wrap">
         <Button variant="secondary" size="sm" onClick={() => void load()} disabled={loading}>
-          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+          {loading ? <MapSpinner size={14} /> : null}
           刷新
         </Button>
         {KNOWN_TARGETS.slice(0, 3).map((target) => (
@@ -130,7 +131,7 @@ export function UpdateAccelerationSettings() {
             onClick={() => void handleTrigger(target)}
             disabled={triggering === target}
           >
-            {triggering === target ? <RefreshCw size={14} className="animate-spin" /> : <Zap size={14} />}
+            {triggering === target ? <MapSpinner size={14} /> : <Zap size={14} />}
             缓存 {TARGET_LABELS[target] ?? target}
           </Button>
         ))}

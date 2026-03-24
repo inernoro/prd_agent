@@ -2,11 +2,12 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Crown, Users, Bot, DollarSign, Link2, TrendingUp,
   MessageSquare, Image, Bug, Zap, Activity,
-  BarChart3, RefreshCw, Loader2,
+  BarChart3, RefreshCw,
   ArrowUpDown, ChevronUp, ChevronDown, Info,
   Cpu, Sparkles, FileText,
 } from 'lucide-react';
 import { TabBar } from '@/components/design/TabBar';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import CountUp from '@/components/reactbits/CountUp';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { EChart } from '@/components/charts/EChart';
@@ -1059,7 +1060,7 @@ export default function ExecutiveDashboardPage() {
               style={{ color: refreshing ? D.primary : D.text3 }}
               title="刷新数据"
             >
-              {refreshing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+              {refreshing ? <MapSpinner size={14} /> : <RefreshCw size={14} />}
             </button>
           </div>
         )}

@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Search,
-  Loader2,
   ArrowRight,
   FileText,
   Palette,
@@ -23,6 +22,7 @@ import {
   Zap,
   type LucideIcon,
 } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useToolboxStore } from '@/stores/toolboxStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -558,11 +558,7 @@ export default function AgentLauncherPage() {
           {/* ── Loading ── */}
           {itemsLoading ? (
             <div className="flex items-center justify-center h-48">
-              <Loader2
-                size={24}
-                className="animate-spin"
-                style={{ color: 'var(--accent-primary)' }}
-              />
+              <MapSpinner size={24} color="var(--accent-primary)" />
             </div>
           ) : searchQuery.trim() ? (
             /* ── Search results ── */

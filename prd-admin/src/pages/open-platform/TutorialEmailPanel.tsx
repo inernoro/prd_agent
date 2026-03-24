@@ -2,10 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import {
-  Sparkles, Send, Save, Eye, Loader2, RefreshCw, Code2,
+  Sparkles, Send, Save, Eye, RefreshCw, Code2,
   Trash2, FileText, Users, Clock, CheckCircle, XCircle,
   ChevronDown, ChevronUp, Mail, Copy, Download,
 } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import {
   generateTutorialEmailTemplate,
   quickSendTutorialEmail,
@@ -338,7 +339,7 @@ function ComposeView() {
                 <Save size={12} /> 存模板
               </label>
               <Button onClick={handleQuickSend} disabled={sending} size="sm">
-                {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                {sending ? <MapSpinner size={14} /> : <Send size={14} />}
                 发送
               </Button>
             </div>
@@ -448,7 +449,7 @@ function ComposeView() {
                 <div className="flex justify-start">
                   <div className="px-3 py-2 rounded-xl text-sm flex items-center gap-2"
                     style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', color: 'var(--text-muted)', borderBottomLeftRadius: 4 }}>
-                    <Loader2 size={14} className="animate-spin" />
+                    <MapSpinner size={14} />
                     AI 正在生成邮件...
                   </div>
                 </div>
@@ -477,7 +478,7 @@ function ComposeView() {
               size="sm"
               style={{ flexShrink: 0 }}
             >
-              {generating ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+              {generating ? <MapSpinner size={14} /> : <Send size={14} />}
             </Button>
           </div>
         </div>

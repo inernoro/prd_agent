@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { FileText, Users, Settings, RefreshCw, HelpCircle } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
@@ -133,7 +134,7 @@ export default function ReportAgentPage() {
       {loading && !error && (
         <GlassCard glow className="py-3 px-3">
           <div className="text-[12px] flex items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
-            <RefreshCw size={12} className="animate-spin" />
+            <MapSpinner size={12} />
             加载中...
           </div>
         </GlassCard>

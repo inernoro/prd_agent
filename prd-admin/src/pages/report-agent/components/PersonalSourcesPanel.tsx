@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Github, BookOpen, Plus, RefreshCw, Trash2, TestTube, Link2, Check, X, Database } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
@@ -164,7 +165,7 @@ export function PersonalSourcesPanel() {
           </div>
           <div className="flex gap-2">
             <Button variant="secondary" size="sm" onClick={() => load()} disabled={loading}>
-              <RefreshCw size={12} className={loading ? 'animate-spin' : ''} /> 刷新
+              {loading ? <MapSpinner size={12} /> : <RefreshCw size={12} />} 刷新
             </Button>
           </div>
         </div>
@@ -220,7 +221,7 @@ export function PersonalSourcesPanel() {
                 className="whitespace-nowrap"
               >
                 {togglingAiSourceKey === source.key ? (
-                  <><RefreshCw size={12} className="animate-spin" /> 更新中...</>
+                  <><MapSpinner size={12} /> 更新中...</>
                 ) : source.enabled ? (
                   <><Check size={12} /> 已开启</>
                 ) : (
@@ -360,7 +361,7 @@ export function PersonalSourcesPanel() {
                       <TestTube size={13} className={testingId === source.id ? 'animate-pulse' : ''} />
                     </Button>
                     <Button variant="ghost" size="sm" onClick={() => handleSync(source.id)} disabled={syncingId === source.id} title="同步数据">
-                      <RefreshCw size={13} className={syncingId === source.id ? 'animate-spin' : ''} />
+                      {syncingId === source.id ? <MapSpinner size={13} /> : <RefreshCw size={13} />}
                     </Button>
                     <Button variant="ghost" size="sm" onClick={() => handleDelete(source.id)} title="解除绑定">
                       <Trash2 size={13} />

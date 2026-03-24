@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Workflow, Play, RefreshCw, Clock, CheckCircle2, XCircle, AlertCircle } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { getTeamWorkflow, runTeamWorkflow } from '@/services';
@@ -50,7 +51,7 @@ export function TeamWorkflowPanel({ teamId }: TeamWorkflowPanelProps) {
     return (
       <GlassCard className="p-3">
         <div className="flex items-center gap-2 text-[12px]" style={{ color: 'var(--text-tertiary)' }}>
-          <RefreshCw size={12} className="animate-spin" /> 加载工作流信息...
+          <MapSpinner size={12} /> 加载工作流信息...
         </div>
       </GlassCard>
     );
@@ -88,7 +89,7 @@ export function TeamWorkflowPanel({ teamId }: TeamWorkflowPanelProps) {
         </div>
         <div className="flex gap-2">
           <Button variant="secondary" size="sm" onClick={() => load()} disabled={loading}>
-            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+            {loading ? <MapSpinner size={12} /> : <RefreshCw size={12} />}
           </Button>
           <Button variant="primary" size="sm" onClick={handleRun} disabled={running}>
             <Play size={12} className={running ? 'animate-pulse' : ''} />
@@ -106,7 +107,7 @@ export function TeamWorkflowPanel({ teamId }: TeamWorkflowPanelProps) {
       {lastExec && (
         <div className="flex items-center gap-3 text-[12px] pt-1" style={{ borderTop: '1px solid var(--border-primary)' }}>
           <div className="flex items-center gap-1">
-            <StatusIcon size={12} style={{ color: statusCfg?.color }} className={lastExec.status === 'running' ? 'animate-spin' : ''} />
+            {lastExec.status === 'running' ? <MapSpinner size={12} color={statusCfg?.color} /> : <StatusIcon size={12} style={{ color: statusCfg?.color }} />}
             <span style={{ color: statusCfg?.color }}>{statusCfg?.label || lastExec.status}</span>
           </div>
           <div style={{ color: 'var(--text-tertiary)' }}>

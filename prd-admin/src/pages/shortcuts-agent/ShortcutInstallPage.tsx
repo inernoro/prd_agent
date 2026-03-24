@@ -1,3 +1,4 @@
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useState, useEffect } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 
@@ -86,10 +87,7 @@ export default function ShortcutInstallPage() {
   if (!data) {
     return (
       <div style={containerStyle}>
-        <div style={cardStyle}>
-          <div style={{ fontSize: 48, marginBottom: 16 }}>⏳</div>
-          <p style={{ fontSize: 16, color: 'rgba(255,255,255,0.7)' }}>加载中...</p>
-        </div>
+        <MapSectionLoader />
       </div>
     );
   }

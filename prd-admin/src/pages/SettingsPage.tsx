@@ -7,6 +7,7 @@ import { Button } from '@/components/design/Button';
 import { useNavOrderStore } from '@/stores/navOrderStore';
 import { useAuthStore } from '@/stores/authStore';
 import { GripVertical, Palette, RefreshCw, RotateCcw, Image, UserCog, Database, ListOrdered, Zap } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import * as LucideIcons from 'lucide-react';
 import { ThemeSkinEditor } from '@/pages/settings/ThemeSkinEditor';
 import AssetsManagePage from '@/pages/AssetsManagePage';
@@ -123,7 +124,7 @@ function NavOrderSettings() {
       {/* 操作按钮 */}
       <div className="flex items-center gap-2 shrink-0">
         <Button variant="secondary" size="sm" onClick={() => void loadFromServer()} disabled={saving}>
-          <RefreshCw size={14} className={saving ? 'animate-spin' : ''} />
+          {saving ? <MapSpinner size={14} /> : <RefreshCw size={14} />}
           刷新
         </Button>
         <Button variant="secondary" size="sm" onClick={handleReset} disabled={saving}>
@@ -146,7 +147,7 @@ function NavOrderSettings() {
             </div>
             {saving && (
               <div className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--text-muted)' }}>
-                <RefreshCw size={12} className="animate-spin" />
+                <MapSpinner size={12} />
                 保存中...
               </div>
             )}

@@ -1,11 +1,13 @@
 import { Dialog } from '@/components/ui/Dialog';
 import { ModelListItem } from '@/components/model/ModelListItem';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import type { PoolPrediction, PredictionStep, PredictionEndpoint } from '@/types';
 import {
-  Loader2, Radar, Zap, GitBranch, RotateCw, Shuffle, Timer,
+  Radar, Zap, GitBranch, RotateCw, Shuffle, Timer,
   ArrowRight, Check, X, CircleDot, ChevronRight,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 
 interface PoolPredictionDialogProps {
   open: boolean;
@@ -48,8 +50,7 @@ export function PoolPredictionDialog({ open, onOpenChange, prediction, loading, 
         <div className="min-h-[280px]">
           {loading ? (
             <div className="flex flex-col items-center justify-center py-16 gap-3">
-              <Loader2 size={28} className="animate-spin" style={{ color: 'rgba(56,189,248,0.6)' }} />
-              <span className="text-[13px]" style={{ color: 'var(--text-muted)' }}>正在分析调度路径...</span>
+              <MapSectionLoader text="正在分析调度路径..." />
             </div>
           ) : prediction ? (
             <PredictionContent prediction={prediction} platformNameById={platformNameById} />
@@ -558,7 +559,7 @@ function RoundRobinViz({ steps, endpoints, color, phase, platformNameById }: Viz
           className="flex items-center gap-2 px-4 py-1.5 rounded-lg text-[11px] font-semibold"
           style={{ background: `${color}10`, border: `1px solid ${color}20`, color }}
         >
-          <RotateCw size={12} className={phase >= steps.length ? 'animate-spin' : ''} style={{ animationDuration: '3s' }} />
+          {phase >= steps.length ? <MapSpinner size={12} /> : <RotateCw size={12} />}
           轮询调度
         </div>
       </div>

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo, type KeyboardEvent } from 'react';
-import { Send, X, Code, Loader2, CheckCircle2, Wand2, AlertTriangle } from 'lucide-react';
+import { Send, X, Code, CheckCircle2, Wand2, AlertTriangle } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { Button } from '@/components/design/Button';
 import { useSseStream } from '@/lib/useSseStream';
 import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
@@ -471,7 +472,7 @@ function ChatMessage({
         {message.content}
         {message.isStreaming && (
           <span style={{ display: 'inline-block', marginLeft: 4 }}>
-            <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} />
+            <MapSpinner size={12} />
           </span>
         )}
       </div>

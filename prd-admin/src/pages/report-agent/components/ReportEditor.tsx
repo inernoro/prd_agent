@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, type ClipboardEvent } from 'react';
-import { ArrowLeft, Save, Send, Plus, Trash2, Sparkles, RefreshCw, FileText } from 'lucide-react';
+import { ArrowLeft, Save, Send, Plus, Trash2, Sparkles, FileText } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
@@ -575,7 +576,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                   className="whitespace-nowrap"
                 >
                   {createModeLoading === WeeklyReportCreationMode.AiDraft ? (
-                    <><RefreshCw size={13} className="animate-spin" /> 生成中...</>
+                    <><MapSpinner size={13} /> 生成中...</>
                   ) : (
                     <><Sparkles size={13} /> AI生成周报草稿</>
                   )}
@@ -647,7 +648,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
               {canGenerate && (
                 <Button variant="secondary" size="sm" onClick={handleGenerate} disabled={generating || saving || deleting}>
                   {generating ? (
-                    <><RefreshCw size={13} className="animate-spin" /> 生成中...</>
+                    <><MapSpinner size={13} /> 生成中...</>
                   ) : (
                     <><Sparkles size={13} /> AI重新生成草稿</>
                   )}

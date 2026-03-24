@@ -18,7 +18,6 @@ import {
   Copy,
   Filter,
   Hash,
-  Loader2,
   Monitor,
   Server,
   Sparkles,
@@ -26,6 +25,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useSearchParams } from 'react-router-dom';
 
 function codeBoxStyle(): React.CSSProperties {
@@ -99,7 +99,7 @@ function buildMetaLabel(args: {
 
 function statusBadge(statusCode: number, status?: string | null) {
   // 请求状态优先（running/timeout）
-  if (status === 'running') return <Badge variant="featured" size="sm" icon={<Loader2 size={10} className="animate-spin" />}>进行中</Badge>;
+  if (status === 'running') return <Badge variant="featured" size="sm" icon={<MapSpinner size={10} />}>进行中</Badge>;
   if (status === 'timeout') return <Badge variant="warning" size="sm" icon={<AlertTriangle size={10} />}>超时</Badge>;
   // HTTP 状态码
   if (statusCode >= 200 && statusCode < 300) return <Badge variant="success" size="sm" icon={<CheckCircle size={10} />}>{statusCode} 成功</Badge>;
@@ -533,7 +533,7 @@ export default function SystemLogsTab() {
               <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
                 进行中 ({runningItems.length})
               </span>
-              {runningLoading && <Loader2 size={12} className="animate-spin" style={{ color: 'var(--text-muted)' }} />}
+              {runningLoading && <MapSpinner size={12} color="var(--text-muted)" />}
             </div>
             <div className="grid gap-2">
               {runningItems.map((it) => (
@@ -579,7 +579,7 @@ export default function SystemLogsTab() {
           <div className="flex-1 min-h-0 overflow-auto grid gap-2 content-start">
             {loading && (
               <div className="text-sm flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
-                <Loader2 size={16} className="animate-spin" />
+                <MapSpinner size={16} />
                 加载中…
               </div>
             )}
@@ -678,7 +678,7 @@ export default function SystemLogsTab() {
 
           {detailLoading && (
             <div className="text-sm flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
-              <Loader2 size={16} className="animate-spin" />
+              <MapSpinner size={16} />
               加载详情中…
             </div>
           )}
@@ -761,7 +761,7 @@ export default function SystemLogsTab() {
                   >
                     {relatedLlmLoading ? (
                       <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--text-muted)' }}>
-                        <Loader2 size={14} className="animate-spin" />
+                        <MapSpinner size={14} />
                         加载中...
                       </div>
                     ) : relatedLlmLogs.length === 0 ? (

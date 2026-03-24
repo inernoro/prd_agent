@@ -8,7 +8,6 @@ import {
   Clock,
   ExternalLink,
   FileText,
-  Loader2,
   LogOut,
   Sparkles,
   UserMinus,
@@ -17,6 +16,7 @@ import {
   X,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
@@ -673,7 +673,7 @@ export function TeamDashboard() {
               </Button>
               {summaryView?.canGenerateSummary && (
                 <Button variant="primary" size="sm" onClick={handleGenerateSummary} disabled={generatingSummary}>
-                  {generatingSummary ? <Loader2 size={13} className="animate-spin mr-1" /> : <Sparkles size={13} className="mr-1" />}
+                  {generatingSummary ? <MapSpinner size={13} /> : <Sparkles size={13} className="mr-1" />}
                   {summaryView?.summary ? '重新生成' : '生成汇总'}
                 </Button>
               )}

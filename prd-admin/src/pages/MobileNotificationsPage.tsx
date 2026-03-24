@@ -4,10 +4,10 @@ import {
   CheckCircle2,
   Download,
   Paperclip,
-  Loader2,
 } from 'lucide-react';
 import { getAdminNotifications, handleAdminNotification, handleAllAdminNotifications } from '@/services';
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 
 /* ── 通知色调 ── */
 const notificationTone = {
@@ -148,7 +148,7 @@ export default function MobileNotificationsPage() {
                       disabled={isHandling}
                     >
                       {isHandling
-                        ? <Loader2 size={14} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
+                        ? <MapSpinner size={14} color="var(--text-muted)" />
                         : <CheckCircle2 size={14} style={{ color: 'var(--text-secondary)' }} />
                       }
                     </button>

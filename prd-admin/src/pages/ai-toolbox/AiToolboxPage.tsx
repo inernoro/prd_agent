@@ -2,7 +2,8 @@ import { useEffect, useMemo } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar, type TabBarItem } from '@/components/design/TabBar';
 import { useToolboxStore, type ToolboxCategory, type ToolboxPageTab } from '@/stores/toolboxStore';
-import { Package, Search, Plus, Loader2, Sparkles, Boxes, User, Wrench, Star } from 'lucide-react';
+import { Package, Search, Plus, Sparkles, Boxes, User, Wrench, Star } from 'lucide-react';
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { Button } from '@/components/design/Button';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { ToolCard } from './components/ToolCard';
@@ -166,16 +167,7 @@ export default function AiToolboxPage() {
       <div className="flex-1 min-h-0 overflow-auto px-4 pb-3">
         {itemsLoading ? (
           <div className="flex items-center justify-center h-48">
-            <div className="text-center">
-              <Loader2
-                size={28}
-                className="animate-spin mx-auto mb-2"
-                style={{ color: 'var(--accent-primary)' }}
-              />
-              <div className="text-xs" style={{ color: 'rgba(255, 255, 255, 0.5)' }}>
-                加载中...
-              </div>
-            </div>
+            <MapSectionLoader text="加载中..." />
           </div>
         ) : filteredItems.length === 0 ? (
           <GlassCard animated variant="subtle" className="flex flex-col items-center justify-center h-48 gap-3">

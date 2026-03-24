@@ -2,7 +2,8 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
 import { useToolboxStore } from '@/stores/toolboxStore';
-import { ArrowLeft, Loader2, Check, AlertCircle, RotateCcw, Copy } from 'lucide-react';
+import { ArrowLeft, Check, AlertCircle, RotateCcw, Copy } from 'lucide-react';
+import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useState } from 'react';
 
 export function ToolRunner() {
@@ -56,7 +57,7 @@ export function ToolRunner() {
         <GlassCard animated className="p-4 flex items-center gap-3">
           {isRunning && (
             <>
-              <Loader2 size={20} className="animate-spin" style={{ color: 'var(--accent-primary)' }} />
+              <MapSpinner size={20} color="var(--accent-primary)" />
               <span style={{ color: 'var(--text-primary)' }}>正在执行...</span>
             </>
           )}
@@ -124,16 +125,7 @@ export function ToolRunner() {
             </div>
           ) : isRunning ? (
             <div className="flex items-center justify-center h-32">
-              <div className="text-center">
-                <Loader2
-                  size={24}
-                  className="animate-spin mx-auto mb-2"
-                  style={{ color: 'var(--text-muted)' }}
-                />
-                <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                  等待响应...
-                </div>
-              </div>
+              <MapSectionLoader text="等待响应..." />
             </div>
           ) : null}
         </GlassCard>

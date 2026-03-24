@@ -6,11 +6,11 @@ import type { DirectChatMessage } from '@/services';
 import type { ModelGroup } from '@/types/modelGroup';
 import type { Workflow } from '@/services/contracts/workflowAgent';
 import type { LucideIcon } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import {
   ArrowLeft,
   ArrowRight,
   Save,
-  Loader2,
   Sparkles,
   ChevronRight,
   Settings2,
@@ -345,7 +345,7 @@ function PromptExpandModal({
           </div>
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="sm" onClick={onPolish} disabled={polishing || !value.trim()}>
-              {polishing ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+              {polishing ? <MapSpinner size={12} /> : <Sparkles size={12} />}
               AI 润色
             </Button>
             <button
@@ -545,7 +545,7 @@ function TestChatPanel({
             >
               {streamingText || (
                 <span className="flex items-center gap-2" style={{ color: 'rgba(255,255,255,0.4)' }}>
-                  <Loader2 size={12} className="animate-spin" /> 思考中...
+                  <MapSpinner size={12} /> 思考中...
                 </span>
               )}
             </div>
@@ -675,7 +675,7 @@ export function QuickCreateWizard() {
     if (workflowsLoading) {
       return (
         <div className="flex items-center gap-2 py-2" style={{ color: 'rgba(255, 255, 255, 0.5)' }}>
-          <Loader2 size={12} className="animate-spin" />
+          <MapSpinner size={12} />
           <span className="text-[10px]">加载工作流...</span>
         </div>
       );
@@ -1191,7 +1191,7 @@ export function QuickCreateWizard() {
               </div>
               <div className="flex items-center gap-1.5">
                 <Button variant="ghost" size="sm" className="h-7 text-[11px] gap-1" onClick={handlePolish} disabled={polishing || !form.prompt.trim()}>
-                  {polishing ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />}
+                  {polishing ? <MapSpinner size={11} /> : <Sparkles size={11} />}
                   AI 润色
                 </Button>
                 <button
@@ -1376,7 +1376,7 @@ export function QuickCreateWizard() {
               <div className="flex items-center gap-2">
                 <Sparkles size={14} style={{ color: 'rgb(192, 132, 252)' }} />
                 <span className="text-[13px] font-semibold" style={{ color: 'rgba(255, 255, 255, 0.95)' }}>AI 润色结果</span>
-                {polishing && <Loader2 size={13} className="animate-spin" style={{ color: 'rgb(192, 132, 252)' }} />}
+                {polishing && <MapSpinner size={13} color="rgb(192, 132, 252)" />}
               </div>
               <button onClick={handleCancelPolish} className="p-1.5 rounded-lg hover:bg-white/10" style={{ color: 'rgba(255,255,255,0.4)' }}>
                 <X size={16} />
@@ -1440,7 +1440,7 @@ export function QuickCreateWizard() {
             <div className="px-3 pb-3">
               <div className="flex items-center justify-end gap-1 mb-2">
                 <Button variant="ghost" size="sm" className="h-6 text-[10px] gap-1 px-2" onClick={handlePolish} disabled={polishing || !form.prompt.trim()}>
-                  {polishing ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />}
+                  {polishing ? <MapSpinner size={10} /> : <Sparkles size={10} />}
                   润色
                 </Button>
                 <button onClick={() => setShowExpandEditor(true)} className="p-1 rounded hover:bg-white/10" style={{ color: 'rgba(255,255,255,0.4)' }} title="全屏编辑">
@@ -1690,7 +1690,7 @@ export function QuickCreateWizard() {
             )}
             {step === 2 && (
               <Button variant="primary" size="sm" onClick={handleSave} disabled={saving || !form.name.trim() || !form.prompt.trim()}>
-                {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+                {saving ? <MapSpinner size={13} /> : <Save size={13} />}
                 创建智能体
               </Button>
             )}

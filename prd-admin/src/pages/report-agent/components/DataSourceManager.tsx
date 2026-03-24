@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Plus, Pencil, Trash2, RefreshCw, CheckCircle, XCircle, GitBranch } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
@@ -196,7 +197,7 @@ export function DataSourceManager() {
     return (
       <GlassCard className="p-8 text-center">
         <div className="text-[12px] flex items-center gap-2 justify-center" style={{ color: 'var(--text-muted)' }}>
-          <RefreshCw size={12} className="animate-spin" /> 加载数据源...
+          <MapSpinner size={12} /> 加载数据源...
         </div>
       </GlassCard>
     );
@@ -282,7 +283,7 @@ export function DataSourceManager() {
                     disabled={testingId === ds.id}
                   >
                     {testingId === ds.id ? (
-                      <><RefreshCw size={12} className="animate-spin" /> 测试中...</>
+                      <><MapSpinner size={12} /> 测试中...</>
                     ) : (
                       <><CheckCircle size={12} /> 测试连接</>
                     )}
@@ -294,7 +295,7 @@ export function DataSourceManager() {
                     disabled={syncingId === ds.id}
                   >
                     {syncingId === ds.id ? (
-                      <><RefreshCw size={12} className="animate-spin" /> 同步中...</>
+                      <><MapSpinner size={12} /> 同步中...</>
                     ) : (
                       <><RefreshCw size={12} /> 手动同步</>
                     )}

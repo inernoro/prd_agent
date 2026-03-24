@@ -1,3 +1,4 @@
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
 import { SizePickerButton } from '@/components/visual-agent/SizePickerPanel';
 import { glassToolbar, glassInputArea } from '@/lib/glassStyles';
@@ -1068,13 +1069,7 @@ function ProjectCarousel(props: {
   const { items, loading, onCreate, onRename, onShare, onDelete, onOpen } = props;
 
   if (loading) {
-    return (
-      <div className="px-5 py-8">
-        <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
-          加载中...
-        </div>
-      </div>
-    );
+    return <MapSectionLoader />;
   }
 
   return (

@@ -8,7 +8,6 @@ import {
   Check,
   Minus,
   Plus,
-  Loader2,
   Square,
   RectangleHorizontal,
 } from 'lucide-react';
@@ -17,6 +16,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { api } from '@/services/api';
 import { toast } from '@/lib/toast';
 import { ASPECT_OPTIONS, type AspectOptionId } from '@/lib/imageAspectOptions';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 
 // ─── Types ────────────────────────────────────────────
 
@@ -647,7 +647,7 @@ export function DrawingBoardDialog({
               >
                 {msg.content || (
                   <span className="inline-flex items-center gap-1" style={{ color: 'rgba(255,255,255,0.4)' }}>
-                    <Loader2 size={12} className="animate-spin" />
+                    <MapSpinner size={12} />
                     思考中...
                   </span>
                 )}
@@ -710,7 +710,7 @@ export function DrawingBoardDialog({
               disabled={!inputText.trim() || streaming}
               onClick={() => void sendMessage()}
             >
-              {streaming ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
+              {streaming ? <MapSpinner size={13} /> : <Send size={13} />}
             </button>
           </div>
         </div>

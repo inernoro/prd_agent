@@ -1,3 +1,4 @@
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ModelTypePicker } from '@/components/model/ModelTypePicker';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -738,7 +739,7 @@ export default function SkillsPage() {
                     </div>
 
                     <div className="flex-1 overflow-y-auto p-2 space-y-3">
-                      {loading && <div className="text-center text-xs opacity-50 py-8">加载中...</div>}
+                      {loading && <MapSectionLoader />}
 
                       {!loading && grouped.system.length > 0 && (
                         <div>

@@ -27,7 +27,7 @@ import {
   Bot, Lightbulb, Target, Wrench, Sparkles, Rocket, MessageSquare,
   Brain, Cpu, Database, Globe, Image, Music, Video, BookOpen,
   GraduationCap, Briefcase, Heart, Star, Shield, Lock, Search, Layers,
-  Swords, Paperclip, ImagePlus, X, File, Loader2,
+  Swords, Paperclip, ImagePlus, X, File,
   Plus, MessageCircle, Share2, Globe2, AlertCircle,
   Square, Copy, Check, RotateCcw, RefreshCw, Download, Eraser,
   ThumbsUp, ThumbsDown, Pencil, Archive, Pin, ChevronDown,
@@ -36,6 +36,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import remarkMath from 'remark-math';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
@@ -1344,7 +1345,7 @@ function MessageBubble({ message, accentHue, onCopy, onRegenerate, onRetry, onFe
           ) : message.content ? (
             isUser ? message.content : <AssistantMarkdown content={message.content} />
           ) : (
-            message.isStreaming && <Loader2 size={16} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
+            message.isStreaming && <MapSpinner size={16} color="var(--text-muted)" />
           )}
         </div>
         {/* Action buttons row */}

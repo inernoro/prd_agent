@@ -1,6 +1,7 @@
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
 import { GlassSwitch } from '@/components/design/GlassSwitch';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { Dialog } from '@/components/ui/Dialog';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { ModelPoolPickerDialog, type SelectedModelItem } from '@/components/model/ModelPoolPickerDialog';
@@ -1158,7 +1159,7 @@ function InlineDispatchPreview({
               className="flex items-center gap-1.5 px-3 py-1 rounded-md text-[10px] font-semibold"
               style={{ background: `${color}12`, border: `1px solid ${color}25`, color }}
             >
-              <RotateCw size={10} className={phase >= sorted.length ? 'animate-spin' : ''} style={{ animationDuration: '3s' }} />
+              {phase >= sorted.length ? <MapSpinner size={10} /> : <RotateCw size={10} />}
               轮询调度
             </div>
           </div>
