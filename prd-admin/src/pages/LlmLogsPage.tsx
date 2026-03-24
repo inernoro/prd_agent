@@ -1320,7 +1320,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                 onClick={() => load()}
                 disabled={loading}
               >
-                <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+                {loading ? <MapSpinner size={16} /> : <RefreshCw size={16} />}
                 刷新
               </Button>
             </div>

@@ -749,7 +749,7 @@ export function DefectSubmitPanel() {
                 disabled={submitting || !content.trim() || !assigneeUserId}
               >
                 {submitting ? (
-                  <Upload size={14} className="animate-spin" />
+                  <MapSpinner size={14} />
                 ) : (
                   <Send size={14} />
                 )}

@@ -1,5 +1,6 @@
 import { Dialog } from '@/components/ui/Dialog';
 import { ModelListItem } from '@/components/model/ModelListItem';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import type { PoolPrediction, PredictionStep, PredictionEndpoint } from '@/types';
 import {
   Radar, Zap, GitBranch, RotateCw, Shuffle, Timer,
@@ -558,7 +559,7 @@ function RoundRobinViz({ steps, endpoints, color, phase, platformNameById }: Viz
           className="flex items-center gap-2 px-4 py-1.5 rounded-lg text-[11px] font-semibold"
           style={{ background: `${color}10`, border: `1px solid ${color}20`, color }}
         >
-          <RotateCw size={12} className={phase >= steps.length ? 'animate-spin' : ''} style={{ animationDuration: '3s' }} />
+          {phase >= steps.length ? <MapSpinner size={12} /> : <RotateCw size={12} />}
           轮询调度
         </div>
       </div>

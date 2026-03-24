@@ -874,7 +874,7 @@ export default function DesktopAssetsPage() {
           style={{ color: 'var(--text-muted)' }}
           title="刷新"
         >
-          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+          {loading ? <MapSpinner size={14} /> : <RefreshCw size={14} />}
         </button>
       </div>
 

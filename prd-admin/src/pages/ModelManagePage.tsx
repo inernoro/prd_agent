@@ -36,7 +36,7 @@ import type { ModelAdapterInfoBrief } from '@/services/contracts/models';
 import type { Model, Platform } from '@/types/admin';
 import { ModelHealthStatus } from '@/types/modelGroup';
 import type { ModelGroupItem } from '@/types/modelGroup';
-import { Activity, Check, ChevronLeft, ChevronRight, Clock, Database, DatabaseZap, Eye, EyeOff, ImagePlus, LayoutGrid, Link2, Minus, MoreVertical, Pencil, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Trash2 } from 'lucide-react';
+import { Activity, Check, ChevronLeft, ChevronRight, Clock, Database, DatabaseZap, Eye, EyeOff, ImagePlus, LayoutGrid, Link2, Minus, MoreVertical, Pencil, Plus, ScanEye, Search, Sparkles, Star, Trash2 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { glassPanel } from '@/lib/glassStyles';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -1843,7 +1843,7 @@ export default function ModelManagePage() {
                                       title={testResult?.modelId === m.id && !testResult.ok ? testResult.msg : `测试：${m.name}`}
                                     >
                                       {testingModelId === m.id ? (
-                                        <RefreshCw size={16} className="animate-spin" />
+                                        <MapSpinner size={16} />
                                       ) : testResult?.modelId === m.id ? (
                                         testResult.ok ? <Check size={16} /> : <Minus size={16} />
                                       ) : (

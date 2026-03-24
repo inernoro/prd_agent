@@ -1,5 +1,5 @@
-import { Loader2 } from 'lucide-react';
 import { SsePhaseBar } from './SsePhaseBar';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { SseTypingBlock } from './SseTypingBlock';
 import type { SsePhase } from '@/lib/useSseStream';
 
@@ -74,7 +74,7 @@ export function SseStreamPanel({
       ) : isStreaming && !hasData ? (
         waitingContent ?? (
           <div className="flex flex-col items-center gap-2 py-8" style={{ color: 'var(--text-muted)' }}>
-            <Loader2 size={24} className="animate-spin" style={{ color: 'rgba(120,180,255,0.5)' }} />
+            <MapSpinner size={24} color="rgba(120,180,255,0.5)" />
             <span className="text-xs">AI 正在分析数据…</span>
           </div>
         )
