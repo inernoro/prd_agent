@@ -4078,21 +4078,60 @@ function clearActivityLog() {
   document.getElementById('webTabCount').textContent = '0';
 }
 
-// ── Activity Zoom ──
-let activityZoomLevel = 100;
-const ACTIVITY_ZOOM_MIN = 60;
-const ACTIVITY_ZOOM_MAX = 150;
-const ACTIVITY_ZOOM_STEP = 10;
+// ── Activity Panel Resize ──
+(function initActivityResize() {
+  const panel = document.getElementById('activityMonitor');
+  if (!panel) return;
+  const handles = panel.querySelectorAll('.activity-resize-handle');
+  let isResizing = false;
+  let startX, startY, startW, startH, startLeft, startTop, direction;
 
-function zoomActivity(direction) {
-  const next = activityZoomLevel + direction * ACTIVITY_ZOOM_STEP;
-  if (next < ACTIVITY_ZOOM_MIN || next > ACTIVITY_ZOOM_MAX) return;
-  activityZoomLevel = next;
-  const scale = activityZoomLevel / 100;
-  document.getElementById('activityBody').style.zoom = scale;
-  document.getElementById('webActivityBody').style.zoom = scale;
-  document.getElementById('activityZoomLevel').textContent = activityZoomLevel + '%';
-}
+  handles.forEach(h => {
+    h.addEventListener('mousedown', (e) => {
+      if (panel.classList.contains('collapsed')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      isResizing = true;
+      direction = h.dataset.direction;
+      startX = e.clientX;
+      startY = e.clientY;
+      const rect = panel.getBoundingClientRect();
+      startW = rect.width;
+      startH = rect.height;
+      startLeft = rect.left;
+      startTop = rect.top;
+      panel.style.transition = 'none';
+      document.body.style.cursor = h.style.cursor || getComputedStyle(h).cursor;
+      document.body.style.userSelect = 'none';
+    });
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!isResizing) return;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    const minW = 320, minH = 200;
+    const maxW = window.innerWidth * 0.9;
+    const maxH = window.innerHeight * 0.9;
+
+    if (direction === 'w' || direction === 'nw') {
+      const newW = Math.min(maxW, Math.max(minW, startW - dx));
+      panel.style.width = newW + 'px';
+    }
+    if (direction === 'n' || direction === 'nw') {
+      const newH = Math.min(maxH, Math.max(minH, startH - dy));
+      panel.style.height = newH + 'px';
+    }
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!isResizing) return;
+    isResizing = false;
+    panel.style.transition = '';
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  });
+})();
 
 // ════════════════ AI Pairing System ════════════════
 
