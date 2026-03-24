@@ -31,10 +31,17 @@ The API uses AI Access Key authentication:
 ## Base URL
 
 ```
-http://localhost:8000
+# 本地开发
+http://localhost:5000
+
+# 预览环境（分支名 / 替换为 -，转小写）
+https://{branch-slug}.miduo.org
+
+# 预览环境 Cloudflare 干扰时（通过 CDS container-exec）
+http://localhost:5000  (容器内)
 ```
 
-> 注意：用户可能配置了不同端口，以实际运行的 API 服务端口为准。
+> 预览域名可能被 Cloudflare 干扰返回 500，此时需通过 CDS `container-exec` 在容器内测试。
 
 ## Common API Endpoints
 
@@ -154,6 +161,16 @@ curl -s "http://[::1]:5000/api/prd/projects?page=1&pageSize=10" \
 - **401 User not found**: The username in `X-AI-Impersonate` must exist in the database (use `$MAP_AI_USER`, never hardcode `admin` or `root`)
 - **403 Forbidden**: Should not happen with AI Access Key (has super permissions)
 - **404 Not Found**: Check the endpoint path
+- **HTTP 500 via preview domain**: Cloudflare CDN 可能干扰认证请求。如果预览域名返回 500 但容器状态为 running，使用 CDS `container-exec` 在容器内直接 curl `http://localhost:5000/...` 绕过 CDN
+
+## 常见陷阱
+
+| 陷阱 | 后果 | 正确做法 |
+|------|------|---------|
+| 使用 `Authorization: Bearer` header | 认证失败 | 必须用 `X-AI-Access-Key` header |
+| 测试 `/api/users/me` | 404（该端点不存在） | 用 `/api/users` 列表验证认证是否正常 |
+| 把 404 当成认证失败 | 误判根因、引入错误修复 | 区分 HTTP 状态码：401=认证失败，404=端点不存在 |
+| 预览域名 500 认为代码有 bug | 可能是 Cloudflare 干扰 | 通过 CDS container-exec 在容器内验证 |
 
 ## Security Notes
 
