@@ -8,6 +8,7 @@ import { ToastContainer } from '@/components/ui/Toast';
 import { AgentSwitcherProvider } from '@/components/agent-switcher';
 import { BranchBadge } from '@/components/BranchBadge';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { SuspenseVideoLoader } from '@/components/ui/VideoLoader';
 
 // ── Route-level lazy loading ──
 // Each page is loaded on-demand, drastically reducing initial bundle in dev mode.
@@ -205,7 +206,7 @@ export default function App() {
     <AgentSwitcherProvider>
       <ToastContainer />
       <BranchBadge />
-      <Suspense>
+      <Suspense fallback={<SuspenseVideoLoader />}>
       <Routes location={location}>
         {/* Landing page - public */}
         <Route path="/home" element={<LandingPage />} />
