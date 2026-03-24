@@ -2568,6 +2568,63 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     };
   }, [focusStage, pushMsg, setViewport, workspaceId]);
 
+  // Watchdog：定期检查画布上卡住的 running 项目，自动恢复或标记失败
+  useEffect(() => {
+    const WATCHDOG_INTERVAL = 15_000; // 每 15 秒检查一次
+    const STALE_THRESHOLD = 120_000; // running 超过 2 分钟视为可能卡住
+
+    const tid = window.setInterval(() => {
+      const items = canvasRef.current;
+      const staleRunning = items.filter(
+        (el) => el.status === 'running' && el.runId && el.createdAt && Date.now() - el.createdAt > STALE_THRESHOLD
+      );
+      if (staleRunning.length === 0) return;
+
+      // 逐个查询后端实际状态
+      for (const el of staleRunning) {
+        void getImageGenRun({ runId: el.runId!, includeItems: true, includeImages: true })
+          .then((res) => {
+            if (!res.success || !res.data?.run) return;
+            const run = res.data.run;
+            if (run.status === 'Completed') {
+              const item = res.data.items?.find((it) => it.url);
+              if (item?.url) {
+                setCanvas((prev) =>
+                  prev.map((x) =>
+                    x.key === el.key && x.status === 'running'
+                      ? { ...x, status: 'done', src: item.url!, kind: 'image', originalSrc: item.url!, syncStatus: 'synced' as const }
+                      : x
+                  )
+                );
+              } else {
+                setCanvas((prev) =>
+                  prev.map((x) =>
+                    x.key === el.key && x.status === 'running'
+                      ? { ...x, status: 'error', errorMessage: '生成完成但无图片数据' }
+                      : x
+                  )
+                );
+              }
+            } else if (run.status === 'Failed' || run.status === 'Cancelled') {
+              setCanvas((prev) =>
+                prev.map((x) =>
+                  x.key === el.key && x.status === 'running'
+                    ? { ...x, status: 'error', errorMessage: run.status === 'Failed' ? '生成失败' : '已取消' }
+                    : x
+                )
+              );
+            }
+            // Queued/Running：后端仍在处理，继续等待
+          })
+          .catch(() => {
+            // 查询失败，不做处理，下次 watchdog 再试
+          });
+      }
+    }, WATCHDOG_INTERVAL);
+
+    return () => window.clearInterval(tid);
+  }, []); // 无依赖，组件生命周期内常驻
+
   // 自动保存画布（debounce）
   useEffect(() => {
     if (!workspaceId) return;
