@@ -1038,7 +1038,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // ── Build profiles CRUD ──
 
   router.get('/build-profiles', (_req, res) => {
-    res.json({ profiles: stateService.getBuildProfiles() });
+    const profiles = stateService.getBuildProfiles().map(p => ({
+      ...p,
+      env: p.env ? maskSecrets(p.env) : p.env,
+    }));
+    res.json({ profiles });
   });
 
   router.post('/build-profiles', (req, res) => {
@@ -1220,7 +1224,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // ── Custom environment variables ──
 
   router.get('/env', (_req, res) => {
-    res.json({ env: stateService.getCustomEnv() });
+    res.json({ env: maskSecrets(stateService.getCustomEnv()) });
   });
 
   // Helper: sync CDS-relevant env vars into runtime config
@@ -1246,7 +1250,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     stateService.setCustomEnv(env);
     stateService.save();
     syncCdsConfig();
-    res.json({ message: '环境变量已更新', env });
+    res.json({ message: '环境变量已更新', env: maskSecrets(env) });
   });
 
   router.put('/env/:key', (req, res) => {
