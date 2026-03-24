@@ -11,9 +11,17 @@ interface LiteraryCardProps {
 }
 
 /**
- * 文学创作卡片 — NotebookLM 风格
- * 统一 16:10 比例 + 封面图全覆盖 + 底部渐变遮罩 + 文字叠加
+ * 文学创作卡片 — 瀑布流风格
+ * 自然比例 + 封面图全覆盖 + 底部渐变遮罩 + 文字叠加
  */
+
+/** Get aspect ratio string for a submission item */
+function getAspectRatio(item: SubmissionItem): string {
+  if (item.coverWidth && item.coverHeight) {
+    return `${item.coverWidth}/${item.coverHeight}`;
+  }
+  return '16/10';
+}
 
 /* 无封面图时的默认渐变背景 */
 const FALLBACK_GRADIENTS = [
@@ -68,11 +76,11 @@ export function LiteraryCard({ item, onLikeToggle, onClick }: LiteraryCardProps)
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick?.(); } }}
     >
-      {/* Card — unified 16:10, image full-bleed, text at bottom */}
+      {/* Card — natural aspect ratio for waterfall, image full-bleed, text at bottom */}
       <div
         className="relative w-full overflow-hidden rounded-xl transition-all duration-300 group-hover:shadow-xl group-hover:shadow-black/30 group-hover:scale-[1.02]"
         style={{
-          aspectRatio: '16/10',
+          aspectRatio: getAspectRatio(item),
           background: hasCover ? '#0a0a0f' : getFallbackGradient(item.id),
         }}
       >
