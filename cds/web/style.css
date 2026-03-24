@@ -1042,6 +1042,21 @@ button.text-btn:hover { color: var(--accent); }
   transition: color var(--transition);
 }
 a.branch-name:hover { color: var(--accent); }
+/* Quick actions (copy + jump) — visible on row hover, hidden otherwise to not steal branch name space */
+.branch-quick-actions {
+  display: none; gap: 2px; align-items: center; flex-shrink: 0;
+}
+.branch-card-row1:hover .branch-quick-actions { display: inline-flex; }
+.branch-quick-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border: none; border-radius: 4px;
+  background: transparent; color: var(--text-muted); cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.branch-quick-btn:hover {
+  color: var(--accent); background: var(--surface-hover, rgba(255,255,255,0.08));
+}
+.branch-quick-btn svg.inline-icon { width: 13px; height: 13px; }
 .branch-meta { font-size: 11px; color: var(--text-secondary); line-height: 1.4; white-space: nowrap; }
 .port-badge {
   display: inline-flex; align-items: center; gap: 3px;
@@ -1099,7 +1114,6 @@ a.branch-name:hover { color: var(--accent); }
 .branch-actions-commit {
   flex: 1; min-width: 0;
   display: flex; align-items: center; gap: 4px;
-  justify-content: flex-end;
   font-size: 12px; color: var(--text-muted);
   cursor: pointer; overflow: hidden;
   white-space: nowrap; padding: 0 4px;

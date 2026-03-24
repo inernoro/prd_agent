@@ -60,6 +60,9 @@ let previewMode = localStorage.getItem('cds_preview_mode') || 'simple';
 // ── Mirror acceleration (npm/docker registry mirrors) ──
 let mirrorEnabled = false;
 
+// ── Tab title override (update browser tab title with tag/branch name) ──
+let tabTitleEnabled = true;
+
 // ── Theme (light/dark) ──
 // Theme is applied in <head> inline script to prevent FOUC (flash of unstyled content).
 let cdsTheme = localStorage.getItem('cds_theme') || 'dark';
@@ -218,7 +221,7 @@ let workerPort = '';
 
 async function init() {
   updateThemeUI();
-  await Promise.all([loadBranches(), loadProfiles(), loadRoutingRules(), loadConfig(), loadEnvVars(), loadInfraServices(), loadMirrorState()]);
+  await Promise.all([loadBranches(), loadProfiles(), loadRoutingRules(), loadConfig(), loadEnvVars(), loadInfraServices(), loadMirrorState(), loadTabTitleState()]);
   refreshRemoteCandidates();
   updatePreviewModeUI();
   initStateStream(); // Server-authority: listen for state changes via SSE (replaces polling)
@@ -412,6 +415,14 @@ function confirmOpenGithub(event) {
   return true;
 }
 
+function copyBranchName(name) {
+  navigator.clipboard.writeText(name).then(() => {
+    showToast('已复制: ' + name, 'success');
+  }).catch(() => {
+    showToast('复制失败', 'error');
+  });
+}
+
 function cyclePreviewMode() {
   // Cycle: simple → port → multi → simple
   const modes = ['simple', 'port', 'multi'];
@@ -460,6 +471,32 @@ async function toggleMirror() {
 function updateMirrorUI() {
   const sw = document.querySelector('.settings-switch-mirror');
   if (sw) sw.classList.toggle('on', mirrorEnabled);
+}
+
+// ── Tab title override ──
+
+async function loadTabTitleState() {
+  try {
+    const data = await api('GET', '/tab-title');
+    tabTitleEnabled = data.enabled;
+  } catch { /* ignore */ }
+}
+
+async function toggleTabTitle() {
+  const newVal = !tabTitleEnabled;
+  try {
+    await api('PUT', '/tab-title', { enabled: newVal });
+    tabTitleEnabled = newVal;
+    updateTabTitleUI();
+    showToast(newVal ? '标签页标题已开启' : '标签页标题已关闭', 'info');
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+function updateTabTitleUI() {
+  const sw = document.querySelector('.settings-switch-tabtitle');
+  if (sw) sw.classList.toggle('on', tabTitleEnabled);
 }
 
 // ── Theme toggle ──
@@ -1803,6 +1840,14 @@ function toggleSettingsMenu(event) {
         </span>
       </span>
     </div>
+    <div class="settings-menu-item settings-menu-switch" onclick="toggleTabTitle()">
+      <span class="settings-menu-switch-label">标签页标题</span>
+      <span class="settings-switch settings-switch-tabtitle ${tabTitleEnabled ? 'on' : ''}">
+        <span class="settings-switch-track">
+          <span class="settings-switch-thumb"></span>
+        </span>
+      </span>
+    </div>
     <div class="settings-menu-item" onclick="closeSettingsMenu(); exportConfig()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 13a.5.5 0 01-.5-.5V3a.5.5 0 01.5-.5h5.586a.5.5 0 01.354.146l3.414 3.414a.5.5 0 01.146.354V12.5a.5.5 0 01-.5.5h-9zM3.5 1A1.5 1.5 0 002 2.5v11A1.5 1.5 0 003.5 15h9a1.5 1.5 0 001.5-1.5V6.414a1.5 1.5 0 00-.44-1.06L10.147 1.94A1.5 1.5 0 009.086 1.5H3.5z"/></svg>
       导出配置
@@ -2073,6 +2118,14 @@ function renderBranches() {
               ${b.isFavorite ? ICON.star : ICON.starOutline}
             </span>
             <a class="branch-name" href="${githubRepoUrl ? githubRepoUrl.replace('github.com', 'github.dev') + '/tree/' + encodeURIComponent(b.branch) : '#'}" target="_blank" onclick="event.stopPropagation(); return confirmOpenGithub(event)" title="在 GitHub.dev 中浏览代码">${ICON.branch} ${esc(b.branch)}</a>
+            <span class="branch-quick-actions">
+              <button class="branch-quick-btn" onclick="event.stopPropagation(); copyBranchName('${esc(b.branch)}')" title="复制分支名">
+                <svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"/></svg>
+              </button>
+              <button class="branch-quick-btn" onclick="event.stopPropagation(); previewBranch('${esc(b.id)}')" title="打开预览">
+                <svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M3.75 2h3.5a.75.75 0 010 1.5h-3.5a.25.25 0 00-.25.25v8.5c0 .138.112.25.25.25h8.5a.25.25 0 00.25-.25v-3.5a.75.75 0 011.5 0v3.5A1.75 1.75 0 0112.25 14h-8.5A1.75 1.75 0 012 12.25v-8.5C2 2.784 2.784 2 3.75 2zm6.854-.22a.75.75 0 01.22.53v2.5a.75.75 0 01-1.5 0V3.56L6.22 6.72a.75.75 0 01-1.06-1.06l3.1-3.1H6.81a.75.75 0 010-1.5h3.5a.75.75 0 01.293.06z"/></svg>
+              </button>
+            </span>
           </div>
           ${b.subject ? `<div class="branch-card-row2">
             ${b.pinnedCommit ? `<span class="pinned-commit-badge" onclick="event.stopPropagation(); checkoutCommit('${esc(b.id)}', '', true, '')" title="已固定到历史提交 ${esc(b.pinnedCommit)}，点击恢复最新">📌 ${esc(b.pinnedCommit)}</span>` : ''}
@@ -2108,13 +2161,8 @@ function renderBranches() {
     if (card) card.classList.add('is-previewing');
   }
 
-  // Update page title with branch tags for tab identification
-  const allTags = [...new Set(branches.flatMap(b => b.tags || []))];
-  if (allTags.length) {
-    document.title = `[${allTags.join(' · ')}] Cloud Dev Suite`;
-  } else {
-    document.title = 'Cloud Development Suite';
-  }
+  // Dashboard title stays constant — tag-based titles are for proxied preview pages only (widget-script.ts)
+  document.title = 'Cloud Dev Suite';
 }
 
 // ── Build profiles (data only) ──

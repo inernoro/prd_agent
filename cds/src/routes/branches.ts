@@ -174,6 +174,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       branches: branchesWithSubject,
       defaultBranch: state.defaultBranch,
       capacity: { maxContainers, runningContainers, totalMemGB },
+      tabTitleEnabled: stateService.isTabTitleEnabled(),
     });
   });
 
@@ -1288,6 +1289,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
     stateService.setMirrorEnabled(enabled);
     stateService.save();
     res.json({ message: enabled ? '镜像加速已开启' : '镜像加速已关闭', enabled });
+  });
+
+  // ── Tab title override ──
+
+  router.get('/tab-title', (_req, res) => {
+    res.json({ enabled: stateService.isTabTitleEnabled() });
+  });
+
+  router.put('/tab-title', (req, res) => {
+    const { enabled } = req.body as { enabled?: boolean };
+    if (typeof enabled !== 'boolean') {
+      res.status(400).json({ error: 'enabled 必须是布尔值' });
+      return;
+    }
+    stateService.setTabTitleEnabled(enabled);
+    stateService.save();
+    res.json({ message: enabled ? '标签页标题已开启' : '标签页标题已关闭', enabled });
   });
 
   // ── Config (read-only) ──
@@ -2506,10 +2524,27 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Step 2: switch branch if specified
       if (branch) {
         send('checkout', 'running', `正在切换到分支 ${branch}...`);
-        const checkoutResult = await shell.exec(`git checkout ${branch}`, { cwd: repoRoot });
+        // Use -f to discard tracked-file changes (safe: untracked files like .cds/state.json are untouched)
+        const checkoutResult = await shell.exec(`git checkout -f ${branch}`, { cwd: repoRoot });
         if (checkoutResult.exitCode !== 0) {
           // Try creating tracking branch from remote
-          await shell.exec(`git checkout -b ${branch} origin/${branch}`, { cwd: repoRoot });
+          const fallbackResult = await shell.exec(`git checkout -f -b ${branch} origin/${branch}`, { cwd: repoRoot });
+          if (fallbackResult.exitCode !== 0) {
+            const errMsg = (fallbackResult.stderr || fallbackResult.stdout || '未知错误').trim();
+            send('checkout', 'error', `切换分支失败: ${errMsg}`);
+            sendSSE(res, 'error', { message: `无法切换到 ${branch}: ${errMsg}` });
+            res.end();
+            return;
+          }
+        }
+        // Verify the checkout actually worked
+        const verifyResult = await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: repoRoot });
+        const actualBranch = verifyResult.stdout.trim();
+        if (actualBranch !== branch) {
+          send('checkout', 'error', `切换失败: 期望 ${branch}，实际仍在 ${actualBranch}`);
+          sendSSE(res, 'error', { message: `分支切换未生效: 仍在 ${actualBranch}` });
+          res.end();
+          return;
         }
         send('checkout', 'done', `已切换到 ${branch}`);
       }

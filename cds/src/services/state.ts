@@ -50,6 +50,7 @@ export class StateService {
       if (!this.state.customEnv) this.state.customEnv = {};
       if (!this.state.infraServices) this.state.infraServices = [];
       if (this.state.mirrorEnabled === undefined) this.state.mirrorEnabled = false;
+      if (this.state.tabTitleEnabled === undefined) this.state.tabTitleEnabled = true;
       if (!this.state.executors) this.state.executors = {};
       // Migrate: backfill cacheMounts for existing build profiles
       this.migrateCacheMounts();
@@ -317,6 +318,16 @@ export class StateService {
       // Yarn specific
       YARN_NPM_REGISTRY_SERVER: 'https://registry.npmmirror.com',
     };
+  }
+
+  // ── Tab title override ──
+
+  isTabTitleEnabled(): boolean {
+    return this.state.tabTitleEnabled !== false;
+  }
+
+  setTabTitleEnabled(enabled: boolean): void {
+    this.state.tabTitleEnabled = enabled;
   }
 
   // ── Executor management ──
