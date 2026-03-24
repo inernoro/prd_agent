@@ -2086,7 +2086,11 @@ a.branch-name:hover { color: var(--accent); }
   bottom: 16px;
   right: 16px;
   width: 480px;
-  max-height: 420px;
+  height: 420px;
+  min-width: 320px;
+  min-height: 200px;
+  max-width: 90vw;
+  max-height: 90vh;
   z-index: 9998;
   border-radius: var(--radius);
   background: var(--bg-card);
@@ -2095,12 +2099,13 @@ a.branch-name:hover { color: var(--accent); }
   backdrop-filter: blur(16px);
   display: flex;
   flex-direction: column;
-  transition: max-height 0.3s var(--transition), opacity 0.2s;
+  transition: opacity 0.2s;
   overflow: hidden;
 }
 
 .activity-monitor.collapsed {
-  max-height: 40px;
+  height: 40px !important;
+  min-height: 40px;
 }
 
 .activity-header {
@@ -2308,39 +2313,28 @@ a.branch-name:hover { color: var(--accent); }
   color: var(--accent);
 }
 
-/* ── Activity Zoom Controls ── */
-.activity-zoom {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  margin-left: auto;
-  padding: 0 8px;
-  flex-shrink: 0;
+/* ── Activity Resize Handles ── */
+.activity-resize-handle {
+  position: absolute;
+  z-index: 10;
 }
-.activity-zoom-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  border-radius: var(--radius-xs);
-  transition: all 0.15s ease;
+.activity-resize-n {
+  top: 0; left: 8px; right: 8px;
+  height: 5px;
+  cursor: n-resize;
 }
-.activity-zoom-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text-secondary);
+.activity-resize-w {
+  top: 8px; bottom: 8px; left: 0;
+  width: 5px;
+  cursor: w-resize;
 }
-.activity-zoom-level {
-  font-size: 9px;
-  font-family: var(--font-mono);
-  color: var(--text-muted);
-  min-width: 28px;
-  text-align: center;
-  user-select: none;
+.activity-resize-nw {
+  top: 0; left: 0;
+  width: 12px; height: 12px;
+  cursor: nw-resize;
+}
+.activity-monitor.collapsed .activity-resize-handle {
+  display: none;
 }
 
 .activity-body {
