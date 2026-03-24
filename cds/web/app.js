@@ -2224,7 +2224,6 @@ async function loadEnvVars() {
 }
 
 function maskValue(key, val) {
-  if (/password|secret|key/i.test(key)) return '••••••••';
   return val;
 }
 
@@ -2284,7 +2283,6 @@ function openEnvModal() {
   const html = `
     <p class="config-panel-desc">
       自定义环境变量将注入到所有容器中，可覆盖自动检测的主机变量。
-      键名中包含 <code>PASSWORD</code> 或 <code>SECRET</code> 的值在显示时会被遮蔽。
     </p>
     <div class="config-panel-actions" style="margin-bottom:10px">
       <button class="sm" onclick="openBulkEnvModal()">批量编辑</button>
