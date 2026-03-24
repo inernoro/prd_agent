@@ -648,7 +648,9 @@ public class OpenAIImageClient
         try
         {
             // Google 响应格式检测：{ candidates: [{ content: { parts: [{ inlineData: { data } }] } }] }
-            var isGoogleResponse = (platformType == "google" || platformType == "gemini");
+            // 双重检测：1) platformType 标记 2) 响应体特征（兼容 OpenAI 兼容网关代理 Gemini 的情况）
+            var isGoogleResponse = (platformType == "google" || platformType == "gemini")
+                || body.Contains("\"candidates\"", StringComparison.Ordinal);
             if (isGoogleResponse)
             {
                 var googleImages = GooglePlatformAdapter.ParseGoogleResponseImages(body);
@@ -688,30 +690,38 @@ public class OpenAIImageClient
 
                     if (bytes == null || bytes.Length == 0) continue;
 
-                    var stored = await _assetStorage.SaveAsync(bytes, outMime, ct,
-                        domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
-                    var displayUrl = stored.Url;
-
-                    if (wmConfigGoogle != null)
+                    try
                     {
-                        try
-                        {
-                            var rendered = await _watermarkRenderer.ApplyAsync(bytes, outMime, wmConfigGoogle, ct);
-                            var wmStored = await _assetStorage.SaveAsync(rendered.bytes, rendered.mime, ct,
-                                domain: AppDomainPaths.DomainWatermark, type: AppDomainPaths.TypeImg);
-                            displayUrl = wmStored.Url;
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning(ex, "[Google] 水印应用失败，使用原图");
-                        }
-                    }
+                        var stored = await _assetStorage.SaveAsync(bytes, outMime, ct,
+                            domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+                        var displayUrl = stored.Url;
 
-                    googleGenImages[i].Url = displayUrl;
-                    googleGenImages[i].Base64 = null;
-                    googleGenImages[i].OriginalUrl = stored.Url;
-                    googleGenImages[i].OriginalSha256 = stored.Sha256;
-                    cosInfosGoogle.Add(new { index = i, url = stored.Url, sha256 = stored.Sha256, mime = stored.Mime, sizeBytes = stored.SizeBytes });
+                        if (wmConfigGoogle != null)
+                        {
+                            try
+                            {
+                                var rendered = await _watermarkRenderer.ApplyAsync(bytes, outMime, wmConfigGoogle, ct);
+                                var wmStored = await _assetStorage.SaveAsync(rendered.bytes, rendered.mime, ct,
+                                    domain: AppDomainPaths.DomainWatermark, type: AppDomainPaths.TypeImg);
+                                displayUrl = wmStored.Url;
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogWarning(ex, "[Google] 水印应用失败，使用原图");
+                            }
+                        }
+
+                        googleGenImages[i].Url = displayUrl;
+                        googleGenImages[i].Base64 = null;
+                        googleGenImages[i].OriginalUrl = stored.Url;
+                        googleGenImages[i].OriginalSha256 = stored.Sha256;
+                        cosInfosGoogle.Add(new { index = i, url = stored.Url, sha256 = stored.Sha256, mime = stored.Mime, sizeBytes = stored.SizeBytes });
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "[Google] COS 上传失败（index={Index}），回退 base64 内联返回", i);
+                        // COS 上传失败时保留 base64，让前端仍能显示图片
+                    }
                 }
 
                 _logger.LogInformation("[Google] 生图成功: ImageCount={Count}, COS={CosCount}", googleGenImages.Count, cosInfosGoogle.Count);

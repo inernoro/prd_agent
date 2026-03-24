@@ -326,6 +326,7 @@ export const api = {
     },
     imageGen: {
       plan: () => '/api/visual-agent/image-gen/plan',
+      clarify: () => '/api/visual-agent/image-gen/clarify',
       generate: () => '/api/visual-agent/image-gen/generate',
       sizeCaps: () => '/api/visual-agent/image-gen/size-caps',
       /** 获取所有生图场景的模型池（合并去重） */
