@@ -2524,10 +2524,33 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Step 2: switch branch if specified
       if (branch) {
         send('checkout', 'running', `正在切换到分支 ${branch}...`);
+        // Stash any dirty changes to prevent checkout failure
+        const statusResult = await shell.exec('git status --porcelain', { cwd: repoRoot });
+        const isDirty = statusResult.stdout.trim().length > 0;
+        if (isDirty) {
+          send('checkout', 'running', `工作目录有未提交变更，正在暂存...`);
+          await shell.exec('git stash --include-untracked', { cwd: repoRoot });
+        }
         const checkoutResult = await shell.exec(`git checkout ${branch}`, { cwd: repoRoot });
         if (checkoutResult.exitCode !== 0) {
           // Try creating tracking branch from remote
-          await shell.exec(`git checkout -b ${branch} origin/${branch}`, { cwd: repoRoot });
+          const fallbackResult = await shell.exec(`git checkout -b ${branch} origin/${branch}`, { cwd: repoRoot });
+          if (fallbackResult.exitCode !== 0) {
+            const errMsg = fallbackResult.stderr || fallbackResult.stdout || '未知错误';
+            send('checkout', 'error', `切换分支失败: ${errMsg.trim()}`);
+            sendSSE(res, 'error', { message: `无法切换到 ${branch}: ${errMsg.trim()}` });
+            res.end();
+            return;
+          }
+        }
+        // Verify the checkout actually worked
+        const verifyResult = await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: repoRoot });
+        const actualBranch = verifyResult.stdout.trim();
+        if (actualBranch !== branch) {
+          send('checkout', 'error', `切换失败: 期望 ${branch}，实际仍在 ${actualBranch}`);
+          sendSSE(res, 'error', { message: `分支切换未生效: 仍在 ${actualBranch}` });
+          res.end();
+          return;
         }
         send('checkout', 'done', `已切换到 ${branch}`);
       }
