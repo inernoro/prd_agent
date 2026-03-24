@@ -78,18 +78,7 @@ function RequirePermission({ perm, children }: { perm: string; children: React.R
   const navigate = useNavigate();
 
   if (!loaded) {
-    return (
-      <div className="h-full w-full flex items-center justify-center" style={{ background: 'var(--bg-base)' }}>
-        <div className="text-center">
-          <div className="text-[20px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-            加载权限中...
-          </div>
-          <div className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>
-            正在获取后台权限，请稍候
-          </div>
-        </div>
-      </div>
-    );
+    return <SuspenseVideoLoader />;
   }
 
   const has = Array.isArray(perms) && perms.includes(perm);
