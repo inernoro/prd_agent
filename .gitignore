@@ -79,3 +79,6 @@ __pycache__/
 .claude/settings.local.json
 .claude/launch.json
 .claude/worktrees/
+
+# CDS runtime state (contains env secrets, port allocations, container status)
+.cds/state.json
