@@ -450,8 +450,9 @@ public class LiteraryAgentWorkspaceController : ControllerBase
 
     /// <summary>
     /// 兜底回填：旧数据中 markers 已存在但 assetIdByMarkerIndex 为空时，
-    /// 通过 marker.text 与 asset.prompt 前缀匹配（去除参考图前缀后），自动建立关联。
-    /// 仅针对 article-illustration 场景，且只在 assetIdByMarkerIndex 完全为空时触发（一次性回填）。
+    /// 取最新 N 个 assets（N=marker 数量）按创建时间正序与 markers 按 index 顺序匹配。
+    /// 旧版本生图后 prompt 经 LLM 重写，与 marker text 无直接文本关系，故只能按时间顺序。
+    /// 仅 article-illustration 场景 + assetIdByMarkerIndex 完全为空时触发（一次性回填）。
     /// </summary>
     private async Task TryBackfillMarkerAssetsAsync(ImageMasterWorkspace ws, List<ImageAsset> assets, CancellationToken ct)
     {
@@ -461,52 +462,36 @@ public class LiteraryAgentWorkspaceController : ControllerBase
             if (wf?.Markers == null || wf.Markers.Count == 0) return;
             if (ws.ScenarioType != "article-illustration") return;
 
-            // 只在 assetIdByMarkerIndex 完全为空时触发
             var hasMapping = wf.AssetIdByMarkerIndex?.Values.Any(v => !string.IsNullOrWhiteSpace(v)) ?? false;
             if (hasMapping) return;
-
-            // 没有 assets 则无法回填
             if (assets.Count == 0) return;
-
-            // 至少有一个 marker 状态为 null/empty（旧数据特征）
             if (!wf.Markers.Any(m => string.IsNullOrEmpty(m.Status) || m.Status == "idle")) return;
 
-            // 参考图前缀（旧数据的 prompt 通常以此开头）
-            const string refPrefix = "请参考图中的风格、色调、构图和视觉元素来生成图片，保持整体美学风格的一致性。";
+            // 取最新 N 个 assets（按创建时间倒序已在查询中完成），然后反转为正序
+            var markerCount = wf.Markers.Count;
+            var candidateAssets = assets
+                .OrderByDescending(a => a.CreatedAt)
+                .Take(markerCount)
+                .OrderBy(a => a.CreatedAt)
+                .ToList();
+
+            if (candidateAssets.Count == 0) return;
 
             wf.AssetIdByMarkerIndex ??= new Dictionary<string, string>(StringComparer.Ordinal);
-            var usedAssetIds = new HashSet<string>(StringComparer.Ordinal);
             var needUpdate = false;
 
-            foreach (var marker in wf.Markers)
+            for (var i = 0; i < Math.Min(wf.Markers.Count, candidateAssets.Count); i++)
             {
-                if (string.IsNullOrWhiteSpace(marker.Text)) continue;
-                var markerText = marker.Text.Trim();
+                var marker = wf.Markers[i];
+                var asset = candidateAssets[i];
 
-                // 在 assets 中寻找 prompt 匹配的图片
-                var matched = assets.FirstOrDefault(a =>
-                {
-                    if (usedAssetIds.Contains(a.Id)) return false;
-                    if (string.IsNullOrWhiteSpace(a.Prompt)) return false;
-                    var prompt = a.Prompt.Trim();
-                    // 去除参考图前缀后匹配
-                    if (prompt.StartsWith(refPrefix))
-                        prompt = prompt[refPrefix.Length..].Trim();
-                    // 前缀匹配（marker text 可能很长，asset prompt 被截断到 300 字符）
-                    return prompt.Length > 20 && markerText.StartsWith(prompt[..Math.Min(prompt.Length, 50)]);
-                });
-
-                if (matched != null)
-                {
-                    usedAssetIds.Add(matched.Id);
-                    wf.AssetIdByMarkerIndex[marker.Index.ToString()] = matched.Id;
-                    marker.Status = "done";
-                    marker.AssetId = matched.Id;
-                    marker.Url = matched.Url;
-                    marker.ErrorMessage = null;
-                    marker.UpdatedAt = DateTime.UtcNow;
-                    needUpdate = true;
-                }
+                wf.AssetIdByMarkerIndex[marker.Index.ToString()] = asset.Id;
+                marker.Status = "done";
+                marker.AssetId = asset.Id;
+                marker.Url = asset.Url;
+                marker.ErrorMessage = null;
+                marker.UpdatedAt = DateTime.UtcNow;
+                needUpdate = true;
             }
 
             if (needUpdate)

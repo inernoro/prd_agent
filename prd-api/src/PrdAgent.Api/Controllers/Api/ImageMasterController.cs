@@ -2683,7 +2683,8 @@ public class ImageMasterController : ControllerBase
 
     /// <summary>
     /// 兜底回填：旧数据中 markers 已存在但 assetIdByMarkerIndex 为空时，
-    /// 通过 marker.text 与 asset.prompt 前缀匹配（去除参考图前缀后），自动建立关联。
+    /// 取最新 N 个 assets（N=marker 数量）按创建时间正序与 markers 按 index 顺序匹配。
+    /// 旧版本生图后 prompt 经 LLM 重写，与 marker text 无直接文本关系，故只能按时间顺序。
     /// </summary>
     private async Task TryBackfillMarkerAssetsAsync(ImageMasterWorkspace ws, List<ImageAsset> assets, CancellationToken ct)
     {
@@ -2698,38 +2699,30 @@ public class ImageMasterController : ControllerBase
             if (assets.Count == 0) return;
             if (!wf.Markers.Any(m => string.IsNullOrEmpty(m.Status) || m.Status == "idle")) return;
 
-            const string refPrefix = "请参考图中的风格、色调、构图和视觉元素来生成图片，保持整体美学风格的一致性。";
+            var markerCount = wf.Markers.Count;
+            var candidateAssets = assets
+                .OrderByDescending(a => a.CreatedAt)
+                .Take(markerCount)
+                .OrderBy(a => a.CreatedAt)
+                .ToList();
+
+            if (candidateAssets.Count == 0) return;
 
             wf.AssetIdByMarkerIndex ??= new Dictionary<string, string>(StringComparer.Ordinal);
-            var usedAssetIds = new HashSet<string>(StringComparer.Ordinal);
             var needUpdate = false;
 
-            foreach (var marker in wf.Markers)
+            for (var i = 0; i < Math.Min(wf.Markers.Count, candidateAssets.Count); i++)
             {
-                if (string.IsNullOrWhiteSpace(marker.Text)) continue;
-                var markerText = marker.Text.Trim();
+                var marker = wf.Markers[i];
+                var asset = candidateAssets[i];
 
-                var matched = assets.FirstOrDefault(a =>
-                {
-                    if (usedAssetIds.Contains(a.Id)) return false;
-                    if (string.IsNullOrWhiteSpace(a.Prompt)) return false;
-                    var prompt = a.Prompt.Trim();
-                    if (prompt.StartsWith(refPrefix))
-                        prompt = prompt[refPrefix.Length..].Trim();
-                    return prompt.Length > 20 && markerText.StartsWith(prompt[..Math.Min(prompt.Length, 50)]);
-                });
-
-                if (matched != null)
-                {
-                    usedAssetIds.Add(matched.Id);
-                    wf.AssetIdByMarkerIndex[marker.Index.ToString()] = matched.Id;
-                    marker.Status = "done";
-                    marker.AssetId = matched.Id;
-                    marker.Url = matched.Url;
-                    marker.ErrorMessage = null;
-                    marker.UpdatedAt = DateTime.UtcNow;
-                    needUpdate = true;
-                }
+                wf.AssetIdByMarkerIndex[marker.Index.ToString()] = asset.Id;
+                marker.Status = "done";
+                marker.AssetId = asset.Id;
+                marker.Url = asset.Url;
+                marker.ErrorMessage = null;
+                marker.UpdatedAt = DateTime.UtcNow;
+                needUpdate = true;
             }
 
             if (needUpdate)
