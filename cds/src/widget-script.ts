@@ -312,8 +312,9 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     });
   }
 
-  // ── Initial render ──
+  // ── Initial: render badge + fetch branch info to update tab title immediately ──
   render();
+  fetchBranchInfo();
 })();
 </script>`;
 }
