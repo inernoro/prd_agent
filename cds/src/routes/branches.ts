@@ -174,6 +174,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       branches: branchesWithSubject,
       defaultBranch: state.defaultBranch,
       capacity: { maxContainers, runningContainers, totalMemGB },
+      tabTitleEnabled: stateService.isTabTitleEnabled(),
     });
   });
 
@@ -310,6 +311,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const pullResult = await worktreeService.pull(entry.branch, entry.worktreePath);
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
 
+      // Clear pinned commit — deploy always restores to branch HEAD
+      if (entry.pinnedCommit) {
+        entry.pinnedCommit = undefined;
+        logEvent({ step: 'pull', status: 'done', title: '已取消固定提交，恢复到分支最新', timestamp: new Date().toISOString() });
+      }
       stateService.save();
 
       // ── Compute startup layers (topological sort by dependsOn) ──
@@ -563,6 +569,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       logEvent({ step: 'pull', status: 'running', title: '正在拉取最新代码...', timestamp: new Date().toISOString() });
       const pullResult = await worktreeService.pull(entry.branch, entry.worktreePath);
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
+
+      // Clear pinned commit — deploy always restores to branch HEAD
+      if (entry.pinnedCommit) {
+        entry.pinnedCommit = undefined;
+        logEvent({ step: 'pull', status: 'done', title: '已取消固定提交，恢复到分支最新', timestamp: new Date().toISOString() });
+        stateService.save();
+      }
 
       // Build & run the single profile
       logEvent({ step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}...`, timestamp: new Date().toISOString() });
@@ -872,6 +885,93 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  // ── Checkout specific commit (pin to historical commit) ──
+
+  router.post('/branches/:id/checkout/:hash', async (req, res) => {
+    const { id, hash } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    if (entry.status === 'building' || entry.status === 'starting') {
+      res.status(409).json({ error: '分支正在构建/启动中，无法切换提交' });
+      return;
+    }
+
+    try {
+      // Validate the commit hash exists
+      const verify = await shell.exec(
+        `git cat-file -t ${hash}`,
+        { cwd: entry.worktreePath, timeout: 5_000 },
+      );
+      if (verify.exitCode !== 0 || verify.stdout.trim() !== 'commit') {
+        res.status(400).json({ error: `无效的提交: ${hash}` });
+        return;
+      }
+
+      // Checkout the specific commit (detached HEAD)
+      const result = await shell.exec(
+        `git checkout ${hash}`,
+        { cwd: entry.worktreePath, timeout: 10_000 },
+      );
+      if (result.exitCode !== 0) {
+        throw new Error(combinedOutput(result));
+      }
+
+      // Get full short hash + subject for display
+      const logResult = await shell.exec(
+        'git log --oneline -1',
+        { cwd: entry.worktreePath, timeout: 5_000 },
+      );
+      const [pinnedHash, ...subjectParts] = logResult.stdout.trim().split(' ');
+      const pinnedSubject = subjectParts.join(' ');
+
+      entry.pinnedCommit = pinnedHash || hash;
+      stateService.save();
+
+      res.json({
+        message: `已切换到提交 ${pinnedHash}`,
+        pinnedCommit: entry.pinnedCommit,
+        subject: pinnedSubject,
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ── Unpin commit (restore to branch HEAD) ──
+
+  router.post('/branches/:id/unpin', async (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+
+    try {
+      const result = await shell.exec(
+        `git checkout ${entry.branch}`,
+        { cwd: entry.worktreePath, timeout: 10_000 },
+      );
+      if (result.exitCode !== 0) {
+        // Worktree may not have local branch, reset to origin
+        const reset = await shell.exec(
+          `git checkout -B ${entry.branch} origin/${entry.branch}`,
+          { cwd: entry.worktreePath, timeout: 10_000 },
+        );
+        if (reset.exitCode !== 0) throw new Error(combinedOutput(reset));
+      }
+
+      entry.pinnedCommit = undefined;
+      stateService.save();
+      res.json({ message: '已恢复到分支最新提交' });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // ── Reset branch status ──
 
   router.post('/branches/:id/reset', (req, res) => {
@@ -939,7 +1039,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // ── Build profiles CRUD ──
 
   router.get('/build-profiles', (_req, res) => {
-    res.json({ profiles: stateService.getBuildProfiles() });
+    const profiles = stateService.getBuildProfiles().map(p => ({
+      ...p,
+      env: p.env ? maskSecrets(p.env) : p.env,
+    }));
+    res.json({ profiles });
   });
 
   router.post('/build-profiles', (req, res) => {
@@ -1121,7 +1225,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // ── Custom environment variables ──
 
   router.get('/env', (_req, res) => {
-    res.json({ env: stateService.getCustomEnv() });
+    res.json({ env: maskSecrets(stateService.getCustomEnv()) });
   });
 
   // Helper: sync CDS-relevant env vars into runtime config
@@ -1147,7 +1251,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     stateService.setCustomEnv(env);
     stateService.save();
     syncCdsConfig();
-    res.json({ message: '环境变量已更新', env });
+    res.json({ message: '环境变量已更新', env: maskSecrets(env) });
   });
 
   router.put('/env/:key', (req, res) => {
@@ -1185,6 +1289,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
     stateService.setMirrorEnabled(enabled);
     stateService.save();
     res.json({ message: enabled ? '镜像加速已开启' : '镜像加速已关闭', enabled });
+  });
+
+  // ── Tab title override ──
+
+  router.get('/tab-title', (_req, res) => {
+    res.json({ enabled: stateService.isTabTitleEnabled() });
+  });
+
+  router.put('/tab-title', (req, res) => {
+    const { enabled } = req.body as { enabled?: boolean };
+    if (typeof enabled !== 'boolean') {
+      res.status(400).json({ error: 'enabled 必须是布尔值' });
+      return;
+    }
+    stateService.setTabTitleEnabled(enabled);
+    stateService.save();
+    res.json({ message: enabled ? '标签页标题已开启' : '标签页标题已关闭', enabled });
   });
 
   // ── Config (read-only) ──
@@ -2403,10 +2524,27 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Step 2: switch branch if specified
       if (branch) {
         send('checkout', 'running', `正在切换到分支 ${branch}...`);
-        const checkoutResult = await shell.exec(`git checkout ${branch}`, { cwd: repoRoot });
+        // Use -f to discard tracked-file changes (safe: untracked files like .cds/state.json are untouched)
+        const checkoutResult = await shell.exec(`git checkout -f ${branch}`, { cwd: repoRoot });
         if (checkoutResult.exitCode !== 0) {
           // Try creating tracking branch from remote
-          await shell.exec(`git checkout -b ${branch} origin/${branch}`, { cwd: repoRoot });
+          const fallbackResult = await shell.exec(`git checkout -f -b ${branch} origin/${branch}`, { cwd: repoRoot });
+          if (fallbackResult.exitCode !== 0) {
+            const errMsg = (fallbackResult.stderr || fallbackResult.stdout || '未知错误').trim();
+            send('checkout', 'error', `切换分支失败: ${errMsg}`);
+            sendSSE(res, 'error', { message: `无法切换到 ${branch}: ${errMsg}` });
+            res.end();
+            return;
+          }
+        }
+        // Verify the checkout actually worked
+        const verifyResult = await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: repoRoot });
+        const actualBranch = verifyResult.stdout.trim();
+        if (actualBranch !== branch) {
+          send('checkout', 'error', `切换失败: 期望 ${branch}，实际仍在 ${actualBranch}`);
+          sendSSE(res, 'error', { message: `分支切换未生效: 仍在 ${actualBranch}` });
+          res.end();
+          return;
         }
         send('checkout', 'done', `已切换到 ${branch}`);
       }

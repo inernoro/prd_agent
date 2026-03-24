@@ -434,6 +434,7 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
         senderRole: (m as any).senderRole ? ((m as any).senderRole as any) : undefined,
         senderAvatarUrl: (m as any).senderAvatarUrl ? String((m as any).senderAvatarUrl) : undefined,
         senderTags: Array.isArray((m as any).senderTags) ? (m as any).senderTags : undefined,
+        attachmentIds: Array.isArray((m as any).attachmentIds) ? (m as any).attachmentIds : undefined,
       }));
 
       const added = get().prependMessages(mapped);
@@ -488,6 +489,7 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
         senderRole: (m as any).senderRole ? ((m as any).senderRole as any) : undefined,
         senderAvatarUrl: (m as any).senderAvatarUrl ? String((m as any).senderAvatarUrl) : undefined,
         senderTags: Array.isArray((m as any).senderTags) ? (m as any).senderTags : undefined,
+        attachmentIds: Array.isArray((m as any).attachmentIds) ? (m as any).attachmentIds : undefined,
       }));
 
       // 冷启动（本地无缓存）：直接设置
@@ -569,7 +571,10 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
       if (idxFromEnd !== -1) {
         const idx = state.messages.length - 1 - idxFromEnd;
         const next = [...state.messages];
-        next[idx] = { ...next[idx], ...incoming };
+        const existing = next[idx];
+        // 保留本地附件信息（SSE 不携带完整附件详情时不覆盖）
+        const mergedAttachments = incoming.attachments ?? existing.attachments;
+        next[idx] = { ...existing, ...incoming, attachments: mergedAttachments };
         return { messages: maybeSortByGroupSeq(next), localMaxSeq: newMaxSeq, ...clearPending };
       }
     }
@@ -578,7 +583,9 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
     const existingIdx = state.messages.findIndex((m) => m.id === incoming.id);
     if (existingIdx !== -1) {
       const next = [...state.messages];
-      next[existingIdx] = { ...next[existingIdx], ...incoming };
+      const existing = next[existingIdx];
+      const mergedAttachments = incoming.attachments ?? existing.attachments;
+      next[existingIdx] = { ...existing, ...incoming, attachments: mergedAttachments };
       return { messages: maybeSortByGroupSeq(next), localMaxSeq: newMaxSeq, ...clearPending };
     }
 

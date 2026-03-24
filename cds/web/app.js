@@ -20,7 +20,7 @@ const ICON = {
   pr: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5.45 5.154A4.25 4.25 0 009.25 7.5h1.378a2.251 2.251 0 110 1.5H9.25A5.734 5.734 0 015 7.123v3.505a2.25 2.25 0 11-1.5 0V5.372a2.25 2.25 0 111.95-.218zM4.25 13.5a.75.75 0 100-1.5.75.75 0 000 1.5zm8.5-4.5a.75.75 0 100-1.5.75.75 0 000 1.5zM5 3.25a.75.75 0 10-1.5 0 .75.75 0 001.5 0z"/></svg>',
   pull: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.004a.75.75 0 01.75.75v5.689l1.97-1.97a.749.749 0 111.06 1.06l-3.25 3.25a.749.749 0 01-1.06 0L4.22 7.533a.749.749 0 111.06-1.06l1.97 1.97V2.754a.75.75 0 01.75-.75zM2.75 12.5h10.5a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5z"/></svg>',
   preview: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 8s3-5.5 8-5.5S16 8 16 8s-3 5.5-8 5.5S0 8 0 8zm8 3.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7zm0-1.5a2 2 0 110-4 2 2 0 010 4z"/></svg>',
-  deploy: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 12-8.373 8.373a1 1 0 1 1-3-3L12 9"/><path d="m18 15 4-4"/><path d="m21.5 11.5c.7-1 .5-2.4-.3-3.2L17 4.2c-.8-.8-2.2-1-3.2-.3L12 5.5l6.5 6.5z"/></svg>',
+  deploy: '<svg class="inline-icon deploy-hammer-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 12-8.373 8.373a1 1 0 1 1-3-3L12 9"/><path d="m18 15 4-4"/><path d="m21.5 11.5c.7-1 .5-2.4-.3-3.2L17 4.2c-.8-.8-2.2-1-3.2-.3L12 5.5l6.5 6.5z"/></svg>',
   trash: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM11 3V1.75A1.75 1.75 0 009.25 0h-2.5A1.75 1.75 0 005 1.75V3H2.75a.75.75 0 000 1.5h.3l.8 8.2A1.75 1.75 0 005.6 14.5h4.8a1.75 1.75 0 001.75-1.8l.8-8.2h.3a.75.75 0 000-1.5H11z"/></svg>',
   reset: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5z"/></svg>',
   star: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg>',
@@ -60,6 +60,9 @@ let previewMode = localStorage.getItem('cds_preview_mode') || 'simple';
 // ── Mirror acceleration (npm/docker registry mirrors) ──
 let mirrorEnabled = false;
 
+// ── Tab title override (update browser tab title with tag/branch name) ──
+let tabTitleEnabled = true;
+
 // ── Theme (light/dark) ──
 // Theme is applied in <head> inline script to prevent FOUC (flash of unstyled content).
 let cdsTheme = localStorage.getItem('cds_theme') || 'dark';
@@ -95,7 +98,7 @@ function showToast(msg, type = 'info', duration) {
 }
 
 function statusLabel(s) {
-  const map = { running: '运行中', starting: '启动中', building: '构建中', stopping: '正在停止', idle: '空闲', stopped: '已停止', error: '错误' };
+  const map = { running: '运行中', starting: '启动中', building: '构建中', stopping: '正在停止', deleting: '删除中', idle: '空闲', stopped: '已停止', error: '错误' };
   return map[s] || s;
 }
 
@@ -218,7 +221,7 @@ let workerPort = '';
 
 async function init() {
   updateThemeUI();
-  await Promise.all([loadBranches(), loadProfiles(), loadRoutingRules(), loadConfig(), loadEnvVars(), loadInfraServices(), loadMirrorState()]);
+  await Promise.all([loadBranches(), loadProfiles(), loadRoutingRules(), loadConfig(), loadEnvVars(), loadInfraServices(), loadMirrorState(), loadTabTitleState()]);
   refreshRemoteCandidates();
   updatePreviewModeUI();
   initStateStream(); // Server-authority: listen for state changes via SSE (replaces polling)
@@ -412,6 +415,14 @@ function confirmOpenGithub(event) {
   return true;
 }
 
+function copyBranchName(name) {
+  navigator.clipboard.writeText(name).then(() => {
+    showToast('已复制: ' + name, 'success');
+  }).catch(() => {
+    showToast('复制失败', 'error');
+  });
+}
+
 function cyclePreviewMode() {
   // Cycle: simple → port → multi → simple
   const modes = ['simple', 'port', 'multi'];
@@ -460,6 +471,32 @@ async function toggleMirror() {
 function updateMirrorUI() {
   const sw = document.querySelector('.settings-switch-mirror');
   if (sw) sw.classList.toggle('on', mirrorEnabled);
+}
+
+// ── Tab title override ──
+
+async function loadTabTitleState() {
+  try {
+    const data = await api('GET', '/tab-title');
+    tabTitleEnabled = data.enabled;
+  } catch { /* ignore */ }
+}
+
+async function toggleTabTitle() {
+  const newVal = !tabTitleEnabled;
+  try {
+    await api('PUT', '/tab-title', { enabled: newVal });
+    tabTitleEnabled = newVal;
+    updateTabTitleUI();
+    showToast(newVal ? '标签页标题已开启' : '标签页标题已关闭', 'info');
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+function updateTabTitleUI() {
+  const sw = document.querySelector('.settings-switch-tabtitle');
+  if (sw) sw.classList.toggle('on', tabTitleEnabled);
 }
 
 // ── Theme toggle ──
@@ -1112,12 +1149,26 @@ async function previewBranch(id) {
 async function removeBranch(id) {
   if (!confirm(`确定删除分支 "${id}"？将停止所有服务并删除工作区。`)) return;
   busyBranches.add(id);
+  // Immediately set deleting state for visual feedback (borrowing stopping-pulse style)
+  const br = branches.find(b => b.id === id);
+  if (br) {
+    br.status = 'deleting';
+    for (const svc of Object.values(br.services || {})) {
+      svc.status = 'stopping';
+    }
+  }
   renderBranches();
   try {
     const res = await fetch(`${API}/branches/${id}`, { method: 'DELETE' });
     // SSE stream — just consume it
     const reader = res.body.getReader();
     while (!(await reader.read()).done) {}
+    // Collapse animation before removing from DOM
+    const card = document.querySelector(`.branch-card[data-branch-id="${CSS.escape(id)}"]`);
+    if (card) {
+      card.classList.add('deleting-collapse');
+      await new Promise(r => card.addEventListener('animationend', r, { once: true }));
+    }
     showToast(`分支 "${id}" 已删除`, 'success');
   } catch (e) { showToast(e.message, 'error'); }
   busyBranches.delete(id);
@@ -1789,6 +1840,14 @@ function toggleSettingsMenu(event) {
         </span>
       </span>
     </div>
+    <div class="settings-menu-item settings-menu-switch" onclick="toggleTabTitle()">
+      <span class="settings-menu-switch-label">标签页标题</span>
+      <span class="settings-switch settings-switch-tabtitle ${tabTitleEnabled ? 'on' : ''}">
+        <span class="settings-switch-track">
+          <span class="settings-switch-thumb"></span>
+        </span>
+      </span>
+    </div>
     <div class="settings-menu-item" onclick="closeSettingsMenu(); exportConfig()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 13a.5.5 0 01-.5-.5V3a.5.5 0 01.5-.5h5.586a.5.5 0 01.354.146l3.414 3.414a.5.5 0 01.146.354V12.5a.5.5 0 01-.5.5h-9zM3.5 1A1.5 1.5 0 002 2.5v11A1.5 1.5 0 003.5 15h9a1.5 1.5 0 001.5-1.5V6.414a1.5 1.5 0 00-.44-1.06L10.147 1.94A1.5 1.5 0 009.086 1.5H3.5z"/></svg>
       导出配置
@@ -1949,7 +2008,7 @@ function renderBranches() {
       `;
       actionsRightHtml = `
         <div class="split-btn">
-          <button class="sm split-btn-main" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="重新部署">${ICON.deploy} 部署</button>
+          <button class="sm split-btn-main deploy-glow-btn" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="重新部署">${ICON.deploy} 部署</button>
           <button class="sm split-btn-toggle" onclick="toggleDeployMenu('${esc(b.id)}', event)" ${isBusy ? 'disabled' : ''}>
             <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor"><path d="M1 1l4 4 4-4"/></svg>
           </button>
@@ -1965,7 +2024,7 @@ function renderBranches() {
     } else if (isStopped) {
       // Container exists but stopped — neutral deploy, not primary
       actionsLeftHtml = `
-        <button class="sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="部署">${ICON.deploy} 部署</button>
+        <button class="sm deploy-glow-btn" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="部署">${ICON.deploy} 部署</button>
       `;
       actionsRightHtml = `
         <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.trash}</button>
@@ -1973,7 +2032,7 @@ function renderBranches() {
     } else {
       // Idle (never deployed) or building — neutral deploy button
       actionsLeftHtml = `
-        <button class="sm" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="部署">${ICON.deploy} 部署</button>
+        <button class="sm deploy-glow-btn" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="部署">${ICON.deploy} 部署</button>
       `;
       actionsRightHtml = `
         ${hasError ? `<button class="sm" onclick="resetBranch('${esc(b.id)}')" ${btnDisabled('reset')}>${btnLabel('reset', ICON.reset + ' 重置')}</button>` : ''}
@@ -1982,18 +2041,31 @@ function renderBranches() {
     }
 
     const deployLog = inlineDeployLogs.get(b.id);
-    const isDeploying = !!deployLog && deployLog.status === 'building';
+    const localDeploying = !!deployLog && deployLog.status === 'building';
+    // Server-authority: also treat server-pushed 'building'/'starting' as deploying
+    const serverDeploying = !localDeploying && (b.status === 'building' || b.status === 'starting');
+    const isDeploying = localDeploying || serverDeploying;
     const deployFailed = !!deployLog && deployLog.status === 'error';
     const isJustDeployed = justDeployed.has(b.id);
 
     // Commit area in actions row — shows commit info or deploy log during deployment
     let commitAreaHtml = '';
-    if (isDeploying && deployLog) {
+    if (localDeploying && deployLog) {
+      // Local deploy — show live log lines
       const compactLines = deployLog.lines.filter(l => l.trim()).slice(-2);
       commitAreaHtml = `
         <div class="branch-actions-deploy-status" title="部署中，点击查看完整日志" onclick="event.stopPropagation(); openFullDeployLog('${esc(b.id)}', event)">
           <span class="live-dot"></span>
           <pre class="deploy-status-log">${esc(compactLines.join('\n')) || '正在启动...'}</pre>
+        </div>
+      `;
+    } else if (serverDeploying) {
+      // Server-driven deploy (triggered externally) — simplified indicator
+      const statusLabel = b.status === 'building' ? '构建中...' : '启动中...';
+      commitAreaHtml = `
+        <div class="branch-actions-deploy-status">
+          <span class="live-dot"></span>
+          <pre class="deploy-status-log">${statusLabel}</pre>
         </div>
       `;
     } else if (b.subject) {
@@ -2009,7 +2081,7 @@ function renderBranches() {
     // Deploy logs are accessible via the log button in toolbar.
 
     return `
-      <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} expanded ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''} ${isDeploying ? 'is-deploying' : ''} ${b.isColorMarked ? 'is-color-marked' : ''} ${getAiOccupant(b.id) ? 'is-ai-occupied' : ''}" data-branch-id="${esc(b.id)}">
+      <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} expanded ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''} ${isDeploying ? 'is-deploying' : ''} ${b.isColorMarked ? 'is-color-marked' : ''} ${getAiOccupant(b.id) ? 'is-ai-occupied' : ''} ${b.pinnedCommit ? 'is-pinned' : ''}" data-branch-id="${esc(b.id)}">
         ${isDeploying ? '<div class="deploy-progress-bar"><div class="deploy-progress-bar-fill"></div></div>' : ''}
         <div class="branch-card-toolbar">
           ${!isBusy ? `<span class="update-pull-group" onclick="event.stopPropagation(); pullBranch('${esc(b.id)}')" title="${hasUpdates ? branchUpdates[b.id].behind + ' 个新提交，点击拉取' : '点击拉取最新代码'}">
@@ -2046,8 +2118,19 @@ function renderBranches() {
               ${b.isFavorite ? ICON.star : ICON.starOutline}
             </span>
             <a class="branch-name" href="${githubRepoUrl ? githubRepoUrl.replace('github.com', 'github.dev') + '/tree/' + encodeURIComponent(b.branch) : '#'}" target="_blank" onclick="event.stopPropagation(); return confirmOpenGithub(event)" title="在 GitHub.dev 中浏览代码">${ICON.branch} ${esc(b.branch)}</a>
+            <span class="branch-quick-actions">
+              <button class="branch-quick-btn" onclick="event.stopPropagation(); copyBranchName('${esc(b.branch)}')" title="复制分支名">
+                <svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"/></svg>
+              </button>
+              <button class="branch-quick-btn" onclick="event.stopPropagation(); previewBranch('${esc(b.id)}')" title="打开预览">
+                <svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M3.75 2h3.5a.75.75 0 010 1.5h-3.5a.25.25 0 00-.25.25v8.5c0 .138.112.25.25.25h8.5a.25.25 0 00.25-.25v-3.5a.75.75 0 011.5 0v3.5A1.75 1.75 0 0112.25 14h-8.5A1.75 1.75 0 012 12.25v-8.5C2 2.784 2.784 2 3.75 2zm6.854-.22a.75.75 0 01.22.53v2.5a.75.75 0 01-1.5 0V3.56L6.22 6.72a.75.75 0 01-1.06-1.06l3.1-3.1H6.81a.75.75 0 010-1.5h3.5a.75.75 0 01.293.06z"/></svg>
+              </button>
+            </span>
           </div>
-          ${b.subject ? `<div class="branch-card-row2"><span class="branch-commit-msg" title="${esc(b.subject)}">${commitIcon(b.subject)} ${esc(b.subject)}</span></div>` : ''}
+          ${b.subject ? `<div class="branch-card-row2">
+            ${b.pinnedCommit ? `<span class="pinned-commit-badge" onclick="event.stopPropagation(); checkoutCommit('${esc(b.id)}', '', true, '')" title="已固定到历史提交 ${esc(b.pinnedCommit)}，点击恢复最新">📌 ${esc(b.pinnedCommit)}</span>` : ''}
+            <span class="branch-commit-msg" title="${esc(b.subject)}">${commitIcon(b.subject)} ${esc(b.subject)}</span>
+          </div>` : ''}
           ${portBadgesHtml ? `<div class="branch-card-ports">${portBadgesHtml}</div>` : ''}
           ${b.executorId ? `<span class="executor-tag" title="部署在执行器 ${esc(b.executorId)}">⚡ ${esc(b.executorId.replace(/^executor-/, '').slice(0, 20))}</span>` : ''}
         </div>
@@ -2077,6 +2160,9 @@ function renderBranches() {
     const card = document.querySelector(`.branch-card[data-branch-id="${branchId}"]`);
     if (card) card.classList.add('is-previewing');
   }
+
+  // Dashboard title stays constant — tag-based titles are for proxied preview pages only (widget-script.ts)
+  document.title = 'Cloud Dev Suite';
 }
 
 // ── Build profiles (data only) ──
@@ -3575,15 +3661,57 @@ async function toggleCommitLog(id, triggerEl) {
       el.innerHTML = '<div class="commit-log-empty">暂无提交记录</div>';
       return;
     }
-    el.innerHTML = commits.map((c, i) => `
-      <div class="commit-log-item ${i === 0 ? 'latest' : ''}">
-        ${commitIcon(c.subject)}<code class="commit-hash">${esc(c.hash)}</code>
+    const branch = branches.find(br => br.id === id);
+    const isPinned = branch?.pinnedCommit;
+    el.innerHTML = commits.map((c, i) => {
+      const isCurrent = isPinned ? c.hash === isPinned : i === 0;
+      const isLatest = i === 0;
+      return `
+      <div class="commit-log-item ${isLatest ? 'latest' : ''} ${isCurrent ? 'current' : ''}" onclick="event.stopPropagation(); checkoutCommit('${esc(id)}', '${esc(c.hash)}', ${isLatest}, ${JSON.stringify(esc(c.subject))})" title="点击切换到此提交进行构建">
+        ${isCurrent ? '<span class="commit-current-dot"></span>' : ''}${commitIcon(c.subject)}<code class="commit-hash">${esc(c.hash)}</code>
         <span class="commit-subject">${esc(c.subject)}</span>
         <span class="commit-meta">${esc(c.author)} · ${esc(c.date)}</span>
       </div>
-    `).join('');
+    `;
+    }).join('');
   } catch (e) {
     el.innerHTML = `<div class="commit-log-empty" style="color:var(--red)">${esc(e.message)}</div>`;
+  }
+}
+
+async function checkoutCommit(branchId, hash, isLatest, subject) {
+  closeCommitLog();
+  const branch = branches.find(b => b.id === branchId);
+  if (!branch) return;
+
+  // If clicking on the latest commit and currently pinned, unpin
+  if (isLatest && branch.pinnedCommit) {
+    if (!confirm(`恢复到分支最新提交？\n\n当前固定在: ${branch.pinnedCommit}`)) return;
+    try {
+      await api('POST', `/branches/${encodeURIComponent(branchId)}/unpin`);
+      branch.pinnedCommit = undefined;
+      showToast('已恢复到分支最新提交', 'success');
+      renderBranches();
+    } catch (e) {
+      showToast(`恢复失败: ${e.message}`, 'error');
+    }
+    return;
+  }
+
+  // If clicking on the latest commit and not pinned, nothing to do
+  if (isLatest && !branch.pinnedCommit) return;
+
+  // Confirm checkout to historical commit
+  const msg = `切换到历史提交进行构建？\n\n${hash}  ${subject}\n\n⚠️ 切换后卡片将显示警示状态\n点击「部署」会自动恢复到分支最新`;
+  if (!confirm(msg)) return;
+
+  try {
+    const data = await api('POST', `/branches/${encodeURIComponent(branchId)}/checkout/${encodeURIComponent(hash)}`);
+    branch.pinnedCommit = data.pinnedCommit || hash;
+    showToast(`已切换到提交 ${hash}`, 'success');
+    renderBranches();
+  } catch (e) {
+    showToast(`切换失败: ${e.message}`, 'error');
   }
 }
 
@@ -3735,6 +3863,19 @@ function toUTC8Time(isoStr) {
   return full;
 }
 
+// Get display label for branch: prefer tags from event, then branches array, fallback to last segment of ID
+function getBranchDisplayLabel(branchId, eventTags) {
+  // 1. Server-side resolved tags (reliable, no timing issues)
+  if (eventTags?.length) return eventTags.join(' · ');
+  // 2. Fallback: lookup from branches array (may be empty on early events)
+  const branch = branches.find(b => b.id === branchId);
+  if (branch?.tags?.length) return branch.tags.join(' · ');
+  // 3. Last resort: tail of branch ID
+  const lastDash = branchId.lastIndexOf('-');
+  const tail = lastDash >= 0 ? branchId.slice(lastDash + 1) : branchId;
+  return tail.length > 16 ? tail.slice(0, 13) + '…' : tail;
+}
+
 function renderActivityItem(event) {
   const body = document.getElementById('activityBody');
   if (!body) return;
@@ -3756,12 +3897,10 @@ function renderActivityItem(event) {
   });
 
   let html = '';
-  // Branch ID first (last segment after '-') to identify which preview is making requests
+  // Branch label: prefer tags, fallback to last ID segment
   if (event.branchId) {
-    const lastDash = event.branchId.lastIndexOf('-');
-    const branchTail = lastDash >= 0 ? event.branchId.slice(lastDash + 1) : event.branchId;
-    const branchShort = branchTail.length > 16 ? branchTail.slice(0, 13) + '…' : branchTail;
-    html += `<span class="activity-source" style="background:var(--accent-bg);color:var(--accent);font-size:9px;font-weight:600;padding:1px 4px;border-radius:3px" title="${escapeHtml(event.branchId)}">${escapeHtml(branchShort)}</span>`;
+    const branchLabel = getBranchDisplayLabel(event.branchId, event.branchTags);
+    html += `<span class="activity-source" style="background:var(--accent-bg);color:var(--accent);font-size:9px;font-weight:600;padding:1px 4px;border-radius:3px" title="${escapeHtml(event.branchId)}">${escapeHtml(branchLabel)}</span>`;
   }
   // AI badge if applicable
   if (isAi) {
@@ -3813,12 +3952,10 @@ function renderWebActivityItem(event) {
   const containerBg = isApi ? 'rgba(56,139,253,0.12)' : 'rgba(63,185,80,0.12)';
 
   let html = '';
-  // Branch first, then container badge
+  // Branch label: prefer tags, fallback to last ID segment
   if (event.branchId) {
-    const lastDash = event.branchId.lastIndexOf('-');
-    const branchTail = lastDash >= 0 ? event.branchId.slice(lastDash + 1) : event.branchId;
-    const branchShort = branchTail.length > 16 ? branchTail.slice(0, 13) + '…' : branchTail;
-    html += `<span class="activity-source" style="background:var(--accent-bg);color:var(--accent);font-size:9px;font-weight:600;padding:1px 4px;border-radius:3px" title="${escapeHtml(event.branchId)}">${escapeHtml(branchShort)}</span>`;
+    const branchLabel = getBranchDisplayLabel(event.branchId, event.branchTags);
+    html += `<span class="activity-source" style="background:var(--accent-bg);color:var(--accent);font-size:9px;font-weight:600;padding:1px 4px;border-radius:3px" title="${escapeHtml(event.branchId)}">${escapeHtml(branchLabel)}</span>`;
   }
   html += `<span class="web-container-badge" style="background:${containerBg};color:${containerColor}">${containerLabel}</span>`;
   html += `<span class="activity-path" title="${escapeHtml(event.path)}">${escapeHtml(shortPath)}</span>`;

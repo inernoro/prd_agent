@@ -990,18 +990,37 @@ function MessageListInner() {
                 }`}
               >
               {message.role === 'User' ? (
-                <p
-                  className={`whitespace-pre-wrap ${isMine ? '' : 'text-text-primary'}`}
-                  style={{
-                    // 当输出 ASCII 表格（依赖空格对齐）时，必须用等宽字体，否则右侧会错乱
-                    fontFamily: 'var(--font-mono)',
-                    fontVariantLigatures: 'none',
-                    // 用户消息也跟随 Assistant 字体缩放设置
-                    ...assistantContentStyle,
-                  }}
-                >
-                  {message.content}
-                </p>
+                <div>
+                  {/* 附件图片 */}
+                  {message.attachments && message.attachments.length > 0 && (
+                    <div className={`flex flex-wrap gap-2 ${message.content ? 'mb-2' : ''}`}>
+                      {message.attachments
+                        .filter((att) => att.mimeType?.startsWith('image/'))
+                        .map((att) => (
+                          <img
+                            key={att.attachmentId}
+                            src={att.url}
+                            alt={att.fileName}
+                            className="max-w-[280px] max-h-[200px] rounded-lg object-contain cursor-pointer"
+                            onClick={() => window.open(att.url, '_blank')}
+                            draggable={false}
+                          />
+                        ))}
+                    </div>
+                  )}
+                  {message.content && (
+                    <p
+                      className={`whitespace-pre-wrap ${isMine ? '' : 'text-text-primary'}`}
+                      style={{
+                        fontFamily: 'var(--font-mono)',
+                        fontVariantLigatures: 'none',
+                        ...assistantContentStyle,
+                      }}
+                    >
+                      {message.content}
+                    </p>
+                  )}
+                </div>
               ) : (
                 <div>
             {/* 思考过程：有实际思考内容时用 ThinkingSection（可折叠），否则用加载动画 */}

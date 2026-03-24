@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, ChevronDown } from 'lucide-react';
-import { SubmissionCard } from './SubmissionCard';
-import { LiteraryCard } from './LiteraryCard';
+import { Loader2, ChevronDown, Eye, BookOpen, X } from 'lucide-react';
 import { SubmissionDetailModal } from './SubmissionDetailModal';
 import {
   listPublicSubmissions,
@@ -10,6 +8,8 @@ import {
   adminWithdrawSubmission,
   type SubmissionItem,
 } from '@/services/real/submissions';
+import { resolveAvatarUrl, DEFAULT_AVATAR_FALLBACK } from '@/lib/avatar';
+import { HeartLikeButton } from '@/components/effects/HeartLikeButton';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useAuthStore } from '@/stores/authStore';
 import { toast } from '@/lib/toast';
@@ -21,6 +21,205 @@ const TABS = [
 ] as const;
 
 const PAGE_SIZE = 20;
+
+/* ── NotebookLM-style gradient fallbacks ── */
+const FALLBACK_GRADIENTS = [
+  'linear-gradient(135deg, #1a1a2e 0%, #16213e 40%, #0f3460 100%)',
+  'linear-gradient(135deg, #2d1b69 0%, #11998e 100%)',
+  'linear-gradient(135deg, #1f1c2c 0%, #928dab 100%)',
+  'linear-gradient(135deg, #0f2027 0%, #203a43 40%, #2c5364 100%)',
+  'linear-gradient(135deg, #1a002e 0%, #3d1f5c 50%, #5c3d7a 100%)',
+  'linear-gradient(135deg, #141e30 0%, #243b55 100%)',
+];
+
+function getFallbackGradient(id: string): string {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = ((hash << 5) - hash + id.charCodeAt(i)) | 0;
+  return FALLBACK_GRADIENTS[Math.abs(hash) % FALLBACK_GRADIENTS.length];
+}
+
+/* ── Unified NotebookLM-style Card ── */
+
+function ShowcaseCard({
+  item,
+  onLikeToggle,
+  onClick,
+  isAdmin,
+  onAdminWithdraw,
+}: {
+  item: SubmissionItem;
+  onLikeToggle?: (id: string, liked: boolean) => Promise<void>;
+  onClick?: () => void;
+  isAdmin?: boolean;
+  onAdminWithdraw?: (id: string) => void;
+}) {
+  const [liked, setLiked] = useState(item.likedByMe);
+  const [likeCount, setLikeCount] = useState(item.likeCount);
+  const [liking, setLiking] = useState(false);
+  const [imgLoaded, setImgLoaded] = useState(false);
+  const [imgError, setImgError] = useState(false);
+
+  useEffect(() => { setLiked(item.likedByMe); }, [item.likedByMe]);
+  useEffect(() => { setLikeCount(item.likeCount); }, [item.likeCount]);
+
+  const avatarUrl = resolveAvatarUrl({ avatarFileName: item.ownerAvatarFileName });
+  const hasCover = !!item.coverUrl && !imgError;
+
+  const handleLike = async () => {
+    if (liking) return;
+    setLiking(true);
+    const newLiked = !liked;
+    setLiked(newLiked);
+    setLikeCount((c) => c + (newLiked ? 1 : -1));
+    try {
+      await onLikeToggle?.(item.id, newLiked);
+    } catch {
+      setLiked(!newLiked);
+      setLikeCount((c) => c + (newLiked ? -1 : 1));
+    } finally {
+      setLiking(false);
+    }
+  };
+
+  return (
+    <div
+      className="group cursor-pointer"
+      onClick={onClick}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick?.(); } }}
+    >
+      {/* Card — full-bleed image/gradient, text overlaid at bottom */}
+      <div
+        className="relative w-full overflow-hidden rounded-xl transition-all duration-300 group-hover:shadow-xl group-hover:shadow-black/30 group-hover:scale-[1.02]"
+        style={{
+          aspectRatio: '16/10',
+          background: hasCover ? '#0a0a0f' : getFallbackGradient(item.id),
+        }}
+      >
+        {/* Cover image */}
+        {item.coverUrl && !imgError && (
+          <img
+            src={item.coverUrl}
+            alt={item.title}
+            className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-[1.06]"
+            style={{ opacity: imgLoaded ? 1 : 0, transition: 'opacity 0.5s ease' }}
+            loading="lazy"
+            onLoad={() => setImgLoaded(true)}
+            onError={() => setImgError(true)}
+          />
+        )}
+
+        {/* Decorative quote for no-image literary cards */}
+        {!hasCover && item.contentType === 'literary' && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none">
+            <span className="text-[100px] font-serif leading-none" style={{ color: 'rgba(255,255,255,0.04)' }}>"</span>
+          </div>
+        )}
+
+        {/* Bottom gradient overlay for text readability */}
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            background: hasCover
+              ? 'linear-gradient(180deg, rgba(0,0,0,0.02) 0%, rgba(0,0,0,0.12) 35%, rgba(0,0,0,0.72) 100%)'
+              : 'linear-gradient(180deg, transparent 30%, rgba(0,0,0,0.4) 100%)',
+          }}
+        />
+
+        {/* Admin withdraw button */}
+        {isAdmin && (
+          <button
+            type="button"
+            className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-20 flex items-center justify-center w-6 h-6 rounded-full"
+            style={{
+              background: 'rgba(239, 68, 68, 0.85)',
+              backdropFilter: 'blur(8px)',
+              color: '#fff',
+              border: '1px solid rgba(255,255,255,0.2)',
+            }}
+            title="管理员撤稿"
+            onClick={(e) => {
+              e.stopPropagation();
+              onAdminWithdraw?.(item.id);
+            }}
+          >
+            <X size={12} />
+          </button>
+        )}
+
+        {/* Content overlay — all at the bottom, NotebookLM style */}
+        <div className="absolute inset-0 z-10 flex flex-col justify-end p-3.5 gap-2">
+          {/* Source badge — avatar + name (like NotebookLM's source icon) */}
+          <div className="flex items-center gap-2">
+            <img
+              src={avatarUrl}
+              alt={item.ownerUserName}
+              className="w-5 h-5 rounded-full shrink-0 object-cover ring-1 ring-white/20"
+              onError={(e) => { (e.target as HTMLImageElement).src = DEFAULT_AVATAR_FALLBACK; }}
+            />
+            <span
+              className="text-[11px] font-medium truncate drop-shadow"
+              style={{ color: 'rgba(255,255,255,0.8)' }}
+            >
+              {item.ownerUserName}
+            </span>
+            {item.contentType === 'literary' && (
+              <div
+                className="flex items-center gap-1 px-1.5 py-0.5 rounded-full ml-auto shrink-0"
+                style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.08)' }}
+              >
+                <BookOpen size={9} style={{ color: 'rgba(165,180,252,0.9)' }} />
+                <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.6)' }}>文学创作</span>
+              </div>
+            )}
+          </div>
+
+          {/* Title — large and bold */}
+          <h3
+            className="text-[15px] font-bold leading-snug line-clamp-2 drop-shadow-lg"
+            style={{ color: '#fff', textShadow: '0 1px 6px rgba(0,0,0,0.5)' }}
+          >
+            {item.title || '未命名'}
+          </h3>
+
+          {/* Bottom row: date + stats */}
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] drop-shadow" style={{ color: 'rgba(255,255,255,0.5)' }}>
+              {new Date(item.createdAt).toLocaleDateString()}
+            </span>
+            <div className="flex-1" />
+            {item.viewCount > 0 && (
+              <span
+                className="flex items-center gap-0.5 text-[10px] drop-shadow"
+                style={{ color: 'rgba(255,255,255,0.5)' }}
+              >
+                <Eye size={10} />
+                {item.viewCount >= 10000 ? `${(item.viewCount / 10000).toFixed(1)}万` : item.viewCount}
+              </span>
+            )}
+            <div
+              className="flex items-center gap-0.5"
+              style={{ color: liked ? '#F43F5E' : 'rgba(255,255,255,0.45)' }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <HeartLikeButton
+                size={18}
+                liked={liked}
+                heartColor="#F43F5E"
+                disabled={liking}
+                onClick={handleLike}
+              />
+              {likeCount > 0 && <span className="text-[10px] drop-shadow">{likeCount}</span>}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── ShowcaseGallery ── */
 
 export function ShowcaseGallery() {
   const { isMobile } = useBreakpoint();
@@ -121,6 +320,15 @@ export function ShowcaseGallery() {
 
   const hasMore = items.length < total;
 
+  // Grid style — uniform responsive grid (NotebookLM style, NOT masonry)
+  const gridStyle = {
+    display: 'grid' as const,
+    gap: isMobile ? 12 : 16,
+    gridTemplateColumns: isMobile
+      ? 'repeat(auto-fill, minmax(150px, 1fr))'
+      : 'repeat(auto-fill, minmax(240px, 1fr))',
+  };
+
   // 只在初始加载（全部tab）没有数据时隐藏整个区域
   if (!loading && items.length === 0 && initialLoadDone.current && !activeTab) return null;
 
@@ -162,15 +370,15 @@ export function ShowcaseGallery() {
         </div>
       </div>
 
-      {/* Loading skeleton */}
+      {/* Loading skeleton — uniform grid */}
       {loading && (
-        <div style={{ columnCount: isMobile ? 2 : 4, columnGap: isMobile ? 12 : 20 }}>
+        <div style={gridStyle}>
           {Array.from({ length: 12 }).map((_, i) => (
             <div
               key={i}
-              className="animate-pulse rounded-2xl break-inside-avoid mb-5"
+              className="animate-pulse rounded-xl"
               style={{
-                height: [220, 280, 340, 200, 300, 260][i % 6],
+                aspectRatio: '16/10',
                 background: 'rgba(255,255,255,0.03)',
               }}
             />
@@ -178,28 +386,19 @@ export function ShowcaseGallery() {
         </div>
       )}
 
-      {/* Masonry — CSS columns 瀑布流，自动填充空隙 */}
+      {/* Uniform grid — all cards same height, NotebookLM style */}
       {!loading && items.length > 0 && (
         <>
-          <div style={{ columnCount: isMobile ? 2 : 4, columnGap: isMobile ? 12 : 20 }}>
+          <div style={gridStyle}>
             {items.map((item) => (
-              <div key={item.id} className="break-inside-avoid mb-5">
-                {item.contentType === 'literary' ? (
-                  <LiteraryCard
-                    item={item}
-                    onLikeToggle={handleLikeToggle}
-                    onClick={() => setSelectedId(item.id)}
-                  />
-                ) : (
-                  <SubmissionCard
-                    item={item}
-                    onLikeToggle={handleLikeToggle}
-                    onClick={() => setSelectedId(item.id)}
-                    isAdmin={isAdmin}
-                    onAdminWithdraw={handleAdminWithdraw}
-                  />
-                )}
-              </div>
+              <ShowcaseCard
+                key={item.id}
+                item={item}
+                onLikeToggle={handleLikeToggle}
+                onClick={() => setSelectedId(item.id)}
+                isAdmin={isAdmin}
+                onAdminWithdraw={handleAdminWithdraw}
+              />
             ))}
           </div>
 

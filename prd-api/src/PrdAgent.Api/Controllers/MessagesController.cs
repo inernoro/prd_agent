@@ -171,6 +171,7 @@ public class MessagesController : ControllerBase
                         Role = MessageRole.User,
                         Content = request.Content ?? "",
                         ViewRole = answerAsRole ?? session?.CurrentRole ?? UserRole.PM,
+                        AttachmentIds = request.AttachmentIds ?? new List<string>(),
                         Timestamp = DateTime.UtcNow
                     };
                     await _messageRepository.InsertManyAsync(new[] { userMessage });
@@ -491,7 +492,7 @@ public class MessagesController : ControllerBase
                 var uid = u.UserId;
                 if (string.IsNullOrWhiteSpace(uid)) continue;
                 var name = (u.DisplayName ?? u.Username ?? uid).Trim();
-                var avatarUrl = AvatarUrlBuilder.Build(_configuration, u.AvatarFileName);
+                var avatarUrl = AvatarUrlBuilder.Build(_configuration, u);
                 var member = members.FirstOrDefault(m => m.UserId == uid);
                 var tags = member?.Tags;
                 senderInfoMap[uid!] = (name, u.Role, avatarUrl, tags);
@@ -530,7 +531,8 @@ public class MessagesController : ControllerBase
                 ViewRole = m.ViewRole,
                 Timestamp = m.Timestamp,
                 TokenUsage = m.TokenUsage,
-                SuggestedQuestions = m.SuggestedQuestions
+                SuggestedQuestions = m.SuggestedQuestions,
+                AttachmentIds = m.AttachmentIds != null && m.AttachmentIds.Count > 0 ? m.AttachmentIds : null
             };
         }).ToList();
 
@@ -562,6 +564,7 @@ public class MessageResponse
     public TokenUsage? TokenUsage { get; set; }
     /// <summary>推荐追问列表（仅 Assistant 消息）</summary>
     public List<SuggestedQuestion>? SuggestedQuestions { get; set; }
+    public List<string>? AttachmentIds { get; set; }
 }
 
 

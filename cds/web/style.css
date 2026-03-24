@@ -252,6 +252,7 @@
 [data-theme="light"] .branch-card.status-starting { border-left-color: var(--yellow); }
 [data-theme="light"] .branch-card.status-error { border-left-color: var(--red); }
 [data-theme="light"] .branch-card.status-stopping { border-left-color: var(--red); }
+[data-theme="light"] .branch-card.status-deleting { border-left-color: var(--red); }
 
 [data-theme="light"] .port-badge.run-port {
   color: var(--green); background: var(--green-bg); border-color: var(--green-border);
@@ -778,6 +779,14 @@ button.text-btn:hover { color: var(--accent); }
 .branch-card.status-stopping {
   animation: stopping-pulse 1.2s ease-in-out infinite;
 }
+.branch-card.status-deleting {
+  animation: stopping-pulse 0.8s ease-in-out infinite;
+  opacity: 0.85;
+}
+.branch-card.deleting-collapse {
+  animation: deleting-collapse 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  pointer-events: none;
+}
 @keyframes stopping-pulse {
   0%, 100% {
     box-shadow: 0 0 0 0 rgba(244, 63, 94, 0), 0 1px 3px rgba(0, 0, 0, 0.2);
@@ -787,6 +796,11 @@ button.text-btn:hover { color: var(--accent); }
     box-shadow: 0 0 12px 2px rgba(244, 63, 94, 0.3), 0 0 24px 4px rgba(244, 63, 94, 0.1);
     border-color: rgba(244, 63, 94, 0.4);
   }
+}
+@keyframes deleting-collapse {
+  0% { transform: scale(1); opacity: 0.85; max-height: 600px; margin-bottom: 12px; }
+  60% { transform: scale(0.95); opacity: 0.3; }
+  100% { transform: scale(0.9); opacity: 0; max-height: 0; margin-bottom: 0; overflow: hidden; }
 }
 /* Human web access — blinking footprint icon in toolbar */
 .human-access-icon {
@@ -853,6 +867,16 @@ button.text-btn:hover { color: var(--accent); }
 }
 @keyframes ai-icon-spin {
   to { transform: rotate(360deg); }
+}
+/* During deploy, hide AI spinner entirely */
+.branch-card.is-deploying .ai-mark-spinner {
+  display: none;
+}
+/* During deploy, AI card border stops spinning — use deploy glow instead */
+.branch-card.is-ai-occupied.is-deploying {
+  background-image: none;
+  border: 1px solid var(--accent-border);
+  animation: deploying-glow 2s ease-in-out infinite;
 }
 
 /* AI branch activity feed — single-line roller in card */
@@ -960,6 +984,10 @@ button.text-btn:hover { color: var(--accent); }
   color: var(--red); background: var(--red-bg); border: 1px solid var(--red-border);
   animation: port-stopping-blink 1s ease-in-out infinite;
 }
+.status-badge-deleting {
+  color: var(--red); background: var(--red-bg); border: 1px solid var(--red-border);
+  animation: port-stopping-blink 0.7s ease-in-out infinite;
+}
 .status-badge-starting {
   color: var(--yellow); background: var(--yellow-bg); border: 1px solid rgba(251, 191, 36, 0.2);
   animation: port-building-pulse 2s ease-in-out infinite;
@@ -1014,6 +1042,21 @@ button.text-btn:hover { color: var(--accent); }
   transition: color var(--transition);
 }
 a.branch-name:hover { color: var(--accent); }
+/* Quick actions (copy + jump) — visible on row hover, hidden otherwise to not steal branch name space */
+.branch-quick-actions {
+  display: none; gap: 2px; align-items: center; flex-shrink: 0;
+}
+.branch-card-row1:hover .branch-quick-actions { display: inline-flex; }
+.branch-quick-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border: none; border-radius: 4px;
+  background: transparent; color: var(--text-muted); cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.branch-quick-btn:hover {
+  color: var(--accent); background: var(--surface-hover, rgba(255,255,255,0.08));
+}
+.branch-quick-btn svg.inline-icon { width: 13px; height: 13px; }
 .branch-meta { font-size: 11px; color: var(--text-secondary); line-height: 1.4; white-space: nowrap; }
 .port-badge {
   display: inline-flex; align-items: center; gap: 3px;
@@ -1071,7 +1114,6 @@ a.branch-name:hover { color: var(--accent); }
 .branch-actions-commit {
   flex: 1; min-width: 0;
   display: flex; align-items: center; gap: 4px;
-  justify-content: flex-end;
   font-size: 12px; color: var(--text-muted);
   cursor: pointer; overflow: hidden;
   white-space: nowrap; padding: 0 4px;
@@ -1279,10 +1321,18 @@ a.branch-name:hover { color: var(--accent); }
   padding: 7px 12px; font-size: 12px;
   border-bottom: 1px solid var(--border);
   transition: background var(--transition);
+  cursor: pointer; position: relative;
 }
 .commit-log-item:last-child { border-bottom: none; }
 .commit-log-item:hover { background: var(--bg-hover); }
 .commit-log-item.latest { background: rgba(163, 230, 53, 0.04); }
+.commit-log-item.current { background: rgba(251, 191, 36, 0.08); }
+.commit-log-item.current .commit-hash { color: var(--yellow); }
+.commit-current-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--yellow); flex-shrink: 0;
+  align-self: center;
+}
 .commit-hash {
   color: var(--accent); font-family: var(--font-mono);
   font-size: 11px; flex-shrink: 0; letter-spacing: 0.01em;
@@ -1408,12 +1458,47 @@ a.branch-name:hover { color: var(--accent); }
   border-color: rgba(224, 180, 58, 0.25);
   position: relative;
 }
-.branch-card.is-busy::after {
-  content: ''; position: absolute; top: 12px; right: 14px;
-  width: 16px; height: 16px;
-  border: 2px solid rgba(224, 180, 58, 0.15);
-  border-top-color: var(--yellow); border-radius: 50%;
-  animation: spin 0.7s linear infinite;
+/* Busy spinner removed — it overlaps toolbar buttons (lightbulb/ai-mark).
+   Busy state is already indicated by the yellow border on .branch-card.is-busy. */
+
+/* ════════════════ Pinned Commit State ════════════════ */
+
+.branch-card.is-pinned {
+  border: 2px solid rgba(251, 146, 60, 0.5);
+  box-shadow:
+    0 0 0 1px rgba(251, 146, 60, 0.15),
+    0 0 12px 1px rgba(251, 146, 60, 0.08),
+    0 2px 8px rgba(0,0,0,0.2);
+}
+.branch-card.is-pinned .branch-card-row2 {
+  background: rgba(251, 146, 60, 0.06);
+  border-radius: 4px;
+  padding: 2px 6px;
+  margin: -2px -6px;
+}
+.pinned-commit-badge {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 11px; font-family: var(--font-mono);
+  color: var(--yellow); background: rgba(251, 191, 36, 0.12);
+  padding: 1px 8px; border-radius: 10px;
+  cursor: pointer; flex-shrink: 0;
+  border: 1px solid rgba(251, 191, 36, 0.2);
+  transition: background var(--transition), border-color var(--transition);
+}
+.pinned-commit-badge:hover {
+  background: rgba(251, 191, 36, 0.2);
+  border-color: rgba(251, 191, 36, 0.4);
+}
+[data-theme="light"] .branch-card.is-pinned {
+  border-color: rgba(234, 118, 22, 0.5);
+  box-shadow:
+    0 0 0 1px rgba(234, 118, 22, 0.15),
+    0 0 12px 1px rgba(234, 118, 22, 0.06),
+    0 2px 8px rgba(0,0,0,0.08);
+}
+[data-theme="light"] .pinned-commit-badge {
+  color: #b45309; background: rgba(234, 118, 22, 0.1);
+  border-color: rgba(234, 118, 22, 0.25);
 }
 
 /* ════════════════ Toast ════════════════ */
@@ -1627,6 +1712,35 @@ a.branch-name:hover { color: var(--accent); }
 /* Card deploying state */
 .branch-card.is-deploying {
   border-color: var(--accent-border);
+  animation: deploying-glow 2s ease-in-out infinite;
+}
+@keyframes deploying-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0), 0 1px 3px rgba(0, 0, 0, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 10px 1px rgba(16, 185, 129, 0.15), 0 0 20px 3px rgba(16, 185, 129, 0.06);
+  }
+}
+
+/* Hammer icon blink during deploy */
+.branch-card.is-deploying .deploy-hammer-icon {
+  animation: hammer-blink 1.2s ease-in-out infinite;
+}
+@keyframes hammer-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+/* Deploy button glow during deploy */
+.branch-card.is-deploying .deploy-glow-btn {
+  box-shadow: 0 0 6px 1px rgba(16, 185, 129, 0.4), inset 0 0 4px rgba(16, 185, 129, 0.1);
+  border-color: var(--accent-border) !important;
+  animation: deploy-btn-glow 2s ease-in-out infinite;
+}
+@keyframes deploy-btn-glow {
+  0%, 100% { box-shadow: 0 0 4px 0px rgba(16, 185, 129, 0.2); }
+  50% { box-shadow: 0 0 10px 2px rgba(16, 185, 129, 0.45), inset 0 0 4px rgba(16, 185, 129, 0.1); }
 }
 
 
@@ -1719,11 +1833,7 @@ a.branch-name:hover { color: var(--accent); }
   .branch-tag { padding: 3px 8px; }
   .branch-tag-remove { width: 18px; height: 18px; font-size: 14px; }
 
-  /* Busy spinner: reposition to avoid overlap with right-side elements */
-  .branch-card.is-busy::after {
-    top: auto; bottom: 12px; right: 12px;
-    width: 14px; height: 14px;
-  }
+  /* Busy spinner removed — see main styles */
 
   /* Modal: slight margin on mobile */
   .modal-dialog { max-height: 90vh; margin: 0 12px; }

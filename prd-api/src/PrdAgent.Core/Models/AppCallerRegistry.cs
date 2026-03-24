@@ -255,6 +255,14 @@ public static class VisualAgent
         public const string Plan = "visual-agent.image-gen.plan::intent";
 
         [AppCallerMetadata(
+            "提示词澄清",
+            "将用户自由文本改写为明确的生图提示词",
+            ModelTypes = new[] { ModelTypes.Intent },
+            Category = "ImageGen"
+        )]
+        public const string Clarify = "visual-agent.image-gen.clarify::intent";
+
+        [AppCallerMetadata(
             "图片生成",
             "单张图片生成",
             ModelTypes = new[] { ModelTypes.ImageGen },

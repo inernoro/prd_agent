@@ -55,6 +55,7 @@ import type {
 } from '@/services/contracts/modelLab';
 import type {
   CancelImageGenRunContract,
+  ClarifyImageGenPromptContract,
   CreateImageGenRunContract,
   GenerateImageGenContract,
   GetImageGenRunContract,
@@ -330,6 +331,7 @@ import {
 } from '@/services/real/modelLab';
 import {
   cancelImageGenRunReal,
+  clarifyImageGenPromptReal,
   createImageGenRunReal,
   generateImageGenReal,
   getImageGenRunReal,
@@ -828,6 +830,7 @@ export const upsertModelLabModelSet: UpsertModelLabModelSetContract = withAuth(u
 export const runModelLabStream: RunModelLabStreamContract = withAuth(runModelLabStreamReal);
 
 export const planImageGen: PlanImageGenContract = withAuth(planImageGenReal);
+export const clarifyImageGenPrompt: ClarifyImageGenPromptContract = withAuth(clarifyImageGenPromptReal);
 export const generateImageGen: GenerateImageGenContract = withAuth(generateImageGenReal);
 export const runImageGenBatchStream: RunImageGenBatchStreamContract = withAuth(runImageGenBatchStreamReal);
 export const getImageGenSizeCaps: GetImageGenSizeCapsContract = withAuth(getImageGenSizeCapsReal);

@@ -11,14 +11,11 @@ import {
   deleteLiteraryAgentWorkspaceReal as deleteLiteraryAgentWorkspace,
 } from '@/services/real/literaryAgentConfig';
 import type { VisualAgentWorkspace } from '@/services/contracts/visualAgent';
-import { Plus, Pencil, Trash2, FileText, SquarePen, FolderOpen, ChevronDown, ChevronRight, FolderPlus, MoveRight, BookOpen, Calendar } from 'lucide-react';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { Plus, Pencil, Trash2, FileText, SquarePen, FolderOpen, ChevronDown, ChevronRight, FolderPlus, MoveRight, BookOpen, Calendar, Clock, Folder } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { cn } from '@/lib/cn';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import rehypeRaw from 'rehype-raw';
 
 // ── Helpers ──
 
@@ -64,74 +61,49 @@ function formatDateLabel(dateKey: string): string {
   return `${d.getFullYear()}年${month}月${day}日`;
 }
 
-function getArticlePreviewText(ws: VisualAgentWorkspace, maxChars = 200) {
+function getPlainPreviewText(ws: VisualAgentWorkspace, maxChars = 120) {
   const raw = ws.articleContent ?? ws.articleContentWithMarkers ?? '';
   let s = String(raw ?? '').trim();
   if (!s) return '';
+  // Strip markers and block quotes
   s = s.replace(/^\s*\[插图\]\s*:\s*.*$/gm, '');
   s = s.replace(/^\s*>\s*配图.*$/gm, '');
+  // Strip markdown syntax
+  s = s.replace(/^#{1,6}\s+/gm, '');
+  s = s.replace(/\*\*(.+?)\*\*/g, '$1');
+  s = s.replace(/\*(.+?)\*/g, '$1');
+  s = s.replace(/`(.+?)`/g, '$1');
+  s = s.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+  s = s.replace(/^\s*[-*+]\s+/gm, '');
+  s = s.replace(/^\s*\d+\.\s+/gm, '');
+  s = s.replace(/\n{2,}/g, '\n');
   s = s.trim();
-  const softLimit = Math.max(800, maxChars);
-  if (s.length <= softLimit) return s;
-  return s.slice(0, softLimit);
+  if (s.length <= maxChars) return s;
+  return s.slice(0, maxChars) + '…';
 }
 
-// ── Article Preview ──
+// ── NotebookLM-style gradient backgrounds ──
 
-function ArticlePreview({ markdown }: { markdown: string }) {
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const [overflowed, setOverflowed] = useState(false);
-  const md = useMemo(() => String(markdown || '').trim(), [markdown]);
-  const maxHeightPx = 100;
+const CARD_GRADIENTS = [
+  'linear-gradient(135deg, #1a1a2e 0%, #16213e 40%, #0f3460 100%)',
+  'linear-gradient(135deg, #2d1b69 0%, #11998e 100%)',
+  'linear-gradient(135deg, #1f1c2c 0%, #928dab 100%)',
+  'linear-gradient(135deg, #0f2027 0%, #203a43 40%, #2c5364 100%)',
+  'linear-gradient(135deg, #1a002e 0%, #3d1f5c 50%, #5c3d7a 100%)',
+  'linear-gradient(135deg, #141e30 0%, #243b55 100%)',
+  'linear-gradient(135deg, #0d1117 0%, #161b22 40%, #21262d 100%)',
+  'linear-gradient(135deg, #1b1b3a 0%, #2e1065 100%)',
+];
 
-  useLayoutEffect(() => {
-    const el = rootRef.current;
-    if (!el) return;
-    const measure = () => setOverflowed(el.scrollHeight - el.clientHeight > 1);
-    measure();
-    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => measure()) : null;
-    ro?.observe(el);
-    return () => ro?.disconnect();
-  }, [md]);
-
-  if (!md) return <div style={{ color: 'var(--text-muted)', fontSize: 10 }}>(暂无内容)</div>;
-
-  return (
-    <div className="relative overflow-hidden" style={{ maxHeight: maxHeightPx }}>
-      <div ref={rootRef} className="overflow-hidden" style={{ maxHeight: maxHeightPx }}>
-        <style>{`
-          .literary-preview-md { font-size: 10px; line-height: 1.4; color: var(--text-secondary); white-space: normal; word-break: break-word; }
-          .literary-preview-md h1,.literary-preview-md h2,.literary-preview-md h3 { color: var(--text-primary); font-weight: 700; margin: 4px 0 2px; font-size: 11px; }
-          .literary-preview-md p { margin: 2px 0; }
-          .literary-preview-md ul,.literary-preview-md ol { margin: 2px 0; padding-left: 12px; }
-          .literary-preview-md li { margin: 1px 0; }
-          .literary-preview-md blockquote { margin: 2px 0; padding: 2px 6px; border-left: 2px solid rgba(165,180,252,0.35); background: rgba(165,180,252,0.06); border-radius: 4px; }
-          .literary-preview-md code { font-size: 9px; background: var(--bg-input-hover); padding: 0 3px; border-radius: 3px; }
-        `}</style>
-        <div className="literary-preview-md">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            rehypePlugins={[rehypeRaw]}
-            skipHtml
-            allowedElements={['p', 'strong', 'em', 'code', 'blockquote', 'ul', 'ol', 'li', 'br', 'h1', 'h2', 'h3']}
-            unwrapDisallowed
-            components={{ a: ({ children }) => <span>{children}</span> }}
-          >
-            {md}
-          </ReactMarkdown>
-        </div>
-      </div>
-      {overflowed && (
-        <div
-          className="pointer-events-none absolute inset-x-0 bottom-0"
-          style={{ height: 24, background: 'linear-gradient(to bottom, rgba(18,18,18,0), rgba(18,18,18,0.95))' }}
-        />
-      )}
-    </div>
-  );
+function getCardGradient(id: string): string {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = ((hash << 5) - hash + id.charCodeAt(i)) | 0;
+  return CARD_GRADIENTS[Math.abs(hash) % CARD_GRADIENTS.length];
 }
 
 // ── Types ──
+
+type ViewMode = 'time' | 'folder';
 
 type FolderGroup = {
   folderName: string | null;
@@ -143,6 +115,143 @@ type DayGroup = {
   items: VisualAgentWorkspace[];
 };
 
+// ── NotebookLM-style Workspace Card ──
+
+function WorkspaceCard({
+  ws,
+  viewMode,
+  onClick,
+  onContextMenu,
+  onDragStart,
+}: {
+  ws: VisualAgentWorkspace;
+  viewMode: ViewMode;
+  onClick: () => void;
+  onContextMenu: (e: React.MouseEvent) => void;
+  onDragStart: (e: React.DragEvent) => void;
+}) {
+  const preview = getPlainPreviewText(ws, 100);
+  const dateStr = formatDate(ws.updatedAt);
+  // Use latest illustration (newest generated image), fallback to coverAssets for legacy
+  const coverUrl = ws.latestIllustrationUrl || ws.coverAssets?.[0]?.url;
+  const [imgLoaded, setImgLoaded] = useState(false);
+  const [imgError, setImgError] = useState(false);
+  const hasCover = !!coverUrl && !imgError;
+
+  // Badge: show folder name in time mode, hide in folder mode
+  const badgeLabel = viewMode === 'time' && ws.folderName ? ws.folderName : null;
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      draggable
+      onDragStart={onDragStart}
+      onContextMenu={onContextMenu}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); }
+      }}
+      className="group cursor-pointer select-none"
+    >
+      <div
+        className="relative w-full overflow-hidden rounded-2xl transition-all duration-300 group-hover:shadow-xl group-hover:shadow-black/30 group-hover:scale-[1.02]"
+        style={{
+          aspectRatio: '3/2',
+          background: hasCover ? '#0a0a0f' : getCardGradient(ws.id),
+        }}
+      >
+        {/* Cover image — full bleed */}
+        {coverUrl && !imgError && (
+          <img
+            src={coverUrl}
+            alt={ws.title}
+            className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-[1.06]"
+            style={{ opacity: imgLoaded ? 1 : 0, transition: 'opacity 0.5s ease' }}
+            loading="lazy"
+            onLoad={() => setImgLoaded(true)}
+            onError={() => setImgError(true)}
+          />
+        )}
+
+        {/* Subtle decorative element — only when no cover */}
+        {!hasCover && (
+          <div className="absolute inset-0 pointer-events-none select-none">
+            <span
+              className="absolute -right-4 -top-4 text-[140px] font-serif leading-none"
+              style={{ color: 'rgba(255,255,255,0.03)' }}
+            >
+              "
+            </span>
+          </div>
+        )}
+
+        {/* Bottom gradient for text readability */}
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            background: hasCover
+              ? 'linear-gradient(180deg, rgba(0,0,0,0.05) 0%, rgba(0,0,0,0.15) 30%, rgba(0,0,0,0.7) 100%)'
+              : 'linear-gradient(180deg, transparent 20%, rgba(0,0,0,0.35) 100%)',
+          }}
+        />
+
+        {/* Content overlay */}
+        <div className="absolute inset-0 z-10 flex flex-col justify-between p-4">
+          {/* Top: folder badge + date */}
+          <div className="flex items-center justify-between">
+            {badgeLabel ? (
+              <div
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full backdrop-blur-md"
+                style={{
+                  background: 'rgba(0,0,0,0.3)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                }}
+              >
+                <FolderOpen size={11} style={{ color: 'rgba(165,180,252,0.9)' }} />
+                <span className="text-[10px] font-medium truncate max-w-[120px]" style={{ color: 'rgba(255,255,255,0.75)' }}>
+                  {badgeLabel}
+                </span>
+              </div>
+            ) : (
+              <div />
+            )}
+            <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.4)' }}>
+              {dateStr}
+            </span>
+          </div>
+
+          {/* Bottom: title + preview text */}
+          <div className="flex flex-col gap-1.5">
+            <h3
+              className="text-[15px] font-bold leading-snug line-clamp-2 drop-shadow-lg"
+              style={{ color: '#fff', textShadow: '0 1px 6px rgba(0,0,0,0.5)' }}
+            >
+              {ws.title || '未命名'}
+            </h3>
+            {preview && (
+              <p
+                className="text-[11px] leading-relaxed line-clamp-2"
+                style={{ color: 'rgba(255,255,255,0.55)' }}
+              >
+                {preview}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Hover border glow */}
+        <div
+          className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
+          style={{
+            boxShadow: 'inset 0 0 0 1px rgba(165,180,252,0.2)',
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
 // ── Page ──
 
 export default function LiteraryAgentWorkspaceListPage() {
@@ -151,9 +260,14 @@ export default function LiteraryAgentWorkspaceListPage() {
   const [items, setItems] = useState<VisualAgentWorkspace[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    const saved = sessionStorage.getItem('literary-view-mode');
+    return saved === 'folder' ? 'folder' : 'time';
+  });
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
   const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
   const contextMenu = useContextMenu();
+  const gridRef = useRef<HTMLDivElement>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -201,6 +315,22 @@ export default function LiteraryAgentWorkspaceListPage() {
       if (ws.folderName) set.add(ws.folderName);
     }
     return [...set].sort();
+  }, [items]);
+
+  // 按日期分组（全局）
+  const dayGroups = useMemo<DayGroup[]>(() => {
+    const map = new Map<string, VisualAgentWorkspace[]>();
+    const sorted = [...items].sort((a, b) => {
+      const ta = new Date(a.updatedAt).getTime() || 0;
+      const tb = new Date(b.updatedAt).getTime() || 0;
+      return tb - ta;
+    });
+    for (const ws of sorted) {
+      const key = toDateKey(ws.updatedAt);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(ws);
+    }
+    return [...map.entries()].map(([dateKey, dayItems]) => ({ dateKey, items: dayItems }));
   }, [items]);
 
   // ── CRUD handlers ──
@@ -434,194 +564,142 @@ export default function LiteraryAgentWorkspaceListPage() {
     await onMoveToFolder(ws, targetFolder);
   };
 
-  // ── 将文章列表按日期分组（时间线） ──
+  // ── Render: Card grid (responsive) ──
 
-  function groupByDay(workspaces: VisualAgentWorkspace[]): DayGroup[] {
-    const map = new Map<string, VisualAgentWorkspace[]>();
-    // 按 updatedAt 降序排列
-    const sorted = [...workspaces].sort((a, b) => {
-      const ta = new Date(a.updatedAt).getTime() || 0;
-      const tb = new Date(b.updatedAt).getTime() || 0;
-      return tb - ta;
-    });
-    for (const ws of sorted) {
-      const key = toDateKey(ws.updatedAt);
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(ws);
-    }
-    // 保持日期降序
-    return [...map.entries()].map(([dateKey, dayItems]) => ({ dateKey, items: dayItems }));
-  }
-
-  // ── Render: Timeline card ──
-
-  const renderTimelineCard = (ws: VisualAgentWorkspace, isLast: boolean) => (
-    <div key={ws.id} className="relative flex gap-3">
-      {/* 时间线连线 */}
-      <div className="flex flex-col items-center shrink-0" style={{ width: 20 }}>
-        <div
-          className="w-2 h-2 rounded-full shrink-0 mt-2.5"
-          style={{ background: 'var(--accent-primary, #818CF8)', boxShadow: '0 0 6px rgba(129,140,248,0.4)' }}
+  const renderCardGrid = (workspaces: VisualAgentWorkspace[]) => (
+    <div
+      className="grid gap-4"
+      style={{
+        gridTemplateColumns: isMobile
+          ? 'repeat(auto-fill, minmax(160px, 1fr))'
+          : 'repeat(auto-fill, minmax(240px, 1fr))',
+      }}
+    >
+      {workspaces.map((ws) => (
+        <WorkspaceCard
+          key={ws.id}
+          ws={ws}
+          viewMode={viewMode}
+          onClick={() => navigate(`/literary-agent/${ws.id}`)}
+          onContextMenu={(e) => handleCardContextMenu(e, ws)}
+          onDragStart={(e) => handleDragStart(e, ws)}
         />
-        {!isLast && (
-          <div className="flex-1 w-px" style={{ background: 'rgba(99,102,241,0.15)' }} />
-        )}
-      </div>
+      ))}
+    </div>
+  );
 
-      {/* 卡片内容 */}
-      <div className="flex-1 min-w-0 pb-3">
-        <GlassCard animated glow className="p-0 overflow-hidden">
-          <div
-            role="button"
-            tabIndex={0}
-            title={ws.title || ws.id}
-            draggable
-            onDragStart={(e) => handleDragStart(e, ws)}
-            onContextMenu={(e) => handleCardContextMenu(e, ws)}
-            className="group relative cursor-pointer select-none transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-white/15"
-            onClick={() => navigate(`/literary-agent/${ws.id}`)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                navigate(`/literary-agent/${ws.id}`);
-              }
-            }}
-          >
-            <div className="flex gap-3 p-3">
-              {/* 左侧：文章内容 */}
-              <div className="flex-1 min-w-0 flex flex-col gap-1.5">
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <FileText size={13} style={{ color: 'var(--accent-primary)', flexShrink: 0 }} />
-                  <div className="font-semibold text-[13px] truncate" style={{ color: 'var(--text-primary)' }}>
-                    {ws.title}
-                  </div>
-                </div>
-                <div className="overflow-hidden rounded-md" style={{ maxHeight: 80 }}>
-                  <ArticlePreview markdown={getArticlePreviewText(ws)} />
-                </div>
-              </div>
-            </div>
+  // ── Render: Time view (按时间) ──
 
-            {/* 底栏：操作按钮 + 时间 */}
-            <div
-              className="px-3 py-1.5 text-[10px] border-t flex items-center"
-              style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
-            >
-              <div
-                className={cn(
-                  'flex items-center gap-0.5',
-                  'opacity-0 pointer-events-none transition-opacity duration-100',
-                  'group-hover:opacity-100 group-hover:pointer-events-auto',
-                  'mobile-show-actions',
-                )}
-              >
-                <Button
-                  size="xs"
-                  variant="secondary"
-                  className="h-5 w-5 p-0 rounded-[6px] gap-0"
-                  onClick={(e) => { e.stopPropagation(); navigate(`/literary-agent/${ws.id}`); }}
-                  title="编辑"
-                >
-                  <SquarePen size={10} />
-                </Button>
-                <Button
-                  size="xs"
-                  variant="secondary"
-                  className="h-5 w-5 p-0 rounded-[6px] gap-0"
-                  onClick={(e) => { e.stopPropagation(); void onRename(ws); }}
-                  title="重命名"
-                >
-                  <Pencil size={10} />
-                </Button>
-                <Button
-                  size="xs"
-                  variant="danger"
-                  className="h-5 w-5 p-0 rounded-[6px] gap-0"
-                  onClick={(e) => { e.stopPropagation(); void onDelete(ws); }}
-                  title="删除"
-                >
-                  <Trash2 size={10} />
-                </Button>
-              </div>
-              <div className="flex-1 text-right truncate">{formatDate(ws.updatedAt)}</div>
-            </div>
+  const renderTimeView = () => (
+    <div className="space-y-6">
+      {dayGroups.map((dayGroup) => (
+        <div key={dayGroup.dateKey}>
+          {/* Date header */}
+          <div className="flex items-center gap-2 mb-3 pl-0.5">
+            <Calendar size={12} style={{ color: 'var(--text-muted)' }} />
+            <span className="text-[12px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+              {formatDateLabel(dayGroup.dateKey)}
+            </span>
+            <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+              {dayGroup.dateKey}
+            </span>
+            <div className="flex-1 h-px ml-2" style={{ background: 'rgba(255,255,255,0.06)' }} />
           </div>
-        </GlassCard>
-      </div>
-    </div>
-  );
-
-  // ── Render: Day group (时间线分组) ──
-
-  const renderDayGroup = (dayGroup: DayGroup) => (
-    <div key={dayGroup.dateKey} className="mb-2">
-      {/* 日期标题 */}
-      <div className="flex items-center gap-2 mb-2 pl-0.5">
-        <Calendar size={12} style={{ color: 'var(--text-muted)' }} />
-        <span className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>
-          {formatDateLabel(dayGroup.dateKey)}
-        </span>
-        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-          {dayGroup.dateKey}
-        </span>
-        <div className="flex-1 h-px ml-2" style={{ background: 'rgba(255,255,255,0.06)' }} />
-      </div>
-      {/* 该日的文章列表 — 时间线形式 */}
-      <div className={isMobile ? '' : 'pl-4'}>
-        {dayGroup.items.map((ws, idx) =>
-          renderTimelineCard(ws, idx === dayGroup.items.length - 1)
-        )}
-      </div>
-    </div>
-  );
-
-  // ── Render: Folder group ──
-
-  const renderFolderGroup = (group: FolderGroup) => {
-    const { folderName, items: groupItems } = group;
-    const isCollapsed = folderName ? collapsedFolders.has(folderName) : false;
-    const isDragOver = dragOverFolder === (folderName ?? '__uncategorized__');
-    const displayName = folderName || '未分类';
-
-    // 在文件夹内按日期分组
-    const dayGroups = groupByDay(groupItems);
-
-    return (
-      <div key={folderName ?? '__uncategorized__'} className="mb-6">
-        {/* 文件夹标题栏 */}
-        <div
-          className={cn(
-            'flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer select-none mb-3 transition-colors',
-            isDragOver ? 'bg-white/10 ring-1 ring-white/20' : 'hover:bg-white/5',
-          )}
-          onClick={() => folderName && toggleFolder(folderName)}
-          onContextMenu={(e) => folderName && handleFolderContextMenu(e, folderName)}
-          onDragOver={(e) => handleDragOver(e, folderName ?? '__uncategorized__')}
-          onDragLeave={handleDragLeave}
-          onDrop={(e) => void handleDrop(e, folderName)}
-        >
-          {folderName ? (
-            isCollapsed ? <ChevronRight size={14} style={{ color: 'var(--text-muted)' }} /> : <ChevronDown size={14} style={{ color: 'var(--text-muted)' }} />
-          ) : (
-            <div className="w-[14px]" />
-          )}
-          <FolderOpen size={14} style={{ color: folderName ? 'var(--accent-primary)' : 'var(--text-muted)' }} />
-          <span className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
-            {displayName}
-          </span>
-          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-            ({groupItems.length})
-          </span>
+          {renderCardGrid(dayGroup.items)}
         </div>
-        {/* 时间线内容 */}
-        {!isCollapsed && (
-          <div className={isMobile ? '' : 'pl-6'}>
-            {dayGroups.map(renderDayGroup)}
+      ))}
+    </div>
+  );
+
+  // ── Render: Folder view (按文件夹) ──
+
+  const renderFolderView = () => (
+    <div className="space-y-6">
+      {groups.map((group) => {
+        const { folderName, items: groupItems } = group;
+        const isCollapsed = folderName ? collapsedFolders.has(folderName) : false;
+        const isDragOver = dragOverFolder === (folderName ?? '__uncategorized__');
+        const displayName = folderName || '未分类';
+
+        return (
+          <div key={folderName ?? '__uncategorized__'}>
+            {/* Folder header */}
+            <div
+              className={cn(
+                'flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer select-none mb-3 transition-colors',
+                isDragOver ? 'bg-white/10 ring-1 ring-white/20' : 'hover:bg-white/5',
+              )}
+              onClick={() => folderName && toggleFolder(folderName)}
+              onContextMenu={(e) => folderName && handleFolderContextMenu(e, folderName)}
+              onDragOver={(e) => handleDragOver(e, folderName ?? '__uncategorized__')}
+              onDragLeave={handleDragLeave}
+              onDrop={(e) => void handleDrop(e, folderName)}
+            >
+              {folderName ? (
+                isCollapsed ? <ChevronRight size={14} style={{ color: 'var(--text-muted)' }} /> : <ChevronDown size={14} style={{ color: 'var(--text-muted)' }} />
+              ) : (
+                <div className="w-[14px]" />
+              )}
+              <FolderOpen size={14} style={{ color: folderName ? 'var(--accent-primary)' : 'var(--text-muted)' }} />
+              <span className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
+                {displayName}
+              </span>
+              <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                ({groupItems.length})
+              </span>
+            </div>
+            {/* Cards */}
+            {!isCollapsed && (
+              <div className={isMobile ? '' : 'pl-4'}>
+                {renderCardGrid(groupItems)}
+              </div>
+            )}
           </div>
+        );
+      })}
+    </div>
+  );
+
+  // ── View mode toggle ──
+
+  const viewModeToggle = (
+    <div
+      className="flex items-center rounded-lg overflow-hidden"
+      style={{
+        background: 'rgba(255,255,255,0.04)',
+        border: '1px solid rgba(255,255,255,0.08)',
+      }}
+    >
+      <button
+        type="button"
+        className={cn(
+          'flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium transition-all duration-200',
         )}
-      </div>
-    );
-  };
+        style={{
+          background: viewMode === 'time' ? 'rgba(99,102,241,0.15)' : 'transparent',
+          color: viewMode === 'time' ? 'var(--accent-primary, #818CF8)' : 'var(--text-muted)',
+        }}
+        onClick={() => { setViewMode('time'); sessionStorage.setItem('literary-view-mode', 'time'); }}
+      >
+        <Clock size={12} />
+        按时间
+      </button>
+      <button
+        type="button"
+        className={cn(
+          'flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium transition-all duration-200',
+        )}
+        style={{
+          background: viewMode === 'folder' ? 'rgba(99,102,241,0.15)' : 'transparent',
+          color: viewMode === 'folder' ? 'var(--accent-primary, #818CF8)' : 'var(--text-muted)',
+        }}
+        onClick={() => { setViewMode('folder'); sessionStorage.setItem('literary-view-mode', 'folder'); }}
+      >
+        <Folder size={12} />
+        按文件夹
+      </button>
+    </div>
+  );
 
   return (
     <div
@@ -635,6 +713,7 @@ export default function LiteraryAgentWorkspaceListPage() {
         icon={<BookOpen size={16} />}
         actions={
           <>
+            {viewModeToggle}
             <Button variant="secondary" size="sm" onClick={() => void onCreateFolder()} disabled={loading}>
               <FolderPlus size={14} />
             </Button>
@@ -652,11 +731,27 @@ export default function LiteraryAgentWorkspaceListPage() {
         </GlassCard>
       )}
 
-      <div className="flex-1 min-h-0 overflow-auto">
+      <div className="flex-1 min-h-0 overflow-auto" ref={gridRef}>
         {loading ? (
-          <GlassCard animated glow className="py-2 px-3">
-            <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>加载中...</div>
-          </GlassCard>
+          <div
+            className="grid gap-4"
+            style={{
+              gridTemplateColumns: isMobile
+                ? 'repeat(auto-fill, minmax(160px, 1fr))'
+                : 'repeat(auto-fill, minmax(240px, 1fr))',
+            }}
+          >
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div
+                key={i}
+                className="animate-pulse rounded-2xl"
+                style={{
+                  aspectRatio: '3/2',
+                  background: 'rgba(255,255,255,0.03)',
+                }}
+              />
+            ))}
+          </div>
         ) : items.length === 0 ? (
           <GlassCard animated glow className="py-6 px-3">
             <div className="text-center">
@@ -666,10 +761,10 @@ export default function LiteraryAgentWorkspaceListPage() {
               </div>
             </div>
           </GlassCard>
+        ) : viewMode === 'time' ? (
+          renderTimeView()
         ) : (
-          <div className="max-w-[960px]">
-            {groups.map(renderFolderGroup)}
-          </div>
+          renderFolderView()
         )}
       </div>
     </div>

@@ -69,9 +69,12 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   var branchStatus='';
   var commitSha='';
   var commitMsg='';
+  var branchTags=[];
   var steps=[];
   var resultMsg='';
   var resultOk=true;
+  var titlePrefix='';
+  var titleObserver=null;
 
   // ── Widget root ──
   var root=document.createElement('div');
@@ -162,7 +165,8 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     h+=ICON_BRANCH;
     h+='<span class="cds-branch">'+BRANCH_NAME+'</span>';
     if(commitSha)h+='<span class="cds-sha" title="'+commitSha+'">'+commitSha+'</span>';
-    h+='<span class="cds-tag">CDS</span>';
+    if(branchTags.length){for(var ti=0;ti<branchTags.length;ti++){h+='<span class="cds-tag">'+branchTags[ti]+'</span>';}}
+    else{h+='<span class="cds-tag">CDS</span>';}
     h+='<button data-action="toggle" title="'+(expanded?'收起':'展开更新面板')+'">'+(expanded?ICON_DOWN:ICON_UP)+'</button>';
     h+='<button data-action="dismiss">'+ICON_X+'</button>';
     h+='</div>';
@@ -208,7 +212,24 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
       branchStatus=found?found.status:'';
       commitSha=found&&found.commitSha?found.commitSha:'';
       commitMsg=found&&found.subject?found.subject:'';
+      branchTags=(found&&found.tags)||[];
       profiles=(res[1]&&res[1].profiles)||[];
+
+      // Update page title with tags or branch short name for easy tab identification
+      var tabTitleEnabled=res[0]&&res[0].tabTitleEnabled!==false;
+      if(tabTitleEnabled){
+        if(branchTags.length){
+          titlePrefix=branchTags.join(' · ');
+        }else{
+          titlePrefix=BRANCH_NAME.indexOf('/')>=0?BRANCH_NAME.substring(BRANCH_NAME.indexOf('/')+1):BRANCH_NAME;
+        }
+        applyTitlePrefix();
+        watchTitle();
+      }else{
+        titlePrefix='';
+        unwatchTitle();
+      }
+
       render();
     }).catch(function(){
       branchStatus='';
@@ -295,8 +316,27 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     });
   }
 
-  // ── Initial render ──
+  // ── Title guard: MutationObserver keeps title prefix even when SPA overwrites it ──
+  function applyTitlePrefix(){
+    if(!titlePrefix)return;
+    var raw=document.title.replace(/\\[.*?\\]\\s*/,'');
+    var want='['+titlePrefix+'] '+raw;
+    if(document.title!==want)document.title=want;
+  }
+  function watchTitle(){
+    if(titleObserver)return;
+    var el=document.querySelector('title');
+    if(!el)return;
+    titleObserver=new MutationObserver(function(){applyTitlePrefix();});
+    titleObserver.observe(el,{childList:true,characterData:true,subtree:true});
+  }
+  function unwatchTitle(){
+    if(titleObserver){titleObserver.disconnect();titleObserver=null;}
+  }
+
+  // ── Initial: render badge + fetch branch info to update tab title immediately ──
   render();
+  fetchBranchInfo();
 })();
 </script>`;
 }

@@ -34,7 +34,7 @@ const TABS = [
 
 const PAGE_SIZE = 24;
 
-// ── Masonry Card ──
+// ── Unified Visual Card (NotebookLM style) ──
 
 function MasonryCard({
   item,
@@ -55,6 +55,7 @@ function MasonryCard({
   useEffect(() => { setLikeCount(item.likeCount); }, [item.likeCount]);
 
   const avatarUrl = resolveAvatarUrl({ avatarFileName: item.ownerAvatarFileName });
+  const hasCover = !!item.coverUrl && !imgError;
 
   const handleLike = async () => {
     if (liking) return;
@@ -74,7 +75,7 @@ function MasonryCard({
 
   return (
     <div
-      className="group cursor-pointer break-inside-avoid mb-5"
+      className="group cursor-pointer"
       onClick={onClick}
       role="button"
       tabIndex={0}
@@ -82,144 +83,99 @@ function MasonryCard({
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); }
       }}
     >
-      {/* Image */}
+      {/* Unified card — 16:10, image full-bleed, text at bottom */}
       <div
-        className="relative w-full overflow-hidden rounded-2xl"
+        className="relative w-full overflow-hidden rounded-xl transition-all duration-300 group-hover:shadow-xl group-hover:shadow-black/30 group-hover:scale-[1.02]"
         style={{
-          background: 'rgba(255,255,255,0.03)',
+          aspectRatio: '16/10',
+          background: hasCover ? '#0a0a0f' : 'rgba(255,255,255,0.03)',
         }}
       >
-        {/* Skeleton */}
-        {!imgLoaded && !imgError && (
-          <div
-            className="w-full animate-pulse"
-            style={{
-              aspectRatio: item.coverWidth && item.coverHeight
-                ? `${item.coverWidth}/${item.coverHeight}`
-                : '3/4',
-              minHeight: 180,
-              background: 'linear-gradient(135deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%)',
-            }}
-          />
-        )}
-        {imgError && (
-          <div
-            className="w-full flex items-center justify-center"
-            style={{
-              aspectRatio: '3/4',
-              minHeight: 180,
-              background: 'rgba(255,255,255,0.03)',
-            }}
-          >
-            <ImageOff size={32} style={{ color: 'rgba(255,255,255,0.08)' }} />
-          </div>
-        )}
+        {/* Cover image */}
         {item.coverUrl && !imgError && (
           <img
             src={item.coverUrl}
             alt={item.title}
-            className="w-full block transition-transform duration-700 ease-out group-hover:scale-[1.04]"
-            style={{
-              opacity: imgLoaded ? 1 : 0,
-              transition: 'opacity 0.5s ease, transform 0.7s ease',
-              position: imgLoaded ? 'relative' : 'absolute',
-              top: 0,
-              left: 0,
-            }}
+            className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-[1.06]"
+            style={{ opacity: imgLoaded ? 1 : 0, transition: 'opacity 0.5s ease' }}
             loading="lazy"
             onLoad={() => setImgLoaded(true)}
             onError={() => { setImgError(true); setImgLoaded(true); }}
           />
         )}
 
-        {/* Hover overlay with gradient */}
+        {/* Error state */}
+        {imgError && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <ImageOff size={28} style={{ color: 'rgba(255,255,255,0.08)' }} />
+          </div>
+        )}
+
+        {/* Bottom gradient */}
         <div
-          className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
+          className="absolute inset-0 pointer-events-none"
           style={{
-            background: 'linear-gradient(180deg, rgba(0,0,0,0) 30%, rgba(0,0,0,0.65) 100%)',
+            background: 'linear-gradient(180deg, rgba(0,0,0,0.02) 0%, rgba(0,0,0,0.12) 35%, rgba(0,0,0,0.72) 100%)',
           }}
         />
 
-        {/* Hover glow border */}
-        <div
-          className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
-          style={{
-            boxShadow: 'inset 0 0 0 1px rgba(129,140,248,0.3), 0 0 30px rgba(129,140,248,0.08)',
-          }}
-        />
-
-        {/* Floating stats on hover */}
-        <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between opacity-0 group-hover:opacity-100 transition-all duration-400 translate-y-2 group-hover:translate-y-0 pointer-events-none">
+        {/* Content — all at bottom */}
+        <div className="absolute inset-0 z-10 flex flex-col justify-end p-3.5 gap-2">
+          {/* Source: avatar + name */}
           <div className="flex items-center gap-2">
+            <img
+              src={avatarUrl}
+              alt={item.ownerUserName}
+              className="w-5 h-5 rounded-full shrink-0 object-cover ring-1 ring-white/20"
+              onError={(e) => { (e.target as HTMLImageElement).src = DEFAULT_AVATAR_FALLBACK; }}
+            />
+            <span className="text-[11px] font-medium truncate drop-shadow" style={{ color: 'rgba(255,255,255,0.8)' }}>
+              {item.ownerUserName}
+            </span>
+          </div>
+
+          {/* Title */}
+          <h3
+            className="text-[15px] font-bold leading-snug line-clamp-2 drop-shadow-lg"
+            style={{ color: '#fff', textShadow: '0 1px 6px rgba(0,0,0,0.5)' }}
+          >
+            {item.title || '未命名'}
+          </h3>
+
+          {/* Bottom: date + stats */}
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] drop-shadow" style={{ color: 'rgba(255,255,255,0.5)' }}>
+              {new Date(item.createdAt).toLocaleDateString()}
+            </span>
+            <div className="flex-1" />
             {item.viewCount > 0 && (
-              <span className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-full"
-                style={{
-                  background: 'rgba(0,0,0,0.5)',
-                  backdropFilter: 'blur(8px)',
-                  color: 'rgba(255,255,255,0.85)',
-                }}>
-                <Eye size={11} />
-                {item.viewCount >= 10000
-                  ? `${(item.viewCount / 10000).toFixed(1)}万`
-                  : item.viewCount}
+              <span className="flex items-center gap-0.5 text-[10px] drop-shadow" style={{ color: 'rgba(255,255,255,0.5)' }}>
+                <Eye size={10} />
+                {item.viewCount >= 10000 ? `${(item.viewCount / 10000).toFixed(1)}万` : item.viewCount}
               </span>
             )}
+            <div
+              className="flex items-center gap-0.5"
+              style={{ color: liked ? '#F43F5E' : 'rgba(255,255,255,0.45)' }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <HeartLikeButton
+                size={18}
+                liked={liked}
+                heartColor="#F43F5E"
+                disabled={liking}
+                onClick={handleLike}
+              />
+              {likeCount > 0 && <span className="text-[10px] drop-shadow">{likeCount}</span>}
+            </div>
           </div>
-        </div>
-      </div>
-
-      {/* Info section */}
-      <div className="flex items-center gap-2.5 mt-3 px-1">
-        <img
-          src={avatarUrl}
-          alt={item.ownerUserName}
-          className="w-7 h-7 rounded-full shrink-0 object-cover ring-1 ring-white/10 transition-transform duration-300 group-hover:scale-110"
-          onError={(e) => { (e.target as HTMLImageElement).src = DEFAULT_AVATAR_FALLBACK; }}
-        />
-        <span
-          className="text-[13px] font-medium truncate flex-1 transition-colors duration-300"
-          style={{ color: 'var(--text-secondary, rgba(255,255,255,0.7))' }}
-        >
-          {item.ownerUserName}
-        </span>
-        <div
-          className="flex items-center gap-0.5 shrink-0"
-          style={{ color: liked ? '#F43F5E' : 'var(--text-muted, rgba(255,255,255,0.3))' }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <HeartLikeButton
-            size={22}
-            liked={liked}
-            heartColor="#F43F5E"
-            disabled={liking}
-            onClick={handleLike}
-          />
-          {likeCount > 0 && <span className="text-[11px]">{likeCount}</span>}
         </div>
       </div>
     </div>
   );
 }
 
-// ── Skeleton Grid ──
-
-function SkeletonGrid() {
-  const heights = [260, 340, 220, 300, 280, 360, 240, 320, 200, 290, 330, 250];
-  return (
-    <>
-      {heights.map((h, i) => (
-        <div
-          key={i}
-          className="break-inside-avoid mb-5 animate-pulse rounded-2xl"
-          style={{
-            height: h,
-            background: 'linear-gradient(135deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%)',
-          }}
-        />
-      ))}
-    </>
-  );
-}
+// ── (SkeletonGrid no longer needed — inline skeletons used instead) ──
 
 // ── Main Page ──
 
@@ -309,8 +265,14 @@ export default function PortfolioShowcasePage() {
 
   const hasMore = items.length < total;
 
-  // Column count based on viewport
-  const columnCount = isMobile ? 2 : 4;
+  // Uniform responsive grid (NotebookLM style, NOT masonry)
+  const gridStyle: React.CSSProperties = {
+    display: 'grid',
+    gap: isMobile ? 12 : 16,
+    gridTemplateColumns: isMobile
+      ? 'repeat(auto-fill, minmax(150px, 1fr))'
+      : 'repeat(auto-fill, minmax(260px, 1fr))',
+  };
 
   const heroOpacity = Math.max(0, 1 - scrollY / 300);
   const heroScale = 1 + scrollY * 0.0003;
@@ -568,34 +530,29 @@ export default function PortfolioShowcasePage() {
         <div style={{ padding: isMobile ? '20px 12px 80px' : '32px 48px 80px' }}>
           {/* Loading skeleton */}
           {loading && (
-            <div
-              style={{
-                columnCount,
-                columnGap: isMobile ? 12 : 20,
-              }}
-            >
-              <SkeletonGrid />
+            <div style={gridStyle}>
+              {Array.from({ length: 12 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="animate-pulse rounded-xl"
+                  style={{ aspectRatio: '16/10', background: 'rgba(255,255,255,0.03)' }}
+                />
+              ))}
             </div>
           )}
 
-          {/* Masonry grid */}
+          {/* Uniform grid */}
           {!loading && items.length > 0 && (
             <>
-              <div
-                style={{
-                  columnCount,
-                  columnGap: isMobile ? 12 : 20,
-                }}
-              >
+              <div style={gridStyle}>
                 {items.map((item) => (
                   item.contentType === 'literary' ? (
-                    <div key={item.id} className="break-inside-avoid mb-5">
-                      <LiteraryCard
-                        item={item}
-                        onLikeToggle={handleLikeToggle}
-                        onClick={() => setSelectedId(item.id)}
-                      />
-                    </div>
+                    <LiteraryCard
+                      key={item.id}
+                      item={item}
+                      onLikeToggle={handleLikeToggle}
+                      onClick={() => setSelectedId(item.id)}
+                    />
                   ) : (
                     <MasonryCard
                       key={item.id}

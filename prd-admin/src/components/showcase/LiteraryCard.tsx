@@ -12,11 +12,10 @@ interface LiteraryCardProps {
 
 /**
  * 文学创作卡片 — NotebookLM 风格
- * 封面图全覆盖 + 底部渐变遮罩 + 文字叠加
- * 无封面图时使用文学主题渐变作为默认背景
+ * 统一 16:10 比例 + 封面图全覆盖 + 底部渐变遮罩 + 文字叠加
  */
 
-/* 无封面图时的默认渐变背景 — 6 种文学主题配色循环使用 */
+/* 无封面图时的默认渐变背景 */
 const FALLBACK_GRADIENTS = [
   'linear-gradient(135deg, #1a1a2e 0%, #16213e 40%, #0f3460 100%)',
   'linear-gradient(135deg, #2d1b69 0%, #11998e 100%)',
@@ -69,15 +68,15 @@ export function LiteraryCard({ item, onLikeToggle, onClick }: LiteraryCardProps)
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick?.(); } }}
     >
-      {/* 卡片主体 — 图片全覆盖，文字叠加在底部 */}
+      {/* Card — unified 16:10, image full-bleed, text at bottom */}
       <div
-        className="relative w-full overflow-hidden rounded-2xl transition-all duration-300 group-hover:shadow-xl group-hover:shadow-black/30 group-hover:scale-[1.02]"
+        className="relative w-full overflow-hidden rounded-xl transition-all duration-300 group-hover:shadow-xl group-hover:shadow-black/30 group-hover:scale-[1.02]"
         style={{
-          aspectRatio: '4/5',
+          aspectRatio: '16/10',
           background: hasCover ? '#0a0a0f' : getFallbackGradient(item.id),
         }}
       >
-        {/* 封面图 — 全覆盖 */}
+        {/* Cover image */}
         {item.coverUrl && !imgError && (
           <img
             src={item.coverUrl}
@@ -90,98 +89,84 @@ export function LiteraryCard({ item, onLikeToggle, onClick }: LiteraryCardProps)
           />
         )}
 
-        {/* 无封面图时的装饰元素 — 大引号 */}
+        {/* Decorative quote for no-cover */}
         {!hasCover && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none">
-            <span
-              className="text-[120px] font-serif leading-none"
-              style={{ color: 'rgba(255,255,255,0.04)' }}
-            >
-              "
-            </span>
+            <span className="text-[100px] font-serif leading-none" style={{ color: 'rgba(255,255,255,0.04)' }}>"</span>
           </div>
         )}
 
-        {/* 底部渐变遮罩 — 保证文字可读性 */}
+        {/* Bottom gradient */}
         <div
           className="absolute inset-0 pointer-events-none"
           style={{
             background: hasCover
-              ? 'linear-gradient(180deg, rgba(0,0,0,0.05) 0%, rgba(0,0,0,0.15) 40%, rgba(0,0,0,0.75) 100%)'
+              ? 'linear-gradient(180deg, rgba(0,0,0,0.02) 0%, rgba(0,0,0,0.12) 35%, rgba(0,0,0,0.72) 100%)'
               : 'linear-gradient(180deg, transparent 30%, rgba(0,0,0,0.4) 100%)',
           }}
         />
 
-        {/* 内容层 — 全部叠在图片上方 */}
-        <div className="absolute inset-0 z-10 flex flex-col justify-between p-4">
-          {/* 顶部：来源 badge（类似 NotebookLM 的 source icon + name） */}
+        {/* Content — all at bottom */}
+        <div className="absolute inset-0 z-10 flex flex-col justify-end p-3.5 gap-2">
+          {/* Source row: avatar + name + badge */}
           <div className="flex items-center gap-2">
-            <div
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full backdrop-blur-md"
-              style={{
-                background: 'rgba(0,0,0,0.35)',
-                border: '1px solid rgba(255,255,255,0.1)',
-              }}
+            <img
+              src={avatarUrl}
+              alt={item.ownerUserName}
+              className="w-5 h-5 rounded-full shrink-0 object-cover ring-1 ring-white/20"
+              onError={(e) => { (e.target as HTMLImageElement).src = DEFAULT_AVATAR_FALLBACK; }}
+            />
+            <span
+              className="text-[11px] font-medium truncate drop-shadow"
+              style={{ color: 'rgba(255,255,255,0.8)' }}
             >
-              <BookOpen size={12} style={{ color: 'rgba(165,180,252,0.9)' }} />
-              <span className="text-[11px] font-medium" style={{ color: 'rgba(255,255,255,0.85)' }}>
-                文学创作
-              </span>
+              {item.ownerUserName}
+            </span>
+            <div
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded-full ml-auto shrink-0"
+              style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.08)' }}
+            >
+              <BookOpen size={9} style={{ color: 'rgba(165,180,252,0.9)' }} />
+              <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.6)' }}>文学创作</span>
             </div>
           </div>
 
-          {/* 底部：标题 + 作者信息 */}
-          <div className="flex flex-col gap-2">
-            {/* 标题 — 大号加粗，NotebookLM 风格 */}
-            <h3
-              className="text-[17px] font-bold leading-tight line-clamp-2 drop-shadow-lg"
-              style={{ color: '#fff', textShadow: '0 1px 8px rgba(0,0,0,0.5)' }}
-            >
-              {item.title || '未命名'}
-            </h3>
+          {/* Title */}
+          <h3
+            className="text-[15px] font-bold leading-snug line-clamp-2 drop-shadow-lg"
+            style={{ color: '#fff', textShadow: '0 1px 6px rgba(0,0,0,0.5)' }}
+          >
+            {item.title || '未命名'}
+          </h3>
 
-            {/* 作者 + 统计 */}
-            <div className="flex items-center gap-2">
-              <img
-                src={avatarUrl}
-                alt={item.ownerUserName}
-                className="w-5 h-5 rounded-full shrink-0 object-cover ring-1 ring-white/20"
-                onError={(e) => { (e.target as HTMLImageElement).src = DEFAULT_AVATAR_FALLBACK; }}
-              />
+          {/* Bottom: date + stats */}
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] drop-shadow" style={{ color: 'rgba(255,255,255,0.5)' }}>
+              {new Date(item.createdAt).toLocaleDateString()}
+            </span>
+            <div className="flex-1" />
+            {item.viewCount > 0 && (
               <span
-                className="text-[11px] font-medium truncate flex-1 drop-shadow"
-                style={{ color: 'rgba(255,255,255,0.8)' }}
+                className="flex items-center gap-0.5 text-[10px] drop-shadow"
+                style={{ color: 'rgba(255,255,255,0.5)' }}
               >
-                {item.ownerUserName}
+                <Eye size={10} />
+                {item.viewCount >= 10000 ? `${(item.viewCount / 10000).toFixed(1)}万` : item.viewCount}
               </span>
-
-              <div className="flex items-center gap-2 shrink-0">
-                {item.viewCount > 0 && (
-                  <span
-                    className="flex items-center gap-0.5 text-[10px] drop-shadow"
-                    style={{ color: 'rgba(255,255,255,0.6)' }}
-                  >
-                    <Eye size={10} />
-                    {item.viewCount >= 10000
-                      ? `${(item.viewCount / 10000).toFixed(1)}万`
-                      : item.viewCount}
-                  </span>
-                )}
-                <div
-                  className="flex items-center gap-0.5"
-                  style={{ color: liked ? '#F43F5E' : 'rgba(255,255,255,0.5)' }}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <HeartLikeButton
-                    size={20}
-                    liked={liked}
-                    heartColor="#F43F5E"
-                    disabled={liking}
-                    onClick={handleLike}
-                  />
-                  {likeCount > 0 && <span className="text-[10px] drop-shadow">{likeCount}</span>}
-                </div>
-              </div>
+            )}
+            <div
+              className="flex items-center gap-0.5"
+              style={{ color: liked ? '#F43F5E' : 'rgba(255,255,255,0.45)' }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <HeartLikeButton
+                size={18}
+                liked={liked}
+                heartColor="#F43F5E"
+                disabled={liking}
+                onClick={handleLike}
+              />
+              {likeCount > 0 && <span className="text-[10px] drop-shadow">{likeCount}</span>}
             </div>
           </div>
         </div>

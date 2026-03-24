@@ -210,6 +210,38 @@ const PRD_MD_STYLE = `
     }
   }
 
+  /* 配图卡片：prompt 文字底部浮层（默认半可见，hover 全可见） */
+  .marker-card-prompt-overlay {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 24px 10px 8px;
+    background: linear-gradient(to top, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0.35) 60%, transparent 100%);
+    opacity: 0.6;
+    transition: opacity 0.25s ease;
+    pointer-events: none;
+    cursor: pointer;
+  }
+  .marker-card-wrap:hover .marker-card-prompt-overlay {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .marker-card-prompt-text {
+    font-size: 12px;
+    line-height: 1.5;
+    color: rgba(255,255,255,0.92);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    word-break: break-all;
+  }
+  .marker-card-wrap:hover .marker-card-prompt-text {
+    -webkit-line-clamp: 3;
+  }
+
   /* 文章内图片显示尺寸控制 */
   .prd-md img[data-marker-idx] {
     max-width: var(--img-display-size, 50%) !important;
@@ -454,6 +486,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const thinkingPanelRef = useRef<HTMLDivElement>(null); // 思考面板的 ref（自动滚动到底部）
   const isStreamingRef = useRef<boolean>(false); // 标记是否正在流式输出
   const [glowingMarkers, setGlowingMarkers] = useState<Set<number>>(new Set()); // 正在播放入场动画的 marker 卡片
+  const [editingMarkerIdx, setEditingMarkerIdx] = useState<number | null>(null); // 正在弹窗编辑 prompt 的 marker 索引
   const knownMarkerIndicesRef = useRef<Set<number>>(new Set()); // 已知的 marker 索引（用于检测新增）
   const [imageDisplaySize, setImageDisplaySize] = useState(50); // 文章内图片显示尺寸百分比
   const [rawMarkerOutput, setRawMarkerOutput] = useState(''); // Anchor 模式下 LLM 原始输出（用于视觉反馈）
@@ -2801,7 +2834,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               </div>
             </div>
 
-            <div ref={markerListRef} className="flex-1 min-h-0 overflow-auto space-y-1.5">
+            <div ref={markerListRef} className="flex-1 min-h-0 overflow-auto space-y-3 pr-0.5">
               {/* 标记生成中的进度提示 */}
               {markerStreaming && (
                 <div
@@ -2834,7 +2867,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 const src =
                   String(it.assetUrl || it.url || '').trim() ||
                   (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '');
-                const showPlaceholder = it.status === 'running' || it.status === 'parsing'; // 生图和解析时都显示动画
+                const showPlaceholder = it.status === 'running' || it.status === 'parsing';
                 const canShow = Boolean(src) && it.status === 'done';
                 const hasImage = Boolean(String(it.assetUrl || it.url || '').trim() || it.base64);
                 const genLabel = hasImage ? '重新生成' : '生成图片';
@@ -2844,273 +2877,272 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
                 return (
                   <div
-                  key={it.markerIndex}
-                  className="surface-inset p-2.5 rounded"
-                  style={{
-                    position: 'relative',
-                  }}
-                >
-                  {/* 入场发光边框动画 */}
-                  {isGlowing && (
-                    <div
-                      className="marker-card-glow-entrance"
-                      onAnimationEnd={() => {
-                        setGlowingMarkers((prev) => {
-                          const next = new Set(prev);
-                          next.delete(it.markerIndex);
-                          return next;
-                        });
-                      }}
-                    />
-                  )}
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
-                      配图 {idx + 1}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {/* 尺寸选择器 */}
-                      <ImageSizePicker
-                        sizesByResolution={sizesByResolutionForPicker}
-                        value={it.planItem?.size || '1024x1024'}
-                        onChange={(s) => {
-                          const updatedPlanItem = { ...(it.planItem || { prompt: it.draftText || it.markerText, count: 1 }), size: s };
-                          setMarkerRunItems((prev) =>
-                            prev.map((x) =>
-                              x.markerIndex === it.markerIndex
-                                ? { ...x, planItem: updatedPlanItem }
-                                : x
-                            )
-                          );
-                          // 持久化尺寸到后端
-                          void updateMarkerStatus(it.markerIndex, {
-                            planItem: { prompt: updatedPlanItem.prompt, count: updatedPlanItem.count ?? 1, size: s },
+                    key={it.markerIndex}
+                    className="surface-inset rounded-xl overflow-hidden"
+                    style={{ position: 'relative' }}
+                  >
+                    {/* 入场发光边框动画 */}
+                    {isGlowing && (
+                      <div
+                        className="marker-card-glow-entrance"
+                        onAnimationEnd={() => {
+                          setGlowingMarkers((prev) => {
+                            const next = new Set(prev);
+                            next.delete(it.markerIndex);
+                            return next;
                           });
                         }}
-                        disabled={it.status === 'running' || it.status === 'parsing'}
                       />
-                      {/* 状态标签 */}
+                    )}
+
+                    {/* ─── 图片区（所有控件 + prompt 文字浮在图片上）─── */}
+                    <div
+                      className="marker-card-wrap relative group"
+                      style={{
+                        aspectRatio: '4 / 3',
+                        padding: '6px 6px 0',
+                        background: 'rgba(0,0,0,0.22)',
+                        cursor: canShow ? 'pointer' : 'default',
+                      }}
+                      onClick={() => {
+                        if (!canShow) return;
+                        const allImages = markerRunItems
+                          .filter(x => x.assetUrl || x.url || x.base64)
+                          .map((x, i) => ({
+                            url: x.assetUrl || x.url || (x.base64?.startsWith('data:') ? x.base64 : `data:image/png;base64,${x.base64}`) || '',
+                            alt: `配图 ${i + 1}`,
+                          }));
+                        const currentIdx = allImages.findIndex((_, i) => {
+                          const item = markerRunItems.filter(x => x.assetUrl || x.url || x.base64)[i];
+                          return item?.markerIndex === it.markerIndex;
+                        });
+                        setImagePreviewIndex(currentIdx >= 0 ? currentIdx : 0);
+                        setImagePreviewOpen(true);
+                      }}
+                    >
+                      {/* 图片内容 / 占位 / 加载动画 */}
+                      {showPlaceholder ? (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+                          {it.status === 'parsing' ? (
+                            <>
+                              <Loader2 size={28} className="animate-spin" style={{ color: 'rgba(250, 204, 21, 0.7)' }} />
+                              <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.5)' }}>解析尺寸…</span>
+                            </>
+                          ) : (
+                            <div style={{ width: '100%', height: '100%', maxWidth: 120, maxHeight: 120, aspectRatio: '1' }}>
+                              <PrdPetalBreathingLoader fill />
+                            </div>
+                          )}
+                        </div>
+                      ) : canShow ? (
+                        <img src={src} alt={`img-${idx + 1}`} className="w-full h-full block rounded-lg" style={{ objectFit: 'contain' }} />
+                      ) : (
+                        (() => {
+                          const cs = it.planItem?.size || '1024x1024';
+                          const [cw, ch] = cs.split(/[xX×]/).map(Number);
+                          const cRatio = (cw && ch) ? cw / ch : 1;
+                          const containerH = 140;
+                          const containerW = 280;
+                          let previewW: number, previewH: number;
+                          if (cRatio >= containerW / containerH) {
+                            previewW = Math.min(containerW, 240);
+                            previewH = Math.round(previewW / cRatio);
+                          } else {
+                            previewH = Math.min(containerH, 120);
+                            previewW = Math.round(previewH * cRatio);
+                          }
+                          return (
+                            <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+                              <div
+                                className="rounded-lg flex items-center justify-center"
+                                style={{
+                                  width: previewW,
+                                  height: previewH,
+                                  background: 'var(--nested-block-bg)',
+                                  border: '1.5px dashed rgba(99, 102, 241, 0.3)',
+                                  transition: 'width 0.2s, height 0.2s',
+                                }}
+                              >
+                                <ImageIcon size={18} style={{ opacity: 0.4 }} />
+                              </div>
+                            </div>
+                          );
+                        })()
+                      )}
+
+                      {/* 浮层：顶部 - 标签 + 尺寸 + 状态 */}
                       <div
-                        className="text-[11px] px-2 py-0.5 rounded-full font-semibold"
-                        style={{
-                          background:
-                            it.status === 'done'
-                              ? 'rgba(34, 197, 94, 0.12)'
-                              : it.status === 'error'
-                                ? 'rgba(239, 68, 68, 0.12)'
-                                : it.status === 'running' || it.status === 'parsing'
-                                  ? 'rgba(250, 204, 21, 0.12)'
-                                  : 'var(--bg-input-hover)',
-                          border:
-                            it.status === 'done'
-                              ? '1px solid rgba(34, 197, 94, 0.28)'
-                              : it.status === 'error'
-                                ? '1px solid rgba(239, 68, 68, 0.28)'
-                                : it.status === 'running' || it.status === 'parsing'
-                                  ? '1px solid rgba(250, 204, 21, 0.24)'
-                                  : '1px solid var(--border-default)',
-                          color:
-                            it.status === 'done'
-                              ? 'rgba(34, 197, 94, 0.95)'
-                              : it.status === 'error'
-                                ? 'rgba(239, 68, 68, 0.95)'
-                                : it.status === 'running' || it.status === 'parsing'
-                                  ? 'rgba(250, 204, 21, 0.95)'
-                                  : 'var(--text-secondary)',
-                        }}
-                        title={it.errorMessage || ''}
+                        className="absolute top-0 left-0 right-0 flex items-center justify-between px-2 py-1.5"
+                        style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.5) 0%, transparent 100%)' }}
+                        onClick={(e) => e.stopPropagation()}
                       >
-                        {statusLabel}
+                        <span className="text-[11px] font-medium" style={{ color: 'rgba(255,255,255,0.85)' }}>
+                          配图 {idx + 1}
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <ImageSizePicker
+                            sizesByResolution={sizesByResolutionForPicker}
+                            value={it.planItem?.size || '1024x1024'}
+                            onChange={(s) => {
+                              const updatedPlanItem = { ...(it.planItem || { prompt: it.draftText || it.markerText, count: 1 }), size: s };
+                              setMarkerRunItems((prev) =>
+                                prev.map((x) =>
+                                  x.markerIndex === it.markerIndex
+                                    ? { ...x, planItem: updatedPlanItem }
+                                    : x
+                                )
+                              );
+                              void updateMarkerStatus(it.markerIndex, {
+                                planItem: { prompt: updatedPlanItem.prompt, count: updatedPlanItem.count ?? 1, size: s },
+                              });
+                            }}
+                            disabled={it.status === 'running' || it.status === 'parsing'}
+                          />
+                          <div
+                            className="text-[11px] px-2 py-0.5 rounded-full font-semibold"
+                            style={{
+                              background:
+                                it.status === 'done'
+                                  ? 'rgba(34, 197, 94, 0.18)'
+                                  : it.status === 'error'
+                                    ? 'rgba(239, 68, 68, 0.18)'
+                                    : it.status === 'running' || it.status === 'parsing'
+                                      ? 'rgba(250, 204, 21, 0.18)'
+                                      : 'rgba(255,255,255,0.1)',
+                              border:
+                                it.status === 'done'
+                                  ? '1px solid rgba(34, 197, 94, 0.35)'
+                                  : it.status === 'error'
+                                    ? '1px solid rgba(239, 68, 68, 0.35)'
+                                    : it.status === 'running' || it.status === 'parsing'
+                                      ? '1px solid rgba(250, 204, 21, 0.3)'
+                                      : '1px solid rgba(255,255,255,0.2)',
+                              color:
+                                it.status === 'done'
+                                  ? 'rgba(34, 197, 94, 0.95)'
+                                  : it.status === 'error'
+                                    ? 'rgba(239, 68, 68, 0.95)'
+                                    : it.status === 'running' || it.status === 'parsing'
+                                      ? 'rgba(250, 204, 21, 0.95)'
+                                      : 'rgba(255,255,255,0.7)',
+                            }}
+                            title={it.errorMessage || ''}
+                          >
+                            {statusLabel}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 错误信息浮层 */}
+                      {it.errorMessage ? (
+                        <div
+                          className="absolute text-[11px] px-2 py-1 rounded"
+                          style={{
+                            background: 'rgba(239,68,68,0.85)',
+                            color: 'white',
+                            bottom: 8,
+                            left: 8,
+                            right: 8,
+                            zIndex: 2,
+                          }}
+                        >
+                          {it.errorMessage}
+                        </div>
+                      ) : null}
+
+                      {/* prompt 文字浮层：默认半可见，hover 全可见，点击编辑 */}
+                      <div
+                        className="marker-card-prompt-overlay"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditingMarkerIdx(it.markerIndex);
+                        }}
+                        title="点击编辑提示词"
+                      >
+                        <div className="marker-card-prompt-text">
+                          {it.draftText || it.markerText || '（暂无提示词，点击编辑）'}
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  {it.errorMessage ? (
-                    <div className="mt-2 text-xs" style={{ color: 'rgba(239,68,68,0.92)' }}>
-                      {it.errorMessage}
-                    </div>
-                  ) : null}
-
-                  <div
-                    className="mt-1.5 rounded-[10px] overflow-hidden relative group"
-                    style={{
-                      height: 120,
-                      background: 'rgba(0,0,0,0.18)',
-                      border: '1px solid var(--border-default)',
-                      cursor: canShow ? 'pointer' : 'default',
-                    }}
-                    onClick={() => {
-                      if (!canShow) return;
-                      const allImages = markerRunItems
-                        .filter(x => x.assetUrl || x.url || x.base64)
-                        .map((x, i) => ({
-                          url: x.assetUrl || x.url || (x.base64?.startsWith('data:') ? x.base64 : `data:image/png;base64,${x.base64}`) || '',
-                          alt: `配图 ${i + 1}`,
-                        }));
-                      const currentIdx = allImages.findIndex((_, i) => {
-                        const item = markerRunItems.filter(x => x.assetUrl || x.url || x.base64)[i];
-                        return item?.markerIndex === it.markerIndex;
-                      });
-                      setImagePreviewIndex(currentIdx >= 0 ? currentIdx : 0);
-                      setImagePreviewOpen(true);
-                    }}
-                  >
-                    {showPlaceholder ? (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-                        {it.status === 'parsing' ? (
+                    {/* 操作按钮栏（图片下方独立行） */}
+                    <div className="px-2.5 py-2 flex items-center justify-between gap-1">
+                      <div className="flex items-center gap-1">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          disabled={it.status === 'running' || it.status === 'parsing'}
+                          onClick={() => void handleDeleteMarker(it.markerIndex)}
+                          title="删除该配图提示词（同时移除文章中的对应 [插图] 标记）"
+                        >
+                          <Trash2 size={14} />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => locateMarkerInPreview(it.markerIndex)}
+                          title="定位到正文中的配图标记位置"
+                        >
+                          <MapPin size={14} />
+                        </Button>
+                        {canShow && (
                           <>
-                            <Loader2 size={28} className="animate-spin" style={{ color: 'rgba(250, 204, 21, 0.7)' }} />
-                            <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.5)' }}>解析尺寸…</span>
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={async () => {
+                                try {
+                                  await navigator.clipboard.writeText(src);
+                                  toast.success('已复制', '图片链接已复制到剪贴板');
+                                } catch (error) {
+                                  console.error('Copy failed:', error);
+                                }
+                              }}
+                              title="复制图片链接"
+                            >
+                              <Copy size={14} />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={async () => {
+                                try {
+                                  const response = await fetch(src);
+                                  const blob = await response.blob();
+                                  const blobUrl = URL.createObjectURL(blob);
+                                  const link = document.createElement('a');
+                                  link.href = blobUrl;
+                                  link.download = `配图-${idx + 1}.png`;
+                                  link.click();
+                                  URL.revokeObjectURL(blobUrl);
+                                } catch (error) {
+                                  console.error('Download failed:', error);
+                                  const link = document.createElement('a');
+                                  link.href = src;
+                                  link.download = `配图-${idx + 1}.png`;
+                                  link.target = '_blank';
+                                  link.click();
+                                }
+                              }}
+                              title="下载图片"
+                            >
+                              <DownloadCloud size={14} />
+                            </Button>
                           </>
-                        ) : (
-                          <div style={{ width: '100%', height: '100%', maxWidth: 120, maxHeight: 120, aspectRatio: '1' }}>
-                            <PrdPetalBreathingLoader fill />
-                          </div>
                         )}
                       </div>
-                    ) : null}
-                    {canShow ? (
-                      <>
-                        <img src={src} alt={`img-${idx + 1}`} className="w-full h-full block" style={{ objectFit: 'contain' }} />
-
-                        {/* Copy and Download icons */}
-                        <div
-                          className="absolute bottom-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <button
-                            className="p-2 rounded-lg"
-                            style={{
-                              ...glassFloatingButton,
-                              background: 'rgba(0, 0, 0, 0.6)',
-                              border: '1px solid rgba(255, 255, 255, 0.2)',
-                            }}
-                            onClick={async () => {
-                              try {
-                                await navigator.clipboard.writeText(src);
-                                toast.success('已复制', '图片链接已复制到剪贴板');
-                              } catch (error) {
-                                console.error('Copy failed:', error);
-                              }
-                            }}
-                            title="复制图片链接"
-                          >
-                            <Copy size={16} style={{ color: 'white' }} />
-                          </button>
-                          <button
-                            className="p-2 rounded-lg"
-                            style={{
-                              ...glassFloatingButton,
-                              background: 'rgba(0, 0, 0, 0.6)',
-                              border: '1px solid rgba(255, 255, 255, 0.2)',
-                            }}
-                            onClick={async () => {
-                              try {
-                                // 使用 fetch + blob 方式下载，避免跨域问题导致打开而不是下载
-                                const response = await fetch(src);
-                                const blob = await response.blob();
-                                const blobUrl = URL.createObjectURL(blob);
-                                const link = document.createElement('a');
-                                link.href = blobUrl;
-                                link.download = `配图-${idx + 1}.png`;
-                                link.click();
-                                URL.revokeObjectURL(blobUrl);
-                              } catch (error) {
-                                console.error('Download failed:', error);
-                                // 如果 fetch 失败（可能是跨域），尝试直接下载
-                                const link = document.createElement('a');
-                                link.href = src;
-                                link.download = `配图-${idx + 1}.png`;
-                                link.target = '_blank';
-                                link.click();
-                              }
-                            }}
-                            title="下载图片"
-                          >
-                            <DownloadCloud size={16} style={{ color: 'white' }} />
-                          </button>
-                        </div>
-                      </>
-                    ) : !showPlaceholder ? (
-                      (() => {
-                        // 显示按当前选中尺寸的比例预览框
-                        const cs = it.planItem?.size || '1024x1024';
-                        const [cw, ch] = cs.split(/[xX×]/).map(Number);
-                        const cRatio = (cw && ch) ? cw / ch : 1;
-                        const containerH = 100; // 预留上下 padding
-                        const containerW = 280; // 约等于卡片宽度
-                        // 在容器内按比例显示，不超出边界
-                        let previewW: number, previewH: number;
-                        if (cRatio >= containerW / containerH) {
-                          previewW = Math.min(containerW, 240);
-                          previewH = Math.round(previewW / cRatio);
-                        } else {
-                          previewH = Math.min(containerH, 90);
-                          previewW = Math.round(previewH * cRatio);
-                        }
-                        return (
-                          <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-xs" style={{ color: 'var(--text-muted)' }}>
-                            <div
-                              className="rounded-lg flex items-center justify-center"
-                              style={{
-                                width: previewW,
-                                height: previewH,
-                                background: 'var(--nested-block-bg)',
-                                border: '1.5px dashed rgba(99, 102, 241, 0.3)',
-                                transition: 'width 0.2s, height 0.2s',
-                              }}
-                            >
-                              <ImageIcon size={18} style={{ opacity: 0.4 }} />
-                            </div>
-                          </div>
-                        );
-                      })()
-                    ) : null}
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={it.status === 'running' || it.status === 'parsing' || !imageGenModel}
+                        onClick={() => void handleRegenerateOne(it.markerIndex)}
+                        title={genTitle}
+                      >
+                        <Sparkles size={14} />
+                        {genLabel}
+                      </Button>
+                    </div>
                   </div>
-
-                  <textarea
-                    value={it.draftText}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setMarkerRunItems((prev) => prev.map((x) => (x.markerIndex === it.markerIndex ? { ...x, draftText: v, planItem: null } : x)));
-                    }}
-                    className="mt-1.5 w-full rounded-[10px] px-2.5 py-1.5 text-[12px] outline-none resize-none prd-field"
-                    style={{ minHeight: 56 }}
-                    placeholder="可编辑后右下角生成图片 / 重新生成"
-                    disabled={it.status === 'running' || it.status === 'parsing'}
-                  />
-
-                  <div className="mt-1.5 flex items-center justify-between gap-2">
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      disabled={it.status === 'running' || it.status === 'parsing'}
-                      onClick={() => void handleDeleteMarker(it.markerIndex)}
-                      title="删除该配图提示词（同时移除文章中的对应 [插图] 标记）"
-                    >
-                      <Trash2 size={14} />
-                      删除
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => locateMarkerInPreview(it.markerIndex)}
-                      title="定位到正文中的配图标记位置"
-                    >
-                      <MapPin size={14} />
-                      定位
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      disabled={it.status === 'running' || it.status === 'parsing' || !imageGenModel}
-                      onClick={() => void handleRegenerateOne(it.markerIndex)}
-                      title={genTitle}
-                    >
-                      <Sparkles size={14} />
-                      {genLabel}
-                    </Button>
-                  </div>
-                </div>
                 );
               })}
             </div>
@@ -3120,6 +3152,54 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           </PanelCard>
         )}
       </div>
+
+      {/* 配图 Prompt 编辑弹窗 */}
+      {editingMarkerIdx !== null && (() => {
+        const editItem = markerRunItems.find(x => x.markerIndex === editingMarkerIdx);
+        if (!editItem) return null;
+        const editIdx = markerRunItems.indexOf(editItem);
+        return (
+          <Dialog
+            open
+            onOpenChange={(open) => { if (!open) setEditingMarkerIdx(null); }}
+            title={`编辑提示词 — 配图 ${editIdx + 1}`}
+            maxWidth={640}
+            content={
+              <div className="flex flex-col gap-3">
+                <textarea
+                  autoFocus
+                  value={editItem.draftText}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setMarkerRunItems((prev) => prev.map((x) => (x.markerIndex === editingMarkerIdx ? { ...x, draftText: v, planItem: null } : x)));
+                  }}
+                  className="w-full rounded-[14px] px-3 py-2.5 text-[13px] leading-6 outline-none resize-none font-mono prd-field"
+                  style={{ minHeight: 180 }}
+                  placeholder="描述配图内容、风格、构图…"
+                  disabled={editItem.status === 'running' || editItem.status === 'parsing'}
+                />
+                <div className="flex items-center justify-between gap-2">
+                  <Button size="sm" variant="secondary" onClick={() => setEditingMarkerIdx(null)}>
+                    关闭
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={editItem.status === 'running' || editItem.status === 'parsing' || !imageGenModel}
+                    onClick={() => {
+                      setEditingMarkerIdx(null);
+                      void handleRegenerateOne(editItem.markerIndex);
+                    }}
+                  >
+                    <Sparkles size={14} />
+                    {editItem.assetUrl || editItem.url || editItem.base64 ? '保存并重新生成' : '保存并生成图片'}
+                  </Button>
+                </div>
+              </div>
+            }
+          />
+        );
+      })()}
 
       {/* 新建提示词对话框 */}
       <Dialog

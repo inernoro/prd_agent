@@ -143,6 +143,7 @@ proxyService.setOnAccess((branchId, method, reqPath, status, duration, profileId
   if (now - lastSent < 2000) return; // throttle: 1 event per 2 seconds per branch
   webAccessThrottle.set(branchId, now);
 
+  const branchTags = stateService.getBranch(branchId)?.tags ?? [];
   const event: ActivityEvent = {
     id: nextActivitySeq(),
     ts: new Date().toISOString(),
@@ -153,6 +154,7 @@ proxyService.setOnAccess((branchId, method, reqPath, status, duration, profileId
     type: 'web',
     source: 'user',
     branchId,
+    branchTags: branchTags.length ? branchTags : undefined,
     profileId,
   };
   broadcastActivity(event);

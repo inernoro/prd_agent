@@ -34,6 +34,21 @@ export type ImageGenGenerateResponse = {
 
 export type PlanImageGenContract = (input: { text: string; maxItems?: number; systemPromptOverride?: string }) => Promise<ApiResponse<ImageGenPlanResponse>>;
 
+// -------- 提示词澄清（Prompt Clarification） --------
+
+export type ImageGenClarifyResponse = {
+  originalPrompt: string;
+  clarifiedPrompt: string;
+  /** 是否做了实质修改 */
+  wasModified: boolean;
+};
+
+export type ClarifyImageGenPromptContract = (input: {
+  prompt: string;
+  /** 是否有参考图 */
+  hasReferenceImage?: boolean;
+}) => Promise<ApiResponse<ImageGenClarifyResponse>>;
+
 export type GenerateImageGenContract = (input: {
   modelId: string;
   platformId?: string;

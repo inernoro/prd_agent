@@ -32,6 +32,7 @@ import {
   getWatermarkByApp,
   listWatermarksMarketplace,
   forkWatermark,
+  clarifyImageGenPrompt,
   planImageGen,
   refreshVisualAgentWorkspaceCover,
   saveVisualAgentWorkspaceCanvas,
@@ -1240,7 +1241,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       id: 'assistant-hello',
       role: 'Assistant',
       content:
-        'Hi，我是你的 AI 设计师。描述你的需求，我会把它转成可执行的生图提示词并把结果放到左侧画板。若你想让输入直接作为提示词发送（不再二次解析/改写），可在"模型偏好"里开启"直连"。',
+        'Hi，我是你的 AI 设计师。描述你想要的画面，我会自动将你的描述优化为专业的生图提示词，然后把生成结果放到左侧画板。你可以用中文、英文或任何方式表达创意！',
       ts: Date.now(),
     },
   ]);
@@ -2339,15 +2340,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     if (!directPromptKey) return;
     try {
       setDirectPromptReady(false);
-      // 需求变更：直连应始终开启（避免解析接口不稳定/误关导致体验抖动）。
-      // 历史上用户可能关闭过（sessionStorage 存了 0），这里统一纠正为开启，并写回。
-      setDirectPrompt(true);
+      const stored = sessionStorage.getItem(directPromptKey);
+      // 默认开启直连（首次进入）；若本地已有值则以本地为准
+      setDirectPrompt(stored === null ? true : stored === '1');
       setDirectPromptReady(true);
-      try {
-        sessionStorage.setItem(directPromptKey, '1');
-      } catch {
-        // ignore
-      }
     } catch {
       // ignore
       setDirectPrompt(true);
@@ -2571,6 +2567,63 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       }
     };
   }, [focusStage, pushMsg, setViewport, workspaceId]);
+
+  // Watchdog：定期检查画布上卡住的 running 项目，自动恢复或标记失败
+  useEffect(() => {
+    const WATCHDOG_INTERVAL = 15_000; // 每 15 秒检查一次
+    const STALE_THRESHOLD = 120_000; // running 超过 2 分钟视为可能卡住
+
+    const tid = window.setInterval(() => {
+      const items = canvasRef.current;
+      const staleRunning = items.filter(
+        (el) => el.status === 'running' && el.runId && el.createdAt && Date.now() - el.createdAt > STALE_THRESHOLD
+      );
+      if (staleRunning.length === 0) return;
+
+      // 逐个查询后端实际状态
+      for (const el of staleRunning) {
+        void getImageGenRun({ runId: el.runId!, includeItems: true, includeImages: true })
+          .then((res) => {
+            if (!res.success || !res.data?.run) return;
+            const run = res.data.run;
+            if (run.status === 'Completed') {
+              const item = res.data.items?.find((it) => it.url);
+              if (item?.url) {
+                setCanvas((prev) =>
+                  prev.map((x) =>
+                    x.key === el.key && x.status === 'running'
+                      ? { ...x, status: 'done', src: item.url!, kind: 'image', originalSrc: item.url!, syncStatus: 'synced' as const }
+                      : x
+                  )
+                );
+              } else {
+                setCanvas((prev) =>
+                  prev.map((x) =>
+                    x.key === el.key && x.status === 'running'
+                      ? { ...x, status: 'error', errorMessage: '生成完成但无图片数据' }
+                      : x
+                  )
+                );
+              }
+            } else if (run.status === 'Failed' || run.status === 'Cancelled') {
+              setCanvas((prev) =>
+                prev.map((x) =>
+                  x.key === el.key && x.status === 'running'
+                    ? { ...x, status: 'error', errorMessage: run.status === 'Failed' ? '生成失败' : '已取消' }
+                    : x
+                )
+              );
+            }
+            // Queued/Running：后端仍在处理，继续等待
+          })
+          .catch(() => {
+            // 查询失败，不做处理，下次 watchdog 再试
+          });
+      }
+    }, WATCHDOG_INTERVAL);
+
+    return () => window.clearInterval(tid);
+  }, []); // 无依赖，组件生命周期内常驻
 
   // 自动保存画布（debounce）
   useEffect(() => {
@@ -3424,6 +3477,18 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: display || reqText || undefined, imageRefShas }));
         return;
       }
+      // 提示词澄清：将用户自由输入改写为明确的英文生图提示词，降低失败率
+      try {
+        const clarifyRes = await clarifyImageGenPrompt({
+          prompt: firstPrompt,
+          hasReferenceImage: unifiedImageRefs.length > 0,
+        });
+        if (clarifyRes.success && clarifyRes.data?.wasModified && clarifyRes.data.clarifiedPrompt) {
+          firstPrompt = clarifyRes.data.clarifiedPrompt;
+        }
+      } catch {
+        // 澄清失败不阻断生图流程，静默降级使用原始 prompt
+      }
     } else {
       let plan: ImageGenPlanResponse | null = null;
       try {
@@ -3789,7 +3854,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             // 原图信息：优先用 asset（后端持久化的），否则用 SSE 顶层字段
             const originalU = String(asset?.originalUrl || o.originalUrl || u || '');
             const originalSha = String(asset?.originalSha256 || o.originalSha256 || asset?.sha256 || '');
-            if (!u) return;
+            if (!u) {
+              // imageDone 但 URL 为空 — 视为失败，避免幽灵状态（既不成功也不失败）
+              const emptyMsg = '生成完成但图片数据为空，请重试';
+              setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: emptyMsg } : x)));
+              const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
+              pushMsg('Assistant', buildGenErrorContent({ msg: emptyMsg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: modelPoolName, imageRefShas }));
+              triggerDefectFlash();
+              return;
+            }
             setCanvas((prev) =>
               prev.map((x) =>
                 x.key === key
@@ -7949,43 +8022,23 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       >
                         <div className="flex items-center justify-between gap-3">
                           <div className="min-w-0">
-                            <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                              模型偏好
-                            </div>
-                            <div className="mt-0.5 text-[12px] truncate" style={{ color: 'var(--text-muted)' }}>
-                              仅影响本页生图；候选项以启用 isImageGen 为准
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-2 shrink-0">
-                            <span className="text-[12px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
-                              自动
-                            </span>
-                            <Switch checked={modelPrefAuto} onCheckedChange={(v) => setModelPrefAuto(v)} ariaLabel="自动选择模型" />
-                          </div>
-                        </div>
-
-                        <div className="mt-3 flex items-center justify-between gap-3">
-                          <div className="min-w-0">
                             <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                               提示词模式
                             </div>
                             <div className="mt-0.5 text-[12px]" style={{ color: 'var(--text-muted)' }}>
-                              直连开启后不再调用解析接口，输入原样作为 prompt
+                              {directPrompt
+                                ? '智能优化：自动将输入改写为明确的英文生图提示词'
+                                : '解析模式：通过意图模型从文本中提取图片清单'}
                             </div>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
-                            <span className="text-[12px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
-                              直连
+                            <span className="text-[12px] font-semibold" style={{ color: directPrompt ? 'var(--color-success, #22c55e)' : 'var(--text-secondary)' }}>
+                              {directPrompt ? '智能优化' : '解析'}
                             </span>
                             <Switch
                               checked={directPrompt}
-                              onCheckedChange={() => {
-                                // 需求变更：固定开启（若未来需要恢复可配置，再改回可切换）
-                                setDirectPrompt(true);
-                              }}
-                              disabled
-                              ariaLabel="直连模式（固定开启）"
+                              onCheckedChange={(v) => setDirectPrompt(v)}
+                              ariaLabel="提示词模式"
                             />
                           </div>
                         </div>
