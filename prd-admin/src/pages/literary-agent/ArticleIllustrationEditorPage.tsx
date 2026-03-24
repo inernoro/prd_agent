@@ -210,6 +210,35 @@ const PRD_MD_STYLE = `
     }
   }
 
+  /* 配图卡片：hover 显示 prompt 文字 */
+  .marker-card-prompt-overlay {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 28px 10px 10px;
+    background: linear-gradient(to top, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.5) 60%, transparent 100%);
+    opacity: 0;
+    transition: opacity 0.25s ease;
+    pointer-events: none;
+    cursor: pointer;
+  }
+  .marker-card-wrap:hover .marker-card-prompt-overlay {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .marker-card-prompt-text {
+    font-size: 12px;
+    line-height: 1.5;
+    color: rgba(255,255,255,0.88);
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    word-break: break-all;
+  }
+
   /* 文章内图片显示尺寸控制 */
   .prd-md img[data-marker-idx] {
     max-width: var(--img-display-size, 50%) !important;
@@ -454,6 +483,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const thinkingPanelRef = useRef<HTMLDivElement>(null); // 思考面板的 ref（自动滚动到底部）
   const isStreamingRef = useRef<boolean>(false); // 标记是否正在流式输出
   const [glowingMarkers, setGlowingMarkers] = useState<Set<number>>(new Set()); // 正在播放入场动画的 marker 卡片
+  const [editingMarkerIdx, setEditingMarkerIdx] = useState<number | null>(null); // 正在弹窗编辑 prompt 的 marker 索引
   const knownMarkerIndicesRef = useRef<Set<number>>(new Set()); // 已知的 marker 索引（用于检测新增）
   const [imageDisplaySize, setImageDisplaySize] = useState(50); // 文章内图片显示尺寸百分比
   const [rawMarkerOutput, setRawMarkerOutput] = useState(''); // Anchor 模式下 LLM 原始输出（用于视觉反馈）
@@ -2864,9 +2894,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       />
                     )}
 
-                    {/* ─── 上半：图片区（所有控件浮在图片上）─── */}
+                    {/* ─── 图片区（所有控件 + prompt 文字浮在图片上）─── */}
                     <div
-                      className="relative group"
+                      className="marker-card-wrap relative group"
                       style={{
                         height: 170,
                         background: 'rgba(0,0,0,0.22)',
@@ -3088,31 +3118,34 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       {/* 错误信息浮层 */}
                       {it.errorMessage ? (
                         <div
-                          className="absolute bottom-8 left-2 right-2 text-[11px] px-2 py-1 rounded"
-                          style={{ background: 'rgba(239,68,68,0.85)', color: 'white' }}
+                          className="absolute text-[11px] px-2 py-1 rounded"
+                          style={{
+                            background: 'rgba(239,68,68,0.85)',
+                            color: 'white',
+                            bottom: 32,
+                            left: 8,
+                            right: 8,
+                            zIndex: 2,
+                          }}
                         >
                           {it.errorMessage}
                         </div>
                       ) : null}
-                    </div>
 
-                    {/* ─── 下半：Prompt 文字编辑区（固定高度）─── */}
-                    <textarea
-                      value={it.draftText}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setMarkerRunItems((prev) => prev.map((x) => (x.markerIndex === it.markerIndex ? { ...x, draftText: v, planItem: null } : x)));
-                      }}
-                      className="w-full px-2.5 py-2 text-[12px] leading-[1.5] outline-none resize-none"
-                      style={{
-                        height: 58,
-                        background: 'rgba(0,0,0,0.12)',
-                        borderTop: '1px solid var(--border-default)',
-                        color: 'var(--text-secondary)',
-                      }}
-                      placeholder="可编辑后生成图片 / 重新生成"
-                      disabled={it.status === 'running' || it.status === 'parsing'}
-                    />
+                      {/* hover 浮层：prompt 文字（点击打开编辑弹窗） */}
+                      <div
+                        className="marker-card-prompt-overlay"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditingMarkerIdx(it.markerIndex);
+                        }}
+                        title="点击编辑提示词"
+                      >
+                        <div className="marker-card-prompt-text">
+                          {it.draftText || it.markerText || '（暂无提示词，点击编辑）'}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 );
               })}
@@ -3123,6 +3156,54 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           </PanelCard>
         )}
       </div>
+
+      {/* 配图 Prompt 编辑弹窗 */}
+      {editingMarkerIdx !== null && (() => {
+        const editItem = markerRunItems.find(x => x.markerIndex === editingMarkerIdx);
+        if (!editItem) return null;
+        const editIdx = markerRunItems.indexOf(editItem);
+        return (
+          <Dialog
+            open
+            onOpenChange={(open) => { if (!open) setEditingMarkerIdx(null); }}
+            title={`编辑提示词 — 配图 ${editIdx + 1}`}
+            maxWidth={640}
+            content={
+              <div className="flex flex-col gap-3">
+                <textarea
+                  autoFocus
+                  value={editItem.draftText}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setMarkerRunItems((prev) => prev.map((x) => (x.markerIndex === editingMarkerIdx ? { ...x, draftText: v, planItem: null } : x)));
+                  }}
+                  className="w-full rounded-[14px] px-3 py-2.5 text-[13px] leading-6 outline-none resize-none font-mono prd-field"
+                  style={{ minHeight: 180 }}
+                  placeholder="描述配图内容、风格、构图…"
+                  disabled={editItem.status === 'running' || editItem.status === 'parsing'}
+                />
+                <div className="flex items-center justify-between gap-2">
+                  <Button size="sm" variant="secondary" onClick={() => setEditingMarkerIdx(null)}>
+                    关闭
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={editItem.status === 'running' || editItem.status === 'parsing' || !imageGenModel}
+                    onClick={() => {
+                      setEditingMarkerIdx(null);
+                      void handleRegenerateOne(editItem.markerIndex);
+                    }}
+                  >
+                    <Sparkles size={14} />
+                    {editItem.assetUrl || editItem.url || editItem.base64 ? '保存并重新生成' : '保存并生成图片'}
+                  </Button>
+                </div>
+              </div>
+            }
+          />
+        );
+      })()}
 
       {/* 新建提示词对话框 */}
       <Dialog
