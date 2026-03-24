@@ -252,6 +252,7 @@
 [data-theme="light"] .branch-card.status-starting { border-left-color: var(--yellow); }
 [data-theme="light"] .branch-card.status-error { border-left-color: var(--red); }
 [data-theme="light"] .branch-card.status-stopping { border-left-color: var(--red); }
+[data-theme="light"] .branch-card.status-deleting { border-left-color: var(--red); }
 
 [data-theme="light"] .port-badge.run-port {
   color: var(--green); background: var(--green-bg); border-color: var(--green-border);
@@ -778,6 +779,14 @@ button.text-btn:hover { color: var(--accent); }
 .branch-card.status-stopping {
   animation: stopping-pulse 1.2s ease-in-out infinite;
 }
+.branch-card.status-deleting {
+  animation: stopping-pulse 0.8s ease-in-out infinite;
+  opacity: 0.85;
+}
+.branch-card.deleting-collapse {
+  animation: deleting-collapse 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  pointer-events: none;
+}
 @keyframes stopping-pulse {
   0%, 100% {
     box-shadow: 0 0 0 0 rgba(244, 63, 94, 0), 0 1px 3px rgba(0, 0, 0, 0.2);
@@ -787,6 +796,11 @@ button.text-btn:hover { color: var(--accent); }
     box-shadow: 0 0 12px 2px rgba(244, 63, 94, 0.3), 0 0 24px 4px rgba(244, 63, 94, 0.1);
     border-color: rgba(244, 63, 94, 0.4);
   }
+}
+@keyframes deleting-collapse {
+  0% { transform: scale(1); opacity: 0.85; max-height: 600px; margin-bottom: 12px; }
+  60% { transform: scale(0.95); opacity: 0.3; }
+  100% { transform: scale(0.9); opacity: 0; max-height: 0; margin-bottom: 0; overflow: hidden; }
 }
 /* Human web access — blinking footprint icon in toolbar */
 .human-access-icon {
@@ -969,6 +983,10 @@ button.text-btn:hover { color: var(--accent); }
 .status-badge-stopping {
   color: var(--red); background: var(--red-bg); border: 1px solid var(--red-border);
   animation: port-stopping-blink 1s ease-in-out infinite;
+}
+.status-badge-deleting {
+  color: var(--red); background: var(--red-bg); border: 1px solid var(--red-border);
+  animation: port-stopping-blink 0.7s ease-in-out infinite;
 }
 .status-badge-starting {
   color: var(--yellow); background: var(--yellow-bg); border: 1px solid rgba(251, 191, 36, 0.2);

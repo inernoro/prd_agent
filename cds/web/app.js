@@ -95,7 +95,7 @@ function showToast(msg, type = 'info', duration) {
 }
 
 function statusLabel(s) {
-  const map = { running: '运行中', starting: '启动中', building: '构建中', stopping: '正在停止', idle: '空闲', stopped: '已停止', error: '错误' };
+  const map = { running: '运行中', starting: '启动中', building: '构建中', stopping: '正在停止', deleting: '删除中', idle: '空闲', stopped: '已停止', error: '错误' };
   return map[s] || s;
 }
 
@@ -1112,12 +1112,26 @@ async function previewBranch(id) {
 async function removeBranch(id) {
   if (!confirm(`确定删除分支 "${id}"？将停止所有服务并删除工作区。`)) return;
   busyBranches.add(id);
+  // Immediately set deleting state for visual feedback (borrowing stopping-pulse style)
+  const br = branches.find(b => b.id === id);
+  if (br) {
+    br.status = 'deleting';
+    for (const svc of Object.values(br.services || {})) {
+      svc.status = 'stopping';
+    }
+  }
   renderBranches();
   try {
     const res = await fetch(`${API}/branches/${id}`, { method: 'DELETE' });
     // SSE stream — just consume it
     const reader = res.body.getReader();
     while (!(await reader.read()).done) {}
+    // Collapse animation before removing from DOM
+    const card = document.querySelector(`.branch-card[data-branch-id="${CSS.escape(id)}"]`);
+    if (card) {
+      card.classList.add('deleting-collapse');
+      await new Promise(r => card.addEventListener('animationend', r, { once: true }));
+    }
     showToast(`分支 "${id}" 已删除`, 'success');
   } catch (e) { showToast(e.message, 'error'); }
   busyBranches.delete(id);
