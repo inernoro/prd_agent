@@ -274,6 +274,25 @@ export function ModelPoolManagePage() {
     }
   };
 
+  const handleSetDefault = useCallback(async (pool: ModelGroup) => {
+    try {
+      await updateModelGroup(pool.id, {
+        name: pool.name,
+        code: pool.code || '',
+        priority: pool.priority ?? 50,
+        modelType: pool.modelType || 'chat',
+        strategyType: pool.strategyType ?? PoolStrategyType.FailFast,
+        isDefaultForType: true,
+        description: pool.description || '',
+        models: pool.models || [],
+      });
+      toast.success('已设为备用');
+      await loadData();
+    } catch (error) {
+      toast.error('设置失败', String(error));
+    }
+  }, [loadData]);
+
   const toggleModel = (platformId: string, modelId: string) => {
     const key = `${platformId}:${modelId}`.toLowerCase();
     const exists = poolForm.models.some((m) => keyOfModel(m) === key);
@@ -452,7 +471,7 @@ export function ModelPoolManagePage() {
                                     </span>
                                   )}
                                 </div>
-                                <div className="text-[10px] mt-px flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
+                                <div className="text-[10px] mt-px flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
                                   {modelCount > 0 ? (
                                     <>
                                       <span className="w-1 h-1 rounded-full inline-block" style={{ background: healthyCnt === modelCount ? 'rgba(34,197,94,0.95)' : 'rgba(251,191,36,0.95)' }} />
@@ -461,6 +480,18 @@ export function ModelPoolManagePage() {
                                   ) : '空'}
                                 </div>
                               </div>
+                              {/* 设为备用按钮 */}
+                              {!pool.isDefaultForType && (
+                                <Tooltip content="设为备用">
+                                  <button
+                                    className="shrink-0 w-5 h-5 rounded border flex items-center justify-center hover:border-green-500/50 hover:bg-green-500/10 transition-colors"
+                                    style={{ borderColor: 'var(--border-subtle)' }}
+                                    onClick={(e) => { e.stopPropagation(); handleSetDefault(pool); }}
+                                  >
+                                    <Check size={10} className="opacity-0 hover:opacity-100" style={{ color: 'rgba(34,197,94,0.95)' }} />
+                                  </button>
+                                </Tooltip>
+                              )}
                             </div>
                           </div>
                         );
