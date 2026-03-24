@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
   Search,
-  ChevronDown,
   Sparkles,
   Eye,
   ImageOff,
@@ -33,6 +32,30 @@ const TABS = [
 ] as const;
 
 const PAGE_SIZE = 24;
+
+/** Distribute items into columns by shortest-column-first for waterfall layout */
+function distributeToColumns<T extends { coverWidth: number; coverHeight: number }>(
+  items: T[],
+  columnCount: number,
+): T[][] {
+  const columns: T[][] = Array.from({ length: columnCount }, () => []);
+  const heights = new Array(columnCount).fill(0);
+  for (const item of items) {
+    const ratio = item.coverWidth && item.coverHeight ? item.coverHeight / item.coverWidth : 0.625;
+    const shortest = heights.indexOf(Math.min(...heights));
+    columns[shortest].push(item);
+    heights[shortest] += ratio;
+  }
+  return columns;
+}
+
+/** Get aspect ratio string for a submission item */
+function getAspectRatio(item: SubmissionItem): string {
+  if (item.coverWidth && item.coverHeight) {
+    return `${item.coverWidth}/${item.coverHeight}`;
+  }
+  return '16/10';
+}
 
 // ── Unified Visual Card (NotebookLM style) ──
 
@@ -83,11 +106,11 @@ function MasonryCard({
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); }
       }}
     >
-      {/* Unified card — 16:10, image full-bleed, text at bottom */}
+      {/* Card — natural aspect ratio for waterfall layout */}
       <div
         className="relative w-full overflow-hidden rounded-xl transition-all duration-300 group-hover:shadow-xl group-hover:shadow-black/30 group-hover:scale-[1.02]"
         style={{
-          aspectRatio: '16/10',
+          aspectRatio: getAspectRatio(item),
           background: hasCover ? '#0a0a0f' : 'rgba(255,255,255,0.03)',
         }}
       >
@@ -237,11 +260,6 @@ export default function PortfolioShowcasePage() {
     fetchItems(tab, 0, false);
   };
 
-  const handleLoadMore = () => {
-    if (loadingMore) return;
-    fetchItems(activeTab, items.length, true);
-  };
-
   const handleLikeToggle = async (id: string, liked: boolean) => {
     const res = liked ? await likeSubmission(id) : await unlikeSubmission(id);
     if (res.success) {
@@ -265,14 +283,28 @@ export default function PortfolioShowcasePage() {
 
   const hasMore = items.length < total;
 
-  // Uniform responsive grid (NotebookLM style, NOT masonry)
-  const gridStyle: React.CSSProperties = {
-    display: 'grid',
-    gap: isMobile ? 12 : 16,
-    gridTemplateColumns: isMobile
-      ? 'repeat(auto-fill, minmax(150px, 1fr))'
-      : 'repeat(auto-fill, minmax(260px, 1fr))',
-  };
+  // Waterfall column count + distribution
+  const columnCount = isMobile ? 2 : 4;
+  const gap = isMobile ? 12 : 16;
+  const columns = useMemo(() => distributeToColumns(items, columnCount), [items, columnCount]);
+
+  // Infinite scroll sentinel
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const root = scrollRef.current;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && !loading && !loadingMore && items.length < total) {
+          fetchItems(activeTab, items.length, true);
+        }
+      },
+      { root, rootMargin: '300px' },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [loading, loadingMore, items.length, total, activeTab, fetchItems]);
 
   const heroOpacity = Math.max(0, 1 - scrollY / 300);
   const heroScale = 1 + scrollY * 0.0003;
@@ -528,64 +560,65 @@ export default function PortfolioShowcasePage() {
 
         {/* ── Gallery content ── */}
         <div style={{ padding: isMobile ? '20px 12px 80px' : '32px 48px 80px' }}>
-          {/* Loading skeleton */}
+          {/* Loading skeleton — waterfall */}
           {loading && (
-            <div style={gridStyle}>
-              {Array.from({ length: 12 }).map((_, i) => (
-                <div
-                  key={i}
-                  className="animate-pulse rounded-xl"
-                  style={{ aspectRatio: '16/10', background: 'rgba(255,255,255,0.03)' }}
-                />
+            <div style={{ display: 'flex', gap, alignItems: 'flex-start' }}>
+              {Array.from({ length: columnCount }).map((_, col) => (
+                <div key={col} style={{ flex: 1, display: 'flex', flexDirection: 'column', gap }}>
+                  {Array.from({ length: 3 }).map((_, i) => (
+                    <div
+                      key={i}
+                      className="animate-pulse rounded-xl"
+                      style={{
+                        aspectRatio: ['3/4', '16/10', '1/1'][i % 3],
+                        background: 'rgba(255,255,255,0.03)',
+                      }}
+                    />
+                  ))}
+                </div>
               ))}
             </div>
           )}
 
-          {/* Uniform grid */}
+          {/* Waterfall layout */}
           {!loading && items.length > 0 && (
             <>
-              <div style={gridStyle}>
-                {items.map((item) => (
-                  item.contentType === 'literary' ? (
-                    <LiteraryCard
-                      key={item.id}
-                      item={item}
-                      onLikeToggle={handleLikeToggle}
-                      onClick={() => setSelectedId(item.id)}
-                    />
-                  ) : (
-                    <MasonryCard
-                      key={item.id}
-                      item={item}
-                      onLikeToggle={handleLikeToggle}
-                      onClick={() => setSelectedId(item.id)}
-                    />
-                  )
+              <div style={{ display: 'flex', gap, alignItems: 'flex-start' }}>
+                {columns.map((col, colIdx) => (
+                  <div key={colIdx} style={{ flex: 1, display: 'flex', flexDirection: 'column', gap }}>
+                    {col.map((item) => (
+                      item.contentType === 'literary' ? (
+                        <LiteraryCard
+                          key={item.id}
+                          item={item}
+                          onLikeToggle={handleLikeToggle}
+                          onClick={() => setSelectedId(item.id)}
+                        />
+                      ) : (
+                        <MasonryCard
+                          key={item.id}
+                          item={item}
+                          onLikeToggle={handleLikeToggle}
+                          onClick={() => setSelectedId(item.id)}
+                        />
+                      )
+                    ))}
+                  </div>
                 ))}
               </div>
 
-              {/* Load more */}
-              {hasMore && (
-                <div className="flex justify-center mt-12">
-                  <button
-                    type="button"
-                    onClick={handleLoadMore}
-                    disabled={loadingMore}
-                    className="group flex items-center gap-2.5 px-8 py-3 rounded-full text-[13px] font-medium transition-all duration-300 hover:scale-[1.03]"
-                    style={{
-                      background: 'linear-gradient(135deg, rgba(99,102,241,0.12) 0%, rgba(168,85,247,0.08) 100%)',
-                      border: '1px solid rgba(99,102,241,0.2)',
-                      color: 'rgba(255,255,255,0.6)',
-                      boxShadow: '0 0 20px rgba(99,102,241,0.05)',
-                    }}
-                  >
-                    {loadingMore ? (
-                      <MapSpinner size={14} />
-                    ) : (
-                      <ChevronDown size={14} className="transition-transform duration-300 group-hover:translate-y-0.5" />
-                    )}
-                    {loadingMore ? '加载中...' : `加载更多 · 还有 ${total - items.length} 件`}
-                  </button>
+              {/* Infinite scroll sentinel + loading indicator */}
+              <div ref={sentinelRef} className="h-1" />
+              {loadingMore && (
+                <div className="flex justify-center py-8">
+                  <MapSpinner size={20} />
+                </div>
+              )}
+              {!hasMore && items.length > 0 && (
+                <div className="flex justify-center py-8">
+                  <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.3)' }}>
+                    已展示全部作品
+                  </span>
                 </div>
               )}
             </>

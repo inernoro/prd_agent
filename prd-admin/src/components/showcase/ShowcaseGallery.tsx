@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronDown, Eye, BookOpen, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Eye, BookOpen, X } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { SubmissionDetailModal } from './SubmissionDetailModal';
 import {
@@ -22,6 +22,30 @@ const TABS = [
 ] as const;
 
 const PAGE_SIZE = 20;
+
+/** Distribute items into columns by shortest-column-first for waterfall layout */
+function distributeToColumns<T extends { coverWidth: number; coverHeight: number }>(
+  items: T[],
+  columnCount: number,
+): T[][] {
+  const columns: T[][] = Array.from({ length: columnCount }, () => []);
+  const heights = new Array(columnCount).fill(0);
+  for (const item of items) {
+    const ratio = item.coverWidth && item.coverHeight ? item.coverHeight / item.coverWidth : 0.625;
+    const shortest = heights.indexOf(Math.min(...heights));
+    columns[shortest].push(item);
+    heights[shortest] += ratio;
+  }
+  return columns;
+}
+
+/** Get aspect ratio string for a submission item */
+function getAspectRatio(item: SubmissionItem): string {
+  if (item.coverWidth && item.coverHeight) {
+    return `${item.coverWidth}/${item.coverHeight}`;
+  }
+  return '16/10';
+}
 
 /* ── NotebookLM-style gradient fallbacks ── */
 const FALLBACK_GRADIENTS = [
@@ -90,11 +114,11 @@ function ShowcaseCard({
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick?.(); } }}
     >
-      {/* Card — full-bleed image/gradient, text overlaid at bottom */}
+      {/* Card — full-bleed image/gradient, natural aspect ratio for waterfall */}
       <div
         className="relative w-full overflow-hidden rounded-xl transition-all duration-300 group-hover:shadow-xl group-hover:shadow-black/30 group-hover:scale-[1.02]"
         style={{
-          aspectRatio: '16/10',
+          aspectRatio: getAspectRatio(item),
           background: hasCover ? '#0a0a0f' : getFallbackGradient(item.id),
         }}
       >
@@ -272,11 +296,6 @@ export function ShowcaseGallery() {
     fetchItems(tab, 0, false);
   };
 
-  const handleLoadMore = () => {
-    if (loadingMore) return;
-    fetchItems(activeTab, items.length, true);
-  };
-
   const handleLikeToggle = async (id: string, liked: boolean) => {
     const res = liked ? await likeSubmission(id) : await unlikeSubmission(id);
     if (res.success) {
@@ -321,14 +340,27 @@ export function ShowcaseGallery() {
 
   const hasMore = items.length < total;
 
-  // Grid style — uniform responsive grid (NotebookLM style, NOT masonry)
-  const gridStyle = {
-    display: 'grid' as const,
-    gap: isMobile ? 12 : 16,
-    gridTemplateColumns: isMobile
-      ? 'repeat(auto-fill, minmax(150px, 1fr))'
-      : 'repeat(auto-fill, minmax(240px, 1fr))',
-  };
+  // Waterfall column count
+  const columnCount = isMobile ? 2 : 4;
+  const gap = isMobile ? 12 : 16;
+  const columns = useMemo(() => distributeToColumns(items, columnCount), [items, columnCount]);
+
+  // Infinite scroll: observe a sentinel at the bottom
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && !loading && !loadingMore && items.length < total) {
+          fetchItems(activeTab, items.length, true);
+        }
+      },
+      { rootMargin: '200px' },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [loading, loadingMore, items.length, total, activeTab, fetchItems]);
 
   // 只在初始加载（全部tab）没有数据时隐藏整个区域
   if (!loading && items.length === 0 && initialLoadDone.current && !activeTab) return null;
@@ -371,59 +403,58 @@ export function ShowcaseGallery() {
         </div>
       </div>
 
-      {/* Loading skeleton — uniform grid */}
+      {/* Loading skeleton — waterfall */}
       {loading && (
-        <div style={gridStyle}>
-          {Array.from({ length: 12 }).map((_, i) => (
-            <div
-              key={i}
-              className="animate-pulse rounded-xl"
-              style={{
-                aspectRatio: '16/10',
-                background: 'rgba(255,255,255,0.03)',
-              }}
-            />
+        <div style={{ display: 'flex', gap, alignItems: 'flex-start' }}>
+          {Array.from({ length: columnCount }).map((_, col) => (
+            <div key={col} style={{ flex: 1, display: 'flex', flexDirection: 'column', gap }}>
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="animate-pulse rounded-xl"
+                  style={{
+                    aspectRatio: ['3/4', '16/10', '1/1'][i % 3],
+                    background: 'rgba(255,255,255,0.03)',
+                  }}
+                />
+              ))}
+            </div>
           ))}
         </div>
       )}
 
-      {/* Uniform grid — all cards same height, NotebookLM style */}
+      {/* Waterfall layout — natural aspect ratio cards */}
       {!loading && items.length > 0 && (
         <>
-          <div style={gridStyle}>
-            {items.map((item) => (
-              <ShowcaseCard
-                key={item.id}
-                item={item}
-                onLikeToggle={handleLikeToggle}
-                onClick={() => setSelectedId(item.id)}
-                isAdmin={isAdmin}
-                onAdminWithdraw={handleAdminWithdraw}
-              />
+          <div style={{ display: 'flex', gap, alignItems: 'flex-start' }}>
+            {columns.map((col, colIdx) => (
+              <div key={colIdx} style={{ flex: 1, display: 'flex', flexDirection: 'column', gap }}>
+                {col.map((item) => (
+                  <ShowcaseCard
+                    key={item.id}
+                    item={item}
+                    onLikeToggle={handleLikeToggle}
+                    onClick={() => setSelectedId(item.id)}
+                    isAdmin={isAdmin}
+                    onAdminWithdraw={handleAdminWithdraw}
+                  />
+                ))}
+              </div>
             ))}
           </div>
 
-          {/* Load more */}
-          {hasMore && (
-            <div className="flex justify-center mt-8 mb-4">
-              <button
-                type="button"
-                onClick={handleLoadMore}
-                disabled={loadingMore}
-                className="flex items-center gap-2 px-6 py-2.5 rounded-full text-xs font-medium transition-all duration-200 hover:scale-[1.02]"
-                style={{
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  color: 'var(--text-muted, rgba(255,255,255,0.5))',
-                }}
-              >
-                {loadingMore ? (
-                  <MapSpinner size={14} />
-                ) : (
-                  <ChevronDown size={14} />
-                )}
-                {loadingMore ? '加载中...' : '加载更多'}
-              </button>
+          {/* Infinite scroll sentinel + loading indicator */}
+          <div ref={sentinelRef} className="h-1" />
+          {loadingMore && (
+            <div className="flex justify-center py-6">
+              <MapSpinner size={20} />
+            </div>
+          )}
+          {!hasMore && items.length > 0 && (
+            <div className="flex justify-center py-6">
+              <span className="text-[11px]" style={{ color: 'var(--text-muted, rgba(255,255,255,0.3))' }}>
+                已展示全部作品
+              </span>
             </div>
           )}
         </>
