@@ -822,6 +822,9 @@ public class ImageMasterController : ControllerBase
         // 后端是状态的唯一来源，前端只是观察者
         await TrySyncRunningMarkersAsync(ws, ct);
 
+        // 兜底：旧数据中 markers 存在但 assetIdByMarkerIndex 为空，通过 prompt 文本匹配修复关联
+        await TryBackfillMarkerAssetsAsync(ws, assets, ct);
+
         return Ok(ApiResponse<object>.Ok(new { workspace = ws, messages, assets, canvas, viewport, hasMoreMessages }));
     }
 
@@ -1953,6 +1956,7 @@ public class ImageMasterController : ControllerBase
         var searchPaths = new (string domain, string type)[]
         {
             (AppDomainPaths.DomainVisualAgent, AppDomainPaths.TypeImg),
+            (AppDomainPaths.DomainLiteraryAgent, AppDomainPaths.TypeImg),
             (AppDomainPaths.DomainDefectAgent, AppDomainPaths.TypeLog),
         };
 
@@ -2674,6 +2678,73 @@ public class ImageMasterController : ControllerBase
         {
             // 唤醒逻辑是 best-effort，不应影响主流程
             _logger?.LogWarning(ex, "TrySyncRunningMarkersAsync failed for workspace {WorkspaceId}", ws.Id);
+        }
+    }
+
+    /// <summary>
+    /// 兜底回填：旧数据中 markers 已存在但 assetIdByMarkerIndex 为空时，
+    /// 取最新 N 个 assets（N=marker 数量）按创建时间正序与 markers 按 index 顺序匹配。
+    /// 旧版本生图后 prompt 经 LLM 重写，与 marker text 无直接文本关系，故只能按时间顺序。
+    /// </summary>
+    private async Task TryBackfillMarkerAssetsAsync(ImageMasterWorkspace ws, List<ImageAsset> assets, CancellationToken ct)
+    {
+        try
+        {
+            var wf = ws.ArticleWorkflow;
+            if (wf?.Markers == null || wf.Markers.Count == 0) return;
+            if (ws.ScenarioType != "article-illustration") return;
+
+            var hasMapping = wf.AssetIdByMarkerIndex?.Values.Any(v => !string.IsNullOrWhiteSpace(v)) ?? false;
+            if (hasMapping) return;
+            if (assets.Count == 0) return;
+            if (!wf.Markers.Any(m => string.IsNullOrEmpty(m.Status) || m.Status == "idle")) return;
+
+            var markerCount = wf.Markers.Count;
+            var candidateAssets = assets
+                .OrderByDescending(a => a.CreatedAt)
+                .Take(markerCount)
+                .OrderBy(a => a.CreatedAt)
+                .ToList();
+
+            if (candidateAssets.Count == 0) return;
+
+            wf.AssetIdByMarkerIndex ??= new Dictionary<string, string>(StringComparer.Ordinal);
+            var needUpdate = false;
+
+            for (var i = 0; i < Math.Min(wf.Markers.Count, candidateAssets.Count); i++)
+            {
+                var marker = wf.Markers[i];
+                var asset = candidateAssets[i];
+
+                wf.AssetIdByMarkerIndex[marker.Index.ToString()] = asset.Id;
+                marker.Status = "done";
+                marker.AssetId = asset.Id;
+                marker.Url = asset.Url;
+                marker.ErrorMessage = null;
+                marker.UpdatedAt = DateTime.UtcNow;
+                needUpdate = true;
+            }
+
+            if (needUpdate)
+            {
+                wf.DoneImageCount = wf.AssetIdByMarkerIndex.Values
+                    .Where(v => !string.IsNullOrWhiteSpace(v)).Distinct().Count();
+
+                await _db.ImageMasterWorkspaces.UpdateOneAsync(
+                    x => x.Id == ws.Id,
+                    Builders<ImageMasterWorkspace>.Update
+                        .Set(x => x.ArticleWorkflow, wf)
+                        .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                    cancellationToken: ct);
+
+                _logger?.LogInformation(
+                    "Backfilled {Count} marker-asset associations for workspace {WorkspaceId}",
+                    wf.AssetIdByMarkerIndex.Count, ws.Id);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "TryBackfillMarkerAssetsAsync failed for workspace {WorkspaceId}", ws.Id);
         }
     }
 

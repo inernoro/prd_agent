@@ -25,13 +25,15 @@ public class LiteraryAgentWorkspaceController : ControllerBase
 {
     private readonly MongoDbContext _db;
     private readonly IAssetStorage _assetStorage;
+    private readonly ILogger<LiteraryAgentWorkspaceController> _logger;
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
-    public LiteraryAgentWorkspaceController(MongoDbContext db, IAssetStorage assetStorage)
+    public LiteraryAgentWorkspaceController(MongoDbContext db, IAssetStorage assetStorage, ILogger<LiteraryAgentWorkspaceController> logger)
     {
         _db = db;
         _assetStorage = assetStorage;
+        _logger = logger;
     }
 
     private string GetAdminId()
@@ -287,11 +289,29 @@ public class LiteraryAgentWorkspaceController : ControllerBase
             .Limit(msgLimit)
             .ToListAsync(ct);
 
-        var assets = await _db.ImageAssets
-            .Find(x => x.WorkspaceId == ws.Id)
-            .SortByDescending(x => x.CreatedAt)
-            .Limit(astLimit)
-            .ToListAsync(ct);
+        // 文章配图场景：只返回当前版本的图片，隐藏重新生成的旧版本
+        List<ImageAsset> assets;
+        var currentAssetIds = ws.ArticleWorkflow?.AssetIdByMarkerIndex?.Values
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Distinct()
+            .ToHashSet(StringComparer.Ordinal);
+
+        if (ws.ScenarioType == "article-illustration" && currentAssetIds != null && currentAssetIds.Count > 0)
+        {
+            assets = await _db.ImageAssets
+                .Find(x => x.WorkspaceId == ws.Id && currentAssetIds.Contains(x.Id))
+                .SortBy(x => x.ArticleInsertionIndex)
+                .ThenBy(x => x.CreatedAt)
+                .ToListAsync(ct);
+        }
+        else
+        {
+            assets = await _db.ImageAssets
+                .Find(x => x.WorkspaceId == ws.Id)
+                .SortByDescending(x => x.CreatedAt)
+                .Limit(astLimit)
+                .ToListAsync(ct);
+        }
 
         var canvas = await _db.ImageMasterCanvases
             .Find(x => x.WorkspaceId == ws.Id)
@@ -301,6 +321,12 @@ public class LiteraryAgentWorkspaceController : ControllerBase
             ? vp
             : null;
 
+        // 唤醒逻辑：自动修正卡住的 marker 状态（与 ImageMasterController 对齐）
+        await TrySyncRunningMarkersAsync(ws, ct);
+
+        // 兜底：旧数据中 markers 存在但 assetIdByMarkerIndex 为空，通过 prompt 文本匹配修复关联
+        await TryBackfillMarkerAssetsAsync(ws, assets, ct);
+
         return Ok(ApiResponse<object>.Ok(new
         {
             workspace = ws,
@@ -309,6 +335,186 @@ public class LiteraryAgentWorkspaceController : ControllerBase
             canvas,
             viewport
         }));
+    }
+
+    /// <summary>
+    /// 唤醒逻辑：检测卡住的 marker 状态，自动修正。
+    /// 后端是状态的唯一来源，当检测到不一致时自动修正。
+    /// 场景：前端刷新时丢失 SSE 事件，或后端重启导致状态未同步。
+    /// </summary>
+    private async Task TrySyncRunningMarkersAsync(ImageMasterWorkspace ws, CancellationToken ct)
+    {
+        try
+        {
+            var wf = ws.ArticleWorkflow;
+            if (wf?.Markers == null || wf.Markers.Count == 0) return;
+
+            var now = DateTime.UtcNow;
+            var needUpdate = false;
+
+            // 1. 检测 parsing 状态超时（超过 5 分钟认为卡住）
+            foreach (var marker in wf.Markers.Where(m => m.Status == "parsing"))
+            {
+                var markerTime = marker.UpdatedAt ?? wf.UpdatedAt;
+                if (now - markerTime > TimeSpan.FromMinutes(5))
+                {
+                    marker.Status = "error";
+                    marker.ErrorMessage = "意图解析超时，请重试";
+                    marker.UpdatedAt = now;
+                    needUpdate = true;
+                    _logger.LogInformation(
+                        "Auto-corrected stuck parsing marker: workspace={WorkspaceId}, index={Index}",
+                        ws.Id, marker.Index);
+                }
+            }
+
+            // 2. 检测 running 状态的 marker，同步 run 的真实状态
+            var runningMarkers = wf.Markers
+                .Where(m => m.Status == "running" && !string.IsNullOrEmpty(m.RunId))
+                .ToList();
+
+            if (runningMarkers.Count == 0 && !needUpdate) return;
+
+            if (runningMarkers.Count == 0)
+            {
+                await _db.ImageMasterWorkspaces.UpdateOneAsync(
+                    x => x.Id == ws.Id,
+                    Builders<ImageMasterWorkspace>.Update
+                        .Set(x => x.ArticleWorkflow, wf)
+                        .Set(x => x.UpdatedAt, now),
+                    cancellationToken: ct);
+                return;
+            }
+
+            // 批量查询这些 run 的状态
+            var runIds = runningMarkers.Select(m => m.RunId!).Distinct().ToList();
+            var runs = await _db.ImageGenRuns
+                .Find(r => runIds.Contains(r.Id))
+                .ToListAsync(ct);
+            var runById = runs.ToDictionary(r => r.Id);
+
+            foreach (var marker in runningMarkers)
+            {
+                if (!runById.TryGetValue(marker.RunId!, out var run)) continue;
+
+                if (run.Status == ImageGenRunStatus.Completed)
+                {
+                    var item = await _db.ImageGenRunItems
+                        .Find(i => i.RunId == run.Id && i.Status == ImageGenRunItemStatus.Done)
+                        .FirstOrDefaultAsync(ct);
+
+                    marker.Status = "done";
+                    marker.Url = item?.Url ?? marker.Url;
+                    marker.ErrorMessage = null;
+                    marker.UpdatedAt = now;
+                    needUpdate = true;
+                }
+                else if (run.Status == ImageGenRunStatus.Failed || run.Status == ImageGenRunStatus.Cancelled)
+                {
+                    var item = await _db.ImageGenRunItems
+                        .Find(i => i.RunId == run.Id)
+                        .FirstOrDefaultAsync(ct);
+
+                    marker.Status = "error";
+                    marker.ErrorMessage = item?.ErrorMessage ?? (run.Status == ImageGenRunStatus.Cancelled ? "任务已取消" : "生图失败");
+                    marker.UpdatedAt = now;
+                    needUpdate = true;
+                }
+                else if (run.Status == ImageGenRunStatus.Running || run.Status == ImageGenRunStatus.Queued)
+                {
+                    if (now - run.CreatedAt > TimeSpan.FromMinutes(10))
+                    {
+                        marker.Status = "error";
+                        marker.ErrorMessage = "生图任务超时，请重试";
+                        marker.UpdatedAt = now;
+                        needUpdate = true;
+                    }
+                }
+            }
+
+            if (needUpdate)
+            {
+                await _db.ImageMasterWorkspaces.UpdateOneAsync(
+                    x => x.Id == ws.Id,
+                    Builders<ImageMasterWorkspace>.Update
+                        .Set(x => x.ArticleWorkflow, wf)
+                        .Set(x => x.UpdatedAt, now),
+                    cancellationToken: ct);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "TrySyncRunningMarkersAsync failed for workspace {WorkspaceId}", ws.Id);
+        }
+    }
+
+    /// <summary>
+    /// 兜底回填：旧数据中 markers 已存在但 assetIdByMarkerIndex 为空时，
+    /// 取最新 N 个 assets（N=marker 数量）按创建时间正序与 markers 按 index 顺序匹配。
+    /// 旧版本生图后 prompt 经 LLM 重写，与 marker text 无直接文本关系，故只能按时间顺序。
+    /// 仅 article-illustration 场景 + assetIdByMarkerIndex 完全为空时触发（一次性回填）。
+    /// </summary>
+    private async Task TryBackfillMarkerAssetsAsync(ImageMasterWorkspace ws, List<ImageAsset> assets, CancellationToken ct)
+    {
+        try
+        {
+            var wf = ws.ArticleWorkflow;
+            if (wf?.Markers == null || wf.Markers.Count == 0) return;
+            if (ws.ScenarioType != "article-illustration") return;
+
+            var hasMapping = wf.AssetIdByMarkerIndex?.Values.Any(v => !string.IsNullOrWhiteSpace(v)) ?? false;
+            if (hasMapping) return;
+            if (assets.Count == 0) return;
+            if (!wf.Markers.Any(m => string.IsNullOrEmpty(m.Status) || m.Status == "idle")) return;
+
+            // 取最新 N 个 assets（按创建时间倒序已在查询中完成），然后反转为正序
+            var markerCount = wf.Markers.Count;
+            var candidateAssets = assets
+                .OrderByDescending(a => a.CreatedAt)
+                .Take(markerCount)
+                .OrderBy(a => a.CreatedAt)
+                .ToList();
+
+            if (candidateAssets.Count == 0) return;
+
+            wf.AssetIdByMarkerIndex ??= new Dictionary<string, string>(StringComparer.Ordinal);
+            var needUpdate = false;
+
+            for (var i = 0; i < Math.Min(wf.Markers.Count, candidateAssets.Count); i++)
+            {
+                var marker = wf.Markers[i];
+                var asset = candidateAssets[i];
+
+                wf.AssetIdByMarkerIndex[marker.Index.ToString()] = asset.Id;
+                marker.Status = "done";
+                marker.AssetId = asset.Id;
+                marker.Url = asset.Url;
+                marker.ErrorMessage = null;
+                marker.UpdatedAt = DateTime.UtcNow;
+                needUpdate = true;
+            }
+
+            if (needUpdate)
+            {
+                wf.DoneImageCount = wf.AssetIdByMarkerIndex.Values
+                    .Where(v => !string.IsNullOrWhiteSpace(v)).Distinct().Count();
+
+                await _db.ImageMasterWorkspaces.UpdateOneAsync(
+                    x => x.Id == ws.Id,
+                    Builders<ImageMasterWorkspace>.Update
+                        .Set(x => x.ArticleWorkflow, wf)
+                        .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                    cancellationToken: ct);
+
+                _logger.LogInformation(
+                    "Backfilled {Count} marker-asset associations for workspace {WorkspaceId}",
+                    wf.AssetIdByMarkerIndex.Count, ws.Id);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "TryBackfillMarkerAssetsAsync failed for workspace {WorkspaceId}", ws.Id);
+        }
     }
 
     /// <summary>
