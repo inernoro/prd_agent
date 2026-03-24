@@ -3801,10 +3801,14 @@ function toUTC8Time(isoStr) {
   return full;
 }
 
-// Get display label for branch: prefer tags, fallback to last segment of ID
-function getBranchDisplayLabel(branchId) {
+// Get display label for branch: prefer tags from event, then branches array, fallback to last segment of ID
+function getBranchDisplayLabel(branchId, eventTags) {
+  // 1. Server-side resolved tags (reliable, no timing issues)
+  if (eventTags?.length) return eventTags.join(' · ');
+  // 2. Fallback: lookup from branches array (may be empty on early events)
   const branch = branches.find(b => b.id === branchId);
   if (branch?.tags?.length) return branch.tags.join(' · ');
+  // 3. Last resort: tail of branch ID
   const lastDash = branchId.lastIndexOf('-');
   const tail = lastDash >= 0 ? branchId.slice(lastDash + 1) : branchId;
   return tail.length > 16 ? tail.slice(0, 13) + '…' : tail;
@@ -3833,7 +3837,7 @@ function renderActivityItem(event) {
   let html = '';
   // Branch label: prefer tags, fallback to last ID segment
   if (event.branchId) {
-    const branchLabel = getBranchDisplayLabel(event.branchId);
+    const branchLabel = getBranchDisplayLabel(event.branchId, event.branchTags);
     html += `<span class="activity-source" style="background:var(--accent-bg);color:var(--accent);font-size:9px;font-weight:600;padding:1px 4px;border-radius:3px" title="${escapeHtml(event.branchId)}">${escapeHtml(branchLabel)}</span>`;
   }
   // AI badge if applicable
@@ -3888,7 +3892,7 @@ function renderWebActivityItem(event) {
   let html = '';
   // Branch label: prefer tags, fallback to last ID segment
   if (event.branchId) {
-    const branchLabel = getBranchDisplayLabel(event.branchId);
+    const branchLabel = getBranchDisplayLabel(event.branchId, event.branchTags);
     html += `<span class="activity-source" style="background:var(--accent-bg);color:var(--accent);font-size:9px;font-weight:600;padding:1px 4px;border-radius:3px" title="${escapeHtml(event.branchId)}">${escapeHtml(branchLabel)}</span>`;
   }
   html += `<span class="web-container-badge" style="background:${containerBg};color:${containerColor}">${containerLabel}</span>`;

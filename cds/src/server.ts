@@ -45,6 +45,8 @@ export interface ActivityEvent {
   query?: string;
   /** Branch ID extracted from path (for AI occupation tracking) */
   branchId?: string;
+  /** Branch tags for activity display (resolved server-side to avoid timing issues) */
+  branchTags?: string[];
   /** Build profile ID that handled the request (e.g. 'api', 'admin') */
   profileId?: string;
   /** Remote address of the client */
@@ -469,6 +471,8 @@ export function createServer(deps: ServerDeps): express.Express {
     // Extract branch ID from path for AI occupation tracking
     const branchMatch = req.path.match(/^\/branches\/([^/]+)/);
     const branchId = branchMatch ? branchMatch[1] : undefined;
+    // Resolve branch tags for activity display (avoids frontend timing issues)
+    const branchTags = branchId ? (stateService.getBranch(branchId)?.tags ?? []) : [];
 
     (res as any).end = function (...args: any[]) {
       const duration = Date.now() - start;
@@ -487,6 +491,7 @@ export function createServer(deps: ServerDeps): express.Express {
         body: reqBody,
         query: reqQuery,
         branchId,
+        branchTags: branchTags.length ? branchTags : undefined,
         remoteAddr: (req.headers['cf-connecting-ip'] as string) || (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || req.socket?.remoteAddress,
         userAgent: req.headers['user-agent'],
         referer: req.headers['referer'] || req.headers['origin'],
