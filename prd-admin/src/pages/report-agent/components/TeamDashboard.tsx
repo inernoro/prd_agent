@@ -23,6 +23,7 @@ import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
 import { useReportAgentStore } from '@/stores/reportAgentStore';
 import { useAuthStore } from '@/stores/authStore';
+import { buildKeywordSnippet, containsKeyword, renderHighlightedText } from './reportSearchHighlight';
 import {
   addReportTeamMember,
   generateTeamSummary,
@@ -702,7 +703,7 @@ export function TeamDashboard() {
                   className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg"
                   style={{
                     background: 'var(--bg-secondary)',
-                    boxShadow: 'inset 0 0 0 1px rgba(59, 130, 246, 0.16)',
+                    boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.03)',
                   }}
                 >
                   <Search size={13} style={{ color: 'var(--text-muted)' }} />
@@ -789,6 +790,17 @@ export function TeamDashboard() {
                     {reportsView?.items.map((item) => {
                       const cfg = statusConfig[item.status] || statusConfig[WeeklyReportStatus.Submitted];
                       const StatusIcon = cfg.icon;
+                      const userNameNode = activeKeyword
+                        ? renderHighlightedText(item.userName || item.userId, activeKeyword)
+                        : (item.userName || item.userId);
+                      const matchedFields: string[] = [];
+                      if (activeKeyword) {
+                        if (containsKeyword(item.userName, activeKeyword)) matchedFields.push('成员');
+                        if (containsKeyword(item.teamName, activeKeyword)) matchedFields.push('团队');
+                      }
+                      const snippet = item.matchedSnippet
+                        ? buildKeywordSnippet(item.matchedSnippet, activeKeyword)
+                        : null;
                       return (
                         <button
                           key={item.reportId}
@@ -796,16 +808,26 @@ export function TeamDashboard() {
                           onClick={() => openReportDetail(item.reportId)}
                         >
                           <div className="min-w-0">
-                            <div className="text-[13px] font-medium truncate">{item.userName || item.userId}</div>
+                            <div className="text-[13px] font-medium truncate">{userNameNode}</div>
                             <div className="mt-1 flex items-center flex-wrap gap-2 text-[11px]">
                               <span className="flex items-center gap-1 px-2 py-0.5 rounded-full font-medium" style={{ color: cfg.color, background: cfg.bg }}>
                                 <StatusIcon size={10} />
                                 {cfg.label}
                               </span>
+                              {!!matchedFields.length && (
+                                <span style={{ color: 'var(--text-secondary)' }}>
+                                  命中：{matchedFields.join(' / ')}
+                                </span>
+                              )}
                               <span style={{ color: 'var(--text-muted)' }}>
                                 提交于 {item.submittedAt ? new Date(item.submittedAt).toLocaleString() : '-'}
                               </span>
                             </div>
+                            {snippet && (
+                              <div className="mt-2 text-[11px] leading-5" style={{ color: 'var(--text-secondary)' }}>
+                                命中摘要：{renderHighlightedText(snippet, activeKeyword)}
+                              </div>
+                            )}
                           </div>
                           <Button variant="secondary" size="sm" onClick={(e) => { e.stopPropagation(); openReportDetail(item.reportId); }}>
                             <ExternalLink size={13} />

@@ -11,6 +11,7 @@ import type { WeeklyReport } from '@/services/contracts/reportAgent';
 import { WeeklyReportStatus } from '@/services/contracts/reportAgent';
 import { ReportEditor } from './ReportEditor';
 import { DailyLogInline } from './DailyLogInline';
+import { buildKeywordSnippet, containsKeyword, renderHighlightedText } from './reportSearchHighlight';
 
 // ────── helpers ──────
 
@@ -386,7 +387,7 @@ export function ReportMainView() {
                   className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg"
                   style={{
                     background: 'var(--bg-secondary)',
-                    boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.04), 0 0 0 1px rgba(59, 130, 246, 0.12)',
+                    boxShadow: '0 1px 2px rgba(0, 0, 0, 0.08)',
                   }}
                 >
                   <Search size={13} style={{ color: 'var(--text-muted)' }} />
@@ -483,6 +484,7 @@ export function ReportMainView() {
                   <ReportCard
                     key={report.id}
                     report={report}
+                    keyword={activeKeyword}
                     onClick={() => handleEditReport(report.id)}
                   />
                 ))}
@@ -538,9 +540,10 @@ export function ReportMainView() {
 
 // ────── Report Card ──────
 
-function ReportCard({ report, onClick }: {
+function ReportCard({ report, keyword = '', onClick }: {
   report: {
     id: string;
+    userName?: string;
     teamName?: string;
     status: string;
     sections: { templateSection?: { title?: string }; items: { content: string }[] }[];
@@ -549,6 +552,7 @@ function ReportCard({ report, onClick }: {
     reviewedAt?: string;
     updatedAt: string;
   };
+  keyword?: string;
   onClick: () => void;
 }) {
   const cfg = statusConfig[report.status] || statusConfig[WeeklyReportStatus.Draft];
@@ -558,6 +562,18 @@ function ReportCard({ report, onClick }: {
     (sum, s) => sum + s.items.filter((i) => i.content.trim()).length, 0
   );
   const progress = totalItems > 0 ? Math.round((filledItems / totalItems) * 100) : 0;
+  const matchedSnippet = useMemo(() => {
+    if (!keyword) return null;
+    for (const section of report.sections) {
+      const title = section.templateSection?.title;
+      if (containsKeyword(title, keyword)) return title ?? null;
+      for (const item of section.items) {
+        const snippet = buildKeywordSnippet(item.content, keyword);
+        if (snippet) return snippet;
+      }
+    }
+    return buildKeywordSnippet(report.returnReason, keyword);
+  }, [keyword, report.returnReason, report.sections]);
 
   return (
     <div
@@ -577,7 +593,7 @@ function ReportCard({ report, onClick }: {
         <div className="flex items-start justify-between mb-3">
           <div className="flex-1 min-w-0">
             <div className="text-[15px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-              {report.teamName || '未知团队'}
+              {renderHighlightedText(report.teamName || '未知团队', keyword)}
             </div>
           </div>
           <div className="flex items-center gap-2 ml-2">
@@ -596,6 +612,7 @@ function ReportCard({ report, onClick }: {
           {report.sections.map((s, i) => {
             const filled = s.items.filter(it => it.content.trim()).length;
             const total = s.items.length;
+            const title = s.templateSection?.title || `章节 ${i + 1}`;
             return (
               <div
                 key={i}
@@ -609,12 +626,25 @@ function ReportCard({ report, onClick }: {
                   className="w-1.5 h-1.5 rounded-full"
                   style={{ background: filled > 0 ? 'rgba(34, 197, 94, 0.6)' : 'rgba(156, 163, 175, 0.3)' }}
                 />
-                {s.templateSection?.title || `章节 ${i + 1}`}
+                {renderHighlightedText(title, keyword)}
                 <span style={{ opacity: 0.6 }}>{filled}/{total}</span>
               </div>
             );
           })}
         </div>
+
+        {keyword && matchedSnippet && (
+          <div
+            className="text-[11px] px-3 py-2 rounded-lg leading-relaxed mb-3"
+            style={{
+              color: 'var(--text-secondary)',
+              backgroundColor: 'rgba(99, 102, 241, 0.06)',
+              border: '1px solid rgba(99, 102, 241, 0.12)',
+            }}
+          >
+            命中：{renderHighlightedText(matchedSnippet, keyword)}
+          </div>
+        )}
 
         {/* Progress bar */}
         {totalItems > 0 && (
@@ -642,7 +672,7 @@ function ReportCard({ report, onClick }: {
             className="text-[11px] px-3 py-2 rounded-lg leading-relaxed mt-3"
             style={{ color: 'rgba(239, 68, 68, 0.85)', backgroundColor: 'rgba(239, 68, 68, 0.06)', border: '1px solid rgba(239, 68, 68, 0.1)' }}
           >
-            {report.returnReason}
+            {renderHighlightedText(report.returnReason, keyword)}
           </div>
         )}
         <div className="text-[10px] mt-3" style={{ color: 'var(--text-muted)' }}>

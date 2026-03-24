@@ -713,6 +713,7 @@ export interface TeamReportListItem {
   teamName?: string;
   weekYear: number;
   weekNumber: number;
+  matchedSnippet?: string;
 }
 
 export interface TeamReportsViewData {

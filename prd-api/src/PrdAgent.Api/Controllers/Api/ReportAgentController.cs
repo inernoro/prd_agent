@@ -3264,20 +3264,55 @@ public class ReportAgentController : ControllerBase
             };
         }
 
+        Dictionary<string, string?> matchedSnippetByReportId = new(StringComparer.Ordinal);
         if (normalizedKeyword != null)
         {
             var escapedKeyword = Regex.Escape(normalizedKeyword);
             var regex = new Regex(escapedKeyword, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-            visibleReports = visibleReports
-                .Where(report =>
-                    (!string.IsNullOrWhiteSpace(report.UserName) && regex.IsMatch(report.UserName)) ||
-                    (!string.IsNullOrWhiteSpace(report.TeamName) && regex.IsMatch(report.TeamName)) ||
-                    (!string.IsNullOrWhiteSpace(report.ReturnReason) && regex.IsMatch(report.ReturnReason)) ||
-                    report.Sections.Any(section =>
-                        (!string.IsNullOrWhiteSpace(section.TemplateSection?.Title) && regex.IsMatch(section.TemplateSection.Title)) ||
-                        section.Items.Any(item => !string.IsNullOrWhiteSpace(item.Content) && regex.IsMatch(item.Content))
-                    ))
-                .ToList();
+            var filteredReports = new List<WeeklyReport>();
+            foreach (var report in visibleReports)
+            {
+                string? matchedSnippet = null;
+                if (!string.IsNullOrWhiteSpace(report.UserName) && regex.IsMatch(report.UserName))
+                {
+                    matchedSnippet = report.UserName;
+                }
+                else if (!string.IsNullOrWhiteSpace(report.TeamName) && regex.IsMatch(report.TeamName))
+                {
+                    matchedSnippet = report.TeamName;
+                }
+                else if (!string.IsNullOrWhiteSpace(report.ReturnReason) && regex.IsMatch(report.ReturnReason))
+                {
+                    matchedSnippet = report.ReturnReason;
+                }
+                else
+                {
+                    foreach (var section in report.Sections)
+                    {
+                        if (!string.IsNullOrWhiteSpace(section.TemplateSection?.Title) && regex.IsMatch(section.TemplateSection.Title))
+                        {
+                            matchedSnippet = section.TemplateSection.Title;
+                            break;
+                        }
+                        foreach (var item in section.Items)
+                        {
+                            if (!string.IsNullOrWhiteSpace(item.Content) && regex.IsMatch(item.Content))
+                            {
+                                matchedSnippet = item.Content;
+                                break;
+                            }
+                        }
+                        if (matchedSnippet != null) break;
+                    }
+                }
+
+                if (matchedSnippet != null)
+                {
+                    filteredReports.Add(report);
+                    matchedSnippetByReportId[report.Id] = matchedSnippet;
+                }
+            }
+            visibleReports = filteredReports;
         }
 
         var total = visibleReports.Count;
@@ -3296,7 +3331,8 @@ public class ReportAgentController : ControllerBase
                 teamId = r.TeamId,
                 teamName = r.TeamName,
                 weekYear = r.WeekYear,
-                weekNumber = r.WeekNumber
+                weekNumber = r.WeekNumber,
+                matchedSnippet = matchedSnippetByReportId.TryGetValue(r.Id, out var matchedSnippet) ? matchedSnippet : null
             })
             .Cast<object>()
             .ToList();
