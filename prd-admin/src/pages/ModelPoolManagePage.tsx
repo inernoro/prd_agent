@@ -39,7 +39,7 @@ import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import { getModelTypeDisplayName, getModelTypeIcon, MODEL_TYPE_DEFINITIONS } from '@/lib/appCallerUtils';
-import { ModelTypePicker, ModelTypeFilterBar } from '@/components/model/ModelTypePicker';
+import { ModelTypePicker } from '@/components/model/ModelTypePicker';
 
 /* ── 4 种可预测的调度策略（icon 选择器） ── */
 const STRATEGY_OPTIONS = [
@@ -80,8 +80,6 @@ export function ModelPoolManagePage() {
 
   // 左侧选中的模型池
   const [selectedPoolId, setSelectedPoolId] = useState<string | null>(null);
-  // 模型类型过滤
-  const [modelTypeFilter, setModelTypeFilter] = useState<string>('');
 
   // 弹窗状态
   const [showPoolDialog, setShowPoolDialog] = useState(false);
@@ -311,9 +309,6 @@ export function ModelPoolManagePage() {
 
   const filteredPools = useMemo(() => {
     let result = pools;
-    if (modelTypeFilter) {
-      result = result.filter(p => (p.modelType || 'chat') === modelTypeFilter);
-    }
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
       result = result.filter(
@@ -329,7 +324,7 @@ export function ModelPoolManagePage() {
       if (!a.isDefaultForType && b.isDefaultForType) return 1;
       return a.name.localeCompare(b.name);
     });
-  }, [pools, searchTerm, modelTypeFilter]);
+  }, [pools, searchTerm]);
 
   // 按 modelType 分组（用于左侧列表分组标题）
   const groupedByType = useMemo(() => {
@@ -371,20 +366,20 @@ export function ModelPoolManagePage() {
     <div className="h-full min-h-0 flex flex-col gap-4">
 
       {/* 主体：左侧列表 + 右侧详情 */}
-      <div className="grid gap-4 flex-1 min-h-0 lg:grid-cols-[320px_1fr]">
+      <div className="grid gap-4 flex-1 min-h-0 lg:grid-cols-[280px_1fr]">
 
         {/* ══ 左侧：模型池列表 ══ */}
         <GlassCard animated glow className="flex flex-col min-h-0 p-0 overflow-hidden">
-          <div className="p-3 border-b border-white/10 space-y-2">
+          <div className="p-3 border-b border-white/10">
             <div className="flex items-center gap-2">
               <div className="relative flex-1">
-                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
                 <input
                   type="text"
-                  placeholder="搜索模型池..."
+                  placeholder="搜索..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full h-9 pl-9 pr-3 rounded-[11px] outline-none text-[13px]"
+                  className="w-full h-8 pl-8 pr-3 rounded-lg outline-none text-[12px]"
                   style={{
                     background: 'var(--bg-input)',
                     border: '1px solid var(--border-subtle)',
@@ -396,10 +391,6 @@ export function ModelPoolManagePage() {
                 <Plus size={14} />
               </Button>
             </div>
-            <ModelTypeFilterBar
-              value={modelTypeFilter}
-              onChange={setModelTypeFilter}
-            />
           </div>
 
           <div className="flex-1 overflow-auto">
@@ -412,19 +403,18 @@ export function ModelPoolManagePage() {
               <div className="p-8 text-center" style={{ color: 'var(--text-muted)' }}>
                 <Database size={32} className="mx-auto mb-2 opacity-40" />
                 <div className="text-sm">暂无模型池</div>
-                <div className="mt-2 text-xs">点击 + 创建你的第一个模型池</div>
               </div>
             ) : (
-              <div className="divide-y divide-white/10">
+              <div>
                 {groupedByType.map((group) => {
                   const GroupIcon = group.Icon;
                   return (
                     <div key={group.type}>
                       {/* 类型分组标题 */}
-                      <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider flex items-center gap-1.5" style={{ color: 'var(--text-muted)', background: 'var(--bg-input)' }}>
-                        <GroupIcon size={12} />
+                      <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider flex items-center gap-1.5 sticky top-0 z-[1]" style={{ color: 'var(--text-muted)', background: 'var(--bg-input)' }}>
+                        <GroupIcon size={11} />
                         {group.label}
-                        <span className="opacity-60">({group.pools.length})</span>
+                        <span className="opacity-60">{group.pools.length}</span>
                       </div>
                       {/* 池列表 */}
                       {group.pools.map((pool) => {
@@ -438,52 +428,39 @@ export function ModelPoolManagePage() {
                           <div
                             key={pool.id}
                             onClick={() => setSelectedPoolId(pool.id)}
-                            className="surface-row px-3 py-2.5 cursor-pointer"
+                            className="surface-row px-3 py-2 cursor-pointer"
                             style={isSelected ? { background: 'var(--bg-input-hover)' } : undefined}
                           >
-                            <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-2.5">
                               <div
-                                className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center"
+                                className="shrink-0 w-7 h-7 rounded-md flex items-center justify-center"
                                 style={{
-                                  background: isSelected ? `${strategyOpt.color}15` : 'var(--bg-input-hover)',
+                                  background: isSelected ? `${strategyOpt.color}15` : 'transparent',
                                   border: isSelected ? `1px solid ${strategyOpt.color}30` : '1px solid var(--border-subtle)',
                                 }}
                               >
-                                <StrategyIcon size={15} style={{ color: isSelected ? strategyOpt.color : 'var(--text-muted)' }} />
+                                <StrategyIcon size={13} style={{ color: isSelected ? strategyOpt.color : 'var(--text-muted)' }} />
                               </div>
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-1.5">
-                                  <span className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                                  <span className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
                                     {pool.name}
                                   </span>
                                   {pool.isDefaultForType && (
-                                    <span
-                                      className="shrink-0 px-1 py-px rounded text-[9px] font-medium"
-                                      style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.95)' }}
-                                    >
+                                    <span className="shrink-0 px-1 py-px rounded text-[9px]" style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.95)' }}>
                                       备用
                                     </span>
                                   )}
                                 </div>
-                                <div className="flex items-center gap-2 mt-0.5">
-                                  <span className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
-                                    {modelCount > 0 ? (
-                                      healthyCnt === modelCount ? (
-                                        <span className="flex items-center gap-1">
-                                          <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ background: 'rgba(34,197,94,0.95)' }} />
-                                          {modelCount} 个模型
-                                        </span>
-                                      ) : (
-                                        <span className="flex items-center gap-1">
-                                          <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ background: 'rgba(251,191,36,0.95)' }} />
-                                          {modelCount} 个模型
-                                        </span>
-                                      )
-                                    ) : '无模型'}
-                                  </span>
+                                <div className="text-[10px] mt-px flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
+                                  {modelCount > 0 ? (
+                                    <>
+                                      <span className="w-1 h-1 rounded-full inline-block" style={{ background: healthyCnt === modelCount ? 'rgba(34,197,94,0.95)' : 'rgba(251,191,36,0.95)' }} />
+                                      {modelCount} 模型
+                                    </>
+                                  ) : '空'}
                                 </div>
                               </div>
-                              {isSelected && <ChevronRight size={14} style={{ color: 'var(--text-muted)' }} />}
                             </div>
                           </div>
                         );
@@ -496,142 +473,121 @@ export function ModelPoolManagePage() {
           </div>
         </GlassCard>
 
-        {/* ══ 右侧：模型池详情 ══ */}
-        <div className="grid grid-rows-[auto_1fr] gap-4 min-h-0">
-
-          {/* 上栏：池信息 + 操作 */}
-          <GlassCard animated glow className="p-4 overflow-hidden">
-            {!selectedPool ? (
-              <div className="h-full flex items-center justify-center py-2 text-sm" style={{ color: 'var(--text-muted)' }}>
-                请选择一个模型池
-              </div>
-            ) : (() => {
-              const modelCount = selectedPool.models?.length || 0;
-              const healthyCnt = selectedPool.models?.filter(m => m.healthStatus === 'Healthy').length ?? 0;
-              const degradedCnt = selectedPool.models?.filter(m => m.healthStatus === 'Degraded').length ?? 0;
-              const unavailableCnt = selectedPool.models?.filter(m => m.healthStatus === 'Unavailable').length ?? 0;
-              const strategyOpt = STRATEGY_OPTIONS.find(s => s.value === selectedPool.strategyType) || STRATEGY_OPTIONS[0];
-              const StrategyIcon = strategyOpt.icon;
-              const TypeIcon = getModelTypeIcon(selectedPool.modelType || 'chat');
-
-              return (
-                <div className="flex items-center justify-between gap-4 flex-wrap">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <h3 className="text-base font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                      {selectedPool.name}
-                    </h3>
-                    {selectedPool.isDefaultForType && (
-                      <span
-                        className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium"
-                        style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.95)' }}
-                      >
-                        备用
-                      </span>
-                    )}
-                    <span className="inline-flex items-center gap-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                      <TypeIcon size={12} />
-                      {getModelTypeDisplayName(selectedPool.modelType || 'chat')}
-                    </span>
-                    <span
-                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"
-                      style={{ background: `${strategyOpt.color}12`, color: strategyOpt.color }}
-                    >
-                      <StrategyIcon size={10} />
-                      {STRATEGY_LABEL_MAP[selectedPool.strategyType ?? 0] || '快速'}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-3 shrink-0">
-                    {/* 健康摘要 */}
-                    {modelCount > 0 && (
-                      <div className="flex items-center gap-2 text-[11px]">
-                        {healthyCnt > 0 && (
-                          <span className="flex items-center gap-1" style={{ color: 'rgba(34,197,94,0.95)' }}>
-                            <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'rgba(34,197,94,0.95)' }} />
-                            {healthyCnt}
-                          </span>
-                        )}
-                        {degradedCnt > 0 && (
-                          <span className="flex items-center gap-1" style={{ color: 'rgba(251,191,36,0.95)' }}>
-                            <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'rgba(251,191,36,0.95)' }} />
-                            {degradedCnt}
-                          </span>
-                        )}
-                        {unavailableCnt > 0 && (
-                          <span className="flex items-center gap-1" style={{ color: 'rgba(239,68,68,0.95)' }}>
-                            <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'rgba(239,68,68,0.95)' }} />
-                            {unavailableCnt}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                    {/* 操作按钮 */}
-                    <div className="flex items-center gap-1">
-                      <Tooltip content="预测下次调度路径">
-                        <button className="p-1.5 rounded-lg hover:bg-white/10 transition-colors" onClick={() => handlePredict(selectedPool)}>
-                          <Radar size={15} style={{ color: 'rgba(56,189,248,0.85)' }} />
-                        </button>
-                      </Tooltip>
-                      <Tooltip content="复制为新模型池">
-                        <button className="p-1.5 rounded-lg hover:bg-white/10 transition-colors" onClick={() => handleCopyPool(selectedPool)}>
-                          <Copy size={15} style={{ color: 'var(--text-muted)' }} />
-                        </button>
-                      </Tooltip>
-                      <Tooltip content="编辑模型池">
-                        <button className="p-1.5 rounded-lg hover:bg-white/10 transition-colors" onClick={() => handleEditPool(selectedPool)}>
-                          <Edit size={15} style={{ color: 'var(--text-muted)' }} />
-                        </button>
-                      </Tooltip>
-                      <Tooltip content="删除模型池">
-                        <button className="p-1.5 rounded-lg hover:bg-white/10 transition-colors" onClick={() => handleDeletePool(selectedPool)}>
-                          <Trash2 size={15} style={{ color: 'var(--text-muted)' }} />
-                        </button>
-                      </Tooltip>
-                    </div>
-                  </div>
-                </div>
-              );
-            })()}
+        {/* ══ 右侧：单面板详情 ══ */}
+        {!selectedPool ? (
+          <GlassCard animated glow className="flex items-center justify-center overflow-hidden">
+            <div className="text-center" style={{ color: 'var(--text-muted)' }}>
+              <Database size={40} className="mx-auto mb-3 opacity-30" />
+              <div className="text-[13px]">选择一个模型池</div>
+            </div>
           </GlassCard>
+        ) : (() => {
+          const modelCount = selectedPool.models?.length || 0;
+          const healthyCnt = selectedPool.models?.filter(m => m.healthStatus === 'Healthy').length ?? 0;
+          const degradedCnt = selectedPool.models?.filter(m => m.healthStatus === 'Degraded').length ?? 0;
+          const unavailableCnt = selectedPool.models?.filter(m => m.healthStatus === 'Unavailable').length ?? 0;
+          const strategyOpt = STRATEGY_OPTIONS.find(s => s.value === selectedPool.strategyType) || STRATEGY_OPTIONS[0];
+          const StrategyIcon = strategyOpt.icon;
+          const TypeIcon = getModelTypeIcon(selectedPool.modelType || 'chat');
 
-          {/* 下栏：调度预览 + 模型列表 */}
-          {!selectedPool ? (
-            <GlassCard animated glow className="flex items-center justify-center overflow-hidden">
-              <div className="text-center" style={{ color: 'var(--text-muted)' }}>
-                <Database size={48} className="mx-auto mb-4 opacity-40" />
-                <div className="text-sm">选择一个模型池查看详情</div>
-                <div className="mt-2 text-xs">或点击 + 创建新的模型池</div>
-              </div>
-            </GlassCard>
-          ) : (
+          return (
             <GlassCard animated glow className="min-h-0 overflow-auto p-0">
+              {/* ── 头部：名称 + 操作 ── */}
+              <div className="sticky top-0 z-[1] px-5 py-3 flex items-center justify-between gap-3 border-b" style={{ borderColor: 'var(--nested-block-border)', background: 'var(--bg-card)' }}>
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <h3 className="text-[15px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                    {selectedPool.name}
+                  </h3>
+                  {selectedPool.isDefaultForType && (
+                    <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium" style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.95)' }}>
+                      备用
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <Tooltip content="预测调度">
+                    <button className="p-1.5 rounded-lg hover:bg-white/10 transition-colors" onClick={() => handlePredict(selectedPool)}>
+                      <Radar size={15} style={{ color: 'rgba(56,189,248,0.85)' }} />
+                    </button>
+                  </Tooltip>
+                  <Tooltip content="复制">
+                    <button className="p-1.5 rounded-lg hover:bg-white/10 transition-colors" onClick={() => handleCopyPool(selectedPool)}>
+                      <Copy size={15} style={{ color: 'var(--text-muted)' }} />
+                    </button>
+                  </Tooltip>
+                  <Tooltip content="编辑">
+                    <button className="p-1.5 rounded-lg hover:bg-white/10 transition-colors" onClick={() => handleEditPool(selectedPool)}>
+                      <Edit size={15} style={{ color: 'var(--text-muted)' }} />
+                    </button>
+                  </Tooltip>
+                  <Tooltip content="删除">
+                    <button className="p-1.5 rounded-lg hover:bg-white/10 transition-colors" onClick={() => handleDeletePool(selectedPool)}>
+                      <Trash2 size={15} style={{ color: 'var(--text-muted)' }} />
+                    </button>
+                  </Tooltip>
+                </div>
+              </div>
+
+              {/* ── 属性标签行 ── */}
+              <div className="px-5 py-2.5 flex items-center gap-3 flex-wrap text-[11px] border-b" style={{ borderColor: 'var(--nested-block-border)' }}>
+                <span className="inline-flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
+                  <TypeIcon size={12} />
+                  {getModelTypeDisplayName(selectedPool.modelType || 'chat')}
+                </span>
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded" style={{ background: `${strategyOpt.color}12`, color: strategyOpt.color }}>
+                  <StrategyIcon size={10} />
+                  {STRATEGY_LABEL_MAP[selectedPool.strategyType ?? 0] || '快速'}
+                </span>
+                {selectedPool.code && (
+                  <span className="font-mono" style={{ color: 'var(--text-muted)' }}>{selectedPool.code}</span>
+                )}
+                <span style={{ color: 'var(--text-muted)' }}>优先级 {selectedPool.priority ?? 50}</span>
+                {selectedPool.description && (
+                  <>
+                    <span style={{ color: 'var(--border-default)' }}>|</span>
+                    <span style={{ color: 'var(--text-muted)' }}>{selectedPool.description}</span>
+                  </>
+                )}
+              </div>
+
+              {/* ── 统计瓦片 ── */}
+              <div className="px-5 py-3 grid grid-cols-4 gap-3">
+                <div className="rounded-lg px-3 py-2 text-center" style={{ background: 'var(--bg-input)' }}>
+                  <div className="text-[18px] font-semibold tabular-nums" style={{ color: 'var(--text-primary)' }}>{modelCount}</div>
+                  <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>模型</div>
+                </div>
+                <div className="rounded-lg px-3 py-2 text-center" style={{ background: 'rgba(34,197,94,0.06)' }}>
+                  <div className="text-[18px] font-semibold tabular-nums" style={{ color: 'rgba(34,197,94,0.95)' }}>{healthyCnt}</div>
+                  <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>健康</div>
+                </div>
+                <div className="rounded-lg px-3 py-2 text-center" style={{ background: degradedCnt > 0 ? 'rgba(251,191,36,0.06)' : 'var(--bg-input)' }}>
+                  <div className="text-[18px] font-semibold tabular-nums" style={{ color: degradedCnt > 0 ? 'rgba(251,191,36,0.95)' : 'var(--text-muted)' }}>{degradedCnt}</div>
+                  <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>降权</div>
+                </div>
+                <div className="rounded-lg px-3 py-2 text-center" style={{ background: unavailableCnt > 0 ? 'rgba(239,68,68,0.06)' : 'var(--bg-input)' }}>
+                  <div className="text-[18px] font-semibold tabular-nums" style={{ color: unavailableCnt > 0 ? 'rgba(239,68,68,0.95)' : 'var(--text-muted)' }}>{unavailableCnt}</div>
+                  <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>不可用</div>
+                </div>
+              </div>
+
               {(!selectedPool.models || selectedPool.models.length === 0) ? (
-                <div className="flex items-center justify-center py-16">
+                <div className="flex items-center justify-center py-12">
                   <div className="text-center" style={{ color: 'var(--text-muted)' }}>
-                    <Database size={40} className="mx-auto mb-3 opacity-40" />
-                    <div className="text-sm">此模型池暂无模型</div>
+                    <div className="text-sm">暂无模型</div>
                     <div className="mt-2">
                       <Button variant="secondary" size="sm" onClick={() => handleEditPool(selectedPool)}>
-                        <Edit size={14} />
-                        编辑模型池
+                        <Plus size={14} />
+                        添加模型
                       </Button>
                     </div>
                   </div>
                 </div>
               ) : (
-                <div>
-                  {/* 调度策略预览 */}
-                  <div className="border-b" style={{ borderColor: 'var(--nested-block-border)' }}>
-                    <InlineDispatchPreview
-                      models={selectedPool.models}
-                      strategyType={selectedPool.strategyType ?? PoolStrategyType.FailFast}
-                      platformNameById={platformNameById}
-                    />
-                  </div>
-
-                  {/* 模型列表 */}
-                  <div className="p-3">
-                    <div className="text-[11px] font-semibold mb-2 flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
-                      模型列表 ({selectedPool.models.length})
+                <>
+                  {/* ── 模型列表 ── */}
+                  <div className="px-5 pb-3">
+                    <div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>
+                      模型列表
                     </div>
                     <div className="space-y-1">
                       {selectedPool.models.map((model, idx) => {
@@ -681,34 +637,24 @@ export function ModelPoolManagePage() {
                     </div>
                   </div>
 
-                  {/* 池元信息 */}
-                  {(selectedPool.code || selectedPool.description) && (
-                    <div className="px-3 pb-3">
-                      <div className="rounded-lg p-2.5 space-y-1 text-[11px]" style={{ background: 'var(--bg-input)' }}>
-                        {selectedPool.code && (
-                          <div className="flex items-center gap-2">
-                            <span style={{ color: 'var(--text-muted)' }}>代码</span>
-                            <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>{selectedPool.code}</span>
-                          </div>
-                        )}
-                        {selectedPool.description && (
-                          <div className="flex items-start gap-2">
-                            <span className="shrink-0" style={{ color: 'var(--text-muted)' }}>描述</span>
-                            <span style={{ color: 'var(--text-secondary)' }}>{selectedPool.description}</span>
-                          </div>
-                        )}
-                        <div className="flex items-center gap-2">
-                          <span style={{ color: 'var(--text-muted)' }}>优先级</span>
-                          <span style={{ color: 'var(--text-secondary)' }}>{selectedPool.priority ?? 50}</span>
-                        </div>
-                      </div>
+                  {/* ── 调度策略可视化 ── */}
+                  <div className="px-5 pb-4">
+                    <div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>
+                      调度预览
                     </div>
-                  )}
-                </div>
+                    <div className="rounded-xl surface-inset">
+                      <InlineDispatchPreview
+                        models={selectedPool.models}
+                        strategyType={selectedPool.strategyType ?? PoolStrategyType.FailFast}
+                        platformNameById={platformNameById}
+                      />
+                    </div>
+                  </div>
+                </>
               )}
             </GlassCard>
-          )}
-        </div>
+          );
+        })()}
       </div>
 
       {/* 调度预测弹窗 */}
