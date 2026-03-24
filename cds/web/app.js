@@ -60,6 +60,9 @@ let previewMode = localStorage.getItem('cds_preview_mode') || 'simple';
 // ── Mirror acceleration (npm/docker registry mirrors) ──
 let mirrorEnabled = false;
 
+// ── Tab title override (update browser tab title with tag/branch name) ──
+let tabTitleEnabled = true;
+
 // ── Theme (light/dark) ──
 // Theme is applied in <head> inline script to prevent FOUC (flash of unstyled content).
 let cdsTheme = localStorage.getItem('cds_theme') || 'dark';
@@ -218,7 +221,7 @@ let workerPort = '';
 
 async function init() {
   updateThemeUI();
-  await Promise.all([loadBranches(), loadProfiles(), loadRoutingRules(), loadConfig(), loadEnvVars(), loadInfraServices(), loadMirrorState()]);
+  await Promise.all([loadBranches(), loadProfiles(), loadRoutingRules(), loadConfig(), loadEnvVars(), loadInfraServices(), loadMirrorState(), loadTabTitleState()]);
   refreshRemoteCandidates();
   updatePreviewModeUI();
   initStateStream(); // Server-authority: listen for state changes via SSE (replaces polling)
@@ -460,6 +463,32 @@ async function toggleMirror() {
 function updateMirrorUI() {
   const sw = document.querySelector('.settings-switch-mirror');
   if (sw) sw.classList.toggle('on', mirrorEnabled);
+}
+
+// ── Tab title override ──
+
+async function loadTabTitleState() {
+  try {
+    const data = await api('GET', '/tab-title');
+    tabTitleEnabled = data.enabled;
+  } catch { /* ignore */ }
+}
+
+async function toggleTabTitle() {
+  const newVal = !tabTitleEnabled;
+  try {
+    await api('PUT', '/tab-title', { enabled: newVal });
+    tabTitleEnabled = newVal;
+    updateTabTitleUI();
+    showToast(newVal ? '标签页标题已开启' : '标签页标题已关闭', 'info');
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+function updateTabTitleUI() {
+  const sw = document.querySelector('.settings-switch-tabtitle');
+  if (sw) sw.classList.toggle('on', tabTitleEnabled);
 }
 
 // ── Theme toggle ──
@@ -1798,6 +1827,14 @@ function toggleSettingsMenu(event) {
     <div class="settings-menu-item settings-menu-switch" onclick="toggleTheme(event)">
       <span class="settings-menu-switch-label">白天模式</span>
       <span class="settings-switch settings-switch-theme ${cdsTheme === 'light' ? 'on' : ''}">
+        <span class="settings-switch-track">
+          <span class="settings-switch-thumb"></span>
+        </span>
+      </span>
+    </div>
+    <div class="settings-menu-item settings-menu-switch" onclick="toggleTabTitle()">
+      <span class="settings-menu-switch-label">标签页标题</span>
+      <span class="settings-switch settings-switch-tabtitle ${tabTitleEnabled ? 'on' : ''}">
         <span class="settings-switch-track">
           <span class="settings-switch-thumb"></span>
         </span>

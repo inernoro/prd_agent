@@ -174,6 +174,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       branches: branchesWithSubject,
       defaultBranch: state.defaultBranch,
       capacity: { maxContainers, runningContainers, totalMemGB },
+      tabTitleEnabled: stateService.isTabTitleEnabled(),
     });
   });
 
@@ -1288,6 +1289,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
     stateService.setMirrorEnabled(enabled);
     stateService.save();
     res.json({ message: enabled ? '镜像加速已开启' : '镜像加速已关闭', enabled });
+  });
+
+  // ── Tab title override ──
+
+  router.get('/tab-title', (_req, res) => {
+    res.json({ enabled: stateService.isTabTitleEnabled() });
+  });
+
+  router.put('/tab-title', (req, res) => {
+    const { enabled } = req.body as { enabled?: boolean };
+    if (typeof enabled !== 'boolean') {
+      res.status(400).json({ error: 'enabled 必须是布尔值' });
+      return;
+    }
+    stateService.setTabTitleEnabled(enabled);
+    stateService.save();
+    res.json({ message: enabled ? '标签页标题已开启' : '标签页标题已关闭', enabled });
   });
 
   // ── Config (read-only) ──

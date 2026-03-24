@@ -169,6 +169,8 @@ export interface CdsState {
   infraServices: InfraService[];
   /** Mirror acceleration enabled (npm/docker registry mirrors for faster builds in China) */
   mirrorEnabled?: boolean;
+  /** Tab title override enabled (updates browser tab title with tag or branch short name) */
+  tabTitleEnabled?: boolean;
   /** Registered executor nodes (scheduler mode) */
   executors?: Record<string, ExecutorNode>;
 }
