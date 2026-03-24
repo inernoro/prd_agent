@@ -1426,17 +1426,8 @@ a.branch-name:hover { color: var(--accent); }
   border-color: rgba(224, 180, 58, 0.25);
   position: relative;
 }
-.branch-card.is-busy::after {
-  content: ''; position: absolute; top: 12px; right: 14px;
-  width: 16px; height: 16px;
-  border: 2px solid rgba(224, 180, 58, 0.15);
-  border-top-color: var(--yellow); border-radius: 50%;
-  animation: spin 0.7s linear infinite;
-}
-/* During deploy, hide the busy spinner — hammer blink + progress bar are enough */
-.branch-card.is-deploying.is-busy::after {
-  display: none;
-}
+/* Busy spinner removed — it overlaps toolbar buttons (lightbulb/ai-mark).
+   Busy state is already indicated by the yellow border on .branch-card.is-busy. */
 
 /* ════════════════ Pinned Commit State ════════════════ */
 

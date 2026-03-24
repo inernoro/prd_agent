@@ -3801,6 +3801,15 @@ function toUTC8Time(isoStr) {
   return full;
 }
 
+// Get display label for branch: prefer tags, fallback to last segment of ID
+function getBranchDisplayLabel(branchId) {
+  const branch = branches.find(b => b.id === branchId);
+  if (branch?.tags?.length) return branch.tags.join(' · ');
+  const lastDash = branchId.lastIndexOf('-');
+  const tail = lastDash >= 0 ? branchId.slice(lastDash + 1) : branchId;
+  return tail.length > 16 ? tail.slice(0, 13) + '…' : tail;
+}
+
 function renderActivityItem(event) {
   const body = document.getElementById('activityBody');
   if (!body) return;
@@ -3822,12 +3831,10 @@ function renderActivityItem(event) {
   });
 
   let html = '';
-  // Branch ID first (last segment after '-') to identify which preview is making requests
+  // Branch label: prefer tags, fallback to last ID segment
   if (event.branchId) {
-    const lastDash = event.branchId.lastIndexOf('-');
-    const branchTail = lastDash >= 0 ? event.branchId.slice(lastDash + 1) : event.branchId;
-    const branchShort = branchTail.length > 16 ? branchTail.slice(0, 13) + '…' : branchTail;
-    html += `<span class="activity-source" style="background:var(--accent-bg);color:var(--accent);font-size:9px;font-weight:600;padding:1px 4px;border-radius:3px" title="${escapeHtml(event.branchId)}">${escapeHtml(branchShort)}</span>`;
+    const branchLabel = getBranchDisplayLabel(event.branchId);
+    html += `<span class="activity-source" style="background:var(--accent-bg);color:var(--accent);font-size:9px;font-weight:600;padding:1px 4px;border-radius:3px" title="${escapeHtml(event.branchId)}">${escapeHtml(branchLabel)}</span>`;
   }
   // AI badge if applicable
   if (isAi) {
@@ -3879,12 +3886,10 @@ function renderWebActivityItem(event) {
   const containerBg = isApi ? 'rgba(56,139,253,0.12)' : 'rgba(63,185,80,0.12)';
 
   let html = '';
-  // Branch first, then container badge
+  // Branch label: prefer tags, fallback to last ID segment
   if (event.branchId) {
-    const lastDash = event.branchId.lastIndexOf('-');
-    const branchTail = lastDash >= 0 ? event.branchId.slice(lastDash + 1) : event.branchId;
-    const branchShort = branchTail.length > 16 ? branchTail.slice(0, 13) + '…' : branchTail;
-    html += `<span class="activity-source" style="background:var(--accent-bg);color:var(--accent);font-size:9px;font-weight:600;padding:1px 4px;border-radius:3px" title="${escapeHtml(event.branchId)}">${escapeHtml(branchShort)}</span>`;
+    const branchLabel = getBranchDisplayLabel(event.branchId);
+    html += `<span class="activity-source" style="background:var(--accent-bg);color:var(--accent);font-size:9px;font-weight:600;padding:1px 4px;border-radius:3px" title="${escapeHtml(event.branchId)}">${escapeHtml(branchLabel)}</span>`;
   }
   html += `<span class="web-container-badge" style="background:${containerBg};color:${containerColor}">${containerLabel}</span>`;
   html += `<span class="activity-path" title="${escapeHtml(event.path)}">${escapeHtml(shortPath)}</span>`;
