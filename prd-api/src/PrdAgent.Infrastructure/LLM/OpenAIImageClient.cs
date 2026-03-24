@@ -648,7 +648,9 @@ public class OpenAIImageClient
         try
         {
             // Google 响应格式检测：{ candidates: [{ content: { parts: [{ inlineData: { data } }] } }] }
-            var isGoogleResponse = (platformType == "google" || platformType == "gemini");
+            // 双重检测：1) platformType 标记 2) 响应体特征（兼容 OpenAI 兼容网关代理 Gemini 的情况）
+            var isGoogleResponse = (platformType == "google" || platformType == "gemini")
+                || body.Contains("\"candidates\"", StringComparison.Ordinal);
             if (isGoogleResponse)
             {
                 var googleImages = GooglePlatformAdapter.ParseGoogleResponseImages(body);
