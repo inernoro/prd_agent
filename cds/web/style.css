@@ -2306,6 +2306,41 @@ a.branch-name:hover { color: var(--accent); }
   color: var(--accent);
 }
 
+/* ── Activity Zoom Controls ── */
+.activity-zoom {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  padding: 0 8px;
+  flex-shrink: 0;
+}
+.activity-zoom-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+  transition: all 0.15s ease;
+}
+.activity-zoom-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+.activity-zoom-level {
+  font-size: 9px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  min-width: 28px;
+  text-align: center;
+  user-select: none;
+}
+
 .activity-body {
   flex: 1;
   overflow-y: auto;
