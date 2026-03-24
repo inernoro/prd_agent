@@ -42,7 +42,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/cn';
 import { glassPanel, glassSidebar, glassFloatingButton, glassMobileHeader } from '@/lib/glassStyles';
 import { useAuthStore } from '@/stores/authStore';
@@ -51,7 +51,7 @@ import { useLayoutStore } from '@/stores/layoutStore';
 import { useNavOrderStore } from '@/stores/navOrderStore';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { SystemDialogHost } from '@/components/ui/SystemDialogHost';
-import { RouteTransitionVideo } from '@/components/ui/VideoLoader';
+import { SuspenseVideoLoader } from '@/components/ui/VideoLoader';
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { Dialog } from '@/components/ui/Dialog';
 import { MobileDrawer } from '@/components/ui/MobileDrawer';
@@ -1278,9 +1278,10 @@ export default function AppShell() {
               isMobile ? 'px-[var(--mobile-padding,16px)] py-3' : fullBleedMain ? 'p-0' : isHomePage ? 'px-3 py-3' : 'px-5 py-5'
             )}
           >
-            <div className="flex-1 min-h-0 relative">
-              <RouteTransitionVideo />
-              <Outlet />
+            <div className="flex-1 min-h-0">
+              <Suspense key={location.pathname} fallback={<SuspenseVideoLoader />}>
+                <Outlet />
+              </Suspense>
             </div>
           </div>
         </main>
