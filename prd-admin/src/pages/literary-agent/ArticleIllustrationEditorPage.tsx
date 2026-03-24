@@ -210,15 +210,15 @@ const PRD_MD_STYLE = `
     }
   }
 
-  /* 配图卡片：hover 显示 prompt 文字 */
+  /* 配图卡片：prompt 文字底部浮层（默认半可见，hover 全可见） */
   .marker-card-prompt-overlay {
     position: absolute;
     bottom: 0;
     left: 0;
     right: 0;
-    padding: 28px 10px 10px;
-    background: linear-gradient(to top, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.5) 60%, transparent 100%);
-    opacity: 0;
+    padding: 24px 10px 8px;
+    background: linear-gradient(to top, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0.35) 60%, transparent 100%);
+    opacity: 0.6;
     transition: opacity 0.25s ease;
     pointer-events: none;
     cursor: pointer;
@@ -230,13 +230,16 @@ const PRD_MD_STYLE = `
   .marker-card-prompt-text {
     font-size: 12px;
     line-height: 1.5;
-    color: rgba(255,255,255,0.88);
+    color: rgba(255,255,255,0.92);
     display: -webkit-box;
-    -webkit-line-clamp: 3;
+    -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
     text-overflow: ellipsis;
     word-break: break-all;
+  }
+  .marker-card-wrap:hover .marker-card-prompt-text {
+    -webkit-line-clamp: 3;
   }
 
   /* 文章内图片显示尺寸控制 */
@@ -2898,7 +2901,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     <div
                       className="marker-card-wrap relative group"
                       style={{
-                        height: 170,
+                        aspectRatio: '4 / 3',
                         background: 'rgba(0,0,0,0.22)',
                         cursor: canShow ? 'pointer' : 'default',
                       }}

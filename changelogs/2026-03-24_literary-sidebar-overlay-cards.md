@@ -1,1 +1,1 @@
-| feat | prd-admin | 文学创作配图卡片：去除固定 textarea，改为 hover 显示 prompt 文字 + 点击弹窗编辑，卡片纯图片更沉浸 |
+| feat | prd-admin | 文学配图卡片：图片区改为 4:3 宽高比，prompt 文字默认半可见(2行) hover 全可见(3行)，参考 Pinterest/Dribbble 渐进展示 |
