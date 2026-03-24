@@ -9,8 +9,6 @@ const VIDEO_CDN_DOMAIN = 'https://i.pa.759800.com';
 const VIDEO_PATH = '/icon/title/home.mp4';
 const VIDEO_SRC = `${VIDEO_CDN_DOMAIN}${VIDEO_PATH}`;
 
-/** 视频至少显示的时间（ms），避免闪烁 */
-const MIN_DISPLAY_MS = 600;
 
 export function VideoLoader({ className }: { className?: string }) {
   const videoRef = useRef<HTMLVideoElement>(null);
