@@ -94,8 +94,9 @@ public class AiAccessKeyAuthenticationHandler : AuthenticationHandler<AiAccessKe
             return AuthenticateResult.Fail("X-AI-Impersonate header cannot be empty");
         }
 
-        // 5. 验证用户存在（从数据库查询）
-        var user = await _userService.GetByUsernameAsync(impersonateUsername);
+        // 5. 验证用户存在（从数据库查询，忽略大小写）
+        var user = await _userService.GetByUsernameAsync(impersonateUsername)
+            ?? await _userService.GetByUsernameAsync(impersonateUsername.ToLowerInvariant());
         if (user == null)
         {
             Logger.LogWarning(
