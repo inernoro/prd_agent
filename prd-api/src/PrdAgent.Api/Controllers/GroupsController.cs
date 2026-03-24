@@ -931,7 +931,7 @@ public class GroupsController : ControllerBase
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Distinct()
             .ToList();
-        var senderInfoMap = new Dictionary<string, (string Name, UserRole Role, string? AvatarFileName, List<GroupMemberTag>? Tags)>(StringComparer.Ordinal);
+        var senderInfoMap = new Dictionary<string, (string Name, UserRole Role, string? AvatarUrl, List<GroupMemberTag>? Tags)>(StringComparer.Ordinal);
         if (senderIds.Count > 0)
         {
             var users = await _db.Users
@@ -942,13 +942,13 @@ public class GroupsController : ControllerBase
                 var uid = u.UserId;
                 if (string.IsNullOrWhiteSpace(uid)) continue;
                 var name = (u.DisplayName ?? u.Username ?? uid).Trim();
-                var avatarFileName = u.AvatarFileName;
-                
+                var avatarUrl = AvatarUrlBuilder.Build(_cfg, u);
+
                 // 获取该用户在当前群组的 tags（机器人会有"机器人"标签）
                 var member = members.FirstOrDefault(m => m.UserId == uid);
                 var tags = member?.Tags;
-                
-                senderInfoMap[uid!] = (name, u.Role, avatarFileName, tags);
+
+                senderInfoMap[uid!] = (name, u.Role, avatarUrl, tags);
             }
         }
 
@@ -970,7 +970,7 @@ public class GroupsController : ControllerBase
             {
                 senderName = info.Name;
                 senderRole = info.Role;
-                senderAvatarUrl = AvatarUrlBuilder.Build(_cfg, info.AvatarFileName);
+                senderAvatarUrl = info.AvatarUrl;
                 senderTags = info.Tags;
             }
 
@@ -990,7 +990,8 @@ public class GroupsController : ControllerBase
             ResendOfMessageId = m.ResendOfMessageId,
             ViewRole = m.ViewRole,
             Timestamp = m.Timestamp,
-                TokenUsage = m.TokenUsage
+                TokenUsage = m.TokenUsage,
+                AttachmentIds = m.AttachmentIds != null && m.AttachmentIds.Count > 0 ? m.AttachmentIds : null
             };
         }).ToList();
 
@@ -1157,7 +1158,7 @@ public class GroupsController : ControllerBase
                     var uid = u.UserId;
                     if (string.IsNullOrWhiteSpace(uid)) continue;
                     var name = (u.DisplayName ?? u.Username ?? uid).Trim();
-                    var avatarUrl = AvatarUrlBuilder.Build(_cfg, u.AvatarFileName);
+                    var avatarUrl = AvatarUrlBuilder.Build(_cfg, u);
                     var member = batchMembers.FirstOrDefault(m => m.UserId == uid);
                     var tags = member?.Tags;
                     batchSenderInfoMap[uid!] = (name, u.Role, avatarUrl, tags);
@@ -1202,7 +1203,7 @@ public class GroupsController : ControllerBase
             if (u == null) return (null, null, null, null);
             
             var name = (u.DisplayName ?? u.Username ?? u.UserId ?? string.Empty).Trim();
-            var avatarUrl = AvatarUrlBuilder.Build(_cfg, u.AvatarFileName);
+            var avatarUrl = AvatarUrlBuilder.Build(_cfg, u);
             var member = groupMembersCache.FirstOrDefault(m => m.UserId == senderId);
             var tags = member?.Tags;
             
@@ -1362,7 +1363,8 @@ public class GroupsController : ControllerBase
                 ResendOfMessageId = m.ResendOfMessageId,
                 ViewRole = m.ViewRole,
                 Timestamp = m.Timestamp,
-                TokenUsage = m.TokenUsage
+                TokenUsage = m.TokenUsage,
+                AttachmentIds = m.AttachmentIds != null && m.AttachmentIds.Count > 0 ? m.AttachmentIds : null
             }
         };
     }
