@@ -17,7 +17,6 @@ import {
   Send,
   Paperclip,
   FileText,
-  Upload,
   Sparkles,
   Check,
   Eye,
