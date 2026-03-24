@@ -75,6 +75,11 @@ public class ChatStreamEvent
     /// 是否跳过了 AI 回复（普通群聊模式）
     /// </summary>
     public bool? SkippedAiReply { get; set; }
+
+    /// <summary>
+    /// 推荐追问列表（type=suggestedQuestions 时下发）
+    /// </summary>
+    public List<SuggestedQuestion>? SuggestedQuestions { get; set; }
 }
 
 /// <summary>

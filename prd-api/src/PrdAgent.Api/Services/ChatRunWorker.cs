@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using PrdAgent.Api.Json;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Interfaces.LlmGateway;
 using PrdAgent.Core.Models;
 
 namespace PrdAgent.Api.Services;
@@ -340,6 +341,106 @@ public sealed class ChatRunWorker : BackgroundService
             meta.EndedAt = DateTime.UtcNow;
         }
         await _runStore.SetRunAsync(RunKinds.Chat, meta, ttl: TimeSpan.FromHours(24), ct: CancellationToken.None);
+
+        // ── 推荐追问：done 后异步生成，不阻塞主流程 ──
+        if (!cancel && lastType == "done" && assembled.Length > 0)
+        {
+            _ = GenerateSuggestedQuestionsAsync(scope, runId, meta.AssistantMessageId ?? "", input.Content, assembled.ToString());
+        }
+    }
+
+    /// <summary>
+    /// 异步生成推荐追问（轻量模型，3 秒超时，失败静默）
+    /// </summary>
+    private async Task GenerateSuggestedQuestionsAsync(
+        IServiceScope scope,
+        string runId,
+        string assistantMessageId,
+        string userQuestion,
+        string assistantAnswer)
+    {
+        try
+        {
+            var gateway = scope.ServiceProvider.GetRequiredService<ILlmGateway>();
+            var messageRepo = scope.ServiceProvider.GetRequiredService<IMessageRepository>();
+
+            var client = gateway.CreateClient(
+                AppCallerRegistry.Desktop.Chat.SuggestedQuestions,
+                "intent",
+                maxTokens: 512,
+                temperature: 0.6);
+
+            const string systemPrompt = @"你是一个对话助手。根据用户的问题和 AI 的回答，生成 2-3 个有价值的追问建议。
+要求：
+1. 追问应该有助于用户深入理解、拓展思考或验证关键点
+2. 追问应该简洁（不超过 30 字），自然口语化
+3. 每个追问标注图标类型：chat（讨论类）、doc（文档/生成类）、tool（工具/分析类）
+4. 严格按 JSON 数组格式返回，不要输出其他内容
+
+返回格式示例：
+[{""text"":""这个方案的性能瓶颈在哪里？"",""icon"":""chat""},{""text"":""帮我生成一份测试用例"",""icon"":""doc""},{""text"":""分析一下潜在的安全风险"",""icon"":""tool""}]";
+
+            // 截断过长的回答，只取前 1500 字符用于生成追问
+            var answerTruncated = assistantAnswer.Length > 1500
+                ? assistantAnswer[..1500] + "..."
+                : assistantAnswer;
+
+            var messages = new List<LLMMessage>
+            {
+                new() { Role = "user", Content = $"用户问题：{userQuestion}\n\nAI 回答：{answerTruncated}" }
+            };
+
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            var fullText = new StringBuilder();
+
+            await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, messages, cts.Token))
+            {
+                if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    fullText.Append(chunk.Content);
+                }
+            }
+
+            var json = fullText.ToString().Trim();
+            // 提取 JSON 数组（兼容模型输出前后有多余文字）
+            var startIdx = json.IndexOf('[');
+            var endIdx = json.LastIndexOf(']');
+            if (startIdx < 0 || endIdx < 0 || endIdx <= startIdx) return;
+            json = json[startIdx..(endIdx + 1)];
+
+            var items = JsonSerializer.Deserialize<List<SuggestedQuestion>>(json, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+            if (items == null || items.Count == 0) return;
+
+            // 过滤空项 + 限制数量
+            items = items.Where(q => !string.IsNullOrWhiteSpace(q.Text)).Take(3).ToList();
+            if (items.Count == 0) return;
+
+            // 发送 SSE 事件
+            var suggestedEvent = new ChatStreamEvent
+            {
+                Type = "suggestedQuestions",
+                MessageId = assistantMessageId,
+                SuggestedQuestions = items
+            };
+            await _runStore.AppendEventAsync(RunKinds.Chat, runId, "message", suggestedEvent,
+                ttl: TimeSpan.FromHours(24), ct: CancellationToken.None);
+
+            // 持久化到 Message
+            var message = await messageRepo.FindByIdAsync(assistantMessageId);
+            if (message != null)
+            {
+                message.SuggestedQuestions = items;
+                await messageRepo.ReplaceOneAsync(message);
+            }
+        }
+        catch (Exception ex)
+        {
+            // 推荐追问是增值功能，失败不影响主流程
+            _logger.LogDebug(ex, "生成推荐追问失败: runId={RunId}", runId);
+        }
     }
 }
 

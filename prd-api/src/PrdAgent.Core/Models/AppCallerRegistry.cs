@@ -42,6 +42,14 @@ public static class Desktop
             Category = "Chat"
         )]
         public const string ChatVision = "prd-agent-desktop.chat::vision";
+
+        [AppCallerMetadata(
+            "聊天-推荐追问",
+            "对话完成后生成推荐追问建议（轻量模型）",
+            ModelTypes = new[] { ModelTypes.Intent },
+            Category = "Chat"
+        )]
+        public const string SuggestedQuestions = "prd-agent-desktop.chat.suggested-questions::intent";
     }
     
     public static class PRD

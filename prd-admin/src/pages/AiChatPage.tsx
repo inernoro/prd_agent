@@ -16,6 +16,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import type { AiChatStreamEvent } from '@/services/contracts/aiChat';
+import { SuggestedQuestions } from './ai-chat/components/SuggestedQuestions';
 import { toast } from '@/lib/toast';
 import { useLocation } from 'react-router-dom';
 import { usePrdAgentStore } from '@/stores/prdAgentStore';
@@ -50,8 +51,8 @@ type UiMessage = {
   role: 'User' | 'Assistant';
   content: string;
   /**
-   * 高级流式渲染：把“已完成的段落/行块”拆成多个 markdown part，
-   * 只增量 append 新 part，避免整段 ReactMarkdown 反复重排导致“闪烁/颗粒感”。
+   * 高级流式渲染：把”已完成的段落/行块”拆成多个 markdown part，
+   * 只增量 append 新 part，避免整段 ReactMarkdown 反复重排导致”闪烁/颗粒感”。
    */
   mdParts?: string[];
   groupSeq?: number;
@@ -59,7 +60,8 @@ type UiMessage = {
   resendOfMessageId?: string;
   timestamp: number;
   citations?: Array<{ headingId?: string | null; headingTitle?: string | null; excerpt?: string | null }>;
-  // 元数据（调试页：用于展示“本轮系统提示词”）
+  suggestedQuestions?: Array<{ text: string; icon?: string | null }>;
+  // 元数据（调试页：用于展示”本轮系统提示词”）
   viewRole?: 'PM' | 'DEV' | 'QA';
   promptKey?: string;
   promptTitle?: string;
@@ -709,6 +711,7 @@ export default function AiChatPage() {
           replyToMessageId: (m as any).replyToMessageId ? String((m as any).replyToMessageId) : undefined,
           resendOfMessageId: (m as any).resendOfMessageId ? String((m as any).resendOfMessageId) : undefined,
           viewRole: ((m as any).viewRole ? String((m as any).viewRole).trim().toUpperCase() : undefined) as any,
+          suggestedQuestions: Array.isArray(m.suggestedQuestions) && m.suggestedQuestions.length > 0 ? m.suggestedQuestions : undefined,
           timestamp: new Date(m.timestamp).getTime(),
         }));
         setMessages(mapped);
@@ -736,6 +739,7 @@ export default function AiChatPage() {
         replyToMessageId: (m as any).replyToMessageId ? String((m as any).replyToMessageId) : undefined,
         resendOfMessageId: (m as any).resendOfMessageId ? String((m as any).resendOfMessageId) : undefined,
         viewRole: ((m as any).viewRole ? String((m as any).viewRole).trim().toUpperCase() : undefined) as any,
+        suggestedQuestions: Array.isArray(m.suggestedQuestions) && m.suggestedQuestions.length > 0 ? m.suggestedQuestions : undefined,
         timestamp: new Date(m.timestamp).getTime(),
       }));
       setMessages(mapped);
@@ -809,6 +813,15 @@ export default function AiChatPage() {
       if (!id) return;
       const cs = Array.isArray(evt.citations) ? evt.citations : [];
       setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, citations: cs } : m)));
+      return;
+    }
+
+    if (t === 'suggestedQuestions') {
+      const id = String(evt.messageId || '');
+      if (!id) return;
+      const qs = Array.isArray(evt.suggestedQuestions) ? evt.suggestedQuestions : [];
+      if (qs.length === 0) return;
+      setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, suggestedQuestions: qs } : m)));
       return;
     }
 
@@ -970,6 +983,25 @@ export default function AiChatPage() {
       ac.signal
     );
   };
+
+  // 推荐追问点击：填入输入框，用户可编辑后手动发送，或直接发送
+  const pendingSuggestedRef = useRef<string | null>(null);
+  const handleSuggestedQuestionClick = useCallback((text: string) => {
+    pendingSuggestedRef.current = text;
+    setComposer(text);
+    requestAnimationFrame(() => {
+      adjustComposerHeight();
+      composerRef.current?.focus();
+    });
+  }, []);
+
+  // 自动发送推荐追问（composer 更新后触发）
+  useEffect(() => {
+    if (pendingSuggestedRef.current && composer === pendingSuggestedRef.current && !isStreaming) {
+      pendingSuggestedRef.current = null;
+      void sendMessage();
+    }
+  }, [composer, isStreaming]);
 
   const onPickPrdFile = async (file: File) => {
     if (!file) return;
@@ -1683,6 +1715,19 @@ export default function AiChatPage() {
               );
             })
           )}
+          {/* 推荐追问：仅展示最后一条 Assistant 消息的追问建议 */}
+          {!isStreaming && (() => {
+            const lastAssistant = [...messages].reverse().find((m) => m.role === 'Assistant' && m.suggestedQuestions?.length);
+            if (!lastAssistant?.suggestedQuestions?.length) return null;
+            return (
+              <div className="flex justify-start">
+                <SuggestedQuestions
+                  questions={lastAssistant.suggestedQuestions}
+                  onSelect={handleSuggestedQuestionClick}
+                />
+              </div>
+            );
+          })()}
           <div ref={bottomRef} />
         </div>
 

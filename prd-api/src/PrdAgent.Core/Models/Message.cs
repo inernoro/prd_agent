@@ -81,6 +81,23 @@ public class Message
     
     /// <summary>消息时间</summary>
     public DateTime Timestamp { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// 推荐追问列表（仅 Assistant 消息；在回答完成后由轻量模型生成）
+    /// </summary>
+    public List<SuggestedQuestion>? SuggestedQuestions { get; set; }
+}
+
+/// <summary>
+/// 推荐追问项
+/// </summary>
+public class SuggestedQuestion
+{
+    /// <summary>追问文本</summary>
+    public string Text { get; set; } = string.Empty;
+
+    /// <summary>图标类型：chat / doc / tool</summary>
+    public string? Icon { get; set; }
 }
 
 /// <summary>

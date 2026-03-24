@@ -29,6 +29,7 @@ export type AiChatHistoryMessage = {
   viewRole?: string | null;
   timestamp: string;
   tokenUsage?: AiChatTokenUsage | null;
+  suggestedQuestions?: AiChatSuggestedQuestion[] | null;
 };
 
 export type AiChatGetHistoryContract = (input: { sessionId: string; limit?: number }) => Promise<ApiResponse<AiChatHistoryMessage[]>>;
@@ -39,8 +40,13 @@ export type AiChatDocCitation = {
   excerpt?: string | null;
 };
 
+export type AiChatSuggestedQuestion = {
+  text: string;
+  icon?: string | null; // chat / doc / tool
+};
+
 export type AiChatStreamEvent = {
-  type: string; // start, blockStart, blockDelta, blockEnd, delta, citations, done, error
+  type: string; // start, blockStart, blockDelta, blockEnd, delta, citations, suggestedQuestions, done, error
   messageId?: string | null;
   content?: string | null;
   errorCode?: string | null;
@@ -49,6 +55,7 @@ export type AiChatStreamEvent = {
   blockKind?: string | null;
   blockLanguage?: string | null;
   citations?: AiChatDocCitation[] | null;
+  suggestedQuestions?: AiChatSuggestedQuestion[] | null;
 };
 
 

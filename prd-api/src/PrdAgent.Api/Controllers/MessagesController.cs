@@ -531,6 +531,7 @@ public class MessagesController : ControllerBase
                 ViewRole = m.ViewRole,
                 Timestamp = m.Timestamp,
                 TokenUsage = m.TokenUsage,
+                SuggestedQuestions = m.SuggestedQuestions,
                 AttachmentIds = m.AttachmentIds != null && m.AttachmentIds.Count > 0 ? m.AttachmentIds : null
             };
         }).ToList();
@@ -561,6 +562,8 @@ public class MessageResponse
     public UserRole? ViewRole { get; set; }
     public DateTime Timestamp { get; set; }
     public TokenUsage? TokenUsage { get; set; }
+    /// <summary>推荐追问列表（仅 Assistant 消息）</summary>
+    public List<SuggestedQuestion>? SuggestedQuestions { get; set; }
     public List<string>? AttachmentIds { get; set; }
 }
 
