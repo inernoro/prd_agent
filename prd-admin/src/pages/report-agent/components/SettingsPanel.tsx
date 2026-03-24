@@ -66,17 +66,15 @@ const SECTIONS: SectionDef[] = [
 
 export function SettingsPanel() {
   const [activeSection, setActiveSection] = useState<SettingsSection>('overview');
-  const permissions = useAuthStore((s) => s.permissions);
   const teams = useReportAgentStore((s) => s.teams);
-  const isSuper = permissions.includes('super');
-  const canSeeTeamAiPrompt = isSuper
-    || permissions.includes('report-agent.team.manage')
-    || teams.some((team) => team.canManageMembers || team.myRole === 'leader' || team.myRole === 'deputy');
+  const canSeeTeamAiPrompt = teams.some((team) => team.canManageMembers);
 
   const visibleSections = SECTIONS.filter((s) => {
     if (s.isPersonal) return true;
     if (s.key === 'team-ai-prompt') return canSeeTeamAiPrompt;
     if (!s.requirePerm) return true;
+    const permissions = useAuthStore.getState().permissions;
+    const isSuper = permissions.includes('super');
     return isSuper || permissions.includes(s.requirePerm);
   });
 

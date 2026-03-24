@@ -13,12 +13,7 @@ import {
 import type { ReportTeam } from '@/services/contracts/reportAgent';
 
 function pickManageableTeams(items: ReportTeam[]): ReportTeam[] {
-  const manageable = items.filter((team) =>
-    team.canManageMembers
-    || team.relationType === 'managed'
-    || team.myRole === 'leader'
-    || team.myRole === 'deputy'
-  );
+  const manageable = items.filter((team) => team.canManageMembers);
   return manageable;
 }
 
@@ -26,6 +21,7 @@ export function TeamAiPromptSettingsPanel() {
   const [loadingTeams, setLoadingTeams] = useState(true);
   const [teams, setTeams] = useState<ReportTeam[]>([]);
   const [selectedTeamId, setSelectedTeamId] = useState('');
+  const [forbidden, setForbidden] = useState(false);
 
   const [loadingPrompt, setLoadingPrompt] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -43,6 +39,7 @@ export function TeamAiPromptSettingsPanel() {
 
   const loadTeams = useCallback(async () => {
     setLoadingTeams(true);
+    setForbidden(false);
     const res = await listReportTeams();
     setLoadingTeams(false);
     if (!res.success || !res.data) {
@@ -64,9 +61,16 @@ export function TeamAiPromptSettingsPanel() {
     const res = await getTeamAiSummaryPrompt({ teamId });
     setLoadingPrompt(false);
     if (!res.success || !res.data) {
+      if (res.error?.code === 'PERMISSION_DENIED') {
+        setForbidden(true);
+        setTeams([]);
+        setSelectedTeamId('');
+        return;
+      }
       toast.error(res.error?.message || '加载团队 Prompt 失败');
       return;
     }
+    setForbidden(false);
     setSystemDefaultPrompt(res.data.systemDefaultPrompt || '');
     setCustomPrompt(res.data.customPrompt || '');
     setDraftPrompt(res.data.customPrompt || '');
@@ -160,7 +164,9 @@ export function TeamAiPromptSettingsPanel() {
     return (
       <GlassCard className="p-4">
         <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
-          暂无可管理团队，暂不能配置“团队周报AI分析Prompt”。
+          {forbidden
+            ? '你没有团队周报AI分析 Prompt 的管理权限。'
+            : '暂无可管理团队，暂不能配置“团队周报AI分析Prompt”。'}
         </div>
       </GlassCard>
     );
