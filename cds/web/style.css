@@ -1801,11 +1801,7 @@ a.branch-name:hover { color: var(--accent); }
   .branch-tag { padding: 3px 8px; }
   .branch-tag-remove { width: 18px; height: 18px; font-size: 14px; }
 
-  /* Busy spinner: reposition to avoid overlap with right-side elements */
-  .branch-card.is-busy::after {
-    top: auto; bottom: 12px; right: 12px;
-    width: 14px; height: 14px;
-  }
+  /* Busy spinner removed — see main styles */
 
   /* Modal: slight margin on mobile */
   .modal-dialog { max-height: 90vh; margin: 0 12px; }
