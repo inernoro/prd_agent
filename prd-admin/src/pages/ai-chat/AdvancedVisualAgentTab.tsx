@@ -3487,13 +3487,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         // 澄清失败不阻断生图流程，静默降级使用原始 prompt
       }
     } else {
-      // 直连模式：跳过 AI 处理，直接使用用户原始输入作为 prompt
+      // 直连模式：跳过 AI 处理，仅加生图意图前缀后直接发给生图模型
       firstPrompt = stripModelMention(reqText) || stripModelMention(display) || '';
       if (!firstPrompt) {
         const msg = '内容为空';
         pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: display || reqText || undefined, imageRefShas }));
         return;
       }
+      firstPrompt = `Generate an image based on the following description:\n${firstPrompt}`;
     }
 
     const refDim =
