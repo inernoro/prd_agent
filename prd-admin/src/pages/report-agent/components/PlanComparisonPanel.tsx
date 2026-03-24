@@ -1,3 +1,4 @@
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useState, useEffect } from 'react';
 import { ArrowRight, FileQuestion } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -21,7 +22,7 @@ export function PlanComparisonPanel({ reportId }: Props) {
   }, [reportId]);
 
   if (loading) {
-    return <div className="text-[12px] py-4 text-center" style={{ color: 'var(--text-muted)' }}>加载中...</div>;
+    return <MapSectionLoader />;
   }
 
   if (!data || !data.hasLastWeek) {

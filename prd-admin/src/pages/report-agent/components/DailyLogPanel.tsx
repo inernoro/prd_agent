@@ -1,3 +1,4 @@
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   Send, Trash2, ChevronLeft, ChevronRight, Clock, Calendar,
@@ -1088,9 +1089,7 @@ export function DailyLogPanel() {
 
           {/* Timeline / Items */}
           {!loaded ? (
-            <GlassCard className="p-8 text-center">
-              <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>加载中...</div>
-            </GlassCard>
+            <MapSectionLoader />
           ) : items.length === 0 && dayCommits.length === 0 ? (
             /* ── Empty State ── */
             <div className="flex-1 flex items-center justify-center" style={{ minHeight: 300 }}>

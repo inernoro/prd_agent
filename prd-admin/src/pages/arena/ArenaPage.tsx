@@ -31,10 +31,11 @@ import { ConfirmTip } from '@/components/ui/ConfirmTip';
 import { ModelPoolPickerDialog, type SelectedModelItem } from '@/components/model/ModelPoolPickerDialog';
 import type { Platform } from '@/types/admin';
 import {
-  Eye, Send, Plus, Search, MessageSquare, Clock, Loader2, Swords, ChevronDown, ChevronRight, Brain,
+  Eye, Send, Plus, Search, MessageSquare, Clock, Swords, ChevronDown, ChevronRight, Brain,
   Edit3, Trash2, Settings, Power, RefreshCw, Download, Copy, Check,
   Image as ImageIcon, X, FileText, Paperclip,
 } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1290,7 +1291,7 @@ export function ArenaPage() {
         <div className="flex-1 overflow-y-auto px-2 pb-2" style={{ minHeight: 0 }}>
           {historyLoading ? (
             <div className="flex items-center justify-center py-8">
-              <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--text-muted)' }} />
+              <MapSpinner size={16} color="var(--text-muted)" />
             </div>
           ) : filteredHistory.length === 0 ? (
             <div className="text-center py-8 text-[13px]" style={{ color: 'var(--text-muted)' }}>
@@ -1378,7 +1379,7 @@ export function ArenaPage() {
                 style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-primary)' }}
               >
                 {lineupLoading ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <MapSpinner size={14} />
                 ) : (
                   <>
                     <span>{selectedGroup?.name ?? '选择阵容'}</span>
@@ -1466,7 +1467,7 @@ export function ArenaPage() {
                   <div className="flex-1 overflow-y-auto px-2 pb-2" style={{ minHeight: 0 }}>
                     {adminLoading ? (
                       <div className="flex items-center justify-center py-6">
-                        <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--text-muted)' }} />
+                        <MapSpinner size={16} color="var(--text-muted)" />
                       </div>
                     ) : adminGroups.length === 0 ? (
                       <div className="text-center py-6 text-[12px]" style={{ color: 'var(--text-muted)' }}>
@@ -1601,7 +1602,7 @@ export function ArenaPage() {
 
               {lineupLoading ? (
                 <div className="flex items-center justify-center gap-2 text-[13px] mb-4" style={{ color: 'var(--text-muted)' }}>
-                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <MapSpinner size={16} />
                   <span>加载阵容中...</span>
                 </div>
               ) : lineupError ? (
@@ -1697,7 +1698,7 @@ export function ArenaPage() {
                             border: '1px dashed rgba(255,255,255,0.15)',
                           }}
                         >
-                          <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--text-muted)' }} />
+                          <MapSpinner size={16} color="var(--text-muted)" />
                         </div>
                       )}
                     </div>
@@ -1911,7 +1912,7 @@ export function ArenaPage() {
                         </div>
                         <div className="flex items-center gap-2 flex-shrink-0">
                           {panel.status === 'streaming' && (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: labelColor }} />
+                            <MapSpinner size={14} color={labelColor} />
                           )}
                           {panel.status === 'done' && (
                             <div className="w-2 h-2 rounded-full" style={{ background: '#10b981' }} />
@@ -2129,7 +2130,7 @@ export function ArenaPage() {
                           border: '1px dashed rgba(255,255,255,0.15)',
                         }}
                       >
-                        <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--text-muted)' }} />
+                        <MapSpinner size={16} color="var(--text-muted)" />
                       </div>
                     )}
                   </div>
@@ -2184,7 +2185,7 @@ export function ArenaPage() {
                         onClick={handleReveal}
                         disabled={revealLoading}
                       >
-                        {revealLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
+                        {revealLoading ? <MapSpinner size={14} /> : <Eye className="w-3.5 h-3.5" />}
                         揭晓身份
                       </Button>
                     )}
@@ -2196,7 +2197,7 @@ export function ArenaPage() {
                       className="px-4"
                     >
                       {isStreaming ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <MapSpinner size={16} />
                       ) : (
                         <Send className="w-4 h-4" />
                       )}
@@ -2259,7 +2260,7 @@ export function ArenaPage() {
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="secondary" size="sm" onClick={() => setGroupDialogOpen(false)}>取消</Button>
               <Button variant="primary" size="sm" onClick={handleSaveGroup} disabled={groupSaving}>
-                {groupSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                {groupSaving ? <MapSpinner size={14} /> : null}
                 {editingGroupId ? '保存' : '创建'}
               </Button>
             </div>

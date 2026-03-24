@@ -11,6 +11,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { Search, TrendingUp, Clock, ArrowLeft, Store } from 'lucide-react';
 import { MarketplaceCard } from '@/components/marketplace/MarketplaceCard';
@@ -234,11 +235,7 @@ export const MarketplacePage: React.FC = () => {
 
         {/* 内容区 */}
         {loading ? (
-          <div className="flex items-center justify-center py-20">
-            <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
-              加载中...
-            </div>
-          </div>
+          <MapSectionLoader />
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 gap-3">
             <Store size={48} style={{ color: 'var(--text-muted)', opacity: 0.5 }} />

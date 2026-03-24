@@ -1,3 +1,4 @@
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { Badge } from '@/components/design/Badge';
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -1535,7 +1536,7 @@ export default function ModelManagePage() {
 
           <div className="flex-1 overflow-auto">
             {loading ? (
-              <div className="py-16 text-center" style={{ color: 'var(--text-muted)' }}>加载中...</div>
+              <MapSectionLoader />
             ) : selectedPlatform || isAll ? (
               <div className="p-4 space-y-6">
                 {selectedPlatform && (

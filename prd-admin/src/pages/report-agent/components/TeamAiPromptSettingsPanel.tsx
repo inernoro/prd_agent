@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { RefreshCw, Sparkles } from 'lucide-react';
+import { Sparkles } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
@@ -149,7 +150,7 @@ export function TeamAiPromptSettingsPanel() {
     return (
       <GlassCard className="p-4">
         <div className="text-[12px] flex items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
-          <RefreshCw size={12} className="animate-spin" />
+          <MapSpinner size={12} />
           加载团队配置中...
         </div>
       </GlassCard>
@@ -170,7 +171,7 @@ export function TeamAiPromptSettingsPanel() {
     return (
       <GlassCard className="p-4">
         <div className="text-[12px] flex items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
-          <RefreshCw size={12} className="animate-spin" />
+          <MapSpinner size={12} />
           加载团队 Prompt 配置中...
         </div>
       </GlassCard>
@@ -270,7 +271,7 @@ export function TeamAiPromptSettingsPanel() {
 
         <div className="mt-3 flex items-center gap-2">
           <Button variant="primary" size="sm" onClick={() => { void handleSave(); }} disabled={saving || resetting}>
-            {saving ? <><RefreshCw size={12} className="animate-spin" /> 保存中...</> : <><Sparkles size={12} /> 保存团队自定义 Prompt</>}
+            {saving ? <><MapSpinner size={12} /> 保存中...</> : <><Sparkles size={12} /> 保存团队自定义 Prompt</>}
           </Button>
           <Button
             variant="secondary"

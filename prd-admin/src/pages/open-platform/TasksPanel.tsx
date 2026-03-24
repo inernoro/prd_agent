@@ -5,7 +5,8 @@ import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import { Select } from '@/components/design/Select';
 import { channelService } from '@/services';
-import { RefreshCw, Search, Clock, CheckCircle, XCircle, Loader2, ListTodo, Mail, MessageSquare, Mic, Webhook, ExternalLink } from 'lucide-react';
+import { RefreshCw, Search, Clock, CheckCircle, XCircle, ListTodo, Mail, MessageSquare, Mic, Webhook, ExternalLink } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import type { ChannelTask, ChannelTaskStats } from '@/services/contracts/channels';
 import { ChannelTypeDisplayNames, TaskStatusDisplayNames } from '@/services/contracts/channels';
@@ -22,7 +23,7 @@ function fmtDate(v?: string | null) {
 
 const statusIcons: Record<string, React.ReactNode> = {
   pending: <Clock size={14} className="text-yellow-400" />,
-  processing: <Loader2 size={14} className="text-blue-400 animate-spin" />,
+  processing: <MapSpinner size={14} color="rgb(96, 165, 250)" />,
   completed: <CheckCircle size={14} className="text-green-400" />,
   failed: <XCircle size={14} className="text-red-400" />,
   cancelled: <XCircle size={14} className="text-gray-400" />,

@@ -6,6 +6,7 @@ import { useDefectStore } from '@/stores/defectStore';
 import { toast } from '@/lib/toast';
 import { DefectStatus } from '@/services/contracts/defectAgent';
 import { Bug, Plus, FileText, RefreshCw, LayoutGrid, List, Columns3, BarChart3, FolderKanban } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { DefectList } from './components/DefectList';
 import { DefectSubmitPanel } from './components/DefectSubmitPanel';
 import { DefectDetailPanel } from './components/DefectDetailPanel';
@@ -228,7 +229,7 @@ export default function DefectAgentPage() {
             className="text-[12px] flex items-center gap-2"
             style={{ color: 'var(--text-muted)' }}
           >
-            <RefreshCw size={12} className="animate-spin" />
+            <MapSpinner size={12} />
             加载中...
           </div>
         </GlassCard>

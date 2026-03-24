@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Loader2, AlertCircle, ArrowLeft } from 'lucide-react';
+import { AlertCircle, ArrowLeft } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { getWorkflow, listExecutions } from '@/services';
 import type { Workflow, WorkflowExecution } from '@/services/contracts/workflowAgent';
 import { Button } from '@/components/design/Button';
@@ -64,7 +65,7 @@ export function WorkflowCanvasPage() {
   if (loading || unmounting) {
     return (
       <div className="h-full flex items-center justify-center">
-        <Loader2 className="w-5 h-5 animate-spin" style={{ color: 'var(--text-muted)' }} />
+        <MapSpinner size={20} color="var(--text-muted)" />
         <span className="ml-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>
           {unmounting ? '返回中...' : '加载画布...'}
         </span>

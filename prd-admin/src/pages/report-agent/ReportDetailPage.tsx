@@ -1,3 +1,4 @@
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, MessageSquare, CornerDownRight, Trash2, Send, GitCompare, X, CheckCircle2 } from 'lucide-react';
@@ -158,11 +159,7 @@ export default function ReportDetailPage() {
   }, [showViewPopover]);
 
   if (!report) {
-    return (
-      <div className="h-full flex items-center justify-center">
-        <div className="text-[13px]" style={{ color: 'var(--text-muted)' }}>加载中...</div>
-      </div>
-    );
+    return <MapSectionLoader />;
   }
 
   const tabs: { key: TabKey; label: string }[] = [

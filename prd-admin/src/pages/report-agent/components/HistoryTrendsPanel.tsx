@@ -1,3 +1,4 @@
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useState, useEffect, useMemo } from 'react';
 import { BarChart3, TrendingUp, GitCommit, CalendarCheck, Users, ChevronDown, AlertTriangle } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -171,7 +172,7 @@ export function HistoryTrendsPanel() {
       </GlassCard>
 
       {loading && (
-        <div className="text-center py-12 text-[12px]" style={{ color: 'var(--text-muted)' }}>加载中...</div>
+        <MapSectionLoader />
       )}
 
       {!loading && mode === 'personal' && (

@@ -46,7 +46,6 @@ import {
   Eye,
   Layers,
   Link2,
-  Loader2,
   Plus,
   RefreshCw,
   Search,
@@ -56,6 +55,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { systemDialog } from '@/lib/systemDialog';
@@ -906,8 +906,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
           <div className="flex-1 overflow-auto">
             {isLoading ? (
               <div className="p-8 text-center" style={{ color: 'var(--text-muted)' }}>
-                <Loader2 size={32} className="mx-auto mb-2 opacity-40 animate-spin" />
-                <div className="text-sm">加载中...</div>
+                <MapSectionLoader text="加载中..." />
               </div>
             ) : filteredAppGroups.length === 0 ? (
               <div className="p-8 text-center" style={{ color: 'var(--text-muted)' }}>
@@ -974,8 +973,8 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
           <GlassCard animated glow className="p-4 overflow-hidden">
             {isLoading ? (
               <div className="h-full flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>
-                <Loader2 size={20} className="animate-spin mr-2" />
-                <span className="text-sm">加载中...</span>
+                <MapSpinner size={20} />
+                <span className="text-sm ml-2">加载中...</span>
               </div>
             ) : !selectedAppGroup ? (
               <div className="h-full flex items-center justify-center text-sm" style={{ color: 'var(--text-muted)' }}>
@@ -1021,8 +1020,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
           {isLoading ? (
             <GlassCard animated glow className="flex items-center justify-center overflow-hidden">
               <div className="text-center" style={{ color: 'var(--text-muted)' }}>
-                <Loader2 size={48} className="mx-auto mb-4 opacity-40 animate-spin" />
-                <div className="text-sm">加载中...</div>
+                <MapSectionLoader text="加载中..." />
               </div>
             </GlassCard>
           ) : !selectedAppGroup ? (

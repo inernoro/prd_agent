@@ -18,8 +18,8 @@ import {
   CheckCircle,
   BarChart3,
   Users,
-  RefreshCw,
 } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 
 const statusLabels: Record<string, string> = {
   draft: '草稿',
@@ -86,8 +86,8 @@ export function StatsPanel() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16" style={{ color: 'var(--text-muted)' }}>
-        <RefreshCw size={16} className="animate-spin mr-2" />
-        加载统计数据...
+        <MapSpinner size={16} />
+        <span className="ml-2">加载统计数据...</span>
       </div>
     );
   }

@@ -1,3 +1,4 @@
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Dialog } from '@/components/ui/Dialog';
@@ -205,7 +206,7 @@ export function ExchangeManagePage() {
 
       {/* 列表 */}
       {loading ? (
-        <div className="text-center text-muted-foreground py-12">加载中...</div>
+        <MapSectionLoader />
       ) : exchanges.length === 0 ? (
         <GlassCard animated className="text-center py-12">
           <ArrowLeftRight size={36} className="mx-auto mb-3 text-muted-foreground/50" />

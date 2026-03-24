@@ -7,6 +7,7 @@ import { TabBar } from '@/components/design/TabBar';
 import { TrendingUp } from 'lucide-react';
 import { getActiveGroups, getGapStats, getMessageTrend, getTokenUsage } from '@/services';
 import type { ActiveGroup, GapStats, TrendItem } from '@/services/contracts/adminStats';
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useEffect, useMemo, useState } from 'react';
 
 type TokenData = {
@@ -172,9 +173,7 @@ export default function StatsPage() {
             className="mt-3 rounded-[14px] overflow-hidden surface-inset"
           >
             {loading ? (
-              <div className="h-[280px] flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>
-                加载中...
-              </div>
+              <MapSectionLoader style={{ minHeight: 280 }} />
             ) : trend.length === 0 ? (
               <div className="h-[280px] flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>
                 暂无数据
@@ -195,9 +194,7 @@ export default function StatsPage() {
             className="mt-3 rounded-[14px] overflow-hidden surface-inset"
           >
             {loading ? (
-              <div className="h-[280px] flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>
-                加载中...
-              </div>
+              <MapSectionLoader style={{ minHeight: 280 }} />
             ) : !gapStats ? (
               <div className="h-[280px] flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>
                 暂无数据
@@ -228,9 +225,7 @@ export default function StatsPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={4} className="px-4 py-8 text-center" style={{ color: 'var(--text-muted)' }}>
-                    加载中...
-                  </td>
+                  <td colSpan={4}><MapSectionLoader /></td>
                 </tr>
               ) : groups.length === 0 ? (
                 <tr>

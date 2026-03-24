@@ -1,3 +1,4 @@
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useEffect, useMemo, useState } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
@@ -878,9 +879,7 @@ export default function UsersPage() {
           className="mt-4 flex-1 min-h-0 overflow-auto rounded-[14px] p-4 surface-inset"
         >
           {loading ? (
-            <div className="py-10 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
-              加载中...
-            </div>
+            <MapSectionLoader />
           ) : items.length === 0 ? (
             <div className="py-12 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
               暂无数据
@@ -1765,9 +1764,7 @@ export default function UsersPage() {
         content={
           <div className="space-y-4">
             {rateLimitLoading ? (
-              <div className="py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
-                加载中...
-              </div>
+              <MapSectionLoader />
             ) : (
               <>
                 <div className="text-sm" style={{ color: 'var(--text-muted)' }}>

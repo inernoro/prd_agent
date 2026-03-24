@@ -44,6 +44,7 @@ import {
   QrCode,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 
 // ─── Utility ───
 
@@ -277,7 +278,7 @@ export default function WebPagesPage() {
             className="p-2 rounded-lg transition-colors"
             style={{ background: 'var(--bg-sunken)', color: 'var(--text-muted)', border: '1px solid var(--border-default)' }}
           >
-            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+            {loading ? <MapSpinner size={14} /> : <RefreshCw size={14} />}
           </button>
         </div>
 
@@ -469,7 +470,7 @@ function QrCodeDialog({ site, onClose }: { site: HostedSite; onClose: () => void
         <div className="flex flex-col items-center gap-4 py-4">
           {loading ? (
             <div className="flex items-center gap-2 py-8" style={{ color: 'var(--text-muted)' }}>
-              <RefreshCw size={16} className="animate-spin" />
+              <MapSpinner size={16} />
               <span className="text-sm">正在生成分享链接…</span>
             </div>
           ) : error ? (

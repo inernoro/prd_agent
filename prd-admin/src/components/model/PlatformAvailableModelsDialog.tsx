@@ -8,6 +8,7 @@ import { resolveCherryGroupKey } from '@/lib/cherryModelGrouping';
 import { inferPresetTagKeys, matchAvailableModelsTab, type PresetTagKey } from '@/lib/modelPresetTags';
 import { getAvatarUrlByGroup, getAvatarUrlByModelName, useAvatarUpdates } from '@/assets/model-avatars';
 import { ArrowDown, DatabaseZap, ImagePlus, Link2, Minus, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Wand2, Zap, Settings } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { matchAdapterConfig } from '@/lib/imageGenAdapterConfigs';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { systemDialog } from '@/lib/systemDialog';
@@ -353,7 +354,7 @@ export function PlatformAvailableModelsDialog({
               disabled={!platform?.id || availableLoading}
               aria-label="刷新"
             >
-              <RefreshCw size={16} className={availableLoading ? 'animate-spin' : ''} />
+              {availableLoading ? <MapSpinner size={16} /> : <RefreshCw size={16} />}
             </Button>
             {platform?.id !== '__exchange__' && (
               <Button

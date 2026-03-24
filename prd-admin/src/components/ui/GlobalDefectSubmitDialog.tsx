@@ -4,6 +4,7 @@
  * 支持截图自动 VLM 分析（异步后台完成，不阻塞用户输入）
  */
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
@@ -25,7 +26,6 @@ import {
   Paperclip,
   FileText,
   Sparkles,
-  Loader2,
   Bug,
   Terminal,
   AlertTriangle,
@@ -664,7 +664,7 @@ export function GlobalDefectSubmitDialog() {
                               className="absolute bottom-0 left-0 right-0 flex items-center justify-center gap-1 py-0.5"
                               style={{ background: 'rgba(0,0,0,0.7)' }}
                             >
-                              <Loader2 size={8} className="animate-spin" style={{ color: 'rgba(100, 200, 255, 0.9)' }} />
+                              <MapSpinner size={8} color="rgba(100, 200, 255, 0.9)" />
                               <span className="text-[8px]" style={{ color: 'rgba(100, 200, 255, 0.9)' }}>解析中</span>
                             </div>
                           )}
@@ -745,7 +745,7 @@ export function GlobalDefectSubmitDialog() {
                       color: 'var(--text-muted)',
                     }}
                   >
-                    <Loader2 size={10} className="animate-spin" style={{ color: 'rgba(100, 200, 255, 0.8)' }} />
+                    <MapSpinner size={10} color="rgba(100, 200, 255, 0.8)" />
                     正在分析截图内容...
                   </div>
                 )}
@@ -792,7 +792,7 @@ export function GlobalDefectSubmitDialog() {
                   style={{ cursor: logPreview && logPreview.totalCount > 0 ? 'pointer' : 'default' }}
                 >
                   {logPreviewLoading ? (
-                    <Loader2 size={14} className="animate-spin" style={{ color: 'rgba(100, 200, 255, 0.8)' }} />
+                    <MapSpinner size={14} color="rgba(100, 200, 255, 0.8)" />
                   ) : (
                     <Terminal size={14} style={{ color: 'rgba(100, 200, 255, 0.8)' }} />
                   )}
@@ -949,7 +949,7 @@ export function GlobalDefectSubmitDialog() {
                 title="AI 润色：优化描述内容，根据模板补充信息"
               >
                 {polishing ? (
-                  <Loader2 size={14} className="animate-spin" />
+                  <MapSpinner size={14} />
                 ) : (
                   <Sparkles size={14} />
                 )}

@@ -1,6 +1,7 @@
 import { memo, useMemo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { Loader2, AlertCircle, CheckCircle2, FlaskConical, PauseCircle } from 'lucide-react';
+import { AlertCircle, CheckCircle2, FlaskConical, PauseCircle } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { getIconForCapsule, getEmojiForCapsule } from './capsuleRegistry';
 import type { ArtifactSlot } from '@/services/contracts/workflowAgent';
 
@@ -146,7 +147,7 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
         <div className="mt-2 flex items-center gap-2">
           {data.execStatus === 'running' && (
             <div className="flex items-center gap-1">
-              <Loader2 className="w-3 h-3 animate-spin" style={{ color: 'rgba(59,130,246,0.9)' }} />
+              <MapSpinner size={12} color="rgba(59,130,246,0.9)" />
               <span className="text-[10px]" style={{ color: 'rgba(59,130,246,0.9)' }}>运行中...</span>
             </div>
           )}

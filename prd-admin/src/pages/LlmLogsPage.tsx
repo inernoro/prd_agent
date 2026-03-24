@@ -11,7 +11,7 @@ import { getAdminDocumentContent, getLlmLogDetail, getLlmLogs, getLlmLogsMeta, l
 import type { LlmLogsMetaAppCallerCode } from '@/services/contracts/llmLogs';
 import type { LlmRequestLog, LlmRequestLogListItem, UploadArtifact } from '@/types/admin';
 import { CheckCircle, ChevronDown, Clock, Copy, Database, Eraser, Hash, HelpCircle, ImagePlus, Layers, RefreshCw, Reply, ScanEye, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
-import { MapSpinner } from '@/components/ui/VideoLoader';
+import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { AppCallerKeyIcon, getModelTypeIcon } from '@/lib/appCallerUtils';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { UserAvatar } from '@/components/ui/UserAvatar';
@@ -1417,7 +1417,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
         <div className="flex-1 min-h-0 overflow-auto">
           <div className="divide-y divide-white/10">
           {loading ? (
-            <div className="py-12 text-center" style={{ color: 'var(--text-muted)' }}>加载中...</div>
+            <MapSectionLoader />
           ) : items.length === 0 ? (
             <div className="py-12 text-center" style={{ color: 'var(--text-muted)' }}>暂无日志</div>
           ) : (

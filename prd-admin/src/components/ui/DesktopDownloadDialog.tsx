@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
-import { Download, Loader2 } from 'lucide-react';
+import { Download } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 
 const GITHUB_REPO = 'inernoro/prd_agent';
 const GITHUB_RELEASES_URL = `https://github.com/${GITHUB_REPO}/releases/latest`;
@@ -160,7 +161,7 @@ export function DesktopDownloadDialog({ open, onOpenChange }: DesktopDownloadDia
 
           {loading ? (
             <div className="flex items-center justify-center py-8">
-              <Loader2 size={20} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
+              <MapSpinner size={20} color="var(--text-muted)" />
               <span className="ml-2 text-sm" style={{ color: 'var(--text-muted)' }}>获取最新版本...</span>
             </div>
           ) : (

@@ -1,3 +1,4 @@
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useEffect } from 'react';
 import { ArrowLeft, Link2, Copy, Trash2, Eye, RefreshCw } from 'lucide-react';
 import { useWorkflowStore } from '@/stores/workflowStore';
@@ -41,7 +42,7 @@ export function SharePanel() {
       </div>
 
       {/* Loading */}
-      {loading && <div className="text-center py-8 text-muted-foreground text-sm">加载中...</div>}
+      {loading && <MapSectionLoader />}
 
       {/* Empty */}
       {!loading && shares.length === 0 && (

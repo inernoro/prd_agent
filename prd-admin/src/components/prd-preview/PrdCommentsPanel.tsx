@@ -2,6 +2,7 @@
  * PRD 评论面板（Web 版）
  * 从 prd-desktop 移植，invoke() 替换为 apiRequest()。
  */
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest } from '@/services/real/apiClient';
 import { api } from '@/services/api';
@@ -151,7 +152,7 @@ export default function PrdCommentsPanel({ documentId, groupId, headingId, headi
         ) : null}
 
         {loading ? (
-          <div className="text-sm" style={{ color: 'var(--text-muted)' }}>加载中...</div>
+          <MapSectionLoader />
         ) : items.length === 0 ? (
           <div className="text-sm" style={{ color: 'var(--text-muted)' }}>暂无评论，来发表第一条。</div>
         ) : (

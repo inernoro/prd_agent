@@ -1,3 +1,4 @@
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useMemo, useState } from 'react';
 import {
   LayoutDashboard,
@@ -130,13 +131,7 @@ export function PermissionMatrix({
   };
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
-          加载中...
-        </div>
-      </div>
-    );
+    return <MapSectionLoader />;
   }
 
   return (

@@ -1,3 +1,4 @@
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useCallback, useEffect, useState } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
@@ -146,7 +147,7 @@ function SequencesTab() {
       )}
 
       {loading ? (
-        <div className="text-center py-8" style={{ color: 'var(--text-muted)' }}>加载中...</div>
+        <MapSectionLoader />
       ) : sequences.length === 0 ? (
         <div className="text-center py-8" style={{ color: 'var(--text-muted)' }}>
           暂无序列，点击"新建序列"开始
@@ -379,7 +380,7 @@ function TemplatesTab() {
       )}
 
       {loading ? (
-        <div className="text-center py-8" style={{ color: 'var(--text-muted)' }}>加载中...</div>
+        <MapSectionLoader />
       ) : templates.length === 0 ? (
         <div className="text-center py-8" style={{ color: 'var(--text-muted)' }}>
           暂无模板，点击"新建模板"开始
@@ -539,7 +540,7 @@ function AssetsTab() {
       )}
 
       {loading ? (
-        <div className="text-center py-8" style={{ color: 'var(--text-muted)' }}>加载中...</div>
+        <MapSectionLoader />
       ) : assets.length === 0 ? (
         <div className="text-center py-8" style={{ color: 'var(--text-muted)' }}>
           暂无素材，点击"添加素材"上传截图 URL
@@ -721,7 +722,7 @@ function EnrollmentsTab() {
       </div>
 
       {loading ? (
-        <div className="text-center py-8" style={{ color: 'var(--text-muted)' }}>加载中...</div>
+        <MapSectionLoader />
       ) : enrollments.length === 0 ? (
         <div className="text-center py-8" style={{ color: 'var(--text-muted)' }}>
           暂无发送记录

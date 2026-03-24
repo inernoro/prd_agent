@@ -57,6 +57,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { motion } from 'motion/react';
 
 // --- Utility ---
@@ -856,7 +857,7 @@ function CreateTransferDialog({
     <div className="flex flex-col gap-0" style={{ maxHeight: '65vh' }}>
       {loadingData ? (
         <div className="flex items-center justify-center py-16">
-          <RefreshCw size={20} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
+          <MapSpinner size={20} color="var(--text-muted)" />
         </div>
       ) : (
         <>

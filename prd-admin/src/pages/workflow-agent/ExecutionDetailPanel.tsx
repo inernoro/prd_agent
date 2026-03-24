@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   ArrowLeft, RefreshCw, RotateCcw, Share2, XCircle,
-  CheckCircle2, Clock, AlertCircle, Loader2, MinusCircle,
+  CheckCircle2, Clock, AlertCircle, MinusCircle,
   FileText, Download, ChevronDown, ChevronRight, Eye,
   ScrollText, LayoutList, Terminal, ExternalLink, PauseCircle, PlayCircle,
   Brain,
@@ -14,6 +14,7 @@ import { getCapsuleType } from './capsuleRegistry';
 import { connectSse } from '@/lib/useSseStream';
 import { api } from '@/services/api';
 import { ArtifactPreviewModal } from './ArtifactPreviewModal';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
 import type { SsePhase } from '@/lib/useSseStream';
 
@@ -36,7 +37,7 @@ interface LogEntry {
 
 const nodeStatusIcons: Record<string, React.ReactNode> = {
   pending: <Clock className="w-4 h-4 text-gray-400" />,
-  running: <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />,
+  running: <MapSpinner size={16} color="rgb(59, 130, 246)" />,
   completed: <CheckCircle2 className="w-4 h-4 text-green-500" />,
   failed: <AlertCircle className="w-4 h-4 text-red-500" />,
   skipped: <MinusCircle className="w-4 h-4 text-gray-400" />,
@@ -516,7 +517,7 @@ export function ExecutionDetailPanel() {
           </span>
           {isRunning && (
             <span className="flex items-center gap-1 text-xs text-blue-500">
-              <Loader2 className="w-3 h-3 animate-spin" />
+              <MapSpinner size={12} />
               实时监控中
             </span>
           )}
@@ -615,7 +616,7 @@ export function ExecutionDetailPanel() {
                     </span>
                   )}
                   {llmStreamActive && (
-                    <Loader2 className="w-3 h-3 animate-spin" style={{ color: 'rgba(139,92,246,0.7)' }} />
+                    <MapSpinner size={12} color="rgba(139,92,246,0.7)" />
                   )}
                   {!llmStreamActive && llmStreamContent && (
                     <CheckCircle2 className="w-3 h-3" style={{ color: 'rgba(34,197,94,0.8)' }} />
