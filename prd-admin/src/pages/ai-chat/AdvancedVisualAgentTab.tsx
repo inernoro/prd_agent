@@ -3486,6 +3486,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       } catch {
         // 澄清失败不阻断生图流程，静默降级使用原始 prompt
       }
+      // 智能模式也需要追加生图意图前缀，与直连模式保持一致
+      firstPrompt = `Generate an image based on the following description:\n${firstPrompt}`;
     } else {
       // 直连模式：跳过 AI 处理，仅加生图意图前缀后直接发给生图模型
       firstPrompt = stripModelMention(reqText) || stripModelMention(display) || '';
