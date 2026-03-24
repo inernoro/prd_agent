@@ -51,7 +51,7 @@ import { useLayoutStore } from '@/stores/layoutStore';
 import { useNavOrderStore } from '@/stores/navOrderStore';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { SystemDialogHost } from '@/components/ui/SystemDialogHost';
-import { SuspenseVideoLoader } from '@/components/ui/VideoLoader';
+import { InlinePageLoader } from '@/components/ui/VideoLoader';
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { Dialog } from '@/components/ui/Dialog';
 import { MobileDrawer } from '@/components/ui/MobileDrawer';
@@ -1278,8 +1278,8 @@ export default function AppShell() {
               isMobile ? 'px-[var(--mobile-padding,16px)] py-3' : fullBleedMain ? 'p-0' : isHomePage ? 'px-3 py-3' : 'px-5 py-5'
             )}
           >
-            <div className="flex-1 min-h-0">
-              <Suspense key={location.pathname} fallback={<SuspenseVideoLoader />}>
+            <div className="flex-1 min-h-0 relative">
+              <Suspense fallback={<InlinePageLoader />}>
                 <Outlet />
               </Suspense>
             </div>
