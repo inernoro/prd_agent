@@ -2524,21 +2524,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Step 2: switch branch if specified
       if (branch) {
         send('checkout', 'running', `正在切换到分支 ${branch}...`);
-        // Stash any dirty changes to prevent checkout failure
-        const statusResult = await shell.exec('git status --porcelain', { cwd: repoRoot });
-        const isDirty = statusResult.stdout.trim().length > 0;
-        if (isDirty) {
-          send('checkout', 'running', `工作目录有未提交变更，正在暂存...`);
-          await shell.exec('git stash --include-untracked', { cwd: repoRoot });
-        }
-        const checkoutResult = await shell.exec(`git checkout ${branch}`, { cwd: repoRoot });
+        // Use -f to discard tracked-file changes (safe: untracked files like .cds/state.json are untouched)
+        const checkoutResult = await shell.exec(`git checkout -f ${branch}`, { cwd: repoRoot });
         if (checkoutResult.exitCode !== 0) {
           // Try creating tracking branch from remote
-          const fallbackResult = await shell.exec(`git checkout -b ${branch} origin/${branch}`, { cwd: repoRoot });
+          const fallbackResult = await shell.exec(`git checkout -f -b ${branch} origin/${branch}`, { cwd: repoRoot });
           if (fallbackResult.exitCode !== 0) {
-            const errMsg = fallbackResult.stderr || fallbackResult.stdout || '未知错误';
-            send('checkout', 'error', `切换分支失败: ${errMsg.trim()}`);
-            sendSSE(res, 'error', { message: `无法切换到 ${branch}: ${errMsg.trim()}` });
+            const errMsg = (fallbackResult.stderr || fallbackResult.stdout || '未知错误').trim();
+            send('checkout', 'error', `切换分支失败: ${errMsg}`);
+            sendSSE(res, 'error', { message: `无法切换到 ${branch}: ${errMsg}` });
             res.end();
             return;
           }
