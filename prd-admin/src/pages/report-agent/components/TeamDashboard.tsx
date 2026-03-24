@@ -10,6 +10,7 @@ import {
   FileText,
   Loader2,
   LogOut,
+  Search,
   Sparkles,
   UserMinus,
   UserPlus,
@@ -91,6 +92,11 @@ export function TeamDashboard() {
 
   const [reportsView, setReportsView] = useState<TeamReportsViewData | null>(null);
   const [reportsLoading, setReportsLoading] = useState(false);
+  const [searchExpanded, setSearchExpanded] = useState(false);
+  const [searchDraft, setSearchDraft] = useState('');
+  const [activeKeyword, setActiveKeyword] = useState('');
+  const [isLoadingMoreSearch, setIsLoadingMoreSearch] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const [summaryView, setSummaryView] = useState<TeamSummaryViewData | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [generatingSummary, setGeneratingSummary] = useState(false);
@@ -162,7 +168,14 @@ export function TeamDashboard() {
       return;
     }
     setReportsLoading(true);
-    const res = await getTeamReportsView({ teamId: selectedTeamId, weekYear, weekNumber });
+    const res = await getTeamReportsView({
+      teamId: selectedTeamId,
+      weekYear,
+      weekNumber,
+      keyword: activeKeyword || undefined,
+      page: 1,
+      pageSize: 20,
+    });
     if (res.success && res.data) {
       setReportsView(res.data);
     } else {
@@ -170,7 +183,7 @@ export function TeamDashboard() {
       if (res.error?.message) toast.error(res.error.message);
     }
     setReportsLoading(false);
-  }, [selectedTeamId, weekYear, weekNumber]);
+  }, [activeKeyword, selectedTeamId, weekYear, weekNumber]);
 
   const loadSummaryView = useCallback(async () => {
     if (!selectedTeamId) {
@@ -253,6 +266,12 @@ export function TeamDashboard() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [closeMemberDrawer, memberDrawerVisible]);
 
+  useEffect(() => {
+    if (!searchExpanded) return;
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  }, [searchExpanded]);
+
   const members = useMemo(() => {
     const list = reportsView?.members ?? [];
     return list.slice().sort((a, b) => {
@@ -306,6 +325,68 @@ export function TeamDashboard() {
     toast.success('团队汇总已生成');
     await loadSummaryView();
   };
+
+  const handleSearchSubmit = useCallback(async () => {
+    const keyword = searchDraft.trim();
+    if (!keyword || !selectedTeamId) {
+      setSearchExpanded(false);
+      return;
+    }
+    setActiveKeyword(keyword);
+    setSearchExpanded(false);
+    setReportsLoading(true);
+    const res = await getTeamReportsView({
+      teamId: selectedTeamId,
+      weekYear,
+      weekNumber,
+      keyword,
+      page: 1,
+      pageSize: 20,
+    });
+    if (res.success && res.data) {
+      setReportsView(res.data);
+    } else {
+      if (res.error?.message) toast.error(res.error.message);
+    }
+    setReportsLoading(false);
+  }, [searchDraft, selectedTeamId, weekYear, weekNumber]);
+
+  const handleClearSearch = useCallback(async () => {
+    setSearchDraft('');
+    setActiveKeyword('');
+    if (!selectedTeamId) return;
+    setReportsLoading(true);
+    const res = await getTeamReportsView({ teamId: selectedTeamId, weekYear, weekNumber, page: 1, pageSize: 20 });
+    if (res.success && res.data) {
+      setReportsView(res.data);
+    } else if (res.error?.message) {
+      toast.error(res.error.message);
+    }
+    setReportsLoading(false);
+  }, [selectedTeamId, weekYear, weekNumber]);
+
+  const handleLoadMoreSearch = useCallback(async () => {
+    if (!selectedTeamId || !activeKeyword || !reportsView?.hasMore || isLoadingMoreSearch) return;
+    setIsLoadingMoreSearch(true);
+    const nextPage = (reportsView.page ?? 1) + 1;
+    const res = await getTeamReportsView({
+      teamId: selectedTeamId,
+      weekYear,
+      weekNumber,
+      keyword: activeKeyword,
+      page: nextPage,
+      pageSize: reportsView.pageSize || 20,
+    });
+    if (res.success && res.data) {
+      setReportsView((prev) => prev ? {
+        ...res.data,
+        items: [...prev.items, ...res.data.items],
+      } : res.data);
+    } else if (res.error?.message) {
+      toast.error(res.error.message);
+    }
+    setIsLoadingMoreSearch(false);
+  }, [activeKeyword, isLoadingMoreSearch, reportsView, selectedTeamId, weekNumber, weekYear]);
 
   const handleLeaveSelectedTeam = async () => {
     if (!selectedTeamId || !window.confirm('确认退出该团队？')) return;
@@ -588,18 +669,108 @@ export function TeamDashboard() {
                 </span>
               </div>
             </div>
-            {canAccessTeamAiSummary && (
-              <Button variant="secondary" size="sm" onClick={handleEnterSummary}>
-                <Sparkles size={13} />
-                团队周报AI分析
-              </Button>
-            )}
+            <div className="flex items-center gap-2 flex-wrap justify-end">
+              {activeKeyword && (
+                <button
+                  className="whitespace-nowrap inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-[12px] font-medium transition-colors"
+                  style={{
+                    color: 'rgba(59, 130, 246, 0.95)',
+                    background: 'rgba(59, 130, 246, 0.1)',
+                    border: '1px solid rgba(59, 130, 246, 0.2)',
+                  }}
+                  onClick={() => {
+                    setSearchDraft(activeKeyword);
+                    setSearchExpanded(true);
+                  }}
+                >
+                  <Search size={13} />
+                  搜索：{activeKeyword}
+                  <span
+                    className="inline-flex items-center justify-center rounded-full w-4 h-4"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void handleClearSearch();
+                    }}
+                    style={{ background: 'rgba(255,255,255,0.18)' }}
+                  >
+                    <X size={11} />
+                  </span>
+                </button>
+              )}
+              {searchExpanded ? (
+                <div
+                  className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg"
+                  style={{
+                    background: 'var(--bg-secondary)',
+                    boxShadow: 'inset 0 0 0 1px rgba(59, 130, 246, 0.16)',
+                  }}
+                >
+                  <Search size={13} style={{ color: 'var(--text-muted)' }} />
+                  <input
+                    ref={searchInputRef}
+                    className="w-[180px] text-[12px] bg-transparent outline-none"
+                    style={{ color: 'var(--text-primary)' }}
+                    value={searchDraft}
+                    placeholder="搜索团队周报关键词"
+                    onChange={(e) => setSearchDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        void handleSearchSubmit();
+                      }
+                      if (e.key === 'Escape') {
+                        setSearchExpanded(false);
+                      }
+                    }}
+                    onBlur={() => {
+                      if (!searchDraft.trim()) {
+                        setSearchExpanded(false);
+                      }
+                    }}
+                  />
+                </div>
+              ) : !activeKeyword ? (
+                <button
+                  className="w-8 h-8 rounded-lg inline-flex items-center justify-center transition-colors"
+                  style={{
+                    color: 'var(--text-secondary)',
+                    background: 'var(--bg-secondary)',
+                    border: '1px solid var(--border-primary)',
+                  }}
+                  onClick={() => setSearchExpanded(true)}
+                  title="搜索团队周报"
+                  aria-label="搜索团队周报"
+                >
+                  <Search size={14} />
+                </button>
+              ) : null}
+              {canAccessTeamAiSummary && (
+                <Button variant="secondary" size="sm" onClick={handleEnterSummary}>
+                  <Sparkles size={13} />
+                  团队周报AI分析
+                </Button>
+              )}
+            </div>
           </div>
           <div className="px-5 py-4 max-h-[540px] overflow-auto">
             {reportsLoading ? (
               <div className="text-[12px] text-center py-10" style={{ color: 'var(--text-muted)' }}>加载中...</div>
             ) : (
               <div className="flex flex-col gap-3">
+                {activeKeyword && (
+                  <div className="flex items-center justify-between gap-3 flex-wrap px-1">
+                    <div className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+                      搜索结果：共找到 <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{reportsView?.total ?? 0}</span> 份匹配周报
+                    </div>
+                    <button
+                      className="text-[12px] inline-flex items-center gap-1.5 transition-opacity hover:opacity-80"
+                      style={{ color: 'var(--text-muted)' }}
+                      onClick={() => void handleClearSearch()}
+                    >
+                      <X size={12} />
+                      清空搜索
+                    </button>
+                  </div>
+                )}
                 {reportsView?.message && (
                   <div className="surface-inset rounded-xl px-3 py-2 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
                     {reportsView.message}
@@ -607,37 +778,56 @@ export function TeamDashboard() {
                 )}
                 {(reportsView?.items ?? []).length === 0 ? (
                   <div className="surface-inset rounded-xl px-4 py-8 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
-                    本周暂无可查看的已提交周报
+                    {activeKeyword
+                      ? reportsView?.visibilityScope === 'self_only'
+                        ? '你本周可见周报中没有找到匹配内容'
+                        : '本周团队周报中没有找到匹配内容'
+                      : '本周暂无可查看的已提交周报'}
                   </div>
                 ) : (
-                  reportsView?.items.map((item) => {
-                    const cfg = statusConfig[item.status] || statusConfig[WeeklyReportStatus.Submitted];
-                    const StatusIcon = cfg.icon;
-                    return (
-                      <button
-                        key={item.reportId}
-                        className="surface-row rounded-xl px-4 py-3 text-left flex items-center justify-between"
-                        onClick={() => openReportDetail(item.reportId)}
-                      >
-                        <div className="min-w-0">
-                          <div className="text-[13px] font-medium truncate">{item.userName || item.userId}</div>
-                          <div className="mt-1 flex items-center flex-wrap gap-2 text-[11px]">
-                            <span className="flex items-center gap-1 px-2 py-0.5 rounded-full font-medium" style={{ color: cfg.color, background: cfg.bg }}>
-                              <StatusIcon size={10} />
-                              {cfg.label}
-                            </span>
-                            <span style={{ color: 'var(--text-muted)' }}>
-                              提交于 {item.submittedAt ? new Date(item.submittedAt).toLocaleString() : '-'}
-                            </span>
+                  <>
+                    {reportsView?.items.map((item) => {
+                      const cfg = statusConfig[item.status] || statusConfig[WeeklyReportStatus.Submitted];
+                      const StatusIcon = cfg.icon;
+                      return (
+                        <button
+                          key={item.reportId}
+                          className="surface-row rounded-xl px-4 py-3 text-left flex items-center justify-between"
+                          onClick={() => openReportDetail(item.reportId)}
+                        >
+                          <div className="min-w-0">
+                            <div className="text-[13px] font-medium truncate">{item.userName || item.userId}</div>
+                            <div className="mt-1 flex items-center flex-wrap gap-2 text-[11px]">
+                              <span className="flex items-center gap-1 px-2 py-0.5 rounded-full font-medium" style={{ color: cfg.color, background: cfg.bg }}>
+                                <StatusIcon size={10} />
+                                {cfg.label}
+                              </span>
+                              <span style={{ color: 'var(--text-muted)' }}>
+                                提交于 {item.submittedAt ? new Date(item.submittedAt).toLocaleString() : '-'}
+                              </span>
+                            </div>
                           </div>
-                        </div>
-                        <Button variant="secondary" size="sm" onClick={(e) => { e.stopPropagation(); openReportDetail(item.reportId); }}>
-                          <ExternalLink size={13} />
-                          查看
+                          <Button variant="secondary" size="sm" onClick={(e) => { e.stopPropagation(); openReportDetail(item.reportId); }}>
+                            <ExternalLink size={13} />
+                            查看
+                          </Button>
+                        </button>
+                      );
+                    })}
+                    {activeKeyword && reportsView?.hasMore && (
+                      <div className="flex justify-center pt-1">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => void handleLoadMoreSearch()}
+                          disabled={isLoadingMoreSearch}
+                          className="whitespace-nowrap"
+                        >
+                          {isLoadingMoreSearch ? '加载中...' : '加载更多结果'}
                         </Button>
-                      </button>
-                    );
-                  })
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             )}

@@ -2138,7 +2138,7 @@ sequenceDiagram
 - `POST /api/report-agent/reports/{id}/views` — 记录浏览事件（每次打开/刷新均记录，精确到秒）
 - `GET /api/report-agent/reports/{id}/views-summary` — 浏览汇总（去重人数、总浏览次数、最近浏览时间、单人浏览次数、常来标记）
 - `GET /api/report-agent/teams/{id}/dashboard` — 团队面板
-- `GET /api/report-agent/teams/{id}/reports/view` — 团队周报列表视图（按权限返回 full_team / self_only）
+- `GET /api/report-agent/teams/{id}/reports/view` — 团队周报列表视图（按权限返回 full_team / self_only，支持当前团队当前周次内关键词搜索与分页元信息）
 - `GET /api/report-agent/teams/{id}/summary/view` — 团队周报AI分析视图（按权限返回 full_team / self_only）
 
 **权限定义**：

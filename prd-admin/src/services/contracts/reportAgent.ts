@@ -724,6 +724,11 @@ export interface TeamReportsViewData {
   visibilityScope: TeamSummaryVisibilityScope;
   stats: TeamReportsViewStats;
   items: TeamReportListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+  keyword?: string;
   members: TeamDashboardMember[];
   message?: string;
   canGenerateSummary: boolean;
@@ -753,6 +758,9 @@ export type GetTeamReportsViewContract = (input: {
   teamId: string;
   weekYear?: number;
   weekNumber?: number;
+  keyword?: string;
+  page?: number;
+  pageSize?: number;
 }) => Promise<ApiResponse<TeamReportsViewData>>;
 
 // ========== Phase 4: History Trends ==========

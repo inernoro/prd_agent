@@ -631,6 +631,9 @@ export const getTeamReportsViewReal: GetTeamReportsViewContract = async (input) 
   const qs = new URLSearchParams();
   if (input.weekYear != null) qs.set('weekYear', String(input.weekYear));
   if (input.weekNumber != null) qs.set('weekNumber', String(input.weekNumber));
+  if (input.keyword) qs.set('keyword', input.keyword);
+  if (input.page != null) qs.set('page', String(input.page));
+  if (input.pageSize != null) qs.set('pageSize', String(input.pageSize));
   const q = qs.toString();
   return await apiRequest<TeamReportsViewData>(
     `${api.reportAgent.teams.reportsView(encodeURIComponent(input.teamId))}${q ? `?${q}` : ''}`,

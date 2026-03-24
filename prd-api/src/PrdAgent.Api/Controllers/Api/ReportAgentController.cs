@@ -3158,10 +3158,16 @@ public class ReportAgentController : ControllerBase
     /// </summary>
     [HttpGet("teams/{id}/reports/view")]
     public async Task<IActionResult> GetTeamReportsView(string id,
-        [FromQuery] int? weekYear, [FromQuery] int? weekNumber)
+        [FromQuery] int? weekYear, [FromQuery] int? weekNumber,
+        [FromQuery] string? keyword = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20)
     {
         var userId = GetUserId();
         var username = GetUsername();
+        page = Math.Max(page, 1);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+        var normalizedKeyword = string.IsNullOrWhiteSpace(keyword) ? null : keyword.Trim();
         var team = await _db.ReportTeams.Find(t => t.Id == id).FirstOrDefaultAsync();
         if (team == null)
             return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "团队不存在"));
@@ -3200,29 +3206,14 @@ public class ReportAgentController : ControllerBase
         var pendingCount = Math.Max(0, allMembers.Count - submittedCount);
 
         string? message = null;
-        List<object> items;
+        List<WeeklyReport> visibleReports;
         List<object> members;
 
         if (canViewAllReports)
         {
-            items = weekReports
+            visibleReports = weekReports
                 .Where(r => submittedStatuses.Contains(r.Status))
                 .OrderByDescending(r => r.SubmittedAt ?? r.UpdatedAt)
-                .Select(r => new
-                {
-                    reportId = r.Id,
-                    userId = r.UserId,
-                    userName = r.UserName,
-                    avatarFileName = r.AvatarFileName,
-                    status = r.Status,
-                    submittedAt = r.SubmittedAt,
-                    updatedAt = r.UpdatedAt,
-                    teamId = r.TeamId,
-                    teamName = r.TeamName,
-                    weekYear = r.WeekYear,
-                    weekNumber = r.WeekNumber
-                })
-                .Cast<object>()
                 .ToList();
 
             var reportMap = weekReports.ToDictionary(r => r.UserId);
@@ -3245,23 +3236,10 @@ public class ReportAgentController : ControllerBase
                 .OrderByDescending(r => r.SubmittedAt ?? r.UpdatedAt)
                 .FirstOrDefault();
 
-            items = new List<object>();
+            visibleReports = new List<WeeklyReport>();
             if (selfVisibleReport != null)
             {
-                items.Add(new
-                {
-                    reportId = selfVisibleReport.Id,
-                    userId = selfVisibleReport.UserId,
-                    userName = selfVisibleReport.UserName,
-                    avatarFileName = selfVisibleReport.AvatarFileName,
-                    status = selfVisibleReport.Status,
-                    submittedAt = selfVisibleReport.SubmittedAt,
-                    updatedAt = selfVisibleReport.UpdatedAt,
-                    teamId = selfVisibleReport.TeamId,
-                    teamName = selfVisibleReport.TeamName,
-                    weekYear = selfVisibleReport.WeekYear,
-                    weekNumber = selfVisibleReport.WeekNumber
-                });
+                visibleReports.Add(selfVisibleReport);
                 message = "当前团队未公开成员周报，仅展示你本周已提交周报";
             }
             else
@@ -3286,6 +3264,43 @@ public class ReportAgentController : ControllerBase
             };
         }
 
+        if (normalizedKeyword != null)
+        {
+            var escapedKeyword = Regex.Escape(normalizedKeyword);
+            var regex = new Regex(escapedKeyword, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            visibleReports = visibleReports
+                .Where(report =>
+                    (!string.IsNullOrWhiteSpace(report.UserName) && regex.IsMatch(report.UserName)) ||
+                    (!string.IsNullOrWhiteSpace(report.TeamName) && regex.IsMatch(report.TeamName)) ||
+                    (!string.IsNullOrWhiteSpace(report.ReturnReason) && regex.IsMatch(report.ReturnReason)) ||
+                    report.Sections.Any(section =>
+                        (!string.IsNullOrWhiteSpace(section.TemplateSection?.Title) && regex.IsMatch(section.TemplateSection.Title)) ||
+                        section.Items.Any(item => !string.IsNullOrWhiteSpace(item.Content) && regex.IsMatch(item.Content))
+                    ))
+                .ToList();
+        }
+
+        var total = visibleReports.Count;
+        var pagedReports = visibleReports
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(r => new
+            {
+                reportId = r.Id,
+                userId = r.UserId,
+                userName = r.UserName,
+                avatarFileName = r.AvatarFileName,
+                status = r.Status,
+                submittedAt = r.SubmittedAt,
+                updatedAt = r.UpdatedAt,
+                teamId = r.TeamId,
+                teamName = r.TeamName,
+                weekYear = r.WeekYear,
+                weekNumber = r.WeekNumber
+            })
+            .Cast<object>()
+            .ToList();
+
         return Ok(ApiResponse<object>.Ok(new
         {
             team,
@@ -3300,7 +3315,12 @@ public class ReportAgentController : ControllerBase
                 submittedCount,
                 pendingCount
             },
-            items,
+            items = pagedReports,
+            total,
+            page,
+            pageSize,
+            hasMore = page * pageSize < total,
+            keyword = normalizedKeyword,
             members,
             message,
             canGenerateSummary,
