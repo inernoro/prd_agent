@@ -210,6 +210,35 @@ const PRD_MD_STYLE = `
     }
   }
 
+  /* 配图卡片：图文叠层 hover 效果 */
+  .marker-card-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    background: linear-gradient(to top, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.4) 50%, transparent 100%);
+    opacity: 0;
+    transition: opacity 0.25s ease;
+    pointer-events: none;
+    border-radius: inherit;
+    padding: 10px;
+  }
+  .marker-card-image-wrap:hover .marker-card-overlay {
+    opacity: 1;
+  }
+  .marker-card-overlay-text {
+    font-size: 12px;
+    line-height: 1.5;
+    color: rgba(255,255,255,0.88);
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    word-break: break-all;
+  }
+
   /* 文章内图片显示尺寸控制 */
   .prd-md img[data-marker-idx] {
     max-width: var(--img-display-size, 50%) !important;
@@ -454,6 +483,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const thinkingPanelRef = useRef<HTMLDivElement>(null); // 思考面板的 ref（自动滚动到底部）
   const isStreamingRef = useRef<boolean>(false); // 标记是否正在流式输出
   const [glowingMarkers, setGlowingMarkers] = useState<Set<number>>(new Set()); // 正在播放入场动画的 marker 卡片
+  const [expandedMarkerIdx, setExpandedMarkerIdx] = useState<number | null>(null); // 当前展开编辑的配图卡片
   const knownMarkerIndicesRef = useRef<Set<number>>(new Set()); // 已知的 marker 索引（用于检测新增）
   const [imageDisplaySize, setImageDisplaySize] = useState(50); // 文章内图片显示尺寸百分比
   const [rawMarkerOutput, setRawMarkerOutput] = useState(''); // Anchor 模式下 LLM 原始输出（用于视觉反馈）
@@ -2834,156 +2864,123 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 const src =
                   String(it.assetUrl || it.url || '').trim() ||
                   (it.base64 ? (it.base64.startsWith('data:') ? it.base64 : `data:image/png;base64,${it.base64}`) : '');
-                const showPlaceholder = it.status === 'running' || it.status === 'parsing'; // 生图和解析时都显示动画
+                const showPlaceholder = it.status === 'running' || it.status === 'parsing';
                 const canShow = Boolean(src) && it.status === 'done';
                 const hasImage = Boolean(String(it.assetUrl || it.url || '').trim() || it.base64);
                 const genLabel = hasImage ? '重新生成' : '生成图片';
                 const genTitle = hasImage ? '重新生成该配图（会替换左侧预览中的对应插图）' : '生成该配图（会插入左侧预览中对应 [插图] 位置）';
 
                 const isGlowing = glowingMarkers.has(it.markerIndex);
+                // done 且未展开 → 折叠模式（图片为主，hover 显示 prompt）
+                const isCollapsed = it.status === 'done' && expandedMarkerIdx !== it.markerIndex;
 
-                return (
+                const statusBadge = (
                   <div
-                  key={it.markerIndex}
-                  className="surface-inset p-2.5 rounded"
-                  style={{
-                    position: 'relative',
-                  }}
-                >
-                  {/* 入场发光边框动画 */}
-                  {isGlowing && (
-                    <div
-                      className="marker-card-glow-entrance"
-                      onAnimationEnd={() => {
-                        setGlowingMarkers((prev) => {
-                          const next = new Set(prev);
-                          next.delete(it.markerIndex);
-                          return next;
-                        });
-                      }}
-                    />
-                  )}
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
-                      配图 {idx + 1}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {/* 尺寸选择器 */}
-                      <ImageSizePicker
-                        sizesByResolution={sizesByResolutionForPicker}
-                        value={it.planItem?.size || '1024x1024'}
-                        onChange={(s) => {
-                          const updatedPlanItem = { ...(it.planItem || { prompt: it.draftText || it.markerText, count: 1 }), size: s };
-                          setMarkerRunItems((prev) =>
-                            prev.map((x) =>
-                              x.markerIndex === it.markerIndex
-                                ? { ...x, planItem: updatedPlanItem }
-                                : x
-                            )
-                          );
-                          // 持久化尺寸到后端
-                          void updateMarkerStatus(it.markerIndex, {
-                            planItem: { prompt: updatedPlanItem.prompt, count: updatedPlanItem.count ?? 1, size: s },
-                          });
-                        }}
-                        disabled={it.status === 'running' || it.status === 'parsing'}
-                      />
-                      {/* 状态标签 */}
-                      <div
-                        className="text-[11px] px-2 py-0.5 rounded-full font-semibold"
-                        style={{
-                          background:
-                            it.status === 'done'
-                              ? 'rgba(34, 197, 94, 0.12)'
-                              : it.status === 'error'
-                                ? 'rgba(239, 68, 68, 0.12)'
-                                : it.status === 'running' || it.status === 'parsing'
-                                  ? 'rgba(250, 204, 21, 0.12)'
-                                  : 'var(--bg-input-hover)',
-                          border:
-                            it.status === 'done'
-                              ? '1px solid rgba(34, 197, 94, 0.28)'
-                              : it.status === 'error'
-                                ? '1px solid rgba(239, 68, 68, 0.28)'
-                                : it.status === 'running' || it.status === 'parsing'
-                                  ? '1px solid rgba(250, 204, 21, 0.24)'
-                                  : '1px solid var(--border-default)',
-                          color:
-                            it.status === 'done'
-                              ? 'rgba(34, 197, 94, 0.95)'
-                              : it.status === 'error'
-                                ? 'rgba(239, 68, 68, 0.95)'
-                                : it.status === 'running' || it.status === 'parsing'
-                                  ? 'rgba(250, 204, 21, 0.95)'
-                                  : 'var(--text-secondary)',
-                        }}
-                        title={it.errorMessage || ''}
-                      >
-                        {statusLabel}
-                      </div>
-                    </div>
-                  </div>
-
-                  {it.errorMessage ? (
-                    <div className="mt-2 text-xs" style={{ color: 'rgba(239,68,68,0.92)' }}>
-                      {it.errorMessage}
-                    </div>
-                  ) : null}
-
-                  <div
-                    className="mt-1.5 rounded-[10px] overflow-hidden relative group"
+                    className="text-[11px] px-2 py-0.5 rounded-full font-semibold"
                     style={{
-                      height: 120,
-                      background: 'rgba(0,0,0,0.18)',
-                      border: '1px solid var(--border-default)',
-                      cursor: canShow ? 'pointer' : 'default',
+                      background:
+                        it.status === 'done'
+                          ? 'rgba(34, 197, 94, 0.12)'
+                          : it.status === 'error'
+                            ? 'rgba(239, 68, 68, 0.12)'
+                            : it.status === 'running' || it.status === 'parsing'
+                              ? 'rgba(250, 204, 21, 0.12)'
+                              : 'var(--bg-input-hover)',
+                      border:
+                        it.status === 'done'
+                          ? '1px solid rgba(34, 197, 94, 0.28)'
+                          : it.status === 'error'
+                            ? '1px solid rgba(239, 68, 68, 0.28)'
+                            : it.status === 'running' || it.status === 'parsing'
+                              ? '1px solid rgba(250, 204, 21, 0.24)'
+                              : '1px solid var(--border-default)',
+                      color:
+                        it.status === 'done'
+                          ? 'rgba(34, 197, 94, 0.95)'
+                          : it.status === 'error'
+                            ? 'rgba(239, 68, 68, 0.95)'
+                            : it.status === 'running' || it.status === 'parsing'
+                              ? 'rgba(250, 204, 21, 0.95)'
+                              : 'var(--text-secondary)',
                     }}
-                    onClick={() => {
-                      if (!canShow) return;
-                      const allImages = markerRunItems
-                        .filter(x => x.assetUrl || x.url || x.base64)
-                        .map((x, i) => ({
-                          url: x.assetUrl || x.url || (x.base64?.startsWith('data:') ? x.base64 : `data:image/png;base64,${x.base64}`) || '',
-                          alt: `配图 ${i + 1}`,
-                        }));
-                      const currentIdx = allImages.findIndex((_, i) => {
-                        const item = markerRunItems.filter(x => x.assetUrl || x.url || x.base64)[i];
-                        return item?.markerIndex === it.markerIndex;
-                      });
-                      setImagePreviewIndex(currentIdx >= 0 ? currentIdx : 0);
-                      setImagePreviewOpen(true);
-                    }}
+                    title={it.errorMessage || ''}
                   >
-                    {showPlaceholder ? (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-                        {it.status === 'parsing' ? (
-                          <>
-                            <Loader2 size={28} className="animate-spin" style={{ color: 'rgba(250, 204, 21, 0.7)' }} />
-                            <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.5)' }}>解析尺寸…</span>
-                          </>
-                        ) : (
-                          <div style={{ width: '100%', height: '100%', maxWidth: 120, maxHeight: 120, aspectRatio: '1' }}>
-                            <PrdPetalBreathingLoader fill />
-                          </div>
-                        )}
-                      </div>
-                    ) : null}
-                    {canShow ? (
-                      <>
+                    {statusLabel}
+                  </div>
+                );
+
+                // ─── 折叠模式：图片为主体，hover 浮现 prompt ───
+                if (isCollapsed) {
+                  return (
+                    <div
+                      key={it.markerIndex}
+                      className="surface-inset rounded overflow-hidden"
+                      style={{ position: 'relative' }}
+                    >
+                      {isGlowing && (
+                        <div
+                          className="marker-card-glow-entrance"
+                          onAnimationEnd={() => {
+                            setGlowingMarkers((prev) => {
+                              const next = new Set(prev);
+                              next.delete(it.markerIndex);
+                              return next;
+                            });
+                          }}
+                        />
+                      )}
+                      {/* 图片区域 + hover 叠层 */}
+                      <div
+                        className="marker-card-image-wrap relative group"
+                        style={{
+                          height: 180,
+                          background: 'rgba(0,0,0,0.18)',
+                          cursor: 'pointer',
+                        }}
+                        onClick={() => {
+                          // 双击图片预览大图，单击展开编辑
+                          setExpandedMarkerIdx(it.markerIndex);
+                        }}
+                        onDoubleClick={(e) => {
+                          e.stopPropagation();
+                          if (!canShow) return;
+                          const allImages = markerRunItems
+                            .filter(x => x.assetUrl || x.url || x.base64)
+                            .map((x, i) => ({
+                              url: x.assetUrl || x.url || (x.base64?.startsWith('data:') ? x.base64 : `data:image/png;base64,${x.base64}`) || '',
+                              alt: `配图 ${i + 1}`,
+                            }));
+                          const currentIdx = allImages.findIndex((_, i) => {
+                            const item = markerRunItems.filter(x => x.assetUrl || x.url || x.base64)[i];
+                            return item?.markerIndex === it.markerIndex;
+                          });
+                          setImagePreviewIndex(currentIdx >= 0 ? currentIdx : 0);
+                          setImagePreviewOpen(true);
+                        }}
+                      >
                         <img src={src} alt={`img-${idx + 1}`} className="w-full h-full block" style={{ objectFit: 'contain' }} />
 
-                        {/* Copy and Download icons */}
+                        {/* hover 浮层：prompt 文字 */}
+                        <div className="marker-card-overlay">
+                          <div className="marker-card-overlay-text">{it.draftText || it.markerText}</div>
+                        </div>
+
+                        {/* 左下角标签 + 状态 */}
+                        <div className="absolute bottom-2 left-2 flex items-center gap-1.5 opacity-70 group-hover:opacity-0 transition-opacity">
+                          <span className="text-[11px] font-medium" style={{ color: 'rgba(255,255,255,0.9)', textShadow: '0 1px 3px rgba(0,0,0,0.6)' }}>
+                            配图 {idx + 1}
+                          </span>
+                          {statusBadge}
+                        </div>
+
+                        {/* 右下角操作按钮 */}
                         <div
-                          className="absolute bottom-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                          className="absolute bottom-2 right-2 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity"
                           onClick={(e) => e.stopPropagation()}
                         >
                           <button
-                            className="p-2 rounded-lg"
-                            style={{
-                              ...glassFloatingButton,
-                              background: 'rgba(0, 0, 0, 0.6)',
-                              border: '1px solid rgba(255, 255, 255, 0.2)',
-                            }}
+                            className="p-1.5 rounded-lg"
+                            style={{ ...glassFloatingButton, background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(255,255,255,0.2)' }}
                             onClick={async () => {
                               try {
                                 await navigator.clipboard.writeText(src);
@@ -2994,18 +2991,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             }}
                             title="复制图片链接"
                           >
-                            <Copy size={16} style={{ color: 'white' }} />
+                            <Copy size={14} style={{ color: 'white' }} />
                           </button>
                           <button
-                            className="p-2 rounded-lg"
-                            style={{
-                              ...glassFloatingButton,
-                              background: 'rgba(0, 0, 0, 0.6)',
-                              border: '1px solid rgba(255, 255, 255, 0.2)',
-                            }}
+                            className="p-1.5 rounded-lg"
+                            style={{ ...glassFloatingButton, background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(255,255,255,0.2)' }}
                             onClick={async () => {
                               try {
-                                // 使用 fetch + blob 方式下载，避免跨域问题导致打开而不是下载
                                 const response = await fetch(src);
                                 const blob = await response.blob();
                                 const blobUrl = URL.createObjectURL(blob);
@@ -3016,7 +3008,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 URL.revokeObjectURL(blobUrl);
                               } catch (error) {
                                 console.error('Download failed:', error);
-                                // 如果 fetch 失败（可能是跨域），尝试直接下载
                                 const link = document.createElement('a');
                                 link.href = src;
                                 link.download = `配图-${idx + 1}.png`;
@@ -3026,91 +3017,290 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             }}
                             title="下载图片"
                           >
-                            <DownloadCloud size={16} style={{ color: 'white' }} />
+                            <DownloadCloud size={14} style={{ color: 'white' }} />
                           </button>
                         </div>
-                      </>
-                    ) : !showPlaceholder ? (
-                      (() => {
-                        // 显示按当前选中尺寸的比例预览框
-                        const cs = it.planItem?.size || '1024x1024';
-                        const [cw, ch] = cs.split(/[xX×]/).map(Number);
-                        const cRatio = (cw && ch) ? cw / ch : 1;
-                        const containerH = 100; // 预留上下 padding
-                        const containerW = 280; // 约等于卡片宽度
-                        // 在容器内按比例显示，不超出边界
-                        let previewW: number, previewH: number;
-                        if (cRatio >= containerW / containerH) {
-                          previewW = Math.min(containerW, 240);
-                          previewH = Math.round(previewW / cRatio);
-                        } else {
-                          previewH = Math.min(containerH, 90);
-                          previewW = Math.round(previewH * cRatio);
-                        }
-                        return (
-                          <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-xs" style={{ color: 'var(--text-muted)' }}>
-                            <div
-                              className="rounded-lg flex items-center justify-center"
-                              style={{
-                                width: previewW,
-                                height: previewH,
-                                background: 'var(--nested-block-bg)',
-                                border: '1.5px dashed rgba(99, 102, 241, 0.3)',
-                                transition: 'width 0.2s, height 0.2s',
-                              }}
-                            >
-                              <ImageIcon size={18} style={{ opacity: 0.4 }} />
-                            </div>
-                          </div>
-                        );
-                      })()
+                      </div>
+
+                      {/* 精简操作栏 */}
+                      <div className="px-2.5 py-1.5 flex items-center justify-between gap-2">
+                        <ImageSizePicker
+                          sizesByResolution={sizesByResolutionForPicker}
+                          value={it.planItem?.size || '1024x1024'}
+                          onChange={(s) => {
+                            const updatedPlanItem = { ...(it.planItem || { prompt: it.draftText || it.markerText, count: 1 }), size: s };
+                            setMarkerRunItems((prev) =>
+                              prev.map((x) =>
+                                x.markerIndex === it.markerIndex
+                                  ? { ...x, planItem: updatedPlanItem }
+                                  : x
+                              )
+                            );
+                            void updateMarkerStatus(it.markerIndex, {
+                              planItem: { prompt: updatedPlanItem.prompt, count: updatedPlanItem.count ?? 1, size: s },
+                            });
+                          }}
+                          disabled={false}
+                        />
+                        <div className="flex items-center gap-1.5">
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => locateMarkerInPreview(it.markerIndex)}
+                            title="定位到正文中的配图标记位置"
+                          >
+                            <MapPin size={14} />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            disabled={!imageGenModel}
+                            onClick={() => void handleRegenerateOne(it.markerIndex)}
+                            title={genTitle}
+                          >
+                            <Sparkles size={14} />
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+
+                // ─── 展开模式：idle / parsed / running / error / done+expanded ───
+                return (
+                  <div
+                    key={it.markerIndex}
+                    className="surface-inset p-2.5 rounded"
+                    style={{ position: 'relative' }}
+                  >
+                    {isGlowing && (
+                      <div
+                        className="marker-card-glow-entrance"
+                        onAnimationEnd={() => {
+                          setGlowingMarkers((prev) => {
+                            const next = new Set(prev);
+                            next.delete(it.markerIndex);
+                            return next;
+                          });
+                        }}
+                      />
+                    )}
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
+                        配图 {idx + 1}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <ImageSizePicker
+                          sizesByResolution={sizesByResolutionForPicker}
+                          value={it.planItem?.size || '1024x1024'}
+                          onChange={(s) => {
+                            const updatedPlanItem = { ...(it.planItem || { prompt: it.draftText || it.markerText, count: 1 }), size: s };
+                            setMarkerRunItems((prev) =>
+                              prev.map((x) =>
+                                x.markerIndex === it.markerIndex
+                                  ? { ...x, planItem: updatedPlanItem }
+                                  : x
+                              )
+                            );
+                            void updateMarkerStatus(it.markerIndex, {
+                              planItem: { prompt: updatedPlanItem.prompt, count: updatedPlanItem.count ?? 1, size: s },
+                            });
+                          }}
+                          disabled={it.status === 'running' || it.status === 'parsing'}
+                        />
+                        {statusBadge}
+                      </div>
+                    </div>
+
+                    {it.errorMessage ? (
+                      <div className="mt-2 text-xs" style={{ color: 'rgba(239,68,68,0.92)' }}>
+                        {it.errorMessage}
+                      </div>
                     ) : null}
-                  </div>
 
-                  <textarea
-                    value={it.draftText}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setMarkerRunItems((prev) => prev.map((x) => (x.markerIndex === it.markerIndex ? { ...x, draftText: v, planItem: null } : x)));
-                    }}
-                    className="mt-1.5 w-full rounded-[10px] px-2.5 py-1.5 text-[12px] outline-none resize-none prd-field"
-                    style={{ minHeight: 56 }}
-                    placeholder="可编辑后右下角生成图片 / 重新生成"
-                    disabled={it.status === 'running' || it.status === 'parsing'}
-                  />
+                    <div
+                      className="mt-1.5 rounded-[10px] overflow-hidden relative group"
+                      style={{
+                        height: canShow ? 160 : 120,
+                        background: 'rgba(0,0,0,0.18)',
+                        border: '1px solid var(--border-default)',
+                        cursor: canShow ? 'pointer' : 'default',
+                      }}
+                      onClick={() => {
+                        if (!canShow) return;
+                        const allImages = markerRunItems
+                          .filter(x => x.assetUrl || x.url || x.base64)
+                          .map((x, i) => ({
+                            url: x.assetUrl || x.url || (x.base64?.startsWith('data:') ? x.base64 : `data:image/png;base64,${x.base64}`) || '',
+                            alt: `配图 ${i + 1}`,
+                          }));
+                        const currentIdx = allImages.findIndex((_, i) => {
+                          const item = markerRunItems.filter(x => x.assetUrl || x.url || x.base64)[i];
+                          return item?.markerIndex === it.markerIndex;
+                        });
+                        setImagePreviewIndex(currentIdx >= 0 ? currentIdx : 0);
+                        setImagePreviewOpen(true);
+                      }}
+                    >
+                      {showPlaceholder ? (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+                          {it.status === 'parsing' ? (
+                            <>
+                              <Loader2 size={28} className="animate-spin" style={{ color: 'rgba(250, 204, 21, 0.7)' }} />
+                              <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.5)' }}>解析尺寸…</span>
+                            </>
+                          ) : (
+                            <div style={{ width: '100%', height: '100%', maxWidth: 120, maxHeight: 120, aspectRatio: '1' }}>
+                              <PrdPetalBreathingLoader fill />
+                            </div>
+                          )}
+                        </div>
+                      ) : null}
+                      {canShow ? (
+                        <>
+                          <img src={src} alt={`img-${idx + 1}`} className="w-full h-full block" style={{ objectFit: 'contain' }} />
+                          <div
+                            className="absolute bottom-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <button
+                              className="p-2 rounded-lg"
+                              style={{ ...glassFloatingButton, background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(255,255,255,0.2)' }}
+                              onClick={async () => {
+                                try {
+                                  await navigator.clipboard.writeText(src);
+                                  toast.success('已复制', '图片链接已复制到剪贴板');
+                                } catch (error) {
+                                  console.error('Copy failed:', error);
+                                }
+                              }}
+                              title="复制图片链接"
+                            >
+                              <Copy size={16} style={{ color: 'white' }} />
+                            </button>
+                            <button
+                              className="p-2 rounded-lg"
+                              style={{ ...glassFloatingButton, background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(255,255,255,0.2)' }}
+                              onClick={async () => {
+                                try {
+                                  const response = await fetch(src);
+                                  const blob = await response.blob();
+                                  const blobUrl = URL.createObjectURL(blob);
+                                  const link = document.createElement('a');
+                                  link.href = blobUrl;
+                                  link.download = `配图-${idx + 1}.png`;
+                                  link.click();
+                                  URL.revokeObjectURL(blobUrl);
+                                } catch (error) {
+                                  console.error('Download failed:', error);
+                                  const link = document.createElement('a');
+                                  link.href = src;
+                                  link.download = `配图-${idx + 1}.png`;
+                                  link.target = '_blank';
+                                  link.click();
+                                }
+                              }}
+                              title="下载图片"
+                            >
+                              <DownloadCloud size={16} style={{ color: 'white' }} />
+                            </button>
+                          </div>
+                        </>
+                      ) : !showPlaceholder ? (
+                        (() => {
+                          const cs = it.planItem?.size || '1024x1024';
+                          const [cw, ch] = cs.split(/[xX×]/).map(Number);
+                          const cRatio = (cw && ch) ? cw / ch : 1;
+                          const containerH = 100;
+                          const containerW = 280;
+                          let previewW: number, previewH: number;
+                          if (cRatio >= containerW / containerH) {
+                            previewW = Math.min(containerW, 240);
+                            previewH = Math.round(previewW / cRatio);
+                          } else {
+                            previewH = Math.min(containerH, 90);
+                            previewW = Math.round(previewH * cRatio);
+                          }
+                          return (
+                            <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+                              <div
+                                className="rounded-lg flex items-center justify-center"
+                                style={{
+                                  width: previewW,
+                                  height: previewH,
+                                  background: 'var(--nested-block-bg)',
+                                  border: '1.5px dashed rgba(99, 102, 241, 0.3)',
+                                  transition: 'width 0.2s, height 0.2s',
+                                }}
+                              >
+                                <ImageIcon size={18} style={{ opacity: 0.4 }} />
+                              </div>
+                            </div>
+                          );
+                        })()
+                      ) : null}
+                    </div>
 
-                  <div className="mt-1.5 flex items-center justify-between gap-2">
-                    <Button
-                      size="sm"
-                      variant="secondary"
+                    <textarea
+                      value={it.draftText}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setMarkerRunItems((prev) => prev.map((x) => (x.markerIndex === it.markerIndex ? { ...x, draftText: v, planItem: null } : x)));
+                      }}
+                      className="mt-1.5 w-full rounded-[10px] px-2.5 py-1.5 text-[12px] outline-none resize-none prd-field"
+                      style={{ minHeight: 56 }}
+                      placeholder="可编辑后右下角生成图片 / 重新生成"
                       disabled={it.status === 'running' || it.status === 'parsing'}
-                      onClick={() => void handleDeleteMarker(it.markerIndex)}
-                      title="删除该配图提示词（同时移除文章中的对应 [插图] 标记）"
-                    >
-                      <Trash2 size={14} />
-                      删除
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => locateMarkerInPreview(it.markerIndex)}
-                      title="定位到正文中的配图标记位置"
-                    >
-                      <MapPin size={14} />
-                      定位
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      disabled={it.status === 'running' || it.status === 'parsing' || !imageGenModel}
-                      onClick={() => void handleRegenerateOne(it.markerIndex)}
-                      title={genTitle}
-                    >
-                      <Sparkles size={14} />
-                      {genLabel}
-                    </Button>
+                    />
+
+                    <div className="mt-1.5 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          disabled={it.status === 'running' || it.status === 'parsing'}
+                          onClick={() => void handleDeleteMarker(it.markerIndex)}
+                          title="删除该配图提示词（同时移除文章中的对应 [插图] 标记）"
+                        >
+                          <Trash2 size={14} />
+                          删除
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => locateMarkerInPreview(it.markerIndex)}
+                          title="定位到正文中的配图标记位置"
+                        >
+                          <MapPin size={14} />
+                          定位
+                        </Button>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        {/* 已完成且展开时，提供收起按钮 */}
+                        {it.status === 'done' && expandedMarkerIdx === it.markerIndex && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => setExpandedMarkerIdx(null)}
+                            title="收起编辑"
+                          >
+                            <CheckCircle2 size={14} />
+                            收起
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          disabled={it.status === 'running' || it.status === 'parsing' || !imageGenModel}
+                          onClick={() => void handleRegenerateOne(it.markerIndex)}
+                          title={genTitle}
+                        >
+                          <Sparkles size={14} />
+                          {genLabel}
+                        </Button>
+                      </div>
+                    </div>
                   </div>
-                </div>
                 );
               })}
             </div>
