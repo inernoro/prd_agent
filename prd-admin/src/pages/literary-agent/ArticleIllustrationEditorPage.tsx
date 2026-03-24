@@ -2834,7 +2834,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               </div>
             </div>
 
-            <div ref={markerListRef} className="flex-1 min-h-0 overflow-auto space-y-1.5">
+            <div ref={markerListRef} className="flex-1 min-h-0 overflow-auto space-y-3 pr-0.5">
               {/* 标记生成中的进度提示 */}
               {markerStreaming && (
                 <div
@@ -2878,7 +2878,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 return (
                   <div
                     key={it.markerIndex}
-                    className="surface-inset rounded overflow-hidden"
+                    className="surface-inset rounded-xl overflow-hidden"
                     style={{ position: 'relative' }}
                   >
                     {/* 入场发光边框动画 */}
@@ -2900,6 +2900,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       className="marker-card-wrap relative group"
                       style={{
                         aspectRatio: '4 / 3',
+                        padding: '6px 6px 0',
                         background: 'rgba(0,0,0,0.22)',
                         cursor: canShow ? 'pointer' : 'default',
                       }}
@@ -2934,7 +2935,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                           )}
                         </div>
                       ) : canShow ? (
-                        <img src={src} alt={`img-${idx + 1}`} className="w-full h-full block" style={{ objectFit: 'contain' }} />
+                        <img src={src} alt={`img-${idx + 1}`} className="w-full h-full block rounded-lg" style={{ objectFit: 'contain' }} />
                       ) : (
                         (() => {
                           const cs = it.planItem?.size || '1024x1024';
@@ -3065,7 +3066,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     </div>
 
                     {/* 操作按钮栏（图片下方独立行） */}
-                    <div className="px-2 py-1.5 flex items-center justify-between gap-1">
+                    <div className="px-2.5 py-2 flex items-center justify-between gap-1">
                       <div className="flex items-center gap-1">
                         <Button
                           size="sm"
