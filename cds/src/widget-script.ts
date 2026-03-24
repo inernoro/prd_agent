@@ -73,6 +73,8 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   var steps=[];
   var resultMsg='';
   var resultOk=true;
+  var titlePrefix='';
+  var titleObserver=null;
 
   // ── Widget root ──
   var root=document.createElement('div');
@@ -216,14 +218,16 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
       // Update page title with tags or branch short name for easy tab identification
       var tabTitleEnabled=res[0]&&res[0].tabTitleEnabled!==false;
       if(tabTitleEnabled){
-        var origTitle=document.title.replace(/\\[.*?\\]\\s*/,'');
         if(branchTags.length){
-          var tagStr=branchTags.join(' · ');
-          document.title='['+tagStr+'] '+origTitle;
+          titlePrefix=branchTags.join(' · ');
         }else{
-          var shortBranch=BRANCH_NAME.indexOf('/')>=0?BRANCH_NAME.substring(BRANCH_NAME.indexOf('/')+1):BRANCH_NAME;
-          document.title='['+shortBranch+'] '+origTitle;
+          titlePrefix=BRANCH_NAME.indexOf('/')>=0?BRANCH_NAME.substring(BRANCH_NAME.indexOf('/')+1):BRANCH_NAME;
         }
+        applyTitlePrefix();
+        watchTitle();
+      }else{
+        titlePrefix='';
+        unwatchTitle();
       }
 
       render();
@@ -310,6 +314,24 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
       resultOk=false;
       render();
     });
+  }
+
+  // ── Title guard: MutationObserver keeps title prefix even when SPA overwrites it ──
+  function applyTitlePrefix(){
+    if(!titlePrefix)return;
+    var raw=document.title.replace(/\\[.*?\\]\\s*/,'');
+    var want='['+titlePrefix+'] '+raw;
+    if(document.title!==want)document.title=want;
+  }
+  function watchTitle(){
+    if(titleObserver)return;
+    var el=document.querySelector('title');
+    if(!el)return;
+    titleObserver=new MutationObserver(function(){applyTitlePrefix();});
+    titleObserver.observe(el,{childList:true,characterData:true,subtree:true});
+  }
+  function unwatchTitle(){
+    if(titleObserver){titleObserver.disconnect();titleObserver=null;}
   }
 
   // ── Initial: render badge + fetch branch info to update tab title immediately ──
