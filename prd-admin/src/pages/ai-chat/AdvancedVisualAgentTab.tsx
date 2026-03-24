@@ -3797,7 +3797,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             // 原图信息：优先用 asset（后端持久化的），否则用 SSE 顶层字段
             const originalU = String(asset?.originalUrl || o.originalUrl || u || '');
             const originalSha = String(asset?.originalSha256 || o.originalSha256 || asset?.sha256 || '');
-            if (!u) return;
+            if (!u) {
+              // imageDone 但 URL 为空 — 视为失败，避免幽灵状态（既不成功也不失败）
+              const emptyMsg = '生成完成但图片数据为空，请重试';
+              setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: emptyMsg } : x)));
+              const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
+              pushMsg('Assistant', buildGenErrorContent({ msg: emptyMsg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: modelPoolName, imageRefShas }));
+              triggerDefectFlash();
+              return;
+            }
             setCanvas((prev) =>
               prev.map((x) =>
                 x.key === key
