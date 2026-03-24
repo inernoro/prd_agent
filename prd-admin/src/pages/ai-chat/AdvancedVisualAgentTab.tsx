@@ -1138,8 +1138,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   // - 开启（智能优化）：调用 clarify API 将用户输入改写为英文生图提示词，再生图
   // - 关闭（直连模式）：跳过 AI 处理，直接把输入原样作为 prompt 发给生图模型
   const directPromptKey = userId ? `prdAdmin.visualAgent.directPrompt.${userId}` : '';
-  // 需求：直连作为默认值（首次进入默认开启）；若本地已有值则以本地为准
-  const [directPrompt, setDirectPrompt] = useState(true);
+  // 需求：默认关闭智能优化；仅用户手动开启才生效；程序不得自动变更此值
+  const [directPrompt, setDirectPrompt] = useState(false);
   const [directPromptReady, setDirectPromptReady] = useState(false);
   const effectiveModel = useMemo(() => {
     const byId = modelPrefModelId ? enabledImageModels.find((m) => m.id === modelPrefModelId) ?? null : null;
@@ -2339,12 +2339,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     try {
       setDirectPromptReady(false);
       const stored = sessionStorage.getItem(directPromptKey);
-      // 默认开启直连（首次进入）；若本地已有值则以本地为准
-      setDirectPrompt(stored === null ? true : stored === '1');
+      // 默认关闭智能优化；仅用户显式开启过才恢复为 true
+      setDirectPrompt(stored === null ? false : stored === '1');
       setDirectPromptReady(true);
     } catch {
       // ignore
-      setDirectPrompt(true);
+      setDirectPrompt(false);
       setDirectPromptReady(true);
     }
   }, [directPromptKey]);
