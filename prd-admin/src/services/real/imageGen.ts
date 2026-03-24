@@ -3,6 +3,7 @@ import { api } from '@/services/api';
 import { fail, ok, type ApiResponse } from '@/types/api';
 import type {
   CancelImageGenRunContract,
+  ClarifyImageGenPromptContract,
   CreateImageGenRunContract,
   GenerateImageGenContract,
   GetImageGenSizeCapsContract,
@@ -18,6 +19,13 @@ export const planImageGenReal: PlanImageGenContract = async (input) => {
   return await apiRequest(api.visualAgent.imageGen.plan(), {
     method: 'POST',
     body: { text: input.text, maxItems: input.maxItems, systemPromptOverride: input.systemPromptOverride },
+  });
+};
+
+export const clarifyImageGenPromptReal: ClarifyImageGenPromptContract = async (input) => {
+  return await apiRequest(api.visualAgent.imageGen.clarify(), {
+    method: 'POST',
+    body: { prompt: input.prompt, hasReferenceImage: input.hasReferenceImage ?? false },
   });
 };
 

@@ -32,6 +32,7 @@ import {
   getWatermarkByApp,
   listWatermarksMarketplace,
   forkWatermark,
+  clarifyImageGenPrompt,
   planImageGen,
   refreshVisualAgentWorkspaceCover,
   saveVisualAgentWorkspaceCanvas,
@@ -1240,7 +1241,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       id: 'assistant-hello',
       role: 'Assistant',
       content:
-        'Hi，我是你的 AI 设计师。描述你的需求，我会把它转成可执行的生图提示词并把结果放到左侧画板。若你想让输入直接作为提示词发送（不再二次解析/改写），可在"模型偏好"里开启"直连"。',
+        'Hi，我是你的 AI 设计师。描述你想要的画面，我会自动将你的描述优化为专业的生图提示词，然后把生成结果放到左侧画板。你可以用中文、英文或任何方式表达创意！',
       ts: Date.now(),
     },
   ]);
@@ -3423,6 +3424,18 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         const msg = '内容为空';
         pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: display || reqText || undefined, imageRefShas }));
         return;
+      }
+      // 提示词澄清：将用户自由输入改写为明确的英文生图提示词，降低失败率
+      try {
+        const clarifyRes = await clarifyImageGenPrompt({
+          prompt: firstPrompt,
+          hasReferenceImage: unifiedImageRefs.length > 0,
+        });
+        if (clarifyRes.success && clarifyRes.data?.wasModified && clarifyRes.data.clarifiedPrompt) {
+          firstPrompt = clarifyRes.data.clarifiedPrompt;
+        }
+      } catch {
+        // 澄清失败不阻断生图流程，静默降级使用原始 prompt
       }
     } else {
       let plan: ImageGenPlanResponse | null = null;
@@ -7972,6 +7985,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             </div>
                             <div className="mt-0.5 text-[12px]" style={{ color: 'var(--text-muted)' }}>
                               直连开启后不再调用解析接口，输入原样作为 prompt
+                            </div>
+                            <div className="mt-0.5 text-[11px]" style={{ color: 'var(--color-success, #22c55e)' }}>
+                              已启用智能优化：自动将输入改写为明确的生图提示词
                             </div>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
