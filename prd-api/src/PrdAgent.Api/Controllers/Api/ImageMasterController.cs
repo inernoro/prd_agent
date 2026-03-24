@@ -1953,6 +1953,7 @@ public class ImageMasterController : ControllerBase
         var searchPaths = new (string domain, string type)[]
         {
             (AppDomainPaths.DomainVisualAgent, AppDomainPaths.TypeImg),
+            (AppDomainPaths.DomainLiteraryAgent, AppDomainPaths.TypeImg),
             (AppDomainPaths.DomainDefectAgent, AppDomainPaths.TypeLog),
         };
 
