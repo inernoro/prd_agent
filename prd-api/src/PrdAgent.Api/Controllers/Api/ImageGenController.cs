@@ -460,7 +460,7 @@ public class ImageGenController : ControllerBase
     /// <summary>
     /// 提示词澄清：将用户自由文本改写为明确的英文生图提示词，降低生图失败率
     /// </summary>
-    [HttpPost(“clarify”)]
+    [HttpPost("clarify")]
     [ProducesResponseType(typeof(ApiResponse<ImageGenClarifyResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status502BadGateway)]
@@ -469,7 +469,7 @@ public class ImageGenController : ControllerBase
         var originalPrompt = (request?.Prompt ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(originalPrompt))
         {
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, “prompt 不能为空”));
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "prompt 不能为空"));
         }
 
         // 长度限制（澄清场景不需要长文本，上限 2000 字符足够）
@@ -478,7 +478,7 @@ public class ImageGenController : ControllerBase
 
         // 快速跳过：如果已经是高质量英文提示词（≥30 词，含描述性内容），直接返回
         var wordCount = prompt.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
-        var looksLikeEnglishPrompt = wordCount >= 30 && Regex.IsMatch(prompt, @”^[\x20-\x7E\s]+$”);
+        var looksLikeEnglishPrompt = wordCount >= 30 && Regex.IsMatch(prompt, @"^[\x20-\x7E\s]+$");
         if (looksLikeEnglishPrompt)
         {
             return Ok(ApiResponse<ImageGenClarifyResponse>.Ok(new ImageGenClarifyResponse
@@ -492,23 +492,23 @@ public class ImageGenController : ControllerBase
         try
         {
             var appCallerCode = VisualAgent.ImageGen.Clarify;
-            var llmClient = _gateway.CreateClient(appCallerCode, “intent”, maxTokens: 512, temperature: 0.3);
+            var llmClient = _gateway.CreateClient(appCallerCode, "intent", maxTokens: 512, temperature: 0.3);
             var requestContext = new LlmRequestContext(
-                RequestId: Guid.NewGuid().ToString(“N”),
+                RequestId: Guid.NewGuid().ToString("N"),
                 GroupId: null,
                 SessionId: null,
                 UserId: GetAdminId(),
-                ViewRole: “ADMIN”,
+                ViewRole: "ADMIN",
                 DocumentChars: null,
                 DocumentHash: null,
-                SystemPromptRedacted: “[IMAGE_GEN_CLARIFY]”,
-                RequestType: “intent”,
+                SystemPromptRedacted: "[IMAGE_GEN_CLARIFY]",
+                RequestType: "intent",
                 AppCallerCode: appCallerCode);
 
             using var _ = _llmRequestContext.BeginScope(requestContext);
 
             var systemPrompt = ImageGenClarifyPrompt.Build(hasRefImage);
-            var messages = new List<LLMMessage> { new() { Role = “user”, Content = prompt } };
+            var messages = new List<LLMMessage> { new() { Role = "user", Content = prompt } };
 
             var clarified = await CollectToTextAsync(llmClient, systemPrompt, messages, CancellationToken.None);
             clarified = (clarified ?? string.Empty).Trim();
@@ -543,7 +543,7 @@ public class ImageGenController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, “Image prompt clarify failed, falling back to original prompt”);
+            _logger.LogWarning(ex, "Image prompt clarify failed, falling back to original prompt");
             // 兜底：LLM 调用失败时返回原始输入，不阻断生图流程
             return Ok(ApiResponse<ImageGenClarifyResponse>.Ok(new ImageGenClarifyResponse
             {
@@ -555,9 +555,9 @@ public class ImageGenController : ControllerBase
     }
 
     /// <summary>
-    /// 生图尺寸白名单缓存（用于前端展示”智能尺寸替换”状态）
+    /// 生图尺寸白名单缓存（用于前端展示"智能尺寸替换"状态）
     /// </summary>
-    [HttpGet(“size-caps”)]
+    [HttpGet("size-caps")]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetSizeCaps([FromQuery] bool includeFallback = false, CancellationToken ct = default)
     {
