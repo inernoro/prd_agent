@@ -3,6 +3,7 @@ import { Link2, FileBarChart, Building2, Sparkles, ChevronRight } from 'lucide-r
 import { GlassCard } from '@/components/design/GlassCard';
 import { useAuthStore } from '@/stores/authStore';
 import { useReportAgentStore } from '@/stores/reportAgentStore';
+import { ReportTeamRole } from '@/services/contracts/reportAgent';
 import { PersonalSourcesPanel } from './PersonalSourcesPanel';
 import { AiPromptSettingsPanel } from './AiPromptSettingsPanel';
 import { TeamAiPromptSettingsPanel } from './TeamAiPromptSettingsPanel';
@@ -67,14 +68,18 @@ const SECTIONS: SectionDef[] = [
 export function SettingsPanel() {
   const [activeSection, setActiveSection] = useState<SettingsSection>('overview');
   const teams = useReportAgentStore((s) => s.teams);
-  const canSeeTeamAiPrompt = teams.some((team) => team.canManageMembers);
+  const permissions = useAuthStore((s) => s.permissions);
+  const isSuper = permissions.includes('super');
+  const hasTeamManagePerm = isSuper || permissions.includes('report-agent.team.manage');
+  // 仅当用户是某团队的负责人/副负责人，或拥有系统级团队管理权限时，才允许配置团队AI分析Prompt
+  const canSeeTeamAiPrompt = hasTeamManagePerm || teams.some(
+    (team) => team.myRole === ReportTeamRole.Leader || team.myRole === ReportTeamRole.Deputy
+  );
 
   const visibleSections = SECTIONS.filter((s) => {
     if (s.isPersonal) return true;
     if (s.key === 'team-ai-prompt') return canSeeTeamAiPrompt;
     if (!s.requirePerm) return true;
-    const permissions = useAuthStore.getState().permissions;
-    const isSuper = permissions.includes('super');
     return isSuper || permissions.includes(s.requirePerm);
   });
 
