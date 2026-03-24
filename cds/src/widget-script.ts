@@ -69,6 +69,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   var branchStatus='';
   var commitSha='';
   var commitMsg='';
+  var branchTags=[];
   var steps=[];
   var resultMsg='';
   var resultOk=true;
@@ -162,7 +163,8 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     h+=ICON_BRANCH;
     h+='<span class="cds-branch">'+BRANCH_NAME+'</span>';
     if(commitSha)h+='<span class="cds-sha" title="'+commitSha+'">'+commitSha+'</span>';
-    h+='<span class="cds-tag">CDS</span>';
+    if(branchTags.length){for(var ti=0;ti<branchTags.length;ti++){h+='<span class="cds-tag">'+branchTags[ti]+'</span>';}}
+    else{h+='<span class="cds-tag">CDS</span>';}
     h+='<button data-action="toggle" title="'+(expanded?'收起':'展开更新面板')+'">'+(expanded?ICON_DOWN:ICON_UP)+'</button>';
     h+='<button data-action="dismiss">'+ICON_X+'</button>';
     h+='</div>';
@@ -208,7 +210,16 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
       branchStatus=found?found.status:'';
       commitSha=found&&found.commitSha?found.commitSha:'';
       commitMsg=found&&found.subject?found.subject:'';
+      branchTags=(found&&found.tags)||[];
       profiles=(res[1]&&res[1].profiles)||[];
+
+      // Update page title with branch tags for easy tab identification
+      if(branchTags.length){
+        var tagStr=branchTags.join(' · ');
+        var origTitle=document.title.replace(/\\[.*?\\]\\s*/,'');
+        document.title='['+tagStr+'] '+origTitle;
+      }
+
       render();
     }).catch(function(){
       branchStatus='';
