@@ -193,85 +193,151 @@ public class InitController : ControllerBase
     /// 策略：
     /// 1. 删除所有 IsSystemDefault=true 的应用
     /// 2. 删除不在注册表中的孤儿应用（旧格式 AppCode）
-    /// 3. 从代码注册表重新插入最新的系统默认应用
-    /// 4. 清理悬挂的模型池绑定关系
+    /// 3. 增量同步：新增缺失应用，更新已有应用的名称/描述/模型类型
+    ///
+    /// 重要：此操作保留已有应用的专属模型池绑定（ModelGroupIds）和调用统计数据，
+    /// 仅更新元信息和补充新增的模型类型需求。
     /// </summary>
     [HttpPost("default-apps")]
     public async Task<IActionResult> InitDefaultApps()
     {
-        var deleted = new List<string>();
         var orphanDeleted = new List<string>();
         var created = new List<string>();
+        var updated = new List<string>();
+        var unchanged = new List<string>();
+        var preservedBindingsCount = 0;
 
         // 从注册表获取最新定义
         var definitions = AppCallerRegistrationService.GetAllDefinitions();
         var registeredAppCodes = definitions.Select(d => d.AppCode).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        // 步骤 1：删除所有系统默认应用
-        var systemDefaultApps = await _db.LLMAppCallers
-            .Find(a => a.IsSystemDefault == true)
-            .ToListAsync();
-
-        foreach (var app in systemDefaultApps)
-        {
-            await _db.LLMAppCallers.DeleteOneAsync(a => a.Id == app.Id);
-            deleted.Add(app.AppCode);
-            _logger.LogInformation("删除系统默认应用: {AppCode}", app.AppCode);
-        }
+        // 步骤 1：加载所有现有应用，按 AppCode 索引
+        var existingApps = await _db.LLMAppCallers.Find(_ => true).ToListAsync();
+        var existingByCode = existingApps
+            .GroupBy(x => x.AppCode, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
         // 步骤 2：删除不在注册表中的孤儿应用（旧格式或已废弃的 AppCode）
-        // 注意：这会删除所有不在注册表中的应用，包括历史遗留的旧格式应用
-        var allApps = await _db.LLMAppCallers.Find(_ => true).ToListAsync();
-        foreach (var app in allApps)
+        foreach (var app in existingApps)
         {
-            // 如果不在注册表中，则删除（无论是什么类型）
             if (!registeredAppCodes.Contains(app.AppCode))
             {
                 await _db.LLMAppCallers.DeleteOneAsync(a => a.Id == app.Id);
                 orphanDeleted.Add(app.AppCode);
-                _logger.LogInformation("删除孤儿应用: {AppCode} (IsSystemDefault={IsSystemDefault})",
-                    app.AppCode, app.IsSystemDefault);
+                _logger.LogInformation("删除孤儿应用: {AppCode}", app.AppCode);
             }
         }
 
-        // 步骤 3：重新插入系统默认应用
+        // 步骤 3：增量同步 — 新增缺失应用，更新已有应用（保留 ModelGroupIds 和统计）
         foreach (var def in definitions)
         {
-            var app = new LLMAppCaller
+            if (!existingByCode.TryGetValue(def.AppCode, out var existing))
             {
-                Id = Guid.NewGuid().ToString("N"),
-                AppCode = def.AppCode,
-                DisplayName = def.DisplayName,
-                Description = def.Description,
-                ModelRequirements = def.ModelTypes.Select(mt => new AppModelRequirement
+                // 全新应用：直接创建
+                var app = new LLMAppCaller
                 {
-                    ModelType = mt,
+                    Id = Guid.NewGuid().ToString("N"),
+                    AppCode = def.AppCode,
+                    DisplayName = def.DisplayName,
+                    Description = def.Description,
+                    ModelRequirements = def.ModelTypes.Select(mt => new AppModelRequirement
+                    {
+                        ModelType = mt,
+                        Purpose = $"用于{def.DisplayName}",
+                        IsRequired = true,
+                        ModelGroupIds = new List<string>()
+                    }).ToList(),
+                    IsSystemDefault = true,
+                    IsAutoRegistered = false,
+                    TotalCalls = 0,
+                    SuccessCalls = 0,
+                    FailedCalls = 0,
+                    LastCalledAt = null,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+
+                await _db.LLMAppCallers.InsertOneAsync(app);
+                created.Add(def.AppCode);
+                _logger.LogInformation("创建系统默认应用: {AppCode} - {DisplayName}", def.AppCode, def.DisplayName);
+                continue;
+            }
+
+            // 已存在的应用：增量更新，保留 ModelGroupIds 和调用统计
+            var changed = false;
+
+            if (!string.Equals(existing.DisplayName, def.DisplayName, StringComparison.Ordinal))
+            {
+                existing.DisplayName = def.DisplayName;
+                changed = true;
+            }
+
+            if (!string.Equals(existing.Description ?? string.Empty, def.Description ?? string.Empty, StringComparison.Ordinal))
+            {
+                existing.Description = def.Description;
+                changed = true;
+            }
+
+            if (!existing.IsSystemDefault)
+            {
+                existing.IsSystemDefault = true;
+                changed = true;
+            }
+
+            if (existing.IsAutoRegistered)
+            {
+                existing.IsAutoRegistered = false;
+                changed = true;
+            }
+
+            // 补充新增的模型类型需求，保留已有的 ModelGroupIds 绑定
+            existing.ModelRequirements ??= new List<AppModelRequirement>();
+            var existingTypes = existing.ModelRequirements
+                .Select(r => r.ModelType)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var modelType in def.ModelTypes)
+            {
+                if (existingTypes.Contains(modelType))
+                    continue;
+
+                existing.ModelRequirements.Add(new AppModelRequirement
+                {
+                    ModelType = modelType,
                     Purpose = $"用于{def.DisplayName}",
                     IsRequired = true,
-                    ModelGroupIds = new List<string>() // 空列表表示使用默认分组
-                }).ToList(),
-                IsSystemDefault = true,  // 标记为系统默认
-                IsAutoRegistered = false,
-                TotalCalls = 0,
-                SuccessCalls = 0,
-                FailedCalls = 0,
-                LastCalledAt = null,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
-            };
+                    ModelGroupIds = new List<string>()
+                });
+                changed = true;
+            }
 
-            await _db.LLMAppCallers.InsertOneAsync(app);
-            created.Add(def.AppCode);
+            // 统计保留了多少专属绑定
+            var bindingCount = existing.ModelRequirements
+                .Count(r => r.ModelGroupIds != null && r.ModelGroupIds.Count > 0);
+            preservedBindingsCount += bindingCount;
 
-            _logger.LogInformation("创建系统默认应用: {AppCode} - {DisplayName}", def.AppCode, def.DisplayName);
+            if (!changed)
+            {
+                unchanged.Add(def.AppCode);
+                continue;
+            }
+
+            existing.UpdatedAt = DateTime.UtcNow;
+            await _db.LLMAppCallers.ReplaceOneAsync(x => x.Id == existing.Id, existing);
+            updated.Add(def.AppCode);
+            _logger.LogInformation("更新系统默认应用: {AppCode} - {DisplayName} (保留 {BindingCount} 个专属绑定)",
+                def.AppCode, def.DisplayName, bindingCount);
         }
 
         return Ok(ApiResponse<object>.Ok(new
         {
-            deleted,
-            orphanDeleted,
             created,
-            message = $"删除 {deleted.Count} 个旧应用，清理 {orphanDeleted.Count} 个孤儿应用，创建 {created.Count} 个新应用"
+            updated,
+            unchanged,
+            orphanDeleted,
+            preservedBindingsCount,
+            message = $"新增 {created.Count} 个应用，更新 {updated.Count} 个，未变 {unchanged.Count} 个，清理 {orphanDeleted.Count} 个孤儿应用，保留 {preservedBindingsCount} 个专属模型池绑定"
         }));
     }
     

@@ -126,9 +126,11 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
 
   // 初始化结果弹窗
   const [initResult, setInitResult] = useState<{
-    deleted: string[];
-    orphanDeleted: string[];
     created: string[];
+    updated: string[];
+    unchanged: string[];
+    orphanDeleted: string[];
+    preservedBindingsCount: number;
     message: string;
   } | null>(null);
 
@@ -550,12 +552,12 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
 
   const handleInitDefaultApps = useCallback(async () => {
     const confirmed = await systemDialog.confirm({
-      title: '确认初始化',
+      title: '同步应用注册表',
       message: `此操作将：
-1. 删除所有系统默认应用和子功能
-2. 重新创建最新的系统默认应用
-3. 保留用户自定义的应用和模型池
-4. 系统默认应用的配置会被重置
+1. 新增代码中新定义的应用
+2. 更新已有应用的名称和描述
+3. 清理已废弃的孤儿应用
+4. 保留所有专属模型池绑定和调用统计
 
 确定继续？`,
     });
@@ -850,9 +852,9 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
   const actionsSetRef = useRef(false);
   const actions = useMemo(() => (
         <>
-          <Button variant="secondary" size="sm" onClick={handleInitDefaultApps} title="初始化应用">
+          <Button variant="secondary" size="sm" onClick={handleInitDefaultApps} title="同步应用">
             <RefreshCw size={14} />
-            {!isMobile && '初始化应用'}
+            {!isMobile && '同步应用'}
           </Button>
           <Button variant="secondary" size="sm" onClick={() => setShowConfigDialog(true)} title="系统配置">
             <Settings size={14} />
@@ -2244,65 +2246,79 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
         );
       })()}
 
-      {/* 初始化结果弹窗 */}
+      {/* 同步结果弹窗 */}
       {initResult && (
         <Dialog
           open={!!initResult}
           onOpenChange={(open) => { if (!open) setInitResult(null); }}
-          title="初始化完成"
-          description={initResult.message}
-          maxWidth={680}
+          title="同步完成"
+          description="应用注册表已与代码定义同步"
+          maxWidth={480}
           content={
-            <div className="space-y-4 max-h-[60vh] overflow-auto">
-              {/* 删除的系统默认应用 */}
-              {initResult.deleted.length > 0 && (
-                <div>
-                  <div className="text-[12px] font-semibold mb-2 flex items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
-                    <span className="inline-block w-2 h-2 rounded-full" style={{ background: 'rgba(239,68,68,0.8)' }} />
-                    删除旧应用（{initResult.deleted.length}）
+            <div className="space-y-3">
+              {/* 统计摘要 */}
+              <div className="grid grid-cols-2 gap-2">
+                {initResult.created.length > 0 && (
+                  <div className="rounded-lg px-3 py-2" style={{ background: 'rgba(34,197,94,0.08)' }}>
+                    <div className="text-[18px] font-semibold" style={{ color: 'rgba(34,197,94,0.9)' }}>{initResult.created.length}</div>
+                    <div className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>新增应用</div>
                   </div>
-                  <div className="rounded-lg p-2 space-y-1" style={{ background: 'var(--bg-input)' }}>
-                    {initResult.deleted.map((code: string) => (
-                      <div key={code} className="text-[11px] font-mono px-2 py-1 rounded" style={{ color: 'rgba(239,68,68,0.9)', background: 'rgba(239,68,68,0.06)' }}>
-                        {code}
-                      </div>
-                    ))}
+                )}
+                {initResult.updated.length > 0 && (
+                  <div className="rounded-lg px-3 py-2" style={{ background: 'rgba(59,130,246,0.08)' }}>
+                    <div className="text-[18px] font-semibold" style={{ color: 'rgba(59,130,246,0.9)' }}>{initResult.updated.length}</div>
+                    <div className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>更新应用</div>
                   </div>
+                )}
+                {initResult.unchanged.length > 0 && (
+                  <div className="rounded-lg px-3 py-2" style={{ background: 'var(--bg-input)' }}>
+                    <div className="text-[18px] font-semibold" style={{ color: 'var(--text-secondary)' }}>{initResult.unchanged.length}</div>
+                    <div className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>无变化</div>
+                  </div>
+                )}
+                {initResult.orphanDeleted.length > 0 && (
+                  <div className="rounded-lg px-3 py-2" style={{ background: 'rgba(251,191,36,0.08)' }}>
+                    <div className="text-[18px] font-semibold" style={{ color: 'rgba(251,191,36,0.9)' }}>{initResult.orphanDeleted.length}</div>
+                    <div className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>清理孤儿</div>
+                  </div>
+                )}
+              </div>
+
+              {/* 专属绑定保留提示 */}
+              {initResult.preservedBindingsCount > 0 && (
+                <div className="rounded-lg px-3 py-2 flex items-center gap-2 text-[12px]" style={{ background: 'rgba(34,197,94,0.06)', color: 'rgba(34,197,94,0.9)' }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                  已保留 {initResult.preservedBindingsCount} 个专属模型池绑定
                 </div>
               )}
 
-              {/* 清理的孤儿应用 */}
-              {initResult.orphanDeleted.length > 0 && (
-                <div>
-                  <div className="text-[12px] font-semibold mb-2 flex items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
-                    <span className="inline-block w-2 h-2 rounded-full" style={{ background: 'rgba(251,191,36,0.8)' }} />
-                    清理孤儿应用（{initResult.orphanDeleted.length}）
-                  </div>
-                  <div className="rounded-lg p-2 space-y-1" style={{ background: 'var(--bg-input)' }}>
-                    {initResult.orphanDeleted.map((code: string) => (
-                      <div key={code} className="text-[11px] font-mono px-2 py-1 rounded" style={{ color: 'rgba(251,191,36,0.9)', background: 'rgba(251,191,36,0.06)' }}>
-                        {code}
+              {/* 详情折叠 — 仅在有新增/清理时显示 */}
+              {(initResult.created.length > 0 || initResult.orphanDeleted.length > 0) && (
+                <details className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
+                  <summary className="cursor-pointer select-none py-1 hover:underline">查看详情</summary>
+                  <div className="mt-2 space-y-2 max-h-[40vh] overflow-auto">
+                    {initResult.created.length > 0 && (
+                      <div>
+                        <div className="font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>新增应用</div>
+                        <div className="rounded-lg p-2 space-y-0.5" style={{ background: 'var(--bg-input)' }}>
+                          {initResult.created.map((code: string) => (
+                            <div key={code} className="font-mono px-1.5 py-0.5">{code}</div>
+                          ))}
+                        </div>
                       </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* 创建的新应用 */}
-              {initResult.created.length > 0 && (
-                <div>
-                  <div className="text-[12px] font-semibold mb-2 flex items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
-                    <span className="inline-block w-2 h-2 rounded-full" style={{ background: 'rgba(34,197,94,0.8)' }} />
-                    创建新应用（{initResult.created.length}）
-                  </div>
-                  <div className="rounded-lg p-2 space-y-1" style={{ background: 'var(--bg-input)' }}>
-                    {initResult.created.map((code: string) => (
-                      <div key={code} className="text-[11px] font-mono px-2 py-1 rounded" style={{ color: 'rgba(34,197,94,0.9)', background: 'rgba(34,197,94,0.06)' }}>
-                        {code}
+                    )}
+                    {initResult.orphanDeleted.length > 0 && (
+                      <div>
+                        <div className="font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>清理的孤儿应用</div>
+                        <div className="rounded-lg p-2 space-y-0.5" style={{ background: 'var(--bg-input)' }}>
+                          {initResult.orphanDeleted.map((code: string) => (
+                            <div key={code} className="font-mono px-1.5 py-0.5">{code}</div>
+                          ))}
+                        </div>
                       </div>
-                    ))}
+                    )}
                   </div>
-                </div>
+                </details>
               )}
             </div>
           }
