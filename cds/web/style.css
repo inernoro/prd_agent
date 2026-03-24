@@ -802,20 +802,22 @@ button.text-btn:hover { color: var(--accent); }
   60% { transform: scale(0.95); opacity: 0.3; }
   100% { transform: scale(0.9); opacity: 0; max-height: 0; margin-bottom: 0; overflow: hidden; }
 }
-/* Human web access — blinking footprint icon in toolbar */
+/* Human web access — footprint icon hidden, preview eye blinks instead */
 .human-access-icon {
   display: none;
   width: 16px; height: 16px;
   color: var(--green);
-  animation: human-access-blink 1.5s ease-in-out infinite;
   flex-shrink: 0;
 }
-.branch-card.is-previewing .human-access-icon {
-  display: block;
+/* Preview eye blink when being browsed */
+.branch-card.is-previewing button.preview .inline-icon {
+  color: var(--green);
+  animation: eye-blink 3s ease-in-out infinite;
+  filter: drop-shadow(0 0 4px var(--green));
 }
-@keyframes human-access-blink {
-  0%, 100% { opacity: 1; filter: drop-shadow(0 0 3px var(--green)); }
-  50% { opacity: 0.25; filter: none; }
+@keyframes eye-blink {
+  0%, 38%, 42%, 100% { transform: scaleY(1); opacity: 1; }
+  40% { transform: scaleY(0.08); opacity: 0.6; }
 }
 
 /* AI occupation — rotating gradient border + breathing glow on card */
@@ -2084,7 +2086,11 @@ a.branch-name:hover { color: var(--accent); }
   bottom: 16px;
   right: 16px;
   width: 480px;
-  max-height: 420px;
+  height: 420px;
+  min-width: 320px;
+  min-height: 200px;
+  max-width: 90vw;
+  max-height: 90vh;
   z-index: 9998;
   border-radius: var(--radius);
   background: var(--bg-card);
@@ -2093,12 +2099,13 @@ a.branch-name:hover { color: var(--accent); }
   backdrop-filter: blur(16px);
   display: flex;
   flex-direction: column;
-  transition: max-height 0.3s var(--transition), opacity 0.2s;
+  transition: opacity 0.2s;
   overflow: hidden;
 }
 
 .activity-monitor.collapsed {
-  max-height: 40px;
+  height: 40px !important;
+  min-height: 40px;
 }
 
 .activity-header {
@@ -2304,6 +2311,30 @@ a.branch-name:hover { color: var(--accent); }
 .activity-tab.active .activity-tab-count {
   background: var(--accent-bg);
   color: var(--accent);
+}
+
+/* ── Activity Resize Handles ── */
+.activity-resize-handle {
+  position: absolute;
+  z-index: 10;
+}
+.activity-resize-n {
+  top: 0; left: 8px; right: 8px;
+  height: 5px;
+  cursor: n-resize;
+}
+.activity-resize-w {
+  top: 8px; bottom: 8px; left: 0;
+  width: 5px;
+  cursor: w-resize;
+}
+.activity-resize-nw {
+  top: 0; left: 0;
+  width: 12px; height: 12px;
+  cursor: nw-resize;
+}
+.activity-monitor.collapsed .activity-resize-handle {
+  display: none;
 }
 
 .activity-body {

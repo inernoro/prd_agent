@@ -77,4 +77,19 @@ export const toast = {
       duration,
     });
   },
+
+  /** 显示持续加载提示，返回 toastId 用于后续 dismiss */
+  loading: (title: string, message?: string): string => {
+    const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const store = useToastStore.getState();
+    store.addToast({ type: 'info' as ToastType, title, message, duration: 60_000 });
+    // addToast 内部生成 id，这里用最新添加的 toast id
+    const toasts = useToastStore.getState().toasts;
+    return toasts[toasts.length - 1]?.id ?? id;
+  },
+
+  /** 移除指定 toast */
+  dismiss: (id: string) => {
+    useToastStore.getState().removeToast(id);
+  },
 };

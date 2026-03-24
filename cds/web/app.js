@@ -2224,7 +2224,6 @@ async function loadEnvVars() {
 }
 
 function maskValue(key, val) {
-  if (/password|secret|key/i.test(key)) return '••••••••';
   return val;
 }
 
@@ -2284,7 +2283,6 @@ function openEnvModal() {
   const html = `
     <p class="config-panel-desc">
       自定义环境变量将注入到所有容器中，可覆盖自动检测的主机变量。
-      键名中包含 <code>PASSWORD</code> 或 <code>SECRET</code> 的值在显示时会被遮蔽。
     </p>
     <div class="config-panel-actions" style="margin-bottom:10px">
       <button class="sm" onclick="openBulkEnvModal()">批量编辑</button>
@@ -4077,6 +4075,61 @@ function clearActivityLog() {
   document.getElementById('cdsTabCount').textContent = '0';
   document.getElementById('webTabCount').textContent = '0';
 }
+
+// ── Activity Panel Resize ──
+(function initActivityResize() {
+  const panel = document.getElementById('activityMonitor');
+  if (!panel) return;
+  const handles = panel.querySelectorAll('.activity-resize-handle');
+  let isResizing = false;
+  let startX, startY, startW, startH, startLeft, startTop, direction;
+
+  handles.forEach(h => {
+    h.addEventListener('mousedown', (e) => {
+      if (panel.classList.contains('collapsed')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      isResizing = true;
+      direction = h.dataset.direction;
+      startX = e.clientX;
+      startY = e.clientY;
+      const rect = panel.getBoundingClientRect();
+      startW = rect.width;
+      startH = rect.height;
+      startLeft = rect.left;
+      startTop = rect.top;
+      panel.style.transition = 'none';
+      document.body.style.cursor = h.style.cursor || getComputedStyle(h).cursor;
+      document.body.style.userSelect = 'none';
+    });
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!isResizing) return;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    const minW = 320, minH = 200;
+    const maxW = window.innerWidth * 0.9;
+    const maxH = window.innerHeight * 0.9;
+
+    if (direction === 'w' || direction === 'nw') {
+      const newW = Math.min(maxW, Math.max(minW, startW - dx));
+      panel.style.width = newW + 'px';
+    }
+    if (direction === 'n' || direction === 'nw') {
+      const newH = Math.min(maxH, Math.max(minH, startH - dy));
+      panel.style.height = newH + 'px';
+    }
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!isResizing) return;
+    isResizing = false;
+    panel.style.transition = '';
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  });
+})();
 
 // ════════════════ AI Pairing System ════════════════
 

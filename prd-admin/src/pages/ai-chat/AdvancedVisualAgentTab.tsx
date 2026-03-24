@@ -33,7 +33,6 @@ import {
   listWatermarksMarketplace,
   forkWatermark,
   clarifyImageGenPrompt,
-  planImageGen,
   refreshVisualAgentWorkspaceCover,
   saveVisualAgentWorkspaceCanvas,
   updateVisualAgentPreferences,
@@ -67,7 +66,6 @@ import { resolveImageRefs, buildRequestText } from '@/lib/imageRefResolver';
 import type { CanvasImageItem as ContractCanvasItem, ChipRef } from '@/lib/imageRefContract';
 import { moveUp, moveDown, bringToFront, sendToBack } from '@/lib/canvasLayerUtils';
 import { assignMissingRefIds, getMaxRefId } from '@/lib/visualAgentCanvasPersist';
-import type { ImageGenPlanResponse } from '@/services/contracts/imageGen';
 import type { ImageAsset, VisualAgentCanvas, VisualAgentWorkspace } from '@/services/contracts/visualAgent';
 import type { Model } from '@/types/admin';
 import {
@@ -1137,8 +1135,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   // 局部重绘（Inpainting）状态
   const [inpaintTarget, setInpaintTarget] = useState<CanvasImageItem | null>(null);
   // 提示词模式：按账号持久化（不写 DB）
-  // - 关闭：先调用 planImageGen 解析/改写成候选提示词，再生图
-  // - 开启：跳过解析，直接把输入原样作为 prompt 发给生图模型
+  // - 开启（智能优化）：调用 clarify API 将用户输入改写为英文生图提示词，再生图
+  // - 关闭（直连模式）：跳过 AI 处理，直接把输入原样作为 prompt 发给生图模型
   const directPromptKey = userId ? `prdAdmin.visualAgent.directPrompt.${userId}` : '';
   // 需求：直连作为默认值（首次进入默认开启）；若本地已有值则以本地为准
   const [directPrompt, setDirectPrompt] = useState(true);
@@ -3468,7 +3466,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       .map((img) => img.originalSha256 || img.sha256 || '')
       .filter((sha) => sha.length === 64);
 
-    let items: Array<{ prompt: string }> = [];
     let firstPrompt = '';
     if (directPrompt) {
       firstPrompt = stripModelMention(reqText) || stripModelMention(display) || '';
@@ -3490,24 +3487,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         // 澄清失败不阻断生图流程，静默降级使用原始 prompt
       }
     } else {
-      let plan: ImageGenPlanResponse | null = null;
-      try {
-        const pres = await planImageGen({ text: reqText, maxItems: 8 });
-        if (!pres.success) {
-          const msg = pres.error?.message || '解析失败';
-          pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: reqText || undefined, imageRefShas }));
-          return;
-        }
-        plan = pres.data ?? null;
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : '网络错误';
-        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: reqText || undefined, imageRefShas }));
+      // 直连模式：跳过 AI 处理，仅加生图意图前缀后直接发给生图模型
+      firstPrompt = stripModelMention(reqText) || stripModelMention(display) || '';
+      if (!firstPrompt) {
+        const msg = '内容为空';
+        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: display || reqText || undefined, imageRefShas }));
         return;
       }
-
-      items = Array.isArray(plan?.items) ? (plan!.items as Array<{ prompt: string }>) : [];
-      const fallbackPrompt = stripModelMention(reqText) || reqText;
-      firstPrompt = String(items[0]?.prompt ?? '').trim() || fallbackPrompt;
+      firstPrompt = `Generate an image based on the following description:\n${firstPrompt}`;
     }
 
     const refDim =
@@ -3610,7 +3597,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     requestAnimationFrame(() => {
       const f = focusKeyRef.current;
       if (!f || f.key !== key) return;
-      // 新图可能很大，移动视角前先适配尺寸（选中图 + 目标图联合适配）
+      // 新图：只缩小适应或平移，不放大（避免用户每次生成后都要手动缩小视野）
+      // maxZoom 限制为当前缩放级别，确保只会缩小或保持不变
+      const curZoom = zoomRef.current;
       if (f.w && f.h) {
         const targetRect = { x: f.cx - f.w / 2, y: f.cy - f.h / 2, w: f.w, h: f.h };
         if (f.refRect) {
@@ -3619,9 +3608,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           const minY = Math.min(targetRect.y, f.refRect.y);
           const maxX = Math.max(targetRect.x + targetRect.w, f.refRect.x + f.refRect.w);
           const maxY = Math.max(targetRect.y + targetRect.h, f.refRect.y + f.refRect.h);
-          animateCameraToFitRect({ x: minX, y: minY, w: maxX - minX, h: maxY - minY });
+          animateCameraToFitRect({ x: minX, y: minY, w: maxX - minX, h: maxY - minY }, { maxZoom: curZoom });
         } else {
-          animateCameraToFitRect(targetRect);
+          animateCameraToFitRect(targetRect, { maxZoom: curZoom });
         }
       } else {
         animateCameraToWorldCenter(f.cx, f.cy);
@@ -4518,9 +4507,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           requestAnimationFrame(() => {
             const f = focusKeyRef.current;
             if (!f || f.key !== targetKey) return;
-            // 新图可能很大，移动视角前先适配尺寸
+            // 新图：只缩小适应或平移，不放大
             if (f.w && f.h) {
-              animateCameraToFitRect({ x: f.cx - f.w / 2, y: f.cy - f.h / 2, w: f.w, h: f.h });
+              animateCameraToFitRect({ x: f.cx - f.w / 2, y: f.cy - f.h / 2, w: f.w, h: f.h }, { maxZoom: zoomRef.current });
             } else {
               animateCameraToWorldCenter(f.cx, f.cy);
             }
@@ -4677,9 +4666,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     requestAnimationFrame(() => {
       const f = focusKeyRef.current;
       if (!f) return;
-      // 新图可能很大，移动视角前先适配尺寸
+      // 新图：只缩小适应或平移，不放大
       if (f.w && f.h) {
-        animateCameraToFitRect({ x: f.cx - f.w / 2, y: f.cy - f.h / 2, w: f.w, h: f.h });
+        animateCameraToFitRect({ x: f.cx - f.w / 2, y: f.cy - f.h / 2, w: f.w, h: f.h }, { maxZoom: zoomRef.current });
       } else {
         animateCameraToWorldCenter(f.cx, f.cy);
       }
@@ -7645,15 +7634,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               ref={inputPanelRef}
               className="mt-2 rounded-[12px] p-2 relative shrink-0"
               style={{
-                border: directPrompt ? '1px solid rgba(255,255,255,0.10)' : '1px solid rgba(251,146,60,0.55)',
-                background: directPrompt ? '#353538' : 'rgba(251,146,60,0.06)',
+                border: directPrompt ? '1px solid rgba(251,146,60,0.55)' : '1px solid rgba(255,255,255,0.10)',
+                background: directPrompt ? 'rgba(251,146,60,0.06)' : '#353538',
                 backdropFilter: 'none',
                 WebkitBackdropFilter: 'none',
                 boxShadow: undefined,
               }}
             >
-              {/* 若直连被关闭（auto/解析模式）：做明显提示，避免用户误以为"直连默认开启" */}
-              {!directPrompt ? (
+              {/* 智能优化开启时：AUTO 徽章提示，表明 AI 正在自动优化提示词 */}
+              {directPrompt ? (
                 <div
                   className="absolute z-30 inline-flex items-center gap-1 rounded-full px-2 h-5 text-[10px] font-extrabold tracking-wide"
                   style={{
@@ -8028,12 +8017,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             <div className="mt-0.5 text-[12px]" style={{ color: 'var(--text-muted)' }}>
                               {directPrompt
                                 ? '智能优化：自动将输入改写为明确的英文生图提示词'
-                                : '解析模式：通过意图模型从文本中提取图片清单'}
+                                : '直连模式：跳过 AI 处理，直接将原始输入发给生图模型'}
                             </div>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
                             <span className="text-[12px] font-semibold" style={{ color: directPrompt ? 'var(--color-success, #22c55e)' : 'var(--text-secondary)' }}>
-                              {directPrompt ? '智能优化' : '解析'}
+                              {directPrompt ? '智能优化' : '直连'}
                             </span>
                             <Switch
                               checked={directPrompt}

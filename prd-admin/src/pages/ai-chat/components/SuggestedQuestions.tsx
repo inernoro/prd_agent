@@ -2,7 +2,7 @@ import { memo } from 'react';
 import { MessageCircle, FileText, Wrench, ChevronRight } from 'lucide-react';
 import type { AiChatSuggestedQuestion } from '@/services/contracts/aiChat';
 
-const ICON_MAP: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
+const ICON_MAP: Record<string, React.ComponentType<{ size?: number | string; className?: string }>> = {
   chat: MessageCircle,
   doc: FileText,
   tool: Wrench,
