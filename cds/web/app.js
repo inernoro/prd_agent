@@ -4078,6 +4078,22 @@ function clearActivityLog() {
   document.getElementById('webTabCount').textContent = '0';
 }
 
+// ── Activity Zoom ──
+let activityZoomLevel = 100;
+const ACTIVITY_ZOOM_MIN = 60;
+const ACTIVITY_ZOOM_MAX = 150;
+const ACTIVITY_ZOOM_STEP = 10;
+
+function zoomActivity(direction) {
+  const next = activityZoomLevel + direction * ACTIVITY_ZOOM_STEP;
+  if (next < ACTIVITY_ZOOM_MIN || next > ACTIVITY_ZOOM_MAX) return;
+  activityZoomLevel = next;
+  const scale = activityZoomLevel / 100;
+  document.getElementById('activityBody').style.zoom = scale;
+  document.getElementById('webActivityBody').style.zoom = scale;
+  document.getElementById('activityZoomLevel').textContent = activityZoomLevel + '%';
+}
+
 // ════════════════ AI Pairing System ════════════════
 
 let aiPairingRequests = [];

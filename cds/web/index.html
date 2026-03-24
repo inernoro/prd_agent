@@ -152,6 +152,15 @@
         Web
         <span class="activity-tab-count" id="webTabCount">0</span>
       </button>
+      <div class="activity-zoom">
+        <button class="activity-zoom-btn" onclick="event.stopPropagation();zoomActivity(-1)" title="缩小">
+          <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M4 8a.75.75 0 01.75-.75h6.5a.75.75 0 010 1.5h-6.5A.75.75 0 014 8z"/></svg>
+        </button>
+        <span class="activity-zoom-level" id="activityZoomLevel">100%</span>
+        <button class="activity-zoom-btn" onclick="event.stopPropagation();zoomActivity(1)" title="放大">
+          <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M8 4a.75.75 0 01.75.75v2.5h2.5a.75.75 0 010 1.5h-2.5v2.5a.75.75 0 01-1.5 0v-2.5h-2.5a.75.75 0 010-1.5h2.5v-2.5A.75.75 0 018 4z"/></svg>
+        </button>
+      </div>
     </div>
     <div class="activity-body" id="activityBody"></div>
     <div class="activity-body" id="webActivityBody" style="display:none"></div>
