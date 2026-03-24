@@ -2340,15 +2340,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     if (!directPromptKey) return;
     try {
       setDirectPromptReady(false);
-      // 需求变更：直连应始终开启（避免解析接口不稳定/误关导致体验抖动）。
-      // 历史上用户可能关闭过（sessionStorage 存了 0），这里统一纠正为开启，并写回。
-      setDirectPrompt(true);
+      const stored = sessionStorage.getItem(directPromptKey);
+      // 默认开启直连（首次进入）；若本地已有值则以本地为准
+      setDirectPrompt(stored === null ? true : stored === '1');
       setDirectPromptReady(true);
-      try {
-        sessionStorage.setItem(directPromptKey, '1');
-      } catch {
-        // ignore
-      }
     } catch {
       // ignore
       setDirectPrompt(true);
@@ -7984,10 +7979,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               提示词模式
                             </div>
                             <div className="mt-0.5 text-[12px]" style={{ color: 'var(--text-muted)' }}>
-                              直连开启后不再调用解析接口，输入原样作为 prompt
-                            </div>
-                            <div className="mt-0.5 text-[11px]" style={{ color: 'var(--color-success, #22c55e)' }}>
-                              已启用智能优化：自动将输入改写为明确的生图提示词
+                              {directPrompt
+                                ? '智能优化：自动将输入改写为明确的英文生图提示词'
+                                : '解析模式：通过意图模型从文本中提取图片清单'}
                             </div>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
@@ -7996,12 +7990,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             </span>
                             <Switch
                               checked={directPrompt}
-                              onCheckedChange={() => {
-                                // 需求变更：固定开启（若未来需要恢复可配置，再改回可切换）
-                                setDirectPrompt(true);
-                              }}
-                              disabled
-                              ariaLabel="直连模式（固定开启）"
+                              onCheckedChange={(v) => setDirectPrompt(v)}
+                              ariaLabel="直连模式（开启后自动优化提示词）"
                             />
                           </div>
                         </div>
