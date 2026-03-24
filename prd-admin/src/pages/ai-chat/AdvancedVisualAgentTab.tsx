@@ -8022,24 +8022,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       >
                         <div className="flex items-center justify-between gap-3">
                           <div className="min-w-0">
-                            <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                              模型偏好
-                            </div>
-                            <div className="mt-0.5 text-[12px] truncate" style={{ color: 'var(--text-muted)' }}>
-                              仅影响本页生图；候选项以启用 isImageGen 为准
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-2 shrink-0">
-                            <span className="text-[12px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
-                              自动
-                            </span>
-                            <Switch checked={modelPrefAuto} onCheckedChange={(v) => setModelPrefAuto(v)} ariaLabel="自动选择模型" />
-                          </div>
-                        </div>
-
-                        <div className="mt-3 flex items-center justify-between gap-3">
-                          <div className="min-w-0">
                             <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                               提示词模式
                             </div>
@@ -8050,13 +8032,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             </div>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
-                            <span className="text-[12px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
-                              直连
+                            <span className="text-[12px] font-semibold" style={{ color: directPrompt ? 'var(--color-success, #22c55e)' : 'var(--text-secondary)' }}>
+                              {directPrompt ? '智能优化' : '解析'}
                             </span>
                             <Switch
                               checked={directPrompt}
                               onCheckedChange={(v) => setDirectPrompt(v)}
-                              ariaLabel="直连模式（开启后自动优化提示词）"
+                              ariaLabel="提示词模式"
                             />
                           </div>
                         </div>
