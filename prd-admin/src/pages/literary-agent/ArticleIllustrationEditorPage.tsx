@@ -2875,8 +2875,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
                 const isGlowing = glowingMarkers.has(it.markerIndex);
 
-                const floatingBtnStyle = { ...glassFloatingButton, background: 'rgba(0,0,0,0.55)', border: '1px solid rgba(255,255,255,0.15)' };
-
                 return (
                   <div
                     key={it.markerIndex}
@@ -3034,90 +3032,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         </div>
                       </div>
 
-                      {/* 浮层：底部 - 操作按钮（hover 显示） */}
-                      <div
-                        className="absolute bottom-0 left-0 right-0 flex items-center justify-between px-2 py-1.5 opacity-0 group-hover:opacity-100 transition-opacity"
-                        style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.55) 0%, transparent 100%)' }}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <div className="flex items-center gap-1">
-                          <button
-                            className="p-1.5 rounded-lg"
-                            style={floatingBtnStyle}
-                            onClick={() => void handleDeleteMarker(it.markerIndex)}
-                            disabled={it.status === 'running' || it.status === 'parsing'}
-                            title="删除该配图提示词"
-                          >
-                            <Trash2 size={14} style={{ color: 'white' }} />
-                          </button>
-                          <button
-                            className="p-1.5 rounded-lg"
-                            style={floatingBtnStyle}
-                            onClick={() => locateMarkerInPreview(it.markerIndex)}
-                            title="定位到正文中的配图标记位置"
-                          >
-                            <MapPin size={14} style={{ color: 'white' }} />
-                          </button>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          {canShow && (
-                            <>
-                              <button
-                                className="p-1.5 rounded-lg"
-                                style={floatingBtnStyle}
-                                onClick={async () => {
-                                  try {
-                                    await navigator.clipboard.writeText(src);
-                                    toast.success('已复制', '图片链接已复制到剪贴板');
-                                  } catch (error) {
-                                    console.error('Copy failed:', error);
-                                  }
-                                }}
-                                title="复制图片链接"
-                              >
-                                <Copy size={14} style={{ color: 'white' }} />
-                              </button>
-                              <button
-                                className="p-1.5 rounded-lg"
-                                style={floatingBtnStyle}
-                                onClick={async () => {
-                                  try {
-                                    const response = await fetch(src);
-                                    const blob = await response.blob();
-                                    const blobUrl = URL.createObjectURL(blob);
-                                    const link = document.createElement('a');
-                                    link.href = blobUrl;
-                                    link.download = `配图-${idx + 1}.png`;
-                                    link.click();
-                                    URL.revokeObjectURL(blobUrl);
-                                  } catch (error) {
-                                    console.error('Download failed:', error);
-                                    const link = document.createElement('a');
-                                    link.href = src;
-                                    link.download = `配图-${idx + 1}.png`;
-                                    link.target = '_blank';
-                                    link.click();
-                                  }
-                                }}
-                                title="下载图片"
-                              >
-                                <DownloadCloud size={14} style={{ color: 'white' }} />
-                              </button>
-                            </>
-                          )}
-                          <button
-                            className="p-1.5 rounded-lg flex items-center gap-1"
-                            style={floatingBtnStyle}
-                            onClick={() => void handleRegenerateOne(it.markerIndex)}
-                            disabled={it.status === 'running' || it.status === 'parsing' || !imageGenModel}
-                            title={genTitle}
-                          >
-                            <Sparkles size={14} style={{ color: 'white' }} />
-                            <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.9)' }}>{genLabel}</span>
-                          </button>
-                        </div>
-                      </div>
-
                       {/* 错误信息浮层 */}
                       {it.errorMessage ? (
                         <div
@@ -3125,7 +3039,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                           style={{
                             background: 'rgba(239,68,68,0.85)',
                             color: 'white',
-                            bottom: 32,
+                            bottom: 8,
                             left: 8,
                             right: 8,
                             zIndex: 2,
@@ -3135,7 +3049,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         </div>
                       ) : null}
 
-                      {/* hover 浮层：prompt 文字（点击打开编辑弹窗） */}
+                      {/* prompt 文字浮层：默认半可见，hover 全可见，点击编辑 */}
                       <div
                         className="marker-card-prompt-overlay"
                         onClick={(e) => {
@@ -3148,6 +3062,84 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                           {it.draftText || it.markerText || '（暂无提示词，点击编辑）'}
                         </div>
                       </div>
+                    </div>
+
+                    {/* 操作按钮栏（图片下方独立行） */}
+                    <div className="px-2 py-1.5 flex items-center justify-between gap-1">
+                      <div className="flex items-center gap-1">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          disabled={it.status === 'running' || it.status === 'parsing'}
+                          onClick={() => void handleDeleteMarker(it.markerIndex)}
+                          title="删除该配图提示词（同时移除文章中的对应 [插图] 标记）"
+                        >
+                          <Trash2 size={14} />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => locateMarkerInPreview(it.markerIndex)}
+                          title="定位到正文中的配图标记位置"
+                        >
+                          <MapPin size={14} />
+                        </Button>
+                        {canShow && (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={async () => {
+                                try {
+                                  await navigator.clipboard.writeText(src);
+                                  toast.success('已复制', '图片链接已复制到剪贴板');
+                                } catch (error) {
+                                  console.error('Copy failed:', error);
+                                }
+                              }}
+                              title="复制图片链接"
+                            >
+                              <Copy size={14} />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={async () => {
+                                try {
+                                  const response = await fetch(src);
+                                  const blob = await response.blob();
+                                  const blobUrl = URL.createObjectURL(blob);
+                                  const link = document.createElement('a');
+                                  link.href = blobUrl;
+                                  link.download = `配图-${idx + 1}.png`;
+                                  link.click();
+                                  URL.revokeObjectURL(blobUrl);
+                                } catch (error) {
+                                  console.error('Download failed:', error);
+                                  const link = document.createElement('a');
+                                  link.href = src;
+                                  link.download = `配图-${idx + 1}.png`;
+                                  link.target = '_blank';
+                                  link.click();
+                                }
+                              }}
+                              title="下载图片"
+                            >
+                              <DownloadCloud size={14} />
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={it.status === 'running' || it.status === 'parsing' || !imageGenModel}
+                        onClick={() => void handleRegenerateOne(it.markerIndex)}
+                        title={genTitle}
+                      >
+                        <Sparkles size={14} />
+                        {genLabel}
+                      </Button>
                     </div>
                   </div>
                 );
