@@ -165,7 +165,7 @@ export function SubmissionCard({ item, onLikeToggle, onClick, isAdmin, onAdminWi
             onClick={(e) => e.stopPropagation()}
           >
             <HeartLikeButton
-              size={24}
+              size={44}
               liked={liked}
               heartColor="#F43F5E"
               disabled={liking}
