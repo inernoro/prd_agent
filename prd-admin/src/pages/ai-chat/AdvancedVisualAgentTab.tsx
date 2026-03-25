@@ -2361,16 +2361,19 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     }
   }, [directPrompt, directPromptKey, directPromptReady]);
 
-  // 如果手动选中的模型被禁用/不存在，自动回退到“自动”
+  // 如果手动选中的模型被后端删除（模型池中不存在），自动回退到”自动”
+  // 重要：必须等模型池加载完成后再判断，否则空数组会误判用户选择
   useEffect(() => {
+    if (modelsLoading) return;
     if (modelPrefAuto) return;
     if (!modelPrefModelId) return;
+    if (enabledImageModels.length === 0) return;
     const ok = enabledImageModels.some((m) => m.id === modelPrefModelId);
     if (!ok) {
       setModelPrefAuto(true);
       setModelPrefModelId('');
     }
-  }, [enabledImageModels, modelPrefAuto, modelPrefModelId]);
+  }, [enabledImageModels, modelPrefAuto, modelPrefModelId, modelsLoading]);
 
   // 启动时：加载 workspace 并回放历史消息+画布（workspaceId 为稳定主键）
   useEffect(() => {
