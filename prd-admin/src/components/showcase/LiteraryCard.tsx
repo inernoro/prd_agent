@@ -168,7 +168,7 @@ export function LiteraryCard({ item, onLikeToggle, onClick }: LiteraryCardProps)
               onClick={(e) => e.stopPropagation()}
             >
               <HeartLikeButton
-                size={18}
+                size={32}
                 liked={liked}
                 heartColor="#F43F5E"
                 disabled={liking}
