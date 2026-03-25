@@ -1003,7 +1003,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   );
   const DEFAULT_ZOOM = 0.5;
 
-  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsLoading, setModelsLoading] = useState(true);
   // 统一模型池列表（合并所有生成类型，去重）
   const [imageGenPools, setImageGenPools] = useState<ModelGroupForApp[]>([]);
 
