@@ -1207,6 +1207,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         command: `${nodeCmd.installPrefix}${nodeCmd.runPrefix}vite --host 0.0.0.0 --port 5173`,
         containerPort: 5173,
         cacheMounts: nodeCmd.cacheMounts,
+        // Wait for Vite to fully initialize (CSS/plugin pipeline ready) before routing traffic.
+        // Without this, the proxy forwards requests while Vite is still starting, causing
+        // CSS MIME type errors (Vite returns HTML fallback before transforms are ready).
+        startupSignal: '➜  Network:',
       },
     ];
 

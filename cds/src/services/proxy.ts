@@ -267,8 +267,8 @@ export class ProxyService {
     const state = this.stateService.getState();
     const branch = state.branches[branchSlug];
 
-    // Branch doesn't exist or isn't running — trigger auto-build
-    if (!branch || branch.status !== 'running') {
+    // Branch doesn't exist or isn't running — trigger auto-build or show loading
+    if (!branch || (branch.status !== 'running' && branch.status !== 'starting')) {
       if (this.onAutoBuild) {
         this.onAutoBuild(branchRef, req, res);
         return;
@@ -282,6 +282,12 @@ export class ProxyService {
       return;
     }
 
+    // Branch-level starting: all services still initializing
+    if (branch.status === 'starting') {
+      this.serveStartingPage(res, branchSlug, branch);
+      return;
+    }
+
     // Find the upstream URL for this branch
     if (!this.resolveUpstream) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -290,6 +296,19 @@ export class ProxyService {
     }
 
     const profileId = this.detectProfileFromRequest(req, branch);
+
+    // Service-level starting: branch is "running" (some services up) but
+    // the specific service for this request is still initializing.
+    // Show loading page instead of proxying to a half-ready server
+    // (prevents CSS MIME type errors from Vite returning HTML before ready).
+    if (profileId) {
+      const svc = branch.services[profileId];
+      if (svc && svc.status === 'starting') {
+        this.serveStartingPage(res, branchSlug, branch, profileId);
+        return;
+      }
+    }
+
     const upstream = this.resolveUpstream(branchSlug, profileId);
 
     if (!upstream) {
@@ -300,6 +319,50 @@ export class ProxyService {
 
     console.log(`[proxy] ${req.method} ${req.url} → ${upstream} (branch=${branchSlug}, profile=${profileId || 'default'})`);
     this.proxyRequest(req, res, upstream, { branchId: branchSlug, branchName: branchRef, trackAccess: true, profileId });
+  }
+
+  /**
+   * Serve a loading page when a branch or service is in 'starting' state.
+   * Auto-refreshes every 2 seconds until the service is ready.
+   */
+  private serveStartingPage(res: http.ServerResponse, branchSlug: string, branch: BranchEntry, waitingProfileId?: string): void {
+    const services = Object.values(branch.services);
+    const serviceRows = services.map(svc => {
+      const icon = svc.status === 'running' ? '✓' : svc.status === 'starting' ? '◌' : svc.status === 'error' ? '✗' : '·';
+      const color = svc.status === 'running' ? '#3fb950' : svc.status === 'starting' ? '#58a6ff' : svc.status === 'error' ? '#f85149' : '#8b949e';
+      const label = waitingProfileId === svc.profileId ? `${svc.profileId} (等待就绪...)` : svc.profileId;
+      return `<div class="svc"><span style="color:${color}">${icon}</span> ${label}</div>`;
+    }).join('');
+
+    const html = `<!DOCTYPE html>
+<html lang="zh"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>启动中 — ${branchSlug}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
+.card{max-width:420px;width:100%;padding:32px;background:#161b22;border:1px solid #30363d;border-radius:12px;text-align:center}
+.spinner{width:28px;height:28px;border:3px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 16px}
+@keyframes spin{to{transform:rotate(360deg)}}
+h2{font-size:16px;font-weight:600;color:#f0f6fc;margin-bottom:8px}
+.branch{font-family:ui-monospace,SFMono-Regular,monospace;font-size:13px;color:#58a6ff;background:#21262d;padding:4px 8px;border-radius:4px;margin-bottom:20px;display:inline-block;word-break:break-all}
+.services{display:flex;flex-direction:column;gap:6px;margin-bottom:16px;text-align:left}
+.svc{font-size:13px;padding:6px 10px;background:#0d1117;border:1px solid #21262d;border-radius:6px;font-family:ui-monospace,monospace}
+.hint{font-size:12px;color:#8b949e}
+</style>
+</head><body>
+<div class="card">
+  <div class="spinner"></div>
+  <h2>服务正在启动中</h2>
+  <div class="branch">${branchSlug}</div>
+  <div class="services">${serviceRows}</div>
+  <div class="hint">页面将在服务就绪后自动刷新...</div>
+</div>
+<script>setTimeout(function(){location.reload()},2000)</script>
+</body></html>`;
+
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache, no-store' });
+    res.end(html);
   }
 
   /**

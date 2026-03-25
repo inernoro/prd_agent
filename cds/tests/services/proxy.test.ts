@@ -122,6 +122,109 @@ describe('ProxyService', () => {
     });
   });
 
+  describe('handleRequest — starting state loading page', () => {
+    function makeRes(): { res: http.ServerResponse; written: { statusCode: number; headers: Record<string, string>; body: string } } {
+      const written = { statusCode: 0, headers: {} as Record<string, string>, body: '' };
+      const res = {
+        writeHead(code: number, headers: Record<string, string>) { written.statusCode = code; written.headers = headers; },
+        end(body?: string) { written.body = body || ''; },
+      } as unknown as http.ServerResponse;
+      return { res, written };
+    }
+
+    function addBranch(id: string, status: 'running' | 'starting' | 'building', services: Record<string, { profileId: string; status: string }> = {}) {
+      const svcState: Record<string, any> = {};
+      for (const [k, v] of Object.entries(services)) {
+        svcState[k] = { profileId: v.profileId, containerName: `cds-${id}-${k}`, hostPort: 9000, status: v.status };
+      }
+      stateService.addBranch({
+        id, branch: id, worktreePath: `/tmp/${id}`,
+        services: svcState, status, createdAt: new Date().toISOString(),
+      });
+      stateService.save();
+    }
+
+    it('should serve loading page when branch status is starting', () => {
+      addBranch('my-branch', 'starting', {
+        admin: { profileId: 'admin', status: 'starting' },
+      });
+      stateService.setDefaultBranch('my-branch');
+      stateService.save();
+
+      const req = makeReq({ host: 'localhost' });
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(written.statusCode).toBe(200);
+      expect(written.headers['Content-Type']).toContain('text/html');
+      expect(written.body).toContain('启动中');
+      expect(written.body).toContain('setTimeout');
+    });
+
+    it('should serve loading page when target service is starting but branch is running', () => {
+      addBranch('my-branch', 'running', {
+        api: { profileId: 'api', status: 'running' },
+        admin: { profileId: 'admin', status: 'starting' },
+      });
+      stateService.addBuildProfile({
+        id: 'api', name: 'API', dockerImage: 'dotnet:8', workDir: 'api',
+        containerPort: 5000, pathPrefixes: ['/api/'],
+      });
+      stateService.addBuildProfile({
+        id: 'admin', name: 'Admin', dockerImage: 'node:20', workDir: 'admin',
+        containerPort: 5173,
+      });
+      stateService.setDefaultBranch('my-branch');
+      stateService.save();
+
+      // Must set resolveUpstream — proxy checks it before profile detection
+      proxy.setResolveUpstream(() => 'http://localhost:9000');
+
+      // Request to admin (non-API path) → should hit the starting admin service
+      const req = makeReq({ host: 'localhost' }, '/dashboard');
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(written.statusCode).toBe(200);
+      expect(written.headers['Content-Type']).toContain('text/html');
+      expect(written.body).toContain('启动中');
+      expect(written.body).toContain('admin');
+    });
+
+    it('should proxy to upstream when target service is running', () => {
+      addBranch('my-branch', 'running', {
+        admin: { profileId: 'admin', status: 'running' },
+      });
+      stateService.setDefaultBranch('my-branch');
+      stateService.save();
+
+      let resolvedUpstream = '';
+      proxy.setResolveUpstream((_branchSlug, _profileId) => { resolvedUpstream = 'http://localhost:9000'; return resolvedUpstream; });
+
+      // Use a mock req with pipe to avoid TypeError in proxyRequest
+      const req = { headers: { host: 'localhost' }, url: '/', pipe: () => {} } as unknown as http.IncomingMessage;
+      const { res } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(resolvedUpstream).toBe('http://localhost:9000');
+    });
+
+    it('should still trigger auto-build for building/idle/error states', () => {
+      addBranch('my-branch', 'building', {});
+      stateService.setDefaultBranch('my-branch');
+      stateService.save();
+
+      let autoBuildCalled = false;
+      proxy.setOnAutoBuild(() => { autoBuildCalled = true; });
+
+      const req = makeReq({ host: 'localhost' }, '/');
+      const { res } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(autoBuildCalled).toBe(true);
+    });
+  });
+
   describe('matchRule', () => {
     it('should match domain rule and extract capture group', () => {
       const result = proxy.matchRule(
