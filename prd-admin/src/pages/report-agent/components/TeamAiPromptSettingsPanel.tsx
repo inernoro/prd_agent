@@ -10,11 +10,14 @@ import {
   resetTeamAiSummaryPrompt,
   updateTeamAiSummaryPrompt,
 } from '@/services';
+import { ReportTeamRole } from '@/services/contracts/reportAgent';
 import type { ReportTeam } from '@/services/contracts/reportAgent';
 
 function pickManageableTeams(items: ReportTeam[]): ReportTeam[] {
-  const manageable = items.filter((team) => team.canManageMembers);
-  return manageable;
+  // 仅展示当前用户是负责人或副负责人的团队，普通成员不应出现在此列表
+  return items.filter(
+    (team) => team.myRole === ReportTeamRole.Leader || team.myRole === ReportTeamRole.Deputy
+  );
 }
 
 export function TeamAiPromptSettingsPanel() {
