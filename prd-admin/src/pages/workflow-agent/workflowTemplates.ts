@@ -1,5 +1,7 @@
 import type { WorkflowNode, WorkflowEdge, WorkflowVariable } from '@/services/contracts/workflowAgent';
 import { tapdHtmlGenCode } from './tapdHtmlTemplate';
+import { storyHtmlGenCode } from './storyHtmlTemplate';
+import { inspectionHtmlGenCode } from './inspectionHtmlTemplate';
 
 // ═══════════════════════════════════════════════════════════════
 // 工作流模板注册表 — 预定义的一键导入模板
