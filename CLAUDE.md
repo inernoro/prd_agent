@@ -149,9 +149,11 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | **cds-deploy-pipeline** | `/cds-deploy` | 跨服务器灰度环境生命周期：部署/观测/诊断/操作/验证/清理 |
 | **llm-visibility** | `/visibility` | LLM 交互可视化审计 + 组件指南 |
 | **theme-transition** | `/theme-transition` | 主题切换圆形过渡动效 (View Transition API) |
+| **agent-guide** | `/help` | Agent 开发新手引导：阶段跟踪 + 技能推荐 + 进度管理 |
 
 ### 使用指引
 
+0. **首次开发 Agent** → `/help` 进入新手引导，全程阶段式陪伴（详见 `doc/guide.agent-onboarding.md`）
 1. **新需求提出时** → `/validate` 验证需求质量和价值（中大型功能必跑）
 3. **方案评审时** → 先 `/risk` 评估风险，再 `/trace` 追踪关键链路
 4. **开发完成后** → 先 `/verify` 交叉验证，再 `/cds-deploy` 一键部署+冒烟测试
