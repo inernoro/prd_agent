@@ -1,5 +1,19 @@
 # 多图组合生成设计 (Multi-Image Compose)
 
+> **版本**：v1.0 | **日期**：2026-03-27 | **状态**：设计完成
+
+---
+
+## 一、管理摘要
+
+- **解决什么问题**：用户需要通过自然语言描述多张图片的组合关系（如"把大象放进房间"），当前系统不支持多图语义理解与融合生成
+- **方案概述**：两阶段 VLM 流水线——Stage 1 异步预提取图片描述，Stage 2 实时组合意图解析 + 生图，复用预处理结果减少 VLM 调用
+- **业务价值**：让视觉创作 Agent 支持多图组合生成，提升创作灵活性和用户体验
+- **影响范围**：后端（ImageAsset 模型、VisualAgent 服务、ImageGen Controller/Worker）、前端（组合生成 UI）
+- **预计风险**：中 — 依赖 VLM 语义理解准确性，语序变化可能影响结果
+
+---
+
 ## 1. 目标与边界
 
 ### 1.1 目标
@@ -328,6 +342,8 @@ sequenceDiagram
 | 组合解析服务 | `prd-api/src/PrdAgent.Infrastructure/Services/VisualAgent/MultiImageComposeService.cs` |
 | Compose 接口 | `prd-api/src/PrdAgent.Api/Controllers/Api/ImageGenController.cs` |
 | 上传触发 | `prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs` |
+
+> 注：`ImageMasterController` 现已更名为 `VisualAgentController`。
 | DI 注册 | `prd-api/src/PrdAgent.Api/Program.cs` |
 
 ---

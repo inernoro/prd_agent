@@ -4,7 +4,15 @@
 
 ---
 
-## 一、产品定位
+## 一、管理摘要
+
+- **解决什么问题**：管理层缺乏实时掌握全员 AI 协作状况的统一视角，无法量化 AI 工具的使用效果和成本
+- **方案概述**：构建总裁面板（实时驾驶舱）和周报 Agent（定时快照）两个互补产品，基于 LLM 请求日志等数据源提供多维度分析
+- **业务价值**：CEO/CTO 一站式查看 AI 使用率、Token 成本、Agent 采纳度等关键指标，支撑数据驱动的 AI 投入决策
+- **影响范围**：新增周报管理模块（report-agent），消费现有 llm_request_logs 等集合数据
+- **预计风险**：中 — LLM 日志 7 天 TTL 导致历史趋势丢失，需引入聚合快照机制
+
+## 二、产品定位
 
 ### 两个互补产品
 
@@ -56,7 +64,7 @@ UserId                        string?     → 按用户聚合
 GroupId / SessionId           string?     → 关联对话上下文
 RequestPurpose                string?     → AppCallerCode，区分 Agent 和功能点
 RequestPurposeDisplayName     string?     → 中文名（自包含，日志写入时已保存）
-Provider / Model              string      → 按模型/平台聚合成本
+Platform / Model              string      → 按模型/平台聚合成本
 PlatformId / PlatformName     string?     → 平台维度
 ModelGroupId / ModelGroupName string?     → 模型池维度
 InputTokens / OutputTokens    int?        → Token 消耗（成本计算核心）
