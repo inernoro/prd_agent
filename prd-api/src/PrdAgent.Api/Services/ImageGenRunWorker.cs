@@ -910,6 +910,15 @@ public class ImageGenRunWorker : BackgroundService
         }
     }
 
+    /// <summary>
+    /// 剥离前端追加的生图意图前缀，该前缀仅用于 LLM 调用，不应存入展示字段。
+    /// </summary>
+    private static string StripImageGenPrefix(string prompt)
+    {
+        const string prefix = "Generate an image based on the following description:\n";
+        return prompt.StartsWith(prefix, StringComparison.Ordinal) ? prompt[prefix.Length..].Trim() : prompt;
+    }
+
     private static bool TryParseWxH(string? raw, out int w, out int h)
     {
         w = 0;
@@ -988,7 +997,7 @@ public class ImageGenRunWorker : BackgroundService
             Mime = assetMime,
             SizeBytes = assetSizeBytes,
             Url = url ?? assetUrl,  // 展示用（有水印时是 watermark URL，无水印时是 imagemaster URL）
-            Prompt = (prompt ?? string.Empty).Trim(),
+            Prompt = StripImageGenPrefix((prompt ?? string.Empty).Trim()),
             CreatedAt = DateTime.UtcNow,
             OriginalUrl = assetUrl,
             OriginalSha256 = assetSha256,

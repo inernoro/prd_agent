@@ -1359,6 +1359,12 @@ public class ImageMasterController : ControllerBase
             var prompt = (request?.Prompt ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(prompt)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "prompt 不能为空"));
 
+            // 剥离前端追加的生图意图前缀（该前缀仅用于 LLM 调用，不应存入展示字段）
+            const string imageGenPrefix = "Generate an image based on the following description:\n";
+            var displayPrompt = prompt.StartsWith(imageGenPrefix, StringComparison.Ordinal)
+                ? prompt[imageGenPrefix.Length..].Trim()
+                : prompt;
+
             // 风格统一：若 workspace 设置了 StylePrompt，自动拼接到用户 prompt 后面
             var stylePrompt = (ws.StylePrompt ?? string.Empty).Trim();
             if (!string.IsNullOrWhiteSpace(stylePrompt))
@@ -1411,12 +1417,13 @@ public class ImageMasterController : ControllerBase
                 initSha = null;
             }
 
-            // 关键：先把“占位元素”写入画布（服务端写入，避免前端关闭导致元素不存在）
+            // 关键：先把”占位元素”写入画布（服务端写入，避免前端关闭导致元素不存在）
+            // 使用 displayPrompt（不含生图意图前缀），避免前缀泄漏到 UI 展示
             await UpsertWorkspaceCanvasPlaceholderAsync(
                 workspaceId: wid,
                 ownerUserId: ws.OwnerUserId,
                 targetKey: targetKey,
-                prompt: prompt,
+                prompt: displayPrompt,
                 x: request?.X,
                 y: request?.Y,
                 w: request?.W,

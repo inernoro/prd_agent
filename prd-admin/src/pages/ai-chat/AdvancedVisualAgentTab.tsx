@@ -3470,6 +3470,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       .filter((sha) => sha.length === 64);
 
     let firstPrompt = '';
+    let displayPrompt = ''; // 用户原始提示词（不含生图意图前缀），用于 UI 展示和存储
     if (directPrompt) {
       firstPrompt = stripModelMention(reqText) || stripModelMention(display) || '';
       if (!firstPrompt) {
@@ -3489,6 +3490,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       } catch {
         // 澄清失败不阻断生图流程，静默降级使用原始 prompt
       }
+      // 保存用于展示的提示词（不含前缀）
+      displayPrompt = firstPrompt;
       // 智能模式也需要追加生图意图前缀，与直连模式保持一致
       firstPrompt = `Generate an image based on the following description:\n${firstPrompt}`;
     } else {
@@ -3499,6 +3502,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: display || reqText || undefined, imageRefShas }));
         return;
       }
+      // 保存用于展示的提示词（不含前缀）
+      displayPrompt = firstPrompt;
       firstPrompt = `Generate an image based on the following description:\n${firstPrompt}`;
     }
 
@@ -3560,7 +3565,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 // 这样底部白色快捷输入框会消失，同时仍保持加载动画与可选中行为
                 kind: 'image',
                 createdAt: Date.now(),
-                prompt: firstPrompt,
+                prompt: displayPrompt,
                 status: 'running',
                 errorMessage: null,
                 // 保持面板位置与尺寸
@@ -3582,7 +3587,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         key,
         kind: 'image',
         createdAt: Date.now(),
-        prompt: firstPrompt,
+        prompt: displayPrompt,
         src: '',
         status: 'running',
         w: genW,
@@ -3800,7 +3805,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       if (!runRes.success) {
         const msg = runRes.error?.message || '生成失败';
         setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
-        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, imageRefShas }));
+        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: displayPrompt || undefined, imageRefShas }));
         triggerDefectFlash();
         return;
       }
@@ -3809,7 +3814,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       if (!runId) {
         const msg = '未返回 runId';
         setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
-        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, imageRefShas }));
+        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: displayPrompt || undefined, imageRefShas }));
         triggerDefectFlash();
         return;
       }
@@ -3853,7 +3858,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               const emptyMsg = '生成完成但图片数据为空，请重试';
               setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: emptyMsg } : x)));
               const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
-              pushMsg('Assistant', buildGenErrorContent({ msg: emptyMsg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: modelPoolName, imageRefShas }));
+              pushMsg('Assistant', buildGenErrorContent({ msg: emptyMsg, refSrc: refSrc || undefined, prompt: displayPrompt || undefined, runId, modelPool: modelPoolName, imageRefShas }));
               triggerDefectFlash();
               return;
             }
@@ -3876,7 +3881,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               )
             );
             const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
-            pushMsg('Assistant', buildGenDoneContent({ src: u, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: modelPoolName, imageRefShas }));
+            pushMsg('Assistant', buildGenDoneContent({ src: u, refSrc: refSrc || undefined, prompt: displayPrompt || undefined, runId, modelPool: modelPoolName, imageRefShas }));
             // 自动投稿：生图完成后自动提交到作品广场（受开关控制）
             if (asset?.id && autoSubmitEnabledRef.current) {
               autoSubmitImages([asset.id]).catch(() => {});
@@ -3885,7 +3890,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             const msg = String(o.errorMessage ?? '生成失败');
             setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
             const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
-            pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: modelPoolName, imageRefShas }));
+            pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: displayPrompt || undefined, runId, modelPool: modelPoolName, imageRefShas }));
             triggerDefectFlash();
           }
         },
@@ -3895,7 +3900,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         setCanvas((prev) => {
           const item = prev.find((x) => x.key === key);
           if (item && item.status === 'running') {
-            pushMsg('Assistant', buildGenErrorContent({ msg: '生成超时或连接中断，请重试', refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: pickedModel?.name || pickedModel?.modelName || '', imageRefShas }));
+            pushMsg('Assistant', buildGenErrorContent({ msg: '生成超时或连接中断，请重试', refSrc: refSrc || undefined, prompt: displayPrompt || undefined, runId, modelPool: pickedModel?.name || pickedModel?.modelName || '', imageRefShas }));
             triggerDefectFlash();
           }
           return prev.map((x) =>
@@ -3908,7 +3913,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     } catch (e) {
       const msg = e instanceof Error ? e.message : '生成失败';
       setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
-      pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, imageRefShas }));
+      pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: displayPrompt || undefined, imageRefShas }));
       triggerDefectFlash();
     }
   };
