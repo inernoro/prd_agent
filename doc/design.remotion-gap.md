@@ -276,6 +276,6 @@ npx remotion add @remotion/transitions
 
 ---
 
-## 七、一句话总结
+## 八、一句话总结
 
 > **我们把 Remotion 当成了"文字渲染器"，而互联网上的人把它当成"After Effects 的代码版"。差距不在 Remotion 本身，在于我们只用了它 5% 的能力。**
