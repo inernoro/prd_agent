@@ -30,6 +30,11 @@ public class UserPreferences
     public VisualAgentPreferences? VisualAgentPreferences { get; set; }
 
     /// <summary>
+    /// 文学创作 Agent 偏好设置
+    /// </summary>
+    public LiteraryAgentPreferences? LiteraryAgentPreferences { get; set; }
+
+    /// <summary>
     /// 周报 Agent 偏好设置
     /// </summary>
     public ReportAgentPreferences? ReportAgentPreferences { get; set; }
@@ -86,6 +91,19 @@ public class VisualAgentPreferences
 
     /// <summary>用户自定义快捷指令（最多 10 个）</summary>
     public List<QuickActionConfig>? QuickActions { get; set; }
+}
+
+/// <summary>
+/// 文学创作 Agent 偏好设置
+/// </summary>
+[BsonIgnoreExtraElements]
+public class LiteraryAgentPreferences
+{
+    /// <summary>是否自动选择模型（true 时使用后端默认模型池）</summary>
+    public bool ModelAuto { get; set; } = true;
+
+    /// <summary>用户手动选择的模型池 ID（仅当 ModelAuto=false 时有效）</summary>
+    public string? ModelId { get; set; }
 }
 
 /// <summary>

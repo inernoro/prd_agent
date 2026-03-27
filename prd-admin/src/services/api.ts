@@ -278,6 +278,7 @@ export const api = {
       navOrder: () => '/api/dashboard/user-preferences/nav-order',
       theme: () => '/api/dashboard/user-preferences/theme',
       visualAgent: () => '/api/dashboard/user-preferences/visual-agent',
+      literaryAgent: () => '/api/dashboard/user-preferences/literary-agent',
     },
     stats: {
       overview: () => '/api/dashboard/stats/overview',
@@ -397,6 +398,8 @@ export const api = {
         unpublish: (id: string) => `/api/literary-agent/config/reference-images/${id}/unpublish`,
         fork: (id: string) => `/api/literary-agent/config/reference-images/${id}/fork`,
       },
+      /** 获取统一模型池列表（文生图 + 图生图，合并去重） */
+      models: () => '/api/literary-agent/config/models',
       /** 获取文生图模型池（无参考图场景） */
       modelsText2Img: () => '/api/literary-agent/config/models/text2img',
       /** 获取图生图模型池（有风格参考图场景） */

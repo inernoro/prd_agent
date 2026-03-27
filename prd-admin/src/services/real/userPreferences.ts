@@ -8,8 +8,10 @@ import type {
   UpdateNavOrderContract,
   UpdateThemeConfigContract,
   UpdateVisualAgentPreferencesContract,
+  UpdateLiteraryAgentPreferencesContract,
   ThemeConfigResponse,
   VisualAgentPreferences,
+  LiteraryAgentPreferences,
 } from '@/services/contracts/userPreferences';
 
 // 去重：navOrderStore + themeStore + VisualAgentTab 可能同时调用，共享一个 in-flight 请求
@@ -26,7 +28,7 @@ export const getUserPreferencesReal: GetUserPreferencesContract = async (): Prom
 };
 
 async function doGetUserPreferences(): Promise<ApiResponse<UserPreferences>> {
-  const res = await apiRequest<{ navOrder: string[]; themeConfig?: ThemeConfigResponse; visualAgentPreferences?: VisualAgentPreferences }>(
+  const res = await apiRequest<{ navOrder: string[]; themeConfig?: ThemeConfigResponse; visualAgentPreferences?: VisualAgentPreferences; literaryAgentPreferences?: LiteraryAgentPreferences }>(
     api.dashboard.userPreferences.get()
   );
   if (!res.success) return res as unknown as ApiResponse<UserPreferences>;
@@ -34,6 +36,7 @@ async function doGetUserPreferences(): Promise<ApiResponse<UserPreferences>> {
     navOrder: res.data.navOrder ?? [],
     themeConfig: res.data.themeConfig,
     visualAgentPreferences: res.data.visualAgentPreferences,
+    literaryAgentPreferences: res.data.literaryAgentPreferences,
   });
 }
 
@@ -63,6 +66,17 @@ export const updateVisualAgentPreferencesReal: UpdateVisualAgentPreferencesContr
   const res = await apiRequest<void>(api.dashboard.userPreferences.visualAgent(), {
     method: 'PUT',
     body: { visualAgentPreferences: prefs },
+  });
+  if (!res.success) return res;
+  return ok(undefined);
+};
+
+export const updateLiteraryAgentPreferencesReal: UpdateLiteraryAgentPreferencesContract = async (
+  prefs: LiteraryAgentPreferences
+): Promise<ApiResponse<void>> => {
+  const res = await apiRequest<void>(api.dashboard.userPreferences.literaryAgent(), {
+    method: 'PUT',
+    body: { literaryAgentPreferences: prefs },
   });
   if (!res.success) return res;
   return ok(undefined);
