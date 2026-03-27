@@ -348,13 +348,15 @@ public class ReportAgentController : ControllerBase
             .ToDictionary(g => g.Key, g => g.OrderByDescending(m => m.JoinedAt).First().Role);
 
         List<ReportTeam> teams;
-        if (HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
+        if (HasPermission(AdminPermissionCatalog.ReportAgentTeamManage))
         {
+            // 有团队管理权限的用户可查看所有团队（需要统一管理）
             teams = await _db.ReportTeams.Find(_ => true)
                 .SortByDescending(t => t.CreatedAt).ToListAsync();
         }
         else
         {
+            // 普通用户仅看自己参与（成员）或负责（leader）的团队
             var teamIds = memberships.Select(m => m.TeamId).Distinct().ToList();
             var leaderTeams = await _db.ReportTeams.Find(t => t.LeaderUserId == userId).ToListAsync();
             var leaderTeamIds = leaderTeams.Select(t => t.Id).ToList();
@@ -384,9 +386,18 @@ public class ReportAgentController : ControllerBase
     [HttpGet("teams/{id}")]
     public async Task<IActionResult> GetTeam(string id)
     {
+        var userId = GetUserId();
         var team = await _db.ReportTeams.Find(t => t.Id == id).FirstOrDefaultAsync();
         if (team == null)
             return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "团队不存在"));
+
+        // 权限校验：团队管理员 OR 全局查看权限 OR 是团队成员/负责人
+        var isLeader = team.LeaderUserId == userId;
+        var isMember = await IsTeamMember(id, userId);
+        if (!HasPermission(AdminPermissionCatalog.ReportAgentTeamManage)
+            && !HasPermission(AdminPermissionCatalog.ReportAgentViewAll)
+            && !isLeader && !isMember)
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权查看该团队"));
 
         var members = await _db.ReportTeamMembers.Find(m => m.TeamId == id)
             .SortBy(m => m.JoinedAt).ToListAsync();
