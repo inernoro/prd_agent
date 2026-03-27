@@ -4,7 +4,7 @@
 
 ---
 
-## 一、管理摘要
+## 管理摘要
 
 - **解决什么问题**：LLM 请求日志中参考图因 base64 截断无法显示，重绘消息因前端 fire-and-forget 模式导致刷新后丢失
 - **方案概述**：引入 ImageReferences 独立字段存储 COS URL 避免截断问题，将消息持久化从前端异步调用改为后端 Controller/Worker 自动保存
@@ -12,7 +12,7 @@
 - **影响范围**：LLM Gateway（ImageReferences 透传）、ImageMasterController（消息保存重构）、前端 LlmLogsPage 和 VisualAgentTab
 - **预计风险**：低 — 旧日志降级到 extractInlineImagesFromBody，旧消息无 refSrc 时不显示参考图
 
-## 二、问题根因
+## 一、问题根因
 
 ### 问题 1：参考图显示 base64
 
