@@ -1,14 +1,18 @@
 # 图片引用日志 & 消息服务器权威持久化 — 架构设计
 
-> **版本**：v1.0 | **日期**：2026-02-08
-> **关联分支**：`claude/fix-image-url-redraw-KK7Oe`
-> **解决问题**：
-> 1. LLM 请求日志中参考图显示 base64 而非 COS URL
-> 2. 重绘消息刷新后丢失 & 编辑窗不显示参考图
+> **版本**：v1.0 | **日期**：2026-02-08 | **状态**：已实现
 
 ---
 
-## 一、问题根因
+## 一、管理摘要
+
+- **解决什么问题**：LLM 请求日志中参考图因 base64 截断无法显示，重绘消息因前端 fire-and-forget 模式导致刷新后丢失
+- **方案概述**：引入 ImageReferences 独立字段存储 COS URL 避免截断问题，将消息持久化从前端异步调用改为后端 Controller/Worker 自动保存
+- **业务价值**：LLM 日志中参考图可正常查看，消息持久化不再依赖前端网络状态，刷新后历史完整保留
+- **影响范围**：LLM Gateway（ImageReferences 透传）、ImageMasterController（消息保存重构）、前端 LlmLogsPage 和 VisualAgentTab
+- **预计风险**：低 — 旧日志降级到 extractInlineImagesFromBody，旧消息无 refSrc 时不显示参考图
+
+## 二、问题根因
 
 ### 问题 1：参考图显示 base64
 
@@ -273,7 +277,7 @@ base64 图片数据 (通常 200KB+) 被截断后无法作为 `<img>` 的 src 使
                                             ├─ Gateway.SendAsync()
                                             │   ├─ LlmRequestLog
                                             │   │   .ImageReferences ←── 新增
-                                            │   └─ 调用 Provider
+                                            │   └─ 调用 Platform Adapter
                                             │
                                             ├─ 上传结果到 COS
                                             │
