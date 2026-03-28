@@ -223,6 +223,38 @@ public class ReviewAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { submission, result }));
     }
 
+    /// <summary>
+    /// 重新评审 — 清除旧结果，重置为 Queued 状态，触发重跑
+    /// </summary>
+    [HttpPost("submissions/{id}/rerun")]
+    public async Task<IActionResult> RerunSubmission(string id, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var submission = await _db.ReviewSubmissions.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (submission == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "提交记录不存在"));
+
+        if (submission.SubmitterId != userId && !HasViewAllPermission())
+            return Forbid();
+
+        // 删除旧结果
+        if (!string.IsNullOrEmpty(submission.ResultId))
+            await _db.ReviewResults.DeleteOneAsync(x => x.Id == submission.ResultId, CancellationToken.None);
+
+        // 重置状态
+        await _db.ReviewSubmissions.UpdateOneAsync(
+            x => x.Id == id,
+            Builders<ReviewSubmission>.Update
+                .Set(x => x.Status, ReviewStatuses.Queued)
+                .Unset(x => x.ResultId)
+                .Unset(x => x.CompletedAt)
+                .Unset(x => x.StartedAt)
+                .Unset(x => x.ErrorMessage),
+            cancellationToken: CancellationToken.None);
+
+        return Ok(ApiResponse<object>.Ok(new { message = "已重置，请刷新页面重新评审" }));
+    }
+
     // ──────────────────────────────────────────────
     // SSE 评审流
     // ──────────────────────────────────────────────
@@ -568,16 +600,20 @@ public class ReviewAgentController : ControllerBase
 
     private static string? TryExtractJsonBlock(string output)
     {
-        // 优先提取 ```json ... ``` 或 ``` ... ``` 代码块中的 JSON
-        var codeBlockMatch = System.Text.RegularExpressions.Regex.Match(
-            output, @"```(?:json)?\s*(\{[\s\S]*?\})\s*```",
+        // 先尝试从代码块中剥离 fence 标记，得到内层内容
+        // 注意：用非贪婪 [\s\S]*? 匹配 fence 内容本身是正确的（找最近的结束 fence）
+        // 但不能用非贪婪来找 {}，必须用 IndexOf/LastIndexOf 找最外层花括号
+        string searchTarget = output;
+        var fenceMatch = System.Text.RegularExpressions.Regex.Match(
+            output, @"```(?:json)?\s*([\s\S]*?)\s*```",
             System.Text.RegularExpressions.RegexOptions.Singleline);
-        if (codeBlockMatch.Success) return codeBlockMatch.Groups[1].Value;
+        if (fenceMatch.Success)
+            searchTarget = fenceMatch.Groups[1].Value;
 
-        // 回退：找最外层 { ... }
-        var start = output.IndexOf('{');
-        var end = output.LastIndexOf('}');
-        return (start >= 0 && end > start) ? output[start..(end + 1)] : null;
+        // 用 IndexOf / LastIndexOf 找最外层 { ... }，正确处理嵌套 JSON
+        var start = searchTarget.IndexOf('{');
+        var end = searchTarget.LastIndexOf('}');
+        return (start >= 0 && end > start) ? searchTarget[start..(end + 1)] : null;
     }
 
     private async Task WriteSseEventAsync(string eventType, object data)

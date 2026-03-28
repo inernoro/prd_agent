@@ -4,7 +4,7 @@ import { ClipboardCheck, ArrowLeft, CheckCircle, XCircle, Clock, RefreshCw, Chev
 import { useSseStream } from '@/lib/useSseStream';
 import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
 import { SseTypingBlock } from '@/components/sse/SseTypingBlock';
-import { getReviewSubmission, getReviewResultStreamUrl } from '@/services';
+import { getReviewSubmission, getReviewResultStreamUrl, rerunReviewSubmission } from '@/services';
 import type { ReviewSubmission, ReviewResult, ReviewDimensionScore } from '@/services';
 
 export function ReviewAgentResultPage() {
@@ -19,7 +19,8 @@ export function ReviewAgentResultPage() {
   const [isPassed, setIsPassed] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   const [expandedDims, setExpandedDims] = useState<Set<string>>(new Set());
-  const [streamStarted, setStreamStarted] = useState(false);
+  const [streaming, setStreaming] = useState(false);
+  const [rerunning, setRerunning] = useState(false);
 
   const loadData = useCallback(async () => {
     if (!id) return;
@@ -40,7 +41,7 @@ export function ReviewAgentResultPage() {
   useEffect(() => { loadData(); }, [loadData]);
 
   const sse = useSseStream<ReviewDimensionScore>({
-    url: id && !result && submission?.status !== 'Error' ? getReviewResultStreamUrl(id) : '',
+    url: '',
     itemEvent: 'dimension_score',
     onItem: (item) => {
       setDimensionScores(prev => {
@@ -56,16 +57,45 @@ export function ReviewAgentResultPage() {
         setSummary(d.summary);
       }
     },
-    onDone: () => loadData(),
-    onError: (msg) => console.error('评审流错误:', msg),
+    onDone: () => {
+      setStreaming(false);
+      loadData();
+    },
+    onError: (msg) => {
+      console.error('评审流错误:', msg);
+      setStreaming(false);
+    },
   });
 
+  // 自动开始 SSE：未完成的 submission
   useEffect(() => {
-    if (submission && submission.status !== 'Done' && submission.status !== 'Error' && !streamStarted) {
-      setStreamStarted(true);
-      sse.start();
+    if (!submission || streaming) return;
+    if (submission.status === 'Queued' || submission.status === 'Running') {
+      setStreaming(true);
+      sse.start({ url: getReviewResultStreamUrl(submission.id) });
     }
-  }, [submission, streamStarted, sse]);
+  }, [submission]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleRerun() {
+    if (!id || rerunning) return;
+    setRerunning(true);
+    try {
+      const res = await rerunReviewSubmission(id);
+      if (res.success) {
+        // 清空旧结果，重置状态
+        setResult(null);
+        setDimensionScores([]);
+        setSummary('');
+        setTotalScore(null);
+        setIsPassed(null);
+        setStreaming(true);
+        setSubmission(prev => prev ? { ...prev, status: 'Queued', resultId: undefined } : prev);
+        sse.start({ url: getReviewResultStreamUrl(id!) });
+      }
+    } finally {
+      setRerunning(false);
+    }
+  }
 
   function toggleDim(key: string) {
     setExpandedDims(prev => {
@@ -96,7 +126,7 @@ export function ReviewAgentResultPage() {
 
   const isDone = submission.status === 'Done' || totalScore !== null;
   const isError = submission.status === 'Error';
-  const isRunning = !isDone && !isError;
+  const isRunning = streaming || (!isDone && !isError);
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-6">
@@ -122,7 +152,7 @@ export function ReviewAgentResultPage() {
             </div>
           </div>
           {/* 总分/状态 */}
-          {isDone && totalScore !== null && (
+          {isDone && totalScore !== null && !isRunning && (
             <div className="flex-shrink-0 text-right">
               <div className={`text-2xl font-bold ${isPassed ? 'text-emerald-400' : 'text-red-400'}`}>
                 {totalScore}分
@@ -141,7 +171,7 @@ export function ReviewAgentResultPage() {
               </div>
             </div>
           )}
-          {isError && (
+          {isError && !isRunning && (
             <div className="flex-shrink-0">
               <div className="flex items-center gap-1.5 text-xs text-red-400/80">
                 <XCircle className="w-3.5 h-3.5" />
@@ -213,22 +243,22 @@ export function ReviewAgentResultPage() {
       )}
 
       {/* AI 总结评语 */}
-      {summary && (
+      {summary && !isRunning && (
         <div className="mb-6 bg-white/3 border border-white/8 rounded-xl p-5">
           <h2 className="text-sm font-medium text-white/60 mb-3">AI 总结评语</h2>
           <p className="text-sm text-white/70 leading-relaxed">{summary}</p>
         </div>
       )}
 
-      {/* 错误状态 */}
-      {isError && (
-        <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-5">
-          <p className="text-sm text-red-300 mb-3">{submission.errorMessage ?? '评审失败，请重试'}</p>
+      {/* 重新评审按钮（已完成或失败时显示） */}
+      {(isDone || isError) && !isRunning && (
+        <div className="flex justify-end">
           <button
-            onClick={() => { setStreamStarted(false); sse.start(); }}
-            className="flex items-center gap-1.5 text-sm text-red-400 hover:text-red-300 transition-colors"
+            onClick={handleRerun}
+            disabled={rerunning}
+            className="flex items-center gap-1.5 text-sm text-white/40 hover:text-white/70 transition-colors disabled:opacity-50"
           >
-            <RefreshCw className="w-3.5 h-3.5" />
+            <RefreshCw className={`w-3.5 h-3.5 ${rerunning ? 'animate-spin' : ''}`} />
             重新评审
           </button>
         </div>

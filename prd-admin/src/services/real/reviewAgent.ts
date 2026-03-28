@@ -107,6 +107,10 @@ export async function getSubmission(
   return apiRequest(`/api/review-agent/submissions/${id}`);
 }
 
+export async function rerunSubmission(id: string): Promise<ApiResponse<{ message: string }>> {
+  return apiRequest(`/api/review-agent/submissions/${id}/rerun`, { method: 'POST' });
+}
+
 // SSE 流式接口 URL（供 useSseStream 使用）
 export function getResultStreamUrl(submissionId: string): string {
   return `/api/review-agent/submissions/${submissionId}/result/stream`;

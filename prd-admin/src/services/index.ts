@@ -1463,6 +1463,7 @@ export {
   getMySubmissions as getMyReviewSubmissions,
   getAllSubmissions as getAllReviewSubmissions,
   getSubmission as getReviewSubmission,
+  rerunSubmission as rerunReviewSubmission,
   getResultStreamUrl as getReviewResultStreamUrl,
 } from '@/services/real/reviewAgent';
 export type {
