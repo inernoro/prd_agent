@@ -240,6 +240,23 @@ export function createServer(deps: ServerDeps): express.Express {
   const authEnabled = !!(cdsUser && cdsPass);
   const validToken = authEnabled ? makeToken(cdsUser!, cdsPass!) : '';
 
+  // ── Temporary debug endpoint (public, remove after fixing) ──
+  app.get('/api/ai/auth-debug', (req, res) => {
+    const processKey = process.env.AI_ACCESS_KEY;
+    const customKey = deps.stateService.getCustomEnv()?.['AI_ACCESS_KEY'];
+    const headerKey = req.headers['x-ai-access-key'] as string | undefined;
+    res.json({
+      processKeySet: !!processKey,
+      processKeyLen: processKey?.length ?? 0,
+      customKeySet: !!customKey,
+      customKeyLen: customKey?.length ?? 0,
+      headerKeySet: !!headerKey,
+      headerKeyLen: headerKey?.length ?? 0,
+      keysMatch: !!(processKey || customKey) && headerKey === (processKey || customKey),
+      authEnabled,
+    });
+  });
+
   // ── AI pairing endpoints (before auth, some are public) ──
   // POST /api/ai/request-access — AI agent requests pairing (public)
   app.post('/api/ai/request-access', (req, res) => {
@@ -334,23 +351,6 @@ export function createServer(deps: ServerDeps): express.Express {
   } else {
     console.warn('  ⚠ Auth: disabled — CDS_USERNAME / CDS_PASSWORD not set, dashboard is open to anyone!');
   }
-
-  // ── Temporary debug endpoint (public, remove after fixing) ──
-  app.get('/api/ai/auth-debug', (req, res) => {
-    const processKey = process.env.AI_ACCESS_KEY;
-    const customKey = deps.stateService.getCustomEnv()?.['AI_ACCESS_KEY'];
-    const headerKey = req.headers['x-ai-access-key'] as string | undefined;
-    res.json({
-      processKeySet: !!processKey,
-      processKeyLen: processKey?.length ?? 0,
-      customKeySet: !!customKey,
-      customKeyLen: customKey?.length ?? 0,
-      headerKeySet: !!headerKey,
-      headerKeyLen: headerKey?.length ?? 0,
-      keysMatch: !!(processKey || customKey) && headerKey === (processKey || customKey),
-      authEnabled,
-    });
-  });
 
   // ── AI pairing management (requires auth) ──
   // GET /api/ai/pending — list pending pairing requests
