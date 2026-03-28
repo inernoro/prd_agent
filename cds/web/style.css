@@ -2550,6 +2550,103 @@ a.branch-name:hover { color: var(--accent); }
   margin: 0;
 }
 
+/* ════════════════ CDS Loading Animation (MAP style) ════════════════ */
+
+.cds-loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 0;
+  position: relative;
+  user-select: none;
+}
+
+.cds-loading-glow {
+  position: absolute;
+  width: 200px;
+  height: 200px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,255,255,0.03) 0%, transparent 70%);
+  animation: cds-glow-pulse 3s ease-in-out infinite;
+}
+
+.cds-loading-letters {
+  display: flex;
+  gap: 4px;
+  position: relative;
+}
+
+.cds-letter {
+  font-size: 36px;
+  font-weight: 700;
+  font-family: 'Inter', 'SF Pro Display', -apple-system, system-ui, sans-serif;
+  letter-spacing: 0.08em;
+  color: var(--color);
+  opacity: 0;
+  background: linear-gradient(90deg, var(--color) 40%, rgba(255,255,255,0.5) 50%, var(--color) 60%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: cds-letter-in 600ms cubic-bezier(0.16, 1, 0.3, 1) var(--delay) forwards,
+             cds-shimmer 2.4s linear 800ms infinite;
+}
+
+.cds-loading-bar {
+  margin-top: 16px;
+  width: 80px;
+  height: 1.5px;
+  border-radius: 1px;
+  background: linear-gradient(90deg, transparent, var(--text-muted), transparent);
+  transform-origin: center;
+  animation: cds-bar-scan 2s ease-in-out 400ms infinite;
+}
+
+.cds-loading-hint {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+  opacity: 0;
+  animation: cds-hint-in 600ms ease 600ms forwards;
+}
+
+@keyframes cds-letter-in {
+  0%   { opacity: 0; transform: translateY(10px) scale(0.92); filter: blur(4px); }
+  60%  { opacity: 1; transform: translateY(-2px) scale(1.02); filter: blur(0); }
+  100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+}
+
+@keyframes cds-shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes cds-bar-scan {
+  0%   { transform: scaleX(0); opacity: 0.5; }
+  50%  { transform: scaleX(1); opacity: 1; }
+  100% { transform: scaleX(0); opacity: 0.5; }
+}
+
+@keyframes cds-glow-pulse {
+  0%, 100% { opacity: 0; }
+  50%      { opacity: 0.15; }
+}
+
+@keyframes cds-hint-in {
+  0%   { opacity: 0; transform: translateY(4px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+/* Light mode: letters use warm colors */
+[data-theme="light"] .cds-letter {
+  --fallback-shimmer: rgba(42, 31, 25, 0.15);
+}
+
+[data-theme="light"] .cds-loading-glow {
+  background: radial-gradient(circle, rgba(230, 92, 70, 0.06) 0%, transparent 70%);
+}
+
 /* ════════════════ Export / Cleanup option buttons ════════════════ */
 
 .btn-export-option {

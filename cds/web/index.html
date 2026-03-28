@@ -67,7 +67,16 @@
 
     <!-- Branch list -->
     <section id="branchList" class="branch-list">
-      <div class="empty-state">暂无分支，请在上方搜索并添加。</div>
+      <div class="cds-loading-state" id="cdsInitLoader">
+        <div class="cds-loading-glow"></div>
+        <div class="cds-loading-letters">
+          <span class="cds-letter" style="--delay:0ms;--color:var(--accent, #e8e8ec)">C</span>
+          <span class="cds-letter" style="--delay:120ms;--color:var(--text-secondary, #a0a0b0)">D</span>
+          <span class="cds-letter" style="--delay:240ms;--color:var(--text-muted, #78788a)">S</span>
+        </div>
+        <div class="cds-loading-bar"></div>
+        <div class="cds-loading-hint">加载中</div>
+      </div>
     </section>
 
     <div id="toast" class="toast hidden"></div>
