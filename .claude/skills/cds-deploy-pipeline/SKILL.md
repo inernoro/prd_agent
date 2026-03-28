@@ -121,6 +121,7 @@ AUTH="-H 'Cookie: cds_token=$CDS_TOKEN'"
 
 > **认证优先级**：AI 自动尝试 A → B → C。方式 A 配置后完全静默，方式 B 需要用户在 Dashboard 点一次批准。
 > **关键**：当方式 A 失败或未配置时，AI 必须向用户展示选项菜单，不可静默跳过。
+> **自批准配对**：如果方式 A 已通过（AI 已有 `X-AI-Access-Key` 认证），可以通过 `POST /api/ai/approve/:id` 自批准配对请求，无需用户操作 Dashboard。
 
 ## API 操作监控
 
@@ -819,7 +820,7 @@ Phase 5: Smoke Test
 
 | # | 陷阱 | 表现 | 解决方案 |
 |---|------|------|---------|
-| 1 | **CDS 仅 Cookie 认证** | `X-CDS-Token` / `Authorization` 均返回 401 | 必须用 `-H "Cookie: cds_token=xxx"` |
+| 1 | **Cookie 认证受限** | Cookie 认证需从浏览器复制 `cds_token`，且跨域受限 | 优先用 `X-AI-Access-Key`（已修复支持 customEnv），Cookie 仅最后兜底 |
 | 2 | **deploy 后状态延迟** | 触发后第一次轮询仍为 idle | 触发后 `sleep 3` 再开始轮询 |
 | 3 | **starting 状态假死** | CDS 报 `starting` 但容器已 `listening on :5000` | 轮询 2min 后用 `container-logs` 交叉验证 |
 | 4 | **Cloudflare 401→500** | 预览域名访问认证失败端点返回 HTTP 500 空 body | 用 `container-exec` 在容器内测试绕过 CDN |
