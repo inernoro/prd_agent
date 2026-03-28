@@ -104,7 +104,7 @@ public class DatabaseInitializer
                         var update = Builders<SystemRole>.Update
                             .Set(x => x.Permissions, merged)
                             .Set(x => x.UpdatedAt, DateTime.UtcNow)
-                            .Set(x => x.UpdatedBy, “system”);
+                            .Set(x => x.UpdatedBy, "system");
                         await _db.SystemRoles.UpdateOneAsync(x => x.Id == existed.Id, update);
                     }
                 }
