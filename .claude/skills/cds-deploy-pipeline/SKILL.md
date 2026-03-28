@@ -62,17 +62,19 @@ Phase 0 认证：
 3. 用户选择后执行对应认证方式
 ```
 
+### ⚠ 硬性禁令
+
+1. **禁止使用 `X-Cds-Internal: 1`**：该 header 能认证但 Activity 无 AI 标志，用户看不到 AI 操作。它是 CDS 内部代理用的，AI 永远不应该使用。
+2. **Bash 调用间变量隔离**：每次 Bash 工具调用是独立 shell，`export VAR=xxx` 不会保留到下次调用。**必须在同一个 Bash 调用中用 `&&` 链接所有需要同一变量的命令**。只有用户 `.bashrc` / `.zshrc` 中的变量（如 `$CDS_HOST`、`$AI_ACCESS_KEY`）跨调用可用。
+3. **配对 Token 必须当场使用**：获取 Token 后的所有操作必须在同一个 Bash 调用中完成，不能分开调用。
+
 ### 方式 A：静态密钥（推荐，零交互）
 
-CDS 服务端配置 `AI_ACCESS_KEY` 环境变量，AI 请求时带 `X-AI-Access-Key` header：
+CDS 服务端配置 `AI_ACCESS_KEY` 环境变量（process.env 或 customEnv 均可），AI 请求时带 `X-AI-Access-Key` header：
 
 ```bash
-# CDS 服务端 (.bashrc 或 docker env)
-export AI_ACCESS_KEY="your-shared-secret"
-
-# AI 请求时
-AUTH="-H 'X-AI-Access-Key: $AI_ACCESS_KEY'"
-curl -sf $AUTH "$CDS/api/branches"
+# AI 请求时（$AI_ACCESS_KEY 来自用户 profile，跨 Bash 调用可用）
+curl -sf -H "X-AI-Access-Key: $AI_ACCESS_KEY" "$CDS/api/branches"
 ```
 
 ### 方式 B：动态配对（类似路由器连接方式）
@@ -102,9 +104,12 @@ for i in $(seq 1 60); do
 done
 
 # Step 4: 后续所有请求使用 AI token
+# ⚠ 关键：必须在同一个 Bash 调用中完成！Token 存在变量中，跨 Bash 调用会丢失
 AUTH="-H 'X-CDS-AI-Token: $AI_TOKEN'"
 curl -sf $AUTH "$CDS/api/branches"
 ```
+
+> **⚠ 方式 B 的 Shell 隔离陷阱**：Token 存储在 bash 变量中，**获取 Token 和使用 Token 的所有命令必须在同一个 Bash 工具调用中**（用 `&&` 链接）。分成多个 Bash 调用会导致 Token 变量为空 → 401。
 
 ### 方式 C：Cookie（兜底，手动复制）
 
@@ -808,7 +813,7 @@ Phase 5: Smoke Test
 
 ---
 
-## 实战陷阱（2026-03-20 验证）
+## 实战陷阱（2026-03-28 更新）
 
 以下经验来自真实部署验证，每条都有对应的解决方案。
 
@@ -826,3 +831,6 @@ Phase 5: Smoke Test
 | 10 | **AdminPermissionMiddleware 拦截幽灵 404** | 不存在的路径用 AI key 返回 401 而非 404 | 先用 JWT 验证路径存在，再排查 AI key 问题 |
 | 11 | **过度使用 container-exec** | 嵌套 JSON 转义复杂导致命令静默失败 | **优先直连 MAP 平台预览域名**（`AI_ACCESS_KEY` 通用），仅在 CDN 干扰时才用 container-exec |
 | 12 | **用户名发现太复杂** | root JWT 登录 + 查 users 多步骤易出错 | **配置 `MAP_AI_USER` 环境变量**，零网络请求直接获取用户名 |
+| 13 | **Bash 工具 Shell 隔离** | `export VAR=xxx` 在下次 Bash 调用中丢失，Token 变空导致 401 | **所有依赖同一变量的命令必须在一个 Bash 调用中用 `&&` 链接**。只有用户 profile 中的变量（`$CDS_HOST`、`$AI_ACCESS_KEY`）跨调用可用 |
+| 14 | **禁止用 X-Cds-Internal 兜底** | `X-Cds-Internal: 1` 能认证但 Activity **无 AI 标志**，用户看不到 AI 操作痕迹 | **必须用 `X-AI-Access-Key` 或配对 Token**。`X-Cds-Internal` 是内部代理用的，AI 永远不应该使用 |
+| 15 | **AI_ACCESS_KEY 三层不一致** | CDS 进程 `process.env`（宿主机 .bashrc）、CDS customEnv（UI 设置）、AI Agent 本地 env 三个值可能不同 | CDS 已修复：`resolveAiSession` 同时检查 `process.env` 和 `customEnv`，任一匹配即通过。但 AI Agent 本地 env 必须和其中之一一致 |
