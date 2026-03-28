@@ -78,7 +78,8 @@ public class LlmSchedulingPolicyTests
             string modelType,
             int maxTokens = 4096,
             double temperature = 0.2,
-            bool includeThinking = false)
+            bool includeThinking = false,
+            string? expectedModel = null)
         {
             LastAppCallerCode = appCallerCode;
             LastModelType = modelType;
