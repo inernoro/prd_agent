@@ -746,6 +746,7 @@ button.text-btn:hover { color: var(--accent); }
 
 .branch-list {
   display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px;
+  padding-bottom: 60px; /* 为底部 Activity 浮窗留出空间 */
 }
 
 @media (min-width: 768px) {
