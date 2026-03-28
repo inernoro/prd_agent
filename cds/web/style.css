@@ -131,6 +131,9 @@
   --purple: #8a45c0;
   --cyan: #1a8f8f;
 
+  /* Code block background — light mode needs readable contrast */
+  --bg-code-block: #f1eae4;
+
   /* Background glow — warm peach radials */
   --bg-glow-1: #ffe1d4;      /* H18 S100 L92 */
   --bg-glow-2: #ffe8d8;      /* H25 S100 L93 */
@@ -2545,6 +2548,38 @@ a.branch-name:hover { color: var(--accent); }
   white-space: pre-wrap;
   word-break: break-all;
   margin: 0;
+}
+
+/* ════════════════ Export / Cleanup option buttons ════════════════ */
+
+.btn-export-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  text-align: left;
+  color: var(--text-primary);
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.btn-export-option:hover {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+}
+
+.btn-export-option svg {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.btn-danger-option:hover {
+  border-color: var(--red);
+  background: rgba(248, 81, 73, 0.06);
 }
 
 /* ════════════════ AI Pairing Indicator ════════════════ */

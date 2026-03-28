@@ -1399,7 +1399,7 @@ async function pruneStaleBranches() {
         <p>删除本地 git 分支中不在 CDS 部署列表上的分支</p>
         <p style="color:var(--text-muted);font-size:12px">保护分支（main/master/develop/当前分支）不会被删除</p>
       </div>
-      <pre id="pruneLog" style="text-align:left;font-size:11px;color:var(--text-secondary);background:rgba(8,12,28,0.6);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;margin:12px 0;max-height:200px;overflow-y:auto;white-space:pre-wrap;font-family:var(--font-mono)">正在扫描本地分支...</pre>
+      <pre id="pruneLog" style="text-align:left;font-size:11px;color:var(--text-secondary);background:var(--bg-code-block, rgba(8,12,28,0.6));border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;margin:12px 0;max-height:200px;overflow-y:auto;white-space:pre-wrap;font-family:var(--font-mono)">正在扫描本地分支...</pre>
       <div class="capacity-warning-actions" id="pruneActions">
         <button class="sm" disabled><span class="btn-spinner"></span>扫描中...</button>
       </div>
@@ -1459,7 +1459,7 @@ async function cleanupOrphans() {
         <p>正在拉取远程分支列表并检测孤儿分支...</p>
         <p style="color:var(--text-muted);font-size:12px">孤儿分支 = 本地存在但远程已删除的分支</p>
       </div>
-      <pre id="orphanCleanupLog" style="text-align:left;font-size:11px;color:var(--text-secondary);background:rgba(8,12,28,0.6);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;margin:12px 0;max-height:200px;overflow-y:auto;white-space:pre-wrap;font-family:var(--font-mono)">正在获取远程分支信息...</pre>
+      <pre id="orphanCleanupLog" style="text-align:left;font-size:11px;color:var(--text-secondary);background:var(--bg-code-block, rgba(8,12,28,0.6));border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;margin:12px 0;max-height:200px;overflow-y:auto;white-space:pre-wrap;font-family:var(--font-mono)">正在获取远程分支信息...</pre>
       <div class="capacity-warning-actions" id="orphanCleanupActions">
         <button class="sm" disabled><span class="btn-spinner"></span>检测中...</button>
       </div>
@@ -1848,30 +1848,18 @@ function toggleSettingsMenu(event) {
         </span>
       </span>
     </div>
-    <div class="settings-menu-item" onclick="closeSettingsMenu(); exportConfig()">
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); openExportModal()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 13a.5.5 0 01-.5-.5V3a.5.5 0 01.5-.5h5.586a.5.5 0 01.354.146l3.414 3.414a.5.5 0 01.146.354V12.5a.5.5 0 01-.5.5h-9zM3.5 1A1.5 1.5 0 002 2.5v11A1.5 1.5 0 003.5 15h9a1.5 1.5 0 001.5-1.5V6.414a1.5 1.5 0 00-.44-1.06L10.147 1.94A1.5 1.5 0 009.086 1.5H3.5z"/></svg>
-      导出配置
-    </div>
-    <div class="settings-menu-item" onclick="closeSettingsMenu(); exportSkill()">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 1.75a.25.25 0 01.25-.25h3.5a.75.75 0 000-1.5h-3.5A1.75 1.75 0 002 1.75v11.5c0 .966.784 1.75 1.75 1.75h8.5A1.75 1.75 0 0014 13.25v-6a.75.75 0 00-1.5 0v6a.25.25 0 01-.25.25h-8.5a.25.25 0 01-.25-.25V1.75z"/><path d="M11.78.22a.75.75 0 00-1.06 0L6.22 4.72a.75.75 0 000 1.06l.53.53-2.97 2.97a.75.75 0 101.06 1.06l2.97-2.97.53.53a.75.75 0 001.06 0l4.5-4.5a.75.75 0 000-1.06L11.78.22z"/></svg>
-      导出部署技能
+      导出
     </div>
     <div class="settings-menu-item" onclick="closeSettingsMenu(); openSelfUpdate()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0114.95 7.16a.75.75 0 01-1.49.178A5.5 5.5 0 008 2.5zm6.294 5.505a.75.75 0 01.834.656 5.5 5.5 0 01-9.592 2.97l1.204-1.204a.25.25 0 00-.177-.427H3.354a.25.25 0 01-.354-.354l1.38-1.38A7.002 7.002 0 0014.95 7.16z"/><circle cx="8" cy="8" r="2"/></svg>
       自动更新
     </div>
     <div class="settings-menu-divider"></div>
-    <div class="settings-menu-item danger" onclick="closeSettingsMenu(); pruneStaleBranches()">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 3.25a2.25 2.25 0 113 2.122v5.256a2.251 2.251 0 11-1.5 0V5.372A2.25 2.25 0 011.5 3.25zm5.677-.177L9.573.677A.25.25 0 0110 .854V2.5h1A2.5 2.5 0 0113.5 5v5.628a2.251 2.251 0 11-1.5 0V5a1 1 0 00-1-1h-1v1.646a.25.25 0 01-.427.177L7.177 3.427a.25.25 0 010-.354z"/></svg>
-      清理非列表分支
-    </div>
-    <div class="settings-menu-item danger" onclick="closeSettingsMenu(); cleanupOrphans()">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5 3.254V3.25a.75.75 0 01.75-.75h4.5a.75.75 0 01.75.75v.004a2.5 2.5 0 011.94 2.204l.089.713a.75.75 0 11-1.486.186l-.089-.714A1 1 0 0010.47 4.75H5.53a1 1 0 00-.984.893l-.089.714a.75.75 0 01-1.486-.186l.089-.714A2.5 2.5 0 015 3.254zM4.07 6.5l.7 5.95c.09.747.71 1.3 1.46 1.3h3.54c.75 0 1.37-.553 1.46-1.3l.7-5.95H4.07z"/></svg>
-      清理孤儿分支
-    </div>
-    <div class="settings-menu-item danger" onclick="closeSettingsMenu(); cleanupAll()">
+    <div class="settings-menu-item danger" onclick="closeSettingsMenu(); openCleanupModal()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM11 3V1.75A1.75 1.75 0 009.25 0h-2.5A1.75 1.75 0 005 1.75V3H2.75a.75.75 0 000 1.5h.3l.8 8.2A1.75 1.75 0 005.6 14.5h4.8a1.75 1.75 0 001.75-1.8l.8-8.2h.3a.75.75 0 000-1.5H11z"/></svg>
-      清理全部分支
+      清理分支
     </div>
     <div class="settings-menu-item danger" onclick="closeSettingsMenu(); factoryReset()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z"/></svg>
@@ -1891,6 +1879,61 @@ function closeSettingsMenu() {
   settingsMenuOpen = false;
   const el = document.getElementById('settings-menu-portal');
   if (el) el.remove();
+}
+
+// ── Export modal (merged 导出配置 + 导出部署技能) ──
+
+function openExportModal() {
+  const html = `
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <button class="btn-export-option" onclick="closeConfigModal(); exportConfig()">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 13a.5.5 0 01-.5-.5V3a.5.5 0 01.5-.5h5.586a.5.5 0 01.354.146l3.414 3.414a.5.5 0 01.146.354V12.5a.5.5 0 01-.5.5h-9z"/></svg>
+        <div>
+          <div style="font-weight:600;font-size:14px">导出配置</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px">导出 CDS Compose YAML（构建配置 + 环境变量）</div>
+        </div>
+      </button>
+      <button class="btn-export-option" onclick="closeConfigModal(); exportSkill()">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 1.75a.25.25 0 01.25-.25h3.5a.75.75 0 000-1.5h-3.5A1.75 1.75 0 002 1.75v11.5c0 .966.784 1.75 1.75 1.75h8.5A1.75 1.75 0 0014 13.25v-6a.75.75 0 00-1.5 0v6a.25.25 0 01-.25.25h-8.5a.25.25 0 01-.25-.25V1.75z"/><path d="M11.78.22a.75.75 0 00-1.06 0L6.22 4.72a.75.75 0 000 1.06l.53.53-2.97 2.97a.75.75 0 101.06 1.06l2.97-2.97.53.53a.75.75 0 001.06 0l4.5-4.5a.75.75 0 000-1.06L11.78.22z"/></svg>
+        <div>
+          <div style="font-weight:600;font-size:14px">导出部署技能</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px">生成 AI Agent 可用的 CDS 部署技能文件</div>
+        </div>
+      </button>
+    </div>
+  `;
+  openConfigModal('导出', html);
+}
+
+// ── Cleanup modal (merged 3 cleanup actions) ──
+
+function openCleanupModal() {
+  const html = `
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <button class="btn-export-option btn-danger-option" onclick="closeConfigModal(); pruneStaleBranches()">
+        <span style="font-size:20px">🧹</span>
+        <div>
+          <div style="font-weight:600;font-size:14px">清理非列表分支</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px">删除本地 git 中不在 CDS 部署列表上的分支</div>
+        </div>
+      </button>
+      <button class="btn-export-option btn-danger-option" onclick="closeConfigModal(); cleanupOrphans()">
+        <span style="font-size:20px">🔍</span>
+        <div>
+          <div style="font-weight:600;font-size:14px">清理孤儿分支</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px">清理本地存在但远程已删除的分支</div>
+        </div>
+      </button>
+      <button class="btn-export-option btn-danger-option" onclick="closeConfigModal(); cleanupAll()">
+        <span style="font-size:20px">🗑️</span>
+        <div>
+          <div style="font-weight:600;font-size:14px">清理全部分支</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px">停止并删除所有非默认分支的容器和 worktree</div>
+        </div>
+      </button>
+    </div>
+  `;
+  openConfigModal('清理分支', html);
 }
 
 // ── Recently-touched visual feedback ──
@@ -1918,9 +1961,7 @@ function renderBranches() {
   // Save scroll position before re-render
   const scrollY = window.scrollY;
   const el = document.getElementById('branchList');
-  const count = document.getElementById('branchCount');
-  const modeLabel = cdsMode === 'scheduler' ? ' · 调度端' : cdsMode === 'executor' ? ' · 执行端' : '';
-  count.textContent = `${branches.length} 个分支${modeLabel}`;
+  // 分支数量已从 header 移除，标题区仅显示 "Cloud Dev Suite"
 
   if (branches.length === 0) {
     el.innerHTML = '<div class="empty-state">暂无分支，请在上方搜索并添加。</div>';
