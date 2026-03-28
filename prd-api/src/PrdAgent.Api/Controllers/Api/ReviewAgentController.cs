@@ -463,9 +463,11 @@ public class ReviewAgentController : ControllerBase
         sb.AppendLine("```json");
         sb.AppendLine("{");
         sb.AppendLine("  \"dimensions\": [");
-        foreach (var dim in dims)
+        for (int i = 0; i < dims.Count; i++)
         {
-            sb.AppendLine($"    {{ \"key\": \"{dim.Key}\", \"score\": <0-{dim.MaxScore}的整数>, \"comment\": \"<50字以内的评价>\" }},");
+            var dim = dims[i];
+            var comma = i < dims.Count - 1 ? "," : "";
+            sb.AppendLine($"    {{ \"key\": \"{dim.Key}\", \"score\": <0-{dim.MaxScore}的整数>, \"comment\": \"<该维度的具体评价，50字以内>\" }}{comma}");
         }
         sb.AppendLine("  ],");
         sb.AppendLine("  \"summary\": \"<100字以内的总体评语，指出最主要的优点和不足>\"");
@@ -501,7 +503,11 @@ public class ReviewAgentController : ControllerBase
             if (jsonStart >= 0 && jsonEnd > jsonStart)
             {
                 var jsonStr = llmOutput[jsonStart..(jsonEnd + 1)];
-                var doc = JsonDocument.Parse(jsonStr);
+                var doc = JsonDocument.Parse(jsonStr, new JsonDocumentOptions
+                {
+                    AllowTrailingCommas = true,
+                    CommentHandling = JsonCommentHandling.Skip,
+                });
 
                 if (doc.RootElement.TryGetProperty("summary", out var summaryEl))
                     summary = summaryEl.GetString() ?? string.Empty;
