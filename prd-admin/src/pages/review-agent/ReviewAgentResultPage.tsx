@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ClipboardCheck, ArrowLeft, CheckCircle, XCircle, ChevronDown, ChevronUp, AlertTriangle, User } from 'lucide-react';
+import { ClipboardCheck, ArrowLeft, CheckCircle, XCircle, ChevronDown, ChevronUp, AlertTriangle, User, RefreshCw } from 'lucide-react';
 import { Loader2 } from 'lucide-react';
 import { useSseStream } from '@/lib/useSseStream';
 import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
 import { SseTypingBlock } from '@/components/sse/SseTypingBlock';
-import { getReviewSubmission, getReviewResultStreamUrl } from '@/services';
+import { getReviewSubmission, getReviewResultStreamUrl, rerunReviewSubmission } from '@/services';
 import type { ReviewSubmission, ReviewResult, ReviewDimensionScore } from '@/services';
 
 function RawOutputDebug({ result }: { result: ReviewResult }) {
@@ -50,6 +50,7 @@ export function ReviewAgentResultPage() {
   const [loading, setLoading] = useState(true);
   const [expandedDims, setExpandedDims] = useState<Set<string>>(new Set());
   const [streaming, setStreaming] = useState(false);
+  const [rerunning, setRerunning] = useState(false);
 
   const loadData = useCallback(async () => {
     if (!id) return;
@@ -109,6 +110,27 @@ export function ReviewAgentResultPage() {
       sse.start({ url: getReviewResultStreamUrl(submission.id) });
     }
   }, [submission]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleRerun() {
+    if (!id || rerunning) return;
+    setRerunning(true);
+    try {
+      const res = await rerunReviewSubmission(id);
+      if (res.success) {
+        setResult(null);
+        setDimensionScores([]);
+        setSummary('');
+        setTotalScore(null);
+        setIsPassed(null);
+        setExpandedDims(new Set());
+        setStreaming(true);
+        setSubmission(prev => prev ? { ...prev, status: 'Queued', resultId: undefined } : prev);
+        sse.start({ url: getReviewResultStreamUrl(id!) });
+      }
+    } finally {
+      setRerunning(false);
+    }
+  }
 
   function toggleDim(key: string) {
     setExpandedDims(prev => {
@@ -268,13 +290,27 @@ export function ReviewAgentResultPage() {
         <RawOutputDebug result={result} />
       )}
 
-      {/* 底部：提交人信息 */}
-      {(isDone || isError) && !isRunning && submission.submitterName && (
-        <div className="flex justify-end mt-4">
-          <div className="flex items-center gap-1.5 text-sm text-white/35">
-            <User className="w-3.5 h-3.5" />
-            {submission.submitterName}
+      {/* 底部：失败重评审 + 提交人 */}
+      {(isDone || isError) && !isRunning && (
+        <div className="flex items-center justify-between mt-4">
+          <div>
+            {isError && (
+              <button
+                onClick={handleRerun}
+                disabled={rerunning}
+                className="flex items-center gap-1.5 text-sm text-indigo-400 hover:text-indigo-300 transition-colors disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${rerunning ? 'animate-spin' : ''}`} />
+                重新评审
+              </button>
+            )}
           </div>
+          {submission.submitterName && (
+            <div className="flex items-center gap-1.5 text-sm text-white/35">
+              <User className="w-3.5 h-3.5" />
+              {submission.submitterName}
+            </div>
+          )}
         </div>
       )}
     </div>

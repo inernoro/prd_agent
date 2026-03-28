@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ClipboardCheck, Plus, Search, ChevronRight, ChevronLeft, CheckCircle, XCircle, Clock, Loader2, Users } from 'lucide-react';
+import { ClipboardCheck, Plus, Search, ChevronRight, ChevronLeft, CheckCircle, XCircle, Clock, Loader2, Users, Settings2 } from 'lucide-react';
 import { getMyReviewSubmissions } from '@/services';
 import { useAuthStore } from '@/stores/authStore';
 import type { ReviewSubmission } from '@/services';
+import { ReviewAgentDimensionsModal } from './ReviewAgentDimensionsModal';
 
 function getStatusDisplay(item: ReviewSubmission): { label: string; color: string; icon: React.ReactNode } {
   if (item.status === 'Done') {
@@ -30,6 +31,8 @@ export function ReviewAgentPage() {
   const navigate = useNavigate();
   const permissions = useAuthStore(s => s.permissions ?? []);
   const canViewAll = permissions.includes('review-agent.view-all') || permissions.includes('super');
+  const canManage = permissions.includes('review-agent.manage') || permissions.includes('super');
+  const [dimsModalOpen, setDimsModalOpen] = useState(false);
 
   const [items, setItems] = useState<ReviewSubmission[]>([]);
   const [total, setTotal] = useState(0);
@@ -63,6 +66,7 @@ export function ReviewAgentPage() {
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
   return (
+    <>
     <div className="max-w-3xl mx-auto px-4 py-6">
       {/* 页头 */}
       <div className="flex items-center justify-between mb-6">
@@ -76,6 +80,16 @@ export function ReviewAgentPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {canManage && (
+            <button
+              onClick={() => setDimsModalOpen(true)}
+              className="flex items-center gap-1.5 text-sm text-white/50 hover:text-white/80 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg px-3 py-2 transition-colors"
+              title="评审维度配置"
+            >
+              <Settings2 className="w-3.5 h-3.5" />
+              维度配置
+            </button>
+          )}
           {canViewAll && (
             <button
               onClick={() => navigate('/review-agent/all')}
@@ -206,5 +220,7 @@ export function ReviewAgentPage() {
         </div>
       )}
     </div>
+      <ReviewAgentDimensionsModal open={dimsModalOpen} onClose={() => setDimsModalOpen(false)} />
+    </>
   );
 }
