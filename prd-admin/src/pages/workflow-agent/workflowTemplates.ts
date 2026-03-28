@@ -1,7 +1,6 @@
 import type { WorkflowNode, WorkflowEdge, WorkflowVariable } from '@/services/contracts/workflowAgent';
 import { tapdHtmlGenCode } from './tapdHtmlTemplate';
-import { storyHtmlGenCode } from './storyHtmlTemplate';
-import { inspectionHtmlGenCode } from './inspectionHtmlTemplate';
+import { committeeMonthlyHtmlGenCode } from './committeeMonthlyHtmlTemplate';
 
 // ═══════════════════════════════════════════════════════════════
 // 工作流模板注册表 — 预定义的一键导入模板
@@ -1388,10 +1387,449 @@ result = {
 };
 
 // ═══════════════════════════════════════════════════════════════
+// 模板: 产品专业委员会月报（4 章节合一）
+// ═══════════════════════════════════════════════════════════════
+//
+// 拓扑图（★ = 并行层）：
+//
+//   👆 手动触发
+//     ↓
+//   ★ 并行层 ─────────────────────────────────────────────────
+//   │  ├── 🔗 TAPD 需求采集 (stories) → 📊 需求统计        │
+//   │  ├── 🔗 TAPD 缺陷采集 (bugs)    → 📊 缺陷统计        │
+//   │  ├── 📊 巡检数据解析                                  │
+//   │  └── 📊 整改数据解析                                  │
+//   ────────────────────────────────────────────────────────────
+//     ↓
+//   🔀 数据合并（4 路 fan-in）
+//     ├──→ 🤖 LLM 分析 ────→ 🔀 最终合并（2 路）
+//     └──────────────────────→ ↑
+//                              ↓
+//                         🌐 HTML 渲染
+//                          ↓       ↓
+//                        💾 导出  🔔 通知
+//
+
+const committeeMonthlyTemplate: WorkflowTemplate = {
+  id: 'committee-monthly-report',
+  name: '产品专业委员会月报',
+  description: '一键生成产品质量月报：TAPD 需求分析 + 产品缺陷分析 + 月度巡检 + 专项整改，4 章节合一，AI 自动生成分析与启发',
+  icon: '📋',
+  tags: ['quality', 'monthly', 'tapd', 'committee', 'report'],
+  requiredInputs: [
+    {
+      key: 'cookie',
+      label: 'TAPD Cookie',
+      type: 'textarea',
+      placeholder: 'tapdsession=xxx; t_u=xxx; ...',
+      helpTip: '浏览器登录 TAPD → F12 → Network → 任意请求 → Headers → Cookie → 复制整段',
+      required: true,
+    },
+    {
+      key: 'dateRange',
+      label: '统计月份',
+      type: 'month',
+      placeholder: '2026-03',
+      helpTip: '选择要统计的月份',
+      required: true,
+      defaultValue: new Date().toISOString().slice(0, 7),
+    },
+    {
+      key: 'storyWorkspaceId',
+      label: '需求空间 ID',
+      type: 'text',
+      placeholder: '64054517',
+      defaultValue: '64054517',
+      helpTip: 'TAPD「米多需求池管理」空间 ID',
+      required: true,
+    },
+    {
+      key: 'bugWorkspaceId',
+      label: '缺陷空间 ID',
+      type: 'text',
+      placeholder: '66590626',
+      defaultValue: '66590626',
+      helpTip: 'TAPD「产品缺陷管理」空间 ID',
+      required: true,
+    },
+    {
+      key: 'inspectionData',
+      label: '巡检数据（CSV 文本）',
+      type: 'textarea',
+      placeholder: `## 需求评审及时性\n责任人,总数,及时,不及时\n任林波,13,12,1\n周洋腾,6,6,0\n\n## 需求状态更新及时性\n...`,
+      helpTip: '从语雀 Excel 导出 CSV，按巡检类别用 ## 标题分隔。每行格式：责任人,总数,及时数,不及时数',
+      required: false,
+    },
+    {
+      key: 'rectificationData',
+      label: '整改数据（CSV 文本）',
+      type: 'textarea',
+      placeholder: `问题,提出时间,逻辑归因,结构归母,责任人,解决计划,进度,是否办结,备注\n品牌产品保护区优化,2026-01,HTTPS协议,技术架构,伍林波,2月完成,已完成,是,`,
+      helpTip: '从语雀 Excel 导出 CSV。第一行为表头，后续每行一条整改记录',
+      required: false,
+    },
+  ],
+  build: (inputs) => {
+    _edgeIdx = 0;
+
+    // ── 需求统计 JS ──
+    const storyStatsCode = `var items = Array.isArray(data) ? data : [];
+var total = items.length;
+var statusMap = {};
+items.forEach(function(i) { var s = (i["状态"] || "未知").trim(); statusMap[s] = (statusMap[s]||0)+1; });
+var handlerMap = {};
+items.forEach(function(i) { var h = (i["处理人"] || "未分配").trim(); handlerMap[h] = (handlerMap[h]||0)+1; });
+var priorityMap = {};
+items.forEach(function(i) { var p = (i["优先级"] || "未设置").trim(); priorityMap[p] = (priorityMap[p]||0)+1; });
+var customerMap = {};
+items.forEach(function(i) {
+  var title = i["标题"] || i.title || "";
+  var m = title.match(/\\[([^\\]]+)\\]/);
+  if (m) {
+    var name = m[1];
+    if (!customerMap[name]) customerMap[name] = {count:0, titles:[]};
+    customerMap[name].count++;
+    if (customerMap[name].titles.length < 3) customerMap[name].titles.push(title);
+  }
+});
+var customers = Object.keys(customerMap).map(function(k) {
+  return {name:k, count:customerMap[k].count, titles:customerMap[k].titles};
+}).sort(function(a,b){return b.count-a.count;});
+var details = items.map(function(i) {
+  return {title:i["标题"]||"", handler:i["处理人"]||"", status:i["状态"]||"", priority:i["优先级"]||"", createdAt:i["创建时间"]||"", url:i["URL链接"]||""};
+});
+result = {total:total, statusDistribution:statusMap, handlerDistribution:handlerMap, priorityDistribution:priorityMap, customerAnalysis:customers, details:details};`;
+
+    // ── 缺陷统计 JS ──
+    const defectStatsCode = `var items = Array.isArray(data) ? data : [];
+var total = items.length;
+var statusMap = {};
+items.forEach(function(i) { var s = (i["状态"] || "未知").trim(); statusMap[s] = (statusMap[s]||0)+1; });
+var categoryMap = {};
+items.forEach(function(i) { var c = (i["分类"] || i["所属产品"] || "未分类").trim(); categoryMap[c] = (categoryMap[c]||0)+1; });
+var handlerMap = {};
+items.forEach(function(i) { var h = (i["处理人"] || "未分配").trim(); handlerMap[h] = (handlerMap[h]||0)+1; });
+var priorityMap = {};
+items.forEach(function(i) { var p = (i["优先级"] || "未设置").trim(); priorityMap[p] = (priorityMap[p]||0)+1; });
+var severityMap = {};
+items.forEach(function(i) { var s = (i["严重程度"] || "未设置").trim(); severityMap[s] = (severityMap[s]||0)+1; });
+var details = items.map(function(i) {
+  return {title:i["标题"]||"", handler:i["处理人"]||"", creator:i["创建人"]||"", status:i["状态"]||"", priority:i["优先级"]||"", severity:i["严重程度"]||"", category:i["分类"]||i["所属产品"]||"", createdAt:i["创建时间"]||"", url:i["URL链接"]||""};
+});
+result = {total:total, statusDistribution:statusMap, categoryDistribution:categoryMap, handlerDistribution:handlerMap, priorityDistribution:priorityMap, severityDistribution:severityMap, details:details};`;
+
+    // ── 巡检解析 JS ──
+    const inspectionText = (inputs.inspectionData || '').replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$/g, '\\$');
+    const inspectionParseCode = `var raw = ${JSON.stringify(inputs.inspectionData || '')};
+var items = [];
+var curName = "";
+var curDetails = [];
+raw.split("\\n").forEach(function(line) {
+  line = line.trim();
+  if (!line) return;
+  if (line.indexOf("##") === 0) {
+    if (curName) {
+      var t=0,ti=0;
+      curDetails.forEach(function(d){t+=d.total;ti+=d.timely;});
+      items.push({name:curName, total:t, timely:ti, details:curDetails});
+    }
+    curName = line.replace(/^#+\\s*/, "").trim();
+    curDetails = [];
+  } else {
+    var sep = line.indexOf("\\t") >= 0 ? "\\t" : ",";
+    var parts = line.split(sep).map(function(s){return s.trim();});
+    if (parts.length >= 3 && parts[0] !== "责任人") {
+      var person = parts[0];
+      var total = parseInt(parts[1]) || 0;
+      var timely = parseInt(parts[2]) || 0;
+      var untimely = parts.length >= 4 ? (parseInt(parts[3]) || 0) : (total - timely);
+      curDetails.push({person:person, total:total, timely:timely, untimely:untimely});
+    }
+  }
+});
+if (curName) {
+  var t=0,ti=0;
+  curDetails.forEach(function(d){t+=d.total;ti+=d.timely;});
+  items.push({name:curName, total:t, timely:ti, details:curDetails});
+}
+result = {items:items};`;
+
+    // ── 整改解析 JS ──
+    const rectificationParseCode = `var raw = ${JSON.stringify(inputs.rectificationData || '')};
+var lines = raw.split("\\n").map(function(l){return l.trim();}).filter(function(l){return l;});
+var items = [];
+var headerSkipped = false;
+lines.forEach(function(line) {
+  var sep = line.indexOf("\\t") >= 0 ? "\\t" : ",";
+  var parts = line.split(sep).map(function(s){return s.trim();});
+  if (!headerSkipped) {
+    if (parts[0] === "问题" || parts[0].indexOf("简要说明") >= 0) { headerSkipped = true; return; }
+    headerSkipped = true;
+  }
+  if (parts.length >= 7) {
+    items.push({
+      problem: parts[0] || "",
+      raisedAt: parts[1] || "",
+      logicCause: parts[2] || "",
+      structCause: parts[3] || "",
+      owner: parts[4] || "",
+      plan: parts[5] || "",
+      progress: parts[6] || "",
+      closed: (parts[7] || "").indexOf("是") >= 0,
+      remark: parts[8] || ""
+    });
+  }
+});
+var closed = items.filter(function(i){return i.closed;}).length;
+result = {total:items.length, closed:closed, open:items.length-closed, items:items};`;
+
+    // ── LLM 分析 Prompt ──
+    const llmPrompt = `你是产品质量分析师。基于以下 4 个板块的数据，为产品专业委员会月报生成分析报告。
+
+对每个板块输出 3-5 条关键发现和改进建议。语言简洁专业，直击要点。
+
+按以下格式输出（必须使用这些标题）：
+
+## 需求分析
+- 发现1...
+- 发现2...
+- 建议...
+
+## 产品缺陷分析
+- 发现1...
+- 建议...
+
+## 月度巡检分析
+- 发现1...
+- 建议...
+
+## 专项整改分析
+- 发现1...
+- 建议...`;
+
+    const nodes: WorkflowNode[] = [
+      // ── 触发 ──
+      {
+        nodeId: 'n-trigger',
+        name: '手动触发',
+        nodeType: 'manual-trigger',
+        config: { inputPrompt: '点击开始生成产品专业委员会月报' },
+        inputSlots: [],
+        outputSlots: [{ slotId: 'manual-out', name: 'input', dataType: 'json', required: true }],
+        position: { x: 80, y: 400 },
+      },
+
+      // ── TAPD 需求采集 ──
+      {
+        nodeId: 'n-tapd-story',
+        name: 'TAPD 需求采集',
+        nodeType: 'tapd-collector',
+        config: {
+          authMode: 'cookie',
+          workspaceId: inputs.storyWorkspaceId || '64054517',
+          cookie: inputs.cookie || '',
+          dataType: 'stories',
+          dateRange: inputs.dateRange || '',
+          maxPages: '50',
+          fetchDetail: 'true',
+        },
+        inputSlots: [{ slotId: 'tapd-in', name: 'trigger', dataType: 'json', required: false }],
+        outputSlots: [{ slotId: 'tapd-out', name: 'data', dataType: 'json', required: true }],
+        position: { x: 380, y: 150 },
+      },
+
+      // ── 需求统计 ──
+      {
+        nodeId: 'n-story-stats',
+        name: '需求统计',
+        nodeType: 'script-executor',
+        config: { language: 'javascript', code: storyStatsCode, timeoutSeconds: '30' },
+        inputSlots: [{ slotId: 'script-in', name: 'input', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'script-out', name: 'output', dataType: 'json', required: true }],
+        position: { x: 680, y: 150 },
+      },
+
+      // ── TAPD 缺陷采集 ──
+      {
+        nodeId: 'n-tapd-bug',
+        name: 'TAPD 缺陷采集',
+        nodeType: 'tapd-collector',
+        config: {
+          authMode: 'cookie',
+          workspaceId: inputs.bugWorkspaceId || '66590626',
+          cookie: inputs.cookie || '',
+          dataType: 'bugs',
+          dateRange: inputs.dateRange || '',
+          maxPages: '50',
+          fetchDetail: 'true',
+        },
+        inputSlots: [{ slotId: 'tapd-in', name: 'trigger', dataType: 'json', required: false }],
+        outputSlots: [{ slotId: 'tapd-out', name: 'data', dataType: 'json', required: true }],
+        position: { x: 380, y: 350 },
+      },
+
+      // ── 缺陷统计 ──
+      {
+        nodeId: 'n-bug-stats',
+        name: '缺陷统计',
+        nodeType: 'script-executor',
+        config: { language: 'javascript', code: defectStatsCode, timeoutSeconds: '30' },
+        inputSlots: [{ slotId: 'script-in', name: 'input', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'script-out', name: 'output', dataType: 'json', required: true }],
+        position: { x: 680, y: 350 },
+      },
+
+      // ── 巡检解析 ──
+      {
+        nodeId: 'n-inspection',
+        name: '巡检数据解析',
+        nodeType: 'script-executor',
+        config: { language: 'javascript', code: inspectionParseCode, timeoutSeconds: '15' },
+        inputSlots: [{ slotId: 'script-in', name: 'input', dataType: 'json', required: false }],
+        outputSlots: [{ slotId: 'script-out', name: 'output', dataType: 'json', required: true }],
+        position: { x: 380, y: 550 },
+      },
+
+      // ── 整改解析 ──
+      {
+        nodeId: 'n-rectification',
+        name: '整改数据解析',
+        nodeType: 'script-executor',
+        config: { language: 'javascript', code: rectificationParseCode, timeoutSeconds: '15' },
+        inputSlots: [{ slotId: 'script-in', name: 'input', dataType: 'json', required: false }],
+        outputSlots: [{ slotId: 'script-out', name: 'output', dataType: 'json', required: true }],
+        position: { x: 380, y: 750 },
+      },
+
+      // ── 数据合并 (4 路) ──
+      {
+        nodeId: 'n-merge-data',
+        name: '数据合并（4路）',
+        nodeType: 'data-merger',
+        config: { mergeStrategy: 'object' },
+        inputSlots: [
+          { slotId: 'merge-in-1', name: 'input1', dataType: 'json', required: true, description: '需求统计' },
+          { slotId: 'merge-in-2', name: 'input2', dataType: 'json', required: true, description: '缺陷统计' },
+          { slotId: 'merge-in-3', name: 'input3', dataType: 'json', required: true, description: '巡检数据' },
+          { slotId: 'merge-in-4', name: 'input4', dataType: 'json', required: true, description: '整改数据' },
+        ],
+        outputSlots: [{ slotId: 'merge-out', name: 'merged', dataType: 'json', required: true }],
+        position: { x: 1000, y: 400 },
+      },
+
+      // ── LLM 分析 ──
+      {
+        nodeId: 'n-llm',
+        name: 'AI 分析与启发',
+        nodeType: 'report-generator',
+        config: { reportTemplate: llmPrompt, format: 'markdown' },
+        inputSlots: [{ slotId: 'report-in', name: 'data', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'report-out', name: 'report', dataType: 'text', required: true }],
+        position: { x: 1300, y: 250 },
+      },
+
+      // ── 最终合并 (LLM 输出 + 原始数据) ──
+      {
+        nodeId: 'n-merge-final',
+        name: '合并分析结果',
+        nodeType: 'data-merger',
+        config: { mergeStrategy: 'object' },
+        inputSlots: [
+          { slotId: 'merge-in-1', name: 'input1', dataType: 'json', required: true, description: 'AI 分析文本' },
+          { slotId: 'merge-in-2', name: 'input2', dataType: 'json', required: true, description: '原始统计数据' },
+        ],
+        outputSlots: [{ slotId: 'merge-out', name: 'merged', dataType: 'json', required: true }],
+        position: { x: 1600, y: 400 },
+      },
+
+      // ── HTML 渲染 ──
+      {
+        nodeId: 'n-html',
+        name: 'HTML 月报渲染',
+        nodeType: 'script-executor',
+        config: {
+          language: 'javascript',
+          timeoutSeconds: '30',
+          code: committeeMonthlyHtmlGenCode,
+        },
+        inputSlots: [{ slotId: 'script-in', name: 'input', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'script-out', name: 'output', dataType: 'text', required: true }],
+        position: { x: 1900, y: 400 },
+      },
+
+      // ── 导出 ──
+      {
+        nodeId: 'n-export',
+        name: '导出 HTML 月报',
+        nodeType: 'file-exporter',
+        config: {
+          fileFormat: 'html',
+          fileName: `committee-monthly-report-${inputs.dateRange || '{{date}}'}`,
+        },
+        inputSlots: [{ slotId: 'export-in', name: 'data', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'export-out', name: 'file', dataType: 'binary', required: true }],
+        position: { x: 2200, y: 280 },
+      },
+
+      // ── 通知 ──
+      {
+        nodeId: 'n-notify',
+        name: '完成通知',
+        nodeType: 'notification-sender',
+        config: {
+          title: '产品专业委员会月报已生成',
+          content: '已完成 4 个章节的数据采集、统计分析和 AI 洞察，请查看 HTML 报告',
+          level: 'success',
+          attachFromInput: 'cos',
+        },
+        inputSlots: [{ slotId: 'notify-in', name: 'data', dataType: 'json', required: false }],
+        outputSlots: [{ slotId: 'notify-out', name: 'result', dataType: 'json', required: true }],
+        position: { x: 2200, y: 520 },
+      },
+    ];
+
+    const edges: WorkflowEdge[] = [
+      // 触发 → 4 路并行
+      edge('n-trigger', 'manual-out', 'n-tapd-story', 'tapd-in'),
+      edge('n-trigger', 'manual-out', 'n-tapd-bug', 'tapd-in'),
+      edge('n-trigger', 'manual-out', 'n-inspection', 'script-in'),
+      edge('n-trigger', 'manual-out', 'n-rectification', 'script-in'),
+
+      // TAPD → 统计
+      edge('n-tapd-story', 'tapd-out', 'n-story-stats', 'script-in'),
+      edge('n-tapd-bug', 'tapd-out', 'n-bug-stats', 'script-in'),
+
+      // 4 路 → 数据合并
+      edge('n-story-stats', 'script-out', 'n-merge-data', 'merge-in-1'),
+      edge('n-bug-stats', 'script-out', 'n-merge-data', 'merge-in-2'),
+      edge('n-inspection', 'script-out', 'n-merge-data', 'merge-in-3'),
+      edge('n-rectification', 'script-out', 'n-merge-data', 'merge-in-4'),
+
+      // 数据合并 → LLM + 最终合并
+      edge('n-merge-data', 'merge-out', 'n-llm', 'report-in'),
+      edge('n-merge-data', 'merge-out', 'n-merge-final', 'merge-in-2'),
+
+      // LLM → 最终合并
+      edge('n-llm', 'report-out', 'n-merge-final', 'merge-in-1'),
+
+      // 最终合并 → HTML
+      edge('n-merge-final', 'merge-out', 'n-html', 'script-in'),
+
+      // HTML → 导出 + 通知
+      edge('n-html', 'script-out', 'n-export', 'export-in'),
+      edge('n-html', 'script-out', 'n-notify', 'notify-in'),
+    ];
+
+    return { nodes, edges, variables: [] };
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════
 // 注册表
 // ═══════════════════════════════════════════════════════════════
 
 export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
+  committeeMonthlyTemplate,
   fullTestSuiteTemplate,
   tapdBugCollectionTemplate,
   smartHttpTemplate,
