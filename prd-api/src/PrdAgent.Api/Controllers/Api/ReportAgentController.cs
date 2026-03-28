@@ -347,22 +347,14 @@ public class ReportAgentController : ControllerBase
             .GroupBy(m => m.TeamId)
             .ToDictionary(g => g.Key, g => g.OrderByDescending(m => m.JoinedAt).First().Role);
 
-        List<ReportTeam> teams;
-        if (HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
-        {
-            teams = await _db.ReportTeams.Find(_ => true)
-                .SortByDescending(t => t.CreatedAt).ToListAsync();
-        }
-        else
-        {
-            var teamIds = memberships.Select(m => m.TeamId).Distinct().ToList();
-            var leaderTeams = await _db.ReportTeams.Find(t => t.LeaderUserId == userId).ToListAsync();
-            var leaderTeamIds = leaderTeams.Select(t => t.Id).ToList();
-            teamIds = teamIds.Union(leaderTeamIds).Distinct().ToList();
+        // 硬性规定：无论任何权限，只有在团队内（成员或负责人）才能看到该团队
+        var teamIds = memberships.Select(m => m.TeamId).Distinct().ToList();
+        var leaderTeams = await _db.ReportTeams.Find(t => t.LeaderUserId == userId).ToListAsync();
+        var leaderTeamIds = leaderTeams.Select(t => t.Id).ToList();
+        teamIds = teamIds.Union(leaderTeamIds).Distinct().ToList();
 
-            teams = await _db.ReportTeams.Find(t => teamIds.Contains(t.Id))
-                .SortByDescending(t => t.CreatedAt).ToListAsync();
-        }
+        var teams = await _db.ReportTeams.Find(t => teamIds.Contains(t.Id))
+            .SortByDescending(t => t.CreatedAt).ToListAsync();
 
         var hasTeamManagePermission = HasPermission(AdminPermissionCatalog.ReportAgentTeamManage);
         var items = teams.Select(team =>
@@ -384,9 +376,16 @@ public class ReportAgentController : ControllerBase
     [HttpGet("teams/{id}")]
     public async Task<IActionResult> GetTeam(string id)
     {
+        var userId = GetUserId();
         var team = await _db.ReportTeams.Find(t => t.Id == id).FirstOrDefaultAsync();
         if (team == null)
             return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "团队不存在"));
+
+        // 硬性规定：只有团队成员或负责人才能查看，权限不能绕过
+        var isLeader = team.LeaderUserId == userId;
+        var isMember = await IsTeamMember(id, userId);
+        if (!isLeader && !isMember)
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权查看该团队"));
 
         var members = await _db.ReportTeamMembers.Find(m => m.TeamId == id)
             .SortBy(m => m.JoinedAt).ToListAsync();
