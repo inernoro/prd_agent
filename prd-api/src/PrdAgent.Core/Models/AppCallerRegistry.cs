@@ -801,6 +801,36 @@ public static class ReportAgent
 }
 
 /// <summary>
+/// Transcript Agent 音视频转录
+/// </summary>
+public static class TranscriptAgent
+{
+    public const string AppName = "Transcript Agent";
+
+    public static class Transcribe
+    {
+        [AppCallerMetadata(
+            "音视频转录",
+            "将音视频内容转换为带时间轴的文字",
+            ModelTypes = new[] { ModelTypes.Asr },
+            Category = "Transcription"
+        )]
+        public const string Audio = "transcript-agent.transcribe::asr";
+    }
+
+    public static class Copywrite
+    {
+        [AppCallerMetadata(
+            "模板转文案",
+            "将转录文本按模板转换为结构化文案",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Transcription"
+        )]
+        public const string Generate = "transcript-agent.copywrite::chat";
+    }
+}
+
+/// <summary>
 /// Admin 管理后台
 /// </summary>
 public static class Admin

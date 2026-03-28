@@ -155,6 +155,11 @@ public static class AdminPermissionCatalog
     public const string ReportAgentDataSourceManage = "report-agent.datasource.manage";
 
     /// <summary>
+    /// 转录 Agent 权限：音视频转录与文案生成
+    /// </summary>
+    public const string TranscriptAgentUse = "transcript-agent.use";
+
+    /// <summary>
     /// 网页托管权限（读）：查看托管站点列表
     /// </summary>
     public const string WebPagesRead = "web-pages.read";
@@ -230,6 +235,9 @@ public static class AdminPermissionCatalog
         new(ReportAgentTeamManage, "周报-团队管理", "管理周报团队与成员"),
         new(ReportAgentViewAll, "周报-查看全部", "查看所有团队周报"),
         new(ReportAgentDataSourceManage, "周报-数据源管理", "配置 Git/SVN 仓库连接"),
+
+        new(TranscriptAgentUse, "转录 Agent", "音视频转录与文案生成"),
+
         new(WorkflowAgentManage, "工作流引擎-管理", "管理所有工作流与执行记录"),
 
         new(WebPagesRead, "网页托管-读", "查看托管站点列表与详情"),

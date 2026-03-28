@@ -194,6 +194,12 @@ public class MongoDbContext
     public IMongoCollection<TutorialEmailAsset> TutorialEmailAssets => _database.GetCollection<TutorialEmailAsset>("tutorial_email_assets");
     public IMongoCollection<TutorialEmailEnrollment> TutorialEmailEnrollments => _database.GetCollection<TutorialEmailEnrollment>("tutorial_email_enrollments");
 
+    // Transcript Agent 音视频转录
+    public IMongoCollection<TranscriptWorkspace> TranscriptWorkspaces => _database.GetCollection<TranscriptWorkspace>("transcript_workspaces");
+    public IMongoCollection<TranscriptItem> TranscriptItems => _database.GetCollection<TranscriptItem>("transcript_items");
+    public IMongoCollection<TranscriptRun> TranscriptRuns => _database.GetCollection<TranscriptRun>("transcript_runs");
+    public IMongoCollection<TranscriptTemplate> TranscriptTemplates => _database.GetCollection<TranscriptTemplate>("transcript_templates");
+
     private void CreateIndexes()
     {
         static bool IsIndexConflict(MongoCommandException ex)

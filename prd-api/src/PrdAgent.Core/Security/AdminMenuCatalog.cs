@@ -23,6 +23,7 @@ public static class AdminMenuCatalog
         new("ai-toolbox", "/ai-toolbox", "AI 百宝箱", "智能工具集合", "Sparkles", 10, "tools"),
         new("workflow-agent", "/workflow-agent", "工作流", "自动化流程编排", "Workflow", 20, "tools"),
         new("executive", "/executive", "团队洞察", "团队数据概览与分析", "BarChart3", 25, "tools"),
+        new("transcript-agent", "/transcript-agent", "转录工作台", "音视频转录与文案生成", "FileAudio", 27, "tools"),
 
         // ── 个人空间 (personal) ──
         new("marketplace", "/marketplace", "探索市场", "发现优质配置与技能", "Store", 30, "personal"),
