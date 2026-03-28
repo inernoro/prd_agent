@@ -153,11 +153,16 @@ public class ReviewAgentController : ControllerBase
     [HttpGet("submissions")]
     public async Task<IActionResult> GetMySubmissions(
         [FromQuery] int page = 1,
-        [FromQuery] int pageSize = 20,
+        [FromQuery] int pageSize = 50,
+        [FromQuery] bool? isPassed = null,
         CancellationToken ct = default)
     {
         var userId = GetUserId();
-        var filter = Builders<ReviewSubmission>.Filter.Eq(x => x.SubmitterId, userId);
+        var filterBuilder = Builders<ReviewSubmission>.Filter;
+        var filter = filterBuilder.Eq(x => x.SubmitterId, userId);
+
+        if (isPassed.HasValue)
+            filter &= filterBuilder.Eq(x => x.IsPassed, isPassed.Value);
 
         var total = await _db.ReviewSubmissions.CountDocumentsAsync(filter, cancellationToken: ct);
         var items = await _db.ReviewSubmissions.Find(filter)
@@ -200,6 +205,33 @@ public class ReviewAgentController : ControllerBase
             .ToListAsync(ct);
 
         return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
+    }
+
+    /// <summary>
+    /// 获取曾经提交过的用户列表（需要 review-agent.view-all 权限），按最新提交时间倒序去重
+    /// </summary>
+    [HttpGet("submitters")]
+    public async Task<IActionResult> GetSubmitters(CancellationToken ct)
+    {
+        if (!HasViewAllPermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        var items = await _db.ReviewSubmissions
+            .Find(Builders<ReviewSubmission>.Filter.Empty)
+            .SortByDescending(x => x.SubmittedAt)
+            .Project(x => new { x.SubmitterId, x.SubmitterName })
+            .ToListAsync(ct);
+
+        // 按提交人去重，保留最近提交（已按时间倒序，first-seen 即为最近）
+        var seen = new HashSet<string>();
+        var submitters = new List<object>();
+        foreach (var item in items)
+        {
+            if (seen.Add(item.SubmitterId))
+                submitters.Add(new { id = item.SubmitterId, name = item.SubmitterName });
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { submitters }));
     }
 
     /// <summary>
@@ -247,6 +279,7 @@ public class ReviewAgentController : ControllerBase
             Builders<ReviewSubmission>.Update
                 .Set(x => x.Status, ReviewStatuses.Queued)
                 .Unset(x => x.ResultId)
+                .Unset(x => x.IsPassed)
                 .Unset(x => x.CompletedAt)
                 .Unset(x => x.StartedAt)
                 .Unset(x => x.ErrorMessage),
@@ -465,6 +498,7 @@ public class ReviewAgentController : ControllerBase
             Builders<ReviewSubmission>.Update
                 .Set(x => x.Status, ReviewStatuses.Done)
                 .Set(x => x.ResultId, result.Id)
+                .Set(x => x.IsPassed, isPassed)
                 .Set(x => x.CompletedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ClipboardCheck, Plus, ChevronRight, CheckCircle, XCircle, Clock, Loader2, Users } from 'lucide-react';
+import { ClipboardCheck, Plus, Search, ChevronRight, ChevronLeft, CheckCircle, XCircle, Clock, Loader2, Users } from 'lucide-react';
 import { getMyReviewSubmissions } from '@/services';
 import { useAuthStore } from '@/stores/authStore';
 import type { ReviewSubmission } from '@/services';
@@ -12,6 +12,16 @@ const STATUS_LABELS: Record<string, { label: string; color: string; icon: React.
   Error: { label: '失败', color: 'text-red-400/80', icon: <XCircle className="w-3.5 h-3.5" /> },
 };
 
+type FilterTab = 'all' | 'passed' | 'failed';
+
+const FILTER_TABS: { key: FilterTab; label: string }[] = [
+  { key: 'all', label: '全部提交' },
+  { key: 'passed', label: '已通过' },
+  { key: 'failed', label: '未通过' },
+];
+
+const PAGE_SIZE = 50;
+
 export function ReviewAgentPage() {
   const navigate = useNavigate();
   const permissions = useAuthStore(s => s.permissions ?? []);
@@ -19,19 +29,34 @@ export function ReviewAgentPage() {
 
   const [items, setItems] = useState<ReviewSubmission[]>([]);
   const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<FilterTab>('all');
+  const [search, setSearch] = useState('');
 
   const loadData = useCallback(async () => {
     setLoading(true);
-    const res = await getMyReviewSubmissions(1, 20);
+    const isPassed = activeTab === 'passed' ? true : activeTab === 'failed' ? false : undefined;
+    const res = await getMyReviewSubmissions(page, PAGE_SIZE, isPassed);
     if (res.success && res.data) {
       setItems(res.data.items);
       setTotal(res.data.total);
     }
     setLoading(false);
-  }, []);
+  }, [page, activeTab]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  const handleTabChange = (tab: FilterTab) => {
+    setActiveTab(tab);
+    setPage(1);
+  };
+
+  const filtered = search
+    ? items.filter(i => i.title.toLowerCase().includes(search.toLowerCase()))
+    : items;
+
+  const totalPages = Math.ceil(total / PAGE_SIZE);
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-6">
@@ -66,47 +91,67 @@ export function ReviewAgentPage() {
         </div>
       </div>
 
-      {/* 统计卡片 */}
-      <div className="grid grid-cols-3 gap-3 mb-6">
-        {[
-          { label: '全部提交', value: total },
-          { label: '已通过', value: items.filter(i => i.status === 'Done').length },
-          { label: '评审中', value: items.filter(i => i.status === 'Running' || i.status === 'Queued').length },
-        ].map(stat => (
-          <div key={stat.label} className="bg-white/3 border border-white/8 rounded-xl px-4 py-3 text-center">
-            <div className="text-2xl font-bold text-white">{stat.value}</div>
-            <div className="text-xs text-white/40 mt-1">{stat.label}</div>
-          </div>
-        ))}
+      {/* 筛选 Tab + 搜索 */}
+      <div className="flex items-center gap-3 mb-5">
+        <div className="flex gap-1 p-1 bg-white/5 rounded-lg border border-white/8">
+          {FILTER_TABS.map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => handleTabChange(tab.key)}
+              className={`text-xs px-3 py-1.5 rounded-md transition-colors ${
+                activeTab === tab.key
+                  ? 'bg-indigo-600 text-white'
+                  : 'text-white/50 hover:text-white/80'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex-1 relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/30" />
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="搜索方案标题..."
+            className="w-full bg-white/5 border border-white/10 rounded-lg pl-9 pr-4 py-2 text-sm text-white placeholder-white/30 focus:outline-none focus:border-indigo-500/50 transition-colors"
+          />
+        </div>
       </div>
 
       {/* 提交列表 */}
       <div>
-        <h2 className="text-sm font-medium text-white/50 mb-3">我的提交记录</h2>
         {loading ? (
           <div className="flex items-center justify-center h-32">
             <Loader2 className="w-6 h-6 text-indigo-400 animate-spin" />
           </div>
-        ) : items.length === 0 ? (
+        ) : filtered.length === 0 ? (
           <div className="text-center py-16 space-y-4">
             <div className="w-14 h-14 rounded-2xl bg-white/3 flex items-center justify-center mx-auto">
               <ClipboardCheck className="w-7 h-7 text-white/20" />
             </div>
             <div>
-              <p className="text-white/40 text-sm">还没有提交记录</p>
-              <p className="text-white/25 text-xs mt-1">上传产品方案，AI 将帮助你预先发现评审问题</p>
+              <p className="text-white/40 text-sm">
+                {activeTab === 'all' ? '还没有提交记录' : activeTab === 'passed' ? '暂无通过的记录' : '暂无未通过的记录'}
+              </p>
+              {activeTab === 'all' && (
+                <p className="text-white/25 text-xs mt-1">上传产品方案，AI 将帮助你预先发现评审问题</p>
+              )}
             </div>
-            <button
-              onClick={() => navigate('/review-agent/submit')}
-              className="inline-flex items-center gap-1.5 text-sm text-indigo-400 hover:text-indigo-300 transition-colors"
-            >
-              <Plus className="w-4 h-4" />
-              提交第一个方案
-            </button>
+            {activeTab === 'all' && (
+              <button
+                onClick={() => navigate('/review-agent/submit')}
+                className="inline-flex items-center gap-1.5 text-sm text-indigo-400 hover:text-indigo-300 transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                提交第一个方案
+              </button>
+            )}
           </div>
         ) : (
           <div className="space-y-2">
-            {items.map(item => {
+            {filtered.map(item => {
               const statusInfo = STATUS_LABELS[item.status] ?? { label: item.status, color: 'text-white/50', icon: null };
               return (
                 <button
@@ -135,6 +180,27 @@ export function ReviewAgentPage() {
           </div>
         )}
       </div>
+
+      {/* 分页（超过50条时显示） */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-3 mt-6">
+          <button
+            disabled={page <= 1}
+            onClick={() => setPage(p => p - 1)}
+            className="p-2 rounded-lg bg-white/5 border border-white/10 disabled:opacity-30 hover:bg-white/10 transition-colors"
+          >
+            <ChevronLeft className="w-4 h-4 text-white/70" />
+          </button>
+          <span className="text-sm text-white/50">第 {page} / {totalPages} 页</span>
+          <button
+            disabled={page >= totalPages}
+            onClick={() => setPage(p => p + 1)}
+            className="p-2 rounded-lg bg-white/5 border border-white/10 disabled:opacity-30 hover:bg-white/10 transition-colors"
+          >
+            <ChevronRight className="w-4 h-4 text-white/70" />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

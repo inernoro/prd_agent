@@ -1465,6 +1465,7 @@ export {
   getSubmission as getReviewSubmission,
   rerunSubmission as rerunReviewSubmission,
   getResultStreamUrl as getReviewResultStreamUrl,
+  getSubmitters as getReviewSubmitters,
 } from '@/services/real/reviewAgent';
 export type {
   ReviewDimensionConfig,

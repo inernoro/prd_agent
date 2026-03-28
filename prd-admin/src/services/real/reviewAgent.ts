@@ -34,6 +34,7 @@ export interface ReviewSubmission {
   fileName: string;
   status: 'Queued' | 'Running' | 'Done' | 'Error';
   resultId?: string;
+  isPassed?: boolean;
   errorMessage?: string;
   submittedAt: string;
   startedAt?: string;
@@ -85,9 +86,16 @@ export async function createSubmission(
 
 export async function getMySubmissions(
   page = 1,
-  pageSize = 20
+  pageSize = 50,
+  isPassed?: boolean
 ): Promise<ApiResponse<{ items: ReviewSubmission[]; total: number; page: number; pageSize: number }>> {
-  return apiRequest(`/api/review-agent/submissions?page=${page}&pageSize=${pageSize}`);
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  if (isPassed !== undefined) params.set('isPassed', String(isPassed));
+  return apiRequest(`/api/review-agent/submissions?${params}`);
+}
+
+export async function getSubmitters(): Promise<ApiResponse<{ submitters: { id: string; name: string }[] }>> {
+  return apiRequest('/api/review-agent/submitters');
 }
 
 export async function getAllSubmissions(

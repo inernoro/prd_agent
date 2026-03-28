@@ -31,6 +31,9 @@ public class ReviewSubmission
     /// <summary>评审结果 ID（Done 后填写）</summary>
     public string? ResultId { get; set; }
 
+    /// <summary>评审结果快照：是否通过（≥80分为通过，Done 后填写）</summary>
+    public bool? IsPassed { get; set; }
+
     public string? ErrorMessage { get; set; }
 
     public DateTime SubmittedAt { get; set; } = DateTime.UtcNow;

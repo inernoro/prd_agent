@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ClipboardList, Search, ChevronLeft, ChevronRight, CheckCircle, XCircle, Clock, Loader2 } from 'lucide-react';
-import { getAllReviewSubmissions } from '@/services';
+import { ClipboardList, Search, ChevronLeft, ChevronRight, ArrowLeft, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
+import { getAllReviewSubmissions, getReviewSubmitters } from '@/services';
 import type { ReviewSubmission } from '@/services';
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
@@ -11,6 +11,11 @@ const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   Error: { label: '失败', color: 'text-red-400/80' },
 };
 
+interface Submitter {
+  id: string;
+  name: string;
+}
+
 export function ReviewAgentAllPage() {
   const navigate = useNavigate();
   const [items, setItems] = useState<ReviewSubmission[]>([]);
@@ -18,19 +23,28 @@ export function ReviewAgentAllPage() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
+  const [selectedSubmitterId, setSelectedSubmitterId] = useState('');
+  const [submitters, setSubmitters] = useState<Submitter[]>([]);
+  const [tagsExpanded, setTagsExpanded] = useState(false);
 
   const pageSize = 20;
 
+  // Load submitters for tag filter
+  useEffect(() => {
+    getReviewSubmitters().then(res => {
+      if (res.success && res.data) setSubmitters(res.data.submitters);
+    });
+  }, []);
+
   const loadData = useCallback(async () => {
     setLoading(true);
-    const res = await getAllReviewSubmissions(page, pageSize, undefined, statusFilter || undefined);
+    const res = await getAllReviewSubmissions(page, pageSize, selectedSubmitterId || undefined);
     if (res.success && res.data) {
       setItems(res.data.items);
       setTotal(res.data.total);
     }
     setLoading(false);
-  }, [page, statusFilter]);
+  }, [page, selectedSubmitterId]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -43,8 +57,22 @@ export function ReviewAgentAllPage() {
 
   const totalPages = Math.ceil(total / pageSize);
 
+  // Show 2 rows of tags (approx 5 per row) by default
+  const TAG_COLLAPSED_COUNT = 10;
+  const visibleSubmitters = tagsExpanded ? submitters : submitters.slice(0, TAG_COLLAPSED_COUNT);
+  const hasMoreTags = submitters.length > TAG_COLLAPSED_COUNT;
+
   return (
     <div className="max-w-4xl mx-auto px-4 py-6">
+      {/* 返回按钮 */}
+      <button
+        onClick={() => navigate(-1)}
+        className="flex items-center gap-1.5 text-sm text-white/40 hover:text-white/70 mb-5 transition-colors"
+      >
+        <ArrowLeft className="w-4 h-4" />
+        返回
+      </button>
+
       <div className="flex items-center gap-3 mb-6">
         <div className="w-9 h-9 rounded-lg bg-indigo-500/10 flex items-center justify-center">
           <ClipboardList className="w-4 h-4 text-indigo-400" />
@@ -55,30 +83,57 @@ export function ReviewAgentAllPage() {
         </div>
       </div>
 
-      {/* 过滤栏 */}
-      <div className="flex items-center gap-3 mb-5">
-        <div className="flex-1 relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
-          <input
-            type="text"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="搜索方案标题或提交人..."
-            className="w-full bg-white/5 border border-white/10 rounded-lg pl-9 pr-4 py-2.5 text-sm text-white placeholder-white/30 focus:outline-none focus:border-indigo-500/50 transition-colors"
-          />
-        </div>
-        <select
-          value={statusFilter}
-          onChange={e => { setStatusFilter(e.target.value); setPage(1); }}
-          className="bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white/70 focus:outline-none focus:border-indigo-500/50 transition-colors"
-        >
-          <option value="">全部状态</option>
-          <option value="Queued">等待评审</option>
-          <option value="Running">评审中</option>
-          <option value="Done">已完成</option>
-          <option value="Error">失败</option>
-        </select>
+      {/* 搜索框 */}
+      <div className="relative mb-3">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="搜索方案标题或提交人..."
+          className="w-full bg-white/5 border border-white/10 rounded-lg pl-9 pr-4 py-2.5 text-sm text-white placeholder-white/30 focus:outline-none focus:border-indigo-500/50 transition-colors"
+        />
       </div>
+
+      {/* 用户标签筛选 */}
+      {submitters.length > 0 && (
+        <div className="mb-5">
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              onClick={() => { setSelectedSubmitterId(''); setPage(1); }}
+              className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                !selectedSubmitterId
+                  ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300'
+                  : 'bg-white/5 border-white/10 text-white/50 hover:border-white/20 hover:text-white/70'
+              }`}
+            >
+              全部
+            </button>
+            {visibleSubmitters.map(s => (
+              <button
+                key={s.id}
+                onClick={() => { setSelectedSubmitterId(prev => prev === s.id ? '' : s.id); setPage(1); }}
+                className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                  selectedSubmitterId === s.id
+                    ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300'
+                    : 'bg-white/5 border-white/10 text-white/50 hover:border-white/20 hover:text-white/70'
+                }`}
+              >
+                {s.name}
+              </button>
+            ))}
+            {hasMoreTags && (
+              <button
+                onClick={() => setTagsExpanded(v => !v)}
+                className="text-xs px-2.5 py-1 rounded-full border border-white/10 text-white/30 hover:text-white/60 transition-colors flex items-center gap-0.5"
+              >
+                {tagsExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                {tagsExpanded ? '收起' : `+${submitters.length - TAG_COLLAPSED_COUNT} 人`}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* 列表 */}
       {loading ? (
