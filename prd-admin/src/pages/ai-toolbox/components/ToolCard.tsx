@@ -100,6 +100,7 @@ const AGENT_COVER_PATHS: Record<string, string> = {
   'arena': 'icon/backups/agent/arena.png',
   'shortcuts-agent': 'icon/backups/agent/shortcuts-agent.png',
   'workflow-agent': 'icon/backups/agent/workflow-agent.png',
+  'review-agent': 'icon/backups/agent/review-agent.png',
 };
 
 /** Agent 封面视频 CDN 路径映射 */
@@ -113,6 +114,7 @@ const AGENT_VIDEO_PATHS: Record<string, string> = {
   'arena': 'icon/backups/agent/arena.mp4',
   'shortcuts-agent': 'icon/backups/agent/shortcuts-agent.mp4',
   'workflow-agent': 'icon/backups/agent/workflow-agent.mp4',
+  'review-agent': 'icon/backups/agent/review-agent.mp4',
 };
 
 function getCoverImageUrl(agentKey?: string): string | null {
