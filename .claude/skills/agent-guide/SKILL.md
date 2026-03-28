@@ -3,7 +3,8 @@ name: agent-guide
 description: |
   Agent 开发新手引导技能。读取 .agent-workspace/ 下的进度文件，告诉用户当前阶段、下一步操作、推荐技能。
   首次使用时引导用户给 Agent 取名并创建工作区。支持全生命周期引导：破冰→需求→设计→建造→验收。
-  触发词: "/help", "我的进度", "当前项目情况", "项目进度", "接下来做什么", "下一步"
+  触发词: "/help", "新手引导", "agent引导", "开发引导"
+  注意: 仅当用户明确请求新手引导时触发。日常对话中的"下一步""进度"等词不应触发此技能。
 allowed-tools: Read Write Edit Glob Grep Bash
 ---
 
