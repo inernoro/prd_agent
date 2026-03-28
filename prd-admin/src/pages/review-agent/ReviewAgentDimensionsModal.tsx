@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Plus, Trash2, GripVertical, Save } from 'lucide-react';
+import { X, Plus, Trash2, GripVertical, Save, ChevronDown, ChevronUp } from 'lucide-react';
 import { getReviewDimensions as getDimensions, updateReviewDimensions as updateDimensions } from '@/services';
 import type { ReviewDimensionConfig } from '@/services';
 
@@ -15,6 +15,7 @@ export function ReviewAgentDimensionsModal({ open, onClose }: Props) {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!open) return;
@@ -44,11 +45,20 @@ export function ReviewAgentDimensionsModal({ open, onClose }: Props) {
     setDims(prev => prev.map((d, i) => i === idx ? { ...d, ...patch } : d));
   }
 
+  function toggleExpand(key: string) {
+    setExpandedKeys(prev => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  }
+
   function addDim() {
     const maxOrder = dims.length > 0 ? Math.max(...dims.map(d => d.orderIndex)) : 0;
+    const key = `dim_${Date.now()}`;
     const newDim: EditableDim = {
       id: '',
-      key: `dim_${Date.now()}`,
+      key,
       name: '',
       description: '',
       maxScore: 10,
@@ -56,6 +66,8 @@ export function ReviewAgentDimensionsModal({ open, onClose }: Props) {
       isActive: true,
     };
     setDims(prev => [...prev, newDim]);
+    // 新增维度自动展开明细
+    setExpandedKeys(prev => new Set([...prev, key]));
   }
 
   function removeDim(idx: number) {
@@ -103,7 +115,7 @@ export function ReviewAgentDimensionsModal({ open, onClose }: Props) {
         style={{
           background: 'rgba(12, 15, 28, 0.97)',
           border: '1px solid rgba(255,255,255,0.1)',
-          maxHeight: '80vh',
+          maxHeight: '85vh',
         }}
         onClick={e => e.stopPropagation()}
       >
@@ -129,67 +141,96 @@ export function ReviewAgentDimensionsModal({ open, onClose }: Props) {
           ) : dims.length === 0 ? (
             <p className="text-center text-white/30 text-sm py-8">暂无维度，点击下方添加</p>
           ) : (
-            dims.map((dim, idx) => (
-              <div
-                key={dim.key}
-                className="flex items-center gap-2 rounded-xl px-3 py-2.5"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}
-              >
-                {/* Move buttons */}
-                <div className="flex flex-col gap-0.5 shrink-0">
-                  <button
-                    onClick={() => moveUp(idx)}
-                    disabled={idx === 0}
-                    className="w-4 h-3 flex items-center justify-center text-white/25 hover:text-white/60 disabled:opacity-20 transition-colors"
-                  >
-                    <GripVertical className="w-3 h-3 rotate-90 -scale-y-100" />
-                  </button>
-                  <button
-                    onClick={() => moveDown(idx)}
-                    disabled={idx === dims.length - 1}
-                    className="w-4 h-3 flex items-center justify-center text-white/25 hover:text-white/60 disabled:opacity-20 transition-colors"
-                  >
-                    <GripVertical className="w-3 h-3 rotate-90" />
-                  </button>
-                </div>
-
-                {/* Active toggle */}
-                <button
-                  onClick={() => updateDim(idx, { isActive: !dim.isActive })}
-                  className={`w-2 h-2 rounded-full shrink-0 transition-colors ${dim.isActive ? 'bg-indigo-400' : 'bg-white/15'}`}
-                  title={dim.isActive ? '点击禁用' : '点击启用'}
-                />
-
-                {/* Name */}
-                <input
-                  value={dim.name}
-                  onChange={e => updateDim(idx, { name: e.target.value })}
-                  placeholder="维度名称"
-                  className="flex-1 bg-transparent text-sm text-white placeholder-white/25 outline-none min-w-0"
-                />
-
-                {/* Max score */}
-                <div className="flex items-center gap-1 shrink-0">
-                  <input
-                    type="number"
-                    min={1}
-                    max={100}
-                    value={dim.maxScore}
-                    onChange={e => updateDim(idx, { maxScore: Math.max(1, parseInt(e.target.value) || 1) })}
-                    className="w-12 bg-white/5 rounded-lg text-center text-sm text-white outline-none px-1 py-0.5 border border-white/8"
-                  />
-                  <span className="text-xs text-white/30">分</span>
-                </div>
-
-                {/* Delete */}
-                <button
-                  onClick={() => removeDim(idx)}
-                  className="p-1 rounded-lg hover:bg-rose-500/15 text-white/25 hover:text-rose-400 transition-colors shrink-0"
+            dims.map((dim, idx) => {
+              const isExpanded = expandedKeys.has(dim.key);
+              return (
+                <div
+                  key={dim.key}
+                  className="rounded-xl overflow-hidden"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ))
+                  {/* Row: controls + name + score + expand/delete */}
+                  <div className="flex items-center gap-2 px-3 py-2.5">
+                    {/* Move buttons */}
+                    <div className="flex flex-col gap-0.5 shrink-0">
+                      <button
+                        onClick={() => moveUp(idx)}
+                        disabled={idx === 0}
+                        className="w-4 h-3 flex items-center justify-center text-white/25 hover:text-white/60 disabled:opacity-20 transition-colors"
+                      >
+                        <GripVertical className="w-3 h-3 rotate-90 -scale-y-100" />
+                      </button>
+                      <button
+                        onClick={() => moveDown(idx)}
+                        disabled={idx === dims.length - 1}
+                        className="w-4 h-3 flex items-center justify-center text-white/25 hover:text-white/60 disabled:opacity-20 transition-colors"
+                      >
+                        <GripVertical className="w-3 h-3 rotate-90" />
+                      </button>
+                    </div>
+
+                    {/* Active toggle */}
+                    <button
+                      onClick={() => updateDim(idx, { isActive: !dim.isActive })}
+                      className={`w-2 h-2 rounded-full shrink-0 transition-colors ${dim.isActive ? 'bg-indigo-400' : 'bg-white/15'}`}
+                      title={dim.isActive ? '点击禁用' : '点击启用'}
+                    />
+
+                    {/* Name */}
+                    <input
+                      value={dim.name}
+                      onChange={e => updateDim(idx, { name: e.target.value })}
+                      placeholder="维度名称"
+                      className="flex-1 bg-transparent text-sm text-white placeholder-white/25 outline-none min-w-0"
+                    />
+
+                    {/* Max score */}
+                    <div className="flex items-center gap-1 shrink-0">
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={dim.maxScore}
+                        onChange={e => updateDim(idx, { maxScore: Math.max(1, parseInt(e.target.value) || 1) })}
+                        className="w-12 bg-white/5 rounded-lg text-center text-sm text-white outline-none px-1 py-0.5 border border-white/8"
+                      />
+                      <span className="text-xs text-white/30">分</span>
+                    </div>
+
+                    {/* Expand criteria */}
+                    <button
+                      onClick={() => toggleExpand(dim.key)}
+                      className="p-1 rounded-lg hover:bg-white/8 text-white/25 hover:text-white/60 transition-colors shrink-0"
+                      title="展开/折叠明细要求"
+                    >
+                      {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                    </button>
+
+                    {/* Delete */}
+                    <button
+                      onClick={() => removeDim(idx)}
+                      className="p-1 rounded-lg hover:bg-rose-500/15 text-white/25 hover:text-rose-400 transition-colors shrink-0"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  {/* Expandable: description / criteria */}
+                  {isExpanded && (
+                    <div className="px-3 pb-3 border-t border-white/5 pt-2.5">
+                      <p className="text-xs text-white/35 mb-1.5">明细要求 <span className="text-white/20">（写入评审提示词，指导 AI 评分）</span></p>
+                      <textarea
+                        value={dim.description}
+                        onChange={e => updateDim(idx, { description: e.target.value })}
+                        placeholder="描述该维度的评分依据、检查要点和扣分规则..."
+                        rows={4}
+                        className="w-full bg-black/20 rounded-lg text-sm text-white/80 placeholder-white/20 outline-none px-3 py-2 resize-none border border-white/8 focus:border-indigo-500/40 transition-colors leading-relaxed"
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            })
           )}
         </div>
 

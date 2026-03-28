@@ -5,8 +5,8 @@ import { Loader2 } from 'lucide-react';
 import { useSseStream } from '@/lib/useSseStream';
 import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
 import { SseTypingBlock } from '@/components/sse/SseTypingBlock';
-import { getReviewSubmission, getReviewResultStreamUrl, rerunReviewSubmission } from '@/services';
-import type { ReviewSubmission, ReviewResult, ReviewDimensionScore } from '@/services';
+import { getReviewSubmission, getReviewResultStreamUrl, rerunReviewSubmission, getReviewDimensions } from '@/services';
+import type { ReviewSubmission, ReviewResult, ReviewDimensionScore, ReviewDimensionConfig } from '@/services';
 
 function RawOutputDebug({ result }: { result: ReviewResult }) {
   const [expanded, setExpanded] = useState(false);
@@ -48,6 +48,7 @@ export function ReviewAgentResultPage() {
   const [totalScore, setTotalScore] = useState<number | null>(null);
   const [isPassed, setIsPassed] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
+  const [dimConfigs, setDimConfigs] = useState<ReviewDimensionConfig[]>([]);
   const [expandedDims, setExpandedDims] = useState<Set<string>>(new Set());
   const [streaming, setStreaming] = useState(false);
   const [rerunning, setRerunning] = useState(false);
@@ -71,6 +72,13 @@ export function ReviewAgentResultPage() {
   }, [id]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // 加载维度配置（用于显示明细要求）
+  useEffect(() => {
+    getReviewDimensions().then(res => {
+      if (res.success && res.data) setDimConfigs(res.data.dimensions);
+    });
+  }, []);
 
   const sse = useSseStream<ReviewDimensionScore>({
     url: '',
@@ -265,9 +273,22 @@ export function ReviewAgentResultPage() {
                       {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                     </div>
                   </button>
-                  {isExpanded && dim.comment && (
-                    <div className="px-4 pb-3 text-sm text-white/50 border-t border-white/5 pt-3">
-                      {dim.comment}
+                  {isExpanded && (
+                    <div className="px-4 pb-3 border-t border-white/5 pt-3 space-y-2.5">
+                      {/* AI 评语 */}
+                      {dim.comment && (
+                        <p className="text-sm text-white/60 leading-relaxed">{dim.comment}</p>
+                      )}
+                      {/* 明细要求（来自维度配置） */}
+                      {(() => {
+                        const cfg = dimConfigs.find(c => c.key === dim.key);
+                        return cfg?.description ? (
+                          <div className="rounded-lg px-3 py-2" style={{ background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)' }}>
+                            <p className="text-xs text-indigo-400/70 mb-1 font-medium">明细要求</p>
+                            <p className="text-xs text-white/40 leading-relaxed whitespace-pre-wrap">{cfg.description}</p>
+                          </div>
+                        ) : null;
+                      })()}
                     </div>
                   )}
                 </div>

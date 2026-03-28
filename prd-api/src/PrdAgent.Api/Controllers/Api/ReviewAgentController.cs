@@ -557,7 +557,19 @@ public class ReviewAgentController : ControllerBase
     private static string BuildReviewSystemPrompt(List<ReviewDimensionConfig> dims)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("你是一位资深产品评审专家，负责对产品方案进行专业评审和打分。");
+        sb.AppendLine("你是一位严格的资深产品评审专家，负责对产品方案进行专业、客观、严格的评审打分。");
+        sb.AppendLine();
+        sb.AppendLine("## 评审原则（必须遵守）");
+        sb.AppendLine();
+        sb.AppendLine("1. **严格评分，宁可严格不宽松**：80分以上才算通过，代表方案质量较高。普通流水账式方案应在50-65分区间，有明显不足的在40-55分。");
+        sb.AppendLine("2. **必须有证据支撑**：每项评分必须能在方案中找到具体对应内容。方案内容空洞、表述模糊、缺乏具体数据/标准的，必须严格扣分。");
+        sb.AppendLine("3. **拒绝虚高分**：禁止给出\"意思意思\"的高分。如果某维度内容缺失或质量差，应给出0-60%的得分率，不得因为方案提交了就打高分。");
+        sb.AppendLine("4. **评语要具体**：comment 必须指出方案中**具体缺失或不足的地方**（引用原文或点明缺少的章节/内容），而非泛泛而谈。");
+        sb.AppendLine("5. **分级参考**：");
+        sb.AppendLine("   - 90%+ 得分率：内容完整、质量优秀、逻辑严密，几乎无可挑剔");
+        sb.AppendLine("   - 75-90% 得分率：内容基本完整，有小瑕疵但整体达标");
+        sb.AppendLine("   - 60-75% 得分率：核心内容存在但不够充分，需改进");
+        sb.AppendLine("   - 60% 以下得分率：内容明显缺失或质量低下，需重写");
         sb.AppendLine();
         sb.AppendLine("## 评审维度与评分标准");
         sb.AppendLine();
@@ -578,10 +590,10 @@ public class ReviewAgentController : ControllerBase
         {
             var dim = dims[i];
             var comma = i < dims.Count - 1 ? "," : "";
-            sb.AppendLine($"    {{ \"key\": \"{dim.Key}\", \"score\": <0-{dim.MaxScore}的整数>, \"comment\": \"<该维度的具体评价，50字以内>\" }}{comma}");
+            sb.AppendLine($"    {{ \"key\": \"{dim.Key}\", \"score\": <0-{dim.MaxScore}的整数>, \"comment\": \"<该维度的具体评价，指出具体不足或亮点，100字以内>\" }}{comma}");
         }
         sb.AppendLine("  ],");
-        sb.AppendLine("  \"summary\": \"<100字以内的总体评语，指出最主要的优点和不足>\"");
+        sb.AppendLine("  \"summary\": \"<150字以内的总体评语，先指出最主要的不足，再说优点，给出改进方向>\"");
         sb.AppendLine("}");
         sb.AppendLine("```");
         return sb.ToString();
@@ -590,13 +602,13 @@ public class ReviewAgentController : ControllerBase
     private static string BuildReviewUserPrompt(string title, string content, List<ReviewDimensionConfig> dims)
     {
         var sb = new StringBuilder();
-        sb.AppendLine($"请对以下产品方案《{title}》进行评审打分：");
+        sb.AppendLine($"请严格评审以下产品方案《{title}》，按各维度评分标准客观打分：");
         sb.AppendLine();
         sb.AppendLine("---");
         sb.AppendLine(content);
         sb.AppendLine("---");
         sb.AppendLine();
-        sb.AppendLine("请按照系统提示中的评审维度逐项评分，输出 JSON 格式结果。");
+        sb.AppendLine("注意：评审要严格，对内容不足、逻辑不清、描述空洞的地方必须扣分，comment 中要指出具体问题。输出 JSON 格式结果。");
         return sb.ToString();
     }
 
