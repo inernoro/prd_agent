@@ -2550,20 +2550,18 @@ a.branch-name:hover { color: var(--accent); }
 /* ════════════════ AI Pairing Indicator ════════════════ */
 
 .ai-pairing-indicator {
-  position: fixed;
-  top: 14px;
-  right: 70px;
-  z-index: 9999;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 12px;
-  border-radius: 20px;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 16px;
   background: linear-gradient(135deg, rgba(192, 132, 252, 0.15), rgba(96, 165, 250, 0.15));
   border: 1px solid rgba(192, 132, 252, 0.3);
   cursor: pointer;
   animation: ai-glow 1.5s ease-in-out infinite;
   transition: all 0.2s;
+  height: 28px;
+  flex-shrink: 0;
 }
 
 .ai-pairing-indicator:hover {
@@ -2572,7 +2570,7 @@ a.branch-name:hover { color: var(--accent); }
 }
 
 .ai-pairing-indicator.hidden {
-  display: none;
+  display: none !important;
 }
 
 @keyframes ai-glow {

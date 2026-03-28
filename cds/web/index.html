@@ -22,6 +22,11 @@
         <span class="header-subtitle" id="branchCount"></span>
       </div>
       <div class="header-actions">
+        <!-- AI Pairing Indicator (inline, before refresh) -->
+        <div id="aiPairingIndicator" class="ai-pairing-indicator hidden" onclick="showAiPairingPanel()">
+          <span class="ai-pulse"></span>
+          <span class="ai-label">AI</span>
+        </div>
         <button id="globalRefreshBtn" class="icon-btn labeled" onclick="checkAllUpdates()" title="检查远程更新">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
           <span class="icon-btn-label">刷新全部分支</span>
@@ -159,12 +164,6 @@
     <div class="activity-resize-handle activity-resize-n" data-direction="n"></div>
     <div class="activity-resize-handle activity-resize-w" data-direction="w"></div>
     <div class="activity-resize-handle activity-resize-nw" data-direction="nw"></div>
-  </div>
-
-  <!-- AI Pairing Indicator (top-right, flashes when pending) -->
-  <div id="aiPairingIndicator" class="ai-pairing-indicator hidden" onclick="showAiPairingPanel()">
-    <span class="ai-pulse"></span>
-    <span class="ai-label">AI</span>
   </div>
 
   <!-- AI Pairing Panel (modal) -->

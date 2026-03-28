@@ -250,7 +250,10 @@ export function createServer(deps: ServerDeps): express.Express {
       agentName: String(agentName).slice(0, 100),
       purpose: String(purpose || '').slice(0, 500),
       createdAt: new Date().toISOString(),
-      ip: req.ip || req.socket.remoteAddress || 'unknown',
+      ip: (req.headers['cf-connecting-ip'] as string) ||
+          (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+          (req.headers['x-real-ip'] as string) ||
+          req.ip || req.socket.remoteAddress || 'unknown',
     };
     pendingAiRequests.set(id, request);
 
