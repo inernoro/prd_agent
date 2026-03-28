@@ -408,7 +408,7 @@ public class ReviewAgentController : ControllerBase
             }
             else if (chunk.Type == GatewayChunkType.Error)
             {
-                gatewayError = chunk.Content ?? "网关返回未知错误";
+                gatewayError = chunk.Error ?? chunk.Content ?? "网关返回未知错误";
                 _logger.LogError("ReviewAgent 网关错误 [{SubmissionId}]: {Error}", submissionId, gatewayError);
                 break;
             }

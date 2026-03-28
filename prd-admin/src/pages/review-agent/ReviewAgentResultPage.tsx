@@ -93,6 +93,7 @@ export function ReviewAgentResultPage() {
     onError: (msg) => {
       console.error('评审流错误:', msg);
       setStreaming(false);
+      loadData(); // 刷新 submission 状态（Error/Done）
     },
   });
 
