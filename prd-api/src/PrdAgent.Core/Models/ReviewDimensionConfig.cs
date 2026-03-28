@@ -49,7 +49,7 @@ public static class DefaultReviewDimensions
             Key = "consistency",
             Name = "内在自洽性",
             MaxScore = 20,
-            Description = "评估整篇方案的逻辑闭环：项目目的→现状问题→用户诉求→实现思路是否形成完整链条；各章节描述是否互相支撑，有无矛盾；问题陈述的"问题"是否与"需求"对应；实现思路是否能解决所提出的问题。",
+            Description = "评估整篇方案的逻辑闭环：项目目的→现状问题→用户诉求→实现思路是否形成完整链条；各章节描述是否互相支撑，有无矛盾；问题陈述的\"问题\"是否与\"需求\"对应；实现思路是否能解决所提出的问题。",
             OrderIndex = 2,
         },
         new ReviewDimensionConfig
