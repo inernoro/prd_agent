@@ -390,6 +390,7 @@ public class ReviewAgentController : ControllerBase
         };
 
         var fullContent = new StringBuilder();
+        string? gatewayError = null;
 
         await WriteSseEventAsync("phase", new { phase = "scoring", message = "正在逐维度评分..." });
 
@@ -405,6 +406,26 @@ public class ReviewAgentController : ControllerBase
                 catch (ObjectDisposedException) { break; }
                 catch (OperationCanceledException) { break; }
             }
+            else if (chunk.Type == GatewayChunkType.Error)
+            {
+                gatewayError = chunk.Content ?? "网关返回未知错误";
+                _logger.LogError("ReviewAgent 网关错误 [{SubmissionId}]: {Error}", submissionId, gatewayError);
+                break;
+            }
+        }
+
+        // 网关错误：标记失败并返回
+        if (gatewayError != null)
+        {
+            await _db.ReviewSubmissions.UpdateOneAsync(
+                x => x.Id == submissionId,
+                Builders<ReviewSubmission>.Update
+                    .Set(x => x.Status, ReviewStatuses.Error)
+                    .Set(x => x.ErrorMessage, $"LLM 网关错误: {gatewayError}"),
+                cancellationToken: CancellationToken.None);
+            try { await WriteSseEventAsync("error", new { message = $"LLM 网关错误: {gatewayError}" }); }
+            catch { /* 客户端已断开 */ }
+            return;
         }
 
         // 解析 LLM 输出
