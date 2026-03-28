@@ -262,6 +262,16 @@ public class ReviewAgentController : ControllerBase
         if (!string.IsNullOrEmpty(submission.ResultId))
             result = await _db.ReviewResults.Find(x => x.Id == submission.ResultId).FirstOrDefaultAsync(ct);
 
+        // 懒修复：Done 状态但 IsPassed 未写入（旧数据兼容）
+        if (result != null && submission.Status == ReviewStatuses.Done && submission.IsPassed == null)
+        {
+            submission.IsPassed = result.IsPassed;
+            await _db.ReviewSubmissions.UpdateOneAsync(
+                x => x.Id == id,
+                Builders<ReviewSubmission>.Update.Set(x => x.IsPassed, result.IsPassed),
+                cancellationToken: CancellationToken.None);
+        }
+
         return Ok(ApiResponse<object>.Ok(new { submission, result }));
     }
 

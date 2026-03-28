@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ClipboardCheck, ArrowLeft, CheckCircle, XCircle, Clock, RefreshCw, ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react';
+import { ClipboardCheck, ArrowLeft, CheckCircle, XCircle, ChevronDown, ChevronUp, AlertTriangle, User } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { useSseStream } from '@/lib/useSseStream';
 import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
 import { SseTypingBlock } from '@/components/sse/SseTypingBlock';
-import { getReviewSubmission, getReviewResultStreamUrl, rerunReviewSubmission } from '@/services';
+import { getReviewSubmission, getReviewResultStreamUrl } from '@/services';
 import type { ReviewSubmission, ReviewResult, ReviewDimensionScore } from '@/services';
 
 function RawOutputDebug({ result }: { result: ReviewResult }) {
@@ -49,7 +50,6 @@ export function ReviewAgentResultPage() {
   const [loading, setLoading] = useState(true);
   const [expandedDims, setExpandedDims] = useState<Set<string>>(new Set());
   const [streaming, setStreaming] = useState(false);
-  const [rerunning, setRerunning] = useState(false);
 
   const loadData = useCallback(async () => {
     if (!id) return;
@@ -78,13 +78,13 @@ export function ReviewAgentResultPage() {
         return existing ? prev.map(d => d.key === item.key ? item : d) : [...prev, item];
       });
     },
-    onEvent: (eventType, data) => {
-      if (eventType === 'result') {
+    onEvent: {
+      result: (data: unknown) => {
         const d = data as { totalScore: number; isPassed: boolean; summary: string };
         setTotalScore(d.totalScore);
         setIsPassed(d.isPassed);
         setSummary(d.summary);
-      }
+      },
     },
     onDone: () => {
       setStreaming(false);
@@ -93,7 +93,7 @@ export function ReviewAgentResultPage() {
     onError: (msg) => {
       console.error('评审流错误:', msg);
       setStreaming(false);
-      loadData(); // 刷新 submission 状态（Error/Done）
+      loadData();
     },
   });
 
@@ -105,27 +105,6 @@ export function ReviewAgentResultPage() {
       sse.start({ url: getReviewResultStreamUrl(submission.id) });
     }
   }, [submission]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  async function handleRerun() {
-    if (!id || rerunning) return;
-    setRerunning(true);
-    try {
-      const res = await rerunReviewSubmission(id);
-      if (res.success) {
-        // 清空旧结果，重置状态
-        setResult(null);
-        setDimensionScores([]);
-        setSummary('');
-        setTotalScore(null);
-        setIsPassed(null);
-        setStreaming(true);
-        setSubmission(prev => prev ? { ...prev, status: 'Queued', resultId: undefined } : prev);
-        sse.start({ url: getReviewResultStreamUrl(id!) });
-      }
-    } finally {
-      setRerunning(false);
-    }
-  }
 
   function toggleDim(key: string) {
     setExpandedDims(prev => {
@@ -184,19 +163,19 @@ export function ReviewAgentResultPage() {
           {/* 总分/状态 */}
           {isDone && totalScore !== null && !isRunning && (
             <div className="flex-shrink-0 text-right">
-              <div className={`text-2xl font-bold ${isPassed ? 'text-emerald-400' : 'text-red-400'}`}>
+              <div className={`text-2xl font-bold ${isPassed ? 'text-emerald-400' : 'text-orange-400'}`}>
                 {totalScore}分
               </div>
-              <div className={`flex items-center gap-1 text-xs mt-0.5 justify-end ${isPassed ? 'text-emerald-400/80' : 'text-red-400/80'}`}>
+              <div className={`flex items-center gap-1 text-xs mt-0.5 justify-end ${isPassed ? 'text-emerald-400/80' : 'text-orange-400/80'}`}>
                 {isPassed ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
-                {isPassed ? '通过' : '不通过'}
+                {isPassed ? '已通过' : '未通过'}
               </div>
             </div>
           )}
           {isRunning && (
             <div className="flex-shrink-0">
               <div className="flex items-center gap-1.5 text-xs text-amber-400/80">
-                <Clock className="w-3.5 h-3.5 animate-pulse" />
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 评审中
               </div>
             </div>
@@ -205,7 +184,7 @@ export function ReviewAgentResultPage() {
             <div className="flex-shrink-0">
               <div className="flex items-center gap-1.5 text-xs text-red-400/80">
                 <XCircle className="w-3.5 h-3.5" />
-                评审失败
+                失败
               </div>
             </div>
           )}
@@ -285,17 +264,13 @@ export function ReviewAgentResultPage() {
         <RawOutputDebug result={result} />
       )}
 
-      {/* 重新评审按钮（已完成或失败时显示） */}
-      {(isDone || isError) && !isRunning && (
+      {/* 底部：提交人信息 */}
+      {(isDone || isError) && !isRunning && submission.submitterName && (
         <div className="flex justify-end mt-4">
-          <button
-            onClick={handleRerun}
-            disabled={rerunning}
-            className="flex items-center gap-1.5 text-sm text-white/40 hover:text-white/70 transition-colors disabled:opacity-50"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${rerunning ? 'animate-spin' : ''}`} />
-            重新评审
-          </button>
+          <div className="flex items-center gap-1.5 text-sm text-white/35">
+            <User className="w-3.5 h-3.5" />
+            {submission.submitterName}
+          </div>
         </div>
       )}
     </div>
