@@ -68,7 +68,7 @@
   --shadow-lg: 0 16px 48px rgba(0,0,0,0.6);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  --font-mono: 'Cascadia Code', 'JetBrains Mono', 'Fira Code', 'Source Code Pro', 'SF Mono', Menlo, Consolas, 'Courier New', monospace;
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'SF Mono', Menlo, Consolas, monospace;
 }
 
 /* ════════════════ Light Theme ════════════════ */
@@ -251,7 +251,10 @@
 /* 卡片左侧状态色边框已移除 — 状态通过圆点指示器区分 */
 
 [data-theme="light"] .port-badge.run-port {
-  color: var(--green); background: var(--green-bg); border-color: var(--green-border);
+  color: #0f7d65; background: rgba(16, 125, 101, 0.13); border-color: rgba(16, 125, 101, 0.28);
+}
+[data-theme="light"] .port-badge.port-idle {
+  color: var(--text-muted); background: rgba(42, 31, 25, 0.04); border-color: rgba(42, 31, 25, 0.10);
 }
 
 [data-theme="light"] select {
@@ -262,7 +265,7 @@
 /* ════════════════ Grid Background ════════════════ */
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans SC', sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans SC', sans-serif;
   background: var(--bg-primary);
   color: var(--text-primary);
   min-height: 100vh;
@@ -920,6 +923,14 @@ button.text-btn:hover { color: var(--accent); }
   background: var(--green);
   opacity: 1;
   box-shadow: 0 0 6px var(--green);
+}
+[data-theme="light"] .status-dot-running {
+  background: #0f7d65;
+  box-shadow: 0 0 8px rgba(15, 125, 101, 0.4);
+}
+[data-theme="light"] .status-dot {
+  background: #c4b8b0;
+  opacity: 0.6;
 }
 @keyframes status-dot-blink {
   0%, 100% { opacity: 1; box-shadow: 0 0 6px var(--green); }
