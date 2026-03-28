@@ -45,6 +45,7 @@ interface ToolboxState {
   // Items
   items: ToolboxItem[];
   itemsLoading: boolean;
+  itemsLoadError: string | null;
   selectedItem: ToolboxItem | null;
 
   // Favorites
@@ -273,6 +274,7 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
 
   items: [],
   itemsLoading: false,
+  itemsLoadError: null,
   selectedItem: null,
 
   favoriteIds: loadFavoritesFromStorage(),
@@ -290,15 +292,27 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
   // Load all items (builtin + custom)
   loadItems: async () => {
     if (get().itemsLoading) return; // 防止并发重复加载
-    set({ itemsLoading: true });
+    set({ itemsLoading: true, itemsLoadError: null });
     try {
       const res = await listToolboxItems();
-      const customItems = res.success && res.data ? res.data.items : [];
-      // 合并内置工具和自定义工具
-      set({ items: [...BUILTIN_TOOLS, ...customItems] });
-    } catch {
-      // 即使API失败，也显示内置工具
-      set({ items: BUILTIN_TOOLS });
+      if (res.success && res.data) {
+        const customItems = res.data.items ?? [];
+        // 合并内置工具和自定义工具
+        set({ items: [...BUILTIN_TOOLS, ...customItems], itemsLoadError: null });
+      } else {
+        const cachedCustomItems = get().items.filter((item) => item.type === 'custom');
+        set({
+          items: [...BUILTIN_TOOLS, ...cachedCustomItems],
+          itemsLoadError: res.error?.message || '自定义智能体加载失败',
+        });
+      }
+    } catch (error) {
+      // 即使 API 失败，也显示内置工具；并显式暴露错误，避免“静默降级”误导用户
+      const cachedCustomItems = get().items.filter((item) => item.type === 'custom');
+      set({
+        items: [...BUILTIN_TOOLS, ...cachedCustomItems],
+        itemsLoadError: error instanceof Error ? error.message : '网络异常，请稍后重试',
+      });
     } finally {
       set({ itemsLoading: false });
     }
