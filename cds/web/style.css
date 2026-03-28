@@ -185,7 +185,6 @@
 
 [data-theme="light"] .branch-card {
   background: #ffffff;
-  border-left-color: #2a1f1920;
   box-shadow: 0 1px 4px #2c1c140d, 0 0 0 1px #2a1f190a;
 }
 [data-theme="light"] .branch-card:hover {
@@ -194,7 +193,6 @@
 }
 [data-theme="light"] .branch-card.status-idle,
 [data-theme="light"] .branch-card.status-stopped {
-  border-left-color: #2a1f1920;
 }
 
 [data-theme="light"] .port-badge.port-idle { background: #2a1f1908; }
@@ -250,12 +248,7 @@
 [data-theme="light"] .term-result { color: var(--text-secondary); }
 
 
-[data-theme="light"] .branch-card.status-running { border-left-color: var(--green); }
-[data-theme="light"] .branch-card.status-building { border-left-color: var(--blue); }
-[data-theme="light"] .branch-card.status-starting { border-left-color: var(--yellow); }
-[data-theme="light"] .branch-card.status-error { border-left-color: var(--red); }
-[data-theme="light"] .branch-card.status-stopping { border-left-color: var(--red); }
-[data-theme="light"] .branch-card.status-deleting { border-left-color: var(--red); }
+/* 卡片左侧状态色边框已移除 — 状态通过圆点指示器区分 */
 
 [data-theme="light"] .port-badge.run-port {
   color: var(--green); background: var(--green-bg); border-color: var(--green-border);
@@ -499,6 +492,7 @@ button.accent:hover {
 button.preview {
   background: none; border-color: transparent;
   color: var(--blue); font-weight: 500;
+  display: inline-flex; align-items: center; vertical-align: middle;
 }
 button.preview:hover {
   background: rgba(92, 158, 255, 0.08);
@@ -1771,8 +1765,6 @@ a.branch-name:hover { color: var(--accent); }
 
   /* Header actions */
   .header-actions { gap: 3px; }
-  .icon-btn.labeled { padding: 0 6px; }
-  .icon-btn-label { display: none; }
   .icon-btn { width: 32px; height: 32px; }
   .ai-pairing-indicator { padding: 3px 8px; height: 26px; gap: 4px; }
   .ai-label { font-size: 11px; }
@@ -1781,7 +1773,6 @@ a.branch-name:hover { color: var(--accent); }
   .branch-card {
     padding: 12px 12px;
     border: 1px solid rgba(255, 255, 255, 0.15);
-    border-left: 2px solid rgba(255, 255, 255, 0.10);
   }
   .branch-card + .branch-card { margin-top: 8px; }
 
@@ -1982,15 +1973,7 @@ a.branch-name:hover { color: var(--accent); }
   background-clip: padding-box, border-box;
   border-radius: var(--radius);
 }
-/* Override status left-border: gradient takes priority for marked cards */
-.branch-card.is-color-marked.status-running,
-.branch-card.is-color-marked.status-idle,
-.branch-card.is-color-marked.status-stopped,
-.branch-card.is-color-marked.status-building,
-.branch-card.is-color-marked.status-starting,
-.branch-card.is-color-marked.status-error {
-  border-left-color: transparent;
-}
+/* 卡片左侧状态色边框已移除 */
 /* Subtle animated gradient glow */
 .branch-card.is-color-marked::before {
   content: '';

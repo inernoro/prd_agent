@@ -19,7 +19,7 @@ const ICON = {
   commit: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M11.93 8.5a4.002 4.002 0 01-7.86 0H.75a.75.75 0 010-1.5h3.32a4.002 4.002 0 017.86 0h3.32a.75.75 0 010 1.5h-3.32zM8 10.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z"/></svg>',
   pr: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5.45 5.154A4.25 4.25 0 009.25 7.5h1.378a2.251 2.251 0 110 1.5H9.25A5.734 5.734 0 015 7.123v3.505a2.25 2.25 0 11-1.5 0V5.372a2.25 2.25 0 111.95-.218zM4.25 13.5a.75.75 0 100-1.5.75.75 0 000 1.5zm8.5-4.5a.75.75 0 100-1.5.75.75 0 000 1.5zM5 3.25a.75.75 0 10-1.5 0 .75.75 0 001.5 0z"/></svg>',
   pull: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.004a.75.75 0 01.75.75v5.689l1.97-1.97a.749.749 0 111.06 1.06l-3.25 3.25a.749.749 0 01-1.06 0L4.22 7.533a.749.749 0 111.06-1.06l1.97 1.97V2.754a.75.75 0 01.75-.75zM2.75 12.5h10.5a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5z"/></svg>',
-  preview: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 8s3-5.5 8-5.5S16 8 16 8s-3 5.5-8 5.5S0 8 0 8zm8 3.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7zm0-1.5a2 2 0 110-4 2 2 0 010 4z"/></svg>',
+  preview: '<svg class="inline-icon" width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M0 8s3-5.5 8-5.5S16 8 16 8s-3 5.5-8 5.5S0 8 0 8zm8 3.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7zm0-1.5a2 2 0 110-4 2 2 0 010 4z"/></svg>',
   deploy: '<svg class="inline-icon deploy-hammer-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 12-8.373 8.373a1 1 0 1 1-3-3L12 9"/><path d="m18 15 4-4"/><path d="m21.5 11.5c.7-1 .5-2.4-.3-3.2L17 4.2c-.8-.8-2.2-1-3.2-.3L12 5.5l6.5 6.5z"/></svg>',
   trash: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM11 3V1.75A1.75 1.75 0 009.25 0h-2.5A1.75 1.75 0 005 1.75V3H2.75a.75.75 0 000 1.5h.3l.8 8.2A1.75 1.75 0 005.6 14.5h4.8a1.75 1.75 0 001.75-1.8l.8-8.2h.3a.75.75 0 000-1.5H11z"/></svg>',
   reset: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5z"/></svg>',
@@ -377,11 +377,20 @@ async function removeExecutor(id) {
 
 // ── Check updates (global refresh) ──
 
+/** 合并刷新：同时刷新远程候选列表 + 检查所有分支更新 */
+async function refreshAll() {
+  const btn = document.getElementById('refreshRemoteBtn');
+  if (btn) btn.classList.add('spinning');
+  try {
+    await Promise.all([checkAllUpdates(), refreshRemoteCandidates()]);
+  } finally {
+    if (btn) btn.classList.remove('spinning');
+  }
+}
+
 async function checkAllUpdates() {
   if (isCheckingUpdates) return;
   isCheckingUpdates = true;
-  const btn = document.getElementById('globalRefreshBtn');
-  if (btn) btn.classList.add('spinning');
   try {
     const data = await api('GET', '/check-updates');
     branchUpdates = data.updates || {};
@@ -404,7 +413,6 @@ async function checkAllUpdates() {
     showToast('检查更新失败: ' + e.message, 'error');
   }
   isCheckingUpdates = false;
-  if (btn) btn.classList.remove('spinning');
 }
 
 function confirmOpenGithub(event) {
@@ -445,6 +453,16 @@ function updatePreviewModeUI() {
   const label = document.querySelector('.preview-mode-label');
   const labels = { simple: '简洁', port: '端口直连', multi: '子域名' };
   if (label) label.textContent = labels[previewMode] || previewMode;
+  // Update title brand color based on preview mode
+  const titleEl = document.querySelector('.title-static');
+  if (titleEl) {
+    const gradients = {
+      simple: 'linear-gradient(120deg, var(--accent) 0%, var(--blue) 50%, var(--accent) 100%)',
+      port: 'linear-gradient(120deg, var(--orange, #f59e0b) 0%, var(--yellow, #eab308) 50%, var(--orange, #f59e0b) 100%)',
+      multi: 'linear-gradient(120deg, var(--green, #10b981) 0%, var(--cyan, #06b6d4) 50%, var(--green, #10b981) 100%)',
+    };
+    titleEl.style.backgroundImage = gradients[previewMode] || gradients.simple;
+  }
 }
 
 // ── Mirror acceleration ──
@@ -1827,14 +1845,6 @@ function toggleSettingsMenu(event) {
     <div class="settings-menu-item settings-menu-switch" onclick="toggleMirror()">
       <span class="settings-menu-switch-label">镜像加速</span>
       <span class="settings-switch settings-switch-mirror ${mirrorEnabled ? 'on' : ''}">
-        <span class="settings-switch-track">
-          <span class="settings-switch-thumb"></span>
-        </span>
-      </span>
-    </div>
-    <div class="settings-menu-item settings-menu-switch" onclick="toggleTheme(event)">
-      <span class="settings-menu-switch-label">白天模式</span>
-      <span class="settings-switch settings-switch-theme ${cdsTheme === 'light' ? 'on' : ''}">
         <span class="settings-switch-track">
           <span class="settings-switch-thumb"></span>
         </span>
