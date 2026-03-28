@@ -1454,3 +1454,20 @@ export {
   listMyWorkspacesReal as listMyWorkspaces,
   listMyConfigsReal as listMyConfigs,
 } from '@/services/real/dataTransfer';
+
+// ── Review Agent 产品评审员 ──
+export {
+  getDimensions as getReviewDimensions,
+  updateDimensions as updateReviewDimensions,
+  createSubmission as createReviewSubmission,
+  getMySubmissions as getMyReviewSubmissions,
+  getAllSubmissions as getAllReviewSubmissions,
+  getSubmission as getReviewSubmission,
+  getResultStreamUrl as getReviewResultStreamUrl,
+} from '@/services/real/reviewAgent';
+export type {
+  ReviewDimensionConfig,
+  ReviewDimensionScore,
+  ReviewSubmission,
+  ReviewResult,
+} from '@/services/real/reviewAgent';

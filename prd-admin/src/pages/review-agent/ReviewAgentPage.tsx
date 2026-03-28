@@ -1,0 +1,140 @@
+import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { ClipboardCheck, Plus, ChevronRight, CheckCircle, XCircle, Clock, Loader2, Users } from 'lucide-react';
+import { getMyReviewSubmissions } from '@/services';
+import { useAuthStore } from '@/stores/authStore';
+import type { ReviewSubmission } from '@/services';
+
+const STATUS_LABELS: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
+  Queued: { label: '等待评审', color: 'text-amber-400/80', icon: <Clock className="w-3.5 h-3.5" /> },
+  Running: { label: '评审中', color: 'text-blue-400/80', icon: <Loader2 className="w-3.5 h-3.5 animate-spin" /> },
+  Done: { label: '已完成', color: 'text-emerald-400/80', icon: <CheckCircle className="w-3.5 h-3.5" /> },
+  Error: { label: '失败', color: 'text-red-400/80', icon: <XCircle className="w-3.5 h-3.5" /> },
+};
+
+export function ReviewAgentPage() {
+  const navigate = useNavigate();
+  const permissions = useAuthStore(s => s.permissions ?? []);
+  const canViewAll = permissions.includes('review-agent.view-all') || permissions.includes('super');
+
+  const [items, setItems] = useState<ReviewSubmission[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    const res = await getMyReviewSubmissions(1, 20);
+    if (res.success && res.data) {
+      setItems(res.data.items);
+      setTotal(res.data.total);
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  return (
+    <div className="max-w-3xl mx-auto px-4 py-6">
+      {/* 页头 */}
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-indigo-500/10 flex items-center justify-center">
+            <ClipboardCheck className="w-5 h-5 text-indigo-400" />
+          </div>
+          <div>
+            <h1 className="text-xl font-semibold text-white">产品评审员</h1>
+            <p className="text-sm text-white/40 mt-0.5">上传产品方案，AI 多维度评审打分</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {canViewAll && (
+            <button
+              onClick={() => navigate('/review-agent/all')}
+              className="flex items-center gap-1.5 text-sm text-white/50 hover:text-white/80 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg px-3 py-2 transition-colors"
+            >
+              <Users className="w-3.5 h-3.5" />
+              全部提交
+            </button>
+          )}
+          <button
+            onClick={() => navigate('/review-agent/submit')}
+            className="flex items-center gap-1.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg px-4 py-2 transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            提交方案
+          </button>
+        </div>
+      </div>
+
+      {/* 统计卡片 */}
+      <div className="grid grid-cols-3 gap-3 mb-6">
+        {[
+          { label: '全部提交', value: total },
+          { label: '已通过', value: items.filter(i => i.status === 'Done').length },
+          { label: '评审中', value: items.filter(i => i.status === 'Running' || i.status === 'Queued').length },
+        ].map(stat => (
+          <div key={stat.label} className="bg-white/3 border border-white/8 rounded-xl px-4 py-3 text-center">
+            <div className="text-2xl font-bold text-white">{stat.value}</div>
+            <div className="text-xs text-white/40 mt-1">{stat.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* 提交列表 */}
+      <div>
+        <h2 className="text-sm font-medium text-white/50 mb-3">我的提交记录</h2>
+        {loading ? (
+          <div className="flex items-center justify-center h-32">
+            <Loader2 className="w-6 h-6 text-indigo-400 animate-spin" />
+          </div>
+        ) : items.length === 0 ? (
+          <div className="text-center py-16 space-y-4">
+            <div className="w-14 h-14 rounded-2xl bg-white/3 flex items-center justify-center mx-auto">
+              <ClipboardCheck className="w-7 h-7 text-white/20" />
+            </div>
+            <div>
+              <p className="text-white/40 text-sm">还没有提交记录</p>
+              <p className="text-white/25 text-xs mt-1">上传产品方案，AI 将帮助你预先发现评审问题</p>
+            </div>
+            <button
+              onClick={() => navigate('/review-agent/submit')}
+              className="inline-flex items-center gap-1.5 text-sm text-indigo-400 hover:text-indigo-300 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              提交第一个方案
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {items.map(item => {
+              const statusInfo = STATUS_LABELS[item.status] ?? { label: item.status, color: 'text-white/50', icon: null };
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => navigate(`/review-agent/submissions/${item.id}`)}
+                  className="w-full flex items-center gap-4 bg-white/3 hover:bg-white/5 border border-white/8 rounded-xl px-5 py-4 text-left transition-colors group"
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-white truncate group-hover:text-indigo-200 transition-colors">
+                      {item.title}
+                    </p>
+                    <div className="flex items-center gap-3 text-xs text-white/35 mt-1">
+                      <span>{item.fileName}</span>
+                      <span>·</span>
+                      <span>{new Date(item.submittedAt).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                    </div>
+                  </div>
+                  <div className={`flex items-center gap-1.5 text-xs flex-shrink-0 ${statusInfo.color}`}>
+                    {statusInfo.icon}
+                    {statusInfo.label}
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-white/20 group-hover:text-white/40 transition-colors flex-shrink-0" />
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

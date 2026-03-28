@@ -155,6 +155,21 @@ public static class AdminPermissionCatalog
     public const string ReportAgentDataSourceManage = "report-agent.datasource.manage";
 
     /// <summary>
+    /// 产品评审员权限：提交方案 + 查看自己的评审结果
+    /// </summary>
+    public const string ReviewAgentUse = "review-agent.use";
+
+    /// <summary>
+    /// 产品评审员查看全部权限：查看所有人的提交和评审结果（由余瑞鹏分配）
+    /// </summary>
+    public const string ReviewAgentViewAll = "review-agent.view-all";
+
+    /// <summary>
+    /// 产品评审员管理权限：自定义评审维度配置
+    /// </summary>
+    public const string ReviewAgentManage = "review-agent.manage";
+
+    /// <summary>
     /// 网页托管权限（读）：查看托管站点列表
     /// </summary>
     public const string WebPagesRead = "web-pages.read";
@@ -231,6 +246,10 @@ public static class AdminPermissionCatalog
         new(ReportAgentViewAll, "周报-查看全部", "查看所有团队周报"),
         new(ReportAgentDataSourceManage, "周报-数据源管理", "配置 Git/SVN 仓库连接"),
         new(WorkflowAgentManage, "工作流引擎-管理", "管理所有工作流与执行记录"),
+
+        new(ReviewAgentUse, "产品评审员", "提交方案并查看自己的评审结果"),
+        new(ReviewAgentViewAll, "产品评审员-查看全部", "查看所有提交记录和评审结果"),
+        new(ReviewAgentManage, "产品评审员-管理", "自定义评审维度配置"),
 
         new(WebPagesRead, "网页托管-读", "查看托管站点列表与详情"),
         new(WebPagesWrite, "网页托管-写", "上传/编辑/删除/分享托管站点"),
