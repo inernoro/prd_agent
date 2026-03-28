@@ -983,6 +983,7 @@ public static class ReviewAgent
         public const string Chat = "review-agent.review::chat";
     }
 }
+}
 
 /// <summary>
 /// 应用调用者元数据标记
