@@ -457,6 +457,9 @@ public static class CapsuleTypes
     public const string SitePublisher = "site-publisher";
     public const string EmailSender = "email-sender";
 
+    // CLI Agent 执行器
+    public const string CliAgentExecutor = "cli-agent-executor";
+
     // 短视频工作流类
     public const string DouyinParser = "douyin-parser";
     public const string VideoDownloader = "video-downloader";
@@ -478,6 +481,8 @@ public static class CapsuleTypes
         Delay, Condition,
         // 输出类
         ReportGenerator, WebpageGenerator, FileExporter, WebhookSender, NotificationSender, VideoGeneration, SitePublisher, EmailSender,
+        // CLI Agent 执行器
+        CliAgentExecutor,
         // 短视频工作流类
         DouyinParser, VideoDownloader, VideoToText, TextToCopywriting,
         // 旧类型兼容

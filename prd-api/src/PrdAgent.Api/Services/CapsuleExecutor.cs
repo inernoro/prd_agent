@@ -88,6 +88,9 @@ public static class CapsuleExecutor
             CapsuleTypes.VideoToText => await ExecuteVideoToTextAsync(sp, node, variables, inputArtifacts, emitEvent),
             CapsuleTypes.TextToCopywriting => await ExecuteTextToCopywritingAsync(sp, node, variables, inputArtifacts, emitEvent),
 
+            // ── CLI Agent 执行器 ──
+            CapsuleTypes.CliAgentExecutor => await ExecuteCliAgentAsync(sp, node, variables, inputArtifacts, emitEvent),
+
             // ── 异步任务类 ──
             CapsuleTypes.VideoGeneration => await ExecuteVideoGenerationAsync(sp, node, variables, inputArtifacts, emitEvent),
 
@@ -4552,6 +4555,358 @@ function safeChart(canvasId, config) {
         var outputJson = JsonSerializer.Serialize(result, JsonPretty);
         var artifact = MakeTextArtifact(node, "email-out", "邮件发送结果", outputJson, "application/json");
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
+    }
+
+    // ── CLI Agent 执行器 ──────────────────────────────────────
+
+    /// <summary>
+    /// CLI Agent 执行器：调度 Docker 容器中的 CLI 编码工具生成页面/项目。
+    /// 支持多轮迭代：通过 previousOutput + userFeedback 输入槽传入上轮产物和修改意见。
+    /// 容器约定：工作目录 /workspace，产物放入 /output，主入口文件为 /output/index.html。
+    /// </summary>
+    public static async Task<CapsuleResult> ExecuteCliAgentAsync(
+        IServiceProvider sp,
+        WorkflowNode node,
+        Dictionary<string, string> variables,
+        List<ExecutionArtifact> inputArtifacts,
+        EmitEventDelegate? emitEvent = null)
+    {
+        var logger = sp.GetRequiredService<ILoggerFactory>().CreateLogger("CapsuleExecutor.CliAgent");
+        var sb = new StringBuilder();
+        sb.AppendLine($"[CLI Agent] 节点: {node.Name}");
+
+        // ── 1. 解析配置 ──
+        var image = ReplaceVariables(GetConfigString(node, "image") ?? "node:20-slim", variables).Trim();
+        var setupCommand = ReplaceVariables(GetConfigString(node, "setupCommand") ?? "", variables).Trim();
+        var generateCommand = ReplaceVariables(GetConfigString(node, "generateCommand") ?? "", variables).Trim();
+        var spec = GetConfigString(node, "spec") ?? "none";
+        var framework = GetConfigString(node, "framework") ?? "html";
+        var style = GetConfigString(node, "style") ?? "ui-ux-pro-max";
+        var prompt = ReplaceVariables(GetConfigString(node, "prompt") ?? "", variables).Trim();
+        var timeoutSeconds = int.TryParse(GetConfigString(node, "timeoutSeconds"), out var ts) ? ts : 300;
+        var memoryLimitMb = int.TryParse(GetConfigString(node, "memoryLimitMb"), out var ml) ? ml : 512;
+
+        // 环境变量
+        var envVarsJson = ReplaceVariables(GetConfigString(node, "envVars") ?? "", variables).Trim();
+        var envVars = new Dictionary<string, string>();
+        if (!string.IsNullOrWhiteSpace(envVarsJson))
+        {
+            try
+            {
+                envVars = JsonSerializer.Deserialize<Dictionary<string, string>>(envVarsJson) ?? new();
+            }
+            catch (Exception ex)
+            {
+                sb.AppendLine($"[CLI Agent] ⚠️ 环境变量 JSON 解析失败: {ex.Message}");
+            }
+        }
+
+        sb.AppendLine($"  镜像: {image}");
+        sb.AppendLine($"  框架: {framework}, 风格: {style}, 规范: {spec}");
+        sb.AppendLine($"  超时: {timeoutSeconds}s, 内存: {memoryLimitMb}MB");
+
+        // ── 2. 提取多轮迭代输入 ──
+        var specInput = inputArtifacts
+            .FirstOrDefault(a => a.SlotId == "cli-spec-in")?.InlineContent ?? "";
+        var previousOutput = inputArtifacts
+            .FirstOrDefault(a => a.SlotId == "cli-prev-in")?.InlineContent ?? "";
+        var userFeedback = inputArtifacts
+            .FirstOrDefault(a => a.SlotId == "cli-feedback-in")?.InlineContent ?? "";
+
+        // 如果 slot 匹配不到，尝试按名称匹配
+        if (string.IsNullOrWhiteSpace(specInput))
+            specInput = inputArtifacts.FirstOrDefault(a => a.Name?.Contains("spec", StringComparison.OrdinalIgnoreCase) == true)?.InlineContent ?? "";
+        if (string.IsNullOrWhiteSpace(previousOutput))
+            previousOutput = inputArtifacts.FirstOrDefault(a => a.Name?.Contains("previous", StringComparison.OrdinalIgnoreCase) == true)?.InlineContent ?? "";
+        if (string.IsNullOrWhiteSpace(userFeedback))
+            userFeedback = inputArtifacts.FirstOrDefault(a => a.Name?.Contains("feedback", StringComparison.OrdinalIgnoreCase) == true)?.InlineContent ?? "";
+
+        var isIteration = !string.IsNullOrWhiteSpace(previousOutput) || !string.IsNullOrWhiteSpace(userFeedback);
+        sb.AppendLine($"  迭代模式: {(isIteration ? $"是（上轮产物 {previousOutput.Length} chars, 反馈 {userFeedback.Length} chars）" : "否（首轮生成）")}");
+
+        if (emitEvent != null)
+            await emitEvent("cli-agent-phase", new { phase = "preparing", message = "准备容器环境…" });
+
+        // ── 3. 构建容器上下文文件 ──
+        // 将 prompt/spec/feedback 写入 context.json，容器内脚本可读取
+        var context = new Dictionary<string, object?>
+        {
+            ["spec"] = spec,
+            ["framework"] = framework,
+            ["style"] = style,
+            ["prompt"] = prompt,
+            ["specInput"] = specInput,
+            ["previousOutput"] = previousOutput,
+            ["userFeedback"] = userFeedback,
+            ["isIteration"] = isIteration,
+            ["iterationRound"] = isIteration ? 2 : 1,
+        };
+        var contextJson = JsonSerializer.Serialize(context, JsonPretty);
+
+        // ── 4. 创建临时目录、写入上下文 ──
+        var runId = Guid.NewGuid().ToString("N")[..12];
+        var workDir = Path.Combine(Path.GetTempPath(), "cli-agent", runId);
+        var outputDir = Path.Combine(workDir, "output");
+        var contextDir = Path.Combine(workDir, "context");
+        Directory.CreateDirectory(outputDir);
+        Directory.CreateDirectory(contextDir);
+
+        await File.WriteAllTextAsync(Path.Combine(contextDir, "context.json"), contextJson);
+        sb.AppendLine($"  工作目录: {workDir}");
+
+        // 如果是迭代模式且有上轮产物，写入 previous.html
+        if (!string.IsNullOrWhiteSpace(previousOutput))
+            await File.WriteAllTextAsync(Path.Combine(contextDir, "previous.html"), previousOutput);
+        if (!string.IsNullOrWhiteSpace(userFeedback))
+            await File.WriteAllTextAsync(Path.Combine(contextDir, "feedback.txt"), userFeedback);
+        if (!string.IsNullOrWhiteSpace(specInput))
+            await File.WriteAllTextAsync(Path.Combine(contextDir, "spec.txt"), specInput);
+
+        // ── 5. 构建并执行 Docker 命令 ──
+        if (emitEvent != null)
+            await emitEvent("cli-agent-phase", new { phase = "running", message = $"启动容器 {image}…" });
+
+        // 构建完整的容器内执行脚本
+        var containerScript = new StringBuilder();
+        containerScript.AppendLine("set -e");
+
+        // 首轮执行初始化命令
+        if (!isIteration && !string.IsNullOrWhiteSpace(setupCommand))
+        {
+            containerScript.AppendLine("echo '[CLI Agent] Running setup...'");
+            containerScript.AppendLine(setupCommand);
+        }
+
+        // 执行生成命令
+        if (!string.IsNullOrWhiteSpace(generateCommand))
+        {
+            containerScript.AppendLine("echo '[CLI Agent] Running generate...'");
+            containerScript.AppendLine(generateCommand);
+        }
+        else
+        {
+            // 没有显式命令时，检查 /output 是否有内容
+            containerScript.AppendLine("echo '[CLI Agent] No generate command, checking output directory...'");
+            containerScript.AppendLine("ls -la /output/ 2>/dev/null || echo 'Output directory empty'");
+        }
+
+        var scriptContent = containerScript.ToString();
+        await File.WriteAllTextAsync(Path.Combine(contextDir, "run.sh"), scriptContent);
+
+        // 构建 docker run 参数
+        var dockerArgs = new StringBuilder();
+        dockerArgs.Append("run --rm");
+        dockerArgs.Append($" --memory={memoryLimitMb}m");
+        dockerArgs.Append($" --cpus=1");
+        dockerArgs.Append($" --network=host");
+        dockerArgs.Append($" -v \"{contextDir}:/context:ro\"");
+        dockerArgs.Append($" -v \"{outputDir}:/output\"");
+        dockerArgs.Append($" -w /workspace");
+
+        // 注入环境变量
+        envVars["CLI_AGENT_SPEC"] = spec;
+        envVars["CLI_AGENT_FRAMEWORK"] = framework;
+        envVars["CLI_AGENT_STYLE"] = style;
+        envVars["CLI_AGENT_IS_ITERATION"] = isIteration.ToString().ToLower();
+        foreach (var (key, value) in envVars)
+        {
+            dockerArgs.Append($" -e \"{key}={value.Replace("\"", "\\\"")}\"");
+        }
+
+        dockerArgs.Append($" {image} sh /context/run.sh");
+
+        var dockerCommand = $"docker {dockerArgs}";
+
+        logger.LogInformation("CliAgent: Executing docker command for run {RunId}, image={Image}, timeout={Timeout}s",
+            runId, image, timeoutSeconds);
+
+        // ── 6. 执行容器并收集输出 ──
+        var sw = Stopwatch.StartNew();
+        string stdOut = "", stdErr = "";
+        int exitCode;
+
+        try
+        {
+            using var process = new Process();
+            process.StartInfo = new ProcessStartInfo
+            {
+                FileName = "docker",
+                Arguments = dockerArgs.ToString(),
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+
+            process.Start();
+
+            // 流式读取日志
+            var stdOutTask = process.StandardOutput.ReadToEndAsync();
+            var stdErrTask = process.StandardError.ReadToEndAsync();
+
+            var exited = process.WaitForExit(timeoutSeconds * 1000);
+            if (!exited)
+            {
+                try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
+                sb.AppendLine($"[CLI Agent] ⚠️ 容器执行超时 ({timeoutSeconds}s)，已强制终止");
+                logger.LogWarning("CliAgent: Container timed out after {Timeout}s, killed", timeoutSeconds);
+            }
+
+            stdOut = await stdOutTask;
+            stdErr = await stdErrTask;
+            exitCode = process.ExitCode;
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            sb.AppendLine($"[CLI Agent] ❌ Docker 执行异常: {ex.Message}");
+            logger.LogError(ex, "CliAgent: Docker execution failed for run {RunId}", runId);
+
+            // 返回错误结果
+            var errorArtifact = MakeTextArtifact(node, "cli-html-out", "执行错误",
+                $"<html><body><h1>CLI Agent 执行失败</h1><pre>{System.Net.WebUtility.HtmlEncode(ex.Message)}</pre></body></html>",
+                "text/html");
+            var errorLog = MakeTextArtifact(node, "cli-log-out", "执行日志", sb.ToString());
+            CleanupWorkDir(workDir, logger);
+            return new CapsuleResult(new List<ExecutionArtifact> { errorArtifact, errorLog }, sb.ToString());
+        }
+
+        sw.Stop();
+        sb.AppendLine($"[CLI Agent] 容器退出码: {exitCode}, 耗时: {sw.ElapsedMilliseconds}ms");
+
+        if (!string.IsNullOrWhiteSpace(stdOut))
+            sb.AppendLine($"[CLI Agent] stdout ({stdOut.Length} chars):\n{TruncateLog(stdOut, 2000)}");
+        if (!string.IsNullOrWhiteSpace(stdErr))
+            sb.AppendLine($"[CLI Agent] stderr ({stdErr.Length} chars):\n{TruncateLog(stdErr, 1000)}");
+
+        if (emitEvent != null)
+            await emitEvent("cli-agent-phase", new { phase = "collecting", message = "收集产物…" });
+
+        // ── 7. 收集 /output 目录的产物 ──
+        var artifacts = new List<ExecutionArtifact>();
+        var fileManifest = new List<Dictionary<string, object?>>();
+
+        if (Directory.Exists(outputDir))
+        {
+            var outputFiles = Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories);
+            sb.AppendLine($"[CLI Agent] 产物文件数: {outputFiles.Length}");
+
+            string? mainHtml = null;
+
+            foreach (var file in outputFiles.OrderBy(f => f))
+            {
+                var relativePath = Path.GetRelativePath(outputDir, file);
+                var fileSize = new FileInfo(file).Length;
+                var fileMime = InferMimeTypeFromPath(relativePath);
+
+                fileManifest.Add(new Dictionary<string, object?>
+                {
+                    ["path"] = relativePath,
+                    ["size"] = fileSize,
+                    ["mimeType"] = fileMime,
+                });
+
+                // 找主入口文件
+                if (mainHtml == null && (relativePath == "index.html"
+                    || relativePath.EndsWith(".html", StringComparison.OrdinalIgnoreCase)))
+                {
+                    mainHtml = await File.ReadAllTextAsync(file);
+                    sb.AppendLine($"  主入口: {relativePath} ({fileSize} bytes)");
+                }
+            }
+
+            // 如果没有 HTML 文件，检查 stdout 是否包含 HTML
+            if (mainHtml == null && !string.IsNullOrWhiteSpace(stdOut) &&
+                (stdOut.Contains("<!DOCTYPE html", StringComparison.OrdinalIgnoreCase) ||
+                 stdOut.Contains("<html", StringComparison.OrdinalIgnoreCase)))
+            {
+                mainHtml = stdOut;
+                sb.AppendLine("  主入口: 从 stdout 提取 HTML");
+            }
+
+            // 如果还是没有 HTML，把 stdout 包装为 HTML
+            if (mainHtml == null)
+            {
+                mainHtml = $"<!DOCTYPE html><html><head><meta charset='utf-8'><title>CLI Agent Output</title></head><body><pre>{System.Net.WebUtility.HtmlEncode(stdOut)}</pre></body></html>";
+                sb.AppendLine("  主入口: stdout 包装为纯文本 HTML");
+            }
+
+            // 主 HTML 产物
+            var htmlArtifact = MakeTextArtifact(node, "cli-html-out", "生成页面", mainHtml, "text/html");
+            artifacts.Add(htmlArtifact);
+
+            // 文件清单
+            var manifestJson = JsonSerializer.Serialize(fileManifest, JsonPretty);
+            var manifestArtifact = MakeTextArtifact(node, "cli-files-out", "文件清单", manifestJson, "application/json");
+            artifacts.Add(manifestArtifact);
+        }
+        else
+        {
+            sb.AppendLine("[CLI Agent] ⚠️ 输出目录不存在，无产物");
+            var emptyHtml = $"<!DOCTYPE html><html><head><meta charset='utf-8'><title>No Output</title></head><body><h1>容器未生成产物</h1><pre>{System.Net.WebUtility.HtmlEncode(stdOut)}</pre></body></html>";
+            artifacts.Add(MakeTextArtifact(node, "cli-html-out", "空产物", emptyHtml, "text/html"));
+        }
+
+        // 执行日志产物
+        var logContent = sb.ToString();
+        artifacts.Add(MakeTextArtifact(node, "cli-log-out", "执行日志", logContent));
+
+        if (emitEvent != null)
+            await emitEvent("cli-agent-phase", new { phase = "completed", message = $"完成，耗时 {sw.ElapsedMilliseconds}ms" });
+
+        // ── 8. 清理临时目录 ──
+        CleanupWorkDir(workDir, logger);
+
+        return new CapsuleResult(artifacts, logContent);
+    }
+
+    /// <summary>根据文件路径推断 MIME 类型</summary>
+    private static string InferMimeTypeFromPath(string path)
+    {
+        var ext = Path.GetExtension(path).ToLowerInvariant();
+        return ext switch
+        {
+            ".html" or ".htm" => "text/html",
+            ".css" => "text/css",
+            ".js" or ".mjs" => "application/javascript",
+            ".json" => "application/json",
+            ".ts" or ".tsx" => "application/typescript",
+            ".jsx" => "application/javascript",
+            ".svg" => "image/svg+xml",
+            ".png" => "image/png",
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".gif" => "image/gif",
+            ".webp" => "image/webp",
+            ".ico" => "image/x-icon",
+            ".woff" or ".woff2" => "font/woff2",
+            ".ttf" => "font/ttf",
+            ".md" => "text/markdown",
+            ".xml" => "application/xml",
+            ".yaml" or ".yml" => "application/yaml",
+            _ => "application/octet-stream",
+        };
+    }
+
+    /// <summary>截断日志，保留头尾</summary>
+    private static string TruncateLog(string log, int maxLength)
+    {
+        if (log.Length <= maxLength) return log;
+        var half = maxLength / 2;
+        return log[..half] + $"\n\n... [{log.Length - maxLength} chars truncated] ...\n\n" + log[^half..];
+    }
+
+    /// <summary>尽力清理临时工作目录</summary>
+    private static void CleanupWorkDir(string workDir, ILogger logger)
+    {
+        try
+        {
+            if (Directory.Exists(workDir))
+                Directory.Delete(workDir, recursive: true);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "CliAgent: Failed to cleanup work directory {WorkDir}", workDir);
+        }
     }
 
     // ── 短视频工作流 ──────────────────────────────────────────
