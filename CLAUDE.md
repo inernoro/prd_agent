@@ -138,6 +138,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | **smoke-test** | `/smoke` | 链式 curl 端到端测试 |
 | **task-handoff-checklist** | `/handoff` | 8 维度交接清单 |
 | **preview-url** | `/preview` | 分支名生成预览验收地址 |
+| **plan-first** | `/plan-first` | 先给方案再动手，确认后执行 |
 | **conflict-resolution** | `/resolve` | PR 前预合并 main |
 | **weekly-update-summary** | `/weekly` | git 历史生成周报 |
 | **doc-writer** | `/doc` | doc/ 文档类型守护 |
