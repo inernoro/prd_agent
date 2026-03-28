@@ -966,21 +966,21 @@ public static class System
         )]
         public const string Generation = "system.health-probe::generation";
     }
-}
 
-public static class ReviewAgent
-{
-    public const string AppName = "Review Agent";
-
-    public static class Review
+    public static class ReviewAgent
     {
-        [AppCallerMetadata(
-            "产品方案评审",
-            "对上传的产品方案进行多维度 AI 评审打分",
-            ModelTypes = new[] { ModelTypes.Chat },
-            Category = "Review"
-        )]
-        public const string Chat = "review-agent.review::chat";
+        public const string AppName = "Review Agent";
+
+        public static class Review
+        {
+            [AppCallerMetadata(
+                "产品方案评审",
+                "对上传的产品方案进行多维度 AI 评审打分",
+                ModelTypes = new[] { ModelTypes.Chat },
+                Category = "Review"
+            )]
+            public const string Chat = "review-agent.review::chat";
+        }
     }
 }
 }
