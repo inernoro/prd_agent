@@ -497,12 +497,10 @@ public class ReviewAgentController : ControllerBase
 
         try
         {
-            // 提取 JSON 块
-            var jsonStart = llmOutput.IndexOf('{');
-            var jsonEnd = llmOutput.LastIndexOf('}');
-            if (jsonStart >= 0 && jsonEnd > jsonStart)
+            // 提取 JSON 块（优先从代码块中提取，其次找最外层 {}）
+            var jsonStr = TryExtractJsonBlock(llmOutput);
+            if (jsonStr != null)
             {
-                var jsonStr = llmOutput[jsonStart..(jsonEnd + 1)];
                 var doc = JsonDocument.Parse(jsonStr, new JsonDocumentOptions
                 {
                     AllowTrailingCommas = true,
@@ -518,7 +516,7 @@ public class ReviewAgentController : ControllerBase
                     foreach (var dimEl in dimsEl.EnumerateArray())
                     {
                         var key = dimEl.TryGetProperty("key", out var keyEl) ? keyEl.GetString() ?? "" : "";
-                        var score = dimEl.TryGetProperty("score", out var scoreEl) ? scoreEl.GetInt32() : 0;
+                        var score = dimEl.TryGetProperty("score", out var scoreEl) ? ParseScore(scoreEl) : 0;
                         var comment = dimEl.TryGetProperty("comment", out var commentEl) ? commentEl.GetString() ?? "" : "";
 
                         if (dimMap.TryGetValue(key, out var dimConfig))
@@ -558,6 +556,28 @@ public class ReviewAgentController : ControllerBase
         }
 
         return (scores, summary);
+    }
+
+    private static int ParseScore(JsonElement scoreEl) => scoreEl.ValueKind switch
+    {
+        JsonValueKind.Number => (int)Math.Round(scoreEl.GetDouble()),
+        JsonValueKind.String => int.TryParse(scoreEl.GetString(), out var v) ? v :
+                                double.TryParse(scoreEl.GetString(), out var d) ? (int)Math.Round(d) : 0,
+        _ => 0,
+    };
+
+    private static string? TryExtractJsonBlock(string output)
+    {
+        // 优先提取 ```json ... ``` 或 ``` ... ``` 代码块中的 JSON
+        var codeBlockMatch = System.Text.RegularExpressions.Regex.Match(
+            output, @"```(?:json)?\s*(\{[\s\S]*?\})\s*```",
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+        if (codeBlockMatch.Success) return codeBlockMatch.Groups[1].Value;
+
+        // 回退：找最外层 { ... }
+        var start = output.IndexOf('{');
+        var end = output.LastIndexOf('}');
+        return (start >= 0 && end > start) ? output[start..(end + 1)] : null;
     }
 
     private async Task WriteSseEventAsync(string eventType, object data)
