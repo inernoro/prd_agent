@@ -7,21 +7,22 @@ import type { ReviewSubmission } from '@/services';
 
 function getStatusDisplay(item: ReviewSubmission): { label: string; color: string; icon: React.ReactNode } {
   if (item.status === 'Done') {
-    return item.isPassed
-      ? { label: '已通过', color: 'text-emerald-400/80', icon: <CheckCircle className="w-3.5 h-3.5" /> }
-      : { label: '未通过', color: 'text-orange-400/80', icon: <XCircle className="w-3.5 h-3.5" /> };
+    if (item.isPassed === true) return { label: '已通过', color: 'text-emerald-400/80', icon: <CheckCircle className="w-3.5 h-3.5" /> };
+    if (item.isPassed === false) return { label: '未通过', color: 'text-orange-400/80', icon: <XCircle className="w-3.5 h-3.5" /> };
+    return { label: '已完成', color: 'text-emerald-400/80', icon: <CheckCircle className="w-3.5 h-3.5" /> };
   }
   if (item.status === 'Error') return { label: '失败', color: 'text-red-400/80', icon: <XCircle className="w-3.5 h-3.5" /> };
   if (item.status === 'Running') return { label: '评审中', color: 'text-blue-400/80', icon: <Loader2 className="w-3.5 h-3.5 animate-spin" /> };
   return { label: '等待评审', color: 'text-amber-400/80', icon: <Clock className="w-3.5 h-3.5" /> };
 }
 
-type FilterTab = 'all' | 'passed' | 'failed';
+type FilterTab = 'all' | 'passed' | 'notPassed' | 'error';
 
 const FILTER_TABS: { key: FilterTab; label: string }[] = [
   { key: 'all', label: '全部提交' },
   { key: 'passed', label: '已通过' },
-  { key: 'failed', label: '未通过' },
+  { key: 'notPassed', label: '未通过' },
+  { key: 'error', label: '失败' },
 ];
 
 const PAGE_SIZE = 50;
@@ -40,8 +41,8 @@ export function ReviewAgentPage() {
 
   const loadData = useCallback(async () => {
     setLoading(true);
-    const isPassed = activeTab === 'passed' ? true : activeTab === 'failed' ? false : undefined;
-    const res = await getMyReviewSubmissions(page, PAGE_SIZE, isPassed);
+    const filterParam = activeTab !== 'all' ? activeTab : undefined;
+    const res = await getMyReviewSubmissions(page, PAGE_SIZE, filterParam);
     if (res.success && res.data) {
       setItems(res.data.items);
       setTotal(res.data.total);
@@ -137,7 +138,7 @@ export function ReviewAgentPage() {
             </div>
             <div>
               <p className="text-white/40 text-sm">
-                {activeTab === 'all' ? '还没有提交记录' : activeTab === 'passed' ? '暂无通过的记录' : '暂无未通过的记录'}
+                {activeTab === 'all' ? '还没有提交记录' : activeTab === 'passed' ? '暂无通过的记录' : activeTab === 'notPassed' ? '暂无未通过的记录' : '暂无失败的记录'}
               </p>
               {activeTab === 'all' && (
                 <p className="text-white/25 text-xs mt-1">上传产品方案，AI 将帮助你预先发现评审问题</p>

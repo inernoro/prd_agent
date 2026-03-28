@@ -154,18 +154,23 @@ public class ReviewAgentController : ControllerBase
     public async Task<IActionResult> GetMySubmissions(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 50,
-        [FromQuery] bool? isPassed = null,
+        [FromQuery] string? filter = null,
         CancellationToken ct = default)
     {
         var userId = GetUserId();
         var filterBuilder = Builders<ReviewSubmission>.Filter;
-        var filter = filterBuilder.Eq(x => x.SubmitterId, userId);
+        var dbFilter = filterBuilder.Eq(x => x.SubmitterId, userId);
 
-        if (isPassed.HasValue)
-            filter &= filterBuilder.Eq(x => x.IsPassed, isPassed.Value);
+        dbFilter = filter switch
+        {
+            "passed" => dbFilter & filterBuilder.Eq(x => x.IsPassed, true),
+            "notPassed" => dbFilter & filterBuilder.Eq(x => x.IsPassed, false),
+            "error" => dbFilter & filterBuilder.Eq(x => x.Status, ReviewStatuses.Error),
+            _ => dbFilter,
+        };
 
-        var total = await _db.ReviewSubmissions.CountDocumentsAsync(filter, cancellationToken: ct);
-        var items = await _db.ReviewSubmissions.Find(filter)
+        var total = await _db.ReviewSubmissions.CountDocumentsAsync(dbFilter, cancellationToken: ct);
+        var items = await _db.ReviewSubmissions.Find(dbFilter)
             .SortByDescending(x => x.SubmittedAt)
             .Skip((page - 1) * pageSize)
             .Limit(pageSize)
@@ -182,23 +187,28 @@ public class ReviewAgentController : ControllerBase
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
         [FromQuery] string? submitterId = null,
-        [FromQuery] string? status = null,
+        [FromQuery] string? filter = null,
         CancellationToken ct = default)
     {
         if (!HasViewAllPermission())
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限查看全部提交记录"));
 
         var filterBuilder = Builders<ReviewSubmission>.Filter;
-        var filter = filterBuilder.Empty;
+        var dbFilter = filterBuilder.Empty;
 
         if (!string.IsNullOrWhiteSpace(submitterId))
-            filter &= filterBuilder.Eq(x => x.SubmitterId, submitterId);
+            dbFilter &= filterBuilder.Eq(x => x.SubmitterId, submitterId);
 
-        if (!string.IsNullOrWhiteSpace(status))
-            filter &= filterBuilder.Eq(x => x.Status, status);
+        dbFilter = filter switch
+        {
+            "passed" => dbFilter & filterBuilder.Eq(x => x.IsPassed, true),
+            "notPassed" => dbFilter & filterBuilder.Eq(x => x.IsPassed, false),
+            "error" => dbFilter & filterBuilder.Eq(x => x.Status, ReviewStatuses.Error),
+            _ => dbFilter,
+        };
 
-        var total = await _db.ReviewSubmissions.CountDocumentsAsync(filter, cancellationToken: ct);
-        var items = await _db.ReviewSubmissions.Find(filter)
+        var total = await _db.ReviewSubmissions.CountDocumentsAsync(dbFilter, cancellationToken: ct);
+        var items = await _db.ReviewSubmissions.Find(dbFilter)
             .SortByDescending(x => x.SubmittedAt)
             .Skip((page - 1) * pageSize)
             .Limit(pageSize)

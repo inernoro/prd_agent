@@ -87,10 +87,10 @@ export async function createSubmission(
 export async function getMySubmissions(
   page = 1,
   pageSize = 50,
-  isPassed?: boolean
+  filter?: string
 ): Promise<ApiResponse<{ items: ReviewSubmission[]; total: number; page: number; pageSize: number }>> {
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
-  if (isPassed !== undefined) params.set('isPassed', String(isPassed));
+  if (filter) params.set('filter', filter);
   return apiRequest(`/api/review-agent/submissions?${params}`);
 }
 
@@ -102,11 +102,11 @@ export async function getAllSubmissions(
   page = 1,
   pageSize = 20,
   submitterId?: string,
-  status?: string
+  filter?: string
 ): Promise<ApiResponse<{ items: ReviewSubmission[]; total: number; page: number; pageSize: number }>> {
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   if (submitterId) params.set('submitterId', submitterId);
-  if (status) params.set('status', status);
+  if (filter) params.set('filter', filter);
   return apiRequest(`/api/review-agent/submissions/all?${params}`);
 }
 

@@ -1,19 +1,27 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ClipboardList, Search, ChevronLeft, ChevronRight, ArrowLeft, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
+import { ClipboardList, Search, ChevronLeft, ChevronRight, ArrowLeft, ChevronDown, ChevronUp, Loader2, CheckCircle, XCircle } from 'lucide-react';
 import { getAllReviewSubmissions, getReviewSubmitters } from '@/services';
 import type { ReviewSubmission } from '@/services';
 
 function getStatusInfo(item: ReviewSubmission): { label: string; color: string; spinning?: boolean } {
   if (item.status === 'Done') {
-    return item.isPassed
-      ? { label: '已通过', color: 'text-emerald-400/80' }
-      : { label: '未通过', color: 'text-orange-400/80' };
+    if (item.isPassed === true) return { label: '已通过', color: 'text-emerald-400/80' };
+    if (item.isPassed === false) return { label: '未通过', color: 'text-orange-400/80' };
+    return { label: '已完成', color: 'text-emerald-400/80' };
   }
   if (item.status === 'Error') return { label: '失败', color: 'text-red-400/80' };
   if (item.status === 'Running') return { label: '评审中', color: 'text-blue-400/80', spinning: true };
   return { label: '等待评审', color: 'text-amber-400/80' };
 }
+
+type StatusFilter = 'all' | 'passed' | 'notPassed' | 'error';
+const STATUS_TABS: { key: StatusFilter; label: string }[] = [
+  { key: 'all', label: '全部' },
+  { key: 'passed', label: '已通过' },
+  { key: 'notPassed', label: '未通过' },
+  { key: 'error', label: '失败' },
+];
 
 interface Submitter {
   id: string;
@@ -27,13 +35,13 @@ export function ReviewAgentAllPage() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [selectedSubmitterId, setSelectedSubmitterId] = useState('');
   const [submitters, setSubmitters] = useState<Submitter[]>([]);
   const [tagsExpanded, setTagsExpanded] = useState(false);
 
   const pageSize = 20;
 
-  // Load submitters for tag filter
   useEffect(() => {
     getReviewSubmitters().then(res => {
       if (res.success && res.data) setSubmitters(res.data.submitters);
@@ -42,13 +50,14 @@ export function ReviewAgentAllPage() {
 
   const loadData = useCallback(async () => {
     setLoading(true);
-    const res = await getAllReviewSubmissions(page, pageSize, selectedSubmitterId || undefined);
+    const filterParam = statusFilter !== 'all' ? statusFilter : undefined;
+    const res = await getAllReviewSubmissions(page, pageSize, selectedSubmitterId || undefined, filterParam);
     if (res.success && res.data) {
       setItems(res.data.items);
       setTotal(res.data.total);
     }
     setLoading(false);
-  }, [page, selectedSubmitterId]);
+  }, [page, statusFilter, selectedSubmitterId]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -61,7 +70,6 @@ export function ReviewAgentAllPage() {
 
   const totalPages = Math.ceil(total / pageSize);
 
-  // Show 2 rows of tags (approx 5 per row) by default
   const TAG_COLLAPSED_COUNT = 10;
   const visibleSubmitters = tagsExpanded ? submitters : submitters.slice(0, TAG_COLLAPSED_COUNT);
   const hasMoreTags = submitters.length > TAG_COLLAPSED_COUNT;
@@ -97,6 +105,23 @@ export function ReviewAgentAllPage() {
           placeholder="搜索方案标题或提交人..."
           className="w-full bg-white/5 border border-white/10 rounded-lg pl-9 pr-4 py-2.5 text-sm text-white placeholder-white/30 focus:outline-none focus:border-indigo-500/50 transition-colors"
         />
+      </div>
+
+      {/* 状态筛选 Tabs */}
+      <div className="flex gap-1 mb-3">
+        {STATUS_TABS.map(tab => (
+          <button
+            key={tab.key}
+            onClick={() => { setStatusFilter(tab.key); setPage(1); }}
+            className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
+              statusFilter === tab.key
+                ? 'bg-indigo-600 border-indigo-600 text-white'
+                : 'bg-white/5 border-white/10 text-white/50 hover:text-white/80 hover:border-white/20'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
       {/* 用户标签筛选 */}
@@ -168,8 +193,8 @@ export function ReviewAgentAllPage() {
                     <span>{new Date(item.submittedAt).toLocaleDateString('zh-CN')}</span>
                   </div>
                 </div>
-                <div className={`text-xs flex-shrink-0 ${statusInfo.color}`}>
-                  {statusInfo.spinning && <Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1" />}
+                <div className={`flex items-center gap-1.5 text-xs flex-shrink-0 ${statusInfo.color}`}>
+                  {statusInfo.spinning && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   {statusInfo.label}
                 </div>
               </button>
