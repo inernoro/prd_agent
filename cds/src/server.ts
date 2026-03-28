@@ -195,6 +195,9 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
   const customKey = stateService?.getCustomEnv()?.['AI_ACCESS_KEY'];
   const staticKey = processKey || customKey;
   const headerKey = req.headers['x-ai-access-key'] as string | undefined;
+  if (headerKey) {
+    console.log(`  [AI Auth Debug] processKey=${processKey ? 'SET' : 'UNSET'}, customKey=${customKey ? 'SET' : 'UNSET'}, staticKey=${staticKey ? 'SET' : 'UNSET'}, headerKey=${headerKey ? 'SET' : 'UNSET'}, match=${staticKey === headerKey}, stateService=${stateService ? 'YES' : 'NO'}`);
+  }
   if (staticKey && headerKey === staticKey) {
     return { id: 'static', agentName: 'AI (static key)', token: staticKey, approvedAt: '', expiresAt: '' };
   }
