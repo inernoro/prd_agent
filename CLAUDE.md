@@ -126,7 +126,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 ## 质量保障技能链
 
 ```
-需求 → /validate → 设计 → /risk → /trace → 实现 → /verify → /cds-deploy → /preview → /handoff → /weekly
+需求 → /validate → 设计 → /risk → /trace → 实现 → /verify → /scope-check → /cds-deploy → /preview → /handoff → /weekly
 ```
 
 | 技能 | 触发词 | 用途 |
@@ -150,6 +150,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | **llm-visibility** | `/visibility` | LLM 交互可视化审计 + 组件指南 |
 | **theme-transition** | `/theme-transition` | 主题切换圆形过渡动效 (View Transition API) |
 | **agent-guide** | `/help` | Agent 开发新手引导：阶段跟踪 + 技能推荐 + 进度管理 |
+| **scope-check** | `/scope-check` | 分支受控检查：变更文件分类 + 越界检测 + append-only 审计 |
 
 ### 使用指引
 

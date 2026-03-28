@@ -279,8 +279,9 @@ ls .agent-workspace/*/progress.md 2>/dev/null
 **引导策略**：
 1. 引导用户完整走一遍流程
 2. 发现问题 → 记录 → 修复 → 重新验证
-3. 一切 OK → `/handoff` 生成交接清单
-4. 确认无误 → 合并代码
+3. **提交前** → `/scope-check` 做分支受控检查，确认变更没有越界
+4. 一切 OK → `/handoff` 生成交接清单
+5. 确认无误 → 合并代码
 
 ---
 
@@ -362,6 +363,7 @@ ls .agent-workspace/*/progress.md 2>/dev/null
 | AI 对话功能实现后 | `/visibility` | "涉及 AI 交互，用 `/visibility` 确认体验是否达标" |
 | 准备部署 | `/cds-deploy` | "部署到测试环境看看？输入 `/cds-deploy`" |
 | 需要预览链接 | `/preview` | "生成一个预览链接，可以直接在浏览器验收" |
+| 准备提交 | `/scope-check` | "提交前先做个边界检查，确认没有越界修改" |
 | 开发完成 | `/handoff` | "最后一步：生成交接清单，输入 `/handoff`" |
 | 准备合并 | `/resolve` | "合并前先用 `/resolve` 预处理一下冲突" |
 
