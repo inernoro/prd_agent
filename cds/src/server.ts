@@ -189,9 +189,9 @@ function broadcastAiPairing(event: string, data: unknown) {
 }
 
 /** Check if a request is from an approved AI session */
-function resolveAiSession(req: express.Request): ApprovedAiSession | null {
-  // Static mode: AI_ACCESS_KEY environment variable
-  const staticKey = process.env.AI_ACCESS_KEY;
+function resolveAiSession(req: express.Request, stateService?: StateService): ApprovedAiSession | null {
+  // Static mode: AI_ACCESS_KEY from process env or custom env (fallback)
+  const staticKey = process.env.AI_ACCESS_KEY || stateService?.getCustomEnv()?.['AI_ACCESS_KEY'];
   const headerKey = req.headers['x-ai-access-key'] as string | undefined;
   if (staticKey && headerKey === staticKey) {
     return { id: 'static', agentName: 'AI (static key)', token: staticKey, approvedAt: '', expiresAt: '' };
@@ -312,7 +312,7 @@ export function createServer(deps: ServerDeps): express.Express {
       if (token === validToken) return next();
 
       // Check AI session auth
-      const aiSession = resolveAiSession(req);
+      const aiSession = resolveAiSession(req, deps.stateService);
       if (aiSession) {
         (req as any)._aiSession = aiSession;
         return next();
