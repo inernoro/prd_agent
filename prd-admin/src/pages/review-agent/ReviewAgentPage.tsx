@@ -8,8 +8,7 @@ import type { ReviewSubmission } from '@/services';
 function getStatusDisplay(item: ReviewSubmission): { label: string; color: string; icon: React.ReactNode } {
   if (item.status === 'Done') {
     if (item.isPassed === true) return { label: '已通过', color: 'text-emerald-400/80', icon: <CheckCircle className="w-3.5 h-3.5" /> };
-    if (item.isPassed === false) return { label: '未通过', color: 'text-orange-400/80', icon: <XCircle className="w-3.5 h-3.5" /> };
-    return { label: '已完成', color: 'text-emerald-400/80', icon: <CheckCircle className="w-3.5 h-3.5" /> };
+    return { label: '未通过', color: 'text-orange-400/80', icon: <XCircle className="w-3.5 h-3.5" /> };
   }
   if (item.status === 'Error') return { label: '失败', color: 'text-red-400/80', icon: <XCircle className="w-3.5 h-3.5" /> };
   if (item.status === 'Running') return { label: '评审中', color: 'text-blue-400/80', icon: <Loader2 className="w-3.5 h-3.5 animate-spin" /> };
