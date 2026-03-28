@@ -1561,6 +1561,7 @@ a.branch-name:hover { color: var(--accent); }
   width: 100%; max-width: 740px; max-height: 85vh;
   display: flex; flex-direction: column;
   box-shadow: 0 -8px 40px rgba(0,0,0,0.5);
+  margin-bottom: 60px; /* 为底部 Activity 浮窗留出空间 */
 }
 .modal-header {
   display: flex; justify-content: space-between; align-items: center;
