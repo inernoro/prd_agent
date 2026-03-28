@@ -409,7 +409,7 @@ public class ReviewAgentController : ControllerBase
 
         // 解析 LLM 输出
         var llmOutput = fullContent.ToString();
-        var (dimensionScores, summary) = ParseReviewOutput(llmOutput, dims);
+        var (dimensionScores, summary, parseError) = ParseReviewOutput(llmOutput, dims);
 
         var totalScore = dimensionScores.Sum(d => d.Score);
         var isPassed = totalScore >= 80;
@@ -433,6 +433,7 @@ public class ReviewAgentController : ControllerBase
             IsPassed = isPassed,
             Summary = summary,
             FullMarkdown = llmOutput,
+            ParseError = parseError,
         };
 
         await _db.ReviewResults.InsertOneAsync(result, cancellationToken: CancellationToken.None);
@@ -521,56 +522,31 @@ public class ReviewAgentController : ControllerBase
         return sb.ToString();
     }
 
-    private static (List<ReviewDimensionScore> scores, string summary) ParseReviewOutput(
+    private static (List<ReviewDimensionScore> scores, string summary, string? parseError) ParseReviewOutput(
         string llmOutput, List<ReviewDimensionConfig> dims)
     {
         var scores = new List<ReviewDimensionScore>();
         var summary = string.Empty;
+        string? parseError = null;
 
-        try
+        if (string.IsNullOrWhiteSpace(llmOutput))
         {
-            // 提取 JSON 块（优先从代码块中提取，其次找最外层 {}）
-            var jsonStr = TryExtractJsonBlock(llmOutput);
-            if (jsonStr != null)
-            {
-                var doc = JsonDocument.Parse(jsonStr, new JsonDocumentOptions
-                {
-                    AllowTrailingCommas = true,
-                    CommentHandling = JsonCommentHandling.Skip,
-                });
-
-                if (doc.RootElement.TryGetProperty("summary", out var summaryEl))
-                    summary = summaryEl.GetString() ?? string.Empty;
-
-                if (doc.RootElement.TryGetProperty("dimensions", out var dimsEl))
-                {
-                    var dimMap = dims.ToDictionary(d => d.Key);
-                    foreach (var dimEl in dimsEl.EnumerateArray())
-                    {
-                        var key = dimEl.TryGetProperty("key", out var keyEl) ? keyEl.GetString() ?? "" : "";
-                        var score = dimEl.TryGetProperty("score", out var scoreEl) ? ParseScore(scoreEl) : 0;
-                        var comment = dimEl.TryGetProperty("comment", out var commentEl) ? commentEl.GetString() ?? "" : "";
-
-                        if (dimMap.TryGetValue(key, out var dimConfig))
-                        {
-                            score = Math.Clamp(score, 0, dimConfig.MaxScore);
-                            scores.Add(new ReviewDimensionScore
-                            {
-                                Key = key,
-                                Name = dimConfig.Name,
-                                Score = score,
-                                MaxScore = dimConfig.MaxScore,
-                                Comment = comment,
-                            });
-                        }
-                    }
-                }
-            }
+            parseError = "LLM 返回空内容（网关未输出任何文本）";
         }
-        catch (Exception)
+        else
         {
-            // 解析失败时给所有维度 0 分，并保留原始输出作为 summary
-            summary = "评审结果解析失败，请查看原始评审内容。";
+            // ── 策略 1: JSON 解析 ──
+            parseError = TryParseJson(llmOutput, dims, scores, ref summary);
+
+            // ── 策略 2: 如果 JSON 失败或没有解析到任何维度，用正则兜底 ──
+            if (scores.Count == 0)
+            {
+                var regexError = TryParseWithRegex(llmOutput, dims, scores);
+                if (scores.Count > 0)
+                    parseError = null; // 正则成功，清除错误
+                else
+                    parseError = $"JSON解析: {parseError ?? "无JSON块"} | 正则解析: {regexError}";
+            }
         }
 
         // 补全未解析到的维度
@@ -583,11 +559,99 @@ public class ReviewAgentController : ControllerBase
                 Name = dim.Name,
                 Score = 0,
                 MaxScore = dim.MaxScore,
-                Comment = "未能解析",
+                Comment = parseError != null ? "解析失败" : "未在输出中找到",
             });
         }
 
-        return (scores, summary);
+        return (scores, summary, parseError);
+    }
+
+    private static string? TryParseJson(string llmOutput, List<ReviewDimensionConfig> dims,
+        List<ReviewDimensionScore> scores, ref string summary)
+    {
+        try
+        {
+            var jsonStr = TryExtractJsonBlock(llmOutput);
+            if (jsonStr == null) return "未找到 JSON 块";
+
+            var doc = JsonDocument.Parse(jsonStr, new JsonDocumentOptions
+            {
+                AllowTrailingCommas = true,
+                CommentHandling = JsonCommentHandling.Skip,
+            });
+
+            if (doc.RootElement.TryGetProperty("summary", out var summaryEl))
+                summary = summaryEl.GetString() ?? string.Empty;
+
+            if (!doc.RootElement.TryGetProperty("dimensions", out var dimsEl))
+                return $"JSON 解析成功但缺少 dimensions 字段，根节点字段: {string.Join(", ", doc.RootElement.EnumerateObject().Select(p => p.Name))}";
+
+            var dimMap = dims.ToDictionary(d => d.Key);
+            foreach (var dimEl in dimsEl.EnumerateArray())
+            {
+                var key = dimEl.TryGetProperty("key", out var keyEl) ? keyEl.GetString() ?? "" : "";
+                var score = dimEl.TryGetProperty("score", out var scoreEl) ? ParseScore(scoreEl) : 0;
+                var comment = dimEl.TryGetProperty("comment", out var commentEl) ? commentEl.GetString() ?? "" : "";
+
+                if (dimMap.TryGetValue(key, out var dimConfig))
+                {
+                    scores.Add(new ReviewDimensionScore
+                    {
+                        Key = key,
+                        Name = dimConfig.Name,
+                        Score = Math.Clamp(score, 0, dimConfig.MaxScore),
+                        MaxScore = dimConfig.MaxScore,
+                        Comment = comment,
+                    });
+                }
+            }
+            return null; // 成功
+        }
+        catch (Exception ex)
+        {
+            return $"JSON 异常: {ex.Message}";
+        }
+    }
+
+    private static string? TryParseWithRegex(string llmOutput, List<ReviewDimensionConfig> dims,
+        List<ReviewDimensionScore> scores)
+    {
+        // 在原始文本中用正则提取 "key": "xxx", "score": 数字 配对
+        var dimMap = dims.ToDictionary(d => d.Key);
+        var keyPattern = new System.Text.RegularExpressions.Regex(
+            @"""key""\s*:\s*""([^""]+)""\s*,\s*""score""\s*:\s*(\d+(?:\.\d+)?)",
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+        var commentPattern = new System.Text.RegularExpressions.Regex(
+            @"""comment""\s*:\s*""([^""\\]*(?:\\.[^""\\]*)*)""");
+
+        var matches = keyPattern.Matches(llmOutput);
+        if (matches.Count == 0)
+            return $"正则也未找到 key/score 对（输出前200字: {llmOutput[..Math.Min(200, llmOutput.Length)].Replace("\n", "\\n")})";
+
+        // 按 key 找最近的 comment
+        foreach (System.Text.RegularExpressions.Match m in matches)
+        {
+            var key = m.Groups[1].Value;
+            var score = (int)Math.Round(double.Parse(m.Groups[2].Value));
+
+            if (!dimMap.TryGetValue(key, out var dimConfig)) continue;
+            if (scores.Any(s => s.Key == key)) continue;
+
+            // 在 match 位置附近找 comment
+            var segment = llmOutput[m.Index..Math.Min(m.Index + 300, llmOutput.Length)];
+            var cm = commentPattern.Match(segment);
+            var comment = cm.Success ? cm.Groups[1].Value : "";
+
+            scores.Add(new ReviewDimensionScore
+            {
+                Key = key,
+                Name = dimConfig.Name,
+                Score = Math.Clamp(score, 0, dimConfig.MaxScore),
+                MaxScore = dimConfig.MaxScore,
+                Comment = comment,
+            });
+        }
+        return scores.Count == 0 ? "找到 key/score 对但 key 不在维度列表中" : null;
     }
 
     private static int ParseScore(JsonElement scoreEl) => scoreEl.ValueKind switch

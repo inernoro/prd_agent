@@ -48,6 +48,7 @@ export interface ReviewResult {
   isPassed: boolean;
   summary: string;
   fullMarkdown: string;
+  parseError?: string;
   scoredAt: string;
 }
 

@@ -25,6 +25,9 @@ public class ReviewResult
     /// <summary>完整评审报告（Markdown）</summary>
     public string FullMarkdown { get; set; } = string.Empty;
 
+    /// <summary>解析错误信息（为空表示解析成功）</summary>
+    public string? ParseError { get; set; }
+
     public DateTime ScoredAt { get; set; } = DateTime.UtcNow;
 }
 

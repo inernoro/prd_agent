@@ -1,11 +1,40 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ClipboardCheck, ArrowLeft, CheckCircle, XCircle, Clock, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
+import { ClipboardCheck, ArrowLeft, CheckCircle, XCircle, Clock, RefreshCw, ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react';
 import { useSseStream } from '@/lib/useSseStream';
 import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
 import { SseTypingBlock } from '@/components/sse/SseTypingBlock';
 import { getReviewSubmission, getReviewResultStreamUrl, rerunReviewSubmission } from '@/services';
 import type { ReviewSubmission, ReviewResult, ReviewDimensionScore } from '@/services';
+
+function RawOutputDebug({ result }: { result: ReviewResult }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="mb-4 bg-amber-500/8 border border-amber-500/20 rounded-xl p-4">
+      <div className="flex items-start gap-2 mb-2">
+        <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-amber-300">评分解析失败</p>
+          {result.parseError && (
+            <p className="text-xs text-amber-400/70 mt-0.5 font-mono break-all">{result.parseError}</p>
+          )}
+        </div>
+      </div>
+      <button
+        onClick={() => setExpanded(v => !v)}
+        className="text-xs text-amber-400/60 hover:text-amber-400 transition-colors flex items-center gap-1"
+      >
+        {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+        {expanded ? '收起' : '查看'} AI 原始输出（用于诊断）
+      </button>
+      {expanded && (
+        <pre className="mt-3 text-xs text-white/50 bg-black/20 rounded p-3 overflow-auto max-h-64 whitespace-pre-wrap break-all">
+          {result.fullMarkdown || '（空）'}
+        </pre>
+      )}
+    </div>
+  );
+}
 
 export function ReviewAgentResultPage() {
   const { id } = useParams<{ id: string }>();
@@ -250,9 +279,14 @@ export function ReviewAgentResultPage() {
         </div>
       )}
 
+      {/* 解析错误 / 原始 AI 输出诊断（仅当所有维度为 0 分时显示） */}
+      {isDone && !isRunning && result && totalScore === 0 && (
+        <RawOutputDebug result={result} />
+      )}
+
       {/* 重新评审按钮（已完成或失败时显示） */}
       {(isDone || isError) && !isRunning && (
-        <div className="flex justify-end">
+        <div className="flex justify-end mt-4">
           <button
             onClick={handleRerun}
             disabled={rerunning}
