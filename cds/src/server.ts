@@ -190,16 +190,14 @@ function broadcastAiPairing(event: string, data: unknown) {
 
 /** Check if a request is from an approved AI session */
 function resolveAiSession(req: express.Request, stateService?: StateService): ApprovedAiSession | null {
-  // Static mode: AI_ACCESS_KEY from process env or custom env (fallback)
-  const processKey = process.env.AI_ACCESS_KEY;
-  const customKey = stateService?.getCustomEnv()?.['AI_ACCESS_KEY'];
-  const staticKey = processKey || customKey;
+  // Static mode: AI_ACCESS_KEY from process env or custom env (either match accepts)
   const headerKey = req.headers['x-ai-access-key'] as string | undefined;
   if (headerKey) {
-    console.log(`  [AI Auth Debug] processKey=${processKey ? 'SET' : 'UNSET'}, customKey=${customKey ? 'SET' : 'UNSET'}, staticKey=${staticKey ? 'SET' : 'UNSET'}, headerKey=${headerKey ? 'SET' : 'UNSET'}, match=${staticKey === headerKey}, stateService=${stateService ? 'YES' : 'NO'}`);
-  }
-  if (staticKey && headerKey === staticKey) {
-    return { id: 'static', agentName: 'AI (static key)', token: staticKey, approvedAt: '', expiresAt: '' };
+    const processKey = process.env.AI_ACCESS_KEY;
+    const customKey = stateService?.getCustomEnv()?.['AI_ACCESS_KEY'];
+    if ((processKey && headerKey === processKey) || (customKey && headerKey === customKey)) {
+      return { id: 'static', agentName: 'AI (static key)', token: headerKey, approvedAt: '', expiresAt: '' };
+    }
   }
 
   // Dynamic mode: approved pairing token
@@ -239,23 +237,6 @@ export function createServer(deps: ServerDeps): express.Express {
   const cdsPass = process.env.CDS_PASSWORD;
   const authEnabled = !!(cdsUser && cdsPass);
   const validToken = authEnabled ? makeToken(cdsUser!, cdsPass!) : '';
-
-  // ── Temporary debug endpoint (public, remove after fixing) ──
-  app.get('/api/ai/auth-debug', (req, res) => {
-    const processKey = process.env.AI_ACCESS_KEY;
-    const customKey = deps.stateService.getCustomEnv()?.['AI_ACCESS_KEY'];
-    const headerKey = req.headers['x-ai-access-key'] as string | undefined;
-    res.json({
-      processKeySet: !!processKey,
-      processKeyLen: processKey?.length ?? 0,
-      customKeySet: !!customKey,
-      customKeyLen: customKey?.length ?? 0,
-      headerKeySet: !!headerKey,
-      headerKeyLen: headerKey?.length ?? 0,
-      keysMatch: !!(processKey || customKey) && headerKey === (processKey || customKey),
-      authEnabled,
-    });
-  });
 
   // ── AI pairing endpoints (before auth, some are public) ──
   // POST /api/ai/request-access — AI agent requests pairing (public)
