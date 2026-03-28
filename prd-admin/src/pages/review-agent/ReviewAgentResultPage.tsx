@@ -62,6 +62,8 @@ export function ReviewAgentResultPage() {
         setSummary(res.data.result.summary);
         setTotalScore(res.data.result.totalScore);
         setIsPassed(res.data.result.isPassed);
+        // 默认展开所有维度
+        setExpandedDims(new Set(res.data.result.dimensionScores.map((d: { key: string }) => d.key)));
       }
     }
     setLoading(false);
@@ -77,6 +79,8 @@ export function ReviewAgentResultPage() {
         const existing = prev.find(d => d.key === item.key);
         return existing ? prev.map(d => d.key === item.key ? item : d) : [...prev, item];
       });
+      // 流式新增维度自动展开
+      setExpandedDims(prev => new Set([...prev, item.key]));
     },
     onEvent: {
       result: (data: unknown) => {
@@ -212,8 +216,8 @@ export function ReviewAgentResultPage() {
             {dimensionScores.map((dim) => {
               const pct = dim.maxScore > 0 ? (dim.score / dim.maxScore) * 100 : 0;
               const isExpanded = expandedDims.has(dim.key);
-              const scoreColor = pct >= 80 ? 'text-emerald-400' : pct >= 60 ? 'text-amber-400' : 'text-red-400';
-              const barColor = pct >= 80 ? 'bg-emerald-500' : pct >= 60 ? 'bg-amber-500' : 'bg-red-500';
+              const scoreColor = pct >= 90 ? 'text-emerald-400' : pct >= 75 ? 'text-cyan-400' : pct >= 60 ? 'text-amber-400' : 'text-rose-400';
+              const barColor = pct >= 90 ? 'bg-emerald-500' : pct >= 75 ? 'bg-cyan-500' : pct >= 60 ? 'bg-amber-500' : 'bg-rose-500';
 
               return (
                 <div key={dim.key} className="bg-white/3 border border-white/8 rounded-lg overflow-hidden">

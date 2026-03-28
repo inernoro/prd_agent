@@ -161,9 +161,11 @@ public class ReviewAgentController : ControllerBase
         var filterBuilder = Builders<ReviewSubmission>.Filter;
         var dbFilter = filterBuilder.Eq(x => x.SubmitterId, userId);
 
+        // "passed" 匹配前端显示逻辑：Done 且 IsPassed=true 或 IsPassed=null（历史数据）
         dbFilter = filter switch
         {
-            "passed" => dbFilter & filterBuilder.Eq(x => x.IsPassed, true),
+            "passed" => dbFilter & filterBuilder.Eq(x => x.Status, ReviewStatuses.Done)
+                                 & (filterBuilder.Eq(x => x.IsPassed, true) | filterBuilder.Eq(x => x.IsPassed, (bool?)null)),
             "notPassed" => dbFilter & filterBuilder.Eq(x => x.IsPassed, false),
             "error" => dbFilter & filterBuilder.Eq(x => x.Status, ReviewStatuses.Error),
             _ => dbFilter,
@@ -201,7 +203,8 @@ public class ReviewAgentController : ControllerBase
 
         dbFilter = filter switch
         {
-            "passed" => dbFilter & filterBuilder.Eq(x => x.IsPassed, true),
+            "passed" => dbFilter & filterBuilder.Eq(x => x.Status, ReviewStatuses.Done)
+                                 & (filterBuilder.Eq(x => x.IsPassed, true) | filterBuilder.Eq(x => x.IsPassed, (bool?)null)),
             "notPassed" => dbFilter & filterBuilder.Eq(x => x.IsPassed, false),
             "error" => dbFilter & filterBuilder.Eq(x => x.Status, ReviewStatuses.Error),
             _ => dbFilter,
