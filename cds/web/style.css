@@ -1770,9 +1770,12 @@ a.branch-name:hover { color: var(--accent); }
   header { margin-bottom: 16px; padding-bottom: 12px; }
 
   /* Header actions */
-  .header-actions { gap: 4px; }
-  .icon-btn.labeled { padding: 0 8px; }
-  .icon-btn-label { font-size: 12px; }
+  .header-actions { gap: 3px; }
+  .icon-btn.labeled { padding: 0 6px; }
+  .icon-btn-label { display: none; }
+  .icon-btn { width: 32px; height: 32px; }
+  .ai-pairing-indicator { padding: 3px 8px; height: 26px; gap: 4px; }
+  .ai-label { font-size: 11px; }
 
   /* Cards — slightly stronger borders for mobile */
   .branch-card {
