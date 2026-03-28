@@ -525,7 +525,7 @@ else if (eventName === 'my-new-event') {
 | DAG 推进 | 无条件串行 | + 条件分支路由 |
 | 前端状态 | 轮询 | SSE + 降级轮询 |
 | Demo | TAPD 依赖外部凭证 | 公共 API 零配置 |
-| 事件推送 | 未实现 | IRunEventStore + SSE endpoint |
+| 事件推送 | 已实现 | IRunEventStore + SSE endpoint |
 
 ---
 
