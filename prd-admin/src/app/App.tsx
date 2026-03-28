@@ -56,6 +56,7 @@ const MobileNotificationsPage = lazy(() => import('@/pages/MobileNotificationsPa
 const PortfolioShowcasePage = lazy(() => import('@/pages/PortfolioShowcasePage'));
 const RichComposerLab = lazy(() => import('@/pages/_dev/RichComposerLab'));
 const MobileAuditPage = lazy(() => import('@/pages/_dev/MobileAuditPage'));
+const SandboxDemoPage = lazy(() => import('@/pages/_dev/SandboxDemoPage'));
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -210,6 +211,7 @@ export default function App() {
         {/* 开发试验场 - 无需权限 */}
         <Route path="/_dev/rich-composer-lab" element={<RichComposerLab />} />
         <Route path="/_dev/mobile-audit" element={<MobileAuditPage />} />
+        <Route path="/_dev/sandbox-demo" element={<SandboxDemoPage />} />
 
         {/* 视觉创作 Agent - 独立全屏页面，不使用 AppShell 布局 */}
         <Route
