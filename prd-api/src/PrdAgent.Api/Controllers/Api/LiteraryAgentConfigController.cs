@@ -51,9 +51,12 @@ public class LiteraryAgentConfigController : ControllerBase
     {
         /// <summary>文学创作配图-文生图（无参考图）</summary>
         public const string Text2Img = "literary-agent.illustration.text2img::generation";
-        
+
         /// <summary>文学创作配图-图生图（有风格参考图）</summary>
         public const string Img2Img = "literary-agent.illustration.img2img::generation";
+
+        /// <summary>文学创作内容生成-对话（标记生成）</summary>
+        public const string Chat = "literary-agent.content::chat";
     }
 
     private string GetAdminId() => this.GetRequiredUserId();
@@ -98,6 +101,17 @@ public class LiteraryAgentConfigController : ControllerBase
         }
 
         return Ok(ApiResponse<List<ModelPoolForAppResult>>.Ok(merged));
+    }
+
+    /// <summary>
+    /// 获取文学创作"对话/标记生成"可用的模型池列表
+    /// 内部使用硬编码的 appCallerCode: literary-agent.content::chat
+    /// </summary>
+    [HttpGet("models/chat")]
+    public async Task<IActionResult> GetChatModels(CancellationToken ct)
+    {
+        var result = await _modelPoolQuery.GetModelPoolsAsync(AppCallerCodes.Chat, "chat", ct);
+        return Ok(ApiResponse<List<ModelPoolForAppResult>>.Ok(result));
     }
 
     /// <summary>

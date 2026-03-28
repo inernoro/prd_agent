@@ -190,6 +190,7 @@ export const getActiveReferenceImageConfigReal: GetActiveReferenceImageConfigCon
 
 import type {
   GetLiteraryAgentModelsContract,
+  GetLiteraryAgentChatModelsContract,
   GetLiteraryAgentImageGenModelsContract,
   GetLiteraryAgentAllModelsContract,
   GetLiteraryAgentMainModelContract,
@@ -198,11 +199,21 @@ import type {
 } from '../contracts/literaryAgentConfig';
 
 /**
- * 获取文学创作统一模型池列表（文生图 + 图生图，合并去重）
+ * 获取文学创作统一生图模型池列表（文生图 + 图生图，合并去重）
  */
 export const getLiteraryAgentModelsReal: GetLiteraryAgentModelsContract = async () => {
   return await apiRequest<LiteraryAgentModelPool[]>(
     api.literaryAgent.config.models(),
+    { method: 'GET' }
+  );
+};
+
+/**
+ * 获取文学创作对话/标记生成模型池列表
+ */
+export const getLiteraryAgentChatModelsReal: GetLiteraryAgentChatModelsContract = async () => {
+  return await apiRequest<LiteraryAgentModelPool[]>(
+    api.literaryAgent.config.modelsChatPools(),
     { method: 'GET' }
   );
 };

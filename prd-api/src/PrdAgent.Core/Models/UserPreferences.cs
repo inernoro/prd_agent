@@ -99,11 +99,11 @@ public class VisualAgentPreferences
 [BsonIgnoreExtraElements]
 public class LiteraryAgentPreferences
 {
-    /// <summary>是否自动选择模型（true 时使用后端默认模型池）</summary>
-    public bool ModelAuto { get; set; } = true;
+    /// <summary>用户选择的生图模型池 ID</summary>
+    public string? ImageModelId { get; set; }
 
-    /// <summary>用户手动选择的模型池 ID（仅当 ModelAuto=false 时有效）</summary>
-    public string? ModelId { get; set; }
+    /// <summary>用户选择的文生提示词（对话/标记生成）模型池 ID</summary>
+    public string? ChatModelId { get; set; }
 }
 
 /// <summary>

@@ -165,6 +165,7 @@ import type {
   DeactivateReferenceImageConfigContract,
   GetActiveReferenceImageConfigContract,
   GetLiteraryAgentModelsContract,
+  GetLiteraryAgentChatModelsContract,
   GetLiteraryAgentImageGenModelsContract,
   GetLiteraryAgentAllModelsContract,
   GetLiteraryAgentMainModelContract,
@@ -447,6 +448,7 @@ import {
   deactivateReferenceImageConfigReal,
   getActiveReferenceImageConfigReal,
   getLiteraryAgentModelsReal,
+  getLiteraryAgentChatModelsReal,
   getLiteraryAgentImageGenModelsReal,
   getLiteraryAgentAllModelsReal,
   getLiteraryAgentMainModelReal,
@@ -938,6 +940,7 @@ export const activateReferenceImageConfig: ActivateReferenceImageConfigContract 
 export const deactivateReferenceImageConfig: DeactivateReferenceImageConfigContract = withAuth(deactivateReferenceImageConfigReal);
 export const getActiveReferenceImageConfig: GetActiveReferenceImageConfigContract = withAuth(getActiveReferenceImageConfigReal);
 export const getLiteraryAgentModels: GetLiteraryAgentModelsContract = withAuth(getLiteraryAgentModelsReal);
+export const getLiteraryAgentChatModels: GetLiteraryAgentChatModelsContract = withAuth(getLiteraryAgentChatModelsReal);
 export const getLiteraryAgentImageGenModels: GetLiteraryAgentImageGenModelsContract = withAuth(getLiteraryAgentImageGenModelsReal);
 export const getLiteraryAgentAllModels: GetLiteraryAgentAllModelsContract = withAuth(getLiteraryAgentAllModelsReal);
 export const getLiteraryAgentMainModel: GetLiteraryAgentMainModelContract = withAuth(getLiteraryAgentMainModelReal);

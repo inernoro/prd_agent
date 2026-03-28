@@ -400,6 +400,8 @@ export const api = {
       },
       /** 获取统一模型池列表（文生图 + 图生图，合并去重） */
       models: () => '/api/literary-agent/config/models',
+      /** 获取对话/标记生成模型池列表 */
+      modelsChatPools: () => '/api/literary-agent/config/models/chat',
       /** 获取文生图模型池（无参考图场景） */
       modelsText2Img: () => '/api/literary-agent/config/models/text2img',
       /** 获取图生图模型池（有风格参考图场景） */

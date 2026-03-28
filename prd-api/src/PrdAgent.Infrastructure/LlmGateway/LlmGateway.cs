@@ -1226,7 +1226,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         string modelType,
         int maxTokens = 4096,
         double temperature = 0.2,
-        bool includeThinking = false)
+        bool includeThinking = false,
+        string? expectedModel = null)
     {
         if (!TryValidateAppCaller(appCallerCode, modelType, out var error))
         {
@@ -1243,7 +1244,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             maxTokens: maxTokens,
             temperature: temperature,
             includeThinking: includeThinking,
-            contextAccessor: _contextAccessor);
+            contextAccessor: _contextAccessor,
+            expectedModel: expectedModel);
     }
 
     private static bool TryValidateAppCaller(string appCallerCode, string modelType, out string error)

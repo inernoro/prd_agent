@@ -42,10 +42,10 @@ export type VisualAgentPreferences = {
 
 /** 文学创作 Agent 偏好设置 */
 export type LiteraryAgentPreferences = {
-  /** 是否自动选择模型 */
-  modelAuto: boolean;
-  /** 用户手动选择的模型池 ID（仅当 modelAuto=false 时有效） */
-  modelId?: string;
+  /** 用户选择的生图模型池 ID */
+  imageModelId?: string;
+  /** 用户选择的文生提示词（对话/标记生成）模型池 ID */
+  chatModelId?: string;
 };
 
 export type UserPreferences = {

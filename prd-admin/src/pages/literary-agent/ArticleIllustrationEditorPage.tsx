@@ -17,7 +17,7 @@ import {
 import {
   createLiteraryAgentImageGenRun,
   generateArticleMarkers,
-  getLiteraryAgentMainModel,
+  getLiteraryAgentChatModels,
   planImageGen,
   streamLiteraryAgentImageGenRunWithRetry,
   updateArticleMarker,
@@ -469,22 +469,24 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   // 提取的标记列表
   const [markers, setMarkers] = useState<ArticleMarker[]>([]);
 
-  // 统一模型池列表（文生图 + 图生图，合并去重，与视觉创作一致）
+  // === 模型池状态 ===
   const [imageGenPools, setImageGenPools] = useState<LiteraryAgentModelPool[]>([]);
+  const [chatPools, setChatPools] = useState<LiteraryAgentModelPool[]>([]);
   const [modelsLoading, setModelsLoading] = useState(true);
-  const [mainModel, setMainModel] = useState<Model | null>(null); // 用于生成标记的模型
   const [imageGenModelError, setImageGenModelError] = useState<string | null>(null);
 
-  // 模型偏好（与视觉创作一致：按账号持久化到数据库）
+  // 模型偏好（按账号持久化到数据库）
   const userId = useAuthStore((s) => s.user?.userId ?? '');
-  const [modelPrefOpen, setModelPrefOpen] = useState(false);
-  const [modelPrefAuto, setModelPrefAuto] = useState(true);
-  const [modelPrefModelId, setModelPrefModelId] = useState<string>('');
+  const [imageModelPrefOpen, setImageModelPrefOpen] = useState(false);
+  const [imageModelPrefId, setImageModelPrefId] = useState<string>('');
+  const [chatModelPrefOpen, setChatModelPrefOpen] = useState(false);
+  const [chatModelPrefId, setChatModelPrefId] = useState<string>('');
   const [modelPrefReady, setModelPrefReady] = useState(false);
 
-  // 将模型池转换为可选择的模型列表
-  const enabledImageModels = useMemo(() => {
-    return imageGenPools
+  // 生图模型池 → 可选择列表
+  type PoolModel = { poolId: string; id: string; name: string; modelName: string; actualModelId: string; platformId: string; enabled: boolean; isDedicated: boolean; isDefault: boolean };
+  const toPoolModels = useCallback((pools: LiteraryAgentModelPool[]): PoolModel[] => {
+    return pools
       .filter((g) => g.models && g.models.length > 0)
       .map((g) => {
         const first = g.models[0]!;
@@ -501,19 +503,21 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         };
       })
       .filter((m) => m.enabled);
-  }, [imageGenPools]);
+  }, []);
 
-  // 服务器默认模型（第一个启用的池）
-  const serverDefaultModel = useMemo(() => {
-    return enabledImageModels[0] ?? null;
-  }, [enabledImageModels]);
+  const enabledImageModels = useMemo(() => toPoolModels(imageGenPools), [imageGenPools, toPoolModels]);
+  const enabledChatModels = useMemo(() => toPoolModels(chatPools), [chatPools, toPoolModels]);
 
-  // 用户选择的有效模型（与视觉创作逻辑一致）
+  // 有效选中模型（无 auto 概念，默认选第一个）
   const effectiveModel = useMemo(() => {
-    const byId = modelPrefModelId ? enabledImageModels.find((m) => m.id === modelPrefModelId) ?? null : null;
-    if (modelPrefAuto) return serverDefaultModel;
-    return byId ?? serverDefaultModel;
-  }, [enabledImageModels, modelPrefAuto, modelPrefModelId, serverDefaultModel]);
+    const byId = imageModelPrefId ? enabledImageModels.find((m) => m.id === imageModelPrefId) : null;
+    return byId ?? enabledImageModels[0] ?? null;
+  }, [enabledImageModels, imageModelPrefId]);
+
+  const effectiveChatModel = useMemo(() => {
+    const byId = chatModelPrefId ? enabledChatModels.find((m) => m.id === chatModelPrefId) : null;
+    return byId ?? enabledChatModels[0] ?? null;
+  }, [enabledChatModels, chatModelPrefId]);
 
   // 兼容旧代码：imageGenModel 由 effectiveModel 驱动
   const imageGenModel = useMemo<Model | null>(() => {
@@ -527,6 +531,19 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       isImageGen: true,
     } as Model;
   }, [effectiveModel]);
+
+  // mainModel 由 effectiveChatModel 驱动（用于标记生成模型名称显示）
+  const mainModel = useMemo<Model | null>(() => {
+    if (!effectiveChatModel) return null;
+    return {
+      id: effectiveChatModel.id,
+      name: effectiveChatModel.name,
+      modelName: effectiveChatModel.modelName,
+      platformId: effectiveChatModel.platformId,
+      enabled: effectiveChatModel.enabled,
+      isMain: true,
+    } as Model;
+  }, [effectiveChatModel]);
 
   // 生图模型尺寸选项（按分辨率分组，从后端 adapter-info 获取）
   const [sizesByResolutionForPicker, setSizesByResolutionForPicker] = useState<SizesByResolution>({ '1k': [], '2k': [], '4k': [] });
@@ -609,41 +626,38 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId]);
 
-  // 加载统一模型池列表 + 主模型信息 + 用户偏好
+  // 加载模型池列表（生图 + 对话）+ 用户偏好
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       setImageGenModelError(null);
       setModelsLoading(true);
 
-      const [poolsRes, mainModelRes, prefsRes] = await Promise.all([
+      const [imgPoolsRes, chatPoolsRes, prefsRes] = await Promise.all([
         getLiteraryAgentModels().catch(() => ({ success: false, data: null as LiteraryAgentModelPool[] | null })),
-        getLiteraryAgentMainModel().catch(() => ({ success: false, data: null as { model: null } | null })),
+        getLiteraryAgentChatModels().catch(() => ({ success: false, data: null as LiteraryAgentModelPool[] | null })),
         getUserPreferences().catch(() => ({ success: false, data: null as null })),
       ]);
       if (cancelled) return;
 
-      // 设置统一模型池
-      if (poolsRes.success && poolsRes.data) {
-        setImageGenPools(poolsRes.data);
-        if (poolsRes.data.length === 0) {
+      if (imgPoolsRes.success && imgPoolsRes.data) {
+        setImageGenPools(imgPoolsRes.data);
+        if (imgPoolsRes.data.length === 0) {
           setImageGenModelError('未找到启用的生图模型（请绑定专属模型池）');
         }
       } else {
         setImageGenModelError('加载模型池失败');
       }
 
-      // 设置主模型
-      if (mainModelRes.success && mainModelRes.data?.model) {
-        const m = mainModelRes.data.model;
-        setMainModel({ id: m.id, name: m.name, modelName: m.modelName, platformId: m.platformId ?? '', enabled: m.enabled, isMain: m.isMain } as Model);
+      if (chatPoolsRes.success && chatPoolsRes.data) {
+        setChatPools(chatPoolsRes.data);
       }
 
       // 恢复用户模型偏好
       if (prefsRes.success && prefsRes.data?.literaryAgentPreferences) {
         const prefs = prefsRes.data.literaryAgentPreferences;
-        setModelPrefAuto(prefs.modelAuto ?? true);
-        setModelPrefModelId(prefs.modelId ?? '');
+        setImageModelPrefId(prefs.imageModelId ?? '');
+        setChatModelPrefId(prefs.chatModelId ?? '');
       }
       setModelPrefReady(true);
       setModelsLoading(false);
@@ -653,29 +667,28 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     };
   }, []);
 
-  // 持久化模型偏好（debounce 500ms，与视觉创作一致）
+  // 持久化模型偏好（debounce 500ms）
   useEffect(() => {
     if (!modelPrefReady || !userId) return;
     const timeout = setTimeout(() => {
       void updateLiteraryAgentPreferences({
-        modelAuto: modelPrefAuto,
-        modelId: modelPrefModelId || undefined,
+        imageModelId: imageModelPrefId || undefined,
+        chatModelId: chatModelPrefId || undefined,
       }).catch(() => {});
     }, 500);
     return () => clearTimeout(timeout);
-  }, [modelPrefAuto, modelPrefModelId, modelPrefReady, userId]);
+  }, [imageModelPrefId, chatModelPrefId, modelPrefReady, userId]);
 
   // 验证用户选择的模型是否仍在可用列表中
   useEffect(() => {
-    if (modelPrefAuto) return;
-    if (!modelPrefModelId) return;
     if (modelsLoading) return;
-    const ok = enabledImageModels.some((m) => m.id === modelPrefModelId);
-    if (!ok) {
-      setModelPrefAuto(true);
-      setModelPrefModelId('');
+    if (imageModelPrefId && !enabledImageModels.some((m) => m.id === imageModelPrefId)) {
+      setImageModelPrefId('');
     }
-  }, [enabledImageModels, modelPrefAuto, modelPrefModelId, modelsLoading]);
+    if (chatModelPrefId && !enabledChatModels.some((m) => m.id === chatModelPrefId)) {
+      setChatModelPrefId('');
+    }
+  }, [enabledImageModels, enabledChatModels, imageModelPrefId, chatModelPrefId, modelsLoading]);
 
   // 从 ASPECT_OPTIONS 构建默认尺寸选项（当适配器未返回尺寸时作为 fallback）
   const defaultSizesByResolution: SizesByResolution = React.useMemo(() => ({
@@ -1150,6 +1163,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         userInstruction: systemPrompt,
         idempotencyKey: `gen-markers-${Date.now()}`,
         insertionMode: 'anchor',
+        modelId: effectiveChatModel?.actualModelId,
       });
 
       let fullText = '';
@@ -1491,7 +1505,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       appKey: 'literary-agent',
       articleMarkerIndex: markerIndex,
     };
-    if (effectiveModel && !modelPrefAuto) {
+    if (effectiveModel) {
       runInput.platformId = effectiveModel.platformId;
       runInput.modelId = effectiveModel.actualModelId;
     }
@@ -2253,30 +2267,85 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 </div>
               </div>
               
-              {/* 模型信息展示 - 紧凑设计 */}
+              {/* 模型切换器：提示词模型 + 生图模型 */}
               <div className="flex items-center gap-1.5">
-                {mainModel && (
-                  <div
-                    className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]"
-                    style={{ background: 'rgba(59, 130, 246, 0.1)', color: '#60A5FA' }}
-                    title="标记生成模型"
-                  >
-                    <Sparkles size={10} />
-                    {mainModel.modelName || mainModel.name}
-                  </div>
-                )}
-                {/* 统一模型切换器（与视觉创作一致） */}
-                <DropdownMenu.Root open={modelPrefOpen} onOpenChange={setModelPrefOpen}>
+                {/* 提示词/标记生成模型切换器 */}
+                <DropdownMenu.Root open={chatModelPrefOpen} onOpenChange={setChatModelPrefOpen}>
                   <DropdownMenu.Trigger asChild>
                     <button
                       type="button"
-                      className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[10px] font-medium truncate max-w-[160px] cursor-pointer hover:opacity-80 transition-opacity"
+                      className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[10px] font-medium truncate max-w-[180px] cursor-pointer hover:opacity-80 transition-opacity"
+                      style={{
+                        background: effectiveChatModel ? 'rgba(99, 102, 241, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                        border: effectiveChatModel ? '1px solid rgba(99, 102, 241, 0.35)' : '1px solid rgba(239, 68, 68, 0.35)',
+                        color: effectiveChatModel ? 'rgba(129, 140, 248, 0.95)' : 'rgba(248, 113, 113, 0.95)',
+                      }}
+                      title={effectiveChatModel ? `${effectiveChatModel.name} - 点击切换提示词模型` : '选择提示词模型'}
+                    >
+                      <Sparkles size={10} className="shrink-0" />
+                      <span className="truncate">{effectiveChatModel?.name || '选择模型'}</span>
+                      <span className="text-[8px] ml-0.5" style={{ opacity: 0.6 }}>▾</span>
+                    </button>
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.Content
+                      side="bottom"
+                      align="start"
+                      sideOffset={6}
+                      className="z-50 rounded-[12px] p-2.5"
+                      style={{ width: 300, maxWidth: 'min(92vw, 300px)', ...glassPanel }}
+                    >
+                      <div className="text-[12px] font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
+                        文生提示词模型
+                      </div>
+                      {enabledChatModels.length === 0 ? (
+                        <div className="text-[12px] py-2" style={{ color: 'var(--text-muted)' }}>暂无可用模型池</div>
+                      ) : (
+                        <div className="space-y-1.5 max-h-[280px] overflow-auto">
+                          {enabledChatModels.map((m) => {
+                            const picked = effectiveChatModel?.id === m.id;
+                            return (
+                              <button
+                                key={m.id}
+                                type="button"
+                                className="w-full text-left rounded-[10px] px-2.5 py-1.5 hover:bg-white/5 transition-colors"
+                                style={{
+                                  border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.08)',
+                                  background: picked ? 'rgba(250,204,21,0.06)' : 'rgba(255,255,255,0.02)',
+                                }}
+                                onClick={() => { setChatModelPrefId(m.id); setChatModelPrefOpen(false); }}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{m.name || m.modelName}</div>
+                                  </div>
+                                  <span className="shrink-0 inline-flex items-center justify-center h-5 w-5 rounded-full" style={{
+                                    background: picked ? 'rgba(250,204,21,0.18)' : 'rgba(255,255,255,0.04)',
+                                    border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.10)',
+                                    color: picked ? 'rgba(250,204,21,0.95)' : 'rgba(255,255,255,0.28)',
+                                  }}><Check size={12} /></span>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Root>
+
+                {/* 生图模型切换器 */}
+                <DropdownMenu.Root open={imageModelPrefOpen} onOpenChange={setImageModelPrefOpen}>
+                  <DropdownMenu.Trigger asChild>
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[10px] font-medium truncate max-w-[180px] cursor-pointer hover:opacity-80 transition-opacity"
                       style={{
                         background: effectiveModel ? 'rgba(34, 197, 94, 0.12)' : 'rgba(239, 68, 68, 0.12)',
                         border: effectiveModel ? '1px solid rgba(34, 197, 94, 0.35)' : '1px solid rgba(239, 68, 68, 0.35)',
                         color: effectiveModel ? 'rgba(74, 222, 128, 0.95)' : 'rgba(248, 113, 113, 0.95)',
                       }}
-                      title={effectiveModel ? `${effectiveModel.name} - 点击切换模型` : '选择模型'}
+                      title={effectiveModel ? `${effectiveModel.name} - 点击切换生图模型` : '选择生图模型'}
                     >
                       <Sparkles size={10} className="shrink-0" />
                       <span className="truncate">{effectiveModel?.name || '选择模型'}</span>
@@ -2289,23 +2358,17 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       align="start"
                       sideOffset={6}
                       className="z-50 rounded-[12px] p-2.5"
-                      style={{
-                        width: 300,
-                        maxWidth: 'min(92vw, 300px)',
-                        ...glassPanel,
-                      }}
+                      style={{ width: 300, maxWidth: 'min(92vw, 300px)', ...glassPanel }}
                     >
                       <div className="text-[12px] font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
                         生图模型
                       </div>
                       {enabledImageModels.length === 0 ? (
-                        <div className="text-[12px] py-2" style={{ color: 'var(--text-muted)' }}>
-                          暂无可用模型池（请在模型管理中绑定）
-                        </div>
+                        <div className="text-[12px] py-2" style={{ color: 'var(--text-muted)' }}>暂无可用模型池</div>
                       ) : (
                         <div className="space-y-1.5 max-h-[280px] overflow-auto">
                           {enabledImageModels.map((m) => {
-                            const picked = (!modelPrefAuto && modelPrefModelId === m.id) || (modelPrefAuto && serverDefaultModel?.id === m.id);
+                            const picked = effectiveModel?.id === m.id;
                             return (
                               <button
                                 key={m.id}
@@ -2315,33 +2378,17 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                   border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.08)',
                                   background: picked ? 'rgba(250,204,21,0.06)' : 'rgba(255,255,255,0.02)',
                                 }}
-                                onClick={() => {
-                                  setModelPrefAuto(false);
-                                  setModelPrefModelId(m.id);
-                                  setModelPrefOpen(false);
-                                }}
+                                onClick={() => { setImageModelPrefId(m.id); setImageModelPrefOpen(false); }}
                               >
                                 <div className="flex items-center justify-between gap-2">
                                   <div className="min-w-0">
-                                    <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                                      {m.name || m.modelName}
-                                    </div>
-                                    {m.isDedicated && (
-                                      <span className="text-[9px] px-1 py-0.5 rounded bg-green-500/15 text-green-400 mt-0.5 inline-block">
-                                        专属
-                                      </span>
-                                    )}
+                                    <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{m.name || m.modelName}</div>
                                   </div>
-                                  <span
-                                    className="shrink-0 inline-flex items-center justify-center h-5 w-5 rounded-full"
-                                    style={{
-                                      background: picked ? 'rgba(250,204,21,0.18)' : 'rgba(255,255,255,0.04)',
-                                      border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.10)',
-                                      color: picked ? 'rgba(250,204,21,0.95)' : 'rgba(255,255,255,0.28)',
-                                    }}
-                                  >
-                                    <Check size={12} />
-                                  </span>
+                                  <span className="shrink-0 inline-flex items-center justify-center h-5 w-5 rounded-full" style={{
+                                    background: picked ? 'rgba(250,204,21,0.18)' : 'rgba(255,255,255,0.04)',
+                                    border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.10)',
+                                    color: picked ? 'rgba(250,204,21,0.95)' : 'rgba(255,255,255,0.28)',
+                                  }}><Check size={12} /></span>
                                 </div>
                               </button>
                             );
@@ -2351,6 +2398,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     </DropdownMenu.Content>
                   </DropdownMenu.Portal>
                 </DropdownMenu.Root>
+
                 {/* 生图错误提示 */}
                 {imageGenModelError && enabledImageModels.length === 0 && (
                   <div className="text-[10px] px-1.5 py-0.5 rounded text-red-400 bg-red-500/10">
