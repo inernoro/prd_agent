@@ -4,12 +4,16 @@ import { ClipboardList, Search, ChevronLeft, ChevronRight, ArrowLeft, ChevronDow
 import { getAllReviewSubmissions, getReviewSubmitters } from '@/services';
 import type { ReviewSubmission } from '@/services';
 
-const STATUS_LABELS: Record<string, { label: string; color: string }> = {
-  Queued: { label: '等待评审', color: 'text-amber-400/80' },
-  Running: { label: '评审中', color: 'text-blue-400/80' },
-  Done: { label: '已完成', color: 'text-emerald-400/80' },
-  Error: { label: '失败', color: 'text-red-400/80' },
-};
+function getStatusInfo(item: ReviewSubmission): { label: string; color: string; spinning?: boolean } {
+  if (item.status === 'Done') {
+    return item.isPassed
+      ? { label: '已通过', color: 'text-emerald-400/80' }
+      : { label: '未通过', color: 'text-orange-400/80' };
+  }
+  if (item.status === 'Error') return { label: '失败', color: 'text-red-400/80' };
+  if (item.status === 'Running') return { label: '评审中', color: 'text-blue-400/80', spinning: true };
+  return { label: '等待评审', color: 'text-amber-400/80' };
+}
 
 interface Submitter {
   id: string;
@@ -145,7 +149,7 @@ export function ReviewAgentAllPage() {
       ) : (
         <div className="space-y-2">
           {filtered.map(item => {
-            const statusInfo = STATUS_LABELS[item.status] ?? { label: item.status, color: 'text-white/50' };
+            const statusInfo = getStatusInfo(item);
             return (
               <button
                 key={item.id}
@@ -165,7 +169,7 @@ export function ReviewAgentAllPage() {
                   </div>
                 </div>
                 <div className={`text-xs flex-shrink-0 ${statusInfo.color}`}>
-                  {item.status === 'Running' && <Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1" />}
+                  {statusInfo.spinning && <Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1" />}
                   {statusInfo.label}
                 </div>
               </button>

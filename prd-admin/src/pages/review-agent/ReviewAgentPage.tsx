@@ -5,12 +5,16 @@ import { getMyReviewSubmissions } from '@/services';
 import { useAuthStore } from '@/stores/authStore';
 import type { ReviewSubmission } from '@/services';
 
-const STATUS_LABELS: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
-  Queued: { label: '等待评审', color: 'text-amber-400/80', icon: <Clock className="w-3.5 h-3.5" /> },
-  Running: { label: '评审中', color: 'text-blue-400/80', icon: <Loader2 className="w-3.5 h-3.5 animate-spin" /> },
-  Done: { label: '已完成', color: 'text-emerald-400/80', icon: <CheckCircle className="w-3.5 h-3.5" /> },
-  Error: { label: '失败', color: 'text-red-400/80', icon: <XCircle className="w-3.5 h-3.5" /> },
-};
+function getStatusDisplay(item: ReviewSubmission): { label: string; color: string; icon: React.ReactNode } {
+  if (item.status === 'Done') {
+    return item.isPassed
+      ? { label: '已通过', color: 'text-emerald-400/80', icon: <CheckCircle className="w-3.5 h-3.5" /> }
+      : { label: '未通过', color: 'text-orange-400/80', icon: <XCircle className="w-3.5 h-3.5" /> };
+  }
+  if (item.status === 'Error') return { label: '失败', color: 'text-red-400/80', icon: <XCircle className="w-3.5 h-3.5" /> };
+  if (item.status === 'Running') return { label: '评审中', color: 'text-blue-400/80', icon: <Loader2 className="w-3.5 h-3.5 animate-spin" /> };
+  return { label: '等待评审', color: 'text-amber-400/80', icon: <Clock className="w-3.5 h-3.5" /> };
+}
 
 type FilterTab = 'all' | 'passed' | 'failed';
 
@@ -152,7 +156,7 @@ export function ReviewAgentPage() {
         ) : (
           <div className="space-y-2">
             {filtered.map(item => {
-              const statusInfo = STATUS_LABELS[item.status] ?? { label: item.status, color: 'text-white/50', icon: null };
+              const statusInfo = getStatusDisplay(item);
               return (
                 <button
                   key={item.id}
