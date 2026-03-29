@@ -102,6 +102,29 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 原则：用户在等待 AI 响应时，屏幕上必须有持续变化的内容。静止的"加载中…"超过 2 秒即为体验缺陷。
 
+### 7. 新增 Model 必须对照现有 Model 写法
+
+新建 MongoDB 实体类时，**必须先读一个现有同类 Model 文件**，对照其 Id 声明方式、属性标注、命名风格。禁止凭记忆或通用知识编写。
+
+**具体规则**：
+- Id 声明：`public string Id { get; set; } = Guid.NewGuid().ToString("N");`，不加 `[BsonId]` / `[BsonRepresentation]`
+- 必须 `grep` 一个现有 Model（如 `DefectReport.cs`）确认格式后再写
+- 获取用户 ID：`this.GetRequiredUserId()`，不用 `User.FindFirstValue("userId")`
+
+### 8. Agent 开发"完成"标准
+
+功能开发声称"完成"前，**必须全部满足**以下条件：
+- 后端编译零错误（本地 + CDS 环境双重验证）
+- 前端页面可通过预览地址打开并正常渲染
+- 核心业务流程端到端跑通（不是只有 CRUD）
+- 直连预览域名测试（非 container-exec），模拟真实用户访问路径
+- 依赖的外部服务（如 ASR 模型池）已确认可用
+
+**禁止**：
+- 骨架完成就报"已实现"——CRUD 能用不等于业务跑通
+- 绕过真实访问路径测试——container-exec 是诊断工具，不是验收工具
+- 不主动查系统能力——需要模型池就去查平台有没有，需要用户就去查数据库有哪些
+
 ---
 
 ## 架构规则索引
