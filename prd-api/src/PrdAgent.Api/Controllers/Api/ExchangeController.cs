@@ -663,15 +663,15 @@ public static class ExchangeTemplates
         {
             Id = "doubao-asr-stream",
             Name = "豆包流式语音识别 (WebSocket)",
-            Description = "字节跳动豆包流式 ASR，通过 WebSocket 二进制协议实时推送音频分片，支持实时转录",
-            ApiKeyPlaceholder = "AppID|AccessToken",
-            ApiKeyHint = "格式：AppID|AccessToken，在火山引擎控制台获取",
+            Description = "字节跳动豆包流式 ASR，通过 WebSocket 二进制协议实时推送音频分片，支持实时转录，支持 x-api-key 单Key认证",
+            ApiKeyPlaceholder = "x-api-key",
+            ApiKeyHint = "在火山引擎控制台获取 API Key（UUID 格式），也支持 AppID|AccessToken 双Key格式",
             Preset = new ExchangeTemplatePreset
             {
                 Name = "豆包 ASR (流式 WebSocket)",
                 ModelAlias = "doubao-asr-stream",
                 TargetUrl = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream",
-                TargetAuthScheme = "DoubaoAsr",
+                TargetAuthScheme = "XApiKey",
                 TransformerType = "doubao-asr-stream",
                 TransformerConfig = new Dictionary<string, object>
                 {

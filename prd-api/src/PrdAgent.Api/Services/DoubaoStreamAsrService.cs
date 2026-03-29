@@ -109,16 +109,26 @@ public class DoubaoStreamAsrService
         var segments = SplitAudio(pcmData, segmentSize);
         _logger.LogInformation("[DoubaoStreamAsr] 音频分片: {Count} 片, 每片 {Size} bytes", segments.Count, segmentSize);
 
-        // 构建认证头
+        // 构建认证头（支持双Key和单Key两种模式）
         var resourceId = config?.GetValueOrDefault("resourceId")?.ToString() ?? "volc.bigasr.sauc.duration";
         var requestId = Guid.NewGuid().ToString();
         var headers = new Dictionary<string, string>
         {
             ["X-Api-Resource-Id"] = resourceId,
             ["X-Api-Request-Id"] = requestId,
-            ["X-Api-Access-Key"] = accessKey,
-            ["X-Api-App-Key"] = appKey
         };
+
+        if (!string.IsNullOrEmpty(appKey))
+        {
+            // 双Key模式：X-Api-App-Key + X-Api-Access-Key
+            headers["X-Api-App-Key"] = appKey;
+            headers["X-Api-Access-Key"] = accessKey;
+        }
+        else
+        {
+            // 单Key模式：x-api-key
+            headers["x-api-key"] = accessKey;
+        }
 
         using var ws = new ClientWebSocket();
         foreach (var (key, value) in headers)
