@@ -2000,7 +2000,8 @@ a.branch-name:hover { color: var(--accent); }
   clip-path: circle(0% at var(--cm-ripple-x, 50%) var(--cm-ripple-y, 50%));
 }
 .color-mark-ripple.ripple-marked::after {
-  background: rgba(245, 158, 11, 0.05);
+  background: rgba(245, 158, 11, 0.04);
+  box-shadow: inset 0 0 0 2px rgba(245, 178, 11, 0.5), inset 0 0 12px 3px rgba(245, 158, 11, 0.1);
 }
 .color-mark-ripple.ripple-normal::after {
   background: transparent;
