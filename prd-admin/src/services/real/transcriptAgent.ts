@@ -1,4 +1,6 @@
 import { apiRequest } from './apiClient';
+import { useAuthStore } from '@/stores/authStore';
+import { ok, fail, type ApiResponse } from '@/types/api';
 import type {
   TranscriptWorkspace,
   TranscriptItem,
@@ -26,25 +28,36 @@ export const deleteWorkspace = (id: string) =>
 export const listItems = (workspaceId: string) =>
   apiRequest<TranscriptItem[]>(`${BASE}/workspaces/${workspaceId}/items`, { method: 'GET' });
 
-export const uploadItem = async (workspaceId: string, file: File) => {
+export const uploadItem = async (workspaceId: string, file: File): Promise<ApiResponse<{ item: TranscriptItem; runId: string }>> => {
+  // FormData 上传不走 apiRequest（会被 JSON 序列化），对照 avatarAssets.ts 写法
+  const token = useAuthStore.getState().token;
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
   const fd = new FormData();
   fd.append('file', file);
-  // FormData 上传不走 apiRequest 的 JSON 序列化，直接 fetch
-  const token = (await import('@/stores/authStore')).useAuthStore.getState().token;
-  const res = await fetch(`${BASE}/workspaces/${workspaceId}/items/upload`, {
-    method: 'POST',
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      Accept: 'application/json',
-    },
-    body: fd,
-  });
-  if (!res.ok) {
+
+  const rawBase = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').trim().replace(/\/+$/, '');
+  const url = rawBase
+    ? `${rawBase}${BASE}/workspaces/${workspaceId}/items/upload`
+    : `${BASE}/workspaces/${workspaceId}/items/upload`;
+
+  try {
+    const res = await fetch(url, { method: 'POST', headers, body: fd });
     const text = await res.text();
-    return { ok: false as const, data: null, error: text };
+    try {
+      return JSON.parse(text) as ApiResponse<{ item: TranscriptItem; runId: string }>;
+    } catch {
+      if (!res.ok) {
+        return fail('UPLOAD_ERROR', `上传失败（HTTP ${res.status}）`) as unknown as ApiResponse<{ item: TranscriptItem; runId: string }>;
+      }
+      // 非标准 ApiResponse 格式（Controller 直接返回对象）
+      const data = JSON.parse(text);
+      return ok(data) as ApiResponse<{ item: TranscriptItem; runId: string }>;
+    }
+  } catch (e) {
+    return fail('NETWORK_ERROR', e instanceof Error ? e.message : '网络错误') as unknown as ApiResponse<{ item: TranscriptItem; runId: string }>;
   }
-  const data = await res.json();
-  return { ok: true as const, data: data as { item: TranscriptItem; runId: string }, error: null };
 };
 
 export const deleteItem = (itemId: string) =>

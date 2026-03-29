@@ -9,7 +9,7 @@ import type { TranscriptItem } from '@/services/contracts/transcriptAgent';
 
 export default function TranscriptAgentPage() {
   const {
-    workspaces, currentWorkspace, items, templates, loading,
+    workspaces, currentWorkspace, items, templates, loading, uploading,
     fetchWorkspaces, selectWorkspace, createWorkspace, deleteWorkspace,
     uploadFile, deleteItem, fetchTemplates, createCopywrite, refreshItems, pollRun,
   } = useTranscriptStore();
@@ -55,7 +55,6 @@ export default function TranscriptAgentPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     await uploadFile(file);
-    toast.success('文件上传成功，正在转写...');
     e.target.value = '';
   };
 
@@ -280,8 +279,9 @@ export default function TranscriptAgentPage() {
           <input ref={fileInputRef} type="file" className="hidden"
             accept="audio/*,video/mp4,video/webm,video/quicktime"
             onChange={handleUpload} />
-          <Button size="sm" onClick={() => fileInputRef.current?.click()}>
-            <Upload className="w-4 h-4 mr-1.5" /> 上传
+          <Button size="sm" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+            {uploading ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Upload className="w-4 h-4 mr-1.5" />}
+            {uploading ? '上传中...' : '上传'}
           </Button>
           <Button size="sm" variant="ghost" onClick={() => { if (confirm('删除此工作区及所有素材？')) deleteWorkspace(currentWorkspace.id); }}>
             <Trash2 className="w-4 h-4" />
@@ -291,14 +291,24 @@ export default function TranscriptAgentPage() {
         {/* 素材列表 */}
         {items.length === 0 ? (
           <div className="flex-1 flex items-center justify-center">
-            <button onClick={() => fileInputRef.current?.click()}
-              className="text-center group cursor-pointer">
-              <div className="w-20 h-20 mx-auto mb-4 rounded-2xl bg-white/[0.03] border border-dashed border-white/10 flex items-center justify-center group-hover:border-white/20 group-hover:bg-white/[0.05] transition-all">
-                <Mic className="w-8 h-8 text-white/20 group-hover:text-white/40 transition-colors" />
+            {uploading ? (
+              <div className="text-center">
+                <div className="w-20 h-20 mx-auto mb-4 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
+                  <Loader2 className="w-8 h-8 text-blue-400 animate-spin" />
+                </div>
+                <p className="text-sm text-white/60">正在上传并处理...</p>
+                <p className="text-xs text-white/30 mt-1">文件上传后将自动开始转写</p>
               </div>
-              <p className="text-sm text-white/40 group-hover:text-white/60 transition-colors">上传音视频文件开始转写</p>
-              <p className="text-xs text-white/20 mt-1">支持 MP3, WAV, MP4, M4A 等格式，最大 100MB</p>
-            </button>
+            ) : (
+              <button onClick={() => fileInputRef.current?.click()}
+                className="text-center group cursor-pointer">
+                <div className="w-20 h-20 mx-auto mb-4 rounded-2xl bg-white/[0.03] border border-dashed border-white/10 flex items-center justify-center group-hover:border-white/20 group-hover:bg-white/[0.05] transition-all">
+                  <Mic className="w-8 h-8 text-white/20 group-hover:text-white/40 transition-colors" />
+                </div>
+                <p className="text-sm text-white/40 group-hover:text-white/60 transition-colors">上传音视频文件开始转写</p>
+                <p className="text-xs text-white/20 mt-1">支持 MP3, WAV, MP4, M4A 等格式，最大 100MB</p>
+              </button>
+            )}
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto p-6">

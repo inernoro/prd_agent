@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import * as svc from '@/services/real/transcriptAgent';
+import { toast } from '@/lib/toast';
 import type {
   TranscriptWorkspace,
   TranscriptItem,
@@ -14,7 +15,7 @@ interface TranscriptState {
   runs: TranscriptRun[];
   templates: TranscriptTemplate[];
   loading: boolean;
-  error: string;
+  uploading: boolean;
 
   fetchWorkspaces: () => Promise<void>;
   selectWorkspace: (id: string) => Promise<void>;
@@ -35,18 +36,17 @@ export const useTranscriptStore = create<TranscriptState>((set, get) => ({
   runs: [],
   templates: [],
   loading: false,
-  error: '',
+  uploading: false,
 
   fetchWorkspaces: async () => {
-    set({ loading: true, error: '' });
+    set({ loading: true });
     const res = await svc.listWorkspaces();
     if (res.success) set({ workspaces: res.data! });
-    else set({ error: res.error?.message ?? '加载失败' });
     set({ loading: false });
   },
 
   selectWorkspace: async (id: string) => {
-    set({ loading: true, error: '' });
+    set({ loading: true });
     const [wsRes, itemsRes, runsRes] = await Promise.all([
       svc.getWorkspace(id),
       svc.listItems(id),
@@ -59,7 +59,7 @@ export const useTranscriptStore = create<TranscriptState>((set, get) => ({
         runs: runsRes.success ? runsRes.data! : [],
       });
     } else {
-      set({ error: wsRes.error?.message ?? '加载工作区失败' });
+      toast.error(wsRes.error?.message ?? '加载失败');
     }
     set({ loading: false });
   },
@@ -68,9 +68,10 @@ export const useTranscriptStore = create<TranscriptState>((set, get) => ({
     const res = await svc.createWorkspace(title);
     if (res.success && res.data) {
       set(s => ({ workspaces: [res.data!, ...s.workspaces] }));
+      toast.success('工作区已创建');
       return res.data;
     }
-    set({ error: res.error?.message ?? '创建失败' });
+    toast.error(res.error?.message ?? '创建失败');
     return null;
   },
 
@@ -82,26 +83,30 @@ export const useTranscriptStore = create<TranscriptState>((set, get) => ({
         currentWorkspace: s.currentWorkspace?.id === id ? null : s.currentWorkspace,
         items: s.currentWorkspace?.id === id ? [] : s.items,
       }));
+      toast.success('已删除');
     }
   },
 
   uploadFile: async (file: File) => {
     const ws = get().currentWorkspace;
     if (!ws) return;
-    set({ loading: true });
+    set({ uploading: true });
+    toast.success(`正在上传 ${file.name}...`);
     const res = await svc.uploadItem(ws.id, file);
-    if (res.ok && res.data) {
+    if (res.success && res.data) {
       set(s => ({ items: [res.data!.item, ...s.items] }));
+      toast.success('上传成功，开始转写');
     } else {
-      set({ error: res.error ?? '上传失败' });
+      toast.error(res.error?.message ?? '上传失败');
     }
-    set({ loading: false });
+    set({ uploading: false });
   },
 
   deleteItem: async (itemId: string) => {
     const res = await svc.deleteItem(itemId);
     if (res.success) {
       set(s => ({ items: s.items.filter(i => i.id !== itemId) }));
+      toast.success('已删除');
     }
   },
 
@@ -116,16 +121,14 @@ export const useTranscriptStore = create<TranscriptState>((set, get) => ({
       set(s => ({ runs: [res.data!, ...s.runs] }));
       return res.data;
     }
-    set({ error: res.error?.message ?? '文案生成失败' });
+    toast.error(res.error?.message ?? '生成失败');
     return null;
   },
 
   pollRun: async (runId: string) => {
     const res = await svc.getRun(runId);
     if (res.success && res.data) {
-      set(s => ({
-        runs: s.runs.map(r => r.id === runId ? res.data! : r),
-      }));
+      set(s => ({ runs: s.runs.map(r => r.id === runId ? res.data! : r) }));
       return res.data;
     }
     return null;
