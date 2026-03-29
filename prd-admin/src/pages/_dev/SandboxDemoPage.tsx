@@ -86,6 +86,8 @@ type EdgeData = {
 type SandboxNode = Node<NodeData, 'sandboxNode'>;
 type SandboxEdge = Edge<EdgeData, 'sandboxEdge'>;
 type ToolMode = 'select' | 'link';
+type RoleOption = { family: RoleFamily; subtype: RoleSubtype };
+type MarkOption = { family: MarkFamily; subtype: MarkSubtype };
 
 const ROLE_LINK_STATES: LinkState[] = ['出货', '退货', '调拨', '返利'];
 const CROSS_LINK_STATES: LinkState[] = [
@@ -101,7 +103,7 @@ const CROSS_LINK_STATES: LinkState[] = [
 const MARK_STATES: MarkState[] = ['未入库', '已入库', '出货', '退货', '已扫码'];
 const STORAGE_KEY = 'sandbox-demo-v4';
 
-const ROLE_MENU: Array<{ title: string; options: Array<{ family: RoleFamily; subtype: RoleSubtype }> }> = [
+const ROLE_MENU: Array<{ title: string; options: RoleOption[] }> = [
   { title: '总部', options: [{ family: 'hq', subtype: '总部' }] },
   {
     title: '经销商',
@@ -127,7 +129,7 @@ const ROLE_MENU: Array<{ title: string; options: Array<{ family: RoleFamily; sub
   { title: '消费者', options: [{ family: 'consumer', subtype: '消费者' }] },
 ];
 
-const MARK_MENU: Array<{ title: string; options: Array<{ family: MarkFamily; subtype: MarkSubtype }> }> = [
+const MARK_MENU: Array<{ title: string; options: MarkOption[] }> = [
   {
     title: '物流码',
     options: [
@@ -146,6 +148,9 @@ const MARK_MENU: Array<{ title: string; options: Array<{ family: MarkFamily; sub
     ],
   },
 ];
+
+const ALL_ROLE_OPTIONS: RoleOption[] = ROLE_MENU.flatMap((group) => group.options);
+const ALL_MARK_OPTIONS: MarkOption[] = MARK_MENU.flatMap((group) => group.options);
 
 function getRoleColor(family: RoleFamily) {
   switch (family) {
@@ -193,6 +198,11 @@ function getRelation(source: NodeData, target: NodeData): LinkRelation | null {
 
 function createNodeId(kind: ElementKind) {
   return `${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function getNodeDisplayText(data: NodeData) {
+  const name = data.name?.trim();
+  return name ? name : data.title;
 }
 
 function calcNextPosition(nodes: SandboxNode[], kind: ElementKind) {
@@ -377,6 +387,50 @@ function SandboxEdgeRenderer({
   );
 }
 
+function buildBusinessSteps(nodes: SandboxNode[], edges: SandboxEdge[]) {
+  if (edges.length === 0) {
+    return [
+      {
+        id: 'step-empty-1',
+        title: '步骤 1',
+        desc: '添加渠道角色（总部、经销商、门店等）',
+        status: 'done' as const,
+      },
+      {
+        id: 'step-empty-2',
+        title: '步骤 2',
+        desc: '添加标识节点（物流码、营销二维码）',
+        status: nodes.length > 0 ? ('done' as const) : ('active' as const),
+      },
+      {
+        id: 'step-empty-3',
+        title: '步骤 3',
+        desc: '进入连线模式，点击两个节点建立业务关系',
+        status: 'pending' as const,
+      },
+      {
+        id: 'step-empty-4',
+        title: '步骤 4',
+        desc: '点击连线配置业务状态，形成完整演示链路',
+        status: 'pending' as const,
+      },
+    ];
+  }
+
+  return edges.map((edge, index) => {
+    const source = nodes.find((node) => node.id === edge.source);
+    const target = nodes.find((node) => node.id === edge.target);
+    const sourceText = source ? getNodeDisplayText(source.data) : edge.source;
+    const targetText = target ? getNodeDisplayText(target.data) : edge.target;
+    return {
+      id: edge.id,
+      title: `步骤 ${index + 1}`,
+      desc: `${sourceText} → ${targetText}：${edge.data?.linkState ?? '未配置'}`,
+      status: 'done' as const,
+    };
+  });
+}
+
 const nodeTypes = { sandboxNode: SandboxNodeRenderer };
 const edgeTypes = { sandboxEdge: SandboxEdgeRenderer };
 
@@ -406,6 +460,87 @@ function ToolbarButton({
       }}
     >
       {label}
+    </button>
+  );
+}
+
+function LeftPanelSection({
+  title,
+  count,
+  children,
+}: {
+  title: string;
+  count?: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        borderRadius: 10,
+        border: '1px solid rgba(120,148,206,0.25)',
+        background: 'rgba(7,14,30,0.6)',
+        padding: '10px 10px 8px',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 8,
+          fontSize: 12,
+          color: '#9fc2ff',
+          fontWeight: 600,
+        }}
+      >
+        <span>{title}</span>
+        {typeof count === 'number' ? (
+          <span
+            style={{
+              fontSize: 10,
+              color: '#c9dcff',
+              borderRadius: 999,
+              padding: '1px 7px',
+              border: '1px solid rgba(120,148,206,0.35)',
+              background: 'rgba(15,26,49,0.7)',
+            }}
+          >
+            {count}
+          </span>
+        ) : null}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function ComponentToken({
+  title,
+  subtitle,
+  onClick,
+}: {
+  title: string;
+  subtitle: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="whitespace-nowrap"
+      style={{
+        width: '100%',
+        textAlign: 'left',
+        borderRadius: 10,
+        border: '1px solid rgba(120,148,206,0.3)',
+        background: 'rgba(11,20,41,0.86)',
+        padding: '8px 10px',
+        color: '#e7f0ff',
+        cursor: 'pointer',
+      }}
+    >
+      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>{title}</div>
+      <div style={{ fontSize: 10, color: 'rgba(200,220,255,0.7)' }}>{subtitle}</div>
     </button>
   );
 }
@@ -534,6 +669,49 @@ function SandboxDemoInner() {
     setShowMarkMenu(false);
     setSelectedMarkKeys({});
   }, [selectedMarkKeys, setNodes]);
+
+  const addRoleQuickly = useCallback(
+    (option: RoleOption) => {
+      setNodes((curr) => [
+        ...curr,
+        {
+          id: createNodeId('role'),
+          type: 'sandboxNode',
+          draggable: true,
+          position: calcNextPosition(curr, 'role'),
+          data: {
+            kind: 'role',
+            family: option.family,
+            subtype: option.subtype,
+            title: option.subtype,
+          },
+        },
+      ]);
+    },
+    [setNodes]
+  );
+
+  const addMarkQuickly = useCallback(
+    (option: MarkOption) => {
+      setNodes((curr) => [
+        ...curr,
+        {
+          id: createNodeId('mark'),
+          type: 'sandboxNode',
+          draggable: true,
+          position: calcNextPosition(curr, 'mark'),
+          data: {
+            kind: 'mark',
+            family: option.family,
+            subtype: option.subtype,
+            title: option.subtype.replace('物流码', '').replace('营销码', '').replace('码', '码'),
+            markState: '未入库',
+          },
+        },
+      ]);
+    },
+    [setNodes]
+  );
 
   const onNodeClick = useCallback(
     (_event: React.MouseEvent, node: SandboxNode) => {
@@ -705,168 +883,269 @@ function SandboxDemoInner() {
     };
   }, [deleteSelected]);
 
+  const roleNodes = useMemo(() => nodes.filter((node) => node.data.kind === 'role'), [nodes]);
+  const markNodes = useMemo(() => nodes.filter((node) => node.data.kind === 'mark'), [nodes]);
+  const businessSteps = useMemo(() => buildBusinessSteps(nodes, edges), [nodes, edges]);
+
+  const sidePanelCardStyle: React.CSSProperties = {
+    borderRadius: 10,
+    border: '1px solid rgba(120,148,206,0.25)',
+    background: 'rgba(7,14,30,0.62)',
+    padding: '10px 10px 8px',
+  };
+
+  const sidePanelTitleStyle: React.CSSProperties = {
+    fontSize: 11,
+    fontWeight: 700,
+    marginBottom: 6,
+    color: '#9fc2ff',
+    letterSpacing: 0.4,
+  };
+
   return (
-    <div style={{ height: '100vh', width: '100%', background: '#060d1d', color: '#e7f0ff', position: 'relative' }}>
+    <div
+      style={{
+        height: '100vh',
+        width: '100%',
+        background: '#060d1d',
+        color: '#e7f0ff',
+        display: 'grid',
+        gridTemplateRows: '56px 1fr',
+        gridTemplateColumns: '260px minmax(640px,1fr) 300px',
+        gap: 10,
+        padding: 10,
+        boxSizing: 'border-box',
+      }}
+    >
       <div
         style={{
-          position: 'absolute',
-          zIndex: 10,
-          top: 12,
-          left: 12,
-          padding: '8px 10px',
+          gridColumn: '1 / 4',
           borderRadius: 10,
           border: '1px solid rgba(120,148,206,0.35)',
-          background: 'rgba(7,14,30,0.84)',
-          fontSize: 12,
-        }}
-      >
-        一个让复杂业务逻辑“看得见、摸得着、拖得动”的交互式沙盘 Agent
-      </div>
-
-      <div
-        style={{
-          position: 'absolute',
-          zIndex: 10,
-          top: 12,
-          right: 12,
+          background: 'rgba(7,14,30,0.86)',
           display: 'flex',
           alignItems: 'center',
-          gap: 8,
-          flexWrap: 'wrap',
-          justifyContent: 'flex-end',
+          justifyContent: 'space-between',
+          padding: '0 12px',
         }}
       >
-        <ToolbarButton label="保存" onClick={saveLocal} />
-        <ToolbarButton label="加载" onClick={loadLocal} />
-        <ToolbarButton label="清空" onClick={clearAll} />
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 700 }}>沙盘 Agent 三栏演示</div>
+          <div style={{ fontSize: 11, color: 'rgba(210,225,255,0.74)' }}>{summaryText}</div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <ToolbarButton label="保存" onClick={saveLocal} />
+          <ToolbarButton label="加载" onClick={loadLocal} />
+          <ToolbarButton label="清空" onClick={clearAll} />
+        </div>
       </div>
 
-      <ReactFlow<SandboxNode, SandboxEdge>
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
-        onNodeClick={onNodeClick}
-        onNodeDoubleClick={onNodeDoubleClick}
-        onEdgeClick={onEdgeClick}
-        onSelectionChange={onSelectionChange}
-        onPaneClick={() => {
-          if (toolMode === 'link') setPendingLinkSourceId(null);
-        }}
-        fitView
-        selectionOnDrag={false}
-        selectionKeyCode="Shift"
-        panOnDrag={spacePressed}
-        selectionMode={SelectionMode.Partial}
-        multiSelectionKeyCode="Shift"
-        deleteKeyCode={null}
-        attributionPosition="bottom-right"
-      >
-        <Background gap={24} size={1} color="rgba(126,162,235,0.15)" />
-        <MiniMap
-          pannable
-          zoomable
-          style={{ background: 'rgba(7,14,30,0.8)', border: '1px solid rgba(120,148,206,0.35)' }}
-          nodeColor={(node) => getNodeColor(node.data as NodeData)}
-        />
-        <Controls />
-      </ReactFlow>
-
-      <div
+      <aside
         style={{
-          position: 'absolute',
-          left: 16,
-          bottom: 16,
-          zIndex: 12,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          padding: 10,
           borderRadius: 12,
-          border: '1px solid rgba(120,148,206,0.35)',
-          background: 'rgba(7,14,30,0.88)',
+          border: '1px solid rgba(120,148,206,0.3)',
+          background: 'rgba(7,14,30,0.8)',
+          padding: 10,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 10,
+          overflow: 'auto',
         }}
       >
-        <ToolbarButton
-          label="添加角色"
-          active={showRoleMenu}
-          onClick={() => {
-            setShowRoleMenu((prev) => !prev);
-            setShowMarkMenu(false);
-          }}
-        />
-        <ToolbarButton
-          label="添加标识"
-          active={showMarkMenu}
-          onClick={() => {
-            setShowMarkMenu((prev) => !prev);
-            setShowRoleMenu(false);
-          }}
-        />
-        <ToolbarButton
-          label="连线"
-          active={toolMode === 'link'}
-          onClick={() => {
-            setToolMode((prev) => (prev === 'link' ? 'select' : 'link'));
-            setPendingLinkSourceId(null);
-          }}
-        />
-        <ToolbarButton label="删除" onClick={deleteSelected} />
-      </div>
+        <div style={sidePanelCardStyle}>
+          <div style={sidePanelTitleStyle}>快捷操作</div>
+          <div style={{ display: 'grid', gap: 7 }}>
+            <ToolbarButton
+              label="添加角色"
+              active={showRoleMenu}
+              onClick={() => {
+                setShowRoleMenu((prev) => !prev);
+                setShowMarkMenu(false);
+              }}
+            />
+            <ToolbarButton
+              label="添加标识"
+              active={showMarkMenu}
+              onClick={() => {
+                setShowMarkMenu((prev) => !prev);
+                setShowRoleMenu(false);
+              }}
+            />
+            <ToolbarButton
+              label="连线"
+              active={toolMode === 'link'}
+              onClick={() => {
+                setToolMode((prev) => (prev === 'link' ? 'select' : 'link'));
+                setPendingLinkSourceId(null);
+              }}
+            />
+            <ToolbarButton label="删除" onClick={deleteSelected} />
+          </div>
+        </div>
 
-      <div
+        <div style={sidePanelCardStyle}>
+          <div style={sidePanelTitleStyle}>组件库</div>
+          <div style={{ fontSize: 11, color: 'rgba(210,225,255,0.72)', marginBottom: 8 }}>点击条目快速加点，支持重复添加</div>
+          <LeftPanelSection title="角色节点" count={roleNodes.length}>
+            <div style={{ display: 'grid', gap: 6 }}>
+              {ALL_ROLE_OPTIONS.map((option) => (
+                <ComponentToken
+                  key={`left-role-${option.family}-${option.subtype}`}
+                  title={option.subtype}
+                  subtitle="角色"
+                  onClick={() => addRoleQuickly(option)}
+                />
+              ))}
+            </div>
+          </LeftPanelSection>
+          <div style={{ height: 8 }} />
+          <LeftPanelSection title="标识节点" count={markNodes.length}>
+            <div style={{ display: 'grid', gap: 6 }}>
+              {ALL_MARK_OPTIONS.map((option) => (
+                <ComponentToken
+                  key={`left-mark-${option.family}-${option.subtype}`}
+                  title={option.subtype}
+                  subtitle="标识"
+                  onClick={() => addMarkQuickly(option)}
+                />
+              ))}
+            </div>
+          </LeftPanelSection>
+        </div>
+
+        <div style={sidePanelCardStyle}>
+          <div style={sidePanelTitleStyle}>操作提示</div>
+          <div style={{ fontSize: 11, lineHeight: 1.7, color: 'rgba(215,230,255,0.86)' }}>
+            <div>1. Shift + 框选：多选节点</div>
+            <div>2. Delete / Backspace：删除选中</div>
+            <div>3. 按住空格 + 拖拽：平移画布</div>
+          </div>
+        </div>
+      </aside>
+
+      <main
         style={{
-          position: 'absolute',
-          left: 16,
-          bottom: 82,
-          zIndex: 12,
-          borderRadius: 10,
-          border: '1px solid rgba(120,148,206,0.35)',
-          background: 'rgba(7,14,30,0.88)',
-          color: '#d8e7ff',
-          fontSize: 12,
-          padding: '7px 10px',
+          borderRadius: 12,
+          border: '1px solid rgba(120,148,206,0.3)',
+          overflow: 'hidden',
+          background: 'rgba(7,14,30,0.66)',
+          position: 'relative',
         }}
       >
-        {summaryText}
-      </div>
-      <div
+        <ReactFlow<SandboxNode, SandboxEdge>
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
+          onNodeClick={onNodeClick}
+          onNodeDoubleClick={onNodeDoubleClick}
+          onEdgeClick={onEdgeClick}
+          onSelectionChange={onSelectionChange}
+          onPaneClick={() => {
+            if (toolMode === 'link') setPendingLinkSourceId(null);
+          }}
+          fitView
+          selectionOnDrag={false}
+          selectionKeyCode="Shift"
+          panOnDrag={spacePressed}
+          selectionMode={SelectionMode.Partial}
+          multiSelectionKeyCode="Shift"
+          deleteKeyCode={null}
+          attributionPosition="bottom-right"
+        >
+          <Background gap={24} size={1} color="rgba(126,162,235,0.15)" />
+          <MiniMap
+            pannable
+            zoomable
+            style={{ background: 'rgba(7,14,30,0.8)', border: '1px solid rgba(120,148,206,0.35)' }}
+            nodeColor={(node) => getNodeColor(node.data as NodeData)}
+          />
+          <Controls />
+        </ReactFlow>
+      </main>
+
+      <aside
         style={{
-          position: 'absolute',
-          right: 16,
-          bottom: 16,
-          zIndex: 12,
-          borderRadius: 10,
-          border: '1px solid rgba(120,148,206,0.35)',
-          background: 'rgba(7,14,30,0.88)',
-          color: '#d8e7ff',
-          fontSize: 12,
-          padding: '8px 10px',
-          lineHeight: 1.55,
-          minWidth: 260,
+          borderRadius: 12,
+          border: '1px solid rgba(120,148,206,0.3)',
+          background: 'rgba(7,14,30,0.8)',
+          padding: 10,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 10,
+          overflow: 'auto',
         }}
       >
-        <div style={{ fontWeight: 700, marginBottom: 4 }}>操作提示</div>
-        <div>1. Shift + 框选：多选节点</div>
-        <div>2. Delete / Backspace：删除选中</div>
-        <div>3. 按住空格 + 拖拽：平移画布</div>
-      </div>
+        <div style={sidePanelCardStyle}>
+          <div style={sidePanelTitleStyle}>解析与检验</div>
+          <div style={{ display: 'grid', gap: 8, fontSize: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: 'rgba(210,225,255,0.72)' }}>当前模式</span>
+              <span style={{ color: '#d8e7ff', fontWeight: 600 }}>{toolMode === 'link' ? '连线' : '自由搭建'}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: 'rgba(210,225,255,0.72)' }}>节点总数</span>
+              <span style={{ color: '#d8e7ff', fontWeight: 600 }}>{nodes.length}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: 'rgba(210,225,255,0.72)' }}>连线总数</span>
+              <span style={{ color: '#d8e7ff', fontWeight: 600 }}>{edges.length}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: 'rgba(210,225,255,0.72)' }}>连线状态</span>
+              <span style={{ color: pendingLinkSourceId ? '#ffd88b' : '#a4c2ff', fontWeight: 600 }}>
+                {pendingLinkSourceId ? '等待终点' : '待命'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div style={sidePanelCardStyle}>
+          <div style={sidePanelTitleStyle}>业务步骤说明</div>
+          <div style={{ display: 'grid', gap: 8 }}>
+            {businessSteps.map((step) => {
+              const bg =
+                step.status === 'done'
+                  ? 'rgba(36, 174, 116, 0.18)'
+                  : step.status === 'active'
+                    ? 'rgba(253, 185, 74, 0.2)'
+                    : 'rgba(120,148,206,0.14)';
+              const border =
+                step.status === 'done'
+                  ? '1px solid rgba(72, 207, 147, 0.42)'
+                  : step.status === 'active'
+                    ? '1px solid rgba(253, 185, 74, 0.45)'
+                    : '1px solid rgba(120,148,206,0.3)';
+              const tag = step.status === 'done' ? '完成' : step.status === 'active' ? '进行中' : '排队中';
+              return (
+                <div key={step.id} style={{ borderRadius: 10, border, background: bg, padding: '8px 10px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700 }}>{step.title}</span>
+                    <span style={{ fontSize: 10, color: 'rgba(225,238,255,0.82)' }}>{tag}</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: 'rgba(210,225,255,0.82)', lineHeight: 1.6 }}>{step.desc}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </aside>
 
       {showRoleMenu ? (
         <div
           style={{
             position: 'absolute',
-            left: 16,
-            bottom: 132,
-            zIndex: 13,
+            left: 278,
+            top: 78,
+            zIndex: 30,
             width: 318,
-            maxHeight: 360,
+            maxHeight: 420,
             overflow: 'auto',
             borderRadius: 12,
             border: '1px solid rgba(120,148,206,0.35)',
-            background: 'rgba(6,12,28,0.96)',
+            background: 'rgba(6,12,28,0.98)',
             padding: 12,
           }}
         >
@@ -919,15 +1198,15 @@ function SandboxDemoInner() {
         <div
           style={{
             position: 'absolute',
-            left: 16,
-            bottom: 132,
-            zIndex: 13,
+            left: 278,
+            top: 78,
+            zIndex: 30,
             width: 318,
-            maxHeight: 360,
+            maxHeight: 420,
             overflow: 'auto',
             borderRadius: 12,
             border: '1px solid rgba(120,148,206,0.35)',
-            background: 'rgba(6,12,28,0.96)',
+            background: 'rgba(6,12,28,0.98)',
             padding: 12,
           }}
         >
