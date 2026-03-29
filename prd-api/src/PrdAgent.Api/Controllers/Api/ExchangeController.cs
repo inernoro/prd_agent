@@ -634,17 +634,17 @@ public static class ExchangeTemplates
     {
         new ExchangeTemplate
         {
-            Id = "doubao-asr",
-            Name = "豆包大模型语音识别 (双Key认证)",
-            Description = "字节跳动豆包 BigModel ASR，异步 submit+query 模式，支持中英文混合语音识别、说话人识别、声道分离",
-            ApiKeyPlaceholder = "AppID|AccessToken",
-            ApiKeyHint = "格式：AppID|AccessToken，在火山引擎控制台获取 App ID 和 Access Token",
+            Id = "doubao-asr-xapikey",
+            Name = "豆包大模型语音识别",
+            Description = "字节跳动豆包 BigModel ASR，使用 x-api-key 认证，异步 submit+query 模式",
+            ApiKeyPlaceholder = "x-api-key",
+            ApiKeyHint = "在火山引擎控制台获取 API Key（UUID 格式）",
             Preset = new ExchangeTemplatePreset
             {
                 Name = "豆包 ASR (BigModel)",
                 ModelAlias = "doubao-asr-bigmodel",
                 TargetUrl = "https://openspeech.bytedance.com/api/v3/auc/bigmodel/submit",
-                TargetAuthScheme = "DoubaoAsr",
+                TargetAuthScheme = "XApiKey",
                 TransformerType = "doubao-asr",
                 TransformerConfig = new Dictionary<string, object>
                 {
@@ -657,33 +657,6 @@ public static class ExchangeTemplates
                 },
                 Enabled = true,
                 Description = "豆包大模型语音识别 - 异步模式 (submit+query)"
-            }
-        },
-        new ExchangeTemplate
-        {
-            Id = "doubao-asr-xapikey",
-            Name = "豆包大模型语音识别 (单Key认证)",
-            Description = "字节跳动豆包 Seed ASR，使用 x-api-key 单Key认证，异步 submit+query 模式",
-            ApiKeyPlaceholder = "x-api-key",
-            ApiKeyHint = "在火山引擎控制台获取 API Key（UUID 格式）",
-            Preset = new ExchangeTemplatePreset
-            {
-                Name = "豆包 ASR (Seed)",
-                ModelAlias = "doubao-asr-seed",
-                TargetUrl = "https://openspeech.bytedance.com/api/v3/auc/bigmodel/submit",
-                TargetAuthScheme = "XApiKey",
-                TransformerType = "doubao-asr",
-                TransformerConfig = new Dictionary<string, object>
-                {
-                    ["resourceId"] = "volc.seedasr.auc",
-                    ["enableItn"] = true,
-                    ["enablePunc"] = true,
-                    ["enableDdc"] = true,
-                    ["enableSpeakerInfo"] = false,
-                    ["enableChannelSplit"] = false
-                },
-                Enabled = true,
-                Description = "豆包语音识别 - Seed ASR (x-api-key 认证)"
             }
         },
         new ExchangeTemplate
