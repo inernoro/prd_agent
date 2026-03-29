@@ -29,6 +29,7 @@ import { useBreakpoint } from '@/hooks/useBreakpoint';
 import type { ToolboxItem } from '@/services';
 import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
+import { ReviewAgentCardArt } from '@/pages/ai-toolbox/components/ReviewAgentCardArt';
 
 // ── Icon & Color mapping (self-contained, doesn't touch ToolCard) ──
 
@@ -165,8 +166,10 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
         height: 200,
       }}
     >
-      {/* Cover image or gradient background */}
-      {coverUrl && !coverFailed ? (
+      {/* Cover visual: inline art / CDN image / gradient fallback */}
+      {item.agentKey === 'review-agent' ? (
+        <ReviewAgentCardArt />
+      ) : coverUrl && !coverFailed ? (
         <>
           <img
             src={coverUrl}

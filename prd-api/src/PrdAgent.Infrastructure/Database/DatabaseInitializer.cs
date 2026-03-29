@@ -89,8 +89,8 @@ public class DatabaseInitializer
             var existed = await _db.SystemRoles.Find(x => x.Key == def.Key).FirstOrDefaultAsync();
             if (existed != null)
             {
-                // 仅对 admin 做“增量补齐”，避免升级后管理员丢功能（只加不减，不覆盖）
-                if (string.Equals(existed.Key, "admin", StringComparison.Ordinal) && existed.IsBuiltIn)
+                // 对所有内置角色做”增量补齐”：只加不减，确保升级后新权限自动生效
+                if (existed.IsBuiltIn)
                 {
                     var current = existed.Permissions ?? new List<string>();
                     var merged = current

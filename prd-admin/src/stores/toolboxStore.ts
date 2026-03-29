@@ -209,6 +209,19 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     usageCount: 0,
     createdAt: new Date().toISOString(),
   },
+  {
+    id: 'builtin-review-agent',
+    name: '产品评审员',
+    description: '上传产品方案(.md)，AI 多维度评审打分，正式评审前发现问题',
+    icon: 'ClipboardCheck',
+    category: 'builtin',
+    type: 'builtin',
+    agentKey: 'review-agent',
+    routePath: '/review-agent',
+    tags: ['评审', '产品', 'PRD'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+  },
   // ========== 普通版 Agent（统一对话界面）==========
   {
     id: 'builtin-code-reviewer',

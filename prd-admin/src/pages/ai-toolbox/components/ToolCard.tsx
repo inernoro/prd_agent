@@ -140,6 +140,7 @@ function getPalette(iconName: string) {
 }
 
 import { SpotlightEffect } from './SpotlightEffect';
+import { ReviewAgentCardArt } from './ReviewAgentCardArt';
 
 export function ToolCard({ item }: ToolCardProps) {
   const { selectItem, toggleFavorite, isFavorite } = useToolboxStore();
@@ -210,8 +211,10 @@ export function ToolCard({ item }: ToolCardProps) {
         className="absolute inset-0 z-0 opacity-[0.03] mix-blend-overlay pointer-events-none"
         style={{ backgroundImage: 'var(--glass-noise)' }}
       />
-      {/* Cover visual — CDN 图片 or 渐变 + 大图标 */}
-      {coverUrl && !coverFailed ? (
+      {/* Cover visual — 内联插画 / CDN 图片 / 渐变兜底 */}
+      {item.agentKey === 'review-agent' ? (
+        <ReviewAgentCardArt />
+      ) : coverUrl && !coverFailed ? (
         <>
           <img
             src={coverUrl}
