@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -49,12 +50,15 @@ public class TranscriptRunWorker : BackgroundService
         var gateway = scope.ServiceProvider.GetRequiredService<ILlmGateway>();
 
         // 原子认领一个 queued 任务
-        var run = await db.TranscriptRuns.FindOneAndUpdateAsync(
-            r => r.Status == "queued",
-            Builders<TranscriptRun>.Update
-                .Set(r => r.Status, "processing")
-                .Set(r => r.UpdatedAt, DateTime.UtcNow),
-            new FindOneAndUpdateOptions<TranscriptRun> { ReturnDocument = ReturnDocument.After });
+        var filter = Builders<TranscriptRun>.Filter.Eq(r => r.Status, "queued");
+        var update = Builders<TranscriptRun>.Update
+            .Set(r => r.Status, "processing")
+            .Set(r => r.UpdatedAt, DateTime.UtcNow);
+        var options = new FindOneAndUpdateOptions<TranscriptRun, TranscriptRun>
+        {
+            ReturnDocument = ReturnDocument.After
+        };
+        var run = await db.TranscriptRuns.FindOneAndUpdateAsync(filter, update, options);
 
         if (run == null) return;
 
@@ -68,7 +72,7 @@ public class TranscriptRunWorker : BackgroundService
                 await ProcessCopywriteAsync(db, gateway, run);
 
             await db.TranscriptRuns.UpdateOneAsync(
-                r => r.Id == run.Id,
+                Builders<TranscriptRun>.Filter.Eq(r => r.Id, run.Id),
                 Builders<TranscriptRun>.Update
                     .Set(r => r.Status, "completed")
                     .Set(r => r.Progress, 100)
@@ -81,11 +85,21 @@ public class TranscriptRunWorker : BackgroundService
             _logger.LogError(ex, "[transcript-agent] Run {RunId} failed", run.Id);
 
             await db.TranscriptRuns.UpdateOneAsync(
-                r => r.Id == run.Id,
+                Builders<TranscriptRun>.Filter.Eq(r => r.Id, run.Id),
                 Builders<TranscriptRun>.Update
                     .Set(r => r.Status, "failed")
                     .Set(r => r.Error, ex.Message)
                     .Set(r => r.UpdatedAt, DateTime.UtcNow));
+
+            // ASR 失败时同步更新 Item 状态
+            if (run.Type == "asr")
+            {
+                await db.TranscriptItems.UpdateOneAsync(
+                    Builders<TranscriptItem>.Filter.Eq(i => i.Id, run.ItemId),
+                    Builders<TranscriptItem>.Update
+                        .Set(i => i.TranscribeStatus, "failed")
+                        .Set(i => i.TranscribeError, ex.Message));
+            }
         }
     }
 
@@ -95,20 +109,20 @@ public class TranscriptRunWorker : BackgroundService
 
     private async Task ProcessAsrAsync(MongoDbContext db, ILlmGateway gateway, TranscriptRun run)
     {
-        var item = await db.TranscriptItems.Find(i => i.Id == run.ItemId).FirstOrDefaultAsync();
+        var item = await db.TranscriptItems.Find(
+            Builders<TranscriptItem>.Filter.Eq(i => i.Id, run.ItemId)).FirstOrDefaultAsync();
         if (item == null) throw new InvalidOperationException($"Item {run.ItemId} not found");
 
-        // 更新进度：下载文件
+        // 更新进度：开始处理
         await UpdateProgress(db, run.Id, 10);
         await db.TranscriptItems.UpdateOneAsync(
-            i => i.Id == item.Id,
+            Builders<TranscriptItem>.Filter.Eq(i => i.Id, item.Id),
             Builders<TranscriptItem>.Update.Set(i => i.TranscribeStatus, "processing"));
 
         // 下载音频文件
         using var httpClient = new HttpClient();
         var audioBytes = await httpClient.GetByteArrayAsync(item.FileUrl);
 
-        // 更新进度：开始转写
         await UpdateProgress(db, run.Id, 30);
 
         // 调用 ASR 模型池（与 VideoToDocRunWorker 相同模式）
@@ -137,17 +151,17 @@ public class TranscriptRunWorker : BackgroundService
 
         if (rawResp?.Success != true || rawResp.Content == null)
         {
-            throw new InvalidOperationException($"ASR 转写失败: {rawResp?.Error ?? "无响应"}");
+            throw new InvalidOperationException($"ASR 转写失败: {rawResp?.ErrorMessage ?? "无响应"}");
         }
 
         await UpdateProgress(db, run.Id, 80);
 
         // 解析 Whisper 响应
-        var (segments, _) = ParseWhisperResponse(rawResp.Content);
+        var segments = ParseWhisperSegments(rawResp.Content);
 
         // 保存转写结果到 Item
         await db.TranscriptItems.UpdateOneAsync(
-            i => i.Id == item.Id,
+            Builders<TranscriptItem>.Filter.Eq(i => i.Id, item.Id),
             Builders<TranscriptItem>.Update
                 .Set(i => i.Segments, segments)
                 .Set(i => i.TranscribeStatus, "completed")
@@ -160,7 +174,8 @@ public class TranscriptRunWorker : BackgroundService
 
     private async Task ProcessCopywriteAsync(MongoDbContext db, ILlmGateway gateway, TranscriptRun run)
     {
-        var item = await db.TranscriptItems.Find(i => i.Id == run.ItemId).FirstOrDefaultAsync();
+        var item = await db.TranscriptItems.Find(
+            Builders<TranscriptItem>.Filter.Eq(i => i.Id, run.ItemId)).FirstOrDefaultAsync();
         if (item?.Segments == null || item.Segments.Count == 0)
             throw new InvalidOperationException("素材未完成转写");
 
@@ -168,23 +183,35 @@ public class TranscriptRunWorker : BackgroundService
         TranscriptTemplate? template = null;
         if (!string.IsNullOrEmpty(run.TemplateId))
         {
-            template = await db.TranscriptTemplates.Find(t => t.Id == run.TemplateId).FirstOrDefaultAsync();
+            template = await db.TranscriptTemplates.Find(
+                Builders<TranscriptTemplate>.Filter.Eq(t => t.Id, run.TemplateId)).FirstOrDefaultAsync();
         }
 
         var transcriptText = string.Join("\n",
             item.Segments.Select(s => $"[{TimeSpan.FromSeconds(s.Start):hh\\:mm\\:ss}] {s.Text}"));
 
-        var systemPrompt = template?.Prompt ?? "你是一个专业的内容编辑。请将以下带时间戳的转写文本整理成结构清晰的文案。保留关键信息，去除口语化表达和重复内容。";
+        var systemPrompt = template?.Prompt ??
+            "你是一个专业的内容编辑。请将以下带时间戳的转写文本整理成结构清晰的文案。保留关键信息，去除口语化表达和重复内容。";
 
         await UpdateProgress(db, run.Id, 30);
+
+        // 构建 OpenAI 格式的 chat 请求体
+        var requestBody = new JsonObject
+        {
+            ["model"] = "gpt-4",
+            ["messages"] = new JsonArray
+            {
+                new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                new JsonObject { ["role"] = "user", ["content"] = $"以下是需要整理的转写文本：\n\n{transcriptText}" }
+            },
+            ["max_tokens"] = 4096
+        };
 
         var request = new GatewayRequest
         {
             AppCallerCode = AppCallerRegistry.TranscriptAgent.Copywrite.Generate,
             ModelType = ModelTypes.Chat,
-            SystemPrompt = systemPrompt,
-            UserMessage = $"以下是需要整理的转写文本：\n\n{transcriptText}",
-            MaxTokens = 4096
+            RequestBody = requestBody,
         };
 
         await UpdateProgress(db, run.Id, 50);
@@ -192,12 +219,12 @@ public class TranscriptRunWorker : BackgroundService
         var resp = await gateway.SendAsync(request, CancellationToken.None);
 
         if (resp?.Success != true)
-            throw new InvalidOperationException($"文案生成失败: {resp?.Error ?? "无响应"}");
+            throw new InvalidOperationException($"文案生成失败: {resp?.ErrorMessage ?? "无响应"}");
 
         await UpdateProgress(db, run.Id, 90);
 
         await db.TranscriptRuns.UpdateOneAsync(
-            r => r.Id == run.Id,
+            Builders<TranscriptRun>.Filter.Eq(r => r.Id, run.Id),
             Builders<TranscriptRun>.Update.Set(r => r.Result, resp.Content));
     }
 
@@ -205,14 +232,12 @@ public class TranscriptRunWorker : BackgroundService
     // 工具方法
     // ═══════════════════════════════════════════════════════════
 
-    private (List<TranscriptSegment> segments, string language) ParseWhisperResponse(string json)
+    private List<TranscriptSegment> ParseWhisperSegments(string json)
     {
         try
         {
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
-
-            var lang = root.TryGetProperty("language", out var langProp) ? langProp.GetString() ?? "unknown" : "unknown";
             var segments = new List<TranscriptSegment>();
 
             if (root.TryGetProperty("segments", out var segsArr))
@@ -228,19 +253,19 @@ public class TranscriptRunWorker : BackgroundService
                 }
             }
 
-            return (segments, lang);
+            return segments;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[transcript-agent] 解析 Whisper 响应失败");
-            return (new List<TranscriptSegment>(), "unknown");
+            return new List<TranscriptSegment>();
         }
     }
 
     private static async Task UpdateProgress(MongoDbContext db, string runId, int progress)
     {
         await db.TranscriptRuns.UpdateOneAsync(
-            r => r.Id == runId,
+            Builders<TranscriptRun>.Filter.Eq(r => r.Id, runId),
             Builders<TranscriptRun>.Update
                 .Set(r => r.Progress, progress)
                 .Set(r => r.UpdatedAt, DateTime.UtcNow));

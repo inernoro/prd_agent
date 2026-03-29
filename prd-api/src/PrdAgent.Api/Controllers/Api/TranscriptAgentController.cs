@@ -4,6 +4,7 @@ using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
+using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 
@@ -46,7 +47,7 @@ public class TranscriptAgentController : ControllerBase
     [HttpGet("workspaces")]
     public async Task<IActionResult> ListWorkspaces()
     {
-        var userId = User.FindFirstValue("userId")!;
+        var userId = this.GetRequiredUserId();
         var list = await _db.TranscriptWorkspaces
             .Find(w => w.OwnerUserId == userId || w.MemberUserIds.Contains(userId))
             .SortByDescending(w => w.UpdatedAt)
@@ -57,7 +58,7 @@ public class TranscriptAgentController : ControllerBase
     [HttpPost("workspaces")]
     public async Task<IActionResult> CreateWorkspace([FromBody] CreateWorkspaceDto dto)
     {
-        var userId = User.FindFirstValue("userId")!;
+        var userId = this.GetRequiredUserId();
         var workspace = new TranscriptWorkspace
         {
             Title = dto.Title.Trim(),
@@ -70,7 +71,7 @@ public class TranscriptAgentController : ControllerBase
     [HttpGet("workspaces/{id}")]
     public async Task<IActionResult> GetWorkspace(string id)
     {
-        var userId = User.FindFirstValue("userId")!;
+        var userId = this.GetRequiredUserId();
         var workspace = await _db.TranscriptWorkspaces
             .Find(w => w.Id == id && (w.OwnerUserId == userId || w.MemberUserIds.Contains(userId)))
             .FirstOrDefaultAsync();
@@ -81,7 +82,7 @@ public class TranscriptAgentController : ControllerBase
     [HttpDelete("workspaces/{id}")]
     public async Task<IActionResult> DeleteWorkspace(string id)
     {
-        var userId = User.FindFirstValue("userId")!;
+        var userId = this.GetRequiredUserId();
         var result = await _db.TranscriptWorkspaces.DeleteOneAsync(w => w.Id == id && w.OwnerUserId == userId);
         if (result.DeletedCount == 0) return NotFound();
 
@@ -96,7 +97,7 @@ public class TranscriptAgentController : ControllerBase
     [HttpGet("workspaces/{workspaceId}/items")]
     public async Task<IActionResult> ListItems(string workspaceId)
     {
-        var userId = User.FindFirstValue("userId")!;
+        var userId = this.GetRequiredUserId();
         var workspace = await _db.TranscriptWorkspaces
             .Find(w => w.Id == workspaceId && (w.OwnerUserId == userId || w.MemberUserIds.Contains(userId)))
             .FirstOrDefaultAsync();
@@ -113,7 +114,7 @@ public class TranscriptAgentController : ControllerBase
     [RequestSizeLimit(MaxUploadBytes)]
     public async Task<IActionResult> UploadItem(string workspaceId, IFormFile file)
     {
-        var userId = User.FindFirstValue("userId")!;
+        var userId = this.GetRequiredUserId();
         var workspace = await _db.TranscriptWorkspaces
             .Find(w => w.Id == workspaceId && (w.OwnerUserId == userId || w.MemberUserIds.Contains(userId)))
             .FirstOrDefaultAsync();
@@ -129,7 +130,7 @@ public class TranscriptAgentController : ControllerBase
         await file.CopyToAsync(ms);
         var bytes = ms.ToArray();
 
-        var stored = await _assetStorage.SaveAsync(bytes, file.ContentType, "transcript-agent", "upload");
+        var stored = await _assetStorage.SaveAsync(bytes, file.ContentType, CancellationToken.None, "transcript-agent", "upload");
 
         var item = new TranscriptItem
         {
@@ -163,7 +164,7 @@ public class TranscriptAgentController : ControllerBase
     [HttpDelete("items/{itemId}")]
     public async Task<IActionResult> DeleteItem(string itemId)
     {
-        var userId = User.FindFirstValue("userId")!;
+        var userId = this.GetRequiredUserId();
         var result = await _db.TranscriptItems.DeleteOneAsync(i => i.Id == itemId && i.OwnerUserId == userId);
         if (result.DeletedCount == 0) return NotFound();
 
@@ -176,7 +177,7 @@ public class TranscriptAgentController : ControllerBase
     [HttpPut("items/{itemId}/segments")]
     public async Task<IActionResult> UpdateSegments(string itemId, [FromBody] List<TranscriptSegment> segments)
     {
-        var userId = User.FindFirstValue("userId")!;
+        var userId = this.GetRequiredUserId();
         var update = Builders<TranscriptItem>.Update
             .Set(i => i.Segments, segments)
             .Set(i => i.UpdatedAt, DateTime.UtcNow);
@@ -191,7 +192,7 @@ public class TranscriptAgentController : ControllerBase
     [HttpGet("templates")]
     public async Task<IActionResult> ListTemplates()
     {
-        var userId = User.FindFirstValue("userId")!;
+        var userId = this.GetRequiredUserId();
         var templates = await _db.TranscriptTemplates
             .Find(t => t.IsSystem || t.OwnerUserId == userId)
             .SortBy(t => t.Name)
@@ -202,7 +203,7 @@ public class TranscriptAgentController : ControllerBase
     [HttpPost("items/{itemId}/copywrite")]
     public async Task<IActionResult> CreateCopywriteRun(string itemId, [FromBody] CreateCopywriteDto dto)
     {
-        var userId = User.FindFirstValue("userId")!;
+        var userId = this.GetRequiredUserId();
         var item = await _db.TranscriptItems.Find(i => i.Id == itemId && i.OwnerUserId == userId).FirstOrDefaultAsync();
         if (item == null) return NotFound("素材不存在");
         if (item.Segments == null || item.Segments.Count == 0)
@@ -230,7 +231,7 @@ public class TranscriptAgentController : ControllerBase
     [HttpGet("runs/{runId}")]
     public async Task<IActionResult> GetRun(string runId)
     {
-        var userId = User.FindFirstValue("userId")!;
+        var userId = this.GetRequiredUserId();
         var run = await _db.TranscriptRuns.Find(r => r.Id == runId && r.OwnerUserId == userId).FirstOrDefaultAsync();
         if (run == null) return NotFound();
         return Ok(run);
@@ -239,7 +240,7 @@ public class TranscriptAgentController : ControllerBase
     [HttpGet("workspaces/{workspaceId}/runs")]
     public async Task<IActionResult> ListRuns(string workspaceId)
     {
-        var userId = User.FindFirstValue("userId")!;
+        var userId = this.GetRequiredUserId();
         var runs = await _db.TranscriptRuns
             .Find(r => r.WorkspaceId == workspaceId && r.OwnerUserId == userId)
             .SortByDescending(r => r.CreatedAt)
@@ -252,7 +253,7 @@ public class TranscriptAgentController : ControllerBase
     [HttpPost("items/{itemId}/export")]
     public async Task<IActionResult> Export(string itemId, [FromBody] ExportDto dto)
     {
-        var userId = User.FindFirstValue("userId")!;
+        var userId = this.GetRequiredUserId();
         var item = await _db.TranscriptItems.Find(i => i.Id == itemId && i.OwnerUserId == userId).FirstOrDefaultAsync();
         if (item == null) return NotFound();
         if (item.Segments == null || item.Segments.Count == 0)
