@@ -79,7 +79,7 @@ public class DoubaoStreamAsrService
         var segmentDurationMs = 200;
         var sampleRate = 16000;
 
-        // 解析 WAV 获取音频参数和 PCM 数据
+        // 解析音频：WAV 直接提取 PCM，其他格式用 ffmpeg 转换为 16kHz/1ch WAV
         byte[] pcmData;
         int channels = 1, bitsPerSample = 16, actualRate = sampleRate;
 
@@ -95,8 +95,21 @@ public class DoubaoStreamAsrService
         }
         else
         {
-            pcmData = audioData;
-            _logger.LogInformation("[DoubaoStreamAsr] 非 WAV 格式, 按 raw PCM 处理, size={Size}bytes", pcmData.Length);
+            // 非 WAV 格式（MP3/M4A/OGG/FLAC/WebM/MP4 等）→ ffmpeg 转 16kHz/1ch WAV
+            _logger.LogInformation("[DoubaoStreamAsr] 非 WAV 格式, 使用 ffmpeg 转换, input={Size}bytes", audioData.Length);
+            var convertedWav = await ConvertToWavWithFfmpeg(audioData);
+            if (convertedWav == null)
+            {
+                result.Error = "ffmpeg 转换失败：不支持的音频格式或 ffmpeg 未安装";
+                return result;
+            }
+            var wavInfo = ReadWavInfo(convertedWav);
+            channels = wavInfo.Channels;
+            bitsPerSample = wavInfo.BitsPerSample;
+            actualRate = wavInfo.SampleRate;
+            pcmData = wavInfo.PcmData;
+            _logger.LogInformation("[DoubaoStreamAsr] ffmpeg 转换完成: channels={Ch}, bits={Bits}, rate={Rate}, pcm={PcmLen}bytes",
+                channels, bitsPerSample, actualRate, pcmData.Length);
         }
 
         // 豆包 WebSocket ASR 要求 16kHz 单声道 16bit PCM，需要重采样
@@ -529,6 +542,66 @@ public class DoubaoStreamAsrService
     // ═══════════════════════════════════════════════════════════
     // WAV 解析
     // ═══════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// 使用 ffmpeg 将任意音频格式转换为 16kHz 单声道 16bit WAV
+    /// </summary>
+    private async Task<byte[]?> ConvertToWavWithFfmpeg(byte[] inputData)
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"asr_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        var inputPath = Path.Combine(tempDir, "input");
+        var outputPath = Path.Combine(tempDir, "output.wav");
+
+        try
+        {
+            await File.WriteAllBytesAsync(inputPath, inputData);
+
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "ffmpeg",
+                Arguments = $"-i \"{inputPath}\" -acodec pcm_s16le -ac 1 -ar 16000 -f wav -y \"{outputPath}\"",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = System.Diagnostics.Process.Start(psi);
+            if (process == null)
+            {
+                _logger.LogError("[DoubaoStreamAsr] ffmpeg 进程启动失败");
+                return null;
+            }
+
+            var stderr = await process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            if (process.ExitCode != 0)
+            {
+                _logger.LogWarning("[DoubaoStreamAsr] ffmpeg 退出码={ExitCode}, stderr={Stderr}",
+                    process.ExitCode, stderr.Length > 500 ? stderr[^500..] : stderr);
+                return null;
+            }
+
+            if (!File.Exists(outputPath))
+            {
+                _logger.LogWarning("[DoubaoStreamAsr] ffmpeg 输出文件不存在");
+                return null;
+            }
+
+            return await File.ReadAllBytesAsync(outputPath);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[DoubaoStreamAsr] ffmpeg 转换异常");
+            return null;
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, true); } catch { /* ignore */ }
+        }
+    }
 
     private static bool IsWavFile(byte[] data)
     {
