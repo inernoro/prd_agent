@@ -59,7 +59,6 @@ export const uploadItem = async (workspaceId: string, file: File): Promise<ApiRe
     } catch {
       return fail('PARSE_ERROR', '响应解析失败') as unknown as ApiResponse<{ item: TranscriptItem; runId: string }>;
     }
-    }
   } catch (e) {
     return fail('NETWORK_ERROR', e instanceof Error ? e.message : '网络错误') as unknown as ApiResponse<{ item: TranscriptItem; runId: string }>;
   }
