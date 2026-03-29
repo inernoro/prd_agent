@@ -26,6 +26,11 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   var css=document.createElement('style');
   css.textContent=\`
     @keyframes cds-spin{to{transform:rotate(360deg)}}
+    @keyframes cds-ai-border-glow{0%,100%{box-shadow:inset 0 0 8px 3px rgba(96,165,250,0.35),inset 0 0 24px 6px rgba(167,139,250,0.15),0 0 8px rgba(96,165,250,0.2)}50%{box-shadow:inset 0 0 14px 5px rgba(96,165,250,0.55),inset 0 0 40px 10px rgba(167,139,250,0.25),0 0 16px rgba(96,165,250,0.35)}}
+    @keyframes cds-ai-border-flow{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
+    .cds-ai-active{animation:cds-ai-border-glow 2s ease-in-out infinite;pointer-events:none;position:fixed;inset:0;z-index:99998;border:2px solid transparent;background:linear-gradient(135deg,rgba(167,139,250,0.3),rgba(96,165,250,0.3),rgba(192,132,252,0.3),rgba(56,189,248,0.3),rgba(167,139,250,0.3));background-size:300% 300%;animation:cds-ai-border-flow 4s linear infinite,cds-ai-border-glow 2s ease-in-out infinite;border-radius:0}
+    .cds-ai-badge{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:99999;display:flex;align-items:center;gap:6px;padding:4px 12px;border-radius:20px;background:rgba(22,27,34,0.9);backdrop-filter:blur(8px);border:1px solid rgba(96,165,250,0.4);box-shadow:0 2px 12px rgba(96,165,250,0.3);font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;font-size:11px;color:#e2e8f0;white-space:nowrap;pointer-events:none}
+    .cds-ai-badge-dot{width:6px;height:6px;border-radius:50%;background:#60a5fa;box-shadow:0 0 6px #60a5fa;animation:cds-blink 1.5s ease-in-out infinite}
     #cds-widget{position:fixed;left:12px;bottom:12px;z-index:99999;font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;color:#e2e8f0;user-select:none;font-size:12px}
     #cds-widget *{box-sizing:border-box}
     #cds-widget .cds-badge{display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:8px;background:rgba(35,134,54,0.85);backdrop-filter:blur(8px);border:1px solid rgba(63,185,80,0.3);box-shadow:0 2px 8px rgba(0,0,0,0.25);cursor:grab;line-height:1}
@@ -103,6 +108,61 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   var logModalContent='';
   var titlePrefix='';
   var titleObserver=null;
+
+  // ── AI occupation state ──
+  var aiOccupant=null;
+  var aiLastSeen=0;
+  var AI_TTL=30000;
+  var aiOverlay=null;
+  var aiBadgeEl=null;
+
+  function updateAiOverlay(){
+    var isActive=aiOccupant&&(Date.now()-aiLastSeen<AI_TTL);
+    if(isActive){
+      if(!aiOverlay){
+        aiOverlay=document.createElement('div');
+        aiOverlay.className='cds-ai-active';
+        document.body.appendChild(aiOverlay);
+      }
+      if(!aiBadgeEl){
+        aiBadgeEl=document.createElement('div');
+        aiBadgeEl.className='cds-ai-badge';
+        document.body.appendChild(aiBadgeEl);
+      }
+      aiBadgeEl.innerHTML='<span class="cds-ai-badge-dot"></span> AI 操控中'+(aiOccupant!=='AI'?' · '+aiOccupant:'');
+    }else{
+      if(aiOverlay){aiOverlay.remove();aiOverlay=null;}
+      if(aiBadgeEl){aiBadgeEl.remove();aiBadgeEl=null;}
+      aiOccupant=null;
+    }
+  }
+
+  // Connect to activity stream for AI occupation detection
+  function initAiStream(){
+    var es;
+    try{es=new EventSource(API+'/activity-stream');}catch(e){return;}
+    es.onmessage=function(msg){
+      try{
+        var evt=JSON.parse(msg.data);
+        if(evt.source==='ai'&&evt.branchId===BRANCH_ID){
+          aiOccupant=evt.agent||'AI';
+          aiLastSeen=Date.now();
+          updateAiOverlay();
+        }
+      }catch(e){}
+    };
+    es.onerror=function(){
+      es.close();
+      setTimeout(initAiStream,5000);
+    };
+  }
+
+  // Periodic TTL check for AI occupation expiry
+  setInterval(function(){
+    if(aiOccupant&&Date.now()-aiLastSeen>=AI_TTL){
+      updateAiOverlay();
+    }
+  },5000);
 
   // ── Widget root ──
   var root=document.createElement('div');
@@ -513,6 +573,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   // ── Initial: render badge + fetch branch info to update tab title immediately ──
   render();
   fetchBranchInfo();
+  initAiStream();
 })();
 </script>`;
 }
