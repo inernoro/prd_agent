@@ -41,8 +41,8 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     #cds-widget .cds-commit-msg{font-size:10px;color:#8b949e;margin-bottom:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
     #cds-widget button{display:flex;align-items:center;justify-content:center;padding:2px;border-radius:4px;border:none;background:transparent;color:inherit;cursor:pointer;opacity:0.6}
     #cds-widget button:hover{opacity:1}
-    #cds-widget .cds-panel{margin-bottom:4px;padding:10px 12px;border-radius:8px;background:rgba(22,27,34,0.95);backdrop-filter:blur(12px);border:1px solid rgba(63,185,80,0.3);box-shadow:0 4px 16px rgba(0,0,0,0.4);width:260px;overflow:hidden}
-    #cds-widget .cds-deploy-btn{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:6px;border:1px solid #30363d;background:#21262d;color:#c9d1d9;font-size:11px;cursor:pointer;flex:1;min-width:0;opacity:1}
+    #cds-widget .cds-panel{margin-bottom:4px;padding:10px 12px;border-radius:8px;background:rgba(22,27,34,0.95);backdrop-filter:blur(12px);border:1px solid rgba(63,185,80,0.3);box-shadow:0 4px 16px rgba(0,0,0,0.4);min-width:260px;width:max-content;max-width:min(480px,calc(100vw - 40px));overflow:hidden}
+    #cds-widget .cds-deploy-btn{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:6px;border:1px solid #30363d;background:#21262d;color:#c9d1d9;font-size:11px;cursor:pointer;flex:1;min-width:0;opacity:1;white-space:nowrap}
     #cds-widget .cds-deploy-btn:hover{border-color:#58a6ff}
     #cds-widget .cds-deploy-btn:disabled{cursor:wait;opacity:0.5}
     #cds-widget .cds-deploy-btn.full{background:#161b22;width:100%}
@@ -51,6 +51,15 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     #cds-widget .cds-log-btn:hover{border-color:#58a6ff;color:#c9d1d9}
     #cds-widget .cds-log-panel{margin-top:6px;padding:6px 8px;border-radius:6px;background:#0d1117;border:1px solid #30363d;max-height:200px;overflow-y:auto;font-size:10px;line-height:1.5;white-space:pre-wrap;word-break:break-all;color:#8b949e;font-family:ui-monospace,SFMono-Regular,monospace}
     #cds-widget .cds-log-header{display:flex;align-items:center;justify-content:space-between;margin-top:6px;margin-bottom:2px;font-size:10px;color:#8b949e}
+    #cds-log-modal-overlay{position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace}
+    #cds-log-modal{width:min(720px,calc(100vw - 48px));max-height:calc(100vh - 80px);border-radius:12px;background:#161b22;border:1px solid #30363d;box-shadow:0 8px 32px rgba(0,0,0,0.5);display:flex;flex-direction:column;overflow:hidden;color:#e2e8f0;font-size:12px}
+    #cds-log-modal .cds-log-modal-header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid #30363d;flex-shrink:0}
+    #cds-log-modal .cds-log-modal-title{font-size:13px;font-weight:600;color:#e2e8f0}
+    #cds-log-modal .cds-log-modal-actions{display:flex;align-items:center;gap:6px}
+    #cds-log-modal .cds-log-modal-btn{display:flex;align-items:center;gap:4px;padding:4px 10px;border-radius:6px;border:1px solid #30363d;background:#21262d;color:#c9d1d9;font-size:11px;cursor:pointer;font-family:inherit;white-space:nowrap}
+    #cds-log-modal .cds-log-modal-btn:hover{border-color:#58a6ff;color:#58a6ff}
+    #cds-log-modal .cds-log-modal-btn.copied{border-color:#3fb950;color:#3fb950}
+    #cds-log-modal .cds-log-modal-body{flex:1;overflow-y:auto;padding:10px 14px;font-size:11px;line-height:1.6;white-space:pre-wrap;word-break:break-all;color:#8b949e;user-select:text;-webkit-user-select:text}
     #cds-widget .cds-mode-row{display:flex;align-items:center;gap:4px;margin-bottom:6px}
     #cds-widget .cds-mode-label{font-size:10px;color:#8b949e;flex-shrink:0}
     #cds-widget .cds-mode-select{font-size:10px;padding:2px 4px;border-radius:4px;border:1px solid #30363d;background:#161b22;color:#c9d1d9;cursor:pointer;flex:1;min-width:0}
@@ -71,6 +80,8 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   var ICON_UP='<svg class="cds-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px"><polyline points="18 15 12 9 6 15"/></svg>';
   var ICON_DOWN='<svg class="cds-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px"><polyline points="6 9 12 15 18 9"/></svg>';
   var ICON_LOG='<svg viewBox="0 0 16 16" fill="currentColor" style="width:12px;height:12px"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.5 0a.25.25 0 01.25-.25h10.5a.25.25 0 01.25.25v7.5a.25.25 0 01-.25.25h-4.5a.75.75 0 00-.75.75v2.19l-2.72-2.72a.75.75 0 00-.53-.22H2.75a.25.25 0 01-.25-.25v-7.5z"/></svg>';
+  var ICON_COPY='<svg viewBox="0 0 16 16" fill="currentColor" style="width:12px;height:12px"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"/></svg>';
+  var ICON_EXPAND='<svg viewBox="0 0 16 16" fill="currentColor" style="width:12px;height:12px"><path d="M3.25 1A2.25 2.25 0 001 3.25v2a.75.75 0 001.5 0v-2a.75.75 0 01.75-.75h2a.75.75 0 000-1.5h-2zm9.5 0a.75.75 0 000 1.5h2a.75.75 0 01.75.75v2a.75.75 0 001.5 0v-2A2.25 2.25 0 0014.75 1h-2zM2.5 10.75a.75.75 0 00-1.5 0v2A2.25 2.25 0 003.25 15h2a.75.75 0 000-1.5h-2a.75.75 0 01-.75-.75v-2zm13 0a.75.75 0 00-1.5 0v2a.75.75 0 01-.75.75h-2a.75.75 0 000 1.5h2A2.25 2.25 0 0015.5 12.75v-2z"/></svg>';
 
   // ── State ──
   var expanded=false;
@@ -87,6 +98,9 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   var logProfileId=null;
   var logContent='';
   var logLoading=false;
+  var logModalOpen=false;
+  var logModalProfileName='';
+  var logModalContent='';
   var titlePrefix='';
   var titleObserver=null;
 
@@ -192,11 +206,11 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
           h+='</div>';
         }
 
-        // Log panel
+        // Log panel (inline preview + open modal button)
         if(logProfileId){
-          var logProfileName=logProfileId;
-          for(var lpi=0;lpi<profiles.length;lpi++){if(profiles[lpi].id===logProfileId)logProfileName=profiles[lpi].name;}
-          h+='<div class="cds-log-header"><span>'+logProfileName+' 日志</span><button data-action="close-log" style="background:none;border:none;color:#8b949e;cursor:pointer;font-size:12px;padding:2px 4px">'+ICON_X+'</button></div>';
+          var _logPName=logProfileId;
+          for(var lpi=0;lpi<profiles.length;lpi++){if(profiles[lpi].id===logProfileId)_logPName=profiles[lpi].name;}
+          h+='<div class="cds-log-header"><span>'+_logPName+' 日志</span><div style="display:flex;gap:4px"><button data-action="open-log-modal" title="弹窗查看" style="background:none;border:none;color:#8b949e;cursor:pointer;font-size:12px;padding:2px 4px">'+ICON_EXPAND+'</button><button data-action="close-log" style="background:none;border:none;color:#8b949e;cursor:pointer;font-size:12px;padding:2px 4px">'+ICON_X+'</button></div></div>';
           h+='<div class="cds-log-panel">'+(logLoading?'<span class="cds-spinner"></span> 加载中...':logContent||'(空)')+'</div>';
         }
 
@@ -226,6 +240,61 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     // Attach drag to badge bar
     var badge=root.querySelector('.cds-badge');
     if(badge)badge.addEventListener('mousedown',onMouseDown);
+
+    // Render log modal
+    renderLogModal();
+  }
+
+  function renderLogModal(){
+    var existing=document.getElementById('cds-log-modal-overlay');
+    if(!logModalOpen){
+      if(existing)existing.remove();
+      return;
+    }
+    var overlay=existing||document.createElement('div');
+    overlay.id='cds-log-modal-overlay';
+    var mh='<div id="cds-log-modal">';
+    mh+='<div class="cds-log-modal-header">';
+    mh+='<span class="cds-log-modal-title">'+logModalProfileName+' 日志</span>';
+    mh+='<div class="cds-log-modal-actions">';
+    mh+='<button class="cds-log-modal-btn" data-action="copy-log">'+ICON_COPY+' 复制全部</button>';
+    mh+='<button class="cds-log-modal-btn" data-action="close-log-modal">'+ICON_X+'</button>';
+    mh+='</div></div>';
+    mh+='<div class="cds-log-modal-body">'+(logModalContent||'(空)')+'</div>';
+    mh+='</div>';
+    overlay.innerHTML=mh;
+    if(!existing){
+      overlay.addEventListener('click',function(e){
+        if(e.target===overlay){logModalOpen=false;renderLogModal();}
+        var btn=e.target.closest('button');
+        if(!btn)return;
+        var act=btn.getAttribute('data-action');
+        if(act==='close-log-modal'){logModalOpen=false;renderLogModal();}
+        if(act==='copy-log'){
+          var text=logModalContent||'';
+          if(navigator.clipboard&&navigator.clipboard.writeText){
+            navigator.clipboard.writeText(text).then(function(){
+              btn.classList.add('copied');
+              btn.innerHTML=ICON_COPY+' 已复制';
+              setTimeout(function(){btn.classList.remove('copied');btn.innerHTML=ICON_COPY+' 复制全部';},1500);
+            });
+          }else{
+            var ta=document.createElement('textarea');
+            ta.value=text;ta.style.cssText='position:fixed;left:-9999px';
+            document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);
+            btn.classList.add('copied');
+            btn.innerHTML=ICON_COPY+' 已复制';
+            setTimeout(function(){btn.classList.remove('copied');btn.innerHTML=ICON_COPY+' 复制全部';},1500);
+          }
+        }
+      });
+      // ESC to close
+      overlay.addEventListener('keydown',function(e){if(e.key==='Escape'){logModalOpen=false;renderLogModal();}});
+      document.body.appendChild(overlay);
+    }
+    // Scroll to bottom
+    var body=overlay.querySelector('.cds-log-modal-body');
+    if(body)body.scrollTop=body.scrollHeight;
   }
 
   // ── Event delegation ──
@@ -235,6 +304,15 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     var action=btn.getAttribute('data-action');
     if(action==='dismiss'){root.remove();return;}
     if(action==='close-log'){logProfileId=null;logContent='';render();return;}
+    if(action==='open-log-modal'){
+      var _pName=logProfileId||'';
+      for(var _i=0;_i<profiles.length;_i++){if(profiles[_i].id===logProfileId)_pName=profiles[_i].name;}
+      logModalProfileName=_pName;
+      logModalContent=logContent;
+      logModalOpen=true;
+      renderLogModal();
+      return;
+    }
     if(action==='toggle'){
       expanded=!expanded;
       if(expanded)fetchBranchInfo();
@@ -323,10 +401,13 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
       body:JSON.stringify({profileId:pid})
     }).then(function(r){return r.json();}).then(function(d){
       logContent=d.logs||d.error||'(空)';
-      // Keep last 80 lines
+      // Keep last 80 lines for inline panel
       var lines=logContent.split('\\n');
       if(lines.length>80)logContent=lines.slice(-80).join('\\n');
-      logLoading=false;render();
+      logLoading=false;
+      // Sync to modal if open
+      if(logModalOpen){logModalContent=logContent;renderLogModal();}
+      render();
       // Scroll log panel to bottom
       var lp=root.querySelector('.cds-log-panel');
       if(lp)lp.scrollTop=lp.scrollHeight;
