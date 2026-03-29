@@ -1991,52 +1991,60 @@ a.branch-name:hover { color: var(--accent); }
   pointer-events: none;
   z-index: 2;
 }
-/* ::before = 金色边框层（仅描边，无填充） */
-.color-mark-ripple::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  clip-path: circle(0% at var(--cm-ripple-x, 50%) var(--cm-ripple-y, 50%));
-}
 /* ::after = 内容 tint 层 */
 .color-mark-ripple::after {
   content: '';
   position: absolute;
-  inset: 2px; /* 内缩到 padding-box */
+  inset: 2px;
   border-radius: calc(var(--radius) - 2px);
   clip-path: circle(0% at var(--cm-ripple-x, 50%) var(--cm-ripple-y, 50%));
-}
-/* 标记：金色边框 + amber tint */
-.color-mark-ripple.ripple-marked::before {
-  border: 2px solid rgba(245, 158, 11, 0.7);
-  box-shadow: 0 0 10px 1px rgba(245, 158, 11, 0.2);
-  background: transparent;
 }
 .color-mark-ripple.ripple-marked::after {
   background: rgba(245, 158, 11, 0.05);
 }
-/* 取消标记：恢复默认边框 */
-.color-mark-ripple.ripple-normal::before {
-  border: 2px solid var(--card-border);
-  background: transparent;
-}
 .color-mark-ripple.ripple-normal::after {
   background: transparent;
-}
-/* Light mode */
-[data-theme="light"] .color-mark-ripple.ripple-marked::before {
-  border-color: rgba(217, 119, 6, 0.55);
-  box-shadow: 0 0 8px 1px rgba(217, 119, 6, 0.15);
 }
 [data-theme="light"] .color-mark-ripple.ripple-marked::after {
   background: rgba(217, 119, 6, 0.04);
 }
-/* 动画：两个伪元素同步扩展 */
-.color-mark-ripple.animate::before,
 .color-mark-ripple.animate::after {
   animation: cm-ripple-expand 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }
+/* ── Gold border ring: solid gold bg masked to show only 2px edge ── */
+.cm-border-ring {
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 3;
+  background: rgba(245, 158, 11, 0.7);
+  box-shadow: 0 0 10px 2px rgba(245, 158, 11, 0.2);
+  /* Mask: cut out inner area, only show 2px border ring */
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  padding: 2px; /* This defines the ring width */
+  /* Clip to expanding circle */
+  clip-path: circle(0% at var(--cm-ripple-x, 50%) var(--cm-ripple-y, 50%));
+}
+.cm-border-ring.ring-normal {
+  background: var(--card-border);
+  box-shadow: none;
+}
+[data-theme="light"] .cm-border-ring.ring-marked {
+  background: rgba(217, 119, 6, 0.6);
+  box-shadow: 0 0 8px 1px rgba(217, 119, 6, 0.15);
+}
+.cm-border-ring.animate {
+  animation: cm-ripple-expand 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
 @keyframes cm-ripple-expand {
   to {
     clip-path: circle(var(--cm-ripple-radius, 150%) at var(--cm-ripple-x, 50%) var(--cm-ripple-y, 50%));

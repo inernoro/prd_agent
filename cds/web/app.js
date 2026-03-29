@@ -1262,6 +1262,7 @@ async function toggleColorMark(id, event) {
       Math.max(y, cardRect.height - y) ** 2
     ));
 
+    // Tint overlay (content area)
     const overlay = document.createElement('div');
     overlay.className = 'color-mark-ripple';
     overlay.style.setProperty('--cm-ripple-x', `${x}px`);
@@ -1269,11 +1270,24 @@ async function toggleColorMark(id, event) {
     overlay.style.setProperty('--cm-ripple-radius', `${maxRadius}px`);
     overlay.classList.add(newVal ? 'ripple-marked' : 'ripple-normal');
     card.appendChild(overlay);
+
+    // Border overlay: gold background with inner circle cutout → animated ring
+    const borderEl = document.createElement('div');
+    borderEl.className = 'cm-border-ring';
+    borderEl.style.setProperty('--cm-ripple-x', `${x}px`);
+    borderEl.style.setProperty('--cm-ripple-y', `${y}px`);
+    borderEl.style.setProperty('--cm-ripple-radius', `${maxRadius}px`);
+    borderEl.classList.add(newVal ? 'ring-marked' : 'ring-normal');
+    card.appendChild(borderEl);
+
     overlay.offsetHeight;
     overlay.classList.add('animate');
-    overlay.addEventListener('animationend', () => {
+    borderEl.classList.add('animate');
+
+    borderEl.addEventListener('animationend', () => {
       card.classList.toggle('is-color-marked', newVal);
       overlay.remove();
+      borderEl.remove();
     }, { once: true });
   } else {
     // No card element — apply immediately
