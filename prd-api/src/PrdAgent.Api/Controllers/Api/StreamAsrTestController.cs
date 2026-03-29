@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Api.Services;
-using PrdAgent.Core.Helpers;
+using PrdAgent.Core.Models;
 
 namespace PrdAgent.Api.Controllers.Api;
 
