@@ -545,6 +545,68 @@ function ComponentToken({
   );
 }
 
+function GuideHintItem({
+  index,
+  text,
+  active,
+}: {
+  index: number;
+  text: string;
+  active?: boolean;
+}) {
+  return (
+    <div
+      style={{
+        position: 'relative',
+        borderRadius: 9,
+        padding: '8px 10px 8px 34px',
+        border: active ? '1px solid rgba(255, 214, 102, 0.55)' : '1px solid rgba(120,148,206,0.3)',
+        background: active ? 'linear-gradient(90deg, rgba(255,214,102,0.16), rgba(120,148,206,0.12))' : 'rgba(12,22,44,0.7)',
+        color: '#eaf2ff',
+        fontSize: 11,
+        lineHeight: 1.6,
+      }}
+    >
+      <div
+        style={{
+          position: 'absolute',
+          left: 10,
+          top: 8,
+          width: 18,
+          height: 18,
+          borderRadius: 999,
+          border: active ? '1px solid rgba(255,214,102,0.85)' : '1px solid rgba(120,148,206,0.45)',
+          background: active ? 'rgba(255,214,102,0.24)' : 'rgba(120,148,206,0.2)',
+          display: 'grid',
+          placeItems: 'center',
+          fontSize: 10,
+          fontWeight: 700,
+          color: active ? '#fff3cf' : '#cae0ff',
+        }}
+      >
+        {index}
+      </div>
+      {text}
+      {active ? (
+        <span
+          style={{
+            position: 'absolute',
+            right: 10,
+            top: '50%',
+            transform: 'translateY(-50%)',
+            width: 8,
+            height: 8,
+            borderRadius: 999,
+            background: '#ffd666',
+            boxShadow: '0 0 10px rgba(255,214,102,0.9)',
+            animation: 'sandboxGuidePulse 1.2s ease-in-out infinite',
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 function SandboxDemoInner() {
   const [nodes, setNodes, onNodesChange] = useNodesState<SandboxNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<SandboxEdge>([]);
@@ -1015,10 +1077,25 @@ function SandboxDemoInner() {
 
         <div style={sidePanelCardStyle}>
           <div style={sidePanelTitleStyle}>操作提示</div>
-          <div style={{ fontSize: 11, lineHeight: 1.7, color: 'rgba(215,230,255,0.86)' }}>
-            <div>1. Shift + 框选：多选节点</div>
-            <div>2. Delete / Backspace：删除选中</div>
-            <div>3. 按住空格 + 拖拽：平移画布</div>
+          <div
+            style={{
+              marginBottom: 8,
+              borderRadius: 8,
+              border: '1px dashed rgba(255,214,102,0.55)',
+              background: 'rgba(255,214,102,0.08)',
+              color: '#fff0c2',
+              fontSize: 11,
+              fontWeight: 700,
+              padding: '6px 8px',
+              letterSpacing: 0.2,
+            }}
+          >
+            新手引导：先看这 3 条再操作
+          </div>
+          <div style={{ display: 'grid', gap: 7 }}>
+            <GuideHintItem index={1} text="Shift + 框选：多选节点" active />
+            <GuideHintItem index={2} text="Delete / Backspace：删除选中" />
+            <GuideHintItem index={3} text="按住空格 + 拖拽：平移画布" />
           </div>
         </div>
       </aside>
@@ -1409,6 +1486,13 @@ function SandboxDemoInner() {
           </div>
         </div>
       ) : null}
+      <style>{`
+        @keyframes sandboxGuidePulse {
+          0% { transform: translateY(-50%) scale(0.85); opacity: 0.7; }
+          50% { transform: translateY(-50%) scale(1.15); opacity: 1; }
+          100% { transform: translateY(-50%) scale(0.85); opacity: 0.7; }
+        }
+      `}</style>
     </div>
   );
 }
