@@ -1372,6 +1372,30 @@ async function removeTagFromBranch(id, tag, event) {
   }
 }
 
+async function editBranchTags(id, event) {
+  event.stopPropagation();
+  const branch = branches.find(b => b.id === id);
+  if (!branch) return;
+  const currentTags = (branch.tags || []).join(', ');
+  const input = prompt('编辑标签（逗号分隔）:', currentTags);
+  if (input === null) return; // cancelled
+  const newTags = input.split(/[,，]/).map(t => t.trim()).filter(Boolean);
+  const oldTags = [...(branch.tags || [])];
+  // Optimistic update
+  branch.tags = newTags;
+  renderBranches();
+  renderTagFilterBar();
+  try {
+    await api('PATCH', `/branches/${id}`, { tags: newTags });
+    showToast('标签已保存', 'success');
+  } catch (e) {
+    branch.tags = oldTags;
+    renderBranches();
+    renderTagFilterBar();
+    showToast(e.message, 'error');
+  }
+}
+
 function filterByTag(tag) {
   activeTagFilter = activeTagFilter === tag ? null : tag;
   renderTagFilterBar();
@@ -1888,10 +1912,6 @@ function toggleSettingsMenu(event) {
         </span>
       </span>
     </div>
-    <div class="settings-menu-item" onclick="closeSettingsMenu(); openExportModal()">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 13a.5.5 0 01-.5-.5V3a.5.5 0 01.5-.5h5.586a.5.5 0 01.354.146l3.414 3.414a.5.5 0 01.146.354V12.5a.5.5 0 01-.5.5h-9zM3.5 1A1.5 1.5 0 002 2.5v11A1.5 1.5 0 003.5 15h9a1.5 1.5 0 001.5-1.5V6.414a1.5 1.5 0 00-.44-1.06L10.147 1.94A1.5 1.5 0 009.086 1.5H3.5z"/></svg>
-      导出
-    </div>
     <div class="settings-menu-item" onclick="closeSettingsMenu(); openSelfUpdate()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0114.95 7.16a.75.75 0 01-1.49.178A5.5 5.5 0 008 2.5zm6.294 5.505a.75.75 0 01.834.656 5.5 5.5 0 01-9.592 2.97l1.204-1.204a.25.25 0 00-.177-.427H3.354a.25.25 0 01-.354-.354l1.38-1.38A7.002 7.002 0 0014.95 7.16z"/><circle cx="8" cy="8" r="2"/></svg>
       自动更新
@@ -2090,6 +2110,7 @@ function renderBranches() {
           </span>
         `).join('')}
         <span class="branch-tag-add" onclick="addTagToBranch('${esc(b.id)}', event)" title="添加标签">+ 标签</span>
+        <span class="branch-tag-edit" onclick="editBranchTags('${esc(b.id)}', event)" title="编辑标签">${ICON.edit}</span>
       </div>
     `;
 
@@ -2514,6 +2535,9 @@ function openImportModal() {
       <button class="sm" id="importApplyBtn" disabled onclick="applyImportConfig()">仅导入配置</button>
       <button class="sm accent" id="importInitBtn" disabled onclick="importAndInit()">导入并初始化</button>
       <button class="sm" onclick="closeConfigModal()">取消</button>
+      <span style="flex:1"></span>
+      <button class="sm" onclick="closeConfigModal(); exportConfig()" title="导出 CDS Compose YAML"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-2px;margin-right:3px"><path d="M2.75 14A1.75 1.75 0 011 12.25v-2.5a.75.75 0 011.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 00.25-.25v-2.5a.75.75 0 011.5 0v2.5A1.75 1.75 0 0113.25 14H2.75zm3.22-7.53a.75.75 0 001.06 1.06L8 6.56V1.75a.75.75 0 00-1.5 0v4.81L5.53 5.59a.75.75 0 00-1.06 1.06l2.5 2.5a.75.75 0 001.06 0l2.5-2.5z"/></svg>导出配置</button>
+      <button class="sm" onclick="closeConfigModal(); exportSkill()" title="生成 AI Agent 部署技能文件"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-2px;margin-right:3px"><path d="M3.5 1.75a.25.25 0 01.25-.25h3.5a.75.75 0 000-1.5h-3.5A1.75 1.75 0 002 1.75v11.5c0 .966.784 1.75 1.75 1.75h8.5A1.75 1.75 0 0014 13.25v-6a.75.75 0 00-1.5 0v6a.25.25 0 01-.25.25h-8.5a.25.25 0 01-.25-.25V1.75z"/><path d="M11.78.22a.75.75 0 00-1.06 0L6.22 4.72a.75.75 0 000 1.06l.53.53-2.97 2.97a.75.75 0 101.06 1.06l2.97-2.97.53.53a.75.75 0 001.06 0l4.5-4.5a.75.75 0 000-1.06L11.78.22z"/></svg>导出技能</button>
     </div>
     <div style="margin-top:4px;font-size:11px;color:var(--fg-muted)">
       「仅导入配置」只写入配置不启动服务；「导入并初始化」会自动启动基础设施、创建主分支并部署。

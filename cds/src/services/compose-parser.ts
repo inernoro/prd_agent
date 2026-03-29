@@ -557,7 +557,8 @@ export function toCdsCompose(
 }
 
 /**
- * Resolve ${CDS_*} env var templates in a value string.
+ * Resolve ${VAR} env var templates in a value string.
+ * Lookup order: cdsVars → process.env (host) → default → empty string.
  * Supports ${VAR} and ${VAR:-default} syntax.
  */
 export function resolveEnvTemplates(
@@ -567,7 +568,7 @@ export function resolveEnvTemplates(
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {
     result[key] = value.replace(/\$\{(\w+)(?::-(.*?))?\}/g, (_match, name, defaultVal) => {
-      return cdsVars[name] ?? defaultVal ?? '';
+      return cdsVars[name] ?? process.env[name] ?? defaultVal ?? '';
     });
   }
   return result;
