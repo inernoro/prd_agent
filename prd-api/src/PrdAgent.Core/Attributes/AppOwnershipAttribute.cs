@@ -82,4 +82,8 @@ public static class AppNames
     /// <summary>Report Agent - 周报管理</summary>
     public const string ReportAgent = "report-agent";
     public const string ReportAgentDisplay = "周报管理";
+
+    /// <summary>Transcript Agent - 音视频转录</summary>
+    public const string TranscriptAgent = "transcript-agent";
+    public const string TranscriptAgentDisplay = "音视频转录";
 }

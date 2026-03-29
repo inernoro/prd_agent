@@ -76,6 +76,7 @@ docs:
 
   # ── 三、指南 ──
   # 先看全貌索引，再看部署/开发，然后是 Agent 使用教程，最后是专题指南
+  guide.agent-onboarding: Agent 开发入门指南（新手必读）
   guide.list.directory: 文档索引目录页
   guide.quickstart: PRD Agent 快速部署指南
   guide.development-guide: PRD Agent 开发文档

@@ -102,6 +102,37 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 原则：用户在等待 AI 响应时，屏幕上必须有持续变化的内容。静止的"加载中…"超过 2 秒即为体验缺陷。
 
+### 7. 新增 Model 必须对照现有 Model 写法
+
+新建 MongoDB 实体类时，**必须先读一个现有同类 Model 文件**，对照其 Id 声明方式、属性标注、命名风格。禁止凭记忆或通用知识编写。
+
+**具体规则**：
+- Id 声明：`public string Id { get; set; } = Guid.NewGuid().ToString("N");`，不加 `[BsonId]` / `[BsonRepresentation]`
+- 必须 `grep` 一个现有 Model（如 `DefectReport.cs`）确认格式后再写
+- 获取用户 ID：`this.GetRequiredUserId()`，不用 `User.FindFirstValue("userId")`
+
+**前端 service 层同样适用**：新建 `services/real/*.ts` 时，必须先读 `apiClient.ts` 的 `apiRequest` 签名。关键陷阱：
+- `apiRequest` 内部会自动 `JSON.stringify(options.body)`，**调用方传原始对象，禁止再 `JSON.stringify`**
+- ❌ `body: JSON.stringify({ title })` → 双重序列化，后端 400
+- ✅ `body: { title }` → 正确
+- FormData 上传不能走 `apiRequest`（会被 JSON 序列化），必须直接 `fetch`
+- `apiRequest` 返回 `ApiResponse<T>` 格式 `{success, data, error}`，**用 `res.success` 判断，不是 `res.ok`**
+- 错误信息是对象 `res.error?.message`，不是字符串 `res.error`
+
+### 8. Agent 开发"完成"标准
+
+功能开发声称"完成"前，**必须全部满足**以下条件：
+- 后端编译零错误（本地 + CDS 环境双重验证）
+- 前端页面可通过预览地址打开并正常渲染
+- 核心业务流程端到端跑通（不是只有 CRUD）
+- 直连预览域名测试（非 container-exec），模拟真实用户访问路径
+- 依赖的外部服务（如 ASR 模型池）已确认可用
+
+**禁止**：
+- 骨架完成就报"已实现"——CRUD 能用不等于业务跑通
+- 绕过真实访问路径测试——container-exec 是诊断工具，不是验收工具
+- 不主动查系统能力——需要模型池就去查平台有没有，需要用户就去查数据库有哪些
+
 ---
 
 ## 架构规则索引
@@ -126,7 +157,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 ## 质量保障技能链
 
 ```
-需求 → /validate → 设计 → /risk → /trace → 实现 → /verify → /cds-deploy → /preview → /handoff → /weekly
+需求 → /validate → 设计 → /risk → /trace → 实现 → /verify → /scope-check → /cds-deploy → /preview → /handoff → /weekly
 ```
 
 | 技能 | 触发词 | 用途 |
@@ -150,9 +181,12 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | **cds-deploy-pipeline** | `/cds-deploy` | 跨服务器灰度环境生命周期：部署/观测/诊断/操作/验证/清理 |
 | **llm-visibility** | `/visibility` | LLM 交互可视化审计 + 组件指南 |
 | **theme-transition** | `/theme-transition` | 主题切换圆形过渡动效 (View Transition API) |
+| **agent-guide** | `/help` | Agent 开发新手引导：阶段跟踪 + 技能推荐 + 进度管理 |
+| **scope-check** | `/scope-check` | 分支受控检查：变更文件分类 + 越界检测 + append-only 审计 |
 
 ### 使用指引
 
+0. **首次开发 Agent** → `/help` 进入新手引导，全程阶段式陪伴（详见 `doc/guide.agent-onboarding.md`）
 1. **新需求提出时** → `/validate` 验证需求质量和价值（中大型功能必跑）
 3. **方案评审时** → 先 `/risk` 评估风险，再 `/trace` 追踪关键链路
 4. **开发完成后** → 先 `/verify` 交叉验证，再 `/cds-deploy` 一键部署+冒烟测试

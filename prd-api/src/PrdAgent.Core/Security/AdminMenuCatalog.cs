@@ -44,6 +44,7 @@ public static class AdminMenuCatalog
         new("automations", "/automations", "自动化", null, "Zap", 230),
         new("arena", "/arena", "AI 竞技场", null, "Swords", 240),
         new("shortcuts-agent", "/shortcuts-agent", "快捷指令", null, "Smartphone", 250),
+        new("transcript-agent", "/transcript-agent", "转录工作台", null, "FileAudio", 260),
     };
 
     /// <summary>
