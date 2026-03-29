@@ -681,7 +681,7 @@ function SandboxDemoInner() {
         event.preventDefault();
         setSpacePressed(true);
       }
-      if (event.key === 'Delete') {
+      if (event.key === 'Delete' || event.key === 'Backspace') {
         deleteSelected();
       }
       if (event.key === 'Escape') {
@@ -756,10 +756,11 @@ function SandboxDemoInner() {
           if (toolMode === 'link') setPendingLinkSourceId(null);
         }}
         fitView
-        selectionOnDrag={!spacePressed}
+        selectionOnDrag={false}
+        selectionKeyCode="Shift"
         panOnDrag={spacePressed}
         selectionMode={SelectionMode.Partial}
-        multiSelectionKeyCode={null}
+        multiSelectionKeyCode="Shift"
         deleteKeyCode={null}
         attributionPosition="bottom-right"
       >
@@ -830,6 +831,27 @@ function SandboxDemoInner() {
         }}
       >
         {summaryText}
+      </div>
+      <div
+        style={{
+          position: 'absolute',
+          right: 16,
+          bottom: 16,
+          zIndex: 12,
+          borderRadius: 10,
+          border: '1px solid rgba(120,148,206,0.35)',
+          background: 'rgba(7,14,30,0.88)',
+          color: '#d8e7ff',
+          fontSize: 12,
+          padding: '8px 10px',
+          lineHeight: 1.55,
+          minWidth: 260,
+        }}
+      >
+        <div style={{ fontWeight: 700, marginBottom: 4 }}>操作提示</div>
+        <div>1. Shift + 框选：多选节点</div>
+        <div>2. Delete / Backspace：删除选中</div>
+        <div>3. 按住空格 + 拖拽：平移画布</div>
       </div>
 
       {showRoleMenu ? (
