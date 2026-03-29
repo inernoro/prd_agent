@@ -1,248 +1,151 @@
 ---
 name: create-executor
-description: "CLI Agent 执行器接入技能。引导创建新的执行器类型（如龙虾执行器），自动生成后端分发逻辑、前端注册、联调测试。触发词：'创建执行器', '接入执行器', 'create executor', '新增执行器', '/create-executor'。"
+description: "全自动接入 CLI Agent 执行器。用户只需说出执行器名称和用途，Claude 自动完成：读取代码 → 生成执行器 → 注册 → 自测 → 完成。触发词：'创建执行器', '接入执行器', 'create executor', '新增执行器', '/create-executor'。"
 ---
 
-# Create Executor — 执行器接入向导
+# Create Executor — 全自动执行器接入
 
-为 CLI Agent 执行器胶囊接入新的执行器类型，全流程自动化：创建 → 注册 → 联调 → 测试。
+你是一个执行器接入 Agent。用户只需告诉你执行器名称和用途，你自主完成全部接入工作。
 
-## 架构概览
+## 执行协议
 
-```
-┌───────────────────────────────────────────────────┐
-│  CapsuleExecutor.ExecuteCliAgentAsync (入口分发)   │
-│                                                   │
-│  executorType ──┬── "builtin-llm"  ✅ 已实现       │
-│                 ├── "docker"       ✅ 已实现       │
-│                 ├── "api"          ✅ 已实现       │
-│                 ├── "script"       ✅ 已实现       │
-│                 └── "你的新类型"    🆕 由此技能创建  │
-└───────────────────────────────────────────────────┘
-```
+收到请求后，**不要问问题**，直接按以下步骤自主执行。只在需要用户提供密钥/凭据时才暂停询问。
 
-## 接入范式
+### Phase 1: 理解环境（静默执行）
 
-每个执行器都是一个静态方法，签名统一：
+1. 读取 `prd-api/src/PrdAgent.Api/Services/CapsuleExecutor.cs`，找到 `ExecuteCliAgentAsync` 入口方法和已有执行器（搜索 `ExecuteCliAgent_`）
+2. 读取 `prd-api/src/PrdAgent.Core/Models/CapsuleTypeRegistry.cs`，找到 `CliAgentExecutor` 的 ConfigSchema
+3. 确认已有执行器列表和 executorType switch 分支
 
+### Phase 2: 生成执行器代码
+
+根据用户描述，生成执行器实现。必须遵循接入范式：
+
+**方法签名（固定）：**
 ```csharp
-private static async Task<CapsuleResult> ExecuteCliAgent_{Name}Async(
-    IServiceProvider sp,
-    WorkflowNode node,
-    Dictionary<string, string> variables,
-    CliAgentContext ctx,        // 公共上下文（spec/framework/style/prompt/迭代信息）
-    StringBuilder sb,           // 日志
-    ILogger logger,
-    EmitEventDelegate? emitEvent)
+private static async Task<CapsuleResult> ExecuteCliAgent_{PascalName}Async(
+    IServiceProvider sp, WorkflowNode node, Dictionary<string, string> variables,
+    CliAgentContext ctx, StringBuilder sb, ILogger logger, EmitEventDelegate? emitEvent)
 ```
 
-### 输入：CliAgentContext（所有执行器共享）
+**输入：CliAgentContext（已有，不要修改）**
+- `ctx.Spec` / `ctx.Framework` / `ctx.Style` / `ctx.Prompt` — 通用配置
+- `ctx.SpecInput` — 上游产品规格
+- `ctx.PreviousOutput` — 上轮 HTML（多轮迭代）
+- `ctx.UserFeedback` — 用户修改意见（多轮迭代）
+- `ctx.IsIteration` — 是否迭代轮
+- `ctx.TimeoutSeconds` / `ctx.EnvVars` — 资源限制
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `Spec` | string | 规范类型：none/spec/dri/dev/sdd |
-| `Framework` | string | 框架：html/react/vue/nextjs/svelte/custom |
-| `Style` | string | 风格：ui-ux-pro-max/minimal/dashboard/landing/doc/custom |
-| `Prompt` | string | 用户输入的生成提示词 |
-| `SpecInput` | string | 上游传入的产品规格文档 |
-| `PreviousOutput` | string | 上一轮生成的 HTML（多轮迭代时非空） |
-| `UserFeedback` | string | 用户修改意见（多轮迭代时非空） |
-| `IsIteration` | bool | 是否为迭代轮次 |
-| `TimeoutSeconds` | int | 超时时间 |
-| `EnvVars` | Dict | 环境变量 |
-
-### 输出：CapsuleResult
-
-必须返回至少一个产物到 `cli-html-out` 槽位：
-
+**输出（固定）：必须返回 cli-html-out 槽位**
 ```csharp
 return new CapsuleResult(new List<ExecutionArtifact>
 {
-    MakeTextArtifact(node, "cli-html-out", "生成页面", htmlContent, "text/html"),
+    MakeTextArtifact(node, "cli-html-out", "生成页面", html, "text/html"),
     MakeTextArtifact(node, "cli-log-out", "日志", sb.ToString()),
 }, sb.ToString());
 ```
 
-## 创建流程
-
-收到用户请求后，按以下步骤执行：
-
-### Step 1: 收集执行器信息
-
-向用户确认：
-1. **执行器名称**（kebab-case，如 `lobster`）
-2. **执行器类型**：属于哪类？
-   - `docker-based`：需要 Docker 容器运行（如 OpenHands、Aider）
-   - `api-based`：调用外部 HTTP API（如 Bolt.new、v0）
-   - `local-process`：本地运行一个进程/CLI 命令
-   - `llm-based`：调用 LLM Gateway 但用不同的 prompt 策略
-3. **专有配置字段**：该执行器需要哪些独有的配置参数？
-4. **交互协议**：该执行器如何接收 prompt，如何返回结果？
-
-### Step 2: 后端实现（3 个文件）
-
-#### 2.1 CapsuleTypeRegistry.cs — 注册 executorType 选项
-
-在 `CapsuleTypeRegistry.CliAgentExecutor.ConfigSchema` 的 `executorType` 字段 Options 中追加新选项：
-
+**多轮迭代（必须支持）：**
 ```csharp
-new() { Value = "{name}", Label = "{显示名}" },
-```
-
-如果有专有配置字段，在 ConfigSchema 中追加：
-
-```csharp
-// ── {Name} 执行器配置 ──
-new() { Key = "{name}Xxx", Label = "XXX", FieldType = "text", Required = false,
-    HelpTip = "{Name} 执行器专用：..." },
-```
-
-#### 2.2 CapsuleExecutor.cs — 添加分发分支 + 实现方法
-
-在 `ExecuteCliAgentAsync` 的 switch 中追加：
-
-```csharp
-"{name}" => await ExecuteCliAgent_{Name}Async(sp, node, variables, ctx, sb, logger, emitEvent),
-```
-
-然后实现执行器方法。模板：
-
-```csharp
-// ── 执行器: {Name} ──
-
-private static async Task<CapsuleResult> ExecuteCliAgent_{Name}Async(
-    IServiceProvider sp, WorkflowNode node, Dictionary<string, string> variables,
-    CliAgentContext ctx, StringBuilder sb, ILogger logger, EmitEventDelegate? emitEvent)
+if (ctx.IsIteration)
 {
-    // 1. 提取专有配置
-    var myConfig = ReplaceVariables(GetConfigString(node, "{name}Xxx") ?? "", variables).Trim();
-    sb.AppendLine($"[{name}] config: {myConfig}");
-
-    // 2. 发射进度事件
-    if (emitEvent != null)
-        await emitEvent("cli-agent-phase", new { phase = "running", message = "执行中…" });
-
-    // 3. 执行核心逻辑
-    //    - Docker: Process.Start("docker", args)
-    //    - API: httpClient.PostAsync(endpoint, payload)
-    //    - Local: Process.Start(command, args)
-    //    - LLM: gateway.GenerateAsync(request)
-    var html = "<!DOCTYPE html><html><body>TODO</body></html>";
-
-    // 4. 多轮迭代处理
-    if (ctx.IsIteration)
-    {
-        // 把 ctx.PreviousOutput + ctx.UserFeedback 传给执行器
-        // 让它在上一轮基础上修改
-    }
-
-    // 5. 返回结果
-    if (emitEvent != null)
-        await emitEvent("cli-agent-phase", new { phase = "completed", message = "完成" });
-
-    return new CapsuleResult(new List<ExecutionArtifact>
-    {
-        MakeTextArtifact(node, "cli-html-out", "生成页面", html, "text/html"),
-        MakeTextArtifact(node, "cli-log-out", "日志", sb.ToString()),
-    }, sb.ToString());
+    // 把 ctx.PreviousOutput + ctx.UserFeedback 传给执行逻辑
+    // 要求在上轮基础上增量修改，不要全部重写
 }
 ```
 
-#### 2.3 WorkflowModels.cs — 无需修改
+**进度事件（必须发射）：**
+```csharp
+if (emitEvent != null)
+    await emitEvent("cli-agent-phase", new { phase = "running", message = "描述当前步骤…" });
+```
 
-执行器类型是 config 字段，不是 CapsuleType，不需要改 WorkflowModels。
+### Phase 3: 注册（改 2 个文件）
 
-### Step 3: 前端注册
+**文件 1: `CapsuleTypeRegistry.cs`**
 
-在 `prd-admin/src/pages/workflow-agent/capsuleRegistry.tsx` 中**无需修改**——执行器类型是配置表单的 select 选项，由后端 ConfigSchema 驱动，前端自动渲染。
+在 CliAgentExecutor 的 ConfigSchema 中找到 `executorType` 的 Options 列表，追加：
+```csharp
+new() { Value = "{kebab-name}", Label = "{显示名称}" },
+```
 
-### Step 4: 编译验证
+如果执行器有专有配置，在 ConfigSchema 末尾（`timeoutSeconds` 之前）追加字段：
+```csharp
+// ── {Name} 执行器配置 ──
+new() { Key = "{kebabName}Config", Label = "xxx", FieldType = "text", Required = false, HelpTip = "{Name} 执行器专用：..." },
+```
 
+**文件 2: `CapsuleExecutor.cs`**
+
+在 `ExecuteCliAgentAsync` 方法的 switch 中追加分支：
+```csharp
+"{kebab-name}" => await ExecuteCliAgent_{PascalName}Async(sp, node, variables, ctx, sb, logger, emitEvent),
+```
+
+然后在 `// ── CLI Agent 工具方法 ──` 注释之前插入执行器方法实现。
+
+### Phase 4: 编译验证
+
+执行：
 ```bash
 cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | head -30
 ```
 
-### Step 5: 联调测试
+如果有编译错误，自行修复后重新编译，直到零错误。
 
-使用工作流胶囊测试接口验证：
+### Phase 5: 自测
 
-```bash
-# 测试新执行器
-curl -X POST http://localhost:5000/api/workflow-agent/capsules/test-run \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $AI_ACCESS_KEY" \
-  -d '{
-    "nodeType": "cli-agent-executor",
-    "config": {
-      "executorType": "{name}",
-      "prompt": "生成一个简单的 Hello World 页面",
-      "framework": "html",
-      "style": "minimal"
-    },
-    "inputArtifacts": []
-  }'
-```
-
-验证点：
-- [ ] 返回 200 且 artifacts 包含 `cli-html-out`
-- [ ] HTML 内容有效（包含 `<!DOCTYPE html>`）
-- [ ] 日志产物包含执行器名称标记
-
-### Step 6: 多轮迭代测试
+构造一个最小测试用例，验证执行器可以运行：
 
 ```bash
-# 第 2 轮：传入上轮结果 + 反馈
-curl -X POST http://localhost:5000/api/workflow-agent/capsules/test-run \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $AI_ACCESS_KEY" \
-  -d '{
-    "nodeType": "cli-agent-executor",
-    "config": {
-      "executorType": "{name}",
-      "prompt": "产品展示页",
-      "framework": "html",
-      "style": "ui-ux-pro-max"
-    },
-    "inputArtifacts": [
-      {
-        "slotId": "cli-prev-in",
-        "name": "previousOutput",
-        "mimeType": "text/html",
-        "inlineContent": "<html>...上轮结果...</html>"
-      },
-      {
-        "slotId": "cli-feedback-in",
-        "name": "userFeedback",
-        "mimeType": "text/plain",
-        "inlineContent": "标题太小了，配色换成蓝色"
-      }
-    ]
-  }'
+# 自测方法：直接在 C# 中构造 WorkflowNode 调用执行器
+# 如果环境有 dotnet，写一个简单的测试脚本
+cd prd-api && dotnet build --no-restore
 ```
 
-### Step 7: 提交
+编译通过即为 Phase 5 通过（实际运行时测试需要完整环境）。
 
-完成后提交代码，changelog 碎片示例：
+对于可以静态验证的部分：
+- 确认 switch 分支的字符串与 Registry Option Value 一致
+- 确认方法签名与分发调用一致
+- 确认返回了 cli-html-out 槽位的 artifact
+
+### Phase 6: 完成
+
+1. 创建 changelog 碎片：`changelogs/YYYY-MM-DD_{name}-executor.md`
+2. 向用户报告：
 
 ```
-| feat | prd-api | 新增 {Name} 执行器，支持 xxx |
+✅ {Name} 执行器接入完成
+
+改动文件：
+  - CapsuleTypeRegistry.cs：注册 executorType="{kebab-name}" + {N} 个专有配置
+  - CapsuleExecutor.cs：新增 ExecuteCliAgent_{PascalName}Async ({N} 行)
+
+执行器类型：{类型描述}
+多轮迭代：✅ 支持
+编译检查：✅ 通过
+
+用户可在工作流编辑器中添加「CLI Agent 执行器」胶囊，执行器类型选择「{显示名}」即可使用。
 ```
 
-## 已有执行器清单
+## 执行器分类参考
 
-| executorType | 名称 | 依赖 | 适用场景 |
-|---|---|---|---|
-| `builtin-llm` | 内置 LLM | ILlmGateway | 无需额外环境，直接 LLM 生成 HTML |
-| `docker` | Docker 容器 | docker CLI | 运行任意容器化 CLI 工具 |
-| `api` | 外部 API | HTTP | 调用 OpenHands/Bolt.new 等外部服务 |
-| `script` | Jint 脚本 | 无 | JavaScript 沙箱内简单生成 |
+| 类型 | 核心逻辑 | 示例 |
+|------|---------|------|
+| **LLM 策略型** | 调用 ILlmGateway，不同 system prompt | 专业文档生成器、PPT 页面生成器 |
+| **Docker 容器型** | Process.Start("docker", args) | OpenHands、Aider、自定义镜像 |
+| **API 调用型** | HttpClient.PostAsync | Bolt.new、v0、自建微服务 |
+| **CLI 进程型** | Process.Start(command) | 本地 Node.js 脚本、Python 工具 |
+| **混合型** | LLM 生成 prompt → 传给外部工具 | LLM 审题 + CLI 执行 |
 
-## 扩展点设计
+## 已注册执行器
 
-新执行器**只需改 2 个文件**：
-1. `CapsuleTypeRegistry.cs`：注册 executorType 选项 + 专有配置字段
-2. `CapsuleExecutor.cs`：添加 switch 分支 + 实现方法
+读取代码后以实际为准，截至技能创建时：
 
-**不需要改**：WorkflowModels、前端代码、前端 contracts、capsuleRegistry.tsx。
-
-这就是接入范式：所有执行器共享输入输出协议（CliAgentContext → CapsuleResult），差异只在执行逻辑。
+| Value | 名称 | 依赖 |
+|-------|------|------|
+| `builtin-llm` | 内置 LLM | ILlmGateway |
+| `docker` | Docker 容器 | docker CLI |
+| `api` | 外部 API | IHttpClientFactory |
+| `script` | Jint 脚本 | 无 |

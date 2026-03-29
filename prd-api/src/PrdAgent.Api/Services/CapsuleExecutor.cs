@@ -4607,6 +4607,7 @@ function safeChart(canvasId, config) {
                 "docker" => await ExecuteCliAgent_DockerAsync(sp, node, variables, ctx, sb, logger, emitEvent),
                 "api" => await ExecuteCliAgent_ApiAsync(sp, node, variables, ctx, sb, logger, emitEvent),
                 "script" => ExecuteCliAgent_Script(node, ctx, sb),
+                "lobster" => await ExecuteCliAgent_LobsterAsync(sp, node, variables, ctx, sb, logger, emitEvent),
                 _ => throw new InvalidOperationException($"未知执行器类型: {executorType}，支持: builtin-llm, docker, api, script"),
             };
         }
@@ -4985,6 +4986,93 @@ function safeChart(canvasId, config) {
         return new CapsuleResult(new List<ExecutionArtifact>
         {
             MakeTextArtifact(node, "cli-html-out", "生成页面", result, "text/html"),
+            MakeTextArtifact(node, "cli-log-out", "日志", sb.ToString()),
+        }, sb.ToString());
+    }
+
+    // ── 执行器 E: Lobster（龙虾测试执行器，LLM 策略型） ──
+
+    private static async Task<CapsuleResult> ExecuteCliAgent_LobsterAsync(
+        IServiceProvider sp, WorkflowNode node, Dictionary<string, string> variables,
+        CliAgentContext ctx, StringBuilder sb, ILogger logger, EmitEventDelegate? emitEvent)
+    {
+        var gateway = sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>();
+        var lobsterStyle = ReplaceVariables(GetConfigString(node, "lobsterStyle") ?? "professional", variables).Trim();
+        sb.AppendLine($"[lobster] 龙虾执行器启动, style={lobsterStyle}");
+
+        if (emitEvent != null)
+            await emitEvent("cli-agent-phase", new { phase = "running", message = "龙虾正在生成页面…" });
+
+        // 龙虾策略：分阶段 prompt，先规划结构再生成代码
+        var planPrompt = $@"你是一个产品着陆页架构师。根据以下需求，输出页面的章节结构（JSON 数组），每个元素包含 section（章节名）和 description（内容描述）。
+
+需求：{(string.IsNullOrWhiteSpace(ctx.Prompt) ? "一个通用产品展示页" : ctx.Prompt)}
+框架：{ctx.Framework}
+风格：{lobsterStyle}
+
+{(ctx.IsIteration ? $"用户反馈：{ctx.UserFeedback}\n请在已有结构基础上调整。" : "")}
+
+只输出 JSON 数组，不要其他文字。";
+
+        sb.AppendLine("[lobster] Phase 1: 规划结构");
+        var planReq = new PrdAgent.Infrastructure.LlmGateway.GatewayRequest
+        {
+            AppCallerCode = "page-agent.generate::chat",
+            ModelType = "chat",
+            UserMessage = planPrompt,
+        };
+        var planResp = await gateway.GenerateAsync(planReq, CancellationToken.None);
+        var plan = planResp?.Content ?? "[]";
+        sb.AppendLine($"[lobster] 结构规划: {plan.Length} chars");
+
+        if (emitEvent != null)
+            await emitEvent("cli-agent-phase", new { phase = "generating", message = "根据结构生成页面…" });
+
+        // Phase 2: 根据结构生成完整 HTML
+        var genSystemPrompt = BuildPageGenSystemPrompt(ctx);
+        var genUserPrompt = new StringBuilder();
+        genUserPrompt.AppendLine($"## 页面结构规划\n{plan}\n");
+        if (!string.IsNullOrWhiteSpace(ctx.SpecInput))
+            genUserPrompt.AppendLine($"## 产品规格\n{ctx.SpecInput}\n");
+        if (!string.IsNullOrWhiteSpace(ctx.Prompt))
+            genUserPrompt.AppendLine($"## 用户需求\n{ctx.Prompt}\n");
+        if (ctx.IsIteration && !string.IsNullOrWhiteSpace(ctx.PreviousOutput))
+        {
+            genUserPrompt.AppendLine($"## 上轮结果\n```html\n{TruncateLog(ctx.PreviousOutput, 20000)}\n```\n");
+            genUserPrompt.AppendLine($"## 修改意见\n{ctx.UserFeedback}\n");
+            genUserPrompt.AppendLine("在上轮结果基础上增量修改，保留满意部分。");
+        }
+        else
+        {
+            genUserPrompt.AppendLine("根据结构规划和需求，生成完整的自包含 HTML 页面。");
+        }
+
+        sb.AppendLine("[lobster] Phase 2: 生成 HTML");
+        var genReq = new PrdAgent.Infrastructure.LlmGateway.GatewayRequest
+        {
+            AppCallerCode = "page-agent.generate::chat",
+            ModelType = "chat",
+            SystemPrompt = genSystemPrompt,
+            UserMessage = genUserPrompt.ToString(),
+        };
+
+        var sw = Stopwatch.StartNew();
+        var genResp = await gateway.GenerateAsync(genReq, CancellationToken.None);
+        sw.Stop();
+
+        var html = CleanHtmlFromLlmResponse(genResp?.Content ?? "");
+        sb.AppendLine($"[lobster] 生成完成: {html.Length} chars, {sw.ElapsedMilliseconds}ms");
+
+        if (string.IsNullOrWhiteSpace(html) || !html.Contains("<html", StringComparison.OrdinalIgnoreCase))
+            html = "<!DOCTYPE html><html><body><h1>龙虾执行器：LLM 未返回有效 HTML</h1></body></html>";
+
+        if (emitEvent != null)
+            await emitEvent("cli-agent-phase", new { phase = "completed", message = $"龙虾完成, {sw.ElapsedMilliseconds}ms" });
+
+        return new CapsuleResult(new List<ExecutionArtifact>
+        {
+            MakeTextArtifact(node, "cli-html-out", "生成页面", html, "text/html"),
+            MakeTextArtifact(node, "cli-files-out", "结构规划", plan, "application/json"),
             MakeTextArtifact(node, "cli-log-out", "日志", sb.ToString()),
         }, sb.ToString());
     }

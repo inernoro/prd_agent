@@ -942,6 +942,7 @@ public static class CapsuleTypeRegistry
                 new() { Value = "docker", Label = "Docker 容器" },
                 new() { Value = "api", Label = "外部 API（OpenHands/Bolt 等）" },
                 new() { Value = "script", Label = "本地脚本（Jint 沙箱）" },
+                new() { Value = "lobster", Label = "龙虾（两阶段 LLM：先规划结构再生成）" },
             }, HelpTip = "选择执行方式：内置 LLM 直接生成页面，Docker 运行容器化 CLI 工具，API 调用外部服务，脚本在 Jint 沙箱中执行" },
 
             // ── 通用配置 ──
@@ -984,6 +985,14 @@ public static class CapsuleTypeRegistry
 
             // ── 脚本执行器配置（executorType=script 时生效） ──
             new() { Key = "scriptCode", Label = "生成脚本", FieldType = "code", Required = false, Placeholder = "// context 对象包含 spec/framework/style/prompt\n// previousOutput/userFeedback 用于多轮迭代\nresult = generatePage(context);", HelpTip = "脚本执行器专用：Jint 沙箱中执行的 JavaScript" },
+
+            // ── Lobster 执行器配置 ──
+            new() { Key = "lobsterStyle", Label = "龙虾风格", FieldType = "select", Required = false, DefaultValue = "professional", Options = new()
+            {
+                new() { Value = "professional", Label = "专业商务" },
+                new() { Value = "playful", Label = "活泼趣味" },
+                new() { Value = "tech", Label = "科技极客" },
+            }, HelpTip = "Lobster 执行器专用：着陆页视觉风格" },
 
             // ── 资源限制 ──
             new() { Key = "timeoutSeconds", Label = "超时时间（秒）", FieldType = "number", Required = false, DefaultValue = "300" },
