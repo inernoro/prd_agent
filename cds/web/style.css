@@ -1854,8 +1854,8 @@ a.branch-name:hover { color: var(--accent); }
   /* Inline deploy log: responsive */
 
 
-  /* Commit info: hide on mobile to save space, show on expand */
-  .branch-actions-commit { display: none; }
+  /* Commit info: compact on mobile, single line with truncation */
+  .branch-actions-commit { font-size: 10px; }
 
   /* Dropdown/menu items: bigger touch targets */
   .branch-dropdown-item { padding: 10px 14px; min-height: 44px; }
