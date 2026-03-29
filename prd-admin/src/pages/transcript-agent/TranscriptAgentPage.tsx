@@ -147,16 +147,16 @@ export default function TranscriptAgentPage() {
         </div>
 
         {showCreate && (
-          <div className="p-3 border-b border-white/10 flex gap-2">
+          <div className="p-3 border-b border-white/10 flex items-center gap-2">
             <input
-              className="flex-1 px-2 py-1 text-sm rounded bg-white/5 border border-white/10 outline-none focus:border-white/30"
-              placeholder="工作区名称..."
+              className="flex-1 min-w-0 px-2 py-1 text-sm rounded bg-white/5 border border-white/10 outline-none focus:border-white/30"
+              placeholder="名称..."
               value={newTitle}
               onChange={e => setNewTitle(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleCreate()}
               autoFocus
             />
-            <Button size="sm" onClick={handleCreate}>创建</Button>
+            <Button size="sm" className="shrink-0 whitespace-nowrap" onClick={handleCreate}>创建</Button>
           </div>
         )}
 
