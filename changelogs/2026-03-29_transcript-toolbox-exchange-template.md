@@ -6,5 +6,7 @@
 | feat | prd-api | 新增 DoubaoAsr 认证方案，支持豆包双 Header 认证模式 |
 | feat | prd-api | Exchange 测试端点支持音频文件上传测试 (test-audio) |
 | feat | prd-admin | Exchange 测试面板新增音频模式，支持文件上传和 URL 测试 |
-| feat | prd-api | 新增 DoubaoStreamAsrService，实现豆包 WebSocket 二进制协议流式语音识别 |
+| feat | prd-api | 新增 DoubaoStreamAsrService，实现豆包 WebSocket 二进制协议流式语音识别（含 PCM 自动重采样） |
 | feat | prd-api | 新增 doubao-asr-stream 转换器标记和导入模板 |
+| fix | prd-api | 修复流式 ASR 音频格式声明 (wav→pcm) 和结果提取 (result 对象兼容) |
+| feat | prd-api | DoubaoStreamAsrService 自动 48kHz/2ch → 16kHz/1ch 重采样，纯 C# 无需 ffmpeg |
