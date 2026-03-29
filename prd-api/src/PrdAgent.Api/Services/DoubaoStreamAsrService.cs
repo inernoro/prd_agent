@@ -79,38 +79,83 @@ public class DoubaoStreamAsrService
         var segmentDurationMs = 200;
         var sampleRate = 16000;
 
-        // 解析音频：WAV 直接提取 PCM，其他格式用 ffmpeg 转换为 16kHz/1ch WAV
+        // 统一转换策略：
+        // 1. 标准 16bit WAV → 直接解析 PCM（最快）
+        // 2. 非标准 WAV（24bit 等）或非 WAV → ffmpeg 转 16kHz/1ch/16bit WAV
+        // 3. 任何解析失败 → ffmpeg 兜底
         byte[] pcmData;
         int channels = 1, bitsPerSample = 16, actualRate = sampleRate;
+        var needFfmpeg = false;
 
         if (IsWavFile(audioData))
         {
-            var wavInfo = ReadWavInfo(audioData);
-            channels = wavInfo.Channels;
-            bitsPerSample = wavInfo.BitsPerSample;
-            actualRate = wavInfo.SampleRate;
-            pcmData = wavInfo.PcmData;
-            _logger.LogInformation("[DoubaoStreamAsr] WAV 解析: channels={Ch}, bits={Bits}, rate={Rate}, pcm={PcmLen}bytes",
-                channels, bitsPerSample, actualRate, pcmData.Length);
+            try
+            {
+                var wavInfo = ReadWavInfo(audioData);
+                if (wavInfo.BitsPerSample != 16 || wavInfo.PcmData.Length == 0)
+                {
+                    // 非 16bit WAV（如 24bit）或空数据 → ffmpeg 转换
+                    _logger.LogInformation("[DoubaoStreamAsr] WAV 非标准格式 (bits={Bits}, pcm={Len}), 走 ffmpeg",
+                        wavInfo.BitsPerSample, wavInfo.PcmData.Length);
+                    needFfmpeg = true;
+                }
+                else
+                {
+                    channels = wavInfo.Channels;
+                    bitsPerSample = wavInfo.BitsPerSample;
+                    actualRate = wavInfo.SampleRate;
+                    pcmData = wavInfo.PcmData;
+                    _logger.LogInformation("[DoubaoStreamAsr] WAV 解析: channels={Ch}, bits={Bits}, rate={Rate}, pcm={PcmLen}bytes",
+                        channels, bitsPerSample, actualRate, pcmData.Length);
+                    goto wavParsed;
+                }
+            }
+            catch (Exception ex)
+            {
+                // WAV 头损坏/截断 → ffmpeg 兜底
+                _logger.LogWarning(ex, "[DoubaoStreamAsr] WAV 解析失败, 走 ffmpeg 兜底");
+                needFfmpeg = true;
+            }
         }
         else
         {
-            // 非 WAV 格式（MP3/M4A/OGG/FLAC/WebM/MP4 等）→ ffmpeg 转 16kHz/1ch WAV
-            _logger.LogInformation("[DoubaoStreamAsr] 非 WAV 格式, 使用 ffmpeg 转换, input={Size}bytes", audioData.Length);
+            needFfmpeg = true;
+        }
+
+        // ffmpeg 转换路径
+        if (needFfmpeg)
+        {
+            _logger.LogInformation("[DoubaoStreamAsr] 使用 ffmpeg 转换, input={Size}bytes", audioData.Length);
             var convertedWav = await ConvertToWavWithFfmpeg(audioData);
             if (convertedWav == null)
             {
-                result.Error = "ffmpeg 转换失败：不支持的音频格式或 ffmpeg 未安装";
+                result.Error = "音频格式转换失败：不支持的格式或文件已损坏";
                 return result;
             }
-            var wavInfo = ReadWavInfo(convertedWav);
-            channels = wavInfo.Channels;
-            bitsPerSample = wavInfo.BitsPerSample;
-            actualRate = wavInfo.SampleRate;
-            pcmData = wavInfo.PcmData;
-            _logger.LogInformation("[DoubaoStreamAsr] ffmpeg 转换完成: channels={Ch}, bits={Bits}, rate={Rate}, pcm={PcmLen}bytes",
-                channels, bitsPerSample, actualRate, pcmData.Length);
+            try
+            {
+                var wavInfo = ReadWavInfo(convertedWav);
+                channels = wavInfo.Channels;
+                bitsPerSample = wavInfo.BitsPerSample;
+                actualRate = wavInfo.SampleRate;
+                pcmData = wavInfo.PcmData;
+                _logger.LogInformation("[DoubaoStreamAsr] ffmpeg 转换完成: channels={Ch}, bits={Bits}, rate={Rate}, pcm={PcmLen}bytes",
+                    channels, bitsPerSample, actualRate, pcmData.Length);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[DoubaoStreamAsr] ffmpeg 输出 WAV 解析失败");
+                result.Error = $"音频处理失败: {ex.Message}";
+                return result;
+            }
         }
+        else
+        {
+            // 不会走到这里，编译器需要
+            result.Error = "未知音频处理错误";
+            return result;
+        }
+        wavParsed:
 
         // 豆包 WebSocket ASR 要求 16kHz 单声道 16bit PCM，需要重采样
         const int targetRate = 16000;
@@ -250,6 +295,164 @@ public class DoubaoStreamAsrService
             {
                 try { await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None); }
                 catch { /* ignore close errors */ }
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// 带回调的流式 ASR 转录（SSE 实时推送用）
+    /// 每个阶段、每帧结果都通过回调通知调用方
+    /// </summary>
+    public async Task<StreamAsrResult> TranscribeWithCallbackAsync(
+        string wsUrl, string appKey, string accessKey, byte[] audioData,
+        Dictionary<string, object>? config = null,
+        Func<string, string, Task>? onStage = null,
+        Func<int, int, Task>? onProgress = null,
+        Func<int, string, bool, Task>? onFrame = null,
+        CancellationToken ct = default)
+    {
+        var result = new StreamAsrResult();
+
+        // 音频预处理（复用 TranscribeAsync 的逻辑）
+        byte[] pcmData;
+        int channels = 1, bitsPerSample = 16, actualRate = 16000;
+
+        if (onStage != null) await onStage("converting", "音频格式检测与转换...");
+
+        if (IsWavFile(audioData))
+        {
+            try
+            {
+                var wavInfo = ReadWavInfo(audioData);
+                if (wavInfo.BitsPerSample != 16 || wavInfo.PcmData.Length == 0)
+                {
+                    if (onStage != null) await onStage("converting", "非标准 WAV, ffmpeg 转换中...");
+                    var converted = await ConvertToWavWithFfmpeg(audioData);
+                    if (converted == null) { result.Error = "音频格式转换失败"; return result; }
+                    wavInfo = ReadWavInfo(converted);
+                }
+                channels = wavInfo.Channels; bitsPerSample = wavInfo.BitsPerSample;
+                actualRate = wavInfo.SampleRate; pcmData = wavInfo.PcmData;
+            }
+            catch
+            {
+                if (onStage != null) await onStage("converting", "WAV 解析失败, ffmpeg 兜底转换...");
+                var converted = await ConvertToWavWithFfmpeg(audioData);
+                if (converted == null) { result.Error = "音频格式转换失败"; return result; }
+                var wi = ReadWavInfo(converted);
+                channels = wi.Channels; bitsPerSample = wi.BitsPerSample;
+                actualRate = wi.SampleRate; pcmData = wi.PcmData;
+            }
+        }
+        else
+        {
+            if (onStage != null) await onStage("converting", "非 WAV 格式, ffmpeg 转换中...");
+            var converted = await ConvertToWavWithFfmpeg(audioData);
+            if (converted == null) { result.Error = "音频格式转换失败"; return result; }
+            var wi = ReadWavInfo(converted);
+            channels = wi.Channels; bitsPerSample = wi.BitsPerSample;
+            actualRate = wi.SampleRate; pcmData = wi.PcmData;
+        }
+
+        // 重采样
+        const int targetRate = 16000; const int targetCh = 1;
+        if (actualRate != targetRate || channels != targetCh)
+        {
+            pcmData = ResamplePcm(pcmData, channels, bitsPerSample, actualRate, targetCh, targetRate);
+            channels = targetCh; actualRate = targetRate;
+        }
+
+        if (onStage != null) await onStage("converted", $"音频就绪: {pcmData.Length / 1024}KB, 16kHz/1ch");
+
+        // 分片
+        var segDurMs = 200;
+        var bytesPerSec = channels * (bitsPerSample / 8) * actualRate;
+        var segSize = bytesPerSec * segDurMs / 1000;
+        if (segSize <= 0) segSize = 3200;
+        var segments = SplitAudio(pcmData, segSize);
+
+        // WebSocket
+        var resourceId = config?.GetValueOrDefault("resourceId")?.ToString() ?? "volc.bigasr.sauc.duration";
+        var headers = new Dictionary<string, string>
+        {
+            ["X-Api-Resource-Id"] = resourceId,
+            ["X-Api-Request-Id"] = Guid.NewGuid().ToString(),
+        };
+        if (!string.IsNullOrEmpty(appKey))
+        {
+            headers["X-Api-App-Key"] = appKey;
+            headers["X-Api-Access-Key"] = accessKey;
+        }
+        else
+        {
+            headers["x-api-key"] = accessKey;
+        }
+
+        using var ws = new System.Net.WebSockets.ClientWebSocket();
+        foreach (var (key, value) in headers) ws.Options.SetRequestHeader(key, value);
+
+        try
+        {
+            if (onStage != null) await onStage("connecting", $"连接 {wsUrl}...");
+            await ws.ConnectAsync(new Uri(wsUrl), ct);
+
+            var seq = 1;
+            var fullReq = BuildFullClientRequest(seq, channels, bitsPerSample, actualRate, config);
+            await ws.SendAsync(new ArraySegment<byte>(fullReq), System.Net.WebSockets.WebSocketMessageType.Binary, true, ct);
+            seq++;
+            var initResp = await ReceiveOneAsync(ws, ct);
+            if (initResp.Code != 0) { result.Error = $"初始化失败: code={initResp.Code}"; return result; }
+
+            if (onStage != null) await onStage("sending", $"开始发送 {segments.Count} 个音频分片...");
+
+            // 并发发送 + 接收
+            var sendSeq = seq;
+            var sendTask = Task.Run(async () =>
+            {
+                for (var i = 0; i < segments.Count; i++)
+                {
+                    var isLast = i == segments.Count - 1;
+                    var audioReq = BuildAudioOnlyRequest(sendSeq, segments[i], isLast);
+                    await ws.SendAsync(new ArraySegment<byte>(audioReq), System.Net.WebSockets.WebSocketMessageType.Binary, true, CancellationToken.None);
+                    if (onProgress != null) await onProgress(i + 1, segments.Count);
+                    if (!isLast) { sendSeq++; await Task.Delay(segDurMs, CancellationToken.None); }
+                }
+            }, CancellationToken.None);
+
+            var responses = new List<AsrResponseFrame>();
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(120);
+            while (DateTime.UtcNow < deadline)
+            {
+                try
+                {
+                    var resp = await ReceiveOneAsync(ws, CancellationToken.None);
+                    responses.Add(resp);
+                    var frameText = ExtractTextFromPayload(resp);
+                    if (onFrame != null) await onFrame(resp.PayloadSequence, frameText, resp.IsLastPackage);
+                    if (resp.IsLastPackage || resp.Code != 0) break;
+                }
+                catch (System.Net.WebSockets.WebSocketException) { break; }
+            }
+
+            await sendTask;
+
+            result.Responses = responses;
+            result.Success = responses.All(r => r.Code == 0);
+            result.FullText = ExtractFullText(responses);
+            result.Segments = ExtractSegments(responses);
+        }
+        catch (Exception ex)
+        {
+            result.Error = ex.Message;
+        }
+        finally
+        {
+            if (ws.State == System.Net.WebSockets.WebSocketState.Open)
+            {
+                try { await ws.CloseAsync(System.Net.WebSockets.WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None); }
+                catch { /* ignore */ }
             }
         }
 

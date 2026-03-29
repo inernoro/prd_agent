@@ -9,4 +9,7 @@
 | feat | prd-api | 新增 DoubaoStreamAsrService，实现豆包 WebSocket 二进制协议流式语音识别（含 PCM 自动重采样） |
 | feat | prd-api | 新增 doubao-asr-stream 转换器标记和导入模板 |
 | fix | prd-api | 修复流式 ASR 音频格式声明 (wav→pcm) 和结果提取 (result 对象兼容) |
-| feat | prd-api | DoubaoStreamAsrService 自动 48kHz/2ch → 16kHz/1ch 重采样，纯 C# 无需 ffmpeg |
+| feat | prd-api | DoubaoStreamAsrService 自动重采样 + ffmpeg 转换（MP3/M4A/OGG/FLAC/WebM/MP4/24bit WAV） |
+| feat | prd-api | 流式 ASR SSE 端点 (/api/test/stream-asr/sse)，逐帧推送识别结果 |
+| fix | prd-api | 修复 24bit WAV 和截断 WAV 的边界处理 |
+| feat | prd-api | Dockerfile + cds-compose.yml 自动安装 ffmpeg |
