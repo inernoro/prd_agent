@@ -74,7 +74,7 @@ import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/cn';
 import type { Model } from '@/types/admin';
-import type { ImageGenPlanItem } from '@/services/contracts/imageGen';
+import type { CreateImageGenRunInput, ImageGenPlanItem } from '@/services/contracts/imageGen';
 
 // 3 个状态：0=upload, 1=editing, 2=markersGenerated
 type WorkflowPhase = 0 | 1 | 2;
@@ -531,19 +531,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       isImageGen: true,
     } as Model;
   }, [effectiveModel]);
-
-  // mainModel 由 effectiveChatModel 驱动（用于标记生成模型名称显示）
-  const mainModel = useMemo<Model | null>(() => {
-    if (!effectiveChatModel) return null;
-    return {
-      id: effectiveChatModel.id,
-      name: effectiveChatModel.name,
-      modelName: effectiveChatModel.modelName,
-      platformId: effectiveChatModel.platformId,
-      enabled: effectiveChatModel.enabled,
-      isMain: true,
-    } as Model;
-  }, [effectiveChatModel]);
 
   // 生图模型尺寸选项（按分辨率分组，从后端 adapter-info 获取）
   const [sizesByResolutionForPicker, setSizesByResolutionForPicker] = useState<SizesByResolution>({ '1k': [], '2k': [], '4k': [] });
@@ -1496,7 +1483,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     );
     const idem = `article_img_${workspaceId}_${markerIndex}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     // 如果用户选择了特定模型，传入 platformId 和 modelId 供后端使用
-    const runInput: Record<string, unknown> = {
+    const runInput: CreateImageGenRunInput = {
       items: [{ prompt: plannedPrompt, count: 1, size: plannedSize }],
       size: plannedSize,
       responseFormat: 'url',
