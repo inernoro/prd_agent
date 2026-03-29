@@ -42,10 +42,15 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     #cds-widget button{display:flex;align-items:center;justify-content:center;padding:2px;border-radius:4px;border:none;background:transparent;color:inherit;cursor:pointer;opacity:0.6}
     #cds-widget button:hover{opacity:1}
     #cds-widget .cds-panel{margin-bottom:4px;padding:10px 12px;border-radius:8px;background:rgba(22,27,34,0.95);backdrop-filter:blur(12px);border:1px solid rgba(63,185,80,0.3);box-shadow:0 4px 16px rgba(0,0,0,0.4);width:260px;overflow:hidden}
-    #cds-widget .cds-deploy-btn{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:6px;border:1px solid #30363d;background:#21262d;color:#c9d1d9;font-size:11px;cursor:pointer;width:100%;opacity:1}
+    #cds-widget .cds-deploy-btn{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:6px;border:1px solid #30363d;background:#21262d;color:#c9d1d9;font-size:11px;cursor:pointer;flex:1;min-width:0;opacity:1}
     #cds-widget .cds-deploy-btn:hover{border-color:#58a6ff}
     #cds-widget .cds-deploy-btn:disabled{cursor:wait;opacity:0.5}
-    #cds-widget .cds-deploy-btn.full{background:#161b22}
+    #cds-widget .cds-deploy-btn.full{background:#161b22;width:100%}
+    #cds-widget .cds-deploy-row{display:flex;gap:3px;align-items:stretch}
+    #cds-widget .cds-log-btn{display:flex;align-items:center;justify-content:center;width:28px;flex-shrink:0;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;cursor:pointer;font-size:10px;padding:0}
+    #cds-widget .cds-log-btn:hover{border-color:#58a6ff;color:#c9d1d9}
+    #cds-widget .cds-log-panel{margin-top:6px;padding:6px 8px;border-radius:6px;background:#0d1117;border:1px solid #30363d;max-height:200px;overflow-y:auto;font-size:10px;line-height:1.5;white-space:pre-wrap;word-break:break-all;color:#8b949e;font-family:ui-monospace,SFMono-Regular,monospace}
+    #cds-widget .cds-log-header{display:flex;align-items:center;justify-content:space-between;margin-top:6px;margin-bottom:2px;font-size:10px;color:#8b949e}
     #cds-widget .cds-mode-row{display:flex;align-items:center;gap:4px;margin-bottom:6px}
     #cds-widget .cds-mode-label{font-size:10px;color:#8b949e;flex-shrink:0}
     #cds-widget .cds-mode-select{font-size:10px;padding:2px 4px;border-radius:4px;border:1px solid #30363d;background:#161b22;color:#c9d1d9;cursor:pointer;flex:1;min-width:0}
@@ -65,6 +70,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   var ICON_X='<svg class="cds-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
   var ICON_UP='<svg class="cds-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px"><polyline points="18 15 12 9 6 15"/></svg>';
   var ICON_DOWN='<svg class="cds-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px"><polyline points="6 9 12 15 18 9"/></svg>';
+  var ICON_LOG='<svg viewBox="0 0 16 16" fill="currentColor" style="width:12px;height:12px"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.5 0a.25.25 0 01.25-.25h10.5a.25.25 0 01.25.25v7.5a.25.25 0 01-.25.25h-4.5a.75.75 0 00-.75.75v2.19l-2.72-2.72a.75.75 0 00-.53-.22H2.75a.25.25 0 01-.25-.25v-7.5z"/></svg>';
 
   // ── State ──
   var expanded=false;
@@ -78,6 +84,9 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   var steps=[];
   var resultMsg='';
   var resultOk=true;
+  var logProfileId=null;
+  var logContent='';
+  var logLoading=false;
   var titlePrefix='';
   var titleObserver=null;
 
@@ -153,9 +162,12 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
             modeTag=' ('+p.deployModes[p.activeDeployMode].label+')';
           }
           var isThis=deploying&&deployProfileId===p.id;
+          h+='<div class="cds-deploy-row">';
           h+='<button class="cds-deploy-btn" data-profile="'+p.id+'"'+(deploying?' disabled':'')+' style="opacity:'+(deploying&&!isThis?'0.5':'1')+'">';
           h+=(isThis?'<span class="cds-spinner"></span>':ICON_REFRESH);
           h+=' 更新 '+p.name+modeTag+'</button>';
+          h+='<button class="cds-log-btn" data-log-profile="'+p.id+'" title="查看 '+p.name+' 日志">'+ICON_LOG+'</button>';
+          h+='</div>';
         }
         if(profiles.length>1){
           var isAll=deploying&&deployProfileId===null;
@@ -178,6 +190,14 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
             h+='<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+s.title+'</span></div>';
           }
           h+='</div>';
+        }
+
+        // Log panel
+        if(logProfileId){
+          var logProfileName=logProfileId;
+          for(var lpi=0;lpi<profiles.length;lpi++){if(profiles[lpi].id===logProfileId)logProfileName=profiles[lpi].name;}
+          h+='<div class="cds-log-header"><span>'+logProfileName+' 日志</span><button data-action="close-log" style="background:none;border:none;color:#8b949e;cursor:pointer;font-size:12px;padding:2px 4px">'+ICON_X+'</button></div>';
+          h+='<div class="cds-log-panel">'+(logLoading?'<span class="cds-spinner"></span> 加载中...':logContent||'(空)')+'</div>';
         }
 
         // Result
@@ -214,12 +234,15 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     if(!btn)return;
     var action=btn.getAttribute('data-action');
     if(action==='dismiss'){root.remove();return;}
+    if(action==='close-log'){logProfileId=null;logContent='';render();return;}
     if(action==='toggle'){
       expanded=!expanded;
       if(expanded)fetchBranchInfo();
       render();
       return;
     }
+    var logPid=btn.getAttribute('data-log-profile');
+    if(logPid){fetchContainerLog(logPid);return;}
     var profileId=btn.getAttribute('data-profile');
     if(profileId&&!deploying){
       doDeploy(profileId==='__all__'?undefined:profileId);
@@ -289,6 +312,25 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
       profiles=[];
       render();
     });
+  }
+
+  function fetchContainerLog(pid){
+    if(logProfileId===pid){logProfileId=null;logContent='';render();return;}
+    logProfileId=pid;logContent='';logLoading=true;render();
+    fetch(API+'/branches/'+BRANCH_ID+'/container-logs',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({profileId:pid})
+    }).then(function(r){return r.json();}).then(function(d){
+      logContent=d.logs||d.error||'(空)';
+      // Keep last 80 lines
+      var lines=logContent.split('\\n');
+      if(lines.length>80)logContent=lines.slice(-80).join('\\n');
+      logLoading=false;render();
+      // Scroll log panel to bottom
+      var lp=root.querySelector('.cds-log-panel');
+      if(lp)lp.scrollTop=lp.scrollHeight;
+    }).catch(function(e){logContent='Error: '+e.message;logLoading=false;render();});
   }
 
   function doDeploy(profileId){
