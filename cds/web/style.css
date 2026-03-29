@@ -1964,79 +1964,55 @@ a.branch-name:hover { color: var(--accent); }
 }
 
 /* ── Color-marked card — amber/gold static highlight ── */
+/* border-color 和 ripple ::after 的 border 完全一致，无闪烁 */
 .branch-card.is-color-marked {
-  border: 2px solid transparent;
-  background-image:
-    linear-gradient(var(--bg-card), var(--bg-card)),
-    linear-gradient(135deg, #f59e0b, #eab308, #d97706, #f59e0b);
-  background-origin: border-box;
-  background-clip: padding-box, border-box;
-  border-radius: var(--radius);
+  border-color: rgba(245, 158, 11, 0.65);
   box-shadow:
     0 0 10px 1px rgba(245, 158, 11, 0.15),
+    inset 0 0 16px 2px rgba(245, 158, 11, 0.06),
     0 2px 8px rgba(0,0,0,0.2);
   position: relative;
-}
-/* Inner warm tint */
-.branch-card.is-color-marked::before {
-  content: '';
-  position: absolute; inset: 0;
-  border-radius: calc(var(--radius) - 2px);
-  background: linear-gradient(135deg, rgba(245, 158, 11, 0.04), rgba(234, 179, 8, 0.03), rgba(217, 119, 6, 0.04));
-  pointer-events: none;
-  z-index: 0;
 }
 
 /* Light theme */
 [data-theme="light"] .branch-card.is-color-marked {
-  background-image:
-    linear-gradient(var(--bg-card), var(--bg-card)),
-    linear-gradient(135deg, #d97706, #b45309, #d97706);
-  background-origin: border-box;
-  background-clip: padding-box, border-box;
+  border-color: rgba(217, 119, 6, 0.5);
   box-shadow:
     0 0 8px 1px rgba(217, 119, 6, 0.12),
+    inset 0 0 12px 2px rgba(217, 119, 6, 0.04),
     0 2px 8px rgba(0,0,0,0.06);
 }
 
 /* ── Ripple overlay for color-mark transition ── */
 .color-mark-ripple {
   position: absolute;
-  inset: 0;
+  inset: -2px; /* 覆盖 border 区域 */
   border-radius: inherit;
   pointer-events: none;
   z-index: 2;
-  overflow: hidden;
 }
 .color-mark-ripple::after {
   content: '';
   position: absolute;
   inset: 0;
+  border-radius: inherit;
   clip-path: circle(0% at var(--cm-ripple-x, 50%) var(--cm-ripple-y, 50%));
 }
-/* Gold shockwave: bright edge via box-shadow on the clip-path circle */
+/* 金色染色：内容 tint + 金色边框一起随 clip-path 扩展 */
 .color-mark-ripple.ripple-marked::after {
-  background: rgba(245, 158, 11, 0.06);
-  backdrop-filter: brightness(0.95) saturate(1.2);
-  -webkit-backdrop-filter: brightness(0.95) saturate(1.2);
-  box-shadow: inset 0 0 0 3px rgba(245, 158, 11, 0.7), inset 0 0 20px 4px rgba(245, 158, 11, 0.2);
+  background: rgba(245, 158, 11, 0.05);
+  border: 2px solid rgba(245, 158, 11, 0.65);
+  box-shadow: inset 0 0 16px 2px rgba(245, 158, 11, 0.12), 0 0 10px 1px rgba(245, 158, 11, 0.15);
 }
-/* Ripple out: wash out with silver edge */
+/* 取消：银色边框染回 */
 .color-mark-ripple.ripple-normal::after {
   background: transparent;
-  backdrop-filter: brightness(1.08) saturate(0.8);
-  -webkit-backdrop-filter: brightness(1.08) saturate(0.8);
-  box-shadow: inset 0 0 0 2px rgba(180, 180, 180, 0.4), inset 0 0 12px 2px rgba(180, 180, 180, 0.1);
+  border: 2px solid var(--card-border);
 }
 [data-theme="light"] .color-mark-ripple.ripple-marked::after {
-  background: rgba(217, 119, 6, 0.05);
-  backdrop-filter: brightness(0.98) saturate(1.1);
-  -webkit-backdrop-filter: brightness(0.98) saturate(1.1);
-  box-shadow: inset 0 0 0 3px rgba(217, 119, 6, 0.5), inset 0 0 16px 3px rgba(217, 119, 6, 0.15);
-}
-[data-theme="light"] .color-mark-ripple.ripple-normal::after {
-  backdrop-filter: brightness(1.03) saturate(0.9);
-  -webkit-backdrop-filter: brightness(1.03) saturate(0.9);
+  background: rgba(217, 119, 6, 0.04);
+  border-color: rgba(217, 119, 6, 0.5);
+  box-shadow: inset 0 0 12px 2px rgba(217, 119, 6, 0.08), 0 0 8px 1px rgba(217, 119, 6, 0.1);
 }
 .color-mark-ripple.animate::after {
   animation: cm-ripple-expand 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;

@@ -1274,6 +1274,7 @@ async function toggleColorMark(id, event) {
     overlay.addEventListener('animationend', () => {
       // Apply the actual class change after the ripple covers the card
       card.classList.toggle('is-color-marked', newVal);
+      // Remove overlay — is-color-marked CSS now takes over the border
       overlay.remove();
     }, { once: true });
   } else {
