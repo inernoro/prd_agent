@@ -143,7 +143,8 @@ public class TranscriptRunWorker : BackgroundService
             {
                 ["file"] = (item.FileName, audioBytes, item.MimeType)
             },
-            TimeoutSeconds = 600
+            TimeoutSeconds = 600,
+            Context = new GatewayRequestContext { UserId = run.OwnerUserId }
         };
 
         await UpdateProgress(db, run.Id, 50);
@@ -216,6 +217,7 @@ public class TranscriptRunWorker : BackgroundService
             AppCallerCode = AppCallerRegistry.TranscriptAgent.Copywrite.Generate,
             ModelType = ModelTypes.Chat,
             RequestBody = requestBody,
+            Context = new GatewayRequestContext { UserId = run.OwnerUserId }
         };
 
         await UpdateProgress(db, run.Id, 50);
