@@ -2058,7 +2058,7 @@ function renderBranches() {
     const hasDeployModes = allModes.length > 0;
     const deployModeMenuItems = hasDeployModes
       ? allModes.map(m => {
-          const check = m.active ? '● ' : '';
+          const check = m.active ? '✓ ' : '';
           return `<div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu(); switchModeAndDeploy('${esc(b.id)}', '${esc(m.profileId)}', '${esc(m.modeId)}')">${check}${esc(m.profileName)}: ${esc(m.label)}</div>`;
         }).join('')
       : '';
