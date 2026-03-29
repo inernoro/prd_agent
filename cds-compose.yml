@@ -50,7 +50,7 @@ x-cds-deploy-modes:
         corepack enable &&
         pnpm install --frozen-lockfile &&
         pnpm run build &&
-        npx -y serve -s dist -l 8000
+        npx -y serve -s dist -l 8000 --listen 0.0.0.0
 
 services:
   # ── App Services (有相对路径 volume mount) ──
