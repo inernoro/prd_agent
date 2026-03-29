@@ -156,39 +156,49 @@ public class DoubaoStreamAsrService
                 return result;
             }
 
-            // 3. 发送音频分片 + 接收响应
+            // 3. 发送音频分片（独立 seq 变量避免并发问题）
+            var sendSeq = seq;
             var sendTask = Task.Run(async () =>
             {
                 for (var i = 0; i < segments.Count; i++)
                 {
                     var isLast = i == segments.Count - 1;
-                    var audioRequest = BuildAudioOnlyRequest(seq, segments[i], isLast);
+                    var audioRequest = BuildAudioOnlyRequest(sendSeq, segments[i], isLast);
                     await ws.SendAsync(new ArraySegment<byte>(audioRequest), WebSocketMessageType.Binary, true, CancellationToken.None);
+                    _logger.LogDebug("[DoubaoStreamAsr] 发送分片 {Idx}/{Total}, seq={Seq}, last={Last}, size={Size}",
+                        i + 1, segments.Count, sendSeq, isLast, segments[i].Length);
 
                     if (!isLast)
                     {
-                        seq++;
+                        sendSeq++;
                         await Task.Delay(segmentDurationMs, CancellationToken.None);
                     }
                 }
-                _logger.LogInformation("[DoubaoStreamAsr] 所有音频分片已发送");
+                _logger.LogInformation("[DoubaoStreamAsr] 所有音频分片已发送, 最终 seq={Seq}", sendSeq);
             }, CancellationToken.None);
 
             // 4. 持续接收响应直到最后一个包
             var responses = new List<AsrResponseFrame>();
-            while (true)
+            var recvTimeout = TimeSpan.FromSeconds(120);
+            var recvDeadline = DateTime.UtcNow + recvTimeout;
+            while (DateTime.UtcNow < recvDeadline)
             {
-                var resp = await ReceiveOneAsync(ws, CancellationToken.None);
-                responses.Add(resp);
-
-                if (resp.PayloadMsg != null)
+                try
                 {
-                    _logger.LogDebug("[DoubaoStreamAsr] 收到响应: seq={Seq}, last={Last}",
-                        resp.PayloadSequence, resp.IsLastPackage);
-                }
+                    var resp = await ReceiveOneAsync(ws, CancellationToken.None);
+                    responses.Add(resp);
 
-                if (resp.IsLastPackage || resp.Code != 0)
+                    _logger.LogInformation("[DoubaoStreamAsr] 收到响应帧: seq={Seq}, last={Last}, code={Code}, hasPayload={HasPayload}",
+                        resp.PayloadSequence, resp.IsLastPackage, resp.Code, resp.PayloadMsg != null);
+
+                    if (resp.IsLastPackage || resp.Code != 0)
+                        break;
+                }
+                catch (WebSocketException ex)
+                {
+                    _logger.LogWarning(ex, "[DoubaoStreamAsr] WebSocket 接收异常, state={State}", ws.State);
                     break;
+                }
             }
 
             await sendTask;
