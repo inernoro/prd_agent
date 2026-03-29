@@ -125,12 +125,13 @@ public class TranscriptRunWorker : BackgroundService
 
         await UpdateProgress(db, run.Id, 30);
 
-        // 调用 ASR 模型池（与 VideoToDocRunWorker 相同模式）
+        // 调用 ASR 模型池
         var rawRequest = new GatewayRawRequest
         {
             AppCallerCode = AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
             ModelType = ModelTypes.Asr,
             EndpointPath = "/v1/audio/transcriptions",
+            IsMultipart = true,
             MultipartFields = new Dictionary<string, object>
             {
                 ["model"] = "whisper-1",
@@ -151,7 +152,10 @@ public class TranscriptRunWorker : BackgroundService
 
         if (rawResp?.Success != true || rawResp.Content == null)
         {
-            throw new InvalidOperationException($"ASR 转写失败: {rawResp?.ErrorMessage ?? "无响应"}");
+            var detail = rawResp?.ErrorMessage ?? rawResp?.Content ?? "无响应";
+            _logger.LogWarning("[transcript-agent] ASR 失败详情: StatusCode={StatusCode}, Error={Error}, Content={Content}",
+                rawResp?.StatusCode, rawResp?.ErrorMessage, rawResp?.Content?.Substring(0, Math.Min(rawResp.Content?.Length ?? 0, 500)));
+            throw new InvalidOperationException($"ASR 转写失败: {detail}");
         }
 
         await UpdateProgress(db, run.Id, 80);
