@@ -767,7 +767,7 @@ button.text-btn:hover { color: var(--accent); }
   background: var(--bg-card);
   border: 2px solid var(--card-border);
   border-radius: var(--radius);
-  transition: border-color 0.5s ease, box-shadow 0.5s ease, background 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
   overflow: hidden;
   position: relative;
@@ -1991,30 +1991,49 @@ a.branch-name:hover { color: var(--accent); }
   pointer-events: none;
   z-index: 2;
 }
-.color-mark-ripple::after {
+/* ::before = 金色边框层（仅描边，无填充） */
+.color-mark-ripple::before {
   content: '';
   position: absolute;
   inset: 0;
   border-radius: inherit;
   clip-path: circle(0% at var(--cm-ripple-x, 50%) var(--cm-ripple-y, 50%));
 }
-/* 金色染色：仅内容 tint，边框通过卡片 transition 渐变 */
-.color-mark-ripple.ripple-marked::after {
-  background: rgba(245, 158, 11, 0.06);
-  backdrop-filter: brightness(0.96) saturate(1.15);
-  -webkit-backdrop-filter: brightness(0.96) saturate(1.15);
+/* ::after = 内容 tint 层 */
+.color-mark-ripple::after {
+  content: '';
+  position: absolute;
+  inset: 2px; /* 内缩到 padding-box */
+  border-radius: calc(var(--radius) - 2px);
+  clip-path: circle(0% at var(--cm-ripple-x, 50%) var(--cm-ripple-y, 50%));
 }
-/* 取消标记 */
+/* 标记：金色边框 + amber tint */
+.color-mark-ripple.ripple-marked::before {
+  border: 2px solid rgba(245, 158, 11, 0.7);
+  box-shadow: 0 0 10px 1px rgba(245, 158, 11, 0.2);
+  background: transparent;
+}
+.color-mark-ripple.ripple-marked::after {
+  background: rgba(245, 158, 11, 0.05);
+}
+/* 取消标记：恢复默认边框 */
+.color-mark-ripple.ripple-normal::before {
+  border: 2px solid var(--card-border);
+  background: transparent;
+}
 .color-mark-ripple.ripple-normal::after {
   background: transparent;
-  backdrop-filter: brightness(1.04) saturate(0.9);
-  -webkit-backdrop-filter: brightness(1.04) saturate(0.9);
+}
+/* Light mode */
+[data-theme="light"] .color-mark-ripple.ripple-marked::before {
+  border-color: rgba(217, 119, 6, 0.55);
+  box-shadow: 0 0 8px 1px rgba(217, 119, 6, 0.15);
 }
 [data-theme="light"] .color-mark-ripple.ripple-marked::after {
   background: rgba(217, 119, 6, 0.04);
-  backdrop-filter: brightness(0.98) saturate(1.1);
-  -webkit-backdrop-filter: brightness(0.98) saturate(1.1);
 }
+/* 动画：两个伪元素同步扩展 */
+.color-mark-ripple.animate::before,
 .color-mark-ripple.animate::after {
   animation: cm-ripple-expand 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }

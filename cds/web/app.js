@@ -1262,9 +1262,6 @@ async function toggleColorMark(id, event) {
       Math.max(y, cardRect.height - y) ** 2
     ));
 
-    // 立即开始边框颜色过渡（CSS transition 0.5s 和 ripple 动画同步）
-    card.classList.toggle('is-color-marked', newVal);
-
     const overlay = document.createElement('div');
     overlay.className = 'color-mark-ripple';
     overlay.style.setProperty('--cm-ripple-x', `${x}px`);
@@ -1275,6 +1272,7 @@ async function toggleColorMark(id, event) {
     overlay.offsetHeight;
     overlay.classList.add('animate');
     overlay.addEventListener('animationend', () => {
+      card.classList.toggle('is-color-marked', newVal);
       overlay.remove();
     }, { once: true });
   } else {
