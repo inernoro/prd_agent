@@ -1280,14 +1280,30 @@ async function toggleColorMark(id, event) {
     borderEl.classList.add(newVal ? 'ring-marked' : 'ring-normal');
     card.appendChild(borderEl);
 
+    // Arc ring: gold circle that expands from click point (visible shockwave)
+    const arcRing = document.createElement('div');
+    arcRing.className = 'cm-arc-ring';
+    const diameter = maxRadius * 2;
+    arcRing.style.width = `${diameter}px`;
+    arcRing.style.height = `${diameter}px`;
+    arcRing.style.left = `${x - maxRadius}px`;
+    arcRing.style.top = `${y - maxRadius}px`;
+    if (!newVal) {
+      arcRing.style.borderColor = 'rgba(180,180,180,0.4)';
+      arcRing.style.boxShadow = '0 0 8px 1px rgba(180,180,180,0.15)';
+    }
+    card.appendChild(arcRing);
+
     overlay.offsetHeight;
     overlay.classList.add('animate');
     borderEl.classList.add('animate');
+    arcRing.classList.add('animate');
 
     borderEl.addEventListener('animationend', () => {
       card.classList.toggle('is-color-marked', newVal);
       overlay.remove();
       borderEl.remove();
+      arcRing.remove();
     }, { once: true });
   } else {
     // No card element — apply immediately

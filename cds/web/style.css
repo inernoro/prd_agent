@@ -2001,7 +2001,29 @@ a.branch-name:hover { color: var(--accent); }
 }
 .color-mark-ripple.ripple-marked::after {
   background: rgba(245, 158, 11, 0.04);
-  box-shadow: inset 0 0 0 2px rgba(245, 178, 11, 0.5), inset 0 0 12px 3px rgba(245, 158, 11, 0.1);
+}
+
+/* ── 金色圆弧冲击波：独立圆环元素，scale 扩展 ── */
+.cm-arc-ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 3px solid rgba(245, 178, 11, 0.85);
+  box-shadow: 0 0 14px 3px rgba(245, 158, 11, 0.35), inset 0 0 6px 1px rgba(245, 158, 11, 0.15);
+  pointer-events: none;
+  z-index: 4;
+  transform: scale(0);
+}
+.cm-arc-ring.animate {
+  animation: cm-arc-expand 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+@keyframes cm-arc-expand {
+  0%   { transform: scale(0); opacity: 1; }
+  80%  { opacity: 0.7; }
+  100% { transform: scale(1); opacity: 0; }
+}
+[data-theme="light"] .cm-arc-ring {
+  border-color: rgba(217, 119, 6, 0.7);
+  box-shadow: 0 0 10px 2px rgba(217, 119, 6, 0.25);
 }
 .color-mark-ripple.ripple-normal::after {
   background: transparent;
