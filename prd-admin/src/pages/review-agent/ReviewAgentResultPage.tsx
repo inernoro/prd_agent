@@ -248,6 +248,7 @@ export function ReviewAgentResultPage() {
               const isExpanded = expandedDims.has(dim.key);
               const scoreColor = pct >= 90 ? 'text-emerald-400' : pct >= 75 ? 'text-cyan-400' : pct >= 60 ? 'text-amber-400' : 'text-rose-400';
               const barColor = pct >= 90 ? 'bg-emerald-500' : pct >= 75 ? 'bg-cyan-500' : pct >= 60 ? 'bg-amber-500' : 'bg-rose-500';
+              const dimCfg = dimConfigs.find(c => c.key === dim.key);
 
               return (
                 <div key={dim.key} className="bg-white/3 border border-white/8 rounded-lg overflow-hidden">
@@ -275,20 +276,15 @@ export function ReviewAgentResultPage() {
                   </button>
                   {isExpanded && (
                     <div className="px-4 pb-3 border-t border-white/5 pt-3 space-y-2.5">
-                      {/* AI 评语 */}
                       {dim.comment && (
                         <p className="text-sm text-white/60 leading-relaxed">{dim.comment}</p>
                       )}
-                      {/* 明细要求（来自维度配置） */}
-                      {(() => {
-                        const cfg = dimConfigs.find(c => c.key === dim.key);
-                        return cfg?.description ? (
-                          <div className="rounded-lg px-3 py-2" style={{ background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)' }}>
-                            <p className="text-xs text-indigo-400/70 mb-1 font-medium">明细要求</p>
-                            <p className="text-xs text-white/40 leading-relaxed whitespace-pre-wrap">{cfg.description}</p>
-                          </div>
-                        ) : null;
-                      })()}
+                      {dimCfg?.description && (
+                        <div className="rounded-lg px-3 py-2" style={{ background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)' }}>
+                          <p className="text-xs text-indigo-400/70 mb-1 font-medium">明细要求</p>
+                          <p className="text-xs text-white/40 leading-relaxed whitespace-pre-wrap">{dimCfg.description}</p>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

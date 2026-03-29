@@ -18,7 +18,10 @@ export function ReviewAgentDimensionsModal({ open, onClose }: Props) {
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setExpandedKeys(new Set());
+      return;
+    }
     setLoading(true);
     setError('');
     getDimensions().then(res => {
