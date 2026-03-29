@@ -200,6 +200,22 @@ public class TranscriptAgentController : ControllerBase
         return Ok(templates);
     }
 
+    [HttpPost("templates")]
+    public async Task<IActionResult> CreateTemplate([FromBody] CreateTemplateDto dto)
+    {
+        var userId = this.GetRequiredUserId();
+        var template = new TranscriptTemplate
+        {
+            Name = dto.Name.Trim(),
+            Description = dto.Description?.Trim(),
+            Prompt = dto.Prompt.Trim(),
+            IsSystem = dto.IsSystem,
+            OwnerUserId = dto.IsSystem ? null : userId
+        };
+        await _db.TranscriptTemplates.InsertOneAsync(template);
+        return Ok(template);
+    }
+
     [HttpPost("items/{itemId}/copywrite")]
     public async Task<IActionResult> CreateCopywriteRun(string itemId, [FromBody] CreateCopywriteDto dto)
     {
@@ -311,4 +327,5 @@ public class TranscriptAgentController : ControllerBase
 
 public record CreateWorkspaceDto(string Title);
 public record CreateCopywriteDto(string TemplateId);
+public record CreateTemplateDto(string Name, string? Description, string Prompt, bool IsSystem = false);
 public record ExportDto(List<string> Formats);
