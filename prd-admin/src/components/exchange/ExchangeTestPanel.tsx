@@ -18,17 +18,29 @@ import {
   X,
   Clock,
 } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useRef, useState, useCallback } from 'react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { readSseStream, type SseEvent } from '@/lib/sse';
+import { useAuthStore } from '@/stores/authStore';
 
 /** 转换器是否为 fal.ai 图片类型 */
 function isFalImageType(type: string) {
   return ['fal-image', 'fal-image-edit'].includes(type);
 }
 
-/** 转换器是否为 ASR 语音类型 */
+/** 转换器是否为 ASR 语音类型（HTTP 异步） */
 function isAsrType(type: string) {
   return type === 'doubao-asr';
+}
+
+/** 转换器是否为流式 ASR（WebSocket + SSE） */
+function isStreamAsrType(type: string) {
+  return type === 'doubao-asr-stream';
+}
+
+/** 是否为任意 ASR 类型 */
+function isAnyAsrType(type: string) {
+  return isAsrType(type) || isStreamAsrType(type);
 }
 
 /** 将 File 转为 base64 data URI（fal.ai 原生支持） */
@@ -70,7 +82,8 @@ export function ExchangeTestPanel({
   onClose: () => void;
 }) {
   const showVisual = isFalImageType(exchange.transformerType);
-  const showAudio = isAsrType(exchange.transformerType);
+  const showAudio = isAnyAsrType(exchange.transformerType);
+  const isStream = isStreamAsrType(exchange.transformerType);
   const [mode, setMode] = useState<'visual' | 'json' | 'audio'>(
     showVisual ? 'visual' : showAudio ? 'audio' : 'json'
   );
@@ -111,6 +124,16 @@ export function ExchangeTestPanel({
   const [result, setResult] = useState<ExchangeTestResult | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // ===== Stream ASR SSE state =====
+  const [sseStage, setSseStage] = useState('');
+  const [sseMessage, setSseMessage] = useState('');
+  const [sseFrames, setSseFrames] = useState<{ seq: number; text: string; isLast: boolean }[]>([]);
+  const [sseProgress, setSseProgress] = useState<{ sent: number; total: number } | null>(null);
+  const [sseResult, setSseResult] = useState<{
+    success: boolean; text: string; segmentCount: number; durationMs: number; error?: string;
+  } | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
   // Build JSON from visual form
   const buildJsonFromForm = () => {
     const body: Record<string, unknown> = {
@@ -143,6 +166,76 @@ export function ExchangeTestPanel({
     }
     setMode('visual');
   };
+
+  // Handle stream ASR test (SSE)
+  const handleStreamAsrTest = useCallback(async () => {
+    if (!audioFile && !audioUrl.trim()) {
+      setSseResult({ success: false, text: '', segmentCount: 0, durationMs: 0, error: '请上传音频文件或输入音频 URL' });
+      return;
+    }
+    setLoading(true);
+    setResult(null);
+    setSseStage('');
+    setSseMessage('');
+    setSseFrames([]);
+    setSseProgress(null);
+    setSseResult(null);
+
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+
+    try {
+      const formData = new FormData();
+      if (audioFile) formData.append('file', audioFile);
+      if (audioUrl.trim()) formData.append('audioUrl', audioUrl.trim());
+
+      const token = useAuthStore.getState().token;
+      const res = await fetch(api.mds.exchanges.testStreamAsrSse(exchange.id), {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+        signal: ac.signal,
+      });
+
+      if (!res.ok) {
+        const errText = await res.text().catch(() => '');
+        setSseResult({ success: false, text: '', segmentCount: 0, durationMs: 0, error: errText || `HTTP ${res.status}` });
+        return;
+      }
+
+      await readSseStream(res, (evt: SseEvent) => {
+        if (!evt.data) return;
+        try {
+          const data = JSON.parse(evt.data);
+          if (evt.event === 'stage') {
+            setSseStage(data.stage ?? '');
+            setSseMessage(data.message ?? '');
+          } else if (evt.event === 'progress') {
+            setSseProgress({ sent: data.sent, total: data.total });
+          } else if (evt.event === 'frame') {
+            setSseFrames(prev => [...prev, { seq: data.seq, text: data.text, isLast: data.isLast }]);
+          } else if (evt.event === 'result') {
+            setSseResult({
+              success: data.success,
+              text: data.text ?? '',
+              segmentCount: data.segmentCount ?? 0,
+              durationMs: data.durationMs ?? 0,
+              error: data.error,
+            });
+          } else if (evt.event === 'error') {
+            setSseResult({ success: false, text: '', segmentCount: 0, durationMs: 0, error: data.error ?? '未知错误' });
+          }
+        } catch { /* ignore */ }
+      }, ac.signal);
+    } catch (err) {
+      if ((err as Error).name !== 'AbortError') {
+        setSseResult({ success: false, text: '', segmentCount: 0, durationMs: 0, error: '连接失败' });
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [audioFile, audioUrl, exchange.id]);
 
   // Handle test
   const handleTest = async (dryRun: boolean) => {
@@ -313,13 +406,22 @@ export function ExchangeTestPanel({
           )}
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" onClick={() => handleTest(true)} disabled={loading}>
-            <Eye size={13} className="mr-1" /> 仅预览转换
-          </Button>
-          <Button size="sm" onClick={() => handleTest(false)} disabled={loading}>
-            {loading ? <MapSpinner size={13} className="mr-1" /> : <Play size={13} className="mr-1" />}
-            发送测试
-          </Button>
+          {isStream && mode === 'audio' ? (
+            <Button size="sm" onClick={handleStreamAsrTest} disabled={loading}>
+              {loading ? <MapSpinner size={13} className="mr-1" /> : <Play size={13} className="mr-1" />}
+              流式测试
+            </Button>
+          ) : (
+            <>
+              <Button variant="secondary" size="sm" onClick={() => handleTest(true)} disabled={loading}>
+                <Eye size={13} className="mr-1" /> 仅预览转换
+              </Button>
+              <Button size="sm" onClick={() => handleTest(false)} disabled={loading}>
+                {loading ? <MapSpinner size={13} className="mr-1" /> : <Play size={13} className="mr-1" />}
+                发送测试
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
@@ -553,10 +655,19 @@ export function ExchangeTestPanel({
               <div className="text-[11px] text-muted-foreground">
                 输入可直接访问的音频文件 URL
               </div>
-              {/* 异步说明 */}
+              {/* 模式说明 */}
               <div className="mt-3 p-2 rounded bg-muted/20 text-[11px] text-muted-foreground space-y-1">
-                <div>该转换器使用 <strong>异步模式</strong>（submit + query 轮询）</div>
-                <div>提交后将自动轮询结果，可能需要等待数秒到数分钟</div>
+                {isStream ? (
+                  <>
+                    <div>该转换器使用 <strong>WebSocket 流式模式</strong>（实时推送）</div>
+                    <div>上传音频后通过 SSE 逐帧显示识别进度和结果</div>
+                  </>
+                ) : (
+                  <>
+                    <div>该转换器使用 <strong>异步模式</strong>（submit + query 轮询）</div>
+                    <div>提交后将自动轮询结果，可能需要等待数秒到数分钟</div>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -574,6 +685,95 @@ export function ExchangeTestPanel({
             onChange={e => setRequestBody(e.target.value)}
             spellCheck={false}
           />
+        </div>
+      )}
+
+      {/* ===== 流式 ASR SSE 结果区域 ===== */}
+      {isStream && (sseStage || sseFrames.length > 0 || sseResult) && (
+        <div className="space-y-3">
+          {/* 阶段指示器 */}
+          {sseStage && sseStage !== 'done' && (
+            <div className="flex items-center gap-2 text-xs">
+              <div className="relative flex h-2 w-2">
+                {sseStage !== 'error' && (
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
+                )}
+                <span className={`relative inline-flex rounded-full h-2 w-2 ${sseStage === 'error' ? 'bg-destructive' : 'bg-primary'}`} />
+              </div>
+              <span className="text-muted-foreground">{sseMessage}</span>
+              {sseProgress && (
+                <span className="text-muted-foreground/60">
+                  ({sseProgress.sent}/{sseProgress.total} 帧)
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* 进度条 */}
+          {sseProgress && sseProgress.total > 0 && sseStage !== 'done' && (
+            <div className="w-full bg-muted/30 rounded-full h-1.5">
+              <div
+                className="bg-primary h-1.5 rounded-full transition-all duration-200"
+                style={{ width: `${Math.min(100, (sseProgress.sent / sseProgress.total) * 100)}%` }}
+              />
+            </div>
+          )}
+
+          {/* 实时帧列表 */}
+          {sseFrames.length > 0 && (
+            <GlassCard className="p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-medium">实时识别帧</div>
+                <span className="text-[11px] text-muted-foreground">{sseFrames.length} 帧</span>
+              </div>
+              <div className="max-h-[200px] overflow-auto space-y-0.5">
+                {sseFrames.map((f, i) => (
+                  <div key={i} className={`text-[11px] px-2 py-0.5 rounded flex items-center gap-2 ${
+                    f.isLast ? 'bg-green-500/10 text-green-600' : 'bg-muted/20 text-foreground/80'
+                  }`}>
+                    <span className="text-muted-foreground/50 font-mono w-6 shrink-0 text-right">#{f.seq}</span>
+                    <span className="font-mono">{f.text || '—'}</span>
+                    {f.isLast && <Check size={10} className="text-green-500 shrink-0" />}
+                  </div>
+                ))}
+              </div>
+            </GlassCard>
+          )}
+
+          {/* 最终结果 */}
+          {sseResult && (
+            <GlassCard className="p-3 space-y-2">
+              <div className="flex items-center gap-3 text-xs">
+                {sseResult.success ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full"
+                    style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.95)', border: '1px solid rgba(34,197,94,0.28)' }}>
+                    <Check size={11} /> 转录成功
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full"
+                    style={{ background: 'rgba(239,68,68,0.12)', color: 'rgba(239,68,68,0.95)', border: '1px solid rgba(239,68,68,0.28)' }}>
+                    <X size={11} /> 失败
+                  </span>
+                )}
+                {sseResult.durationMs > 0 && (
+                  <span className="inline-flex items-center gap-1 text-muted-foreground">
+                    <Clock size={11} /> {sseResult.durationMs}ms
+                  </span>
+                )}
+                {sseResult.segmentCount > 0 && (
+                  <span className="text-muted-foreground">{sseResult.segmentCount} 段</span>
+                )}
+              </div>
+              {sseResult.error && (
+                <div className="text-xs text-destructive">{sseResult.error}</div>
+              )}
+              {sseResult.text && (
+                <div className="text-sm leading-relaxed p-2 rounded bg-muted/20">
+                  {sseResult.text}
+                </div>
+              )}
+            </GlassCard>
+          )}
         </div>
       )}
 

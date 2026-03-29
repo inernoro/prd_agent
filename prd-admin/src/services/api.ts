@@ -113,6 +113,7 @@ export const api = {
       list: () => '/api/mds/exchanges',
       byId: (id: string) => `/api/mds/exchanges/${id}`,
       test: (id: string) => `/api/mds/exchanges/${id}/test`,
+      testStreamAsrSse: (id: string) => `/api/mds/exchanges/${id}/test-stream-asr/sse`,
       transformerTypes: () => '/api/mds/exchanges/transformer-types',
       forPool: () => '/api/mds/exchanges/for-pool',
       templates: () => '/api/mds/exchanges/templates',
