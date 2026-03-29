@@ -1,5 +1,3 @@
-using MongoDB.Bson;
-using MongoDB.Bson.Serialization.Attributes;
 using PrdAgent.Core.Attributes;
 
 namespace PrdAgent.Core.Models;
@@ -7,9 +5,7 @@ namespace PrdAgent.Core.Models;
 [AppOwnership(AppNames.TranscriptAgent, AppNames.TranscriptAgentDisplay)]
 public class TranscriptItem
 {
-    [BsonId]
-    [BsonRepresentation(BsonType.ObjectId)]
-    public string Id { get; set; } = null!;
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     public string WorkspaceId { get; set; } = null!;
 
