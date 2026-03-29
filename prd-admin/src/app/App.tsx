@@ -66,6 +66,11 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const location = useLocation();
   if (!isAuthenticated) {
+    // 兼容 hash URL：如 /#/transcript-agent → 提取 /transcript-agent 作为 returnUrl
+    const hashPath = window.location.hash?.replace(/^#/, '') || '';
+    if (hashPath && hashPath !== '/') {
+      return <Navigate to={`/login?returnUrl=${encodeURIComponent(hashPath)}`} replace />;
+    }
     // 根路径未登录 → 展示公开首页；其他受保护路由 → 跳转登录页
     if (location.pathname === '/') {
       return <Navigate to="/home" replace />;

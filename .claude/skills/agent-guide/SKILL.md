@@ -304,6 +304,25 @@ ls .agent-workspace/*/progress.md 2>/dev/null
 
 ---
 
+## CDS 部署标签
+
+当使用 `/cds-deploy` 部署到 CDS 后，**必须自动给分支打标签**（≤7 字），方便用户在 CDS Dashboard 一眼识别：
+
+```bash
+BRANCH_ID=$(echo "$BRANCH" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
+curl -sf -X PATCH "$CDS/api/branches/$BRANCH_ID" \
+  -H "X-AI-Access-Key: $AI_ACCESS_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"tags\":[\"${AGENT_LABEL}\"]}"
+```
+
+标签命名规则：取 Agent 的中文简称，不超过 7 字。例如：
+- `transcript-agent` → `转录工作台`
+- `review-agent` → `产品评审员`
+- `defect-agent` → `缺陷管理`
+
+---
+
 ## 跨会话记忆协议
 
 **核心原则**：`progress.md` 是跨会话的唯一记忆载体。
