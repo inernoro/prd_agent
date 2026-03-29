@@ -84,4 +84,21 @@ export const AUTH_SCHEME_OPTIONS = [
   { value: 'Bearer', label: 'Bearer (Authorization: Bearer {key})' },
   { value: 'Key', label: 'Key (Authorization: Key {key})' },
   { value: 'XApiKey', label: 'x-api-key (Header: x-api-key)' },
+  { value: 'DoubaoAsr', label: '豆包 ASR (X-Api-App-Key + X-Api-Access-Key)' },
 ] as const;
+
+/** Exchange 导入模板定义 */
+export interface ExchangeTemplate {
+  /** 模板 ID */
+  id: string;
+  /** 模板名称 */
+  name: string;
+  /** 描述 */
+  description: string;
+  /** 预设 Exchange 配置（除 API Key 外） */
+  preset: Omit<CreateExchangeRequest, 'targetApiKey'>;
+  /** API Key 输入提示 */
+  apiKeyPlaceholder: string;
+  /** API Key 格式说明 */
+  apiKeyHint: string;
+}

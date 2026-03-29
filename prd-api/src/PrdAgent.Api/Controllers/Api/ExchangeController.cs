@@ -328,6 +328,16 @@ public class ExchangeController : ControllerBase
                 case "key":
                     httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Key", apiKey);
                     break;
+                case "doubao-asr":
+                    var parts = apiKey.Split('|', 2);
+                    var appId = parts.Length > 1 ? parts[0] : "";
+                    var accessToken = parts.Length > 1 ? parts[1] : apiKey;
+                    httpRequest.Headers.TryAddWithoutValidation("X-Api-App-Key", appId);
+                    httpRequest.Headers.TryAddWithoutValidation("X-Api-Access-Key", accessToken);
+                    httpRequest.Headers.TryAddWithoutValidation("X-Api-Resource-Id", "volc.bigasr.auc_turbo");
+                    httpRequest.Headers.TryAddWithoutValidation("X-Api-Request-Id", Guid.NewGuid().ToString());
+                    httpRequest.Headers.TryAddWithoutValidation("X-Api-Sequence", "-1");
+                    break;
                 default:
                     httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
                     break;
@@ -407,7 +417,151 @@ public class ExchangeController : ControllerBase
         }));
     }
 
+    /// <summary>
+    /// 获取可用的导入模板列表（预设配置，用户只需提供 API Key 即可一键创建）
+    /// </summary>
+    [HttpGet("templates")]
+    public IActionResult GetImportTemplates()
+    {
+        var templates = ExchangeTemplates.All.Select(t => new
+        {
+            t.Id,
+            t.Name,
+            t.Description,
+            t.ApiKeyPlaceholder,
+            t.ApiKeyHint,
+            preset = new
+            {
+                t.Preset.Name,
+                t.Preset.ModelAlias,
+                t.Preset.TargetUrl,
+                t.Preset.TargetAuthScheme,
+                t.Preset.TransformerType,
+                t.Preset.TransformerConfig,
+                t.Preset.Enabled,
+                t.Preset.Description
+            }
+        });
+
+        return Ok(ApiResponse<object>.Ok(new { items = templates }));
+    }
+
+    /// <summary>
+    /// 通过模板导入 Exchange（用户只需提供模板 ID + API Key）
+    /// </summary>
+    [HttpPost("import-from-template")]
+    public async Task<IActionResult> ImportFromTemplate([FromBody] ImportFromTemplateRequest request, CancellationToken ct)
+    {
+        var template = ExchangeTemplates.All.FirstOrDefault(t => t.Id == request.TemplateId);
+        if (template == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, $"模板 '{request.TemplateId}' 不存在"));
+
+        if (string.IsNullOrWhiteSpace(request.ApiKey))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "API Key 不能为空"));
+
+        // 检查别名冲突
+        var alias = template.Preset.ModelAlias;
+        var existing = await _db.ModelExchanges
+            .Find(e => e.ModelAlias == alias)
+            .FirstOrDefaultAsync(ct);
+        if (existing != null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"ModelAlias '{alias}' 已存在，该模板可能已导入"));
+
+        var exchange = new ModelExchange
+        {
+            Name = template.Preset.Name,
+            ModelAlias = template.Preset.ModelAlias,
+            TargetUrl = template.Preset.TargetUrl,
+            TargetApiKeyEncrypted = ApiKeyCrypto.Encrypt(request.ApiKey.Trim(), GetJwtSecret()),
+            TargetAuthScheme = template.Preset.TargetAuthScheme ?? "Bearer",
+            TransformerType = template.Preset.TransformerType ?? "passthrough",
+            TransformerConfig = template.Preset.TransformerConfig,
+            Enabled = template.Preset.Enabled,
+            Description = template.Preset.Description
+        };
+
+        await _db.ModelExchanges.InsertOneAsync(exchange, cancellationToken: ct);
+
+        _logger.LogInformation("[Exchange] 通过模板导入 Exchange: {Id} / {Name} / template={TemplateId}",
+            exchange.Id, exchange.Name, request.TemplateId);
+
+        return Ok(ApiResponse<object>.Ok(new { exchange.Id, exchange.Name, exchange.ModelAlias }));
+    }
+
     private string GetJwtSecret() => _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
+}
+
+// ========== Exchange 导入模板（硬编码） ==========
+
+public static class ExchangeTemplates
+{
+    public static readonly List<ExchangeTemplate> All = new()
+    {
+        new ExchangeTemplate
+        {
+            Id = "doubao-asr",
+            Name = "豆包大模型语音识别",
+            Description = "字节跳动豆包 BigModel ASR，支持中英文混合语音识别，flash 极速模式",
+            ApiKeyPlaceholder = "AppID|AccessToken",
+            ApiKeyHint = "格式：AppID|AccessToken，在火山引擎控制台获取",
+            Preset = new ExchangeTemplatePreset
+            {
+                Name = "豆包 ASR (Flash)",
+                ModelAlias = "doubao-asr-flash",
+                TargetUrl = "https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash",
+                TargetAuthScheme = "DoubaoAsr",
+                TransformerType = "doubao-asr",
+                TransformerConfig = new Dictionary<string, object>
+                {
+                    ["enableItn"] = true,
+                    ["enablePunc"] = true,
+                    ["enableDdc"] = true
+                },
+                Enabled = true,
+                Description = "豆包大模型语音识别 - Flash 极速模式"
+            }
+        },
+        new ExchangeTemplate
+        {
+            Id = "fal-image-gen",
+            Name = "fal.ai 图片生成",
+            Description = "fal.ai Nano Banana Pro 图片生成，支持文生图和图生图",
+            ApiKeyPlaceholder = "fal.ai API Key",
+            ApiKeyHint = "在 fal.ai 控制台获取 API Key",
+            Preset = new ExchangeTemplatePreset
+            {
+                Name = "fal.ai Nano Banana Pro",
+                ModelAlias = "fal-nano-banana-pro",
+                TargetUrl = "https://fal.run/fal-ai/nano-banana-pro",
+                TargetAuthScheme = "Key",
+                TransformerType = "fal-image",
+                Enabled = true,
+                Description = "fal.ai 图片生成 - Nano Banana Pro"
+            }
+        }
+    };
+}
+
+public class ExchangeTemplate
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public string ApiKeyPlaceholder { get; set; } = "API Key";
+    public string ApiKeyHint { get; set; } = string.Empty;
+    public ExchangeTemplatePreset Preset { get; set; } = new();
+}
+
+public class ExchangeTemplatePreset
+{
+    public string Name { get; set; } = string.Empty;
+    public string ModelAlias { get; set; } = string.Empty;
+    public string TargetUrl { get; set; } = string.Empty;
+    public string? TargetAuthScheme { get; set; }
+    public string? TransformerType { get; set; }
+    public Dictionary<string, object>? TransformerConfig { get; set; }
+    public bool Enabled { get; set; } = true;
+    public string? Description { get; set; }
 }
 
 // ========== Request DTOs ==========
@@ -444,4 +598,12 @@ public class ExchangeTestRequest
     public string StandardRequestBody { get; set; } = "{}";
     /// <summary>仅预览转换结果，不实际发送请求</summary>
     public bool DryRun { get; set; }
+}
+
+public class ImportFromTemplateRequest
+{
+    /// <summary>模板 ID</summary>
+    public string TemplateId { get; set; } = string.Empty;
+    /// <summary>用户提供的 API Key</summary>
+    public string ApiKey { get; set; } = string.Empty;
 }

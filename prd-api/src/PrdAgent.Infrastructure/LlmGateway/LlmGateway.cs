@@ -835,6 +835,17 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 httpRequest.Headers.Authorization =
                     new System.Net.Http.Headers.AuthenticationHeaderValue("Key", apiKey);
                 break;
+            case "doubao-asr":
+                // 豆包 ASR 认证：apiKey 格式 "appId|accessToken"
+                var parts = apiKey.Split('|', 2);
+                var appId = parts.Length > 1 ? parts[0] : "";
+                var accessToken = parts.Length > 1 ? parts[1] : apiKey;
+                httpRequest.Headers.TryAddWithoutValidation("X-Api-App-Key", appId);
+                httpRequest.Headers.TryAddWithoutValidation("X-Api-Access-Key", accessToken);
+                httpRequest.Headers.TryAddWithoutValidation("X-Api-Resource-Id", "volc.bigasr.auc_turbo");
+                httpRequest.Headers.TryAddWithoutValidation("X-Api-Request-Id", Guid.NewGuid().ToString());
+                httpRequest.Headers.TryAddWithoutValidation("X-Api-Sequence", "-1");
+                break;
             default: // "bearer" or anything else
                 httpRequest.Headers.Authorization =
                     new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
