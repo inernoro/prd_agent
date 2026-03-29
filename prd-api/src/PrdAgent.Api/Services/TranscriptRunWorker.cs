@@ -202,14 +202,42 @@ public class TranscriptRunWorker : BackgroundService
         await UpdateProgress(db, run.Id, 80);
 
         // 将流式结果转为 TranscriptSegment
-        var segments = result.Segments.Select(s => new TranscriptSegment
-        {
-            Start = 0,
-            End = s.DurationSec,
-            Text = s.Text
-        }).ToList();
+        // 流式 ASR 每帧包含累积文本，需要去重：只取最后一帧的 utterances
+        // 如果有 utterances（含时间戳），按 utterance 分段；否则用 FullText 作为单段
+        var segments = new List<TranscriptSegment>();
 
-        // 如果只有一个 segment 且包含完整文本，作为单段处理
+        // 从最后一帧的 utterances 提取（有时间戳的精细分段）
+        var lastResponse = result.Responses.LastOrDefault(r => r.PayloadMsg != null);
+        if (lastResponse?.PayloadMsg != null)
+        {
+            try
+            {
+                var payload = lastResponse.PayloadMsg.Value;
+                if (payload.TryGetProperty("result", out var res) &&
+                    res.TryGetProperty("utterances", out var utts) &&
+                    utts.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    double runningTime = 0;
+                    foreach (var utt in utts.EnumerateArray())
+                    {
+                        var text = utt.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
+                        if (string.IsNullOrWhiteSpace(text)) continue;
+                        double startMs = utt.TryGetProperty("start_time", out var st) ? st.GetDouble() : 0;
+                        double endMs = utt.TryGetProperty("end_time", out var et) ? et.GetDouble() : 0;
+                        segments.Add(new TranscriptSegment
+                        {
+                            Start = startMs / 1000.0,
+                            End = endMs / 1000.0,
+                            Text = text.Trim()
+                        });
+                        runningTime = endMs / 1000.0;
+                    }
+                }
+            }
+            catch { /* fallback below */ }
+        }
+
+        // 兜底：用 FullText 作为单段
         if (segments.Count == 0 && !string.IsNullOrEmpty(result.FullText))
         {
             segments.Add(new TranscriptSegment { Start = 0, End = 0, Text = result.FullText });
