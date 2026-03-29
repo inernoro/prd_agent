@@ -2039,9 +2039,12 @@ function renderBranches() {
     const btnLabel = (action, label) => isLoading(b.id, action) ? `<span class="btn-spinner"></span>${label}` : label;
 
     // Build deploy dropdown items for single-service redeploy
-    const deployMenuItems = buildProfiles.map(p =>
-      `<div class="deploy-menu-item" onclick="deploySingleService('${esc(b.id)}', '${esc(p.id)}')">${esc(p.name)}</div>`
-    ).join('');
+    const deployMenuItems = buildProfiles.map(p => {
+      const modeTag = p.activeDeployMode && p.deployModes?.[p.activeDeployMode]
+        ? ` <span style="font-size:10px;opacity:0.6">(${esc(p.deployModes[p.activeDeployMode].label)})</span>`
+        : '';
+      return `<div class="deploy-menu-item" onclick="deploySingleService('${esc(b.id)}', '${esc(p.id)}')">${esc(p.name)}${modeTag}</div>`;
+    }).join('');
 
     // Build stop menu item for deploy dropdown
     const stopMenuItem = isRunning ? `<div class="deploy-menu-divider"></div><div class="deploy-menu-item deploy-menu-item-danger" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); stopBranch('${esc(b.id)}')">停止所有服务</div>` : '';
@@ -3305,7 +3308,18 @@ async function deleteRuleAndRefresh(id) {
 function openProfileModal() {
   const listHtml = buildProfiles.length === 0
     ? '<div class="config-empty">暂无构建配置，请添加一个。</div>'
-    : buildProfiles.map(p => `
+    : buildProfiles.map(p => {
+        const modeHtml = p.deployModes && Object.keys(p.deployModes).length > 0
+          ? `<div style="margin-top:4px;display:flex;align-items:center;gap:6px">
+              <span style="font-size:11px;color:var(--text-muted)">部署模式:</span>
+              <select style="font-size:11px;padding:2px 6px;border-radius:4px;border:1px solid var(--border);background:var(--bg-secondary);color:var(--text-primary);cursor:pointer" onchange="switchDeployMode('${esc(p.id)}', this.value)">
+                ${Object.entries(p.deployModes).map(([k, m]) =>
+                  `<option value="${esc(k)}"${p.activeDeployMode === k ? ' selected' : ''}>${esc(m.label || k)}</option>`
+                ).join('')}
+              </select>
+            </div>`
+          : '';
+        return `
         <div class="config-item">
           <div class="config-item-main">
             <span style="opacity:0.7">${getPortIcon(p.id, p)}</span>
@@ -3313,12 +3327,13 @@ function openProfileModal() {
             <code class="config-item-match">${esc(p.dockerImage)}</code>
             <span class="config-item-detail">${esc(p.workDir || '.')} :${p.containerPort}${p.pathPrefixes?.length ? ' → ' + p.pathPrefixes.join(', ') : ''}</span>
             <code class="config-item-cmd" title="${esc(p.runCommand)}">${esc(p.runCommand)}</code>
+            ${modeHtml}
           </div>
           <div class="config-item-actions">
             <button class="icon-btn xs danger-icon" onclick="deleteProfileAndRefresh('${esc(p.id)}')" title="删除">&times;</button>
           </div>
         </div>
-      `).join('');
+      `;}).join('');
 
   const html = `
     <p class="config-panel-desc">
@@ -3422,6 +3437,14 @@ async function deleteProfileAndRefresh(id) {
     showToast('配置已删除', 'success');
     await loadProfiles();
     openProfileModal();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function switchDeployMode(profileId, mode) {
+  try {
+    await api('PUT', `/build-profiles/${profileId}/deploy-mode`, { mode });
+    showToast(`已切换部署模式`, 'success');
+    await loadProfiles();
   } catch (e) { showToast(e.message, 'error'); }
 }
 

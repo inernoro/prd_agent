@@ -18,6 +18,43 @@ x-cds-env:
   JWT_SECRET: "TODO: 请填写实际值"
   AI_ACCESS_KEY: "TODO: 请填写实际值"
 
+# 部署模式 — 每个服务可在 CDS 左侧面板下拉切换
+# dev: 热重载开发模式（改代码自动刷新，内存占用高）
+# static: 静态编译模式（一次编译、runtime 运行，内存低、启动快）
+x-cds-deploy-modes:
+  api:
+    dev:
+      label: "开发模式 (热重载)"
+      command: >-
+        dotnet restore &&
+        dotnet build --no-restore &&
+        dotnet watch run --project src/PrdAgent.Api --urls http://0.0.0.0:5000
+    static:
+      label: "静态部署 (publish)"
+      command: >-
+        dotnet restore &&
+        dotnet publish src/PrdAgent.Api -c Release -o /publish --no-restore &&
+        dotnet /publish/PrdAgent.Api.dll --urls http://0.0.0.0:5000
+      env:
+        ASPNETCORE_ENVIRONMENT: Production
+        DOTNET_GCHeapHardLimit: "0x8000000"
+  admin:
+    dev:
+      label: "开发模式 (Vite HMR)"
+      command: >-
+        corepack enable &&
+        pnpm install --frozen-lockfile &&
+        pnpm exec vite --host 0.0.0.0 --port 8000
+    static:
+      label: "静态部署 (build+serve)"
+      command: >-
+        corepack enable &&
+        pnpm install --frozen-lockfile &&
+        pnpm run build &&
+        npx -y serve -s dist -l 8000
+      env:
+        NODE_OPTIONS: "--max-old-space-size=96"
+
 services:
   # ── App Services (有相对路径 volume mount) ──
 

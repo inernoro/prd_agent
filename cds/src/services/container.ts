@@ -2,9 +2,28 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService } from '../types.js';
+import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService, DeployModeOverride } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { resolveEnvTemplates } from './compose-parser.js';
+
+/**
+ * Resolve a BuildProfile with active deploy mode overrides applied.
+ * Returns a new profile object with command/dockerImage/env merged from the mode.
+ */
+export function resolveProfileWithMode(profile: BuildProfile): BuildProfile {
+  const mode = profile.activeDeployMode;
+  if (!mode || !profile.deployModes?.[mode]) return profile;
+
+  const override = profile.deployModes[mode];
+  return {
+    ...profile,
+    command: override.command ?? profile.command,
+    dockerImage: override.dockerImage ?? profile.dockerImage,
+    env: override.env
+      ? { ...profile.env, ...override.env }
+      : profile.env,
+  };
+}
 
 export class ContainerService {
   constructor(

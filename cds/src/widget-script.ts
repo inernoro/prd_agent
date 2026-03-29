@@ -46,6 +46,11 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     #cds-widget .cds-deploy-btn:hover{border-color:#58a6ff}
     #cds-widget .cds-deploy-btn:disabled{cursor:wait;opacity:0.5}
     #cds-widget .cds-deploy-btn.full{background:#161b22}
+    #cds-widget .cds-mode-row{display:flex;align-items:center;gap:4px;margin-bottom:6px}
+    #cds-widget .cds-mode-label{font-size:10px;color:#8b949e;flex-shrink:0}
+    #cds-widget .cds-mode-select{font-size:10px;padding:2px 4px;border-radius:4px;border:1px solid #30363d;background:#161b22;color:#c9d1d9;cursor:pointer;flex:1;min-width:0}
+    #cds-widget .cds-mode-select:hover{border-color:#58a6ff}
+    #cds-widget .cds-mode-select:focus{outline:none;border-color:#58a6ff}
     #cds-widget .cds-spinner{display:inline-block;width:11px;height:11px;border:2px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:cds-spin .8s linear infinite;flex-shrink:0}
     #cds-widget .cds-step{display:flex;align-items:center;gap:4px;font-size:10px;color:#8b949e}
     #cds-widget .cds-step.done{color:#3fb950}
@@ -121,13 +126,36 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
         if(commitSha)h+='<span class="cds-commit-sha">'+commitSha+'</span>';
         h+='</div>';
         if(commitMsg)h+='<div class="cds-commit-msg" title="'+commitMsg.replace(/"/g,'&quot;')+'">'+commitMsg+'</div>';
+        // Deploy mode selectors
+        for(var mi=0;mi<profiles.length;mi++){
+          var mp=profiles[mi];
+          if(mp.deployModes&&Object.keys(mp.deployModes).length>0){
+            var modes=mp.deployModes;
+            var activeMode=mp.activeDeployMode||'';
+            h+='<div class="cds-mode-row">';
+            h+='<span class="cds-mode-label">'+mp.name+':</span>';
+            h+='<select class="cds-mode-select" data-mode-profile="'+mp.id+'">';
+            var modeKeys=Object.keys(modes);
+            for(var mk=0;mk<modeKeys.length;mk++){
+              var mKey=modeKeys[mk];
+              var mLabel=modes[mKey].label||mKey;
+              var sel=activeMode===mKey?' selected':'';
+              h+='<option value="'+mKey+'"'+sel+'>'+mLabel+'</option>';
+            }
+            h+='</select></div>';
+          }
+        }
         h+='<div style="display:flex;flex-direction:column;gap:4px">';
         for(var i=0;i<profiles.length;i++){
           var p=profiles[i];
+          var modeTag='';
+          if(p.activeDeployMode&&p.deployModes&&p.deployModes[p.activeDeployMode]){
+            modeTag=' ('+p.deployModes[p.activeDeployMode].label+')';
+          }
           var isThis=deploying&&deployProfileId===p.id;
           h+='<button class="cds-deploy-btn" data-profile="'+p.id+'"'+(deploying?' disabled':'')+' style="opacity:'+(deploying&&!isThis?'0.5':'1')+'">';
           h+=(isThis?'<span class="cds-spinner"></span>':ICON_REFRESH);
-          h+=' 更新 '+p.name+'</button>';
+          h+=' 更新 '+p.name+modeTag+'</button>';
         }
         if(profiles.length>1){
           var isAll=deploying&&deployProfileId===null;
@@ -196,6 +224,31 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     if(profileId&&!deploying){
       doDeploy(profileId==='__all__'?undefined:profileId);
     }
+  });
+
+  // Deploy mode change handler
+  root.addEventListener('change',function(e){
+    var sel=e.target;
+    if(!sel||!sel.getAttribute)return;
+    var profileId=sel.getAttribute('data-mode-profile');
+    if(!profileId)return;
+    var mode=sel.value;
+    fetch(API+'/build-profiles/'+profileId+'/deploy-mode',{
+      method:'PUT',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({mode:mode})
+    }).then(function(r){
+      if(r.ok){
+        // Update local state
+        for(var i=0;i<profiles.length;i++){
+          if(profiles[i].id===profileId){
+            profiles[i].activeDeployMode=mode;
+            break;
+          }
+        }
+        render();
+      }
+    }).catch(function(){});
   });
 
   // ── CDS API calls ──
