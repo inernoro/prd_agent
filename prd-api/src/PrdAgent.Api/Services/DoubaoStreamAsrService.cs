@@ -150,6 +150,9 @@ public class DoubaoStreamAsrService
 
             // 接收 FullClientRequest 的响应
             var initResp = await ReceiveOneAsync(ws, ct);
+            _logger.LogInformation("[DoubaoStreamAsr] 初始响应: code={Code}, seq={Seq}, last={Last}, hasPayload={HasPayload}, payload={Payload}",
+                initResp.Code, initResp.PayloadSequence, initResp.IsLastPackage, initResp.PayloadMsg != null,
+                initResp.PayloadMsg?.ToString()?.Substring(0, Math.Min(initResp.PayloadMsg?.ToString()?.Length ?? 0, 300)) ?? "null");
             if (initResp.Code != 0)
             {
                 result.Error = $"初始化失败: code={initResp.Code}";
@@ -316,6 +319,8 @@ public class DoubaoStreamAsrService
 
         if (wsResult.MessageType == WebSocketMessageType.Close)
         {
+            _logger.LogWarning("[DoubaoStreamAsr] 收到 WebSocket Close 帧, closeStatus={Status}, desc={Desc}",
+                ws.CloseStatus, ws.CloseStatusDescription);
             return new AsrResponseFrame { IsLastPackage = true };
         }
 
