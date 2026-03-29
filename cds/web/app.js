@@ -2152,13 +2152,6 @@ function renderBranches() {
           <pre class="deploy-status-log">${statusLabel}</pre>
         </div>
       `;
-    } else if (b.subject) {
-      commitAreaHtml = `
-        <div class="branch-actions-commit" onclick="event.stopPropagation(); toggleCommitLog('${esc(b.id)}', this)" title="点击查看历史提交">
-          ${commitIcon(b.subject)} ${esc(b.subject)}
-          <svg class="commit-chevron" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M4.427 5.427a.75.75 0 011.146 0L8 7.854l2.427-2.427a.75.75 0 111.146 1.146l-3 3a.75.75 0 01-1.146 0l-3-3a.75.75 0 010-1.146z"/></svg>
-        </div>
-      `;
     }
 
     // Inline deploy log was removed (squeezes card layout).
@@ -2213,7 +2206,7 @@ function renderBranches() {
           </div>
           ${b.subject ? `<div class="branch-card-row2">
             ${b.pinnedCommit ? `<span class="pinned-commit-badge" onclick="event.stopPropagation(); checkoutCommit('${esc(b.id)}', '', true, '')" title="已固定到历史提交 ${esc(b.pinnedCommit)}，点击恢复最新">📌 ${esc(b.pinnedCommit)}</span>` : ''}
-            <span class="branch-commit-msg" title="${esc(b.subject)}">${commitIcon(b.subject)} ${esc(b.subject)}</span>
+            <span class="branch-commit-msg" onclick="event.stopPropagation(); toggleCommitLog('${esc(b.id)}', this)" title="点击查看历史提交" style="cursor:pointer">${commitIcon(b.subject)} ${esc(b.subject)}</span>
           </div>` : ''}
           ${portBadgesHtml ? `<div class="branch-card-ports">${portBadgesHtml}</div>` : ''}
           ${b.executorId ? `<span class="executor-tag" title="部署在执行器 ${esc(b.executorId)}">⚡ ${esc(b.executorId.replace(/^executor-/, '').slice(0, 20))}</span>` : ''}
