@@ -28,16 +28,17 @@ x-cds-deploy-modes:
       command: >-
         dotnet restore &&
         dotnet build --no-restore &&
+        DOTNET_GCHeapHardLimit=0x10000000
         dotnet watch run --project src/PrdAgent.Api --urls http://0.0.0.0:5000
     static:
       label: "静态部署 (publish)"
       command: >-
         dotnet restore &&
         dotnet publish src/PrdAgent.Api -c Release -o /publish --no-restore &&
+        DOTNET_GCHeapHardLimit=0x8000000
         dotnet /publish/PrdAgent.Api.dll --urls http://0.0.0.0:5000
       env:
         ASPNETCORE_ENVIRONMENT: Production
-        DOTNET_GCHeapHardLimit: "0x8000000"
   admin:
     dev:
       label: "开发模式 (Vite HMR)"
@@ -71,6 +72,7 @@ services:
     command: >-
       dotnet restore &&
       dotnet build --no-restore &&
+      DOTNET_GCHeapHardLimit=0x10000000
       dotnet run --project src/PrdAgent.Api --no-build --urls http://0.0.0.0:5000
     depends_on:
       mongodb: { condition: service_healthy }
@@ -81,7 +83,6 @@ services:
       DOTNET_TieredCompilation: 1
       DOTNET_TC_QuickJit: 1
       DOTNET_ReadyToRun: 0
-      DOTNET_GCHeapHardLimit: 0x10000000
       MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
       MongoDB__DatabaseName: prdagent
       Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT}"
