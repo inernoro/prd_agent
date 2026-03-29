@@ -116,6 +116,8 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 - ❌ `body: JSON.stringify({ title })` → 双重序列化，后端 400
 - ✅ `body: { title }` → 正确
 - FormData 上传不能走 `apiRequest`（会被 JSON 序列化），必须直接 `fetch`
+- `apiRequest` 返回 `ApiResponse<T>` 格式 `{success, data, error}`，**用 `res.success` 判断，不是 `res.ok`**
+- 错误信息是对象 `res.error?.message`，不是字符串 `res.error`
 
 ### 8. Agent 开发"完成"标准
 

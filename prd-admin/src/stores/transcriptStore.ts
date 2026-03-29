@@ -40,8 +40,8 @@ export const useTranscriptStore = create<TranscriptState>((set, get) => ({
   fetchWorkspaces: async () => {
     set({ loading: true, error: '' });
     const res = await svc.listWorkspaces();
-    if (res.ok) set({ workspaces: res.data! });
-    else set({ error: res.error ?? '加载失败' });
+    if (res.success) set({ workspaces: res.data! });
+    else set({ error: res.error?.message ?? '加载失败' });
     set({ loading: false });
   },
 
@@ -52,31 +52,31 @@ export const useTranscriptStore = create<TranscriptState>((set, get) => ({
       svc.listItems(id),
       svc.listRuns(id),
     ]);
-    if (wsRes.ok) {
+    if (wsRes.success) {
       set({
         currentWorkspace: wsRes.data!,
-        items: itemsRes.ok ? itemsRes.data! : [],
-        runs: runsRes.ok ? runsRes.data! : [],
+        items: itemsRes.success ? itemsRes.data! : [],
+        runs: runsRes.success ? runsRes.data! : [],
       });
     } else {
-      set({ error: wsRes.error ?? '加载工作区失败' });
+      set({ error: wsRes.error?.message ?? '加载工作区失败' });
     }
     set({ loading: false });
   },
 
   createWorkspace: async (title: string) => {
     const res = await svc.createWorkspace(title);
-    if (res.ok && res.data) {
+    if (res.success && res.data) {
       set(s => ({ workspaces: [res.data!, ...s.workspaces] }));
       return res.data;
     }
-    set({ error: res.error ?? '创建失败' });
+    set({ error: res.error?.message ?? '创建失败' });
     return null;
   },
 
   deleteWorkspace: async (id: string) => {
     const res = await svc.deleteWorkspace(id);
-    if (res.ok) {
+    if (res.success) {
       set(s => ({
         workspaces: s.workspaces.filter(w => w.id !== id),
         currentWorkspace: s.currentWorkspace?.id === id ? null : s.currentWorkspace,
@@ -100,29 +100,29 @@ export const useTranscriptStore = create<TranscriptState>((set, get) => ({
 
   deleteItem: async (itemId: string) => {
     const res = await svc.deleteItem(itemId);
-    if (res.ok) {
+    if (res.success) {
       set(s => ({ items: s.items.filter(i => i.id !== itemId) }));
     }
   },
 
   fetchTemplates: async () => {
     const res = await svc.listTemplates();
-    if (res.ok) set({ templates: res.data! });
+    if (res.success) set({ templates: res.data! });
   },
 
   createCopywrite: async (itemId: string, templateId: string) => {
     const res = await svc.createCopywriteRun(itemId, templateId);
-    if (res.ok && res.data) {
+    if (res.success && res.data) {
       set(s => ({ runs: [res.data!, ...s.runs] }));
       return res.data;
     }
-    set({ error: res.error ?? '文案生成失败' });
+    set({ error: res.error?.message ?? '文案生成失败' });
     return null;
   },
 
   pollRun: async (runId: string) => {
     const res = await svc.getRun(runId);
-    if (res.ok && res.data) {
+    if (res.success && res.data) {
       set(s => ({
         runs: s.runs.map(r => r.id === runId ? res.data! : r),
       }));
@@ -135,6 +135,6 @@ export const useTranscriptStore = create<TranscriptState>((set, get) => ({
     const ws = get().currentWorkspace;
     if (!ws) return;
     const res = await svc.listItems(ws.id);
-    if (res.ok) set({ items: res.data! });
+    if (res.success) set({ items: res.data! });
   },
 }));
