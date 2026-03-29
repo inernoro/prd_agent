@@ -95,9 +95,20 @@ public class DoubaoStreamAsrService
         }
         else
         {
-            // 非 WAV 直接作为 raw PCM 处理
             pcmData = audioData;
             _logger.LogInformation("[DoubaoStreamAsr] 非 WAV 格式, 按 raw PCM 处理, size={Size}bytes", pcmData.Length);
+        }
+
+        // 豆包 WebSocket ASR 要求 16kHz 单声道 16bit PCM，需要重采样
+        const int targetRate = 16000;
+        const int targetChannels = 1;
+        if (actualRate != targetRate || channels != targetChannels)
+        {
+            pcmData = ResamplePcm(pcmData, channels, bitsPerSample, actualRate, targetChannels, targetRate);
+            _logger.LogInformation("[DoubaoStreamAsr] PCM 重采样: {SrcRate}Hz/{SrcCh}ch → {DstRate}Hz/{DstCh}ch, 新大小={Len}bytes",
+                actualRate, channels, targetRate, targetChannels, pcmData.Length);
+            channels = targetChannels;
+            actualRate = targetRate;
         }
 
         // 计算分片大小
@@ -555,6 +566,52 @@ public class DoubaoStreamAsrService
         var bytes = data[..4].ToArray();
         if (BitConverter.IsLittleEndian) Array.Reverse(bytes);
         return BitConverter.ToUInt32(bytes, 0);
+    }
+
+    /// <summary>
+    /// PCM 重采样：多声道→单声道（取左声道）+ 采样率转换（线性插值）
+    /// 仅支持 16bit PCM
+    /// </summary>
+    private static byte[] ResamplePcm(byte[] pcm, int srcChannels, int srcBits, int srcRate, int dstChannels, int dstRate)
+    {
+        var bytesPerSample = srcBits / 8; // 2 for 16bit
+        var srcFrameSize = srcChannels * bytesPerSample;
+        var srcFrameCount = pcm.Length / srcFrameSize;
+
+        // 1. 提取左声道（或单声道直接用）为 short[]
+        var srcSamples = new short[srcFrameCount];
+        for (var i = 0; i < srcFrameCount; i++)
+        {
+            srcSamples[i] = BitConverter.ToInt16(pcm, i * srcFrameSize);
+        }
+
+        // 2. 采样率转换（线性插值）
+        var ratio = (double)srcRate / dstRate;
+        var dstFrameCount = (int)(srcFrameCount / ratio);
+        var dstSamples = new short[dstFrameCount];
+
+        for (var i = 0; i < dstFrameCount; i++)
+        {
+            var srcPos = i * ratio;
+            var idx = (int)srcPos;
+            var frac = srcPos - idx;
+
+            if (idx + 1 < srcFrameCount)
+                dstSamples[i] = (short)(srcSamples[idx] * (1 - frac) + srcSamples[idx + 1] * frac);
+            else if (idx < srcFrameCount)
+                dstSamples[i] = srcSamples[idx];
+        }
+
+        // 3. 转回 byte[]
+        var result = new byte[dstFrameCount * dstChannels * bytesPerSample];
+        for (var i = 0; i < dstFrameCount; i++)
+        {
+            var bytes = BitConverter.GetBytes(dstSamples[i]);
+            result[i * 2] = bytes[0];
+            result[i * 2 + 1] = bytes[1];
+        }
+
+        return result;
     }
 
     private static List<byte[]> SplitAudio(byte[] data, int segmentSize)
