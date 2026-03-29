@@ -4701,16 +4701,21 @@ function safeChart(canvasId, config) {
         sb.AppendLine($"  System prompt: {systemPrompt.Length} chars");
         sb.AppendLine($"  User prompt: {userPrompt.Length} chars");
 
+        var messages = new System.Text.Json.Nodes.JsonArray
+        {
+            new System.Text.Json.Nodes.JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+            new System.Text.Json.Nodes.JsonObject { ["role"] = "user", ["content"] = userPrompt.ToString() },
+        };
         var request = new PrdAgent.Infrastructure.LlmGateway.GatewayRequest
         {
             AppCallerCode = "page-agent.generate::chat",
             ModelType = "chat",
-            SystemPrompt = systemPrompt,
-            UserMessage = userPrompt.ToString(),
+            TimeoutSeconds = ctx.TimeoutSeconds,
+            RequestBody = new System.Text.Json.Nodes.JsonObject { ["messages"] = messages },
         };
 
         var sw = Stopwatch.StartNew();
-        var response = await gateway.GenerateAsync(request, CancellationToken.None);
+        var response = await gateway.SendAsync(request, CancellationToken.None);
         sw.Stop();
 
         var content = response?.Content ?? "";
@@ -4973,8 +4978,7 @@ function safeChart(canvasId, config) {
             .TimeoutInterval(TimeSpan.FromSeconds(Math.Min(ctx.TimeoutSeconds, 60))));
 
         var contextObj = JsonSerializer.Serialize(new { ctx.Spec, ctx.Framework, ctx.Style, ctx.Prompt, ctx.SpecInput, ctx.PreviousOutput, ctx.UserFeedback, ctx.IsIteration }, JsonCompact);
-        engine.SetValue("context", Jint.Native.Json.JsonParser.Parse(engine, contextObj));
-        engine.SetValue("result", "");
+        engine.Execute($"var context = JSON.parse({JsonSerializer.Serialize(contextObj)}); var result = '';");
 
         engine.Execute(code);
         var result = engine.GetValue("result").AsString();
@@ -5015,13 +5019,17 @@ function safeChart(canvasId, config) {
 只输出 JSON 数组，不要其他文字。";
 
         sb.AppendLine("[lobster] Phase 1: 规划结构");
+        var planMessages = new System.Text.Json.Nodes.JsonArray
+        {
+            new System.Text.Json.Nodes.JsonObject { ["role"] = "user", ["content"] = planPrompt },
+        };
         var planReq = new PrdAgent.Infrastructure.LlmGateway.GatewayRequest
         {
             AppCallerCode = "page-agent.generate::chat",
             ModelType = "chat",
-            UserMessage = planPrompt,
+            RequestBody = new System.Text.Json.Nodes.JsonObject { ["messages"] = planMessages },
         };
-        var planResp = await gateway.GenerateAsync(planReq, CancellationToken.None);
+        var planResp = await gateway.SendAsync(planReq, CancellationToken.None);
         var plan = planResp?.Content ?? "[]";
         sb.AppendLine($"[lobster] 结构规划: {plan.Length} chars");
 
@@ -5048,16 +5056,21 @@ function safeChart(canvasId, config) {
         }
 
         sb.AppendLine("[lobster] Phase 2: 生成 HTML");
+        var genMessages = new System.Text.Json.Nodes.JsonArray
+        {
+            new System.Text.Json.Nodes.JsonObject { ["role"] = "system", ["content"] = genSystemPrompt },
+            new System.Text.Json.Nodes.JsonObject { ["role"] = "user", ["content"] = genUserPrompt.ToString() },
+        };
         var genReq = new PrdAgent.Infrastructure.LlmGateway.GatewayRequest
         {
             AppCallerCode = "page-agent.generate::chat",
             ModelType = "chat",
-            SystemPrompt = genSystemPrompt,
-            UserMessage = genUserPrompt.ToString(),
+            TimeoutSeconds = 300,
+            RequestBody = new System.Text.Json.Nodes.JsonObject { ["messages"] = genMessages },
         };
 
         var sw = Stopwatch.StartNew();
-        var genResp = await gateway.GenerateAsync(genReq, CancellationToken.None);
+        var genResp = await gateway.SendAsync(genReq, CancellationToken.None);
         sw.Stop();
 
         var html = CleanHtmlFromLlmResponse(genResp?.Content ?? "");
