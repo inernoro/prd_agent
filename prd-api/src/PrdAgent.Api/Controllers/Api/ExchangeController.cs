@@ -532,6 +532,7 @@ public class ExchangeController : ControllerBase
     /// 下载音频 → WAV 解析 → WebSocket 二进制协议 → 返回转录结果
     /// </summary>
     [HttpPost("test-stream-asr")]
+    [AllowAnonymous]
     public async Task<IActionResult> TestStreamAsr(
         [FromBody] StreamAsrTestRequest request,
         [FromServices] Services.DoubaoStreamAsrService streamAsr,
