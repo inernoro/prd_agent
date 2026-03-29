@@ -28,10 +28,11 @@ prd_agent/
 | **LLM Gateway** | `ILlmGateway` + `ModelResolver` + 三级调度 + 健康管理 |
 | **ModelPool** | 6 种策略引擎 (`Infrastructure/ModelPool/`) |
 | **Marketplace** | `CONFIG_TYPE_REGISTRY` + `IForkable` 白名单复制 |
+| **CLI Agent Executor** | `executorType` 分发 + `CliAgentContext` 共享上下文 + 多轮迭代 |
 
 ## 功能状态速查
 
-**已完成**：对话 Run/Worker, 提示词阶段, 权限矩阵, 水印系统, VisualAgent, 文学代理, 速率限制, 液态玻璃主题, Open Platform, 模型组/Gateway, 模型池策略引擎+UI, 桌面自动更新, PRD 评论, 内容缺失检测, 会话归档, 数据管理, 管理通知, 缺陷管理 Agent, 缺陷分享(外部Agent分析+修复报告+验收), 视频 Agent, 视觉创作视频生成, 视频工作流胶囊, 配置市场, 周报管理 Agent (Phase 1-4), 附件上传, 技能系统, 网页托管
+**已完成**：对话 Run/Worker, 提示词阶段, 权限矩阵, 水印系统, VisualAgent, 文学代理, 速率限制, 液态玻璃主题, Open Platform, 模型组/Gateway, 模型池策略引擎+UI, 桌面自动更新, PRD 评论, 内容缺失检测, 会话归档, 数据管理, 管理通知, 缺陷管理 Agent, 缺陷分享(外部Agent分析+修复报告+验收), 视频 Agent, 视觉创作视频生成, 视频工作流胶囊, 配置市场, 周报管理 Agent (Phase 1-4), 附件上传, 技能系统, 网页托管, CLI Agent 执行器(多执行器分发: builtin-llm/docker/api/script/lobster, 多轮迭代)
 
 **部分完成**：知识库 (多文档上传+类型管理+三阶段格式检测+UTF-16 BOM 支持已实现, RAG/embedding 未实现)
 

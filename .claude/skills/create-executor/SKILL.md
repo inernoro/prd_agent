@@ -139,6 +139,28 @@ cd prd-api && dotnet build --no-restore
 | **CLI 进程型** | Process.Start(command) | 本地 Node.js 脚本、Python 工具 |
 | **混合型** | LLM 生成 prompt → 传给外部工具 | LLM 审题 + CLI 执行 |
 
+### LLM Gateway 调用范式（关键！）
+
+调用 ILlmGateway 时必须使用 `SendAsync` + `RequestBody`（OpenAI messages 格式），**不存在** `GenerateAsync`/`SystemPrompt`/`UserMessage`：
+
+```csharp
+var gateway = sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>();
+var messages = new System.Text.Json.Nodes.JsonArray
+{
+    new System.Text.Json.Nodes.JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+    new System.Text.Json.Nodes.JsonObject { ["role"] = "user", ["content"] = userPrompt },
+};
+var request = new PrdAgent.Infrastructure.LlmGateway.GatewayRequest
+{
+    AppCallerCode = "page-agent.generate::chat",
+    ModelType = "chat",
+    TimeoutSeconds = ctx.TimeoutSeconds,
+    RequestBody = new System.Text.Json.Nodes.JsonObject { ["messages"] = messages },
+};
+var response = await gateway.SendAsync(request, CancellationToken.None);
+var content = response?.Content ?? "";
+```
+
 ## 已注册执行器
 
 读取代码后以实际为准，截至技能创建时：

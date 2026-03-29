@@ -149,6 +149,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | **cds-deploy-pipeline** | `/cds-deploy` | 跨服务器灰度环境生命周期：部署/观测/诊断/操作/验证/清理 |
 | **llm-visibility** | `/visibility` | LLM 交互可视化审计 + 组件指南 |
 | **theme-transition** | `/theme-transition` | 主题切换圆形过渡动效 (View Transition API) |
+| **create-executor** | `/create-executor` | CLI Agent 执行器全自动接入（读代码→生成→注册→自测） |
 
 ### 使用指引
 
