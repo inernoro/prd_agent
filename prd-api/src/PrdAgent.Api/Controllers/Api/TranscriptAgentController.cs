@@ -130,7 +130,7 @@ public class TranscriptAgentController : ControllerBase
         await file.CopyToAsync(ms);
         var bytes = ms.ToArray();
 
-        var stored = await _assetStorage.SaveAsync(bytes, file.ContentType, CancellationToken.None, "transcript-agent", "upload");
+        var stored = await _assetStorage.SaveAsync(bytes, file.ContentType, CancellationToken.None, "transcript-agent", "audio");
 
         var item = new TranscriptItem
         {
