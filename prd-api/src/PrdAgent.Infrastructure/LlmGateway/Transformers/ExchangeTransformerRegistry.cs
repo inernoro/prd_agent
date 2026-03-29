@@ -21,6 +21,7 @@ public class ExchangeTransformerRegistry
         _transformers["fal-image-edit"] = falImage;
 
         Register(new DoubaoAsrTransformer());
+        Register(new DoubaoStreamAsrTransformer());
     }
 
     public void Register(IExchangeTransformer transformer)

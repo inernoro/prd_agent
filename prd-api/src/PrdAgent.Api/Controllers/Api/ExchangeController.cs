@@ -688,6 +688,31 @@ public static class ExchangeTemplates
         },
         new ExchangeTemplate
         {
+            Id = "doubao-asr-stream",
+            Name = "豆包流式语音识别 (WebSocket)",
+            Description = "字节跳动豆包流式 ASR，通过 WebSocket 二进制协议实时推送音频分片，支持实时转录",
+            ApiKeyPlaceholder = "AppID|AccessToken",
+            ApiKeyHint = "格式：AppID|AccessToken，在火山引擎控制台获取",
+            Preset = new ExchangeTemplatePreset
+            {
+                Name = "豆包 ASR (流式 WebSocket)",
+                ModelAlias = "doubao-asr-stream",
+                TargetUrl = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream",
+                TargetAuthScheme = "DoubaoAsr",
+                TransformerType = "doubao-asr-stream",
+                TransformerConfig = new Dictionary<string, object>
+                {
+                    ["resourceId"] = "volc.bigasr.sauc.duration",
+                    ["enableItn"] = true,
+                    ["enablePunc"] = true,
+                    ["enableDdc"] = true
+                },
+                Enabled = true,
+                Description = "豆包流式语音识别 - WebSocket 二进制协议 (bigmodel_nostream)"
+            }
+        },
+        new ExchangeTemplate
+        {
             Id = "fal-image-gen",
             Name = "fal.ai 图片生成",
             Description = "fal.ai Nano Banana Pro 图片生成，支持文生图和图生图",
