@@ -45,15 +45,20 @@ export const uploadItem = async (workspaceId: string, file: File): Promise<ApiRe
   try {
     const res = await fetch(url, { method: 'POST', headers, body: fd });
     const text = await res.text();
+    if (!res.ok) {
+      return fail('UPLOAD_ERROR', `上传失败（HTTP ${res.status}）`) as unknown as ApiResponse<{ item: TranscriptItem; runId: string }>;
+    }
     try {
-      return JSON.parse(text) as ApiResponse<{ item: TranscriptItem; runId: string }>;
-    } catch {
-      if (!res.ok) {
-        return fail('UPLOAD_ERROR', `上传失败（HTTP ${res.status}）`) as unknown as ApiResponse<{ item: TranscriptItem; runId: string }>;
+      const json = JSON.parse(text);
+      // 如果服务器已返回 ApiResponse 格式
+      if ('success' in json && 'data' in json) {
+        return json as ApiResponse<{ item: TranscriptItem; runId: string }>;
       }
-      // 非标准 ApiResponse 格式（Controller 直接返回对象）
-      const data = JSON.parse(text);
-      return ok(data) as ApiResponse<{ item: TranscriptItem; runId: string }>;
+      // Controller 直接返回裸对象 {item, runId}
+      return ok(json as { item: TranscriptItem; runId: string });
+    } catch {
+      return fail('PARSE_ERROR', '响应解析失败') as unknown as ApiResponse<{ item: TranscriptItem; runId: string }>;
+    }
     }
   } catch (e) {
     return fail('NETWORK_ERROR', e instanceof Error ? e.message : '网络错误') as unknown as ApiResponse<{ item: TranscriptItem; runId: string }>;
