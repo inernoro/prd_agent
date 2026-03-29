@@ -748,7 +748,7 @@ button.text-btn:hover { color: var(--accent); }
 /* ════════════════ Branch Cards ════════════════ */
 
 .branch-list {
-  display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px;
+  display: flex; flex-direction: column; gap: 14px; margin-bottom: 24px;
   padding-bottom: 60px; /* 为底部 Activity 浮窗留出空间 */
 }
 
@@ -2003,28 +2003,7 @@ a.branch-name:hover { color: var(--accent); }
   background: rgba(245, 158, 11, 0.04);
 }
 
-/* ── 金色圆弧冲击波：独立圆环元素，scale 扩展 ── */
-.cm-arc-ring {
-  position: absolute;
-  border-radius: 50%;
-  border: 3px solid rgba(245, 178, 11, 0.85);
-  box-shadow: 0 0 14px 3px rgba(245, 158, 11, 0.35), inset 0 0 6px 1px rgba(245, 158, 11, 0.15);
-  pointer-events: none;
-  z-index: 4;
-  transform: scale(0);
-}
-.cm-arc-ring.animate {
-  animation: cm-arc-expand 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
-}
-@keyframes cm-arc-expand {
-  0%   { transform: scale(0); opacity: 1; }
-  80%  { opacity: 0.7; }
-  100% { transform: scale(1); opacity: 0; }
-}
-[data-theme="light"] .cm-arc-ring {
-  border-color: rgba(217, 119, 6, 0.7);
-  box-shadow: 0 0 10px 2px rgba(217, 119, 6, 0.25);
-}
+/* cm-arc-ring 已移除，圆弧效果通过 cm-border-ring 的 box-shadow 实现 */
 .color-mark-ripple.ripple-normal::after {
   background: transparent;
 }
@@ -2034,15 +2013,16 @@ a.branch-name:hover { color: var(--accent); }
 .color-mark-ripple.animate::after {
   animation: cm-ripple-expand 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }
-/* ── Gold border ring: solid gold bg masked to show only 2px edge ── */
+/* ── Gold border ring: solid gold bg masked to 3px ring + strong glow ── */
 .cm-border-ring {
   position: absolute;
-  inset: -2px;
+  inset: -3px;
   border-radius: inherit;
   pointer-events: none;
   z-index: 3;
-  background: rgba(245, 178, 11, 0.9);
-  box-shadow: 0 0 16px 4px rgba(245, 158, 11, 0.35), 0 0 4px 1px rgba(245, 158, 11, 0.5);
+  background: rgba(245, 178, 11, 0.95);
+  /* 强光晕：向内外扩散，在卡片边缘和内容区都产生金色弧光 */
+  box-shadow: 0 0 20px 6px rgba(245, 158, 11, 0.4), 0 0 6px 2px rgba(245, 158, 11, 0.6), inset 0 0 20px 6px rgba(245, 158, 11, 0.3);
   -webkit-mask:
     linear-gradient(#000 0 0) content-box,
     linear-gradient(#000 0 0);
@@ -2052,7 +2032,6 @@ a.branch-name:hover { color: var(--accent); }
     linear-gradient(#000 0 0);
   mask-composite: exclude;
   padding: 3px;
-  /* Clip to expanding circle */
   clip-path: circle(0% at var(--cm-ripple-x, 50%) var(--cm-ripple-y, 50%));
 }
 .cm-border-ring.ring-normal {
@@ -2060,8 +2039,8 @@ a.branch-name:hover { color: var(--accent); }
   box-shadow: none;
 }
 [data-theme="light"] .cm-border-ring.ring-marked {
-  background: rgba(217, 119, 6, 0.6);
-  box-shadow: 0 0 8px 1px rgba(217, 119, 6, 0.15);
+  background: rgba(217, 119, 6, 0.85);
+  box-shadow: 0 0 16px 4px rgba(217, 119, 6, 0.3), 0 0 4px 1px rgba(217, 119, 6, 0.5), inset 0 0 16px 4px rgba(217, 119, 6, 0.2);
 }
 .cm-border-ring.animate {
   animation: cm-ripple-expand 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
