@@ -424,25 +424,42 @@ public class DoubaoStreamAsrService
 
     private static string ExtractFullText(List<AsrResponseFrame> responses)
     {
-        var sb = new StringBuilder();
-        foreach (var resp in responses)
+        // 取最后一个有 text 的帧（nostream 模式最后一帧包含完整文本）
+        for (var i = responses.Count - 1; i >= 0; i--)
         {
-            if (resp.PayloadMsg == null) continue;
-            try
-            {
-                var payload = resp.PayloadMsg.Value;
-                if (payload.TryGetProperty("result", out var resultArr) && resultArr.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var item in resultArr.EnumerateArray())
-                    {
-                        if (item.TryGetProperty("text", out var text))
-                            sb.Append(text.GetString());
-                    }
-                }
-            }
-            catch { /* skip */ }
+            var text = ExtractTextFromPayload(responses[i]);
+            if (!string.IsNullOrEmpty(text)) return text;
         }
-        return sb.ToString();
+        return "";
+    }
+
+    private static string ExtractTextFromPayload(AsrResponseFrame resp)
+    {
+        if (resp.PayloadMsg == null) return "";
+        try
+        {
+            var payload = resp.PayloadMsg.Value;
+            if (!payload.TryGetProperty("result", out var result)) return "";
+
+            // result 可能是对象（WebSocket 模式）或数组（HTTP 模式）
+            if (result.ValueKind == JsonValueKind.Object)
+            {
+                if (result.TryGetProperty("text", out var text))
+                    return text.GetString() ?? "";
+            }
+            else if (result.ValueKind == JsonValueKind.Array)
+            {
+                var sb = new StringBuilder();
+                foreach (var item in result.EnumerateArray())
+                {
+                    if (item.TryGetProperty("text", out var text))
+                        sb.Append(text.GetString());
+                }
+                return sb.ToString();
+            }
+        }
+        catch { /* skip */ }
+        return "";
     }
 
     private static List<StreamAsrSegment> ExtractSegments(List<AsrResponseFrame> responses)
@@ -454,23 +471,53 @@ public class DoubaoStreamAsrService
             try
             {
                 var payload = resp.PayloadMsg.Value;
-                if (payload.TryGetProperty("result", out var resultArr) && resultArr.ValueKind == JsonValueKind.Array)
+                if (!payload.TryGetProperty("result", out var result)) continue;
+
+                // result 是对象（WebSocket）：提取 utterances 或直接 text
+                if (result.ValueKind == JsonValueKind.Object)
                 {
-                    foreach (var item in resultArr.EnumerateArray())
+                    // 尝试 utterances（含时间戳的细粒度分段）
+                    if (result.TryGetProperty("utterances", out var utts) && utts.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var utt in utts.EnumerateArray())
+                        {
+                            var text = utt.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
+                            if (string.IsNullOrWhiteSpace(text)) continue;
+                            double startMs = utt.TryGetProperty("start_time", out var st) ? st.GetDouble() : 0;
+                            double endMs = utt.TryGetProperty("end_time", out var et) ? et.GetDouble() : 0;
+                            segments.Add(new StreamAsrSegment
+                            {
+                                Text = text,
+                                DurationSec = (endMs - startMs) / 1000.0
+                            });
+                        }
+                    }
+                    else
+                    {
+                        // 没有 utterances，用顶层 text + additions.duration
+                        var text = result.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
+                        if (!string.IsNullOrWhiteSpace(text))
+                        {
+                            double duration = 0;
+                            if (result.TryGetProperty("additions", out var adds) &&
+                                adds.TryGetProperty("duration", out var dur))
+                            {
+                                var durStr = dur.GetString() ?? "0";
+                                double.TryParse(durStr, out duration);
+                                duration /= 1000.0;
+                            }
+                            segments.Add(new StreamAsrSegment { Text = text, DurationSec = duration });
+                        }
+                    }
+                }
+                // result 是数组（HTTP 模式兜底）
+                else if (result.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in result.EnumerateArray())
                     {
                         var text = item.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
                         if (string.IsNullOrWhiteSpace(text)) continue;
-
-                        double duration = 0;
-                        if (item.TryGetProperty("additions", out var additions) &&
-                            additions.TryGetProperty("duration", out var dur))
-                        {
-                            var durStr = dur.GetString() ?? "0";
-                            double.TryParse(durStr, out duration);
-                            duration /= 1000.0;
-                        }
-
-                        segments.Add(new StreamAsrSegment { Text = text, DurationSec = duration });
+                        segments.Add(new StreamAsrSegment { Text = text });
                     }
                 }
             }
