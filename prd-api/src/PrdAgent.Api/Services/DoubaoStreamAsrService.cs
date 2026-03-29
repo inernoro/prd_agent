@@ -262,8 +262,8 @@ public class DoubaoStreamAsrService
             ["user"] = new JsonObject { ["uid"] = "prd-agent" },
             ["audio"] = new JsonObject
             {
-                ["format"] = "wav",
-                ["codec"] = "raw",
+                ["format"] = "pcm",
+                ["codec"] = "pcm",
                 ["rate"] = rate,
                 ["bits"] = bits,
                 ["channel"] = channels
