@@ -742,6 +742,33 @@ public static class Admin
 {
     public const string AppName = "PRD Agent Web";
 
+    public static class Lab
+    {
+        [AppCallerMetadata(
+            "实验室-对话测试",
+            "实验室功能的对话模型测试",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Testing"
+        )]
+        public const string Chat = "prd-agent-web.lab::chat";
+
+        [AppCallerMetadata(
+            "实验室-视觉测试",
+            "实验室功能的视觉模型测试",
+            ModelTypes = new[] { ModelTypes.Vision },
+            Category = "Testing"
+        )]
+        public const string Vision = "prd-agent-web.lab::vision";
+
+        [AppCallerMetadata(
+            "实验室-生成测试",
+            "实验室功能的生成模型测试",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "Testing"
+        )]
+        public const string Generation = "prd-agent-web.lab::generation";
+    }
+
     public static class ModelLab
     {
         [AppCallerMetadata(
