@@ -1309,6 +1309,16 @@ a.branch-name:hover { color: var(--accent); }
 }
 .branch-card:hover .branch-tag-add { opacity: 0.6; }
 .branch-tag-add:hover { opacity: 1 !important; color: var(--accent); border-color: var(--accent-border); }
+.branch-tag-edit {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 6px;
+  color: var(--text-muted); cursor: pointer;
+  transition: all var(--transition);
+  opacity: 0;
+}
+.branch-card:hover .branch-tag-edit { opacity: 0.6; }
+.branch-tag-edit:hover { opacity: 1 !important; color: var(--accent); background: rgba(99, 179, 237, 0.1); }
+.branch-tag-edit svg.inline-icon { width: 12px; height: 12px; }
 
 /* ── Commit Log Dropdown ── */
 
@@ -1838,6 +1848,9 @@ a.branch-name:hover { color: var(--accent); }
   .branch-tag-add { opacity: 0.5; }
   .branch-card:hover .branch-tag-add { opacity: 0.5; }
   .branch-tag-add:active { opacity: 1; color: var(--accent); border-color: var(--accent-border); }
+  .branch-tag-edit { opacity: 0.5; }
+  .branch-card:hover .branch-tag-edit { opacity: 0.5; }
+  .branch-tag-edit:active { opacity: 1; color: var(--accent); }
 
   /* Update-pull group: touch target */
   .update-pull-group { padding: 4px 8px; min-height: 36px; }

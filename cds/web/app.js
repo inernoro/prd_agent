@@ -1372,6 +1372,30 @@ async function removeTagFromBranch(id, tag, event) {
   }
 }
 
+async function editBranchTags(id, event) {
+  event.stopPropagation();
+  const branch = branches.find(b => b.id === id);
+  if (!branch) return;
+  const currentTags = (branch.tags || []).join(', ');
+  const input = prompt('编辑标签（逗号分隔）:', currentTags);
+  if (input === null) return; // cancelled
+  const newTags = input.split(/[,，]/).map(t => t.trim()).filter(Boolean);
+  const oldTags = [...(branch.tags || [])];
+  // Optimistic update
+  branch.tags = newTags;
+  renderBranches();
+  renderTagFilterBar();
+  try {
+    await api('PATCH', `/branches/${id}`, { tags: newTags });
+    showToast('标签已保存', 'success');
+  } catch (e) {
+    branch.tags = oldTags;
+    renderBranches();
+    renderTagFilterBar();
+    showToast(e.message, 'error');
+  }
+}
+
 function filterByTag(tag) {
   activeTagFilter = activeTagFilter === tag ? null : tag;
   renderTagFilterBar();
@@ -2090,6 +2114,7 @@ function renderBranches() {
           </span>
         `).join('')}
         <span class="branch-tag-add" onclick="addTagToBranch('${esc(b.id)}', event)" title="添加标签">+ 标签</span>
+        <span class="branch-tag-edit" onclick="editBranchTags('${esc(b.id)}', event)" title="编辑标签">${ICON.edit}</span>
       </div>
     `;
 
