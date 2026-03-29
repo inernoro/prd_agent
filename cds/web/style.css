@@ -1384,11 +1384,13 @@ a.branch-name:hover { color: var(--accent); }
 .split-btn-toggle svg { pointer-events: none; }
 
 .deploy-menu {
-  position: fixed; min-width: 140px;
+  position: fixed; min-width: 160px;
   background: var(--bg-card-solid);
   border: 1px solid var(--card-border);
   border-radius: var(--radius-sm); overflow: hidden;
-  box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+  box-shadow: 0 8px 30px rgba(0,0,0,0.7);
+  z-index: 10000;
+  backdrop-filter: none;
 }
 .deploy-menu-header {
   padding: 6px 10px; font-size: 10px; color: var(--text-muted);

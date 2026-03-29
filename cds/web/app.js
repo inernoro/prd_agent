@@ -2098,6 +2098,22 @@ function renderBranches() {
     let actionsLeftHtml = '';
     let actionsRightHtml = '';
 
+    // Unified deploy menu template (shared across states)
+    const deployMenuTpl = `
+      <template id="deploy-menu-tpl-${esc(b.id)}">
+        ${hasMultipleProfiles ? `<div class="deploy-menu-header">选择服务</div>${deployMenuItems}` : ''}
+        ${hasDeployModes ? `${hasMultipleProfiles ? '<div class="deploy-menu-divider"></div>' : ''}<div class="deploy-menu-header">部署模式</div>${deployModeMenuItems}` : ''}
+        ${isRunning ? `<div class="deploy-menu-divider"></div>
+        <div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); viewBranchLogs('${esc(b.id)}')"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:4px"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.5 0a.25.25 0 01.25-.25h10.5a.25.25 0 01.25.25v7.5a.25.25 0 01-.25.25h-4.5a.75.75 0 00-.75.75v2.19l-2.72-2.72a.75.75 0 00-.53-.22H2.75a.25.25 0 01-.25-.25v-7.5z"/></svg>部署日志</div>
+        ${stopMenuItem}` : ''}
+        <div class="deploy-menu-divider"></div>
+        <div class="deploy-menu-item deploy-menu-item-danger" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); removeBranch('${esc(b.id)}')">${ICON.trash} 删除分支</div>
+      </template>
+    `;
+
+    const hasDropdown = hasMultipleProfiles || hasDeployModes || isRunning;
+    const deployBtnLabel = isRunning ? '更新' : '部署';
+
     if (isStopping) {
       actionsLeftHtml = `
         <button class="sm" disabled><span class="btn-spinner"></span>正在停止...</button>
@@ -2107,61 +2123,29 @@ function renderBranches() {
       actionsLeftHtml = `
         <button class="preview sm" onclick="previewBranch('${esc(b.id)}')" title="Preview">${ICON.preview}</button>
       `;
-      // Note: deploy-menu-tpl is used by the right "更新" split-btn
       actionsRightHtml = `
         <div class="split-btn">
-          <button class="sm split-btn-main deploy-glow-btn" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="拉取最新代码并重新部署">${ICON.deploy} 更新</button>
-          <button class="sm split-btn-toggle" onclick="toggleDeployMenu('${esc(b.id)}', event)" ${isBusy ? 'disabled' : ''}>
+          <button class="sm split-btn-main deploy-glow-btn" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="拉取最新代码并重新部署">${ICON.deploy} ${deployBtnLabel}</button>
+          ${hasDropdown ? `<button class="sm split-btn-toggle" onclick="toggleDeployMenu('${esc(b.id)}', event)" ${isBusy ? 'disabled' : ''}>
             <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor"><path d="M1 1l4 4 4-4"/></svg>
-          </button>
-          <template id="deploy-menu-tpl-${esc(b.id)}">
-            ${hasMultipleProfiles ? `<div class="deploy-menu-header">选择更新的服务</div>${deployMenuItems}` : ''}
-            ${hasDeployModes ? `<div class="deploy-menu-divider"></div><div class="deploy-menu-header">切换部署模式</div>${deployModeMenuItems}` : ''}
-            <div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); viewBranchLogs('${esc(b.id)}')"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:4px"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.5 0a.25.25 0 01.25-.25h10.5a.25.25 0 01.25.25v7.5a.25.25 0 01-.25.25h-4.5a.75.75 0 00-.75.75v2.19l-2.72-2.72a.75.75 0 00-.53-.22H2.75a.25.25 0 01-.25-.25v-7.5z"/></svg>部署日志</div>
-            ${stopMenuItem}
-            <div class="deploy-menu-divider"></div>
-            <div class="deploy-menu-item deploy-menu-item-danger" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); removeBranch('${esc(b.id)}')">${ICON.trash} 删除分支</div>
-          </template>
+          </button>` : ''}
+          ${deployMenuTpl}
         </div>
-      `;
-    } else if (isStopped) {
-      // Container exists but stopped — deploy with optional mode dropdown
-      actionsLeftHtml = hasDeployModes ? `
-        <div class="split-btn">
-          <button class="sm split-btn-main deploy-glow-btn" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="部署">${ICON.deploy} 部署</button>
-          <button class="sm split-btn-toggle" onclick="toggleDeployMenu('${esc(b.id)}', event)" ${isBusy ? 'disabled' : ''}>
-            <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor"><path d="M1 1l4 4 4-4"/></svg>
-          </button>
-          <template id="deploy-menu-tpl-${esc(b.id)}">
-            <div class="deploy-menu-header">选择部署模式</div>
-            ${deployModeMenuItems}
-          </template>
-        </div>
-      ` : `
-        <button class="sm deploy-glow-btn" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="部署">${ICON.deploy} 部署</button>
-      `;
-      actionsRightHtml = `
-        <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.trash}</button>
       `;
     } else {
-      // Idle (never deployed) or building — deploy with optional mode dropdown
-      actionsLeftHtml = hasDeployModes ? `
+      // Stopped / idle / error — single deploy button with optional dropdown
+      actionsLeftHtml = `
         <div class="split-btn">
-          <button class="sm split-btn-main deploy-glow-btn" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="部署">${ICON.deploy} 部署</button>
-          <button class="sm split-btn-toggle" onclick="toggleDeployMenu('${esc(b.id)}', event)" ${isBusy ? 'disabled' : ''}>
+          <button class="sm split-btn-main deploy-glow-btn" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="${deployBtnLabel}">${ICON.deploy} ${deployBtnLabel}</button>
+          ${hasDropdown ? `<button class="sm split-btn-toggle" onclick="toggleDeployMenu('${esc(b.id)}', event)" ${isBusy ? 'disabled' : ''}>
             <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor"><path d="M1 1l4 4 4-4"/></svg>
-          </button>
-          <template id="deploy-menu-tpl-${esc(b.id)}">
-            <div class="deploy-menu-header">选择部署模式</div>
-            ${deployModeMenuItems}
-          </template>
+          </button>` : ''}
+          ${deployMenuTpl}
         </div>
-      ` : `
-        <button class="sm deploy-glow-btn" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="部署">${ICON.deploy} 部署</button>
       `;
       actionsRightHtml = `
         ${hasError ? `<button class="sm" onclick="resetBranch('${esc(b.id)}')" ${btnDisabled('reset')}>${btnLabel('reset', ICON.reset + ' 重置')}</button>` : ''}
-        <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.trash}</button>
+        ${!hasDropdown ? `<button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.trash}</button>` : ''}
       `;
     }
 

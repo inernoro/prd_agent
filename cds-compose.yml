@@ -19,8 +19,8 @@ x-cds-env:
   AI_ACCESS_KEY: "TODO: 请填写实际值"
 
 # 部署模式 — 每个服务可在 CDS 左侧面板下拉切换
-# dev: 热重载开发模式（改代码自动刷新，内存占用高）
-# static: 静态编译模式（一次编译、runtime 运行，内存低、启动快）
+# dev: 热重载开发模式（改代码自动刷新）
+# static: 静态编译模式（一次编译、启动快）
 x-cds-deploy-modes:
   api:
     dev:
@@ -28,14 +28,12 @@ x-cds-deploy-modes:
       command: >-
         dotnet restore &&
         dotnet build --no-restore &&
-        DOTNET_GCHeapHardLimit=0x10000000
         dotnet watch run --project src/PrdAgent.Api --urls http://0.0.0.0:5000
     static:
       label: "静态部署 (publish)"
       command: >-
         dotnet restore &&
         dotnet publish src/PrdAgent.Api -c Release -o /publish --no-restore &&
-        DOTNET_GCHeapHardLimit=0x8000000
         dotnet /publish/PrdAgent.Api.dll --urls http://0.0.0.0:5000
       env:
         ASPNETCORE_ENVIRONMENT: Production
@@ -53,8 +51,6 @@ x-cds-deploy-modes:
         pnpm install --frozen-lockfile &&
         pnpm run build &&
         npx -y serve -s dist -l 8000
-      env:
-        NODE_OPTIONS: "--max-old-space-size=96"
 
 services:
   # ── App Services (有相对路径 volume mount) ──
@@ -65,14 +61,11 @@ services:
     volumes:
       - ./prd-api:/app
       - api-nuget-cache:/root/.nuget/packages
-      - api-build-cache:/app/src/PrdAgent.Api/bin
-      - api-obj-cache:/app/src/PrdAgent.Api/obj
     ports:
       - "5000"
     command: >-
       dotnet restore &&
       dotnet build --no-restore &&
-      DOTNET_GCHeapHardLimit=0x10000000
       dotnet run --project src/PrdAgent.Api --no-build --urls http://0.0.0.0:5000
     depends_on:
       mongodb: { condition: service_healthy }
@@ -80,18 +73,11 @@ services:
     environment:
       # 仅服务特有变量，全局变量已由 x-cds-env 注入
       ASPNETCORE_ENVIRONMENT: Development
-      DOTNET_TieredCompilation: 1
-      DOTNET_TC_QuickJit: 1
-      DOTNET_ReadyToRun: 0
       MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
       MongoDB__DatabaseName: prdagent
       Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT}"
       Jwt__Secret: "${JWT_SECRET}"
       Jwt__Issuer: prdagent
-    deploy:
-      resources:
-        limits:
-          memory: 384M
     labels:
       cds.path-prefix: "/api/"
 
@@ -100,20 +86,12 @@ services:
     working_dir: /app
     volumes:
       - ./prd-admin:/app
-      - admin-pnpm-store:/root/.local/share/pnpm/store
-      - admin-node-modules:/app/node_modules
     ports:
       - "8000"
     command: >-
       corepack enable &&
       pnpm install --frozen-lockfile &&
       pnpm exec vite --host 0.0.0.0 --port 8000
-    environment:
-      NODE_OPTIONS: "--max-old-space-size=192"
-    deploy:
-      resources:
-        limits:
-          memory: 256M
     labels:
       cds.path-prefix: "/"
 
@@ -125,18 +103,10 @@ services:
       - "27017"
     volumes:
       - mongodb-data:/data/db
-    command: >-
-      mongod
-      --wiredTigerCacheSizeGB 0.15
-      --setParameter diagnosticDataCollectionEnabled=false
     healthcheck:
       test: mongosh --eval "db.runCommand({ping:1})" --quiet
       interval: 10s
       retries: 3
-    deploy:
-      resources:
-        limits:
-          memory: 256M
 
   redis:
     image: redis:7-alpine
@@ -144,21 +114,12 @@ services:
       - "6379"
     volumes:
       - redis-data:/data
-    command: redis-server --maxmemory 32mb --maxmemory-policy allkeys-lru
     healthcheck:
       test: redis-cli ping
       interval: 10s
       retries: 3
-    deploy:
-      resources:
-        limits:
-          memory: 48M
 
 volumes:
   mongodb-data:
   redis-data:
   api-nuget-cache:
-  api-build-cache:
-  api-obj-cache:
-  admin-pnpm-store:
-  admin-node-modules:
