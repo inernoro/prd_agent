@@ -98,6 +98,9 @@
 - [文学创作 Agent 文章配图功能设计](design.literary-agent) `design.literary-agent`
   > 文学创作场景下文章自动配图的功能设计
 
+- [产品评审员技术设计文档](design.review-agent) `design.review-agent`
+  > ReviewAgent 的完整技术设计：状态机、LLM 集成、SSE 协议、权限模型、解析策略
+
 - [多文档知识库与文档类型系统设计文档](design.multi-doc-knowledge) `design.multi-doc-knowledge`
   > 知识库多文档管理与文档类型系统的设计
 
