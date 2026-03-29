@@ -1054,11 +1054,13 @@ button.text-btn:hover { color: var(--accent); }
   transition: color var(--transition);
 }
 a.branch-name:hover { color: var(--accent); }
-/* Quick actions (copy + jump) — visible on row hover, hidden otherwise to not steal branch name space */
+/* Quick actions (copy + jump) — visible on row hover, uses visibility to avoid layout shift */
 .branch-quick-actions {
-  display: none; gap: 2px; align-items: center; flex-shrink: 0;
+  display: inline-flex; gap: 2px; align-items: center; flex-shrink: 0;
+  visibility: hidden; opacity: 0;
+  transition: opacity 0.15s ease;
 }
-.branch-card-row1:hover .branch-quick-actions { display: inline-flex; }
+.branch-card-row1:hover .branch-quick-actions { visibility: visible; opacity: 1; }
 .branch-quick-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 22px; height: 22px; border: none; border-radius: 4px;
@@ -1382,11 +1384,13 @@ a.branch-name:hover { color: var(--accent); }
 .split-btn-toggle svg { pointer-events: none; }
 
 .deploy-menu {
-  position: fixed; min-width: 140px;
+  position: fixed; min-width: 160px;
   background: var(--bg-card-solid);
   border: 1px solid var(--card-border);
   border-radius: var(--radius-sm); overflow: hidden;
-  box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+  box-shadow: 0 8px 30px rgba(0,0,0,0.7);
+  z-index: 10000;
+  backdrop-filter: none;
 }
 .deploy-menu-header {
   padding: 6px 10px; font-size: 10px; color: var(--text-muted);
@@ -1854,8 +1858,8 @@ a.branch-name:hover { color: var(--accent); }
   /* Inline deploy log: responsive */
 
 
-  /* Commit info: hide on mobile to save space, show on expand */
-  .branch-actions-commit { display: none; }
+  /* Commit info: compact on mobile, single line with truncation */
+  .branch-actions-commit { font-size: 10px; }
 
   /* Dropdown/menu items: bigger touch targets */
   .branch-dropdown-item { padding: 10px 14px; min-height: 44px; }

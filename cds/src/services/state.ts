@@ -54,6 +54,8 @@ export class StateService {
       if (!this.state.executors) this.state.executors = {};
       // Migrate: backfill cacheMounts for existing build profiles
       this.migrateCacheMounts();
+      // Migrate: ensure deployModes field exists on profiles (no-op if already present)
+      this.migrateDeployModes();
     } else {
       this.state = emptyState();
     }
@@ -99,6 +101,16 @@ export class StateService {
       }
     }
     if (changed) this.save();
+  }
+
+  /**
+   * Ensure deployModes/activeDeployMode fields exist on profiles loaded from older state files.
+   * No data change needed — just ensures the fields are recognized as valid.
+   */
+  private migrateDeployModes(): void {
+    // No-op: TypeScript's optional fields handle missing deployModes gracefully.
+    // This method exists as a migration hook in case future versions need to
+    // transform deploy mode data (e.g., rename keys, merge formats).
   }
 
   /** Listeners notified after every save() */
