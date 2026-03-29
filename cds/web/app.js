@@ -1257,10 +1257,11 @@ async function toggleColorMark(id, event) {
     const btnRect = btn.getBoundingClientRect();
     const x = btnRect.left + btnRect.width / 2 - cardRect.left;
     const y = btnRect.top + btnRect.height / 2 - cardRect.top;
+    // +4px 余量确保圆弧完全覆盖 border-box 角落（含 2px border + 圆角）
     const maxRadius = Math.ceil(Math.sqrt(
       Math.max(x, cardRect.width - x) ** 2 +
       Math.max(y, cardRect.height - y) ** 2
-    ));
+    )) + 4;
 
     // Tint overlay (content area)
     const overlay = document.createElement('div');
