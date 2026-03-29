@@ -16,7 +16,7 @@ namespace PrdAgent.Api.Controllers.Api;
 [ApiController]
 [Route("api/transcript-agent")]
 [Authorize]
-[AdminController("transcript-agent", AdminPermissionCatalog.TranscriptAgentUse)]
+[AdminController("ai-toolbox", AdminPermissionCatalog.AiToolboxUse)]
 public class TranscriptAgentController : ControllerBase
 {
     private const string AppKey = "transcript-agent";
