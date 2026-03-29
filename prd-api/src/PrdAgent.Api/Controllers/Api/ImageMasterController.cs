@@ -2101,7 +2101,10 @@ public class ImageMasterController : ControllerBase
         try
         {
             var appCallerCode = AppCallerRegistry.LiteraryAgent.Content.Chat;
-            var llmClient = _gateway.CreateClient(appCallerCode, "chat", includeThinking: true);
+            // 用户指定的模型作为 expectedModel 提示 Gateway 调度
+            var userModelId = (request?.ModelId ?? string.Empty).Trim();
+            var llmClient = _gateway.CreateClient(appCallerCode, "chat", includeThinking: true,
+                expectedModel: string.IsNullOrWhiteSpace(userModelId) ? null : userModelId);
             var requestId = Guid.NewGuid().ToString("N");
             using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
                 RequestId: requestId,

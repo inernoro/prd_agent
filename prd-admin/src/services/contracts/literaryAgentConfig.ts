@@ -193,6 +193,16 @@ export interface LiteraryAgentModelPool {
 }
 
 /**
+ * 获取文学创作统一生图模型池列表（文生图 + 图生图，合并去重）
+ */
+export type GetLiteraryAgentModelsContract = () => Promise<ApiResponse<LiteraryAgentModelPool[]>>;
+
+/**
+ * 获取文学创作对话/标记生成模型池列表
+ */
+export type GetLiteraryAgentChatModelsContract = () => Promise<ApiResponse<LiteraryAgentModelPool[]>>;
+
+/**
  * 获取文学创作配图生成可用的模型池列表（无参数）
  * 兼容旧接口，根据是否有参考图自动选择 appCallerCode
  */

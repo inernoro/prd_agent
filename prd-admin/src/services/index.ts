@@ -164,6 +164,8 @@ import type {
   ActivateReferenceImageConfigContract,
   DeactivateReferenceImageConfigContract,
   GetActiveReferenceImageConfigContract,
+  GetLiteraryAgentModelsContract,
+  GetLiteraryAgentChatModelsContract,
   GetLiteraryAgentImageGenModelsContract,
   GetLiteraryAgentAllModelsContract,
   GetLiteraryAgentMainModelContract,
@@ -239,7 +241,7 @@ import type { IAutomationsService } from '@/services/contracts/automations';
 import type { IModelGroupsService } from '@/services/contracts/modelGroups';
 import type { IAppCallersService } from '@/services/contracts/appCallers';
 import type { ISchedulerConfigService } from '@/services/contracts/schedulerConfig';
-import type { GetUserPreferencesContract, UpdateNavOrderContract, UpdateThemeConfigContract, UpdateVisualAgentPreferencesContract } from '@/services/contracts/userPreferences';
+import type { GetUserPreferencesContract, UpdateNavOrderContract, UpdateThemeConfigContract, UpdateVisualAgentPreferencesContract, UpdateLiteraryAgentPreferencesContract } from '@/services/contracts/userPreferences';
 import type {
   GetModelSizesContract,
   GetWatermarksContract,
@@ -445,6 +447,8 @@ import {
   activateReferenceImageConfigReal,
   deactivateReferenceImageConfigReal,
   getActiveReferenceImageConfigReal,
+  getLiteraryAgentModelsReal,
+  getLiteraryAgentChatModelsReal,
   getLiteraryAgentImageGenModelsReal,
   getLiteraryAgentAllModelsReal,
   getLiteraryAgentMainModelReal,
@@ -520,7 +524,7 @@ import { AutomationsService } from '@/services/real/automations';
 import { ModelGroupsService } from '@/services/real/modelGroups';
 import { AppCallersService } from '@/services/real/appCallers';
 import { SchedulerConfigService } from '@/services/real/schedulerConfig';
-import { getUserPreferencesReal, updateNavOrderReal, updateThemeConfigReal, updateVisualAgentPreferencesReal } from '@/services/real/userPreferences';
+import { getUserPreferencesReal, updateNavOrderReal, updateThemeConfigReal, updateVisualAgentPreferencesReal, updateLiteraryAgentPreferencesReal } from '@/services/real/userPreferences';
 import {
   getAdminNotificationsReal,
   handleAdminNotificationReal,
@@ -935,6 +939,8 @@ export const deleteReferenceImageConfig: DeleteReferenceImageConfigContract = wi
 export const activateReferenceImageConfig: ActivateReferenceImageConfigContract = withAuth(activateReferenceImageConfigReal);
 export const deactivateReferenceImageConfig: DeactivateReferenceImageConfigContract = withAuth(deactivateReferenceImageConfigReal);
 export const getActiveReferenceImageConfig: GetActiveReferenceImageConfigContract = withAuth(getActiveReferenceImageConfigReal);
+export const getLiteraryAgentModels: GetLiteraryAgentModelsContract = withAuth(getLiteraryAgentModelsReal);
+export const getLiteraryAgentChatModels: GetLiteraryAgentChatModelsContract = withAuth(getLiteraryAgentChatModelsReal);
 export const getLiteraryAgentImageGenModels: GetLiteraryAgentImageGenModelsContract = withAuth(getLiteraryAgentImageGenModelsReal);
 export const getLiteraryAgentAllModels: GetLiteraryAgentAllModelsContract = withAuth(getLiteraryAgentAllModelsReal);
 export const getLiteraryAgentMainModel: GetLiteraryAgentMainModelContract = withAuth(getLiteraryAgentMainModelReal);
@@ -1203,6 +1209,7 @@ export const getUserPreferences: GetUserPreferencesContract = withAuth(getUserPr
 export const updateNavOrder: UpdateNavOrderContract = withAuth(updateNavOrderReal);
 export const updateThemeConfig: UpdateThemeConfigContract = withAuth(updateThemeConfigReal);
 export const updateVisualAgentPreferences: UpdateVisualAgentPreferencesContract = withAuth(updateVisualAgentPreferencesReal);
+export const updateLiteraryAgentPreferences: UpdateLiteraryAgentPreferencesContract = withAuth(updateLiteraryAgentPreferencesReal);
 
 export const getWatermarks: GetWatermarksContract = withAuth(getWatermarksReal);
 export const getWatermarkByApp: GetWatermarkByAppContract = withAuth(getWatermarkByAppReal);

@@ -189,12 +189,34 @@ export const getActiveReferenceImageConfigReal: GetActiveReferenceImageConfigCon
 // ========== 模型查询 API（无参数）==========
 
 import type {
+  GetLiteraryAgentModelsContract,
+  GetLiteraryAgentChatModelsContract,
   GetLiteraryAgentImageGenModelsContract,
   GetLiteraryAgentAllModelsContract,
   GetLiteraryAgentMainModelContract,
   LiteraryAgentModelPool,
   LiteraryAgentAllModelsResponse,
 } from '../contracts/literaryAgentConfig';
+
+/**
+ * 获取文学创作统一生图模型池列表（文生图 + 图生图，合并去重）
+ */
+export const getLiteraryAgentModelsReal: GetLiteraryAgentModelsContract = async () => {
+  return await apiRequest<LiteraryAgentModelPool[]>(
+    api.literaryAgent.config.models(),
+    { method: 'GET' }
+  );
+};
+
+/**
+ * 获取文学创作对话/标记生成模型池列表
+ */
+export const getLiteraryAgentChatModelsReal: GetLiteraryAgentChatModelsContract = async () => {
+  return await apiRequest<LiteraryAgentModelPool[]>(
+    api.literaryAgent.config.modelsChatPools(),
+    { method: 'GET' }
+  );
+};
 
 /**
  * 获取文学创作配图生成可用的模型池列表（兼容旧接口）
