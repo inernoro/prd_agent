@@ -189,12 +189,15 @@ function broadcastAiPairing(event: string, data: unknown) {
 }
 
 /** Check if a request is from an approved AI session */
-function resolveAiSession(req: express.Request): ApprovedAiSession | null {
-  // Static mode: AI_ACCESS_KEY environment variable
-  const staticKey = process.env.AI_ACCESS_KEY;
+function resolveAiSession(req: express.Request, stateService?: StateService): ApprovedAiSession | null {
+  // Static mode: AI_ACCESS_KEY from process env or custom env (either match accepts)
   const headerKey = req.headers['x-ai-access-key'] as string | undefined;
-  if (staticKey && headerKey === staticKey) {
-    return { id: 'static', agentName: 'AI (static key)', token: staticKey, approvedAt: '', expiresAt: '' };
+  if (headerKey) {
+    const processKey = process.env.AI_ACCESS_KEY;
+    const customKey = stateService?.getCustomEnv()?.['AI_ACCESS_KEY'];
+    if ((processKey && headerKey === processKey) || (customKey && headerKey === customKey)) {
+      return { id: 'static', agentName: 'AI (static key)', token: headerKey, approvedAt: '', expiresAt: '' };
+    }
   }
 
   // Dynamic mode: approved pairing token
@@ -247,7 +250,10 @@ export function createServer(deps: ServerDeps): express.Express {
       agentName: String(agentName).slice(0, 100),
       purpose: String(purpose || '').slice(0, 500),
       createdAt: new Date().toISOString(),
-      ip: req.ip || req.socket.remoteAddress || 'unknown',
+      ip: (req.headers['cf-connecting-ip'] as string) ||
+          (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+          (req.headers['x-real-ip'] as string) ||
+          req.ip || req.socket.remoteAddress || 'unknown',
     };
     pendingAiRequests.set(id, request);
 
@@ -312,7 +318,7 @@ export function createServer(deps: ServerDeps): express.Express {
       if (token === validToken) return next();
 
       // Check AI session auth
-      const aiSession = resolveAiSession(req);
+      const aiSession = resolveAiSession(req, deps.stateService);
       if (aiSession) {
         (req as any)._aiSession = aiSession;
         return next();

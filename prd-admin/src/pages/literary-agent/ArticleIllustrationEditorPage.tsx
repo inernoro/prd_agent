@@ -1,4 +1,4 @@
-import { glassBadge, glassFloatingButton } from '@/lib/glassStyles';
+import { glassBadge, glassFloatingButton, glassPanel } from '@/lib/glassStyles';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
@@ -17,7 +17,7 @@ import {
 import {
   createLiteraryAgentImageGenRun,
   generateArticleMarkers,
-  getLiteraryAgentMainModel,
+  getLiteraryAgentChatModels,
   planImageGen,
   streamLiteraryAgentImageGenRunWithRetry,
   updateArticleMarker,
@@ -34,7 +34,9 @@ import {
   deleteReferenceImageConfig,
   activateReferenceImageConfig,
   deactivateReferenceImageConfig,
-  getLiteraryAgentAllModels,
+  getLiteraryAgentModels,
+  getUserPreferences,
+  updateLiteraryAgentPreferences,
   optimizeLiteraryPrompt,
   getAdapterInfoByModelName,
   // 海鲜市场 API
@@ -48,14 +50,16 @@ import {
   updateLiteraryAgentWorkspaceReal as updateVisualAgentWorkspace,
   uploadLiteraryAgentWorkspaceAssetReal as uploadVisualAgentWorkspaceAsset,
 } from '@/services/real/literaryAgentConfig';
-import type { LiteraryAgentModelPool, LiteraryAgentAllModelsResponse } from '@/services/contracts/literaryAgentConfig';
+import type { LiteraryAgentModelPool } from '@/services/contracts/literaryAgentConfig';
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
 import { BatchSizePicker } from '@/components/ui/BatchSizePicker';
 import { ASPECT_OPTIONS, type SizesByResolution } from '@/lib/imageAspectOptions';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft, Check } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { useAuthStore } from '@/stores/authStore';
 import { useNavigate } from 'react-router-dom';
 
 import ReactMarkdown from 'react-markdown';
@@ -465,14 +469,81 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   // 提取的标记列表
   const [markers, setMarkers] = useState<ArticleMarker[]>([]);
 
-  // 生图模型（区分文生图和图生图两种场景）
-  const [imageGenModel, setImageGenModel] = useState<Model | null>(null);
-  const [mainModel, setMainModel] = useState<Model | null>(null); // 用于生成标记的模型
+  // === 模型池状态 ===
+  const [imageGenPools, setImageGenPools] = useState<LiteraryAgentModelPool[]>([]);
+  const [chatPools, setChatPools] = useState<LiteraryAgentModelPool[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(true);
   const [imageGenModelError, setImageGenModelError] = useState<string | null>(null);
-  // 文生图模型池（无参考图）
-  const [text2ImgPool, setText2ImgPool] = useState<LiteraryAgentModelPool | null>(null);
-  // 图生图模型池（有风格参考图）
-  const [img2ImgPool, setImg2ImgPool] = useState<LiteraryAgentModelPool | null>(null);
+
+  // 模型偏好（按账号持久化到数据库）
+  const userId = useAuthStore((s) => s.user?.userId ?? '');
+  const [imageModelPrefOpen, setImageModelPrefOpen] = useState(false);
+  const [imageModelPrefId, setImageModelPrefId] = useState<string>('');
+  const [chatModelPrefOpen, setChatModelPrefOpen] = useState(false);
+  const [chatModelPrefId, setChatModelPrefId] = useState<string>('');
+  const [modelPrefReady, setModelPrefReady] = useState(false);
+
+  // 生图模型池 → 可选择列表
+  type PoolModel = { poolId: string; id: string; name: string; modelName: string; actualModelId: string; platformId: string; enabled: boolean; isDedicated: boolean; isDefault: boolean };
+  const toPoolModels = useCallback((pools: LiteraryAgentModelPool[]): PoolModel[] => {
+    return pools
+      .filter((g) => g.models && g.models.length > 0)
+      .map((g) => {
+        const first = g.models[0]!;
+        return {
+          poolId: g.id,
+          id: `pool_${g.id}`,
+          name: g.name,
+          modelName: g.code || first.modelId,
+          actualModelId: first.modelId,
+          platformId: first.platformId,
+          enabled: g.models.some((m) => m.healthStatus === 'Healthy' || m.healthStatus === 'Degraded'),
+          isDedicated: g.isDedicated,
+          isDefault: g.isDefault,
+        };
+      })
+      .filter((m) => m.enabled);
+  }, []);
+
+  const enabledImageModels = useMemo(() => toPoolModels(imageGenPools), [imageGenPools, toPoolModels]);
+  const enabledChatModels = useMemo(() => toPoolModels(chatPools), [chatPools, toPoolModels]);
+
+  // 有效选中模型（无 auto 概念，默认选第一个）
+  const effectiveModel = useMemo(() => {
+    const byId = imageModelPrefId ? enabledImageModels.find((m) => m.id === imageModelPrefId) : null;
+    return byId ?? enabledImageModels[0] ?? null;
+  }, [enabledImageModels, imageModelPrefId]);
+
+  const effectiveChatModel = useMemo(() => {
+    const byId = chatModelPrefId ? enabledChatModels.find((m) => m.id === chatModelPrefId) : null;
+    return byId ?? enabledChatModels[0] ?? null;
+  }, [enabledChatModels, chatModelPrefId]);
+
+  // 兼容旧代码：imageGenModel 由 effectiveModel 驱动
+  const imageGenModel = useMemo<Model | null>(() => {
+    if (!effectiveModel) return null;
+    return {
+      id: effectiveModel.id,
+      name: effectiveModel.name,
+      modelName: effectiveModel.modelName,
+      platformId: effectiveModel.platformId,
+      enabled: effectiveModel.enabled,
+      isImageGen: true,
+    } as Model;
+  }, [effectiveModel]);
+
+  // mainModel 由 effectiveChatModel 驱动（用于标记生成模型名称显示）
+  const mainModel = useMemo<Model | null>(() => {
+    if (!effectiveChatModel) return null;
+    return {
+      id: effectiveChatModel.id,
+      name: effectiveChatModel.name,
+      modelName: effectiveChatModel.modelName,
+      platformId: effectiveChatModel.platformId,
+      enabled: effectiveChatModel.enabled,
+      isMain: true,
+    } as Model;
+  }, [effectiveChatModel]);
 
   // 生图模型尺寸选项（按分辨率分组，从后端 adapter-info 获取）
   const [sizesByResolutionForPicker, setSizesByResolutionForPicker] = useState<SizesByResolution>({ '1k': [], '2k': [], '4k': [] });
@@ -555,70 +626,69 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId]);
 
-  // 自动选择生图模型（区分文生图和图生图两种场景）
-  // 后端 API 一次性返回两种场景的模型池
+  // 加载模型池列表（生图 + 对话）+ 用户偏好
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       setImageGenModelError(null);
-      setText2ImgPool(null);
-      setImg2ImgPool(null);
+      setModelsLoading(true);
 
-      // 并行加载：所有模型池 + 主模型信息
-      const [allPoolsRes, mainModelRes] = await Promise.all([
-        getLiteraryAgentAllModels().catch(() => ({ success: false, data: null as LiteraryAgentAllModelsResponse | null })),
-        getLiteraryAgentMainModel().catch(() => ({ success: false, data: null as { model: null } | null })),
+      const [imgPoolsRes, chatPoolsRes, prefsRes] = await Promise.all([
+        getLiteraryAgentModels().catch(() => ({ success: false, data: null as LiteraryAgentModelPool[] | null })),
+        getLiteraryAgentChatModels().catch(() => ({ success: false, data: null as LiteraryAgentModelPool[] | null })),
+        getUserPreferences().catch(() => ({ success: false, data: null as null })),
       ]);
       if (cancelled) return;
 
-      // 解析两种场景的模型池
-      if (allPoolsRes.success && allPoolsRes.data) {
-        const t2iPools = allPoolsRes.data.text2img?.pools ?? [];
-        const i2iPools = allPoolsRes.data.img2img?.pools ?? [];
-
-        // 查找专属模型池（isDedicated=true），否则用第一个
-        const t2iPool = t2iPools.find((p) => p.isDedicated) ?? t2iPools[0] ?? null;
-        const i2iPool = i2iPools.find((p) => p.isDedicated) ?? i2iPools[0] ?? null;
-
-        setText2ImgPool(t2iPool);
-        setImg2ImgPool(i2iPool);
+      if (imgPoolsRes.success && imgPoolsRes.data) {
+        setImageGenPools(imgPoolsRes.data);
+        if (imgPoolsRes.data.length === 0) {
+          setImageGenModelError('未找到启用的生图模型（请绑定专属模型池）');
+        }
+      } else {
+        setImageGenModelError('加载模型池失败');
       }
 
-      // 获取主模型（用于显示标记生成模型名称）
-      if (mainModelRes.success && mainModelRes.data?.model) {
-        const m = mainModelRes.data.model;
-        setMainModel({ id: m.id, name: m.name, modelName: m.modelName, platformId: m.platformId ?? '', enabled: m.enabled, isMain: m.isMain } as Model);
+      if (chatPoolsRes.success && chatPoolsRes.data) {
+        setChatPools(chatPoolsRes.data);
       }
+
+      // 恢复用户模型偏好
+      if (prefsRes.success && prefsRes.data?.literaryAgentPreferences) {
+        const prefs = prefsRes.data.literaryAgentPreferences;
+        setImageModelPrefId(prefs.imageModelId ?? '');
+        setChatModelPrefId(prefs.chatModelId ?? '');
+      }
+      setModelPrefReady(true);
+      setModelsLoading(false);
     })();
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // 根据是否有激活的参考图，决定当前使用哪个模型池来显示 imageGenModel
+  // 持久化模型偏好（debounce 500ms）
   useEffect(() => {
-    const hasActiveRefImage = referenceImageConfigs.some((c) => c.isActive);
-    const pool = hasActiveRefImage ? img2ImgPool : text2ImgPool;
+    if (!modelPrefReady || !userId) return;
+    const timeout = setTimeout(() => {
+      void updateLiteraryAgentPreferences({
+        imageModelId: imageModelPrefId || undefined,
+        chatModelId: chatModelPrefId || undefined,
+      }).catch(() => {});
+    }, 500);
+    return () => clearTimeout(timeout);
+  }, [imageModelPrefId, chatModelPrefId, modelPrefReady, userId]);
 
-    // 更新 imageGenModel 用于生图时的校验
-    if (pool && pool.models && pool.models.length > 0) {
-      const sortedPoolModels = [...pool.models].sort((a, b) => (a.priority ?? 50) - (b.priority ?? 50));
-      const topPoolModel = sortedPoolModels[0];
-      setImageGenModel({
-        id: `pool-${pool.id}-${topPoolModel.modelId}`,
-        name: pool.name || topPoolModel.modelId,
-        modelName: pool.code || topPoolModel.modelId,
-        platformId: topPoolModel.platformId,
-        enabled: true,
-        isImageGen: true,
-      } as Model);
-    } else {
-      setImageGenModel(null);
-      if (!text2ImgPool && !img2ImgPool) {
-        setImageGenModelError('未找到启用的生图模型（请绑定专属模型池）');
-      }
+  // 验证用户选择的模型是否仍在可用列表中
+  useEffect(() => {
+    if (modelsLoading) return;
+    if (imageModelPrefId && !enabledImageModels.some((m) => m.id === imageModelPrefId)) {
+      setImageModelPrefId('');
     }
-  }, [referenceImageConfigs, text2ImgPool, img2ImgPool]);
+    if (chatModelPrefId && !enabledChatModels.some((m) => m.id === chatModelPrefId)) {
+      setChatModelPrefId('');
+    }
+  }, [enabledImageModels, enabledChatModels, imageModelPrefId, chatModelPrefId, modelsLoading]);
 
   // 从 ASPECT_OPTIONS 构建默认尺寸选项（当适配器未返回尺寸时作为 fallback）
   const defaultSizesByResolution: SizesByResolution = React.useMemo(() => ({
@@ -629,7 +699,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   // 从后端获取生图模型的尺寸选项（按分辨率分组，与视觉创作一致）
   useEffect(() => {
-    const modelName = imageGenModel?.modelName;
+    const modelName = effectiveModel?.actualModelId || imageGenModel?.modelName;
     if (!modelName) {
       setSizesByResolutionForPicker(defaultSizesByResolution);
       return;
@@ -657,7 +727,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       }
     })();
     return () => { cancelled = true; };
-  }, [imageGenModel?.modelName, defaultSizesByResolution]);
+  }, [effectiveModel?.actualModelId, imageGenModel?.modelName, defaultSizesByResolution]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1093,6 +1163,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         userInstruction: systemPrompt,
         idempotencyKey: `gen-markers-${Date.now()}`,
         insertionMode: 'anchor',
+        modelId: effectiveChatModel?.actualModelId,
       });
 
       let fullText = '';
@@ -1424,17 +1495,22 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       )
     );
     const idem = `article_img_${workspaceId}_${markerIndex}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    // 如果用户选择了特定模型，传入 platformId 和 modelId 供后端使用
+    const runInput: Record<string, unknown> = {
+      items: [{ prompt: plannedPrompt, count: 1, size: plannedSize }],
+      size: plannedSize,
+      responseFormat: 'url',
+      maxConcurrency: 1,
+      workspaceId,
+      appKey: 'literary-agent',
+      articleMarkerIndex: markerIndex,
+    };
+    if (effectiveModel) {
+      runInput.platformId = effectiveModel.platformId;
+      runInput.modelId = effectiveModel.actualModelId;
+    }
     const created = await createLiteraryAgentImageGenRun({
-      input: {
-        // 不需要传模型信息，后端会根据 appCallerCode 从绑定的模型池自动解析
-        items: [{ prompt: plannedPrompt, count: 1, size: plannedSize }],
-        size: plannedSize,
-        responseFormat: 'url',  // 使用 URL 格式，后端会自动保存到 COS
-        maxConcurrency: 1,
-        workspaceId,  // 传入 workspaceId，后端会自动保存图片到 COS
-        appKey: 'literary-agent',  // 文学创作应用标识，用于水印配置
-        articleMarkerIndex: markerIndex,  // 传入 markerIndex，后端 Worker 完成/失败时自动回填 marker 状态
-      },
+      input: runInput,
       idempotencyKey: idem,
     });
     if (!created.success) {
@@ -2191,66 +2267,140 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 </div>
               </div>
               
-              {/* 模型信息展示 - 紧凑设计 */}
+              {/* 模型切换器：提示词模型 + 生图模型 */}
               <div className="flex items-center gap-1.5">
-                {mainModel && (
-                  <div
-                    className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]"
-                    style={{ background: 'rgba(59, 130, 246, 0.1)', color: '#60A5FA' }}
-                    title="标记生成模型"
-                  >
-                    <Sparkles size={10} />
-                    {mainModel.modelName || mainModel.name}
-                  </div>
-                )}
-                {/* 文生图模型 */}
-                {text2ImgPool ? (
-                  <div
-                    className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]"
-                    style={{ 
-                      background: !referenceImageConfigs.some(c => c.isActive) ? 'rgba(34, 197, 94, 0.15)' : 'rgba(139, 92, 246, 0.1)', 
-                      color: !referenceImageConfigs.some(c => c.isActive) ? '#4ADE80' : '#A78BFA' 
-                    }}
-                    title={`文生图${text2ImgPool.isDedicated ? '(专属)' : ''}: ${text2ImgPool.name}`}
-                  >
-                    {text2ImgPool.isDedicated && (
-                      <span className="text-[8px] px-1 py-0.5 rounded bg-green-500/20 text-green-400 mr-0.5">
-                        专
-                      </span>
-                    )}
-                    <span className="text-[8px] opacity-60 mr-0.5">T2I</span>
-                    {text2ImgPool.name || text2ImgPool.code}
-                  </div>
-                ) : (
-                  <div className="text-[10px] px-1.5 py-0.5 rounded text-yellow-400 bg-yellow-500/10" title="文生图模型未配置">
-                    <span className="text-[8px] opacity-60 mr-0.5">T2I</span>-
-                  </div>
-                )}
-                {/* 图生图模型 */}
-                {img2ImgPool ? (
-                  <div
-                    className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]"
-                    style={{ 
-                      background: referenceImageConfigs.some(c => c.isActive) ? 'rgba(34, 197, 94, 0.15)' : 'rgba(139, 92, 246, 0.1)', 
-                      color: referenceImageConfigs.some(c => c.isActive) ? '#4ADE80' : '#A78BFA' 
-                    }}
-                    title={`图生图${img2ImgPool.isDedicated ? '(专属)' : ''}: ${img2ImgPool.name}`}
-                  >
-                    {img2ImgPool.isDedicated && (
-                      <span className="text-[8px] px-1 py-0.5 rounded bg-green-500/20 text-green-400 mr-0.5">
-                        专
-                      </span>
-                    )}
-                    <span className="text-[8px] opacity-60 mr-0.5">I2I</span>
-                    {img2ImgPool.name || img2ImgPool.code}
-                  </div>
-                ) : (
-                  <div className="text-[10px] px-1.5 py-0.5 rounded text-yellow-400 bg-yellow-500/10" title="图生图模型未配置">
-                    <span className="text-[8px] opacity-60 mr-0.5">I2I</span>-
-                  </div>
-                )}
+                {/* 提示词/标记生成模型切换器 */}
+                <DropdownMenu.Root open={chatModelPrefOpen} onOpenChange={setChatModelPrefOpen}>
+                  <DropdownMenu.Trigger asChild>
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[10px] font-medium truncate max-w-[180px] cursor-pointer hover:opacity-80 transition-opacity"
+                      style={{
+                        background: effectiveChatModel ? 'rgba(99, 102, 241, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                        border: effectiveChatModel ? '1px solid rgba(99, 102, 241, 0.35)' : '1px solid rgba(239, 68, 68, 0.35)',
+                        color: effectiveChatModel ? 'rgba(129, 140, 248, 0.95)' : 'rgba(248, 113, 113, 0.95)',
+                      }}
+                      title={effectiveChatModel ? `${effectiveChatModel.name} - 点击切换提示词模型` : '选择提示词模型'}
+                    >
+                      <Sparkles size={10} className="shrink-0" />
+                      <span className="truncate">{effectiveChatModel?.name || '选择模型'}</span>
+                      <span className="text-[8px] ml-0.5" style={{ opacity: 0.6 }}>▾</span>
+                    </button>
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.Content
+                      side="bottom"
+                      align="start"
+                      sideOffset={6}
+                      className="z-50 rounded-[12px] p-2.5"
+                      style={{ width: 300, maxWidth: 'min(92vw, 300px)', ...glassPanel }}
+                    >
+                      <div className="text-[12px] font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
+                        文生提示词模型
+                      </div>
+                      {enabledChatModels.length === 0 ? (
+                        <div className="text-[12px] py-2" style={{ color: 'var(--text-muted)' }}>暂无可用模型池</div>
+                      ) : (
+                        <div className="space-y-1.5 max-h-[280px] overflow-auto">
+                          {enabledChatModels.map((m) => {
+                            const picked = effectiveChatModel?.id === m.id;
+                            return (
+                              <button
+                                key={m.id}
+                                type="button"
+                                className="w-full text-left rounded-[10px] px-2.5 py-1.5 hover:bg-white/5 transition-colors"
+                                style={{
+                                  border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.08)',
+                                  background: picked ? 'rgba(250,204,21,0.06)' : 'rgba(255,255,255,0.02)',
+                                }}
+                                onClick={() => { setChatModelPrefId(m.id); setChatModelPrefOpen(false); }}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{m.name || m.modelName}</div>
+                                  </div>
+                                  <span className="shrink-0 inline-flex items-center justify-center h-5 w-5 rounded-full" style={{
+                                    background: picked ? 'rgba(250,204,21,0.18)' : 'rgba(255,255,255,0.04)',
+                                    border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.10)',
+                                    color: picked ? 'rgba(250,204,21,0.95)' : 'rgba(255,255,255,0.28)',
+                                  }}><Check size={12} /></span>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Root>
+
+                {/* 生图模型切换器 */}
+                <DropdownMenu.Root open={imageModelPrefOpen} onOpenChange={setImageModelPrefOpen}>
+                  <DropdownMenu.Trigger asChild>
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[10px] font-medium truncate max-w-[180px] cursor-pointer hover:opacity-80 transition-opacity"
+                      style={{
+                        background: effectiveModel ? 'rgba(34, 197, 94, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                        border: effectiveModel ? '1px solid rgba(34, 197, 94, 0.35)' : '1px solid rgba(239, 68, 68, 0.35)',
+                        color: effectiveModel ? 'rgba(74, 222, 128, 0.95)' : 'rgba(248, 113, 113, 0.95)',
+                      }}
+                      title={effectiveModel ? `${effectiveModel.name} - 点击切换生图模型` : '选择生图模型'}
+                    >
+                      <Sparkles size={10} className="shrink-0" />
+                      <span className="truncate">{effectiveModel?.name || '选择模型'}</span>
+                      <span className="text-[8px] ml-0.5" style={{ opacity: 0.6 }}>▾</span>
+                    </button>
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.Content
+                      side="bottom"
+                      align="start"
+                      sideOffset={6}
+                      className="z-50 rounded-[12px] p-2.5"
+                      style={{ width: 300, maxWidth: 'min(92vw, 300px)', ...glassPanel }}
+                    >
+                      <div className="text-[12px] font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
+                        生图模型
+                      </div>
+                      {enabledImageModels.length === 0 ? (
+                        <div className="text-[12px] py-2" style={{ color: 'var(--text-muted)' }}>暂无可用模型池</div>
+                      ) : (
+                        <div className="space-y-1.5 max-h-[280px] overflow-auto">
+                          {enabledImageModels.map((m) => {
+                            const picked = effectiveModel?.id === m.id;
+                            return (
+                              <button
+                                key={m.id}
+                                type="button"
+                                className="w-full text-left rounded-[10px] px-2.5 py-1.5 hover:bg-white/5 transition-colors"
+                                style={{
+                                  border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.08)',
+                                  background: picked ? 'rgba(250,204,21,0.06)' : 'rgba(255,255,255,0.02)',
+                                }}
+                                onClick={() => { setImageModelPrefId(m.id); setImageModelPrefOpen(false); }}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{m.name || m.modelName}</div>
+                                  </div>
+                                  <span className="shrink-0 inline-flex items-center justify-center h-5 w-5 rounded-full" style={{
+                                    background: picked ? 'rgba(250,204,21,0.18)' : 'rgba(255,255,255,0.04)',
+                                    border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.10)',
+                                    color: picked ? 'rgba(250,204,21,0.95)' : 'rgba(255,255,255,0.28)',
+                                  }}><Check size={12} /></span>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Root>
+
                 {/* 生图错误提示 */}
-                {imageGenModelError && !text2ImgPool && !img2ImgPool && (
+                {imageGenModelError && enabledImageModels.length === 0 && (
                   <div className="text-[10px] px-1.5 py-0.5 rounded text-red-400 bg-red-500/10">
                     生图不可用
                   </div>
