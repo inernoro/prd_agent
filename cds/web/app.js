@@ -2046,6 +2046,23 @@ function renderBranches() {
       return `<div class="deploy-menu-item" onclick="deploySingleService('${esc(b.id)}', '${esc(p.id)}')">${esc(p.name)}${modeTag}</div>`;
     }).join('');
 
+    // Build deploy mode menu items for the left deploy button
+    const allModes = [];
+    for (const p of buildProfiles) {
+      if (p.deployModes && Object.keys(p.deployModes).length > 0) {
+        for (const [modeId, mode] of Object.entries(p.deployModes)) {
+          allModes.push({ profileId: p.id, profileName: p.name, modeId, label: mode.label || modeId, active: p.activeDeployMode === modeId });
+        }
+      }
+    }
+    const hasDeployModes = allModes.length > 0;
+    const deployModeMenuItems = hasDeployModes
+      ? allModes.map(m => {
+          const check = m.active ? '● ' : '';
+          return `<div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu(); switchModeAndDeploy('${esc(b.id)}', '${esc(m.profileId)}', '${esc(m.modeId)}')">${check}${esc(m.profileName)}: ${esc(m.label)}</div>`;
+        }).join('')
+      : '';
+
     // Build stop menu item for deploy dropdown
     const stopMenuItem = isRunning ? `<div class="deploy-menu-divider"></div><div class="deploy-menu-item deploy-menu-item-danger" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); stopBranch('${esc(b.id)}')">停止所有服务</div>` : '';
 
@@ -2090,14 +2107,16 @@ function renderBranches() {
       actionsLeftHtml = `
         <button class="preview sm" onclick="previewBranch('${esc(b.id)}')" title="Preview">${ICON.preview}</button>
       `;
+      // Note: deploy-menu-tpl is used by the right "更新" split-btn
       actionsRightHtml = `
         <div class="split-btn">
-          <button class="sm split-btn-main deploy-glow-btn" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="重新部署">${ICON.deploy} 部署</button>
+          <button class="sm split-btn-main deploy-glow-btn" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="拉取最新代码并重新部署">${ICON.deploy} 更新</button>
           <button class="sm split-btn-toggle" onclick="toggleDeployMenu('${esc(b.id)}', event)" ${isBusy ? 'disabled' : ''}>
             <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor"><path d="M1 1l4 4 4-4"/></svg>
           </button>
           <template id="deploy-menu-tpl-${esc(b.id)}">
-            ${hasMultipleProfiles ? `<div class="deploy-menu-header">选择重部署的服务</div>${deployMenuItems}` : ''}
+            ${hasMultipleProfiles ? `<div class="deploy-menu-header">选择更新的服务</div>${deployMenuItems}` : ''}
+            ${hasDeployModes ? `<div class="deploy-menu-divider"></div><div class="deploy-menu-header">切换部署模式</div>${deployModeMenuItems}` : ''}
             <div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); viewBranchLogs('${esc(b.id)}')"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:4px"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.5 0a.25.25 0 01.25-.25h10.5a.25.25 0 01.25.25v7.5a.25.25 0 01-.25.25h-4.5a.75.75 0 00-.75.75v2.19l-2.72-2.72a.75.75 0 00-.53-.22H2.75a.25.25 0 01-.25-.25v-7.5z"/></svg>部署日志</div>
             ${stopMenuItem}
             <div class="deploy-menu-divider"></div>
@@ -2106,16 +2125,38 @@ function renderBranches() {
         </div>
       `;
     } else if (isStopped) {
-      // Container exists but stopped — neutral deploy, not primary
-      actionsLeftHtml = `
+      // Container exists but stopped — deploy with optional mode dropdown
+      actionsLeftHtml = hasDeployModes ? `
+        <div class="split-btn">
+          <button class="sm split-btn-main deploy-glow-btn" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="部署">${ICON.deploy} 部署</button>
+          <button class="sm split-btn-toggle" onclick="toggleDeployMenu('${esc(b.id)}', event)" ${isBusy ? 'disabled' : ''}>
+            <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor"><path d="M1 1l4 4 4-4"/></svg>
+          </button>
+          <template id="deploy-menu-tpl-${esc(b.id)}">
+            <div class="deploy-menu-header">选择部署模式</div>
+            ${deployModeMenuItems}
+          </template>
+        </div>
+      ` : `
         <button class="sm deploy-glow-btn" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="部署">${ICON.deploy} 部署</button>
       `;
       actionsRightHtml = `
         <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.trash}</button>
       `;
     } else {
-      // Idle (never deployed) or building — neutral deploy button
-      actionsLeftHtml = `
+      // Idle (never deployed) or building — deploy with optional mode dropdown
+      actionsLeftHtml = hasDeployModes ? `
+        <div class="split-btn">
+          <button class="sm split-btn-main deploy-glow-btn" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="部署">${ICON.deploy} 部署</button>
+          <button class="sm split-btn-toggle" onclick="toggleDeployMenu('${esc(b.id)}', event)" ${isBusy ? 'disabled' : ''}>
+            <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor"><path d="M1 1l4 4 4-4"/></svg>
+          </button>
+          <template id="deploy-menu-tpl-${esc(b.id)}">
+            <div class="deploy-menu-header">选择部署模式</div>
+            ${deployModeMenuItems}
+          </template>
+        </div>
+      ` : `
         <button class="sm deploy-glow-btn" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="部署">${ICON.deploy} 部署</button>
       `;
       actionsRightHtml = `
@@ -3444,6 +3485,14 @@ async function switchDeployMode(profileId, mode) {
     await api('PUT', `/build-profiles/${profileId}/deploy-mode`, { mode });
     showToast(`已切换部署模式`, 'success');
     await loadProfiles();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function switchModeAndDeploy(branchId, profileId, modeId) {
+  try {
+    await api('PUT', `/build-profiles/${profileId}/deploy-mode`, { mode: modeId });
+    await loadProfiles();
+    deployBranch(branchId);
   } catch (e) { showToast(e.message, 'error'); }
 }
 
