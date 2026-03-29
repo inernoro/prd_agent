@@ -92,6 +92,13 @@ public class ReviewAgentController : ControllerBase
         if (dimensions == null || dimensions.Count == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "维度列表不能为空"));
 
+        if (dimensions.Any(d => d.MaxScore <= 0))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "每个维度的满分必须大于 0"));
+
+        var activeTotal = dimensions.Where(d => d.IsActive).Sum(d => d.MaxScore);
+        if (activeTotal < 80)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"启用维度总分 {activeTotal} 分，低于通过线 80 分，请调整"));
+
         var userId = GetUserId();
         var now = DateTime.UtcNow;
 
@@ -127,6 +134,9 @@ public class ReviewAgentController : ControllerBase
         var attachment = await _db.Attachments.Find(x => x.AttachmentId == req.AttachmentId).FirstOrDefaultAsync(ct);
         if (attachment == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "附件不存在"));
+
+        if (string.IsNullOrWhiteSpace(attachment.ExtractedText))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无法从文件中提取文本内容，请确认上传的是有效的 Markdown 文件"));
 
         var userId = GetUserId();
         var displayName = GetDisplayName() ?? userId;
@@ -290,7 +300,7 @@ public class ReviewAgentController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "提交记录不存在"));
 
         if (submission.SubmitterId != userId && !HasViewAllPermission())
-            return Forbid();
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限操作该提交"));
 
         // 删除旧结果
         if (!string.IsNullOrEmpty(submission.ResultId))
@@ -360,6 +370,13 @@ public class ReviewAgentController : ControllerBase
         if (submission.Status == ReviewStatuses.Error)
         {
             await WriteSseEventAsync("error", new { message = submission.ErrorMessage ?? "评审失败" });
+            return;
+        }
+
+        // 防止并发：已在评审中则拒绝重复触发
+        if (submission.Status == ReviewStatuses.Running)
+        {
+            await WriteSseEventAsync("error", new { message = "该方案正在评审中，请勿重复连接" });
             return;
         }
 
@@ -527,7 +544,7 @@ public class ReviewAgentController : ControllerBase
 
         // 发送完成通知给提交人
         var actionUrl = $"/review-agent/submissions/{submissionId}";
-        var passText = isPassed ? "通过" : "不通过";
+        var passText = isPassed ? "已通过" : "未通过";
         var notification = new AdminNotification
         {
             TargetUserId = submission.SubmitterId,

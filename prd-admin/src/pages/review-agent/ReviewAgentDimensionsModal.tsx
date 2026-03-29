@@ -135,6 +135,15 @@ export function ReviewAgentDimensionsModal({ open, onClose }: Props) {
           </button>
         </div>
 
+        {/* 总分不足警告 */}
+        {totalScore < 80 && !loading && (
+          <div className="mx-5 mt-3 px-3 py-2 rounded-lg text-xs text-amber-300/90 flex items-center gap-2"
+            style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)' }}>
+            <span>⚠</span>
+            <span>启用维度总分 <strong>{totalScore}</strong> 分，低于通过线 80 分，任何方案都无法通过，请调整分值</span>
+          </div>
+        )}
+
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
           {loading ? (

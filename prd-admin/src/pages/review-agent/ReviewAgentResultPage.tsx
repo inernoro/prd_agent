@@ -302,8 +302,8 @@ export function ReviewAgentResultPage() {
         </div>
       )}
 
-      {/* 解析错误 / 原始 AI 输出诊断（仅当所有维度为 0 分时显示） */}
-      {isDone && !isRunning && result && totalScore === 0 && (
+      {/* 解析错误 / 原始 AI 输出诊断（仅当解析失败时显示） */}
+      {isDone && !isRunning && result?.parseError && (
         <RawOutputDebug result={result} />
       )}
 
