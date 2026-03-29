@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Core.Helpers;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
@@ -317,31 +318,14 @@ public class ExchangeController : ControllerBase
         };
 
         // 设置认证头
-        if (!string.IsNullOrWhiteSpace(apiKey))
+        SetTestAuthHeader(httpRequest, exchange.TargetAuthScheme, apiKey);
+
+        // 设置转换器额外 headers
+        var extraHeaders = transformer.GetExtraHeaders(exchange.TransformerConfig);
+        if (extraHeaders != null)
         {
-            switch ((exchange.TargetAuthScheme ?? "Bearer").ToLowerInvariant())
-            {
-                case "x-api-key":
-                case "xapikey":
-                    httpRequest.Headers.TryAddWithoutValidation("x-api-key", apiKey);
-                    break;
-                case "key":
-                    httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Key", apiKey);
-                    break;
-                case "doubao-asr":
-                    var parts = apiKey.Split('|', 2);
-                    var appId = parts.Length > 1 ? parts[0] : "";
-                    var accessToken = parts.Length > 1 ? parts[1] : apiKey;
-                    httpRequest.Headers.TryAddWithoutValidation("X-Api-App-Key", appId);
-                    httpRequest.Headers.TryAddWithoutValidation("X-Api-Access-Key", accessToken);
-                    httpRequest.Headers.TryAddWithoutValidation("X-Api-Resource-Id", "volc.bigasr.auc_turbo");
-                    httpRequest.Headers.TryAddWithoutValidation("X-Api-Request-Id", Guid.NewGuid().ToString());
-                    httpRequest.Headers.TryAddWithoutValidation("X-Api-Sequence", "-1");
-                    break;
-                default:
-                    httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-                    break;
-            }
+            foreach (var (key, value) in extraHeaders)
+                httpRequest.Headers.TryAddWithoutValidation(key, value);
         }
 
         string rawResponseBody;
@@ -351,12 +335,91 @@ public class ExchangeController : ControllerBase
         try
         {
             var httpClient = _httpClientFactory.CreateClient();
-            httpClient.Timeout = TimeSpan.FromSeconds(30);
+            httpClient.Timeout = TimeSpan.FromSeconds(120);
 
             var startedAt = DateTime.UtcNow;
             var response = await httpClient.SendAsync(httpRequest, ct);
             rawResponseBody = await response.Content.ReadAsStringAsync(ct);
             httpStatus = (int)response.StatusCode;
+
+            // 异步转换器：submit+query 轮询
+            if (transformer is IAsyncExchangeTransformer asyncTx)
+            {
+                var respHeaders = new Dictionary<string, string>();
+                foreach (var h in response.Headers)
+                    respHeaders[h.Key] = string.Join(", ", h.Value);
+
+                if (asyncTx.IsTaskFailed(httpStatus, respHeaders, rawResponseBody, out var failError))
+                {
+                    durationMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
+                    return Ok(ApiResponse<object>.Ok(new
+                    {
+                        standardRequest = standardBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
+                        transformedRequest = transformedJson,
+                        rawResponse = rawResponseBody,
+                        transformedResponse = (string?)null,
+                        error = failError,
+                        httpStatus = (int?)httpStatus,
+                        durationMs = (long?)durationMs,
+                        isAsync = true
+                    }));
+                }
+
+                if (asyncTx.IsTaskPending(httpStatus, respHeaders, rawResponseBody))
+                {
+                    var (queryUrl, queryBody, queryExtraHeaders) = asyncTx.BuildQueryRequest(
+                        actualTargetUrl, httpStatus, respHeaders, rawResponseBody, exchange.TransformerConfig);
+
+                    // 获取 submit 时的 X-Api-Request-Id
+                    string? submitRequestId = null;
+                    if (httpRequest.Headers.TryGetValues("X-Api-Request-Id", out var reqIds))
+                        submitRequestId = reqIds.FirstOrDefault();
+
+                    var maxAttempts = Math.Min(asyncTx.MaxPollAttempts, 120); // 测试模式最多 120 次
+                    for (var i = 0; i < maxAttempts; i++)
+                    {
+                        await Task.Delay(asyncTx.PollIntervalMs, ct);
+
+                        var qReq = new HttpRequestMessage(HttpMethod.Post, queryUrl)
+                        {
+                            Content = new StringContent(queryBody?.ToJsonString() ?? "{}", System.Text.Encoding.UTF8, "application/json")
+                        };
+                        SetTestAuthHeader(qReq, exchange.TargetAuthScheme, apiKey);
+                        foreach (var (k, v) in queryExtraHeaders)
+                            qReq.Headers.TryAddWithoutValidation(k, v);
+                        if (submitRequestId != null)
+                            qReq.Headers.TryAddWithoutValidation("X-Api-Request-Id", submitRequestId);
+
+                        var qResp = await httpClient.SendAsync(qReq, ct);
+                        rawResponseBody = await qResp.Content.ReadAsStringAsync(ct);
+                        httpStatus = (int)qResp.StatusCode;
+
+                        var qHeaders = new Dictionary<string, string>();
+                        foreach (var h in qResp.Headers)
+                            qHeaders[h.Key] = string.Join(", ", h.Value);
+
+                        if (asyncTx.IsTaskComplete(httpStatus, qHeaders, rawResponseBody))
+                            break;
+
+                        if (asyncTx.IsTaskFailed(httpStatus, qHeaders, rawResponseBody, out var qErr))
+                        {
+                            durationMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
+                            return Ok(ApiResponse<object>.Ok(new
+                            {
+                                standardRequest = standardBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
+                                transformedRequest = transformedJson,
+                                rawResponse = rawResponseBody,
+                                transformedResponse = (string?)null,
+                                error = qErr,
+                                httpStatus = (int?)httpStatus,
+                                durationMs = (long?)durationMs,
+                                isAsync = true
+                            }));
+                        }
+                    }
+                }
+            }
+
             durationMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
         }
         catch (Exception ex)
@@ -415,6 +478,53 @@ public class ExchangeController : ControllerBase
             httpStatus = (int?)httpStatus,
             durationMs = (long?)durationMs
         }));
+    }
+
+    /// <summary>
+    /// 测试 Exchange 转换管线（音频文件上传版）：
+    /// 接收音频文件 → 转 base64 → 构建标准请求 → 走完整 Exchange 管线
+    /// </summary>
+    [HttpPost("{id}/test-audio")]
+    [RequestSizeLimit(100 * 1024 * 1024)] // 100MB
+    public async Task<IActionResult> TestExchangeWithAudio(
+        string id,
+        [FromForm] IFormFile file,
+        [FromForm] string? audioUrl,
+        [FromForm] bool dryRun = false,
+        CancellationToken ct = default)
+    {
+        var exchange = await _db.ModelExchanges.Find(e => e.Id == id).FirstOrDefaultAsync(ct);
+        if (exchange == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "Exchange 不存在"));
+
+        // 构建标准请求：优先使用 URL，否则用上传文件转 base64
+        var standardBody = new JsonObject();
+
+        if (!string.IsNullOrWhiteSpace(audioUrl))
+        {
+            standardBody["audio_url"] = audioUrl.Trim();
+        }
+        else if (file != null && file.Length > 0)
+        {
+            using var ms = new MemoryStream();
+            await file.CopyToAsync(ms, ct);
+            var base64 = Convert.ToBase64String(ms.ToArray());
+            standardBody["audio_data"] = base64;
+            standardBody["format"] = Path.GetExtension(file.FileName).TrimStart('.');
+        }
+        else
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请上传音频文件或提供 audio_url"));
+        }
+
+        // 复用 JSON 测试逻辑
+        var testRequest = new ExchangeTestRequest
+        {
+            StandardRequestBody = standardBody.ToJsonString(),
+            DryRun = dryRun
+        };
+
+        return await TestExchange(id, testRequest, ct);
     }
 
     /// <summary>
@@ -489,6 +599,31 @@ public class ExchangeController : ControllerBase
     }
 
     private string GetJwtSecret() => _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
+
+    private static void SetTestAuthHeader(HttpRequestMessage req, string? authScheme, string? apiKey)
+    {
+        if (string.IsNullOrWhiteSpace(apiKey)) return;
+        switch ((authScheme ?? "Bearer").ToLowerInvariant())
+        {
+            case "x-api-key":
+            case "xapikey":
+                req.Headers.TryAddWithoutValidation("x-api-key", apiKey);
+                break;
+            case "key":
+                req.Headers.Authorization = new AuthenticationHeaderValue("Key", apiKey);
+                break;
+            case "doubao-asr":
+                var parts = apiKey.Split('|', 2);
+                var appId = parts.Length > 1 ? parts[0] : "";
+                var accessToken = parts.Length > 1 ? parts[1] : apiKey;
+                req.Headers.TryAddWithoutValidation("X-Api-App-Key", appId);
+                req.Headers.TryAddWithoutValidation("X-Api-Access-Key", accessToken);
+                break;
+            default:
+                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+                break;
+        }
+    }
 }
 
 // ========== Exchange 导入模板（硬编码） ==========
@@ -500,25 +635,55 @@ public static class ExchangeTemplates
         new ExchangeTemplate
         {
             Id = "doubao-asr",
-            Name = "豆包大模型语音识别",
-            Description = "字节跳动豆包 BigModel ASR，支持中英文混合语音识别，flash 极速模式",
+            Name = "豆包大模型语音识别 (双Key认证)",
+            Description = "字节跳动豆包 BigModel ASR，异步 submit+query 模式，支持中英文混合语音识别、说话人识别、声道分离",
             ApiKeyPlaceholder = "AppID|AccessToken",
-            ApiKeyHint = "格式：AppID|AccessToken，在火山引擎控制台获取",
+            ApiKeyHint = "格式：AppID|AccessToken，在火山引擎控制台获取 App ID 和 Access Token",
             Preset = new ExchangeTemplatePreset
             {
-                Name = "豆包 ASR (Flash)",
-                ModelAlias = "doubao-asr-flash",
-                TargetUrl = "https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash",
+                Name = "豆包 ASR (BigModel)",
+                ModelAlias = "doubao-asr-bigmodel",
+                TargetUrl = "https://openspeech.bytedance.com/api/v3/auc/bigmodel/submit",
                 TargetAuthScheme = "DoubaoAsr",
                 TransformerType = "doubao-asr",
                 TransformerConfig = new Dictionary<string, object>
                 {
+                    ["resourceId"] = "volc.bigasr.auc",
                     ["enableItn"] = true,
                     ["enablePunc"] = true,
-                    ["enableDdc"] = true
+                    ["enableDdc"] = true,
+                    ["enableSpeakerInfo"] = true,
+                    ["enableChannelSplit"] = true
                 },
                 Enabled = true,
-                Description = "豆包大模型语音识别 - Flash 极速模式"
+                Description = "豆包大模型语音识别 - 异步模式 (submit+query)"
+            }
+        },
+        new ExchangeTemplate
+        {
+            Id = "doubao-asr-xapikey",
+            Name = "豆包大模型语音识别 (单Key认证)",
+            Description = "字节跳动豆包 Seed ASR，使用 x-api-key 单Key认证，异步 submit+query 模式",
+            ApiKeyPlaceholder = "x-api-key",
+            ApiKeyHint = "在火山引擎控制台获取 API Key（UUID 格式）",
+            Preset = new ExchangeTemplatePreset
+            {
+                Name = "豆包 ASR (Seed)",
+                ModelAlias = "doubao-asr-seed",
+                TargetUrl = "https://openspeech.bytedance.com/api/v3/auc/bigmodel/submit",
+                TargetAuthScheme = "XApiKey",
+                TransformerType = "doubao-asr",
+                TransformerConfig = new Dictionary<string, object>
+                {
+                    ["resourceId"] = "volc.seedasr.auc",
+                    ["enableItn"] = true,
+                    ["enablePunc"] = true,
+                    ["enableDdc"] = true,
+                    ["enableSpeakerInfo"] = false,
+                    ["enableChannelSplit"] = false
+                },
+                Enabled = true,
+                Description = "豆包语音识别 - Seed ASR (x-api-key 认证)"
             }
         },
         new ExchangeTemplate
