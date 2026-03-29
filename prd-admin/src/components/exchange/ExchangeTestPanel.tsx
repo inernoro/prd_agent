@@ -2,8 +2,12 @@ import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
 import { testExchange } from '@/services/real/exchanges';
 import type { ModelExchange, ExchangeTestResult } from '@/types/exchange';
+import type { ApiResponse } from '@/types/api';
+import { apiRequest } from '@/services/real/apiClient';
+import { api } from '@/services/api';
 import {
   ArrowRight,
+  AudioLines,
   Check,
   Code,
   ImagePlus,
@@ -20,6 +24,11 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 /** 转换器是否为 fal.ai 图片类型 */
 function isFalImageType(type: string) {
   return ['fal-image', 'fal-image-edit'].includes(type);
+}
+
+/** 转换器是否为 ASR 语音类型 */
+function isAsrType(type: string) {
+  return type === 'doubao-asr';
 }
 
 /** 将 File 转为 base64 data URI（fal.ai 原生支持） */
@@ -61,7 +70,10 @@ export function ExchangeTestPanel({
   onClose: () => void;
 }) {
   const showVisual = isFalImageType(exchange.transformerType);
-  const [mode, setMode] = useState<'visual' | 'json'>(showVisual ? 'visual' : 'json');
+  const showAudio = isAsrType(exchange.transformerType);
+  const [mode, setMode] = useState<'visual' | 'json' | 'audio'>(
+    showVisual ? 'visual' : showAudio ? 'audio' : 'json'
+  );
 
   // 图片传输模式：从 Exchange 配置读取默认值
   const configDefault = (exchange.transformerConfig?.imageTransferMode as ImageTransferMode) ?? 'auto';
@@ -76,8 +88,16 @@ export function ExchangeTestPanel({
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // ===== Audio mode state =====
+  const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [audioUrl, setAudioUrl] = useState('');
+  const audioInputRef = useRef<HTMLInputElement>(null);
+
   // ===== JSON mode state =====
   const [requestBody, setRequestBody] = useState(() => {
+    if (showAudio) {
+      return JSON.stringify({ audio_url: 'https://example.com/audio.mp3' }, null, 2);
+    }
     if (!showVisual) {
       return JSON.stringify(
         { messages: [{ role: 'user', content: 'Hello, how are you?' }], model: 'gpt-4o', max_tokens: 100 },
@@ -126,16 +146,50 @@ export function ExchangeTestPanel({
 
   // Handle test
   const handleTest = async (dryRun: boolean) => {
-    const body = mode === 'visual' ? buildJsonFromForm() : requestBody;
     setLoading(true);
     setResult(null);
     try {
-      const res = await testExchange(exchange.id, body, dryRun);
+      let res: ApiResponse<ExchangeTestResult>;
+
+      if (mode === 'audio') {
+        // 音频模式：使用 multipart 上传或 URL
+        if (!audioFile && !audioUrl.trim()) {
+          setResult({
+            standardRequest: '{}',
+            transformedRequest: null,
+            rawResponse: null,
+            transformedResponse: null,
+            error: '请上传音频文件或输入音频 URL',
+            httpStatus: null,
+            durationMs: null,
+          });
+          return;
+        }
+
+        const formData = new FormData();
+        if (audioFile) formData.append('file', audioFile);
+        if (audioUrl.trim()) formData.append('audioUrl', audioUrl.trim());
+        formData.append('dryRun', String(dryRun));
+
+        // 直接 fetch（FormData 不走 apiRequest 的 JSON 序列化）
+        const token = sessionStorage.getItem('access_token');
+        const resp = await fetch(api.mds.exchanges.test(exchange.id).replace('/test', '/test-audio'), {
+          method: 'POST',
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          body: formData,
+        });
+        const json = await resp.json();
+        res = json.success ? { success: true, data: json.data, error: null } : { success: false, data: json.data, error: json.error };
+      } else {
+        const body = mode === 'visual' ? buildJsonFromForm() : requestBody;
+        res = await testExchange(exchange.id, body, dryRun);
+      }
+
       if (res.success) {
         setResult(res.data);
       } else {
         setResult({
-          standardRequest: body,
+          standardRequest: mode === 'audio' ? '(音频文件)' : (mode === 'visual' ? buildJsonFromForm() : requestBody),
           transformedRequest: null,
           rawResponse: null,
           transformedResponse: null,
@@ -220,6 +274,30 @@ export function ExchangeTestPanel({
                 onClick={switchToVisual}
               >
                 <ImagePlus size={12} /> 可视化
+              </button>
+              <button
+                className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-md transition-colors ${
+                  mode === 'json'
+                    ? 'bg-primary/15 text-primary border border-primary/30'
+                    : 'bg-muted/40 text-muted-foreground hover:bg-muted/60 border border-transparent'
+                }`}
+                onClick={switchToJson}
+              >
+                <Code size={12} /> JSON
+              </button>
+            </>
+          )}
+          {showAudio && (
+            <>
+              <button
+                className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-md transition-colors ${
+                  mode === 'audio'
+                    ? 'bg-primary/15 text-primary border border-primary/30'
+                    : 'bg-muted/40 text-muted-foreground hover:bg-muted/60 border border-transparent'
+                }`}
+                onClick={() => setMode('audio')}
+              >
+                <AudioLines size={12} /> 音频
               </button>
               <button
                 className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-md transition-colors ${
@@ -411,6 +489,75 @@ export function ExchangeTestPanel({
                 value={numImages}
                 onChange={e => setNumImages(Math.max(1, parseInt(e.target.value) || 1))}
               />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== 音频模式 ===== */}
+      {mode === 'audio' && (
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-4">
+            {/* 左栏：文件上传 */}
+            <div className="space-y-2">
+              <label className="block text-sm font-medium">上传音频文件</label>
+              <div
+                className="h-[120px] border-2 border-dashed border-border/60 rounded-lg flex flex-col items-center justify-center hover:border-primary/40 transition-colors cursor-pointer"
+                onClick={() => audioInputRef.current?.click()}
+              >
+                <input
+                  ref={audioInputRef}
+                  type="file"
+                  accept="audio/*,video/mp4"
+                  className="hidden"
+                  onChange={e => {
+                    const f = e.target.files?.[0];
+                    if (f) { setAudioFile(f); setAudioUrl(''); }
+                  }}
+                />
+                {audioFile ? (
+                  <div className="text-center">
+                    <AudioLines size={24} className="mx-auto mb-1 text-primary" />
+                    <div className="text-sm font-medium truncate max-w-[200px]">{audioFile.name}</div>
+                    <div className="text-[11px] text-muted-foreground">
+                      {(audioFile.size / 1024 / 1024).toFixed(1)} MB
+                    </div>
+                    <button
+                      className="text-[11px] text-destructive mt-1 hover:underline"
+                      onClick={e => { e.stopPropagation(); setAudioFile(null); }}
+                    >
+                      移除
+                    </button>
+                  </div>
+                ) : (
+                  <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <Upload size={13} />
+                    点击上传 MP3 / WAV / M4A
+                  </span>
+                )}
+              </div>
+              <div className="text-[11px] text-muted-foreground">
+                建议上传 MP3 格式，其他格式请先用 ffmpeg 转换
+              </div>
+            </div>
+
+            {/* 右栏：URL 输入 */}
+            <div className="space-y-2">
+              <label className="block text-sm font-medium">或输入音频 URL</label>
+              <input
+                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                placeholder="https://example.com/audio.mp3"
+                value={audioUrl}
+                onChange={e => { setAudioUrl(e.target.value); if (e.target.value.trim()) setAudioFile(null); }}
+              />
+              <div className="text-[11px] text-muted-foreground">
+                输入可直接访问的音频文件 URL
+              </div>
+              {/* 异步说明 */}
+              <div className="mt-3 p-2 rounded bg-muted/20 text-[11px] text-muted-foreground space-y-1">
+                <div>该转换器使用 <strong>异步模式</strong>（submit + query 轮询）</div>
+                <div>提交后将自动轮询结果，可能需要等待数秒到数分钟</div>
+              </div>
             </div>
           </div>
         </div>

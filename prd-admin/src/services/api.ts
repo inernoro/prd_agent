@@ -115,6 +115,8 @@ export const api = {
       test: (id: string) => `/api/mds/exchanges/${id}/test`,
       transformerTypes: () => '/api/mds/exchanges/transformer-types',
       forPool: () => '/api/mds/exchanges/for-pool',
+      templates: () => '/api/mds/exchanges/templates',
+      importFromTemplate: () => '/api/mds/exchanges/import-from-template',
     },
 
     // 调度器配置

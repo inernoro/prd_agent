@@ -221,6 +221,7 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.ArenaRunWorker>();
 
 // 转录 Agent 后台执行器（ASR 转写 + 模板转文案）
 builder.Services.AddHostedService<PrdAgent.Api.Services.TranscriptRunWorker>();
+builder.Services.AddSingleton<PrdAgent.Api.Services.DoubaoStreamAsrService>();
 
 // 权限字符串迁移服务（启动时自动迁移旧格式 admin.xxx → 新格式 appKey.action）
 builder.Services.AddHostedService<PrdAgent.Api.Services.PermissionMigrationService>();
