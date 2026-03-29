@@ -288,15 +288,48 @@ curl -X POST 'https://openspeech.bytedance.com/api/v3/auc/bigmodel/query' \
 
 ## 7. 注意事项
 
-1. **音频格式**: 推荐 MP3 或 WAV (PCM 16bit 16kHz)，其他格式需先用 ffmpeg 转换
-2. **文件大小**: HTTP 模式支持 URL 传入，无大小限制；WebSocket 模式需分片传输
-3. **超时**: HTTP 异步模式轮询最多 10 分钟（600 次 × 1s）；WebSocket 无超时
-4. **Resource ID**: 不同产品线使用不同 ID：
-   - `volc.bigasr.auc` — BigModel ASR (HTTP)
-   - `volc.seedasr.auc` — Seed ASR (HTTP)
+1. **音频格式**: WebSocket 流式模式**严格要求 16kHz 单声道 16bit PCM**，`DoubaoStreamAsrService` 会自动重采样（纯 C# 线性插值，无需 ffmpeg）。HTTP 异步模式接受多种格式
+2. **任意格式上传**: 用户可能上传 MP3/M4A/OGG/FLAC/MP4 等任意格式，建议在 `TranscriptRunWorker` 中用 ffmpeg 转为 WAV 后再传入 Service
+3. **文件大小**: HTTP 模式支持 URL 传入，无大小限制；WebSocket 模式需分片传输（每片 200ms PCM）
+4. **超时**: HTTP 异步模式轮询最多 10 分钟；WebSocket 接收超时 120 秒
+5. **Resource ID**: 不同产品线使用不同 ID：
+   - `volc.bigasr.auc` — BigModel ASR (HTTP 异步)
    - `volc.bigasr.sauc.duration` — 流式 ASR (WebSocket)
-5. **Key 安全**: API Key 在数据库中 AES 加密存储，API 返回时脱敏显示
+6. **Key 安全**: API Key 在数据库中 AES 加密存储，API 返回时脱敏显示
+
+## 8. 实测结果 (2026-03-29)
+
+### HTTP 异步模式
+
+```
+音频: output.wav (48kHz/2ch, 5.6 秒)
+认证: x-api-key (单Key)
+结果: 「你先简单介绍介绍你自己，你是个什么样的人？」
+耗时: submit 5s + query 2s
+含 19 个词级时间戳 (word-level timestamps)
+```
+
+### WebSocket 流式模式
+
+```
+音频: output.wav (48kHz/2ch → 自动重采样 16kHz/1ch)
+认证: x-api-key (单Key)
+结果: 「你先简单介绍介绍你自己，你是个什么样的人？」
+帧数: 28 帧 (每 200ms 一帧)
+耗时: 6.5 秒
+```
+
+两种模式转录结果完全一致。
+
+## 9. 已知限制与后续优化
+
+| 项目 | 现状 | 优化方向 |
+|------|------|----------|
+| 音频格式 | 仅支持 WAV/raw PCM 输入 | TranscriptRunWorker 中加 ffmpeg 预处理，支持 MP3/M4A/OGG 等 |
+| 重采样质量 | 线性插值（简单但有轻微失真） | 可改用 sinc 插值或 ffmpeg |
+| 断线重连 | 无 | 生产环境长音频需增加重连机制 |
+| 实时流式 | 使用 bigmodel_nostream（发完再返） | 如需实时字幕可改用 bigmodel 端点 |
 
 ---
 
-> 关联文档: `doc/design.transcript-agent.md` | 关联代码: `prd-api/src/PrdAgent.Infrastructure/LlmGateway/Transformers/`
+> 关联文档: `doc/design.transcript-agent.md` | 关联代码: `prd-api/src/PrdAgent.Api/Services/DoubaoStreamAsrService.cs`
