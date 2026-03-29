@@ -234,6 +234,8 @@ export type GenerateArticleMarkersContract = (input: {
   articleContent: string;
   userInstruction?: string;
   idempotencyKey?: string;
+  /** 用户指定的模型 ID（可选，用于模型切换） */
+  modelId?: string;
 }) => AsyncIterable<{ type: string; text?: string; fullText?: string; message?: string }>;
 
 export type ExtractArticleMarkersContract = (input: {

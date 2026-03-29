@@ -99,6 +99,12 @@ export const menuList: MenuDef[] = [
     permissions: ['authz.manage'],
   },
   {
+    appKey: 'review-agent',
+    label: '产品评审员',
+    icon: 'ClipboardCheck',
+    permissions: ['review-agent.use', 'review-agent.view-all', 'review-agent.manage'],
+  },
+  {
     appKey: 'defect-agent',
     label: '缺陷管理 Agent',
     icon: 'Bug',
@@ -242,6 +248,9 @@ export const allPermissions: PermissionDef[] = [
   { key: 'visual-agent.use', label: '视觉创作 Agent', description: '高级视觉创作工作区', category: 'use' },
   { key: 'literary-agent.use', label: '文学创作 Agent', description: '文章配图智能生成', category: 'use' },
   { key: 'video-agent.use', label: '视频 Agent', description: '文章转视频教程生成', category: 'use' },
+  { key: 'review-agent.use', label: '产品评审员', description: '提交方案并查看自己的评审结果', category: 'use' },
+  { key: 'review-agent.view-all', label: '产品评审员 - 查看全部', description: '查看所有提交记录和评审结果', category: 'read' },
+  { key: 'review-agent.manage', label: '产品评审员 - 管理', description: '自定义评审维度配置', category: 'manage' },
   { key: 'defect-agent.use', label: '缺陷管理 Agent', description: '提交和查看缺陷', category: 'use' },
   { key: 'defect-agent.manage', label: '缺陷管理 Agent - 管理', description: '设置模板、指派处理人', category: 'manage' },
   { key: 'arena-agent.use', label: '竞技场 Agent', description: '模型盲评对战', category: 'use' },

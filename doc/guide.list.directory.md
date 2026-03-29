@@ -98,6 +98,9 @@
 - [文学创作 Agent 文章配图功能设计](design.literary-agent) `design.literary-agent`
   > 文学创作场景下文章自动配图的功能设计
 
+- [产品评审员技术设计文档](design.review-agent) `design.review-agent`
+  > ReviewAgent 的完整技术设计：状态机、LLM 集成、SSE 协议、权限模型、解析策略
+
 - [多文档知识库与文档类型系统设计文档](design.multi-doc-knowledge) `design.multi-doc-knowledge`
   > 知识库多文档管理与文档类型系统的设计
 
@@ -192,6 +195,9 @@
 
 - [缺陷管理 Agent 使用教程](guide.defect-agent) `guide.defect-agent`
   > 缺陷提交、四种视图、AI 分析与分享协作
+
+- [产品评审员使用手册](guide.review-agent) `guide.review-agent`
+  > 方案上传、7 维度评分解读、维度自定义与权限说明
 
 - [视频创作 Agent 使用教程](guide.video-agent) `guide.video-agent`
   > 文章转视频的分镜生成与导出全流程
@@ -382,6 +388,7 @@
 | 2026-03-20 | 🟢 新增 | `design.model-pool-failover` | 模型池故障转移与自动探活设计 |
 | 2026-03-20 | 🟢 新增 | `report.skill-doc-evaluation` | 文档技能评测报告 |
 | 2026-03-23 | 🟢 新增 | `design.generation-snapshot` | 生成快照设计 |
+| 2026-03-28 | 🟢 新增 | `guide.review-agent` | 产品评审员使用手册 |
 | 2026-03-23 | 🟢 新增 | `guide.cds-ai-auth` | CDS + 后端 API 双层认证诊断指南 |
 | 2026-03-23 | 🟢 新增 | `guide.prd-agent-operations` | PRD Agent 全平台操作手册 |
 | 2026-03-23 | 🟢 新增 | `guide.skill-workflow` | AI 技能工作流指南 |

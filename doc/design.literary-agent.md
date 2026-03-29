@@ -1,855 +1,238 @@
-# 文学创作 Agent - 文章配图功能设计
+# 文学创作 Agent (Literary Agent) 架构设计
 
-**文档版本**：v1.0  
-**创建日期**：2026-01-08  
-**最后更新**：2026-01-08  
-**功能状态**：已落地
+> **版本**：v1.0 | **日期**：2026-03-28 | **状态**：已实现
+>
+> **appKey**：`literary-agent`
 
----
+## 一、管理摘要
 
-## 1. 功能概述
+- **解决什么问题**：内容创作者写完文章后，配图环节繁琐——需要手动寻找合适的图片位置、编写生图 prompt、逐张生成、下载、插入文章，整个过程耗时且割裂
+- **方案概述**：提供文学创作工作空间，支持文章上传 → AI 自动标注配图位置 → 批量生图 → 带图导出的全流程自动化，同时复用 VisualAgent 的生图引擎
+- **业务价值**：将"写完文章到拿到带图成品"的时间从 2 小时缩短到 5 分钟；提示词和参考图可发布到市场供他人复用，形成创作资产沉淀
+- **影响范围**：prd-api（4 个 Controller 共 2300+ 行）、prd-admin（5+ 前端页面）、VisualAgent（复用生图引擎）、市场系统
+- **当前状态**：已实现，持续迭代。与 VisualAgent 共享底层生图能力，独立维护创作流程和提示词体系
 
-文章配图功能是文学创作 Agent 的核心能力之一，旨在为文章自动生成配图提示词标记，并批量生成配图，最终导出带图片的完整文章。
+## 二、产品定位
 
-### 1.1 核心价值
+**一句话**：AI 驱动的文学创作助手——写作配图一条龙，创作资产可沉淀。
 
-- **自动化配图**：AI 自动识别文章中需要配图的位置，并生成配图提示词
-- **批量生成**：一键生成所有配图，无需逐张手动操作
-- **状态可恢复**：浏览器刷新后能恢复到正确阶段，不会丢失进度
-- **修改即清后续**：任何"提交型修改"都会清空后续阶段数据，避免脏数据
-- **禁止跳未来**：用户不能跳转到未生成过的阶段，确保工作流完整性
+**目标用户**：
 
-### 1.2 用户场景
+| 角色 | 核心需求 | 使用频率 |
+|------|----------|----------|
+| 内容创作者 | 写文章 → 自动配图 → 导出成品 | 每天 |
+| 提示词工程师 | 精调提示词模板 → 发布到市场供他人使用 | 每周 |
+| 团队管理员 | 管理参考图库、提示词库，统一团队创作风格 | 按需 |
 
-> 作为内容创作者，我希望上传一篇文章后，AI 能自动标注需要配图的位置并生成配图提示词，然后一键生成所有配图并导出成品。
+**设计理念**：
 
----
+- **阶段式工作流**：上传 → 预览编辑 → AI 标注配图位置 → 批量生图 → 导出。每个阶段可回退，提交型修改自动清空后续阶段
+- **服务器权威**：工作流状态（`ArticleIllustrationWorkflow`）由服务端管理，浏览器刷新后恢复到正确阶段
+- **创作资产化**：提示词和参考图不只是"用完即弃"的参数，而是可发布、可复用、可 fork 的创作资产
 
-## 2. 工作流设计
+## 三、用户场景与协同涌现
 
-### 2.1 阶段定义
+### 场景 1：小说作者的一天
 
-文章配图工作流包含 5 个阶段：
+> 网文作者小周每天更新 3000 字章节，需要 3 张配图。
+
+1. 小周写好章节 → 上传到 Literary Agent 工作空间
+2. 选择"玄幻风格"提示词模板 + 激活"水墨参考图"
+3. 点击"生成配图标记" → AI 在 3 个场景描写段落标注 `[插图]: 描述`
+4. 小周微调描述（如"把'一片森林'改成'黑暗森林中透出微光'"）
+5. 点击"开始生图" → SSE 实时推送"正在生成第 2/3 张…"
+6. 3 张配图完成 → 导出带图文章 → 发布
+
+**以前**：去 Midjourney 生图 → 下载 → 用 PS 调整 → 手动插入文章 → 约 40 分钟。
+**现在**：上传 → 标注 → 生图 → 导出 → 约 5 分钟。
+
+### 场景 2：提示词资产沉淀与复用
+
+> 团队有 10 个创作者，每人调出了自己擅长的风格提示词。
+
+1. 资深创作者将"水彩插画风"提示词发布到市场（`/publish`）
+2. 新人在市场浏览 → Fork 到自己的提示词库
+3. 新人基于 Fork 的提示词微调，形成自己的变体
+4. 市场记录 ForkCount → 最受欢迎的提示词浮到顶部
+
+**创作资产化**：提示词不再是"用完就忘的一句话"，而是可积累、可传播、可追溯的团队知识资产。
+
+### 场景 3：内容创作流水线（与 VisualAgent + Video Agent 协同）
+
+> 运营需要一篇文章 → 配图 → 短视频 → 展示网页的全套内容。
+
+1. Literary Agent：接收主题 → LLM 生成文章 → AI 标注配图位置
+2. 工作流触发 → VisualAgent 批量生成配图
+3. 配图完成 → 工作流触发 → Video Agent 将文章 + 配图转为短视频分镜
+4. 视频生成完成 → 网页生成舱 → 生成展示页面 → 站点发布
+
+**协同涌现**：运营说了一个主题，系统产出了文章 + 配图 + 视频 + 网页。Literary Agent 负责文字和标注，VisualAgent 负责图片，Video Agent 负责视频，工作流负责编排。
+
+### 场景 4：风格统一的批量创作（与工作流协同）
+
+> 电商团队需要 50 篇产品描述文章，每篇 3 张统一风格配图。
+
+1. 管理员配置工作流：数据源（产品列表 CSV）→ LLM 分析舱（生成文章）→ Literary Agent 配图
+2. 激活统一的参考图 + 提示词模板 → 确保 50 篇文章配图风格一致
+3. 定时触发或手动批量执行
+4. 150 张配图 + 50 篇文章 → 自动导出
+
+**协同涌现**：Literary Agent 单次只处理一篇文章，但通过工作流循环编排，变成了"批量内容工厂"。
+
+## 四、核心能力矩阵
+
+| 能力 | 说明 | 关键组件 |
+|------|------|----------|
+| **工作空间管理** | 创建/管理文学创作工作空间，承载文章和配图 | LiteraryAgentWorkspaceController |
+| **文章配图工作流** | 5 阶段状态机：上传 → 预览 → 标记生成 → 生图中 → 导出 | ArticleIllustrationWorkflow |
+| **AI 配图标注** | LLM 分析文章内容，自动在合适位置插入 `[插图]: 描述` 标记 | ILlmGateway |
+| **批量生图** | 逐条解析标记 → 调用 ImageGen → SSE 实时推送进度 | LiteraryAgentImageGenController |
+| **提示词管理** | 创建/编辑/分类提示词模板，支持 AI 优化 | LiteraryPromptsController |
+| **提示词市场** | 发布/下架/fork 提示词到配置市场 | IForkable + Marketplace |
+| **参考图管理** | 上传/激活/停用参考图配置（用于图生图风格迁移） | LiteraryAgentConfigController |
+| **参考图市场** | 发布/下架/fork 参考图配置到配置市场 | IForkable + Marketplace |
+| **应用级配置** | 底图 SHA256、参考图 URL 等全局配置 | LiteraryAgentConfig |
+| **资产上传** | 工作空间内上传文章文件（.md/.txt） | WorkspaceController |
+
+## 五、整体架构
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                     prd-admin (前端)                       │
+│  WorkspaceList → Editor → ArticleIllustration → Export   │
+│  PromptLibrary    RefImageManager    Marketplace          │
+└──────────────────────┬────────────────────────────────────┘
+                       │ HTTP API / SSE
+┌──────────────────────▼────────────────────────────────────┐
+│            Controller 层 (appKey=literary-agent)           │
+├──────────┬──────────────┬───────────────┬─────────────────┤
+│Workspace │ ImageGen     │ Config        │ Prompts         │
+│Controller│ Controller   │ Controller    │ Controller      │
+│工作空间   │ 批量生图/    │ 参考图/模型/  │ 提示词 CRUD/    │
+│CRUD/资产 │ Run/Stream   │ 市场发布      │ 优化/市场       │
+└────┬─────┴──────┬───────┴───────┬───────┴────────┬────────┘
+     │            │               │                │
+┌────▼────┐ ┌────▼──────┐ ┌─────▼──────┐  ┌──────▼──────┐
+│MongoDB  │ │ ImageGen  │ │ Marketplace│  │ ILlmGateway │
+│         │ │ Engine    │ │ (Fork)     │  │ chat/vision │
+│         │ │(VisualAgt)│ │            │  │             │
+└─────────┘ └───────────┘ └────────────┘  └─────────────┘
+```
+
+### 文章配图工作流——5 阶段状态机
+
+```
+Upload(0) → Editing(1) → MarkersGenerated(2) → ImagesGenerating(3) → ImagesGenerated(4)
+   ↑            │                 │                      │
+   └────────────┴─── 提交型修改 ──┘                      │
+                     (回退并清空后续)                     ↓
+                                                      导出
+```
 
 | 阶段 | 阶段标识 | 说明 | 可跳转条件 |
 |------|----------|------|-----------|
-| 上传 | `upload` | 上传文章文件（.md/.txt） | 总是可跳转 |
-| 预览 | `editing` | 预览文章内容，选择提示词模板 | 已上传文章 |
-| 配图标记 | `markersGenerated` | AI 生成带 `[插图]: 描述` 标记的文章 | 已生成标记 |
-| 生图中 | `imagesGenerating` | 逐条解析标记并调用生图模型 | 已生成标记（自动进入） |
-| 导出 | `imagesGenerated` | 所有配图生成完成，可导出 | 所有配图已完成 |
+| 上传 | `Upload(0)` | 上传文章文件（.md/.txt） | 总是可跳转 |
+| 预览 | `Editing(1)` | 预览文章内容，选择提示词模板 | 已上传文章 |
+| 配图标记 | `MarkersGenerated(2)` | AI 生成带 `[插图]: 描述` 标记的文章 | 已生成标记 |
+| 生图中 | `ImagesGenerating(3)` | 逐条解析标记并调用生图模型 | 已生成标记（自动进入） |
+| 导出 | `ImagesGenerated(4)` | 所有配图生成完成，可导出 | 所有配图已完成 |
 
-### 2.2 状态机规则
+**核心规则**：
+- 提交型修改（重新上传/重新标注）会清空后续阶段 + Version +1
+- 浏览器刷新以服务端 `workflow.Phase` 为准恢复阶段
+- 生图进度通过 `ExpectedImageCount` / `DoneImageCount` 实时追踪
 
-#### 规则 1：单项可随时查看已生成过的任意阶段
+## 六、数据设计
 
-- 服务端 `ArticleIllustrationWorkflow` 记录当前 phase/version/markers/images 进度
-- 前端刷新后以服务端 workflow.phase 为准恢复阶段
-- 浏览器与服务器状态始终一致
+| 集合 | 用途 | 关键字段 |
+|------|------|----------|
+| `literary_agent_configs` | 应用级配置 | Id(=appKey), ReferenceImageSha256, ReferenceImageUrl |
+| `literary_prompts` | 提示词库 | Title, Content, ScenarioType, IsPublic, ForkCount |
+| `reference_image_configs` | 参考图配置 | Name, ImageUrl, IsActive, IsPublic, ForkCount |
+| `image_master_workspaces` | 工作空间（复用 VisualAgent 集合） | ArticleIllustrationWorkflow 嵌入文档扩展配图工作流状态 |
+| `image_assets` | 生成图片资产（复用 VisualAgent 集合） | 配图生成结果存储 |
 
-#### 规则 2：提交型修改后清空并重置后续阶段
+## 七、接口设计
 
-**提交型修改触发点**：
+### 工作空间（LiteraryAgentWorkspaceController）
 
-1. **文章更新**（重新上传/修改文章内容）：
-   - `version++`
-   - 清空标记/图片/旧配图资产
-   - phase 回到 `editing`
-   - 快照当前 workflow 到历史（debug-only，最多保留 10 条）
-
-2. **标记生成成功**（AI 生成配图标记完成）：
-   - `version++`
-   - 写入 markers
-   - 清空旧配图资产
-   - phase 进入 `markersGenerated`
-   - 快照当前 workflow 到历史
-
-#### 规则 3：只切换阶段不修改：不重算、不丢后续数据
-
-- 用户点击阶段按钮切换时，只同步本地展示，不触发后端写入
-- 服务端数据保持不变，后续阶段数据不会丢失
-
-#### 规则 4：禁止跳转到未来阶段（未生成过的）
-
-- 前端 `jumpToPhase` 基于服务端 workflow.phase 判断目标阶段是否"未来"
-- 若目标阶段顺序 > 服务端当前阶段顺序，弹窗提示并禁止跳转
-
-### 2.3 状态机流转图
-
-```
-                                   ┌─────────────┐
-                                   │   upload    │
-                                   │  （上传）    │
-                                   └──────┬──────┘
-                                          │ 上传文章
-                                          v
-                                   ┌─────────────┐
-                                   │   editing   │
-                                   │  （预览）    │
-                                   └──────┬──────┘
-                                          │ 生成配图标记
-                                          v
-                                   ┌─────────────┐
-                                   │ markersGen  │
-                                   │ （配图标记） │
-                                   └──────┬──────┘
-                                          │ 开始生图
-                                          v
-                                   ┌─────────────┐
-                                   │ imagesGen   │
-                                   │ （生图中）   │
-                                   └──────┬──────┘
-                                          │ 全部完成
-                                          v
-                                   ┌─────────────┐
-                                   │ imagesGen   │
-                                   │ （导出）     │
-                                   └─────────────┘
-
-注：任何"提交型修改"都会触发 version++，并清空后续阶段数据
-```
-
----
-
-## 3. 数据模型
-
-### 3.1 ArticleIllustrationWorkflow（服务端状态机）
-
-| 字段 | 类型 | 说明 |
+| 方法 | 路径 | 用途 |
 |------|------|------|
-| `version` | int | 版本号，每次提交型修改递增 |
-| `phase` | string | 当前阶段：`upload/editing/markersGenerated/imagesGenerating/imagesGenerated` |
-| `markers` | array | 标记列表：`[{ index, text, draftText, status, runId, assetId, errorMessage, updatedAt }]` |
-| `expectedImageCount` | int? | 预期图片数（一般等于 markers.length） |
-| `doneImageCount` | int | 已生成图片数 |
-| `assetIdByMarkerIndex` | object | 已完成图片映射：`{ "0": "assetId1", "1": "assetId2" }` |
-| `updatedAt` | datetime | 最后更新时间 |
+| GET | `/api/literary/workspaces` | 工作空间列表 |
+| POST | `/api/literary/workspaces` | 创建工作空间 |
+| PUT | `/api/literary/workspaces/{id}` | 更新工作空间 |
+| DELETE | `/api/literary/workspaces/{id}` | 删除工作空间 |
+| GET | `/api/literary/workspaces/{id}/detail` | 工作空间详情（含文章和配图） |
+| POST | `/api/literary/workspaces/{id}/assets` | 上传文章文件 |
 
-**Marker 字段详解**：
+### 配图生图（LiteraryAgentImageGenController）
 
-| 字段 | 类型 | 说明 |
+| 方法 | 路径 | 用途 |
 |------|------|------|
-| `index` | int | 标记索引（0-based） |
-| `text` | string | 原始标记文本（AI 生成） |
-| `draftText` | string? | 用户编辑的提示词（用于重新生成） |
-| `status` | string? | 运行状态：idle/parsing/parsed/running/done/error |
-| `runId` | string? | 生图任务 ID |
-| `assetId` | string? | 已生成的图片资产 ID |
-| `errorMessage` | string? | 错误信息 |
-| `updatedAt` | datetime? | 最后更新时间 |
+| POST | `/api/literary/image-gen/runs` | 创建配图生图任务（批量） |
+| GET | `/api/literary/image-gen/runs/{runId}` | 查询生图任务状态 |
+| GET | `/api/literary/image-gen/runs/{runId}/stream` | SSE 流式获取生图进度 |
+| POST | `/api/literary/image-gen/runs/{runId}/cancel` | 取消生图任务 |
 
-### 3.2 ImageMasterWorkspace（工作区）
+### 参考图与配置（LiteraryAgentConfigController）
 
-| 字段 | 类型 | 说明 |
+| 方法 | 路径 | 用途 |
 |------|------|------|
-| `id` | string | 工作区唯一标识（Guid） |
-| `title` | string | 工作区标题 |
-| `scenarioType` | string | 场景类型：`article`（文章配图） |
-| `articleContent` | string | 原始文章内容（Markdown） |
-| `articleContentWithMarkers` | string | 带配图标记的文章内容（AI 生成） |
-| `articleWorkflow` | object | 当前工作流状态 |
-| `articleWorkflowHistory` | array | 历史工作流状态（debug-only，最多保留 10 条） |
-| `memberUserIds` | array | 成员用户 ID 列表 |
-| `coverAssetId` | string | 封面图资产 ID |
-| `createdAt` | datetime | 创建时间 |
-| `updatedAt` | datetime | 最后更新时间 |
+| GET | `/api/literary/config/reference-images` | 参考图列表 |
+| POST | `/api/literary/config/reference-images` | 创建参考图配置 |
+| PUT | `/api/literary/config/reference-images/{id}` | 更新参考图 |
+| PUT | `/api/literary/config/reference-images/{id}/image` | 更换参考图图片 |
+| DELETE | `/api/literary/config/reference-images/{id}` | 删除参考图 |
+| POST | `/api/literary/config/reference-images/{id}/activate` | 激活参考图 |
+| POST | `/api/literary/config/reference-images/{id}/deactivate` | 停用参考图 |
+| GET | `/api/literary/config/reference-images/active` | 获取当前激活的参考图 |
+| GET | `/api/literary/config/reference-images/marketplace` | 市场中的参考图 |
+| POST | `/api/literary/config/reference-images/{id}/publish` | 发布到市场 |
+| POST | `/api/literary/config/reference-images/{id}/unpublish` | 从市场下架 |
+| POST | `/api/literary/config/reference-images/{id}/fork` | Fork 市场参考图 |
+| GET | `/api/literary/config` | 获取应用配置 |
+| POST | `/api/literary/config/reference-image` | 设置全局参考图 |
+| DELETE | `/api/literary/config/reference-image` | 清除全局参考图 |
+| GET | `/api/literary/config/models/*` | 获取可用生图模型（text2img/img2img/all/main） |
 
-### 3.3 ImageAsset（图片资产）
+### 提示词（LiteraryPromptsController）
 
-| 字段 | 类型 | 说明 |
+| 方法 | 路径 | 用途 |
 |------|------|------|
-| `id` | string | 资产唯一标识（Guid） |
-| `workspaceId` | string | 所属工作区 ID |
-| `url` | string | 图片 URL（CDN 或 COS） |
-| `sha256` | string | 文件 SHA256 哈希（用于去重） |
-| `width` | int | 图片宽度 |
-| `height` | int | 图片高度 |
-| `prompt` | string | 生图提示词 |
-| `articleInsertionIndex` | int? | 文章配图场景：该图片在文章中的插入位置索引（0-based） |
-| `originalMarkerText` | string | 文章配图场景：原始标记文本（如"温馨的咖啡厅场景"） |
-| `createdAt` | datetime | 创建时间 |
-
----
-
-## 4. 接口设计
-
-### 4.1 生成配图标记接口
-
-**接口路径**：`POST /api/v1/admin/image-master/workspaces/{id}/article/generate-markers`
-
-**请求参数**：
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `articleContent` | string | 是 | 原始文章内容（Markdown） |
-| `userInstruction` | string | 是 | 用户选择的提示词模板（作为 system prompt） |
-
-**响应格式**：SSE 流式
-
-| 事件类型 | 数据结构 | 说明 |
-|----------|----------|------|
-| `delta` | `{ type: "delta", text: string }` | 流式输出生成的带标记文章 |
-| `done` | `{ type: "done", fullText: string }` | 生成完成，返回完整带标记文章 |
-| `error` | `{ type: "error", message: string }` | 生成失败 |
-
-**服务端行为**（提交型修改）：
-- 成功完成后：`version++`，写入 `articleContentWithMarkers`，提取并保存 `markers`，清空旧配图资产，phase 切换到 `markersGenerated`
-- 快照当前 workflow 到历史（debug-only，最多保留 10 条）
-
-### 4.2 上传配图资产接口
-
-**接口路径**：`POST /api/v1/admin/image-master/workspaces/{id}/assets`
-
-**请求参数**：
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `data` | string | 二选一 | base64 或 dataURL 格式图片 |
-| `sourceUrl` | string | 二选一 | 外部图片 URL（HTTPS） |
-| `prompt` | string | 否 | 生图提示词（用于记录） |
-| `width` | int | 否 | 图片宽度 |
-| `height` | int | 否 | 图片高度 |
-| `articleInsertionIndex` | int | 否 | 文章配图场景：该图片在文章中的插入位置索引（0-based） |
-| `originalMarkerText` | string | 否 | 文章配图场景：原始标记文本（如"温馨的咖啡厅场景"） |
-
-**响应格式**：
-
-```json
-{
-  "success": true,
-  "data": {
-    "asset": {
-      "id": "abc123",
-      "url": "https://...",
-      "sha256": "...",
-      "articleInsertionIndex": 0,
-      "originalMarkerText": "温馨的咖啡厅场景"
-    }
-  }
-}
-```
-
-**服务端行为**（推进 workflow）：
-- 若携带 `articleInsertionIndex`：
-  - 删除旧的同 index 配图（若存在）
-  - 写入新 asset 的 `ArticleInsertionIndex/OriginalMarkerText`
-  - 更新 workflow：`assetIdByMarkerIndex[index] = assetId`，`doneImageCount++`
-  - 若 `doneImageCount >= expectedImageCount`，自动切换 phase 到 `imagesGenerated`
-
-### 4.3 导出文章接口
-
-**接口路径**：`POST /api/v1/admin/image-master/workspaces/{id}/article/export`
-
-**请求参数**：
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `useCdn` | bool | 是 | 是否使用 CDN 图片链接（false 则下载图片到本地） |
-| `exportFormat` | string | 否 | 导出格式，默认 `markdown` |
-
-**响应格式**：
-
-```json
-{
-  "success": true,
-  "data": {
-    "content": "# 文章标题\n\n![配图1](https://...)...",
-    "format": "markdown",
-    "assetCount": 3
-  }
-}
-```
-
-**服务端行为**：
-- 按 `articleInsertionIndex` 顺序读取配图资产
-- 将文章中的 `[插图]: 描述` 标记替换为 `![描述](url)`
-- 返回替换后的完整文章内容
-
-### 4.4 更新单条 Marker 状态接口
-
-**接口路径**：`PATCH /api/v1/admin/image-master/workspaces/{id}/article/markers/{markerIndex}`
-
-**请求参数**：
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `draftText` | string | 否 | 用户编辑的提示词 |
-| `status` | string | 否 | 运行状态：idle/parsing/parsed/running/done/error |
-| `runId` | string | 否 | 生图任务 ID |
-| `errorMessage` | string | 否 | 错误信息 |
-
-**响应格式**：
-
-```json
-{
-  "success": true,
-  "data": {
-    "marker": {
-      "index": 0,
-      "text": "温馨的咖啡厅场景",
-      "draftText": "温馨的咖啡厅场景，暖色调",
-      "status": "done",
-      "assetId": "abc123",
-      "updatedAt": "2026-01-09T12:00:00Z"
-    }
-  }
-}
-```
-
----
-
-## 5. 前端实现
-
-### 5.1 核心组件
-
-**ArticleIllustrationEditorPage**：文章配图编辑器主页面
-
-- 位置：`prd-admin/src/pages/literary-agent/ArticleIllustrationEditorPage.tsx`
-- 职责：
-  - 管理本地 UI 状态（phase/articleContent/markers/markerRunItems）
-  - 与后端服务交互（loadWorkspace/updateWorkspace/generateMarkers/uploadAsset/exportArticle）
-  - 基于服务端 workflow 控制阶段跳转禁用
-  - 处理配图生成进度与错误重试
-
-### 5.2 状态管理
-
-**本地状态**（React state）：
-
-| 状态 | 类型 | 说明 |
-|------|------|------|
-| `phase` | string | 当前阶段（初始化时从服务端 workflow 同步） |
-| `articleContent` | string | 原始文章内容 |
-| `articleWithMarkers` | string | 带标记的文章内容 |
-| `markers` | array | 标记列表 |
-| `markerRunItems` | array | 配图生成进度列表 |
-| `workspace` | object | 工作区详情（包含 articleWorkflow） |
-
-**同步策略**：
-
-- 页面加载时：调用 `loadWorkspace`，从服务端 `workspace.articleWorkflow` 恢复 phase/markers
-- 提交型修改后：刷新 workspace detail，同步最新 workflow
-- 阶段跳转前：先刷新 workspace detail，基于服务端 workflow.phase 判断是否允许跳转
-
-### 5.3 关键交互流程
-
-#### 5.3.1 上传文章
-
-```typescript
-// 用户上传文章文件
-const handleUploadArticle = async (file: File) => {
-  const content = await file.text();
-  await updateImageMasterWorkspace({
-    id: workspaceId,
-    articleContent: content, // 触发后端 version++，清空标记/图片
-    idempotencyKey: crypto.randomUUID(),
-  });
-  await loadWorkspace(); // 刷新 workspace，同步最新 workflow
-};
-```
-
-#### 5.3.2 生成配图标记
-
-```typescript
-// 用户点击"生成配图标记"
-const handleGenerateMarkers = async () => {
-  const stream = generateArticleMarkers({
-    workspaceId,
-    articleContent,
-    userInstruction: selectedPrompt,
-  });
-
-  // SSE 流式接收
-  for await (const chunk of stream) {
-    if (chunk.type === 'delta') {
-      setArticleWithMarkers((prev) => prev + chunk.text);
-    } else if (chunk.type === 'done') {
-      setArticleWithMarkers(chunk.fullText);
-      await loadWorkspace(); // 刷新 workspace，同步最新 workflow
-    }
-  }
-};
-```
-
-#### 5.3.3 一键生图
-
-```typescript
-// 用户点击"一键生图"
-const handleGenerateAllImages = async () => {
-  for (const [idx, marker] of markers.entries()) {
-    // 1. 解析标记为结构化 prompt
-    const plan = await planImageGen({ prompt: marker.text });
-
-    // 2. 创建生图 run
-    const run = await createImageGenRun({ ...plan });
-
-    // 3. SSE 订阅生图结果
-    const stream = streamImageGenRunWithRetry(run.id);
-    for await (const chunk of stream) {
-      if (chunk.type === 'completed') {
-        // 4. 上传图片到 workspace
-        await uploadImageMasterWorkspaceAsset({
-          workspaceId,
-          data: chunk.imageData,
-          articleInsertionIndex: idx, // 关键：写入插入位置索引
-          originalMarkerText: marker.text,
-        });
-      }
-    }
-  }
-
-  await loadWorkspace(); // 刷新 workspace，同步最新 workflow
-};
-```
-
-#### 5.3.4 阶段跳转
-
-```typescript
-// 用户点击阶段按钮
-const jumpToPhase = async (targetPhase: string) => {
-  // 先刷新 workspace detail，获取最新 workflow
-  const { workspace: latest } = await getImageMasterWorkspaceDetail(workspaceId);
-  const serverPhase = latest.articleWorkflow.phase;
-
-  // 判断目标阶段是否"未来"
-  const phaseOrder = ['upload', 'editing', 'markersGenerated', 'imagesGenerating', 'imagesGenerated'];
-  const serverOrder = phaseOrder.indexOf(serverPhase);
-  const targetOrder = phaseOrder.indexOf(targetPhase);
-
-  if (targetOrder > serverOrder) {
-    // 禁止跳转到未来阶段
-    alert('该阶段尚未生成，无法跳转');
-    return;
-  }
-
-  // 允许跳转，只更新本地 UI 状态（不触发后端写入）
-  setPhase(targetPhase);
-};
-```
-
-### 5.4 Diff 展示功能
-
-**组件**：`ArticleDiffViewer`（位置：`prd-admin/src/components/diff/ArticleDiffViewer.tsx`）
-
-- 使用 `react-diff-viewer` 库实现 Git Diff 效果
-- 行内模式（inline）：绿色背景表示新增，红色背景表示删除
-- SSE 流式生成时实时更新 diff（每次 chunk 触发重新计算）
-- 生成完成后自动切换回普通预览
-
-**集成方式**：
-
-```typescript
-// 生成配图标记时启用 diff 视图
-const handleGenerateMarkers = async () => {
-  setShowDiff(true); // 启用 diff
-  
-  for await (const chunk of stream) {
-    if (chunk.type === 'chunk') {
-      setArticleWithMarkers(fullText); // 实时更新触发 diff 重算
-    } else if (chunk.type === 'done') {
-      setShowDiff(false); // 完成后关闭 diff
-    }
-  }
-};
-
-// 左侧面板条件渲染
-{phase === 'markers-generating' && showDiff && (
-  <ArticleDiffViewer 
-    oldValue={articleContent} 
-    newValue={articleWithMarkers} 
-  />
-)}
-```
-
-### 5.5 状态持久化
-
-**数据流**：
-
-1. 用户编辑提示词/生图状态变化时，调用 `PATCH /article/markers/{markerIndex}` 保存到后端
-2. 刷新页面时，从 `workspace.articleWorkflow.markers` 恢复 `markerRunItems` 状态
-3. 根据 `assetId` 从 `workspace.assets` 加载对应图片 URL
-
-**实现要点**：
-
-```typescript
-// 页面加载时恢复状态
-async function loadWorkspace() {
-  const res = await getImageMasterWorkspaceDetail({ id: workspaceId });
-  const ws = res.data.workspace;
-  
-  // 从 workflow.markers 恢复右侧运行状态
-  if (ws.articleWorkflow?.markers) {
-    const restoredItems = ws.articleWorkflow.markers.map((m) => ({
-      markerIndex: m.index,
-      markerText: m.text,
-      draftText: m.draftText || m.text,
-      status: m.status || 'idle',
-      runId: m.runId,
-      assetUrl: m.assetId ? assets.find(a => a.id === m.assetId)?.url : null,
-      errorMessage: m.errorMessage,
-    }));
-    setMarkerRunItems(restoredItems);
-  }
-}
-
-// 关键状态变更时保存
-const runSingleMarker = async (markerIndex: number) => {
-  // 1) 解析中
-  setMarkerRunItems(/* ... */);
-  await updateMarkerStatus(markerIndex, { status: 'parsing' });
-  
-  // 2) 解析完成
-  await updateMarkerStatus(markerIndex, { status: 'parsed', draftText });
-  
-  // 3) 生成中
-  await updateMarkerStatus(markerIndex, { status: 'running', runId });
-  
-  // 4) 完成/失败
-  // 上传图片时后端自动更新 marker.status='done' + assetId
-};
-```
-
----
-
-## 6. 后端实现
-
-### 6.1 核心服务
-
-**AdminImageMasterController**：管理后台 ImageMaster 接口
-
-- 位置：`prd-api/src/PrdAgent.Api/Controllers/Admin/AdminImageMasterController.cs`
-- 职责：
-  - 处理文章配图相关接口（生成标记/上传资产/导出文章）
-  - 维护 ArticleWorkflow 状态机（version/phase/markers/images）
-  - 实现"提交型修改清后续"逻辑
-  - 快照历史 workflow（debug-only）
-
-### 6.2 关键逻辑
-
-#### 6.2.1 提交型修改：文章更新
-
-```csharp
-[HttpPut("{id}")]
-public async Task<IActionResult> UpdateWorkspace(string id, [FromBody] UpdateWorkspaceRequest req)
-{
-    var ws = await _workspaceRepo.GetByIdAsync(id);
-    if (ws == null) return NotFound();
-
-    // 检测是否修改了 articleContent
-    var articleChanged = !string.IsNullOrEmpty(req.ArticleContent) 
-                         && req.ArticleContent != ws.ArticleContent;
-
-    if (articleChanged)
-    {
-        // 提交型修改：version++，清空后续阶段
-        ws.ArticleWorkflow.Version++;
-        ws.ArticleWorkflow.Phase = "editing";
-        ws.ArticleWorkflow.Markers.Clear();
-        ws.ArticleWorkflow.ExpectedImageCount = null;
-        ws.ArticleWorkflow.DoneImageCount = 0;
-        ws.ArticleWorkflow.AssetIdByMarkerIndex.Clear();
-        ws.ArticleWorkflow.UpdatedAt = DateTime.UtcNow;
-
-        // 快照当前 workflow 到历史（debug-only，最多保留 10 条）
-        ws.ArticleWorkflowHistory.Add(ws.ArticleWorkflow.Clone());
-        if (ws.ArticleWorkflowHistory.Count > 10)
-        {
-            ws.ArticleWorkflowHistory.RemoveAt(0);
-        }
-
-        // 删除旧的文章配图资产
-        var oldAssets = await _assetRepo.GetByWorkspaceIdAsync(id);
-        foreach (var asset in oldAssets.Where(a => a.ArticleInsertionIndex != null))
-        {
-            await _assetRepo.DeleteAsync(asset.Id);
-        }
-
-        ws.ArticleContent = req.ArticleContent;
-    }
-
-    await _workspaceRepo.UpdateAsync(ws);
-    return Ok(new { workspace = ws });
-}
-```
-
-#### 6.2.2 提交型修改：标记生成成功
-
-```csharp
-[HttpPost("{id}/article/generate-markers")]
-public async Task<IActionResult> GenerateArticleMarkers(string id, [FromBody] GenerateMarkersRequest req)
-{
-    var ws = await _workspaceRepo.GetByIdAsync(id);
-    if (ws == null) return NotFound();
-
-    // SSE 流式生成（省略 LLM 调用细节）
-    var fullText = await StreamGenerateMarkersAsync(req.ArticleContent, req.UserInstruction);
-
-    // 提取标记：[插图]: 描述
-    var markers = ExtractMarkers(fullText);
-
-    // 提交型修改：version++，写入 markers，清空旧配图资产
-    ws.ArticleWorkflow.Version++;
-    ws.ArticleWorkflow.Phase = "markersGenerated";
-    ws.ArticleWorkflow.Markers = markers;
-    ws.ArticleWorkflow.ExpectedImageCount = markers.Count;
-    ws.ArticleWorkflow.DoneImageCount = 0;
-    ws.ArticleWorkflow.AssetIdByMarkerIndex.Clear();
-    ws.ArticleWorkflow.UpdatedAt = DateTime.UtcNow;
-
-    // 快照当前 workflow 到历史
-    ws.ArticleWorkflowHistory.Add(ws.ArticleWorkflow.Clone());
-    if (ws.ArticleWorkflowHistory.Count > 10)
-    {
-        ws.ArticleWorkflowHistory.RemoveAt(0);
-    }
-
-    // 删除旧的文章配图资产
-    var oldAssets = await _assetRepo.GetByWorkspaceIdAsync(id);
-    foreach (var asset in oldAssets.Where(a => a.ArticleInsertionIndex != null))
-    {
-        await _assetRepo.DeleteAsync(asset.Id);
-    }
-
-    ws.ArticleContentWithMarkers = fullText;
-    await _workspaceRepo.UpdateAsync(ws);
-
-    return Ok(new { fullText, markers });
-}
-```
-
-#### 6.2.3 推进 workflow：上传配图资产
-
-```csharp
-[HttpPost("{id}/assets")]
-public async Task<IActionResult> UploadWorkspaceAsset(string id, [FromBody] UploadAssetRequest req)
-{
-    var ws = await _workspaceRepo.GetByIdAsync(id);
-    if (ws == null) return NotFound();
-
-    // 若携带 articleInsertionIndex，删除旧的同 index 配图
-    if (req.ArticleInsertionIndex.HasValue)
-    {
-        var oldAssets = await _assetRepo.GetByWorkspaceIdAsync(id);
-        var oldAsset = oldAssets.FirstOrDefault(a => a.ArticleInsertionIndex == req.ArticleInsertionIndex);
-        if (oldAsset != null)
-        {
-            // 检查 SHA256 是否相同，避免误删底层文件
-            if (oldAsset.Sha256 != newAsset.Sha256)
-            {
-                await _assetRepo.DeleteAsync(oldAsset.Id);
-            }
-        }
-    }
-
-    // 写入新 asset
-    var asset = new ImageAsset
-    {
-        Id = Guid.NewGuid().ToString(),
-        WorkspaceId = id,
-        Url = uploadedUrl,
-        Sha256 = sha256,
-        ArticleInsertionIndex = req.ArticleInsertionIndex,
-        OriginalMarkerText = req.OriginalMarkerText,
-        CreatedAt = DateTime.UtcNow,
-    };
-    await _assetRepo.CreateAsync(asset);
-
-    // 推进 workflow 进度
-    if (req.ArticleInsertionIndex.HasValue)
-    {
-        var idx = req.ArticleInsertionIndex.Value;
-        ws.ArticleWorkflow.AssetIdByMarkerIndex[idx.ToString()] = asset.Id;
-        ws.ArticleWorkflow.DoneImageCount = ws.ArticleWorkflow.AssetIdByMarkerIndex.Count;
-        ws.ArticleWorkflow.UpdatedAt = DateTime.UtcNow;
-
-        // 若全部完成，自动切换到 imagesGenerated
-        if (ws.ArticleWorkflow.DoneImageCount >= ws.ArticleWorkflow.ExpectedImageCount)
-        {
-            ws.ArticleWorkflow.Phase = "imagesGenerated";
-        }
-        else
-        {
-            ws.ArticleWorkflow.Phase = "imagesGenerating";
-        }
-
-        await _workspaceRepo.UpdateAsync(ws);
-    }
-
-    return Ok(new { asset });
-}
-```
-
-#### 6.2.4 导出文章
-
-```csharp
-[HttpPost("{id}/article/export")]
-public async Task<IActionResult> ExportArticle(string id, [FromBody] ExportArticleRequest req)
-{
-    var ws = await _workspaceRepo.GetByIdAsync(id);
-    if (ws == null) return NotFound();
-
-    var content = ws.ArticleContentWithMarkers;
-    var assets = await _assetRepo.GetByWorkspaceIdAsync(id);
-
-    // 按 articleInsertionIndex 排序
-    var sortedAssets = assets
-        .Where(a => a.ArticleInsertionIndex.HasValue)
-        .OrderBy(a => a.ArticleInsertionIndex)
-        .ToList();
-
-    // 替换标记为图片链接
-    foreach (var asset in sortedAssets)
-    {
-        var marker = $"[插图]: {asset.OriginalMarkerText}";
-        var replacement = $"![{asset.OriginalMarkerText}]({asset.Url})";
-        content = content.Replace(marker, replacement);
-    }
-
-    return Ok(new { content, format = "markdown", assetCount = sortedAssets.Count });
-}
-```
-
-### 6.3 BSON 映射配置
-
-**BsonClassMapRegistration**：确保 MongoDB 字段名为 camelCase
-
-- 位置：`prd-api/src/PrdAgent.Infrastructure/Database/BsonClassMapRegistration.cs`
-- 配置：
-
-```csharp
-BsonClassMap.RegisterClassMap<ArticleIllustrationWorkflow>(cm =>
-{
-    cm.AutoMap();
-    cm.SetIgnoreExtraElements(true);
-});
-
-BsonClassMap.RegisterClassMap<ArticleIllustrationMarker>(cm =>
-{
-    cm.AutoMap();
-    cm.SetIgnoreExtraElements(true);
-});
-
-BsonClassMap.RegisterClassMap<ImageMasterWorkspace>(cm =>
-{
-    cm.AutoMap();
-    cm.MapMember(x => x.ArticleWorkflow).SetElementName("articleWorkflow");
-    cm.MapMember(x => x.ArticleWorkflowHistory).SetElementName("articleWorkflowHistory");
-    cm.SetIgnoreExtraElements(true);
-});
-```
-
----
-
-## 7. 验收标准
-
-### 7.1 功能验收
-
-- [ ] 支持上传 .md/.txt 文章文件
-- [ ] 可创建/编辑/删除提示词模板
-- [ ] 生成配图标记时必须选择提示词模板
-- [ ] AI 生成的标记格式为 `[插图]: 描述`
-- [ ] 可逐条编辑标记并重新生成单张配图
-- [ ] 一键生图按顺序生成所有配图
-- [ ] 生成失败的配图可单独重试
-- [ ] 刷新页面后能恢复到正确阶段
-- [ ] 不能跳转到未生成过的阶段（弹窗提示）
-- [ ] 重新上传文章会清空标记/图片
-- [ ] 重新生成标记会清空旧图片
-- [ ] 导出时可选择 CDN 链接或本地下载
-- [ ] 导出的 Markdown 包含所有配图
-
-### 7.2 状态机验收
-
-- [ ] 浏览器刷新后 phase 与服务端一致
-- [ ] 文章更新后 version++，标记/图片清空
-- [ ] 标记生成成功后 version++，旧配图资产清空
-- [ ] 只切换阶段不修改时，后续数据不丢失
-- [ ] 禁止跳转到未来阶段（弹窗提示）
-- [ ] 历史 workflow 最多保留 10 条（debug-only）
-
-### 7.3 边界情况验收
-
-- [ ] 同 index 配图重新生成时，旧配图被删除
-- [ ] 新旧配图 SHA256 相同时，不删除底层文件
-- [ ] 所有配图生成完成后，自动切换到 `imagesGenerated`
-- [ ] 导出时按 `articleInsertionIndex` 顺序替换标记
-
-### 7.4 Diff 展示验收
-
-- [ ] 生成配图标记时，左侧面板显示 Git Diff 效果（行内模式）
-- [ ] 新增内容绿色高亮，删除内容红色高亮（带删除线）
-- [ ] SSE 流式生成时，diff 实时更新（性能可接受，无明显卡顿）
-- [ ] 生成完成后，自动切换回普通预览（不再显示 diff）
-
-### 7.5 状态持久化验收
-
-- [ ] 刷新页面后，右侧配图列表完整恢复（包括状态、提示词、图片 URL）
-- [ ] 用户编辑提示词后刷新，编辑内容不丢失
-- [ ] 生图中途刷新，状态正确恢复为对应阶段（parsing/running/done/error）
-- [ ] 已生成的图片刷新后仍然显示
-
----
-
-## 8. 未来优化方向
-
-### 8.1 功能增强
-
-- [ ] 支持导出 HTML/PDF 格式
-- [ ] 支持批量编辑标记（批量修改提示词）
-- [ ] 支持配图预览与对比（多张候选图）
-- [ ] 支持配图样式模板（统一风格）
-
-### 8.2 性能优化
-
-- [ ] 配图生成并发控制（避免同时生成过多图片）
-- [ ] 配图缓存（相同提示词复用已生成图片）
-- [ ] 增量导出（只导出变更部分）
-
-### 8.3 用户体验
-
-- [ ] 配图生成进度可视化（进度条/百分比）
-- [ ] 配图生成失败时自动重试（指数退避）
-- [ ] 配图生成时间预估（基于历史数据）
-
----
-
-## 9. 参考文档
-
-- [PRD Agent 产品需求文档](3.prd.md) - 第 4.8 节
-- [PRD Agent 软件需求规格说明书](2.srs.md) - 第 5.3 节、第 7.2.10-7.2.11 节
-- [Doc vs Code 差异清单](8.doc-code-diff.md) - 第 2.2 节
-- [文档维护与反向更新规则](0.doc-maintenance.md)
-
----
-
-## 附录：实现清单
-
-### A.1 前端改动
-
-| 文件 | 改动内容 |
-|------|----------|
-| `prd-admin/package.json` | 新增 `react-diff-viewer` 依赖 |
-| `prd-admin/src/components/diff/ArticleDiffViewer.tsx` | 新增 Diff 展示组件（行内模式，绿色新增/红色删除） |
-| `prd-admin/src/services/real/imageMaster.ts` | 新增 `updateArticleMarkerReal` 方法，修复 `updateImageMasterWorkspaceReal` 不传 `articleContent` 的 bug |
-| `prd-admin/src/services/index.ts` | 导出 `updateArticleMarker` 方法 |
-| `prd-admin/src/services/contracts/imageMaster.ts` | 新增 `articleWorkflow/articleWorkflowHistory` 字段 |
-| `prd-admin/src/pages/literary-agent/ArticleIllustrationEditorPage.tsx` | 集成 Diff 展示（SSE 流式生成时启用），实现状态持久化（从服务端恢复 markerRunItems，关键状态变更时保存到后端） |
-
-### A.2 后端改动
-
-| 文件 | 改动内容 |
-|------|----------|
-| `PrdAgent.Core/Models/ArticleIllustrationWorkflow.cs` | 扩展 `ArticleIllustrationMarker` 数据模型（新增 DraftText/Status/RunId/AssetId/ErrorMessage/UpdatedAt 字段） |
-| `PrdAgent.Api/Models/Requests/ArticleIllustrationRequests.cs` | 新增 `UpdateMarkerRequest` 请求模型 |
-| `PrdAgent.Core/Models/ImageMasterWorkspace.cs` | 新增 `ArticleWorkflow/ArticleWorkflowHistory` 字段 |
-| `PrdAgent.Core/Models/ImageAsset.cs` | 新增 `ArticleInsertionIndex/OriginalMarkerText` 字段 |
-| `PrdAgent.Infrastructure/Database/BsonClassMapRegistration.cs` | 注册 workflow 的 BSON 映射（camelCase） |
-| `PrdAgent.Api/Controllers/Admin/AdminImageMasterController.cs` | 实现"提交型修改清后续"逻辑，推进 workflow 进度，新增 PATCH 接口用于保存单条 marker 状态，上传图片时同步更新 marker 状态 |
-
-### A.3 文档改动
-
-| 文件 | 改动内容 |
-|------|----------|
-| `doc/3.prd.md` | 新增第 4.8 节"文学创作 Agent（文章配图）" |
-| `doc/2.srs.md` | 新增第 5.3 节"文学创作 Agent 接口"，第 7.2.10-7.2.11 节数据模型 |
-| `doc/8.doc-code-diff.md` | 更新第 2.2 节，标注"文学创作 Agent 已落地" |
-| `doc/agent.literary-agent.md` | 新增本文档（完整设计说明） |
+| GET | `/api/literary/prompts` | 提示词列表 |
+| POST | `/api/literary/prompts` | 创建提示词 |
+| PUT | `/api/literary/prompts/{id}` | 更新提示词 |
+| DELETE | `/api/literary/prompts/{id}` | 删除提示词 |
+| GET | `/api/literary/prompts/marketplace` | 市场中的提示词 |
+| POST | `/api/literary/prompts/{id}/publish` | 发布到市场 |
+| POST | `/api/literary/prompts/{id}/unpublish` | 从市场下架 |
+| POST | `/api/literary/prompts/{id}/fork` | Fork 市场提示词 |
+| POST | `/api/literary/prompts/optimize` | AI 优化提示词 |
+
+## 八、关联设计文档
+
+| 文档 | 关系 |
+|------|------|
+| `design.visual-agent.md` | 共享底层生图引擎（ImageGen），Literary Agent 复用 VisualAgent 的工作空间和资产集合 |
+| `design.system-emergence.md` | 涌现篇中"内容创作流水线"场景的详细来源 |
+| `design.unified-skill-system.md` | 提示词与技能系统统一设计 |
+
+## 九、影响范围与风险
+
+### 影响范围
+
+| 影响模块 | 变更内容 | 需要配合的团队 |
+|----------|----------|---------------|
+| VisualAgent | 共享 ImageGen 引擎和工作空间集合 | 视觉创作团队 |
+| LLM Gateway | 文章分析 + 配图标注调用，appCallerCode = `literary-agent.*::chat` | 模型运维 |
+| Marketplace | 提示词和参考图的发布/fork | 市场运营 |
+| COS 存储 | 参考图和生成图片存储 | 基础设施 |
+
+### 风险评估
+
+| 风险 | 概率 | 影响 | 缓解措施 |
+|------|------|------|----------|
+| AI 标注位置不准确 | 中 | 低 | 用户可手动调整标记位置和描述 |
+| 批量生图耗时长 | 中 | 中 | SSE 实时进度 + 支持取消 |
+| 提交型修改误清后续阶段 | 低 | 中 | Version 机制 + 前端二次确认 |
+| 市场 fork 的提示词质量不可控 | 低 | 低 | ForkCount 排序 + 管理员审核 |
