@@ -744,13 +744,13 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                             queryRequest.Headers.TryAddWithoutValidation(key, value);
 
                         // 传递 submit 时的 X-Api-Request-Id（豆包 query 需要）
-                        if (submitResponseHeaders.TryGetValue("X-Api-Request-Id", out var reqId) ||
-                            httpRequest.Headers.TryGetValues("X-Api-Request-Id", out var reqIdValues))
-                        {
-                            var requestId = reqId ?? reqIdValues?.FirstOrDefault();
-                            if (requestId != null)
-                                queryRequest.Headers.TryAddWithoutValidation("X-Api-Request-Id", requestId);
-                        }
+                        string? submitRequestId = null;
+                        if (submitResponseHeaders.TryGetValue("X-Api-Request-Id", out var reqId))
+                            submitRequestId = reqId;
+                        else if (httpRequest.Headers.TryGetValues("X-Api-Request-Id", out var reqIdValues))
+                            submitRequestId = reqIdValues.FirstOrDefault();
+                        if (submitRequestId != null)
+                            queryRequest.Headers.TryAddWithoutValidation("X-Api-Request-Id", submitRequestId);
 
                         var queryClient = _httpClientFactory.CreateClient();
                         queryClient.Timeout = TimeSpan.FromSeconds(30);
