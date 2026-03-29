@@ -653,6 +653,17 @@ public static class WorkflowAgent
         )]
         public const string Chat = "workflow-agent.ai-fill::chat";
     }
+
+    public static class CliAgentExecutor
+    {
+        [AppCallerMetadata(
+            "工作流-CLI Agent页面生成",
+            "根据规范、框架、风格要求生成完整的HTML页面，支持多轮迭代修改",
+            ModelTypes = new[] { ModelTypes.Code },
+            Category = "Workflow"
+        )]
+        public const string Code = "workflow-agent.cli-agent::code";
+    }
 }
 
 /// <summary>

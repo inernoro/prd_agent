@@ -929,15 +929,22 @@ public static class CapsuleTypeRegistry
     {
         TypeKey = CapsuleTypes.CliAgentExecutor,
         Name = "CLI Agent 执行器",
-        Description = "调度 Docker 容器中的 CLI 编码工具（如 OpenHands、Aider、Claude Code CLI）生成页面/项目，支持多轮迭代修改",
+        Description = "可扩展的代码生成执行器，支持多种执行模式（内置脚本/Docker/API）和多轮迭代修改",
         Icon = "terminal",
         Category = CapsuleCategory.Processor,
         AccentHue = 280,
         ConfigSchema = new()
         {
-            new() { Key = "image", Label = "Docker 镜像", FieldType = "text", Required = true, Placeholder = "node:20-slim", HelpTip = "执行容器的 Docker 镜像，内置 CLI 工具或通过 setupCommand 安装" },
-            new() { Key = "setupCommand", Label = "初始化命令", FieldType = "textarea", Required = false, Placeholder = "npm create vite@latest app -- --template react-ts && cd app && npm install", HelpTip = "容器启动后的初始化命令（安装依赖、脚手架等），仅首轮执行" },
-            new() { Key = "generateCommand", Label = "生成命令", FieldType = "textarea", Required = true, Placeholder = "node generate.js", HelpTip = "执行生成的命令，每轮都会执行。工作目录为 /workspace，产物放入 /output" },
+            // ── 执行器类型（核心扩展点） ──
+            new() { Key = "executorType", Label = "执行器类型", FieldType = "select", Required = true, DefaultValue = "builtin-llm", Options = new()
+            {
+                new() { Value = "builtin-llm", Label = "内置 LLM 生成（无需 Docker）" },
+                new() { Value = "docker", Label = "Docker 容器" },
+                new() { Value = "api", Label = "外部 API（OpenHands/Bolt 等）" },
+                new() { Value = "script", Label = "本地脚本（Jint 沙箱）" },
+            }, HelpTip = "选择执行方式：内置 LLM 直接生成页面，Docker 运行容器化 CLI 工具，API 调用外部服务，脚本在 Jint 沙箱中执行" },
+
+            // ── 通用配置 ──
             new() { Key = "spec", Label = "规范类型", FieldType = "select", Required = false, DefaultValue = "none", Options = new()
             {
                 new() { Value = "none", Label = "无（自由生成）" },
@@ -953,7 +960,7 @@ public static class CapsuleTypeRegistry
                 new() { Value = "vue", Label = "Vue + Vite" },
                 new() { Value = "nextjs", Label = "Next.js" },
                 new() { Value = "svelte", Label = "Svelte" },
-                new() { Value = "custom", Label = "自定义（由镜像决定）" },
+                new() { Value = "custom", Label = "自定义（由执行器决定）" },
             }},
             new() { Key = "style", Label = "风格技能", FieldType = "select", Required = false, DefaultValue = "ui-ux-pro-max", Options = new()
             {
@@ -965,9 +972,22 @@ public static class CapsuleTypeRegistry
                 new() { Value = "custom", Label = "自定义（在提示词中描述）" },
             }},
             new() { Key = "prompt", Label = "生成提示词", FieldType = "textarea", Required = false, Placeholder = "请生成一个产品展示页面，包含 Hero 区域、功能介绍、价格表…", HelpTip = "描述你想要生成的页面内容，支持 {{variable}} 变量替换" },
-            new() { Key = "timeoutSeconds", Label = "超时时间（秒）", FieldType = "number", Required = false, DefaultValue = "300", HelpTip = "容器最大运行时间，超时自动终止" },
-            new() { Key = "memoryLimitMb", Label = "内存限制（MB）", FieldType = "number", Required = false, DefaultValue = "512", HelpTip = "容器内存上限" },
-            new() { Key = "envVars", Label = "环境变量", FieldType = "json", Required = false, Placeholder = "{\"API_KEY\": \"xxx\"}", HelpTip = "传递给容器的环境变量（JSON 对象），支持 {{variable}} 替换" },
+
+            // ── Docker 执行器配置（executorType=docker 时生效） ──
+            new() { Key = "image", Label = "Docker 镜像", FieldType = "text", Required = false, Placeholder = "node:20-slim", HelpTip = "Docker 执行器专用：容器镜像地址" },
+            new() { Key = "setupCommand", Label = "初始化命令", FieldType = "textarea", Required = false, Placeholder = "npm install", HelpTip = "Docker 执行器专用：容器首轮初始化命令" },
+            new() { Key = "generateCommand", Label = "生成命令", FieldType = "textarea", Required = false, Placeholder = "node generate.js", HelpTip = "Docker 执行器专用：每轮执行的生成命令" },
+
+            // ── API 执行器配置（executorType=api 时生效） ──
+            new() { Key = "apiEndpoint", Label = "API 地址", FieldType = "text", Required = false, Placeholder = "https://api.example.com/generate", HelpTip = "API 执行器专用：外部服务的生成接口地址" },
+            new() { Key = "apiKey", Label = "API 密钥", FieldType = "password", Required = false, HelpTip = "API 执行器专用：认证密钥" },
+
+            // ── 脚本执行器配置（executorType=script 时生效） ──
+            new() { Key = "scriptCode", Label = "生成脚本", FieldType = "code", Required = false, Placeholder = "// context 对象包含 spec/framework/style/prompt\n// previousOutput/userFeedback 用于多轮迭代\nresult = generatePage(context);", HelpTip = "脚本执行器专用：Jint 沙箱中执行的 JavaScript" },
+
+            // ── 资源限制 ──
+            new() { Key = "timeoutSeconds", Label = "超时时间（秒）", FieldType = "number", Required = false, DefaultValue = "300" },
+            new() { Key = "envVars", Label = "环境变量", FieldType = "json", Required = false, Placeholder = "{\"API_KEY\": \"xxx\"}", HelpTip = "传递给执行器的环境变量（JSON 对象）" },
         },
         DefaultInputSlots = new()
         {
