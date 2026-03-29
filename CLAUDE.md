@@ -111,6 +111,12 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 - 必须 `grep` 一个现有 Model（如 `DefectReport.cs`）确认格式后再写
 - 获取用户 ID：`this.GetRequiredUserId()`，不用 `User.FindFirstValue("userId")`
 
+**前端 service 层同样适用**：新建 `services/real/*.ts` 时，必须先读 `apiClient.ts` 的 `apiRequest` 签名。关键陷阱：
+- `apiRequest` 内部会自动 `JSON.stringify(options.body)`，**调用方传原始对象，禁止再 `JSON.stringify`**
+- ❌ `body: JSON.stringify({ title })` → 双重序列化，后端 400
+- ✅ `body: { title }` → 正确
+- FormData 上传不能走 `apiRequest`（会被 JSON 序列化），必须直接 `fetch`
+
 ### 8. Agent 开发"完成"标准
 
 功能开发声称"完成"前，**必须全部满足**以下条件：
