@@ -26,23 +26,34 @@ services:
     working_dir: /app
     volumes:
       - ./prd-api:/app
+      - api-nuget-cache:/root/.nuget/packages
+      - api-build-cache:/app/src/PrdAgent.Api/bin
+      - api-obj-cache:/app/src/PrdAgent.Api/obj
     ports:
       - "5000"
     command: >-
       dotnet restore &&
       dotnet build --no-restore &&
-      dotnet run --project src/PrdAgent.Api --urls http://0.0.0.0:5000
+      dotnet run --project src/PrdAgent.Api --no-build --urls http://0.0.0.0:5000
     depends_on:
       mongodb: { condition: service_healthy }
       redis: { condition: service_healthy }
     environment:
       # 仅服务特有变量，全局变量已由 x-cds-env 注入
       ASPNETCORE_ENVIRONMENT: Development
+      DOTNET_TieredCompilation: 1
+      DOTNET_TC_QuickJit: 1
+      DOTNET_ReadyToRun: 0
+      DOTNET_GCHeapHardLimit: 0x10000000
       MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
       MongoDB__DatabaseName: prdagent
       Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT}"
       Jwt__Secret: "${JWT_SECRET}"
       Jwt__Issuer: prdagent
+    deploy:
+      resources:
+        limits:
+          memory: 384M
     labels:
       cds.path-prefix: "/api/"
 
@@ -51,12 +62,20 @@ services:
     working_dir: /app
     volumes:
       - ./prd-admin:/app
+      - admin-pnpm-store:/root/.local/share/pnpm/store
+      - admin-node-modules:/app/node_modules
     ports:
       - "8000"
     command: >-
       corepack enable &&
       pnpm install --frozen-lockfile &&
       pnpm exec vite --host 0.0.0.0 --port 8000
+    environment:
+      NODE_OPTIONS: "--max-old-space-size=192"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
     labels:
       cds.path-prefix: "/"
 
@@ -68,10 +87,18 @@ services:
       - "27017"
     volumes:
       - mongodb-data:/data/db
+    command: >-
+      mongod
+      --wiredTigerCacheSizeGB 0.15
+      --setParameter diagnosticDataCollectionEnabled=false
     healthcheck:
       test: mongosh --eval "db.runCommand({ping:1})" --quiet
       interval: 10s
       retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 256M
 
   redis:
     image: redis:7-alpine
@@ -79,11 +106,21 @@ services:
       - "6379"
     volumes:
       - redis-data:/data
+    command: redis-server --maxmemory 32mb --maxmemory-policy allkeys-lru
     healthcheck:
       test: redis-cli ping
       interval: 10s
       retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 48M
 
 volumes:
   mongodb-data:
   redis-data:
+  api-nuget-cache:
+  api-build-cache:
+  api-obj-cache:
+  admin-pnpm-store:
+  admin-node-modules:
