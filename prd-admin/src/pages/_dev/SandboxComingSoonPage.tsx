@@ -13,6 +13,104 @@ const sceneList = [
   '异常链路复盘：窜货、漏扫、错配问题可视化还原',
 ];
 
+const CAT_MATRIX = [
+  '................',
+  '....OOOOOOOO....',
+  '..OOHHHHHHHHOO..',
+  '..OHYYYYYYYYHO..',
+  '.OHYWWYWWYWWYHO.',
+  '.OHYWWYYYYWWYHO.',
+  '.OHYWWYPPYWWYHO.',
+  '.OHYYYYYYYYYYHO.',
+  '.OHYBBBBBBBBYHO.',
+  '.OHYBBBBBBBBYHO.',
+  '..OHYBBBBBBYHO..',
+  '..OOHHHHHHHHOO..',
+  '....OO....OO....',
+  '......O..O......',
+  '................',
+];
+
+const CONE_MATRIX = [
+  '....RR....',
+  '...RRRR...',
+  '..RRRRRR..',
+  '.RRWWWWRR.',
+  '.RRRRRRRR.',
+  'RRWWWWWWRR',
+  'RRRRRRRRRR',
+  '..BBBBBB..',
+];
+
+const SPARK_MATRIX = [
+  '..Y..',
+  '.YYY.',
+  'YYYYY',
+  '.YYY.',
+  '..Y..',
+];
+
+const PIXEL_PALETTE: Record<string, string> = {
+  O: '#1d2234',
+  H: '#ffd15f',
+  Y: '#f7dd8a',
+  W: '#f9f9ff',
+  P: '#ff8a9b',
+  B: '#f2c776',
+  R: '#ff7f5f',
+  Y2: '#ffd76a',
+  B2: '#3d4e7b',
+};
+
+function PixelSprite({
+  matrix,
+  palette,
+  pixelSize = 5,
+  style,
+}: {
+  matrix: string[];
+  palette: Record<string, string>;
+  pixelSize?: number;
+  style?: React.CSSProperties;
+}) {
+  const rows = matrix.length;
+  const cols = matrix[0]?.length ?? 0;
+  const cells: React.ReactNode[] = [];
+
+  for (let r = 0; r < rows; r += 1) {
+    const row = matrix[r];
+    for (let c = 0; c < cols; c += 1) {
+      const key = `${r}-${c}`;
+      const code = row[c];
+      const color = palette[code];
+      cells.push(
+        <div
+          key={key}
+          style={{
+            width: pixelSize,
+            height: pixelSize,
+            background: color ?? 'transparent',
+          }}
+        />
+      );
+    }
+  }
+
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: `repeat(${cols}, ${pixelSize}px)`,
+        gridTemplateRows: `repeat(${rows}, ${pixelSize}px)`,
+        imageRendering: 'pixelated',
+        ...style,
+      }}
+    >
+      {cells}
+    </div>
+  );
+}
+
 export default function SandboxComingSoonPage() {
   const navigate = useNavigate();
 
@@ -20,20 +118,41 @@ export default function SandboxComingSoonPage() {
     <div
       style={{
         minHeight: '100vh',
-        background: 'radial-gradient(circle at 20% 0%, rgba(91,124,255,0.18), transparent 42%), #060d1d',
+        background:
+          'radial-gradient(circle at 16% -10%, rgba(139,92,246,0.35), transparent 40%), radial-gradient(circle at 90% 0%, rgba(59,130,246,0.28), transparent 35%), #060d1d',
         color: '#e9f2ff',
         display: 'grid',
         placeItems: 'center',
         padding: 18,
       }}
     >
+      <style>
+        {`
+          @keyframes catFloat {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-6px); }
+          }
+          @keyframes pulseHint {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(255, 209, 95, 0.28); }
+            50% { box-shadow: 0 0 0 10px rgba(255, 209, 95, 0.0); }
+          }
+          @keyframes progressMove {
+            0% { background-position: 0 0; }
+            100% { background-position: 24px 0; }
+          }
+          @keyframes sparkBlink {
+            0%, 100% { opacity: 0.2; transform: scale(0.85); }
+            50% { opacity: 1; transform: scale(1); }
+          }
+        `}
+      </style>
       <div
         style={{
           width: 'min(980px, 100%)',
           borderRadius: 18,
-          border: '1px solid rgba(120,148,206,0.34)',
-          background: 'rgba(7,14,30,0.82)',
-          boxShadow: '0 20px 80px rgba(2,8,22,0.45)',
+          border: '1px solid rgba(166,191,255,0.35)',
+          background: 'linear-gradient(180deg, rgba(12,20,40,0.92), rgba(8,14,30,0.9))',
+          boxShadow: '0 20px 80px rgba(2,8,22,0.45), inset 0 1px 0 rgba(255,255,255,0.05)',
           padding: 24,
           display: 'grid',
           gap: 16,
@@ -46,15 +165,16 @@ export default function SandboxComingSoonPage() {
             alignItems: 'center',
             gap: 8,
             borderRadius: 999,
-            border: '1px solid rgba(255,206,116,0.45)',
-            background: 'rgba(255,206,116,0.14)',
-            color: '#ffe8b4',
+            border: '1px solid rgba(255,206,116,0.65)',
+            background: 'linear-gradient(90deg, rgba(255,206,116,0.22), rgba(255,138,102,0.18))',
+            color: '#fff1c7',
             fontSize: 12,
             fontWeight: 700,
             padding: '4px 10px',
+            animation: 'pulseHint 1.8s ease-in-out infinite',
           }}
         >
-          施工中
+          预热中
         </div>
 
         <div>
@@ -62,6 +182,87 @@ export default function SandboxComingSoonPage() {
           <div style={{ fontSize: 14, lineHeight: 1.8, color: 'rgba(214,228,255,0.88)' }}>
             我们正在把“看得见、摸得着、拖得动”的业务沙盘能力做成智能体。它会帮助你把
             <b> 角色-标识-动作</b> 关系拖拽成图，快速演示复杂业务链路，并用于评审和复盘。
+          </div>
+        </div>
+
+        <div
+          style={{
+            borderRadius: 12,
+            border: '1px solid rgba(120,148,206,0.34)',
+            background: 'rgba(10,20,42,0.75)',
+            padding: '12px 12px 10px',
+            display: 'grid',
+            gridTemplateColumns: 'auto 1fr',
+            alignItems: 'center',
+            gap: 14,
+          }}
+        >
+          <div style={{ position: 'relative', width: 96, height: 92 }}>
+            <PixelSprite
+              matrix={CAT_MATRIX}
+              palette={PIXEL_PALETTE}
+              pixelSize={5}
+              style={{
+                position: 'absolute',
+                left: 4,
+                top: 6,
+                animation: 'catFloat 1.8s ease-in-out infinite',
+                filter: 'drop-shadow(0 8px 10px rgba(0,0,0,0.38))',
+              }}
+            />
+            <PixelSprite
+              matrix={CONE_MATRIX}
+              palette={{ ...PIXEL_PALETTE, W: '#f3f6ff', B: '#42598e' }}
+              pixelSize={4}
+              style={{
+                position: 'absolute',
+                right: 2,
+                bottom: 6,
+              }}
+            />
+            <PixelSprite
+              matrix={SPARK_MATRIX}
+              palette={{ Y: '#ffd15f' }}
+              pixelSize={3}
+              style={{
+                position: 'absolute',
+                right: 24,
+                top: 8,
+                animation: 'sparkBlink 1s steps(2, end) infinite',
+              }}
+            />
+          </div>
+          <div>
+            <div
+              style={{
+                display: 'inline-block',
+                borderRadius: 8,
+                border: '1px solid rgba(120,148,206,0.36)',
+                background: 'rgba(15,28,56,0.85)',
+                padding: '5px 8px',
+                fontSize: 12,
+                fontWeight: 700,
+                color: '#dfeaff',
+                marginBottom: 8,
+              }}
+            >
+              像素小猫正在赶工：喵喵施工中
+            </div>
+            <div
+              style={{
+                height: 10,
+                borderRadius: 999,
+                border: '1px solid rgba(120,148,206,0.35)',
+                background:
+                  'repeating-linear-gradient(45deg, rgba(255,209,95,0.3) 0, rgba(255,209,95,0.3) 8px, rgba(255,138,102,0.3) 8px, rgba(255,138,102,0.3) 16px)',
+                backgroundSize: '24px 24px',
+                animation: 'progressMove 1.1s linear infinite',
+                marginBottom: 8,
+              }}
+            />
+            <div style={{ fontSize: 12, color: 'rgba(214,228,255,0.86)' }}>
+              当前施工重点：规则校验、模板场景、团队协作与分享能力。
+            </div>
           </div>
         </div>
 
