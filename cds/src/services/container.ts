@@ -134,6 +134,26 @@ export class ContainerService {
       }
     }
 
+    // ffmpeg: 静态编译版 bind mount（零依赖，单文件）
+    // 优先使用 /opt/ffmpeg-static/（用户下载的静态版），否则尝试宿主机 /usr/bin/ffmpeg
+    const ffmpegPaths = ['/opt/ffmpeg-static/ffmpeg', '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg'];
+    const ffprobePaths = ['/opt/ffmpeg-static/ffprobe', '/usr/local/bin/ffprobe', '/usr/bin/ffprobe'];
+    const findResult = await this.shell.exec(
+      `for p in ${ffmpegPaths.join(' ')}; do [ -f "$p" ] && echo "$p" && break; done`
+    );
+    const ffmpegPath = findResult.stdout?.trim();
+    if (ffmpegPath) {
+      volumeFlags.push(`-v "${ffmpegPath}:/usr/local/bin/ffmpeg:ro"`);
+      // ffprobe
+      const findProbe = await this.shell.exec(
+        `for p in ${ffprobePaths.join(' ')}; do [ -f "$p" ] && echo "$p" && break; done`
+      );
+      const ffprobePath = findProbe.stdout?.trim();
+      if (ffprobePath) {
+        volumeFlags.push(`-v "${ffprobePath}:/usr/local/bin/ffprobe:ro"`);
+      }
+    }
+
     try {
       const command = profile.command || '';
       if (!command) {
@@ -144,6 +164,7 @@ export class ContainerService {
       if (isNodeContainer) {
         onOutput?.(`── Node.js 容器: node_modules 已隔离到 Docker volume ──\n`);
       }
+
       const runCmd = [
         'docker run -d',
         `--name ${service.containerName}`,

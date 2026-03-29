@@ -15,7 +15,5 @@ RUN dotnet publish "PrdAgent.Api.csproj" -c Release -o /app/publish /p:UseAppHos
 
 FROM base AS final
 WORKDIR /app
-# 转录工作台 ASR 需要 ffmpeg 进行音频格式转换
-RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/publish .
 ENTRYPOINT ["dotnet", "PrdAgent.Api.dll"]

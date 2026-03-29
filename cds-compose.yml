@@ -26,14 +26,12 @@ x-cds-deploy-modes:
     dev:
       label: "开发模式 (热重载)"
       command: >-
-        (which ffmpeg >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq --no-install-recommends ffmpeg)) &&
         dotnet restore &&
         dotnet build --no-restore &&
         dotnet watch run --project src/PrdAgent.Api --urls http://0.0.0.0:5000
     static:
       label: "静态部署 (publish)"
       command: >-
-        (which ffmpeg >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq --no-install-recommends ffmpeg)) &&
         dotnet restore &&
         dotnet publish src/PrdAgent.Api -c Release -o /publish --no-restore &&
         dotnet /publish/PrdAgent.Api.dll --urls http://0.0.0.0:5000
