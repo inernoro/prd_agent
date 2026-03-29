@@ -528,6 +528,71 @@ public class ExchangeController : ControllerBase
     }
 
     /// <summary>
+    /// 测试 WebSocket 流式 ASR（通过 DoubaoStreamAsrService）
+    /// 下载音频 → WAV 解析 → WebSocket 二进制协议 → 返回转录结果
+    /// </summary>
+    [HttpPost("test-stream-asr")]
+    public async Task<IActionResult> TestStreamAsr(
+        [FromBody] StreamAsrTestRequest request,
+        [FromServices] Services.DoubaoStreamAsrService streamAsr,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.AudioUrl))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请提供 audioUrl"));
+        if (string.IsNullOrWhiteSpace(request.ApiKey))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请提供 apiKey"));
+
+        var wsUrl = request.WsUrl ?? "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream";
+
+        // 下载音频
+        byte[] audioData;
+        try
+        {
+            var httpClient = _httpClientFactory.CreateClient();
+            httpClient.Timeout = TimeSpan.FromSeconds(60);
+            audioData = await httpClient.GetByteArrayAsync(request.AudioUrl, ct);
+        }
+        catch (Exception ex)
+        {
+            return Ok(ApiResponse<object>.Ok(new { error = $"下载音频失败: {ex.Message}" }));
+        }
+
+        // 解析 apiKey：支持单Key和双Key
+        string appKey = "", accessKey = request.ApiKey;
+        if (request.ApiKey.Contains('|'))
+        {
+            var parts = request.ApiKey.Split('|', 2);
+            appKey = parts[0];
+            accessKey = parts[1];
+        }
+
+        var config = new Dictionary<string, object>
+        {
+            ["resourceId"] = request.ResourceId ?? "volc.bigasr.sauc.duration",
+            ["enableItn"] = true,
+            ["enablePunc"] = true,
+            ["enableDdc"] = true
+        };
+
+        var startedAt = DateTime.UtcNow;
+        var result = await streamAsr.TranscribeAsync(wsUrl, appKey, accessKey, audioData, config, ct);
+        var durationMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            success = result.Success,
+            text = result.FullText,
+            segmentCount = result.Segments.Count,
+            segments = result.Segments.Select(s => new { s.Text, s.DurationSec }),
+            responseFrameCount = result.Responses.Count,
+            error = result.Error,
+            durationMs,
+            audioSizeBytes = audioData.Length,
+            wsUrl
+        }));
+    }
+
+    /// <summary>
     /// 获取可用的导入模板列表（预设配置，用户只需提供 API Key 即可一键创建）
     /// </summary>
     [HttpGet("templates")]
@@ -769,4 +834,16 @@ public class ImportFromTemplateRequest
     public string TemplateId { get; set; } = string.Empty;
     /// <summary>用户提供的 API Key</summary>
     public string ApiKey { get; set; } = string.Empty;
+}
+
+public class StreamAsrTestRequest
+{
+    /// <summary>音频文件 URL</summary>
+    public string AudioUrl { get; set; } = string.Empty;
+    /// <summary>API Key（单Key 或 AppID|AccessToken）</summary>
+    public string ApiKey { get; set; } = string.Empty;
+    /// <summary>WebSocket URL（可选，默认 bigmodel_nostream）</summary>
+    public string? WsUrl { get; set; }
+    /// <summary>Resource ID（可选）</summary>
+    public string? ResourceId { get; set; }
 }
