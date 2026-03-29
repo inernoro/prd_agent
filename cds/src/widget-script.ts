@@ -26,9 +26,8 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   var css=document.createElement('style');
   css.textContent=\`
     @keyframes cds-spin{to{transform:rotate(360deg)}}
-    @keyframes cds-ai-border-glow{0%,100%{box-shadow:inset 0 0 8px 3px rgba(96,165,250,0.35),inset 0 0 24px 6px rgba(167,139,250,0.15),0 0 8px rgba(96,165,250,0.2)}50%{box-shadow:inset 0 0 14px 5px rgba(96,165,250,0.55),inset 0 0 40px 10px rgba(167,139,250,0.25),0 0 16px rgba(96,165,250,0.35)}}
-    @keyframes cds-ai-border-flow{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
-    .cds-ai-active{animation:cds-ai-border-glow 2s ease-in-out infinite;pointer-events:none;position:fixed;inset:0;z-index:99998;border:2px solid transparent;background:linear-gradient(135deg,rgba(167,139,250,0.3),rgba(96,165,250,0.3),rgba(192,132,252,0.3),rgba(56,189,248,0.3),rgba(167,139,250,0.3));background-size:300% 300%;animation:cds-ai-border-flow 4s linear infinite,cds-ai-border-glow 2s ease-in-out infinite;border-radius:0}
+    @keyframes cds-ai-border-glow{0%,100%{box-shadow:inset 0 0 6px 1px rgba(96,165,250,0.4),inset 0 0 20px 0 rgba(167,139,250,0.08)}50%{box-shadow:inset 0 0 10px 2px rgba(96,165,250,0.6),inset 0 0 30px 0 rgba(167,139,250,0.15)}}
+    .cds-ai-active{position:fixed;inset:0;z-index:99998;pointer-events:none;border:none;background:none;animation:cds-ai-border-glow 2.5s ease-in-out infinite}
     .cds-ai-badge{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:99999;display:flex;align-items:center;gap:6px;padding:4px 12px;border-radius:20px;background:rgba(22,27,34,0.9);backdrop-filter:blur(8px);border:1px solid rgba(96,165,250,0.4);box-shadow:0 2px 12px rgba(96,165,250,0.3);font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;font-size:11px;color:#e2e8f0;white-space:nowrap;pointer-events:none}
     .cds-ai-badge-dot{width:6px;height:6px;border-radius:50%;background:#60a5fa;box-shadow:0 0 6px #60a5fa;animation:cds-blink 1.5s ease-in-out infinite}
     #cds-widget{position:fixed;left:12px;bottom:12px;z-index:99999;font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;color:#e2e8f0;user-select:none;font-size:12px}
