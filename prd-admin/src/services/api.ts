@@ -718,6 +718,22 @@ export const api = {
     stream: (runId: string) => `/api/ai-toolbox/runs/${runId}/stream`,
   },
 
+  // ============ Transcript Agent 音视频转录 ============
+  transcriptAgent: {
+    workspaces: () => '/api/transcript-agent/workspaces',
+    workspace: (id: string) => `/api/transcript-agent/workspaces/${id}`,
+    items: (workspaceId: string) => `/api/transcript-agent/workspaces/${workspaceId}/items`,
+    uploadItem: (workspaceId: string) => `/api/transcript-agent/workspaces/${workspaceId}/items/upload`,
+    deleteItem: (itemId: string) => `/api/transcript-agent/items/${itemId}`,
+    updateSegments: (itemId: string) => `/api/transcript-agent/items/${itemId}/segments`,
+    templates: () => '/api/transcript-agent/templates',
+    createCopywrite: (itemId: string) => `/api/transcript-agent/items/${itemId}/copywrite`,
+    run: (runId: string) => `/api/transcript-agent/runs/${runId}`,
+    runProgress: (runId: string) => `/api/transcript-agent/runs/${runId}/progress`,
+    workspaceRuns: (workspaceId: string) => `/api/transcript-agent/workspaces/${workspaceId}/runs`,
+    exportItem: (itemId: string) => `/api/transcript-agent/items/${itemId}/export`,
+  },
+
   // ============ V1 API (用户端) ============
   v1: {
     documents: {
