@@ -42,22 +42,6 @@ export default function SandboxComingSoonPage() {
             0%, 100% { opacity: 0.28; transform: scale(1); }
             50% { opacity: 0.52; transform: scale(1.06); }
           }
-          @keyframes catBlink {
-            0%, 44%, 48%, 100% { transform: scaleY(1); }
-            46% { transform: scaleY(0.08); }
-          }
-          @keyframes tailSwing {
-            0%, 100% { transform: rotate(10deg); }
-            50% { transform: rotate(-10deg); }
-          }
-          @keyframes leftArmWave {
-            0%, 100% { transform: rotate(6deg); }
-            50% { transform: rotate(-9deg); }
-          }
-          @keyframes rightArmWave {
-            0%, 100% { transform: rotate(-6deg); }
-            50% { transform: rotate(9deg); }
-          }
           @keyframes progressMove {
             0% { background-position: 0 0; }
             100% { background-position: 36px 0; }
@@ -127,8 +111,8 @@ export default function SandboxComingSoonPage() {
             <div
               style={{
                 position: 'relative',
-                width: 320,
-                height: 250,
+                width: 360,
+                height: 260,
                 margin: '0 auto',
                 animation: 'heroFloat 2.2s ease-in-out infinite',
               }}
@@ -142,65 +126,25 @@ export default function SandboxComingSoonPage() {
                   animation: 'haloPulse 2.2s ease-in-out infinite',
                 }}
               />
-              <svg viewBox="0 0 320 250" style={{ width: '100%', height: '100%', filter: 'drop-shadow(0 10px 24px rgba(2,8,22,0.36))' }}>
-                <ellipse cx="160" cy="222" rx="78" ry="13" fill="rgba(113,148,228,0.22)" />
-
-                <g style={{ transformOrigin: '218px 170px', animation: 'tailSwing 1.9s ease-in-out infinite' }}>
-                  <path d="M212 168 C238 172 242 198 220 206" stroke="#24365f" strokeWidth="6" strokeLinecap="round" fill="none" />
-                </g>
-
-                <g style={{ transformOrigin: '114px 132px', animation: 'leftArmWave 1.6s ease-in-out infinite' }}>
-                  <path d="M120 136 C108 118 98 102 86 88" stroke="#24365f" strokeWidth="6" strokeLinecap="round" fill="none" />
-                  <ellipse cx="82" cy="81" rx="15" ry="12" fill="#f7fbff" stroke="#24365f" strokeWidth="4" />
-                  <line x1="77" y1="78" x2="82" y2="83" stroke="#24365f" strokeWidth="2.5" strokeLinecap="round" />
-                  <line x1="82" y1="78" x2="77" y2="83" stroke="#24365f" strokeWidth="2.5" strokeLinecap="round" />
-                </g>
-
-                <g style={{ transformOrigin: '206px 132px', animation: 'rightArmWave 1.6s ease-in-out infinite' }}>
-                  <path d="M200 136 C212 118 222 102 234 88" stroke="#24365f" strokeWidth="6" strokeLinecap="round" fill="none" />
-                  <ellipse cx="238" cy="81" rx="15" ry="12" fill="#f7fbff" stroke="#24365f" strokeWidth="4" />
-                  <line x1="233" y1="78" x2="238" y2="83" stroke="#24365f" strokeWidth="2.5" strokeLinecap="round" />
-                  <line x1="238" y1="78" x2="233" y2="83" stroke="#24365f" strokeWidth="2.5" strokeLinecap="round" />
-                </g>
-
-                <path
-                  d="M160 206 C118 206 97 175 102 138 C106 109 125 92 160 91 C195 92 214 109 218 138 C223 175 202 206 160 206 Z"
-                  fill="#f7fbff"
-                  stroke="#24365f"
-                  strokeWidth="4"
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  display: 'grid',
+                  placeItems: 'center',
+                }}
+              >
+                <img
+                  src="/images/sandbox-cat.gif"
+                  alt="施工中小猫"
+                  style={{
+                    width: 220,
+                    height: 220,
+                    objectFit: 'contain',
+                    filter: 'drop-shadow(0 10px 24px rgba(2,8,22,0.36))',
+                  }}
                 />
-                <ellipse cx="160" cy="170" rx="28" ry="22" fill="#edf4ff" />
-
-                <circle cx="160" cy="103" r="42" fill="#f7fbff" stroke="#24365f" strokeWidth="4" />
-                <path d="M132 74 L120 48 L144 68 Z" fill="#f7fbff" stroke="#24365f" strokeWidth="4" />
-                <path d="M188 74 L200 48 L176 68 Z" fill="#f7fbff" stroke="#24365f" strokeWidth="4" />
-
-                <path d="M133 72 L125 57 L141 67 Z" fill="#ffd7df" />
-                <path d="M187 72 L195 57 L179 67 Z" fill="#ffd7df" />
-
-                <g style={{ transformOrigin: '147px 103px', animation: 'catBlink 3.2s ease-in-out infinite' }}>
-                  <line x1="141" y1="103" x2="151" y2="103" stroke="#24365f" strokeWidth="4" strokeLinecap="round" />
-                </g>
-                <g style={{ transformOrigin: '173px 103px', animation: 'catBlink 3.2s ease-in-out infinite' }}>
-                  <line x1="167" y1="103" x2="177" y2="103" stroke="#24365f" strokeWidth="4" strokeLinecap="round" />
-                </g>
-
-                <circle cx="142" cy="112" r="4" fill="#ffd4de" />
-                <circle cx="178" cy="112" r="4" fill="#ffd4de" />
-
-                <path d="M160 110 L155 116 L165 116 Z" fill="#ff8fa5" stroke="#24365f" strokeWidth="2.5" strokeLinejoin="round" />
-                <path d="M160 116 C154 123 148 123 144 118" stroke="#24365f" strokeWidth="3" strokeLinecap="round" fill="none" />
-                <path d="M160 116 C166 123 172 123 176 118" stroke="#24365f" strokeWidth="3" strokeLinecap="round" fill="none" />
-
-                <path d="M115 96 C102 96 92 98 85 104" stroke="#24365f" strokeWidth="3" strokeLinecap="round" fill="none" />
-                <path d="M205 96 C218 96 228 98 235 104" stroke="#24365f" strokeWidth="3" strokeLinecap="round" fill="none" />
-
-                <path d="M128 66 C132 48 146 38 160 38 C174 38 188 48 192 66 Z" fill="#ffd66f" stroke="#24365f" strokeWidth="4" />
-                <rect x="124" y="64" width="72" height="14" rx="7" fill="#ffd66f" stroke="#24365f" strokeWidth="4" />
-                <rect x="151" y="32" width="18" height="8" rx="4" fill="#ffd66f" stroke="#24365f" strokeWidth="4" />
-                <path d="M126 72 C120 76 118 86 120 92" stroke="#24365f" strokeWidth="3" strokeLinecap="round" fill="none" />
-                <path d="M194 72 C200 76 202 86 200 92" stroke="#24365f" strokeWidth="3" strokeLinecap="round" fill="none" />
-              </svg>
+              </div>
 
               <div
                 style={{
@@ -242,7 +186,7 @@ export default function SandboxComingSoonPage() {
                 marginBottom: 8,
               }}
             >
-              施工总监小喵：正在精修体验中
+              施工总监小喵：正在全力施工中
             </div>
             <div
               style={{
