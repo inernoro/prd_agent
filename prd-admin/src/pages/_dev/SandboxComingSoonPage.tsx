@@ -34,6 +34,14 @@ export default function SandboxComingSoonPage() {
             0%, 100% { transform: translateY(0); }
             50% { transform: translateY(-6px); }
           }
+          @keyframes catShellBreath {
+            0%, 100% { transform: scale(1); box-shadow: 0 18px 40px rgba(4,10,24,0.42); }
+            50% { transform: scale(1.02); box-shadow: 0 22px 48px rgba(40,120,255,0.22); }
+          }
+          @keyframes catGlowBreath {
+            0%, 100% { opacity: 0.34; transform: scale(1); }
+            50% { opacity: 0.58; transform: scale(1.06); }
+          }
           @keyframes pulseHint {
             0%, 100% { box-shadow: 0 0 0 0 rgba(255, 209, 95, 0.28); }
             50% { box-shadow: 0 0 0 10px rgba(255, 209, 95, 0.0); }
@@ -134,16 +142,48 @@ export default function SandboxComingSoonPage() {
                   placeItems: 'center',
                 }}
               >
-                <img
-                  src="/images/sandbox-cat.gif"
-                  alt="施工中小猫"
+                <div
                   style={{
-                    width: 220,
-                    height: 220,
-                    objectFit: 'contain',
-                    filter: 'drop-shadow(0 10px 24px rgba(2,8,22,0.36))',
+                    width: 236,
+                    height: 236,
+                    borderRadius: 32,
+                    border: '1px solid rgba(147,176,255,0.45)',
+                    background:
+                      'linear-gradient(180deg, rgba(19,35,72,0.72), rgba(11,24,52,0.78))',
+                    backdropFilter: 'blur(4px)',
+                    WebkitBackdropFilter: 'blur(4px)',
+                    display: 'grid',
+                    placeItems: 'center',
+                    position: 'relative',
+                    animation: 'catShellBreath 2.6s ease-in-out infinite',
+                    overflow: 'hidden',
                   }}
-                />
+                >
+                  <div
+                    style={{
+                      position: 'absolute',
+                      inset: -18,
+                      borderRadius: 40,
+                      background:
+                        'radial-gradient(circle at 50% 45%, rgba(120,167,255,0.28), transparent 62%)',
+                      animation: 'catGlowBreath 2.6s ease-in-out infinite',
+                      pointerEvents: 'none',
+                    }}
+                  />
+                  <img
+                    src="/images/sandbox-cat.gif"
+                    alt="施工中小猫"
+                    style={{
+                      width: 212,
+                      height: 212,
+                      objectFit: 'contain',
+                      position: 'relative',
+                      zIndex: 1,
+                      filter:
+                        'drop-shadow(0 10px 24px rgba(2,8,22,0.3)) drop-shadow(0 0 10px rgba(131,167,255,0.22))',
+                    }}
+                  />
+                </div>
               </div>
 
               <div
