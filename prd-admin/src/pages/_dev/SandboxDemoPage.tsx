@@ -81,6 +81,7 @@ type EdgeData = {
   linkState: LinkState;
   relation: LinkRelation;
   seed: number;
+  laneOffset?: number;
 };
 
 type SandboxNode = Node<NodeData, 'sandboxNode'>;
@@ -102,6 +103,8 @@ const CROSS_LINK_STATES: LinkState[] = [
 
 const MARK_STATES: MarkState[] = ['未入库', '已入库', '出货', '退货', '已扫码'];
 const STORAGE_KEY = 'sandbox-demo-v4';
+const SNAP_GRID: [number, number] = [20, 20];
+const SNAP_THRESHOLD = 18;
 
 const ROLE_MENU: Array<{ title: string; options: RoleOption[] }> = [
   { title: '总部', options: [{ family: 'hq', subtype: '总部' }] },
@@ -214,9 +217,69 @@ function calcNextPosition(nodes: SandboxNode[], kind: ElementKind) {
   return { x: 120 + col * 220, y: baseY + row * 160 };
 }
 
+function getSnappedPosition(
+  nodeId: string,
+  position: { x: number; y: number },
+  nodes: SandboxNode[]
+) {
+  let x = Math.round(position.x / SNAP_GRID[0]) * SNAP_GRID[0];
+  let y = Math.round(position.y / SNAP_GRID[1]) * SNAP_GRID[1];
+
+  nodes.forEach((node) => {
+    if (node.id === nodeId) return;
+    if (Math.abs(node.position.x - x) <= SNAP_THRESHOLD) x = node.position.x;
+    if (Math.abs(node.position.y - y) <= SNAP_THRESHOLD) y = node.position.y;
+  });
+
+  return { x, y };
+}
+
+function getBidirectionalLaneOffset(
+  sourceId: string,
+  targetId: string,
+  edges: SandboxEdge[]
+) {
+  const hasReverse = edges.some(
+    (edge) => edge.source === targetId && edge.target === sourceId
+  );
+  return hasReverse ? 26 : 0;
+}
+
+function getShiftedPoints(
+  sourceX: number,
+  sourceY: number,
+  targetX: number,
+  targetY: number,
+  laneOffset: number
+) {
+  if (!laneOffset) {
+    return { sourceX, sourceY, targetX, targetY };
+  }
+  const dx = targetX - sourceX;
+  const dy = targetY - sourceY;
+  const length = Math.hypot(dx, dy) || 1;
+  const normalX = -dy / length;
+  const normalY = dx / length;
+  return {
+    sourceX: sourceX + normalX * laneOffset,
+    sourceY: sourceY + normalY * laneOffset,
+    targetX: targetX + normalX * laneOffset,
+    targetY: targetY + normalY * laneOffset,
+  };
+}
+
 function SandboxNodeRenderer({ data, selected }: NodeProps<SandboxNode>) {
   const color = getNodeColor(data);
   const isRole = data.kind === 'role';
+  const roleIconMap: Record<RoleFamily, string> = {
+    hq: 'H',
+    dealer: 'D',
+    store: 'S',
+    sales: 'Y',
+    guide: 'G',
+    consumer: 'C',
+  };
+  const roleIcon = roleIconMap[data.family as RoleFamily] ?? 'R';
 
   return (
     <div style={{ minWidth: 138, textAlign: 'center', position: 'relative' }}>
@@ -266,57 +329,132 @@ function SandboxNodeRenderer({ data, selected }: NodeProps<SandboxNode>) {
       ) : null}
 
       {isRole ? (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
           <div
             style={{
-              width: 22,
-              height: 22,
+              width: 24,
+              height: 24,
               borderRadius: 999,
               border: `2px solid ${color}`,
               background: 'rgba(7, 11, 20, 0.96)',
-              boxShadow: selected ? `0 0 0 3px ${color}55` : 'none',
+              boxShadow: selected ? `0 0 0 3px ${color}55` : '0 6px 12px rgba(4,10,22,0.35)',
             }}
           />
           <div
             style={{
-              minWidth: 108,
-              borderRadius: 10,
-              padding: '10px 14px',
+              minWidth: 138,
+              borderRadius: 12,
+              padding: 8,
               border: `1px solid ${color}`,
-              background: `${color}26`,
+              background: `linear-gradient(180deg, ${color}2f, ${color}1a)`,
               color: '#f3f8ff',
-              fontWeight: 600,
-              fontSize: 13,
-              boxShadow: selected ? `0 0 0 3px ${color}4d` : 'none',
+              boxShadow: selected ? `0 0 0 3px ${color}4d` : '0 8px 16px rgba(8,16,34,0.38)',
             }}
           >
-            {data.title}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div
+                style={{
+                  width: 24,
+                  height: 24,
+                  borderRadius: 7,
+                  border: `1px solid ${color}`,
+                  background: 'rgba(7, 11, 20, 0.92)',
+                  color: '#e7f0ff',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  display: 'grid',
+                  placeItems: 'center',
+                  flexShrink: 0,
+                }}
+              >
+                {roleIcon}
+              </div>
+              <div style={{ textAlign: 'left' }}>
+                <div style={{ fontWeight: 700, fontSize: 13, lineHeight: '16px' }}>{data.title}</div>
+                <div style={{ fontSize: 10, color: 'rgba(225,236,255,0.75)', lineHeight: '13px' }}>{data.subtype}</div>
+              </div>
+            </div>
           </div>
-          <div style={{ fontSize: 11, color: 'rgba(220,230,255,0.88)' }}>{data.subtype}</div>
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7 }}>
           <div
             style={{
-              width: 88,
-              height: 88,
-              borderRadius: 10,
+              width: 96,
+              height: 96,
+              borderRadius: 14,
               border: `2px solid ${color}`,
-              background: '#fcfcff',
-              display: 'grid',
-              gridTemplateColumns: 'repeat(5, 1fr)',
-              gridTemplateRows: 'repeat(5, 1fr)',
-              gap: 2,
-              padding: 7,
-              boxShadow: selected ? `0 0 0 3px ${color}4d` : 'none',
+              background: 'linear-gradient(180deg, #fcfeff, #f4f8ff)',
+              padding: 8,
+              boxShadow: selected ? `0 0 0 3px ${color}4d` : '0 8px 16px rgba(8,16,34,0.35)',
+              position: 'relative',
             }}
           >
-            {Array.from({ length: 25 }).map((_, idx) => {
-              const black = ((idx * 7 + data.subtype.length) % 3) !== 1;
-              return <div key={idx} style={{ background: black ? color : '#fff', borderRadius: 1 }} />;
-            })}
+            <div
+              style={{
+                position: 'absolute',
+                left: 7,
+                top: 7,
+                width: 14,
+                height: 14,
+                borderTop: `2px solid ${color}`,
+                borderLeft: `2px solid ${color}`,
+                borderRadius: 4,
+              }}
+            />
+            <div
+              style={{
+                position: 'absolute',
+                right: 7,
+                top: 7,
+                width: 14,
+                height: 14,
+                borderTop: `2px solid ${color}`,
+                borderRight: `2px solid ${color}`,
+                borderRadius: 4,
+              }}
+            />
+            <div
+              style={{
+                position: 'absolute',
+                left: 7,
+                bottom: 7,
+                width: 14,
+                height: 14,
+                borderBottom: `2px solid ${color}`,
+                borderLeft: `2px solid ${color}`,
+                borderRadius: 4,
+              }}
+            />
+            <div
+              style={{
+                position: 'absolute',
+                right: 7,
+                bottom: 7,
+                width: 14,
+                height: 14,
+                borderBottom: `2px solid ${color}`,
+                borderRight: `2px solid ${color}`,
+                borderRadius: 4,
+              }}
+            />
+            <div
+              style={{
+                width: '100%',
+                height: '100%',
+                display: 'grid',
+                gridTemplateColumns: 'repeat(5, 1fr)',
+                gridTemplateRows: 'repeat(5, 1fr)',
+                gap: 2,
+              }}
+            >
+              {Array.from({ length: 25 }).map((_, idx) => {
+                const dark = ((idx * 7 + data.subtype.length) % 3) !== 1;
+                return <div key={idx} style={{ background: dark ? color : '#fff', borderRadius: 1 }} />;
+              })}
+            </div>
           </div>
-          <div style={{ fontSize: 12, fontWeight: 600, color: '#f4f8ff' }}>{data.title}</div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#f4f8ff' }}>{data.title}</div>
           <div style={{ fontSize: 11, color: 'rgba(220,230,255,0.88)' }}>{data.subtype}</div>
         </div>
       )}
@@ -337,11 +475,18 @@ function SandboxEdgeRenderer({
   selected,
   data,
 }: EdgeProps<SandboxEdge>) {
-  const [path, labelX, labelY] = getSmoothStepPath({
+  const shifted = getShiftedPoints(
     sourceX,
     sourceY,
     targetX,
     targetY,
+    data?.laneOffset ?? 0
+  );
+  const [path, labelX, labelY] = getSmoothStepPath({
+    sourceX: shifted.sourceX,
+    sourceY: shifted.sourceY,
+    targetX: shifted.targetX,
+    targetY: shifted.targetY,
     sourcePosition,
     targetPosition,
     borderRadius: 12,
@@ -607,6 +752,131 @@ function GuideHintItem({
   );
 }
 
+const TOP_GUIDE_STEPS = [
+  'Shift + 框选：多选节点',
+  'Delete / Backspace：删除选中',
+  '按住空格 + 拖拽：平移画布',
+];
+
+function CatPawGlow({ active }: { active?: boolean }) {
+  const glow = active ? '0 0 12px rgba(255,214,102,0.9)' : '0 0 8px rgba(120,148,206,0.55)';
+  const tone = active ? '#ffd666' : '#9fbfff';
+  return (
+    <div style={{ width: 20, height: 18, position: 'relative', opacity: active ? 1 : 0.72 }}>
+      <div
+        style={{
+          position: 'absolute',
+          left: 5,
+          top: 8,
+          width: 10,
+          height: 8,
+          borderRadius: '60% 60% 55% 55%',
+          background: tone,
+          boxShadow: glow,
+        }}
+      />
+      {[0, 1, 2].map((idx) => (
+        <div
+          key={idx}
+          style={{
+            position: 'absolute',
+            left: 1 + idx * 6,
+            top: 0,
+            width: 5,
+            height: 5,
+            borderRadius: 999,
+            background: tone,
+            boxShadow: glow,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function TopGuideHint({
+  active,
+  text,
+  onClick,
+}: {
+  active?: boolean;
+  text: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="whitespace-nowrap"
+      style={{
+        position: 'relative',
+        borderRadius: 999,
+        border: active ? '1px solid rgba(255,214,102,0.68)' : '1px solid rgba(120,148,206,0.36)',
+        background: active
+          ? 'linear-gradient(90deg, rgba(255,214,102,0.2), rgba(113,166,255,0.16))'
+          : 'rgba(10,18,36,0.76)',
+        color: active ? '#fff4cc' : '#deebff',
+        fontSize: 12,
+        fontWeight: 600,
+        padding: '8px 14px 8px 36px',
+        cursor: 'pointer',
+        boxShadow: active ? '0 0 22px rgba(255,214,102,0.22)' : 'none',
+      }}
+    >
+      <span
+        style={{
+          position: 'absolute',
+          left: 12,
+          top: '50%',
+          transform: 'translateY(-50%)',
+          width: 14,
+          height: 14,
+          borderRadius: 999,
+          background: active ? 'rgba(255,214,102,0.95)' : 'rgba(120,148,206,0.65)',
+          boxShadow: active ? '0 0 10px rgba(255,214,102,0.7)' : 'none',
+        }}
+      />
+      <span
+        style={{
+          position: 'absolute',
+          left: 7,
+          top: '50%',
+          transform: 'translateY(-15px)',
+          width: 6,
+          height: 6,
+          borderRadius: 999,
+          background: active ? 'rgba(255,214,102,0.72)' : 'rgba(120,148,206,0.45)',
+        }}
+      />
+      <span
+        style={{
+          position: 'absolute',
+          left: 18,
+          top: '50%',
+          transform: 'translateY(-18px)',
+          width: 5,
+          height: 5,
+          borderRadius: 999,
+          background: active ? 'rgba(255,214,102,0.72)' : 'rgba(120,148,206,0.45)',
+        }}
+      />
+      <span
+        style={{
+          position: 'absolute',
+          left: 24,
+          top: '50%',
+          transform: 'translateY(-12px)',
+          width: 5,
+          height: 5,
+          borderRadius: 999,
+          background: active ? 'rgba(255,214,102,0.72)' : 'rgba(120,148,206,0.45)',
+        }}
+      />
+      {text}
+    </button>
+  );
+}
+
 function SandboxDemoInner() {
   const [nodes, setNodes, onNodesChange] = useNodesState<SandboxNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<SandboxEdge>([]);
@@ -622,6 +892,7 @@ function SandboxDemoInner() {
   const [pendingLinkSourceId, setPendingLinkSourceId] = useState<string | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<string[]>([]);
+  const [guideFocusIndex, setGuideFocusIndex] = useState(0);
 
   const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
   const [editingRoleName, setEditingRoleName] = useState('');
@@ -648,7 +919,7 @@ function SandboxDemoInner() {
   }, [nodes, pendingLinkSourceId, toolMode]);
 
   const buildEdge = useCallback(
-    (sourceId: string, targetId: string) => {
+    (sourceId: string, targetId: string, currentEdges: SandboxEdge[]) => {
       const sourceNode = nodes.find((node) => node.id === sourceId);
       const targetNode = nodes.find((node) => node.id === targetId);
       if (!sourceNode || !targetNode) return null;
@@ -668,6 +939,7 @@ function SandboxDemoInner() {
           relation,
           linkState: defaultState,
           seed: Math.floor(Math.random() * 999),
+          laneOffset: getBidirectionalLaneOffset(sourceId, targetId, currentEdges),
         },
       };
       return edge;
@@ -786,10 +1058,26 @@ function SandboxDemoInner() {
         setPendingLinkSourceId(null);
         return;
       }
-      const newEdge = buildEdge(pendingLinkSourceId, node.id);
-      if (newEdge) {
-        setEdges((curr) => addEdge(newEdge, curr));
-      }
+      setEdges((curr) => {
+        const newEdge = buildEdge(pendingLinkSourceId, node.id, curr);
+        if (!newEdge) return curr;
+
+        const hasReverse = curr.some(
+          (edge) => edge.source === node.id && edge.target === pendingLinkSourceId
+        );
+        const alignedCurrent = hasReverse
+          ? curr.map((edge) =>
+              edge.source === node.id && edge.target === pendingLinkSourceId
+                ? {
+                    ...edge,
+                    data: { ...(edge.data as EdgeData), laneOffset: -26 },
+                  }
+                : edge
+            )
+          : curr;
+
+        return addEdge(newEdge, alignedCurrent);
+      });
       setPendingLinkSourceId(null);
     },
     [buildEdge, pendingLinkSourceId, setEdges, toolMode]
@@ -813,6 +1101,22 @@ function SandboxDemoInner() {
     setSelectedNodeIds(selectedNodes.map((node) => node.id));
     setSelectedEdgeIds(selectedEdges.map((edge) => edge.id));
   }, []);
+
+  const onNodeDragStop = useCallback(
+    (_event: React.MouseEvent, node: SandboxNode) => {
+      setNodes((curr) =>
+        curr.map((item) =>
+          item.id === node.id
+            ? {
+                ...item,
+                position: getSnappedPosition(node.id, node.position, curr),
+              }
+            : item
+        )
+      );
+    },
+    [setNodes]
+  );
 
   const deleteSelected = useCallback(() => {
     if (selectedNodeIds.length === 0 && selectedEdgeIds.length === 0) return;
@@ -913,6 +1217,13 @@ function SandboxDemoInner() {
   }, [loadLocal]);
 
   useEffect(() => {
+    const timer = window.setInterval(() => {
+      setGuideFocusIndex((prev) => (prev + 1) % TOP_GUIDE_STEPS.length);
+    }, 1300);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       const typing = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA';
@@ -991,9 +1302,20 @@ function SandboxDemoInner() {
           padding: '0 12px',
         }}
       >
-        <div>
-          <div style={{ fontSize: 14, fontWeight: 700 }}>沙盘 Agent 三栏演示</div>
+        <div style={{ display: 'grid', gap: 4 }}>
+          <div style={{ fontSize: 14, fontWeight: 700 }}>沙盘智能体</div>
           <div style={{ fontSize: 11, color: 'rgba(210,225,255,0.74)' }}>{summaryText}</div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <CatPawGlow active />
+          {TOP_GUIDE_STEPS.map((step, index) => (
+            <TopGuideHint
+              key={step}
+              text={step}
+              active={guideFocusIndex === index}
+              onClick={() => setGuideFocusIndex(index)}
+            />
+          ))}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <ToolbarButton label="保存" onClick={saveLocal} />
@@ -1076,7 +1398,7 @@ function SandboxDemoInner() {
         </div>
 
         <div style={sidePanelCardStyle}>
-          <div style={sidePanelTitleStyle}>操作提示</div>
+          <div style={sidePanelTitleStyle}>快捷参考</div>
           <div
             style={{
               marginBottom: 8,
@@ -1093,9 +1415,9 @@ function SandboxDemoInner() {
             新手引导：先看这 3 条再操作
           </div>
           <div style={{ display: 'grid', gap: 7 }}>
-            <GuideHintItem index={1} text="Shift + 框选：多选节点" active />
-            <GuideHintItem index={2} text="Delete / Backspace：删除选中" />
-            <GuideHintItem index={3} text="按住空格 + 拖拽：平移画布" />
+            <GuideHintItem index={1} text="Shift + 框选：多选节点" active={guideFocusIndex === 0} />
+            <GuideHintItem index={2} text="Delete / Backspace：删除选中" active={guideFocusIndex === 1} />
+            <GuideHintItem index={3} text="按住空格 + 拖拽：平移画布" active={guideFocusIndex === 2} />
           </div>
         </div>
       </aside>
@@ -1119,6 +1441,7 @@ function SandboxDemoInner() {
           onNodeClick={onNodeClick}
           onNodeDoubleClick={onNodeDoubleClick}
           onEdgeClick={onEdgeClick}
+          onNodeDragStop={onNodeDragStop}
           onSelectionChange={onSelectionChange}
           onPaneClick={() => {
             if (toolMode === 'link') setPendingLinkSourceId(null);
@@ -1131,6 +1454,7 @@ function SandboxDemoInner() {
           multiSelectionKeyCode="Shift"
           deleteKeyCode={null}
           attributionPosition="bottom-right"
+          snapGrid={SNAP_GRID}
         >
           <Background gap={24} size={1} color="rgba(126,162,235,0.15)" />
           <MiniMap
