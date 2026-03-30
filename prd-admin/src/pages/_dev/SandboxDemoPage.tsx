@@ -1244,36 +1244,6 @@ function SandboxDemoInner() {
         </div>
 
         <div style={sidePanelCardStyle}>
-          <div style={sidePanelTitleStyle}>组件库</div>
-          <div style={{ fontSize: 11, color: 'rgba(210,225,255,0.72)', marginBottom: 8 }}>点击条目快速加点，支持重复添加</div>
-          <LeftPanelSection title="角色节点" count={roleNodes.length}>
-            <div style={{ display: 'grid', gap: 6 }}>
-              {ALL_ROLE_OPTIONS.map((option) => (
-                <ComponentToken
-                  key={`left-role-${option.family}-${option.subtype}`}
-                  title={option.subtype}
-                  subtitle="角色"
-                  onClick={() => addRoleQuickly(option)}
-                />
-              ))}
-            </div>
-          </LeftPanelSection>
-          <div style={{ height: 8 }} />
-          <LeftPanelSection title="标识节点" count={markNodes.length}>
-            <div style={{ display: 'grid', gap: 6 }}>
-              {ALL_MARK_OPTIONS.map((option) => (
-                <ComponentToken
-                  key={`left-mark-${option.family}-${option.subtype}`}
-                  title={option.subtype}
-                  subtitle="标识"
-                  onClick={() => addMarkQuickly(option)}
-                />
-              ))}
-            </div>
-          </LeftPanelSection>
-        </div>
-
-        <div style={sidePanelCardStyle}>
           <div style={sidePanelTitleStyle}>快捷参考</div>
           <div
             style={{
@@ -1308,6 +1278,37 @@ function SandboxDemoInner() {
             ))}
           </div>
         </div>
+
+        <div style={sidePanelCardStyle}>
+          <div style={sidePanelTitleStyle}>组件库</div>
+          <div style={{ fontSize: 11, color: 'rgba(210,225,255,0.72)', marginBottom: 8 }}>点击条目快速加点，支持重复添加</div>
+          <LeftPanelSection title="角色节点" count={roleNodes.length}>
+            <div style={{ display: 'grid', gap: 6 }}>
+              {ALL_ROLE_OPTIONS.map((option) => (
+                <ComponentToken
+                  key={`left-role-${option.family}-${option.subtype}`}
+                  title={option.subtype}
+                  subtitle="角色"
+                  onClick={() => addRoleQuickly(option)}
+                />
+              ))}
+            </div>
+          </LeftPanelSection>
+          <div style={{ height: 8 }} />
+          <LeftPanelSection title="标识节点" count={markNodes.length}>
+            <div style={{ display: 'grid', gap: 6 }}>
+              {ALL_MARK_OPTIONS.map((option) => (
+                <ComponentToken
+                  key={`left-mark-${option.family}-${option.subtype}`}
+                  title={option.subtype}
+                  subtitle="标识"
+                  onClick={() => addMarkQuickly(option)}
+                />
+              ))}
+            </div>
+          </LeftPanelSection>
+        </div>
+
       </aside>
 
       <main
