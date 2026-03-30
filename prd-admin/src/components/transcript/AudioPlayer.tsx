@@ -88,7 +88,7 @@ export function AudioPlayer({ src, className, onTimeUpdate, seekTo }: AudioPlaye
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
 
   return (
-    <div className={`bg-muted/30 border-b border-border/50 px-4 py-2.5 flex items-center gap-3 ${className ?? ''}`}>
+    <div className={`surface-inset rounded-none border-b border-border/50 px-4 py-2.5 flex items-center gap-3 ${className ?? ''}`}>
       {/* Hidden audio element */}
       <audio
         ref={audioRef}

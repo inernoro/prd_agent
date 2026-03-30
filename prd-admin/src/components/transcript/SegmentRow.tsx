@@ -56,10 +56,10 @@ export function SegmentRow({ segment, index, isActive, onSeek, onTextChange, row
   return (
     <div
       ref={rowRef}
-      className={`flex gap-4 py-2.5 px-3 rounded-lg cursor-pointer transition-colors group ${
+      className={`flex gap-4 py-2.5 px-3 rounded-lg cursor-pointer group ${
         isActive
-          ? 'bg-primary/10 border-l-2 border-primary'
-          : 'hover:bg-muted/50'
+          ? 'surface-row bg-primary/10 border-l-2 border-primary'
+          : 'surface-row'
       }`}
     >
       {/* Timestamp */}

@@ -71,7 +71,7 @@ export function TranscriptSidebar({ selectedItemId, onSelectItem }: TranscriptSi
   };
 
   return (
-    <div className="w-60 shrink-0 flex flex-col h-full bg-muted/30 border-r border-border/50">
+    <div className="w-60 shrink-0 flex flex-col h-full surface-inset border-r border-border/50">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border/50">
         <h1 className="text-sm font-semibold flex items-center gap-1.5">
@@ -147,10 +147,10 @@ export function TranscriptSidebar({ selectedItemId, onSelectItem }: TranscriptSi
                     onSelectItem(null);
                   }}
                   className={cn(
-                    'w-full flex items-center gap-2 px-2 py-2 rounded-lg text-left text-xs transition-all group',
+                    'w-full flex items-center gap-2 px-2 py-2 rounded-lg text-left text-xs group',
                     currentWorkspace?.id === ws.id
-                      ? 'bg-muted/60 border-l-2 border-primary text-foreground'
-                      : 'hover:bg-muted/50 text-foreground/80',
+                      ? 'surface-row bg-primary/10 border-l-2 border-primary text-foreground'
+                      : 'surface-row text-foreground/80',
                   )}
                 >
                   <FileAudio className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
@@ -187,10 +187,10 @@ export function TranscriptSidebar({ selectedItemId, onSelectItem }: TranscriptSi
                     key={item.id}
                     onClick={() => onSelectItem(item)}
                     className={cn(
-                      'w-full flex items-center gap-2 px-2 py-2 rounded-lg text-left text-xs transition-all group',
+                      'w-full flex items-center gap-2 px-2 py-2 rounded-lg text-left text-xs group',
                       selectedItemId === item.id
-                        ? 'bg-muted/60 border-l-2 border-primary'
-                        : 'hover:bg-muted/50',
+                        ? 'surface-row bg-primary/10 border-l-2 border-primary'
+                        : 'surface-row',
                     )}
                   >
                     <div className="flex-1 min-w-0">

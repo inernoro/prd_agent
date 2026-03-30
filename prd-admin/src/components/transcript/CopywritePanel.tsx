@@ -64,7 +64,7 @@ export function CopywritePanel({ item, templates }: CopywritePanelProps) {
       </div>
 
       {result && (
-        <div className="p-4 bg-muted/30 rounded-lg border border-border/50">
+        <div className="p-4 surface-inset rounded-lg">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-medium text-muted-foreground">生成结果</span>
             <button
