@@ -168,10 +168,11 @@ public class ImageMasterController : ControllerBase
     // ---------------------------
 
     [HttpGet("workspaces")]
-    public async Task<IActionResult> ListWorkspaces([FromQuery] int limit = 20, CancellationToken ct = default)
+    public async Task<IActionResult> ListWorkspaces([FromQuery] int limit = 20, [FromQuery] int skip = 0, CancellationToken ct = default)
     {
         var adminId = GetAdminId();
         limit = Math.Clamp(limit, 1, 50);
+        skip = Math.Max(skip, 0);
         var filter = Builders<ImageMasterWorkspace>.Filter.Or(
             Builders<ImageMasterWorkspace>.Filter.Eq(x => x.OwnerUserId, adminId),
             Builders<ImageMasterWorkspace>.Filter.AnyEq(x => x.MemberUserIds, adminId)
@@ -179,8 +180,12 @@ public class ImageMasterController : ControllerBase
         var items = await _db.ImageMasterWorkspaces
             .Find(filter)
             .SortByDescending(x => x.UpdatedAt)
-            .Limit(limit)
+            .Skip(skip)
+            .Limit(limit + 1)
             .ToListAsync(ct);
+
+        var hasMore = items.Count > limit;
+        if (hasMore) items = items.Take(limit).ToList();
 
         // Hydrate cover assets (avoid N+1 on client)
         var coverIds = new HashSet<string>(StringComparer.Ordinal);
@@ -260,7 +265,7 @@ public class ImageMasterController : ControllerBase
             };
         }).ToList();
 
-        return Ok(ApiResponse<object>.Ok(new { items = dto }));
+        return Ok(ApiResponse<object>.Ok(new { items = dto, hasMore }));
     }
 
     [HttpPost("workspaces")]

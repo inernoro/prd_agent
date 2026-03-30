@@ -107,7 +107,7 @@ export type DeleteVisualAgentAssetContract = (input: { id: string }) => Promise<
 export type GetVisualAgentCanvasContract = (input: { id: string }) => Promise<ApiResponse<{ canvas: VisualAgentCanvas | null }>>;
 export type SaveVisualAgentCanvasContract = (input: { id: string; schemaVersion?: number; payloadJson: string; idempotencyKey?: string }) => Promise<ApiResponse<{ canvas: VisualAgentCanvas }>>;
 
-export type ListVisualAgentWorkspacesContract = (input?: { limit?: number }) => Promise<ApiResponse<{ items: VisualAgentWorkspace[] }>>;
+export type ListVisualAgentWorkspacesContract = (input?: { limit?: number; skip?: number }) => Promise<ApiResponse<{ items: VisualAgentWorkspace[]; hasMore?: boolean }>>;
 export type CreateVisualAgentWorkspaceContract = (input: { title?: string; scenarioType?: string; idempotencyKey?: string }) => Promise<ApiResponse<{ workspace: VisualAgentWorkspace }>>;
 export type UpdateVisualAgentWorkspaceContract = (input: {
   id: string;
