@@ -55,22 +55,22 @@ export function TranscribeProgress({ runId, itemName, onCompleted }: TranscribeP
       <div className="w-full max-w-md space-y-6">
         {/* 文件名 */}
         <div className="text-center">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
-            <Loader2 className="w-7 h-7 text-blue-400 animate-spin" />
+          <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-primary/10 border border-primary/30 flex items-center justify-center">
+            <Loader2 className="w-7 h-7 text-primary animate-spin" />
           </div>
-          <p className="text-sm font-medium text-white/80">{itemName}</p>
-          <p className="text-xs text-white/40 mt-1">{stageLabel}</p>
+          <p className="text-sm font-medium text-foreground">{itemName}</p>
+          <p className="text-xs text-muted-foreground mt-1">{stageLabel}</p>
         </div>
 
         {/* 进度条 */}
         <div className="space-y-2">
-          <div className="w-full bg-white/[0.06] rounded-full h-2 overflow-hidden">
+          <div className="w-full bg-muted/60 rounded-full h-2 overflow-hidden">
             <div
-              className="bg-blue-500/80 h-2 rounded-full transition-all duration-500 ease-out"
+              className="bg-primary/80 h-2 rounded-full transition-all duration-500 ease-out"
               style={{ width: `${Math.max(progress, 2)}%` }}
             />
           </div>
-          <div className="flex justify-between text-xs text-white/30">
+          <div className="flex justify-between text-xs text-muted-foreground">
             <span>{stageLabel}</span>
             <span>{progress}%</span>
           </div>

@@ -46,7 +46,7 @@ export function CopywritePanel({ item, templates }: CopywritePanelProps) {
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-2">
         <select
-          className="px-3 py-2 text-sm rounded-lg bg-white/5 border border-white/10 outline-none focus:border-white/20 transition-colors min-w-[140px]"
+          className="px-3 py-2 text-sm rounded-lg bg-muted/40 border border-border outline-none focus:border-border transition-colors min-w-[140px]"
           value={selectedTemplateId}
           onChange={e => setSelectedTemplateId(e.target.value)}
         >
@@ -64,11 +64,11 @@ export function CopywritePanel({ item, templates }: CopywritePanelProps) {
       </div>
 
       {result && (
-        <div className="p-4 bg-white/[0.03] rounded-lg border border-white/5">
+        <div className="p-4 bg-muted/30 rounded-lg border border-border/50">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-medium text-white/40">生成结果</span>
+            <span className="text-xs font-medium text-muted-foreground">生成结果</span>
             <button
-              className="flex items-center gap-1 text-xs text-white/30 hover:text-white/50 transition-colors"
+              className="flex items-center gap-1 text-xs text-muted-foreground/60 hover:text-foreground transition-colors"
               onClick={() => {
                 navigator.clipboard.writeText(result);
                 toast.success('已复制');
@@ -78,7 +78,7 @@ export function CopywritePanel({ item, templates }: CopywritePanelProps) {
               复制
             </button>
           </div>
-          <pre className="text-sm text-white/70 whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto">
+          <pre className="text-sm text-foreground/80 whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto">
             {result}
           </pre>
         </div>

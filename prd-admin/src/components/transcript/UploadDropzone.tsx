@@ -74,7 +74,7 @@ export function UploadDropzone({ onUpload, uploading, className }: UploadDropzon
           'border border-dashed transition-all text-xs',
           dragging
             ? 'border-primary/40 bg-primary/10 text-primary'
-            : 'border-white/10 hover:border-white/20 text-white/40 hover:text-white/60',
+            : 'border-border hover:border-border text-muted-foreground hover:text-foreground',
           uploading && 'opacity-50 cursor-not-allowed',
         )}
       >

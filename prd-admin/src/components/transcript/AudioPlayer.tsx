@@ -88,7 +88,7 @@ export function AudioPlayer({ src, className, onTimeUpdate, seekTo }: AudioPlaye
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
 
   return (
-    <div className={`bg-white/[0.03] border-b border-white/5 px-4 py-2.5 flex items-center gap-3 ${className ?? ''}`}>
+    <div className={`bg-muted/30 border-b border-border/50 px-4 py-2.5 flex items-center gap-3 ${className ?? ''}`}>
       {/* Hidden audio element */}
       <audio
         ref={audioRef}
@@ -102,7 +102,7 @@ export function AudioPlayer({ src, className, onTimeUpdate, seekTo }: AudioPlaye
       {/* Play/Pause */}
       <button
         onClick={togglePlay}
-        className="hover:bg-white/[0.08] rounded-lg p-1.5 transition-colors text-white/60 hover:text-white/80"
+        className="hover:bg-muted rounded-lg p-1.5 transition-colors text-muted-foreground hover:text-foreground"
       >
         {isPlaying
           ? <Pause className="w-4 h-4" />
@@ -125,14 +125,14 @@ export function AudioPlayer({ src, className, onTimeUpdate, seekTo }: AudioPlaye
       </div>
 
       {/* Time display */}
-      <span className="text-xs font-mono text-white/40 tabular-nums shrink-0">
+      <span className="text-xs font-mono text-muted-foreground tabular-nums shrink-0">
         {formatTime(currentTime)} / {formatTime(duration)}
       </span>
 
       {/* Playback rate */}
       <button
         onClick={cycleRate}
-        className="text-xs text-white/30 hover:text-white/60 px-1.5 rounded transition-colors tabular-nums"
+        className="text-xs text-muted-foreground hover:text-foreground/80 px-1.5 rounded transition-colors tabular-nums"
       >
         {rate}x
       </button>
@@ -149,28 +149,28 @@ export function AudioPlayer({ src, className, onTimeUpdate, seekTo }: AudioPlaye
           border-radius: 2px;
           background: linear-gradient(
             to right,
-            rgb(59 130 246 / 0.6) 0%,
-            rgb(59 130 246 / 0.6) var(--progress, 0%),
-            rgb(255 255 255 / 0.08) var(--progress, 0%),
-            rgb(255 255 255 / 0.08) 100%
+            hsl(var(--primary) / 0.6) 0%,
+            hsl(var(--primary) / 0.6) var(--progress, 0%),
+            hsl(var(--muted) / 0.5) var(--progress, 0%),
+            hsl(var(--muted) / 0.5) 100%
           );
         }
         .audio-progress-slider::-moz-range-track {
           height: 4px;
           border-radius: 2px;
-          background: rgb(255 255 255 / 0.08);
+          background: hsl(var(--muted) / 0.5);
         }
         .audio-progress-slider::-moz-range-progress {
           height: 4px;
           border-radius: 2px;
-          background: rgb(59 130 246 / 0.6);
+          background: hsl(var(--primary) / 0.6);
         }
         .audio-progress-slider::-webkit-slider-thumb {
           -webkit-appearance: none;
           width: 12px;
           height: 12px;
           border-radius: 50%;
-          background: rgb(59 130 246);
+          background: hsl(var(--primary));
           margin-top: -4px;
           cursor: pointer;
           opacity: 0;
@@ -183,7 +183,7 @@ export function AudioPlayer({ src, className, onTimeUpdate, seekTo }: AudioPlaye
           width: 12px;
           height: 12px;
           border-radius: 50%;
-          background: rgb(59 130 246);
+          background: hsl(var(--primary));
           border: none;
           cursor: pointer;
           opacity: 0;

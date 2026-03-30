@@ -40,11 +40,11 @@ export function TranscriptEditor({ item, onItemDeleted }: TranscriptEditorProps)
     return (
       <div className="flex-1 flex items-center justify-center h-full">
         <div className="text-center">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-white/[0.03] border border-dashed border-white/10 flex items-center justify-center">
-            <Mic className="w-7 h-7 text-white/15" />
+          <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-muted/30 border border-dashed border-border flex items-center justify-center">
+            <Mic className="w-7 h-7 text-muted-foreground/60" />
           </div>
-          <p className="text-sm text-white/40">选择一个素材开始编辑</p>
-          <p className="text-xs text-white/20 mt-1">从左侧列表选择已转录的音视频文件</p>
+          <p className="text-sm text-muted-foreground">选择一个素材开始编辑</p>
+          <p className="text-xs text-muted-foreground/60 mt-1">从左侧列表选择已转录的音视频文件</p>
         </div>
       </div>
     );
@@ -92,9 +92,9 @@ export function TranscriptEditor({ item, onItemDeleted }: TranscriptEditorProps)
 
   const statusIcon = (status: string) => {
     switch (status) {
-      case 'completed': return <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />;
-      case 'processing': case 'pending': return <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin" />;
-      case 'failed': return <AlertCircle className="w-3.5 h-3.5 text-red-400" />;
+      case 'completed': return <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />;
+      case 'processing': case 'pending': return <Loader2 className="w-3.5 h-3.5 text-primary animate-spin" />;
+      case 'failed': return <AlertCircle className="w-3.5 h-3.5 text-destructive" />;
       default: return null;
     }
   };
@@ -114,10 +114,10 @@ export function TranscriptEditor({ item, onItemDeleted }: TranscriptEditorProps)
     return (
       <div className="flex flex-col h-full">
         {/* Header */}
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-white/5">
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-border/50">
           <div className="flex-1 min-w-0">
             <h1 className="text-base font-medium truncate">{item.fileName}</h1>
-            <div className="flex items-center gap-3 mt-0.5 text-xs text-white/40">
+            <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground">
               <span className="flex items-center gap-1">{statusIcon(item.transcribeStatus)} {statusText(item.transcribeStatus)}</span>
               <span>{formatFileSize(item.fileSize)}</span>
             </div>
@@ -130,11 +130,11 @@ export function TranscriptEditor({ item, onItemDeleted }: TranscriptEditorProps)
         {/* TranscribeProgress placeholder */}
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center max-w-xs">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-blue-500/10 flex items-center justify-center">
-              <Loader2 className="w-7 h-7 text-blue-400 animate-spin" />
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-primary/10 flex items-center justify-center">
+              <Loader2 className="w-7 h-7 text-primary animate-spin" />
             </div>
-            <p className="text-sm text-white/60">正在转写中</p>
-            <p className="text-xs text-white/30 mt-1">AI 正在识别语音内容，请稍候...</p>
+            <p className="text-sm text-foreground/80">正在转写中</p>
+            <p className="text-xs text-muted-foreground mt-1">AI 正在识别语音内容，请稍候...</p>
           </div>
         </div>
       </div>
@@ -146,10 +146,10 @@ export function TranscriptEditor({ item, onItemDeleted }: TranscriptEditorProps)
     return (
       <div className="flex flex-col h-full">
         {/* Header */}
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-white/5">
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-border/50">
           <div className="flex-1 min-w-0">
             <h1 className="text-base font-medium truncate">{item.fileName}</h1>
-            <div className="flex items-center gap-3 mt-0.5 text-xs text-white/40">
+            <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground">
               <span className="flex items-center gap-1">{statusIcon(item.transcribeStatus)} {statusText(item.transcribeStatus)}</span>
               <span>{formatFileSize(item.fileSize)}</span>
             </div>
@@ -161,9 +161,9 @@ export function TranscriptEditor({ item, onItemDeleted }: TranscriptEditorProps)
 
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center max-w-xs">
-            <AlertCircle className="w-10 h-10 mx-auto mb-3 text-red-400/60" />
-            <p className="text-sm text-red-400">{item.transcribeError ?? '转写失败'}</p>
-            <p className="text-xs text-white/30 mt-2">请检查文件格式是否支持，或重新上传</p>
+            <AlertCircle className="w-10 h-10 mx-auto mb-3 text-destructive/60" />
+            <p className="text-sm text-destructive">{item.transcribeError ?? '转写失败'}</p>
+            <p className="text-xs text-muted-foreground mt-2">请检查文件格式是否支持，或重新上传</p>
           </div>
         </div>
       </div>
@@ -174,10 +174,10 @@ export function TranscriptEditor({ item, onItemDeleted }: TranscriptEditorProps)
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center gap-3 px-6 py-4 border-b border-white/5">
+      <div className="flex items-center gap-3 px-6 py-4 border-b border-border/50">
         <div className="flex-1 min-w-0">
           <h1 className="text-base font-medium truncate">{item.fileName}</h1>
-          <div className="flex items-center gap-3 mt-0.5 text-xs text-white/40">
+          <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground">
             <span className="flex items-center gap-1">{statusIcon(item.transcribeStatus)} {statusText(item.transcribeStatus)}</span>
             <span>{formatFileSize(item.fileSize)}</span>
           </div>
@@ -204,7 +204,7 @@ export function TranscriptEditor({ item, onItemDeleted }: TranscriptEditorProps)
       />
 
       {/* Bottom action bar */}
-      <div className="border-t border-white/5 px-6 py-4">
+      <div className="border-t border-border/50 px-6 py-4">
         <div className="flex items-center gap-4">
           {/* Copywrite */}
           <div className="flex-1">
@@ -221,8 +221,8 @@ export function TranscriptEditor({ item, onItemDeleted }: TranscriptEditorProps)
               <button key={key}
                 className={`px-2.5 py-1.5 text-xs rounded-md border transition-colors ${
                   exportFormats.has(key)
-                    ? 'border-white/20 bg-white/10 text-white/80'
-                    : 'border-white/5 text-white/30 hover:border-white/10'
+                    ? 'border-border bg-muted/40 text-foreground'
+                    : 'border-border/50 text-muted-foreground hover:border-border'
                 }`}
                 onClick={() => toggleFormat(key)}>
                 {label}

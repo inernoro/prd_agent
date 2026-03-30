@@ -63,24 +63,24 @@ export function TranscriptSidebar({ selectedItemId, onSelectItem }: TranscriptSi
 
   const statusIcon = (status: string) => {
     switch (status) {
-      case 'completed': return <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />;
-      case 'processing': case 'pending': return <Loader2 className="w-3 h-3 text-blue-400 animate-spin shrink-0" />;
-      case 'failed': return <AlertCircle className="w-3 h-3 text-red-400 shrink-0" />;
+      case 'completed': return <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0" />;
+      case 'processing': case 'pending': return <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />;
+      case 'failed': return <AlertCircle className="w-3 h-3 text-destructive shrink-0" />;
       default: return null;
     }
   };
 
   return (
-    <div className="w-60 shrink-0 flex flex-col h-full bg-white/[0.02] border-r border-white/5">
+    <div className="w-60 shrink-0 flex flex-col h-full bg-muted/30 border-r border-border/50">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border/50">
         <h1 className="text-sm font-semibold flex items-center gap-1.5">
           <FileAudio className="w-4 h-4" />
           转录工作台
         </h1>
         <button
           onClick={() => setShowCreate(true)}
-          className="p-1 rounded-md hover:bg-white/[0.05] transition-colors text-white/40 hover:text-white/70"
+          className="p-1 rounded-md hover:bg-muted/50 transition-colors text-muted-foreground hover:text-foreground"
           title="新建工作区"
         >
           <Plus className="w-4 h-4" />
@@ -89,10 +89,10 @@ export function TranscriptSidebar({ selectedItemId, onSelectItem }: TranscriptSi
 
       {/* Create workspace inline */}
       {showCreate && (
-        <div className="px-3 py-2 border-b border-white/5 bg-white/[0.02]">
+        <div className="px-3 py-2 border-b border-border/50 bg-muted/30">
           <div className="flex items-center gap-1.5">
             <input
-              className="flex-1 min-w-0 px-2 py-1.5 text-xs rounded-md bg-white/5 border border-white/10 outline-none focus:border-white/25 transition-colors"
+              className="flex-1 min-w-0 px-2 py-1.5 text-xs rounded-md bg-muted/40 border border-border outline-none focus:border-border transition-colors"
               placeholder="工作区名称"
               value={newTitle}
               onChange={e => setNewTitle(e.target.value)}
@@ -105,15 +105,15 @@ export function TranscriptSidebar({ selectedItemId, onSelectItem }: TranscriptSi
             <button
               onClick={handleCreate}
               disabled={!newTitle.trim()}
-              className="px-2 py-1.5 text-xs rounded-md bg-white/10 hover:bg-white/15 transition-colors disabled:opacity-40"
+              className="px-2 py-1.5 text-xs rounded-md bg-muted/40 hover:bg-muted/60 transition-colors disabled:opacity-40"
             >
               创建
             </button>
             <button
               onClick={() => { setShowCreate(false); setNewTitle(''); }}
-              className="p-1 rounded-md hover:bg-white/5 transition-colors"
+              className="p-1 rounded-md hover:bg-muted/50 transition-colors"
             >
-              <X className="w-3 h-3 text-white/40" />
+              <X className="w-3 h-3 text-muted-foreground" />
             </button>
           </div>
         </div>
@@ -125,7 +125,7 @@ export function TranscriptSidebar({ selectedItemId, onSelectItem }: TranscriptSi
         <div className="px-2 pt-2">
           <button
             onClick={() => setWsExpanded(!wsExpanded)}
-            className="flex items-center gap-1 px-2 py-1 text-[10px] uppercase tracking-wider text-white/30 hover:text-white/50 transition-colors w-full"
+            className="flex items-center gap-1 px-2 py-1 text-[10px] uppercase tracking-wider text-muted-foreground hover:text-foreground/80 transition-colors w-full"
           >
             {wsExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
             工作区
@@ -135,7 +135,7 @@ export function TranscriptSidebar({ selectedItemId, onSelectItem }: TranscriptSi
         {wsExpanded && (
           <div className="px-2 pb-1">
             {workspaces.length === 0 ? (
-              <div className="px-2 py-3 text-xs text-white/20 text-center">
+              <div className="px-2 py-3 text-xs text-muted-foreground/60 text-center">
                 暂无工作区
               </div>
             ) : (
@@ -149,17 +149,17 @@ export function TranscriptSidebar({ selectedItemId, onSelectItem }: TranscriptSi
                   className={cn(
                     'w-full flex items-center gap-2 px-2 py-2 rounded-lg text-left text-xs transition-all group',
                     currentWorkspace?.id === ws.id
-                      ? 'bg-white/[0.08] border-l-2 border-primary text-white/90'
-                      : 'hover:bg-white/[0.05] text-white/60',
+                      ? 'bg-muted/60 border-l-2 border-primary text-foreground'
+                      : 'hover:bg-muted/50 text-foreground/80',
                   )}
                 >
-                  <FileAudio className="w-3.5 h-3.5 shrink-0 text-white/30" />
+                  <FileAudio className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
                   <span className="flex-1 min-w-0 truncate">{ws.title}</span>
                   <button
                     onClick={(e) => handleDeleteWorkspace(ws.id, e)}
-                    className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-white/10 transition-all"
+                    className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-muted transition-all"
                   >
-                    <Trash2 className="w-3 h-3 text-white/30" />
+                    <Trash2 className="w-3 h-3 text-muted-foreground" />
                   </button>
                 </button>
               ))
@@ -170,15 +170,15 @@ export function TranscriptSidebar({ selectedItemId, onSelectItem }: TranscriptSi
         {/* Items section (when a workspace is selected) */}
         {currentWorkspace && (
           <>
-            <div className="mx-3 my-1 border-t border-white/5" />
+            <div className="mx-3 my-1 border-t border-border/50" />
             <div className="px-2">
-              <div className="px-2 py-1 text-[10px] uppercase tracking-wider text-white/30">
+              <div className="px-2 py-1 text-[10px] uppercase tracking-wider text-muted-foreground">
                 素材 ({items.length})
               </div>
             </div>
             <div className="px-2 pb-2">
               {items.length === 0 ? (
-                <div className="px-2 py-3 text-xs text-white/20 text-center">
+                <div className="px-2 py-3 text-xs text-muted-foreground/60 text-center">
                   {uploading ? '上传中...' : '暂无素材，请上传音视频'}
                 </div>
               ) : (
@@ -189,24 +189,24 @@ export function TranscriptSidebar({ selectedItemId, onSelectItem }: TranscriptSi
                     className={cn(
                       'w-full flex items-center gap-2 px-2 py-2 rounded-lg text-left text-xs transition-all group',
                       selectedItemId === item.id
-                        ? 'bg-white/[0.08] border-l-2 border-primary'
-                        : 'hover:bg-white/[0.05]',
+                        ? 'bg-muted/60 border-l-2 border-primary'
+                        : 'hover:bg-muted/50',
                     )}
                   >
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
                         {statusIcon(item.transcribeStatus)}
-                        <span className="truncate text-white/70">{item.fileName}</span>
+                        <span className="truncate text-foreground/80">{item.fileName}</span>
                       </div>
-                      <span className="text-[10px] text-white/25 ml-[18px]">
+                      <span className="text-[10px] text-muted-foreground/60 ml-[18px]">
                         {formatFileSize(item.fileSize)}
                       </span>
                     </div>
                     <button
                       onClick={(e) => handleDeleteItem(item.id, e)}
-                      className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-white/10 transition-all shrink-0"
+                      className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-muted transition-all shrink-0"
                     >
-                      <Trash2 className="w-3 h-3 text-white/30" />
+                      <Trash2 className="w-3 h-3 text-muted-foreground" />
                     </button>
                   </button>
                 ))
@@ -218,7 +218,7 @@ export function TranscriptSidebar({ selectedItemId, onSelectItem }: TranscriptSi
 
       {/* Bottom upload area */}
       {currentWorkspace && (
-        <div className="px-3 py-3 border-t border-white/5">
+        <div className="px-3 py-3 border-t border-border/50">
           <UploadDropzone onUpload={handleUpload} uploading={uploading} />
         </div>
       )}

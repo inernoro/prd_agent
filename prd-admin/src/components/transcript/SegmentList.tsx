@@ -49,7 +49,7 @@ export function SegmentList({ segments, currentTime, onSeek, onTextChange, class
   if (segments.length === 0) {
     return (
       <div className={`flex items-center justify-center py-12 ${className ?? ''}`}>
-        <p className="text-sm text-white/30">暂无转录段落</p>
+        <p className="text-sm text-muted-foreground">暂无转录段落</p>
       </div>
     );
   }

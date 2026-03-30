@@ -58,14 +58,14 @@ export function SegmentRow({ segment, index, isActive, onSeek, onTextChange, row
       ref={rowRef}
       className={`flex gap-4 py-2.5 px-3 rounded-lg cursor-pointer transition-colors group ${
         isActive
-          ? 'bg-blue-500/[0.08] border-l-2 border-blue-400'
-          : 'hover:bg-white/[0.04]'
+          ? 'bg-primary/10 border-l-2 border-primary'
+          : 'hover:bg-muted/50'
       }`}
     >
       {/* Timestamp */}
       <span
         className={`font-mono text-xs pt-0.5 w-16 shrink-0 text-right tabular-nums cursor-pointer transition-colors ${
-          isActive ? 'text-blue-400/60' : 'text-white/25 hover:text-white/40'
+          isActive ? 'text-primary/60' : 'text-muted-foreground/60 hover:text-muted-foreground'
         }`}
         onClick={onSeek}
       >
@@ -76,7 +76,7 @@ export function SegmentRow({ segment, index, isActive, onSeek, onTextChange, row
       {isEditing ? (
         <input
           ref={inputRef}
-          className="text-sm text-white/90 leading-relaxed flex-1 bg-transparent border-b border-white/10 outline-none focus:border-blue-400/40"
+          className="text-sm text-foreground leading-relaxed flex-1 bg-transparent border-b border-border outline-none focus:border-primary/30"
           value={editText}
           onChange={e => setEditText(e.target.value)}
           onBlur={handleBlur}
@@ -85,7 +85,7 @@ export function SegmentRow({ segment, index, isActive, onSeek, onTextChange, row
       ) : (
         <span
           className={`text-sm leading-relaxed flex-1 ${
-            isActive ? 'text-white/90' : 'text-white/75'
+            isActive ? 'text-foreground' : 'text-foreground/80'
           }`}
           onClick={() => setIsEditing(true)}
         >
