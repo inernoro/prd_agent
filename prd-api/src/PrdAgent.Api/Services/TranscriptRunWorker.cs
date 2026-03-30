@@ -130,13 +130,32 @@ public class TranscriptRunWorker : BackgroundService
         if (!resolution.Success)
             throw new InvalidOperationException($"ASR 模型调度失败: {resolution.ErrorMessage}");
 
-        // 根据 Exchange 转换器类型选择 ASR 路径
-        if (resolution.IsExchange && resolution.ExchangeTransformerType == "doubao-asr-stream")
+        // 根据模型类型选择 ASR 路径
+        if (resolution.IsExchange)
         {
-            await ProcessAsrViaStreamAsync(db, run, item, resolution);
+            if (resolution.ExchangeTransformerType == "doubao-asr-stream")
+            {
+                // WebSocket 流式 ASR：必须走专用 WebSocket 客户端，不能走 HTTP Gateway
+                await ProcessAsrViaStreamAsync(db, run, item, resolution);
+            }
+            else if (resolution.ExchangeTransformerType == "doubao-asr")
+            {
+                // 异步 submit+query ASR：Gateway 的 SendRawAsync 支持 IAsyncExchangeTransformer 轮询
+                // Gateway 内部会再次 ResolveAsync，但同一模型池内只有 doubao-asr Exchange，不会误选 WebSocket 模型
+                _logger.LogInformation("[transcript-agent] 使用异步 ASR 路径: Exchange={ExchangeName}", resolution.ExchangeName);
+                await ProcessAsrViaGatewayAsync(db, gateway, run, item);
+            }
+            else
+            {
+                // 未知 Exchange 类型：不能贸然走 Gateway（可能是 WebSocket 等非 HTTP 协议），直接报错
+                throw new InvalidOperationException(
+                    $"不支持的 ASR Exchange 转换器类型: {resolution.ExchangeTransformerType}，" +
+                    $"Exchange={resolution.ExchangeName}");
+            }
         }
         else
         {
+            // 非 Exchange 模型（Whisper 等）：走 Gateway HTTP 路径
             await ProcessAsrViaGatewayAsync(db, gateway, run, item);
         }
     }
