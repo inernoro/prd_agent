@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/design/Button';
 
@@ -16,25 +15,6 @@ const sceneList = [
 
 export default function SandboxComingSoonPage() {
   const navigate = useNavigate();
-  const [glowMode, setGlowMode] = useState<'light' | 'pro'>('light');
-  const isProMode = glowMode === 'pro';
-  const modeConfig = isProMode
-    ? {
-        haloBg: 'radial-gradient(circle at 50% 55%, rgba(138,176,255,0.34), rgba(69,112,214,0.09) 65%, transparent 78%)',
-        shellBorder: '1px solid rgba(147,176,255,0.58)',
-        shellBg: 'linear-gradient(180deg, rgba(20,38,76,0.82), rgba(12,26,56,0.88))',
-        shellShadow: '0 12px 30px rgba(12,24,52,0.5), inset 0 1px 0 rgba(255,255,255,0.18)',
-        glowBg: 'radial-gradient(circle at 50% 45%, rgba(120,167,255,0.36), transparent 62%)',
-        imgFilter: 'drop-shadow(0 12px 26px rgba(2,8,22,0.36)) drop-shadow(0 0 14px rgba(131,167,255,0.36))',
-      }
-    : {
-        haloBg: 'radial-gradient(circle at 50% 55%, rgba(138,176,255,0.2), rgba(69,112,214,0.04) 65%, transparent 78%)',
-        shellBorder: '1px solid rgba(147,176,255,0.4)',
-        shellBg: 'linear-gradient(180deg, rgba(19,35,72,0.62), rgba(11,24,52,0.68))',
-        shellShadow: '0 8px 24px rgba(13,25,53,0.35), inset 0 1px 0 rgba(255,255,255,0.14)',
-        glowBg: 'radial-gradient(circle at 50% 45%, rgba(120,167,255,0.2), transparent 62%)',
-        imgFilter: 'drop-shadow(0 10px 24px rgba(2,8,22,0.3)) drop-shadow(0 0 10px rgba(131,167,255,0.22))',
-      };
 
   return (
     <div
@@ -92,70 +72,23 @@ export default function SandboxComingSoonPage() {
           gap: 16,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-          <div
-            style={{
-              display: 'inline-flex',
-              width: 'fit-content',
-              alignItems: 'center',
-              gap: 8,
-              borderRadius: 999,
-              border: '1px solid rgba(255,206,116,0.65)',
-              background: 'linear-gradient(90deg, rgba(255,206,116,0.22), rgba(255,138,102,0.18))',
-              color: '#fff1c7',
-              fontSize: 12,
-              fontWeight: 700,
-              padding: '4px 10px',
-              animation: 'pulseHint 1.8s ease-in-out infinite',
-            }}
-          >
-            预热中
-          </div>
-          <div
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              borderRadius: 999,
-              border: '1px solid rgba(120,148,206,0.38)',
-              background: 'rgba(11,22,46,0.78)',
-              padding: 4,
-            }}
-          >
-            <span style={{ fontSize: 11, color: 'rgba(199,218,255,0.78)', padding: '0 6px' }}>视觉档位</span>
-            <button
-              type="button"
-              onClick={() => setGlowMode('light')}
-              style={{
-                border: 'none',
-                borderRadius: 999,
-                background: glowMode === 'light' ? 'rgba(115,141,255,0.36)' : 'transparent',
-                color: glowMode === 'light' ? '#f0f5ff' : 'rgba(199,218,255,0.78)',
-                fontSize: 11,
-                fontWeight: 700,
-                padding: '4px 10px',
-                cursor: 'pointer',
-              }}
-            >
-              轻量
-            </button>
-            <button
-              type="button"
-              onClick={() => setGlowMode('pro')}
-              style={{
-                border: 'none',
-                borderRadius: 999,
-                background: glowMode === 'pro' ? 'rgba(115,141,255,0.36)' : 'transparent',
-                color: glowMode === 'pro' ? '#f0f5ff' : 'rgba(199,218,255,0.78)',
-                fontSize: 11,
-                fontWeight: 700,
-                padding: '4px 10px',
-                cursor: 'pointer',
-              }}
-            >
-              高级
-            </button>
-          </div>
+        <div
+          style={{
+            display: 'inline-flex',
+            width: 'fit-content',
+            alignItems: 'center',
+            gap: 8,
+            borderRadius: 999,
+            border: '1px solid rgba(255,206,116,0.65)',
+            background: 'linear-gradient(90deg, rgba(255,206,116,0.22), rgba(255,138,102,0.18))',
+            color: '#fff1c7',
+            fontSize: 12,
+            fontWeight: 700,
+            padding: '4px 10px',
+            animation: 'pulseHint 1.8s ease-in-out infinite',
+          }}
+        >
+          预热中
         </div>
 
         <div>
@@ -197,7 +130,7 @@ export default function SandboxComingSoonPage() {
                   position: 'absolute',
                   inset: 0,
                   borderRadius: '50%',
-                  background: modeConfig.haloBg,
+                  background: 'radial-gradient(circle at 50% 55%, rgba(138,176,255,0.26), rgba(69,112,214,0.05) 65%, transparent 78%)',
                   animation: 'haloPulse 2.2s ease-in-out infinite',
                 }}
               />
@@ -214,8 +147,8 @@ export default function SandboxComingSoonPage() {
                     width: 236,
                     height: 236,
                     borderRadius: 32,
-                    border: modeConfig.shellBorder,
-                    background: modeConfig.shellBg,
+                    border: '1px solid rgba(147,176,255,0.45)',
+                    background: 'linear-gradient(180deg, rgba(19,35,72,0.72), rgba(11,24,52,0.78))',
                     backdropFilter: 'blur(4px)',
                     WebkitBackdropFilter: 'blur(4px)',
                     display: 'grid',
@@ -223,7 +156,7 @@ export default function SandboxComingSoonPage() {
                     position: 'relative',
                     animation: 'catShellBreath 2.6s ease-in-out infinite',
                     overflow: 'hidden',
-                    boxShadow: modeConfig.shellShadow,
+                    boxShadow: '0 10px 26px rgba(12,24,52,0.42), inset 0 1px 0 rgba(255,255,255,0.16)',
                   }}
                 >
                   <div
@@ -231,27 +164,11 @@ export default function SandboxComingSoonPage() {
                       position: 'absolute',
                       inset: -18,
                       borderRadius: 40,
-                      background: modeConfig.glowBg,
+                      background: 'radial-gradient(circle at 50% 45%, rgba(120,167,255,0.28), transparent 62%)',
                       animation: 'catGlowBreath 2.6s ease-in-out infinite',
                       pointerEvents: 'none',
                     }}
                   />
-                  {isProMode ? (
-                    <div
-                      style={{
-                        position: 'absolute',
-                        left: 28,
-                        right: 28,
-                        bottom: 10,
-                        height: 16,
-                        borderRadius: 999,
-                        background: 'linear-gradient(180deg, rgba(170,198,255,0.36), rgba(170,198,255,0))',
-                        filter: 'blur(6px)',
-                        opacity: 0.85,
-                        pointerEvents: 'none',
-                      }}
-                    />
-                  ) : null}
                   <img
                     src="/images/sandbox-cat.gif"
                     alt="施工中小猫"
@@ -261,7 +178,8 @@ export default function SandboxComingSoonPage() {
                       objectFit: 'contain',
                       position: 'relative',
                       zIndex: 1,
-                      filter: modeConfig.imgFilter,
+                      filter:
+                        'drop-shadow(0 10px 24px rgba(2,8,22,0.3)) drop-shadow(0 0 10px rgba(131,167,255,0.22))',
                     }}
                   />
                 </div>
