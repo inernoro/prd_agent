@@ -1,10 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Mic, Trash2, Download, AlertCircle, Loader2, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { useTranscriptStore } from '@/stores/transcriptStore';
 import { exportItem } from '@/services/real/transcriptAgent';
 import { toast } from '@/lib/toast';
 import { CopywritePanel } from './CopywritePanel';
+import { AudioPlayer } from './AudioPlayer';
+import { SegmentList } from './SegmentList';
 import type { TranscriptItem } from '@/services/contracts/transcriptAgent';
 
 interface TranscriptEditorProps {
@@ -13,9 +15,23 @@ interface TranscriptEditorProps {
 }
 
 export function TranscriptEditor({ item, onItemDeleted }: TranscriptEditorProps) {
-  const { templates, fetchTemplates, deleteItem } = useTranscriptStore();
+  const { templates, fetchTemplates, deleteItem, updateSegments } = useTranscriptStore();
   const [exportFormats, setExportFormats] = useState<Set<string>>(new Set(['timestamped']));
   const [exporting, setExporting] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [seekTo, setSeekTo] = useState<number | undefined>(undefined);
+
+  const handleSeek = useCallback((time: number) => {
+    setSeekTo(time);
+    // Reset after a tick so the same timestamp can be sought again
+    requestAnimationFrame(() => setSeekTo(undefined));
+  }, []);
+
+  const handleTextChange = useCallback((index: number, newText: string) => {
+    if (!item?.segments) return;
+    const updated = item.segments.map((s, i) => i === index ? { ...s, text: newText } : s);
+    updateSegments(item.id, updated);
+  }, [item, updateSegments]);
 
   useEffect(() => { fetchTemplates(); }, []);
 
@@ -180,17 +196,21 @@ export function TranscriptEditor({ item, onItemDeleted }: TranscriptEditorProps)
         </Button>
       </div>
 
+      {/* Audio player */}
+      <AudioPlayer
+        src={item.fileUrl}
+        onTimeUpdate={setCurrentTime}
+        seekTo={seekTo}
+      />
+
       {/* Segment list */}
-      <div className="flex-1 overflow-y-auto px-6 py-4 min-h-0">
-        {item.segments?.map((seg, i) => (
-          <div key={i} className="flex gap-4 py-2.5 group">
-            <span className="font-mono text-xs text-white/25 pt-0.5 w-14 shrink-0 text-right tabular-nums">
-              {formatTime(seg.start)}
-            </span>
-            <p className="text-sm text-white/75 leading-relaxed flex-1">{seg.text}</p>
-          </div>
-        ))}
-      </div>
+      <SegmentList
+        segments={item.segments ?? []}
+        currentTime={currentTime}
+        onSeek={handleSeek}
+        onTextChange={handleTextChange}
+        className="flex-1 overflow-y-auto px-3 py-2 min-h-0"
+      />
 
       {/* Bottom action bar */}
       <div className="border-t border-white/5 px-6 py-4">

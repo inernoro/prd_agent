@@ -6,6 +6,7 @@ import type {
   TranscriptItem,
   TranscriptRun,
   TranscriptTemplate,
+  TranscriptSegment,
 } from '@/services/contracts/transcriptAgent';
 
 interface TranscriptState {
@@ -26,6 +27,7 @@ interface TranscriptState {
   fetchTemplates: () => Promise<void>;
   createCopywrite: (itemId: string, templateId: string) => Promise<TranscriptRun | null>;
   pollRun: (runId: string) => Promise<TranscriptRun | null>;
+  updateSegments: (itemId: string, segments: TranscriptSegment[]) => Promise<void>;
   refreshItems: () => Promise<void>;
 }
 
@@ -132,6 +134,15 @@ export const useTranscriptStore = create<TranscriptState>((set, get) => ({
       return res.data;
     }
     return null;
+  },
+
+  updateSegments: async (itemId: string, segments: TranscriptSegment[]) => {
+    const res = await svc.updateSegments(itemId, segments);
+    if (res.success) {
+      set(s => ({
+        items: s.items.map(i => i.id === itemId ? { ...i, segments } : i),
+      }));
+    }
   },
 
   refreshItems: async () => {
