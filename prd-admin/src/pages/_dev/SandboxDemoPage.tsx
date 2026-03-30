@@ -693,11 +693,9 @@ function ComponentToken({
 function GuideHintItem({
   index,
   text,
-  active,
 }: {
   index: number;
   text: string;
-  active?: boolean;
 }) {
   return (
     <div
@@ -705,8 +703,8 @@ function GuideHintItem({
         position: 'relative',
         borderRadius: 9,
         padding: '8px 10px 8px 34px',
-        border: active ? '1px solid rgba(255, 214, 102, 0.55)' : '1px solid rgba(120,148,206,0.3)',
-        background: active ? 'linear-gradient(90deg, rgba(255,214,102,0.16), rgba(120,148,206,0.12))' : 'rgba(12,22,44,0.7)',
+        border: '1px solid rgba(120,148,206,0.3)',
+        background: 'rgba(12,22,44,0.7)',
         color: '#eaf2ff',
         fontSize: 11,
         lineHeight: 1.6,
@@ -720,162 +718,37 @@ function GuideHintItem({
           width: 18,
           height: 18,
           borderRadius: 999,
-          border: active ? '1px solid rgba(255,214,102,0.85)' : '1px solid rgba(120,148,206,0.45)',
-          background: active ? 'rgba(255,214,102,0.24)' : 'rgba(120,148,206,0.2)',
+          border: '1px solid rgba(120,148,206,0.45)',
+          background: 'rgba(120,148,206,0.2)',
           display: 'grid',
           placeItems: 'center',
           fontSize: 10,
           fontWeight: 700,
-          color: active ? '#fff3cf' : '#cae0ff',
+          color: '#cae0ff',
         }}
       >
         {index}
       </div>
       {text}
-      {active ? (
-        <span
-          style={{
-            position: 'absolute',
-            right: 10,
-            top: '50%',
-            transform: 'translateY(-50%)',
-            width: 8,
-            height: 8,
-            borderRadius: 999,
-            background: '#ffd666',
-            boxShadow: '0 0 10px rgba(255,214,102,0.9)',
-            animation: 'sandboxGuidePulse 1.2s ease-in-out infinite',
-          }}
-        />
-      ) : null}
     </div>
   );
 }
 
-const TOP_GUIDE_STEPS = [
+const QUICK_GUIDE_STEPS = [
   'Shift + 框选：多选节点',
-  'Delete / Backspace：删除选中',
-  '按住空格 + 拖拽：平移画布',
+  'Delete / Backspace：删除选中内容',
+  '按住空格 + 拖拽：平移无限画布',
+  '双击角色：编辑名称与区域',
+  '双击标识：快速修改状态',
+  '连线模式下依次点击两个节点建立关系',
 ];
 
-function CatPawGlow({ active }: { active?: boolean }) {
-  const glow = active ? '0 0 12px rgba(255,214,102,0.9)' : '0 0 8px rgba(120,148,206,0.55)';
-  const tone = active ? '#ffd666' : '#9fbfff';
-  return (
-    <div style={{ width: 20, height: 18, position: 'relative', opacity: active ? 1 : 0.72 }}>
-      <div
-        style={{
-          position: 'absolute',
-          left: 5,
-          top: 8,
-          width: 10,
-          height: 8,
-          borderRadius: '60% 60% 55% 55%',
-          background: tone,
-          boxShadow: glow,
-        }}
-      />
-      {[0, 1, 2].map((idx) => (
-        <div
-          key={idx}
-          style={{
-            position: 'absolute',
-            left: 1 + idx * 6,
-            top: 0,
-            width: 5,
-            height: 5,
-            borderRadius: 999,
-            background: tone,
-            boxShadow: glow,
-          }}
-        />
-      ))}
-    </div>
-  );
-}
-
-function TopGuideHint({
-  active,
-  text,
-  onClick,
-}: {
-  active?: boolean;
-  text: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="whitespace-nowrap"
-      style={{
-        position: 'relative',
-        borderRadius: 999,
-        border: active ? '1px solid rgba(255,214,102,0.68)' : '1px solid rgba(120,148,206,0.36)',
-        background: active
-          ? 'linear-gradient(90deg, rgba(255,214,102,0.2), rgba(113,166,255,0.16))'
-          : 'rgba(10,18,36,0.76)',
-        color: active ? '#fff4cc' : '#deebff',
-        fontSize: 12,
-        fontWeight: 600,
-        padding: '8px 14px 8px 36px',
-        cursor: 'pointer',
-        boxShadow: active ? '0 0 22px rgba(255,214,102,0.22)' : 'none',
-      }}
-    >
-      <span
-        style={{
-          position: 'absolute',
-          left: 12,
-          top: '50%',
-          transform: 'translateY(-50%)',
-          width: 14,
-          height: 14,
-          borderRadius: 999,
-          background: active ? 'rgba(255,214,102,0.95)' : 'rgba(120,148,206,0.65)',
-          boxShadow: active ? '0 0 10px rgba(255,214,102,0.7)' : 'none',
-        }}
-      />
-      <span
-        style={{
-          position: 'absolute',
-          left: 7,
-          top: '50%',
-          transform: 'translateY(-15px)',
-          width: 6,
-          height: 6,
-          borderRadius: 999,
-          background: active ? 'rgba(255,214,102,0.72)' : 'rgba(120,148,206,0.45)',
-        }}
-      />
-      <span
-        style={{
-          position: 'absolute',
-          left: 18,
-          top: '50%',
-          transform: 'translateY(-18px)',
-          width: 5,
-          height: 5,
-          borderRadius: 999,
-          background: active ? 'rgba(255,214,102,0.72)' : 'rgba(120,148,206,0.45)',
-        }}
-      />
-      <span
-        style={{
-          position: 'absolute',
-          left: 24,
-          top: '50%',
-          transform: 'translateY(-12px)',
-          width: 5,
-          height: 5,
-          borderRadius: 999,
-          background: active ? 'rgba(255,214,102,0.72)' : 'rgba(120,148,206,0.45)',
-        }}
-      />
-      {text}
-    </button>
-  );
-}
+const TOP_BAR_GUIDE_STEPS = [
+  'Shift + 框选：多选',
+  'Delete / Backspace：删除',
+  '按住空格 + 拖拽：平移',
+  '双击角色/标识：快速编辑',
+];
 
 function SandboxDemoInner() {
   const [nodes, setNodes, onNodesChange] = useNodesState<SandboxNode>([]);
@@ -892,7 +765,6 @@ function SandboxDemoInner() {
   const [pendingLinkSourceId, setPendingLinkSourceId] = useState<string | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<string[]>([]);
-  const [guideFocusIndex, setGuideFocusIndex] = useState(0);
 
   const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
   const [editingRoleName, setEditingRoleName] = useState('');
@@ -1217,13 +1089,6 @@ function SandboxDemoInner() {
   }, [loadLocal]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      setGuideFocusIndex((prev) => (prev + 1) % TOP_GUIDE_STEPS.length);
-    }, 1300);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       const typing = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA';
@@ -1306,15 +1171,23 @@ function SandboxDemoInner() {
           <div style={{ fontSize: 14, fontWeight: 700 }}>沙盘智能体</div>
           <div style={{ fontSize: 11, color: 'rgba(210,225,255,0.74)' }}>{summaryText}</div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <CatPawGlow active />
-          {TOP_GUIDE_STEPS.map((step, index) => (
-            <TopGuideHint
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
+          {TOP_BAR_GUIDE_STEPS.map((step, index) => (
+            <span
               key={step}
-              text={step}
-              active={guideFocusIndex === index}
-              onClick={() => setGuideFocusIndex(index)}
-            />
+              style={{
+                borderRadius: 999,
+                border: '1px solid rgba(120,148,206,0.36)',
+                background: 'rgba(10,18,36,0.76)',
+                color: '#deebff',
+                fontSize: 12,
+                fontWeight: 600,
+                padding: '7px 12px',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {index + 1}. {step}
+            </span>
           ))}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1412,12 +1285,12 @@ function SandboxDemoInner() {
               letterSpacing: 0.2,
             }}
           >
-            新手引导：先看这 3 条再操作
+            快速上手：建议按顺序试一遍
           </div>
           <div style={{ display: 'grid', gap: 7 }}>
-            <GuideHintItem index={1} text="Shift + 框选：多选节点" active={guideFocusIndex === 0} />
-            <GuideHintItem index={2} text="Delete / Backspace：删除选中" active={guideFocusIndex === 1} />
-            <GuideHintItem index={3} text="按住空格 + 拖拽：平移画布" active={guideFocusIndex === 2} />
+            {QUICK_GUIDE_STEPS.map((step, index) => (
+              <GuideHintItem key={step} index={index + 1} text={step} />
+            ))}
           </div>
         </div>
       </aside>
@@ -1810,13 +1683,6 @@ function SandboxDemoInner() {
           </div>
         </div>
       ) : null}
-      <style>{`
-        @keyframes sandboxGuidePulse {
-          0% { transform: translateY(-50%) scale(0.85); opacity: 0.7; }
-          50% { transform: translateY(-50%) scale(1.15); opacity: 1; }
-          100% { transform: translateY(-50%) scale(0.85); opacity: 0.7; }
-        }
-      `}</style>
     </div>
   );
 }
