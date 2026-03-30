@@ -1372,6 +1372,30 @@ async function removeTagFromBranch(id, tag, event) {
   }
 }
 
+async function editBranchTags(id, event) {
+  event.stopPropagation();
+  const branch = branches.find(b => b.id === id);
+  if (!branch) return;
+  const currentTags = (branch.tags || []).join(', ');
+  const input = prompt('编辑标签（逗号分隔）:', currentTags);
+  if (input === null) return; // cancelled
+  const newTags = input.split(/[,，]/).map(t => t.trim()).filter(Boolean);
+  const oldTags = [...(branch.tags || [])];
+  // Optimistic update
+  branch.tags = newTags;
+  renderBranches();
+  renderTagFilterBar();
+  try {
+    await api('PATCH', `/branches/${id}`, { tags: newTags });
+    showToast('标签已保存', 'success');
+  } catch (e) {
+    branch.tags = oldTags;
+    renderBranches();
+    renderTagFilterBar();
+    showToast(e.message, 'error');
+  }
+}
+
 function filterByTag(tag) {
   activeTagFilter = activeTagFilter === tag ? null : tag;
   renderTagFilterBar();
@@ -1888,10 +1912,6 @@ function toggleSettingsMenu(event) {
         </span>
       </span>
     </div>
-    <div class="settings-menu-item" onclick="closeSettingsMenu(); openExportModal()">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 13a.5.5 0 01-.5-.5V3a.5.5 0 01.5-.5h5.586a.5.5 0 01.354.146l3.414 3.414a.5.5 0 01.146.354V12.5a.5.5 0 01-.5.5h-9zM3.5 1A1.5 1.5 0 002 2.5v11A1.5 1.5 0 003.5 15h9a1.5 1.5 0 001.5-1.5V6.414a1.5 1.5 0 00-.44-1.06L10.147 1.94A1.5 1.5 0 009.086 1.5H3.5z"/></svg>
-      导出
-    </div>
     <div class="settings-menu-item" onclick="closeSettingsMenu(); openSelfUpdate()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0114.95 7.16a.75.75 0 01-1.49.178A5.5 5.5 0 008 2.5zm6.294 5.505a.75.75 0 01.834.656 5.5 5.5 0 01-9.592 2.97l1.204-1.204a.25.25 0 00-.177-.427H3.354a.25.25 0 01-.354-.354l1.38-1.38A7.002 7.002 0 0014.95 7.16z"/><circle cx="8" cy="8" r="2"/></svg>
       自动更新
@@ -2039,9 +2059,29 @@ function renderBranches() {
     const btnLabel = (action, label) => isLoading(b.id, action) ? `<span class="btn-spinner"></span>${label}` : label;
 
     // Build deploy dropdown items for single-service redeploy
-    const deployMenuItems = buildProfiles.map(p =>
-      `<div class="deploy-menu-item" onclick="deploySingleService('${esc(b.id)}', '${esc(p.id)}')">${esc(p.name)}</div>`
-    ).join('');
+    const deployMenuItems = buildProfiles.map(p => {
+      const modeTag = p.activeDeployMode && p.deployModes?.[p.activeDeployMode]
+        ? ` <span style="font-size:10px;opacity:0.6">(${esc(p.deployModes[p.activeDeployMode].label)})</span>`
+        : '';
+      return `<div class="deploy-menu-item" onclick="deploySingleService('${esc(b.id)}', '${esc(p.id)}')">${esc(p.name)}${modeTag}</div>`;
+    }).join('');
+
+    // Build deploy mode menu items for the left deploy button
+    const allModes = [];
+    for (const p of buildProfiles) {
+      if (p.deployModes && Object.keys(p.deployModes).length > 0) {
+        for (const [modeId, mode] of Object.entries(p.deployModes)) {
+          allModes.push({ profileId: p.id, profileName: p.name, modeId, label: mode.label || modeId, active: p.activeDeployMode === modeId });
+        }
+      }
+    }
+    const hasDeployModes = allModes.length > 0;
+    const deployModeMenuItems = hasDeployModes
+      ? allModes.map(m => {
+          const check = m.active ? '✓ ' : '';
+          return `<div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu(); switchModeAndDeploy('${esc(b.id)}', '${esc(m.profileId)}', '${esc(m.modeId)}')">${check}${esc(m.profileName)}: ${esc(m.label)}</div>`;
+        }).join('')
+      : '';
 
     // Build stop menu item for deploy dropdown
     const stopMenuItem = isRunning ? `<div class="deploy-menu-divider"></div><div class="deploy-menu-item deploy-menu-item-danger" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); stopBranch('${esc(b.id)}')">停止所有服务</div>` : '';
@@ -2070,6 +2110,7 @@ function renderBranches() {
           </span>
         `).join('')}
         <span class="branch-tag-add" onclick="addTagToBranch('${esc(b.id)}', event)" title="添加标签">+ 标签</span>
+        <span class="branch-tag-edit" onclick="editBranchTags('${esc(b.id)}', event)" title="编辑标签">${ICON.edit}</span>
       </div>
     `;
 
@@ -2077,6 +2118,22 @@ function renderBranches() {
     // When container not running (stopped/idle): only show deploy button
     let actionsLeftHtml = '';
     let actionsRightHtml = '';
+
+    // Unified deploy menu template (shared across states)
+    const deployMenuTpl = `
+      <template id="deploy-menu-tpl-${esc(b.id)}">
+        ${hasMultipleProfiles ? `<div class="deploy-menu-header">选择服务</div>${deployMenuItems}` : ''}
+        ${hasDeployModes ? `${hasMultipleProfiles ? '<div class="deploy-menu-divider"></div>' : ''}<div class="deploy-menu-header">部署模式</div>${deployModeMenuItems}` : ''}
+        ${isRunning ? `<div class="deploy-menu-divider"></div>
+        <div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); viewBranchLogs('${esc(b.id)}')"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:4px"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.5 0a.25.25 0 01.25-.25h10.5a.25.25 0 01.25.25v7.5a.25.25 0 01-.25.25h-4.5a.75.75 0 00-.75.75v2.19l-2.72-2.72a.75.75 0 00-.53-.22H2.75a.25.25 0 01-.25-.25v-7.5z"/></svg>部署日志</div>
+        ${stopMenuItem}` : ''}
+        <div class="deploy-menu-divider"></div>
+        <div class="deploy-menu-item deploy-menu-item-danger" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); removeBranch('${esc(b.id)}')">${ICON.trash} 删除分支</div>
+      </template>
+    `;
+
+    const hasDropdown = hasMultipleProfiles || hasDeployModes || isRunning;
+    const deployBtnLabel = isRunning ? '更新' : '部署';
 
     if (isStopping) {
       actionsLeftHtml = `
@@ -2089,35 +2146,27 @@ function renderBranches() {
       `;
       actionsRightHtml = `
         <div class="split-btn">
-          <button class="sm split-btn-main deploy-glow-btn" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="重新部署">${ICON.deploy} 部署</button>
-          <button class="sm split-btn-toggle" onclick="toggleDeployMenu('${esc(b.id)}', event)" ${isBusy ? 'disabled' : ''}>
+          <button class="sm split-btn-main deploy-glow-btn" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="拉取最新代码并重新部署">${ICON.deploy} ${deployBtnLabel}</button>
+          ${hasDropdown ? `<button class="sm split-btn-toggle" onclick="toggleDeployMenu('${esc(b.id)}', event)" ${isBusy ? 'disabled' : ''}>
             <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor"><path d="M1 1l4 4 4-4"/></svg>
-          </button>
-          <template id="deploy-menu-tpl-${esc(b.id)}">
-            ${hasMultipleProfiles ? `<div class="deploy-menu-header">选择重部署的服务</div>${deployMenuItems}` : ''}
-            <div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); viewBranchLogs('${esc(b.id)}')"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:4px"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.5 0a.25.25 0 01.25-.25h10.5a.25.25 0 01.25.25v7.5a.25.25 0 01-.25.25h-4.5a.75.75 0 00-.75.75v2.19l-2.72-2.72a.75.75 0 00-.53-.22H2.75a.25.25 0 01-.25-.25v-7.5z"/></svg>部署日志</div>
-            ${stopMenuItem}
-            <div class="deploy-menu-divider"></div>
-            <div class="deploy-menu-item deploy-menu-item-danger" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); removeBranch('${esc(b.id)}')">${ICON.trash} 删除分支</div>
-          </template>
+          </button>` : ''}
+          ${deployMenuTpl}
         </div>
       `;
-    } else if (isStopped) {
-      // Container exists but stopped — neutral deploy, not primary
-      actionsLeftHtml = `
-        <button class="sm deploy-glow-btn" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="部署">${ICON.deploy} 部署</button>
-      `;
-      actionsRightHtml = `
-        <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.trash}</button>
-      `;
     } else {
-      // Idle (never deployed) or building — neutral deploy button
+      // Stopped / idle / error — single deploy button with optional dropdown
       actionsLeftHtml = `
-        <button class="sm deploy-glow-btn" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="部署">${ICON.deploy} 部署</button>
+        <div class="split-btn">
+          <button class="sm split-btn-main deploy-glow-btn" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="${deployBtnLabel}">${ICON.deploy} ${deployBtnLabel}</button>
+          ${hasDropdown ? `<button class="sm split-btn-toggle" onclick="toggleDeployMenu('${esc(b.id)}', event)" ${isBusy ? 'disabled' : ''}>
+            <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor"><path d="M1 1l4 4 4-4"/></svg>
+          </button>` : ''}
+          ${deployMenuTpl}
+        </div>
       `;
       actionsRightHtml = `
         ${hasError ? `<button class="sm" onclick="resetBranch('${esc(b.id)}')" ${btnDisabled('reset')}>${btnLabel('reset', ICON.reset + ' 重置')}</button>` : ''}
-        <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.trash}</button>
+        ${!hasDropdown ? `<button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.trash}</button>` : ''}
       `;
     }
 
@@ -2208,9 +2257,8 @@ function renderBranches() {
               </button>
             </span>
           </div>
-          ${b.subject ? `<div class="branch-card-row2">
-            ${b.pinnedCommit ? `<span class="pinned-commit-badge" onclick="event.stopPropagation(); checkoutCommit('${esc(b.id)}', '', true, '')" title="已固定到历史提交 ${esc(b.pinnedCommit)}，点击恢复最新">📌 ${esc(b.pinnedCommit)}</span>` : ''}
-            <span class="branch-commit-msg" title="${esc(b.subject)}">${commitIcon(b.subject)} ${esc(b.subject)}</span>
+          ${b.pinnedCommit ? `<div class="branch-card-row2">
+            <span class="pinned-commit-badge" onclick="event.stopPropagation(); checkoutCommit('${esc(b.id)}', '', true, '')" title="已固定到历史提交 ${esc(b.pinnedCommit)}，点击恢复最新">📌 ${esc(b.pinnedCommit)}</span>
           </div>` : ''}
           ${portBadgesHtml ? `<div class="branch-card-ports">${portBadgesHtml}</div>` : ''}
           ${b.executorId ? `<span class="executor-tag" title="部署在执行器 ${esc(b.executorId)}">⚡ ${esc(b.executorId.replace(/^executor-/, '').slice(0, 20))}</span>` : ''}
@@ -2487,6 +2535,9 @@ function openImportModal() {
       <button class="sm" id="importApplyBtn" disabled onclick="applyImportConfig()">仅导入配置</button>
       <button class="sm accent" id="importInitBtn" disabled onclick="importAndInit()">导入并初始化</button>
       <button class="sm" onclick="closeConfigModal()">取消</button>
+      <span style="flex:1"></span>
+      <button class="sm" onclick="closeConfigModal(); exportConfig()" title="导出 CDS Compose YAML"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-2px;margin-right:3px"><path d="M2.75 14A1.75 1.75 0 011 12.25v-2.5a.75.75 0 011.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 00.25-.25v-2.5a.75.75 0 011.5 0v2.5A1.75 1.75 0 0113.25 14H2.75zm3.22-7.53a.75.75 0 001.06 1.06L8 6.56V1.75a.75.75 0 00-1.5 0v4.81L5.53 5.59a.75.75 0 00-1.06 1.06l2.5 2.5a.75.75 0 001.06 0l2.5-2.5z"/></svg>导出配置</button>
+      <button class="sm" onclick="closeConfigModal(); exportSkill()" title="生成 AI Agent 部署技能文件"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-2px;margin-right:3px"><path d="M3.5 1.75a.25.25 0 01.25-.25h3.5a.75.75 0 000-1.5h-3.5A1.75 1.75 0 002 1.75v11.5c0 .966.784 1.75 1.75 1.75h8.5A1.75 1.75 0 0014 13.25v-6a.75.75 0 00-1.5 0v6a.25.25 0 01-.25.25h-8.5a.25.25 0 01-.25-.25V1.75z"/><path d="M11.78.22a.75.75 0 00-1.06 0L6.22 4.72a.75.75 0 000 1.06l.53.53-2.97 2.97a.75.75 0 101.06 1.06l2.97-2.97.53.53a.75.75 0 001.06 0l4.5-4.5a.75.75 0 000-1.06L11.78.22z"/></svg>导出技能</button>
     </div>
     <div style="margin-top:4px;font-size:11px;color:var(--fg-muted)">
       「仅导入配置」只写入配置不启动服务；「导入并初始化」会自动启动基础设施、创建主分支并部署。
@@ -3305,7 +3356,18 @@ async function deleteRuleAndRefresh(id) {
 function openProfileModal() {
   const listHtml = buildProfiles.length === 0
     ? '<div class="config-empty">暂无构建配置，请添加一个。</div>'
-    : buildProfiles.map(p => `
+    : buildProfiles.map(p => {
+        const modeHtml = p.deployModes && Object.keys(p.deployModes).length > 0
+          ? `<div style="margin-top:4px;display:flex;align-items:center;gap:6px">
+              <span style="font-size:11px;color:var(--text-muted)">部署模式:</span>
+              <select style="font-size:11px;padding:2px 6px;border-radius:4px;border:1px solid var(--border);background:var(--bg-secondary);color:var(--text-primary);cursor:pointer" onchange="switchDeployMode('${esc(p.id)}', this.value)">
+                ${Object.entries(p.deployModes).map(([k, m]) =>
+                  `<option value="${esc(k)}"${p.activeDeployMode === k ? ' selected' : ''}>${esc(m.label || k)}</option>`
+                ).join('')}
+              </select>
+            </div>`
+          : '';
+        return `
         <div class="config-item">
           <div class="config-item-main">
             <span style="opacity:0.7">${getPortIcon(p.id, p)}</span>
@@ -3313,12 +3375,13 @@ function openProfileModal() {
             <code class="config-item-match">${esc(p.dockerImage)}</code>
             <span class="config-item-detail">${esc(p.workDir || '.')} :${p.containerPort}${p.pathPrefixes?.length ? ' → ' + p.pathPrefixes.join(', ') : ''}</span>
             <code class="config-item-cmd" title="${esc(p.runCommand)}">${esc(p.runCommand)}</code>
+            ${modeHtml}
           </div>
           <div class="config-item-actions">
             <button class="icon-btn xs danger-icon" onclick="deleteProfileAndRefresh('${esc(p.id)}')" title="删除">&times;</button>
           </div>
         </div>
-      `).join('');
+      `;}).join('');
 
   const html = `
     <p class="config-panel-desc">
@@ -3422,6 +3485,22 @@ async function deleteProfileAndRefresh(id) {
     showToast('配置已删除', 'success');
     await loadProfiles();
     openProfileModal();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function switchDeployMode(profileId, mode) {
+  try {
+    await api('PUT', `/build-profiles/${profileId}/deploy-mode`, { mode });
+    showToast(`已切换部署模式`, 'success');
+    await loadProfiles();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function switchModeAndDeploy(branchId, profileId, modeId) {
+  try {
+    await api('PUT', `/build-profiles/${profileId}/deploy-mode`, { mode: modeId });
+    await loadProfiles();
+    deployBranch(branchId);
   } catch (e) { showToast(e.message, 'error'); }
 }
 
@@ -3976,15 +4055,15 @@ function renderActivityItem(event) {
   });
 
   let html = '';
+  // AI badge first — always at the front for visibility
+  if (isAi) {
+    const agentShort = (event.agent || 'AI').replace(/\s*\(static key\)/, '');
+    html += `<span class="activity-source ai" title="${escapeHtml(event.agent || 'AI')}">${escapeHtml(agentShort)}</span>`;
+  }
   // Branch label: prefer tags, fallback to last ID segment
   if (event.branchId) {
     const branchLabel = getBranchDisplayLabel(event.branchId, event.branchTags);
     html += `<span class="activity-source" style="background:var(--accent-bg);color:var(--accent);font-size:9px;font-weight:600;padding:1px 4px;border-radius:3px" title="${escapeHtml(event.branchId)}">${escapeHtml(branchLabel)}</span>`;
-  }
-  // AI badge if applicable
-  if (isAi) {
-    const agentShort = (event.agent || 'AI').replace(/\s*\(static key\)/, '');
-    html += `<span class="activity-source ai" title="${escapeHtml(event.agent || 'AI')}">${escapeHtml(agentShort)}</span>`;
   }
   html += `<span class="activity-method ${event.method}">${event.method}</span>`;
   // Show Chinese label (golden glow) if available, path as tooltip

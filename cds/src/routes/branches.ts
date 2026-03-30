@@ -6,6 +6,7 @@ import { createGzip } from 'node:zlib';
 import { Router } from 'express';
 import { StateService } from '../services/state.js';
 import type { WorktreeService } from '../services/worktree.js';
+import { resolveProfileWithMode } from '../services/container.js';
 import type { ContainerService } from '../services/container.js';
 import type { BranchEntry, CdsConfig, IShellExecutor, OperationLog, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService } from '../types.js';
 import { discoverComposeFiles, parseComposeFile, parseComposeString, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
@@ -377,11 +378,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const layerStartTime = Date.now();
 
         await Promise.all(layer.items.map(async (profile) => {
+          // Resolve deploy mode overrides (e.g., dev → static)
+          const effectiveProfile = resolveProfileWithMode(profile);
+          const modeLabel = profile.activeDeployMode && profile.deployModes?.[profile.activeDeployMode]
+            ? ` [${profile.deployModes[profile.activeDeployMode].label}]`
+            : '';
           const serviceStartTime = Date.now();
           logEvent({
             step: `build-${profile.id}`,
             status: 'running',
-            title: `正在构建 ${profile.name}...`,
+            title: `正在构建 ${profile.name}${modeLabel}...`,
             timestamp: new Date().toISOString(),
           });
 
@@ -399,15 +405,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
             logEvent({
               step: `env-${profile.id}`,
               status: 'info',
-              title: `${profile.name} 环境变量`,
+              title: `${effectiveProfile.name} 环境变量`,
               detail: {
                 cdsVars: maskSecrets(cdsVars),
-                profileEnvKeys: Object.keys(profile.env ?? {}),
+                profileEnvKeys: Object.keys(effectiveProfile.env ?? {}),
+                deployMode: profile.activeDeployMode || 'default',
               },
               timestamp: new Date().toISOString(),
             });
 
-            await containerService.runService(entry, profile, svc, (chunk) => {
+            await containerService.runService(entry, effectiveProfile, svc, (chunk) => {
               sendSSE(res, 'log', { profileId: profile.id, chunk });
               for (const line of chunk.split('\n')) {
                 if (line.trim()) {
@@ -577,8 +584,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
         stateService.save();
       }
 
+      // Resolve deploy mode overrides
+      const effectiveProfile = resolveProfileWithMode(profile);
+      const modeLabel = profile.activeDeployMode && profile.deployModes?.[profile.activeDeployMode]
+        ? ` [${profile.deployModes[profile.activeDeployMode].label}]`
+        : '';
+
       // Build & run the single profile
-      logEvent({ step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}...`, timestamp: new Date().toISOString() });
+      logEvent({ step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}${modeLabel}...`, timestamp: new Date().toISOString() });
 
       if (!entry.services[profile.id]) {
         const hostPort = stateService.allocatePort(config.portStart);
@@ -596,7 +609,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       try {
         const mergedEnv = getMergedEnv();
-        await containerService.runService(entry, profile, svc, (chunk) => {
+        await containerService.runService(entry, effectiveProfile, svc, (chunk) => {
           sendSSE(res, 'log', { profileId: profile.id, chunk });
           for (const line of chunk.split('\n')) {
             if (line.trim()) logDeploy(id, line);
@@ -1078,6 +1091,32 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.removeBuildProfile(req.params.id);
       stateService.save();
       res.json({ message: '已删除' });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ── Deploy mode switching ──
+
+  router.put('/build-profiles/:id/deploy-mode', (req, res) => {
+    try {
+      const { id } = req.params;
+      const { mode } = req.body as { mode?: string };
+      const profile = stateService.getBuildProfile(id);
+      if (!profile) {
+        res.status(404).json({ error: `构建配置 "${id}" 不存在` });
+        return;
+      }
+      // Validate mode exists (or null/empty to reset to default)
+      if (mode && (!profile.deployModes || !profile.deployModes[mode])) {
+        const available = profile.deployModes ? Object.keys(profile.deployModes).join(', ') : '无';
+        res.status(400).json({ error: `部署模式 "${mode}" 不存在，可用: ${available}` });
+        return;
+      }
+      stateService.updateBuildProfile(id, { activeDeployMode: mode || undefined });
+      stateService.save();
+      const label = mode && profile.deployModes?.[mode]?.label || 'default';
+      res.json({ message: `已切换为 ${label}`, mode: mode || null });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }

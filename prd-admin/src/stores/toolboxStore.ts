@@ -236,6 +236,19 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     usageCount: 0,
     createdAt: new Date().toISOString(),
   },
+  {
+    id: 'builtin-transcript-agent',
+    name: '转录工作台',
+    description: '音视频智能转录，支持多模型ASR转写、时间戳编辑、模板转文案',
+    icon: 'AudioLines',
+    category: 'builtin',
+    type: 'builtin',
+    agentKey: 'transcript-agent',
+    routePath: '/transcript-agent',
+    tags: ['转录', '语音', 'ASR', '字幕'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+  },
   // ========== 普通版 Agent（统一对话界面）==========
   {
     id: 'builtin-code-reviewer',

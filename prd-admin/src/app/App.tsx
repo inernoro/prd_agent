@@ -27,6 +27,7 @@ const DefectAgentPage = lazy(() => import('@/pages/defect-agent').then(m => ({ d
 const VideoAgentPage = lazy(() => import('@/pages/video-agent').then(m => ({ default: m.VideoAgentPage })));
 const ReportAgentPage = lazy(() => import('@/pages/report-agent').then(m => ({ default: m.ReportAgentPage })));
 const ReportDetailPage = lazy(() => import('@/pages/report-agent').then(m => ({ default: m.ReportDetailPage })));
+const TranscriptAgentPage = lazy(() => import('@/pages/transcript-agent').then(m => ({ default: m.TranscriptAgentPage })));
 const ShortcutsPage = lazy(() => import('@/pages/shortcuts-agent').then(m => ({ default: m.ShortcutsPage })));
 const ShortcutInstallPage = lazy(() => import('@/pages/shortcuts-agent').then(m => ({ default: m.ShortcutInstallPage })));
 const WorkflowListPage = lazy(() => import('@/pages/workflow-agent').then(m => ({ default: m.WorkflowListPage })));
@@ -67,6 +68,11 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const location = useLocation();
   if (!isAuthenticated) {
+    // 兼容 hash URL：如 /#/transcript-agent → 提取 /transcript-agent 作为 returnUrl
+    const hashPath = window.location.hash?.replace(/^#/, '') || '';
+    if (hashPath && hashPath !== '/') {
+      return <Navigate to={`/login?returnUrl=${encodeURIComponent(hashPath)}`} replace />;
+    }
     // 根路径未登录 → 展示公开首页；其他受保护路由 → 跳转登录页
     if (location.pathname === '/') {
       return <Navigate to="/home" replace />;
@@ -312,6 +318,7 @@ export default function App() {
         <Route path="video-agent" element={<RequirePermission perm="video-agent.use"><VideoAgentPage /></RequirePermission>} />
         <Route path="report-agent" element={<RequirePermission perm="report-agent.use"><ReportAgentPage /></RequirePermission>} />
         <Route path="report-agent/report/:reportId" element={<RequirePermission perm="report-agent.use"><ReportDetailPage /></RequirePermission>} />
+        <Route path="transcript-agent" element={<RequirePermission perm="transcript-agent.use"><TranscriptAgentPage /></RequirePermission>} />
         <Route path="shortcuts-agent" element={<RequirePermission perm="access"><ShortcutsPage /></RequirePermission>} />
         <Route path="workflow-agent" element={<RequirePermission perm="workflow-agent.use"><WorkflowListPage /></RequirePermission>} />
         <Route path="workflow-agent/:workflowId" element={<RequirePermission perm="workflow-agent.use"><WorkflowEditorPage /></RequirePermission>} />

@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Core.Helpers;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
@@ -317,21 +318,14 @@ public class ExchangeController : ControllerBase
         };
 
         // 设置认证头
-        if (!string.IsNullOrWhiteSpace(apiKey))
+        SetTestAuthHeader(httpRequest, exchange.TargetAuthScheme, apiKey);
+
+        // 设置转换器额外 headers
+        var extraHeaders = transformer.GetExtraHeaders(exchange.TransformerConfig);
+        if (extraHeaders != null)
         {
-            switch ((exchange.TargetAuthScheme ?? "Bearer").ToLowerInvariant())
-            {
-                case "x-api-key":
-                case "xapikey":
-                    httpRequest.Headers.TryAddWithoutValidation("x-api-key", apiKey);
-                    break;
-                case "key":
-                    httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Key", apiKey);
-                    break;
-                default:
-                    httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-                    break;
-            }
+            foreach (var (key, value) in extraHeaders)
+                httpRequest.Headers.TryAddWithoutValidation(key, value);
         }
 
         string rawResponseBody;
@@ -341,12 +335,91 @@ public class ExchangeController : ControllerBase
         try
         {
             var httpClient = _httpClientFactory.CreateClient();
-            httpClient.Timeout = TimeSpan.FromSeconds(30);
+            httpClient.Timeout = TimeSpan.FromSeconds(120);
 
             var startedAt = DateTime.UtcNow;
             var response = await httpClient.SendAsync(httpRequest, ct);
             rawResponseBody = await response.Content.ReadAsStringAsync(ct);
             httpStatus = (int)response.StatusCode;
+
+            // 异步转换器：submit+query 轮询
+            if (transformer is IAsyncExchangeTransformer asyncTx)
+            {
+                var respHeaders = new Dictionary<string, string>();
+                foreach (var h in response.Headers)
+                    respHeaders[h.Key] = string.Join(", ", h.Value);
+
+                if (asyncTx.IsTaskFailed(httpStatus, respHeaders, rawResponseBody, out var failError))
+                {
+                    durationMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
+                    return Ok(ApiResponse<object>.Ok(new
+                    {
+                        standardRequest = standardBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
+                        transformedRequest = transformedJson,
+                        rawResponse = rawResponseBody,
+                        transformedResponse = (string?)null,
+                        error = failError,
+                        httpStatus = (int?)httpStatus,
+                        durationMs = (long?)durationMs,
+                        isAsync = true
+                    }));
+                }
+
+                if (asyncTx.IsTaskPending(httpStatus, respHeaders, rawResponseBody))
+                {
+                    var (queryUrl, queryBody, queryExtraHeaders) = asyncTx.BuildQueryRequest(
+                        actualTargetUrl, httpStatus, respHeaders, rawResponseBody, exchange.TransformerConfig);
+
+                    // 获取 submit 时的 X-Api-Request-Id
+                    string? submitRequestId = null;
+                    if (httpRequest.Headers.TryGetValues("X-Api-Request-Id", out var reqIds))
+                        submitRequestId = reqIds.FirstOrDefault();
+
+                    var maxAttempts = Math.Min(asyncTx.MaxPollAttempts, 120); // 测试模式最多 120 次
+                    for (var i = 0; i < maxAttempts; i++)
+                    {
+                        await Task.Delay(asyncTx.PollIntervalMs, ct);
+
+                        var qReq = new HttpRequestMessage(HttpMethod.Post, queryUrl)
+                        {
+                            Content = new StringContent(queryBody?.ToJsonString() ?? "{}", System.Text.Encoding.UTF8, "application/json")
+                        };
+                        SetTestAuthHeader(qReq, exchange.TargetAuthScheme, apiKey);
+                        foreach (var (k, v) in queryExtraHeaders)
+                            qReq.Headers.TryAddWithoutValidation(k, v);
+                        if (submitRequestId != null)
+                            qReq.Headers.TryAddWithoutValidation("X-Api-Request-Id", submitRequestId);
+
+                        var qResp = await httpClient.SendAsync(qReq, ct);
+                        rawResponseBody = await qResp.Content.ReadAsStringAsync(ct);
+                        httpStatus = (int)qResp.StatusCode;
+
+                        var qHeaders = new Dictionary<string, string>();
+                        foreach (var h in qResp.Headers)
+                            qHeaders[h.Key] = string.Join(", ", h.Value);
+
+                        if (asyncTx.IsTaskComplete(httpStatus, qHeaders, rawResponseBody))
+                            break;
+
+                        if (asyncTx.IsTaskFailed(httpStatus, qHeaders, rawResponseBody, out var qErr))
+                        {
+                            durationMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
+                            return Ok(ApiResponse<object>.Ok(new
+                            {
+                                standardRequest = standardBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
+                                transformedRequest = transformedJson,
+                                rawResponse = rawResponseBody,
+                                transformedResponse = (string?)null,
+                                error = qErr,
+                                httpStatus = (int?)httpStatus,
+                                durationMs = (long?)durationMs,
+                                isAsync = true
+                            }));
+                        }
+                    }
+                }
+            }
+
             durationMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
         }
         catch (Exception ex)
@@ -407,7 +480,317 @@ public class ExchangeController : ControllerBase
         }));
     }
 
+    /// <summary>
+    /// 测试 Exchange 转换管线（音频文件上传版）：
+    /// 接收音频文件 → 转 base64 → 构建标准请求 → 走完整 Exchange 管线
+    /// </summary>
+    [HttpPost("{id}/test-audio")]
+    [RequestSizeLimit(100 * 1024 * 1024)] // 100MB
+    public async Task<IActionResult> TestExchangeWithAudio(
+        string id,
+        [FromForm] IFormFile file,
+        [FromForm] string? audioUrl,
+        [FromForm] bool dryRun = false,
+        CancellationToken ct = default)
+    {
+        var exchange = await _db.ModelExchanges.Find(e => e.Id == id).FirstOrDefaultAsync(ct);
+        if (exchange == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "Exchange 不存在"));
+
+        // 构建标准请求：优先使用 URL，否则用上传文件转 base64
+        var standardBody = new JsonObject();
+
+        if (!string.IsNullOrWhiteSpace(audioUrl))
+        {
+            standardBody["audio_url"] = audioUrl.Trim();
+        }
+        else if (file != null && file.Length > 0)
+        {
+            using var ms = new MemoryStream();
+            await file.CopyToAsync(ms, ct);
+            var base64 = Convert.ToBase64String(ms.ToArray());
+            standardBody["audio_data"] = base64;
+            standardBody["format"] = Path.GetExtension(file.FileName).TrimStart('.');
+        }
+        else
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请上传音频文件或提供 audio_url"));
+        }
+
+        // 复用 JSON 测试逻辑
+        var testRequest = new ExchangeTestRequest
+        {
+            StandardRequestBody = standardBody.ToJsonString(),
+            DryRun = dryRun
+        };
+
+        return await TestExchange(id, testRequest, ct);
+    }
+
+    /// <summary>
+    /// 测试 WebSocket 流式 ASR（通过 DoubaoStreamAsrService）
+    /// 下载音频 → WAV 解析 → WebSocket 二进制协议 → 返回转录结果
+    /// </summary>
+    [HttpPost("test-stream-asr")]
+    [AllowAnonymous]
+    public async Task<IActionResult> TestStreamAsr(
+        [FromBody] StreamAsrTestRequest request,
+        [FromServices] Services.DoubaoStreamAsrService streamAsr,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.AudioUrl))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请提供 audioUrl"));
+        if (string.IsNullOrWhiteSpace(request.ApiKey))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请提供 apiKey"));
+
+        var wsUrl = request.WsUrl ?? "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream";
+
+        // 下载音频
+        byte[] audioData;
+        try
+        {
+            var httpClient = _httpClientFactory.CreateClient();
+            httpClient.Timeout = TimeSpan.FromSeconds(60);
+            audioData = await httpClient.GetByteArrayAsync(request.AudioUrl, ct);
+        }
+        catch (Exception ex)
+        {
+            return Ok(ApiResponse<object>.Ok(new { error = $"下载音频失败: {ex.Message}" }));
+        }
+
+        // 解析 apiKey：支持单Key和双Key
+        string appKey = "", accessKey = request.ApiKey;
+        if (request.ApiKey.Contains('|'))
+        {
+            var parts = request.ApiKey.Split('|', 2);
+            appKey = parts[0];
+            accessKey = parts[1];
+        }
+
+        var config = new Dictionary<string, object>
+        {
+            ["resourceId"] = request.ResourceId ?? "volc.bigasr.sauc.duration",
+            ["enableItn"] = true,
+            ["enablePunc"] = true,
+            ["enableDdc"] = true
+        };
+
+        var startedAt = DateTime.UtcNow;
+        var result = await streamAsr.TranscribeAsync(wsUrl, appKey, accessKey, audioData, config, ct);
+        var durationMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            success = result.Success,
+            text = result.FullText,
+            segmentCount = result.Segments.Count,
+            segments = result.Segments.Select(s => new { s.Text, s.DurationSec }),
+            responseFrameCount = result.Responses.Count,
+            error = result.Error,
+            durationMs,
+            audioSizeBytes = audioData.Length,
+            wsUrl
+        }));
+    }
+
+    /// <summary>
+    /// 获取可用的导入模板列表（预设配置，用户只需提供 API Key 即可一键创建）
+    /// </summary>
+    [HttpGet("templates")]
+    public IActionResult GetImportTemplates()
+    {
+        var templates = ExchangeTemplates.All.Select(t => new
+        {
+            t.Id,
+            t.Name,
+            t.Description,
+            t.ApiKeyPlaceholder,
+            t.ApiKeyHint,
+            preset = new
+            {
+                t.Preset.Name,
+                t.Preset.ModelAlias,
+                t.Preset.TargetUrl,
+                t.Preset.TargetAuthScheme,
+                t.Preset.TransformerType,
+                t.Preset.TransformerConfig,
+                t.Preset.Enabled,
+                t.Preset.Description
+            }
+        });
+
+        return Ok(ApiResponse<object>.Ok(new { items = templates }));
+    }
+
+    /// <summary>
+    /// 通过模板导入 Exchange（用户只需提供模板 ID + API Key）
+    /// </summary>
+    [HttpPost("import-from-template")]
+    public async Task<IActionResult> ImportFromTemplate([FromBody] ImportFromTemplateRequest request, CancellationToken ct)
+    {
+        var template = ExchangeTemplates.All.FirstOrDefault(t => t.Id == request.TemplateId);
+        if (template == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, $"模板 '{request.TemplateId}' 不存在"));
+
+        if (string.IsNullOrWhiteSpace(request.ApiKey))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "API Key 不能为空"));
+
+        // 检查别名冲突
+        var alias = template.Preset.ModelAlias;
+        var existing = await _db.ModelExchanges
+            .Find(e => e.ModelAlias == alias)
+            .FirstOrDefaultAsync(ct);
+        if (existing != null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"ModelAlias '{alias}' 已存在，该模板可能已导入"));
+
+        var exchange = new ModelExchange
+        {
+            Name = template.Preset.Name,
+            ModelAlias = template.Preset.ModelAlias,
+            TargetUrl = template.Preset.TargetUrl,
+            TargetApiKeyEncrypted = ApiKeyCrypto.Encrypt(request.ApiKey.Trim(), GetJwtSecret()),
+            TargetAuthScheme = template.Preset.TargetAuthScheme ?? "Bearer",
+            TransformerType = template.Preset.TransformerType ?? "passthrough",
+            TransformerConfig = template.Preset.TransformerConfig,
+            Enabled = template.Preset.Enabled,
+            Description = template.Preset.Description
+        };
+
+        await _db.ModelExchanges.InsertOneAsync(exchange, cancellationToken: ct);
+
+        _logger.LogInformation("[Exchange] 通过模板导入 Exchange: {Id} / {Name} / template={TemplateId}",
+            exchange.Id, exchange.Name, request.TemplateId);
+
+        return Ok(ApiResponse<object>.Ok(new { exchange.Id, exchange.Name, exchange.ModelAlias }));
+    }
+
     private string GetJwtSecret() => _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
+
+    private static void SetTestAuthHeader(HttpRequestMessage req, string? authScheme, string? apiKey)
+    {
+        if (string.IsNullOrWhiteSpace(apiKey)) return;
+        switch ((authScheme ?? "Bearer").ToLowerInvariant())
+        {
+            case "x-api-key":
+            case "xapikey":
+                req.Headers.TryAddWithoutValidation("x-api-key", apiKey);
+                break;
+            case "key":
+                req.Headers.Authorization = new AuthenticationHeaderValue("Key", apiKey);
+                break;
+            case "doubao-asr":
+                var parts = apiKey.Split('|', 2);
+                var appId = parts.Length > 1 ? parts[0] : "";
+                var accessToken = parts.Length > 1 ? parts[1] : apiKey;
+                req.Headers.TryAddWithoutValidation("X-Api-App-Key", appId);
+                req.Headers.TryAddWithoutValidation("X-Api-Access-Key", accessToken);
+                break;
+            default:
+                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+                break;
+        }
+    }
+}
+
+// ========== Exchange 导入模板（硬编码） ==========
+
+public static class ExchangeTemplates
+{
+    public static readonly List<ExchangeTemplate> All = new()
+    {
+        new ExchangeTemplate
+        {
+            Id = "doubao-asr-xapikey",
+            Name = "豆包大模型语音识别",
+            Description = "字节跳动豆包 BigModel ASR，使用 x-api-key 认证，异步 submit+query 模式",
+            ApiKeyPlaceholder = "x-api-key",
+            ApiKeyHint = "在火山引擎控制台获取 API Key（UUID 格式）",
+            Preset = new ExchangeTemplatePreset
+            {
+                Name = "豆包 ASR (BigModel)",
+                ModelAlias = "doubao-asr-bigmodel",
+                TargetUrl = "https://openspeech.bytedance.com/api/v3/auc/bigmodel/submit",
+                TargetAuthScheme = "XApiKey",
+                TransformerType = "doubao-asr",
+                TransformerConfig = new Dictionary<string, object>
+                {
+                    ["resourceId"] = "volc.bigasr.auc",
+                    ["enableItn"] = true,
+                    ["enablePunc"] = true,
+                    ["enableDdc"] = true,
+                    ["enableSpeakerInfo"] = true,
+                    ["enableChannelSplit"] = true
+                },
+                Enabled = true,
+                Description = "豆包大模型语音识别 - 异步模式 (submit+query)"
+            }
+        },
+        new ExchangeTemplate
+        {
+            Id = "doubao-asr-stream",
+            Name = "豆包流式语音识别 (WebSocket)",
+            Description = "字节跳动豆包流式 ASR，通过 WebSocket 二进制协议实时推送音频分片，支持实时转录，支持 x-api-key 单Key认证",
+            ApiKeyPlaceholder = "x-api-key",
+            ApiKeyHint = "在火山引擎控制台获取 API Key（UUID 格式），也支持 AppID|AccessToken 双Key格式",
+            Preset = new ExchangeTemplatePreset
+            {
+                Name = "豆包 ASR (流式 WebSocket)",
+                ModelAlias = "doubao-asr-stream",
+                TargetUrl = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream",
+                TargetAuthScheme = "XApiKey",
+                TransformerType = "doubao-asr-stream",
+                TransformerConfig = new Dictionary<string, object>
+                {
+                    ["resourceId"] = "volc.bigasr.sauc.duration",
+                    ["enableItn"] = true,
+                    ["enablePunc"] = true,
+                    ["enableDdc"] = true
+                },
+                Enabled = true,
+                Description = "豆包流式语音识别 - WebSocket 二进制协议 (bigmodel_nostream)"
+            }
+        },
+        new ExchangeTemplate
+        {
+            Id = "fal-image-gen",
+            Name = "fal.ai 图片生成",
+            Description = "fal.ai Nano Banana Pro 图片生成，支持文生图和图生图",
+            ApiKeyPlaceholder = "fal.ai API Key",
+            ApiKeyHint = "在 fal.ai 控制台获取 API Key",
+            Preset = new ExchangeTemplatePreset
+            {
+                Name = "fal.ai Nano Banana Pro",
+                ModelAlias = "fal-nano-banana-pro",
+                TargetUrl = "https://fal.run/fal-ai/nano-banana-pro",
+                TargetAuthScheme = "Key",
+                TransformerType = "fal-image",
+                Enabled = true,
+                Description = "fal.ai 图片生成 - Nano Banana Pro"
+            }
+        }
+    };
+}
+
+public class ExchangeTemplate
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public string ApiKeyPlaceholder { get; set; } = "API Key";
+    public string ApiKeyHint { get; set; } = string.Empty;
+    public ExchangeTemplatePreset Preset { get; set; } = new();
+}
+
+public class ExchangeTemplatePreset
+{
+    public string Name { get; set; } = string.Empty;
+    public string ModelAlias { get; set; } = string.Empty;
+    public string TargetUrl { get; set; } = string.Empty;
+    public string? TargetAuthScheme { get; set; }
+    public string? TransformerType { get; set; }
+    public Dictionary<string, object>? TransformerConfig { get; set; }
+    public bool Enabled { get; set; } = true;
+    public string? Description { get; set; }
 }
 
 // ========== Request DTOs ==========
@@ -444,4 +827,24 @@ public class ExchangeTestRequest
     public string StandardRequestBody { get; set; } = "{}";
     /// <summary>仅预览转换结果，不实际发送请求</summary>
     public bool DryRun { get; set; }
+}
+
+public class ImportFromTemplateRequest
+{
+    /// <summary>模板 ID</summary>
+    public string TemplateId { get; set; } = string.Empty;
+    /// <summary>用户提供的 API Key</summary>
+    public string ApiKey { get; set; } = string.Empty;
+}
+
+public class StreamAsrTestRequest
+{
+    /// <summary>音频文件 URL</summary>
+    public string AudioUrl { get; set; } = string.Empty;
+    /// <summary>API Key（单Key 或 AppID|AccessToken）</summary>
+    public string ApiKey { get; set; } = string.Empty;
+    /// <summary>WebSocket URL（可选，默认 bigmodel_nostream）</summary>
+    public string? WsUrl { get; set; }
+    /// <summary>Resource ID（可选）</summary>
+    public string? ResourceId { get; set; }
 }

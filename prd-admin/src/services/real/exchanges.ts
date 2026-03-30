@@ -5,6 +5,7 @@ import type {
   TransformerTypeOption,
   ExchangeForPool,
   ExchangeTestResult,
+  ExchangeTemplate,
 } from '@/types/exchange';
 import type { ApiResponse } from '@/types/api';
 import { apiRequest } from '@/services/real/apiClient';
@@ -69,4 +70,25 @@ export async function testExchange(
     method: 'POST',
     body: { standardRequestBody, dryRun },
   });
+}
+
+/** 获取导入模板列表 */
+export async function getExchangeTemplates(): Promise<ApiResponse<ExchangeTemplate[]>> {
+  const res = await apiRequest<{ items: ExchangeTemplate[] }>(api.mds.exchanges.templates());
+  if (!res.success) return res as unknown as ApiResponse<ExchangeTemplate[]>;
+  return { success: true, data: res.data.items ?? [], error: null };
+}
+
+/** 通过模板导入 Exchange */
+export async function importExchangeFromTemplate(
+  templateId: string,
+  apiKey: string
+): Promise<ApiResponse<{ id: string; name: string; modelAlias: string }>> {
+  return await apiRequest<{ id: string; name: string; modelAlias: string }>(
+    api.mds.exchanges.importFromTemplate(),
+    {
+      method: 'POST',
+      body: { templateId, apiKey },
+    }
+  );
 }

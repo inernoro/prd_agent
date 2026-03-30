@@ -71,6 +71,16 @@ export interface BuildProfile {
    * Takes priority over readinessProbe when set.
    */
   startupSignal?: string;
+  /**
+   * Deploy mode alternatives. Each key is a mode ID (e.g., "dev", "static").
+   * When activeDeployMode matches a key, its overrides replace profile defaults.
+   * Derived from compose extension `x-cds-deploy-modes`.
+   */
+  deployModes?: Record<string, DeployModeOverride>;
+  /**
+   * Currently active deploy mode. null/undefined = use profile defaults (first mode or raw command).
+   */
+  activeDeployMode?: string;
 }
 
 /** Readiness probe configuration for app services */
@@ -81,6 +91,18 @@ export interface ReadinessProbe {
   intervalSeconds?: number;
   /** Max seconds to wait for readiness (default: 300 = 5min) */
   timeoutSeconds?: number;
+}
+
+/** A deploy mode override — alternative command/image/env for a build profile */
+export interface DeployModeOverride {
+  /** Human-readable label shown in dropdown (e.g., "开发模式", "静态部署") */
+  label: string;
+  /** Override command (replaces profile.command when this mode is active) */
+  command?: string;
+  /** Override Docker image (replaces profile.dockerImage when this mode is active) */
+  dockerImage?: string;
+  /** Extra/override environment variables merged on top of profile.env */
+  env?: Record<string, string>;
 }
 
 /** A shared cache mount to avoid duplicating packages across branches */
