@@ -738,6 +738,9 @@ const QUICK_GUIDE_STEPS = [
   'Shift + 框选：多选节点',
   'Delete / Backspace：删除选中内容',
   '按住空格 + 拖拽：平移无限画布',
+];
+
+const ADVANCED_GUIDE_STEPS = [
   '双击角色：编辑名称与区域',
   '双击标识：快速修改状态',
   '连线模式下依次点击两个节点建立关系',
@@ -1287,9 +1290,21 @@ function SandboxDemoInner() {
           >
             快速上手：建议按顺序试一遍
           </div>
+          <div style={{ fontSize: 11, color: 'rgba(159,194,255,0.88)', marginBottom: 6, fontWeight: 700 }}>
+            基础操作
+          </div>
           <div style={{ display: 'grid', gap: 7 }}>
             {QUICK_GUIDE_STEPS.map((step, index) => (
               <GuideHintItem key={step} index={index + 1} text={step} />
+            ))}
+          </div>
+          <div style={{ height: 10 }} />
+          <div style={{ fontSize: 11, color: 'rgba(159,194,255,0.88)', marginBottom: 6, fontWeight: 700 }}>
+            进阶操作
+          </div>
+          <div style={{ display: 'grid', gap: 7 }}>
+            {ADVANCED_GUIDE_STEPS.map((step, index) => (
+              <GuideHintItem key={step} index={index + 4} text={step} />
             ))}
           </div>
         </div>
