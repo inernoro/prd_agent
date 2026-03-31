@@ -3,6 +3,7 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import { PageHeader } from '@/components/design/PageHeader';
+import { SitePreview } from '@/components/SitePreview';
 import { Dialog } from '@/components/ui/Dialog';
 import {
   uploadSite,
@@ -491,53 +492,7 @@ function QrCodeDialog({ site, onClose }: { site: HostedSite; onClose: () => void
   );
 }
 
-function SitePreview({ url, className, style }: { url: string; className?: string; style?: React.CSSProperties }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [loaded, setLoaded] = useState(false);
-  const [containerW, setContainerW] = useState(240);
-  const iframeWidth = 1280;
-  const iframeHeight = 800;
-
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(([entry]) => setContainerW(entry.contentRect.width));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  const scale = containerW / iframeWidth;
-
-  return (
-    <div ref={containerRef} className={className} style={{ position: 'relative', overflow: 'hidden', ...style }}>
-      {!loaded && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1">
-          <FileCode2 size={20} style={{ color: 'var(--accent-primary)', opacity: 0.4 }} />
-        </div>
-      )}
-      <iframe
-        src={url}
-        title="preview"
-        sandbox="allow-scripts allow-same-origin"
-        loading="lazy"
-        onLoad={() => setLoaded(true)}
-        style={{
-          width: iframeWidth,
-          height: iframeHeight,
-          transform: `scale(${scale})`,
-          transformOrigin: 'top left',
-          border: 'none',
-          pointerEvents: 'none',
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          opacity: loaded ? 1 : 0,
-          transition: 'opacity 0.3s',
-        }}
-      />
-    </div>
-  );
-}
+// SitePreview 已提取到 @/components/SitePreview
 
 function SiteCard({ site, selected, onSelect, onEdit, onDelete, onShare, onQrCode }: {
   site: HostedSite;
