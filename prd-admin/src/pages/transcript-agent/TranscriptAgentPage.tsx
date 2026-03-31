@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
-import { GlassCard } from '@/components/design/GlassCard';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/design/Button';
 import { useTranscriptStore } from '@/stores/transcriptStore';
 import { toast } from '@/lib/toast';
@@ -104,7 +103,11 @@ export default function TranscriptAgentPage() {
   const toggleFormat = (fmt: string) => {
     setExportFormats(prev => {
       const next = new Set(prev);
-      next.has(fmt) ? next.delete(fmt) : next.add(fmt);
+      if (next.has(fmt)) {
+        next.delete(fmt);
+      } else {
+        next.add(fmt);
+      }
       return next;
     });
   };

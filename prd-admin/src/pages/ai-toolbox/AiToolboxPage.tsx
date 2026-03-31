@@ -38,6 +38,7 @@ export default function AiToolboxPage() {
     searchQuery,
     items,
     itemsLoading,
+    itemsLoadError,
     selectedItem,
     favoriteIds,
     setPageTab,
@@ -165,6 +166,29 @@ export default function AiToolboxPage() {
 
       {/* Tool Grid */}
       <div className="flex-1 min-h-0 overflow-auto px-4 pb-3">
+        {itemsLoadError && (
+          <GlassCard
+            animated
+            variant="subtle"
+            className="mb-3 p-3 flex items-center justify-between gap-3"
+            style={{
+              border: '1px solid rgba(251, 146, 60, 0.3)',
+              background: 'rgba(251, 146, 60, 0.08)',
+            }}
+          >
+            <div className="min-w-0">
+              <div className="text-xs font-semibold" style={{ color: 'rgba(255, 237, 213, 0.95)' }}>
+                自定义智能体加载失败，当前仅展示内置工具
+              </div>
+              <div className="text-[11px] truncate" style={{ color: 'rgba(255, 237, 213, 0.7)' }}>
+                {itemsLoadError}
+              </div>
+            </div>
+            <Button variant="secondary" size="sm" onClick={loadItems} className="whitespace-nowrap shrink-0">
+              重试加载
+            </Button>
+          </GlassCard>
+        )}
         {itemsLoading ? (
           <div className="flex items-center justify-center h-48">
             <MapSectionLoader text="加载中..." />
