@@ -20,6 +20,7 @@ import {
   Sparkles,
   Workflow,
   Zap,
+  Globe,
   type LucideIcon,
 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -34,7 +35,7 @@ import { ReviewAgentCardArt } from '@/pages/ai-toolbox/components/ReviewAgentCar
 // ── Icon & Color mapping (self-contained, doesn't touch ToolCard) ──
 
 const ICON_MAP: Record<string, LucideIcon> = {
-  FileText, Palette, PenTool, Bug, Video, Swords, FileBarChart, Code2, Languages, FileSearch, BarChart3, Bot, Workflow, Zap,
+  FileText, Palette, PenTool, Bug, Video, Swords, FileBarChart, Code2, Languages, FileSearch, BarChart3, Bot, Workflow, Zap, Globe,
 };
 
 /** Agent 封面图 CDN 路径 */
@@ -79,6 +80,7 @@ const ACCENT: Record<string, { from: string; to: string }> = {
   FileBarChart: { from: '#6366F1', to: '#818CF8' },
   Workflow:  { from: '#14B8A6', to: '#5EEAD4' },
   Zap:       { from: '#F59E0B', to: '#FCD34D' },
+  Globe:     { from: '#0EA5E9', to: '#38BDF8' },
 };
 
 function getAccent(icon: string) {
@@ -353,11 +355,24 @@ export default function AgentLauncherPage() {
     loadItems();
   }, [loadItems]);
 
+  // 静态实用工具入口（不来自后端 toolbox）
+  const staticUtilities: ToolboxItem[] = useMemo(() => [
+    {
+      id: '__web-pages__',
+      name: '网页托管',
+      description: '上传 HTML 或 ZIP，托管并分享你的网页',
+      icon: 'Globe',
+      tags: ['托管', '网页', 'hosting'],
+      routePath: '/web-pages',
+    } as ToolboxItem,
+  ], []);
+
   // Split into featured (customized agents with routePath) and compact (utility agents)
   const { featured, utilities, filtered } = useMemo(() => {
+    const allItems = [...items, ...staticUtilities];
     const query = searchQuery.trim().toLowerCase();
     if (query) {
-      const matched = items.filter(
+      const matched = allItems.filter(
         (item) =>
           item.name.toLowerCase().includes(query) ||
           item.description.toLowerCase().includes(query) ||
@@ -371,8 +386,9 @@ export default function AgentLauncherPage() {
       if (item.routePath) feat.push(item);
       else util.push(item);
     }
+    util.push(...staticUtilities);
     return { featured: feat, utilities: util, filtered: [] };
-  }, [items, searchQuery]);
+  }, [items, staticUtilities, searchQuery]);
 
   const handleClick = (item: ToolboxItem) => {
     if (item.agentKey === 'prd-agent') {

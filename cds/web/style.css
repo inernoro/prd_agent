@@ -1170,13 +1170,22 @@ a.branch-name:hover { color: var(--accent); }
   background: linear-gradient(90deg, rgba(56, 189, 248, 0.04) 0%, var(--bg-card) 40%);
 }
 .branch-card.has-updates.active {
-  background: linear-gradient(90deg, rgba(56, 189, 248, 0.03) 0%, rgba(16, 185, 129, 0.03) 20%, var(--bg-card) 40%);
+  background: linear-gradient(90deg, rgba(56, 189, 248, 0.04) 0%, var(--bg-card) 40%);
 }
 
 /* Card-level recently-touched indicator — bold blue border so you know which card you just operated on */
 .branch-card.recently-touched {
   border: 3px solid var(--blue);
   box-shadow: 0 0 12px rgba(56, 189, 248, 0.35), 0 0 4px rgba(56, 189, 248, 0.2);
+}
+/* has-updates / recently-touched must override ai-occupied rainbow border */
+.branch-card.has-updates.is-ai-occupied,
+.branch-card.recently-touched.is-ai-occupied {
+  background-image: none;
+  background-clip: padding-box;
+  background-origin: padding-box;
+  background-size: auto;
+  animation: none;
 }
 
 /* Duplicate-add: gold flash 3 times then settle to blue */

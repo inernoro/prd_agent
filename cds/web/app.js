@@ -277,6 +277,11 @@ async function loadConfig() {
     cdsMode = data.mode || 'standalone';
     executors = data.executors || [];
     renderExecutorPanel();
+    // Show CDS commit hash in header
+    if (data.cdsCommitHash) {
+      const el = document.getElementById('cdsCommitHash');
+      if (el) el.textContent = data.cdsCommitHash;
+    }
   } catch (e) { console.error('loadConfig:', e); }
 }
 
@@ -1120,25 +1125,20 @@ async function previewBranch(id) {
     return;
   }
 
-  // ── Mode: port (direct port access — no proxy, no cache issues) ──
+  // ── Mode: port (dynamic preview port with path-prefix routing) ──
   if (previewMode === 'port') {
     const branch = branches.find(b => b.id === slug);
     if (!branch || branch.status !== 'running') {
-      showToast('分支未运行，无法通过端口预览', 'error');
+      showToast('分支未运行，无法预览', 'error');
       return;
     }
-    const services = Object.entries(branch.services || {});
-    // Find the web/frontend service (first non-API service, or first service)
-    const webService = services.find(([pid]) => !pid.includes('api') && !pid.includes('backend'))
-      || services.find(([pid]) => pid.includes('web') || pid.includes('frontend') || pid.includes('admin'))
-      || services[0];
-    if (!webService) {
-      showToast('未找到可预览的服务端口', 'error');
-      return;
+    try {
+      const result = await api('POST', `/branches/${slug}/preview-port`);
+      const url = `${location.protocol}//${location.hostname}:${result.port}`;
+      window.open(url, '_blank');
+    } catch (e) {
+      showToast('创建预览端口失败: ' + e.message, 'error');
     }
-    const [, svc] = webService;
-    const url = `${location.protocol}//${location.hostname}:${svc.hostPort}`;
-    window.open(url, '_blank');
     return;
   }
 
@@ -2836,7 +2836,7 @@ async function openSelfUpdate() {
     return;
   }
 
-  const { current, branches } = data;
+  const { current, commitHash, branches } = data;
   const branchItems = branches.map(b =>
     `<div class="combobox-item${b === current ? ' active' : ''}" data-value="${esc(b)}" onclick="selectComboItem(this)">
       ${b === current ? '<span style="color:var(--green);margin-right:4px">✓</span>' : ''}${esc(b)}${b === current ? ' <span style="color:var(--fg-muted);font-size:11px">(当前)</span>' : ''}
@@ -2864,7 +2864,7 @@ async function openSelfUpdate() {
       </div>
     </div>
     <div class="form-row" style="margin-top:4px;font-size:12px;color:var(--fg-muted)">
-      当前分支：<code>${esc(current)}</code>
+      当前分支：<code>${esc(current)}</code>${commitHash ? ` @ <code style="color:var(--blue)">${esc(commitHash)}</code>` : ''}
     </div>
     <div id="selfUpdateProgress" style="display:none;margin-top:12px">
       <div id="selfUpdateSteps" style="display:flex;flex-direction:column;gap:6px"></div>
