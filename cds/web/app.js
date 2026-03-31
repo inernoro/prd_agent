@@ -277,6 +277,11 @@ async function loadConfig() {
     cdsMode = data.mode || 'standalone';
     executors = data.executors || [];
     renderExecutorPanel();
+    // Show CDS commit hash in header
+    if (data.cdsCommitHash) {
+      const el = document.getElementById('cdsCommitHash');
+      if (el) el.textContent = data.cdsCommitHash;
+    }
   } catch (e) { console.error('loadConfig:', e); }
 }
 

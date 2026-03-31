@@ -1549,9 +1549,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
       } catch { /* ignore */ }
     }
 
+    // CDS git commit short hash for version identification
+    let cdsCommitHash = '';
+    try {
+      const result = await shell.exec('git rev-parse --short HEAD', { cwd: config.repoRoot, timeout: 3000 });
+      cdsCommitHash = result.stdout.trim();
+    } catch { /* ignore */ }
+
     res.json({
       ...config,
       githubRepoUrl,
+      cdsCommitHash,
       jwt: { ...config.jwt, secret: '***' },
       executorToken: config.executorToken ? '***' : undefined,
       sharedEnv: Object.fromEntries(
