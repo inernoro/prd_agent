@@ -2,7 +2,6 @@ import { useEffect, useState, useCallback } from 'react';
 import { FileAudio, Plus, Trash2, Loader2, CheckCircle2, AlertCircle, ChevronDown, ChevronRight, X } from 'lucide-react';
 import { useTranscriptStore } from '@/stores/transcriptStore';
 import { toast } from '@/lib/toast';
-import { cn } from '@/lib/cn';
 import { UploadDropzone } from './UploadDropzone';
 import type { TranscriptItem } from '@/services/contracts/transcriptAgent';
 
@@ -146,12 +145,8 @@ export function TranscriptSidebar({ selectedItemId, onSelectItem }: TranscriptSi
                     selectWorkspace(ws.id);
                     onSelectItem(null);
                   }}
-                  className={cn(
-                    'w-full flex items-center gap-2 px-2 py-2 rounded-lg text-left text-xs group',
-                    currentWorkspace?.id === ws.id
-                      ? 'surface-row bg-primary/10 border-l-2 border-primary text-foreground'
-                      : 'surface-row text-foreground/80',
-                  )}
+                  className="surface-row w-full flex items-center gap-2 px-3 py-2.5 text-left text-xs group cursor-pointer"
+                  style={currentWorkspace?.id === ws.id ? { background: 'var(--bg-input-hover)' } : undefined}
                 >
                   <FileAudio className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
                   <span className="flex-1 min-w-0 truncate">{ws.title}</span>
@@ -186,12 +181,8 @@ export function TranscriptSidebar({ selectedItemId, onSelectItem }: TranscriptSi
                   <button
                     key={item.id}
                     onClick={() => onSelectItem(item)}
-                    className={cn(
-                      'w-full flex items-center gap-2 px-2 py-2 rounded-lg text-left text-xs group',
-                      selectedItemId === item.id
-                        ? 'surface-row bg-primary/10 border-l-2 border-primary'
-                        : 'surface-row',
-                    )}
+                    className="surface-row w-full flex items-center gap-2 px-3 py-2.5 text-left text-xs group cursor-pointer"
+                    style={selectedItemId === item.id ? { background: 'var(--bg-input-hover)' } : undefined}
                   >
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
