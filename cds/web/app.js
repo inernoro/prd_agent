@@ -1120,24 +1120,20 @@ async function previewBranch(id) {
     return;
   }
 
-  // ── Mode: port (direct port access — no proxy, no cache issues) ──
+  // ── Mode: port (via worker port proxy — same path-prefix routing as subdomain mode) ──
   if (previewMode === 'port') {
     const branch = branches.find(b => b.id === slug);
     if (!branch || branch.status !== 'running') {
-      showToast('分支未运行，无法通过端口预览', 'error');
+      showToast('分支未运行，无法预览', 'error');
       return;
     }
-    const services = Object.entries(branch.services || {});
-    // Find the web/frontend service (first non-API service, or first service)
-    const webService = services.find(([pid]) => !pid.includes('api') && !pid.includes('backend'))
-      || services.find(([pid]) => pid.includes('web') || pid.includes('frontend') || pid.includes('admin'))
-      || services[0];
-    if (!webService) {
-      showToast('未找到可预览的服务端口', 'error');
+    if (!workerPort) {
+      showToast('workerPort 未配置，无法预览', 'error');
       return;
     }
-    const [, svc] = webService;
-    const url = `${location.protocol}//${location.hostname}:${svc.hostPort}`;
+    // Use /_switch/:slug to set cds_branch cookie and redirect to /
+    // The worker proxy then routes /api/* and /* via path-prefix labels
+    const url = `${location.protocol}//${location.hostname}:${workerPort}/_switch/${encodeURIComponent(slug)}`;
     window.open(url, '_blank');
     return;
   }
