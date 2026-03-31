@@ -184,29 +184,6 @@ function getNodeColor(data: NodeData) {
     : getMarkColor(data.family as MarkFamily);
 }
 
-function getRoleTexture(family: RoleFamily) {
-  switch (family) {
-    case 'hq':
-      return '/images/role-hq.jpg';
-    case 'dealer':
-      return '/images/role-dealer.jpg';
-    case 'store':
-      return '/images/role-store.jpg';
-    case 'sales':
-      return '/images/role-sales.webp';
-    case 'guide':
-      return '/images/role-guide.jpg';
-    case 'consumer':
-      return '/images/role-hq.jpg';
-    default:
-      return '/images/role-hq.jpg';
-  }
-}
-
-function getMarkTexture(family: MarkFamily) {
-  return family === 'logistics' ? '/images/mark-logistics.jpg' : '/images/mark-qr.jpg';
-}
-
 function getEdgeStates(relation: LinkRelation): LinkState[] {
   return relation === 'role-role' ? ROLE_LINK_STATES : CROSS_LINK_STATES;
 }
@@ -294,8 +271,6 @@ function getShiftedPoints(
 function SandboxNodeRenderer({ data, selected }: NodeProps<SandboxNode>) {
   const color = getNodeColor(data);
   const isRole = data.kind === 'role';
-  const roleTexture = getRoleTexture(data.family as RoleFamily);
-  const markTexture = getMarkTexture(data.family as MarkFamily);
   const roleIconMap: Record<RoleFamily, string> = {
     hq: 'H',
     dealer: 'D',
@@ -371,10 +346,7 @@ function SandboxNodeRenderer({ data, selected }: NodeProps<SandboxNode>) {
               borderRadius: 12,
               padding: 8,
               border: `1px solid ${color}`,
-              backgroundImage: `linear-gradient(180deg, rgba(5,10,18,0.22), rgba(5,10,18,0.18)), url("${roleTexture}")`,
-              backgroundSize: 'cover',
-              backgroundPosition: 'center',
-              backgroundBlendMode: 'normal',
+              background: `linear-gradient(180deg, ${color}2f, ${color}1a)`,
               color: '#f3f8ff',
               boxShadow: selected ? `0 0 0 3px ${color}4d` : '0 8px 16px rgba(8,16,34,0.38)',
             }}
@@ -386,7 +358,7 @@ function SandboxNodeRenderer({ data, selected }: NodeProps<SandboxNode>) {
                   height: 24,
                   borderRadius: 7,
                   border: `1px solid ${color}`,
-                  background: 'rgba(7, 11, 20, 0.62)',
+                  background: 'rgba(7, 11, 20, 0.92)',
                   color: '#e7f0ff',
                   fontSize: 11,
                   fontWeight: 700,
@@ -399,7 +371,7 @@ function SandboxNodeRenderer({ data, selected }: NodeProps<SandboxNode>) {
               </div>
               <div style={{ textAlign: 'left' }}>
                 <div style={{ fontWeight: 700, fontSize: 13, lineHeight: '16px' }}>{data.title}</div>
-                <div style={{ fontSize: 10, color: 'rgba(240,246,255,0.9)', lineHeight: '13px' }}>{data.subtype}</div>
+                <div style={{ fontSize: 10, color: 'rgba(225,236,255,0.75)', lineHeight: '13px' }}>{data.subtype}</div>
               </div>
             </div>
           </div>
@@ -412,10 +384,7 @@ function SandboxNodeRenderer({ data, selected }: NodeProps<SandboxNode>) {
               height: 96,
               borderRadius: 14,
               border: `2px solid ${color}`,
-              backgroundImage: `linear-gradient(180deg, rgba(255,255,255,0.16), rgba(255,255,255,0.1)), url("${markTexture}")`,
-              backgroundSize: 'cover',
-              backgroundPosition: 'center',
-              backgroundBlendMode: 'normal',
+              background: 'linear-gradient(180deg, #fcfeff, #f4f8ff)',
               padding: 8,
               boxShadow: selected ? `0 0 0 3px ${color}4d` : '0 8px 16px rgba(8,16,34,0.35)',
               position: 'relative',
@@ -481,7 +450,7 @@ function SandboxNodeRenderer({ data, selected }: NodeProps<SandboxNode>) {
             >
               {Array.from({ length: 25 }).map((_, idx) => {
                 const dark = ((idx * 7 + data.subtype.length) % 3) !== 1;
-                return <div key={idx} style={{ background: dark ? `${color}d0` : 'rgba(255,255,255,0.9)', borderRadius: 1 }} />;
+                return <div key={idx} style={{ background: dark ? color : '#fff', borderRadius: 1 }} />;
               })}
             </div>
           </div>
