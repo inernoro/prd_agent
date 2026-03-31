@@ -184,6 +184,25 @@ function getNodeColor(data: NodeData) {
     : getMarkColor(data.family as MarkFamily);
 }
 
+function getRoleFamilyHint(family: RoleFamily) {
+  switch (family) {
+    case 'hq':
+      return '总部管理';
+    case 'dealer':
+      return '经销渠道';
+    case 'store':
+      return '终端门店';
+    case 'sales':
+      return '业务团队';
+    case 'guide':
+      return '导购人员';
+    case 'consumer':
+      return '消费者';
+    default:
+      return '角色';
+  }
+}
+
 function getEdgeStates(relation: LinkRelation): LinkState[] {
   return relation === 'role-role' ? ROLE_LINK_STATES : CROSS_LINK_STATES;
 }
@@ -271,6 +290,7 @@ function getShiftedPoints(
 function SandboxNodeRenderer({ data, selected }: NodeProps<SandboxNode>) {
   const color = getNodeColor(data);
   const isRole = data.kind === 'role';
+  const roleFamilyHint = getRoleFamilyHint(data.family as RoleFamily);
   const roleIconMap: Record<RoleFamily, string> = {
     hq: 'H',
     dealer: 'D',
@@ -332,36 +352,32 @@ function SandboxNodeRenderer({ data, selected }: NodeProps<SandboxNode>) {
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
           <div
             style={{
-              width: 24,
-              height: 24,
-              borderRadius: 999,
-              border: `2px solid ${color}`,
-              background: 'rgba(7, 11, 20, 0.96)',
-              boxShadow: selected ? `0 0 0 3px ${color}55` : '0 6px 12px rgba(4,10,22,0.35)',
-            }}
-          />
-          <div
-            style={{
-              minWidth: 138,
+              minWidth: 152,
               borderRadius: 12,
-              padding: 8,
               border: `1px solid ${color}`,
-              background: `linear-gradient(180deg, ${color}2f, ${color}1a)`,
+              background: 'rgba(10, 20, 41, 0.94)',
               color: '#f3f8ff',
+              overflow: 'hidden',
               boxShadow: selected ? `0 0 0 3px ${color}4d` : '0 8px 16px rgba(8,16,34,0.38)',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div
+              style={{
+                height: 5,
+                background: `linear-gradient(90deg, ${color}, ${color}99)`,
+              }}
+            />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 9px' }}>
               <div
                 style={{
-                  width: 24,
-                  height: 24,
-                  borderRadius: 7,
+                  width: 26,
+                  height: 26,
+                  borderRadius: 8,
                   border: `1px solid ${color}`,
-                  background: 'rgba(7, 11, 20, 0.92)',
-                  color: '#e7f0ff',
+                  background: `${color}2b`,
+                  color: '#eef5ff',
                   fontSize: 11,
-                  fontWeight: 700,
+                  fontWeight: 800,
                   display: 'grid',
                   placeItems: 'center',
                   flexShrink: 0,
@@ -369,9 +385,23 @@ function SandboxNodeRenderer({ data, selected }: NodeProps<SandboxNode>) {
               >
                 {roleIcon}
               </div>
-              <div style={{ textAlign: 'left' }}>
-                <div style={{ fontWeight: 700, fontSize: 13, lineHeight: '16px' }}>{data.title}</div>
-                <div style={{ fontSize: 10, color: 'rgba(225,236,255,0.75)', lineHeight: '13px' }}>{data.subtype}</div>
+              <div style={{ textAlign: 'left', minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 13, lineHeight: '16px', color: '#f3f8ff' }}>{data.title}</div>
+                <div style={{ fontSize: 10, color: 'rgba(225,236,255,0.76)', lineHeight: '13px' }}>{roleFamilyHint}</div>
+              </div>
+              <div
+                style={{
+                  marginLeft: 'auto',
+                  fontSize: 9,
+                  color: '#dfeeff',
+                  borderRadius: 999,
+                  border: `1px solid ${color}99`,
+                  background: `${color}26`,
+                  padding: '1px 6px',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                角色
               </div>
             </div>
           </div>
@@ -380,78 +410,84 @@ function SandboxNodeRenderer({ data, selected }: NodeProps<SandboxNode>) {
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7 }}>
           <div
             style={{
-              width: 96,
-              height: 96,
-              borderRadius: 14,
+              width: 100,
+              height: 100,
+              borderRadius: 12,
               border: `2px solid ${color}`,
-              background: 'linear-gradient(180deg, #fcfeff, #f4f8ff)',
-              padding: 8,
+              background: '#f9fcff',
+              padding: 7,
               boxShadow: selected ? `0 0 0 3px ${color}4d` : '0 8px 16px rgba(8,16,34,0.35)',
               position: 'relative',
             }}
           >
             <div
               style={{
-                position: 'absolute',
-                left: 7,
-                top: 7,
-                width: 14,
-                height: 14,
-                borderTop: `2px solid ${color}`,
-                borderLeft: `2px solid ${color}`,
-                borderRadius: 4,
-              }}
-            />
-            <div
-              style={{
-                position: 'absolute',
-                right: 7,
-                top: 7,
-                width: 14,
-                height: 14,
-                borderTop: `2px solid ${color}`,
-                borderRight: `2px solid ${color}`,
-                borderRadius: 4,
-              }}
-            />
-            <div
-              style={{
-                position: 'absolute',
-                left: 7,
-                bottom: 7,
-                width: 14,
-                height: 14,
-                borderBottom: `2px solid ${color}`,
-                borderLeft: `2px solid ${color}`,
-                borderRadius: 4,
-              }}
-            />
-            <div
-              style={{
-                position: 'absolute',
-                right: 7,
-                bottom: 7,
-                width: 14,
-                height: 14,
-                borderBottom: `2px solid ${color}`,
-                borderRight: `2px solid ${color}`,
-                borderRadius: 4,
-              }}
-            />
-            <div
-              style={{
                 width: '100%',
                 height: '100%',
-                display: 'grid',
-                gridTemplateColumns: 'repeat(5, 1fr)',
-                gridTemplateRows: 'repeat(5, 1fr)',
-                gap: 2,
+                borderRadius: 8,
+                background: '#fff',
+                border: `1px solid ${color}55`,
+                position: 'relative',
+                overflow: 'hidden',
               }}
             >
-              {Array.from({ length: 25 }).map((_, idx) => {
-                const dark = ((idx * 7 + data.subtype.length) % 3) !== 1;
-                return <div key={idx} style={{ background: dark ? color : '#fff', borderRadius: 1 }} />;
-              })}
+              {[
+                { left: 5, top: 5 },
+                { right: 5, top: 5 },
+                { left: 5, bottom: 5 },
+              ].map((pos, idx) => (
+                <div
+                  key={`finder-${idx}`}
+                  style={{
+                    position: 'absolute',
+                    width: 22,
+                    height: 22,
+                    borderRadius: 4,
+                    border: `3px solid ${color}`,
+                    background: '#fff',
+                    ...pos,
+                  }}
+                >
+                  <div
+                    style={{
+                      position: 'absolute',
+                      left: '50%',
+                      top: '50%',
+                      width: 8,
+                      height: 8,
+                      transform: 'translate(-50%, -50%)',
+                      borderRadius: 2,
+                      background: color,
+                    }}
+                  />
+                </div>
+              ))}
+              <div
+                style={{
+                  position: 'absolute',
+                  left: 33,
+                  right: 5,
+                  top: 33,
+                  bottom: 5,
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(6, 1fr)',
+                  gridTemplateRows: 'repeat(6, 1fr)',
+                  gap: 2,
+                }}
+              >
+                {Array.from({ length: 36 }).map((_, idx) => {
+                  const dark = ((idx * 11 + data.subtype.length) % 4) !== 1;
+                  return (
+                    <div
+                      key={idx}
+                      style={{
+                        background: dark ? `${color}cc` : 'rgba(255,255,255,0.95)',
+                        borderRadius: 1,
+                      }}
+                    />
+                  );
+                })}
+              </div>
             </div>
           </div>
           <div style={{ fontSize: 12, fontWeight: 700, color: '#f4f8ff' }}>{data.title}</div>
