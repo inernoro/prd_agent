@@ -1,3 +1,4 @@
+import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -32,6 +33,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
   } = deps;
 
   const router = Router();
+
+  // ── Preview port servers (port mode: per-branch proxy with path-prefix routing) ──
+  const previewServers = new Map<string, http.Server>();
+
+  function cleanupPreviewServer(branchId: string) {
+    const server = previewServers.get(branchId);
+    if (server) {
+      server.close();
+      previewServers.delete(branchId);
+      const entry = stateService.getBranch(branchId);
+      if (entry) {
+        delete entry.previewPort;
+        stateService.save();
+      }
+      console.log(`[preview] Closed preview proxy for "${branchId}"`);
+    }
+  }
 
   // ── Helper: merged env (CDS_* auto vars + customEnv, later wins) ──
   function getMergedEnv(): Record<string, string> {
@@ -701,6 +719,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         svc.status = 'stopped';
       }
       entry.status = 'idle';
+      cleanupPreviewServer(id);
       stateService.save();
       res.json({ message: '所有服务已停止' });
     } catch (err) {
@@ -720,6 +739,163 @@ export function createBranchRouter(deps: RouterDeps): Router {
     stateService.setDefaultBranch(id);
     stateService.save();
     res.json({ message: `Default branch set to "${id}"` });
+  });
+
+  // ── Preview port (port mode: per-branch proxy with path-prefix routing) ──
+
+  router.post('/branches/:id/preview-port', async (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    if (entry.status !== 'running') {
+      res.status(400).json({ error: '分支未运行' });
+      return;
+    }
+
+    // Reuse existing preview port if still alive
+    if (entry.previewPort && previewServers.has(id)) {
+      res.json({ port: entry.previewPort });
+      return;
+    }
+
+    // Allocate a new port
+    const port = stateService.allocatePort(config.portStart);
+    const profiles = stateService.getBuildProfiles();
+
+    // Create a lightweight HTTP proxy that routes by path-prefix
+    const server = http.createServer((proxyReq, proxyRes) => {
+      const url = proxyReq.url || '/';
+
+      // Detect which profile handles this path (reuse same logic as main proxy)
+      const profileIds = Object.keys(entry.services);
+      let targetProfileId: string | undefined;
+
+      // Phase 1: explicit pathPrefixes
+      const profilesWithRoutes = profiles
+        .filter(p => p.pathPrefixes && p.pathPrefixes.length > 0 && profileIds.includes(p.id))
+        .sort((a, b) => {
+          const maxA = Math.max(...(a.pathPrefixes || []).map(s => s.length));
+          const maxB = Math.max(...(b.pathPrefixes || []).map(s => s.length));
+          return maxB - maxA;
+        });
+      for (const profile of profilesWithRoutes) {
+        if (profile.pathPrefixes!.some(prefix => url.startsWith(prefix))) {
+          targetProfileId = profile.id;
+          break;
+        }
+      }
+      // Phase 2: convention fallback
+      if (!targetProfileId) {
+        if (url.startsWith('/api/')) {
+          targetProfileId = profileIds.find(pid => pid.includes('api') || pid.includes('backend'));
+        }
+        if (!targetProfileId) {
+          targetProfileId = profileIds.find(pid => pid.includes('web') || pid.includes('frontend') || pid.includes('admin'))
+            || profileIds[0];
+        }
+      }
+
+      const svc = targetProfileId ? entry.services[targetProfileId] : undefined;
+      if (!svc || svc.status !== 'running') {
+        proxyRes.writeHead(502, { 'Content-Type': 'application/json' });
+        proxyRes.end(JSON.stringify({ error: `Service "${targetProfileId}" not running` }));
+        return;
+      }
+
+      const upstream = `http://127.0.0.1:${svc.hostPort}`;
+      const upstreamUrl = new URL(upstream);
+      const opts: http.RequestOptions = {
+        hostname: upstreamUrl.hostname,
+        port: upstreamUrl.port,
+        path: proxyReq.url,
+        method: proxyReq.method,
+        headers: { ...proxyReq.headers, host: `${upstreamUrl.hostname}:${upstreamUrl.port}` },
+      };
+
+      const upReq = http.request(opts, (upRes) => {
+        proxyRes.writeHead(upRes.statusCode || 200, upRes.headers);
+        upRes.pipe(proxyRes, { end: true });
+      });
+      upReq.on('error', () => {
+        if (!proxyRes.headersSent) {
+          proxyRes.writeHead(502, { 'Content-Type': 'application/json' });
+          proxyRes.end(JSON.stringify({ error: 'Upstream connection failed' }));
+        }
+      });
+      proxyReq.pipe(upReq, { end: true });
+    });
+
+    // WebSocket upgrade support (for Vite HMR)
+    server.on('upgrade', (proxyReq, socket, head) => {
+      const url = proxyReq.url || '/';
+      const profileIds = Object.keys(entry.services);
+      let targetProfileId: string | undefined;
+
+      // Same path-prefix detection as above
+      const profilesWithRoutes2 = profiles
+        .filter(p => p.pathPrefixes && p.pathPrefixes.length > 0 && profileIds.includes(p.id))
+        .sort((a, b) => {
+          const maxA = Math.max(...(a.pathPrefixes || []).map(s => s.length));
+          const maxB = Math.max(...(b.pathPrefixes || []).map(s => s.length));
+          return maxB - maxA;
+        });
+      for (const profile of profilesWithRoutes2) {
+        if (profile.pathPrefixes!.some(prefix => url.startsWith(prefix))) {
+          targetProfileId = profile.id;
+          break;
+        }
+      }
+      if (!targetProfileId) {
+        targetProfileId = profileIds.find(pid => pid.includes('web') || pid.includes('frontend') || pid.includes('admin'))
+          || profileIds[0];
+      }
+
+      const svc = targetProfileId ? entry.services[targetProfileId] : undefined;
+      if (!svc || svc.status !== 'running') { socket.destroy(); return; }
+
+      const upstream = `http://127.0.0.1:${svc.hostPort}`;
+      const upstreamUrl = new URL(upstream);
+      const opts: http.RequestOptions = {
+        hostname: upstreamUrl.hostname,
+        port: upstreamUrl.port,
+        path: proxyReq.url,
+        method: 'GET',
+        headers: { ...proxyReq.headers, host: `${upstreamUrl.hostname}:${upstreamUrl.port}` },
+      };
+
+      const upReq = http.request(opts);
+      upReq.on('upgrade', (upRes, upSocket, upHead) => {
+        let raw = `HTTP/${upRes.httpVersion} ${upRes.statusCode} ${upRes.statusMessage}\r\n`;
+        for (let i = 0; i < upRes.rawHeaders.length; i += 2) {
+          raw += `${upRes.rawHeaders[i]}: ${upRes.rawHeaders[i + 1]}\r\n`;
+        }
+        raw += '\r\n';
+        socket.write(raw);
+        if (upHead.length > 0) socket.write(upHead);
+        if (head.length > 0) upSocket.write(head);
+        upSocket.pipe(socket);
+        socket.pipe(upSocket);
+      });
+      upReq.on('error', () => socket.destroy());
+      socket.on('error', () => upReq.destroy());
+      upReq.end();
+    });
+
+    server.listen(port, '0.0.0.0', () => {
+      entry.previewPort = port;
+      previewServers.set(id, server);
+      stateService.save();
+      console.log(`[preview] Branch "${id}" preview proxy on port ${port}`);
+      res.json({ port });
+    });
+
+    server.on('error', (err) => {
+      console.error(`[preview] Failed to start preview proxy for "${id}":`, err);
+      res.status(500).json({ error: `Preview port allocation failed: ${(err as Error).message}` });
+    });
   });
 
   // ── Update branch metadata (favorite, notes) ──

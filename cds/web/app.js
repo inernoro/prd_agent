@@ -1120,21 +1120,20 @@ async function previewBranch(id) {
     return;
   }
 
-  // ── Mode: port (via worker port proxy — same path-prefix routing as subdomain mode) ──
+  // ── Mode: port (dynamic preview port with path-prefix routing) ──
   if (previewMode === 'port') {
     const branch = branches.find(b => b.id === slug);
     if (!branch || branch.status !== 'running') {
       showToast('分支未运行，无法预览', 'error');
       return;
     }
-    if (!workerPort) {
-      showToast('workerPort 未配置，无法预览', 'error');
-      return;
+    try {
+      const result = await api('POST', `/branches/${slug}/preview-port`);
+      const url = `${location.protocol}//${location.hostname}:${result.port}`;
+      window.open(url, '_blank');
+    } catch (e) {
+      showToast('创建预览端口失败: ' + e.message, 'error');
     }
-    // Use /_switch/:slug to set cds_branch cookie and redirect to /
-    // The worker proxy then routes /api/* and /* via path-prefix labels
-    const url = `${location.protocol}//${location.hostname}:${workerPort}/_switch/${encodeURIComponent(slug)}`;
-    window.open(url, '_blank');
     return;
   }
 

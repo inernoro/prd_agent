@@ -138,6 +138,8 @@ export interface BranchEntry {
   pinnedCommit?: string;
   /** ID of the executor this branch is deployed on (scheduler mode) */
   executorId?: string;
+  /** Dynamically allocated preview port (path-prefix routing proxy for port mode) */
+  previewPort?: number;
 }
 
 /** State of a single service (one build profile instance) within a branch */
