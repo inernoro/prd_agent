@@ -1883,6 +1883,10 @@ function toggleSettingsMenu(event) {
       基础设施
       ${infraServices.some(s => s.status === 'running') ? '<span style="color:#3fb950;font-size:11px;margin-left:auto">● ' + infraServices.filter(s => s.status === 'running').length + ' 运行中</span>' : ''}
     </div>
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); openMigrationModal()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5.22 14.78a.75.75 0 001.06-1.06L4.56 12h8.69a.75.75 0 000-1.5H4.56l1.72-1.72a.75.75 0 00-1.06-1.06l-3 3a.75.75 0 000 1.06l3 3zm5.56-6.5a.75.75 0 11-1.06-1.06L11.44 5.5H2.75a.75.75 0 010-1.5h8.69L9.72 2.28a.75.75 0 011.06-1.06l3 3a.75.75 0 010 1.06l-3 3z"/></svg>
+      数据迁移
+    </div>
     <div class="settings-menu-item" onclick="closeSettingsMenu(); openStartupSignalModal()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8.834.066C7.494-.087 6.5 1.048 6.5 2.25v.5c0 1.329-.647 2.124-1.318 2.614-.328.24-.66.403-.918.508A1.75 1.75 0 003 7.25v3.5c0 .785.52 1.449 1.235 1.666.186.06.404.145.639.263.461.232.838.49 1.126.756V14.5a.75.75 0 001.5 0v-.329c.247-.075.502-.186.759-.334.364-.21.726-.503 1.051-.886.35-.413.645-.94.822-1.598.114-.424.26-.722.458-.963.2-.245.466-.437.838-.597A1.75 1.75 0 0012 8.25V4.25A1.75 1.75 0 0010.264 2.5h-.129c-.382 0-.733-.074-1.008-.18A2.43 2.43 0 018.834.066z"/></svg>
       启动成功标志
@@ -4414,6 +4418,379 @@ function escapeHtml(s) {
   const d = document.createElement('div');
   d.textContent = s;
   return d.innerHTML;
+}
+
+// ── Data Migration ──
+
+let migrationTasks = [];
+let migrationToolInstalled = null; // null = unknown, true/false
+
+async function loadMigrations() {
+  try { migrationTasks = await api('GET', '/data-migrations'); } catch { migrationTasks = []; }
+}
+
+function migrationStatusDot(status) {
+  const map = { pending: '⚪', running: '🔵', completed: '🟢', failed: '🔴' };
+  return map[status] || '⚪';
+}
+
+function migrationStatusLabel(status) {
+  const map = { pending: '待执行', running: '运行中', completed: '已完成', failed: '失败' };
+  return map[status] || status;
+}
+
+async function openMigrationModal() {
+  await loadMigrations();
+  const listHtml = migrationTasks.length === 0
+    ? '<div class="config-empty">暂无迁移任务。点击"新建迁移"开始配置。</div>'
+    : migrationTasks.slice().reverse().map(m => `
+      <div class="config-item" style="flex-direction:column;align-items:stretch;gap:6px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span>${migrationStatusDot(m.status)}</span>
+          <strong style="flex:1">${esc(m.name)}</strong>
+          <code style="font-size:11px;opacity:0.6">${m.dbType}</code>
+          <span style="font-size:11px;color:var(--fg-muted)">${relativeTime(m.createdAt)}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:4px;font-size:12px">
+          <span style="color:var(--fg-muted)">${migrationStatusLabel(m.status)}</span>
+          ${m.status === 'running' ? `<span style="margin-left:8px;color:var(--blue)">${m.progress || 0}%</span>` : ''}
+          ${m.errorMessage ? `<span style="color:var(--red);margin-left:8px" title="${esc(m.errorMessage)}">⚠ ${esc(m.errorMessage).substring(0, 50)}</span>` : ''}
+          <span style="margin-left:auto;display:flex;gap:4px">
+            ${m.status === 'pending' || m.status === 'failed' ? `<button class="icon-btn xs" onclick="executeMigration('${m.id}')" title="执行迁移">▶</button>` : ''}
+            ${m.log ? `<button class="icon-btn xs" onclick="showMigrationLog('${m.id}')" title="查看日志">📋</button>` : ''}
+            ${m.status !== 'running' ? `<button class="icon-btn xs danger-icon" onclick="deleteMigration('${m.id}')" title="删除">&times;</button>` : ''}
+          </span>
+        </div>
+        ${m.status === 'running' ? `
+        <div style="background:var(--bg-tertiary);border-radius:4px;height:6px;overflow:hidden;margin-top:2px">
+          <div style="background:var(--blue);height:100%;width:${m.progress || 0}%;transition:width 0.5s ease"></div>
+        </div>
+        <div style="font-size:11px;color:var(--fg-muted)">${esc(m.progressMessage || '准备中...')}</div>
+        ` : ''}
+      </div>
+    `).join('');
+
+  const html = `
+    <p class="config-panel-desc">
+      数据库迁移工具。支持在不同 MongoDB 实例之间迁移数据，可配置 SSH 隧道。
+    </p>
+    <div class="config-panel-actions" style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap">
+      <button class="sm primary" onclick="openNewMigrationModal()">+ 新建迁移</button>
+      <button class="sm" onclick="checkMigrationTools()">🔧 检查工具</button>
+    </div>
+    <div id="migrationToolStatus" style="font-size:12px;margin-bottom:8px;display:none"></div>
+    <div id="migrationListInModal">${listHtml}</div>
+  `;
+  openConfigModal('数据迁移', html);
+}
+
+async function checkMigrationTools() {
+  const statusEl = document.getElementById('migrationToolStatus');
+  if (!statusEl) return;
+  statusEl.style.display = 'block';
+  statusEl.innerHTML = '<span class="btn-spinner"></span> 正在检查迁移工具...';
+  try {
+    const data = await api('POST', '/data-migrations/check-tools');
+    if (data.installed) {
+      statusEl.innerHTML = `<span style="color:var(--green)">✓ 已安装: ${esc(data.version)}</span>`;
+      migrationToolInstalled = true;
+    } else {
+      statusEl.innerHTML = `<span style="color:var(--yellow)">⚠ 未安装</span> <button class="sm" onclick="installMigrationTools()" style="margin-left:8px">一键安装</button>`;
+      migrationToolInstalled = false;
+    }
+  } catch (e) {
+    statusEl.innerHTML = `<span style="color:var(--red)">✗ 检查失败: ${esc(e.message)}</span>`;
+  }
+}
+
+async function installMigrationTools() {
+  const statusEl = document.getElementById('migrationToolStatus');
+  if (!statusEl) return;
+  statusEl.innerHTML = '<span class="btn-spinner"></span> 正在安装...';
+
+  try {
+    const res = await fetch(`${API}/data-migrations/install-tools`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.substring(6));
+            if (data.message) statusEl.innerHTML = `<span class="btn-spinner"></span> ${esc(data.message)}`;
+            if (data.installed) {
+              statusEl.innerHTML = `<span style="color:var(--green)">✓ 已安装: ${esc(data.version)}</span>`;
+              migrationToolInstalled = true;
+            }
+          } catch {}
+        }
+        if (line.startsWith('event: error')) {
+          // Next data line has the error
+        }
+      }
+    }
+  } catch (e) {
+    statusEl.innerHTML = `<span style="color:var(--red)">✗ 安装失败: ${esc(e.message)}</span>`;
+  }
+}
+
+function buildConnectionForm(prefix, defaultType) {
+  const mongoSvc = infraServices.find(s => s.id === 'mongodb');
+  const hasLocalMongo = !!mongoSvc;
+  return `
+    <div class="migration-conn-panel">
+      <div class="form-row" style="margin-bottom:8px">
+        <label style="font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px">
+          连接类型:
+          <select id="${prefix}Type" class="form-input sm" onchange="toggleConnType('${prefix}')" style="flex:1">
+            ${hasLocalMongo ? `<option value="local" ${defaultType === 'local' ? 'selected' : ''}>本机 MongoDB${mongoSvc?.status === 'running' ? ' (运行中)' : ''}</option>` : ''}
+            <option value="remote" ${defaultType === 'remote' || !hasLocalMongo ? 'selected' : ''}>远程 MongoDB</option>
+          </select>
+        </label>
+      </div>
+      <div id="${prefix}RemoteFields" style="${defaultType === 'local' && hasLocalMongo ? 'display:none' : ''}">
+        <div class="form-row">
+          <input id="${prefix}Host" class="form-input" placeholder="主机地址" value="127.0.0.1">
+          <input id="${prefix}Port" class="form-input sm" placeholder="端口" value="27017" type="number" style="flex:0.4">
+        </div>
+        <div class="form-row">
+          <input id="${prefix}Database" class="form-input" placeholder="数据库名 (留空=全部)">
+        </div>
+        <div class="form-row">
+          <input id="${prefix}Username" class="form-input" placeholder="用户名 (可选)">
+          <input id="${prefix}Password" class="form-input" placeholder="密码 (可选)" type="password">
+        </div>
+        <div class="form-row">
+          <input id="${prefix}AuthDb" class="form-input" placeholder="认证库 (默认 admin)">
+        </div>
+      </div>
+      <div style="margin-top:8px">
+        <label style="font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" id="${prefix}SshEnabled" onchange="toggleSshTunnel('${prefix}')">
+          SSH 隧道
+        </label>
+        <div id="${prefix}SshFields" style="display:none;margin-top:6px">
+          <div class="form-row">
+            <input id="${prefix}SshHost" class="form-input" placeholder="SSH 主机">
+            <input id="${prefix}SshPort" class="form-input sm" placeholder="SSH 端口" value="22" type="number" style="flex:0.3">
+          </div>
+          <div class="form-row">
+            <input id="${prefix}SshUser" class="form-input" placeholder="SSH 用户名">
+            <input id="${prefix}SshKey" class="form-input" placeholder="私钥路径 (如 ~/.ssh/id_rsa)">
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:8px">
+        <button class="sm" onclick="testConnection('${prefix}')">测试连接</button>
+        <span id="${prefix}TestResult" style="font-size:12px;margin-left:8px"></span>
+      </div>
+    </div>
+  `;
+}
+
+function toggleConnType(prefix) {
+  const type = document.getElementById(`${prefix}Type`).value;
+  const fields = document.getElementById(`${prefix}RemoteFields`);
+  if (fields) fields.style.display = type === 'local' ? 'none' : '';
+}
+
+function toggleSshTunnel(prefix) {
+  const enabled = document.getElementById(`${prefix}SshEnabled`).checked;
+  const fields = document.getElementById(`${prefix}SshFields`);
+  if (fields) fields.style.display = enabled ? '' : 'none';
+}
+
+function readConnectionConfig(prefix) {
+  const type = document.getElementById(`${prefix}Type`)?.value || 'remote';
+  const conn = {
+    type,
+    host: document.getElementById(`${prefix}Host`)?.value?.trim() || '127.0.0.1',
+    port: parseInt(document.getElementById(`${prefix}Port`)?.value) || 27017,
+    database: document.getElementById(`${prefix}Database`)?.value?.trim() || undefined,
+    username: document.getElementById(`${prefix}Username`)?.value?.trim() || undefined,
+    password: document.getElementById(`${prefix}Password`)?.value?.trim() || undefined,
+    authDatabase: document.getElementById(`${prefix}AuthDb`)?.value?.trim() || undefined,
+  };
+  const sshEnabled = document.getElementById(`${prefix}SshEnabled`)?.checked;
+  if (sshEnabled) {
+    conn.sshTunnel = {
+      enabled: true,
+      host: document.getElementById(`${prefix}SshHost`)?.value?.trim() || '',
+      port: parseInt(document.getElementById(`${prefix}SshPort`)?.value) || 22,
+      username: document.getElementById(`${prefix}SshUser`)?.value?.trim() || '',
+      privateKeyPath: document.getElementById(`${prefix}SshKey`)?.value?.trim() || undefined,
+    };
+  }
+  return conn;
+}
+
+async function testConnection(prefix) {
+  const resultEl = document.getElementById(`${prefix}TestResult`);
+  if (!resultEl) return;
+  resultEl.innerHTML = '<span class="btn-spinner"></span> 测试中...';
+  try {
+    const connection = readConnectionConfig(prefix);
+    const data = await api('POST', '/data-migrations/test-connection', { connection });
+    if (data.success) {
+      const dbInfo = data.databases ? ` (${data.databases.length} 个数据库)` : '';
+      resultEl.innerHTML = `<span style="color:var(--green)">✓ 连接成功${dbInfo}</span>`;
+    } else {
+      resultEl.innerHTML = `<span style="color:var(--red)">✗ ${esc(data.error)}</span>`;
+    }
+  } catch (e) {
+    resultEl.innerHTML = `<span style="color:var(--red)">✗ ${esc(e.message)}</span>`;
+  }
+}
+
+function openNewMigrationModal() {
+  const html = `
+    <div class="form-row" style="margin-bottom:12px">
+      <input id="migName" class="form-input" placeholder="迁移任务名称 (如: 生产→测试)" style="flex:1">
+    </div>
+    <div class="migration-dual-panel">
+      <div class="migration-side">
+        <div class="migration-side-title">📤 源数据库</div>
+        ${buildConnectionForm('src', 'local')}
+      </div>
+      <div class="migration-arrow">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+      </div>
+      <div class="migration-side">
+        <div class="migration-side-title">📥 目标数据库</div>
+        ${buildConnectionForm('tgt', 'remote')}
+      </div>
+    </div>
+    <div class="form-row" style="margin-top:12px;gap:6px">
+      <button class="primary sm" onclick="createAndExecuteMigration()">🚀 创建并执行</button>
+      <button class="sm" onclick="saveMigrationOnly()">💾 仅保存</button>
+      <button class="sm" onclick="openMigrationModal()">取消</button>
+    </div>
+  `;
+  openConfigModal('新建数据迁移', html);
+}
+
+async function saveMigrationOnly() {
+  const name = document.getElementById('migName')?.value?.trim();
+  if (!name) { showToast('请输入迁移任务名称', 'error'); return; }
+  const source = readConnectionConfig('src');
+  const target = readConnectionConfig('tgt');
+  try {
+    await api('POST', '/data-migrations', { name, dbType: 'mongodb', source, target });
+    showToast('迁移任务已保存', 'success');
+    openMigrationModal();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function createAndExecuteMigration() {
+  const name = document.getElementById('migName')?.value?.trim();
+  if (!name) { showToast('请输入迁移任务名称', 'error'); return; }
+  const source = readConnectionConfig('src');
+  const target = readConnectionConfig('tgt');
+  try {
+    const mig = await api('POST', '/data-migrations', { name, dbType: 'mongodb', source, target });
+    showToast('任务已创建，开始执行迁移...', 'info');
+    executeMigration(mig.id);
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function executeMigration(id) {
+  // Show progress modal
+  openConfigModal('执行迁移', `
+    <div style="text-align:center;padding:20px">
+      <div id="migProgressBar" style="background:var(--bg-tertiary);border-radius:6px;height:10px;overflow:hidden;margin-bottom:12px">
+        <div id="migProgressFill" style="background:var(--blue);height:100%;width:0%;transition:width 0.5s ease"></div>
+      </div>
+      <div id="migProgressText" style="font-size:14px;margin-bottom:8px">准备中...</div>
+      <div id="migProgressPct" style="font-size:24px;font-weight:bold;color:var(--blue)">0%</div>
+      <div id="migProgressLog" style="max-height:200px;overflow:auto;background:var(--bg-tertiary);padding:8px;border-radius:6px;font-size:11px;text-align:left;margin-top:12px;display:none"></div>
+    </div>
+  `);
+
+  try {
+    const res = await fetch(`${API}/data-migrations/${id}/execute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.substring(6));
+            const fillEl = document.getElementById('migProgressFill');
+            const textEl = document.getElementById('migProgressText');
+            const pctEl = document.getElementById('migProgressPct');
+            if (data.progress !== undefined && fillEl) {
+              fillEl.style.width = data.progress + '%';
+              if (pctEl) pctEl.textContent = data.progress + '%';
+            }
+            if (data.message && textEl) textEl.textContent = data.message;
+          } catch {}
+        }
+        if (line.startsWith('event: done')) {
+          const fillEl = document.getElementById('migProgressFill');
+          const textEl = document.getElementById('migProgressText');
+          const pctEl = document.getElementById('migProgressPct');
+          if (fillEl) fillEl.style.width = '100%';
+          if (fillEl) fillEl.style.background = 'var(--green)';
+          if (pctEl) { pctEl.textContent = '100%'; pctEl.style.color = 'var(--green)'; }
+          if (textEl) textEl.textContent = '✓ 迁移完成！';
+          showToast('数据迁移完成！', 'success');
+        }
+        if (line.startsWith('event: error')) {
+          const fillEl = document.getElementById('migProgressFill');
+          const pctEl = document.getElementById('migProgressPct');
+          if (fillEl) fillEl.style.background = 'var(--red)';
+          if (pctEl) pctEl.style.color = 'var(--red)';
+          // Error data will come in next data: line
+        }
+      }
+    }
+  } catch (e) {
+    const textEl = document.getElementById('migProgressText');
+    if (textEl) textEl.innerHTML = `<span style="color:var(--red)">✗ 执行失败: ${esc(e.message)}</span>`;
+    showToast('迁移失败: ' + e.message, 'error');
+  }
+}
+
+async function showMigrationLog(id) {
+  openConfigModal('迁移日志', '<div class="config-empty"><span class="btn-spinner"></span> 加载中...</div>');
+  try {
+    const data = await api('GET', `/data-migrations/${id}/log`);
+    const html = `
+      <pre style="max-height:400px;overflow:auto;background:var(--bg-tertiary);padding:12px;border-radius:6px;font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-all">${esc(data.log || '(空)')}</pre>
+      <div class="form-row" style="margin-top:8px">
+        <button class="sm" onclick="openMigrationModal()">返回</button>
+      </div>
+    `;
+    openConfigModal('迁移日志', html);
+  } catch (e) {
+    openConfigModal('迁移日志', `<div class="config-empty" style="color:var(--red)">${esc(e.message)}</div>`);
+  }
+}
+
+async function deleteMigration(id) {
+  if (!confirm('确定删除此迁移任务？')) return;
+  try {
+    await api('DELETE', `/data-migrations/${id}`);
+    showToast('已删除', 'success');
+    openMigrationModal();
+  } catch (e) { showToast(e.message, 'error'); }
 }
 
 // ── Init activity monitor & AI pairing ──

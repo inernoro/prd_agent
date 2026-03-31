@@ -2848,3 +2848,55 @@ a.branch-name:hover { color: var(--accent); }
 .ai-request-card .ai-reject-btn:hover {
   background: var(--red-bg);
 }
+
+/* ── Data Migration ── */
+
+.migration-dual-panel {
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.migration-side {
+  flex: 1;
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+}
+
+.migration-side-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.migration-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--fg-muted);
+  opacity: 0.5;
+}
+
+.migration-conn-panel .form-row {
+  margin-bottom: 6px;
+}
+
+.migration-conn-panel .form-input {
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
+@media (max-width: 700px) {
+  .migration-dual-panel {
+    flex-direction: column;
+  }
+  .migration-arrow {
+    transform: rotate(90deg);
+    padding: 4px 0;
+  }
+}

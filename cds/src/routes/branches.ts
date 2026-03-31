@@ -9,7 +9,7 @@ import { StateService } from '../services/state.js';
 import type { WorktreeService } from '../services/worktree.js';
 import { resolveProfileWithMode } from '../services/container.js';
 import type { ContainerService } from '../services/container.js';
-import type { BranchEntry, CdsConfig, IShellExecutor, OperationLog, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService } from '../types.js';
+import type { BranchEntry, CdsConfig, IShellExecutor, OperationLog, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService, DataMigration, MongoConnectionConfig } from '../types.js';
 import { discoverComposeFiles, parseComposeFile, parseComposeString, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { combinedOutput } from '../types.js';
@@ -89,6 +89,31 @@ export function createBranchRouter(deps: RouterDeps): Router {
   function logDeploy(branchId: string, message: string) {
     const ts = new Date().toISOString().slice(11, 19);
     console.log(`  [deploy:${branchId}] ${ts} ${message}`);
+  }
+
+  /** Download MongoDB database tools binary (platform-independent fallback) */
+  async function installMongoToolsBinary(sh: IShellExecutor, send: (msg: string) => void) {
+    const archResult = await sh.exec('uname -m');
+    const arch = archResult.stdout.trim();
+    const isArm = arch === 'aarch64' || arch === 'arm64';
+    const platform = isArm ? 'arm64' : 'x86_64';
+    const url = `https://fastdl.mongodb.org/tools/db/mongodb-database-tools-debian12-${platform}-100.10.0.deb`;
+    send(`正在下载 MongoDB 工具 (${platform})...`);
+    // Try dpkg if debian-based, otherwise extract manually
+    const dlResult = await sh.exec(
+      `cd /tmp && curl -fsSL -o mongo-tools.deb "${url}" 2>&1 && dpkg -x mongo-tools.deb /tmp/mongo-tools-extracted 2>&1 && cp /tmp/mongo-tools-extracted/usr/bin/mongo* /usr/local/bin/ 2>&1 && chmod +x /usr/local/bin/mongo* && rm -rf /tmp/mongo-tools.deb /tmp/mongo-tools-extracted`,
+      { timeout: 120000 }
+    );
+    if (dlResult.exitCode !== 0) {
+      // Try tarball as absolute fallback
+      send('deb 安装失败，尝试 tarball...');
+      const tgzUrl = `https://fastdl.mongodb.org/tools/db/mongodb-database-tools-linux-${platform}-100.10.0.tgz`;
+      await sh.exec(
+        `cd /tmp && curl -fsSL -o mongo-tools.tgz "${tgzUrl}" && tar xzf mongo-tools.tgz && cp mongodb-database-tools-*/bin/mongo* /usr/local/bin/ && chmod +x /usr/local/bin/mongo* && rm -rf /tmp/mongo-tools.tgz /tmp/mongodb-database-tools-*`,
+        { timeout: 120000 }
+      );
+    }
+    send('MongoDB 工具已安装');
   }
 
   // ── Remote branches ──
@@ -2700,6 +2725,359 @@ export function createBranchRouter(deps: RouterDeps): Router {
   });
 
   // ── Self-update: switch CDS's own branch, pull, and restart ──
+
+  // ── Data Migration ──
+
+  // GET /api/data-migrations — list all migration tasks
+  router.get('/data-migrations', (_req, res) => {
+    res.json(stateService.getDataMigrations());
+  });
+
+  // POST /api/data-migrations — create a new migration task
+  router.post('/data-migrations', (req, res) => {
+    const { name, dbType, source, target } = req.body as {
+      name: string;
+      dbType: 'mongodb';
+      source: MongoConnectionConfig;
+      target: MongoConnectionConfig;
+    };
+    if (!name || !dbType || !source || !target) {
+      res.status(400).json({ error: '缺少必填字段: name, dbType, source, target' });
+      return;
+    }
+    const id = `mig-${Date.now().toString(36)}`;
+    const migration: DataMigration = {
+      id,
+      name,
+      dbType,
+      source,
+      target,
+      status: 'pending',
+      progress: 0,
+      createdAt: new Date().toISOString(),
+    };
+    stateService.addDataMigration(migration);
+    stateService.save();
+    res.json(migration);
+  });
+
+  // DELETE /api/data-migrations/:id — delete a migration task
+  router.delete('/data-migrations/:id', (req, res) => {
+    const { id } = req.params;
+    const migration = stateService.getDataMigration(id);
+    if (!migration) { res.status(404).json({ error: '迁移任务不存在' }); return; }
+    if (migration.status === 'running') { res.status(400).json({ error: '任务正在运行中，无法删除' }); return; }
+    stateService.removeDataMigration(id);
+    stateService.save();
+    res.json({ message: '已删除' });
+  });
+
+  // POST /api/data-migrations/check-tools — check if mongodump/mongorestore are available, auto-install if not
+  router.post('/data-migrations/check-tools', async (_req, res) => {
+    try {
+      // Check if mongodump exists
+      const checkResult = await shell.exec('which mongodump 2>/dev/null || which /usr/bin/mongodump 2>/dev/null || echo "NOT_FOUND"');
+      const hasTool = !checkResult.stdout.includes('NOT_FOUND');
+      if (hasTool) {
+        // Get version
+        const verResult = await shell.exec('mongodump --version 2>&1 | head -1');
+        res.json({ installed: true, version: verResult.stdout.trim() });
+        return;
+      }
+      // Auto-install mongodb-database-tools
+      res.json({ installed: false, message: '正在安装 mongodb-database-tools...' });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+    }
+  });
+
+  // POST /api/data-migrations/install-tools — install mongodump/mongorestore
+  router.post('/data-migrations/install-tools', async (_req, res) => {
+    initSSE(res);
+    const send = (msg: string) => sendSSE(res, 'progress', { message: msg });
+    try {
+      send('检测操作系统...');
+      const osInfo = await shell.exec('cat /etc/os-release 2>/dev/null || echo "unknown"');
+      const isDebian = osInfo.stdout.includes('debian') || osInfo.stdout.includes('ubuntu');
+      const isAlpine = osInfo.stdout.includes('alpine');
+      const isRhel = osInfo.stdout.includes('rhel') || osInfo.stdout.includes('centos') || osInfo.stdout.includes('fedora');
+
+      if (isDebian) {
+        send('检测到 Debian/Ubuntu，正在安装 mongodb-database-tools...');
+        // Try apt-get first
+        const aptResult = await shell.exec(
+          'apt-get update -qq 2>/dev/null && apt-get install -y -qq mongodb-database-tools 2>&1 || echo "APT_FAILED"',
+          { timeout: 120000 }
+        );
+        if (aptResult.stdout.includes('APT_FAILED')) {
+          // Fallback: download from MongoDB directly
+          send('apt 安装失败，尝试直接下载二进制文件...');
+          await installMongoToolsBinary(shell, send);
+        } else {
+          send('apt 安装成功');
+        }
+      } else if (isAlpine) {
+        send('检测到 Alpine，直接下载二进制文件...');
+        await installMongoToolsBinary(shell, send);
+      } else if (isRhel) {
+        send('检测到 RHEL/CentOS，正在安装...');
+        const yumResult = await shell.exec(
+          'yum install -y mongodb-database-tools 2>&1 || dnf install -y mongodb-database-tools 2>&1 || echo "YUM_FAILED"',
+          { timeout: 120000 }
+        );
+        if (yumResult.stdout.includes('YUM_FAILED')) {
+          send('yum 安装失败，尝试直接下载二进制文件...');
+          await installMongoToolsBinary(shell, send);
+        }
+      } else {
+        send('未知系统，尝试直接下载二进制文件...');
+        await installMongoToolsBinary(shell, send);
+      }
+
+      // Verify installation
+      const verifyResult = await shell.exec('mongodump --version 2>&1 | head -1');
+      if (verifyResult.exitCode === 0 && verifyResult.stdout.trim()) {
+        sendSSE(res, 'done', { installed: true, version: verifyResult.stdout.trim() });
+      } else {
+        sendSSE(res, 'error', { message: '安装后验证失败，请手动安装 mongodb-database-tools' });
+      }
+      res.end();
+    } catch (e) {
+      sendSSE(res, 'error', { message: (e as Error).message });
+      res.end();
+    }
+  });
+
+  // POST /api/data-migrations/:id/execute — execute a migration task (SSE stream)
+  router.post('/data-migrations/:id/execute', async (req, res) => {
+    const { id } = req.params;
+    const migration = stateService.getDataMigration(id);
+    if (!migration) { res.status(404).json({ error: '迁移任务不存在' }); return; }
+    if (migration.status === 'running') { res.status(400).json({ error: '任务已在运行中' }); return; }
+
+    initSSE(res);
+    const send = (progress: number, message: string) => {
+      sendSSE(res, 'progress', { progress, message });
+      stateService.updateDataMigration(id, { progress, progressMessage: message });
+      stateService.save();
+    };
+
+    // Mark as running
+    stateService.updateDataMigration(id, { status: 'running', startedAt: new Date().toISOString(), progress: 0, errorMessage: undefined, log: '' });
+    stateService.save();
+
+    let logOutput = '';
+    const appendLog = (line: string) => { logOutput += line + '\n'; };
+
+    try {
+      // Resolve local MongoDB connection if source/target is 'local'
+      const resolveConn = (conn: MongoConnectionConfig): MongoConnectionConfig => {
+        if (conn.type === 'local') {
+          const mongoInfra = stateService.getInfraServices().find(s => s.id === 'mongodb');
+          if (!mongoInfra) throw new Error('本机 MongoDB 未在 CDS 基础设施中注册');
+          const dockerHost = stateService.getCdsEnvVars()['CDS_HOST'] || '172.17.0.1';
+          return { ...conn, host: dockerHost, port: mongoInfra.hostPort };
+        }
+        return conn;
+      };
+
+      const src = resolveConn(migration.source);
+      const tgt = resolveConn(migration.target);
+
+      send(5, '正在检查迁移工具...');
+      const toolCheck = await shell.exec('which mongodump && which mongorestore');
+      if (toolCheck.exitCode !== 0) {
+        throw new Error('mongodump/mongorestore 未安装。请先在迁移面板点击"初始化工具"');
+      }
+
+      // Build SSH tunnel if needed
+      let sshProcess: ReturnType<typeof spawn> | null = null;
+      let srcHost = src.host;
+      let srcPort = src.port;
+      let tgtHost = tgt.host;
+      let tgtPort = tgt.port;
+
+      if (src.sshTunnel?.enabled) {
+        send(10, '正在建立源数据库 SSH 隧道...');
+        const localPort = 27100 + Math.floor(Math.random() * 100);
+        const tunnel = src.sshTunnel;
+        const keyArg = tunnel.privateKeyPath ? `-i ${tunnel.privateKeyPath}` : '';
+        const sshCmd = `ssh -f -N -L ${localPort}:${src.host}:${src.port} ${keyArg} -p ${tunnel.port} ${tunnel.username}@${tunnel.host} -o StrictHostKeyChecking=no -o ConnectTimeout=10`;
+        const sshResult = await shell.exec(sshCmd, { timeout: 15000 });
+        if (sshResult.exitCode !== 0) throw new Error(`SSH 隧道建立失败: ${sshResult.stderr}`);
+        srcHost = '127.0.0.1';
+        srcPort = localPort;
+        appendLog(`SSH tunnel (source): localhost:${localPort} -> ${src.host}:${src.port} via ${tunnel.host}`);
+      }
+
+      if (tgt.sshTunnel?.enabled) {
+        send(15, '正在建立目标数据库 SSH 隧道...');
+        const localPort = 27200 + Math.floor(Math.random() * 100);
+        const tunnel = tgt.sshTunnel;
+        const keyArg = tunnel.privateKeyPath ? `-i ${tunnel.privateKeyPath}` : '';
+        const sshCmd = `ssh -f -N -L ${localPort}:${tgt.host}:${tgt.port} ${keyArg} -p ${tunnel.port} ${tunnel.username}@${tunnel.host} -o StrictHostKeyChecking=no -o ConnectTimeout=10`;
+        const sshResult = await shell.exec(sshCmd, { timeout: 15000 });
+        if (sshResult.exitCode !== 0) throw new Error(`SSH 隧道建立失败: ${sshResult.stderr}`);
+        tgtHost = '127.0.0.1';
+        tgtPort = localPort;
+        appendLog(`SSH tunnel (target): localhost:${localPort} -> ${tgt.host}:${tgt.port} via ${tunnel.host}`);
+      }
+
+      // Build mongodump command
+      send(20, '正在导出源数据库...');
+      const dumpDir = `/tmp/cds-migration-${id}`;
+      await shell.exec(`rm -rf ${dumpDir} && mkdir -p ${dumpDir}`);
+
+      let dumpCmd = `mongodump --host=${srcHost} --port=${srcPort}`;
+      if (src.username) dumpCmd += ` --username=${src.username}`;
+      if (src.password) dumpCmd += ` --password=${src.password}`;
+      if (src.authDatabase) dumpCmd += ` --authenticationDatabase=${src.authDatabase}`;
+      if (src.database) dumpCmd += ` --db=${src.database}`;
+      dumpCmd += ` --out=${dumpDir}`;
+
+      appendLog(`dump cmd: mongodump --host=${srcHost} --port=${srcPort} ${src.database ? '--db=' + src.database : '(all dbs)'}`);
+
+      const dumpResult = await shell.exec(dumpCmd, {
+        timeout: 600000,
+        onData: (chunk) => {
+          appendLog(chunk);
+          // Parse progress from mongodump output if possible
+          if (chunk.includes('done dumping')) {
+            send(50, '导出完成，准备导入...');
+          }
+        }
+      });
+
+      if (dumpResult.exitCode !== 0) {
+        throw new Error(`mongodump 失败: ${dumpResult.stderr || dumpResult.stdout}`);
+      }
+
+      send(55, '正在导入到目标数据库...');
+
+      // Build mongorestore command
+      let restoreCmd = `mongorestore --host=${tgtHost} --port=${tgtPort}`;
+      if (tgt.username) restoreCmd += ` --username=${tgt.username}`;
+      if (tgt.password) restoreCmd += ` --password=${tgt.password}`;
+      if (tgt.authDatabase) restoreCmd += ` --authenticationDatabase=${tgt.authDatabase}`;
+      if (tgt.database) restoreCmd += ` --db=${tgt.database}`;
+      restoreCmd += ` --drop ${dumpDir}`;
+      // If source had specific db, restore from that subfolder
+      if (src.database) {
+        restoreCmd = `mongorestore --host=${tgtHost} --port=${tgtPort}`;
+        if (tgt.username) restoreCmd += ` --username=${tgt.username}`;
+        if (tgt.password) restoreCmd += ` --password=${tgt.password}`;
+        if (tgt.authDatabase) restoreCmd += ` --authenticationDatabase=${tgt.authDatabase}`;
+        if (tgt.database) restoreCmd += ` --db=${tgt.database}`;
+        restoreCmd += ` --drop ${dumpDir}/${src.database}`;
+      }
+
+      appendLog(`restore cmd: mongorestore --host=${tgtHost} --port=${tgtPort} ${tgt.database ? '--db=' + tgt.database : '(all dbs)'}`);
+
+      const restoreResult = await shell.exec(restoreCmd, {
+        timeout: 600000,
+        onData: (chunk) => {
+          appendLog(chunk);
+          if (chunk.includes('done')) {
+            send(85, '正在完成导入...');
+          }
+        }
+      });
+
+      if (restoreResult.exitCode !== 0) {
+        throw new Error(`mongorestore 失败: ${restoreResult.stderr || restoreResult.stdout}`);
+      }
+
+      // Cleanup dump files
+      send(95, '正在清理临时文件...');
+      await shell.exec(`rm -rf ${dumpDir}`);
+
+      // Kill SSH tunnels if any
+      if (src.sshTunnel?.enabled || tgt.sshTunnel?.enabled) {
+        await shell.exec('pkill -f "ssh -f -N -L 271"').catch(() => {});
+      }
+
+      send(100, '迁移完成！');
+      stateService.updateDataMigration(id, {
+        status: 'completed',
+        progress: 100,
+        progressMessage: '迁移完成',
+        finishedAt: new Date().toISOString(),
+        log: logOutput,
+      });
+      stateService.save();
+      sendSSE(res, 'done', { message: '迁移完成' });
+      res.end();
+
+    } catch (e) {
+      const errMsg = (e as Error).message;
+      appendLog(`ERROR: ${errMsg}`);
+      stateService.updateDataMigration(id, {
+        status: 'failed',
+        errorMessage: errMsg,
+        finishedAt: new Date().toISOString(),
+        log: logOutput,
+      });
+      stateService.save();
+      sendSSE(res, 'error', { message: errMsg });
+      res.end();
+
+      // Cleanup
+      await shell.exec(`rm -rf /tmp/cds-migration-${id}`).catch(() => {});
+      await shell.exec('pkill -f "ssh -f -N -L 271"').catch(() => {});
+    }
+  });
+
+  // POST /api/data-migrations/:id/test-connection — test a MongoDB connection
+  router.post('/data-migrations/test-connection', async (req, res) => {
+    const { connection } = req.body as { connection: MongoConnectionConfig };
+    if (!connection) { res.status(400).json({ error: '缺少 connection 参数' }); return; }
+
+    try {
+      let host = connection.host;
+      let port = connection.port;
+
+      // Resolve local
+      if (connection.type === 'local') {
+        const mongoInfra = stateService.getInfraServices().find(s => s.id === 'mongodb');
+        if (!mongoInfra) { res.json({ success: false, error: '本机 MongoDB 未注册' }); return; }
+        host = stateService.getCdsEnvVars()['CDS_HOST'] || '172.17.0.1';
+        port = mongoInfra.hostPort;
+      }
+
+      // Build mongosh/mongo test command
+      let testCmd = `mongosh --host ${host} --port ${port} --eval "db.adminCommand({ping:1})" --quiet`;
+      if (connection.username) testCmd = `mongosh --host ${host} --port ${port} -u ${connection.username} -p ${connection.password || ''} --authenticationDatabase ${connection.authDatabase || 'admin'} --eval "db.adminCommand({ping:1})" --quiet`;
+
+      const result = await shell.exec(testCmd, { timeout: 10000 });
+      if (result.exitCode === 0) {
+        // Get database list
+        let listCmd = `mongosh --host ${host} --port ${port} --eval "JSON.stringify(db.adminCommand({listDatabases:1}).databases.map(d=>({name:d.name,sizeOnDisk:d.sizeOnDisk})))" --quiet`;
+        if (connection.username) listCmd = `mongosh --host ${host} --port ${port} -u ${connection.username} -p ${connection.password || ''} --authenticationDatabase ${connection.authDatabase || 'admin'} --eval "JSON.stringify(db.adminCommand({listDatabases:1}).databases.map(d=>({name:d.name,sizeOnDisk:d.sizeOnDisk})))" --quiet`;
+
+        const listResult = await shell.exec(listCmd, { timeout: 10000 });
+        let databases: unknown[] = [];
+        try { databases = JSON.parse(listResult.stdout.trim()); } catch { /* ok */ }
+        res.json({ success: true, databases });
+      } else {
+        // Fallback: try basic TCP connectivity
+        const tcpResult = await shell.exec(`timeout 5 bash -c "echo > /dev/tcp/${host}/${port}" 2>&1 || echo "TCP_FAILED"`);
+        if (tcpResult.stdout.includes('TCP_FAILED')) {
+          res.json({ success: false, error: `无法连接到 ${host}:${port}` });
+        } else {
+          res.json({ success: false, error: `连接成功但认证失败: ${result.stderr || result.stdout}` });
+        }
+      }
+    } catch (e) {
+      res.json({ success: false, error: (e as Error).message });
+    }
+  });
+
+  // GET /api/data-migrations/:id/log — get migration log
+  router.get('/data-migrations/:id/log', (req, res) => {
+    const migration = stateService.getDataMigration(req.params.id);
+    if (!migration) { res.status(404).json({ error: '迁移任务不存在' }); return; }
+    res.json({ log: migration.log || '' });
+  });
 
   // GET /api/self-branches — list git branches of the CDS repo itself
   router.get('/self-branches', async (_req, res) => {

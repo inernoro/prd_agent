@@ -197,6 +197,64 @@ export interface CdsState {
   tabTitleEnabled?: boolean;
   /** Registered executor nodes (scheduler mode) */
   executors?: Record<string, ExecutorNode>;
+  /** Data migration task history */
+  dataMigrations?: DataMigration[];
+}
+
+/** SSH tunnel configuration for data migration */
+export interface SshTunnelConfig {
+  enabled: boolean;
+  host: string;
+  port: number;
+  username: string;
+  /** Private key path on CDS host, or 'agent' for ssh-agent */
+  privateKeyPath?: string;
+  /** Password auth (less secure, prefer key-based) */
+  password?: string;
+}
+
+/** MongoDB connection configuration for data migration */
+export interface MongoConnectionConfig {
+  /** 'local' uses the CDS infra MongoDB, 'remote' uses custom connection */
+  type: 'local' | 'remote';
+  host: string;
+  port: number;
+  /** Database name (empty = all databases) */
+  database?: string;
+  /** Auth username */
+  username?: string;
+  /** Auth password */
+  password?: string;
+  /** Auth source database */
+  authDatabase?: string;
+  /** SSH tunnel for this connection */
+  sshTunnel?: SshTunnelConfig;
+}
+
+/** A data migration task */
+export interface DataMigration {
+  id: string;
+  /** Display name */
+  name: string;
+  /** Database type (extensible: 'mongodb', future: 'redis', 'postgres', etc.) */
+  dbType: 'mongodb';
+  /** Source connection */
+  source: MongoConnectionConfig;
+  /** Target connection */
+  target: MongoConnectionConfig;
+  /** Migration status */
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  /** Progress percentage 0-100 */
+  progress: number;
+  /** Current step description */
+  progressMessage?: string;
+  /** Error message if failed */
+  errorMessage?: string;
+  createdAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  /** Migration log output */
+  log?: string;
 }
 
 /** Volume mount for an infrastructure service */
