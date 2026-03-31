@@ -2794,9 +2794,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       sendSSE(res, 'done', { message: 'CDS 即将重启，页面将在几秒后自动刷新...' });
       res.end();
 
-      // Give time for response to flush, then spawn detached restart.
-      // exec_cds.sh uses "pnpm serve" (no file watcher) in background mode,
-      // so git pull changing files won't trigger a competing restart.
+      // Spawn detached restart script, then exit ourselves.
+      // Previous approach relied on exec_cds.sh killing the old process (us),
+      // but macOS process group kill behaves differently from Linux.
+      // Self-exit is more reliable: we release the port, then exec_cds.sh
+      // finds it free and starts the new process cleanly.
       setTimeout(() => {
         const cdsDir = path.join(repoRoot, 'cds');
         const child = spawn('bash', ['./exec_cds.sh', '--background'], {
@@ -2806,7 +2808,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
           env: { ...process.env },
         });
         child.unref();
-        // exec_cds.sh will kill the old process (us) via PID file + port reclaim
+        // Exit ourselves after a brief delay to ensure the child is running
+        setTimeout(() => process.exit(0), 1000);
       }, 500);
     } catch (err) {
       send('error', 'error', `更新失败: ${(err as Error).message}`);
