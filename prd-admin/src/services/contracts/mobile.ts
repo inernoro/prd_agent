@@ -34,7 +34,7 @@ export type GetMobileStatsContract = (args?: {
 
 export interface MobileAssetItem {
   id: string;
-  type: 'image' | 'document' | 'attachment';
+  type: 'image' | 'document' | 'attachment' | 'webpage';
   title: string;
   /** 内容摘要（前80字） */
   summary?: string | null;

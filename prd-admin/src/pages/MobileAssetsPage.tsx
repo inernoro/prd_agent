@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { Image, FileText, Paperclip, FolderOpen, Globe } from 'lucide-react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
+import { SitePreview } from '@/components/SitePreview';
 import { getMobileAssets } from '@/services';
 import type { MobileAssetItem } from '@/services/contracts/mobile';
 
@@ -105,10 +106,14 @@ export default function MobileAssetsPage() {
                       className="w-full h-full object-cover"
                       loading="lazy"
                     />
+                  ) : asset.type === 'webpage' && asset.url ? (
+                    <SitePreview url={asset.url} className="w-full h-full" />
                   ) : asset.type === 'image' ? (
                     <Image size={24} style={{ color: 'rgba(255,255,255,0.12)' }} />
                   ) : asset.type === 'document' ? (
                     <FileText size={24} style={{ color: 'rgba(255,255,255,0.12)' }} />
+                  ) : asset.type === 'webpage' ? (
+                    <Globe size={24} style={{ color: 'rgba(255,255,255,0.12)' }} />
                   ) : (
                     <Paperclip size={24} style={{ color: 'rgba(255,255,255,0.12)' }} />
                   )}
@@ -122,11 +127,11 @@ export default function MobileAssetsPage() {
                     <span
                       className="inline-block px-1.5 py-0.5 rounded text-[9px] font-medium"
                       style={{
-                        background: asset.type === 'image' ? 'rgba(251,146,60,0.15)' : asset.type === 'document' ? 'rgba(129,140,248,0.15)' : 'rgba(255,255,255,0.08)',
-                        color: asset.type === 'image' ? '#FB923C' : asset.type === 'document' ? '#818CF8' : 'var(--text-muted)',
+                        background: asset.type === 'image' ? 'rgba(251,146,60,0.15)' : asset.type === 'document' ? 'rgba(129,140,248,0.15)' : asset.type === 'webpage' ? 'rgba(52,211,153,0.15)' : 'rgba(255,255,255,0.08)',
+                        color: asset.type === 'image' ? '#FB923C' : asset.type === 'document' ? '#818CF8' : asset.type === 'webpage' ? '#34D399' : 'var(--text-muted)',
                       }}
                     >
-                      {asset.type === 'image' ? '图片' : asset.type === 'document' ? '文档' : '附件'}
+                      {asset.type === 'image' ? '图片' : asset.type === 'document' ? '文档' : asset.type === 'webpage' ? '网页' : '附件'}
                     </span>
                     {asset.sizeBytes > 0 && (
                       <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>
