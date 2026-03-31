@@ -109,7 +109,7 @@ const SHORT_LABEL_MAP: Record<string, string> = {
 };
 
 /** 从侧边栏隐藏的 appKey（页面仍可直接访问） */
-const HIDDEN_NAV_KEYS = new Set(['web-pages']);
+const HIDDEN_NAV_KEYS = new Set<string>([]);
 
 /** 获取短标签：优先查映射表，否则使用完整 label */
 function getShortLabel(appKey: string, label: string): string {
