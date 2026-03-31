@@ -58,6 +58,8 @@ services:
       corepack enable &&
       pnpm install --frozen-lockfile &&
       pnpm exec vite --host 0.0.0.0 --port 8000
+    environment:
+      API_PROXY_TARGET: "http://api:5000"
     labels:
       cds.path-prefix: "/"
 
