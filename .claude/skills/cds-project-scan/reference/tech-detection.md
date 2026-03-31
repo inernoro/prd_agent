@@ -70,6 +70,24 @@ cds-scan 生成的 YAML **无需**手动添加 `PNPM_HOME` 或 `CHOKIDAR_USEPOLL
 | Next.js / Nuxt.js | `["/"]`（前后端一体） |
 | 纯前端 | `["/"]` |
 
+## 前端代理目标推断（Vite Proxy → CDS 环境变量）
+
+当检测到前端服务存在 `vite.config.*` 的 `server.proxy` 配置时：
+
+1. **读取代理目标**：解析 `proxy` 的 `target` 值，识别指向哪个后端服务及端口
+2. **检查环境变量引用**：如果 target 使用 `process.env.XXX`（如 `process.env.API_PROXY_TARGET`），记录该环境变量名
+3. **生成 CDS 环境变量**：在前端服务的 `environment` 中，将代理目标设为 `http://${CDS_HOST}:${CDS_<BACKEND_SERVICE>_PORT}`
+
+**原因**：CDS 容器间不共享 Docker 网络，`localhost` 在容器内指向自身。线上 CDS 通过子域名路由（`cds.path-prefix`）让代理不被触发，但本地端口模式下 Vite proxy 必须工作，需要通过宿主机映射端口跨容器通信。
+
+**推断规则**：
+
+| vite.config 代理目标 | 生成的环境变量 |
+|---------------------|---------------|
+| `process.env.API_PROXY_TARGET \|\| 'http://localhost:5000'` | `API_PROXY_TARGET: "http://${CDS_HOST}:${CDS_API_PORT}"` |
+| `process.env.BACKEND_URL \|\| 'http://localhost:3000'` | `BACKEND_URL: "http://${CDS_HOST}:${CDS_<service>_PORT}"` |
+| 硬编码 `http://localhost:XXXX`（无环境变量） | ⚠️ 警告：建议改为环境变量配置 |
+
 ## Docker Compose 解析
 
 ### 服务提取条件（全部满足）
@@ -106,11 +124,12 @@ cds-scan 生成的 YAML **无需**手动添加 `PNPM_HOME` 或 `CHOKIDAR_USEPOLL
 
 ## 环境变量推荐写法
 
-| 基础设施 | App environment 推荐写法 |
-|----------|-------------------------|
+| 场景 | App environment 推荐写法 |
+|------|-------------------------|
 | `mongodb` | `MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"` |
 | `redis` | `Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT}"` |
 | `postgres` | `DATABASE_URL: "postgres://${CDS_HOST}:${CDS_POSTGRES_PORT}/dbname"` |
 | `mysql` | `DATABASE_URL: "mysql://${CDS_HOST}:${CDS_MYSQL_PORT}/dbname"` |
+| 前端 → 后端代理 | `API_PROXY_TARGET: "http://${CDS_HOST}:${CDS_API_PORT}"` |
 
 命名规则：`CDS_` + 服务名大写（连字符转下划线）+ `_PORT`
