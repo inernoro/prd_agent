@@ -2891,7 +2891,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
 
       // Build SSH tunnel if needed
-      let sshProcess: ReturnType<typeof spawn> | null = null;
       let srcHost = src.host;
       let srcPort = src.port;
       let tgtHost = tgt.host;
