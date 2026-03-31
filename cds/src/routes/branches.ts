@@ -2725,7 +2725,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Merge and deduplicate
       const allBranches = [...new Set([...localBranches, ...remoteBranches])].sort();
 
-      res.json({ current: currentBranch, branches: allBranches });
+      // Get current commit short hash
+      let commitHash = '';
+      try {
+        const hashResult = await shell.exec('git rev-parse --short HEAD', { cwd: config.repoRoot });
+        commitHash = hashResult.stdout.trim();
+      } catch { /* ignore */ }
+
+      res.json({ current: currentBranch, commitHash, branches: allBranches });
     } catch (e) {
       res.status(500).json({ error: '获取分支列表失败: ' + (e as Error).message });
     }
