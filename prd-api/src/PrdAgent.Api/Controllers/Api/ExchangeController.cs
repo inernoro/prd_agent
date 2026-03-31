@@ -796,7 +796,7 @@ public static class ExchangeTemplates
             {
                 Name = "豆包 ASR (流式 WebSocket)",
                 ModelAlias = "doubao-asr-stream",
-                TargetUrl = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream",
+                TargetUrl = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel",
                 TargetAuthScheme = "XApiKey",
                 TransformerType = "doubao-asr-stream",
                 TransformerConfig = new Dictionary<string, object>

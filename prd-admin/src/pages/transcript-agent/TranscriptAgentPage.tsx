@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTranscriptStore } from '@/stores/transcriptStore';
 import { TranscriptSidebar } from '@/components/transcript/TranscriptSidebar';
 import { TranscriptEditor } from '@/components/transcript/TranscriptEditor';
+import { GlassCard } from '@/components/design/GlassCard';
 import type { TranscriptItem } from '@/services/contracts/transcriptAgent';
 
 export default function TranscriptAgentPage() {
@@ -25,17 +26,17 @@ export default function TranscriptAgentPage() {
   }, [items]);
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full gap-3 p-3">
       <TranscriptSidebar
         selectedItemId={selectedItem?.id ?? null}
         onSelectItem={setSelectedItem}
       />
-      <div className="flex-1 min-w-0">
+      <GlassCard variant="subtle" padding="none" className="flex-1 min-w-0 overflow-hidden">
         <TranscriptEditor
           item={selectedItem}
           onItemDeleted={() => setSelectedItem(null)}
         />
-      </div>
+      </GlassCard>
     </div>
   );
 }

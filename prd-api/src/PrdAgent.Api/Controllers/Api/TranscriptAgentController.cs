@@ -268,6 +268,7 @@ public class TranscriptAgentController : ControllerBase
 
         var lastProgress = -1;
         var lastStatus = "";
+        var lastResult = "";
         var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
         // 轮询直到完成/失败（每秒检查一次，最多10分钟）
@@ -283,6 +284,13 @@ public class TranscriptAgentController : ControllerBase
                 lastStatus = run.Status;
 
                 await SendSseEvent("progress", new { status = run.Status, progress = run.Progress });
+            }
+
+            // 实时识别文字变化时推送
+            if (run.Result != null && run.Result != lastResult)
+            {
+                lastResult = run.Result;
+                await SendSseEvent("typing", new { text = run.Result });
             }
 
             // 完成：推送段落数据

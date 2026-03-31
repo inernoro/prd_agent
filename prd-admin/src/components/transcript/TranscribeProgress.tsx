@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useSseStream } from '@/lib/useSseStream';
 import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
+import { SseTypingBlock } from '@/components/sse/SseTypingBlock';
 import { api } from '@/services/api';
 import { Loader2 } from 'lucide-react';
 
@@ -12,6 +13,7 @@ interface TranscribeProgressProps {
 
 export function TranscribeProgress({ runId, itemName, onCompleted }: TranscribeProgressProps) {
   const [progress, setProgress] = useState(0);
+  const [liveText, setLiveText] = useState('');
 
   const { phase, phaseMessage, start } = useSseStream({
     url: api.transcriptAgent.runProgress(runId),
@@ -21,6 +23,9 @@ export function TranscribeProgress({ runId, itemName, onCompleted }: TranscribeP
       progress: (data: unknown) => {
         const d = data as { progress?: number };
         setProgress(d.progress ?? 0);
+      },
+      typing: (data: unknown) => {
+        setLiveText((data as { text?: string }).text ?? '');
       },
       done: () => {
         onCompleted?.();
@@ -75,6 +80,16 @@ export function TranscribeProgress({ runId, itemName, onCompleted }: TranscribeP
             <span>{progress}%</span>
           </div>
         </div>
+
+        {/* 实时识别文字 */}
+        {liveText && (
+          <SseTypingBlock
+            text={liveText}
+            label="实时识别"
+            maxHeight={120}
+            tailChars={200}
+          />
+        )}
 
         {/* 阶段条 */}
         <SsePhaseBar phase={phase} message={phaseMessage || stageLabel} />

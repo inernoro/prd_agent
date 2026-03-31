@@ -185,7 +185,7 @@ public class TranscriptRunWorker : BackgroundService
             accessKey = parts[1];
         }
 
-        var wsUrl = resolution.ApiUrl ?? "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream";
+        var wsUrl = resolution.ApiUrl ?? "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel";
         var config = resolution.ExchangeTransformerConfig ?? new Dictionary<string, object>
         {
             ["resourceId"] = "volc.bigasr.sauc.duration",
@@ -212,7 +212,16 @@ public class TranscriptRunWorker : BackgroundService
                 var pct = 50 + (int)(30.0 * sent / Math.Max(total, 1));
                 await UpdateProgress(db, run.Id, Math.Min(pct, 80));
             },
-            onFrame: null,
+            onFrame: async (seq, text, isLast) =>
+            {
+                if (!string.IsNullOrEmpty(text))
+                {
+                    await db.TranscriptRuns.UpdateOneAsync(
+                        Builders<TranscriptRun>.Filter.Eq(r => r.Id, run.Id),
+                        Builders<TranscriptRun>.Update.Set(r => r.Result, text),
+                        cancellationToken: CancellationToken.None);
+                }
+            },
             ct: CancellationToken.None);
 
         if (!result.Success)

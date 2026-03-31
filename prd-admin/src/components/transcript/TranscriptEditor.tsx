@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Mic, Trash2, Download, AlertCircle, Loader2, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { useTranscriptStore } from '@/stores/transcriptStore';
+import { TranscribeProgress } from './TranscribeProgress';
 import { exportItem } from '@/services/real/transcriptAgent';
 import { toast } from '@/lib/toast';
 import { CopywritePanel } from './CopywritePanel';
@@ -15,7 +16,7 @@ interface TranscriptEditorProps {
 }
 
 export function TranscriptEditor({ item, onItemDeleted }: TranscriptEditorProps) {
-  const { templates, fetchTemplates, deleteItem, updateSegments } = useTranscriptStore();
+  const { templates, fetchTemplates, deleteItem, updateSegments, runs, refreshItems } = useTranscriptStore();
   const [exportFormats, setExportFormats] = useState<Set<string>>(new Set(['timestamped']));
   const [exporting, setExporting] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -127,16 +128,28 @@ export function TranscriptEditor({ item, onItemDeleted }: TranscriptEditorProps)
           </Button>
         </div>
 
-        {/* TranscribeProgress placeholder */}
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center max-w-xs">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-primary/10 flex items-center justify-center">
-              <Loader2 className="w-7 h-7 text-primary animate-spin" />
+        {/* TranscribeProgress with live text */}
+        {(() => {
+          const latestRun = runs.find(r => r.itemId === item.id && r.type === 'asr' &&
+            (r.status === 'queued' || r.status === 'processing'));
+          return latestRun ? (
+            <TranscribeProgress
+              runId={latestRun.id}
+              itemName={item.fileName}
+              onCompleted={() => refreshItems()}
+            />
+          ) : (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center max-w-xs">
+                <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-primary/10 flex items-center justify-center">
+                  <Loader2 className="w-7 h-7 text-primary animate-spin" />
+                </div>
+                <p className="text-sm text-foreground/80">正在转写中</p>
+                <p className="text-xs text-muted-foreground mt-1">AI 正在识别语音内容，请稍候...</p>
+              </div>
             </div>
-            <p className="text-sm text-foreground/80">正在转写中</p>
-            <p className="text-xs text-muted-foreground mt-1">AI 正在识别语音内容，请稍候...</p>
-          </div>
-        </div>
+          );
+        })()}
       </div>
     );
   }
