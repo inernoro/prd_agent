@@ -37,7 +37,7 @@ import {
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useAuthStore } from '@/stores/authStore';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { buildInlineImageToken, computeRequestedSizeByRefRatio, readImageSizeFromFile } from '@/lib/visualAgentPromptUtils';
 import { normalizeFileToSquareDataUrl } from '@/lib/imageSquare';
@@ -1060,13 +1060,32 @@ function NewProjectCard(props: { onClick: () => void }) {
 function ProjectCarousel(props: {
   items: VisualAgentWorkspace[];
   loading: boolean;
+  loadingMore: boolean;
+  hasMore: boolean;
+  onLoadMore: () => void;
   onCreate: () => void;
   onRename: (ws: VisualAgentWorkspace) => void;
   onShare: (ws: VisualAgentWorkspace) => void;
   onDelete: (ws: VisualAgentWorkspace) => void;
   onOpen: (ws: VisualAgentWorkspace) => void;
 }) {
-  const { items, loading, onCreate, onRename, onShare, onDelete, onOpen } = props;
+  const { items, loading, loadingMore, hasMore, onLoadMore, onCreate, onRename, onShare, onDelete, onOpen } = props;
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  // 无限滚动：当哨兵元素进入视口时加载更多
+  useEffect(() => {
+    if (!hasMore || loadingMore) return;
+    const el = sentinelRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) onLoadMore();
+      },
+      { rootMargin: '200px' }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [hasMore, loadingMore, onLoadMore]);
 
   if (loading) {
     return <MapSectionLoader />;
@@ -1104,6 +1123,9 @@ function ProjectCarousel(props: {
           />
         ))}
       </div>
+      {/* 加载更多指示器 + 哨兵 */}
+      {loadingMore && <MapSectionLoader />}
+      {hasMore && <div ref={sentinelRef} className="h-1" />}
     </div>
   );
 }
@@ -1123,6 +1145,8 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   };
   const [items, setItems] = useState<VisualAgentWorkspace[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string>('');
   const refreshBusyRef = useRef<Set<string>>(new Set());
   const lastRefreshHashRef = useRef<Map<string, string>>(new Map());
@@ -1148,11 +1172,13 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
 
   const memberIds = useMemo(() => Array.from(memberSet), [memberSet]);
 
+  const PAGE_SIZE = 30;
+
   const reload = async () => {
     setLoading(true);
     setError('');
     try {
-      const res = await listVisualAgentWorkspaces({ limit: 30 });
+      const res = await listVisualAgentWorkspaces({ limit: PAGE_SIZE, skip: 0 });
       if (!res.success) {
         setError(res.error?.message || '加载 workspace 失败');
         return;
@@ -1160,10 +1186,26 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       const list = Array.isArray(res.data?.items) ? res.data.items : [];
       const filtered = list.filter((item) => item.scenarioType !== 'article-illustration');
       setItems(filtered);
+      setHasMore(res.data?.hasMore ?? false);
     } finally {
       setLoading(false);
     }
   };
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const res = await listVisualAgentWorkspaces({ limit: PAGE_SIZE, skip: items.length });
+      if (!res.success) return;
+      const list = Array.isArray(res.data?.items) ? res.data.items : [];
+      const filtered = list.filter((item) => item.scenarioType !== 'article-illustration');
+      setItems((prev) => [...prev, ...filtered]);
+      setHasMore(res.data?.hasMore ?? false);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMore, items.length]);
 
   useEffect(() => {
     void reload();
@@ -1494,6 +1536,9 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       <ProjectCarousel
         items={items}
         loading={loading}
+        loadingMore={loadingMore}
+        hasMore={hasMore}
+        onLoadMore={loadMore}
         onCreate={onCreate}
         onRename={onRename}
         onShare={openShare}

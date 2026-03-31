@@ -3,7 +3,7 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { testExchange } from '@/services/real/exchanges';
 import type { ModelExchange, ExchangeTestResult } from '@/types/exchange';
 import type { ApiResponse } from '@/types/api';
-import { apiRequest } from '@/services/real/apiClient';
+
 import { api } from '@/services/api';
 import {
   ArrowRight,

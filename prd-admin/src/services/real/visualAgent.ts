@@ -106,8 +106,10 @@ export const saveVisualAgentCanvasReal: SaveVisualAgentCanvasContract = async (i
 
 export const listVisualAgentWorkspacesReal: ListVisualAgentWorkspacesContract = async (input) => {
   const limit = input?.limit ?? 20;
-  return await apiRequest<{ items: VisualAgentWorkspace[] }>(
-    `${api.visualAgent.imageMaster.workspaces.list()}?limit=${encodeURIComponent(String(limit))}`,
+  const skip = input?.skip ?? 0;
+  const params = new URLSearchParams({ limit: String(limit), skip: String(skip) });
+  return await apiRequest<{ items: VisualAgentWorkspace[]; hasMore?: boolean }>(
+    `${api.visualAgent.imageMaster.workspaces.list()}?${params.toString()}`,
     { method: 'GET' }
   );
 };
