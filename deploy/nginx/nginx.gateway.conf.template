@@ -1,0 +1,46 @@
+# CDS Gateway — 本地端口模式下模拟子域名统一路由
+# 环境变量由 CDS compose 注入，envsubst 仅替换 API_TARGET / ADMIN_TARGET
+#
+# 用法：用户通过 gateway 端口访问，无需关心 api/admin 的独立端口
+#   gateway:10007 → /api/* 转发 API，/* 转发 Admin (Vite HMR)
+
+server {
+    listen 80;
+    server_name _;
+    client_max_body_size 30m;
+
+    absolute_redirect off;
+    port_in_redirect off;
+
+    # /api/* → API 服务
+    location ^~ /api/ {
+        proxy_pass http://${API_TARGET};
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_connect_timeout 3s;
+        proxy_send_timeout 60s;
+        # SSE/流式：禁用缓冲
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 3600s;
+    }
+
+    # /* → Admin (Vite dev server)，含 WebSocket 支持 (HMR)
+    location / {
+        proxy_pass http://${ADMIN_TARGET};
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        proxy_read_timeout 86400s;
+    }
+}
