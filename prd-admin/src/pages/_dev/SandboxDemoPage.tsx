@@ -105,6 +105,7 @@ const MARK_STATES: MarkState[] = ['未入库', '已入库', '出货', '退货', 
 const STORAGE_KEY = 'sandbox-demo-v4';
 const SNAP_GRID: [number, number] = [20, 20];
 const SNAP_THRESHOLD = 18;
+const BIDIRECTIONAL_LANE_OFFSET = 34;
 
 const ROLE_MENU: Array<{ title: string; options: RoleOption[] }> = [
   { title: '总部', options: [{ family: 'hq', subtype: '总部' }] },
@@ -261,7 +262,28 @@ function getBidirectionalLaneOffset(
   const hasReverse = edges.some(
     (edge) => edge.source === targetId && edge.target === sourceId
   );
-  return hasReverse ? 26 : 0;
+  return hasReverse ? BIDIRECTIONAL_LANE_OFFSET : 0;
+}
+
+function normalizeBidirectionalLaneOffsets(edges: SandboxEdge[]) {
+  return edges.map((edge) => {
+    const hasReverse = edges.some(
+      (candidate) => candidate.source === edge.target && candidate.target === edge.source
+    );
+    const currentData = (edge.data as EdgeData) ?? { relation: 'role-role', linkState: '出货', seed: 0 };
+    if (!hasReverse) {
+      return {
+        ...edge,
+        data: { ...currentData, laneOffset: 0 },
+      };
+    }
+
+    const sign = edge.source.localeCompare(edge.target) < 0 ? 1 : -1;
+    return {
+      ...edge,
+      data: { ...currentData, laneOffset: sign * BIDIRECTIONAL_LANE_OFFSET },
+    };
+  });
 }
 
 function getShiftedPoints(
@@ -779,7 +801,8 @@ const QUICK_GUIDE_STEPS = [
 const ADVANCED_GUIDE_STEPS = [
   '双击角色：编辑名称与区域',
   '双击标识：快速修改状态',
-  '连线模式下依次点击两个节点建立关系',
+  '连线模式下依次点击两个节点建立关系（完成后自动续连）',
+  '连线模式点击空白区域：立即退出',
 ];
 
 const TOP_BAR_GUIDE_STEPS = [
@@ -824,13 +847,18 @@ function SandboxDemoInner() {
 
   const summaryText = useMemo(() => {
     if (toolMode !== 'link') return '模式：选择';
-    if (!pendingLinkSourceId) return '模式：连线（点击第一个组件）';
+    if (!pendingLinkSourceId) return '模式：连线（点击第一个组件，空白处退出）';
     const sourceNode = nodes.find((node) => node.id === pendingLinkSourceId);
-    return `模式：连线（已选起点 ${sourceNode?.data.title ?? '未知'}，请点击终点）`;
+    return `模式：连线（已选起点 ${sourceNode?.data.title ?? '未知'}，请点击终点，完成后自动续连）`;
   }, [nodes, pendingLinkSourceId, toolMode]);
 
   const buildEdge = useCallback(
     (sourceId: string, targetId: string, currentEdges: SandboxEdge[]) => {
+      const existsSameDirection = currentEdges.some(
+        (edge) => edge.source === sourceId && edge.target === targetId
+      );
+      if (existsSameDirection) return null;
+
       const sourceNode = nodes.find((node) => node.id === sourceId);
       const targetNode = nodes.find((node) => node.id === targetId);
       if (!sourceNode || !targetNode) return null;
@@ -972,24 +1000,9 @@ function SandboxDemoInner() {
       setEdges((curr) => {
         const newEdge = buildEdge(pendingLinkSourceId, node.id, curr);
         if (!newEdge) return curr;
-
-        const hasReverse = curr.some(
-          (edge) => edge.source === node.id && edge.target === pendingLinkSourceId
-        );
-        const alignedCurrent = hasReverse
-          ? curr.map((edge) =>
-              edge.source === node.id && edge.target === pendingLinkSourceId
-                ? {
-                    ...edge,
-                    data: { ...(edge.data as EdgeData), laneOffset: -26 },
-                  }
-                : edge
-            )
-          : curr;
-
-        return addEdge(newEdge, alignedCurrent);
+        return normalizeBidirectionalLaneOffsets(addEdge(newEdge, curr));
       });
-      setPendingLinkSourceId(null);
+      setPendingLinkSourceId(node.id);
     },
     [buildEdge, pendingLinkSourceId, setEdges, toolMode]
   );
@@ -1033,11 +1046,13 @@ function SandboxDemoInner() {
     if (selectedNodeIds.length === 0 && selectedEdgeIds.length === 0) return;
     setNodes((curr) => curr.filter((node) => !selectedNodeIds.includes(node.id)));
     setEdges((curr) =>
-      curr.filter(
-        (edge) =>
-          !selectedEdgeIds.includes(edge.id) &&
-          !selectedNodeIds.includes(edge.source) &&
-          !selectedNodeIds.includes(edge.target)
+      normalizeBidirectionalLaneOffsets(
+        curr.filter(
+          (edge) =>
+            !selectedEdgeIds.includes(edge.id) &&
+            !selectedNodeIds.includes(edge.source) &&
+            !selectedNodeIds.includes(edge.target)
+        )
       )
     );
     setSelectedNodeIds([]);
@@ -1116,7 +1131,7 @@ function SandboxDemoInner() {
       const parsed = JSON.parse(raw) as { nodes: SandboxNode[]; edges: SandboxEdge[] };
       if (Array.isArray(parsed.nodes) && Array.isArray(parsed.edges)) {
         setNodes(parsed.nodes);
-        setEdges(parsed.edges);
+        setEdges(normalizeBidirectionalLaneOffsets(parsed.edges));
       }
     } catch {
       // ignore invalid local data
@@ -1369,7 +1384,9 @@ function SandboxDemoInner() {
           onNodeDragStop={onNodeDragStop}
           onSelectionChange={onSelectionChange}
           onPaneClick={() => {
-            if (toolMode === 'link') setPendingLinkSourceId(null);
+            if (toolMode !== 'link') return;
+            setPendingLinkSourceId(null);
+            setToolMode('select');
           }}
           fitView
           selectionOnDrag={false}
