@@ -217,9 +217,6 @@ services:
       corepack enable &&
       pnpm install --frozen-lockfile &&
       pnpm exec vite --host 0.0.0.0 --port 8000
-    environment:
-      # Vite proxy 跨容器通信：通过宿主机映射端口访问 API
-      API_PROXY_TARGET: "http://${CDS_HOST}:${CDS_API_PORT}"
     labels:
       cds.path-prefix: "/"
 
@@ -307,7 +304,6 @@ volumes:
 6. 必须包含 `x-cds-project`（name + description + repo）
 7. 全局环境变量放 `x-cds-env`，服务特有变量放 `services.*.environment`，禁止重复
 8. 服务引用全局变量时使用 `${VAR_NAME}` 模板语法（如 `Jwt__Secret: "${JWT_SECRET}"`）
-9. 前端服务检测到 Vite `server.proxy` 时，必须在 `environment` 中生成代理目标环境变量（如 `API_PROXY_TARGET: "http://${CDS_HOST}:${CDS_API_PORT}"`），确保跨容器通信。详见 [reference/tech-detection.md](reference/tech-detection.md) 的「前端代理目标推断」
 
 ## 关联文档
 
