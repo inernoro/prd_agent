@@ -113,6 +113,7 @@ export const api = {
       list: () => '/api/mds/exchanges',
       byId: (id: string) => `/api/mds/exchanges/${id}`,
       test: (id: string) => `/api/mds/exchanges/${id}/test`,
+      testStreamAsrSse: (id: string) => `/api/mds/exchanges/${id}/test-stream-asr/sse`,
       transformerTypes: () => '/api/mds/exchanges/transformer-types',
       forPool: () => '/api/mds/exchanges/for-pool',
       templates: () => '/api/mds/exchanges/templates',
@@ -715,6 +716,22 @@ export const api = {
     run: (runId: string) => `/api/ai-toolbox/runs/${runId}`,
     execute: (runId: string) => `/api/ai-toolbox/runs/${runId}/execute`,
     stream: (runId: string) => `/api/ai-toolbox/runs/${runId}/stream`,
+  },
+
+  // ============ Transcript Agent 音视频转录 ============
+  transcriptAgent: {
+    workspaces: () => '/api/transcript-agent/workspaces',
+    workspace: (id: string) => `/api/transcript-agent/workspaces/${id}`,
+    items: (workspaceId: string) => `/api/transcript-agent/workspaces/${workspaceId}/items`,
+    uploadItem: (workspaceId: string) => `/api/transcript-agent/workspaces/${workspaceId}/items/upload`,
+    deleteItem: (itemId: string) => `/api/transcript-agent/items/${itemId}`,
+    updateSegments: (itemId: string) => `/api/transcript-agent/items/${itemId}/segments`,
+    templates: () => '/api/transcript-agent/templates',
+    createCopywrite: (itemId: string) => `/api/transcript-agent/items/${itemId}/copywrite`,
+    run: (runId: string) => `/api/transcript-agent/runs/${runId}`,
+    runProgress: (runId: string) => `/api/transcript-agent/runs/${runId}/progress`,
+    workspaceRuns: (workspaceId: string) => `/api/transcript-agent/workspaces/${workspaceId}/runs`,
+    exportItem: (itemId: string) => `/api/transcript-agent/items/${itemId}/export`,
   },
 
   // ============ V1 API (用户端) ============

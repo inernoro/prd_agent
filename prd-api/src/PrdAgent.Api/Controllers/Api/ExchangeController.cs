@@ -528,69 +528,129 @@ public class ExchangeController : ControllerBase
     }
 
     /// <summary>
-    /// 测试 WebSocket 流式 ASR（通过 DoubaoStreamAsrService）
-    /// 下载音频 → WAV 解析 → WebSocket 二进制协议 → 返回转录结果
+    /// 测试 WebSocket 流式 ASR（SSE 逐帧推送，实时显示进度）
+    /// 接收音频文件 → ffmpeg 转换 → WebSocket 二进制协议 → SSE 推送进度/帧/结果
+    ///
+    /// SSE 事件类型：
+    /// - stage:    阶段变化（uploading / converting / connecting / sending / result / done / error）
+    /// - progress: 发送进度（sent=5, total=28）
+    /// - frame:    每帧识别结果（seq, text, isLast）
+    /// - result:   最终汇总
     /// </summary>
-    [HttpPost("test-stream-asr")]
-    [AllowAnonymous]
-    public async Task<IActionResult> TestStreamAsr(
-        [FromBody] StreamAsrTestRequest request,
+    [HttpPost("{id}/test-stream-asr/sse")]
+    [RequestSizeLimit(100 * 1024 * 1024)]
+    public async Task TestStreamAsrSse(
+        string id,
+        [FromForm] IFormFile? file,
+        [FromForm] string? audioUrl,
         [FromServices] Services.DoubaoStreamAsrService streamAsr,
         CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(request.AudioUrl))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请提供 audioUrl"));
-        if (string.IsNullOrWhiteSpace(request.ApiKey))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请提供 apiKey"));
+        Response.ContentType = "text/event-stream";
+        Response.Headers.Append("Cache-Control", "no-cache");
+        Response.Headers.Append("X-Accel-Buffering", "no");
 
-        var wsUrl = request.WsUrl ?? "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream";
+        var jsonOpts = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+        async Task SendEvent(string eventType, object data)
+        {
+            var json = JsonSerializer.Serialize(data, jsonOpts);
+            try
+            {
+                await Response.WriteAsync($"event: {eventType}\ndata: {json}\n\n", ct);
+                await Response.Body.FlushAsync(ct);
+            }
+            catch (OperationCanceledException) { /* 客户端断开 */ }
+        }
 
-        // 下载音频
-        byte[] audioData;
+        var startedAt = DateTime.UtcNow;
+
         try
         {
-            var httpClient = _httpClientFactory.CreateClient();
-            httpClient.Timeout = TimeSpan.FromSeconds(60);
-            audioData = await httpClient.GetByteArrayAsync(request.AudioUrl, ct);
+            // 查找 Exchange 配置
+            var exchange = await _db.ModelExchanges.Find(e => e.Id == id).FirstOrDefaultAsync(ct);
+            if (exchange == null)
+            {
+                await SendEvent("error", new { error = "Exchange 不存在" });
+                return;
+            }
+
+            if (exchange.TransformerType != "doubao-asr-stream")
+            {
+                await SendEvent("error", new { error = $"该 Exchange 类型为 {exchange.TransformerType}，不支持流式 ASR 测试" });
+                return;
+            }
+
+            // 获取音频数据
+            byte[] audioData;
+            if (file != null && file.Length > 0)
+            {
+                await SendEvent("stage", new { stage = "uploading", message = $"正在读取音频文件 ({file.Length / 1024}KB)..." });
+                using var ms = new MemoryStream();
+                await file.CopyToAsync(ms, ct);
+                audioData = ms.ToArray();
+            }
+            else if (!string.IsNullOrWhiteSpace(audioUrl))
+            {
+                await SendEvent("stage", new { stage = "downloading", message = "正在下载音频文件..." });
+                var httpClient = _httpClientFactory.CreateClient();
+                httpClient.Timeout = TimeSpan.FromSeconds(60);
+                audioData = await httpClient.GetByteArrayAsync(audioUrl, ct);
+                await SendEvent("stage", new { stage = "downloaded", message = $"音频下载完成 ({audioData.Length / 1024}KB)" });
+            }
+            else
+            {
+                await SendEvent("error", new { error = "请上传音频文件或提供 audioUrl" });
+                return;
+            }
+
+            // 从 Exchange 配置获取认证信息
+            var apiKey = ApiKeyCrypto.Decrypt(exchange.TargetApiKeyEncrypted, GetJwtSecret());
+            string appKey = "", accessKey = apiKey;
+            if (apiKey.Contains('|'))
+            {
+                var parts = apiKey.Split('|', 2);
+                appKey = parts[0];
+                accessKey = parts[1];
+            }
+
+            var wsUrl = exchange.TargetUrl ?? "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream";
+            var config = exchange.TransformerConfig ?? new Dictionary<string, object>
+            {
+                ["resourceId"] = "volc.bigasr.sauc.duration",
+                ["enableItn"] = true,
+                ["enablePunc"] = true,
+                ["enableDdc"] = true
+            };
+
+            await SendEvent("stage", new { stage = "processing", message = "正在处理音频..." });
+
+            var result = await streamAsr.TranscribeWithCallbackAsync(
+                wsUrl, appKey, accessKey, audioData, config,
+                onStage: async (stage, msg) => await SendEvent("stage", new { stage, message = msg }),
+                onProgress: async (sent, total) => await SendEvent("progress", new { sent, total }),
+                onFrame: async (seq, text, isLast) => await SendEvent("frame", new { seq, text, isLast }),
+                ct: ct);
+
+            var durationMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
+
+            await SendEvent("result", new
+            {
+                success = result.Success,
+                text = result.FullText,
+                segmentCount = result.Segments.Count,
+                segments = result.Segments.Select(s => new { s.Text, s.DurationSec }),
+                responseFrameCount = result.Responses.Count,
+                error = result.Error,
+                durationMs,
+                audioSizeBytes = audioData.Length
+            });
+
+            await SendEvent("stage", new { stage = "done", message = $"转录完成 ({durationMs}ms)" });
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<object>.Ok(new { error = $"下载音频失败: {ex.Message}" }));
+            await SendEvent("error", new { error = ex.Message });
         }
-
-        // 解析 apiKey：支持单Key和双Key
-        string appKey = "", accessKey = request.ApiKey;
-        if (request.ApiKey.Contains('|'))
-        {
-            var parts = request.ApiKey.Split('|', 2);
-            appKey = parts[0];
-            accessKey = parts[1];
-        }
-
-        var config = new Dictionary<string, object>
-        {
-            ["resourceId"] = request.ResourceId ?? "volc.bigasr.sauc.duration",
-            ["enableItn"] = true,
-            ["enablePunc"] = true,
-            ["enableDdc"] = true
-        };
-
-        var startedAt = DateTime.UtcNow;
-        var result = await streamAsr.TranscribeAsync(wsUrl, appKey, accessKey, audioData, config, ct);
-        var durationMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
-
-        return Ok(ApiResponse<object>.Ok(new
-        {
-            success = result.Success,
-            text = result.FullText,
-            segmentCount = result.Segments.Count,
-            segments = result.Segments.Select(s => new { s.Text, s.DurationSec }),
-            responseFrameCount = result.Responses.Count,
-            error = result.Error,
-            durationMs,
-            audioSizeBytes = audioData.Length,
-            wsUrl
-        }));
     }
 
     /// <summary>
@@ -736,7 +796,7 @@ public static class ExchangeTemplates
             {
                 Name = "豆包 ASR (流式 WebSocket)",
                 ModelAlias = "doubao-asr-stream",
-                TargetUrl = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream",
+                TargetUrl = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel",
                 TargetAuthScheme = "XApiKey",
                 TransformerType = "doubao-asr-stream",
                 TransformerConfig = new Dictionary<string, object>

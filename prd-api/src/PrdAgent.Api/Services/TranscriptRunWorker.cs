@@ -5,6 +5,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Core.Helpers;
 
 namespace PrdAgent.Api.Services;
 
@@ -109,6 +110,9 @@ public class TranscriptRunWorker : BackgroundService
 
     private async Task ProcessAsrAsync(MongoDbContext db, ILlmGateway gateway, TranscriptRun run)
     {
+        using var scope2 = _scopeFactory.CreateScope();
+        var modelResolver = scope2.ServiceProvider.GetRequiredService<IModelResolver>();
+
         var item = await db.TranscriptItems.Find(
             Builders<TranscriptItem>.Filter.Eq(i => i.Id, run.ItemId)).FirstOrDefaultAsync();
         if (item == null) throw new InvalidOperationException($"Item {run.ItemId} not found");
@@ -119,6 +123,172 @@ public class TranscriptRunWorker : BackgroundService
             Builders<TranscriptItem>.Filter.Eq(i => i.Id, item.Id),
             Builders<TranscriptItem>.Update.Set(i => i.TranscribeStatus, "processing"));
 
+        // 预解析模型，判断走哪条 ASR 路径
+        var resolution = await modelResolver.ResolveAsync(
+            AppCallerRegistry.TranscriptAgent.Transcribe.Audio, ModelTypes.Asr);
+
+        if (!resolution.Success)
+            throw new InvalidOperationException($"ASR 模型调度失败: {resolution.ErrorMessage}");
+
+        // 根据模型类型选择 ASR 路径
+        if (resolution.IsExchange)
+        {
+            if (resolution.ExchangeTransformerType == "doubao-asr-stream")
+            {
+                // WebSocket 流式 ASR：必须走专用 WebSocket 客户端，不能走 HTTP Gateway
+                await ProcessAsrViaStreamAsync(db, run, item, resolution);
+            }
+            else if (resolution.ExchangeTransformerType == "doubao-asr")
+            {
+                // 异步 submit+query ASR：Gateway 的 SendRawAsync 支持 IAsyncExchangeTransformer 轮询
+                // Gateway 内部会再次 ResolveAsync，但同一模型池内只有 doubao-asr Exchange，不会误选 WebSocket 模型
+                _logger.LogInformation("[transcript-agent] 使用异步 ASR 路径: Exchange={ExchangeName}", resolution.ExchangeName);
+                await ProcessAsrViaGatewayAsync(db, gateway, run, item);
+            }
+            else
+            {
+                // 未知 Exchange 类型：不能贸然走 Gateway（可能是 WebSocket 等非 HTTP 协议），直接报错
+                throw new InvalidOperationException(
+                    $"不支持的 ASR Exchange 转换器类型: {resolution.ExchangeTransformerType}，" +
+                    $"Exchange={resolution.ExchangeName}");
+            }
+        }
+        else
+        {
+            // 非 Exchange 模型（Whisper 等）：走 Gateway HTTP 路径
+            await ProcessAsrViaGatewayAsync(db, gateway, run, item);
+        }
+    }
+
+    /// <summary>
+    /// 通过 DoubaoStreamAsrService（WebSocket 流式）处理 ASR
+    /// </summary>
+    private async Task ProcessAsrViaStreamAsync(
+        MongoDbContext db, TranscriptRun run, TranscriptItem item,
+        ModelResolutionResult resolution)
+    {
+        _logger.LogInformation("[transcript-agent] 使用流式 ASR 路径: Exchange={ExchangeName}", resolution.ExchangeName);
+
+        // 下载音频文件
+        using var httpClient = new HttpClient();
+        httpClient.Timeout = TimeSpan.FromSeconds(120);
+        var audioBytes = await httpClient.GetByteArrayAsync(item.FileUrl);
+        await UpdateProgress(db, run.Id, 30);
+
+        // 解析 API Key
+        var apiKey = resolution.ApiKey ?? "";
+        string appKey = "", accessKey = apiKey;
+        if (apiKey.Contains('|'))
+        {
+            var parts = apiKey.Split('|', 2);
+            appKey = parts[0];
+            accessKey = parts[1];
+        }
+
+        var wsUrl = resolution.ApiUrl ?? "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel";
+        var config = resolution.ExchangeTransformerConfig ?? new Dictionary<string, object>
+        {
+            ["resourceId"] = "volc.bigasr.sauc.duration",
+            ["enableItn"] = true,
+            ["enablePunc"] = true,
+            ["enableDdc"] = true
+        };
+
+        await UpdateProgress(db, run.Id, 50);
+
+        // 调用 DoubaoStreamAsrService
+        using var scope3 = _scopeFactory.CreateScope();
+        var streamAsr = scope3.ServiceProvider.GetRequiredService<DoubaoStreamAsrService>();
+
+        var result = await streamAsr.TranscribeWithCallbackAsync(
+            wsUrl, appKey, accessKey, audioBytes, config,
+            onStage: async (stage, msg) =>
+            {
+                _logger.LogInformation("[transcript-agent] StreamASR stage: {Stage} - {Msg}", stage, msg);
+                await Task.CompletedTask;
+            },
+            onProgress: async (sent, total) =>
+            {
+                var pct = 50 + (int)(30.0 * sent / Math.Max(total, 1));
+                await UpdateProgress(db, run.Id, Math.Min(pct, 80));
+            },
+            onFrame: async (seq, text, isLast) =>
+            {
+                if (!string.IsNullOrEmpty(text))
+                {
+                    await db.TranscriptRuns.UpdateOneAsync(
+                        Builders<TranscriptRun>.Filter.Eq(r => r.Id, run.Id),
+                        Builders<TranscriptRun>.Update.Set(r => r.Result, text),
+                        cancellationToken: CancellationToken.None);
+                }
+            },
+            ct: CancellationToken.None);
+
+        if (!result.Success)
+            throw new InvalidOperationException($"流式 ASR 转写失败: {result.Error}");
+
+        await UpdateProgress(db, run.Id, 80);
+
+        // 将流式结果转为 TranscriptSegment
+        // 流式 ASR 每帧包含累积文本，需要去重：只取最后一帧的 utterances
+        // 如果有 utterances（含时间戳），按 utterance 分段；否则用 FullText 作为单段
+        var segments = new List<TranscriptSegment>();
+
+        // 从最后一帧的 utterances 提取（有时间戳的精细分段）
+        var lastResponse = result.Responses.LastOrDefault(r => r.PayloadMsg != null);
+        if (lastResponse?.PayloadMsg != null)
+        {
+            try
+            {
+                var payload = lastResponse.PayloadMsg.Value;
+                if (payload.TryGetProperty("result", out var res) &&
+                    res.TryGetProperty("utterances", out var utts) &&
+                    utts.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    double runningTime = 0;
+                    foreach (var utt in utts.EnumerateArray())
+                    {
+                        var text = utt.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
+                        if (string.IsNullOrWhiteSpace(text)) continue;
+                        double startMs = utt.TryGetProperty("start_time", out var st) ? st.GetDouble() : 0;
+                        double endMs = utt.TryGetProperty("end_time", out var et) ? et.GetDouble() : 0;
+                        segments.Add(new TranscriptSegment
+                        {
+                            Start = startMs / 1000.0,
+                            End = endMs / 1000.0,
+                            Text = text.Trim()
+                        });
+                        runningTime = endMs / 1000.0;
+                    }
+                }
+            }
+            catch { /* fallback below */ }
+        }
+
+        // 兜底：用 FullText 作为单段
+        if (segments.Count == 0 && !string.IsNullOrEmpty(result.FullText))
+        {
+            segments.Add(new TranscriptSegment { Start = 0, End = 0, Text = result.FullText });
+        }
+
+        _logger.LogInformation("[transcript-agent] 流式 ASR 完成: {SegmentCount} 段, 全文={TextLen}字",
+            segments.Count, result.FullText?.Length ?? 0);
+
+        // 保存转写结果到 Item
+        await db.TranscriptItems.UpdateOneAsync(
+            Builders<TranscriptItem>.Filter.Eq(i => i.Id, item.Id),
+            Builders<TranscriptItem>.Update
+                .Set(i => i.Segments, segments)
+                .Set(i => i.TranscribeStatus, "completed")
+                .Set(i => i.UpdatedAt, DateTime.UtcNow));
+    }
+
+    /// <summary>
+    /// 通过 LLM Gateway（Whisper 兼容 / HTTP Exchange）处理 ASR
+    /// </summary>
+    private async Task ProcessAsrViaGatewayAsync(
+        MongoDbContext db, ILlmGateway gateway, TranscriptRun run, TranscriptItem item)
+    {
         // 下载音频文件
         using var httpClient = new HttpClient();
         var audioBytes = await httpClient.GetByteArrayAsync(item.FileUrl);

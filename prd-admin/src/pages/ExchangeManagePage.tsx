@@ -16,6 +16,7 @@ import { AUTH_SCHEME_OPTIONS } from '@/types/exchange';
 import { ExchangeTestPanel } from '@/components/exchange/ExchangeTestPanel';
 import {
   ArrowLeftRight,
+  Box,
   Copy,
   Download,
   Edit,
@@ -28,6 +29,19 @@ import {
 import { useEffect, useState } from 'react';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
+import { ModelGroupsService } from '@/services/real/modelGroups';
+import type { CreateModelGroupRequest } from '@/types/modelGroup';
+import { PoolStrategyType } from '@/types/modelGroup';
+
+const modelGroupsService = new ModelGroupsService();
+
+/** 推断 Exchange 转换器类型对应的模型类型 */
+function inferModelType(transformerType: string): string {
+  if (transformerType.startsWith('doubao-asr') || transformerType.includes('asr')) return 'asr';
+  if (transformerType.startsWith('fal-image')) return 'generation';
+  if (transformerType === 'tts' || transformerType.includes('tts')) return 'tts';
+  return 'chat';
+}
 
 type ExchangeForm = {
   name: string;
@@ -80,6 +94,62 @@ export function ExchangeManagePage() {
   const [selectedTemplate, setSelectedTemplate] = useState<ExchangeTemplate | null>(null);
   const [templateApiKey, setTemplateApiKey] = useState('');
   const [importing, setImporting] = useState(false);
+
+  // 一键创建模型池状态
+  const [showPoolDialog, setShowPoolDialog] = useState(false);
+  const [poolExchange, setPoolExchange] = useState<ModelExchange | null>(null);
+  const [poolForm, setPoolForm] = useState({
+    name: '',
+    code: '',
+    modelType: 'asr',
+    isDefaultForType: false,
+  });
+  const [creatingPool, setCreatingPool] = useState(false);
+
+  const handleOpenPoolDialog = (exchange: ModelExchange) => {
+    const modelType = inferModelType(exchange.transformerType);
+    setPoolExchange(exchange);
+    setPoolForm({
+      name: `${exchange.name} 模型池`,
+      code: `pool-${exchange.modelAlias}`,
+      modelType,
+      isDefaultForType: false,
+    });
+    setShowPoolDialog(true);
+  };
+
+  const handleCreatePool = async () => {
+    if (!poolExchange) return;
+    if (!poolForm.name.trim()) { toast.error('请填写模型池名称'); return; }
+    if (!poolForm.code.trim()) { toast.error('请填写模型池代码'); return; }
+
+    setCreatingPool(true);
+    try {
+      const req: CreateModelGroupRequest = {
+        name: poolForm.name.trim(),
+        code: poolForm.code.trim(),
+        priority: 50,
+        modelType: poolForm.modelType,
+        isDefaultForType: poolForm.isDefaultForType,
+        strategyType: PoolStrategyType.FailFast,
+        models: [{
+          modelId: poolExchange.modelAlias,
+          platformId: poolExchange.platformId,
+          priority: 0,
+          healthStatus: 'Healthy' as any,
+          consecutiveFailures: 0,
+          consecutiveSuccesses: 0,
+        }],
+      };
+      await modelGroupsService.createModelGroup(req);
+      toast.success(`模型池「${poolForm.name}」已创建，包含模型 ${poolExchange.modelAlias}`);
+      setShowPoolDialog(false);
+    } catch (err: any) {
+      toast.error(err.message ?? '创建模型池失败');
+    } finally {
+      setCreatingPool(false);
+    }
+  };
 
   const loadData = async () => {
     setLoading(true);
@@ -288,6 +358,10 @@ export function ExchangeManagePage() {
                 </div>
                 <div className="flex items-center gap-1 ml-2 shrink-0">
                   <button className="p-1 rounded hover:bg-muted/50 transition-colors text-muted-foreground hover:text-foreground"
+                    onClick={() => handleOpenPoolDialog(exchange)} title="一键添加到模型池">
+                    <Box size={14} />
+                  </button>
+                  <button className="p-1 rounded hover:bg-muted/50 transition-colors text-muted-foreground hover:text-foreground"
                     onClick={() => setTestingExchange(exchange)} title="测试">
                     <FlaskConical size={14} />
                   </button>
@@ -432,6 +506,86 @@ export function ExchangeManagePage() {
               </>
             )}
           </div>
+        }
+      />
+
+      {/* 一键创建模型池对话框 */}
+      <Dialog
+        open={showPoolDialog}
+        onOpenChange={setShowPoolDialog}
+        title="一键创建模型池"
+        maxWidth={480}
+        content={
+          poolExchange ? (
+            <div className="space-y-4 pt-2">
+              <div className="text-sm text-muted-foreground">
+                为中继「{poolExchange.name}」创建专属模型池，自动关联模型 <code className="px-1 py-0.5 rounded bg-muted/40 text-[11px]">{poolExchange.modelAlias}</code>。
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1">模型池名称</label>
+                <input
+                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                  value={poolForm.name}
+                  onChange={e => setPoolForm(f => ({ ...f, name: e.target.value }))}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1">模型池代码</label>
+                <input
+                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono"
+                  value={poolForm.code}
+                  onChange={e => setPoolForm(f => ({ ...f, code: e.target.value }))}
+                />
+                <div className="text-[11px] text-muted-foreground mt-1">
+                  用于 Gateway 调度匹配，建议使用 kebab-case
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1">模型类型</label>
+                <select
+                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                  value={poolForm.modelType}
+                  onChange={e => setPoolForm(f => ({ ...f, modelType: e.target.value }))}
+                >
+                  <option value="chat">对话 (chat)</option>
+                  <option value="vision">视觉 (vision)</option>
+                  <option value="generation">图片生成 (generation)</option>
+                  <option value="asr">语音识别 (asr)</option>
+                  <option value="tts">语音合成 (tts)</option>
+                  <option value="video-gen">视频生成 (video-gen)</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="pool-default"
+                  checked={poolForm.isDefaultForType}
+                  onChange={e => setPoolForm(f => ({ ...f, isDefaultForType: e.target.checked }))}
+                  className="rounded"
+                />
+                <label htmlFor="pool-default" className="text-sm">设为该类型的默认模型池</label>
+              </div>
+
+              <div className="p-2 rounded bg-muted/20 text-[11px] text-muted-foreground space-y-1">
+                <div>平台: <strong>{poolExchange.platformName}</strong></div>
+                <div>模型: <code className="px-1 py-0.5 rounded bg-muted/40">{poolExchange.modelAlias}</code></div>
+                <div>策略: FailFast（快速失败，单模型推荐）</div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <Button variant="secondary" size="sm" onClick={() => setShowPoolDialog(false)}>
+                  取消
+                </Button>
+                <Button size="sm" onClick={handleCreatePool} disabled={creatingPool}>
+                  {creatingPool ? '创建中...' : '创建模型池'}
+                </Button>
+              </div>
+            </div>
+          ) : <div />
         }
       />
 

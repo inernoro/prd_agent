@@ -6,6 +6,7 @@ import type {
   TranscriptItem,
   TranscriptRun,
   TranscriptTemplate,
+  TranscriptSegment,
 } from '@/services/contracts/transcriptAgent';
 
 interface TranscriptState {
@@ -26,6 +27,9 @@ interface TranscriptState {
   fetchTemplates: () => Promise<void>;
   createCopywrite: (itemId: string, templateId: string) => Promise<TranscriptRun | null>;
   pollRun: (runId: string) => Promise<TranscriptRun | null>;
+  deleteRun: (runId: string) => Promise<void>;
+  renameItem: (itemId: string, newName: string) => Promise<void>;
+  updateSegments: (itemId: string, segments: TranscriptSegment[]) => Promise<void>;
   refreshItems: () => Promise<void>;
 }
 
@@ -132,6 +136,31 @@ export const useTranscriptStore = create<TranscriptState>((set, get) => ({
       return res.data;
     }
     return null;
+  },
+
+  deleteRun: async (runId: string) => {
+    const res = await svc.deleteRun(runId);
+    if (res.success) {
+      set(s => ({ runs: s.runs.filter(r => r.id !== runId) }));
+    }
+  },
+
+  renameItem: async (itemId: string, newName: string) => {
+    const res = await svc.renameItem(itemId, newName);
+    if (res.success) {
+      set(s => ({
+        items: s.items.map(i => i.id === itemId ? { ...i, fileName: newName } : i),
+      }));
+    }
+  },
+
+  updateSegments: async (itemId: string, segments: TranscriptSegment[]) => {
+    const res = await svc.updateSegments(itemId, segments);
+    if (res.success) {
+      set(s => ({
+        items: s.items.map(i => i.id === itemId ? { ...i, segments } : i),
+      }));
+    }
   },
 
   refreshItems: async () => {

@@ -223,7 +223,99 @@ Key 来源: 火山引擎控制台的 App ID + Access Token
 
 **导入模板时**: 单 Key 直接填 UUID，双 Key 用 `AppID|AccessToken` 格式（竖线分隔）。
 
-## 5. 代码对照
+## 5. 其他 Agent 如何接入 ASR
+
+如果你正在开发一个新 Agent，需要调用 ASR 模型进行语音转文字，按以下三步操作。
+
+### 5.1 注册 AppCallerCode
+
+在 `prd-api/src/PrdAgent.Core/Models/AppCallerRegistry.cs` 中，按现有 Agent 的层级结构添加你的 AppCallerCode：
+
+```csharp
+// 在 AppCallerRegistry 类中添加
+public static class YourAgent
+{
+    public static class SomeFeature
+    {
+        [AppCallerMetadata(
+            displayName: "你的Agent-语音转写",
+            description: "描述这个调用点的用途",
+            ModelTypes = new[] { ModelTypes.Asr },
+            Category = "YourAgent")]
+        public const string Transcribe = "your-agent.some-feature.transcribe::asr";
+    }
+}
+```
+
+**命名规范**: `{app-key}.{feature}.{action}::{model-type}`
+
+**已有的 ASR AppCallerCode 参考**:
+
+| AppCallerCode | 用途 |
+|---------------|------|
+| `transcript-agent.transcribe::asr` | 转录工作台 |
+| `video-agent.v2d.transcribe::asr` | 视频转文档 |
+
+### 5.2 绑定模型池
+
+有两种方式让你的 AppCallerCode 找到 ASR 模型：
+
+**方式 A: 使用默认模型池（推荐）**
+
+如果 ASR 模型池已设置 `isDefaultForType = true`，你的 Agent 无需额外配置。Gateway 调度三级优先级：
+
+1. 专属模型池（AppCallerCode 绑定的 `ModelGroupIds`）
+2. 默认模型池（`ModelType = "asr"` 且 `IsDefaultForType = true`）
+3. 传统配置（`IsMain` 标记，不推荐）
+
+**方式 B: 绑定专属模型池**
+
+如果需要独立的模型池（如不同 Agent 使用不同 ASR 服务），在管理后台：
+1. 模型池管理页 → 创建新模型池（类型选 `asr`）
+2. 模型中继页 → 对应 Exchange 卡片点击「一键添加到模型池」
+3. LLM 应用调用方页 → 找到你的 AppCallerCode → 绑定模型池
+
+### 5.3 调用 Gateway
+
+在你的 Service/Worker 中通过 `ILlmGateway` 发起 ASR 调用：
+
+```csharp
+// 注入 ILlmGateway
+private readonly ILlmGateway _gateway;
+
+// HTTP 异步模式（doubao-asr 转换器）
+var response = await _gateway.SendRawAsync(new GatewayRequest
+{
+    AppCallerCode = AppCallerRegistry.YourAgent.SomeFeature.Transcribe,
+    ModelType = ModelTypes.Asr,
+    RawBody = JsonSerializer.Serialize(new
+    {
+        audio = new { url = audioFileUrl }
+    }),
+    // 异步模式 Gateway 自动轮询
+}, CancellationToken.None);
+
+// response.RawBody 包含转录结果 JSON
+```
+
+**WebSocket 流式模式**需直接注入 `DoubaoStreamAsrService`：
+
+```csharp
+// 注入 DoubaoStreamAsrService
+private readonly DoubaoStreamAsrService _streamAsr;
+
+// 需要自行从 Exchange 配置获取 wsUrl 和 apiKey
+var result = await _streamAsr.TranscribeAsync(
+    wsUrl, appKey, accessKey, audioData, config,
+    CancellationToken.None);
+
+// result.FullText 包含完整转录文本
+// result.Segments 包含分段时间戳
+```
+
+> **注意**: WebSocket 流式模式目前不经过 Gateway 调度，直接调用 `DoubaoStreamAsrService`。如需 Gateway 统一调度 WebSocket，需扩展 Gateway 的 Exchange 调度路径（见第 10 节讨论）。
+
+## 6. 代码对照
 
 ### 5.1 核心文件清单
 
@@ -238,7 +330,7 @@ Key 来源: 火山引擎控制台的 App ID + Access Token
 | `ExchangeController.cs` | 中继管理 API + 导入模板 + 测试端点 |
 | `TranscriptRunWorker.cs` | 转录后台 Worker（调用 Gateway/StreamAsr） |
 
-### 5.2 新增接入点步骤
+### 6.2 新增接入点步骤
 
 如果要接入其他 ASR 服务（如阿里云、讯飞）：
 
@@ -248,7 +340,7 @@ Key 来源: 火山引擎控制台的 App ID + Access Token
 4. 如果是 WebSocket 协议，创建专用 Service 类
 5. 认证方案如有新类型，在 `LlmGateway.SetAuthHeader` 增加 case
 
-## 6. 测试验证
+## 7. 测试验证
 
 ### 6.1 HTTP 异步模式验证（已通过）
 
@@ -286,7 +378,7 @@ curl -X POST 'https://openspeech.bytedance.com/api/v3/auc/bigmodel/query' \
 3. 上传音频文件或输入 URL → 点击「发送测试」
 4. 三列面板展示：转换后请求 | 原始响应 | 标准化响应
 
-## 7. 注意事项
+## 8. 注意事项
 
 1. **音频格式**: WebSocket 流式模式**严格要求 16kHz 单声道 16bit PCM**，`DoubaoStreamAsrService` 会自动重采样（纯 C# 线性插值，无需 ffmpeg）。HTTP 异步模式接受多种格式
 2. **任意格式上传**: 用户可能上传 MP3/M4A/OGG/FLAC/MP4 等任意格式，建议在 `TranscriptRunWorker` 中用 ffmpeg 转为 WAV 后再传入 Service
@@ -297,7 +389,7 @@ curl -X POST 'https://openspeech.bytedance.com/api/v3/auc/bigmodel/query' \
    - `volc.bigasr.sauc.duration` — 流式 ASR (WebSocket)
 6. **Key 安全**: API Key 在数据库中 AES 加密存储，API 返回时脱敏显示
 
-## 8. 实测结果 (2026-03-29)
+## 9. 实测结果 (2026-03-29)
 
 ### HTTP 异步模式
 
@@ -321,7 +413,7 @@ curl -X POST 'https://openspeech.bytedance.com/api/v3/auc/bigmodel/query' \
 
 两种模式转录结果完全一致。
 
-## 9. 已知限制与后续优化
+## 10. 已知限制与后续优化
 
 | 项目 | 现状 | 优化方向 |
 |------|------|----------|
@@ -329,6 +421,32 @@ curl -X POST 'https://openspeech.bytedance.com/api/v3/auc/bigmodel/query' \
 | 重采样质量 | 线性插值（简单但有轻微失真） | 可改用 sinc 插值或 ffmpeg |
 | 断线重连 | 无 | 生产环境长音频需增加重连机制 |
 | 实时流式 | 使用 bigmodel_nostream（发完再返） | 如需实时字幕可改用 bigmodel 端点 |
+
+## 11. Gateway 统一调度讨论
+
+### 现状
+
+| 模式 | 调度路径 | 是否经过 Gateway |
+|------|----------|-----------------|
+| HTTP 异步 (doubao-asr) | `ILlmGateway.SendRawAsync` → Exchange 管线 | ✅ 是 |
+| WebSocket 流式 (doubao-asr-stream) | 直接调 `DoubaoStreamAsrService` | ❌ 否 |
+
+### 不统一的影响
+
+- WebSocket 模式不走 Gateway 意味着：不经过模型池策略引擎、不记录 `llmrequestlogs`、不支持健康检查降权
+- 对于单 Exchange 单模型的场景（当前状态），影响不大
+- 如果未来有多个 ASR 服务需要负载均衡，需要统一
+
+### 如果要统一
+
+Gateway 需要新增 WebSocket Exchange 调度路径，大致方案：
+
+1. `GatewayRequest` 新增 `TransportType = "websocket"` 标记
+2. `ModelResolver` 照常选择 Exchange + 模型
+3. Gateway 根据 `TransportType` 走不同执行路径：HTTP → `HttpClient`，WebSocket → 注入对应 Service
+4. 转换器标记类（如 `DoubaoStreamAsrTransformer`）提供 Service 类型信息
+
+**建议**: 当前保持直连模式，等出现第二个 WebSocket ASR 服务时再统一。
 
 ---
 

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
@@ -172,6 +173,32 @@ public class TranscriptAgentController : ControllerBase
         return NoContent();
     }
 
+    // ────────────── 重命名素材 ──────────────
+
+    /// <summary>
+    /// 重命名素材
+    /// </summary>
+    [HttpPatch("items/{itemId}/rename")]
+    public async Task<IActionResult> RenameItem(string itemId, [FromBody] RenameItemRequest request, CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        var item = await _db.TranscriptItems.Find(
+            i => i.Id == itemId && i.OwnerUserId == userId).FirstOrDefaultAsync(ct);
+        if (item == null) return NotFound();
+
+        if (string.IsNullOrWhiteSpace(request.FileName))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "文件名不能为空"));
+
+        await _db.TranscriptItems.UpdateOneAsync(
+            Builders<TranscriptItem>.Filter.Eq(i => i.Id, itemId),
+            Builders<TranscriptItem>.Update
+                .Set(i => i.FileName, request.FileName.Trim())
+                .Set(i => i.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new { id = itemId }));
+    }
+
     // ────────────── 转写结果编辑 ──────────────
 
     [HttpPut("items/{itemId}/segments")]
@@ -242,6 +269,95 @@ public class TranscriptAgentController : ControllerBase
         return Ok(run);
     }
 
+    // ────────────── Run 进度 SSE 流 ──────────────
+
+    /// <summary>
+    /// 转录进度 SSE 流 — 推送 run 状态变化直到完成/失败
+    /// 事件类型：
+    /// - progress: {status, progress}
+    /// - segments: {segments} （完成时推送最终分段结果）
+    /// - done: {status: "completed"}
+    /// - error: {error: "..."}
+    /// </summary>
+    [HttpGet("runs/{runId}/progress")]
+    public async Task StreamRunProgress(string runId, CancellationToken ct)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.Append("Cache-Control", "no-cache");
+        Response.Headers.Append("X-Accel-Buffering", "no");
+
+        var userId = this.GetRequiredUserId();
+
+        // 验证 run 存在且属于当前用户
+        var run = await _db.TranscriptRuns.Find(r => r.Id == runId && r.OwnerUserId == userId).FirstOrDefaultAsync(ct);
+        if (run == null) { Response.StatusCode = 404; return; }
+
+        var lastProgress = -1;
+        var lastStatus = "";
+        var lastResult = "";
+        var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+
+        // 轮询直到完成/失败（每秒检查一次，最多10分钟）
+        for (var i = 0; i < 600 && !ct.IsCancellationRequested; i++)
+        {
+            run = await _db.TranscriptRuns.Find(r => r.Id == runId).FirstOrDefaultAsync(CancellationToken.None);
+            if (run == null) break;
+
+            // 进度变化时推送
+            if (run.Progress != lastProgress || run.Status != lastStatus)
+            {
+                lastProgress = run.Progress;
+                lastStatus = run.Status;
+
+                await SendSseEvent("progress", new { status = run.Status, progress = run.Progress });
+            }
+
+            // 实时识别文字变化时推送
+            if (run.Result != null && run.Result != lastResult)
+            {
+                lastResult = run.Result;
+                await SendSseEvent("typing", new { text = run.Result });
+            }
+
+            // 完成：推送段落数据
+            if (run.Status == "completed")
+            {
+                var item = await _db.TranscriptItems.Find(ti => ti.Id == run.ItemId).FirstOrDefaultAsync(CancellationToken.None);
+                if (item?.Segments != null)
+                {
+                    await SendSseEvent("segments", new
+                    {
+                        segments = item.Segments.Select(s => new { s.Start, s.End, s.Text })
+                    });
+                }
+                await SendSseEvent("done", new { status = "completed" });
+                break;
+            }
+
+            // 失败
+            if (run.Status == "failed")
+            {
+                await SendSseEvent("error", new { error = run.Error ?? "转录失败" });
+                break;
+            }
+
+            await Task.Delay(1000, ct);
+        }
+
+        // 本地方法
+        async Task SendSseEvent(string eventType, object data)
+        {
+            var json = JsonSerializer.Serialize(data, jsonOptions);
+            try
+            {
+                await Response.WriteAsync($"event: {eventType}\ndata: {json}\n\n", CancellationToken.None);
+                await Response.Body.FlushAsync(CancellationToken.None);
+            }
+            catch (OperationCanceledException) { }
+            catch (ObjectDisposedException) { }
+        }
+    }
+
     // ────────────── Run 状态查询 ──────────────
 
     [HttpGet("runs/{runId}")]
@@ -262,6 +378,19 @@ public class TranscriptAgentController : ControllerBase
             .SortByDescending(r => r.CreatedAt)
             .ToListAsync();
         return Ok(runs);
+    }
+
+    // ────────────── 删除 Run ──────────────
+
+    [HttpDelete("runs/{runId}")]
+    public async Task<IActionResult> DeleteRun(string runId)
+    {
+        var userId = this.GetRequiredUserId();
+        var run = await _db.TranscriptRuns.Find(r => r.Id == runId && r.OwnerUserId == userId).FirstOrDefaultAsync();
+        if (run == null) return NotFound();
+
+        await _db.TranscriptRuns.DeleteOneAsync(r => r.Id == runId);
+        return Ok(new { id = runId });
     }
 
     // ────────────── 导出 ──────────────
@@ -329,3 +458,8 @@ public record CreateWorkspaceDto(string Title);
 public record CreateCopywriteDto(string TemplateId);
 public record CreateTemplateDto(string Name, string? Description, string Prompt, bool IsSystem = false);
 public record ExportDto(List<string> Formats);
+
+public class RenameItemRequest
+{
+    public string FileName { get; set; } = string.Empty;
+}
