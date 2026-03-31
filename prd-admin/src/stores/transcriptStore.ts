@@ -27,6 +27,7 @@ interface TranscriptState {
   fetchTemplates: () => Promise<void>;
   createCopywrite: (itemId: string, templateId: string) => Promise<TranscriptRun | null>;
   pollRun: (runId: string) => Promise<TranscriptRun | null>;
+  renameItem: (itemId: string, newName: string) => Promise<void>;
   updateSegments: (itemId: string, segments: TranscriptSegment[]) => Promise<void>;
   refreshItems: () => Promise<void>;
 }
@@ -134,6 +135,15 @@ export const useTranscriptStore = create<TranscriptState>((set, get) => ({
       return res.data;
     }
     return null;
+  },
+
+  renameItem: async (itemId: string, newName: string) => {
+    const res = await svc.renameItem(itemId, newName);
+    if (res.success) {
+      set(s => ({
+        items: s.items.map(i => i.id === itemId ? { ...i, fileName: newName } : i),
+      }));
+    }
   },
 
   updateSegments: async (itemId: string, segments: TranscriptSegment[]) => {

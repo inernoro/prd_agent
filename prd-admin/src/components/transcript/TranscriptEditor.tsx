@@ -5,7 +5,6 @@ import { useTranscriptStore } from '@/stores/transcriptStore';
 import { TranscribeProgress } from './TranscribeProgress';
 import { exportItem } from '@/services/real/transcriptAgent';
 import { toast } from '@/lib/toast';
-import { CopywritePanel } from './CopywritePanel';
 import { AudioPlayer } from './AudioPlayer';
 import { SegmentList } from './SegmentList';
 import type { TranscriptItem } from '@/services/contracts/transcriptAgent';
@@ -16,11 +15,26 @@ interface TranscriptEditorProps {
 }
 
 export function TranscriptEditor({ item, onItemDeleted }: TranscriptEditorProps) {
-  const { templates, fetchTemplates, deleteItem, updateSegments, runs, refreshItems } = useTranscriptStore();
+  const { deleteItem, updateSegments, runs, refreshItems, renameItem } = useTranscriptStore();
   const [exportFormats, setExportFormats] = useState<Set<string>>(new Set(['timestamped']));
   const [exporting, setExporting] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [seekTo, setSeekTo] = useState<number | undefined>(undefined);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
+
+  const handleStartEditTitle = () => {
+    setTitleDraft(item?.fileName ?? '');
+    setEditingTitle(true);
+  };
+
+  const handleSaveTitle = () => {
+    const trimmed = titleDraft.trim();
+    if (trimmed && trimmed !== item?.fileName && item) {
+      renameItem(item.id, trimmed);
+    }
+    setEditingTitle(false);
+  };
 
   const handleSeek = useCallback((time: number) => {
     setSeekTo(time);
@@ -33,8 +47,6 @@ export function TranscriptEditor({ item, onItemDeleted }: TranscriptEditorProps)
     const updated = item.segments.map((s, i) => i === index ? { ...s, text: newText } : s);
     updateSegments(item.id, updated);
   }, [item, updateSegments]);
-
-  useEffect(() => { fetchTemplates(); }, []);
 
   // ── Empty state ──
   if (!item) {
@@ -189,7 +201,24 @@ export function TranscriptEditor({ item, onItemDeleted }: TranscriptEditorProps)
       {/* Header */}
       <div className="flex items-center gap-3 px-6 py-4 border-b border-border/50">
         <div className="flex-1 min-w-0">
-          <h1 className="text-base font-medium truncate">{item.fileName}</h1>
+          {editingTitle ? (
+            <input
+              className="text-base font-medium bg-transparent border-b border-primary/30 outline-none w-full"
+              value={titleDraft}
+              onChange={e => setTitleDraft(e.target.value)}
+              onBlur={handleSaveTitle}
+              onKeyDown={e => { if (e.key === 'Enter') handleSaveTitle(); if (e.key === 'Escape') setEditingTitle(false); }}
+              autoFocus
+            />
+          ) : (
+            <h1
+              className="text-base font-medium truncate cursor-pointer hover:text-foreground/60 transition-colors"
+              onClick={handleStartEditTitle}
+              title="点击编辑标题"
+            >
+              {item.fileName}
+            </h1>
+          )}
           <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground">
             <span className="flex items-center gap-1">{statusIcon(item.transcribeStatus)} {statusText(item.transcribeStatus)}</span>
             <span>{formatFileSize(item.fileSize)}</span>
@@ -218,34 +247,26 @@ export function TranscriptEditor({ item, onItemDeleted }: TranscriptEditorProps)
 
       {/* Bottom action bar */}
       <div className="border-t border-border/50 px-6 py-4">
-        <div className="flex items-center gap-4">
-          {/* Copywrite */}
-          <div className="flex-1">
-            <CopywritePanel item={item} templates={templates} />
-          </div>
-
-          {/* Export */}
-          <div className="flex items-center gap-2 shrink-0">
-            {[
-              { key: 'timestamped', label: '时间戳' },
-              { key: 'txt', label: '纯文本' },
-              { key: 'srt', label: 'SRT' },
-            ].map(({ key, label }) => (
-              <button key={key}
-                className={`px-2.5 py-1.5 text-xs rounded-md border transition-colors ${
-                  exportFormats.has(key)
-                    ? 'border-border bg-muted/40 text-foreground'
-                    : 'border-border/50 text-muted-foreground hover:border-border'
-                }`}
-                onClick={() => toggleFormat(key)}>
-                {label}
-              </button>
-            ))}
-            <Button size="sm" variant="ghost" onClick={handleExport} disabled={exportFormats.size === 0 || exporting}>
-              <Download className="w-4 h-4 mr-1" />
-              导出
-            </Button>
-          </div>
+        <div className="flex items-center justify-end gap-2">
+          {[
+            { key: 'timestamped', label: '时间戳' },
+            { key: 'txt', label: '纯文本' },
+            { key: 'srt', label: 'SRT' },
+          ].map(({ key, label }) => (
+            <button key={key}
+              className={`px-2.5 py-1.5 text-xs rounded-md border transition-colors ${
+                exportFormats.has(key)
+                  ? 'border-border bg-muted/40 text-foreground'
+                  : 'border-border/50 text-muted-foreground hover:border-border'
+              }`}
+              onClick={() => toggleFormat(key)}>
+              {label}
+            </button>
+          ))}
+          <Button size="sm" variant="ghost" onClick={handleExport} disabled={exportFormats.size === 0 || exporting}>
+            <Download className="w-4 h-4 mr-1" />
+            导出
+          </Button>
         </div>
       </div>
     </div>

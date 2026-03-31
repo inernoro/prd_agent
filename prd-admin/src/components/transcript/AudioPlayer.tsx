@@ -145,8 +145,8 @@ export function AudioPlayer({ src, className, onTimeUpdate, seekTo }: AudioPlaye
           outline: none;
         }
         .audio-progress-slider::-webkit-slider-runnable-track {
-          height: 4px;
-          border-radius: 2px;
+          height: 6px;
+          border-radius: 3px;
           background: linear-gradient(
             to right,
             hsl(var(--primary) / 0.6) 0%,
@@ -156,37 +156,37 @@ export function AudioPlayer({ src, className, onTimeUpdate, seekTo }: AudioPlaye
           );
         }
         .audio-progress-slider::-moz-range-track {
-          height: 4px;
-          border-radius: 2px;
+          height: 6px;
+          border-radius: 3px;
           background: hsl(var(--muted) / 0.5);
         }
         .audio-progress-slider::-moz-range-progress {
-          height: 4px;
-          border-radius: 2px;
+          height: 6px;
+          border-radius: 3px;
           background: hsl(var(--primary) / 0.6);
         }
         .audio-progress-slider::-webkit-slider-thumb {
           -webkit-appearance: none;
-          width: 12px;
-          height: 12px;
+          width: 14px;
+          height: 14px;
           border-radius: 50%;
           background: hsl(var(--primary));
           margin-top: -4px;
           cursor: pointer;
-          opacity: 0;
+          opacity: 0.6;
           transition: opacity 0.15s;
         }
         .audio-progress-slider:hover::-webkit-slider-thumb {
           opacity: 1;
         }
         .audio-progress-slider::-moz-range-thumb {
-          width: 12px;
-          height: 12px;
+          width: 14px;
+          height: 14px;
           border-radius: 50%;
           background: hsl(var(--primary));
           border: none;
           cursor: pointer;
-          opacity: 0;
+          opacity: 0.6;
           transition: opacity 0.15s;
         }
         .audio-progress-slider:hover::-moz-range-thumb {

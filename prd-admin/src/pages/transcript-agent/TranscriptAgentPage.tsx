@@ -2,12 +2,16 @@ import { useEffect, useState } from 'react';
 import { useTranscriptStore } from '@/stores/transcriptStore';
 import { TranscriptSidebar } from '@/components/transcript/TranscriptSidebar';
 import { TranscriptEditor } from '@/components/transcript/TranscriptEditor';
+import { GenerateDialog } from '@/components/transcript/GenerateDialog';
 import { GlassCard } from '@/components/design/GlassCard';
 import type { TranscriptItem } from '@/services/contracts/transcriptAgent';
 
 export default function TranscriptAgentPage() {
-  const { items, refreshItems } = useTranscriptStore();
+  const { items, templates, refreshItems, fetchTemplates } = useTranscriptStore();
   const [selectedItem, setSelectedItem] = useState<TranscriptItem | null>(null);
+  const [generateItem, setGenerateItem] = useState<TranscriptItem | null>(null);
+
+  useEffect(() => { fetchTemplates(); }, []);
 
   // Auto-poll pending/processing items
   useEffect(() => {
@@ -33,6 +37,7 @@ export default function TranscriptAgentPage() {
           <TranscriptSidebar
             selectedItemId={selectedItem?.id ?? null}
             onSelectItem={setSelectedItem}
+            onGenerate={setGenerateItem}
           />
         </GlassCard>
 
@@ -44,6 +49,16 @@ export default function TranscriptAgentPage() {
           />
         </GlassCard>
       </div>
+
+      {/* Generate dialog */}
+      {generateItem && (
+        <GenerateDialog
+          open={!!generateItem}
+          onOpenChange={(open) => { if (!open) setGenerateItem(null); }}
+          item={generateItem}
+          templates={templates}
+        />
+      )}
     </div>
   );
 }

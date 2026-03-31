@@ -173,6 +173,32 @@ public class TranscriptAgentController : ControllerBase
         return NoContent();
     }
 
+    // ────────────── 重命名素材 ──────────────
+
+    /// <summary>
+    /// 重命名素材
+    /// </summary>
+    [HttpPatch("items/{itemId}/rename")]
+    public async Task<IActionResult> RenameItem(string itemId, [FromBody] RenameItemRequest request, CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        var item = await _db.TranscriptItems.Find(
+            i => i.Id == itemId && i.OwnerUserId == userId).FirstOrDefaultAsync(ct);
+        if (item == null) return NotFound();
+
+        if (string.IsNullOrWhiteSpace(request.FileName))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "文件名不能为空"));
+
+        await _db.TranscriptItems.UpdateOneAsync(
+            Builders<TranscriptItem>.Filter.Eq(i => i.Id, itemId),
+            Builders<TranscriptItem>.Update
+                .Set(i => i.FileName, request.FileName.Trim())
+                .Set(i => i.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new { id = itemId }));
+    }
+
     // ────────────── 转写结果编辑 ──────────────
 
     [HttpPut("items/{itemId}/segments")]
@@ -419,3 +445,8 @@ public record CreateWorkspaceDto(string Title);
 public record CreateCopywriteDto(string TemplateId);
 public record CreateTemplateDto(string Name, string? Description, string Prompt, bool IsSystem = false);
 public record ExportDto(List<string> Formats);
+
+public class RenameItemRequest
+{
+    public string FileName { get; set; } = string.Empty;
+}

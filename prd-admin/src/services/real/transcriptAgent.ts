@@ -67,6 +67,9 @@ export const uploadItem = async (workspaceId: string, file: File): Promise<ApiRe
 export const deleteItem = (itemId: string) =>
   apiRequest(`${BASE}/items/${itemId}`, { method: 'DELETE' });
 
+export const renameItem = (itemId: string, fileName: string) =>
+  apiRequest(`${BASE}/items/${itemId}/rename`, { method: 'PATCH', body: { fileName } });
+
 export const updateSegments = (itemId: string, segments: TranscriptSegment[]) =>
   apiRequest(`${BASE}/items/${itemId}/segments`, { method: 'PUT', body: segments });
 

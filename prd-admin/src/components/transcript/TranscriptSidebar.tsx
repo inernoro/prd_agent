@@ -1,5 +1,5 @@
-import { useEffect, useState, useCallback } from 'react';
-import { FileAudio, Plus, Trash2, Loader2, CheckCircle2, AlertCircle, ChevronDown, ChevronRight, X } from 'lucide-react';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { FileAudio, FileText, Plus, Trash2, Loader2, CheckCircle2, AlertCircle, ChevronDown, ChevronRight, X, Sparkles } from 'lucide-react';
 import { useTranscriptStore } from '@/stores/transcriptStore';
 import { toast } from '@/lib/toast';
 import { UploadDropzone } from './UploadDropzone';
@@ -8,20 +8,31 @@ import type { TranscriptItem } from '@/services/contracts/transcriptAgent';
 interface TranscriptSidebarProps {
   selectedItemId: string | null;
   onSelectItem: (item: TranscriptItem | null) => void;
+  onGenerate?: (item: TranscriptItem) => void;
 }
 
-export function TranscriptSidebar({ selectedItemId, onSelectItem }: TranscriptSidebarProps) {
+export function TranscriptSidebar({ selectedItemId, onSelectItem, onGenerate }: TranscriptSidebarProps) {
   const {
-    workspaces, currentWorkspace, items, uploading,
+    workspaces, currentWorkspace, items, runs, uploading,
     fetchWorkspaces, selectWorkspace, createWorkspace, deleteWorkspace,
-    uploadFile, deleteItem,
+    uploadFile, deleteItem, renameItem,
   } = useTranscriptStore();
 
   const [showCreate, setShowCreate] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [wsExpanded, setWsExpanded] = useState(true);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState('');
+  const renameInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { fetchWorkspaces(); }, []);
+
+  useEffect(() => {
+    if (editingItemId && renameInputRef.current) {
+      renameInputRef.current.focus();
+      renameInputRef.current.select();
+    }
+  }, [editingItemId]);
 
   const handleCreate = async () => {
     if (!newTitle.trim()) return;
@@ -54,10 +65,28 @@ export function TranscriptSidebar({ selectedItemId, onSelectItem }: TranscriptSi
     }
   };
 
+  const startRename = (item: TranscriptItem) => {
+    setEditingItemId(item.id);
+    setEditingName(item.fileName);
+  };
+
+  const commitRename = (itemId: string) => {
+    const trimmed = editingName.trim();
+    if (trimmed && trimmed !== items.find(i => i.id === itemId)?.fileName) {
+      renameItem(itemId, trimmed);
+    }
+    setEditingItemId(null);
+  };
+
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const formatTime = (dateStr: string) => {
+    const d = new Date(dateStr);
+    return `${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')} ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
   };
 
   const statusIcon = (status: string) => {
@@ -68,6 +97,9 @@ export function TranscriptSidebar({ selectedItemId, onSelectItem }: TranscriptSi
       default: return null;
     }
   };
+
+  const getItemCopywriteRuns = (itemId: string) =>
+    runs.filter(r => r.itemId === itemId && r.type === 'copywrite' && r.status === 'completed');
 
   return (
     <div className="flex flex-col h-full">
@@ -177,30 +209,88 @@ export function TranscriptSidebar({ selectedItemId, onSelectItem }: TranscriptSi
                   {uploading ? '上传中...' : '暂无素材，请上传音视频'}
                 </div>
               ) : (
-                items.map(item => (
-                  <button
-                    key={item.id}
-                    onClick={() => onSelectItem(item)}
-                    className="surface-row w-full flex items-center gap-2 px-3 py-2.5 text-left text-xs group cursor-pointer"
-                    style={selectedItemId === item.id ? { background: 'var(--bg-input-hover)' } : undefined}
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        {statusIcon(item.transcribeStatus)}
-                        <span className="truncate text-foreground/80">{item.fileName}</span>
-                      </div>
-                      <span className="text-[10px] text-muted-foreground/60 ml-[18px]">
-                        {formatFileSize(item.fileSize)}
-                      </span>
+                items.map(item => {
+                  const copywriteRuns = getItemCopywriteRuns(item.id);
+                  return (
+                    <div key={item.id}>
+                      {/* Item row */}
+                      <button
+                        onClick={() => onSelectItem(item)}
+                        className="surface-row w-full flex items-center gap-2 px-3 py-2.5 text-left text-xs group cursor-pointer"
+                        style={selectedItemId === item.id ? { background: 'var(--bg-input-hover)' } : undefined}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            {statusIcon(item.transcribeStatus)}
+                            {editingItemId === item.id ? (
+                              <input
+                                ref={renameInputRef}
+                                className="flex-1 min-w-0 px-1 py-0 text-xs bg-muted/40 border border-border rounded outline-none focus:border-primary/50 text-foreground/80"
+                                value={editingName}
+                                onChange={e => setEditingName(e.target.value)}
+                                onBlur={() => commitRename(item.id)}
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter') commitRename(item.id);
+                                  if (e.key === 'Escape') setEditingItemId(null);
+                                }}
+                                onClick={e => e.stopPropagation()}
+                              />
+                            ) : (
+                              <span
+                                className="truncate text-foreground/80"
+                                onDoubleClick={(e) => {
+                                  e.stopPropagation();
+                                  startRename(item);
+                                }}
+                              >
+                                {item.fileName}
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[10px] text-muted-foreground/60 ml-[18px]">
+                            {formatFileSize(item.fileSize)}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-0.5 shrink-0">
+                          {item.transcribeStatus === 'completed' && onGenerate && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); onGenerate(item); }}
+                              className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-muted transition-all"
+                              title="生成文案"
+                            >
+                              <Sparkles className="w-3 h-3 text-muted-foreground" />
+                            </button>
+                          )}
+                          <button
+                            onClick={(e) => handleDeleteItem(item.id, e)}
+                            className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-muted transition-all"
+                          >
+                            <Trash2 className="w-3 h-3 text-muted-foreground" />
+                          </button>
+                        </div>
+                      </button>
+
+                      {/* Copywrite sub-runs */}
+                      {copywriteRuns.length > 0 && (
+                        <div className="ml-6 pl-2 border-l border-border/30">
+                          {copywriteRuns.map(run => (
+                            <button
+                              key={run.id}
+                              onClick={() => {
+                                onSelectItem(item);
+                                toast.success('查看底部文案区域');
+                              }}
+                              className="surface-row w-full flex items-center gap-1.5 px-2 py-1.5 text-left text-[10px] text-muted-foreground hover:text-foreground/80 cursor-pointer"
+                            >
+                              <FileText className="w-3 h-3 shrink-0" />
+                              <span className="truncate">文案 {formatTime(run.createdAt)}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                    <button
-                      onClick={(e) => handleDeleteItem(item.id, e)}
-                      className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-muted transition-all shrink-0"
-                    >
-                      <Trash2 className="w-3 h-3 text-muted-foreground" />
-                    </button>
-                  </button>
-                ))
+                  );
+                })
               )}
             </div>
           </>
