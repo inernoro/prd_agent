@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { Mic, Trash2, Download, AlertCircle, Loader2, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { useTranscriptStore } from '@/stores/transcriptStore';
