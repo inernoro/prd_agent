@@ -26,17 +26,24 @@ export default function TranscriptAgentPage() {
   }, [items]);
 
   return (
-    <div className="flex h-full gap-3 p-3">
-      <TranscriptSidebar
-        selectedItemId={selectedItem?.id ?? null}
-        onSelectItem={setSelectedItem}
-      />
-      <GlassCard variant="subtle" padding="none" className="flex-1 min-w-0 overflow-hidden">
-        <TranscriptEditor
-          item={selectedItem}
-          onItemDeleted={() => setSelectedItem(null)}
-        />
-      </GlassCard>
+    <div className="h-full min-h-0 flex flex-col gap-4">
+      <div className="grid gap-4 flex-1 min-h-0 lg:grid-cols-[280px_1fr]">
+        {/* 左侧：工作区+素材列表 */}
+        <GlassCard animated glow className="flex flex-col min-h-0 p-0 overflow-hidden">
+          <TranscriptSidebar
+            selectedItemId={selectedItem?.id ?? null}
+            onSelectItem={setSelectedItem}
+          />
+        </GlassCard>
+
+        {/* 右侧：编辑区 */}
+        <GlassCard animated glow className="flex flex-col min-h-0 p-0 overflow-hidden">
+          <TranscriptEditor
+            item={selectedItem}
+            onItemDeleted={() => setSelectedItem(null)}
+          />
+        </GlassCard>
+      </div>
     </div>
   );
 }
