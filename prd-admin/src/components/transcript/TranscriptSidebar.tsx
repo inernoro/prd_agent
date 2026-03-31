@@ -101,7 +101,7 @@ export function TranscriptSidebar({ selectedItemId, selectedRunId, onSelectItem,
 
   const statusIcon = (status: string) => {
     switch (status) {
-      case 'completed': return <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0" />;
+      case 'completed': return <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />;
       case 'processing': case 'pending': return <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />;
       case 'failed': return <AlertCircle className="w-3 h-3 text-destructive shrink-0" />;
       default: return null;
@@ -188,10 +188,10 @@ export function TranscriptSidebar({ selectedItemId, selectedRunId, onSelectItem,
                     selectWorkspace(ws.id);
                     onSelectItem(null);
                   }}
-                  className="surface-row w-full flex items-center gap-2 px-3 py-2.5 text-left text-xs group cursor-pointer"
-                  style={currentWorkspace?.id === ws.id ? { background: 'var(--bg-input-hover)' } : undefined}
+                  className="surface-row w-full flex items-center gap-2 px-3 py-2.5 text-left text-xs font-medium group cursor-pointer"
+                  data-active={currentWorkspace?.id === ws.id || undefined}
                 >
-                  <FileAudio className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+                  <FileAudio className="w-3.5 h-3.5 shrink-0 text-primary/60" />
                   <span className="flex-1 min-w-0 truncate">{ws.title}</span>
                   <button
                     onClick={(e) => handleDeleteWorkspace(ws.id, e)}
@@ -228,7 +228,7 @@ export function TranscriptSidebar({ selectedItemId, selectedRunId, onSelectItem,
                       <button
                         onClick={() => onSelectItem(item)}
                         className="surface-row w-full flex items-center gap-2 px-3 py-2.5 text-left text-xs group cursor-pointer"
-                        style={selectedItemId === item.id ? { background: 'var(--bg-input-hover)' } : undefined}
+                        data-active={selectedItemId === item.id || undefined}
                       >
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-1.5">
@@ -283,7 +283,7 @@ export function TranscriptSidebar({ selectedItemId, selectedRunId, onSelectItem,
 
                       {/* Copywrite sub-runs */}
                       {copywriteRuns.length > 0 && (
-                        <div className="ml-6 pl-2 border-l border-border/30">
+                        <div className="ml-6 pl-2 border-l-2 border-primary/20">
                           {copywriteRuns.map(run => (
                             <button
                               key={run.id}
@@ -292,7 +292,7 @@ export function TranscriptSidebar({ selectedItemId, selectedRunId, onSelectItem,
                                 onSelectRun?.(run.id);
                               }}
                               className="surface-row w-full flex items-center gap-2 pl-2 pr-3 py-1.5 text-left text-[11px] group cursor-pointer"
-                              style={selectedRunId === run.id ? { background: 'var(--bg-input-hover)' } : undefined}
+                              data-active={selectedRunId === run.id || undefined}
                             >
                               {run.status === 'completed' ? (
                                 <FileText className="w-3 h-3 text-muted-foreground/60 shrink-0" />

@@ -94,6 +94,9 @@ export const getRun = (runId: string) =>
 export const listRuns = (workspaceId: string) =>
   apiRequest<TranscriptRun[]>(`${BASE}/workspaces/${workspaceId}/runs`, { method: 'GET' });
 
+export const updateRunResult = (runId: string, result: string) =>
+  apiRequest(`${BASE}/runs/${runId}/result`, { method: 'PUT', body: { result } });
+
 // ── Export ──
 export const exportItem = (itemId: string, formats: string[]) =>
   apiRequest<Record<string, string>>(`${BASE}/items/${itemId}/export`, {

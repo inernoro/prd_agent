@@ -179,11 +179,11 @@ public class TranscriptAgentController : ControllerBase
     /// 重命名素材
     /// </summary>
     [HttpPatch("items/{itemId}/rename")]
-    public async Task<IActionResult> RenameItem(string itemId, [FromBody] RenameItemRequest request, CancellationToken ct)
+    public async Task<IActionResult> RenameItem(string itemId, [FromBody] RenameItemRequest request)
     {
         var userId = this.GetRequiredUserId();
         var item = await _db.TranscriptItems.Find(
-            i => i.Id == itemId && i.OwnerUserId == userId).FirstOrDefaultAsync(ct);
+            i => i.Id == itemId && i.OwnerUserId == userId).FirstOrDefaultAsync();
         if (item == null) return NotFound();
 
         if (string.IsNullOrWhiteSpace(request.FileName))
@@ -194,7 +194,7 @@ public class TranscriptAgentController : ControllerBase
             Builders<TranscriptItem>.Update
                 .Set(i => i.FileName, request.FileName.Trim())
                 .Set(i => i.UpdatedAt, DateTime.UtcNow),
-            cancellationToken: ct);
+            cancellationToken: CancellationToken.None);
 
         return Ok(ApiResponse<object>.Ok(new { id = itemId }));
     }
@@ -298,9 +298,10 @@ public class TranscriptAgentController : ControllerBase
         var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
         // 轮询直到完成/失败（每秒检查一次，最多10分钟）
+        var heartbeatCounter = 0;
         for (var i = 0; i < 600 && !ct.IsCancellationRequested; i++)
         {
-            run = await _db.TranscriptRuns.Find(r => r.Id == runId).FirstOrDefaultAsync(CancellationToken.None);
+            run = await _db.TranscriptRuns.Find(r => r.Id == runId).FirstOrDefaultAsync(ct);
             if (run == null) break;
 
             // 进度变化时推送
@@ -310,6 +311,7 @@ public class TranscriptAgentController : ControllerBase
                 lastStatus = run.Status;
 
                 await SendSseEvent("progress", new { status = run.Status, progress = run.Progress });
+                heartbeatCounter = 0;
             }
 
             // 实时识别文字变化时推送
@@ -317,6 +319,7 @@ public class TranscriptAgentController : ControllerBase
             {
                 lastResult = run.Result;
                 await SendSseEvent("typing", new { text = run.Result });
+                heartbeatCounter = 0;
             }
 
             // 完成：推送段落数据
@@ -339,6 +342,20 @@ public class TranscriptAgentController : ControllerBase
             {
                 await SendSseEvent("error", new { error = run.Error ?? "转录失败" });
                 break;
+            }
+
+            // 每 10 秒发送 keepalive 心跳
+            heartbeatCounter++;
+            if (heartbeatCounter >= 10)
+            {
+                try
+                {
+                    await Response.WriteAsync(": keepalive\n\n", CancellationToken.None);
+                    await Response.Body.FlushAsync(CancellationToken.None);
+                }
+                catch (OperationCanceledException) { }
+                catch (ObjectDisposedException) { }
+                heartbeatCounter = 0;
             }
 
             await Task.Delay(1000, ct);
@@ -378,6 +395,28 @@ public class TranscriptAgentController : ControllerBase
             .SortByDescending(r => r.CreatedAt)
             .ToListAsync();
         return Ok(runs);
+    }
+
+    // ────────────── 保存文案编辑 ──────────────
+
+    /// <summary>
+    /// 保存用户对文案 run 的编辑结果
+    /// </summary>
+    [HttpPut("runs/{runId}/result")]
+    public async Task<IActionResult> UpdateRunResult(string runId, [FromBody] UpdateRunResultDto dto)
+    {
+        var userId = this.GetRequiredUserId();
+        var run = await _db.TranscriptRuns.Find(r => r.Id == runId && r.OwnerUserId == userId).FirstOrDefaultAsync();
+        if (run == null) return NotFound();
+
+        await _db.TranscriptRuns.UpdateOneAsync(
+            Builders<TranscriptRun>.Filter.Eq(r => r.Id, runId),
+            Builders<TranscriptRun>.Update
+                .Set(r => r.Result, dto.Result)
+                .Set(r => r.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: CancellationToken.None);
+
+        return Ok(ApiResponse<object>.Ok(new { id = runId }));
     }
 
     // ────────────── 删除 Run ──────────────
@@ -458,6 +497,7 @@ public record CreateWorkspaceDto(string Title);
 public record CreateCopywriteDto(string TemplateId);
 public record CreateTemplateDto(string Name, string? Description, string Prompt, bool IsSystem = false);
 public record ExportDto(List<string> Formats);
+public record UpdateRunResultDto(string Result);
 
 public class RenameItemRequest
 {
