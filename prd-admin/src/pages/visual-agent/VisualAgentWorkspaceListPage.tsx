@@ -1124,11 +1124,7 @@ function ProjectCarousel(props: {
         ))}
       </div>
       {/* 加载更多指示器 + 哨兵 */}
-      {loadingMore && (
-        <div className="flex justify-center py-6">
-          <div className="w-6 h-6 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
-        </div>
-      )}
+      {loadingMore && <MapSectionLoader />}
       {hasMore && <div ref={sentinelRef} className="h-1" />}
     </div>
   );
