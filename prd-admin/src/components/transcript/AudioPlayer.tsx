@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Play, Pause } from 'lucide-react';
+import { GlassCard } from '@/components/design/GlassCard';
 
 interface AudioPlayerProps {
   src: string;
@@ -88,7 +89,7 @@ export function AudioPlayer({ src, className, onTimeUpdate, seekTo }: AudioPlaye
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
 
   return (
-    <div className={`surface-inset rounded-none border-b border-border/50 px-4 py-2.5 flex items-center gap-3 ${className ?? ''}`}>
+    <GlassCard variant="subtle" padding="none" className={`rounded-none border-b border-border/50 px-4 py-2.5 flex items-center gap-3 ${className ?? ''}`}>
       {/* Hidden audio element */}
       <audio
         ref={audioRef}
@@ -193,6 +194,6 @@ export function AudioPlayer({ src, className, onTimeUpdate, seekTo }: AudioPlaye
           opacity: 1;
         }
       `}</style>
-    </div>
+    </GlassCard>
   );
 }

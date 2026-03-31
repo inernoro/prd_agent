@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { FileAudio, Plus, Trash2, Loader2, CheckCircle2, AlertCircle, ChevronDown, ChevronRight, X } from 'lucide-react';
 import { useTranscriptStore } from '@/stores/transcriptStore';
+import { GlassCard } from '@/components/design/GlassCard';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/cn';
 import { UploadDropzone } from './UploadDropzone';
@@ -71,7 +72,7 @@ export function TranscriptSidebar({ selectedItemId, onSelectItem }: TranscriptSi
   };
 
   return (
-    <div className="w-60 shrink-0 flex flex-col h-full surface-inset border-r border-border/50">
+    <GlassCard variant="subtle" padding="none" className="w-60 shrink-0 flex flex-col h-full rounded-none border-r border-border/50">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border/50">
         <h1 className="text-sm font-semibold flex items-center gap-1.5">
@@ -222,6 +223,6 @@ export function TranscriptSidebar({ selectedItemId, onSelectItem }: TranscriptSi
           <UploadDropzone onUpload={handleUpload} uploading={uploading} />
         </div>
       )}
-    </div>
+    </GlassCard>
   );
 }

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { FileText, Loader2, Copy } from 'lucide-react';
 import { Button } from '@/components/design/Button';
+import { GlassCard } from '@/components/design/GlassCard';
 import { useTranscriptStore } from '@/stores/transcriptStore';
 import { toast } from '@/lib/toast';
 import type { TranscriptItem, TranscriptTemplate } from '@/services/contracts/transcriptAgent';
@@ -64,7 +65,7 @@ export function CopywritePanel({ item, templates }: CopywritePanelProps) {
       </div>
 
       {result && (
-        <div className="p-4 surface-inset rounded-lg">
+        <GlassCard variant="subtle" padding="md" className="rounded-lg">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-medium text-muted-foreground">生成结果</span>
             <button
@@ -81,7 +82,7 @@ export function CopywritePanel({ item, templates }: CopywritePanelProps) {
           <pre className="text-sm text-foreground/80 whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto">
             {result}
           </pre>
-        </div>
+        </GlassCard>
       )}
     </div>
   );
