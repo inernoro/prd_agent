@@ -10,6 +10,7 @@ export default function TranscriptAgentPage() {
   const { items, templates, refreshItems, fetchTemplates } = useTranscriptStore();
   const [selectedItem, setSelectedItem] = useState<TranscriptItem | null>(null);
   const [generateItem, setGenerateItem] = useState<TranscriptItem | null>(null);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
   useEffect(() => { fetchTemplates(); }, []);
 
@@ -36,8 +37,10 @@ export default function TranscriptAgentPage() {
         <GlassCard animated glow className="flex flex-col min-h-0 p-0 overflow-hidden">
           <TranscriptSidebar
             selectedItemId={selectedItem?.id ?? null}
-            onSelectItem={setSelectedItem}
+            selectedRunId={selectedRunId}
+            onSelectItem={(item) => { setSelectedItem(item); setSelectedRunId(null); }}
             onGenerate={setGenerateItem}
+            onSelectRun={(runId) => setSelectedRunId(runId)}
           />
         </GlassCard>
 
@@ -45,7 +48,9 @@ export default function TranscriptAgentPage() {
         <GlassCard animated glow className="flex flex-col min-h-0 p-0 overflow-hidden">
           <TranscriptEditor
             item={selectedItem}
-            onItemDeleted={() => setSelectedItem(null)}
+            selectedRunId={selectedRunId}
+            onItemDeleted={() => { setSelectedItem(null); setSelectedRunId(null); }}
+            onCloseRun={() => setSelectedRunId(null)}
           />
         </GlassCard>
       </div>

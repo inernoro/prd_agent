@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { FileAudio, FileText, Plus, Trash2, Loader2, CheckCircle2, AlertCircle, ChevronDown, ChevronRight, X, Sparkles } from 'lucide-react';
+import { FileAudio, FileText, Plus, Trash2, Loader2, CheckCircle2, AlertCircle, ChevronDown, ChevronRight, X, Sparkles, Eye } from 'lucide-react';
 import { useTranscriptStore } from '@/stores/transcriptStore';
 import { toast } from '@/lib/toast';
 import { UploadDropzone } from './UploadDropzone';
@@ -7,15 +7,17 @@ import type { TranscriptItem } from '@/services/contracts/transcriptAgent';
 
 interface TranscriptSidebarProps {
   selectedItemId: string | null;
+  selectedRunId?: string | null;
   onSelectItem: (item: TranscriptItem | null) => void;
   onGenerate?: (item: TranscriptItem) => void;
+  onSelectRun?: (runId: string) => void;
 }
 
-export function TranscriptSidebar({ selectedItemId, onSelectItem, onGenerate }: TranscriptSidebarProps) {
+export function TranscriptSidebar({ selectedItemId, selectedRunId, onSelectItem, onGenerate, onSelectRun }: TranscriptSidebarProps) {
   const {
     workspaces, currentWorkspace, items, runs, uploading,
     fetchWorkspaces, selectWorkspace, createWorkspace, deleteWorkspace,
-    uploadFile, deleteItem, renameItem,
+    uploadFile, deleteItem, renameItem, deleteRun,
   } = useTranscriptStore();
 
   const [showCreate, setShowCreate] = useState(false);
@@ -23,9 +25,17 @@ export function TranscriptSidebar({ selectedItemId, onSelectItem, onGenerate }: 
   const [wsExpanded, setWsExpanded] = useState(true);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
+  const [confirmDeleteRunId, setConfirmDeleteRunId] = useState<string | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { fetchWorkspaces(); }, []);
+
+  // 3 秒自动复位删除确认状态
+  useEffect(() => {
+    if (!confirmDeleteRunId) return;
+    const t = setTimeout(() => setConfirmDeleteRunId(null), 3000);
+    return () => clearTimeout(t);
+  }, [confirmDeleteRunId]);
 
   useEffect(() => {
     if (editingItemId && renameInputRef.current) {
@@ -99,7 +109,8 @@ export function TranscriptSidebar({ selectedItemId, onSelectItem, onGenerate }: 
   };
 
   const getItemCopywriteRuns = (itemId: string) =>
-    runs.filter(r => r.itemId === itemId && r.type === 'copywrite' && r.status === 'completed');
+    runs.filter(r => r.itemId === itemId && r.type === 'copywrite' &&
+      (r.status === 'completed' || r.status === 'processing' || r.status === 'queued'));
 
   return (
     <div className="flex flex-col h-full">
@@ -278,12 +289,50 @@ export function TranscriptSidebar({ selectedItemId, onSelectItem, onGenerate }: 
                               key={run.id}
                               onClick={() => {
                                 onSelectItem(item);
-                                toast.success('查看底部文案区域');
+                                onSelectRun?.(run.id);
                               }}
-                              className="surface-row w-full flex items-center gap-1.5 px-2 py-1.5 text-left text-[10px] text-muted-foreground hover:text-foreground/80 cursor-pointer"
+                              className="surface-row w-full flex items-center gap-2 pl-2 pr-3 py-1.5 text-left text-[11px] group cursor-pointer"
+                              style={selectedRunId === run.id ? { background: 'var(--bg-input-hover)' } : undefined}
                             >
-                              <FileText className="w-3 h-3 shrink-0" />
-                              <span className="truncate">文案 {formatTime(run.createdAt)}</span>
+                              {run.status === 'completed' ? (
+                                <FileText className="w-3 h-3 text-muted-foreground/60 shrink-0" />
+                              ) : (
+                                <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />
+                              )}
+                              <span className="flex-1 truncate text-muted-foreground">
+                                {run.status === 'completed' ? `文案 ${formatTime(run.createdAt)}` : '生成中...'}
+                              </span>
+                              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-all shrink-0">
+                                <span
+                                  role="button"
+                                  onClick={(e) => { e.stopPropagation(); onSelectItem(item); onSelectRun?.(run.id); }}
+                                  className="p-0.5 rounded hover:bg-muted"
+                                  title="查看"
+                                >
+                                  <Eye className="w-3 h-3 text-muted-foreground" />
+                                </span>
+                                <span
+                                  role="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (confirmDeleteRunId === run.id) {
+                                      deleteRun(run.id);
+                                      setConfirmDeleteRunId(null);
+                                      toast.success('已删除');
+                                    } else {
+                                      setConfirmDeleteRunId(run.id);
+                                    }
+                                  }}
+                                  className={`p-0.5 rounded transition-all ${
+                                    confirmDeleteRunId === run.id
+                                      ? 'bg-destructive/20 text-destructive opacity-100'
+                                      : 'hover:bg-muted text-muted-foreground'
+                                  }`}
+                                  title={confirmDeleteRunId === run.id ? '再次点击确认删除' : '删除'}
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </span>
+                              </div>
                             </button>
                           ))}
                         </div>

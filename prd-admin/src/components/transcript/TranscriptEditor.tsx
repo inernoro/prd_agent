@@ -1,5 +1,5 @@
-import { useState, useCallback } from 'react';
-import { Mic, Trash2, Download, AlertCircle, Loader2, CheckCircle2 } from 'lucide-react';
+import { useState, useCallback, useEffect } from 'react';
+import { Mic, Trash2, Download, AlertCircle, Loader2, CheckCircle2, ArrowLeft, Copy } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { useTranscriptStore } from '@/stores/transcriptStore';
 import { TranscribeProgress } from './TranscribeProgress';
@@ -11,10 +11,12 @@ import type { TranscriptItem } from '@/services/contracts/transcriptAgent';
 
 interface TranscriptEditorProps {
   item: TranscriptItem | null;
+  selectedRunId?: string | null;
   onItemDeleted: () => void;
+  onCloseRun?: () => void;
 }
 
-export function TranscriptEditor({ item, onItemDeleted }: TranscriptEditorProps) {
+export function TranscriptEditor({ item, selectedRunId, onItemDeleted, onCloseRun }: TranscriptEditorProps) {
   const { deleteItem, updateSegments, runs, refreshItems, renameItem } = useTranscriptStore();
   const [exportFormats, setExportFormats] = useState<Set<string>>(new Set(['timestamped']));
   const [exporting, setExporting] = useState(false);
@@ -22,6 +24,19 @@ export function TranscriptEditor({ item, onItemDeleted }: TranscriptEditorProps)
   const [seekTo, setSeekTo] = useState<number | undefined>(undefined);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
+  const [previewMode, setPreviewMode] = useState(true);
+  const [editDraft, setEditDraft] = useState('');
+
+  // Resolve the selected copywrite run
+  const selectedRun = selectedRunId ? runs.find(r => r.id === selectedRunId) : null;
+
+  // Sync editDraft when selectedRun changes
+  useEffect(() => {
+    if (selectedRun?.result) {
+      setEditDraft(selectedRun.result);
+      setPreviewMode(true);
+    }
+  }, [selectedRunId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleStartEditTitle = () => {
     setTitleDraft(item?.fileName ?? '');
@@ -195,6 +210,68 @@ export function TranscriptEditor({ item, onItemDeleted }: TranscriptEditorProps)
     );
   }
 
+  // ── Copywrite run viewer ──
+  if (selectedRun?.result && item) {
+    return (
+      <div className="flex flex-col h-full">
+        {/* Header */}
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-border/50">
+          <button onClick={onCloseRun} className="p-1 rounded hover:bg-muted transition-colors">
+            <ArrowLeft className="w-4 h-4 text-muted-foreground" />
+          </button>
+          <div className="flex-1 min-w-0">
+            <h1 className="text-base font-medium truncate">文案 — {item.fileName}</h1>
+            <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground">
+              <span>{new Date(selectedRun.createdAt).toLocaleString()}</span>
+            </div>
+          </div>
+          {/* Preview / Edit toggle */}
+          <div className="flex items-center gap-1 text-xs">
+            <button
+              className={`px-2 py-1 rounded transition-colors ${previewMode ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              onClick={() => setPreviewMode(true)}
+            >
+              预览
+            </button>
+            <button
+              className={`px-2 py-1 rounded transition-colors ${!previewMode ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              onClick={() => setPreviewMode(false)}
+            >
+              编辑
+            </button>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto px-6 py-4 min-h-0">
+          {previewMode ? (
+            <div className="prose prose-invert prose-sm max-w-none">
+              <pre className="text-sm text-foreground/80 whitespace-pre-wrap leading-relaxed font-sans">
+                {selectedRun.result}
+              </pre>
+            </div>
+          ) : (
+            <textarea
+              className="w-full h-full text-sm text-foreground/80 bg-transparent outline-none resize-none leading-relaxed"
+              value={editDraft}
+              onChange={e => setEditDraft(e.target.value)}
+            />
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="border-t border-border/50 px-6 py-3 flex items-center justify-between">
+          <span className="text-xs text-muted-foreground">{(previewMode ? selectedRun.result : editDraft)?.length ?? 0} 字</span>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="ghost" onClick={() => { navigator.clipboard.writeText(previewMode ? (selectedRun.result ?? '') : editDraft); toast.success('已复制'); }}>
+              <Copy className="w-4 h-4 mr-1" /> 复制
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // ── Completed state ──
   return (
     <div className="flex flex-col h-full">
@@ -254,10 +331,10 @@ export function TranscriptEditor({ item, onItemDeleted }: TranscriptEditorProps)
             { key: 'srt', label: 'SRT' },
           ].map(({ key, label }) => (
             <button key={key}
-              className={`px-2.5 py-1.5 text-xs rounded-md border transition-colors ${
+              className={`px-2.5 py-1.5 text-xs rounded-md transition-colors ${
                 exportFormats.has(key)
-                  ? 'border-border bg-muted/40 text-foreground'
-                  : 'border-border/50 text-muted-foreground hover:border-border'
+                  ? 'bg-primary/15 text-foreground'
+                  : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
               }`}
               onClick={() => toggleFormat(key)}>
               {label}

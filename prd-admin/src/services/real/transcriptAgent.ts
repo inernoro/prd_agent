@@ -85,6 +85,9 @@ export const listTemplates = () =>
   apiRequest<TranscriptTemplate[]>(`${BASE}/templates`, { method: 'GET' });
 
 // ── Runs ──
+export const deleteRun = (runId: string) =>
+  apiRequest<{ id: string }>(`${BASE}/runs/${runId}`, { method: 'DELETE' });
+
 export const getRun = (runId: string) =>
   apiRequest<TranscriptRun>(`${BASE}/runs/${runId}`, { method: 'GET' });
 

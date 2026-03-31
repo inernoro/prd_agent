@@ -56,9 +56,9 @@ export function SegmentRow({ segment, index, isActive, onSeek, onTextChange, row
   return (
     <div
       ref={rowRef}
-      className={`flex gap-4 py-2.5 px-3 rounded-lg cursor-pointer group ${
+      className={`flex gap-4 py-2.5 px-3 cursor-pointer group ${
         isActive
-          ? 'surface-row bg-primary/10 border-l-2 border-primary'
+          ? 'surface-row bg-primary/10'
           : 'surface-row'
       }`}
     >

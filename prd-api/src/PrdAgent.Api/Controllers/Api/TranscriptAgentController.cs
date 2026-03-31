@@ -380,6 +380,19 @@ public class TranscriptAgentController : ControllerBase
         return Ok(runs);
     }
 
+    // ────────────── 删除 Run ──────────────
+
+    [HttpDelete("runs/{runId}")]
+    public async Task<IActionResult> DeleteRun(string runId)
+    {
+        var userId = this.GetRequiredUserId();
+        var run = await _db.TranscriptRuns.Find(r => r.Id == runId && r.OwnerUserId == userId).FirstOrDefaultAsync();
+        if (run == null) return NotFound();
+
+        await _db.TranscriptRuns.DeleteOneAsync(r => r.Id == runId);
+        return Ok(new { id = runId });
+    }
+
     // ────────────── 导出 ──────────────
 
     [HttpPost("items/{itemId}/export")]
