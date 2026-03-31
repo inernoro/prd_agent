@@ -29,12 +29,14 @@ export class WorktreeService {
       throw new Error(`拉取分支 "${branch}" 失败:\n${combinedOutput(fetchResult)}`);
     }
 
-    // Clean up stale worktree if the directory already exists
+    // Always prune stale worktree references before creating a new one.
+    // This handles the case where git has a registered worktree whose
+    // directory no longer exists (e.g. after a crash or manual rm).
+    await this.shell.exec('git worktree prune', { cwd: this.repoRoot });
+
+    // Remove leftover directory if it still exists
     const checkDir = await this.shell.exec(`test -d "${targetDir}" && echo exists`);
     if (checkDir.stdout.trim() === 'exists') {
-      // Prune stale worktree references first
-      await this.shell.exec('git worktree prune', { cwd: this.repoRoot });
-      // Remove the leftover directory
       await this.shell.exec(`rm -rf "${targetDir}"`);
     }
 
