@@ -64,7 +64,9 @@ services:
       - TENCENT_COS_SECRET_KEY=${TENCENT_COS_SECRET_KEY}
       - TENCENT_COS_PUBLIC_BASE_URL=${TENCENT_COS_PUBLIC_BASE_URL}
       - TENCENT_COS_PREFIX=${TENCENT_COS_PREFIX:-data}
-    # 重要：此 API 容器建议只读，避免任何本地落盘（你这种“可写层 1MB”环境必开）
+      # Webhook 通知中「查看详情」链接的前端基地址
+      - App__FrontendBaseUrl=${FRONTEND_BASE_URL:-http://localhost:5500}
+    # 重要：此 API 容器建议只读，避免任何本地落盘（你这种”可写层 1MB”环境必开）
     read_only: true
     # 允许少量临时写入到内存（tmpfs），避免 .NET/HTTP 栈因无 /tmp 可写而异常；不会落到磁盘
     tmpfs:
