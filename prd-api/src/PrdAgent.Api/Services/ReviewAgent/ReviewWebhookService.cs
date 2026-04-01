@@ -43,10 +43,12 @@ public class ReviewWebhookService
             var title = "方案评审完成";
 
             // 纯文本内容（不含 Markdown 语法），BuildPayload 按渠道自行加格式
+            // 去除 summary 中 LLM 自带的 * 号（Markdown 加粗语法）
+            var cleanSummary = summary.Replace("*", "");
             var plainBody = $"方案：《{submission.Title}》\n" +
                             $"提交人：{submission.SubmitterName}\n" +
                             $"得分：{totalScore} / 100 分　{passText}\n" +
-                            $"总评：{summary}";
+                            $"总评：{cleanSummary}";
 
             string? linkPath = null;
             if (!string.IsNullOrEmpty(_frontendBaseUrl))

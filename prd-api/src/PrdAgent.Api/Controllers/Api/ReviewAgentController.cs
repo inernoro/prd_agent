@@ -616,7 +616,7 @@ public class ReviewAgentController : ControllerBase
             sb.AppendLine($"    {{ \"key\": \"{dim.Key}\", \"score\": <0-{dim.MaxScore}的整数>, \"comment\": \"<该维度的具体评价，指出具体不足或亮点，100字以内>\" }}{comma}");
         }
         sb.AppendLine("  ],");
-        sb.AppendLine("  \"summary\": \"<300字以内的总体评语，先指出最主要的不足，再说优点，给出改进方向>\"");
+        sb.AppendLine("  \"summary\": \"<总体评语，完整输出不限字数，先指出最主要的不足，再说优点，给出改进方向>\"");
         sb.AppendLine("}");
         sb.AppendLine("```");
         return sb.ToString();
