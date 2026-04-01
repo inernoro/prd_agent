@@ -55,7 +55,7 @@ public class ReviewWebhookService
 
             foreach (var config in configs)
             {
-                await SendWebhookAsync(client, config, title, body, linkPath);
+                await SendWebhookAsync(client, config, title, body, linkPath, config.MentionAll);
             }
         }
         catch (Exception ex)
@@ -65,7 +65,7 @@ public class ReviewWebhookService
     }
 
     /// <summary>发送测试消息</summary>
-    public async Task<(bool Success, string? Error)> SendTestAsync(string webhookUrl, string channel)
+    public async Task<(bool Success, string? Error)> SendTestAsync(string webhookUrl, string channel, bool mentionAll = false)
     {
         try
         {
@@ -73,7 +73,7 @@ public class ReviewWebhookService
             client.Timeout = TimeSpan.FromSeconds(10);
 
             var payload = BuildPayload(channel, "Webhook 测试消息",
-                "如果您看到这条消息，说明产品评审员 Webhook 配置正确。", null);
+                "如果您看到这条消息，说明产品评审员 Webhook 配置正确。", null, mentionAll);
             var content = new StringContent(payload, Encoding.UTF8, "application/json");
             var response = await client.PostAsync(webhookUrl, content);
 
@@ -89,7 +89,7 @@ public class ReviewWebhookService
         }
     }
 
-    private async Task SendWebhookAsync(HttpClient client, ReviewWebhookConfig config, string title, string body, string? link)
+    private async Task SendWebhookAsync(HttpClient client, ReviewWebhookConfig config, string title, string body, string? link, bool mentionAll = false)
     {
         const int maxRetries = 3;
 
@@ -97,7 +97,7 @@ public class ReviewWebhookService
         {
             try
             {
-                var payload = BuildPayload(config.Channel, title, body, link);
+                var payload = BuildPayload(config.Channel, title, body, link, mentionAll);
                 var content = new StringContent(payload, Encoding.UTF8, "application/json");
                 var response = await client.PostAsync(config.WebhookUrl, content);
 
@@ -118,11 +118,28 @@ public class ReviewWebhookService
         }
     }
 
-    private static string BuildPayload(string channel, string title, string body, string? link)
+    private static string BuildPayload(string channel, string title, string body, string? link, bool mentionAll = false)
     {
         var markdown = $"## {title}\n{body}";
         if (!string.IsNullOrEmpty(link))
             markdown += $"\n> [查看详情]({link})";
+
+        // 企微：开启 @所有人 时用 text 类型（markdown 类型不支持 @）
+        if (channel == WebhookChannel.WeCom && mentionAll)
+        {
+            var plainText = $"【{title}】\n{body}";
+            if (!string.IsNullOrEmpty(link))
+                plainText += $"\n查看详情: {link}";
+            return JsonSerializer.Serialize(new
+            {
+                msgtype = "text",
+                text = new
+                {
+                    content = plainText,
+                    mentioned_list = new[] { "@all" },
+                }
+            });
+        }
 
         return channel switch
         {

@@ -22,6 +22,9 @@ public class ReviewWebhookConfig
     /// <summary>备注名称</summary>
     public string? Name { get; set; }
 
+    /// <summary>企微渠道是否 @所有人（仅 wecom 生效）</summary>
+    public bool MentionAll { get; set; }
+
     public string CreatedBy { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

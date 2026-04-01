@@ -34,6 +34,7 @@ export function ReviewAgentWebhookModal({ open, onClose }: Props) {
   const [formChannel, setFormChannel] = useState('wecom');
   const [formUrl, setFormUrl] = useState('');
   const [formName, setFormName] = useState('');
+  const [formMentionAll, setFormMentionAll] = useState(false);
   const [creating, setCreating] = useState(false);
 
   const [testingId, setTestingId] = useState<string | null>(null);
@@ -59,12 +60,14 @@ export function ReviewAgentWebhookModal({ open, onClose }: Props) {
       webhookUrl: formUrl.trim(),
       triggerEvents: ALL_EVENTS,
       name: formName.trim() || undefined,
+      mentionAll: formChannel === 'wecom' ? formMentionAll : undefined,
     });
     setCreating(false);
     if (res.success) {
       setShowForm(false);
       setFormUrl('');
       setFormName('');
+      setFormMentionAll(false);
       void load();
     } else {
       setError(res.error?.message || '创建失败');
@@ -84,7 +87,7 @@ export function ReviewAgentWebhookModal({ open, onClose }: Props) {
 
   const handleTest = async (wh: ReviewWebhookConfig) => {
     setTestingId(wh.id);
-    const res = await testReviewWebhook({ webhookUrl: wh.webhookUrl, channel: wh.channel });
+    const res = await testReviewWebhook({ webhookUrl: wh.webhookUrl, channel: wh.channel, mentionAll: wh.mentionAll });
     setTestingId(null);
     if (res.success && res.data?.success) {
       setError('');
@@ -150,6 +153,9 @@ export function ReviewAgentWebhookModal({ open, onClose }: Props) {
                       <span className="text-[10px]" style={{ color: wh.isEnabled ? 'rgba(34,197,94,0.6)' : 'rgba(156,163,175,0.5)' }}>
                         {wh.isEnabled ? '已启用' : '已禁用'}
                       </span>
+                      {wh.channel === 'wecom' && wh.mentionAll && (
+                        <span className="text-[10px] px-1 py-0.5 rounded bg-amber-500/15 text-amber-400/80">@所有人</span>
+                      )}
                     </div>
                     <div className="flex items-center gap-0.5">
                       <button onClick={() => handleTest(wh)} disabled={testingId === wh.id}
@@ -215,6 +221,17 @@ export function ReviewAgentWebhookModal({ open, onClose }: Props) {
                   onChange={(e) => setFormUrl(e.target.value)}
                 />
               </div>
+              {formChannel === 'wecom' && (
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={formMentionAll}
+                    onChange={(e) => setFormMentionAll(e.target.checked)}
+                    className="accent-indigo-500"
+                  />
+                  <span className="text-[11px] text-white/60">@所有人（需群主身份，开启后消息改为纯文本格式）</span>
+                </label>
+              )}
               <div className="flex items-center gap-2 pt-1">
                 <button
                   onClick={handleCreate}

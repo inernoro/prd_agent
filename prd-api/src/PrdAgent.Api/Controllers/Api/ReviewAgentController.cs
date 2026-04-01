@@ -870,6 +870,7 @@ public class ReviewAgentController : ControllerBase
             TriggerEvents = req.TriggerEvents ?? new List<string>(ReviewEventType.All),
             IsEnabled = req.IsEnabled ?? true,
             Name = req.Name?.Trim(),
+            MentionAll = req.MentionAll ?? false,
             CreatedBy = GetUserId(),
         };
 
@@ -904,6 +905,8 @@ public class ReviewAgentController : ControllerBase
             updates.Add(Builders<ReviewWebhookConfig>.Update.Set(w => w.IsEnabled, req.IsEnabled.Value));
         if (req.Name != null)
             updates.Add(Builders<ReviewWebhookConfig>.Update.Set(w => w.Name, req.Name.Trim()));
+        if (req.MentionAll.HasValue)
+            updates.Add(Builders<ReviewWebhookConfig>.Update.Set(w => w.MentionAll, req.MentionAll.Value));
 
         if (updates.Count == 0)
             return Ok(ApiResponse<object>.Ok(new { webhook = existing }));
@@ -944,7 +947,7 @@ public class ReviewAgentController : ControllerBase
         if (string.IsNullOrWhiteSpace(req.WebhookUrl))
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "Webhook URL 不能为空"));
 
-        var (success, error) = await _webhookService.SendTestAsync(req.WebhookUrl.Trim(), req.Channel ?? WebhookChannel.WeCom);
+        var (success, error) = await _webhookService.SendTestAsync(req.WebhookUrl.Trim(), req.Channel ?? WebhookChannel.WeCom, req.MentionAll);
         return Ok(ApiResponse<object>.Ok(new { success, error }));
     }
 }
@@ -962,6 +965,7 @@ public class CreateReviewWebhookRequest
     public List<string>? TriggerEvents { get; set; }
     public bool? IsEnabled { get; set; }
     public string? Name { get; set; }
+    public bool? MentionAll { get; set; }
 }
 
 public class UpdateReviewWebhookRequest
@@ -971,10 +975,12 @@ public class UpdateReviewWebhookRequest
     public List<string>? TriggerEvents { get; set; }
     public bool? IsEnabled { get; set; }
     public string? Name { get; set; }
+    public bool? MentionAll { get; set; }
 }
 
 public class TestReviewWebhookRequest
 {
     public string WebhookUrl { get; set; } = string.Empty;
     public string? Channel { get; set; }
+    public bool MentionAll { get; set; }
 }

@@ -136,6 +136,7 @@ export interface ReviewWebhookConfig {
   triggerEvents: string[];
   isEnabled: boolean;
   name?: string;
+  mentionAll: boolean;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
@@ -162,6 +163,7 @@ export async function createReviewWebhook(input: {
   triggerEvents?: string[];
   isEnabled?: boolean;
   name?: string;
+  mentionAll?: boolean;
 }): Promise<ApiResponse<{ webhook: ReviewWebhookConfig }>> {
   return apiRequest('/api/review-agent/webhooks', { method: 'POST', body: input });
 }
@@ -172,6 +174,7 @@ export async function updateReviewWebhook(webhookId: string, input: {
   triggerEvents?: string[];
   isEnabled?: boolean;
   name?: string;
+  mentionAll?: boolean;
 }): Promise<ApiResponse<{ webhook: ReviewWebhookConfig }>> {
   return apiRequest(`/api/review-agent/webhooks/${encodeURIComponent(webhookId)}`, { method: 'PUT', body: input });
 }
@@ -183,6 +186,7 @@ export async function deleteReviewWebhook(webhookId: string): Promise<ApiRespons
 export async function testReviewWebhook(input: {
   webhookUrl: string;
   channel?: string;
+  mentionAll?: boolean;
 }): Promise<ApiResponse<{ success: boolean; error?: string }>> {
   return apiRequest('/api/review-agent/webhooks/test', { method: 'POST', body: input });
 }
