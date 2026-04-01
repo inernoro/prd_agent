@@ -676,6 +676,17 @@ public class ReviewAgentController : ControllerBase
             });
         }
 
+        // 兜底：如果 summary 仍为空，用正则从原始输出提取
+        if (string.IsNullOrEmpty(summary) && !string.IsNullOrWhiteSpace(llmOutput))
+        {
+            var summaryMatch = System.Text.RegularExpressions.Regex.Match(
+                llmOutput,
+                @"""summary""\s*:\s*""([^""\\]*(?:\\.[^""\\]*)*)""",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (summaryMatch.Success)
+                summary = summaryMatch.Groups[1].Value.Replace("\\n", "\n").Replace("\\\"", "\"");
+        }
+
         return (scores, summary, parseError);
     }
 
@@ -695,6 +706,18 @@ public class ReviewAgentController : ControllerBase
 
             if (doc.RootElement.TryGetProperty("summary", out var summaryEl))
                 summary = summaryEl.GetString() ?? string.Empty;
+            // 兜底：大小写不敏感查找 summary
+            if (string.IsNullOrEmpty(summary))
+            {
+                foreach (var prop in doc.RootElement.EnumerateObject())
+                {
+                    if (string.Equals(prop.Name, "summary", StringComparison.OrdinalIgnoreCase))
+                    {
+                        summary = prop.Value.GetString() ?? string.Empty;
+                        break;
+                    }
+                }
+            }
 
             if (!doc.RootElement.TryGetProperty("dimensions", out var dimsEl))
                 return $"JSON 解析成功但缺少 dimensions 字段，根节点字段: {string.Join(", ", doc.RootElement.EnumerateObject().Select(p => p.Name))}";
