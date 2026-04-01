@@ -461,7 +461,7 @@ public class ReviewAgentController : ControllerBase
                     new JsonObject { ["role"] = "user", ["content"] = userPrompt }
                 },
                 ["temperature"] = 0.3,
-                ["max_tokens"] = 4000,
+                ["max_tokens"] = 8192,
             },
         };
 
@@ -685,6 +685,18 @@ public class ReviewAgentController : ControllerBase
                 System.Text.RegularExpressions.RegexOptions.IgnoreCase);
             if (summaryMatch.Success)
                 summary = summaryMatch.Groups[1].Value.Replace("\\n", "\n").Replace("\\\"", "\"");
+        }
+
+        // 截断检测：如果 summary 非空但未以常见结束标点结尾，说明 LLM 输出被 max_tokens 截断
+        if (!string.IsNullOrEmpty(summary))
+        {
+            var trimmed = summary.TrimEnd();
+            if (trimmed.Length > 20 && !trimmed.EndsWith('。') && !trimmed.EndsWith('！')
+                && !trimmed.EndsWith('；') && !trimmed.EndsWith('.') && !trimmed.EndsWith('"')
+                && !trimmed.EndsWith(')') && !trimmed.EndsWith('）'))
+            {
+                summary = trimmed + "……（评语因模型输出长度限制被截断）";
+            }
         }
 
         return (scores, summary, parseError);
