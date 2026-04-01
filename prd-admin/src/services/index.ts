@@ -617,6 +617,11 @@ import type {
   RunTeamWorkflowContract,
   UpdateIdentityMappingsContract,
   SeedSystemTemplatesContract,
+  ListWebhooksContract,
+  CreateWebhookContract,
+  UpdateWebhookContract,
+  DeleteWebhookContract,
+  TestWebhookContract,
 } from '@/services/contracts/reportAgent';
 import {
   listReportTeamsReal,
@@ -697,6 +702,11 @@ import {
   runTeamWorkflowReal,
   updateIdentityMappingsReal,
   seedSystemTemplatesReal,
+  listWebhooksReal,
+  createWebhookReal,
+  updateWebhookReal,
+  deleteWebhookReal,
+  testWebhookReal,
 } from '@/services/real/reportAgent';
 
 function withAuth<TArgs extends unknown[], TResult>(
@@ -1105,6 +1115,11 @@ export const getTeamWorkflow: GetTeamWorkflowContract = withAuth(getTeamWorkflow
 export const runTeamWorkflow: RunTeamWorkflowContract = withAuth(runTeamWorkflowReal);
 export const updateIdentityMappings: UpdateIdentityMappingsContract = withAuth(updateIdentityMappingsReal);
 export const seedSystemTemplates: SeedSystemTemplatesContract = withAuth(seedSystemTemplatesReal);
+export const listWebhooks: ListWebhooksContract = withAuth(listWebhooksReal);
+export const createWebhook: CreateWebhookContract = withAuth(createWebhookReal);
+export const updateWebhook: UpdateWebhookContract = withAuth(updateWebhookReal);
+export const deleteWebhook: DeleteWebhookContract = withAuth(deleteWebhookReal);
+export const testWebhook: TestWebhookContract = withAuth(testWebhookReal);
 
 // Arena 竞技场
 import {

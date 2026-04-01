@@ -248,6 +248,7 @@ builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ReportGenerationSer
 builder.Services.AddHostedService<PrdAgent.Api.Services.ReportAgent.GitSyncWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.ReportAgent.ReportAutoGenerateWorker>();
 // Report Agent Phase 3: 管理增强服务
+builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ReportWebhookService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ReportNotificationService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.TeamSummaryService>();
 // Report Agent v2.0: 工作流管道 + 个人数据源

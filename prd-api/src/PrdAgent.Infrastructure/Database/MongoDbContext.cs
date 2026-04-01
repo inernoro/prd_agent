@@ -121,6 +121,7 @@ public class MongoDbContext
     public IMongoCollection<ReportLike> ReportLikes => _database.GetCollection<ReportLike>("report_likes");
     public IMongoCollection<ReportViewEvent> ReportViewEvents => _database.GetCollection<ReportViewEvent>("report_view_events");
     public IMongoCollection<TeamSummary> ReportTeamSummaries => _database.GetCollection<TeamSummary>("report_team_summaries");
+    public IMongoCollection<ReportWebhookConfig> ReportWebhookConfigs => _database.GetCollection<ReportWebhookConfig>("report_webhook_configs");
     public IMongoCollection<PersonalSource> PersonalSources => _database.GetCollection<PersonalSource>("report_personal_sources");
 
     // Channel Adapter 多通道适配器

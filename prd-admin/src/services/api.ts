@@ -572,6 +572,11 @@ export const api = {
     identityMappings: (teamId: string, userId: string) =>
       `/api/report-agent/teams/${teamId}/members/${userId}/identity-mappings`,
     seedTemplates: () => '/api/report-agent/templates/seed',
+    webhooks: {
+      list: (teamId: string) => `/api/report-agent/teams/${teamId}/webhooks`,
+      byId: (teamId: string, webhookId: string) => `/api/report-agent/teams/${teamId}/webhooks/${webhookId}`,
+      test: (teamId: string) => `/api/report-agent/teams/${teamId}/webhooks/test`,
+    },
   },
 
   // ============ Open Platform 开放平台 ============

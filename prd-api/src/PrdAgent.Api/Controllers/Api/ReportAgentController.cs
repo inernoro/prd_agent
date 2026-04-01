@@ -52,6 +52,7 @@ public class ReportAgentController : ControllerBase
     private readonly ReportGenerationService _generationService;
     private readonly ReportNotificationService _notificationService;
     private readonly TeamSummaryService _teamSummaryService;
+    private readonly ReportWebhookService _webhookService;
 
     public ReportAgentController(
         MongoDbContext db,
@@ -61,7 +62,8 @@ public class ReportAgentController : ControllerBase
         MapActivityCollector activityCollector,
         ReportGenerationService generationService,
         ReportNotificationService notificationService,
-        TeamSummaryService teamSummaryService)
+        TeamSummaryService teamSummaryService,
+        ReportWebhookService webhookService)
     {
         _db = db;
         _assetStorage = assetStorage;
@@ -71,6 +73,7 @@ public class ReportAgentController : ControllerBase
         _generationService = generationService;
         _notificationService = notificationService;
         _teamSummaryService = teamSummaryService;
+        _webhookService = webhookService;
     }
 
     #region Helpers
@@ -3683,6 +3686,179 @@ public class ReportAgentController : ControllerBase
     }
 
     #endregion
+
+    #region Webhook 配置
+
+    /// <summary>获取团队 Webhook 配置列表</summary>
+    [HttpGet("teams/{teamId}/webhooks")]
+    public async Task<IActionResult> ListWebhooks(string teamId)
+    {
+        var userId = GetUserId();
+        var member = await _db.ReportTeamMembers.Find(m => m.TeamId == teamId && m.UserId == userId).FirstOrDefaultAsync();
+        if (member == null) return NotFound(ApiResponse<object>.Fail("未加入该团队"));
+        if (member.Role is not ("leader" or "deputy"))
+            return Forbid();
+
+        var items = await _db.ReportWebhookConfigs
+            .Find(w => w.TeamId == teamId)
+            .SortByDescending(w => w.CreatedAt)
+            .ToListAsync();
+
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>创建 Webhook 配置</summary>
+    [HttpPost("teams/{teamId}/webhooks")]
+    public async Task<IActionResult> CreateWebhook(string teamId, [FromBody] CreateWebhookRequest req)
+    {
+        var userId = GetUserId();
+        var member = await _db.ReportTeamMembers.Find(m => m.TeamId == teamId && m.UserId == userId).FirstOrDefaultAsync();
+        if (member == null) return NotFound(ApiResponse<object>.Fail("未加入该团队"));
+        if (member.Role is not ("leader" or "deputy"))
+            return Forbid();
+
+        if (string.IsNullOrWhiteSpace(req.WebhookUrl))
+            return BadRequest(ApiResponse<object>.Fail("Webhook URL 不能为空"));
+
+        var validChannels = new[] { WebhookChannel.WeCom, WebhookChannel.DingTalk, WebhookChannel.Feishu, WebhookChannel.Custom };
+        if (!validChannels.Contains(req.Channel))
+            return BadRequest(ApiResponse<object>.Fail($"不支持的渠道: {req.Channel}"));
+
+        var invalidEvents = req.TriggerEvents?.Except(ReportEventType.All).ToList();
+        if (invalidEvents is { Count: > 0 })
+            return BadRequest(ApiResponse<object>.Fail($"不支持的事件类型: {string.Join(", ", invalidEvents)}"));
+
+        var config = new ReportWebhookConfig
+        {
+            TeamId = teamId,
+            Channel = req.Channel,
+            WebhookUrl = req.WebhookUrl.Trim(),
+            TriggerEvents = req.TriggerEvents ?? new List<string>(ReportEventType.All),
+            IsEnabled = req.IsEnabled ?? true,
+            Name = req.Name?.Trim(),
+            CreatedBy = userId,
+        };
+
+        await _db.ReportWebhookConfigs.InsertOneAsync(config, cancellationToken: CancellationToken.None);
+        return Created($"/api/report-agent/teams/{teamId}/webhooks/{config.Id}",
+            ApiResponse<object>.Ok(new { webhook = config }));
+    }
+
+    /// <summary>更新 Webhook 配置</summary>
+    [HttpPut("teams/{teamId}/webhooks/{webhookId}")]
+    public async Task<IActionResult> UpdateWebhook(string teamId, string webhookId, [FromBody] UpdateWebhookRequest req)
+    {
+        var userId = GetUserId();
+        var member = await _db.ReportTeamMembers.Find(m => m.TeamId == teamId && m.UserId == userId).FirstOrDefaultAsync();
+        if (member == null) return NotFound(ApiResponse<object>.Fail("未加入该团队"));
+        if (member.Role is not ("leader" or "deputy"))
+            return Forbid();
+
+        var existing = await _db.ReportWebhookConfigs.Find(w => w.Id == webhookId && w.TeamId == teamId).FirstOrDefaultAsync();
+        if (existing == null) return NotFound(ApiResponse<object>.Fail("Webhook 配置不存在"));
+
+        var updates = new List<UpdateDefinition<ReportWebhookConfig>>();
+
+        if (req.WebhookUrl != null)
+        {
+            if (string.IsNullOrWhiteSpace(req.WebhookUrl))
+                return BadRequest(ApiResponse<object>.Fail("Webhook URL 不能为空"));
+            updates.Add(Builders<ReportWebhookConfig>.Update.Set(w => w.WebhookUrl, req.WebhookUrl.Trim()));
+        }
+        if (req.Channel != null)
+        {
+            var validChannels = new[] { WebhookChannel.WeCom, WebhookChannel.DingTalk, WebhookChannel.Feishu, WebhookChannel.Custom };
+            if (!validChannels.Contains(req.Channel))
+                return BadRequest(ApiResponse<object>.Fail($"不支持的渠道: {req.Channel}"));
+            updates.Add(Builders<ReportWebhookConfig>.Update.Set(w => w.Channel, req.Channel));
+        }
+        if (req.TriggerEvents != null)
+        {
+            var invalidEvents = req.TriggerEvents.Except(ReportEventType.All).ToList();
+            if (invalidEvents.Count > 0)
+                return BadRequest(ApiResponse<object>.Fail($"不支持的事件类型: {string.Join(", ", invalidEvents)}"));
+            updates.Add(Builders<ReportWebhookConfig>.Update.Set(w => w.TriggerEvents, req.TriggerEvents));
+        }
+        if (req.IsEnabled.HasValue)
+            updates.Add(Builders<ReportWebhookConfig>.Update.Set(w => w.IsEnabled, req.IsEnabled.Value));
+        if (req.Name != null)
+            updates.Add(Builders<ReportWebhookConfig>.Update.Set(w => w.Name, req.Name.Trim()));
+
+        if (updates.Count == 0)
+            return Ok(ApiResponse<object>.Ok(new { webhook = existing }));
+
+        updates.Add(Builders<ReportWebhookConfig>.Update.Set(w => w.UpdatedAt, DateTime.UtcNow));
+        await _db.ReportWebhookConfigs.UpdateOneAsync(
+            w => w.Id == webhookId,
+            Builders<ReportWebhookConfig>.Update.Combine(updates),
+            cancellationToken: CancellationToken.None);
+
+        var updated = await _db.ReportWebhookConfigs.Find(w => w.Id == webhookId).FirstOrDefaultAsync();
+        return Ok(ApiResponse<object>.Ok(new { webhook = updated }));
+    }
+
+    /// <summary>删除 Webhook 配置</summary>
+    [HttpDelete("teams/{teamId}/webhooks/{webhookId}")]
+    public async Task<IActionResult> DeleteWebhook(string teamId, string webhookId)
+    {
+        var userId = GetUserId();
+        var member = await _db.ReportTeamMembers.Find(m => m.TeamId == teamId && m.UserId == userId).FirstOrDefaultAsync();
+        if (member == null) return NotFound(ApiResponse<object>.Fail("未加入该团队"));
+        if (member.Role is not ("leader" or "deputy"))
+            return Forbid();
+
+        var result = await _db.ReportWebhookConfigs.DeleteOneAsync(
+            w => w.Id == webhookId && w.TeamId == teamId,
+            cancellationToken: CancellationToken.None);
+
+        if (result.DeletedCount == 0)
+            return NotFound(ApiResponse<object>.Fail("Webhook 配置不存在"));
+
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    /// <summary>测试 Webhook 连通性</summary>
+    [HttpPost("teams/{teamId}/webhooks/test")]
+    public async Task<IActionResult> TestWebhook(string teamId, [FromBody] TestWebhookRequest req)
+    {
+        var userId = GetUserId();
+        var member = await _db.ReportTeamMembers.Find(m => m.TeamId == teamId && m.UserId == userId).FirstOrDefaultAsync();
+        if (member == null) return NotFound(ApiResponse<object>.Fail("未加入该团队"));
+        if (member.Role is not ("leader" or "deputy"))
+            return Forbid();
+
+        if (string.IsNullOrWhiteSpace(req.WebhookUrl))
+            return BadRequest(ApiResponse<object>.Fail("Webhook URL 不能为空"));
+
+        var (success, error) = await _webhookService.SendTestAsync(req.WebhookUrl.Trim(), req.Channel ?? WebhookChannel.WeCom);
+        return Ok(ApiResponse<object>.Ok(new { success, error }));
+    }
+
+    #endregion
+}
+
+public class CreateWebhookRequest
+{
+    public string Channel { get; set; } = WebhookChannel.WeCom;
+    public string WebhookUrl { get; set; } = string.Empty;
+    public List<string>? TriggerEvents { get; set; }
+    public bool? IsEnabled { get; set; }
+    public string? Name { get; set; }
+}
+
+public class UpdateWebhookRequest
+{
+    public string? Channel { get; set; }
+    public string? WebhookUrl { get; set; }
+    public List<string>? TriggerEvents { get; set; }
+    public bool? IsEnabled { get; set; }
+    public string? Name { get; set; }
+}
+
+public class TestWebhookRequest
+{
+    public string WebhookUrl { get; set; } = string.Empty;
+    public string? Channel { get; set; }
 }
 
 public class CreateCommentRequest
