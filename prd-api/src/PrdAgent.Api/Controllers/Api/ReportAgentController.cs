@@ -3695,7 +3695,7 @@ public class ReportAgentController : ControllerBase
     {
         var userId = GetUserId();
         var member = await _db.ReportTeamMembers.Find(m => m.TeamId == teamId && m.UserId == userId).FirstOrDefaultAsync();
-        if (member == null) return NotFound(ApiResponse<object>.Fail("未加入该团队"));
+        if (member == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "未加入该团队"));
         if (member.Role is not ("leader" or "deputy"))
             return Forbid();
 
@@ -3713,20 +3713,20 @@ public class ReportAgentController : ControllerBase
     {
         var userId = GetUserId();
         var member = await _db.ReportTeamMembers.Find(m => m.TeamId == teamId && m.UserId == userId).FirstOrDefaultAsync();
-        if (member == null) return NotFound(ApiResponse<object>.Fail("未加入该团队"));
+        if (member == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "未加入该团队"));
         if (member.Role is not ("leader" or "deputy"))
             return Forbid();
 
         if (string.IsNullOrWhiteSpace(req.WebhookUrl))
-            return BadRequest(ApiResponse<object>.Fail("Webhook URL 不能为空"));
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "Webhook URL 不能为空"));
 
         var validChannels = new[] { WebhookChannel.WeCom, WebhookChannel.DingTalk, WebhookChannel.Feishu, WebhookChannel.Custom };
         if (!validChannels.Contains(req.Channel))
-            return BadRequest(ApiResponse<object>.Fail($"不支持的渠道: {req.Channel}"));
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", $"不支持的渠道: {req.Channel}"));
 
         var invalidEvents = req.TriggerEvents?.Except(ReportEventType.All).ToList();
         if (invalidEvents is { Count: > 0 })
-            return BadRequest(ApiResponse<object>.Fail($"不支持的事件类型: {string.Join(", ", invalidEvents)}"));
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", $"不支持的事件类型: {string.Join(", ", invalidEvents)}"));
 
         var config = new ReportWebhookConfig
         {
@@ -3750,33 +3750,33 @@ public class ReportAgentController : ControllerBase
     {
         var userId = GetUserId();
         var member = await _db.ReportTeamMembers.Find(m => m.TeamId == teamId && m.UserId == userId).FirstOrDefaultAsync();
-        if (member == null) return NotFound(ApiResponse<object>.Fail("未加入该团队"));
+        if (member == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "未加入该团队"));
         if (member.Role is not ("leader" or "deputy"))
             return Forbid();
 
         var existing = await _db.ReportWebhookConfigs.Find(w => w.Id == webhookId && w.TeamId == teamId).FirstOrDefaultAsync();
-        if (existing == null) return NotFound(ApiResponse<object>.Fail("Webhook 配置不存在"));
+        if (existing == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "Webhook 配置不存在"));
 
         var updates = new List<UpdateDefinition<ReportWebhookConfig>>();
 
         if (req.WebhookUrl != null)
         {
             if (string.IsNullOrWhiteSpace(req.WebhookUrl))
-                return BadRequest(ApiResponse<object>.Fail("Webhook URL 不能为空"));
+                return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "Webhook URL 不能为空"));
             updates.Add(Builders<ReportWebhookConfig>.Update.Set(w => w.WebhookUrl, req.WebhookUrl.Trim()));
         }
         if (req.Channel != null)
         {
             var validChannels = new[] { WebhookChannel.WeCom, WebhookChannel.DingTalk, WebhookChannel.Feishu, WebhookChannel.Custom };
             if (!validChannels.Contains(req.Channel))
-                return BadRequest(ApiResponse<object>.Fail($"不支持的渠道: {req.Channel}"));
+                return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", $"不支持的渠道: {req.Channel}"));
             updates.Add(Builders<ReportWebhookConfig>.Update.Set(w => w.Channel, req.Channel));
         }
         if (req.TriggerEvents != null)
         {
             var invalidEvents = req.TriggerEvents.Except(ReportEventType.All).ToList();
             if (invalidEvents.Count > 0)
-                return BadRequest(ApiResponse<object>.Fail($"不支持的事件类型: {string.Join(", ", invalidEvents)}"));
+                return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", $"不支持的事件类型: {string.Join(", ", invalidEvents)}"));
             updates.Add(Builders<ReportWebhookConfig>.Update.Set(w => w.TriggerEvents, req.TriggerEvents));
         }
         if (req.IsEnabled.HasValue)
@@ -3803,7 +3803,7 @@ public class ReportAgentController : ControllerBase
     {
         var userId = GetUserId();
         var member = await _db.ReportTeamMembers.Find(m => m.TeamId == teamId && m.UserId == userId).FirstOrDefaultAsync();
-        if (member == null) return NotFound(ApiResponse<object>.Fail("未加入该团队"));
+        if (member == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "未加入该团队"));
         if (member.Role is not ("leader" or "deputy"))
             return Forbid();
 
@@ -3812,7 +3812,7 @@ public class ReportAgentController : ControllerBase
             cancellationToken: CancellationToken.None);
 
         if (result.DeletedCount == 0)
-            return NotFound(ApiResponse<object>.Fail("Webhook 配置不存在"));
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "Webhook 配置不存在"));
 
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
@@ -3823,12 +3823,12 @@ public class ReportAgentController : ControllerBase
     {
         var userId = GetUserId();
         var member = await _db.ReportTeamMembers.Find(m => m.TeamId == teamId && m.UserId == userId).FirstOrDefaultAsync();
-        if (member == null) return NotFound(ApiResponse<object>.Fail("未加入该团队"));
+        if (member == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "未加入该团队"));
         if (member.Role is not ("leader" or "deputy"))
             return Forbid();
 
         if (string.IsNullOrWhiteSpace(req.WebhookUrl))
-            return BadRequest(ApiResponse<object>.Fail("Webhook URL 不能为空"));
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "Webhook URL 不能为空"));
 
         var (success, error) = await _webhookService.SendTestAsync(req.WebhookUrl.Trim(), req.Channel ?? WebhookChannel.WeCom);
         return Ok(ApiResponse<object>.Ok(new { success, error }));
