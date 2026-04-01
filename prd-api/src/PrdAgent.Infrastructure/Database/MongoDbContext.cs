@@ -108,6 +108,7 @@ public class MongoDbContext
     public IMongoCollection<ReviewSubmission> ReviewSubmissions => _database.GetCollection<ReviewSubmission>("review_submissions");
     public IMongoCollection<ReviewResult> ReviewResults => _database.GetCollection<ReviewResult>("review_results");
     public IMongoCollection<ReviewDimensionConfig> ReviewDimensionConfigs => _database.GetCollection<ReviewDimensionConfig>("review_dimension_configs");
+    public IMongoCollection<ReviewWebhookConfig> ReviewWebhookConfigs => _database.GetCollection<ReviewWebhookConfig>("review_webhook_configs");
 
     // Report Agent 周报管理
     public IMongoCollection<ReportTeam> ReportTeams => _database.GetCollection<ReportTeam>("report_teams");
@@ -121,6 +122,7 @@ public class MongoDbContext
     public IMongoCollection<ReportLike> ReportLikes => _database.GetCollection<ReportLike>("report_likes");
     public IMongoCollection<ReportViewEvent> ReportViewEvents => _database.GetCollection<ReportViewEvent>("report_view_events");
     public IMongoCollection<TeamSummary> ReportTeamSummaries => _database.GetCollection<TeamSummary>("report_team_summaries");
+    public IMongoCollection<ReportWebhookConfig> ReportWebhookConfigs => _database.GetCollection<ReportWebhookConfig>("report_webhook_configs");
     public IMongoCollection<PersonalSource> PersonalSources => _database.GetCollection<PersonalSource>("report_personal_sources");
 
     // Channel Adapter 多通道适配器

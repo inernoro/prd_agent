@@ -27,15 +27,18 @@ public class ReviewAgentController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly ILlmGateway _gateway;
     private readonly ILogger<ReviewAgentController> _logger;
+    private readonly Services.ReviewAgent.ReviewWebhookService _webhookService;
 
     public ReviewAgentController(
         MongoDbContext db,
         ILlmGateway gateway,
-        ILogger<ReviewAgentController> logger)
+        ILogger<ReviewAgentController> logger,
+        Services.ReviewAgent.ReviewWebhookService webhookService)
     {
         _db = db;
         _gateway = gateway;
         _logger = logger;
+        _webhookService = webhookService;
     }
 
     private string GetUserId() => this.GetRequiredUserId();
@@ -458,7 +461,7 @@ public class ReviewAgentController : ControllerBase
                     new JsonObject { ["role"] = "user", ["content"] = userPrompt }
                 },
                 ["temperature"] = 0.3,
-                ["max_tokens"] = 4000,
+                ["max_tokens"] = 8192,
             },
         };
 
@@ -558,6 +561,9 @@ public class ReviewAgentController : ControllerBase
         };
         await _db.AdminNotifications.InsertOneAsync(notification, cancellationToken: CancellationToken.None);
 
+        // 推送 Webhook 通知到企微/钉钉/飞书
+        await _webhookService.NotifyReviewCompletedAsync(submission, totalScore, isPassed, summary);
+
         // 推送最终结果
         try
         {
@@ -610,7 +616,7 @@ public class ReviewAgentController : ControllerBase
             sb.AppendLine($"    {{ \"key\": \"{dim.Key}\", \"score\": <0-{dim.MaxScore}的整数>, \"comment\": \"<该维度的具体评价，指出具体不足或亮点，100字以内>\" }}{comma}");
         }
         sb.AppendLine("  ],");
-        sb.AppendLine("  \"summary\": \"<150字以内的总体评语，先指出最主要的不足，再说优点，给出改进方向>\"");
+        sb.AppendLine("  \"summary\": \"<总体评语，完整输出不限字数，先指出最主要的不足，再说优点，给出改进方向>\"");
         sb.AppendLine("}");
         sb.AppendLine("```");
         return sb.ToString();
@@ -642,7 +648,7 @@ public class ReviewAgentController : ControllerBase
         }
         else
         {
-            // ── 策略 1: JSON 解析 ──
+            // ── 策略 1: JSON 解析（两次尝试：原始 → 修复换行后） ──
             parseError = TryParseJson(llmOutput, dims, scores, ref summary);
 
             // ── 策略 2: 如果 JSON 失败或没有解析到任何维度，用正则兜底 ──
@@ -670,7 +676,63 @@ public class ReviewAgentController : ControllerBase
             });
         }
 
+        // ── summary 兜底提取（如果 JSON 解析没拿到或拿到空值） ──
+        if (string.IsNullOrEmpty(summary) && !string.IsNullOrWhiteSpace(llmOutput))
+        {
+            summary = ExtractSummaryFromRawOutput(llmOutput);
+        }
+
+        // ── 不再做截断检测 ──
+        // 之前的截断检测误判率太高（LLM 输出完整但结尾字符不在白名单中），
+        // 导致正常 summary 被追加错误提示。如果 summary 确实不完整，用户可以重新评审。
+
         return (scores, summary, parseError);
+    }
+
+    /// <summary>
+    /// 从原始 LLM 输出中提取 summary 字段值（纯字符串搜索，不依赖 JSON 解析）
+    /// </summary>
+    private static string ExtractSummaryFromRawOutput(string llmOutput)
+    {
+        // 找 "summary" 关键字位置
+        var idx = llmOutput.IndexOf("\"summary\"", StringComparison.OrdinalIgnoreCase);
+        if (idx < 0) return string.Empty;
+
+        // 找冒号
+        var colonIdx = llmOutput.IndexOf(':', idx + 9);
+        if (colonIdx < 0) return string.Empty;
+
+        // 找开始引号
+        var quoteStart = llmOutput.IndexOf('"', colonIdx + 1);
+        if (quoteStart < 0) return string.Empty;
+
+        // 从开始引号后面，向前找关闭引号（跳过转义的 \"）
+        var afterQuote = llmOutput[(quoteStart + 1)..];
+
+        // 策略：从后往前找最后一个未转义的 "，这是 summary 值的结束
+        // 但要排除 JSON 结构符号之后的内容（} 后面的 " 不算）
+        // 先找 JSON 闭合的 }
+        var lastBrace = afterQuote.LastIndexOf('}');
+        var searchEnd = lastBrace >= 0 ? lastBrace : afterQuote.Length;
+
+        var endIdx = -1;
+        for (var i = searchEnd - 1; i >= 0; i--)
+        {
+            if (afterQuote[i] == '"' && (i == 0 || afterQuote[i - 1] != '\\'))
+            {
+                endIdx = i;
+                break;
+            }
+        }
+
+        if (endIdx <= 0) return string.Empty;
+
+        return afterQuote[..endIdx]
+            .Replace("\\n", "\n")
+            .Replace("\\r", "")
+            .Replace("\\\"", "\"")
+            .Replace("\\t", "\t")
+            .Replace("\\\\", "\\");
     }
 
     private static string? TryParseJson(string llmOutput, List<ReviewDimensionConfig> dims,
@@ -681,6 +743,10 @@ public class ReviewAgentController : ControllerBase
             var jsonStr = TryExtractJsonBlock(llmOutput);
             if (jsonStr == null) return "未找到 JSON 块";
 
+            // 预处理：修复 LLM 输出的 JSON 中字符串值内的未转义换行
+            // JSON 规范要求字符串值内的换行必须转义为 \n，但 LLM 常输出字面换行
+            jsonStr = FixUnescapedNewlinesInJsonStrings(jsonStr);
+
             var doc = JsonDocument.Parse(jsonStr, new JsonDocumentOptions
             {
                 AllowTrailingCommas = true,
@@ -689,6 +755,18 @@ public class ReviewAgentController : ControllerBase
 
             if (doc.RootElement.TryGetProperty("summary", out var summaryEl))
                 summary = summaryEl.GetString() ?? string.Empty;
+            // 兜底：大小写不敏感查找 summary
+            if (string.IsNullOrEmpty(summary))
+            {
+                foreach (var prop in doc.RootElement.EnumerateObject())
+                {
+                    if (string.Equals(prop.Name, "summary", StringComparison.OrdinalIgnoreCase))
+                    {
+                        summary = prop.Value.GetString() ?? string.Empty;
+                        break;
+                    }
+                }
+            }
 
             if (!doc.RootElement.TryGetProperty("dimensions", out var dimsEl))
                 return $"JSON 解析成功但缺少 dimensions 字段，根节点字段: {string.Join(", ", doc.RootElement.EnumerateObject().Select(p => p.Name))}";
@@ -769,6 +847,38 @@ public class ReviewAgentController : ControllerBase
         _ => 0,
     };
 
+    /// <summary>
+    /// 修复 JSON 字符串值中未转义的换行符。
+    /// LLM 常在 JSON 字符串值内输出字面换行（非法），需替换为 \n 转义。
+    /// </summary>
+    private static string FixUnescapedNewlinesInJsonStrings(string json)
+    {
+        var sb = new StringBuilder(json.Length);
+        var inString = false;
+        for (var i = 0; i < json.Length; i++)
+        {
+            var c = json[i];
+            if (c == '"' && (i == 0 || json[i - 1] != '\\'))
+            {
+                inString = !inString;
+                sb.Append(c);
+            }
+            else if (inString && c == '\n')
+            {
+                sb.Append("\\n");
+            }
+            else if (inString && c == '\r')
+            {
+                // skip \r (will be covered by \n in \r\n)
+            }
+            else
+            {
+                sb.Append(c);
+            }
+        }
+        return sb.ToString();
+    }
+
     private static string? TryExtractJsonBlock(string output)
     {
         // 先尝试从代码块中剥离 fence 标记，得到内层内容
@@ -801,6 +911,126 @@ public class ReviewAgentController : ControllerBase
         catch (ObjectDisposedException) { }
         catch (OperationCanceledException) { }
     }
+    // ──────────────────────────────────────────────
+    // Webhook 配置（全局，manage 权限）
+    // ──────────────────────────────────────────────
+
+    /// <summary>获取 Webhook 配置列表</summary>
+    [HttpGet("webhooks")]
+    public async Task<IActionResult> ListWebhooks()
+    {
+        if (!HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "需要管理权限"));
+
+        var items = await _db.ReviewWebhookConfigs
+            .Find(_ => true)
+            .SortByDescending(w => w.CreatedAt)
+            .ToListAsync(CancellationToken.None);
+
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>创建 Webhook 配置</summary>
+    [HttpPost("webhooks")]
+    public async Task<IActionResult> CreateWebhook([FromBody] CreateReviewWebhookRequest req)
+    {
+        if (!HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "需要管理权限"));
+
+        if (string.IsNullOrWhiteSpace(req.WebhookUrl))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "Webhook URL 不能为空"));
+
+        var validChannels = new[] { WebhookChannel.WeCom, WebhookChannel.DingTalk, WebhookChannel.Feishu, WebhookChannel.Custom };
+        if (!validChannels.Contains(req.Channel))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", $"不支持的渠道: {req.Channel}"));
+
+        var config = new ReviewWebhookConfig
+        {
+            Channel = req.Channel,
+            WebhookUrl = req.WebhookUrl.Trim(),
+            TriggerEvents = req.TriggerEvents ?? new List<string>(ReviewEventType.All),
+            IsEnabled = req.IsEnabled ?? true,
+            Name = req.Name?.Trim(),
+            MentionAll = req.MentionAll ?? false,
+            CreatedBy = GetUserId(),
+        };
+
+        await _db.ReviewWebhookConfigs.InsertOneAsync(config, cancellationToken: CancellationToken.None);
+        return Created($"/api/review-agent/webhooks/{config.Id}",
+            ApiResponse<object>.Ok(new { webhook = config }));
+    }
+
+    /// <summary>更新 Webhook 配置</summary>
+    [HttpPut("webhooks/{webhookId}")]
+    public async Task<IActionResult> UpdateWebhook(string webhookId, [FromBody] UpdateReviewWebhookRequest req)
+    {
+        if (!HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "需要管理权限"));
+
+        var existing = await _db.ReviewWebhookConfigs.Find(w => w.Id == webhookId).FirstOrDefaultAsync();
+        if (existing == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "Webhook 配置不存在"));
+
+        var updates = new List<UpdateDefinition<ReviewWebhookConfig>>();
+
+        if (req.WebhookUrl != null)
+        {
+            if (string.IsNullOrWhiteSpace(req.WebhookUrl))
+                return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "Webhook URL 不能为空"));
+            updates.Add(Builders<ReviewWebhookConfig>.Update.Set(w => w.WebhookUrl, req.WebhookUrl.Trim()));
+        }
+        if (req.Channel != null)
+            updates.Add(Builders<ReviewWebhookConfig>.Update.Set(w => w.Channel, req.Channel));
+        if (req.TriggerEvents != null)
+            updates.Add(Builders<ReviewWebhookConfig>.Update.Set(w => w.TriggerEvents, req.TriggerEvents));
+        if (req.IsEnabled.HasValue)
+            updates.Add(Builders<ReviewWebhookConfig>.Update.Set(w => w.IsEnabled, req.IsEnabled.Value));
+        if (req.Name != null)
+            updates.Add(Builders<ReviewWebhookConfig>.Update.Set(w => w.Name, req.Name.Trim()));
+        if (req.MentionAll.HasValue)
+            updates.Add(Builders<ReviewWebhookConfig>.Update.Set(w => w.MentionAll, req.MentionAll.Value));
+
+        if (updates.Count == 0)
+            return Ok(ApiResponse<object>.Ok(new { webhook = existing }));
+
+        updates.Add(Builders<ReviewWebhookConfig>.Update.Set(w => w.UpdatedAt, DateTime.UtcNow));
+        await _db.ReviewWebhookConfigs.UpdateOneAsync(
+            w => w.Id == webhookId,
+            Builders<ReviewWebhookConfig>.Update.Combine(updates),
+            cancellationToken: CancellationToken.None);
+
+        var updated = await _db.ReviewWebhookConfigs.Find(w => w.Id == webhookId).FirstOrDefaultAsync();
+        return Ok(ApiResponse<object>.Ok(new { webhook = updated }));
+    }
+
+    /// <summary>删除 Webhook 配置</summary>
+    [HttpDelete("webhooks/{webhookId}")]
+    public async Task<IActionResult> DeleteWebhook(string webhookId)
+    {
+        if (!HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "需要管理权限"));
+
+        var result = await _db.ReviewWebhookConfigs.DeleteOneAsync(
+            w => w.Id == webhookId, cancellationToken: CancellationToken.None);
+
+        if (result.DeletedCount == 0)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "Webhook 配置不存在"));
+
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    /// <summary>测试 Webhook 连通性</summary>
+    [HttpPost("webhooks/test")]
+    public async Task<IActionResult> TestWebhook([FromBody] TestReviewWebhookRequest req)
+    {
+        if (!HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "需要管理权限"));
+
+        if (string.IsNullOrWhiteSpace(req.WebhookUrl))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "Webhook URL 不能为空"));
+
+        var (success, error) = await _webhookService.SendTestAsync(req.WebhookUrl.Trim(), req.Channel ?? WebhookChannel.WeCom, req.MentionAll);
+        return Ok(ApiResponse<object>.Ok(new { success, error }));
+    }
 }
 
 // ──────────────────────────────────────────────
@@ -808,3 +1038,30 @@ public class ReviewAgentController : ControllerBase
 // ──────────────────────────────────────────────
 
 public record CreateReviewSubmissionRequest(string Title, string AttachmentId);
+
+public class CreateReviewWebhookRequest
+{
+    public string Channel { get; set; } = WebhookChannel.WeCom;
+    public string WebhookUrl { get; set; } = string.Empty;
+    public List<string>? TriggerEvents { get; set; }
+    public bool? IsEnabled { get; set; }
+    public string? Name { get; set; }
+    public bool? MentionAll { get; set; }
+}
+
+public class UpdateReviewWebhookRequest
+{
+    public string? Channel { get; set; }
+    public string? WebhookUrl { get; set; }
+    public List<string>? TriggerEvents { get; set; }
+    public bool? IsEnabled { get; set; }
+    public string? Name { get; set; }
+    public bool? MentionAll { get; set; }
+}
+
+public class TestReviewWebhookRequest
+{
+    public string WebhookUrl { get; set; } = string.Empty;
+    public string? Channel { get; set; }
+    public bool MentionAll { get; set; }
+}

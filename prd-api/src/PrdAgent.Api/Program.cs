@@ -248,6 +248,7 @@ builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ReportGenerationSer
 builder.Services.AddHostedService<PrdAgent.Api.Services.ReportAgent.GitSyncWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.ReportAgent.ReportAutoGenerateWorker>();
 // Report Agent Phase 3: 管理增强服务
+builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ReportWebhookService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ReportNotificationService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.TeamSummaryService>();
 // Report Agent v2.0: 工作流管道 + 个人数据源
@@ -258,6 +259,9 @@ builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.PersonalSourceServi
 // Defect Agent: 催办 Worker + Webhook 通知服务
 builder.Services.AddHostedService<PrdAgent.Api.Services.DefectAgent.DefectEscalationWorker>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DefectWebhookService>();
+
+// Review Agent: Webhook 通知服务
+builder.Services.AddScoped<PrdAgent.Api.Services.ReviewAgent.ReviewWebhookService>();
 
 // ImageMaster 资产存储：默认本地文件（可替换为对象存储实现）
 builder.Services.AddSingleton<IAssetStorage>(sp =>
