@@ -3709,7 +3709,7 @@ public class ReportAgentController : ControllerBase
 
     /// <summary>创建 Webhook 配置</summary>
     [HttpPost("teams/{teamId}/webhooks")]
-    public async Task<IActionResult> CreateWebhook(string teamId, [FromBody] CreateWebhookRequest req)
+    public async Task<IActionResult> CreateWebhook(string teamId, [FromBody] CreateReportWebhookRequest req)
     {
         var userId = GetUserId();
         var member = await _db.ReportTeamMembers.Find(m => m.TeamId == teamId && m.UserId == userId).FirstOrDefaultAsync();
@@ -3746,7 +3746,7 @@ public class ReportAgentController : ControllerBase
 
     /// <summary>更新 Webhook 配置</summary>
     [HttpPut("teams/{teamId}/webhooks/{webhookId}")]
-    public async Task<IActionResult> UpdateWebhook(string teamId, string webhookId, [FromBody] UpdateWebhookRequest req)
+    public async Task<IActionResult> UpdateWebhook(string teamId, string webhookId, [FromBody] UpdateReportWebhookRequest req)
     {
         var userId = GetUserId();
         var member = await _db.ReportTeamMembers.Find(m => m.TeamId == teamId && m.UserId == userId).FirstOrDefaultAsync();
@@ -3819,7 +3819,7 @@ public class ReportAgentController : ControllerBase
 
     /// <summary>测试 Webhook 连通性</summary>
     [HttpPost("teams/{teamId}/webhooks/test")]
-    public async Task<IActionResult> TestWebhook(string teamId, [FromBody] TestWebhookRequest req)
+    public async Task<IActionResult> TestWebhook(string teamId, [FromBody] TestReportWebhookRequest req)
     {
         var userId = GetUserId();
         var member = await _db.ReportTeamMembers.Find(m => m.TeamId == teamId && m.UserId == userId).FirstOrDefaultAsync();
@@ -3837,7 +3837,7 @@ public class ReportAgentController : ControllerBase
     #endregion
 }
 
-public class CreateWebhookRequest
+public class CreateReportWebhookRequest
 {
     public string Channel { get; set; } = WebhookChannel.WeCom;
     public string WebhookUrl { get; set; } = string.Empty;
@@ -3846,7 +3846,7 @@ public class CreateWebhookRequest
     public string? Name { get; set; }
 }
 
-public class UpdateWebhookRequest
+public class UpdateReportWebhookRequest
 {
     public string? Channel { get; set; }
     public string? WebhookUrl { get; set; }
@@ -3855,7 +3855,7 @@ public class UpdateWebhookRequest
     public string? Name { get; set; }
 }
 
-public class TestWebhookRequest
+public class TestReportWebhookRequest
 {
     public string WebhookUrl { get; set; } = string.Empty;
     public string? Channel { get; set; }
