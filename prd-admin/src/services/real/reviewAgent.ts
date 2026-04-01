@@ -124,3 +124,65 @@ export async function rerunSubmission(id: string): Promise<ApiResponse<{ message
 export function getResultStreamUrl(submissionId: string): string {
   return `/api/review-agent/submissions/${submissionId}/result/stream`;
 }
+
+// ──────────────────────────────────────────────
+// Webhook 配置
+// ──────────────────────────────────────────────
+
+export interface ReviewWebhookConfig {
+  id: string;
+  channel: string;
+  webhookUrl: string;
+  triggerEvents: string[];
+  isEnabled: boolean;
+  name?: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const ReviewWebhookChannelLabels: Record<string, string> = {
+  wecom: '企业微信',
+  dingtalk: '钉钉',
+  feishu: '飞书',
+  custom: '自定义',
+};
+
+export const ReviewEventLabels: Record<string, string> = {
+  review_completed: '评审完成',
+};
+
+export async function listReviewWebhooks(): Promise<ApiResponse<{ items: ReviewWebhookConfig[] }>> {
+  return apiRequest('/api/review-agent/webhooks');
+}
+
+export async function createReviewWebhook(input: {
+  channel: string;
+  webhookUrl: string;
+  triggerEvents?: string[];
+  isEnabled?: boolean;
+  name?: string;
+}): Promise<ApiResponse<{ webhook: ReviewWebhookConfig }>> {
+  return apiRequest('/api/review-agent/webhooks', { method: 'POST', body: input });
+}
+
+export async function updateReviewWebhook(webhookId: string, input: {
+  channel?: string;
+  webhookUrl?: string;
+  triggerEvents?: string[];
+  isEnabled?: boolean;
+  name?: string;
+}): Promise<ApiResponse<{ webhook: ReviewWebhookConfig }>> {
+  return apiRequest(`/api/review-agent/webhooks/${encodeURIComponent(webhookId)}`, { method: 'PUT', body: input });
+}
+
+export async function deleteReviewWebhook(webhookId: string): Promise<ApiResponse<{ deleted: boolean }>> {
+  return apiRequest(`/api/review-agent/webhooks/${encodeURIComponent(webhookId)}`, { method: 'DELETE' });
+}
+
+export async function testReviewWebhook(input: {
+  webhookUrl: string;
+  channel?: string;
+}): Promise<ApiResponse<{ success: boolean; error?: string }>> {
+  return apiRequest('/api/review-agent/webhooks/test', { method: 'POST', body: input });
+}

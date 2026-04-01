@@ -1488,10 +1488,16 @@ export {
   rerunSubmission as rerunReviewSubmission,
   getResultStreamUrl as getReviewResultStreamUrl,
   getSubmitters as getReviewSubmitters,
+  listReviewWebhooks,
+  createReviewWebhook,
+  updateReviewWebhook,
+  deleteReviewWebhook,
+  testReviewWebhook,
 } from '@/services/real/reviewAgent';
 export type {
   ReviewDimensionConfig,
   ReviewDimensionScore,
   ReviewSubmission,
   ReviewResult,
+  ReviewWebhookConfig,
 } from '@/services/real/reviewAgent';

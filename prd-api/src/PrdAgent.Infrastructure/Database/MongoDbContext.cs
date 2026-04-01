@@ -108,6 +108,7 @@ public class MongoDbContext
     public IMongoCollection<ReviewSubmission> ReviewSubmissions => _database.GetCollection<ReviewSubmission>("review_submissions");
     public IMongoCollection<ReviewResult> ReviewResults => _database.GetCollection<ReviewResult>("review_results");
     public IMongoCollection<ReviewDimensionConfig> ReviewDimensionConfigs => _database.GetCollection<ReviewDimensionConfig>("review_dimension_configs");
+    public IMongoCollection<ReviewWebhookConfig> ReviewWebhookConfigs => _database.GetCollection<ReviewWebhookConfig>("review_webhook_configs");
 
     // Report Agent 周报管理
     public IMongoCollection<ReportTeam> ReportTeams => _database.GetCollection<ReportTeam>("report_teams");

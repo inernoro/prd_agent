@@ -27,15 +27,18 @@ public class ReviewAgentController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly ILlmGateway _gateway;
     private readonly ILogger<ReviewAgentController> _logger;
+    private readonly Services.ReviewAgent.ReviewWebhookService _webhookService;
 
     public ReviewAgentController(
         MongoDbContext db,
         ILlmGateway gateway,
-        ILogger<ReviewAgentController> logger)
+        ILogger<ReviewAgentController> logger,
+        Services.ReviewAgent.ReviewWebhookService webhookService)
     {
         _db = db;
         _gateway = gateway;
         _logger = logger;
+        _webhookService = webhookService;
     }
 
     private string GetUserId() => this.GetRequiredUserId();
@@ -558,6 +561,9 @@ public class ReviewAgentController : ControllerBase
         };
         await _db.AdminNotifications.InsertOneAsync(notification, cancellationToken: CancellationToken.None);
 
+        // 推送 Webhook 通知到企微/钉钉/飞书
+        await _webhookService.NotifyReviewCompletedAsync(submission, totalScore, isPassed, summary);
+
         // 推送最终结果
         try
         {
@@ -801,6 +807,123 @@ public class ReviewAgentController : ControllerBase
         catch (ObjectDisposedException) { }
         catch (OperationCanceledException) { }
     }
+    // ──────────────────────────────────────────────
+    // Webhook 配置（全局，manage 权限）
+    // ──────────────────────────────────────────────
+
+    /// <summary>获取 Webhook 配置列表</summary>
+    [HttpGet("webhooks")]
+    public async Task<IActionResult> ListWebhooks()
+    {
+        if (!HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "需要管理权限"));
+
+        var items = await _db.ReviewWebhookConfigs
+            .Find(_ => true)
+            .SortByDescending(w => w.CreatedAt)
+            .ToListAsync(CancellationToken.None);
+
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>创建 Webhook 配置</summary>
+    [HttpPost("webhooks")]
+    public async Task<IActionResult> CreateWebhook([FromBody] CreateReviewWebhookRequest req)
+    {
+        if (!HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "需要管理权限"));
+
+        if (string.IsNullOrWhiteSpace(req.WebhookUrl))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "Webhook URL 不能为空"));
+
+        var validChannels = new[] { WebhookChannel.WeCom, WebhookChannel.DingTalk, WebhookChannel.Feishu, WebhookChannel.Custom };
+        if (!validChannels.Contains(req.Channel))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", $"不支持的渠道: {req.Channel}"));
+
+        var config = new ReviewWebhookConfig
+        {
+            Channel = req.Channel,
+            WebhookUrl = req.WebhookUrl.Trim(),
+            TriggerEvents = req.TriggerEvents ?? new List<string>(ReviewEventType.All),
+            IsEnabled = req.IsEnabled ?? true,
+            Name = req.Name?.Trim(),
+            CreatedBy = GetUserId(),
+        };
+
+        await _db.ReviewWebhookConfigs.InsertOneAsync(config, cancellationToken: CancellationToken.None);
+        return Created($"/api/review-agent/webhooks/{config.Id}",
+            ApiResponse<object>.Ok(new { webhook = config }));
+    }
+
+    /// <summary>更新 Webhook 配置</summary>
+    [HttpPut("webhooks/{webhookId}")]
+    public async Task<IActionResult> UpdateWebhook(string webhookId, [FromBody] UpdateReviewWebhookRequest req)
+    {
+        if (!HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "需要管理权限"));
+
+        var existing = await _db.ReviewWebhookConfigs.Find(w => w.Id == webhookId).FirstOrDefaultAsync();
+        if (existing == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "Webhook 配置不存在"));
+
+        var updates = new List<UpdateDefinition<ReviewWebhookConfig>>();
+
+        if (req.WebhookUrl != null)
+        {
+            if (string.IsNullOrWhiteSpace(req.WebhookUrl))
+                return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "Webhook URL 不能为空"));
+            updates.Add(Builders<ReviewWebhookConfig>.Update.Set(w => w.WebhookUrl, req.WebhookUrl.Trim()));
+        }
+        if (req.Channel != null)
+            updates.Add(Builders<ReviewWebhookConfig>.Update.Set(w => w.Channel, req.Channel));
+        if (req.TriggerEvents != null)
+            updates.Add(Builders<ReviewWebhookConfig>.Update.Set(w => w.TriggerEvents, req.TriggerEvents));
+        if (req.IsEnabled.HasValue)
+            updates.Add(Builders<ReviewWebhookConfig>.Update.Set(w => w.IsEnabled, req.IsEnabled.Value));
+        if (req.Name != null)
+            updates.Add(Builders<ReviewWebhookConfig>.Update.Set(w => w.Name, req.Name.Trim()));
+
+        if (updates.Count == 0)
+            return Ok(ApiResponse<object>.Ok(new { webhook = existing }));
+
+        updates.Add(Builders<ReviewWebhookConfig>.Update.Set(w => w.UpdatedAt, DateTime.UtcNow));
+        await _db.ReviewWebhookConfigs.UpdateOneAsync(
+            w => w.Id == webhookId,
+            Builders<ReviewWebhookConfig>.Update.Combine(updates),
+            cancellationToken: CancellationToken.None);
+
+        var updated = await _db.ReviewWebhookConfigs.Find(w => w.Id == webhookId).FirstOrDefaultAsync();
+        return Ok(ApiResponse<object>.Ok(new { webhook = updated }));
+    }
+
+    /// <summary>删除 Webhook 配置</summary>
+    [HttpDelete("webhooks/{webhookId}")]
+    public async Task<IActionResult> DeleteWebhook(string webhookId)
+    {
+        if (!HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "需要管理权限"));
+
+        var result = await _db.ReviewWebhookConfigs.DeleteOneAsync(
+            w => w.Id == webhookId, cancellationToken: CancellationToken.None);
+
+        if (result.DeletedCount == 0)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "Webhook 配置不存在"));
+
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    /// <summary>测试 Webhook 连通性</summary>
+    [HttpPost("webhooks/test")]
+    public async Task<IActionResult> TestWebhook([FromBody] TestReviewWebhookRequest req)
+    {
+        if (!HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "需要管理权限"));
+
+        if (string.IsNullOrWhiteSpace(req.WebhookUrl))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "Webhook URL 不能为空"));
+
+        var (success, error) = await _webhookService.SendTestAsync(req.WebhookUrl.Trim(), req.Channel ?? WebhookChannel.WeCom);
+        return Ok(ApiResponse<object>.Ok(new { success, error }));
+    }
 }
 
 // ──────────────────────────────────────────────
@@ -808,3 +931,27 @@ public class ReviewAgentController : ControllerBase
 // ──────────────────────────────────────────────
 
 public record CreateReviewSubmissionRequest(string Title, string AttachmentId);
+
+public class CreateReviewWebhookRequest
+{
+    public string Channel { get; set; } = WebhookChannel.WeCom;
+    public string WebhookUrl { get; set; } = string.Empty;
+    public List<string>? TriggerEvents { get; set; }
+    public bool? IsEnabled { get; set; }
+    public string? Name { get; set; }
+}
+
+public class UpdateReviewWebhookRequest
+{
+    public string? Channel { get; set; }
+    public string? WebhookUrl { get; set; }
+    public List<string>? TriggerEvents { get; set; }
+    public bool? IsEnabled { get; set; }
+    public string? Name { get; set; }
+}
+
+public class TestReviewWebhookRequest
+{
+    public string WebhookUrl { get; set; } = string.Empty;
+    public string? Channel { get; set; }
+}
