@@ -14,15 +14,18 @@ public class ReportWebhookService
     private readonly MongoDbContext _db;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<ReportWebhookService> _logger;
+    private readonly string? _frontendBaseUrl;
 
     public ReportWebhookService(
         MongoDbContext db,
         IHttpClientFactory httpClientFactory,
-        ILogger<ReportWebhookService> logger)
+        ILogger<ReportWebhookService> logger,
+        IConfiguration configuration)
     {
         _db = db;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
+        _frontendBaseUrl = configuration["App:FrontendBaseUrl"]?.TrimEnd('/');
     }
 
     /// <summary>发送周报事件通知到配置的 Webhook</summary>
@@ -30,6 +33,12 @@ public class ReportWebhookService
     {
         try
         {
+            // 将相对路径转换为完整 URL；如果没配置前端基地址则不生成链接
+            string? fullLink = null;
+            if (!string.IsNullOrEmpty(linkPath) && !string.IsNullOrEmpty(_frontendBaseUrl))
+            {
+                fullLink = $"{_frontendBaseUrl}{linkPath}";
+            }
             var filter = Builders<ReportWebhookConfig>.Filter.And(
                 Builders<ReportWebhookConfig>.Filter.Eq(x => x.TeamId, teamId),
                 Builders<ReportWebhookConfig>.Filter.Eq(x => x.IsEnabled, true),
@@ -47,7 +56,7 @@ public class ReportWebhookService
 
             foreach (var config in configs)
             {
-                await SendWebhookAsync(client, config, eventType, title, body, linkPath);
+                await SendWebhookAsync(client, config, eventType, title, body, fullLink);
             }
         }
         catch (Exception ex)
