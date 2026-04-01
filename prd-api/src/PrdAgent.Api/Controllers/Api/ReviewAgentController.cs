@@ -735,9 +735,6 @@ public class ReviewAgentController : ControllerBase
             .Replace("\\\\", "\\");
     }
 
-        return (scores, summary, parseError);
-    }
-
     private static string? TryParseJson(string llmOutput, List<ReviewDimensionConfig> dims,
         List<ReviewDimensionScore> scores, ref string summary)
     {
