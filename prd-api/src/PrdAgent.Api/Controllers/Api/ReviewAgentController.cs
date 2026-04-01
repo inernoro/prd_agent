@@ -676,24 +676,57 @@ public class ReviewAgentController : ControllerBase
             });
         }
 
-        // 兜底：如果 summary 仍为空，用正则从原始输出提取
+        // 兜底：如果 summary 仍为空，用正则从原始输出提取（支持多行内容）
         if (string.IsNullOrEmpty(summary) && !string.IsNullOrWhiteSpace(llmOutput))
         {
+            // 策略 A: 匹配转义的 JSON 字符串值（处理 \" 和 \n 转义）
             var summaryMatch = System.Text.RegularExpressions.Regex.Match(
                 llmOutput,
-                @"""summary""\s*:\s*""([^""\\]*(?:\\.[^""\\]*)*)""",
-                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                @"""summary""\s*:\s*""((?:[^""\\]|\\.)*)""",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Singleline);
             if (summaryMatch.Success)
-                summary = summaryMatch.Groups[1].Value.Replace("\\n", "\n").Replace("\\\"", "\"");
+                summary = summaryMatch.Groups[1].Value
+                    .Replace("\\n", "\n").Replace("\\\"", "\"").Replace("\\t", "\t");
+
+            // 策略 B: 如果策略 A 失败（LLM 输出了未转义换行导致正则断裂），
+            // 找 "summary" 后面到 JSON 结束的所有文本
+            if (string.IsNullOrEmpty(summary))
+            {
+                var idx = llmOutput.IndexOf("\"summary\"", StringComparison.OrdinalIgnoreCase);
+                if (idx >= 0)
+                {
+                    var colonIdx = llmOutput.IndexOf(':', idx + 9);
+                    if (colonIdx >= 0)
+                    {
+                        var quoteStart = llmOutput.IndexOf('"', colonIdx + 1);
+                        if (quoteStart >= 0)
+                        {
+                            // 找最后一个 " 作为结束（跳过转义的 \"）
+                            var content = llmOutput[(quoteStart + 1)..];
+                            var endIdx = content.Length - 1;
+                            for (var i = content.Length - 1; i >= 0; i--)
+                            {
+                                if (content[i] == '"' && (i == 0 || content[i - 1] != '\\'))
+                                {
+                                    endIdx = i;
+                                    break;
+                                }
+                            }
+                            summary = content[..endIdx]
+                                .Replace("\\n", "\n").Replace("\\\"", "\"").Replace("\\t", "\t");
+                        }
+                    }
+                }
+            }
         }
 
         // 截断检测：如果 summary 非空但未以常见结束标点结尾，说明 LLM 输出被 max_tokens 截断
         if (!string.IsNullOrEmpty(summary))
         {
             var trimmed = summary.TrimEnd();
-            if (trimmed.Length > 20 && !trimmed.EndsWith('。') && !trimmed.EndsWith('！')
-                && !trimmed.EndsWith('；') && !trimmed.EndsWith('.') && !trimmed.EndsWith('"')
-                && !trimmed.EndsWith(')') && !trimmed.EndsWith('）'))
+            var lastChar = trimmed.Length > 0 ? trimmed[^1] : '\0';
+            var endings = new HashSet<char> { '。', '！', '；', '.', '!', ';', '"', '"', ')', '）', '】', '」', '\'', '"' };
+            if (trimmed.Length > 20 && !endings.Contains(lastChar))
             {
                 summary = trimmed + "……（评语因模型输出长度限制被截断）";
             }
@@ -709,6 +742,10 @@ public class ReviewAgentController : ControllerBase
         {
             var jsonStr = TryExtractJsonBlock(llmOutput);
             if (jsonStr == null) return "未找到 JSON 块";
+
+            // 预处理：修复 LLM 输出的 JSON 中字符串值内的未转义换行
+            // JSON 规范要求字符串值内的换行必须转义为 \n，但 LLM 常输出字面换行
+            jsonStr = FixUnescapedNewlinesInJsonStrings(jsonStr);
 
             var doc = JsonDocument.Parse(jsonStr, new JsonDocumentOptions
             {
@@ -809,6 +846,38 @@ public class ReviewAgentController : ControllerBase
                                 double.TryParse(scoreEl.GetString(), out var d) ? (int)Math.Round(d) : 0,
         _ => 0,
     };
+
+    /// <summary>
+    /// 修复 JSON 字符串值中未转义的换行符。
+    /// LLM 常在 JSON 字符串值内输出字面换行（非法），需替换为 \n 转义。
+    /// </summary>
+    private static string FixUnescapedNewlinesInJsonStrings(string json)
+    {
+        var sb = new StringBuilder(json.Length);
+        var inString = false;
+        for (var i = 0; i < json.Length; i++)
+        {
+            var c = json[i];
+            if (c == '"' && (i == 0 || json[i - 1] != '\\'))
+            {
+                inString = !inString;
+                sb.Append(c);
+            }
+            else if (inString && c == '\n')
+            {
+                sb.Append("\\n");
+            }
+            else if (inString && c == '\r')
+            {
+                // skip \r (will be covered by \n in \r\n)
+            }
+            else
+            {
+                sb.Append(c);
+            }
+        }
+        return sb.ToString();
+    }
 
     private static string? TryExtractJsonBlock(string output)
     {
