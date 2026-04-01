@@ -648,7 +648,7 @@ public class ReviewAgentController : ControllerBase
         }
         else
         {
-            // ── 策略 1: JSON 解析 ──
+            // ── 策略 1: JSON 解析（两次尝试：原始 → 修复换行后） ──
             parseError = TryParseJson(llmOutput, dims, scores, ref summary);
 
             // ── 策略 2: 如果 JSON 失败或没有解析到任何维度，用正则兜底 ──
@@ -676,61 +676,64 @@ public class ReviewAgentController : ControllerBase
             });
         }
 
-        // 兜底：如果 summary 仍为空，用正则从原始输出提取（支持多行内容）
+        // ── summary 兜底提取（如果 JSON 解析没拿到或拿到空值） ──
         if (string.IsNullOrEmpty(summary) && !string.IsNullOrWhiteSpace(llmOutput))
         {
-            // 策略 A: 匹配转义的 JSON 字符串值（处理 \" 和 \n 转义）
-            var summaryMatch = System.Text.RegularExpressions.Regex.Match(
-                llmOutput,
-                @"""summary""\s*:\s*""((?:[^""\\]|\\.)*)""",
-                System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Singleline);
-            if (summaryMatch.Success)
-                summary = summaryMatch.Groups[1].Value
-                    .Replace("\\n", "\n").Replace("\\\"", "\"").Replace("\\t", "\t");
-
-            // 策略 B: 如果策略 A 失败（LLM 输出了未转义换行导致正则断裂），
-            // 找 "summary" 后面到 JSON 结束的所有文本
-            if (string.IsNullOrEmpty(summary))
-            {
-                var idx = llmOutput.IndexOf("\"summary\"", StringComparison.OrdinalIgnoreCase);
-                if (idx >= 0)
-                {
-                    var colonIdx = llmOutput.IndexOf(':', idx + 9);
-                    if (colonIdx >= 0)
-                    {
-                        var quoteStart = llmOutput.IndexOf('"', colonIdx + 1);
-                        if (quoteStart >= 0)
-                        {
-                            // 找最后一个 " 作为结束（跳过转义的 \"）
-                            var content = llmOutput[(quoteStart + 1)..];
-                            var endIdx = content.Length - 1;
-                            for (var i = content.Length - 1; i >= 0; i--)
-                            {
-                                if (content[i] == '"' && (i == 0 || content[i - 1] != '\\'))
-                                {
-                                    endIdx = i;
-                                    break;
-                                }
-                            }
-                            summary = content[..endIdx]
-                                .Replace("\\n", "\n").Replace("\\\"", "\"").Replace("\\t", "\t");
-                        }
-                    }
-                }
-            }
+            summary = ExtractSummaryFromRawOutput(llmOutput);
         }
 
-        // 截断检测：如果 summary 非空但未以常见结束标点结尾，说明 LLM 输出被 max_tokens 截断
-        if (!string.IsNullOrEmpty(summary))
+        // ── 不再做截断检测 ──
+        // 之前的截断检测误判率太高（LLM 输出完整但结尾字符不在白名单中），
+        // 导致正常 summary 被追加错误提示。如果 summary 确实不完整，用户可以重新评审。
+
+        return (scores, summary, parseError);
+    }
+
+    /// <summary>
+    /// 从原始 LLM 输出中提取 summary 字段值（纯字符串搜索，不依赖 JSON 解析）
+    /// </summary>
+    private static string ExtractSummaryFromRawOutput(string llmOutput)
+    {
+        // 找 "summary" 关键字位置
+        var idx = llmOutput.IndexOf("\"summary\"", StringComparison.OrdinalIgnoreCase);
+        if (idx < 0) return string.Empty;
+
+        // 找冒号
+        var colonIdx = llmOutput.IndexOf(':', idx + 9);
+        if (colonIdx < 0) return string.Empty;
+
+        // 找开始引号
+        var quoteStart = llmOutput.IndexOf('"', colonIdx + 1);
+        if (quoteStart < 0) return string.Empty;
+
+        // 从开始引号后面，向前找关闭引号（跳过转义的 \"）
+        var afterQuote = llmOutput[(quoteStart + 1)..];
+
+        // 策略：从后往前找最后一个未转义的 "，这是 summary 值的结束
+        // 但要排除 JSON 结构符号之后的内容（} 后面的 " 不算）
+        // 先找 JSON 闭合的 }
+        var lastBrace = afterQuote.LastIndexOf('}');
+        var searchEnd = lastBrace >= 0 ? lastBrace : afterQuote.Length;
+
+        var endIdx = -1;
+        for (var i = searchEnd - 1; i >= 0; i--)
         {
-            var trimmed = summary.TrimEnd();
-            var lastChar = trimmed.Length > 0 ? trimmed[^1] : '\0';
-            var endings = new HashSet<char> { '。', '！', '；', '.', '!', ';', '"', '"', ')', '）', '】', '」', '\'', '"' };
-            if (trimmed.Length > 20 && !endings.Contains(lastChar))
+            if (afterQuote[i] == '"' && (i == 0 || afterQuote[i - 1] != '\\'))
             {
-                summary = trimmed + "……（评语因模型输出长度限制被截断）";
+                endIdx = i;
+                break;
             }
         }
+
+        if (endIdx <= 0) return string.Empty;
+
+        return afterQuote[..endIdx]
+            .Replace("\\n", "\n")
+            .Replace("\\r", "")
+            .Replace("\\\"", "\"")
+            .Replace("\\t", "\t")
+            .Replace("\\\\", "\\");
+    }
 
         return (scores, summary, parseError);
     }
