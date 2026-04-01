@@ -41,10 +41,12 @@ public class ReviewWebhookService
 
             var passText = isPassed ? "已通过" : "未通过";
             var title = "方案评审完成";
-            var body = $"**方案**：《{submission.Title}》\n" +
-                       $"**提交人**：{submission.SubmitterName}\n" +
-                       $"**得分**：{totalScore} / 100 分　{passText}\n" +
-                       $"**总评**：{summary}";
+
+            // 纯文本内容（不含 Markdown 语法），BuildPayload 按渠道自行加格式
+            var plainBody = $"方案：《{submission.Title}》\n" +
+                            $"提交人：{submission.SubmitterName}\n" +
+                            $"得分：{totalScore} / 100 分　{passText}\n" +
+                            $"总评：{summary}";
 
             string? linkPath = null;
             if (!string.IsNullOrEmpty(_frontendBaseUrl))
@@ -55,7 +57,7 @@ public class ReviewWebhookService
 
             foreach (var config in configs)
             {
-                await SendWebhookAsync(client, config, title, body, linkPath, config.MentionAll);
+                await SendWebhookAsync(client, config, title, plainBody, linkPath, config.MentionAll);
             }
         }
         catch (Exception ex)
@@ -120,16 +122,14 @@ public class ReviewWebhookService
 
     private static string BuildPayload(string channel, string title, string body, string? link, bool mentionAll = false)
     {
-        var markdown = $"## {title}\n{body}";
-        if (!string.IsNullOrEmpty(link))
-            markdown += $"\n> [查看详情]({link})";
+        // body 是纯文本（不含 Markdown 语法），各渠道自行加格式
 
         // 企微：开启 @所有人 时用 text 类型（markdown 类型不支持 @）
         if (channel == WebhookChannel.WeCom && mentionAll)
         {
             var plainText = $"【{title}】\n{body}";
             if (!string.IsNullOrEmpty(link))
-                plainText += $"\n查看详情: {link}";
+                plainText += $"\n查看详情：{link}";
             return JsonSerializer.Serialize(new
             {
                 msgtype = "text",
@@ -140,6 +140,16 @@ public class ReviewWebhookService
                 }
             });
         }
+
+        // 为 Markdown 渠道加粗字段标签
+        var mdBody = body
+            .Replace("方案：", "**方案**：")
+            .Replace("提交人：", "**提交人**：")
+            .Replace("得分：", "**得分**：")
+            .Replace("总评：", "**总评**：");
+        var markdown = $"## {title}\n{mdBody}";
+        if (!string.IsNullOrEmpty(link))
+            markdown += $"\n> [查看详情]({link})";
 
         return channel switch
         {
