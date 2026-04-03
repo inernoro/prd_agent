@@ -180,6 +180,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | **cds-project-scan** | `/cds-scan` | CDS compose YAML 生成 |
 | **cds-deploy-pipeline** | `/cds-deploy` | 跨服务器灰度环境生命周期：部署/观测/诊断/操作/验证/清理 |
 | **llm-visibility** | `/visibility` | LLM 交互可视化审计 + 组件指南 |
+| **document-emerge** | `/emerge` | 文档空间涌现式功能设计（对标竞品 + 交叉组合） |
 | **theme-transition** | `/theme-transition` | 主题切换圆形过渡动效 (View Transition API) |
 | **agent-guide** | `/help` | Agent 开发新手引导：阶段跟踪 + 技能推荐 + 进度管理 |
 | **scope-check** | `/scope-check` | 分支受控检查：变更文件分类 + 越界检测 + append-only 审计 |
