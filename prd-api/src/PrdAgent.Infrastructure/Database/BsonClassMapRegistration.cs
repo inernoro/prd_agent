@@ -71,6 +71,7 @@ public static class BsonClassMapRegistration
             RegisterToolboxRun();
             RegisterVideoGenRun();
             RegisterReportAgent();
+            RegisterDocumentStore();
 
             _registered = true;
         }
@@ -911,6 +912,33 @@ public static class BsonClassMapRegistration
         if (!BsonClassMap.IsClassMapRegistered(typeof(WeeklyReport)))
         {
             BsonClassMap.RegisterClassMap<WeeklyReport>(cm =>
+            {
+                cm.AutoMap();
+                cm.MapIdMember(x => x.Id)
+                    .SetSerializer(new StringOrObjectIdSerializer())
+                    .SetIdGenerator(GuidStringIdGenerator.Instance);
+                cm.SetIgnoreExtraElements(true);
+            });
+        }
+    }
+
+    private static void RegisterDocumentStore()
+    {
+        if (!BsonClassMap.IsClassMapRegistered(typeof(DocumentStore)))
+        {
+            BsonClassMap.RegisterClassMap<DocumentStore>(cm =>
+            {
+                cm.AutoMap();
+                cm.MapIdMember(x => x.Id)
+                    .SetSerializer(new StringOrObjectIdSerializer())
+                    .SetIdGenerator(GuidStringIdGenerator.Instance);
+                cm.SetIgnoreExtraElements(true);
+            });
+        }
+
+        if (!BsonClassMap.IsClassMapRegistered(typeof(DocumentEntry)))
+        {
+            BsonClassMap.RegisterClassMap<DocumentEntry>(cm =>
             {
                 cm.AutoMap();
                 cm.MapIdMember(x => x.Id)

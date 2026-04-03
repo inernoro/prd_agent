@@ -185,6 +185,16 @@ public static class AdminPermissionCatalog
     public const string WebPagesWrite = "web-pages.write";
 
     /// <summary>
+    /// 文档空间权限（读）：查看文档空间与文档列表
+    /// </summary>
+    public const string DocumentStoreRead = "document-store.read";
+
+    /// <summary>
+    /// 文档空间权限（写）：创建/编辑/删除文档空间与文档
+    /// </summary>
+    public const string DocumentStoreWrite = "document-store.write";
+
+    /// <summary>
     /// 超级权限（当路由未配置映射时，用于兜底放行；同时也可用于 root 破窗全权限）。
     /// </summary>
     public const string Super = "super";
@@ -261,6 +271,9 @@ public static class AdminPermissionCatalog
 
         new(WebPagesRead, "网页托管-读", "查看托管站点列表与详情"),
         new(WebPagesWrite, "网页托管-写", "上传/编辑/删除/分享托管站点"),
+
+        new(DocumentStoreRead, "文档空间-读", "查看文档空间与文档列表"),
+        new(DocumentStoreWrite, "文档空间-写", "创建/编辑/删除文档空间与文档"),
 
         new(Super, "超级权限", "兜底放行：建议仅给 root/超级管理员"),
     };

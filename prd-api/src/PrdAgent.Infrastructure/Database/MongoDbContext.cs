@@ -207,6 +207,10 @@ public class MongoDbContext
     public IMongoCollection<TranscriptRun> TranscriptRuns => _database.GetCollection<TranscriptRun>("transcript_runs");
     public IMongoCollection<TranscriptTemplate> TranscriptTemplates => _database.GetCollection<TranscriptTemplate>("transcript_templates");
 
+    // Document Store 文档空间
+    public IMongoCollection<DocumentStore> DocumentStores => _database.GetCollection<DocumentStore>("document_stores");
+    public IMongoCollection<DocumentEntry> DocumentEntries => _database.GetCollection<DocumentEntry>("document_entries");
+
     private void CreateIndexes()
     {
         static bool IsIndexConflict(MongoCommandException ex)
