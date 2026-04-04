@@ -262,14 +262,28 @@ export class BridgeService {
     // Wrap socket
     const ws = wrapSocket(
       socket,
-      (msg) => this.handleMessage(branchId, msg),
+      (msg) => {
+        console.log(`  [bridge] Message from ${branchId}: ${msg.slice(0, 200)}`);
+        this.handleMessage(branchId, msg);
+      },
       () => this.handleDisconnect(branchId),
     );
 
-    // Setup heartbeat
+    // Debug: log socket events
+    socket.on('error', (err) => {
+      console.error(`  [bridge] Socket error for ${branchId}: ${(err as Error).message}`);
+    });
+    socket.on('close', () => {
+      console.log(`  [bridge] Socket close event for ${branchId}`);
+    });
+
+    // Setup heartbeat (ping every 15s to keep connection alive)
     const heartbeatTimer = setInterval(() => {
       if (ws.readyState === 1) {
-        try { socket.write(encodeFrame(WS_OPCODE_PING, Buffer.alloc(0))); } catch { /* ignore */ }
+        console.log(`  [bridge] Sending ping to ${branchId}`);
+        try { socket.write(encodeFrame(WS_OPCODE_PING, Buffer.alloc(0))); } catch (e) {
+          console.error(`  [bridge] Ping failed: ${(e as Error).message}`);
+        }
       }
     }, HEARTBEAT_INTERVAL);
 
@@ -286,8 +300,9 @@ export class BridgeService {
     console.log(`  [bridge] Connected: ${branchId}`);
     this.onActivityCallback?.(branchId, 'Bridge 已连接');
 
-    // Request initial snapshot
+    // Request initial snapshot after DOM stabilizes
     setTimeout(() => {
+      console.log(`  [bridge] Sending initial snapshot request to ${branchId}`);
       this.sendCommand(branchId, { id: crypto.randomBytes(4).toString('hex'), action: 'snapshot', params: {} })
         .catch(() => { /* ignore initial snapshot failure */ });
     }, 500);
