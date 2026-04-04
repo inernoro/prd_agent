@@ -667,37 +667,6 @@ h2{font-size:16px;font-weight:600;color:#f0f6fc;margin-bottom:8px}
    * Handle WebSocket upgrade for the worker proxy.
    */
   handleUpgrade(req: http.IncomingMessage, socket: import('node:stream').Duplex, head: Buffer): void {
-    // ── /_cds/bridge/ws — route to CDS master for Page Agent Bridge ──
-    const reqUrl = req.url || '/';
-    if (reqUrl.startsWith('/_cds/bridge/ws')) {
-      req.url = reqUrl.slice(5); // strip "/_cds" → "/bridge/ws?branchId=..."
-      const masterPort = this.config?.masterPort || 9900;
-      const options: http.RequestOptions = {
-        hostname: '127.0.0.1',
-        port: masterPort,
-        path: req.url,
-        method: 'GET',
-        headers: { ...req.headers, host: `127.0.0.1:${masterPort}`, 'x-cds-internal': '1' },
-      };
-      const proxyReq = http.request(options);
-      proxyReq.on('upgrade', (proxyRes, proxySocket, proxyHead) => {
-        let rawResponse = `HTTP/${proxyRes.httpVersion} ${proxyRes.statusCode} ${proxyRes.statusMessage}\r\n`;
-        for (let i = 0; i < proxyRes.rawHeaders.length; i += 2) {
-          rawResponse += `${proxyRes.rawHeaders[i]}: ${proxyRes.rawHeaders[i + 1]}\r\n`;
-        }
-        rawResponse += '\r\n';
-        socket.write(rawResponse);
-        if (proxyHead.length > 0) socket.write(proxyHead);
-        if (head.length > 0) proxySocket.write(head);
-        proxySocket.pipe(socket);
-        socket.pipe(proxySocket);
-      });
-      proxyReq.on('error', () => socket.destroy());
-      socket.on('error', () => proxyReq.destroy());
-      proxyReq.end();
-      return;
-    }
-
     // Try preview subdomain first, then normal branch resolution
     const host = req.headers.host || '';
     const previewSlug = this.extractPreviewBranch(host);

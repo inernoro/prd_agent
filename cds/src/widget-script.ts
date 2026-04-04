@@ -570,20 +570,19 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   }
 
   // ══════════════════════════════════════════════════════════════
-  // ── Page Agent Bridge Client ──
-  // Provides DOM extraction, action execution, and WebSocket
+  // ── Page Agent Bridge Client (HTTP Polling) ──
+  // Provides DOM extraction, action execution, and HTTP polling
   // communication so external agents can read and operate the page.
+  // Uses /_cds/api/ HTTP channel (proven reliable) instead of WebSocket.
   // ══════════════════════════════════════════════════════════════
 
-  var bridgeWs=null;
-  var bridgeReconnectDelay=1000;
-  var bridgeMaxReconnectDelay=30000;
   var bridgeConsoleErrors=[];
   var bridgeNetworkErrors=[];
   var bridgeInteractiveElements=[];
   var bridgeNavRequest=null;
   var bridgeNavPollTimer=null;
   var bridgeConnected=false;
+  var bridgePollTimer=null;
 
   // ── Console / Network interceptors ──
   var origConsoleError=console.error;
@@ -841,67 +840,62 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     }
   }
 
-  // ── WebSocket Bridge Connection ──
-  function bridgeConnect(){
-    try{
-      // Determine CDS master URL for WebSocket
-      // Widget accesses CDS via /_cds/api, so master is on the same host
-      var wsProto=location.protocol==='https:'?'wss:':'ws:';
-      var wsUrl=wsProto+'//'+location.host+'/_cds/bridge/ws?branchId='+encodeURIComponent(BRANCH_ID);
+  // ── HTTP Polling Bridge Connection ──
+  // Polls CDS every 2s for commands, sends heartbeat with current state.
+  // Uses the same /_cds/api channel that deploy/pull already use (proven reliable).
 
-      bridgeWs=new WebSocket(wsUrl);
-
-      bridgeWs.onopen=function(){
+  function bridgePoll(){
+    var state=collectPageState();
+    fetch(API+'/bridge/heartbeat',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({branchId:BRANCH_ID,state:state})
+    })
+    .then(function(r){return r.ok?r.json():null;})
+    .then(function(d){
+      if(!d)return;
+      if(!bridgeConnected){
         bridgeConnected=true;
-        bridgeReconnectDelay=1000;
-        console.log('[CDS Bridge] Connected');
-        // Send initial state
-        var state=collectPageState();
-        bridgeWs.send(JSON.stringify({type:'connected',state:state}));
+        console.log('[CDS Bridge] Connected (HTTP polling)');
         renderBridgeIndicator();
-      };
-
-      bridgeWs.onmessage=function(evt){
-        try{
-          var cmd=JSON.parse(evt.data);
-          if(!cmd.id||!cmd.action)return;
-          // Execute the action
-          var result=executeAction(cmd.action,cmd.params||{});
-          // Wait for DOM to stabilize before collecting state
-          setTimeout(function(){
-            var state=collectPageState();
-            var response={
-              id:cmd.id,
-              success:result.success,
-              error:result.error||undefined,
-              state:state
-            };
-            if(result.data)response.data=result.data;
-            try{bridgeWs.send(JSON.stringify(response));}catch(e){}
-          },cmd.action==='navigate'?1000:300);
-        }catch(e){
-          console.error('[CDS Bridge] Message error:',e);
-        }
-      };
-
-      bridgeWs.onclose=function(){
+      }
+      // Check if there's a pending command
+      var cmd=d.command;
+      if(cmd&&cmd.id&&cmd.action){
+        console.log('[CDS Bridge] Executing: '+cmd.action);
+        var result=executeAction(cmd.action,cmd.params||{});
+        // Wait for DOM to stabilize, then send result
+        setTimeout(function(){
+          var newState=collectPageState();
+          var response={
+            branchId:BRANCH_ID,
+            id:cmd.id,
+            success:result.success,
+            error:result.error||undefined,
+            data:result.data||undefined,
+            state:newState
+          };
+          fetch(API+'/bridge/result',{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify(response)
+          }).catch(function(){});
+        },cmd.action==='navigate'?1000:300);
+      }
+    })
+    .catch(function(){
+      // Network error — CDS might be restarting
+      if(bridgeConnected){
         bridgeConnected=false;
-        bridgeWs=null;
         renderBridgeIndicator();
-        // Reconnect with exponential backoff
-        setTimeout(bridgeConnect,bridgeReconnectDelay);
-        bridgeReconnectDelay=Math.min(bridgeReconnectDelay*2,bridgeMaxReconnectDelay);
-      };
-
-      bridgeWs.onerror=function(){
-        // onclose will fire after onerror
-      };
-    }catch(e){
-      // WebSocket not available or blocked
-      setTimeout(bridgeConnect,bridgeReconnectDelay);
-      bridgeReconnectDelay=Math.min(bridgeReconnectDelay*2,bridgeMaxReconnectDelay);
-    }
+      }
+    });
   }
+
+  // Start polling every 2 seconds
+  bridgePollTimer=setInterval(bridgePoll,2000);
+  // First poll immediately
+  bridgePoll();
 
   // ── Page change detection ──
   // Notify bridge when SPA navigation occurs
@@ -1008,9 +1002,6 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
       }
     },30000);
   }
-
-  // ── Start Bridge ──
-  bridgeConnect();
 
   // ── Initial: render badge + fetch branch info to update tab title immediately ──
   render();

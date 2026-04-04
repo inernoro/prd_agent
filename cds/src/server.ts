@@ -523,9 +523,8 @@ export function createServer(deps: ServerDeps): express.Express {
   // Dashboard static files
   app.use(express.static(webDir));
 
-  // SPA fallback — skip WebSocket upgrade requests (handled by http.Server 'upgrade' event)
-  app.get('*', (req, res) => {
-    if (req.headers.upgrade) return;
+  // SPA fallback
+  app.get('*', (_req, res) => {
     res.sendFile(path.join(webDir, 'index.html'));
   });
 

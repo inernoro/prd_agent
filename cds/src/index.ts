@@ -659,19 +659,10 @@ if (mode === 'executor') {
   }, { force: true });
 } else {
   // ── Standalone or Scheduler mode: start dashboard + proxy ──
-  const dashboardServer = http.createServer(app);
-
-  // Bridge WebSocket upgrade on dashboard server
-  dashboardServer.on('upgrade', (req, socket, head) => {
-    if (bridgeService.handleUpgrade(req, socket, head)) return;
-    // Not a bridge request — destroy the socket
-    socket.destroy();
-  });
-
-  listenWithRetry(dashboardServer, config.masterPort, 'Dashboard', () => {
+  listenWithRetry(app, config.masterPort, 'Dashboard', () => {
     console.log(`  Dashboard:  http://localhost:${config.masterPort}`);
     console.log(`  Worker:     http://localhost:${config.workerPort}`);
-    console.log(`  Bridge:     ws://localhost:${config.masterPort}/bridge/ws`);
+    console.log(`  Bridge:     http://localhost:${config.masterPort}/api/bridge/ (HTTP polling)`);
     if (config.switchDomain) console.log(`  Switch:     ${config.switchDomain} → ${config.mainDomain || '(main domain not set)'}`);
     if (config.previewDomain) console.log(`  Preview:    *.<${config.previewDomain}>`);
     console.log(`  State file: ${stateFile}`);
