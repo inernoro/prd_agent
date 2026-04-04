@@ -29,6 +29,7 @@ export type EmergenceNode = {
   groundingType: string;
   groundingRef?: string;
   bridgeAssumptions: string[];
+  missingCapabilities: string[];
   dimension: 1 | 2 | 3;
   nodeType: 'seed' | 'capability' | 'combination' | 'fantasy';
   valueScore: number;

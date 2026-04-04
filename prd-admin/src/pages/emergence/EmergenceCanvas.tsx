@@ -104,6 +104,7 @@ function toFlowNodes(
         status: n.status,
         groundingContent: n.groundingContent,
         bridgeAssumptions: n.bridgeAssumptions ?? [],
+        missingCapabilities: n.missingCapabilities ?? [],
         tags: n.tags ?? [],
         onExplore: () => onExplore(n.id),
         onStatusChange: onStatusChange ? (s: string) => onStatusChange(n.id, s) : undefined,

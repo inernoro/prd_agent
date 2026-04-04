@@ -1,6 +1,6 @@
 import { memo, useMemo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { Sparkle, Zap, Star, Search, CheckCircle2, Pencil, Clock, Lightbulb } from 'lucide-react';
+import { Sparkle, Zap, Star, Search, CheckCircle2, Pencil, Clock, Lightbulb, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 
 // ── 节点数据类型 ──
@@ -15,6 +15,7 @@ export interface EmergenceNodeData {
   status: 'idea' | 'planned' | 'building' | 'done';
   groundingContent: string;
   bridgeAssumptions: string[];
+  missingCapabilities: string[];
   tags: string[];
   onExplore?: () => void;
   onStatusChange?: (newStatus: string) => void;
@@ -127,6 +128,22 @@ function EmergenceNodeInner({ data, selected }: EmergenceNodeType) {
         <p className="text-[10px] italic mb-2" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
           假设���{data.bridgeAssumptions.slice(0, 2).join('；')}
         </p>
+      )}
+
+      {/* 缺失能力警告 */}
+      {data.missingCapabilities?.length > 0 && (
+        <div className="mb-2 p-1.5 rounded-[6px]"
+          style={{ background: 'rgba(234,179,8,0.06)', border: '1px solid rgba(234,179,8,0.15)' }}>
+          <div className="flex items-start gap-1.5">
+            <AlertTriangle size={10} className="mt-0.5 flex-shrink-0" style={{ color: 'rgba(234,179,8,0.8)' }} />
+            <div>
+              <p className="text-[9px] font-semibold mb-0.5" style={{ color: 'rgba(234,179,8,0.8)' }}>需外部支持</p>
+              {data.missingCapabilities.slice(0, 2).map((mc, i) => (
+                <p key={i} className="text-[9px] leading-[1.4]" style={{ color: 'var(--text-muted)' }}>{mc}</p>
+              ))}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* 标签 */}

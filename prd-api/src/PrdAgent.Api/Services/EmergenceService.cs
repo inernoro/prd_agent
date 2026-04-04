@@ -195,11 +195,18 @@ public class EmergenceService
         var sb = new StringBuilder();
         sb.AppendLine("你是一个涌现探索引擎。你必须基于用户提供的种子内容和下方的系统真实能力清单，推演出可直接实现的子功能。");
         sb.AppendLine();
-        sb.AppendLine("## 反向自洽原则");
-        sb.AppendLine("1. 每个节点必须有现实锚点——标明它依赖系统中哪个具体能力（ILlmGateway / Attachment.ExtractedText / WorkflowNode 等）");
-        sb.AppendLine("2. 禁止编造系统不存在的能力。如果需要系统没有的能力，在 groundingContent 中明确标注「需新建」");
-        sb.AppendLine("3. 生成的节点不能与已有节点重复");
-        sb.AppendLine("4. techPlan 必须具体到「用哪个 Service / Controller / 模型完成」，不要泛泛而谈");
+        sb.AppendLine("## 反向自洽 + 无根之木禁令");
+        sb.AppendLine("1. 每个节点必须有现实锚点——标明它依赖系统中哪个具体能力");
+        sb.AppendLine("2. **禁止编造系统不存在的能力**。能力清单中没有的，就是没有");
+        sb.AppendLine("3. 如果某个功能需要系统目前没有的能力，必须在 missingCapabilities 字段中明确列出，并建议借用方式");
+        sb.AppendLine("4. 生成的节点不能与已有节点重复");
+        sb.AppendLine("5. techPlan 必须具体到 Service / Controller / Component 名称");
+        sb.AppendLine();
+        sb.AppendLine("## 借用法则");
+        sb.AppendLine("本系统是思考中枢，不是执行中枢。缺失的能力不要强做，而是建议借用：");
+        sb.AppendLine("- 缺 Embedding/RAG → 建议借用外部 Embedding Agent");
+        sb.AppendLine("- 缺代码扫描 → 建议借用 Claude Code Agent");
+        sb.AppendLine("- 缺数据分析 → 建议借用已有 ECharts 组件或外部 BI");
         sb.AppendLine();
         sb.Append(capabilities);
         sb.AppendLine();
@@ -217,12 +224,14 @@ public class EmergenceService
         sb.AppendLine("    \"groundingType\": \"capability|code|api|document\",");
         sb.AppendLine("    \"groundingRef\": \"具体引用（如 ILlmGateway.SendAsync / Attachment.ExtractedText）\",");
         sb.AppendLine("    \"techPlan\": \"用 XXService 调用 YY，在 ZZController 暴露 API，前端用 AAComponent 展示\",");
+        sb.AppendLine("    \"missingCapabilities\": [\"需要 Embedding 服务（建议借用外部 Agent）\"],");
         sb.AppendLine("    \"valueScore\": 4,");
         sb.AppendLine("    \"difficultyScore\": 2,");
         sb.AppendLine("    \"tags\": [\"标签1\", \"标签2\"]");
         sb.AppendLine("  }");
         sb.AppendLine("]");
         sb.AppendLine("```");
+        sb.AppendLine("missingCapabilities：如果功能完全基于已有能力可实现，传空数组 []。如果需要系统目前没有的能力，列出缺什么、建议怎么借用。");
         sb.AppendLine("只输出 JSON，不要多余解释。");
         return sb.ToString();
     }
@@ -322,6 +331,7 @@ public class EmergenceService
                     Dimension = dimension,
                     NodeType = EmergenceNodeType.Capability,
                     Tags = GetStringArray(obj, "tags"),
+                    MissingCapabilities = GetStringArray(obj, "missingCapabilities"),
                 });
             }
         }
@@ -377,6 +387,7 @@ public class EmergenceService
                     Dimension = dimension,
                     NodeType = dimension == 3 ? EmergenceNodeType.Fantasy : EmergenceNodeType.Combination,
                     Tags = GetStringArray(obj, "tags"),
+                    MissingCapabilities = GetStringArray(obj, "missingCapabilities"),
                 });
             }
         }

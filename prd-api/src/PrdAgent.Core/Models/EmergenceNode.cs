@@ -49,6 +49,13 @@ public class EmergenceNode
     /// </summary>
     public List<string> BridgeAssumptions { get; set; } = new();
 
+    /// <summary>
+    /// 缺失能力清单 — 实现此功能需要但系统目前不具备的能力。
+    /// 每条包含缺什么 + 建议的借用方式。
+    /// 空列表 = 完全基于已有能力可实现。
+    /// </summary>
+    public List<string> MissingCapabilities { get; set; } = new();
+
     // ── 维度与类型 ──
 
     /// <summary>维度：1=系统内（蓝）, 2=跨系统（紫）, 3=幻想（金）</summary>
