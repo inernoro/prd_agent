@@ -569,6 +569,449 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     if(titleObserver){titleObserver.disconnect();titleObserver=null;}
   }
 
+  // ══════════════════════════════════════════════════════════════
+  // ── Page Agent Bridge Client ──
+  // Provides DOM extraction, action execution, and WebSocket
+  // communication so external agents can read and operate the page.
+  // ══════════════════════════════════════════════════════════════
+
+  var bridgeWs=null;
+  var bridgeReconnectDelay=1000;
+  var bridgeMaxReconnectDelay=30000;
+  var bridgeConsoleErrors=[];
+  var bridgeNetworkErrors=[];
+  var bridgeInteractiveElements=[];
+  var bridgeNavRequest=null;
+  var bridgeNavPollTimer=null;
+  var bridgeConnected=false;
+
+  // ── Console / Network interceptors ──
+  var origConsoleError=console.error;
+  console.error=function(){
+    var msg=Array.prototype.slice.call(arguments).join(' ');
+    bridgeConsoleErrors.push(msg.slice(0,500));
+    if(bridgeConsoleErrors.length>20)bridgeConsoleErrors.shift();
+    origConsoleError.apply(console,arguments);
+  };
+
+  var origFetch=window.fetch;
+  window.fetch=function(){
+    return origFetch.apply(this,arguments).then(function(res){
+      if(!res.ok){
+        bridgeNetworkErrors.push(res.status+' '+res.url.slice(0,200));
+        if(bridgeNetworkErrors.length>10)bridgeNetworkErrors.shift();
+      }
+      return res;
+    });
+  };
+
+  // ── DOM Tree Extractor ──
+  // Produces a simplified text representation of the page DOM
+  // with indexed interactive elements for agent consumption.
+
+  var INTERACTIVE_TAGS={'A':1,'BUTTON':1,'INPUT':1,'TEXTAREA':1,'SELECT':1,'DETAILS':1,'SUMMARY':1};
+  var INTERACTIVE_ROLES={'button':1,'link':1,'tab':1,'menuitem':1,'checkbox':1,'radio':1,'switch':1,'slider':1,'textbox':1,'combobox':1,'listbox':1,'option':1};
+  var STATE_CLASSES=['active','disabled','selected','checked','open','closed','expanded','collapsed','current','error','loading','hidden'];
+  var SKIP_TAGS={'SCRIPT':1,'STYLE':1,'NOSCRIPT':1,'SVG':1,'PATH':1,'META':1,'LINK':1,'BR':1,'HR':1};
+  var KEEP_ATTRS=['href','type','placeholder','value','name','role','aria-label','aria-expanded','data-state','title','for','target','checked','disabled','readonly','contenteditable'];
+  var MAX_DEPTH=15;
+  var MAX_NODES=500;
+
+  function isVisible(el){
+    if(!el.offsetParent&&el.tagName!=='BODY'&&el.tagName!=='HTML'){
+      var s=window.getComputedStyle(el);
+      if(s.display==='none'||s.visibility==='hidden')return false;
+      if(s.position!=='fixed'&&s.position!=='sticky')return false;
+    }
+    var r=el.getBoundingClientRect();
+    return r.width>0||r.height>0;
+  }
+
+  function isInteractive(el){
+    if(INTERACTIVE_TAGS[el.tagName])return true;
+    var role=el.getAttribute('role');
+    if(role&&INTERACTIVE_ROLES[role])return true;
+    if(el.getAttribute('onclick')||el.getAttribute('tabindex'))return true;
+    if(el.contentEditable==='true')return true;
+    return false;
+  }
+
+  function getStateClasses(el){
+    var result=[];
+    var cls=el.className;
+    if(typeof cls==='string'){
+      for(var i=0;i<STATE_CLASSES.length;i++){
+        if(cls.indexOf(STATE_CLASSES[i])>=0)result.push(STATE_CLASSES[i]);
+      }
+    }
+    return result;
+  }
+
+  function extractDomTree(){
+    bridgeInteractiveElements=[];
+    var nodeCount={v:0};
+    var lines=[];
+    walkNode(document.body,0,lines,nodeCount);
+    return lines.join('\\n');
+  }
+
+  function walkNode(node,depth,lines,nodeCount){
+    if(nodeCount.v>=MAX_NODES||depth>MAX_DEPTH)return;
+    if(node.nodeType===3){
+      var txt=node.textContent.trim();
+      if(txt){
+        var indent='';for(var d=0;d<depth;d++)indent+='  ';
+        lines.push(indent+txt.slice(0,200));
+        nodeCount.v++;
+      }
+      return;
+    }
+    if(node.nodeType!==1)return;
+    var el=node;
+    if(SKIP_TAGS[el.tagName])return;
+    if(el.getAttribute('data-cds-widget-root')!==null)return;
+    if(el.getAttribute('data-page-agent-ignore')!==null)return;
+    if(!isVisible(el))return;
+
+    var indent='';for(var d=0;d<depth;d++)indent+='  ';
+    var tag=el.tagName.toLowerCase();
+    var interactive=isInteractive(el);
+    var prefix='';
+
+    if(interactive){
+      var idx=bridgeInteractiveElements.length;
+      bridgeInteractiveElements.push(el);
+      prefix='['+idx+']';
+    }
+
+    // Build attribute string
+    var attrs='';
+    for(var a=0;a<KEEP_ATTRS.length;a++){
+      var val=el.getAttribute(KEEP_ATTRS[a]);
+      if(val!==null&&val!==''){
+        // Truncate long values
+        if(val.length>100)val=val.slice(0,100)+'…';
+        attrs+=' '+KEEP_ATTRS[a]+'="'+val.replace(/"/g,'&quot;')+'"';
+      }
+    }
+
+    // Add state classes
+    var sc=getStateClasses(el);
+    if(sc.length)attrs+=' class="'+sc.join(' ')+'"';
+
+    // Check for input value
+    if((el.tagName==='INPUT'||el.tagName==='TEXTAREA')&&el.value){
+      attrs+=' value="'+el.value.slice(0,100).replace(/"/g,'&quot;')+'"';
+    }
+
+    // Get direct text content (not from children)
+    var directText='';
+    for(var c=el.childNodes,ci=0;ci<c.length;ci++){
+      if(c[ci].nodeType===3){
+        var t=c[ci].textContent.trim();
+        if(t)directText+=(directText?' ':'')+t;
+      }
+    }
+    if(directText.length>200)directText=directText.slice(0,200)+'…';
+
+    // If leaf element with only text content
+    var hasChildElements=false;
+    for(var ch=el.children,chi=0;chi<ch.length;chi++){
+      if(!SKIP_TAGS[ch[chi].tagName]&&isVisible(ch[chi])){hasChildElements=true;break;}
+    }
+
+    if(!hasChildElements&&directText){
+      lines.push(indent+prefix+'<'+tag+attrs+'> '+directText+' />');
+      nodeCount.v++;
+    }else if(hasChildElements){
+      lines.push(indent+prefix+'<'+tag+attrs+'>');
+      nodeCount.v++;
+      for(var k=0;k<el.children.length;k++){
+        walkNode(el.children[k],depth+1,lines,nodeCount);
+      }
+      lines.push(indent+'/>');
+    }else if(interactive||tag==='img'){
+      lines.push(indent+prefix+'<'+tag+attrs+' />');
+      nodeCount.v++;
+    }
+    // else: skip non-interactive empty elements
+  }
+
+  // ── Page State Collector ──
+  function collectPageState(){
+    return {
+      url:location.href,
+      title:document.title,
+      domTree:extractDomTree(),
+      viewport:{width:window.innerWidth,height:window.innerHeight},
+      scrollPosition:{x:window.scrollX,y:window.scrollY},
+      consoleErrors:bridgeConsoleErrors.slice(),
+      networkErrors:bridgeNetworkErrors.slice(),
+      timestamp:Date.now()
+    };
+  }
+
+  // ── Action Executor ──
+  function executeAction(action,params){
+    try{
+      if(action==='snapshot'){
+        return {success:true};
+      }
+      if(action==='click'){
+        var clickEl=bridgeInteractiveElements[params.index];
+        if(!clickEl)return {success:false,error:'element index '+params.index+' not found'};
+        // Scroll into view
+        clickEl.scrollIntoView({block:'center',behavior:'instant'});
+        // Full click simulation
+        var rect=clickEl.getBoundingClientRect();
+        var cx=rect.left+rect.width/2;
+        var cy=rect.top+rect.height/2;
+        var evtOpts={bubbles:true,cancelable:true,clientX:cx,clientY:cy,button:0};
+        clickEl.dispatchEvent(new PointerEvent('pointerdown',evtOpts));
+        clickEl.dispatchEvent(new MouseEvent('mousedown',evtOpts));
+        if(clickEl.focus)clickEl.focus();
+        clickEl.dispatchEvent(new PointerEvent('pointerup',evtOpts));
+        clickEl.dispatchEvent(new MouseEvent('mouseup',evtOpts));
+        clickEl.dispatchEvent(new MouseEvent('click',evtOpts));
+        return {success:true};
+      }
+      if(action==='type'){
+        var typeEl=bridgeInteractiveElements[params.index];
+        if(!typeEl)return {success:false,error:'element index '+params.index+' not found'};
+        typeEl.focus();
+        if(params.clear){
+          // Use native setter for React compatibility
+          var nativeSet=Object.getOwnPropertyDescriptor(
+            typeEl.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value'
+          );
+          if(nativeSet&&nativeSet.set){
+            nativeSet.set.call(typeEl,'');
+          }else{
+            typeEl.value='';
+          }
+          typeEl.dispatchEvent(new Event('input',{bubbles:true}));
+        }
+        // Type each character via InputEvent for framework compatibility
+        var text=params.text||'';
+        for(var ti=0;ti<text.length;ti++){
+          typeEl.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,cancelable:true,inputType:'insertText',data:text[ti]}));
+          // For React: use native setter
+          var ns2=Object.getOwnPropertyDescriptor(
+            typeEl.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value'
+          );
+          if(ns2&&ns2.set){
+            ns2.set.call(typeEl,typeEl.value+text[ti]);
+          }else{
+            typeEl.value+=text[ti];
+          }
+          typeEl.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:text[ti]}));
+        }
+        typeEl.dispatchEvent(new Event('change',{bubbles:true}));
+        return {success:true};
+      }
+      if(action==='scroll'){
+        var px=params.pixels||300;
+        var dir=params.direction==='up'?-1:1;
+        window.scrollBy(0,dir*px);
+        return {success:true};
+      }
+      if(action==='navigate'){
+        var navUrl=params.url;
+        // Same-origin check
+        if(navUrl.indexOf('http')===0){
+          try{
+            var nu=new URL(navUrl);
+            if(nu.origin!==location.origin)return {success:false,error:'cross-origin navigation not allowed'};
+          }catch(e){return {success:false,error:'invalid url'};}
+        }
+        window.location.href=navUrl;
+        return {success:true};
+      }
+      if(action==='evaluate'){
+        var result;
+        try{result=eval(params.script);}catch(e){return {success:false,error:e.message};}
+        var resultStr;
+        try{resultStr=JSON.stringify(result);}catch(e2){resultStr=String(result);}
+        if(resultStr&&resultStr.length>10240)resultStr=resultStr.slice(0,10240)+'…(truncated)';
+        return {success:true,data:resultStr};
+      }
+      return {success:false,error:'unknown action: '+action};
+    }catch(e){
+      return {success:false,error:e.message||String(e)};
+    }
+  }
+
+  // ── WebSocket Bridge Connection ──
+  function bridgeConnect(){
+    try{
+      // Determine CDS master URL for WebSocket
+      // Widget accesses CDS via /_cds/api, so master is on the same host
+      var wsProto=location.protocol==='https:'?'wss:':'ws:';
+      var wsUrl=wsProto+'//'+location.host+'/_cds/bridge/ws?branchId='+encodeURIComponent(BRANCH_ID);
+
+      bridgeWs=new WebSocket(wsUrl);
+
+      bridgeWs.onopen=function(){
+        bridgeConnected=true;
+        bridgeReconnectDelay=1000;
+        console.log('[CDS Bridge] Connected');
+        // Send initial state
+        var state=collectPageState();
+        bridgeWs.send(JSON.stringify({type:'connected',state:state}));
+        renderBridgeIndicator();
+      };
+
+      bridgeWs.onmessage=function(evt){
+        try{
+          var cmd=JSON.parse(evt.data);
+          if(!cmd.id||!cmd.action)return;
+          // Execute the action
+          var result=executeAction(cmd.action,cmd.params||{});
+          // Wait for DOM to stabilize before collecting state
+          setTimeout(function(){
+            var state=collectPageState();
+            var response={
+              id:cmd.id,
+              success:result.success,
+              error:result.error||undefined,
+              state:state
+            };
+            if(result.data)response.data=result.data;
+            try{bridgeWs.send(JSON.stringify(response));}catch(e){}
+          },cmd.action==='navigate'?1000:300);
+        }catch(e){
+          console.error('[CDS Bridge] Message error:',e);
+        }
+      };
+
+      bridgeWs.onclose=function(){
+        bridgeConnected=false;
+        bridgeWs=null;
+        renderBridgeIndicator();
+        // Reconnect with exponential backoff
+        setTimeout(bridgeConnect,bridgeReconnectDelay);
+        bridgeReconnectDelay=Math.min(bridgeReconnectDelay*2,bridgeMaxReconnectDelay);
+      };
+
+      bridgeWs.onerror=function(){
+        // onclose will fire after onerror
+      };
+    }catch(e){
+      // WebSocket not available or blocked
+      setTimeout(bridgeConnect,bridgeReconnectDelay);
+      bridgeReconnectDelay=Math.min(bridgeReconnectDelay*2,bridgeMaxReconnectDelay);
+    }
+  }
+
+  // ── Page change detection ──
+  // Notify bridge when SPA navigation occurs
+  var bridgeLastUrl=location.href;
+  function checkUrlChange(){
+    if(location.href!==bridgeLastUrl){
+      bridgeLastUrl=location.href;
+      if(bridgeWs&&bridgeWs.readyState===1){
+        setTimeout(function(){
+          var state=collectPageState();
+          bridgeWs.send(JSON.stringify({type:'page-changed',state:state}));
+        },500);
+      }
+    }
+  }
+  setInterval(checkUrlChange,1000);
+
+  // Listen for popstate (back/forward navigation)
+  window.addEventListener('popstate',function(){
+    setTimeout(function(){
+      checkUrlChange();
+    },300);
+  });
+
+  // ── Bridge status indicator ──
+  // Small dot on the CDS badge showing bridge connection status
+  function renderBridgeIndicator(){
+    var existing=document.getElementById('cds-bridge-indicator');
+    if(existing)existing.remove();
+    if(!bridgeConnected)return;
+    var dot=document.createElement('span');
+    dot.id='cds-bridge-indicator';
+    dot.title='Page Agent Bridge 已连接';
+    dot.style.cssText='width:6px;height:6px;border-radius:50%;background:#60a5fa;box-shadow:0 0 6px #60a5fa;flex-shrink:0;animation:cds-blink 2s ease-in-out infinite';
+    var badge=root.querySelector('.cds-badge');
+    if(badge)badge.insertBefore(dot,badge.firstChild);
+  }
+
+  // ── Navigate Request Polling ──
+  // Widget polls CDS for pending navigation requests from agents
+  function pollNavigateRequests(){
+    fetch(API+'/bridge/navigate-requests/'+BRANCH_ID)
+      .then(function(r){return r.ok?r.json():{};})
+      .then(function(d){
+        var reqs=(d&&d.requests)||[];
+        if(reqs.length>0&&!bridgeNavRequest){
+          bridgeNavRequest=reqs[0];
+          renderNavRequest();
+        }
+      })
+      .catch(function(){});
+  }
+  bridgeNavPollTimer=setInterval(pollNavigateRequests,3000);
+
+  function renderNavRequest(){
+    var existing=document.getElementById('cds-nav-request');
+    if(existing)existing.remove();
+    if(!bridgeNavRequest)return;
+
+    var panel=document.createElement('div');
+    panel.id='cds-nav-request';
+    panel.setAttribute('data-page-agent-ignore','');
+    panel.style.cssText='position:fixed;left:'+pos.x+'px;bottom:'+(pos.y+42)+'px;z-index:99999;min-width:260px;max-width:380px;padding:12px 14px;border-radius:10px;background:rgba(22,27,34,0.95);backdrop-filter:blur(12px);border:1px solid rgba(96,165,250,0.4);box-shadow:0 4px 20px rgba(96,165,250,0.25);font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;font-size:12px;color:#e2e8f0;animation:cds-ai-border-glow 2.5s ease-in-out infinite';
+
+    var h='<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">';
+    h+='<span style="width:8px;height:8px;border-radius:50%;background:#60a5fa;box-shadow:0 0 8px #60a5fa;animation:cds-blink 1.5s ease-in-out infinite"></span>';
+    h+='<span style="font-weight:600;color:#60a5fa">AI 请求打开页面</span>';
+    h+='</div>';
+    h+='<div style="background:rgba(96,165,250,0.1);padding:6px 8px;border-radius:6px;margin-bottom:6px;font-family:ui-monospace,monospace;font-size:11px;color:#93c5fd;word-break:break-all">'+bridgeNavRequest.url+'</div>';
+    if(bridgeNavRequest.reason){
+      h+='<div style="font-size:11px;color:#8b949e;margin-bottom:8px">'+bridgeNavRequest.reason+'</div>';
+    }
+    h+='<div style="display:flex;gap:6px">';
+    h+='<button id="cds-nav-open" style="flex:1;padding:5px 10px;border-radius:6px;border:1px solid rgba(96,165,250,0.4);background:rgba(96,165,250,0.15);color:#93c5fd;font-size:11px;cursor:pointer;font-family:inherit">打开页面</button>';
+    h+='<button id="cds-nav-dismiss" style="padding:5px 10px;border-radius:6px;border:1px solid #30363d;background:#21262d;color:#8b949e;font-size:11px;cursor:pointer;font-family:inherit">忽略</button>';
+    h+='</div>';
+
+    panel.innerHTML=h;
+    document.body.appendChild(panel);
+
+    document.getElementById('cds-nav-open').onclick=function(){
+      var url=bridgeNavRequest.url;
+      var reqId=bridgeNavRequest.id;
+      bridgeNavRequest=null;
+      panel.remove();
+      // Dismiss on server
+      fetch(API+'/bridge/navigate-requests/'+reqId+'/dismiss',{method:'POST'}).catch(function(){});
+      // Navigate
+      window.location.href=url;
+    };
+
+    document.getElementById('cds-nav-dismiss').onclick=function(){
+      var reqId=bridgeNavRequest.id;
+      bridgeNavRequest=null;
+      panel.remove();
+      fetch(API+'/bridge/navigate-requests/'+reqId+'/dismiss',{method:'POST'}).catch(function(){});
+    };
+
+    // Auto-dismiss after 30s
+    setTimeout(function(){
+      if(bridgeNavRequest&&bridgeNavRequest.id===panel.getAttribute('data-req-id')){
+        bridgeNavRequest=null;
+        panel.remove();
+      }
+    },30000);
+  }
+
+  // ── Start Bridge ──
+  bridgeConnect();
+
   // ── Initial: render badge + fetch branch info to update tab title immediately ──
   render();
   fetchBranchInfo();

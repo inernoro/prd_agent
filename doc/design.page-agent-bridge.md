@@ -1,371 +1,315 @@
-# Page Agent Bridge — 编码 Agent 网页操控通道
+# Page Agent Bridge — 编码 Agent 的浏览器之眼
 
 > **日期**：2026-04-04 | **状态**：设计中
 >
-> 本文档描述如何通过 CDS Widget 注入 Page Agent 能力，使编码 Agent 能远程读取和操控预览页面。
+> 让编码 Agent 通过 CDS 预览页面的 Badge 读取 DOM、执行操作，形成"感知→决策→操作→反馈"闭环。
 
 ## 一、管理摘要
 
-- **解决什么问题**：编码 Agent 部署完代码后无法验证页面渲染是否正确，只能做 API 级冒烟测试，缺少"眼睛"和"手"
-- **方案概述**：在 CDS Widget 中注入 Page Agent Bridge，当用户打开预览页时自动建立 WebSocket 通道，编码 Agent 通过 CDS Bridge API 远程读取页面 DOM 状态并执行操作
-- **业务价值**：编码 Agent 可在用户打开页面后自动执行页面级验证，替代人工逐页点击检查
-- **影响范围**：CDS 模块新增 Bridge 端点 + Widget 注入 Bridge 客户端，不改动主项目代码
-- **核心约束**：Bridge 运行在用户浏览器中，Agent 不能自己打开页面，必须用户先打开
+- **解决什么问题**：编码 Agent 部署代码后无法验证页面渲染结果，只能依赖 API 级别的冒烟测试
+- **方案概述**：在 CDS Widget 中集成轻量级 Bridge Client（复用 alibaba/page-agent 的 DOM 解析思路），通过 WebSocket 与 CDS Bridge 端点双向通信，编码 Agent 通过 CDS REST API 读取页面状态并下发操作指令
+- **业务价值**：Agent 获得"眼睛和手"——能看到用户浏览器中的真实页面、执行点击/输入等操作、感知 JS 错误，从而自主验证页面功能
+- **关键约束**：Bridge Client 运行在用户浏览器中，Agent 不能自行打开页面；需要用户打开预览页后建立连接
+- **影响范围**：仅改动 CDS 模块（`cds/src/`），对主项目代码零侵入
 
 ---
 
-## 二、问题背景
+## 二、用户场景
 
-### 现状
+### 场景 A：有人模式（Phase 1）
 
-| 层级 | 现有能力 | 缺失 |
-|------|---------|------|
-| API 测试 | curl 链式冒烟测试（`smoke-test-*.sh`） | ✅ 已有 |
-| 页面渲染验证 | 无 | ❌ 需要人工打开浏览器 |
-| 交互流程验证 | 无 | ❌ 需要人工点击操作 |
-| 错误感知 | 后端日志 | ❌ 前端 JS 错误、Console 警告无法感知 |
+1. 编码 Agent 在 CDS 部署完代码后，需要验证页面
+2. Agent 通过 CDS Bridge API 发起"导航请求"（`POST /api/bridge/navigate-request`）
+3. CDS Widget 在用户浏览器中展示蓝色脉冲动效 + 提示文字："AI 请求打开 /defects 页面"
+4. 用户点击按钮，浏览器导航到目标页面
+5. Badge Bridge Client 自动连接 WebSocket，上报页面 DOM 树
+6. Agent 通过 Bridge API 读取状态、下发操作、验证结果
 
-### CDS 已有基础
+### 场景 B：无人模式（未来）
 
-1. **Widget 自动注入**：CDS Proxy 已能将 `<script>` 注入所有预览页面的 `</body>` 前（`widget-script.ts`）
-2. **AI 占用检测**：Widget 已有 `aiOccupant` 状态 + SSE activity stream 监听（30 秒 TTL）
-3. **WebSocket 代理**：CDS Proxy 已有完整的 WebSocket upgrade 透传能力
-4. **BranchBadge**：前端已有左下角固定定位的分支标识组件
+- CDS 端启动 headless browser，加载预览页，Bridge Client 同样连接
+- 架构完全复用，仅在 CDS 端加一个 browser launcher
 
 ---
 
-## 三、技术方案
-
-### 3.1 架构总览
+## 三、核心架构
 
 ```
 ┌─ 用户浏览器 ─────────────────────────────────────────────────┐
 │                                                              │
-│  预览页面（任意分支）                                          │
-│  ┌────────────────────────────────────────────────────┐      │
-│  │  CDS Widget（已有）                                  │      │
-│  │  ├── 分支信息 / 部署控制（已有）                       │      │
-│  │  ├── AI 占用检测（已有）                              │      │
-│  │  └── Bridge Client（新增）◄──────────┐               │      │
-│  │       ├── DOM 采集器（复用 page-agent）│               │      │
-│  │       ├── 操作执行器（复用 page-agent）│               │      │
-│  │       └── 状态上报 + 指令拉取         │               │      │
-│  └───────────────────────────────────────┼──────────┘      │
-│                                          │ WebSocket        │
-└──────────────────────────────────────────┼─────────────────┘
-                                           │
-                                           ▼
+│  CDS Widget (已有，注入到每个预览页)                           │
+│  ├── 部署面板 (已有)                                         │
+│  ├── AI 占用指示 (已有)                                      │
+│  └── Bridge Client (新增)                                    │
+│      ├── DOM 提取器: 遍历 DOM → 简化文本格式                  │
+│      ├── 操作执行器: click / type / scroll / evaluate         │
+│      ├── 状态采集器: console 错误 / 网络异常 / 路由变化        │
+│      └── WebSocket 客户端 → CDS Bridge                       │
+│                                                              │
+└──────────────────────────────┬────────────────────────────────┘
+                               │ WebSocket (ws://cds:9900/bridge/ws)
+                               ▼
 ┌─ CDS Server ────────────────────────────────────────────────┐
 │                                                              │
-│  Bridge Hub（新增）                                           │
-│  ├── WebSocket 端点: /_cds/bridge/ws                         │
-│  ├── REST 端点:                                              │
-│  │    GET  /_cds/bridge/sessions       ← 查询在线页面        │
-│  │    GET  /_cds/bridge/state/:sid     ← 读取页面状态        │
-│  │    POST /_cds/bridge/execute/:sid   ← 下发操作指令        │
-│  │    GET  /_cds/bridge/result/:rid    ← 获取操作结果        │
-│  └── 内存会话管理（无持久化）                                  │
+│  Bridge 端点 (新增)                                          │
+│  ├── WebSocket Hub: 管理每个分支的 Bridge 连接                │
+│  ├── GET  /api/bridge/state/:branchId   → Agent 读取页面状态 │
+│  ├── POST /api/bridge/command/:branchId → Agent 下发操作指令 │
+│  ├── POST /api/bridge/navigate-request  → Agent 请求用户导航 │
+│  └── GET  /api/bridge/connections       → 查看所有活跃连接   │
 │                                                              │
-└──────────────────────────────────────────┬──────────────────┘
-                                           │ HTTP API
-                                           ▼
-┌─ 编码 Agent（Claude Code / 任意 Agent）──────────────────────┐
+│  分支隔离: WebSocket 按 branchId 分组，一个分支一个连接       │
 │                                                              │
-│  1. GET  /sessions         → 发现哪些页面在线                 │
-│  2. GET  /state/:sid       → 读取页面可交互元素、路由、Console │
-│  3. POST /execute/:sid     → 下发操作（click/type/navigate）  │
-│  4. GET  /result/:rid      → 获取操作结果 + 操作后新状态       │
-│  5. 循环 2-4               → 实现多步验证流程                  │
+└──────────────────────────────┬────────────────────────────────┘
+                               │ REST API
+                               ▼
+┌─ 编码 Agent ────────────────────────────────────────────────┐
+│                                                              │
+│  通过 CDS REST API 操作:                                     │
+│  1. POST /api/bridge/navigate-request → 请求用户打开页面     │
+│  2. GET  /api/bridge/state/:branchId  → 读取 DOM + 状态     │
+│  3. POST /api/bridge/command/:branchId → 下发操作指令        │
+│  4. 读取返回结果 → 决策下一步 → 循环                         │
 │                                                              │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-### 3.2 数据流：一次完整操作
+### 分支隔离保证
+
+- 每个 CDS 分支有独立的预览环境（独立容器、独立端口）
+- Widget 注入时携带 `BRANCH_ID`（已有机制）
+- WebSocket 连接按 `branchId` 注册，Agent 只能操作自己分支的预览页
+- 不同分支的 Bridge 连接完全隔离，不存在跨分支操作风险
+
+---
+
+## 四、Bridge Client（浏览器端）
+
+### 4.1 DOM 提取器
+
+参考 alibaba/page-agent 的 `page-controller` 的 `flatTreeToString()` 设计，将 DOM 简化为 LLM 可消费的文本格式：
 
 ```
-Agent                     CDS Bridge Hub              Browser Widget
-  │                            │                            │
-  │ GET /sessions              │                            │
-  │───────────────────────────>│                            │
-  │ [{sid:"abc", url:"/dashboard", branch:"feat-x"}]       │
-  │<───────────────────────────│                            │
-  │                            │                            │
-  │ GET /state/abc             │                            │
-  │───────────────────────────>│   ws: getState             │
-  │                            │───────────────────────────>│
-  │                            │   ws: stateResult          │
-  │                            │<───────────────────────────│
-  │ {url, title, elements[], console[], route}              │
-  │<───────────────────────────│                            │
-  │                            │                            │
-  │ POST /execute/abc          │                            │
-  │ {action:"click",           │   ws: execute              │
-  │  target:"提交按钮"}        │───────────────────────────>│
-  │ → rid: "r1"               │                            │
-  │<───────────────────────────│                            │
-  │                            │         (执行操作)          │
-  │                            │   ws: executeResult        │
-  │                            │<───────────────────────────│
-  │ GET /result/r1             │                            │
-  │───────────────────────────>│                            │
-  │ {success, newUrl, newState, console, duration}          │
-  │<───────────────────────────│                            │
+[0]<nav> 侧边栏导航
+  [1]<a href="/dashboard"> 仪表盘 />
+  [2]<a href="/defects" class="active"> 缺陷管理 />
+  [3]<a href="/settings"> 设置 />
+/>
+[4]<main> 主内容区域
+  [5]<h1> 缺陷列表 />
+  [6]<input type="text" placeholder="搜索缺陷..." />
+  [7]<button> 新建缺陷 />
+  [8]<table>
+    [9]<tr> #001 登录页白屏 — 严重 — 未修复 />
+    [10]<tr> #002 上传超时 — 一般 — 已修复 />
+  />
+/>
 ```
 
-### 3.3 三层数据模型
+**规则**：
+- 只保留可交互元素（带 `[index]` 编号）和语义文本
+- 过滤不可见元素（`display:none`、`visibility:hidden`、零尺寸）
+- 过滤 CDS Widget 自身（`data-cds-widget-root`、`data-page-agent-ignore`）
+- 每个元素保留关键属性：`href`、`type`、`placeholder`、`value`、`class`（仅 `active`/`disabled`/`selected` 等状态类）
+- 最大深度 15 层，最大节点数 500（防止 DOM 过大）
 
-Bridge Client 采集页面信息分三层，按需请求：
+### 4.2 操作执行器
 
-#### Layer 1: 基础信息（每次自动附带）
-
-```typescript
-interface PageBasicState {
-  url: string            // window.location.href
-  title: string          // document.title
-  route: string          // SPA 路由路径
-  viewport: { width: number, height: number }
-  timestamp: number
-}
-```
-
-#### Layer 2: 可交互元素（getState 时采集）
-
-```typescript
-interface InteractiveElement {
-  index: number          // 元素编号，操作时引用
-  tag: string            // button / input / a / select ...
-  role: string           // ARIA role
-  text: string           // 可见文本或 aria-label
-  type?: string          // input type
-  value?: string         // 当前值
-  disabled: boolean
-  visible: boolean       // 是否在视口内
-  selector: string       // 唯一 CSS 选择器（备用定位）
-}
-```
-
-> 复用 page-agent 的 `page-controller` 包的 DOM 解析能力，它用文本语义而非选择器定位元素，不需要多模态 LLM。
-
-#### Layer 3: 诊断信息（按需采集）
-
-```typescript
-interface DiagnosticState {
-  consoleErrors: string[]       // console.error 缓冲
-  consoleWarnings: string[]     // console.warn 缓冲
-  networkErrors: NetworkError[] // 失败的 fetch/XHR
-  jsErrors: string[]            // window.onerror 捕获
-}
-```
-
-### 3.4 操作指令集
-
-| 指令 | 参数 | 说明 |
+| 操作 | 参数 | 行为 |
 |------|------|------|
-| `click` | `{target: string}` | 点击元素。target 为自然语言描述或元素 index |
-| `type` | `{target: string, text: string}` | 在输入框输入文字 |
-| `navigate` | `{url: string}` | 导航到指定 URL |
-| `scroll` | `{direction: "up"\|"down", amount?: number}` | 滚动页面 |
-| `select` | `{target: string, value: string}` | 选择下拉选项 |
-| `wait` | `{condition: string, timeout?: number}` | 等待条件满足（元素出现/消失/文字变化） |
-| `eval` | `{script: string}` | 执行任意 JS（仅限调试，安全边界内） |
-| `getState` | `{layers?: number[]}` | 获取指定层级的页面状态 |
+| `click` | `{ index: number }` | 模拟完整点击链（pointerdown → mousedown → focus → pointerup → mouseup → click） |
+| `type` | `{ index: number, text: string, clear?: boolean }` | 聚焦输入框，可选清空后输入文本 |
+| `scroll` | `{ direction: 'up'\|'down', pixels?: number }` | 页面或容器滚动 |
+| `navigate` | `{ url: string }` | 浏览器导航到指定 URL（同源限制） |
+| `evaluate` | `{ script: string }` | 执行任意 JS 并返回结果 |
+| `snapshot` | `{}` | 立即采集当前 DOM 树 + 页面信息 |
 
-每个指令执行后自动返回 Layer 1 基础信息 + 操作结果。
+### 4.3 状态采集器
 
-### 3.5 安全边界
-
-| 规则 | 说明 |
-|------|------|
-| **仅 CDS 环境** | Bridge 只在 CDS Widget 注入时激活，生产环境不存在此代码 |
-| **分支隔离** | 每个 WebSocket 会话绑定 branchId，Agent 只能操作目标分支的页面 |
-| **eval 受限** | `eval` 指令仅允许读取操作（获取变量值），禁止修改 DOM 或发起网络请求 |
-| **超时熔断** | 单条指令执行超时 10 秒自动中断，防止阻塞页面 |
-| **会话 TTL** | WebSocket 断开后会话保留 30 秒（与现有 AI 占用 TTL 一致），超时自动清理 |
-
----
-
-## 四、与 page-agent 的复用关系
-
-alibaba/page-agent 是 MIT 协议的开源项目，monorepo 包含 8 个子包。
-
-### 复用的包
-
-| 包 | 用途 | 复用方式 |
-|---|------|---------|
-| `page-controller` | DOM 元素定位 + 操作执行（click/type/scroll） | npm 依赖，在 Widget Bridge Client 中调用 |
-| `core` | DOM 解析、元素可见性判断、文本语义匹配 | npm 依赖 |
-
-### 不复用的包
-
-| 包 | 原因 |
-|---|------|
-| `llms` | 我们用编码 Agent 做决策，不需要浏览器端调 LLM |
-| `mcp` | 它走 Chrome 扩展做中转，我们用 CDS WebSocket 直连 |
-| `extension` | CDS Widget 注入替代扩展，不需要 Chrome 扩展 |
-| `ui` | CDS Widget 已有完整 UI，不需要额外浮窗 |
-| `page-agent` | 主包耦合了 LLM 调用链，我们只需要底层的 controller 和 core |
-
-### 关键技术差异
-
-```
-page-agent 原架构：
-  浏览器内 LLM 调用 → page-controller 执行 → 结果回显
-
-我们的架构：
-  服务端编码 Agent → CDS Bridge API → WebSocket → page-controller 执行 → 结果回传 Agent
-```
-
-核心区别：**决策在服务端（编码 Agent），执行在浏览器端（page-controller）**。page-agent 的 LLM-in-browser 方案对我们无价值，但它的 DOM 操作层正好是我们需要的。
-
----
-
-## 五、实现计划
-
-### Phase 1: 最小可用（Bridge + 读取 + 操作）
-
-```
-cds/
-├── src/
-│   ├── services/
-│   │   └── bridge-hub.ts          # 新增：Bridge 会话管理 + WebSocket Hub
-│   ├── routes/
-│   │   └── bridge-routes.ts       # 新增：REST API 端点
-│   └── widget-script.ts           # 修改：注入 Bridge Client 代码
-└── package.json                   # 新增依赖：page-agent/core, page-agent/page-controller
-```
-
-#### 5.1 CDS Server 侧
-
-**bridge-hub.ts** — 核心服务
+每次操作执行后自动采集并上报：
 
 ```typescript
-// 会话管理
-interface BridgeSession {
-  sid: string              // 会话 ID
-  branchId: string         // 分支标识
-  ws: WebSocket            // 浏览器端 WebSocket
-  lastSeen: number         // 最后活跃时间
-  currentState?: PageBasicState
-  pendingRequests: Map<string, PendingRequest>  // rid → 等待中的指令
-}
-
-// 服务接口
-class BridgeHub {
-  sessions: Map<string, BridgeSession>
-
-  // 浏览器连接
-  handleConnection(ws, branchId): void
-  handleDisconnect(sid): void
-
-  // Agent 调用
-  getSessions(branchId?): SessionInfo[]
-  getState(sid, layers?): Promise<PageState>
-  execute(sid, command): Promise<{ rid: string }>
-  getResult(rid): Promise<ExecuteResult>
+interface PageState {
+  url: string;                    // 当前完整 URL
+  title: string;                  // 页面标题
+  domTree: string;                // 简化 DOM 文本
+  viewport: { width: number; height: number };
+  scrollPosition: { x: number; y: number };
+  consoleErrors: string[];        // 最近 20 条 console.error
+  networkErrors: string[];        // 最近 10 条失败请求（4xx/5xx）
+  timestamp: number;
 }
 ```
 
-**bridge-routes.ts** — REST 端点
-
-```
-GET  /_cds/bridge/sessions              → bridgeHub.getSessions()
-GET  /_cds/bridge/sessions?branch=xxx   → bridgeHub.getSessions(branchId)
-GET  /_cds/bridge/state/:sid            → bridgeHub.getState(sid)
-POST /_cds/bridge/execute/:sid          → bridgeHub.execute(sid, body)
-GET  /_cds/bridge/result/:rid           → bridgeHub.getResult(rid)
-```
-
-#### 5.2 Widget 侧（浏览器端）
-
-在现有 `widget-script.ts` 的 IIFE 中追加 Bridge Client 模块：
+### 4.4 Console / Network 拦截
 
 ```javascript
-// ── Bridge Client ──
-var bridgeWs = null;
-var bridgeReconnectTimer = null;
-var consoleBuffer = [];    // 拦截 console.error/warn
-var networkErrors = [];    // 拦截 fetch 错误
-
-function initBridge() {
-  var wsUrl = location.protocol === 'https:' ? 'wss://' : 'ws://';
-  wsUrl += location.host + '/_cds/bridge/ws?branch=' + BRANCH_ID;
-
-  bridgeWs = new WebSocket(wsUrl);
-  bridgeWs.onopen = function() { reportState(); };
-  bridgeWs.onmessage = function(e) { handleBridgeCommand(JSON.parse(e.data)); };
-  bridgeWs.onclose = function() {
-    bridgeReconnectTimer = setTimeout(initBridge, 3000);
-  };
-}
-
-function handleBridgeCommand(msg) {
-  // msg.type: 'getState' | 'execute'
-  // 调用 page-controller 的能力执行操作
-  // 将结果通过 ws.send 回传
-}
-
-// 拦截 console 和网络错误
+// Console 拦截（仅 error 级别）
 var origError = console.error;
 console.error = function() {
-  consoleBuffer.push(Array.from(arguments).join(' '));
-  if (consoleBuffer.length > 50) consoleBuffer.shift();
+  consoleErrors.push(Array.from(arguments).join(' '));
+  if (consoleErrors.length > 20) consoleErrors.shift();
   origError.apply(console, arguments);
+};
+
+// Network 拦截（仅失败请求）
+var origFetch = window.fetch;
+window.fetch = function() {
+  return origFetch.apply(this, arguments).then(function(res) {
+    if (!res.ok) {
+      networkErrors.push(res.status + ' ' + res.url);
+      if (networkErrors.length > 10) networkErrors.shift();
+    }
+    return res;
+  });
 };
 ```
 
-> page-controller 的 DOM 解析和元素操作函数将作为 npm 依赖在构建时打包进 Widget。
+---
 
-#### 5.3 与现有 AI 占用机制联动
+## 五、CDS Bridge 端点
 
-Bridge 活跃时，复用已有的 `aiOccupant` 状态：
+### 5.1 WebSocket Hub
 
-- Bridge Client 连接后 → 通过 activity stream 广播 AI 占用事件
-- Widget 显示"AI 操控中"蓝色光圈边框（已有 `cds-ai-active` 样式）
-- 指令执行期间 → 光圈持续显示
-- Bridge 断开 → 30 秒 TTL 后光圈消失
+```
+ws://cds-host:9900/bridge/ws?branchId=xxx
+```
 
-用户在页面上能直观看到"AI 正在操控这个页面"。
+- 每个 `branchId` 最多一个活跃 WebSocket 连接（后连接替换前连接）
+- 连接建立后立即发送一次 `snapshot` 指令，获取初始页面状态
+- 心跳：每 15 秒 ping/pong
+- 断线后 Widget 自动重连（指数退避 1s → 2s → 4s → 8s，最大 30s）
 
-### Phase 2: 增强（未来）
+**消息协议**：
 
-| 特性 | 说明 |
-|------|------|
-| 无人模式 | CDS 端启动 headless browser（Puppeteer），加载预览页，Badge 自动连接 |
-| 截图对比 | Layer 4 增加 viewport 截图能力，Agent 可做视觉回归 |
-| 录制回放 | 记录 Agent 操作序列，可导出为 Playwright 测试脚本 |
-| 多标签页 | 同一分支多个页面同时在线，Agent 可在页面间切换 |
+```typescript
+// CDS → Widget（下行指令）
+interface BridgeCommand {
+  id: string;          // 指令 ID（用于匹配响应）
+  action: 'click' | 'type' | 'scroll' | 'navigate' | 'evaluate' | 'snapshot';
+  params: Record<string, unknown>;
+}
+
+// Widget → CDS（上行响应）
+interface BridgeResponse {
+  id: string;          // 对应的指令 ID
+  success: boolean;
+  error?: string;
+  state: PageState;    // 操作后的页面状态
+}
+
+// Widget → CDS（主动上报）
+interface BridgeEvent {
+  type: 'connected' | 'disconnected' | 'page-changed' | 'error';
+  state?: PageState;
+  error?: string;
+}
+```
+
+### 5.2 REST API
+
+| 端点 | 方法 | 用途 | 请求体 | 响应 |
+|------|------|------|--------|------|
+| `/api/bridge/connections` | GET | 查看所有活跃 Bridge 连接 | — | `{ connections: [{ branchId, url, connectedAt }] }` |
+| `/api/bridge/state/:branchId` | GET | 读取页面状态 | — | `PageState \| { error: 'no connection' }` |
+| `/api/bridge/command/:branchId` | POST | 下发操作指令 | `BridgeCommand` | `BridgeResponse`（同步等待） |
+| `/api/bridge/navigate-request` | POST | 请求用户打开页面 | `{ branchId, url, reason }` | `{ requestId }` |
+
+**指令执行流程**（同步等待模式）：
+
+```
+Agent POST /api/bridge/command/my-branch
+  body: { action: "click", params: { index: 7 } }
+    ↓
+CDS 通过 WebSocket 发给 Widget
+    ↓
+Widget 执行 click → 等待 DOM 稳定（300ms）→ 采集新状态
+    ↓
+Widget 通过 WebSocket 返回 BridgeResponse
+    ↓
+CDS 返回给 Agent
+    ↓
+Agent 读取新状态，决策下一步
+```
+
+超时：单条指令最长等待 15 秒，超时返回 `{ success: false, error: "timeout" }`。
 
 ---
 
-## 六、验收标准
+## 六、导航请求 UI
+
+当 Agent 需要用户打开特定页面时，在 CDS Widget 中展示视觉提示。
+
+### 6.1 视觉设计
+
+- 蓝色脉冲圆点 + 边框发光动效（复用已有 `cds-ai-border-glow`）
+- 面板从 Badge 上方弹出，包含：目标 URL、原因说明、"打开页面"和"忽略"按钮
+- 点击"打开页面"→ 浏览器导航到目标 URL → Bridge 自动连接
+- 点击"忽略"→ 面板消失
+- 30 秒无操作自动收起（不自动导航）
+
+### 6.2 通信流程
+
+```
+Agent POST /api/bridge/navigate-request
+  body: { branchId: "my-branch", url: "/defects", reason: "验证缺陷列表排序" }
+    ↓
+CDS 广播 SSE 事件到 Widget（通过 activity-stream）
+    ↓
+Widget 展示导航请求面板
+    ↓
+用户点击"打开页面"
+    ↓
+浏览器 window.location.href = url
+    ↓
+新页面加载 → Widget 重新注入 → Bridge Client 自动连接
+    ↓
+Agent 轮询 /api/bridge/state/:branchId 等待连接就绪
+```
+
+---
+
+## 七、安全边界
+
+| 约束 | 实现 |
+|------|------|
+| 仅限 CDS 预览环境 | Bridge Client 只在 Widget 注入时启用（CDS Proxy 注入） |
+| 生产环境不加载 | 生产环境不经过 CDS Proxy，不会注入 Widget |
+| 分支隔离 | WebSocket 按 `branchId` 分组，Agent 只能操作自己分支 |
+| 操作审计 | 所有 Bridge 指令记录到 Activity Stream |
+| `evaluate` 限制 | JS 执行仅在 Bridge 连接存在时可用，返回值截断为 10KB |
+| 导航限制 | `navigate` 仅允许同源 URL，禁止跳转外部站点 |
+
+---
+
+## 八、与现有机制的关系
+
+| 现有机制 | 关系 |
+|----------|------|
+| CDS Widget 注入（`widget-script.ts`） | Bridge Client 代码追加到 Widget IIFE 中 |
+| AI 占用检测（`aiOccupant` + SSE） | Bridge 连接时自动触发 AI 占用状态 |
+| Activity Stream | Bridge 操作记录为 `source: 'ai'` 的 activity 事件 |
+| 分支 Badge（`BranchBadge.tsx`） | 共存，Bridge 状态指示器附加到 CDS Widget Badge 旁 |
+| CDS WebSocket Proxy（`proxy.ts`） | Bridge WebSocket 走 CDS master 端点，不走分支 proxy |
+
+---
+
+## 九、验收标准
 
 | # | 场景 | 前置条件 | 验收标准 |
 |---|------|---------|---------|
-| **V1** | 页面上线感知 | 用户在浏览器打开预览页 | Bridge Client 自动连接，Agent 通过 `GET /sessions` 能看到该页面在线 |
-| **V2** | 读取页面状态 | 用户已打开页面 | Agent 通过 `GET /state/:sid` 获取到页面标题、路由、可交互元素列表 |
-| **V3** | 执行操作 | 用户已打开页面 | Agent 通过 `POST /execute/:sid` 下发点击/输入指令，用户浏览器中的页面发生对应变化 |
-| **V4** | 操作反馈闭环 | Agent 下发操作后 | `GET /result/:rid` 返回操作是否成功 + 操作后的新页面状态 |
-| **V5** | 错误感知 | 页面有 JS 报错或 API 异常 | Agent 读取状态时 Layer 3 包含 console 错误信息 |
-| **V6** | 非侵入 | 生产环境 | CDS Widget 不注入 Bridge Client，对线上零影响 |
-| **V7** | AI 占用提示 | Agent 正在操控页面 | 页面顶部显示"AI 操控中"徽标 + 蓝色光圈边框 |
+| V1 | Bridge 连接 | 用户在浏览器打开预览页 | Badge 自动连上 CDS Bridge，Agent 通过 `GET /api/bridge/connections` 看到连接 |
+| V2 | 读取页面 | 用户已打开页面 | Agent 通过 `GET /api/bridge/state/:branchId` 读取到页面标题、路由、可交互元素列表 |
+| V3 | 操作页面 | 用户已打开页面 | Agent 通过 `POST /api/bridge/command` 下发"click"指令，用户浏览器里的页面发生对应变化 |
+| V4 | 闭环反馈 | Agent 下发操作后 | Bridge 返回操作结果 + 操作后的新页面状态 |
+| V5 | 错误感知 | 页面有 JS 错误或 API 异常 | Agent 能通过 `state.consoleErrors` / `state.networkErrors` 读取到错误信息 |
+| V6 | 非侵入 | 生产环境 | Badge 不加载（不经过 CDS Proxy），对线上零影响 |
+| V7 | 导航请求 | Agent 需要用户打开新页面 | CDS Widget 展示蓝色脉冲动效 + 提示，用户点击后导航并自动建立连接 |
 
 ---
 
-## 七、关联文档
+## 十、关联文档
 
-| 文档 | 关系 |
-|------|------|
-| `doc/design.cds.md` | CDS 架构设计（Widget 注入、Proxy、WebSocket 代理） |
-| `doc/plan.cds-deployment.md` | CDS 部署计划（环境变量、端口分配） |
-| [alibaba/page-agent](https://github.com/alibaba/page-agent) | 复用其 page-controller + core 包 |
-
----
-
-## 八、风险评估
-
-| 风险 | 概率 | 影响 | 缓解措施 |
-|------|------|------|---------|
-| page-agent 包 API 不稳定 | 中 | 中 | 锁定版本，必要时 fork |
-| Widget JS 体积过大影响页面加载 | 低 | 中 | page-controller 轻量（无截图/无 LLM），tree-shake 后 < 20KB |
-| WebSocket 频繁断连 | 低 | 低 | 自动重连 + 会话 30 秒 TTL 保活 |
-| Agent 操作导致页面崩溃 | 中 | 低 | 单指令 10 秒超时，eval 受限，崩溃后 Bridge 自动重连 |
+- `doc/design.cds.md` — CDS 核心架构
+- `doc/spec.cds.md` — CDS 功能规格
+- alibaba/page-agent — DOM 提取格式参考（`page-controller` 包的 `flatTreeToString`）
