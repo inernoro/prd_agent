@@ -1108,11 +1108,37 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     }
   }
 
-  // ── HTTP Polling Bridge Connection ──
-  // Polls CDS every 2s for commands, sends heartbeat with current state.
-  // Uses the same /_cds/api channel that deploy/pull already use (proven reliable).
+  // ── On-Demand Bridge Connection ──
+  // Widget does NOT poll by default. It periodically checks a lightweight
+  // activation endpoint. Only when an Agent starts a session does the
+  // full heartbeat loop begin. This avoids "Bridge 已连接" noise when
+  // no Agent is operating.
 
+  var bridgeActive=false;   // true = Agent started a session, poll heartbeat
+  var bridgeCheckTimer=null; // lightweight activation check
+  var bridgeActiveTimer=null; // full heartbeat poll
+
+  // Lightweight check: is there an active session for this branch? (no body, no state)
+  function bridgeCheckActivation(){
+    fetch(API+'/bridge/check/'+BRANCH_ID)
+      .then(function(r){return r.ok?r.json():null;})
+      .then(function(d){
+        if(d&&d.active&&!bridgeActive){
+          // Agent started a session — begin full polling
+          bridgeActive=true;
+          bridgeConnected=true;
+          console.log('[CDS Bridge] Activated by Agent');
+          renderBridgeIndicator();
+          bridgePoll(); // immediate first poll
+          bridgeActiveTimer=setInterval(bridgePoll,3000); // 3s poll when active
+        }
+      })
+      .catch(function(){});
+  }
+
+  // Full heartbeat poll (only runs when activated)
   function bridgePoll(){
+    if(!bridgeActive)return;
     var state=collectPageState();
     fetch(API+'/bridge/heartbeat',{
       method:'POST',
@@ -1122,19 +1148,11 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     .then(function(r){return r.ok?r.json():null;})
     .then(function(d){
       if(!d)return;
-      if(!bridgeConnected){
-        bridgeConnected=true;
-        console.log('[CDS Bridge] Connected (HTTP polling)');
-        renderBridgeIndicator();
-      }
-      // Check if there's a pending command
       var cmd=d.command;
       if(cmd&&cmd.id&&cmd.action){
         var desc=cmd.description||actionLabel(cmd.action);
         console.log('[CDS Bridge] Executing: '+cmd.action+' — '+desc);
-        // Show in operation panel
         addOpsStep(cmd.id,cmd.action,desc);
-        // Determine target element for cursor animation
         var targetEl=null;
         if((cmd.action==='click'||cmd.action==='type')&&cmd.params&&cmd.params.index!==undefined){
           targetEl=bridgeInteractiveElements[cmd.params.index]||null;
@@ -1142,14 +1160,16 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
         // Check for end-session signal
         if(cmd.params&&cmd.params.__end_session){
           updateOpsStep(cmd.id,'done',cmd.params.summary||'');
-          // Add completion marker
           addOpsStep('end','snapshot','✅ AI 操作完成');
           updateOpsStep('end','done','');
           hideCursor();
           removeHighlight();
-          // Auto-hide panel after 8s
+          // Stop active polling, go back to lightweight check
+          bridgeActive=false;
+          bridgeConnected=false;
+          if(bridgeActiveTimer){clearInterval(bridgeActiveTimer);bridgeActiveTimer=null;}
+          renderBridgeIndicator();
           setTimeout(function(){opsVisible=false;renderOpsPanel();},8000);
-          // Send result immediately
           var endState=collectPageState();
           fetch(API+'/bridge/result',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({branchId:BRANCH_ID,id:cmd.id,success:true,state:endState})}).catch(function(){});
           return;
@@ -1159,30 +1179,20 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
           if(!result.success){
             updateOpsStep(cmd.id,'error',result.error||'');
           }
-          // Wait for DOM to stabilize, then send result
           var delay=(cmd.action==='navigate'||cmd.action==='spa-navigate')?1500:300;
           setTimeout(function(){
             if(result.success)updateOpsStep(cmd.id,'done','');
             var newState=collectPageState();
-            var response={
-              branchId:BRANCH_ID,
-              id:cmd.id,
-              success:result.success,
-              error:result.error||undefined,
-              data:result.data||undefined,
-              state:newState
-            };
             fetch(API+'/bridge/result',{
               method:'POST',
               headers:{'Content-Type':'application/json'},
-              body:JSON.stringify(response)
+              body:JSON.stringify({branchId:BRANCH_ID,id:cmd.id,success:result.success,error:result.error||undefined,data:result.data||undefined,state:newState})
             }).catch(function(){});
           },delay);
         });
       }
     })
     .catch(function(){
-      // Network error — CDS might be restarting
       if(bridgeConnected){
         bridgeConnected=false;
         renderBridgeIndicator();
@@ -1190,10 +1200,10 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     });
   }
 
-  // Start polling every 5 seconds (enough for agent-driven operations)
-  bridgePollTimer=setInterval(bridgePoll,5000);
-  // First poll immediately
-  bridgePoll();
+  // Start lightweight activation check every 10s (very low overhead, no body)
+  bridgeCheckTimer=setInterval(bridgeCheckActivation,10000);
+  // First check after 2s (give page time to settle)
+  setTimeout(bridgeCheckActivation,2000);
 
   // ── Page change detection ──
   // Notify bridge when SPA navigation occurs

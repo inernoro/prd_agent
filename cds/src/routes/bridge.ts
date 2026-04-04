@@ -44,6 +44,22 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
 
   // ── Agent endpoints ──
 
+  // GET /api/bridge/check/:branchId — Widget lightweight activation check (no body, no auth needed)
+  router.get('/check/:branchId', (req, res) => {
+    res.json({ active: bridgeService.isSessionActive(req.params.branchId) });
+  });
+
+  // POST /api/bridge/start-session — Agent activates Bridge for a branch
+  router.post('/start-session', (req, res) => {
+    const { branchId } = req.body || {};
+    if (!branchId) {
+      res.status(400).json({ error: 'branchId is required' });
+      return;
+    }
+    bridgeService.startSession(branchId);
+    res.json({ success: true, message: 'Session 已激活，Widget 将在 10s 内开始轮询' });
+  });
+
   // GET /api/bridge/connections — List all active bridge connections
   router.get('/connections', (_req, res) => {
     res.json({ connections: bridgeService.getConnections() });
@@ -136,13 +152,15 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
       res.status(400).json({ error: 'branchId is required' });
       return;
     }
-    // Send end command to widget so it can show "AI 操作完成" and hide cursor
+    // Send end command to widget so it can show "AI 操作完成" and stop polling
     bridgeService.sendCommand(branchId, {
       id: crypto.randomBytes(4).toString('hex'),
       action: 'snapshot' as const,
       params: { __end_session: true, summary: summary || '' },
       description: summary || 'AI 操作完成',
     }).catch(() => {});
+    // Deactivate session after a delay (let the end command be picked up first)
+    setTimeout(() => { bridgeService.endSession(branchId); }, 10_000);
     res.json({ success: true });
   });
 

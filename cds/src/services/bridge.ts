@@ -81,6 +81,7 @@ const CONNECTION_TTL = 20_000; // connection considered dead if no heartbeat for
 export class BridgeService {
   private connections = new Map<string, BridgeConnection>();
   private navigateRequests = new Map<string, NavigateRequest>();
+  private activeSessions = new Set<string>(); // branches with active AI sessions
   private onActivityCallback: ((branchId: string, action: string) => void) | null = null;
   private cleanupTimer: ReturnType<typeof setInterval>;
 
@@ -230,6 +231,22 @@ export class BridgeService {
       }
     }
     return result;
+  }
+
+  /** Agent starts a session — Widget will begin polling when it detects this */
+  startSession(branchId: string): void {
+    this.activeSessions.add(branchId);
+  }
+
+  /** Agent ends a session — Widget will stop polling */
+  endSession(branchId: string): void {
+    this.activeSessions.delete(branchId);
+    this.cleanupConnection(branchId);
+  }
+
+  /** Widget checks if an Agent has activated a session for this branch */
+  isSessionActive(branchId: string): boolean {
+    return this.activeSessions.has(branchId);
   }
 
   /** Store a navigate request for the widget to pick up */

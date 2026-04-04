@@ -28,7 +28,19 @@ Agent 通过 CDS Bridge 操作预览页面时的强制规则。
 
 `navigate` 仅用于：登录页（未登录状态，不怕丢 token）。
 
-### 3. 操作前先 snapshot
+### 3. 必须 start-session / end-session
+
+操作前必须调 `POST /api/bridge/start-session`，操作结束必须调 `POST /api/bridge/end-session`。Widget 只有在 session 激活后才开始轮询，避免在 Activity Monitor 中产生噪音。
+
+```bash
+# 开始
+curl -X POST "$CDS/api/bridge/start-session" -d '{"branchId":"xxx"}'
+# ...操作...
+# 结束
+curl -X POST "$CDS/api/bridge/end-session" -d '{"branchId":"xxx","summary":"完成了登录和缺陷评论"}'
+```
+
+### 4. 操作前先 snapshot
 
 每次操作序列开始时，先发一条 `snapshot` 获取最新 DOM 和元素索引。元素索引在页面变化后会失效。
 
